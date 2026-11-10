@@ -1,3 +1,4 @@
+import { PLAINTEXT_CAP_BYTES } from '@relic/format';
 import {
   CustomSource,
   EncodedPacketSink,
@@ -29,10 +30,10 @@ export interface OtioVideoTimingLimits {
 }
 
 export const OTIO_VIDEO_TIMING_LIMITS: OtioVideoTimingLimits = {
-  maxFileBytes: 100 * 1024 * 1024,
+  maxFileBytes: PLAINTEXT_CAP_BYTES,
   maxSourceCacheBytes: 2 * 1024 * 1024,
   maxReadBytes: 8 * 1024 * 1024,
-  maxTotalReadBytes: 100 * 1024 * 1024,
+  maxTotalReadBytes: PLAINTEXT_CAP_BYTES,
   maxReadCalls: 8192,
   maxPackets: 200_000,
   maxIndexBytes: 16 * 1024 * 1024,

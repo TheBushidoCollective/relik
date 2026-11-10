@@ -11,6 +11,7 @@
  * - Validation of standard .otioz archive layout: content.otio and version.txt (1.0.0).
  */
 
+import { PLAINTEXT_CAP_BYTES } from './limits.ts';
 import { ContentTooLargeError, RelicFormatError } from './errors.ts';
 import type {
   InflaterFn,
@@ -19,8 +20,19 @@ import type {
   OtioZipEntryInfo,
   OtioZipIndex,
 } from './otio-types.ts';
+import { Sha256, sha256Hex } from './sha256.ts';
 
-export const MAX_EXPANDED_ZIP_BYTES = 100 * 1024 * 1024; // 100 MiB safety limit
+export const MAX_EXPANDED_ZIP_BYTES = PLAINTEXT_CAP_BYTES;
+export const MAX_INFLATED_ZIP_BYTES = 100 * 1024 * 1024;
+export const OTIO_DOCUMENT_MAX_BYTES = 100 * 1024 * 1024;
+export const MAX_ZIP_DIRECTORY_BYTES = 16 * 1024 * 1024;
+const ZIP_READ_CHUNK_BYTES = 8 * 1024 * 1024;
+
+/** End-exclusive byte ranges in an immutable archive. */
+export interface ZipSource {
+  readonly size: number;
+  read(start: number, end: number): Promise<Uint8Array>;
+}
 
 /**
  * Two reserved members and ZIP64's unusable count leave 65,532 media entries.
@@ -151,12 +163,24 @@ for (let i = 0; i < 256; i++) {
   CRC_TABLE[i] = c >>> 0;
 }
 
-export function crc32(bytes: Uint8Array): number {
-  let c = 0xffffffff;
-  for (let i = 0; i < bytes.length; i++) {
-    c = (CRC_TABLE[(c ^ (bytes[i] as number)) & 0xff] as number) ^ (c >>> 8);
+export class Crc32 {
+  private crc = 0xffffffff;
+
+  update(bytes: Uint8Array): this {
+    let crc = this.crc;
+    for (const byte of bytes)
+      crc = CRC_TABLE[(crc ^ byte) & 0xff]! ^ (crc >>> 8);
+    this.crc = crc;
+    return this;
   }
-  return (c ^ 0xffffffff) >>> 0;
+
+  value(): number {
+    return (this.crc ^ 0xffffffff) >>> 0;
+  }
+}
+
+export function crc32(bytes: Uint8Array): number {
+  return new Crc32().update(bytes).value();
 }
 
 /**
@@ -255,6 +279,91 @@ function findEocdOffset(bytes: Uint8Array): number {
     }
   }
   return -1;
+}
+
+async function readZipRange(
+  source: ZipSource,
+  start: number,
+  end: number
+): Promise<Uint8Array> {
+  if (
+    !Number.isSafeInteger(start) ||
+    !Number.isSafeInteger(end) ||
+    start < 0 ||
+    end < start ||
+    end > source.size
+  ) {
+    throw new OtioZipError(
+      'corrupt-archive',
+      'ZIP range is outside the archive'
+    );
+  }
+  const bytes = await source.read(start, end);
+  if (!(bytes instanceof Uint8Array) || bytes.length !== end - start) {
+    throw new OtioZipError(
+      'corrupt-archive',
+      'ZIP source returned an incomplete range'
+    );
+  }
+  return bytes;
+}
+
+/** Inspect ZIP magic and reserved member names without reading media bytes. */
+export async function isOtiozSource(source: ZipSource): Promise<boolean> {
+  try {
+    if (!Number.isSafeInteger(source.size) || source.size < 22) return false;
+    const magic = await readZipRange(source, 0, 4);
+    if (
+      magic[0] !== 0x50 ||
+      magic[1] !== 0x4b ||
+      magic[2] !== 3 ||
+      magic[3] !== 4
+    )
+      return false;
+    const tail = await readZipRange(
+      source,
+      Math.max(0, source.size - 65557),
+      source.size
+    );
+    const at = findEocdOffset(tail);
+    if (at < 0) return false;
+    const end = new DataView(tail.buffer, tail.byteOffset, tail.byteLength);
+    const count = end.getUint16(at + 10, true);
+    const size = end.getUint32(at + 12, true);
+    const offset = end.getUint32(at + 16, true);
+    if (
+      count === ZIP64_U16 ||
+      offset === ZIP64_U32 ||
+      size > MAX_ZIP_DIRECTORY_BYTES ||
+      offset + size > source.size
+    )
+      return false;
+    const directory = await readZipRange(source, offset, offset + size);
+    const view = new DataView(
+      directory.buffer,
+      directory.byteOffset,
+      directory.byteLength
+    );
+    let cursor = 0;
+    let content = false;
+    let version = false;
+    for (let i = 0; i < count && cursor + 46 <= directory.length; i++) {
+      if (view.getUint32(cursor, true) !== CD_SIG) break;
+      const nameLength = view.getUint16(cursor + 28, true);
+      const extraLength = view.getUint16(cursor + 30, true);
+      const commentLength = view.getUint16(cursor + 32, true);
+      if (cursor + 46 + nameLength > directory.length) break;
+      const name = new TextDecoder().decode(
+        directory.subarray(cursor + 46, cursor + 46 + nameLength)
+      );
+      if (name === 'content.otio') content = true;
+      if (name === 'version.txt') version = true;
+      cursor += 46 + nameLength + extraLength + commentLength;
+    }
+    return content && version;
+  } catch {
+    return false;
+  }
 }
 
 function decodeZipName(bytes: Uint8Array, where: string): string {
@@ -470,40 +579,61 @@ function isPermanentArchiveFailure(err: unknown): err is OtioZipError {
  * Parse and index an OTIOZ ZIP archive.
  */
 export async function indexOtioZip(
-  archiveBytes: Uint8Array,
+  archive: Uint8Array | ZipSource,
   options?: {
+    readonly maxArchiveBytes?: number;
     readonly maxExpandedBytes?: number;
+    readonly maxInflatedBytes?: number;
     readonly inflater?: InflaterFn;
   }
 ): Promise<OtioZipIndex> {
   const maxLimit = options?.maxExpandedBytes ?? MAX_EXPANDED_ZIP_BYTES;
+  const maxArchive =
+    options?.maxArchiveBytes ??
+    options?.maxExpandedBytes ??
+    PLAINTEXT_CAP_BYTES;
+  const maxInflated = options?.maxInflatedBytes ?? MAX_INFLATED_ZIP_BYTES;
   const inflater = options?.inflater ?? defaultInflater;
-
-  if (archiveBytes.length > maxLimit) {
-    throw new ContentTooLargeError(archiveBytes.length, maxLimit);
+  const isRangeSource = !(archive instanceof Uint8Array);
+  const source: ZipSource =
+    archive instanceof Uint8Array
+      ? {
+          size: archive.length,
+          async read(start, end) {
+            return archive.subarray(start, end);
+          },
+        }
+      : archive;
+  if (
+    !Number.isSafeInteger(source.size) ||
+    source.size < 0 ||
+    ![maxLimit, maxArchive, maxInflated].every(
+      (n) => Number.isSafeInteger(n) && n >= 0
+    )
+  ) {
+    throw new OtioZipError('corrupt-archive', 'Invalid ZIP size or limits');
   }
-
-  const eocdOffset = findEocdOffset(archiveBytes);
-  if (eocdOffset < 0) {
+  if (source.size > maxArchive) {
+    throw new ContentTooLargeError(source.size, maxArchive);
+  }
+  const tailStart = Math.max(0, source.size - 65557);
+  const tail = await readZipRange(source, tailStart, source.size);
+  const tailEocd = findEocdOffset(tail);
+  if (tailEocd < 0) {
     throw new OtioZipError(
       'corrupt-archive',
       'End of Central Directory record not found'
     );
   }
-
-  const view = new DataView(
-    archiveBytes.buffer,
-    archiveBytes.byteOffset,
-    archiveBytes.byteLength
-  );
-
-  const diskNumber = view.getUint16(eocdOffset + 4, true);
-  const cdDisk = view.getUint16(eocdOffset + 6, true);
-  const cdRecordsOnDisk = view.getUint16(eocdOffset + 8, true);
-  const cdTotalRecords = view.getUint16(eocdOffset + 10, true);
-  const cdSize = view.getUint32(eocdOffset + 12, true);
-  const cdOffset = view.getUint32(eocdOffset + 16, true);
-  const eocdSig = view.getUint32(eocdOffset, true);
+  const eocdOffset = tailStart + tailEocd;
+  const endView = new DataView(tail.buffer, tail.byteOffset, tail.byteLength);
+  const diskNumber = endView.getUint16(tailEocd + 4, true);
+  const cdDisk = endView.getUint16(tailEocd + 6, true);
+  const cdRecordsOnDisk = endView.getUint16(tailEocd + 8, true);
+  const cdTotalRecords = endView.getUint16(tailEocd + 10, true);
+  const cdSize = endView.getUint32(tailEocd + 12, true);
+  const cdOffset = endView.getUint32(tailEocd + 16, true);
+  const eocdSig = endView.getUint32(tailEocd, true);
   if (eocdSig !== EOCD_SIG) {
     throw new OtioZipError(
       'corrupt-archive',
@@ -535,24 +665,26 @@ export async function indexOtioZip(
     );
   }
 
-  if (
-    cdOffset > archiveBytes.length ||
-    cdSize > archiveBytes.length - cdOffset
-  ) {
+  if (cdOffset > source.size || cdSize > source.size - cdOffset) {
     throw new OtioZipError(
       'corrupt-archive',
       'Central directory points beyond end of archive'
     );
   }
-  if (
-    eocdOffset >= 20 &&
-    cdOffset + cdSize === eocdOffset - 20 &&
-    view.getUint32(eocdOffset - 20, true) === ZIP64_EOCD_LOCATOR
-  ) {
-    throw new OtioZipError(
-      'unsupported-zip',
-      'ZIP64 end of central directory locator is not supported'
-    );
+  if (eocdOffset >= 20 && cdOffset + cdSize === eocdOffset - 20) {
+    const locator = await readZipRange(source, eocdOffset - 20, eocdOffset);
+    if (
+      new DataView(
+        locator.buffer,
+        locator.byteOffset,
+        locator.byteLength
+      ).getUint32(0, true) === ZIP64_EOCD_LOCATOR
+    ) {
+      throw new OtioZipError(
+        'unsupported-zip',
+        'ZIP64 end of central directory locator is not supported'
+      );
+    }
   }
   if (cdOffset + cdSize !== eocdOffset) {
     throw new OtioZipError(
@@ -560,13 +692,26 @@ export async function indexOtioZip(
       'Central directory extent does not end at the end of central directory record'
     );
   }
+  if (cdSize > MAX_ZIP_DIRECTORY_BYTES) {
+    throw new OtioZipError(
+      'unsupported-zip',
+      'Central directory exceeds the size limit'
+    );
+  }
+  const directory = await readZipRange(source, cdOffset, cdOffset + cdSize);
+  const view = new DataView(
+    directory.buffer,
+    directory.byteOffset,
+    directory.byteLength
+  );
 
   const entries = new Map<string, OtioZipEntryInfo>();
   const normalizedNames = new Set<string>();
   const extents: Array<{ start: number; end: number; name: string }> = [];
   let aggregateUncompressed = 0;
-  let cursor = cdOffset;
-  const cdEnd = cdOffset + cdSize;
+  let aggregateInflated = 0;
+  let cursor = 0;
+  const cdEnd = cdSize;
 
   for (let i = 0; i < cdTotalRecords; i++) {
     if (cursor + 46 > cdEnd) {
@@ -620,14 +765,11 @@ export async function indexOtioZip(
     rejectZip64Sentinel(uncompSize, ZIP64_U32, 'uncompressed size');
     rejectZip64Sentinel(localHeaderOffset, ZIP64_U32, 'local header offset');
 
-    const rawNameBytes = archiveBytes.subarray(
-      cursor + 46,
-      cursor + 46 + nameLen
-    );
+    const rawNameBytes = directory.subarray(cursor + 46, cursor + 46 + nameLen);
     const rawName = decodeZipName(rawNameBytes, 'central directory');
     const extraStart = cursor + 46 + nameLen;
     assertNoZip64Extra(
-      archiveBytes.subarray(extraStart, extraStart + extraLen),
+      directory.subarray(extraStart, extraStart + extraLen),
       rawName
     );
 
@@ -667,17 +809,39 @@ export async function indexOtioZip(
         `Aggregate uncompressed size ${aggregateUncompressed} exceeds cap of ${maxLimit} bytes`
       );
     }
+    if (method === 8) {
+      aggregateInflated += uncompSize;
+      if (aggregateInflated > maxInflated) {
+        throw new OtioZipError(
+          'decompression-limit',
+          `Aggregate DEFLATE size ${aggregateInflated} exceeds cap of ${maxInflated} bytes`
+        );
+      }
+    }
+    if (normName === 'content.otio' && uncompSize > OTIO_DOCUMENT_MAX_BYTES) {
+      throw new OtioZipError(
+        'decompression-limit',
+        `content.otio exceeds ${OTIO_DOCUMENT_MAX_BYTES} bytes`
+      );
+    }
 
-    if (
-      localHeaderOffset + 30 > archiveBytes.length ||
-      localHeaderOffset >= cdOffset
-    ) {
+    if (localHeaderOffset + 30 > source.size || localHeaderOffset >= cdOffset) {
       throw new OtioZipError(
         'corrupt-archive',
         'Local header offset beyond archive'
       );
     }
-    const localSig = view.getUint32(localHeaderOffset, true);
+    const localHeader = await readZipRange(
+      source,
+      localHeaderOffset,
+      localHeaderOffset + 30
+    );
+    const localView = new DataView(
+      localHeader.buffer,
+      localHeader.byteOffset,
+      localHeader.byteLength
+    );
+    const localSig = localView.getUint32(0, true);
     if (localSig !== LOCAL_SIG) {
       throw new OtioZipError(
         'corrupt-archive',
@@ -685,13 +849,19 @@ export async function indexOtioZip(
       );
     }
 
-    const localFlags = view.getUint16(localHeaderOffset + 6, true);
-    const localMethod = view.getUint16(localHeaderOffset + 8, true);
-    const localCrc = view.getUint32(localHeaderOffset + 14, true);
-    const localCompSize = view.getUint32(localHeaderOffset + 18, true);
-    const localUncompSize = view.getUint32(localHeaderOffset + 22, true);
-    const localNameLen = view.getUint16(localHeaderOffset + 26, true);
-    const localExtraLen = view.getUint16(localHeaderOffset + 28, true);
+    const localFlags = localView.getUint16(6, true);
+    const localMethod = localView.getUint16(8, true);
+    const localCrc = localView.getUint32(14, true);
+    const localCompSize = localView.getUint32(18, true);
+    const localUncompSize = localView.getUint32(22, true);
+    const localNameLen = localView.getUint16(26, true);
+    const localExtraLen = localView.getUint16(28, true);
+    if (localFlags !== flags) {
+      throw new OtioZipError(
+        'corrupt-archive',
+        `Mismatched flags in local header: ${rawName}`
+      );
+    }
 
     rejectZip64Sentinel(localCompSize, ZIP64_U32, 'local compressed size');
     rejectZip64Sentinel(localUncompSize, ZIP64_U32, 'local uncompressed size');
@@ -723,16 +893,25 @@ export async function indexOtioZip(
       }
     }
 
-    if (localHeaderOffset + 30 + localNameLen > archiveBytes.length) {
+    if (localHeaderOffset + 30 + localNameLen > source.size) {
       throw new OtioZipError(
         'corrupt-archive',
         `Local header name extends beyond archive: ${rawName}`
       );
     }
-    const localNameBytes = archiveBytes.subarray(
+    const variableEnd = localHeaderOffset + 30 + localNameLen + localExtraLen;
+    if (variableEnd > source.size || variableEnd > cdOffset) {
+      throw new OtioZipError(
+        'corrupt-archive',
+        `Local header extends beyond archive: ${rawName}`
+      );
+    }
+    const variable = await readZipRange(
+      source,
       localHeaderOffset + 30,
-      localHeaderOffset + 30 + localNameLen
+      variableEnd
     );
+    const localNameBytes = variable.subarray(0, localNameLen);
     const localName = decodeZipName(localNameBytes, 'local header');
     if (localName !== rawName) {
       throw new OtioZipError(
@@ -744,18 +923,15 @@ export async function indexOtioZip(
     const dataOffset = localHeaderOffset + 30 + localNameLen + localExtraLen;
     if (
       dataOffset < localHeaderOffset + 30 ||
-      dataOffset > archiveBytes.length ||
-      compSize > archiveBytes.length - dataOffset
+      dataOffset > source.size ||
+      compSize > source.size - dataOffset
     ) {
       throw new OtioZipError(
         'corrupt-archive',
         `File data extends beyond archive: ${rawName}`
       );
     }
-    const localExtra = archiveBytes.subarray(
-      localHeaderOffset + 30 + localNameLen,
-      dataOffset
-    );
+    const localExtra = variable.subarray(localNameLen);
     assertNoZip64Extra(localExtra, rawName);
 
     const dataEnd = dataOffset + compSize;
@@ -816,18 +992,36 @@ export async function indexOtioZip(
     customInflater: InflaterFn | undefined
   ): Promise<Uint8Array> {
     if (
-      entry.dataOffset > archiveBytes.length ||
-      entry.compressedSize > archiveBytes.length - entry.dataOffset
+      isRangeSource &&
+      (entry.uncompressedSize > OTIO_DOCUMENT_MAX_BYTES ||
+        entry.compressedSize > OTIO_DOCUMENT_MAX_BYTES)
     ) {
       throw new OtioZipError(
-        'corrupt-archive',
-        `Entry data is outside the archive: ${entry.name}`
+        'decompression-limit',
+        `Entry ${entry.name} is too large to materialize`
       );
     }
-    const slice = archiveBytes.subarray(
-      entry.dataOffset,
-      entry.dataOffset + entry.compressedSize
-    );
+    let slice: Uint8Array;
+    if (!isRangeSource || entry.compressedSize <= ZIP_READ_CHUNK_BYTES) {
+      slice = await readZipRange(
+        source,
+        entry.dataOffset,
+        entry.dataOffset + entry.compressedSize
+      );
+    } else {
+      slice = new Uint8Array(entry.compressedSize);
+      for (
+        let offset = 0;
+        offset < entry.compressedSize;
+        offset += ZIP_READ_CHUNK_BYTES
+      ) {
+        const start = entry.dataOffset + offset;
+        const end =
+          entry.dataOffset +
+          Math.min(offset + ZIP_READ_CHUNK_BYTES, entry.compressedSize);
+        slice.set(await readZipRange(source, start, end), offset);
+      }
+    }
 
     let decompressed: Uint8Array;
     if (entry.method === 0) {
@@ -904,6 +1098,55 @@ export async function indexOtioZip(
     }
   }
 
+  async function scanStoredEntry(name: string, hash?: Sha256): Promise<void> {
+    const entry = entries.get(name);
+    if (!entry) {
+      throw new OtioZipError(
+        'corrupt-archive',
+        `Entry not found in archive: ${name}`
+      );
+    }
+    if (entry.method !== 0) {
+      throw new OtioZipError('unsupported-zip', `Entry is not STORED: ${name}`);
+    }
+    const crc = new Crc32();
+    const end = entry.dataOffset + entry.compressedSize;
+    for (let at = entry.dataOffset; at < end; at += ZIP_READ_CHUNK_BYTES) {
+      const bytes = await readZipRange(
+        source,
+        at,
+        Math.min(at + ZIP_READ_CHUNK_BYTES, end)
+      );
+      crc.update(bytes);
+      hash?.update(bytes);
+    }
+    const actual = crc.value();
+    if (actual !== entry.crc32) {
+      throw new OtioZipError(
+        'corrupt-archive',
+        `CRC32 mismatch on ${entry.name}: expected ${entry.crc32.toString(16)}, got ${actual.toString(16)}`
+      );
+    }
+  }
+
+  async function verifyStoredEntry(name: string): Promise<void> {
+    await scanStoredEntry(name);
+  }
+
+  async function digestEntry(name: string): Promise<string> {
+    const entry = entries.get(name);
+    if (!entry) {
+      throw new OtioZipError(
+        'corrupt-archive',
+        `Entry not found in archive: ${name}`
+      );
+    }
+    if (entry.method !== 0) return sha256Hex(await readEntryData(name));
+    const hash = new Sha256();
+    await scanStoredEntry(name, hash);
+    return hash.hex();
+  }
+
   // Read and verify version.txt
   const versionBytes = await readEntryData('version.txt');
   const versionText = new TextDecoder('utf-8').decode(versionBytes).trim();
@@ -917,14 +1160,7 @@ export async function indexOtioZip(
   // Read content.otio bytes
   const contentOtioBytes = await readEntryData('content.otio');
 
-  // Compute content sha256
-  const hashBuf = await crypto.subtle.digest(
-    'SHA-256',
-    digestInput(contentOtioBytes)
-  );
-  const contentSha256 = Array.from(new Uint8Array(hashBuf))
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('');
+  const contentSha256 = sha256Hex(contentOtioBytes);
 
   return {
     entries,
@@ -932,21 +1168,9 @@ export async function indexOtioZip(
     contentOtioBytes,
     contentSha256,
     readEntry: readEntryData,
+    verifyStoredEntry,
+    digestEntry,
   };
-}
-
-function digestInput(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
-  if (isArrayBufferBacked(bytes)) return bytes;
-  const copy = new Uint8Array(bytes.byteLength);
-  copy.set(bytes);
-  return copy;
-}
-
-async function sha256Hex(bytes: Uint8Array): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', digestInput(bytes));
-  return Array.from(new Uint8Array(digest))
-    .map((byte) => byte.toString(16).padStart(2, '0'))
-    .join('');
 }
 
 /**
@@ -965,14 +1189,14 @@ export async function otioBundleMediaIndex(
       left.name < right.name ? -1 : left.name > right.name ? 1 : 0
     );
   for (const entry of entries) {
-    const bytes = options?.digests
-      ? await zip.readEntry(entry.name)
+    const digest = options?.digests
+      ? await zip.digestEntry(entry.name)
       : undefined;
     media[entry.name] = {
       key: entry.name,
       bundle_path: entry.name,
       size: entry.uncompressedSize,
-      ...(bytes === undefined ? {} : { sha256: await sha256Hex(bytes) }),
+      ...(digest === undefined ? {} : { sha256: digest }),
     };
   }
   return media;

@@ -93,6 +93,7 @@ export type CoverSkipReason =
   | 'render_failed'
   | 'render_timeout'
   | 'over_size_budget'
+  | 'over_render_ceiling'
   | 'service_unsupported'
   | 'service_refused'
   | 'upload_failed';

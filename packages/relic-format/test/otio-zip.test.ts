@@ -1,12 +1,17 @@
 import { describe, expect, test } from 'bun:test';
-import { createDeflateRaw, deflateRawSync } from 'node:zlib';
+import { createHash } from 'node:crypto';
+import { createDeflateRaw, deflateRawSync, inflateRawSync } from 'node:zlib';
 import type { InflaterFn } from '../src/otio-types.ts';
 import {
   crc32,
   indexOtioZip,
   isOtioz,
+  isOtiozSource,
   isRawOtio,
   MAX_EXPANDED_ZIP_BYTES,
+  MAX_INFLATED_ZIP_BYTES,
+  MAX_ZIP_DIRECTORY_BYTES,
+  OTIO_DOCUMENT_MAX_BYTES,
   OtioZipError,
   otioBundleEntry,
   otioBundleEntryFor,
@@ -208,17 +213,27 @@ async function expectZipFailure(
   archive: Uint8Array,
   code: OtioZipError['code']
 ): Promise<void> {
-  try {
-    await indexOtioZip(archive);
-  } catch (err) {
-    expect(err).toBeInstanceOf(OtioZipError);
-    expect(err).not.toBeInstanceOf(ReferenceError);
-    const zipErr = err as OtioZipError;
-    expect(zipErr.name).toBe('OtioZipError');
-    expect(zipErr.code).toBe(code);
-    return;
+  for (const source of [
+    archive,
+    {
+      size: archive.length,
+      async read(start: number, end: number) {
+        return archive.subarray(start, end);
+      },
+    },
+  ]) {
+    try {
+      await indexOtioZip(source);
+    } catch (err) {
+      expect(err).toBeInstanceOf(OtioZipError);
+      expect(err).not.toBeInstanceOf(ReferenceError);
+      const zipErr = err as OtioZipError;
+      expect(zipErr.name).toBe('OtioZipError');
+      expect(zipErr.code).toBe(code);
+      continue;
+    }
+    throw new Error(`indexOtioZip accepted an archive that must fail ${code}`);
   }
-  throw new Error(`indexOtioZip accepted an archive that must fail ${code}`);
 }
 
 describe('otio-zip security indexing and subtype detection', () => {
@@ -698,14 +713,18 @@ describe('otio-zip security indexing and subtype detection', () => {
     const index = await indexOtioZip(zip);
     let calls = 0;
     const { promise: gate, resolve: release } = Promise.withResolvers<void>();
+    const { promise: started, resolve: markStarted } =
+      Promise.withResolvers<void>();
     const inflater: InflaterFn = async (data, _size, maxBytes) => {
       calls += 1;
+      markStarted();
       expect(maxBytes).toBe(payload.length);
       await gate;
       return data;
     };
     const first = index.readEntry('media/a.bin', inflater);
     const second = index.readEntry('media/a.bin', inflater);
+    await started;
     expect(calls).toBe(1);
     release();
     const [a, b] = await Promise.all([first, second]);
@@ -810,9 +829,9 @@ describe('otio-zip security indexing and subtype detection', () => {
     const media = await otioBundleMediaIndex(
       {
         ...indexed,
-        readEntry: async (name, inflater) => {
+        digestEntry: async (name) => {
           reads.push(name);
-          return indexed.readEntry(name, inflater);
+          return indexed.digestEntry(name);
         },
       },
       { digests: true }
@@ -824,5 +843,248 @@ describe('otio-zip security indexing and subtype detection', () => {
     expect(media['media/a.bin']?.bundle_path).toBe('media/a.bin');
     expect(media['media/a.bin']?.sha256).toMatch(/^[a-f0-9]{64}$/);
     expect(media['media/z.bin']?.sha256).toMatch(/^[a-f0-9]{64}$/);
+  });
+});
+
+describe('range-backed OTIO ZIP', () => {
+  const version = new TextEncoder().encode('1.0.0\n');
+  const document = new TextEncoder().encode('{"OTIO_SCHEMA":"Timeline.1"}');
+
+  function sparseStoredSource(mediaSize: number) {
+    const zip = createZipBuffer([
+      { name: 'version.txt', data: version },
+      { name: 'content.otio', data: document },
+      { name: 'media/large.bin', data: new Uint8Array([0]) },
+    ]);
+    const view = new DataView(zip.buffer, zip.byteOffset, zip.byteLength);
+    const cdStart = view.getUint32(zip.length - 22 + 16, true);
+    const local = findZipHeader(zip, 'media/large.bin', 0x04034b50, 30);
+    const central = findZipHeader(zip, 'media/large.bin', 0x02014b50, 46);
+    const dataStart = localDataOffset(view, local);
+    view.setUint32(local + 18, mediaSize, true);
+    view.setUint32(local + 22, mediaSize, true);
+    view.setUint32(central + 20, mediaSize, true);
+    view.setUint32(central + 24, mediaSize, true);
+    const prefix = zip.slice(0, dataStart);
+    const suffix = zip.slice(cdStart);
+    const suffixView = new DataView(
+      suffix.buffer,
+      suffix.byteOffset,
+      suffix.byteLength
+    );
+    const mediaEnd = dataStart + mediaSize;
+    suffixView.setUint32(suffix.length - 22 + 16, mediaEnd, true);
+    const reads: Array<[number, number]> = [];
+    return {
+      reads,
+      size: mediaEnd + suffix.length,
+      async read(start: number, end: number): Promise<Uint8Array> {
+        reads.push([start, end]);
+        const result = new Uint8Array(end - start);
+        if (start < prefix.length) {
+          const prefixEnd = Math.min(end, prefix.length);
+          result.set(prefix.subarray(start, prefixEnd), 0);
+        }
+        if (end > mediaEnd) {
+          const suffixStart = Math.max(start, mediaEnd);
+          result.set(
+            suffix.subarray(suffixStart - mediaEnd, end - mediaEnd),
+            suffixStart - start
+          );
+        }
+        return result;
+      },
+    };
+  }
+
+  test('indexes stored and deflated members identically from arrays and range sources', async () => {
+    const payload = new TextEncoder().encode('compressed media contents');
+    const compressed = deflateRawSync(payload);
+    const archive = createZipBuffer([
+      { name: 'version.txt', data: version },
+      { name: 'content.otio', data: document },
+      { name: 'media/stored.bin', data: new Uint8Array([1, 2, 3]) },
+      {
+        name: 'media/deflated.bin',
+        data: compressed,
+        method: 8,
+        uncompressedSize: payload.length,
+        crc32: crc32(payload),
+      },
+    ]);
+    const source = {
+      size: archive.length,
+      async read(start: number, end: number) {
+        return archive.subarray(start, end);
+      },
+    };
+    const inflater: InflaterFn = (data) => new Uint8Array(inflateRawSync(data));
+    expect(isOtioz(archive)).toBe(true);
+    expect(await isOtiozSource(source)).toBe(true);
+    const memory = await indexOtioZip(archive, { inflater });
+    const ranged = await indexOtioZip(source, { inflater });
+    expect([...ranged.entries]).toEqual([...memory.entries]);
+    expect(ranged.contentOtioBytes).toEqual(memory.contentOtioBytes);
+    expect(ranged.contentSha256).toBe(memory.contentSha256);
+    for (const name of ['media/stored.bin', 'media/deflated.bin']) {
+      expect(await ranged.readEntry(name)).toEqual(
+        await memory.readEntry(name)
+      );
+      expect(await ranged.digestEntry(name)).toBe(
+        await memory.digestEntry(name)
+      );
+    }
+  });
+
+  test('uses bounded reads for materialization, verification, and media digests', async () => {
+    const payload = new Uint8Array(8 * 1024 * 1024 + 1);
+    payload[0] = 19;
+    payload[payload.length - 1] = 7;
+    const archive = createZipBuffer([
+      { name: 'version.txt', data: version },
+      { name: 'content.otio', data: document },
+      { name: 'media/large.bin', data: payload },
+    ]);
+    let largest = 0;
+    const source = {
+      size: archive.length,
+      async read(start: number, end: number) {
+        largest = Math.max(largest, end - start);
+        if (end - start > 8 * 1024 * 1024) throw new Error('unbounded range');
+        return archive.slice(start, end);
+      },
+    };
+    const zip = await indexOtioZip(source);
+    expect(await zip.readEntry('media/large.bin')).toEqual(payload);
+    await zip.verifyStoredEntry('media/large.bin');
+    const digest = createHash('sha256').update(payload).digest('hex');
+    expect(await zip.digestEntry('media/large.bin')).toBe(digest);
+    expect(
+      (await otioBundleMediaIndex(zip, { digests: true }))['media/large.bin']
+        ?.sha256
+    ).toBe(digest);
+    expect(largest).toBeLessThanOrEqual(8 * 1024 * 1024);
+  });
+
+  test('refuses to materialize oversized stored media without requesting its data', async () => {
+    const source = sparseStoredSource(OTIO_DOCUMENT_MAX_BYTES + 1);
+    const zip = await indexOtioZip(source);
+    const before = source.reads.length;
+    await expect(zip.readEntry('media/large.bin')).rejects.toMatchObject({
+      code: 'decompression-limit',
+    });
+    expect(source.reads.length).toBe(before);
+  });
+
+  test('rejects a directory beyond 16 MiB before requesting it', async () => {
+    const size = MAX_ZIP_DIRECTORY_BYTES + 1;
+    const eocd = new Uint8Array(22);
+    const view = new DataView(eocd.buffer);
+    view.setUint32(0, 0x06054b50, true);
+    view.setUint32(12, size, true);
+    const source = {
+      size: size + eocd.length,
+      async read(start: number, end: number) {
+        if (end - start > 65557) throw new Error('directory was read');
+        const result = new Uint8Array(end - start);
+        if (end > size)
+          result.set(
+            eocd.subarray(Math.max(0, start - size), end - size),
+            Math.max(0, size - start)
+          );
+        return result;
+      },
+    };
+    await expect(indexOtioZip(source)).rejects.toMatchObject({
+      code: 'unsupported-zip',
+    });
+  });
+
+  test('rejects inflated aggregate and oversized content.otio declarations', async () => {
+    expect(MAX_INFLATED_ZIP_BYTES).toBe(100 * 1024 * 1024);
+    const deflated = createZipBuffer([
+      { name: 'version.txt', data: version },
+      { name: 'content.otio', data: document },
+      {
+        name: 'media/a',
+        data: new Uint8Array([0]),
+        method: 8,
+        uncompressedSize: 7,
+      },
+      {
+        name: 'media/b',
+        data: new Uint8Array([0]),
+        method: 8,
+        uncompressedSize: 7,
+      },
+    ]);
+    const range = {
+      size: deflated.length,
+      async read(start: number, end: number) {
+        return deflated.subarray(start, end);
+      },
+    };
+    for (const source of [deflated, range]) {
+      await expect(
+        indexOtioZip(source, { maxInflatedBytes: 13 })
+      ).rejects.toMatchObject({ code: 'decompression-limit' });
+    }
+    const oversizedDocument = createZipBuffer([
+      { name: 'version.txt', data: version },
+      {
+        name: 'content.otio',
+        data: new Uint8Array([0]),
+        method: 8,
+        uncompressedSize: OTIO_DOCUMENT_MAX_BYTES + 1,
+      },
+    ]);
+    await expect(
+      indexOtioZip(oversizedDocument, {
+        maxExpandedBytes: 200 * 1024 * 1024,
+        maxInflatedBytes: 200 * 1024 * 1024,
+      })
+    ).rejects.toThrow('content.otio exceeds');
+  });
+
+  test('refuses corrupt stored media, short source reads, and mismatched header flags', async () => {
+    const archive = createZipBuffer([
+      { name: 'version.txt', data: version },
+      { name: 'content.otio', data: document },
+      {
+        name: 'media/bad.bin',
+        data: new Uint8Array([1, 2, 3]),
+        corruptCrc: true,
+      },
+    ]);
+    const source = {
+      size: archive.length,
+      async read(start: number, end: number) {
+        return archive.subarray(start, end);
+      },
+    };
+    const zip = await indexOtioZip(source);
+    await expect(zip.verifyStoredEntry('media/bad.bin')).rejects.toMatchObject({
+      code: 'corrupt-archive',
+    });
+    await expect(zip.digestEntry('media/bad.bin')).rejects.toMatchObject({
+      code: 'corrupt-archive',
+    });
+    const short = {
+      size: archive.length,
+      async read(start: number, end: number) {
+        return archive.subarray(start, Math.max(start, end - 1));
+      },
+    };
+    await expect(indexOtioZip(short)).rejects.toMatchObject({
+      code: 'corrupt-archive',
+    });
+
+    const badFlags = createZipBuffer([
+      { name: 'version.txt', data: version },
+      { name: 'content.otio', data: document },
+    ]);
+    const local = findZipHeader(badFlags, 'content.otio', 0x04034b50, 30);
+    new DataView(badFlags.buffer).setUint16(local + 6, 0x0008, true);
+    await expectZipFailure(badFlags, 'corrupt-archive');
   });
 });
