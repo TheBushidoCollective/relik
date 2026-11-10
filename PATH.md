@@ -1,3 +1,7 @@
+# Deployment smoke safety
+
+After `bun run build`, run `bun scripts/deploy-smoke-path.ts`. It executes both deployment smoke scripts against a loopback application with in-memory state and checks the exact read-only request sequence. Success ends with `DEPLOY_SMOKE_PATH_OK`, after both restored POST probes and a missing asset have been rejected. No production requests are made.
+
 # Email code sign-in
 
 A reader who asks to sign in on a relic gets one email with a six-digit code and a link, types the code into the same page, and is signed in without leaving it: the key stays in the tab, the comment they post carries their address, and the link in that email stops working.
