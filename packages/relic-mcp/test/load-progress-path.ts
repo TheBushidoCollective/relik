@@ -3321,9 +3321,32 @@ try {
       await run.close();
     }
 
+    // Watches the page body for `text` over `ms`, and reports whether it was
+    // ever present. A proof that a page stays put needs this window, not a
+    // single read.
+    const watchForText = async (
+      sid: string,
+      text: string,
+      ms: number
+    ): Promise<boolean> => {
+      let seen = false;
+      const end = Date.now() + ms;
+      while (Date.now() < end) {
+        if (!seen) {
+          seen = await isTrue(
+            sid,
+            `(document.body?.textContent ?? '').includes(${JSON.stringify(text)})`
+          );
+        }
+        await Bun.sleep(100);
+      }
+      return seen;
+    };
+
     // 3e: the current version is HTML and the comparison needs the v1 JSX. The
-    // compiler fetch fails during Compare; the page reloads once onto the
-    // current version, and opening Compare again frames both versions.
+    // compiler fetch fails once during Compare. The page must not reload on its
+    // own: it shows an explanatory error. A manual reload then recovers, and
+    // Compare frames both versions.
     {
       const mixedPath = join(compareDir, 'Mixed.jsx');
       await writeFile(
@@ -3376,24 +3399,57 @@ try {
       run.setBlocks([{ urlPattern: compilerPattern, times: 1 }]);
       await clickSelector(run.sessionId, '.action-history');
       await waitUntil(
+        async () => (run.blocks[compilerPattern] ?? 0) >= 1,
+        30_000,
+        '3e: compiler fetch intercepted'
+      );
+      // Long enough for a stale automatic reload, which needs the server check,
+      // to have run if it were going to.
+      const errorShown = await watchForText(
+        run.sessionId,
+        'could not be loaded for comparison',
+        6_000
+      );
+      const autoReloads = run.navigationUrls.length - 1;
+      assert.equal(
+        autoReloads,
+        0,
+        `3e: the failed comparison reloaded the page on its own (${autoReloads} reloads)`
+      );
+      assert.ok(
+        errorShown,
+        '3e: the failed comparison must tell the reader it could not be loaded'
+      );
+      const errorText = await evalMain<string>(
+        run.sessionId,
+        `document.body?.textContent ?? ''`
+      );
+      assert.ok(
+        /reload/i.test(errorText),
+        '3e: the error must tell the reader to reload the page'
+      );
+      await savePng(run.sessionId, '10-3e-error-no-auto-reload.png');
+
+      // The reader reloads by hand. Page.reload is that user action, counted as
+      // one navigation, and the vault must still reopen the relic.
+      await cdp.send('Page.reload', {}, run.sessionId);
+      await waitUntil(
         async () =>
           run.navigationUrls.length >= 2 &&
-          (await isTrue(run.sessionId, readyExpr)),
+          (await usercontentTexts(run.sessionId, 'main.stage')).some((t) =>
+            t.includes('version two')
+          ),
         45_000,
-        '3e: reloaded onto the current version'
+        '3e: manual reload shows the current version'
       );
-      const reloads = run.navigationUrls.length - 1;
+      const manualReloads = run.navigationUrls.length - 1;
       assert.equal(
-        run.blocks[compilerPattern] ?? 0,
+        manualReloads,
         1,
-        `3e: expected one intercepted compiler fetch, saw ${run.blocks[compilerPattern] ?? 0}`
-      );
-      assert.equal(
-        reloads,
-        1,
-        `3e: expected exactly one reload, saw ${reloads}`
+        `3e: expected exactly one manual reload, saw ${manualReloads}`
       );
       assertNoKeyInReloads(run, '3e');
+
       await clickSelector(run.sessionId, '.action-history');
       await waitUntil(
         async () =>
@@ -3402,7 +3458,7 @@ try {
             `document.querySelectorAll('.compare-pane iframe.usercontent-frame').length`
           )) === 2,
         30_000,
-        '3e: two comparison panes'
+        '3e: two comparison panes after manual reload'
       );
       await waitUntil(
         async () => {
@@ -3434,9 +3490,9 @@ try {
         30_000,
         '3e: both comparison frames show their versions'
       );
-      await savePng(run.sessionId, '10-3e-compare-after-heal.png');
+      await savePng(run.sessionId, '10-3e-manual-recovery.png');
       console.log(
-        `JSX_STEP_3E_COMPARE_AFTER_HEAL_OK panes=2 reloads=${reloads} blocked=${run.blocks[compilerPattern] ?? 0}`
+        `JSX_STEP_3E_MANUAL_RECOVERY_OK auto_reloads=0 manual_reloads=1 blocked=${run.blocks[compilerPattern] ?? 0}`
       );
       await run.close();
     }
