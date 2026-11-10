@@ -80,6 +80,10 @@ function errorName(err: unknown): string {
     : '';
 }
 
+// Lifecycle: the element exists only while it is wanted or preloaded. Hiding the
+// page, the idle cap, a system pause, a failure, or losing the program releases
+// it (no source, no listeners, blob URL revoked). A trusted active gesture is the
+// only thing that creates it again, synchronously, and it plays in that same call.
 export function createOtioAudioOutput(o: {
   document: Document;
   supported: boolean;
@@ -99,6 +103,7 @@ export function createOtioAudioOutput(o: {
 
   let state: OtioAudioOutputState = 'unsupported';
   let programAvailable = false;
+  let documentAttached = false;
   let disposed = false;
   let element: HTMLVideoElement | null = null;
   let objectUrl: string | null = null;
@@ -183,7 +188,7 @@ export function createOtioAudioOutput(o: {
       setState('running');
     if (state === 'running' && at - lastAdvanceAt >= RUNNING_STALL_MS)
       setState('rendering');
-    // A subscriber may have disposed or stopped the primer during the transitions.
+    // A subscriber may have disposed or parked the primer during the transitions.
     if (!wanted || element !== el) return;
     if (state === 'running') {
       cancelFrameLoop();
@@ -200,6 +205,7 @@ export function createOtioAudioOutput(o: {
     }
   }
 
+  // Stops the wanted playback. The element stays in place, paused.
   function stopPlayback(): void {
     generation++;
     wanted = false;
@@ -212,8 +218,77 @@ export function createOtioAudioOutput(o: {
     if (element !== null && !element.paused) element.pause();
   }
 
+  function onPlay(): void {
+    // The media session can resume the element outside this module (a headset
+    // or keyboard play key). Only startPlayback may play it, so any play while
+    // nothing is wanted is pulled back. pause() does not dispatch play, so this
+    // cannot recurse, and the pause event it queues reaches onPause, which does
+    // nothing once wanted is false.
+    if (!wanted && element !== null) element.pause();
+  }
+
+  function onPause(): void {
+    // A system pause during playback parks the primer, so nothing restarts it.
+    if (wanted && element?.paused) parkIdle();
+  }
+
+  function onError(): void {
+    if (element !== null) fail();
+  }
+
+  function attachElement(el: HTMLVideoElement): void {
+    el.addEventListener('timeupdate', observe);
+    el.addEventListener('error', onError);
+    el.addEventListener('pause', onPause);
+    el.addEventListener('play', onPlay);
+  }
+
+  function detachElement(el: HTMLVideoElement): void {
+    el.removeEventListener('timeupdate', observe);
+    el.removeEventListener('error', onError);
+    el.removeEventListener('pause', onPause);
+    el.removeEventListener('play', onPlay);
+  }
+
+  // Creates the element with its source, and makes it the current element.
+  function createPrimer(): HTMLVideoElement {
+    element = makeElement();
+    element.muted = false;
+    element.volume = 1;
+    element.preload = 'auto';
+    element.playsInline = true;
+    element.loop = true;
+    element.disablePictureInPicture = true;
+    element.disableRemotePlayback = true;
+    objectUrl = URL.createObjectURL(otioAudioPrimerBlob());
+    element.src = objectUrl;
+    attachElement(element);
+    return element;
+  }
+
+  // Drops the element, its source and its blob URL. Safe to call when none exists.
+  function releaseElement(): void {
+    const el = element;
+    if (el === null) return;
+    element = null;
+    detachElement(el);
+    if (!el.paused) el.pause();
+    el.removeAttribute('src');
+    el.load();
+    if (objectUrl !== null) URL.revokeObjectURL(objectUrl);
+    objectUrl = null;
+  }
+
+  // Stops, releases the element, and goes idle. A failed primer stays failed.
+  function parkIdle(): void {
+    stopPlayback();
+    releaseElement();
+    if (state !== 'failed') setState('idle');
+  }
+
   function fail(): void {
     stopPlayback();
+    releaseElement();
     setState('failed');
   }
 
@@ -229,8 +304,7 @@ export function createOtioAudioOutput(o: {
       idleTimer = setTimeout(onIdleDeadline, BUSY_RECHECK_MS);
       return;
     }
-    stopPlayback();
-    setState('idle');
+    parkIdle();
   }
 
   function startPlayback(el: HTMLVideoElement): void {
@@ -251,71 +325,43 @@ export function createOtioAudioOutput(o: {
     }
     pending?.then(undefined, (err: unknown) => {
       if (gen !== generation) return;
-      if (errorName(err) === 'AbortError') {
-        stopPlayback();
-        setState('idle');
-      } else {
-        fail();
-      }
+      if (errorName(err) === 'AbortError') parkIdle();
+      else fail();
     });
   }
 
   const onGesture = (event: Event): void => {
-    const el = element;
-    if (!event.isTrusted || el === null) return;
+    if (!event.isTrusted) return;
     const nav = (doc.defaultView?.navigator ?? globalThis.navigator) as
       | NavigatorLike
       | undefined;
     if (nav?.userActivation?.isActive === false) return;
+    // Listeners are attached only while the program is available and supported,
+    // so the element can be created here, in the same synchronous call as play().
+    const el = element ?? createPrimer();
     touchIdle();
     if (el.paused) startPlayback(el);
   };
 
   const onVisibility = (): void => {
-    if (!wanted || !(doc.hidden || doc.visibilityState === 'hidden')) return;
-    stopPlayback();
-    setState('idle');
+    if (!(doc.hidden || doc.visibilityState === 'hidden')) return;
+    if (element !== null) parkIdle();
   };
 
-  const onError = (): void => {
-    if (element !== null) fail();
-  };
-
-  const onPause = (): void => {
-    if (wanted && element?.paused) {
-      stopPlayback();
-      setState('idle');
-    }
-  };
-
-  function attach(el: HTMLVideoElement): void {
+  function attachDocument(): void {
+    if (documentAttached) return;
+    documentAttached = true;
     for (const type of GESTURE_EVENTS)
       doc.addEventListener(type, onGesture, true);
     doc.addEventListener('visibilitychange', onVisibility);
-    el.addEventListener('timeupdate', observe);
-    el.addEventListener('error', onError);
-    el.addEventListener('pause', onPause);
   }
 
-  function detach(el: HTMLVideoElement): void {
+  function detachDocument(): void {
+    if (!documentAttached) return;
+    documentAttached = false;
     for (const type of GESTURE_EVENTS)
       doc.removeEventListener(type, onGesture, true);
     doc.removeEventListener('visibilitychange', onVisibility);
-    el.removeEventListener('timeupdate', observe);
-    el.removeEventListener('error', onError);
-    el.removeEventListener('pause', onPause);
-  }
-
-  function releaseElement(): void {
-    const el = element;
-    if (el === null) return;
-    detach(el);
-    if (!el.paused) el.pause();
-    el.removeAttribute('src');
-    el.load();
-    if (objectUrl !== null) URL.revokeObjectURL(objectUrl);
-    objectUrl = null;
-    element = null;
   }
 
   return {
@@ -348,21 +394,13 @@ export function createOtioAudioOutput(o: {
       if (disposed || available === programAvailable) return;
       programAvailable = available;
       if (available && o.supported) {
-        element = makeElement();
-        element.muted = false;
-        element.volume = 1;
-        element.preload = 'auto';
-        element.playsInline = true;
-        element.loop = true;
-        element.disablePictureInPicture = true;
-        element.disableRemotePlayback = true;
-        objectUrl = URL.createObjectURL(otioAudioPrimerBlob());
-        element.src = objectUrl;
-        attach(element);
+        attachDocument();
+        createPrimer();
         setState('idle');
       } else {
         stopPlayback();
         releaseElement();
+        detachDocument();
         setState('unsupported');
       }
     },
@@ -380,6 +418,7 @@ export function createOtioAudioOutput(o: {
       programAvailable = false;
       stopPlayback();
       releaseElement();
+      detachDocument();
       setState('unsupported');
       subscribers.clear();
     },

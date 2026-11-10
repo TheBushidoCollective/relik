@@ -8,6 +8,7 @@ import {
   test,
 } from 'bun:test';
 import {
+  createOtioAudioOutput,
   OTIO_AUDIO_OUTPUT_IDLE_MS,
   otioAudioOutputSupported,
   type OtioAudioOutputState,
@@ -23,6 +24,9 @@ function domError(name: string): Error {
   return Object.assign(new Error(name), { name });
 }
 
+// Mirrors the element behaviour the module relies on. play() dispatches play,
+// pause() rejects a pending play() with AbortError and dispatches pause, and a
+// system resume dispatches play without a play() call from the module.
 class MockVideo {
   media = 0;
   seeks: number[] = [];
@@ -52,18 +56,29 @@ class MockVideo {
     this.playCalls++;
     this.log.push('play');
     this.paused = false;
-    return new Promise<void>((_, reject) => {
-      this.pending = { reject };
-    });
+    // The promise is registered before the event, as in Chrome: a pause()
+    // dispatched from inside a play listener must be able to reject it.
+    const { promise, reject } = Promise.withResolvers<void>();
+    this.pending = { reject };
+    this.emit('play');
+    return promise;
   }
 
-  // Chrome rejects a pending play() with AbortError when pause() interrupts it.
   pause(): void {
-    if (!this.paused) this.log.push('pause');
+    if (this.paused) return;
+    this.log.push('pause');
     this.paused = true;
     const p = this.pending;
     this.pending = null;
     p?.reject(domError('AbortError'));
+    this.emit('pause');
+  }
+
+  // A system resume (media key, headset) plays the element without a play() call
+  // from the module. It dispatches a play event, and nothing else.
+  systemPlay(): void {
+    this.paused = false;
+    this.emit('play');
   }
 
   load(): void {
@@ -253,7 +268,8 @@ function setup(opts: { supported?: boolean; nav?: Nav } = {}) {
     frames.clear();
     for (const cb of batch) cb();
   };
-  const video = (): MockVideo => videos[0]!;
+  // The most recently created element.
+  const video = (): MockVideo => videos[videos.length - 1]!;
   // One sample: the element reads `media` at the frame and at a timeupdate.
   // Running samples only on timeupdate and the stall timer, so both are fired.
   const sample = (media: number) => {
@@ -333,6 +349,15 @@ describe('setup', () => {
     expect(s.doc.listenerCount()).toBe(0);
     s.gesture();
     expect(s.out.state).toBe('unsupported');
+    expect(s.videos).toHaveLength(0);
+  });
+
+  test('dispose with the gate closed touches nothing on the document', () => {
+    const s = setup({ supported: false });
+    s.out.setProgramAvailable(true);
+    s.out.dispose();
+    expect(s.doc.listenerCount()).toBe(0);
+    expect(s.videos).toHaveLength(0);
   });
 
   test('supported only for desktop user agents', () => {
@@ -356,6 +381,14 @@ describe('setup', () => {
 });
 
 describe('arming', () => {
+  test('a gesture before the program is available does nothing', () => {
+    const s = setup();
+    s.gesture();
+    expect(s.videos).toHaveLength(0);
+    expect(s.doc.listenerCount()).toBe(0);
+    expect(s.out.state).toBe('unsupported');
+  });
+
   test('untrusted events never call play()', () => {
     const s = ready();
     for (const type of ['pointerdown', 'pointerup', 'keydown', 'click'])
@@ -480,98 +513,302 @@ describe('progress and plateaus', () => {
 });
 
 describe('play() outcomes', () => {
-  test('NotAllowedError fails, and a later trusted gesture re-arms', async () => {
+  test('NotAllowedError fails and releases the element; a later trusted gesture re-arms a fresh one', async () => {
     const s = ready();
     s.gesture();
-    s.video().rejectPlay('NotAllowedError');
+    const first = s.video();
+    const url = first.src;
+    first.rejectPlay('NotAllowedError');
     await settle();
     expect(s.out.state).toBe('failed');
+    expect(first.src).toBe('');
+    expect(revoked).toEqual([url]);
     s.gesture();
-    expect(s.video().playCalls).toBe(2);
+    expect(s.videos).toHaveLength(2);
+    expect(s.video().playCalls).toBe(1);
     expect(s.out.state).toBe('starting');
   });
 
-  test('AbortError returns to idle', async () => {
+  test('AbortError returns to idle and releases the element', async () => {
     const s = ready();
     s.gesture();
-    s.video().rejectPlay('AbortError');
+    const first = s.video();
+    first.rejectPlay('AbortError');
     await settle();
     expect(s.out.state).toBe('idle');
+    expect(first.src).toBe('');
   });
 
-  test('an element error fails, and a later gesture re-arms', async () => {
+  test('an element error fails and releases it; a later gesture re-arms', async () => {
     const s = ready();
     s.gesture();
     s.video().emit('error');
     await settle();
     expect(s.out.state).toBe('failed');
     s.gesture();
-    expect(s.video().playCalls).toBe(2);
+    expect(s.videos).toHaveLength(2);
+    expect(s.video().playCalls).toBe(1);
   });
 });
 
 describe('visibility and idle', () => {
-  test('hiding the page pauses to idle, and showing it does not resume', () => {
+  test('hiding the page releases the element and goes idle; showing it does not resume', () => {
     const s = ready();
     s.gesture();
     s.run(300, (e) => e / 1000);
+    const first = s.video();
     s.doc.hidden = true;
     s.doc.visibilityState = 'hidden';
     s.doc.dispatch('visibilitychange');
-    expect(s.video().paused).toBe(true);
+    expect(first.paused).toBe(true);
+    expect(first.src).toBe('');
     expect(s.out.state).toBe('idle');
     s.doc.hidden = false;
     s.doc.visibilityState = 'visible';
     s.doc.dispatch('visibilitychange');
     s.run(500);
-    expect(s.video().playCalls).toBe(1);
-    expect(s.video().paused).toBe(true);
+    expect(s.videos).toHaveLength(1);
+    expect(first.playCalls).toBe(1);
     expect(s.out.state).toBe('idle');
   });
 
-  test('the idle cap stops the primer after 60 s without a trusted gesture', () => {
+  test('hiding the page also releases a preloaded, never-played element', () => {
+    const s = ready();
+    const first = s.video();
+    s.doc.hidden = true;
+    s.doc.visibilityState = 'hidden';
+    s.doc.dispatch('visibilitychange');
+    expect(first.src).toBe('');
+    expect(revoked).toEqual(['blob:primer-1']);
+    expect(s.out.state).toBe('idle');
+  });
+
+  test('the idle cap stops and releases the primer after 60 s without a trusted gesture', () => {
     const s = ready();
     s.gesture();
+    const first = s.video();
     s.clock.advance(OTIO_AUDIO_OUTPUT_IDLE_MS - 1);
-    expect(s.video().paused).toBe(false);
+    expect(first.paused).toBe(false);
     s.clock.advance(1);
-    expect(s.video().paused).toBe(true);
+    expect(first.paused).toBe(true);
+    expect(first.src).toBe('');
     expect(s.out.state).toBe('idle');
   });
 
   test('an untrusted event does not reset the idle cap', () => {
     const s = ready();
     s.gesture();
+    const first = s.video();
     s.clock.advance(30_000);
     s.gesture('pointerdown', false);
     s.clock.advance(OTIO_AUDIO_OUTPUT_IDLE_MS - 30_000);
-    expect(s.video().paused).toBe(true);
+    expect(first.paused).toBe(true);
     expect(s.out.state).toBe('idle');
   });
 
   test('a trusted gesture resets the idle cap', () => {
     const s = ready();
     s.gesture();
+    const first = s.video();
     s.clock.advance(50_000);
     s.gesture();
     s.clock.advance(50_000);
-    expect(s.video().paused).toBe(false);
-    expect(s.video().playCalls).toBe(1);
+    expect(first.paused).toBe(false);
+    expect(first.playCalls).toBe(1);
     s.clock.advance(10_000);
-    expect(s.video().paused).toBe(true);
+    expect(first.paused).toBe(true);
     expect(s.out.state).toBe('idle');
   });
 
-  test('a busy program keeps the primer past the cap, and it stops once busy clears', () => {
+  test('a busy program keeps the primer past the cap, and it is released once busy clears', () => {
     const s = ready();
     s.busy.value = true;
     s.gesture();
+    const first = s.video();
     s.clock.advance(OTIO_AUDIO_OUTPUT_IDLE_MS + 5_000);
-    expect(s.video().paused).toBe(false);
+    expect(first.paused).toBe(false);
     s.busy.value = false;
     s.clock.advance(1000);
+    expect(first.paused).toBe(true);
+    expect(first.src).toBe('');
+    expect(s.out.state).toBe('idle');
+  });
+});
+
+describe('release and re-arm', () => {
+  test('idle revokes the blob URL, clears the source, and drops every element listener', () => {
+    const s = ready();
+    s.gesture();
+    s.run(300, (e) => e / 1000);
+    const v = s.video();
+    const url = v.src;
+    s.clock.advance(OTIO_AUDIO_OUTPUT_IDLE_MS);
+    expect(revoked).toEqual([url]);
+    expect(v.src).toBe('');
+    expect(v.listenerCount()).toBe(0);
+    expect(s.out.state).toBe('idle');
+    expect(s.frames.size).toBe(0);
+    expect(s.clock.timers()).toBe(0);
+  });
+
+  test('nothing restarts the primer by itself after it is released', () => {
+    const s = ready();
+    s.gesture();
+    s.run(300, (e) => e / 1000);
+    s.clock.advance(OTIO_AUDIO_OUTPUT_IDLE_MS);
+    s.clock.advance(10 * 60_000);
+    s.flush();
+    expect(s.videos).toHaveLength(1);
+    expect(s.video().playCalls).toBe(1);
+    expect(s.out.state).toBe('idle');
+    expect(s.frames.size).toBe(0);
+    expect(s.clock.timers()).toBe(0);
+  });
+
+  test('a fresh trusted gesture recreates the element and plays it in the same synchronous call', () => {
+    const s = ready();
+    s.gesture();
+    s.clock.advance(OTIO_AUDIO_OUTPUT_IDLE_MS);
+    expect(s.out.state).toBe('idle');
+    s.gesture();
+    expect(s.videos).toHaveLength(2);
+    expect(s.video().playCalls).toBe(1);
+    expect(s.video().paused).toBe(false);
+    expect(s.video().src).toBe('blob:primer-2');
+    expect(createdBlobs).toHaveLength(2);
+    expect(s.out.state).toBe('starting');
+  });
+
+  test('an untrusted gesture after release creates nothing', () => {
+    const s = ready();
+    s.gesture();
+    s.clock.advance(OTIO_AUDIO_OUTPUT_IDLE_MS);
+    s.gesture('pointerdown', false);
+    expect(s.videos).toHaveLength(1);
+    expect(s.out.state).toBe('idle');
+  });
+
+  test('an inactive activation after release creates nothing', () => {
+    const s = ready();
+    s.gesture();
+    s.clock.advance(OTIO_AUDIO_OUTPUT_IDLE_MS);
+    s.doc.defaultView.navigator.userActivation = { isActive: false };
+    s.gesture();
+    expect(s.videos).toHaveLength(1);
+    expect(s.out.state).toBe('idle');
+  });
+
+  test('document listeners stay attached while the program is available', () => {
+    const s = ready();
+    expect(s.doc.listenerCount()).toBe(5);
+    s.gesture();
+    s.clock.advance(OTIO_AUDIO_OUTPUT_IDLE_MS);
+    expect(s.doc.listenerCount()).toBe(5);
+    s.gesture();
+    expect(s.video().playCalls).toBe(1);
+  });
+
+  test('a system pause releases the primer, and a later gesture plays a fresh one', () => {
+    const s = ready();
+    s.gesture();
+    s.run(300, (e) => e / 1000);
+    const first = s.video();
+    first.pause();
+    expect(s.out.state).toBe('idle');
+    expect(first.src).toBe('');
+    expect(first.listenerCount()).toBe(0);
+    s.gesture();
+    expect(s.videos).toHaveLength(2);
+    expect(s.video().playCalls).toBe(1);
+    expect(s.out.state).toBe('starting');
+  });
+});
+
+describe('media-session resumes', () => {
+  test('a system resume with nothing wanted is pulled back on an idle preloaded element', () => {
+    const s = ready();
+    const v = s.video();
+    const stateCount = s.states.length;
+    v.systemPlay();
+    // The guard paused once. The pause event it dispatched reached onPause, which did nothing.
+    expect(v.paused).toBe(true);
+    expect(v.log).toEqual(['pause']);
+    expect(s.states.length).toBe(stateCount);
+    expect(s.out.state).toBe('idle');
+    expect(v.playCalls).toBe(0);
+    expect(s.videos).toHaveLength(1);
+  });
+
+  test('a pulled-back resume leaves no frames or timers behind, however long it runs', () => {
+    const s = ready();
+    s.video().systemPlay();
+    expect(s.frames.size).toBe(0);
+    expect(s.clock.timers()).toBe(0);
+    s.clock.advance(120_000);
+    s.run(500, (e) => e / 1000);
     expect(s.video().paused).toBe(true);
     expect(s.out.state).toBe('idle');
+    expect(s.frames.size).toBe(0);
+    expect(s.clock.timers()).toBe(0);
+    expect(s.videos).toHaveLength(1);
+  });
+
+  test('a system resume on a released primer reaches nothing and cannot restart it', () => {
+    const s = ready();
+    s.gesture();
+    s.run(300, (e) => e / 1000);
+    const v = s.video();
+    v.pause();
+    v.systemPlay();
+    expect(v.src).toBe('');
+    expect(v.listenerCount()).toBe(0);
+    expect(v.playCalls).toBe(1);
+    expect(s.videos).toHaveLength(1);
+    expect(s.out.state).toBe('idle');
+    expect(s.clock.timers()).toBe(0);
+  });
+
+  test('a system resume while a gesture wants playback is left alone', () => {
+    const s = ready();
+    s.gesture();
+    const v = s.video();
+    const logLength = v.log.length;
+    v.systemPlay();
+    expect(v.paused).toBe(false);
+    expect(v.log.slice(logLength)).toEqual([]);
+    expect(s.out.state).toBe('starting');
+    expect(v.playCalls).toBe(1);
+  });
+
+  test('a trusted gesture still starts the same primer after a pulled-back resume', () => {
+    const s = ready();
+    s.video().systemPlay();
+    expect(s.video().paused).toBe(true);
+    s.gesture();
+    expect(s.videos).toHaveLength(1);
+    expect(s.video().paused).toBe(false);
+    expect(s.video().playCalls).toBe(1);
+    expect(s.out.state).toBe('starting');
+  });
+
+  test('dispose removes the listeners, so a later resume is not touched', () => {
+    const s = ready();
+    const v = s.video();
+    s.out.dispose();
+    const logLength = v.log.length;
+    v.systemPlay();
+    expect(v.paused).toBe(false);
+    expect(v.log.slice(logLength)).toEqual([]);
+  });
+
+  test('losing the program removes the listeners, so a later resume is not touched', () => {
+    const s = ready();
+    const v = s.video();
+    s.out.setProgramAvailable(false);
+    const logLength = v.log.length;
+    v.systemPlay();
+    expect(v.paused).toBe(false);
+    expect(v.log.slice(logLength)).toEqual([]);
   });
 });
 
@@ -633,11 +870,9 @@ describe('whenReached', () => {
     expect(await s.out.whenReached('rendering', { signal, timeoutMs: 0 })).toBe(
       'starting'
     );
+    const closed = setup({ supported: false });
     expect(
-      await setup({ supported: false }).out.whenReached('rendering', {
-        signal,
-        timeoutMs: 1000,
-      })
+      await closed.out.whenReached('rendering', { signal, timeoutMs: 1000 })
     ).toBe('unsupported');
   });
 
@@ -681,9 +916,10 @@ describe('lifetime', () => {
     expect(s.videos).toHaveLength(1);
   });
 
-  test('losing the program releases the element the same way', () => {
+  test('losing the program releases the element the same way; regaining it prepares an idle one', () => {
     const s = ready();
     s.gesture();
+    s.run(300, (e) => e / 1000);
     const v = s.video();
     const url = v.src;
     s.out.setProgramAvailable(false);
@@ -697,7 +933,8 @@ describe('lifetime', () => {
     s.out.setProgramAvailable(true);
     expect(s.videos).toHaveLength(2);
     expect(s.out.state).toBe('idle');
-    expect(s.videos[1]!.playCalls).toBe(0);
+    expect(s.video().playCalls).toBe(0);
+    expect(s.doc.listenerCount()).toBe(5);
   });
 
   test('subscribers hear each change once and stop after unsubscribing', () => {
