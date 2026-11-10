@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { RelicContent } from '../src/content.ts';
 import { MODEL_LIMITS } from '../src/model-parse.ts';
 import { mountModelView } from '../src/model-view.ts';
+import { preserveGlobalDescriptors } from './global-descriptors.ts';
 
 class ElementStub extends EventTarget {
   readonly dataset: Record<string, string> = {};
@@ -56,9 +57,28 @@ class ElementStub extends EventTarget {
 
   querySelectorAll(selector: string): ElementStub[] {
     return this.children.flatMap((child) => [
-      ...(child.tagName === selector ? [child] : []),
+      ...((
+        selector.startsWith('.')
+          ? child.className.split(/\s+/).includes(selector.slice(1))
+          : child.tagName === selector
+      )
+        ? [child]
+        : []),
       ...child.querySelectorAll(selector),
     ]);
+  }
+}
+
+class ContainerStub extends ElementStub {
+  readonly renderEvents: Event[] = [];
+
+  override replaceChildren(...nodes: ElementStub[]): void {
+    for (const node of nodes) {
+      node.addEventListener('relic:render-state', (event) => {
+        this.renderEvents.push(event);
+      });
+    }
+    super.replaceChildren(...nodes);
   }
 }
 
@@ -110,9 +130,21 @@ class WorkerStub {
   }
 }
 
-const workerDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'Worker');
+let restoreGlobals: () => void;
 
 beforeEach(() => {
+  restoreGlobals = preserveGlobalDescriptors('Worker', 'CustomEvent');
+  Object.defineProperty(globalThis, 'CustomEvent', {
+    configurable: true,
+    writable: true,
+    value: class CustomEvent<T = unknown> extends Event {
+      readonly detail: T | null;
+      constructor(type: string, init?: CustomEventInit<T>) {
+        super(type, init);
+        this.detail = init?.detail ?? null;
+      }
+    },
+  });
   WorkerStub.instances = 0;
   WorkerStub.messages.length = 0;
   WorkerStub.posted = Promise.withResolvers<void>();
@@ -124,14 +156,23 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  if (workerDescriptor)
-    Object.defineProperty(globalThis, 'Worker', workerDescriptor);
-  else Reflect.deleteProperty(globalThis, 'Worker');
+  restoreGlobals();
 });
 
-function container(): ElementStub {
-  const doc = new DocumentStub();
-  return doc.createElement('div');
+function container(): ContainerStub {
+  return new ContainerStub(new DocumentStub(), 'div');
+}
+
+function expectErrorEvent(root: ContainerStub): void {
+  expect(root.renderEvents).toHaveLength(1);
+  const event = root.renderEvents[0];
+  expect(event).toBeInstanceOf(Event);
+  expect(event && 'detail' in event ? event.detail : undefined).toBe('error');
+  expect(event?.bubbles).toBe(true);
+}
+
+function renderedText(root: ElementStub): string {
+  return [root.textContent, ...root.children.map(renderedText)].join(' ');
 }
 
 function source(
@@ -166,6 +207,13 @@ describe('model content bounds', () => {
       })
     );
     expect(root.children[0]?.dataset['modelState']).toBe('limit-exceeded');
+    expectErrorEvent(root);
+    expect(root.querySelectorAll('.model-status-title')[0]?.textContent).toBe(
+      'Model exceeds interactive limits'
+    );
+    expect(root.querySelectorAll('.model-status-detail')[0]?.textContent).toBe(
+      'The model is too large or complex for interactive viewing. Download the original file to inspect it.'
+    );
     expect(reads).toBe(0);
     expect(WorkerStub.instances).toBe(0);
     expect(WorkerStub.messages).toHaveLength(0);
@@ -227,6 +275,14 @@ describe('model content bounds', () => {
     await pending.promise.catch(() => undefined);
     await Promise.resolve();
     expect(root.children[0]?.dataset['modelState']).toBe('internal-error');
+    expectErrorEvent(root);
+    expect(root.querySelectorAll('.model-status-title')[0]?.textContent).toBe(
+      'Could not read model'
+    );
+    expect(root.querySelectorAll('.model-status-detail')[0]?.textContent).toBe(
+      'The model parser could not complete. Download the original file to inspect it.'
+    );
+    expect(renderedText(root)).not.toContain('private source bytes');
     expect(WorkerStub.messages).toHaveLength(0);
     dispose();
   });

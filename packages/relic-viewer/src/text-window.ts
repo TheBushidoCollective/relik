@@ -1,5 +1,5 @@
-import type { CommentAnchor } from '@relic/format';
 import type { RelicContent } from './content.ts';
+import type { TextWindowHandle, WindowMark } from './text-window-bridge.ts';
 
 const SCAN_BYTES = 1024 * 1024;
 const ROW_BYTES = 16 * 1024;
@@ -166,31 +166,15 @@ export async function findSourceQuote(
   return undefined;
 }
 
-export interface WindowMark {
-  readonly id: string;
-  readonly anchor: CommentAnchor;
-  readonly resolved?: boolean;
-}
-export interface TextWindowHandle {
-  readonly ready: Promise<void>;
-  setMarks(marks: readonly WindowMark[]): void;
-  reveal(id: string): Promise<void>;
-  dispose(): void;
-}
-const handles = new WeakMap<HTMLElement, TextWindowHandle>();
-export function textWindowFor(host: HTMLElement): TextWindowHandle | undefined {
-  const root = host.matches?.('.text-window')
-    ? host
-    : host.querySelector<HTMLElement>('.text-window');
-  return root ? handles.get(root) : undefined;
-}
-
-/** Fixed DOM size and a native range control avoid browser element-height limits. */
-export function mountTextWindow(
+/**
+ * Fixed DOM size and a native range control avoid browser element-height
+ * limits. Only `text-window-bridge.ts` calls this; it owns registration and
+ * cleanup.
+ */
+export function renderTextWindow(
   root: HTMLElement,
   content: RelicContent
 ): TextWindowHandle {
-  root.classList.add('doc', 'text-window');
   const controller = new AbortController();
   const toolbar = document.createElement('form');
   toolbar.className = 'text-window-tools';
@@ -468,24 +452,7 @@ export function mountTextWindow(
       controller.abort();
       generation++;
       markGeneration++;
-      handles.delete(root);
     },
   };
-  handles.set(root, handle);
-  root.addEventListener('cleanup', () => handle.dispose(), { once: true });
-  if (typeof MutationObserver === 'function') {
-    let connected = root.isConnected;
-    const observer = new MutationObserver(() => {
-      connected ||= root.isConnected;
-      if (connected && !root.isConnected) {
-        observer.disconnect();
-        handle.dispose();
-      }
-    });
-    observer.observe(document.body, { childList: true, subtree: true });
-    controller.signal.addEventListener('abort', () => observer.disconnect(), {
-      once: true,
-    });
-  }
   return handle;
 }

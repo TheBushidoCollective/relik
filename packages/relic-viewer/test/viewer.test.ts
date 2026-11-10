@@ -110,27 +110,25 @@ function deps(
 async function seed(
   content: Uint8Array,
   filename: string,
-  mimetype: string
+  mimetype: string,
+  ttlDays?: number
 ): Promise<{ id: string; fragment: string }> {
   const id = generateRelicId();
   const key = generateKey();
+  const container = await encryptRelic({ content, filename, mimetype, key });
 
-  await app.fetch(
+  const challengeResponse = await app.fetch(
     new Request(`${SERVICE}/api/challenge`, {
       method: 'POST',
       headers: { 'x-forwarded-for': '198.51.100.10' },
     })
   );
-  const challenge = (await app
-    .fetch(
-      new Request(`${SERVICE}/api/challenge`, {
-        method: 'POST',
-        headers: { 'x-forwarded-for': '198.51.100.10' },
-      })
-    )
-    .then((r) => r.json())) as { challenge_nonce: string };
+  expect(challengeResponse.status).toBe(200);
+  const challenge = (await challengeResponse.json()) as {
+    challenge_nonce: string;
+  };
 
-  await app.fetch(
+  const grantResponse = await app.fetch(
     new Request(`${SERVICE}/api/grant`, {
       method: 'POST',
       headers: { 'x-forwarded-for': '198.51.100.10' },
@@ -140,11 +138,20 @@ async function seed(
         renderer_class: 'markdown',
         publishing_client: 'test',
         declared_size_bytes: content.length,
+        declared_ciphertext_bytes: container.length,
+        ...(ttlDays === undefined ? {} : { ttl_days: ttlDays }),
       }),
     })
   );
+  expect(grantResponse.status).toBe(200);
+  const grant = (await grantResponse.json()) as {
+    relic_id: string;
+    upload_headers: Record<string, string>;
+  };
+  expect(grant.relic_id).toBe(id);
+  expect(grant.upload_headers['content-length']).toBe(String(container.length));
 
-  storage.put(id, await encryptRelic({ content, filename, mimetype, key }));
+  storage.put(id, container);
   now += 10 * 60 * 1000;
 
   const { encodeFragment } = await import('@relic/format');
@@ -475,6 +482,7 @@ describe('rendering', () => {
       'text/plain'
     );
     const state = await load(id, deps(fragment));
+    expect(state.kind).toBe('ready');
     if (state.kind === 'ready') expect(state.view.route).toBe('code');
   });
 
@@ -484,6 +492,7 @@ describe('rendering', () => {
     ]);
     const { id, fragment } = await seed(png, 'chart.png', 'image/png');
     const state = await load(id, deps(fragment));
+    expect(state.kind).toBe('ready');
     if (state.kind === 'ready') expect(state.view.route).toBe('image');
   });
 
@@ -494,6 +503,7 @@ describe('rendering', () => {
       'text/html'
     );
     const state = await load(id, deps(fragment));
+    expect(state.kind).toBe('ready');
     if (state.kind === 'ready') {
       expect(state.view.route).toBe('sandboxed-html');
     }
@@ -526,6 +536,7 @@ describe('rendering', () => {
       'text/tsx'
     );
     const state = await load(id, deps(fragment));
+    expect(state.kind).toBe('ready');
     if (state.kind === 'ready') expect(state.view.route).toBe('sandboxed-jsx');
   });
 
@@ -533,6 +544,7 @@ describe('rendering', () => {
     const zip = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0, 0, 0, 0]);
     const { id, fragment } = await seed(zip, 'bundle.zip', 'application/zip');
     const state = await load(id, deps(fragment));
+    expect(state.kind).toBe('ready');
     if (state.kind === 'ready') expect(state.view.route).toBe('download');
   });
 });
@@ -563,6 +575,7 @@ describe('the declared versus sniffed rule', () => {
     );
     const state = await load(id, deps(fragment));
 
+    expect(state.kind).toBe('ready');
     if (state.kind === 'ready') {
       expect(state.view.downgradeNotice).toContain('safer way');
       expect(state.view.route).toBe('download');
@@ -576,6 +589,7 @@ describe('the declared versus sniffed rule', () => {
       'text/markdown'
     );
     const state = await load(id, deps(fragment));
+    expect(state.kind).toBe('ready');
     if (state.kind === 'ready') {
       expect(state.view.downgradeNotice).toBeUndefined();
     }
@@ -677,6 +691,7 @@ describe('failure states', () => {
     );
 
     expect(state.kind).toBe('dead');
+    if (state.kind === 'dead') expect(state.dead.code).toBe('decrypt_failed');
     expect(entries.has(id)).toBe(false);
     expect(rememberCalls.has(id)).toBe(false);
   });
@@ -705,11 +720,14 @@ describe('failure states', () => {
     const { id, fragment } = await seed(
       utf8('# hi'),
       'notes.md',
-      'text/markdown'
+      'text/markdown',
+      7
     );
+    expect((await load(id, deps(fragment))).kind).toBe('ready');
     now += 8 * 86_400 * 1000;
 
     const state = await load(id, deps(fragment));
+    expect(state.kind).toBe('dead');
     if (state.kind === 'dead') expect(state.dead.code).toBe('relic_expired');
   });
 

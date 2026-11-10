@@ -100,7 +100,7 @@ import {
 import { syncFrameScrollers, syncScrollers } from './scroll-sync.ts';
 import { localStorageKeyVault } from './vault.ts';
 import { DOCUMENT_RENDER_LIMIT_BYTES } from './content.ts';
-import { mountTextWindow, textWindowFor } from './text-window.ts';
+import { mountTextWindow, textWindowFor } from './text-window-bridge.ts';
 import {
   AUTO_PROJECTION_MAX_BYTES,
   createVersionStore,

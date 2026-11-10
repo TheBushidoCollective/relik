@@ -797,6 +797,7 @@ describe('Spec B: V2 Load Plate, Boot, Dead Cards, and Key Entry', () => {
   });
 
   test('7. Key entry with a cached prefix: a wrong key shows "That key does not open this relic." with zero fetch calls; right key opens', async () => {
+    const relicId = generateRelicId();
     const key = generateKey();
     const rightKeyFragment = encodeFragment(key);
     const wrongKey = generateKey();
@@ -828,16 +829,26 @@ describe('Spec B: V2 Load Plate, Boot, Dead Cards, and Key Entry', () => {
 
     let fetchCount = 0;
     let blobFetchCount = 0;
+    const blobMethods: string[] = [];
+    const fetchedUrls: string[] = [];
     const deps: ViewerDeps = {
       serviceOrigin: 'https://relic.example',
-      locationHref: 'https://relic.example/r1',
+      locationHref: `https://relic.example/${relicId}`,
       keyVault: makeMockVault(),
-      fetch: (async (input: RequestInfo | URL) => {
+      fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
         fetchCount++;
         const url = String(input);
-        if (url.includes('/blob')) {
+        fetchedUrls.push(url);
+        if (url === 'https://storage.example/blob') {
           blobFetchCount++;
+          blobMethods.push(init?.method ?? 'GET');
           return new Response(container as unknown as BodyInit);
+        }
+        if (url.endsWith('/api/auth/session')) {
+          return Response.json({ email: null });
+        }
+        if (url.endsWith(`/api/relics/${relicId}/comments`)) {
+          return Response.json([]);
         }
         return new Response('', { status: 404 });
       }) as typeof globalThis.fetch,
@@ -850,7 +861,13 @@ describe('Spec B: V2 Load Plate, Boot, Dead Cards, and Key Entry', () => {
       code: 'decrypt_failed',
     };
 
-    renderDead(dead, 'r1', 'https://usercontent.example', deps, cachedPrefix);
+    renderDead(
+      dead,
+      relicId,
+      'https://usercontent.example',
+      deps,
+      cachedPrefix
+    );
 
     const input = rootBody.querySelector('.key-entry-input') as ElementStub;
     const form = rootBody.querySelector('.key-entry-form') as ElementStub;
@@ -887,9 +904,21 @@ describe('Spec B: V2 Load Plate, Boot, Dead Cards, and Key Entry', () => {
       'right key to open and mount relic stage',
       () => rootBody.querySelector('main.stage-dead') === null
     );
+    await waitForCondition(
+      'anonymous comment thread to finish loading',
+      () =>
+        rootBody.querySelector('#comment-thread')?.dataset['threadReady'] ===
+        'true'
+    );
     expect(blobFetchCount).toBe(1);
+    expect(blobMethods).toEqual(['GET']);
+    expect(fetchedUrls.filter((url) => url.endsWith('/mint'))).toHaveLength(0);
     // Relic content stage was mounted
     expect(rootBody.querySelector('main.stage-dead')).toBeNull();
+    expect(rootBody.querySelector('.doc')).not.toBeNull();
+    expect(rootBody.querySelector('#comment-thread')?.dataset['session']).toBe(
+      'anonymous'
+    );
   });
 
   test('8. insecure_context renders the C2 copy with no retry and no field', () => {

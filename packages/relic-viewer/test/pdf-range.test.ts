@@ -8,14 +8,12 @@ import {
 import type * as PdfModule from '../src/pdf.ts';
 
 let pdf: typeof PdfModule;
-const originalDOMMatrix = Object.getOwnPropertyDescriptor(
-  globalThis,
-  'DOMMatrix'
-);
+let originalDOMMatrix: PropertyDescriptor | undefined;
 
 beforeAll(async () => {
+  originalDOMMatrix = Object.getOwnPropertyDescriptor(globalThis, 'DOMMatrix');
   // PDF.js constructs an identity matrix at module load, even without a canvas.
-  if (!originalDOMMatrix) {
+  if (typeof globalThis.DOMMatrix === 'undefined') {
     Object.defineProperty(globalThis, 'DOMMatrix', {
       configurable: true,
       value: class DOMMatrix {},
@@ -26,7 +24,11 @@ beforeAll(async () => {
 });
 
 afterAll(() => {
-  if (!originalDOMMatrix) Reflect.deleteProperty(globalThis, 'DOMMatrix');
+  if (originalDOMMatrix) {
+    Object.defineProperty(globalThis, 'DOMMatrix', originalDOMMatrix);
+  } else {
+    Reflect.deleteProperty(globalThis, 'DOMMatrix');
+  }
 });
 
 function fixturePdf(padding: number): Uint8Array {

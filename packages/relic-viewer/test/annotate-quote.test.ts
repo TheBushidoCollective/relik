@@ -24,12 +24,12 @@ import {
   wrapTextQuoteWithContext,
 } from '../src/comments.ts';
 import { contentFromBytes } from '../src/content.ts';
+import { findSourceQuote } from '../src/text-window.ts';
 import {
-  findSourceQuote,
   mountTextWindow,
   textWindowFor,
   type WindowMark,
-} from '../src/text-window.ts';
+} from '../src/text-window-bridge.ts';
 
 // A minimal, complete DOM tree for testing text manipulation and tree-walking.
 class TestNode extends EventTarget {
@@ -554,6 +554,101 @@ describe('quote anchor adapter and context-aware resolver', () => {
         }
       }
     );
+
+    test('marks set before the renderer loads survive into its first paint', async () => {
+      const source = 'earlier source\n'.repeat(90) + 'alpha beta gamma\nend';
+      const root = new TestElement('div');
+      const handle = mountTextWindow(
+        root as unknown as HTMLElement,
+        contentFromBytes(new TextEncoder().encode(source))
+      );
+      try {
+        // Registration is synchronous: the caller distinguishes windowed marks
+        // from ordinary text marks before the renderer has loaded.
+        expect(textWindowFor(root as unknown as HTMLElement)).toBe(handle);
+        expect(root.querySelector('.text-window-page')).toBeNull();
+        handle.setMarks([
+          { id: 'superseded', anchor: { kind: 'quote', exact: 'earlier' } },
+        ]);
+        handle.setMarks([
+          { id: 'early', anchor: { kind: 'quote', exact: 'beta' } },
+          { id: 'overlap', anchor: { kind: 'text', quote: 'alpha beta' } },
+        ]);
+        const revealed = handle.reveal('early');
+        await handle.ready;
+        await revealed;
+        const page = root.querySelector('.text-window-page')!;
+        expect(page.textContent).toBe('alpha beta gamma\nend');
+        expect(page.focused).toBe(true);
+        expect(
+          page
+            .querySelectorAll('mark[data-comment-id="early"]')
+            .map((part) => part.textContent)
+            .join('')
+        ).toBe('beta');
+        expect(
+          page
+            .querySelectorAll('mark[data-comment-id="overlap"]')
+            .map((part) => part.textContent)
+            .join('')
+        ).toBe('alpha beta');
+        expect(
+          page.querySelectorAll('mark[data-comment-id="superseded"]')
+        ).toHaveLength(0);
+      } finally {
+        handle.dispose();
+      }
+    });
+
+    test.each(['dispose', 'cleanup'] as const)(
+      '%s before the renderer loads never mounts it',
+      async (how) => {
+        const root = new TestElement('div');
+        const handle = mountTextWindow(
+          root as unknown as HTMLElement,
+          contentFromBytes(new TextEncoder().encode('alpha beta\n'))
+        );
+        handle.setMarks([
+          { id: 'late', anchor: { kind: 'quote', exact: 'beta' } },
+        ]);
+        if (how === 'dispose') handle.dispose();
+        else root.dispatchEvent(new Event('cleanup'));
+        await handle.ready;
+        await handle.reveal('late');
+        expect(textWindowFor(root as unknown as HTMLElement)).toBeUndefined();
+        expect(root.childNodes).toHaveLength(0);
+        // Disposal is idempotent, including after the cleanup event.
+        handle.dispose();
+        expect(root.childNodes).toHaveLength(0);
+      }
+    );
+
+    test('cleanup after mounting stops the rendered window', async () => {
+      const source = 'earlier source\n'.repeat(90) + 'alpha beta gamma\nend';
+      const root = new TestElement('div');
+      const handle = mountTextWindow(
+        root as unknown as HTMLElement,
+        contentFromBytes(new TextEncoder().encode(source))
+      );
+      await handle.ready;
+      handle.setMarks([
+        { id: 'kept', anchor: { kind: 'quote', exact: 'beta' } },
+      ]);
+      await handle.reveal('kept');
+      const page = root.querySelector('.text-window-page')!;
+      const scroll = root.querySelector('.text-window-scroll')!;
+      expect(page.textContent).toBe('alpha beta gamma\nend');
+      let painted = 0;
+      root.addEventListener('relic:text-window-paint', () => painted++);
+      root.dispatchEvent(new Event('cleanup'));
+      expect(textWindowFor(root as unknown as HTMLElement)).toBeUndefined();
+      (scroll as unknown as HTMLInputElement).value = '0';
+      scroll.dispatchEvent(new Event('input'));
+      await handle.reveal('kept');
+      expect(painted).toBe(0);
+      expect(page.textContent).toBe('alpha beta gamma\nend');
+      handle.dispose();
+    });
   });
 
   test('headline case: document contains the same phrase three times and context names the second', () => {

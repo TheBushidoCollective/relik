@@ -940,7 +940,12 @@ export async function loadHistoricalVersion(
             result.dead.code === 'content_damaged'
           ? 'version_decrypt_failed'
           : result.dead.code;
-  return unavailable(code, result.dead.detail);
+  return unavailable(
+    code,
+    code === 'version_decrypt_failed'
+      ? `Version ${requestedVersion} could not be decrypted.`
+      : result.dead.detail
+  );
 }
 
 /** Maps the server's codes onto what a recipient should actually be told. */
