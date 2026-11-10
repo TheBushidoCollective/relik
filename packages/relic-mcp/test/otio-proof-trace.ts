@@ -385,13 +385,18 @@ export const otioProofTracePrelude = String.raw`(() => {
           // This source is not connected to the destination or to the gate.
           // Its non-looping position carrier is anchored only while native
           // context time is frozen, never from a production bank descriptor.
-          if (context.state === 'suspended') {
+          if (context.state === 'suspended' || context.state === 'running') {
             const prior = witnesses.get(context);
             if (prior) for (const source of prior.sources) source.disconnect();
-            const exact = context.currentTime * context.sampleRate;
-            const frozenAnchor = Math.round(exact);
-            if (!Number.isSafeInteger(frozenAnchor) || Math.abs(exact - frozenAnchor) > 1 / 1024)
-              throw new Error('proof witness has no integral frozen origin');
+            // Independent proof carrier origin W. It is routed only to the proof tap
+            // (attachWitness), never to the production gate input, so it need not follow
+            // the gate anchor A. It is scheduled at the earliest legal aligned frame so it
+            // can cover the scheduled start F0; if F0 is still uncovered the capture fails.
+            const PROOF_CARRIER_LEAD_FRAMES = 128, PROOF_QUANTUM = 128;
+            const now = context.currentTime * context.sampleRate;
+            const base = Math.ceil(now) + PROOF_CARRIER_LEAD_FRAMES;
+            const frozenAnchor = base + (PROOF_QUANTUM - (base % PROOF_QUANTUM)) % PROOF_QUANTUM;
+            if (!Number.isSafeInteger(frozenAnchor)) throw new Error('proof carrier origin is not an integer');
             const laterAnchor = globalThis.__otioProofClockMode === 'long'
               ? Math.max(frozenAnchor + context.sampleRate * 21, 2 ** 24 - context.sampleRate) : null;
             const length = Math.ceil(context.sampleRate * 20);

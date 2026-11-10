@@ -9656,6 +9656,12 @@ function assertIndependentCarrier(
       witness.length > 0,
     'independent frozen-origin carrier unavailable'
   );
+  // Proof carrier W may be earlier than the first verified sample but never later:
+  // a W after F0 leaves the first samples without independent identity, so fail closed.
+  assert.ok(
+    witness.anchor <= first,
+    `proof carrier origin ${witness.anchor} starts after the verified sample ${first}`
+  );
   let seen = 0;
   let previous: number | null = null;
   for (const chunk of trace.audio) {
@@ -9830,8 +9836,11 @@ function assertAnchorEvidence(
 ): Record<string, unknown> {
   const witness = trace.witness;
   assert.ok(
-    witness && witness.gateInitialFrame === witness.frozenAnchor,
-    'independent frozen anchor missing or disagrees with gate construction'
+    witness &&
+      Number.isSafeInteger(witness.frozenAnchor) &&
+      Number.isSafeInteger(witness.gateInitialFrame) &&
+      witness.frozenAnchor % 128 === 0,
+    'independent proof carrier origin or production anchor missing'
   );
   const layout = trace.events.find((event) => event.kind === 'transport-layout')
     ?.value as Record<string, unknown> | undefined;
@@ -9869,7 +9878,9 @@ function assertAnchorEvidence(
       sourceStart['detune'] === 0 &&
       sourceStart['loop'] === false &&
       typeof sourceStart['when'] === 'number' &&
-      Math.abs(sourceStart['when'] * trace.sampleRate - witness.frozenAnchor) <=
+      Math.abs(
+        sourceStart['when'] * trace.sampleRate - witness.gateInitialFrame
+      ) <=
         1 / 1024,
     'native anchor carrier did not start at the frozen origin with unit rate'
   );
@@ -9882,7 +9893,7 @@ function assertAnchorEvidence(
   assert.ok(
     anchor &&
       anchor['clockEpoch'] === witness.clockEpoch &&
-      anchor['firstFrame'] === witness.frozenAnchor &&
+      anchor['firstFrame'] === witness.gateInitialFrame &&
       anchor['callbackOrdinal'] === 2 &&
       Number.isSafeInteger(anchor['sampleCount']) &&
       Number.isSafeInteger(anchor['quantumLength']) &&
@@ -9890,9 +9901,9 @@ function assertAnchorEvidence(
       Number(anchor['quantumLength']) <= 2048 &&
       Number.isSafeInteger(anchor['bankSerial']) &&
       anchor['lastCertifiedEnd'] ===
-        witness.frozenAnchor + Number(anchor['sampleCount']) &&
-      anchor['clockCoverageEnd'] === witness.frozenAnchor + 65536 - 2048,
-    'anchor certificate lacks exact frozen-origin provenance'
+        witness.gateInitialFrame + Number(anchor['sampleCount']) &&
+      anchor['clockCoverageEnd'] === witness.gateInitialFrame + 65536 - 2048,
+    'anchor certificate lacks exact production-anchor provenance'
   );
   const boot = trace.events
     .filter((event) => event.kind === 'transport-bootstrap-clock')
@@ -9904,7 +9915,7 @@ function assertAnchorEvidence(
     2,
     'first two certified native parameter callbacks missing'
   );
-  let expected = witness.frozenAnchor,
+  let expected = witness.gateInitialFrame,
     total = 0;
   for (let q = 0; q < 2; q++) {
     const record = boot[q]!,
@@ -9926,9 +9937,9 @@ function assertAnchorEvidence(
       assert.ok(
         Number.isFinite(value) &&
           Math.abs(value - Math.round(value)) < 1 / 16 &&
-          witness.frozenAnchor + Math.round(value) === expected + i &&
+          witness.gateInitialFrame + Math.round(value) === expected + i &&
           tags[tags.length === 1 ? 0 : i] === anchor['bankSerial'],
-        'bootstrap bank sample disagrees with frozen origin'
+        'bootstrap bank sample disagrees with production anchor'
       );
     }
     expected += values.length;
@@ -9946,7 +9957,7 @@ function assertAnchorEvidence(
   );
   assertPcmSilence(
     trace,
-    witness.frozenAnchor,
+    witness.gateInitialFrame,
     expected,
     'authored PCM escaped before anchor certification'
   );
@@ -9959,10 +9970,10 @@ function assertGateClockEvidence(
 ): void {
   const witness = trace.witness;
   assert.ok(witness, 'independent carrier provenance missing');
-  assert.equal(
-    witness.gateInitialFrame,
-    witness.frozenAnchor,
-    'gate initial origin differs from independent frozen-context origin'
+  assert.ok(
+    Number.isSafeInteger(witness.gateInitialFrame) &&
+      Number.isSafeInteger(witness.frozenAnchor),
+    'gate origin or independent carrier origin missing'
   );
   const messages = trace.events
     .filter((event) => event.kind === 'transport-message')
@@ -10159,7 +10170,9 @@ function describeClockFault(trace: MovingTrace['trace']): string {
       event.kind === 'transport-message' &&
       event.value !== null &&
       typeof event.value === 'object' &&
-      (event.value as Record<string, unknown>)['type'] === 'clock-fault'
+      ['clock-fault', 'anchor-late'].includes(
+        String((event.value as Record<string, unknown>)['type'])
+      )
   );
   const skipped = trace.events.find(
     (event) => event.kind === 'clock-stale-stop-skipped'
@@ -13275,6 +13288,220 @@ async function assertVideoReservationInvalidation(
   pass('scheduled-video-future-recovery');
 }
 
+// Publishes the authored playback-boundaries document (fr30.webm video and mx_bed.wav
+// audio) for the cold-start scenario, using the same media copies as the boundary proof.
+async function publishColdBoundaryDocument(): Promise<string> {
+  const directory = join(scratch, 'cold-playback-boundaries.otiod');
+  const media = join(directory, 'media');
+  await mkdir(media, { recursive: true });
+  await cp(
+    fileURLToPath(
+      new URL(
+        '../../relic-format/test/fixtures/otio/edge-cases/playback-boundaries.otio',
+        import.meta.url
+      )
+    ),
+    join(directory, 'content.otio')
+  );
+  await cp(join(decoderMediaDir, 'fr30.webm'), join(media, 'fr30.webm'));
+  for (const name of [
+    'plate_1001.png',
+    'plate_1002.png',
+    'mx_bed.wav',
+    'secondary_b.mp4',
+  ])
+    await cp(join(fixtureDir, 'media', name), join(media, name));
+  return publishDecoderDirectory('cold-playback-boundaries', directory);
+}
+
+// Independent references for the cold document, decoded by ffmpeg and never taken from
+// the player: the 64x36 fr30 frames (same scale as the screencast crop), the expected
+// authored frame from the boundary oracle (upper track at composition time 0), and the
+// mx_bed.wav stereo PCM at the context rate, starting at source time 0.
+const AUTHORED_PCM_FRAMES = 4096;
+async function buildColdVideoOracle(rate: number): Promise<{
+  references: Uint8Array[];
+  expectedIndex: number;
+  audio: Float32Array;
+}> {
+  const video = await runChild(
+    [
+      'ffmpeg',
+      '-v',
+      'error',
+      '-i',
+      join(decoderMediaDir, 'fr30.webm'),
+      '-vf',
+      'scale=64:36:flags=neighbor',
+      '-frames:v',
+      '36',
+      '-f',
+      'rawvideo',
+      '-pix_fmt',
+      'rgba',
+      'pipe:1',
+    ],
+    { timeoutMs: 20000 }
+  );
+  assert.equal(video.exit, 0, `reference video decode failed: ${video.stderr}`);
+  const frameBytes = 64 * 36 * 4;
+  assert.equal(
+    video.stdout.length,
+    36 * frameBytes,
+    'reference frame count mismatch'
+  );
+  const references = Array.from({ length: 36 }, (_, i) =>
+    Uint8Array.from(video.stdout.subarray(i * frameBytes, (i + 1) * frameBytes))
+  );
+  const oracle = JSON.parse(
+    await readFile(
+      fileURLToPath(
+        new URL(
+          '../../relic-format/test/fixtures/otio/edge-cases/playback-boundaries-oracle.json',
+          import.meta.url
+        )
+      ),
+      'utf8'
+    )
+  ) as {
+    fixture: {
+      evaluations_at_time: Array<{
+        time: { value: number; rate: number };
+        contributions: Array<{
+          node_id: string;
+          bundle_path: string;
+          kind: string;
+          library_source_time: { value: number; rate: number };
+        }>;
+      }>;
+    };
+  };
+  const atZero = oracle.fixture.evaluations_at_time.find(
+    (entry) => entry.time.value === 0
+  );
+  const upper = atZero?.contributions.find(
+    (entry) => entry.node_id === 'upper-video-a' && entry.kind === 'Video'
+  );
+  assert.ok(
+    upper && upper.bundle_path === 'media/fr30.webm',
+    'oracle upper video contribution missing at time 0'
+  );
+  const expectedIndex = Math.round(
+    (upper.library_source_time.value / upper.library_source_time.rate) * 30
+  );
+  const audioDecode = await runChild(
+    [
+      'ffmpeg',
+      '-v',
+      'error',
+      '-i',
+      join(fixtureDir, 'media', 'mx_bed.wav'),
+      '-t',
+      String(AUTHORED_PCM_FRAMES / rate),
+      '-f',
+      'f32le',
+      '-ac',
+      '2',
+      '-ar',
+      String(rate),
+      'pipe:1',
+    ],
+    { timeoutMs: 20000 }
+  );
+  assert.equal(
+    audioDecode.exit,
+    0,
+    `reference audio decode failed: ${audioDecode.stderr}`
+  );
+  const bytes = Uint8Array.from(audioDecode.stdout);
+  const audio = new Float32Array(bytes.buffer.slice(0, bytes.byteLength));
+  assert.ok(
+    audio.length >= 2 * AUTHORED_PCM_FRAMES,
+    'reference audio too short'
+  );
+  return { references, expectedIndex, audio };
+}
+
+// Authored PCM comparator: actual[k] must match reference frame k in both channels
+// within 0.003, and every frame must be present. An absent frame is never accepted.
+function compareAuthoredPcm(
+  actual: Array<[number, number] | undefined>,
+  reference: Float32Array,
+  frames: number
+): boolean {
+  for (let k = 0; k < frames; k++) {
+    const pair = actual[k];
+    if (!pair) return false;
+    if (Math.abs(pair[0] - reference[2 * k]!) > 0.003) return false;
+    if (Math.abs(pair[1] - reference[2 * k + 1]!) > 0.003) return false;
+  }
+  return true;
+}
+
+// A reference is usable only when it carries real audible content.
+function referenceIsAudible(reference: Float32Array, frames: number): boolean {
+  let sum = 0;
+  for (let i = 0; i < 2 * frames; i++) sum += reference[i]! * reference[i]!;
+  return Math.sqrt(sum / (2 * frames)) > 1e-3;
+}
+
+// Controls for the authored comparator: the reference matches itself, a one-frame shift
+// and silent output are rejected, and a silent reference is not usable.
+function assertAuthoredPcmControls(): void {
+  const frames = 8;
+  const reference = new Float32Array(2 * frames);
+  for (let i = 0; i < reference.length; i++) reference[i] = 0.1 + 0.01 * i;
+  const self: Array<[number, number] | undefined> = [];
+  for (let k = 0; k < frames; k++)
+    self.push([reference[2 * k]!, reference[2 * k + 1]!]);
+  assert.ok(
+    compareAuthoredPcm(self, reference, frames),
+    'authored comparator rejected the reference itself'
+  );
+  const shifted: Array<[number, number] | undefined> = [];
+  for (let k = 0; k < frames; k++) {
+    const j = Math.min(k + 1, frames - 1);
+    shifted.push([reference[2 * j]!, reference[2 * j + 1]!]);
+  }
+  assert.ok(
+    !compareAuthoredPcm(shifted, reference, frames),
+    'one-frame shift was accepted'
+  );
+  const silent: Array<[number, number] | undefined> = [];
+  for (let k = 0; k < frames; k++) silent.push([0, 0]);
+  assert.ok(
+    !compareAuthoredPcm(silent, reference, frames),
+    'silent output was accepted'
+  );
+  assert.ok(
+    !referenceIsAudible(new Float32Array(2 * frames), frames),
+    'silent reference counted as audible'
+  );
+}
+
+// Collects the carrier-identified output frames [f0, f0+frames) in order.
+function collectAuthoredPcm(
+  trace: MovingTrace['trace'],
+  f0: number,
+  frames: number
+): Array<[number, number] | undefined> {
+  const witness = trace.witness;
+  assert.ok(witness, 'authored PCM comparison lacks the independent carrier');
+  const out: Array<[number, number] | undefined> = new Array(frames).fill(
+    undefined
+  );
+  for (const chunk of trace.audio) {
+    for (let i = 0; i < chunk.channels[0]!.length; i++) {
+      const frame = carrierFrame(chunk, i, witness);
+      if (frame === null) continue;
+      const k = frame - f0;
+      if (k < 0 || k >= frames) continue;
+      out[k] = [chunk.channels[0]![i]!, chunk.channels[1]![i]!];
+    }
+  }
+  return out;
+}
+
 async function calibratePostGainTap(
   sessionToken: string,
   interactionOnly = false
@@ -13837,6 +14064,531 @@ async function runNativeAudioCompatibilityProof(
     await browser.close();
   }
 }
+// Pure cold-start verdict. The thresholds are the unchanged original 350 ms budget
+// for both first audible source-correct output and first visual presentation, at
+// least two native promotions, and no suspend request after the play edge.
+function coldStartVerdict(input: {
+  audibleMs: number;
+  visualMs: number;
+  promotions: number;
+  suspendsAfterPlay: number;
+}): boolean {
+  return (
+    input.audibleMs <= 350 &&
+    input.visualMs <= 350 &&
+    input.promotions >= 2 &&
+    input.suspendsAfterPlay === 0
+  );
+}
+
+// First nonzero output at or after f0, using only carrier-identified samples. Returns
+// null when no nonzero sample exists, so absent output is never inferred.
+function firstNonzeroFrame(
+  trace: MovingTrace['trace'],
+  f0: number
+): { frame: number } | null {
+  const witness = trace.witness;
+  assert.ok(witness, 'cold audible measurement lacks the independent carrier');
+  let best: number | null = null;
+  for (const chunk of trace.audio) {
+    for (let i = 0; i < chunk.channels[0]!.length; i++) {
+      const frame = carrierFrame(chunk, i, witness);
+      if (frame === null || frame < f0) continue;
+      const left = chunk.channels[0]![i]!,
+        right = chunk.channels[1]![i]!;
+      if (Math.abs(left) > 1e-6 || Math.abs(right) > 1e-6) {
+        if (best === null || frame < best) best = frame;
+      }
+    }
+  }
+  return best === null ? null : { frame: best };
+}
+
+// Maps a committed frame to wall time with the nearest prior native output
+// observation (getOutputTimestamp). The bound is the read duration plus the
+// extrapolation distance, reported rather than hidden.
+function mapFrameToWall(
+  observations: Array<{
+    before: number;
+    after: number;
+    contextTime: number;
+    performanceTime: number;
+  }>,
+  frame: number,
+  rate: number
+): { wallMs: number; boundMs: number } | null {
+  let chosen: (typeof observations)[number] | null = null;
+  for (const obs of observations) {
+    if (
+      obs.contextTime * rate <= frame &&
+      (chosen === null || obs.contextTime > chosen.contextTime)
+    )
+      chosen = obs;
+  }
+  if (chosen === null) return null;
+  const extrapolationMs = (frame / rate - chosen.contextTime) * 1000;
+  return {
+    wallMs: chosen.performanceTime + extrapolationMs,
+    boundMs: chosen.after - chosen.before + extrapolationMs,
+  };
+}
+
+// Synthetic controls for the cold measurement: an observation after the frame must
+// not be used, and the mapping must follow the nearest prior observation.
+function assertColdMeasurementControls(): void {
+  const obs = [
+    { before: 0, after: 1, contextTime: 0.0, performanceTime: 1000 },
+    { before: 50, after: 51, contextTime: 0.5, performanceTime: 1500 },
+  ];
+  const mapped = mapFrameToWall(obs, 24000, 48000);
+  assert.ok(
+    mapped !== null && Math.abs(mapped.wallMs - 1250) < 1e-9,
+    'cold mapping used the wrong observation'
+  );
+  assert.equal(
+    mapFrameToWall(obs.slice(1), 100, 48000),
+    null,
+    'mapping used an observation after the frame'
+  );
+}
+
+// First screencast frame whose pixels differ from the baseline. Returns -1 when none
+// differ, so an unchanged capture is never reported as presentation.
+function firstChangedScreencastIndex(
+  baseline: Uint8Array,
+  frames: Array<Uint8Array>
+): number {
+  return frames.findIndex(
+    (pixels) =>
+      pixels.length !== baseline.length ||
+      pixels.some((value, i) => value !== baseline[i])
+  );
+}
+
+// Negative controls for the screencast comparator: identical frames never count as a
+// change, and a single differing byte does.
+function assertScreencastComparatorControls(): void {
+  const base = new Uint8Array([1, 2, 3, 4]);
+  assert.equal(
+    firstChangedScreencastIndex(base, [new Uint8Array([1, 2, 3, 4])]),
+    -1,
+    'identical screencast frame counted as presentation'
+  );
+  assert.equal(
+    firstChangedScreencastIndex(base, [
+      new Uint8Array([1, 2, 3, 4]),
+      new Uint8Array([1, 2, 3, 5]),
+    ]),
+    1,
+    'single changed byte was not detected'
+  );
+}
+// Source-matched presentation: a frame is accepted only when it is the expected
+// authored video frame, within the existing classifier's error bound and clearly
+// closer to it than to any other reference. A mere byte difference never qualifies.
+function matchesExpectedVideoFrame(
+  pixels: Uint8Array,
+  references: readonly Uint8Array[],
+  expected: number
+): boolean {
+  const ranked = references
+    .map((reference, index) => ({ index, error: rmse(pixels, reference) }))
+    .sort((a, b) => a.error - b.error);
+  const best = ranked[0];
+  const next = ranked[1];
+  if (!best || !next || best.index !== expected) return false;
+  return best.error < 12 && best.error < next.error;
+}
+
+// Classifies a screencast crop against the independent fr30 references with the same
+// rule as matchesExpectedVideoFrame. Returns null when the frame is noise or ambiguous,
+// so no frame is assigned a source it does not clearly match.
+function classifyVideoFrame(
+  pixels: Uint8Array,
+  references: readonly Uint8Array[]
+): number | null {
+  const ranked = references
+    .map((reference, index) => ({ index, error: rmse(pixels, reference) }))
+    .sort((a, b) => a.error - b.error);
+  const best = ranked[0];
+  const next = ranked[1];
+  if (!best || !next) return null;
+  return best.error < 12 && best.error < next.error ? best.index : null;
+}
+
+// Selects the first post-play presentation of a later source-correct frame. The paused
+// view may already show the expected source frame, so the pre-play class is excluded,
+// not required absent. A frame is accepted only when it is at or after the expected
+// source frame and no further ahead than the elapsed timeline allows (one source frame
+// per 1/30 s at speed 1, plus one frame of rounding). Returns the index or -1.
+function selectPresentedFrame(
+  preplay: number | null,
+  frames: Array<{ elapsedMs: number; cls: number | null }>,
+  expected: number
+): number {
+  for (let i = 0; i < frames.length; i++) {
+    const frame = frames[i];
+    if (!frame || frame.cls === null) continue;
+    if (frame.cls === preplay || frame.cls < expected) continue;
+    const elapsedSourceFrames = (frame.elapsedMs * 30) / 1000;
+    if (frame.cls - expected > Math.floor(elapsedSourceFrames) + 1) continue;
+    return i;
+  }
+  return -1;
+}
+
+// Controls: a paused view already showing the expected frame must not block the
+// movement; a later frame is selected; an identical pre-play frame is skipped; a
+// frame ahead of the timeline is rejected.
+function assertFrameSelectionControls(): void {
+  assert.equal(
+    selectPresentedFrame(
+      6,
+      [
+        { elapsedMs: 10, cls: 6 },
+        { elapsedMs: 40, cls: 7 },
+      ],
+      6
+    ),
+    1,
+    'paused expected frame blocked the later frame'
+  );
+  assert.equal(
+    selectPresentedFrame(null, [{ elapsedMs: 10, cls: 6 }], 6),
+    0,
+    'first expected frame after play was not selected'
+  );
+  assert.equal(
+    selectPresentedFrame(6, [{ elapsedMs: 10, cls: 20 }], 6),
+    -1,
+    'frame ahead of the timeline was accepted'
+  );
+}
+
+// Controls: the expected frame passes; a noise-only frame and a wrong-source frame
+// are rejected; a single-byte difference from the expected frame still matches.
+function assertSourceMatchControls(): void {
+  const frameA = new Uint8Array(16).fill(10);
+  const frameB = new Uint8Array(16).fill(100);
+  const frameC = new Uint8Array(16).fill(200);
+  const refs = [frameA, frameB, frameC];
+  assert.ok(
+    matchesExpectedVideoFrame(frameB, refs, 1),
+    'expected authored frame rejected'
+  );
+  const noise = new Uint8Array(16).map((_, i) => (i % 2 === 0 ? 0 : 255));
+  assert.ok(
+    !matchesExpectedVideoFrame(noise, refs, 1),
+    'noise-only frame accepted as presentation'
+  );
+  assert.ok(
+    !matchesExpectedVideoFrame(frameC, refs, 1),
+    'wrong-source frame accepted'
+  );
+  const oneByte = Uint8Array.from(frameB);
+  oneByte[0] = 101;
+  assert.ok(
+    matchesExpectedVideoFrame(oneByte, refs, 1),
+    'single-byte difference rejected from expected frame'
+  );
+}
+
+// Fresh suspended context: a real trusted click is the first gesture. Audible output
+// is the first nonzero carrier-identified sample mapped through native output
+// timestamps; visual presentation is the first changed canvas pixel and the first
+// screencast frame that matches the expected authored video frame.
+async function runColdStartProof(
+  url: string,
+  sessionToken: string,
+  rate: 44100 | 48000
+): Promise<void> {
+  assertColdMeasurementControls();
+  assertScreencastComparatorControls();
+  assertSourceMatchControls();
+  assertFrameSelectionControls();
+  assertAuthoredPcmControls();
+  const videoOracle = await buildColdVideoOracle(rate);
+  assert.ok(
+    referenceIsAudible(videoOracle.audio, AUTHORED_PCM_FRAMES),
+    'independent mx_bed reference is silent; audible output unproven'
+  );
+  assert.equal(
+    coldStartVerdict({
+      audibleMs: 350,
+      visualMs: 350,
+      promotions: 2,
+      suspendsAfterPlay: 0,
+    }),
+    true
+  );
+  assert.equal(
+    coldStartVerdict({
+      audibleMs: 351,
+      visualMs: 350,
+      promotions: 2,
+      suspendsAfterPlay: 0,
+    }),
+    false
+  );
+  assert.equal(
+    coldStartVerdict({
+      audibleMs: 350,
+      visualMs: 351,
+      promotions: 2,
+      suspendsAfterPlay: 0,
+    }),
+    false
+  );
+  assert.equal(
+    coldStartVerdict({
+      audibleMs: 350,
+      visualMs: 350,
+      promotions: 1,
+      suspendsAfterPlay: 0,
+    }),
+    false
+  );
+  assert.equal(
+    coldStartVerdict({
+      audibleMs: 350,
+      visualMs: 350,
+      promotions: 2,
+      suspendsAfterPlay: 1,
+    }),
+    false
+  );
+  assert.equal(
+    coldStartVerdict({
+      audibleMs: Number.NaN,
+      visualMs: 350,
+      promotions: 2,
+      suspendsAfterPlay: 0,
+    }),
+    false
+  );
+
+  const isolated = await openBrowser(url, sessionToken, {
+    label: `cold-start-${rate}`,
+    recordProofTrace: true,
+    proofSampleRate: rate,
+  });
+  try {
+    await waitReady(isolated);
+    const provenance = await proofProvenance(isolated);
+    const canvasGeometry = await isolated.evaluate<{
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      scale: number;
+      timeOrigin: number;
+    }>(`(() => {
+      const canvas = document.querySelector('canvas.otio-canvas');
+      if (!(canvas instanceof HTMLCanvasElement)) throw new Error('cold start canvas missing');
+      const r = canvas.getBoundingClientRect();
+      return { x: r.left, y: r.top, width: r.width, height: r.height, scale: devicePixelRatio, timeOrigin: performance.timeOrigin };
+    })()`);
+    const stopCast = await isolated.startScreencast();
+    const button = await isolated.evaluate<{ x: number; y: number }>(`(() => {
+      const control = document.querySelector('button.otio-play');
+      if (!(control instanceof HTMLButtonElement)) throw new Error('cold start play control missing');
+      const rect = control.getBoundingClientRect();
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    })()`);
+    const start = await isolated.evaluate<{ contextState: string }>(
+      `(async () => globalThis.__otioProofTrace.start())()`
+    );
+    assert.equal(
+      start.contextState,
+      'suspended',
+      'cold-start context was not fresh and suspended before the click'
+    );
+    const playEdge = await isolated.evaluate<{ timestamp: number }>(
+      `(() => globalThis.__otioProofTrace.playRequest())()`
+    );
+    await clickWithRealPointer(isolated, button.x, button.y);
+    await new Promise<void>((resolve) => setTimeout(resolve, 2500));
+    const outcome = await isolated.evaluate<{
+      trace: MovingTrace['trace'];
+    }>(`(async () => {
+      const root = document.querySelector('.otio-view'), control = document.querySelector('button.otio-play');
+      const trace = await globalThis.__otioProofTrace.stop();
+      if (root?.dataset.playing === 'true' && control instanceof HTMLButtonElement) control.click();
+      return { trace };
+    })()`);
+    await writeFile(
+      join(shotDir, `scheduled-pcm-cold-start-${rate}.json`),
+      JSON.stringify({ provenance, start, playEdge, outcome })
+    );
+    const playMs = playEdge.timestamp;
+    const trace = outcome.trace;
+    const events = trace.events
+      .filter((entry) => entry.kind === 'scheduled-pcm')
+      .map((entry) => entry.value as Record<string, unknown>);
+    const firstEpoch = events.find((event) => event['event'] === 'epoch');
+    assert.ok(
+      firstEpoch,
+      'cold start never committed an epoch; output unproven'
+    );
+    const f0 = Number(firstEpoch['f0']);
+    assert.ok(
+      Number.isSafeInteger(f0),
+      'cold start epoch lacks its committed frame'
+    );
+    assertIndependentCarrier(trace, f0, f0 + rate);
+    assert.ok(
+      compareAuthoredPcm(
+        collectAuthoredPcm(trace, f0, AUTHORED_PCM_FRAMES),
+        videoOracle.audio,
+        AUTHORED_PCM_FRAMES
+      ),
+      'cold output differs from the independently decoded mx_bed reference at the committed start'
+    );
+    const firstOut = firstNonzeroFrame(trace, f0);
+    assert.ok(
+      firstOut,
+      'cold start produced no nonzero source-correct output; audible unproven'
+    );
+    assert.equal(
+      firstOut.frame,
+      f0,
+      `first nonzero output at frame ${firstOut.frame} is not the committed start ${f0}`
+    );
+    const observations = trace.events
+      .filter((entry) => entry.kind === 'audio-output-timestamp-observed')
+      .map((entry) => entry.value as Record<string, unknown>)
+      .filter(
+        (value) =>
+          value['injected'] === false &&
+          value['output'] !== null &&
+          typeof value['output'] === 'object'
+      )
+      .map((value) => {
+        const output = value['output'] as {
+          contextTime: number;
+          performanceTime: number;
+        };
+        return {
+          before: Number(value['before']),
+          after: Number(value['after']),
+          contextTime: output.contextTime,
+          performanceTime: output.performanceTime,
+        };
+      })
+      .filter(
+        (obs) =>
+          Number.isFinite(obs.contextTime) &&
+          Number.isFinite(obs.performanceTime) &&
+          obs.contextTime > 0
+      );
+    const mapped = mapFrameToWall(observations, f0, rate);
+    assert.ok(
+      mapped,
+      'no native output timestamp precedes the first source frame; audible unproven'
+    );
+    const audibleMs = mapped.wallMs - playMs;
+    const audibleUpperMs = audibleMs + mapped.boundMs;
+    const canvas = trace.visual.filter(
+      (sample) => sample.pixels16 && !sample.error
+    );
+    const baseline = [...canvas]
+      .reverse()
+      .find((sample) => sample.timestamp < playMs);
+    if (!baseline || !baseline.pixels16)
+      throw new Error('no pre-play rendered pixel baseline; visual unproven');
+    const basePixels = baseline.pixels16;
+    const changed = canvas.find(
+      (sample) =>
+        sample.timestamp >= playMs &&
+        sample.pixels16 !== undefined &&
+        sample.pixels16.some((value, i) => value !== basePixels[i])
+    );
+    assert.ok(changed, 'no rendered pixel change after play; visual unproven');
+    const canvasVisualMs = changed.timestamp - playMs;
+    // Source-correct presentation movement. The paused view may already show the oracle's
+    // time-0 source frame, so the pre-play class is classified and excluded rather than
+    // required absent. Presentation is the first post-play frame that classifies as a
+    // later source frame, within the timeline bound (selectPresentedFrame). Its time is
+    // the conservative upper bound; the previous frame is the lower bound.
+    const cast = await stopCast();
+    const screen = await decodeScreencastFrames(cast, canvasGeometry);
+    const screenTime = (sample: { timestamp: number }) =>
+      sample.timestamp - canvasGeometry.timeOrigin;
+    const classOf = (pixels: Uint8Array) =>
+      classifyVideoFrame(pixels, videoOracle.references);
+    const screenBefore = screen.filter((sample) => screenTime(sample) < playMs);
+    const lastBefore = screenBefore[screenBefore.length - 1];
+    const preplayClass = lastBefore ? classOf(lastBefore.pixels) : null;
+    const screenAfter = screen.filter((sample) => screenTime(sample) >= playMs);
+    const selectionInput = screenAfter.map((sample) => ({
+      elapsedMs: screenTime(sample) - playMs,
+      cls: classOf(sample.pixels),
+    }));
+    const presentedIndex = selectPresentedFrame(
+      preplayClass,
+      selectionInput,
+      videoOracle.expectedIndex
+    );
+    if (presentedIndex < 0)
+      throw new Error(
+        'no post-play screencast frame presented a later source-correct video frame; visual unproven'
+      );
+    const screenChanged = screenAfter[presentedIndex];
+    if (!screenChanged) throw new Error('screencast selection index invalid');
+    const priorFrame =
+      presentedIndex > 0 ? screenAfter[presentedIndex - 1] : undefined;
+    const screenVisualLowerMs = priorFrame
+      ? screenTime(priorFrame) - playMs
+      : -Infinity;
+    const visualMs = screenTime(screenChanged) - playMs;
+    assert.ok(
+      canvasVisualMs <= 350,
+      `canvas readback changed at ${canvasVisualMs} ms (budget 350)`
+    );
+    assert.ok(
+      screenVisualLowerMs < visualMs,
+      'screencast change did not follow a distinct prior frame'
+    );
+    const promotions = trace.events.filter(
+      (entry) =>
+        entry.kind === 'transport-message' &&
+        (entry.value as Record<string, unknown>)['type'] === 'clock-promoted'
+    ).length;
+    const suspendsAfterPlay = trace.events.filter(
+      (entry) =>
+        entry.kind === 'audio-suspend-request' && entry.timestamp >= playMs
+    ).length;
+    assert.ok(
+      audibleUpperMs <= 350,
+      `cold audible bound ${audibleUpperMs} ms exceeds 350 (estimate ${audibleMs} ms, bound ${mapped.boundMs} ms)`
+    );
+    assert.ok(
+      visualMs <= 350,
+      `cold visual presentation took ${visualMs} ms (budget 350)`
+    );
+    assert.ok(
+      promotions >= 2,
+      `cold start produced ${promotions} promotions (need 2)`
+    );
+    assert.equal(
+      suspendsAfterPlay,
+      0,
+      'cold start suspended the context after the play request'
+    );
+    assert.ok(
+      coldStartVerdict({
+        audibleMs: audibleUpperMs,
+        visualMs,
+        promotions,
+        suspendsAfterPlay,
+      }),
+      'cold-start verdict failed'
+    );
+    pass('scheduled-pcm-cold-start');
+  } finally {
+    await isolated.close();
+  }
+}
 
 async function runScheduledPcmProof(
   sessionToken: string,
@@ -13956,6 +14708,8 @@ async function runScheduledPcmProof(
     }
   }
   const url = await publishDecoderDirectory(`scheduled-pcm-${rate}`, directory);
+  const coldUrl = await publishColdBoundaryDocument();
+  await runColdStartProof(coldUrl, sessionToken, rate);
   const browser = await openBrowser(url, sessionToken, {
     label: `scheduled-pcm-${rate}`,
     recordProofTrace: true,
@@ -14073,6 +14827,22 @@ async function runScheduledPcmProof(
     assert.ok(
       !capture.trace.audioOverflow && !capture.trace.eventsOverflow,
       'scheduled proof trace overflow'
+    );
+    // Planner rule: a running context is never suspended after the play request.
+    // A suspend here is the cold-start cause, so it fails the capture rather than
+    // being excused as bootstrap.
+    const playEdge = capture.playEdge;
+    if (playEdge === undefined)
+      throw new Error('scheduled capture lacks its play edge');
+    const suspendsAfterPlay = capture.trace.events.filter(
+      (entry) =>
+        entry.kind === 'audio-suspend-request' &&
+        entry.timestamp >= playEdge.timestamp
+    );
+    assert.equal(
+      suspendsAfterPlay.length,
+      0,
+      `playback suspended the context after the play request (${suspendsAfterPlay.length} suspend requests)`
     );
     const pcmEvents = capture.trace.events
       .filter((entry) => entry.kind === 'scheduled-pcm')
