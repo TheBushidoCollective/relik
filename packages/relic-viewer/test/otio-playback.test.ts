@@ -29,7 +29,7 @@ import {
   presentedWindowOutcome,
   SNAPSHOT_SLOTS_PER_DECODER,
 } from '../src/otio-playback.ts';
-import { OtioPcmBudget } from '../src/otio-audio-pcm.ts';
+import { OtioPcmBudget, OtioPcmScheduler } from '../src/otio-audio-pcm.ts';
 import { OtioTransportGateState } from '../src/otio-transport-gate-state.ts';
 import {
   certifiedWindowIndex,
@@ -1506,6 +1506,7 @@ describe('PCM transport-node retirement', () => {
     const first = retirements.reserve();
     retirements.retire({ dispose: () => shutdown.promise }, first);
     expect(budget.usedNodes).toBe(2);
+    expect(budget.usedBytes).toBe(32 * 1024);
     await Promise.resolve();
     expect(budget.usedNodes).toBe(2);
 
@@ -1515,6 +1516,7 @@ describe('PCM transport-node retirement', () => {
     failed.reject(new Error('processor unavailable'));
     await Promise.resolve();
     expect(budget.usedNodes).toBe(4);
+    expect(budget.usedBytes).toBe(64 * 1024);
 
     shutdown.resolve();
     await Promise.resolve();
@@ -1522,10 +1524,75 @@ describe('PCM transport-node retirement', () => {
     retirements.contextClosed();
     retirements.contextClosed();
     expect(budget.usedNodes).toBe(0);
+    expect(budget.usedBytes).toBe(0);
     first();
     second();
     expect(budget.usedNodes).toBe(0);
   });
+});
+
+test('PCM fade nodes hold the first-sample gain before rounded boundary automation', () => {
+  const gains: Array<{
+    gain: {
+      value: number;
+      setValueAtTime(value: number, time: number): void;
+      linearRampToValueAtTime(value: number, time: number): void;
+    };
+    connect(node: unknown): unknown;
+    disconnect(): void;
+  }> = [];
+  let gainsAtStart: number[] = [];
+  const context = {
+    sampleRate: 48000,
+    currentTime: 2,
+    createBuffer: () => ({ copyToChannel() {} }),
+    createGain: () => {
+      const node = {
+        gain: {
+          value: 1,
+          setValueAtTime(_value: number, _time: number) {},
+          linearRampToValueAtTime(_value: number, _time: number) {},
+        },
+        connect(destination: unknown) {
+          return destination;
+        },
+        disconnect() {},
+      };
+      gains.push(node);
+      return node;
+    },
+    createBufferSource: () => ({
+      buffer: null,
+      onended: null,
+      connect(destination: unknown) {
+        return destination;
+      },
+      disconnect() {},
+      start(_time: number) {
+        gainsAtStart = gains.map((item) => item.gain.value);
+      },
+      stop() {},
+    }),
+  };
+  const scheduler = new OtioPcmScheduler(
+    context as unknown as AudioContext,
+    { connect() {}, disconnect() {} } as unknown as AudioNode,
+    1,
+    new OtioPcmBudget()
+  );
+  const frame = 112576;
+  expect((frame / 48000) * 48000).toBeGreaterThan(frame);
+  scheduler.schedule({
+    generation: 1,
+    firstContextFrame: frame,
+    planes: [new Float32Array(128)],
+    gainFactors: [
+      { startFrame: 112000, endFrame: 120000, startGain: 0, endGain: 1 },
+      { startFrame: 112000, endFrame: 120000, startGain: 1, endGain: 0 },
+    ],
+  });
+  expect(gainsAtStart[0]).toBeCloseTo(576 / 8000, 12);
+  expect(gainsAtStart[1]).toBeCloseTo(1 - 576 / 8000, 12);
 });
 
 const playbackGlobalKeys = [
@@ -1679,11 +1746,23 @@ describe('otio playback controller', () => {
   function independentPcmFixture(
     withVideo = false,
     withCuts = false,
-    custom?: { document: OtioDocumentV1; audio: Blob }
+    custom?: { document: OtioDocumentV1; audio: Blob },
+    clockOptions?: {
+      checkpointOffsets?: number[];
+      noLease?: boolean;
+      leaseGate?: Promise<void>;
+      imageCuts?: boolean;
+      resolveMedia?: (
+        path: OtioBundleEntryName
+      ) => Promise<string | Blob | null>;
+    }
   ) {
     let wall = 2000;
     let renderFrame = 48000;
     let outputFrame = 48000;
+    const checkpointOffsets = [...(clockOptions?.checkpointOffsets ?? [])];
+    let suspensions = 0;
+    let leaseReleases = 0;
     let timerId = 0;
     const timers = new Map<number, { at: number; callback: () => void }>();
     const descriptors = propertyDescriptors(globalThis, [
@@ -1803,7 +1882,16 @@ describe('otio playback controller', () => {
       dispatch(type: string) {
         for (const listener of this.listeners.get(type) ?? []) listener();
       }
+      async suspend() {
+        suspensions++;
+        this.state = 'suspended';
+      }
       async resume() {
+        if (this.state === 'suspended') {
+          renderFrame += 256;
+          outputFrame += 256;
+          wall += 256 / 48;
+        }
         this.state = 'running';
       }
     }
@@ -1853,6 +1941,18 @@ describe('otio playback controller', () => {
     }
     class FakeGate extends FakeNode {
       readonly machine = new OtioTransportGateState();
+      readonly parameters = new Map(
+        ['clockFrameA', 'clockTagA', 'clockFrameB', 'clockTagB'].map((name) => [
+          name,
+          audioParam(),
+        ])
+      );
+      readonly epoch: number;
+      readonly initialFrame: number;
+      readySent = false;
+      active: Record<string, number>;
+      bank: { requestId: number; descriptor: Record<string, number> } | null =
+        null;
       readonly pending: Array<Record<string, unknown>> = [];
       readonly port = {
         onmessage: null as ((event: { data: unknown }) => void) | null,
@@ -1863,24 +1963,84 @@ describe('otio playback controller', () => {
         close() {},
       };
       onprocessorerror = null;
-      constructor() {
+      constructor(
+        _context: unknown,
+        _name: string,
+        options: {
+          processorOptions: { clockEpoch: number; initialFrame: number };
+        }
+      ) {
         super();
+        this.epoch = options.processorOptions.clockEpoch;
+        this.initialFrame = options.processorOptions.initialFrame;
+        this.active = {
+          clockEpoch: this.epoch,
+          bank: 0,
+          serial: 1,
+          startFrame: this.initialFrame,
+          endFrame: this.initialFrame + 65536,
+        };
         gates.push(this);
       }
       process() {
+        const emit = (data: Record<string, unknown>) =>
+          callbackQueue.push(() =>
+            this.port.onmessage?.({ data: { ...data, clockEpoch: this.epoch } })
+          );
+        if (audioContext.state === 'running' && !this.readySent) {
+          this.readySent = true;
+          emit({ type: 'clock-ready' });
+        }
         const closed = this.machine.expire(renderFrame);
-        if (closed)
-          callbackQueue.push(() => this.port.onmessage?.({ data: closed }));
+        if (closed) emit(closed as unknown as Record<string, unknown>);
         for (const message of this.pending.splice(0)) {
           commands.push(message);
-          if (message.type === 'dispose') {
-            callbackQueue.push(() =>
-              this.port.onmessage?.({ data: { type: 'disposed' } })
-            );
+          if (message.type === 'dispose') emit({ type: 'disposed' });
+          else if (message.type === 'checkpoint') {
+            emit({
+              type: 'checkpoint',
+              nonce: message.nonce,
+              bankSerial: 1,
+              callbackOrdinal: 2,
+              sampleCount: 256,
+              lastCertifiedEnd: renderFrame + (checkpointOffsets.shift() ?? 0),
+              quantumLength: 128,
+              fault: false,
+            });
+          } else if (message.type === 'accept-anchor') {
+            emit({
+              type: 'anchor-accepted',
+              requestId: message.requestId,
+              clockCoverageEnd: this.initialFrame + 65536 - 2048,
+            });
+          } else if (message.type === 'install-bank') {
+            const descriptor = message.descriptor as Record<string, number>;
+            this.bank = { requestId: message.requestId as number, descriptor };
+            emit({
+              type: 'bank-installed',
+              requestId: message.requestId,
+              descriptor,
+            });
           } else {
             const ack = this.machine.command(message, renderFrame);
-            callbackQueue.push(() => this.port.onmessage?.({ data: ack }));
+            emit(ack as unknown as Record<string, unknown>);
           }
+        }
+        if (
+          this.bank &&
+          renderFrame >= this.bank.descriptor.startFrame! + 128
+        ) {
+          const { requestId, descriptor } = this.bank;
+          emit({
+            type: 'clock-promoted',
+            requestId,
+            active: descriptor,
+            retired: this.active,
+            boundary: descriptor.startFrame! + 128,
+            clockCoverageEnd: descriptor.endFrame! - 2048,
+          });
+          this.active = descriptor;
+          this.bank = null;
         }
       }
     }
@@ -1952,8 +2112,18 @@ describe('otio playback controller', () => {
                       kind: 'Video',
                       children: (withCuts
                         ? [
-                            { length: 15, path: 'media/a.mp4' },
-                            { length: 45, path: 'media/b.mp4' },
+                            {
+                              length: 15,
+                              path: clockOptions?.imageCuts
+                                ? 'media/a.png'
+                                : 'media/a.mp4',
+                            },
+                            {
+                              length: 45,
+                              path: clockOptions?.imageCuts
+                                ? 'media/b.png'
+                                : 'media/b.mp4',
+                            },
                           ]
                         : [{ length: 60, path: 'media/clip.mp4' }]
                       ).map((item) => ({
@@ -1993,8 +2163,27 @@ describe('otio playback controller', () => {
       document: audioOnly,
       timelineId,
       canvas: canvas(output),
-      resolveMedia: async () => custom?.audio ?? new Blob([bytes]),
+      resolveMedia: async (path) =>
+        clockOptions?.resolveMedia
+          ? clockOptions.resolveMedia(path)
+          : (custom?.audio ?? new Blob([bytes])),
       audioContext: audioContext as unknown as AudioContext,
+      ...(clockOptions?.noLease
+        ? {}
+        : {
+            acquireAudioClockLease: async () => {
+              await clockOptions?.leaseGate;
+              return {
+                context: audioContext as unknown as AudioContext,
+                signal: new AbortController().signal,
+                suspend: () => audioContext.suspend(),
+                resume: () => audioContext.resume(),
+                release: async () => {
+                  leaseReleases++;
+                },
+              };
+            },
+          }),
       readVideoTiming: async () => ({
         kind: 'windows',
         starts: Float64Array.from({ length: 60 }, (_, i) => i / 30),
@@ -2075,6 +2264,12 @@ describe('otio playback controller', () => {
     }
     return {
       audioContext,
+      get suspensions() {
+        return suspensions;
+      },
+      get leaseReleases() {
+        return leaseReleases;
+      },
       videos,
       output,
       get video() {
@@ -2100,6 +2295,103 @@ describe('otio playback controller', () => {
       },
     };
   }
+
+  test('clock checkpoint mismatch retries once with a fresh gate', async () => {
+    const fixture = independentPcmFixture(false, false, undefined, {
+      checkpointOffsets: [1, 0],
+    });
+    try {
+      await fixture.start();
+      expect(fixture.gates).toHaveLength(2);
+      expect(fixture.suspensions).toBe(3);
+      expect(fixture.leaseReleases).toBe(1);
+      expect(
+        fixture.commands.filter((item) => item.type === 'checkpoint')
+      ).toHaveLength(2);
+    } finally {
+      fixture.restore();
+    }
+  });
+
+  test('two mismatched checkpoints stop instead of fitting a new anchor', async () => {
+    const fixture = independentPcmFixture(false, false, undefined, {
+      checkpointOffsets: [1, 1],
+    });
+    try {
+      const pending = fixture.playback.play();
+      for (let i = 0; i < 35; i++) {
+        await fixture.flush();
+        await fixture.advance(
+          fixture.wall + 8,
+          fixture.renderFrame + 384,
+          fixture.outputFrame + 384
+        );
+      }
+      await pending;
+      expect(fixture.gates).toHaveLength(2);
+      expect(fixture.commands.some((item) => item.type === 'arm')).toBe(false);
+      expect(
+        fixture.playback
+          .getState()
+          .diagnostics.some((item) =>
+            item.message.includes('Scheduled audio stopped')
+          )
+      ).toBe(true);
+      expect(fixture.leaseReleases).toBe(1);
+    } finally {
+      fixture.restore();
+    }
+  });
+
+  test('borrowed contexts without a lease never enter the scheduled gate', async () => {
+    const fixture = independentPcmFixture(false, false, undefined, {
+      noLease: true,
+    });
+    try {
+      const pending = fixture.playback.play();
+      for (let i = 0; i < 35; i++) {
+        await fixture.flush();
+        await fixture.advance(
+          fixture.wall + 8,
+          fixture.renderFrame + 384,
+          fixture.outputFrame + 384
+        );
+      }
+      await pending;
+      expect(fixture.gates).toHaveLength(0);
+      expect(fixture.suspensions).toBe(0);
+      expect(
+        fixture.playback
+          .getState()
+          .diagnostics.some((item) =>
+            item.message.includes('no exclusive clock bootstrap lease')
+          )
+      ).toBe(true);
+    } finally {
+      fixture.restore();
+    }
+  });
+
+  test('a lease delivered after pause cannot revive bootstrap', async () => {
+    const leaseGate = Promise.withResolvers<void>();
+    const fixture = independentPcmFixture(false, false, undefined, {
+      leaseGate: leaseGate.promise,
+    });
+    try {
+      const pending = fixture.playback.play();
+      await fixture.flush();
+      fixture.playback.pause();
+      leaseGate.resolve();
+      await fixture.flush();
+      await pending;
+      expect(fixture.gates).toHaveLength(0);
+      expect(fixture.suspensions).toBe(0);
+      expect(fixture.leaseReleases).toBe(1);
+      expect(fixture.playback.getState().playing).toBe(false);
+    } finally {
+      fixture.restore();
+    }
+  });
 
   test('PCM admits the scheduled-audio fixture without charging disjoint spans in full', async () => {
     const fixtureRoot = new URL(
@@ -2223,7 +2515,132 @@ describe('otio playback controller', () => {
         JSON.stringify(fixture.playback.getState())
       ).toHaveLength(2);
       expect(fixture.pulls).toContain(boundary - f0);
+      expect(fixture.gates).toHaveLength(1);
+      expect(fixture.suspensions).toBe(2);
+      expect(fixture.leaseReleases).toBe(1);
     } finally {
+      fixture.restore();
+    }
+  });
+
+  test('coordinated context change rejects when output drain fails', async () => {
+    const fixture = independentPcmFixture();
+    try {
+      await fixture.start();
+      const prepared = fixture.playback.prepareAudioContextChange().then(
+        () => null,
+        (error: unknown) => error
+      );
+      await fixture.flush();
+      const stop = fixture.commands.find((item) => item.type === 'stop');
+      expect(stop).toBeDefined();
+      fixture.audioContext.getOutputTimestamp = () => ({
+        contextTime: Number.NaN,
+        performanceTime: Number.NaN,
+      });
+      const boundary = Number(stop!.stopFrame);
+      await fixture.advance(fixture.wall + 8, boundary, fixture.outputFrame);
+      expect(await prepared).toBeInstanceOf(Error);
+      expect(fixture.playback.getState().playing).toBe(false);
+    } finally {
+      fixture.restore();
+    }
+  });
+
+  test.each([true, false])(
+    'seek accepts a closed gate whether closure arrived before abort: %s',
+    async (deliverClosure) => {
+      const fixture = independentPcmFixture();
+      try {
+        await fixture.start();
+        const arm = fixture.commands.find((item) => item.type === 'arm')!;
+        const frontier = Number(arm.throughFrame);
+        await fixture.advance(
+          1000 + (frontier - 128) / 48,
+          frontier,
+          frontier - 128,
+          deliverClosure
+        );
+        for (const source of fixture.audioContext.sources) source.onended?.();
+        void fixture.playback.seek({ value: 1, rate: 30 });
+        await fixture.deliverCallbacks();
+        await fixture.flush();
+        if (deliverClosure) {
+          expect(fixture.commands.some((item) => item.type === 'abort')).toBe(
+            false
+          );
+        } else {
+          expect(fixture.commands.some((item) => item.type === 'abort')).toBe(
+            true
+          );
+        }
+        expect(fixture.commands.some((item) => item.type === 'dispose')).toBe(
+          false
+        );
+        expect(
+          fixture.playback
+            .getState()
+            .diagnostics.some((item) =>
+              item.message.includes('transport abort was not acknowledged')
+            )
+        ).toBe(false);
+      } finally {
+        fixture.restore();
+      }
+    }
+  );
+
+  test('a superseded seek timeout cannot stop the newer seek', async () => {
+    const delayedVideo = Promise.withResolvers<string>();
+    const audio = new Blob([
+      await Bun.file(
+        new URL(
+          '../../relic-format/test/fixtures/otio/scheduled-audio.otiod/media/indexed-stereo.wav',
+          import.meta.url
+        )
+      ).arrayBuffer(),
+    ]);
+    let delayedRequests = 0;
+    const fixture = independentPcmFixture(true, true, undefined, {
+      imageCuts: true,
+      resolveMedia: async (path) => {
+        if (path === 'media/b.png') {
+          delayedRequests++;
+          return delayedVideo.promise;
+        }
+        return path === 'media/dialogue.wav' ? audio : 'blob:first-video';
+      },
+    });
+    try {
+      await fixture.start();
+      const oldSeek = fixture.playback.seek({ value: 20, rate: 30 });
+      await fixture.flush();
+      expect(delayedRequests).toBeGreaterThan(0);
+      const newSeek = fixture.playback.seek({ value: 2, rate: 30 });
+      for (let i = 0; i < 40; i++)
+        await fixture.advance(
+          fixture.wall + 4,
+          fixture.renderFrame + 192,
+          fixture.outputFrame + 192
+        );
+      await newSeek;
+      expect(fixture.playback.getState().playing).toBe(true);
+      await fixture.advance(
+        fixture.wall + 400,
+        fixture.renderFrame + 19200,
+        fixture.outputFrame + 19200
+      );
+      await oldSeek;
+      expect(fixture.playback.getState().playing).toBe(true);
+      expect(
+        fixture.playback
+          .getState()
+          .diagnostics.some((item) =>
+            item.message.includes('startup deadline expired')
+          )
+      ).toBe(false);
+    } finally {
+      delayedVideo.resolve('blob:second-video');
       fixture.restore();
     }
   });
@@ -2538,6 +2955,27 @@ describe('otio playback controller', () => {
     fixture.audioContext.audioWorklet.addModule = async () => {
       attempts++;
       throw new Error('module unavailable');
+    };
+    try {
+      for (let i = 0; i < 70; i++) {
+        const play = fixture.playback.play();
+        await fixture.flush();
+        await play;
+        expect(fixture.playback.getState().playing).toBe(false);
+      }
+      expect(attempts).toBe(70);
+      expect(fixture.gates).toHaveLength(0);
+    } finally {
+      fixture.restore();
+    }
+  });
+
+  test('preconstruction context changes release gate credits repeatedly', async () => {
+    const fixture = independentPcmFixture();
+    let attempts = 0;
+    fixture.audioContext.audioWorklet.addModule = async () => {
+      attempts++;
+      fixture.audioContext.state = 'running';
     };
     try {
       for (let i = 0; i < 70; i++) {
