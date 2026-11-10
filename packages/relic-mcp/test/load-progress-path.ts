@@ -1108,10 +1108,12 @@ const cdp = connectPipe(
 await attestBrowserHeadless(cdp, launch);
 
 // A request rule for the browser proof. `times` fails the first N matching
-// requests, or every matching request with 'all'.
+// requests, or every matching request with 'all'. `hold` keeps a failing
+// response unanswered until releaseHeld, so a proof can act while it waits.
 interface BlockRule {
   urlPattern: string;
   times: number | 'all';
+  hold?: boolean;
 }
 
 // Glob match for Fetch patterns, where `*` matches any run of characters.
@@ -1186,6 +1188,7 @@ interface RunOutcome {
   blocks: Record<string, number>;
   navigationUrls: string[];
   setBlocks: (next: BlockRule[]) => void;
+  releaseHeld: () => void;
   close: () => Promise<void>;
 }
 
@@ -1299,6 +1302,7 @@ async function runRelicPage(
       sessionId
     );
   }
+  const heldAnswers: Array<() => void> = [];
   const stopBlock = cdp.onEvent((e) => {
     if (e.method !== 'Fetch.requestPaused' || e.sessionId !== sessionId) return;
     const params = e.params as { requestId: string; request: { url: string } };
@@ -1312,16 +1316,23 @@ async function runRelicPage(
       if (typeof left === 'number') remaining.set(rule.urlPattern, left - 1);
       blocks[rule.urlPattern] = (blocks[rule.urlPattern] ?? 0) + 1;
     }
-    void cdp
-      .send(
-        failIt ? 'Fetch.failRequest' : 'Fetch.continueRequest',
-        failIt
-          ? { requestId: params.requestId, errorReason: 'BlockedByClient' }
-          : { requestId: params.requestId },
-        sessionId
-      )
-      .catch(() => {});
+    const answer = (): void => {
+      void cdp
+        .send(
+          failIt ? 'Fetch.failRequest' : 'Fetch.continueRequest',
+          failIt
+            ? { requestId: params.requestId, errorReason: 'BlockedByClient' }
+            : { requestId: params.requestId },
+          sessionId
+        )
+        .catch(() => {});
+    };
+    if (failIt && rule?.hold === true) heldAnswers.push(answer);
+    else answer();
   });
+  const releaseHeld = (): void => {
+    for (const answer of heldAnswers.splice(0)) answer();
+  };
 
   // Every main-frame navigation, so a proof counts reloads and checks what each
   // reloaded URL carried.
@@ -1565,6 +1576,7 @@ async function runRelicPage(
     blocks,
     navigationUrls,
     setBlocks: resetRules,
+    releaseHeld,
     close: async () => {
       stopContextListener();
       stopBlock();
@@ -3426,6 +3438,128 @@ try {
       console.log(
         `JSX_STEP_3E_COMPARE_AFTER_HEAL_OK panes=2 reloads=${reloads} blocked=${run.blocks[compilerPattern] ?? 0}`
       );
+      await run.close();
+    }
+
+    // 3f: a compare whose compiler reply returns after the reader has left it
+    // must neither reload the page nor take a draft with it. The compiler reply
+    // is held. The reader exits compare, opens Share and types a draft. Then the
+    // held reply is released, and the page must stay put.
+    {
+      const staleJsxPath = join(compareDir, 'Stale.jsx');
+      await writeFile(
+        staleJsxPath,
+        compareJsx('Relik JSX version one', ['Alpha', 'Beta'])
+      );
+      const staleRes = await callMcp('relic_publish', {
+        path: staleJsxPath,
+        cover: false,
+        title: '',
+      });
+      const staleId = String(staleRes['relic_id'] ?? '');
+      const staleUrl = String(staleRes['url'] ?? staleRes['share_url'] ?? '');
+      assert.ok(
+        staleId !== '' && staleUrl.includes('#'),
+        '3f: publish must return an id and key'
+      );
+      const staleHtmlPath = join(compareDir, 'Stale.html');
+      await writeFile(
+        staleHtmlPath,
+        '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Stale</title></head><body><h1>Relik HTML version two</h1></body></html>\n'
+      );
+      const staleRepub = await callMcp('relic_republish', {
+        path: staleHtmlPath,
+        relic_id: staleId,
+        notify: false,
+        cover: false,
+      });
+      assert.equal(
+        staleRepub['version'],
+        2,
+        '3f: the HTML republish must advance to version 2'
+      );
+      const run = await runRelicPage(staleUrl, {
+        viewport,
+        colorScheme: 'light',
+        bypassServiceWorker: true,
+        fixedWait: true,
+        blocks: [{ urlPattern: compilerPattern, times: 0 }],
+      });
+      runsExecuted++;
+      await waitUntil(
+        async () =>
+          (await usercontentTexts(run.sessionId, 'main.stage')).some((t) =>
+            t.includes('version two')
+          ),
+        45_000,
+        '3f: current HTML version rendered'
+      );
+      run.setBlocks([{ urlPattern: compilerPattern, times: 1, hold: true }]);
+      await clickSelector(run.sessionId, '.action-history');
+      await waitUntil(
+        async () => (run.blocks[compilerPattern] ?? 0) >= 1,
+        30_000,
+        '3f: compiler request held'
+      );
+      await clickSelector(run.sessionId, '.action-history');
+      const pressed = await evalMain<string>(
+        run.sessionId,
+        `document.querySelector('.action-history')?.getAttribute('aria-pressed') ?? ''`
+      );
+      assert.equal(
+        pressed,
+        'false',
+        '3f: the reader must have left comparison while the reply is held'
+      );
+      await clickSelector(run.sessionId, '.action-share');
+      await waitUntil(
+        () =>
+          isTrue(
+            run.sessionId,
+            `Boolean(document.querySelector('#share-addresses'))`
+          ),
+        15_000,
+        '3f: share draft box'
+      );
+      const draft = 'reader@example.com';
+      await evalMain(
+        run.sessionId,
+        `(() => {
+          const box = document.querySelector('#share-addresses');
+          if (!box) throw new Error('share draft box missing');
+          box.value = ${JSON.stringify(draft)};
+          box.dispatchEvent(new Event('input', { bubbles: true }));
+          return true;
+        })()`
+      );
+      run.releaseHeld();
+      // Longer than the server check, so a stale reload would have happened by now.
+      await Bun.sleep(6_000);
+      const reloads = run.navigationUrls.length - 1;
+      assert.equal(
+        reloads,
+        0,
+        `3f: a stale compare reloaded the page after the reader left it (${reloads} reloads)`
+      );
+      assert.equal(
+        run.blocks[compilerPattern] ?? 0,
+        1,
+        `3f: expected the held compiler fetch to be intercepted once, saw ${run.blocks[compilerPattern] ?? 0}`
+      );
+      assert.equal(
+        await evalMain<string>(
+          run.sessionId,
+          `document.querySelector('#share-addresses')?.value ?? ''`
+        ),
+        draft,
+        '3f: the draft did not survive the stale reply'
+      );
+      assert.ok(
+        await isTrue(run.sessionId, readyExpr),
+        '3f: the single view must still be ready'
+      );
+      await savePng(run.sessionId, '10-3f-stale-compare-kept-draft.png');
+      console.log('JSX_STEP_3F_STALE_COMPARE_OK reloads=0 draft=kept');
       await run.close();
     }
 
