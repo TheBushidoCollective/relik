@@ -13,7 +13,7 @@
  * 8. Noscript plate and hidden loading stage when scripts disabled
  * 9. Static plate when viewer.js is blocked
  * 10. Version switching preserving stage until ready
- * 11. JSX component relic: rendered frame, comparison, and unavailable compiler (run with --only=jsx)
+ * 11. JSX component relic: rendered frame, comparison, and compiler-load recovery (run with --only=jsx)
  *
  * Output: prints LOAD_PROGRESS_PATH_OK with the fixture and run counts.
  */
@@ -1107,13 +1107,30 @@ const cdp = connectPipe(
 );
 await attestBrowserHeadless(cdp, launch);
 
+// A request rule for the browser proof. `times` fails the first N matching
+// requests, or every matching request with 'all'.
+interface BlockRule {
+  urlPattern: string;
+  times: number | 'all';
+}
+
+// Glob match for Fetch patterns, where `*` matches any run of characters.
+function urlMatches(pattern: string, url: string): boolean {
+  const source = pattern
+    .split('*')
+    .map((part) => part.replace(/[.+?^${}()|[\]\\]/g, '\\$&'))
+    .join('.*');
+  return new RegExp(`^${source}$`).test(url);
+}
+
 // Helper to open a page session with recorder and assertions
 interface OpenRunOptions {
   viewport?: { width: number; height: number; mobile?: boolean };
   colorScheme?: 'light' | 'dark';
   disableScripts?: boolean;
   blockViewerJs?: boolean;
-  blockUrlPattern?: string;
+  blocks?: BlockRule[];
+  fixedWait?: boolean;
   bypassServiceWorker?: boolean;
   onBeforeNavigate?: (sessionId: string) => Promise<void>;
 }
@@ -1166,7 +1183,9 @@ interface RunOutcome {
     loadingFinished: boolean;
     loadingFailed?: { errorText: string; canceled: boolean } | undefined;
   };
-  blockedRequests: number;
+  blocks: Record<string, number>;
+  navigationUrls: string[];
+  setBlocks: (next: BlockRule[]) => void;
   close: () => Promise<void>;
 }
 
@@ -1256,33 +1275,65 @@ async function runRelicPage(
     });
   }
 
-  // Count and fail every request matching blockUrlPattern (the compiler chunk).
-  let blockedRequests = 0;
-  let stopBlock: (() => void) | undefined;
-  if (options.blockUrlPattern !== undefined) {
+  // Network rules fail matching requests and count what was really failed.
+  // setBlocks swaps the rules mid-page; Fetch patterns stay as enabled here.
+  let activeRules: BlockRule[] = options.blocks ?? [];
+  const remaining = new Map<string, number | 'all'>();
+  const resetRules = (next: BlockRule[]): void => {
+    activeRules = next;
+    remaining.clear();
+    for (const rule of next) remaining.set(rule.urlPattern, rule.times);
+  };
+  resetRules(activeRules);
+  const blocks: Record<string, number> = {};
+  for (const rule of activeRules) blocks[rule.urlPattern] = 0;
+  if (activeRules.length > 0) {
     await cdp.send(
       'Fetch.enable',
       {
-        patterns: [
-          { urlPattern: options.blockUrlPattern, requestStage: 'Request' },
-        ],
+        patterns: activeRules.map((rule) => ({
+          urlPattern: rule.urlPattern,
+          requestStage: 'Request',
+        })),
       },
       sessionId
     );
-    stopBlock = cdp.onEvent((e) => {
-      if (e.method === 'Fetch.requestPaused' && e.sessionId === sessionId) {
-        const reqId = (e.params as { requestId: string }).requestId;
-        blockedRequests++;
-        void cdp
-          .send(
-            'Fetch.failRequest',
-            { requestId: reqId, errorReason: 'BlockedByClient' },
-            sessionId
-          )
-          .catch(() => {});
-      }
-    });
   }
+  const stopBlock = cdp.onEvent((e) => {
+    if (e.method !== 'Fetch.requestPaused' || e.sessionId !== sessionId) return;
+    const params = e.params as { requestId: string; request: { url: string } };
+    const rule = activeRules.find((r) =>
+      urlMatches(r.urlPattern, params.request.url)
+    );
+    const left =
+      rule === undefined ? undefined : remaining.get(rule.urlPattern);
+    const failIt = left === 'all' || (typeof left === 'number' && left > 0);
+    if (rule !== undefined && failIt) {
+      if (typeof left === 'number') remaining.set(rule.urlPattern, left - 1);
+      blocks[rule.urlPattern] = (blocks[rule.urlPattern] ?? 0) + 1;
+    }
+    void cdp
+      .send(
+        failIt ? 'Fetch.failRequest' : 'Fetch.continueRequest',
+        failIt
+          ? { requestId: params.requestId, errorReason: 'BlockedByClient' }
+          : { requestId: params.requestId },
+        sessionId
+      )
+      .catch(() => {});
+  });
+
+  // Every main-frame navigation, so a proof counts reloads and checks what each
+  // reloaded URL carried.
+  const navigationUrls: string[] = [];
+  const stopNav = cdp.onEvent((e) => {
+    if (e.method !== 'Page.frameNavigated' || e.sessionId !== sessionId) return;
+    const frame = (e.params as { frame: { url: string; parentId?: string } })
+      .frame;
+    if (frame.parentId === undefined && frame.url !== 'about:blank') {
+      navigationUrls.push(frame.url);
+    }
+  });
 
   let isolatedContextId: number | undefined;
   const stopContextListener = cdp.onEvent((e) => {
@@ -1378,7 +1429,7 @@ async function runRelicPage(
   let readyShot: Buffer | null = null;
 
   // Poll for completion or settling
-  if (!options.disableScripts && !options.blockViewerJs) {
+  if (!options.disableScripts && !options.blockViewerJs && !options.fixedWait) {
     const start = Date.now();
     let _settled = false;
 
@@ -1511,11 +1562,14 @@ async function runRelicPage(
     firstProgressShot,
     readyShot,
     storageRequest: storageReq,
-    blockedRequests,
+    blocks,
+    navigationUrls,
+    setBlocks: resetRules,
     close: async () => {
       stopContextListener();
-      stopBlock?.();
+      stopBlock();
       stopNetListener();
+      stopNav();
       await cdp.send('Target.closeTarget', { targetId }).catch(() => {});
     },
   };
@@ -2820,7 +2874,7 @@ try {
   }
 
   // =========================================================================
-  // RUN 10: JSX component relic (frame, comparison, compiler unreachable)
+  // RUN 10: JSX component relic (frame, comparison, compiler-load recovery)
   // =========================================================================
   if (
     !onlyFilter ||
@@ -2829,7 +2883,7 @@ try {
     onlyFilter === 'jsx'
   ) {
     console.log(
-      '\n--- Run 10: JSX component relic (frame, comparison, compiler unreachable) ---'
+      '\n--- Run 10: JSX component relic (frame, comparison, compiler-load recovery) ---'
     );
     const t0 = Date.now();
     const viewport = { width: 1440, height: 900 };
@@ -2956,70 +3010,430 @@ try {
     console.log('JSX_STEP_2_COMPARE_OK panes=2');
     await jsxRun.close();
 
-    // Step 3: the compiler chunk is blocked, so routing cannot load it and the
-    // reader gets the explicit unavailable card, not damaged content or source.
-    const compilerChunk = await findCompilerChunk(viewerDist);
-    const blockedRun = await runRelicPage(compareUrl, {
-      viewport,
-      colorScheme: 'light',
-      blockUrlPattern: `*${compilerChunk}*`,
-      bypassServiceWorker: true,
-    });
-    runsExecuted++;
-    const deadState = await evalMain<{
+    // Step 3: a failed compiler fetch never shows damaged content or source.
+    // The page reloads at most once. The vault supplies the key on reload, and
+    // no reload carries the fragment. Each block is counted where it is
+    // intercepted, so a case that blocks nothing cannot pass.
+    const compilerPattern = `*${await findCompilerChunk(viewerDist)}*`;
+    const probePattern = '*/assets/icon.svg*';
+    const compareKey = compareUrl.split('#')[1] ?? '';
+    assert.ok(
+      compareKey !== '',
+      'JSX step 3: the compare link must carry a key'
+    );
+    const readyExpr = `Boolean(document.querySelector('main.stage[data-render-state="ready"]'))`;
+    const deadExpr = `Boolean(document.querySelector('main.stage.stage-dead'))`;
+    const stateExpr = `(() => ({
+      dead: document.querySelector('main.stage.stage-dead') !== null,
+      accession: document.querySelector('main.stage-dead .card .accession')?.textContent || '',
+      body: document.body?.textContent || '',
+      stageCode: document.querySelector('.stage-code') !== null,
+    }))()`;
+    // A check during navigation reads as not yet, not as a failure.
+    const isTrue = (sid: string, expr: string): Promise<boolean> =>
+      evalMain<boolean>(sid, expr).catch(() => false);
+    const clickSelector = async (
+      sid: string,
+      selector: string
+    ): Promise<void> => {
+      await evalMain(
+        sid,
+        `(() => {
+          const el = document.querySelector(${JSON.stringify(selector)});
+          if (!el) throw new Error(${JSON.stringify(selector + ' missing')});
+          el.click();
+          return true;
+        })()`
+      );
+    };
+    type StageState = {
       dead: boolean;
       accession: string;
       body: string;
       stageCode: boolean;
-    }>(
-      blockedRun.sessionId,
-      `(() => ({
-        dead: document.querySelector('main.stage.stage-dead') !== null,
-        accession: document.querySelector('.accession')?.textContent || '',
-        body: document.body?.textContent || '',
-        stageCode: document.querySelector('.stage-code') !== null,
-      }))()`
-    );
-    assert.ok(
-      blockedRun.blockedRequests >= 1,
-      `JSX step 3: compiler chunk ${compilerChunk} was never requested, so nothing was blocked`
-    );
-    assert.ok(
-      deadState.dead,
-      'JSX step 3: blocked compiler must show the dead card'
-    );
-    assert.ok(
-      deadState.accession.includes('service_unreachable'),
-      `JSX step 3: expected accession service_unreachable, found "${deadState.accession}"`
-    );
-    assert.ok(
-      deadState.body.includes('Something went wrong reaching the service.'),
-      'JSX step 3: card must say the service could not be reached'
-    );
-    assert.ok(
-      !deadState.body.includes('content_damaged'),
-      'JSX step 3: blocked compiler must not read as damaged content'
-    );
-    assert.equal(
-      deadState.stageCode,
-      false,
-      'JSX step 3: blocked compiler must not fall back to the source view'
-    );
-    if (blockedRun.readyShot) {
-      await writeFile(
-        join(proofDir, '10-jsx-compiler-unreachable.png'),
-        blockedRun.readyShot
+    };
+    const assertUnreachable = async (
+      sid: string,
+      label: string
+    ): Promise<void> => {
+      const s = await evalMain<StageState>(sid, stateExpr);
+      assert.ok(s.dead, `${label}: the dead card must show`);
+      assert.ok(
+        s.accession.includes('service_unreachable'),
+        `${label}: accession must be service_unreachable, found "${s.accession}"`
       );
+      assert.ok(
+        s.body.includes('Something went wrong reaching the service.'),
+        `${label}: the card must say the service could not be reached`
+      );
+      assert.ok(
+        !s.body.includes('content_damaged'),
+        `${label}: must not read as damaged content`
+      );
+      assert.equal(
+        s.stageCode,
+        false,
+        `${label}: must not fall back to the source view`
+      );
+    };
+    const savePng = async (sid: string, name: string): Promise<void> => {
+      const shot = (await cdp.send(
+        'Page.captureScreenshot',
+        { format: 'png' },
+        sid
+      )) as { data: string };
+      await writeFile(join(proofDir, name), Buffer.from(shot.data, 'base64'));
+    };
+    const assertNoKeyInReloads = (run: RunOutcome, label: string): void => {
+      for (const url of run.navigationUrls.slice(1)) {
+        assert.ok(
+          !url.includes('#') && !url.includes(compareKey),
+          `${label}: a reload carried the fragment: ${url}`
+        );
+      }
+    };
+    const mintsOfCompare = (): number =>
+      relicMintCounts.get(compareRelicId) ?? 0;
+
+    // 3a: the first compiler fetch fails once. One reload, the vault supplies
+    // the key, and the component renders.
+    {
+      const mints = mintsOfCompare();
+      const run = await runRelicPage(compareUrl, {
+        viewport,
+        colorScheme: 'light',
+        bypassServiceWorker: true,
+        fixedWait: true,
+        blocks: [{ urlPattern: compilerPattern, times: 1 }],
+      });
+      runsExecuted++;
+      await waitUntil(
+        () => isTrue(run.sessionId, readyExpr),
+        45_000,
+        '3a: component ready after one reload'
+      );
+      const reloads = run.navigationUrls.length - 1;
+      assert.equal(
+        run.blocks[compilerPattern] ?? 0,
+        1,
+        `3a: expected one intercepted compiler fetch, saw ${run.blocks[compilerPattern] ?? 0}`
+      );
+      assert.equal(
+        reloads,
+        1,
+        `3a: expected exactly one reload, saw ${reloads}`
+      );
+      assertNoKeyInReloads(run, '3a');
+      assert.equal(
+        await evalMain<string>(run.sessionId, 'location.hash'),
+        '',
+        '3a: the reloaded page must not keep a fragment'
+      );
+      await waitUntil(
+        async () =>
+          (await usercontentTexts(run.sessionId, 'main.stage')).some((t) =>
+            t.includes('version two')
+          ),
+        15_000,
+        '3a: version two inside the frame'
+      );
+      const minted = mintsOfCompare() - mints;
+      assert.equal(
+        minted,
+        1 + reloads,
+        `3a: one open plus one reload must mint ${1 + reloads} times, saw ${minted}`
+      );
+      await savePng(run.sessionId, '10-3a-heal-once.png');
+      console.log(
+        `JSX_STEP_3A_HEAL_ONCE_OK reloads=${reloads} blocked=${run.blocks[compilerPattern] ?? 0}`
+      );
+      await run.close();
     }
-    console.log(
-      `JSX_STEP_3_COMPILER_UNREACHABLE_OK blocked=${blockedRun.blockedRequests}`
-    );
-    await blockedRun.close();
+
+    // 3b: every compiler fetch fails. One reload is allowed; the second failure
+    // shows the card and nothing reloads again.
+    {
+      const run = await runRelicPage(compareUrl, {
+        viewport,
+        colorScheme: 'light',
+        bypassServiceWorker: true,
+        fixedWait: true,
+        blocks: [{ urlPattern: compilerPattern, times: 'all' }],
+      });
+      runsExecuted++;
+      await waitUntil(
+        async () =>
+          run.navigationUrls.length >= 2 &&
+          (await isTrue(run.sessionId, deadExpr)),
+        45_000,
+        '3b: second attempt fails after the one reload'
+      );
+      await Bun.sleep(1500);
+      const reloads = run.navigationUrls.length - 1;
+      assert.equal(
+        reloads,
+        1,
+        `3b: at most one reload is allowed, saw ${reloads}`
+      );
+      assert.ok(
+        (run.blocks[compilerPattern] ?? 0) >= 2,
+        `3b: the reloaded attempt must also be intercepted, saw ${run.blocks[compilerPattern] ?? 0}`
+      );
+      await assertUnreachable(run.sessionId, '3b');
+      assertNoKeyInReloads(run, '3b');
+      await savePng(run.sessionId, '10-3b-no-loop.png');
+      console.log(
+        `JSX_STEP_3B_NO_LOOP_OK reloads=${reloads} blocked=${run.blocks[compilerPattern] ?? 0}`
+      );
+      await run.close();
+    }
+
+    // 3c: the network is down, so the server check fails. No reload happens and
+    // the card stays. Try again reloads once the network is back.
+    {
+      const run = await runRelicPage(compareUrl, {
+        viewport,
+        colorScheme: 'light',
+        bypassServiceWorker: true,
+        fixedWait: true,
+        blocks: [
+          { urlPattern: compilerPattern, times: 'all' },
+          { urlPattern: probePattern, times: 'all' },
+        ],
+      });
+      runsExecuted++;
+      await waitUntil(
+        () => isTrue(run.sessionId, deadExpr),
+        45_000,
+        '3c: card while the network is down'
+      );
+      assert.equal(
+        run.navigationUrls.length - 1,
+        0,
+        '3c: the page reloaded while the server check was failing'
+      );
+      assert.ok(
+        (run.blocks[probePattern] ?? 0) >= 1,
+        '3c: the server check was never intercepted'
+      );
+      await assertUnreachable(run.sessionId, '3c');
+      run.setBlocks([]);
+      await clickSelector(run.sessionId, '[data-dead-action="retry"]');
+      await waitUntil(
+        () => isTrue(run.sessionId, readyExpr),
+        45_000,
+        '3c: component ready after Try again'
+      );
+      const reloads = run.navigationUrls.length - 1;
+      assert.equal(
+        reloads,
+        1,
+        `3c: Try again should reload once when the network is back, saw ${reloads}`
+      );
+      assertNoKeyInReloads(run, '3c');
+      await savePng(run.sessionId, '10-3c-network-retry.png');
+      console.log(
+        `JSX_STEP_3C_NETWORK_RETRY_OK reloads=${reloads} probes=${run.blocks[probePattern] ?? 0}`
+      );
+      await run.close();
+    }
+
+    // 3d: a typed key whose first compiler fetch fails recovers the same way. A
+    // separate relic keeps the vault empty until the key is typed.
+    {
+      const typedPath = join(compareDir, 'Typed.jsx');
+      await writeFile(typedPath, compareJsx('Relik JSX typed key', ['Alpha']));
+      const typedRes = await callMcp('relic_publish', {
+        path: typedPath,
+        cover: false,
+        title: '',
+      });
+      const typedUrl = String(typedRes['url'] ?? typedRes['share_url'] ?? '');
+      const typedKey = typedUrl.split('#')[1] ?? '';
+      assert.ok(typedKey !== '', '3d: publish must return a key');
+      const bareUrl = typedUrl.split('#')[0] ?? '';
+      const run = await runRelicPage(bareUrl, {
+        viewport,
+        colorScheme: 'light',
+        bypassServiceWorker: true,
+        fixedWait: true,
+        blocks: [{ urlPattern: compilerPattern, times: 1 }],
+      });
+      runsExecuted++;
+      await waitUntil(
+        () =>
+          isTrue(
+            run.sessionId,
+            `Boolean(document.querySelector('.key-entry-form'))`
+          ),
+        30_000,
+        '3d: key entry form'
+      );
+      await evalMain(
+        run.sessionId,
+        `(() => {
+          const input = document.querySelector('#relic-key-input');
+          if (!input) throw new Error('#relic-key-input not found');
+          input.value = ${JSON.stringify(typedKey)};
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+          const form = document.querySelector('.key-entry-form');
+          if (!form) throw new Error('.key-entry-form not found');
+          form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+          return true;
+        })()`
+      );
+      await waitUntil(
+        () => isTrue(run.sessionId, readyExpr),
+        45_000,
+        '3d: component ready after the typed key'
+      );
+      const reloads = run.navigationUrls.length - 1;
+      assert.equal(
+        run.blocks[compilerPattern] ?? 0,
+        1,
+        `3d: expected one intercepted compiler fetch, saw ${run.blocks[compilerPattern] ?? 0}`
+      );
+      assert.equal(
+        reloads,
+        1,
+        `3d: expected exactly one reload, saw ${reloads}`
+      );
+      assert.ok(
+        run.navigationUrls.every((url) => !url.includes(typedKey)),
+        '3d: a navigation carried the key'
+      );
+      await savePng(run.sessionId, '10-3d-typed-key.png');
+      console.log(
+        `JSX_STEP_3D_TYPED_KEY_OK reloads=${reloads} blocked=${run.blocks[compilerPattern] ?? 0}`
+      );
+      await run.close();
+    }
+
+    // 3e: the current version is HTML and the comparison needs the v1 JSX. The
+    // compiler fetch fails during Compare; the page reloads once onto the
+    // current version, and opening Compare again frames both versions.
+    {
+      const mixedPath = join(compareDir, 'Mixed.jsx');
+      await writeFile(
+        mixedPath,
+        compareJsx('Relik JSX version one', ['Alpha', 'Beta'])
+      );
+      const mixedRes = await callMcp('relic_publish', {
+        path: mixedPath,
+        cover: false,
+        title: '',
+      });
+      const mixedId = String(mixedRes['relic_id'] ?? '');
+      const mixedUrl = String(mixedRes['url'] ?? mixedRes['share_url'] ?? '');
+      assert.ok(
+        mixedId !== '' && mixedUrl.includes('#'),
+        '3e: publish must return an id and key'
+      );
+      const mixedHtmlPath = join(compareDir, 'Mixed.html');
+      await writeFile(
+        mixedHtmlPath,
+        '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Mixed</title></head><body><h1>Relik HTML version two</h1></body></html>\n'
+      );
+      const mixedRepub = await callMcp('relic_republish', {
+        path: mixedHtmlPath,
+        relic_id: mixedId,
+        notify: false,
+        cover: false,
+      });
+      assert.equal(
+        mixedRepub['version'],
+        2,
+        '3e: the HTML republish must advance to version 2'
+      );
+      const run = await runRelicPage(mixedUrl, {
+        viewport,
+        colorScheme: 'light',
+        bypassServiceWorker: true,
+        fixedWait: true,
+        blocks: [{ urlPattern: compilerPattern, times: 0 }],
+      });
+      runsExecuted++;
+      await waitUntil(
+        async () =>
+          (await usercontentTexts(run.sessionId, 'main.stage')).some((t) =>
+            t.includes('version two')
+          ),
+        45_000,
+        '3e: current HTML version rendered'
+      );
+      run.setBlocks([{ urlPattern: compilerPattern, times: 1 }]);
+      await clickSelector(run.sessionId, '.action-history');
+      await waitUntil(
+        async () =>
+          run.navigationUrls.length >= 2 &&
+          (await isTrue(run.sessionId, readyExpr)),
+        45_000,
+        '3e: reloaded onto the current version'
+      );
+      const reloads = run.navigationUrls.length - 1;
+      assert.equal(
+        run.blocks[compilerPattern] ?? 0,
+        1,
+        `3e: expected one intercepted compiler fetch, saw ${run.blocks[compilerPattern] ?? 0}`
+      );
+      assert.equal(
+        reloads,
+        1,
+        `3e: expected exactly one reload, saw ${reloads}`
+      );
+      assertNoKeyInReloads(run, '3e');
+      await clickSelector(run.sessionId, '.action-history');
+      await waitUntil(
+        async () =>
+          (await evalMain<number>(
+            run.sessionId,
+            `document.querySelectorAll('.compare-pane iframe.usercontent-frame').length`
+          )) === 2,
+        30_000,
+        '3e: two comparison panes'
+      );
+      await waitUntil(
+        async () => {
+          const texts = await evalMain<string[]>(run.sessionId, summaryExpr);
+          return (
+            texts.length > 0 &&
+            texts.every((t) => t !== 'Rendering both versions.')
+          );
+        },
+        30_000,
+        '3e: comparison summary to settle'
+      );
+      const summaryTexts = await evalMain<string[]>(run.sessionId, summaryExpr);
+      assert.ok(
+        !summaryTexts.some((t) =>
+          t.includes('could not read their rendered structure')
+        ),
+        `3e: comparison could not read rendered structure: ${summaryTexts.join(' | ')}`
+      );
+      await waitUntil(
+        async () => {
+          const cmp = await usercontentTexts(run.sessionId, '.compare-pane');
+          return (
+            cmp.length === 2 &&
+            cmp.some((t) => t.includes('version one')) &&
+            cmp.some((t) => t.includes('version two'))
+          );
+        },
+        30_000,
+        '3e: both comparison frames show their versions'
+      );
+      await savePng(run.sessionId, '10-3e-compare-after-heal.png');
+      console.log(
+        `JSX_STEP_3E_COMPARE_AFTER_HEAL_OK panes=2 reloads=${reloads} blocked=${run.blocks[compilerPattern] ?? 0}`
+      );
+      await run.close();
+    }
+
     console.log('JSX_COMPONENT_PATH_OK');
 
     const dur = Date.now() - t0;
     runSummary.push({
-      name: 'Run 10: JSX component relic frame, comparison, compiler unreachable',
+      name: 'Run 10: JSX component relic frame, comparison, compiler-load recovery',
       durationMs: dur,
       status: 'pass',
     });
