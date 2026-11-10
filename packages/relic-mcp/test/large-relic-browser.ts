@@ -6,6 +6,7 @@ import { mkdir, readFile, realpath } from 'node:fs/promises';
 import { basename, isAbsolute, join } from 'node:path';
 import type { Readable, Writable } from 'node:stream';
 import { promisify } from 'node:util';
+import { dlopen, FFIType, ptr } from 'bun:ffi';
 import { connectPipe, type CdpConnection } from '../src/cover/cdp.ts';
 import { chromeArgs } from '../src/cover/chrome.ts';
 import {
@@ -15,6 +16,43 @@ import {
 
 const execFileAsync = promisify(execFile);
 const MIB = 1024 * 1024;
+
+// RUSAGE_INFO_V4 has a 16-byte UUID followed by 35 uint64 fields.
+const RUSAGE_INFO_V4 = 4;
+const RUSAGE_INFO_V4_SIZE = 296;
+const PHYS_FOOTPRINT_OFFSET = 72;
+const darwinRusage =
+  process.platform === 'darwin'
+    ? dlopen('/usr/lib/libSystem.B.dylib', {
+        proc_pid_rusage: {
+          args: [FFIType.i32, FFIType.i32, FFIType.ptr],
+          returns: FFIType.i32,
+        },
+      })
+    : undefined;
+
+export interface ProcessMemory {
+  readonly type: 'renderer' | 'utility';
+  readonly footprint: number;
+  readonly rss: number;
+}
+
+export type MemorySnapshot = ReadonlyMap<number, ProcessMemory>;
+
+export interface MemoryGrowth {
+  readonly footprint: number;
+  readonly rss: number;
+  readonly added: number[];
+  readonly exited: number[];
+}
+
+export function memoryMeasurement(): 'phys_footprint' | 'rss_anon_swap' {
+  if (process.platform === 'darwin') return 'phys_footprint';
+  if (process.platform === 'linux') return 'rss_anon_swap';
+  throw new Error(
+    `Footprint measurement is unsupported on ${process.platform}`
+  );
+}
 
 export async function processRssBytes(
   pid: number,
@@ -42,6 +80,78 @@ export async function processRssBytes(
     return kib * 1024;
   }
   throw new Error(`RSS measurement is unsupported on ${process.platform}`);
+}
+
+export async function processFootprintBytes(pid: number): Promise<number> {
+  assert.ok(
+    Number.isInteger(pid) && pid > 0 && pid <= 0x7fffffff,
+    `invalid process ID ${pid}`
+  );
+  if (process.platform === 'darwin') {
+    assert.ok(darwinRusage, 'Darwin rusage library is unavailable');
+    const data = new Uint8Array(RUSAGE_INFO_V4_SIZE);
+    const result = darwinRusage.symbols.proc_pid_rusage(
+      pid,
+      RUSAGE_INFO_V4,
+      ptr(data)
+    );
+    assert.equal(result, 0, `proc_pid_rusage failed for pid ${pid}: ${result}`);
+    const footprint = Number(
+      new DataView(data.buffer, data.byteOffset, data.byteLength).getBigUint64(
+        PHYS_FOOTPRINT_OFFSET,
+        true
+      )
+    );
+    assert.ok(
+      Number.isSafeInteger(footprint) && footprint > 0,
+      `invalid physical footprint for pid ${pid}: ${footprint}`
+    );
+    return footprint;
+  }
+  if (process.platform === 'linux') {
+    const status = await readFile(`/proc/${pid}/status`, 'utf8');
+    const fieldBytes = (name: string): number => {
+      const match = new RegExp(`^${name}:\\s+(\\d+)\\s+kB\\s*$`, 'm').exec(
+        status
+      );
+      assert.ok(match?.[1], `missing ${name} for pid ${pid}`);
+      const bytes = Number(match[1]) * 1024;
+      assert.ok(
+        Number.isSafeInteger(bytes) && bytes >= 0,
+        `invalid ${name} for pid ${pid}: ${match[1]}`
+      );
+      return bytes;
+    };
+    const footprint = fieldBytes('RssAnon') + fieldBytes('VmSwap');
+    assert.ok(
+      Number.isSafeInteger(footprint),
+      `invalid footprint for pid ${pid}`
+    );
+    return footprint;
+  }
+  throw new Error(
+    `Footprint measurement is unsupported on ${process.platform}`
+  );
+}
+
+export function memoryGrowth(
+  before: MemorySnapshot,
+  after: MemorySnapshot
+): MemoryGrowth {
+  let footprint = 0;
+  let rss = 0;
+  const added: number[] = [];
+  const exited: number[] = [];
+  for (const [pid, current] of after) {
+    const previous = before.get(pid);
+    if (!previous) added.push(pid);
+    footprint += current.footprint - (previous?.footprint ?? 0);
+    rss += current.rss - (previous?.rss ?? 0);
+  }
+  for (const pid of before.keys()) {
+    if (!after.has(pid)) exited.push(pid);
+  }
+  return { footprint, rss, added, exited };
 }
 
 export async function hashFile(
@@ -270,11 +380,11 @@ export class ProofBrowser {
     await Bun.sleep(500);
   }
 
-  async rendererRss(includeUtility = false): Promise<number> {
+  async rendererMemory(includeUtility = false): Promise<MemorySnapshot> {
     const response = await this.cdp.send('SystemInfo.getProcessInfo');
     const processes = response['processInfo'];
     assert.ok(Array.isArray(processes), 'CDP returned no browser process list');
-    const selected: number[] = [];
+    const selected = new Map<number, ProcessMemory>();
     let rendererCount = 0;
     for (const entry of processes) {
       if (entry !== null && typeof entry === 'object') {
@@ -283,18 +393,23 @@ export class ProofBrowser {
           entry.type === 'renderer' ||
           (includeUtility && entry.type === 'utility')
         ) {
+          const pid = entry.id;
           assert.ok(
-            typeof entry.id === 'number',
-            'CDP process has no process ID'
+            typeof pid === 'number' && Number.isInteger(pid) && pid > 0,
+            'CDP process has no valid process ID'
           );
-          selected.push(entry.id);
+          assert.ok(!selected.has(pid), `CDP returned duplicate pid ${pid}`);
+          const type = entry.type === 'renderer' ? 'renderer' : 'utility';
+          const [footprint, rss] = await Promise.all([
+            processFootprintBytes(pid),
+            processRssBytes(pid),
+          ]);
+          selected.set(pid, { type, footprint, rss });
         }
       }
     }
     assert.ok(rendererCount > 0, 'CDP returned no renderer process');
-    let rss = 0;
-    for (const pid of selected) rss += await processRssBytes(pid);
-    return rss;
+    return selected;
   }
 
   async download(page: Page): Promise<string> {
@@ -322,9 +437,18 @@ export class ProofBrowser {
     throw new Error('download did not complete');
   }
 
-  async memoryNegativeControl(page: Page): Promise<number> {
+  async memoryNegativeControl(page: Page): Promise<{
+    allocation: MemoryGrowth;
+    retained: MemoryGrowth;
+    churn: MemoryGrowth;
+  }> {
+    assert.equal(
+      await this.evaluate<string>(page, 'location.href'),
+      'about:blank',
+      'memory calibration requires its own blank page'
+    );
     await this.pressure(page);
-    const before = await this.rendererRss();
+    const allocationBaseline = await this.rendererMemory();
     await this.evaluate(
       page,
       `(() => {
@@ -333,14 +457,57 @@ export class ProofBrowser {
       globalThis.__largeProofAllocation = bytes;
     })()`
     );
-    const growth = (await this.rendererRss()) - before;
+    const allocation = memoryGrowth(
+      allocationBaseline,
+      await this.rendererMemory()
+    );
     assert.ok(
-      growth > 400 * MIB,
-      `memory sampler missed 512 MiB allocation: growth=${growth}`
+      allocation.footprint > 400 * MIB,
+      `memory sampler missed 512 MiB allocation: ${JSON.stringify(allocation)}`
     );
     await this.evaluate(page, 'globalThis.__largeProofAllocation = null');
     await this.pressure(page);
-    return growth;
+
+    const baseline = await this.rendererMemory();
+    await this.evaluate(
+      page,
+      `(() => {
+      const retained = [];
+      for (let n = 0; n < 1536; n++) {
+        const bytes = new Uint8Array(64 * 1024);
+        for (let i = 0; i < bytes.length; i += 4096) bytes[i] = 1;
+        retained.push(bytes);
+      }
+      globalThis.__largeProofRetained = retained;
+    })()`
+    );
+    await this.pressure(page);
+    const retained = memoryGrowth(baseline, await this.rendererMemory());
+    assert.ok(
+      retained.footprint > 64 * MIB,
+      `memory sampler missed retained allocations: ${JSON.stringify(retained)}`
+    );
+
+    await this.evaluate(
+      page,
+      `(() => {
+      globalThis.__largeProofRetained = null;
+      let checksum = 0;
+      for (let n = 0; n < 8192; n++) {
+        const bytes = new Uint8Array(64 * 1024);
+        for (let i = 0; i < bytes.length; i += 4096) bytes[i] = 1;
+        checksum += bytes[n % bytes.length];
+      }
+      globalThis.__largeProofChurnChecksum = checksum;
+    })()`
+    );
+    await this.pressure(page);
+    const churn = memoryGrowth(baseline, await this.rendererMemory());
+    assert.ok(
+      churn.footprint < 64 * MIB,
+      `memory sampler counted released churn: ${JSON.stringify(churn)}`
+    );
+    return { allocation, retained, churn };
   }
 
   async closePage(page: Page): Promise<void> {
