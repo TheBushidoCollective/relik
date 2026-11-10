@@ -9,15 +9,14 @@
  * composition timeline, and that the loaded element matches the manifest.
  *
  * Time domain: composition time, the document's `timeline_range` domain that
- * anchors and markers use. Every time the session reports is rescaled to the
- * composition clock rate (`timeline_range.duration.rate`), the rate the
- * existing controller uses. A program's `range.start_time` must equal
- * `timeline_range.start_time`, so media time is `composition time -
- * range.start_time`.
+ * anchors and markers use. Every time the session reports is on the composition
+ * clock (`timeline_range.duration.rate`), the rate the existing controller uses.
+ * A program's `range.start_time` must equal `timeline_range.start_time`, so media
+ * time is `composition time - range.start_time`.
  *
  * Session policy by archive status:
- * - `legacy` (no manifest): the existing controller plays the composition, as
- *   before. No banner.
+ * - `legacy` (no manifest): the existing controller plays the composition and
+ *   receives every call directly, as before. No queue, no banner.
  * - `program` (valid program): the native video plays the composition. A
  *   scoped track or item uses the existing controller and original media.
  *   `setScope(scope, { source: 'program' })` bounds the native video to a range
@@ -26,18 +25,19 @@
  *   composition play is rejected and nothing decodes. Only a scoped track or
  *   item plays, through the existing controller, created lazily.
  *
- * Transitions run one at a time, in order. A scope is committed only after the
- * existing controller accepts it, and a failed transition restores the previous
- * state.
+ * Transitions (scope changes, and seek and play on program and focus) run one
+ * at a time, in call order. Seeks coalesce: only the newest seek does work, and
+ * a superseded seek resolves without touching the element. A pause cancels any
+ * play that has not started. A scope is committed only after the existing
+ * controller accepts it, and a failed transition restores the previous state.
  */
 
 import {
   addRationalTimes,
   compareRationalTimes,
-  OTIO_PROGRAM_AUDIO_CODEC,
   MAX_OTIO_PROGRAM_FPS,
+  OTIO_PROGRAM_AUDIO_CODEC,
   readOtioProgramArchive,
-  rescaleTime,
   timeToSeconds,
   type OtioProgramErrorCode,
   type OtioProgramReasonCode,
@@ -52,17 +52,10 @@ import type {
   OtioPlaybackState,
 } from './otio-playback.ts';
 
-/** Viewer-only reasons, raised after the format verifier has accepted the archive. */
-export type OtioProgramViewerCode =
-  | 'load-mismatch'
-  | 'load-failed'
-  | 'playback-failed';
-
-/** Every code a reason can carry: the format vocabulary plus viewer-only codes. */
+/** Every code a program reason can carry. Both sets are spec names; no viewer-only codes exist. */
 export type OtioProgramReasonCodeAll =
   | OtioProgramReasonCode
-  | OtioProgramErrorCode
-  | OtioProgramViewerCode;
+  | OtioProgramErrorCode;
 
 export interface OtioProgramReason {
   readonly code: OtioProgramReasonCodeAll;
@@ -71,13 +64,42 @@ export interface OtioProgramReason {
   readonly time?: OtioRationalTime;
 }
 
+const PROGRAM_ERROR_CODES: readonly OtioProgramErrorCode[] = [
+  'malformed-manifest',
+  'unsafe-path',
+  'archive-mismatch',
+  'digest-mismatch',
+  'size-cap-exceeded',
+];
+
+/**
+ * Maps a thrown value to a spec code. Only `OtioProgramErrorCode` values pass
+ * through. Other failures, including ZIP read errors, map to a spec name:
+ * a decompression limit is `size-cap-exceeded`, and anything else is
+ * `archive-mismatch`.
+ */
+export function reasonCodeForError(error: unknown): OtioProgramReasonCodeAll {
+  if (
+    error instanceof Error &&
+    'code' in error &&
+    typeof error.code === 'string'
+  ) {
+    if ((PROGRAM_ERROR_CODES as readonly string[]).includes(error.code)) {
+      return error.code as OtioProgramErrorCode;
+    }
+    if (error.code === 'decompression-limit') return 'size-cap-exceeded';
+  }
+  return 'archive-mismatch';
+}
+
 const VIDEO_CODEC = /^avc1\.[0-9a-fA-F]{6}$/;
 const FRAME_EPSILON = 1e-6;
+/** Longest allowed difference between the element's duration and the manifest's. */
+const DURATION_TOLERANCE_MIN_SECONDS = 0.1;
+/** Hard cap: a hostile frame rate cannot widen the duration check past one second. */
+const DURATION_TOLERANCE_MAX_SECONDS = 1;
 /** Lowest frame rate the viewer accepts. The format accepts far lower rates. */
 const MIN_VIEWER_FPS = 1;
-/** Duration tolerance floor and cap, in seconds. The cap stops a frame rate from widening the check. */
-const DURATION_TOLERANCE_MIN_SECONDS = 0.1;
-const DURATION_TOLERANCE_MAX_SECONDS = 1;
 
 export function frameRateAllowed(frameRate: {
   readonly num: number;
@@ -138,6 +160,11 @@ export interface ResolveOtioProgramInput {
   readonly timelineId: string;
   /** Every timeline id in the document, for ProgramFormat's document check. */
   readonly timelineIds: readonly string[];
+  /**
+   * Canonical `media/...` archive paths the OTIO document references, derived
+   * from the same parsed document as `timelineIds`. Never taken from the manifest.
+   */
+  readonly mediaPaths: readonly string[];
   readonly timelineRange: OtioTimeRange;
   readonly canPlayType?: (type: string) => CanPlayTypeResult;
 }
@@ -170,27 +197,21 @@ export class CompositionPlaybackDisabled extends Error {
 const defaultCanPlayType = (type: string): CanPlayTypeResult =>
   document.createElement('video').canPlayType(type);
 
-const reasonFromError = (
-  error: unknown,
-  fallback: OtioProgramReasonCodeAll
-): OtioProgramReason => {
+const reasonFromError = (error: unknown): OtioProgramReason => {
   if (error instanceof ProgramRejection) {
     return { code: error.code, message: error.message };
   }
-  if (
-    error instanceof Error &&
-    'code' in error &&
-    typeof error.code === 'string'
-  ) {
-    return { code: error.code as OtioProgramErrorCode, message: error.message };
-  }
-  return { code: fallback, message: 'Program could not be read.' };
+  return {
+    code: reasonCodeForError(error),
+    message:
+      error instanceof Error ? error.message : 'Program could not be read.',
+  };
 };
 
 /**
  * Resolves the program for one composition timeline. A missing manifest is
  * `legacy`. Any rejection by the format verifier or the viewer checks is
- * `unavailable`, with the reason code the verifier or check uses.
+ * `unavailable`, with the spec code it maps to.
  */
 export async function resolveOtioProgram(
   input: ResolveOtioProgramInput
@@ -202,6 +223,7 @@ export async function resolveOtioProgram(
     const archive = await readOtioProgramArchive(zip, {
       document_sha256: zip.contentSha256,
       timeline_ids: input.timelineIds,
+      media_paths: [...input.mediaPaths],
     });
     if (archive === null) return { status: 'legacy' };
 
@@ -287,10 +309,7 @@ export async function resolveOtioProgram(
       },
     };
   } catch (error) {
-    return {
-      status: 'unavailable',
-      reasons: [reasonFromError(error, 'malformed-manifest')],
-    };
+    return { status: 'unavailable', reasons: [reasonFromError(error)] };
   }
 }
 
@@ -313,7 +332,7 @@ export interface OtioProgramPlayer {
 export interface OtioProgramPlayerOptions {
   readonly video: HTMLVideoElement;
   readonly program: ValidatedProgram;
-  /** Called when playback errors after a successful load-time check. */
+  /** Called when playback fails after a successful load-time check. */
   readonly onFailure: (reason: OtioProgramReason) => void;
 }
 
@@ -323,6 +342,9 @@ interface FrameBounds {
   /** First frame after the range. */
   readonly end: number;
 }
+
+const isAbortError = (error: unknown): boolean =>
+  error instanceof Error && error.name === 'AbortError';
 
 export function createOtioProgramPlayer(
   options: OtioProgramPlayerOptions
@@ -341,7 +363,9 @@ export function createOtioProgramPlayer(
   let frameRequest = 0;
   let objectUrl: string | undefined;
   let bounds: FrameBounds | null = null;
-  let settlePendingSeek: (() => void) | undefined;
+  /** Settles the pending seek with `false` when it errored or the player was disposed. */
+  let settlePendingSeek: ((seeked: boolean) => void) | undefined;
+  let settlePendingPlay: (() => void) | undefined;
 
   const clampFrame = (index: number): number =>
     Math.min(Math.max(index, 0), lastFrame);
@@ -412,13 +436,13 @@ export function createOtioProgramPlayer(
   const tick = (): void => {
     frameRequest = 0;
     if (disposed) return;
-    if (syncFrame()) emit();
-    if (bounds !== null && frame >= bounds.end) {
-      // Pause at the range end. The seek lands on the last frame in range.
+    // Check the bound before emitting, so no frame past the range end is reported.
+    if (bounds !== null && frameAtElement() >= bounds.end) {
       video.pause();
       video.currentTime = (bounds.end - 1 + 0.5) * frameSeconds;
       return;
     }
+    if (syncFrame()) emit();
     if (!video.paused && !video.ended)
       frameRequest = requestAnimationFrame(tick);
   };
@@ -463,7 +487,7 @@ export function createOtioProgramPlayer(
     if (disposed || !isLoaded) return;
     video.pause();
     onFailure({
-      code: 'playback-failed',
+      code: 'unsupported-browser',
       message: 'The native program could not be played.',
     });
   });
@@ -475,7 +499,7 @@ export function createOtioProgramPlayer(
       Math.abs(video.duration - timeToSeconds(program.duration)) > tolerance
     ) {
       throw new ProgramRejection(
-        'load-mismatch',
+        'archive-mismatch',
         'Program duration does not match the manifest.'
       );
     }
@@ -484,7 +508,7 @@ export function createOtioProgramPlayer(
       video.videoHeight !== program.height
     ) {
       throw new ProgramRejection(
-        'load-mismatch',
+        'archive-mismatch',
         'Program dimensions do not match the manifest.'
       );
     }
@@ -499,13 +523,19 @@ export function createOtioProgramPlayer(
       loaded.reject(
         error instanceof ProgramRejection
           ? error
-          : new ProgramRejection('load-failed', 'Program failed to load.')
+          : new ProgramRejection(
+              'unsupported-browser',
+              'Program failed to load.'
+            )
       );
     }
   };
   const onLoadError = (): void => {
     loaded.reject(
-      new ProgramRejection('load-failed', 'The native program failed to load.')
+      new ProgramRejection(
+        'unsupported-browser',
+        'The native program failed to load.'
+      )
     );
   };
   video.addEventListener('loadedmetadata', onMetadata, { once: true });
@@ -525,29 +555,56 @@ export function createOtioProgramPlayer(
   video.load();
 
   /**
-   * Moves the element to a frame and settles when the seek finishes, fails, or
-   * the player is disposed. Disposal must never leave a seek pending.
+   * Moves the element to a frame and settles when the seek completes, errors,
+   * or the player is disposed. A failed or disposed seek never reports a frame.
    */
   const seekToFrame = async (target: number): Promise<void> => {
     if (disposed) return;
     const seconds = (target + 0.5) * frameSeconds;
     if (Math.abs(video.currentTime - seconds) > 1e-4) {
-      const settled = Promise.withResolvers<void>();
-      const settle = (): void => {
-        video.removeEventListener('seeked', settle);
-        video.removeEventListener('error', settle);
-        if (settlePendingSeek === settle) settlePendingSeek = undefined;
-        settled.resolve();
+      const settled = Promise.withResolvers<boolean>();
+      const finish = (seeked: boolean): void => {
+        video.removeEventListener('seeked', onSeeked);
+        video.removeEventListener('error', onError);
+        if (settlePendingSeek === finish) settlePendingSeek = undefined;
+        settled.resolve(seeked);
       };
-      settlePendingSeek = settle;
-      video.addEventListener('seeked', settle);
-      video.addEventListener('error', settle);
+      const onSeeked = (): void => finish(true);
+      const onError = (): void => finish(false);
+      settlePendingSeek = finish;
+      video.addEventListener('seeked', onSeeked);
+      video.addEventListener('error', onError);
       video.currentTime = seconds;
-      await settled.promise;
+      const seeked = await settled.promise;
+      if (!seeked || disposed) return;
     }
     if (disposed) return;
     frame = target;
     emit();
+  };
+
+  /**
+   * Starts playback and settles when `play()` resolves, fails, errors, or the
+   * player is disposed. An interrupted play (a pause during start-up) is not a
+   * failure, so it never wedges the caller.
+   */
+  const startElement = async (): Promise<void> => {
+    const settled = Promise.withResolvers<void>();
+    const onError = (): void => settled.resolve();
+    settlePendingPlay = () => settled.resolve();
+    video.addEventListener('error', onError);
+    try {
+      await Promise.race([
+        video.play().catch((error: unknown) => {
+          if (isAbortError(error)) return;
+          throw error;
+        }),
+        settled.promise,
+      ]);
+    } finally {
+      video.removeEventListener('error', onError);
+      settlePendingPlay = undefined;
+    }
   };
 
   return {
@@ -563,7 +620,7 @@ export function createOtioProgramPlayer(
           await seekToFrame(bounds.start);
         }
       }
-      await video.play();
+      await startElement();
     },
     pause() {
       if (disposed) return;
@@ -588,7 +645,8 @@ export function createOtioProgramPlayer(
     dispose() {
       if (disposed) return;
       disposed = true;
-      settlePendingSeek?.();
+      settlePendingSeek?.(false);
+      settlePendingPlay?.();
       stopFrameLoop();
       video.pause();
       for (const remove of cleanup.splice(0)) remove();
@@ -680,6 +738,15 @@ const inRange = (time: OtioRationalTime, range: OtioTimeRange): boolean =>
     addRationalTimes(range.start_time, range.duration)
   ) < 0;
 
+/** Expresses a time on the composition clock. Program times are frame-based, so they round to a clock tick. */
+const atClock = (
+  time: OtioRationalTime,
+  clockRate: number
+): OtioRationalTime => ({
+  value: Math.round(timeToSeconds(time) * clockRate),
+  rate: clockRate,
+});
+
 const idleState = (
   time: OtioRationalTime,
   duration: OtioRationalTime,
@@ -712,12 +779,17 @@ class OtioPlaybackSessionImpl implements OtioPlaybackSession {
   private controllerUnsubscribe: (() => void) | undefined;
   private scoped = false;
   private programScope: OtioPlaybackScope | null = null;
+  /** Composition time on the clock, used while no native program is playing. */
   private idleTime: OtioRationalTime;
   private muted = false;
   private baseMediaPreviewAllowed = false;
   private disposed = false;
   /** Tail of the transition queue: transitions run one at a time, in call order. */
   private transitions: Promise<void> = Promise.resolve();
+  /** Increments on every seek; only the newest seek does work when it runs. */
+  private seekSerial = 0;
+  /** Increments on every play and pause; a queued play runs only if it is still the latest intent. */
+  private playIntent = 0;
 
   constructor(options: OtioPlaybackSessionOptions) {
     this.options = options;
@@ -745,7 +817,8 @@ class OtioPlaybackSessionImpl implements OtioPlaybackSession {
           video,
           program,
           onFailure: (reason) => {
-            void this.serialize(() => this.failProgram(player, reason));
+            // Not queued: a failure must take effect even while a transition waits on this element.
+            this.failProgram(player, reason);
           },
         });
         try {
@@ -761,7 +834,7 @@ class OtioPlaybackSessionImpl implements OtioPlaybackSession {
           });
         } catch (error) {
           player.dispose();
-          this.markUnavailable(reasonFromError(error, 'load-failed'));
+          this.markUnavailable(reasonFromError(error));
         }
       }
     }
@@ -815,26 +888,29 @@ class OtioPlaybackSessionImpl implements OtioPlaybackSession {
       const playerState = this.player.getState();
       return {
         ...playerState,
-        time: rescaleTime(playerState.time, this.clockRate),
-        duration: rescaleTime(playerState.duration, this.clockRate),
+        time: atClock(playerState.time, this.clockRate),
+        duration: atClock(playerState.duration, this.clockRate),
         rate: this.clockRate,
         scope: this.programScope,
       };
     }
     return idleState(
-      rescaleTime(this.idleTime, this.clockRate),
+      this.idleTime,
       this.options.timelineRange.duration,
       this.clockRate
     );
   }
 
   play(): Promise<void> {
+    // Legacy has no queue: the existing controller plays directly.
+    if (this.status === 'legacy' && this.controller !== undefined) {
+      return this.controller.play();
+    }
+    const intent = ++this.playIntent;
     return this.serialize(async () => {
-      if (this.disposed) return;
-      if (
-        this.controller !== undefined &&
-        (this.scoped || this.status === 'legacy')
-      ) {
+      // A pause or a later play arrived first: this play no longer applies.
+      if (this.disposed || intent !== this.playIntent) return;
+      if (this.controller !== undefined && this.scoped) {
         await this.controller.play();
         return;
       }
@@ -847,6 +923,8 @@ class OtioPlaybackSessionImpl implements OtioPlaybackSession {
   }
 
   pause(): void {
+    // Cancels any play that has not started yet, then pauses at once.
+    this.playIntent += 1;
     if (
       this.controller !== undefined &&
       (this.scoped || this.status === 'legacy')
@@ -858,12 +936,15 @@ class OtioPlaybackSessionImpl implements OtioPlaybackSession {
   }
 
   seek(time: OtioRationalTime): Promise<void> {
+    // Legacy has no queue: the existing controller coalesces its own renders.
+    if (this.status === 'legacy' && this.controller !== undefined) {
+      return this.controller.seek(time);
+    }
+    const serial = ++this.seekSerial;
     return this.serialize(async () => {
-      if (this.disposed) return;
-      if (
-        this.controller !== undefined &&
-        (this.scoped || this.status === 'legacy')
-      ) {
+      // A newer seek arrived before this one ran: the newest seek does the work.
+      if (this.disposed || serial !== this.seekSerial) return;
+      if (this.controller !== undefined && this.scoped) {
         await this.controller.seek(time);
         return;
       }
@@ -872,7 +953,7 @@ class OtioPlaybackSessionImpl implements OtioPlaybackSession {
         return;
       }
       // Unavailable composition: positioning only, nothing decodes.
-      this.idleTime = time;
+      this.idleTime = this.clampToComposition(time);
       this.emit();
     });
   }
@@ -886,6 +967,8 @@ class OtioPlaybackSessionImpl implements OtioPlaybackSession {
     scope: OtioPlaybackScope | null,
     options?: OtioScopeOptions
   ): Promise<void> {
+    // Legacy has no queue: the existing controller receives the scope directly.
+    if (this.status === 'legacy') return this.applyScope(scope, options);
     return this.serialize(() => this.applyScope(scope, options));
   }
 
@@ -895,6 +978,8 @@ class OtioPlaybackSessionImpl implements OtioPlaybackSession {
 
   subscribe(listener: OtioPlaybackListener): () => void {
     this.listeners.add(listener);
+    // The controller contract delivers the current state at once.
+    listener(this.getState());
     return () => {
       this.listeners.delete(listener);
     };
@@ -1000,7 +1085,7 @@ class OtioPlaybackSessionImpl implements OtioPlaybackSession {
       await this.player.seek(time);
       this.player.setMuted(this.muted);
     } else {
-      this.idleTime = time;
+      this.idleTime = this.clampToComposition(time);
     }
     this.detachController();
     this.scoped = false;
@@ -1049,6 +1134,17 @@ class OtioPlaybackSessionImpl implements OtioPlaybackSession {
     return this.idleTime;
   }
 
+  /** Clamps a time into the composition range and expresses it on the clock. */
+  private clampToComposition(time: OtioRationalTime): OtioRationalTime {
+    const start = this.options.timelineRange.start_time;
+    const end = addRationalTimes(start, this.options.timelineRange.duration);
+    if (compareRationalTimes(time, start) < 0)
+      return atClock(start, this.clockRate);
+    if (compareRationalTimes(time, end) > 0)
+      return atClock(end, this.clockRate);
+    return atClock(time, this.clockRate);
+  }
+
   private attachController(controller: OtioPlaybackController): void {
     this.controller = controller;
     controller.setBaseMediaPreviewAllowed(this.baseMediaPreviewAllowed);
@@ -1069,12 +1165,12 @@ class OtioPlaybackSessionImpl implements OtioPlaybackSession {
   }
 
   /** The native program failed after it loaded. Composition play is rejected from here on. */
-  private async failProgram(
+  private failProgram(
     failed: OtioProgramPlayer,
     reason: OtioProgramReason
-  ): Promise<void> {
+  ): void {
     if (this.disposed || this.player !== failed) return;
-    const time = failed.getState().time;
+    const time = atClock(failed.getState().time, this.clockRate);
     this.playerUnsubscribe?.();
     this.playerUnsubscribe = undefined;
     this.player = undefined;
