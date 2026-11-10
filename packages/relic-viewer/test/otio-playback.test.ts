@@ -1767,6 +1767,7 @@ describe('otio playback controller', () => {
     custom?: { document: OtioDocumentV1; audio: Blob },
     clockOptions?: {
       anchorOffset?: number;
+      anchorLateAttempts?: number;
       sampleRate?: 44100 | 48000;
       anchorQuanta?: readonly [number, number];
       scheduleAdvanceFrames?: number;
@@ -1774,6 +1775,10 @@ describe('otio playback controller', () => {
       noLease?: boolean;
       leaseGate?: Promise<void>;
       ownedContext?: boolean;
+      revokeLeaseOnResume?: boolean;
+      foreignOnResume?: boolean;
+      suspendLeaseFails?: boolean;
+      initialContextState?: 'running' | 'suspended';
       suspendGate?: Promise<void>;
       resumeGate?: Promise<void>;
       proofBudget?: boolean;
@@ -1945,7 +1950,7 @@ describe('otio playback controller', () => {
       readonly sampleRate = sampleRate;
       readonly destination = new FakeNode();
       readonly audioWorklet = { addModule: async () => {} };
-      state = 'running';
+      state = clockOptions?.initialContextState ?? 'running';
       readonly sources: FakeSource[] = [];
       readonly timestampReads: number[] = [];
       readonly listeners = new Map<string, Set<() => void>>();
@@ -2164,6 +2169,16 @@ describe('otio playback controller', () => {
           );
         if (audioContext.state === 'running' && !this.readySent) {
           this.readySent = true;
+          if (gates.indexOf(this) < (clockOptions?.anchorLateAttempts ?? 0)) {
+            emit({
+              type: 'anchor-late',
+              firstFrame: this.initialFrame,
+              observedFrame: this.initialFrame + 128,
+              prestartSamples: 0,
+              budget: 5120,
+            });
+            return;
+          }
           emit({
             type: 'anchor-certified',
             firstFrame: this.initialFrame + (clockOptions?.anchorOffset ?? 0),
@@ -2379,11 +2394,23 @@ describe('otio playback controller', () => {
         : {
             acquireAudioClockLease: async () => {
               await clockOptions?.leaseGate;
+              const leaseAbort = new AbortController();
               return {
                 context: audioContext as unknown as AudioContext,
-                signal: new AbortController().signal,
-                suspend: () => audioContext.suspend(),
-                resume: () => audioContext.resume(),
+                signal: leaseAbort.signal,
+                suspend: async () => {
+                  if (clockOptions?.suspendLeaseFails)
+                    throw new Error('lease suspend denied');
+                  await audioContext.suspend();
+                },
+                resume: async () => {
+                  await audioContext.resume();
+                  if (clockOptions?.foreignOnResume) {
+                    audioContext.state = 'suspended';
+                    audioContext.dispatch('statechange');
+                  }
+                  if (clockOptions?.revokeLeaseOnResume) leaseAbort.abort();
+                },
                 release: async () => {
                   leaseReleases++;
                 },
@@ -2744,6 +2771,234 @@ describe('otio playback controller', () => {
       fixture.restore();
     }
   });
+  test('a late future anchor retires before one bounded retry', async () => {
+    const fixture = independentPcmFixture(false, false, undefined, {
+      anchorLateAttempts: 1,
+      proofBudget: true,
+    });
+    const proof = globalThis as typeof globalThis & {
+      __otioProofPcmSnapshot: () => {
+        gateReservations: number;
+        carrierReservations: number;
+      };
+    };
+    try {
+      await fixture.start();
+      expect(fixture.gates).toHaveLength(2);
+      expect(fixture.gates[0]!.epoch).not.toBe(fixture.gates[1]!.epoch);
+      expect(proof.__otioProofPcmSnapshot().gateReservations).toBe(1);
+      expect(proof.__otioProofPcmSnapshot().carrierReservations).toBe(1);
+      expect(fixture.suspensions).toBe(0);
+      expect(fixture.resumes).toBe(0);
+    } finally {
+      fixture.restore();
+    }
+  });
+
+  test('failed borrowed bootstrap restores the owner suspend exactly once through the lease', async () => {
+    const fixture = independentPcmFixture(false, false, undefined, {
+      anchorLateAttempts: 2,
+      initialContextState: 'suspended',
+    });
+    try {
+      let settled = false;
+      const pending = fixture.playback.play().finally(() => {
+        settled = true;
+      });
+      for (let i = 0; i < 50 && !settled; i++)
+        await fixture.advance(
+          fixture.wall + 8,
+          fixture.renderFrame + 384,
+          fixture.outputFrame + 384
+        );
+      expect(settled).toBe(true);
+      await pending;
+      for (let i = 0; i < 10; i++) await fixture.flush();
+      expect(fixture.resumes).toBe(1);
+      expect(fixture.suspensions).toBe(1);
+      expect(fixture.audioContext.state).toBe('suspended');
+      expect(fixture.leaseReleases).toBe(1);
+      expect(fixture.playback.getState().playing).toBe(false);
+    } finally {
+      fixture.restore();
+    }
+  });
+
+  test('a revoked borrowed lease leaves the owner clock untouched', async () => {
+    const fixture = independentPcmFixture(false, false, undefined, {
+      initialContextState: 'suspended',
+      revokeLeaseOnResume: true,
+    });
+    try {
+      await fixture.playback.play();
+      for (let i = 0; i < 10; i++) await fixture.flush();
+      expect(fixture.suspensions).toBe(0);
+      expect(fixture.audioContext.state).toBe('running');
+      expect(fixture.leaseReleases).toBe(1);
+      expect(fixture.playback.getState().playing).toBe(false);
+    } finally {
+      fixture.restore();
+    }
+  });
+
+  test('a foreign owner transition during bootstrap is never overwritten', async () => {
+    const fixture = independentPcmFixture(false, false, undefined, {
+      initialContextState: 'suspended',
+      foreignOnResume: true,
+    });
+    try {
+      await fixture.playback.play();
+      for (let i = 0; i < 10; i++) await fixture.flush();
+      expect(fixture.suspensions).toBe(0);
+      expect(fixture.audioContext.state).toBe('suspended');
+      expect(fixture.leaseReleases).toBe(1);
+      expect(fixture.playback.getState().playing).toBe(false);
+    } finally {
+      fixture.restore();
+    }
+  });
+
+  test('a failed borrowed restore is reported and never claimed as restored', async () => {
+    const fixture = independentPcmFixture(false, false, undefined, {
+      anchorLateAttempts: 2,
+      initialContextState: 'suspended',
+      suspendLeaseFails: true,
+    });
+    try {
+      await fixture.playback.play();
+      for (let i = 0; i < 10; i++) await fixture.flush();
+      expect(fixture.suspensions).toBe(0);
+      expect(fixture.audioContext.state).toBe('running');
+      expect(fixture.leaseReleases).toBe(1);
+      expect(
+        fixture.playback
+          .getState()
+          .diagnostics.some((item) =>
+            item.message.includes(
+              'Borrowed audio context restore failed: lease suspend denied'
+            )
+          )
+      ).toBe(true);
+    } finally {
+      fixture.restore();
+    }
+  });
+
+  test('an owned context that fails bootstrap is never suspended', async () => {
+    const fixture = independentPcmFixture(false, false, undefined, {
+      anchorLateAttempts: 2,
+      initialContextState: 'suspended',
+      ownedContext: true,
+    });
+    try {
+      await fixture.playback.play();
+      for (let i = 0; i < 10; i++) await fixture.flush();
+      expect(fixture.resumes).toBe(1);
+      expect(fixture.suspensions).toBe(0);
+      expect(fixture.audioContext.state).toBe('running');
+      expect(fixture.playback.getState().playing).toBe(false);
+    } finally {
+      fixture.restore();
+    }
+  });
+
+  test('two late future anchors do not create a third gate', async () => {
+    const fixture = independentPcmFixture(false, false, undefined, {
+      anchorLateAttempts: 2,
+    });
+    try {
+      let settled = false;
+      const pending = fixture.playback.play().finally(() => {
+        settled = true;
+      });
+      for (let i = 0; i < 50 && !settled; i++)
+        await fixture.advance(
+          fixture.wall + 8,
+          fixture.renderFrame + 384,
+          fixture.outputFrame + 384
+        );
+      expect(settled).toBe(true);
+      await pending;
+      expect(fixture.gates).toHaveLength(2);
+      expect(fixture.commands.some((item) => item.type === 'arm')).toBe(false);
+      expect(fixture.playback.getState().playing).toBe(false);
+    } finally {
+      fixture.restore();
+    }
+  });
+
+  test.each([false, true] as const)(
+    'a running %s context bootstraps without suspend or resume',
+    async (ownedContext) => {
+      const fixture = independentPcmFixture(false, false, undefined, {
+        ownedContext,
+      });
+      try {
+        await fixture.start();
+        expect(fixture.suspensions).toBe(0);
+        expect(fixture.resumes).toBe(0);
+        expect(fixture.gates).toHaveLength(1);
+      } finally {
+        fixture.restore();
+      }
+    }
+  );
+
+  test.each([false, true] as const)(
+    'an initially suspended %s context resumes exactly once without suspension',
+    async (ownedContext) => {
+      const fixture = independentPcmFixture(false, false, undefined, {
+        ownedContext,
+        initialContextState: 'suspended',
+      });
+      try {
+        await fixture.start();
+        expect(fixture.suspensions).toBe(0);
+        expect(fixture.resumes).toBe(1);
+        expect(fixture.gates).toHaveLength(1);
+      } finally {
+        fixture.restore();
+      }
+    }
+  );
+
+  test('pause and play reuse the running certified session without context transitions', async () => {
+    const fixture = independentPcmFixture(false, false, undefined, {
+      autoEndSources: true,
+    });
+    try {
+      await fixture.start();
+      fixture.playback.pause();
+      await fixture.flush();
+      const stop = fixture.commands.find((command) => command.type === 'stop')!;
+      expect(stop).toBeDefined();
+      const boundary = Number(stop.stopFrame);
+      await fixture.advance(fixture.wall + 8, boundary + 256, boundary + 256);
+      await fixture.flush();
+      expect(fixture.playback.getState().playing).toBe(false);
+      let settled = false;
+      const resumed = fixture.playback.play().finally(() => {
+        settled = true;
+      });
+      for (let i = 0; i < 50 && !settled; i++)
+        await fixture.advance(
+          fixture.wall + 8,
+          fixture.renderFrame + 384,
+          fixture.outputFrame + 384
+        );
+      expect(settled).toBe(true);
+      await resumed;
+      expect(fixture.playback.getState().playing).toBe(true);
+      expect(
+        fixture.commands.filter((command) => command.type === 'arm')
+      ).toHaveLength(2);
+      expect(fixture.gates).toHaveLength(1);
+      expect(fixture.suspensions).toBe(0);
+      expect(fixture.resumes).toBe(0);
+    } finally {
+      fixture.restore();
+    }
+  });
 
   test('borrowed contexts without a lease never enter the scheduled gate', async () => {
     const fixture = independentPcmFixture(false, false, undefined, {
@@ -2837,6 +3092,7 @@ describe('otio playback controller', () => {
     const gate = Promise.withResolvers<void>();
     const fixture = independentPcmFixture(false, false, undefined, {
       resumeGate: gate.promise,
+      initialContextState: 'suspended',
     });
     try {
       const pending = fixture.playback.play();
@@ -2864,34 +3120,20 @@ describe('otio playback controller', () => {
     }
   });
 
-  test.each([
-    { ownedContext: false, transition: 'suspend' },
-    { ownedContext: false, transition: 'resume' },
-    { ownedContext: true, transition: 'suspend' },
-    { ownedContext: true, transition: 'resume' },
-  ] as const)(
-    'late $transition quarantines the context (owned=$ownedContext)',
-    async ({ ownedContext, transition }) => {
+  test.each([false, true] as const)(
+    'late resume quarantines the context (owned=%s)',
+    async (ownedContext) => {
       const gate = Promise.withResolvers<void>();
       const fixture = independentPcmFixture(false, false, undefined, {
         ownedContext,
-        ...(transition === 'suspend'
-          ? { suspendGate: gate.promise }
-          : { resumeGate: gate.promise }),
+        resumeGate: gate.promise,
+        initialContextState: 'suspended',
       });
       try {
         const pending = fixture.playback.play();
-        for (
-          let i = 0;
-          i < 4 &&
-          (transition === 'suspend' ? fixture.suspensions : fixture.resumes) ===
-            0;
-          i++
-        )
+        for (let i = 0; i < 4 && fixture.resumes === 0; i++)
           await fixture.flush();
-        expect(
-          transition === 'suspend' ? fixture.suspensions : fixture.resumes
-        ).toBe(1);
+        expect(fixture.resumes).toBe(1);
         await fixture.advance(
           fixture.wall + 351,
           fixture.renderFrame,
@@ -3439,7 +3681,7 @@ describe('otio playback controller', () => {
       ).getChannelData(0);
       expect(successorSamples[0]).toBeCloseTo(((boundary - f0) % 997) / 997, 6);
       expect(fixture.gates).toHaveLength(1);
-      expect(fixture.suspensions).toBe(1);
+      expect(fixture.suspensions).toBe(0);
       expect(fixture.leaseReleases).toBe(1);
     } finally {
       fixture.restore();
