@@ -27,6 +27,7 @@ import {
   POLICY_LINK_LABEL,
   REPORT_LINK_LABEL,
   shareMailtoUrl,
+  sniffModelFormat,
   TRANSFER_LABEL,
 } from '@relic/format';
 import { registerBuiltInAnchorAdapters } from './anchor-adapters.ts';
@@ -83,6 +84,7 @@ import {
   type ScrollportWatch,
 } from './mark-visibility.ts';
 import { createMediaPlayer, type TimeAimDetail } from './media-player.ts';
+import type { mountModelView } from './model-view.ts';
 import {
   disposeOtioViews,
   type OtioAimDetail,
@@ -303,6 +305,7 @@ const MARKER_LABELS: Record<RenderRoute, string> = {
   image: 'Shown as an image, no author code',
   media: 'Plays in your browser, no author code',
   otio: 'Plays its timeline in your browser, no author code',
+  model: 'Shown as a 3D model, no author code',
   pdf: 'Rendered as a document, no author code',
   'sandboxed-html': 'Runs author code, isolated',
   'sandboxed-jsx': 'Runs author code, isolated',
@@ -1599,6 +1602,41 @@ export function buildCurrentStage(
           if (root.dataset['disposed'] === 'true') return;
           root.textContent = 'OTIO could not be loaded.';
           root.dataset['ready'] = 'error';
+        });
+      break;
+    }
+    case 'model': {
+      const root = document.createElement('section');
+      root.className = 'model-view';
+      root.textContent = 'Loading 3D model';
+      main.appendChild(root);
+      const format = sniffModelFormat(view.content);
+      const moduleUrl = '/assets/model-view.js';
+      let dispose: (() => void) | undefined;
+      const observer = new MutationObserver(() => {
+        if (!root.isConnected) {
+          observer.disconnect();
+          dispose?.();
+          root.dataset['disposed'] = 'true';
+        }
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+      void import(moduleUrl)
+        .then((module: { mountModelView: typeof mountModelView }) => {
+          if (root.dataset['disposed'] === 'true') return;
+          if (!format) throw new Error('Unrecognized model');
+          dispose = module.mountModelView(root, format, view.content);
+        })
+        .catch(() => {
+          if (root.dataset['disposed'] === 'true') return;
+          root.textContent =
+            'The 3D model could not be loaded. You can still download the original file.';
+          root.dispatchEvent(
+            new CustomEvent('relic:render-state', {
+              bubbles: true,
+              detail: 'error',
+            })
+          );
         });
       break;
     }
@@ -4986,6 +5024,13 @@ export function buildMarkControls(deps: MarkDeps): MarkControls {
         const media = next.querySelector(
           'video.relic-media, audio.relic-media, video, audio'
         ) as HTMLMediaElement | null;
+
+        if (next.querySelector('.model-view') !== null) {
+          mode = undefined;
+          timeMode = undefined;
+          tools.replaceChildren();
+          return;
+        }
 
         if (next.querySelector('.otio-view') !== null) {
           mode = undefined;
@@ -9377,6 +9422,14 @@ export function trackRenderState(
       } else {
         setReady();
       }
+      break;
+    }
+    case 'model': {
+      stage.addEventListener('relic:render-state', (event: Event) => {
+        const detail = (event as CustomEvent).detail;
+        if (detail === 'ready') setReady();
+        else if (detail === 'error') setError();
+      });
       break;
     }
     case 'pdf': {

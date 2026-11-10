@@ -164,6 +164,24 @@ export async function buildViewer(options?: {
     process.exit(1);
   }
 
+  // Model parsing and WebGL are loaded only when a 3D relic is opened.
+  for (const entry of ['model-view', 'model-parse-worker']) {
+    const modelBuild = await Bun.build({
+      entrypoints: [`${pkgDir}src/${entry}.ts`],
+      outdir: out,
+      target: 'browser',
+      format: 'esm',
+      minify: true,
+      splitting: false,
+      naming: '[name].js',
+    });
+    if (!modelBuild.success) {
+      for (const log of modelBuild.logs) console.error(log);
+      throw new Error(`Failed to bundle ${entry}`);
+    }
+  }
+  await copyFile(`${pkgDir}src/model-view.css`, `${out}model-view.css`);
+
   // `main.js` is served as `viewer.js`, because that is the name the shell and
   // the service worker's cache list both reference.
   await copyFile(`${out}main.js`, `${out}viewer.js`);

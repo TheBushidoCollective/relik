@@ -319,6 +319,8 @@ export function uncomparableClassNoun(route: RenderRoute): string | undefined {
       return 'recording';
     case 'pdf':
       return 'PDF';
+    case 'model':
+      return '3D model';
     default:
       return undefined;
   }
@@ -370,6 +372,9 @@ export function comparisonAvailability(
     } else if (view.route === 'pdf') {
       detail =
         'Relik shows this PDF in your browser but cannot show two versions of it side by side. Each version can still be opened on its own.';
+    } else if (view.route === 'model') {
+      detail =
+        'Relik shows this 3D model in your browser but cannot show two versions side by side. Each version can still be opened on its own.';
     }
     return {
       kind: 'unavailable',

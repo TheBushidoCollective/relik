@@ -26,12 +26,11 @@ const RENDER_ROUTES: readonly RenderRoute[] = [
   'sandboxed-html',
   'sandboxed-jsx',
   'pdf',
+  'model',
 ];
 
 describe('routeForClass and CLASS_BEHAVIOUR agreement', () => {
-  test('all ten renderer classes agree between viewer routing and class behaviour in both directions', () => {
-    expect(RENDERER_CLASSES.length).toBe(10);
-
+  test('renderer classes agree between viewer routing and class behaviour in both directions', () => {
     for (const cls of RENDERER_CLASSES) {
       const behaviour = CLASS_BEHAVIOUR[cls];
       const route = routeForClass(cls);

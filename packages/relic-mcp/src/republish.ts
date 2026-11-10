@@ -16,6 +16,7 @@ import {
   deriveShareProof,
   encryptRelic,
   isValidRelicId,
+  modelFormatFromFilename,
   normalizeTitle,
   type RendererClass,
   shareVerifierFor,
@@ -214,6 +215,10 @@ export async function republish(
   // still open, so naming the duplicate first names the cause.
   const source = await readSource(input.path, deps.files);
   const filename = input.filename ?? source.basename;
+  const coverFilename =
+    modelFormatFromFilename(source.basename) === undefined
+      ? filename
+      : source.basename;
   const normalizedTitle = normalizeTitle(input.title ?? filename);
   // Same rule as a first publish: the class comes from bytes in hand, never
   // from a tool input, so the taxonomy stays machine-attested.
@@ -265,7 +270,7 @@ export async function republish(
       // same && requested && !previous -> render first
       const outcome = await deps.renderCover({
         bytes: source.bytes,
-        filename,
+        filename: coverFilename,
         mimetype: guessMimetype(filename, rendererClass),
         rendererClass,
       });
@@ -305,7 +310,7 @@ export async function republish(
     try {
       coverOutcome = await deps.renderCover({
         bytes: source.bytes,
-        filename,
+        filename: coverFilename,
         mimetype: guessMimetype(filename, rendererClass),
         rendererClass,
       });

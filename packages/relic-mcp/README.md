@@ -32,9 +32,9 @@ For any client that takes a JSON config:
 3. Encrypts locally with AES-128-GCM under RFC 8188 `aes128gcm` framing.
 4. Uploads **only ciphertext**, straight to object storage under a signed URL.
    It does not pass through the Relic service.
-5. Tells the service four things: a coarse renderer class from a ten-value
-   list (`markdown`, `code`, `html`, `jsx`, `image`, `pdf`, `media`, `archive`,
-   `binary`, `otio`), this client's name, the ciphertext's byte length, and the
+5. Tells the service four things: a coarse renderer class from an eleven-value
+   list (`markdown`, `code`, `html`, `jsx`, `image`, `pdf`, `model`, `media`,
+   `archive`, `binary`, `otio`), this client's name, the ciphertext's byte length, and the
    title, which defaults to the filename and is stored in the clear. By default,
    it also renders a 1200x630 cover image of the file's first screen in local
    headless Chrome and uploads it unencrypted via `POST /api/relics/{id}/cover`
@@ -42,6 +42,7 @@ For any client that takes a JSON config:
    timeline relics (`otio`) skip unencrypted first-screen media rendering by
    default, using a generic card carrying the title and format label to protect
    private timeline cuts and media from leaking into unencrypted link previews.
+   STL and OBJ models also use a generic card instead of a geometry preview.
    Not the mimetype, not the contents.
 6. Records the relic's id, key, and publish token locally, in a 0600 file
    under your user config directory, so the relic can be republished from

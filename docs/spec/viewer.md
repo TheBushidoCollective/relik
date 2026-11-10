@@ -208,6 +208,15 @@ Movie samples outside their available range are withheld for video and silent fo
 - **Fidelity boundaries and diagnostic states:** Browser playback operates in browser-managed SDR. Unsupported effects, proprietary plugins, unknown schemas, and unavailable codecs trigger explicit diagnostic states (`supported`, `missing-media`, `unsupported-codec`, `unsupported-effect`, `unsupported-schema`, `invalid-timing`, `unsupported-browser`). An incomplete preview provides a deliberate "Preview base media without unsupported effects" control; it is never claimed as full fidelity.
 - **Security:** The viewer never executes bundled code, plugins, or SchemaDef expressions. All media references resolve only to existing non-directory entries beneath bundled `media/`; remote network fetches are barred.
 - **Chunk loading:** The OTIO parser and playback engine are lazy-loaded on demand to preserve the initial viewer shell budget.
+
+### 3.7 STL and OBJ model inspection
+
+The `model` renderer class is public metadata and never selects the viewer route. The viewer uses the encrypted name and MIME together with a byte-derived candidate, then validates geometry in a bounded worker. Conflicting declarations fall back to download.
+
+The viewer displays binary and ASCII STL and geometry-only OBJ. It does not load materials, textures, external files, URLs, or author code. Model coordinates are expressed in file units. Whole-relic comments and version history remain available; screen-relative model annotations and side-by-side model comparison are not supported. Original bytes remain available for download.
+
+The interactive parser admits at most 16 MiB, 250,000 triangles, 500,000 source vertices, and 1,024 vertices per face. Invalid, unsupported, or over-limit files must produce an error with the original download available. A parser worker can be terminated, but is not an isolation boundary against arbitrary code execution on the viewing origin.
+
 ## 4. The sandbox boundary
 
 **Direction is forced, not chosen.** The main origin fetches, decrypts, and posts plaintext to a static shim whose own code never touches ciphertext and never makes a request. The alternative shape, where the usercontent origin fetches and the parent posts it the key, is what somebody reaches for to avoid moving large payloads across a boundary, and it requires the key to cross. That must never happen.
@@ -331,12 +340,13 @@ When a relic has no cover, when `cover: false` was passed, or when the relic is 
   - `jsx`: `A JSX component.`
   - `image`: `An image.`
   - `pdf`: `A PDF document.`
+  - `model`: `A 3D model.`
   - `media`: `An audio or video file.`
   - `archive`: `An archive.`
   - `binary`: `A binary file.`
   - `otio`: `An OpenTimelineIO timeline.`
 - Tail:
-  - Renderable tail (`renders`: `markdown`, `code`, `html`, `jsx`, `image`, `pdf`): `It opens in your browser, and only someone holding the whole link, including the part after the #, can open it.`
+  - Renderable tail (`renders`: `markdown`, `code`, `html`, `jsx`, `image`, `pdf`, `model`): `It opens in your browser, and only someone holding the whole link, including the part after the #, can open it.`
   - Playable tail (`plays`: `media`, `otio`): `It plays in your browser, and only someone holding the whole link, including the part after the #, can open it.`
   - Download-only tail (`downloads`: `archive`, `binary`): `It downloads to your device, and only someone holding the whole link, including the part after the #, can open it.`
 The description tag value is the class phrase, one space, and the matching tail (for example, "An audio or video file. It plays in your browser, and only someone holding the whole link, including the part after the #, can open it.").
@@ -348,6 +358,7 @@ The description tag value is the class phrase, one space, and the matching tail 
 - `jsx`: `A JSX relic`
 - `image`: `An image relic`
 - `pdf`: `A PDF relic`
+- `model`: `A 3D model relic`
 - `media`: `A media relic`
 - `archive`: `An archive relic`
 - `binary`: `A binary relic`
