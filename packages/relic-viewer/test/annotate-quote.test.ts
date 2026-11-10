@@ -19,12 +19,20 @@ import {
 } from '../src/annotate-quote.ts';
 import {
   unwrapTextQuotes,
+  walkContentTextNodes,
   wrapTextQuote,
   wrapTextQuoteWithContext,
 } from '../src/comments.ts';
+import { contentFromBytes } from '../src/content.ts';
+import {
+  findSourceQuote,
+  mountTextWindow,
+  textWindowFor,
+  type WindowMark,
+} from '../src/text-window.ts';
 
 // A minimal, complete DOM tree for testing text manipulation and tree-walking.
-class TestNode {
+class TestNode extends EventTarget {
   parentElement: TestElement | null = null;
   parentNode: TestElement | null = null;
 
@@ -84,6 +92,30 @@ class TestElement extends TestNode {
   }
   readonly childNodes: (TestElement | TestText)[] = [];
   scrolledIntoView = false;
+  focused = false;
+  clientHeight = 40;
+  private readonly attributes = new Map<string, string>();
+
+  setAttribute(name: string, value: string): void {
+    this.attributes.set(name, value);
+  }
+
+  getAttribute(name: string): string | null {
+    return this.attributes.get(name) ?? null;
+  }
+
+  focus(): void {
+    this.focused = true;
+  }
+
+  append(...children: (TestElement | TestText)[]): void {
+    for (const child of children) this.appendChild(child);
+  }
+
+  replaceChildren(...children: (TestElement | TestText)[]): void {
+    for (const child of [...this.childNodes]) this.removeChild(child);
+    this.append(...children);
+  }
 
   constructor(tagName: string) {
     super();
@@ -108,12 +140,12 @@ class TestElement extends TestNode {
   }
 
   readonly classList = {
-    add: (cls: string): void => {
+    add: (...classes: string[]): void => {
       const parts = this.className.split(' ').filter(Boolean);
-      if (!parts.includes(cls)) {
-        parts.push(cls);
-        this.className = parts.join(' ');
+      for (const cls of classes) {
+        if (!parts.includes(cls)) parts.push(cls);
       }
+      this.className = parts.join(' ');
     },
     remove: (cls: string): void => {
       this.className = this.className
@@ -132,6 +164,10 @@ class TestElement extends TestNode {
   };
 
   appendChild<T extends TestElement | TestText>(child: T): T {
+    if (child instanceof TestElement && child.tagName === '#FRAGMENT') {
+      this.append(...child.childNodes);
+      return child;
+    }
     if (child.parentNode) {
       child.parentNode.removeChild(child);
     }
@@ -258,6 +294,11 @@ function matchesSelector(elem: TestElement, selector: string): boolean {
     'mark-bubble',
     'mark-hint',
     'mark-quote-action',
+    'text-window-tools',
+    'text-window',
+    'text-window-page',
+    'text-window-row',
+    'text-window-scroll',
   ]) {
     if (selector === `.${cls}`) return elem.classList.contains(cls);
   }
@@ -298,6 +339,7 @@ function installTestDom(): void {
   (globalThis as { document?: unknown }).document = {
     createElement: (tag: string) => new TestElement(tag),
     createTextNode: (text: string) => new TestText(text),
+    createDocumentFragment: () => new TestElement('#fragment'),
     createTreeWalker: (
       root: TestNode,
       _whatToShow: number,
@@ -341,6 +383,178 @@ function clearTestDom(): void {
 describe('quote anchor adapter and context-aware resolver', () => {
   beforeEach(installTestDom);
   afterEach(clearTestDom);
+
+  describe('windowed source comments', () => {
+    test.each([
+      ['identical', 'alpha beta gamma', 'alpha beta gamma'],
+      ['contained', 'alpha beta gamma', 'beta'],
+      ['crossing', 'alpha beta', 'beta gamma'],
+      ['across rows', 'beta gamma\ndelta', 'gamma\ndelta epsilon'],
+    ])(
+      '%s ranges retain both navigable identities',
+      async (_name, first, second) => {
+        const source =
+          'earlier source\n'.repeat(90) +
+          'alpha beta gamma\ndelta epsilon\nend';
+        const root = new TestElement('div');
+        const handle = mountTextWindow(
+          root as unknown as HTMLElement,
+          contentFromBytes(new TextEncoder().encode(source))
+        );
+        try {
+          await handle.ready;
+          expect(textWindowFor(root as unknown as HTMLElement)).toBe(handle);
+          const page = root.querySelector('.text-window-page')!;
+          const scroll = root.querySelector('.text-window-scroll')!;
+          const marks: WindowMark[] = [
+            {
+              id: 'second',
+              anchor: { kind: 'quote', exact: second! },
+              resolved: true,
+            },
+            { id: 'first', anchor: { kind: 'quote', exact: first! } },
+          ];
+          handle.setMarks(marks);
+          let count: number | undefined;
+          for (const id of ['first', 'second']) {
+            // Leave the target window before navigating each comment. A retained
+            // position alone is insufficient: its own mark must survive repaint.
+            const { promise: painted, resolve } = Promise.withResolvers<void>();
+            root.addEventListener('relic:text-window-paint', () => resolve(), {
+              once: true,
+            });
+            (scroll as unknown as HTMLInputElement).value = '0';
+            scroll.dispatchEvent(new Event('input'));
+            await painted;
+            expect(page.textContent).toBe('earlier source\nearlier source\n');
+            page.focused = false;
+            await handle.reveal(id);
+            expect(page.focused).toBe(true);
+            expect(page.textContent).toBe('alpha beta gamma\ndelta epsilon\n');
+            for (const mark of marks) {
+              const parts = page.querySelectorAll(
+                `mark[data-comment-id="${mark.id}"]`
+              );
+              expect(parts.length).toBeGreaterThan(0);
+              expect(parts.map((part) => part.textContent).join('')).toBe(
+                mark.anchor.kind === 'quote' ? mark.anchor.exact : ''
+              );
+              expect(
+                parts.every(
+                  (part) =>
+                    part.classList.contains('is-resolved') === !!mark.resolved
+                )
+              ).toBe(true);
+            }
+            const nextCount = page.querySelectorAll(
+              'mark.relic-text-mark'
+            ).length;
+            if (count !== undefined) expect(nextCount).toBe(count);
+            count = nextCount;
+          }
+          // Capturing inside nested marks must still see source once, not
+          // duplicated overlap text or the window's Line/Go/status controls.
+          const selected = walkContentTextNodes(
+            page as unknown as HTMLElement
+          ).find((node) => node.data.includes('beta'))!;
+          const offset = selected.data.indexOf('beta');
+          const quote = captureSelectionQuote(
+            root as unknown as HTMLElement,
+            {
+              startContainer: selected,
+              startOffset: offset,
+              endContainer: selected,
+              endOffset: offset + 'beta'.length,
+            } as unknown as Range,
+            { toString: () => 'beta' } as unknown as Selection
+          );
+          expect(quote).toEqual({
+            kind: 'quote',
+            exact: 'beta',
+            prefix: 'alpha ',
+            suffix: ' gamma\ndelta epsilon\n',
+          });
+          handle.setMarks([]);
+          await handle.reveal('first');
+          expect(page.querySelectorAll('mark.relic-text-mark')).toHaveLength(0);
+          expect(page.textContent).toBe('alpha beta gamma\ndelta epsilon\n');
+        } finally {
+          handle.dispose();
+        }
+      }
+    );
+
+    test.each([
+      [0, 'source'],
+      [0, 'alpha'],
+      [90, 'source'],
+      [90, 'alpha'],
+    ] as const)(
+      'capture near displayed row %i excludes tools for %s',
+      async (firstRow, exact) => {
+        const lines = Array.from(
+          { length: 100 },
+          (_, row) =>
+            `source ${String(row).padStart(3, '0')}: alpha beta gamma\n`
+        );
+        const source = lines.join('');
+        const content = contentFromBytes(new TextEncoder().encode(source));
+        const root = new TestElement('div');
+        const handle = mountTextWindow(root as unknown as HTMLElement, content);
+        try {
+          await handle.ready;
+          handle.setMarks([
+            { id: 'seed', anchor: { kind: 'text', quote: lines[firstRow]! } },
+          ]);
+          await handle.reveal('seed');
+          const page = root.querySelector('.text-window-page')!;
+          const tools = root.querySelector('.text-window-tools')!;
+          expect(tools.textContent).toContain('LineGo');
+          const text = page.querySelector('mark[data-comment-id="seed"]')!
+            .childNodes[0] as TestText;
+          const offset = text.data.indexOf(exact);
+          expect(offset).toBeGreaterThanOrEqual(0);
+          const anchor = captureSelectionQuote(
+            root as unknown as HTMLElement,
+            {
+              startContainer: text,
+              startOffset: offset,
+              endContainer: text,
+              endOffset: offset + exact.length,
+            } as unknown as Range,
+            { toString: () => exact } as unknown as Selection
+          );
+          expect(anchor?.kind).toBe('quote');
+          const quote = anchor as Extract<CommentAnchor, { kind: 'quote' }>;
+          expect(quote.exact).toBe(exact);
+          expect(quote.prefix ?? '').toBe(page.textContent.slice(0, offset));
+          expect(quote.suffix).toBe(
+            page.textContent.slice(offset + exact.length)
+          );
+          expect(
+            walkContentTextNodes(root as unknown as HTMLElement)
+              .map((node) => node.data)
+              .join('')
+          ).toBe(page.textContent);
+          const start = lines.slice(0, firstRow).join('').length + offset;
+          expect(await findSourceQuote(content, quote)).toEqual({
+            start,
+            end: start + exact.length,
+          });
+          handle.setMarks([{ id: 'captured', anchor: quote }]);
+          await handle.reveal('captured');
+          expect(
+            page.querySelector('mark[data-comment-id="captured"]')?.textContent
+          ).toBe(exact);
+          expect(page.textContent).toBe(
+            lines.slice(firstRow, firstRow + 2).join('')
+          );
+        } finally {
+          handle.dispose();
+        }
+      }
+    );
+  });
 
   test('headline case: document contains the same phrase three times and context names the second', () => {
     // The defect: wrapTextQuote wrapped the first occurrence unconditionally.

@@ -254,37 +254,43 @@ export function mountTextWindow(
       node.className = 'text-window-row';
       node.dataset['line'] = String(row.line);
       node.dataset['row'] = String(row.row);
-      let cursor = row.start;
+      // Split only at range boundaries, then nest every covering identity.
+      // Source bytes occur once even when identical or crossing quotes overlap.
+      const edges: { offset: number; mark: WindowMark; starts: boolean }[] = [];
       for (const mark of marks) {
         const at = positions.get(mark.id);
-        if (
-          !at ||
-          at.end <= row.start ||
-          at.start >= row.end ||
-          at.end <= cursor
-        )
-          continue;
-        const begin = Math.max(cursor, row.start, at.start);
-        const end = Math.min(row.end, at.end);
-        node.appendChild(
+        if (!at || at.end <= row.start || at.start >= row.end) continue;
+        edges.push(
+          { offset: Math.max(row.start, at.start), mark, starts: true },
+          { offset: Math.min(row.end, at.end), mark, starts: false }
+        );
+      }
+      edges.sort((a, b) => a.offset - b.offset);
+      let cursor = row.start;
+      const active = new Set<WindowMark>();
+      const appendUntil = (end: number): void => {
+        if (end <= cursor) return;
+        let parent = node;
+        for (const mark of active) {
+          const highlight = document.createElement('mark');
+          highlight.className = `relic-text-mark${mark.resolved ? ' is-resolved' : ''}`;
+          highlight.dataset['commentId'] = mark.id;
+          parent.appendChild(highlight);
+          parent = highlight;
+        }
+        parent.appendChild(
           document.createTextNode(
-            decoder.decode(bytes.subarray(cursor - start, begin - start))
+            decoder.decode(bytes.subarray(cursor - start, end - start))
           )
         );
-        const highlight = document.createElement('mark');
-        highlight.className = `relic-text-mark${mark.resolved ? ' is-resolved' : ''}`;
-        highlight.dataset['commentId'] = mark.id;
-        highlight.textContent = decoder.decode(
-          bytes.subarray(begin - start, end - start)
-        );
-        node.appendChild(highlight);
         cursor = end;
+      };
+      for (const edge of edges) {
+        appendUntil(edge.offset);
+        if (edge.starts) active.add(edge.mark);
+        else active.delete(edge.mark);
       }
-      node.appendChild(
-        document.createTextNode(
-          decoder.decode(bytes.subarray(cursor - start, row.end - start))
-        )
-      );
+      appendUntil(row.end);
       fragment.appendChild(node);
     }
     page.replaceChildren(fragment);
