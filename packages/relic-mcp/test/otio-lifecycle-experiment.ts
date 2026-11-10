@@ -168,7 +168,7 @@ export async function runLifecycleExperiment() {
             gateError = String(e);
             observe('gate-error', gateError);
           },
-          frame
+          { mode: 'frozen', initialFrame: frame }
         ),
         2500,
         'gate construction'

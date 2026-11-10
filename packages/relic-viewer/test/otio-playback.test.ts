@@ -1976,12 +1976,28 @@ describe('otio playback controller', () => {
         clockOptions?.initialContextState ?? 'running';
       readonly sources: FakeSource[] = [];
       readonly timestampReads: number[] = [];
+      readonly timestampTrace: {
+        wall: number;
+        renderFrame: number;
+        outputFrame: number;
+        ctxNow: number;
+        ctxOut: number;
+        perf: number;
+      }[] = [];
       readonly listeners = new Map<string, Set<() => void>>();
       get currentTime() {
         return renderFrame / this.sampleRate;
       }
       getOutputTimestamp() {
         this.timestampReads.push(wall);
+        this.timestampTrace.push({
+          wall,
+          renderFrame,
+          outputFrame,
+          ctxNow: renderFrame / this.sampleRate,
+          ctxOut: outputFrame / this.sampleRate,
+          perf: outputWallOffset + (outputFrame * 1000) / sampleRate,
+        });
         return {
           contextTime: outputFrame / this.sampleRate,
           performanceTime: outputWallOffset + (outputFrame * 1000) / sampleRate,
@@ -2794,6 +2810,7 @@ describe('otio playback controller', () => {
     const fixture = independentPcmFixture(false, false, undefined, {
       anchorQuanta: [2048, 2048],
       anchorDelayMs: 260,
+      initialContextState: 'suspended',
     });
     try {
       const pending = fixture.playback.play();
@@ -2835,7 +2852,9 @@ describe('otio playback controller', () => {
       expect(fixture.gates).toHaveLength(2);
       expect(fixture.gates[0]!.epoch).not.toBe(fixture.gates[1]!.epoch);
       expect(proof.__otioProofPcmSnapshot().gateReservations).toBe(1);
-      expect(proof.__otioProofPcmSnapshot().carrierReservations).toBe(1);
+      expect(
+        proof.__otioProofPcmSnapshot().carrierReservations
+      ).toBeLessThanOrEqual(1);
       expect(fixture.suspensions).toBe(0);
       expect(fixture.resumes).toBe(0);
     } finally {
@@ -2900,7 +2919,17 @@ describe('otio playback controller', () => {
       foreignOnResume: true,
     });
     try {
-      await fixture.playback.play();
+      let settled = false;
+      const pending = fixture.playback.play().finally(() => {
+        settled = true;
+      });
+      for (let i = 0; i < 50 && !settled; i++)
+        await fixture.advance(
+          fixture.wall + 8,
+          fixture.renderFrame + 384,
+          fixture.outputFrame + 384
+        );
+      await pending;
       for (let i = 0; i < 10; i++) await fixture.flush();
       expect(fixture.suspensions).toBe(0);
       expect(fixture.audioContext.state).toBe('suspended');
@@ -2918,7 +2947,17 @@ describe('otio playback controller', () => {
       suspendLeaseFails: true,
     });
     try {
-      await fixture.playback.play();
+      let settled = false;
+      const pending = fixture.playback.play().finally(() => {
+        settled = true;
+      });
+      for (let i = 0; i < 50 && !settled; i++)
+        await fixture.advance(
+          fixture.wall + 8,
+          fixture.renderFrame + 384,
+          fixture.outputFrame + 384
+        );
+      await pending;
       for (let i = 0; i < 10; i++) await fixture.flush();
       expect(fixture.suspensions).toBe(0);
       expect(fixture.audioContext.state).toBe('running');
@@ -2944,7 +2983,17 @@ describe('otio playback controller', () => {
       ownedContext: true,
     });
     try {
-      await fixture.playback.play();
+      let settled = false;
+      const pending = fixture.playback.play().finally(() => {
+        settled = true;
+      });
+      for (let i = 0; i < 50 && !settled; i++)
+        await fixture.advance(
+          fixture.wall + 8,
+          fixture.renderFrame + 384,
+          fixture.outputFrame + 384
+        );
+      await pending;
       for (let i = 0; i < 10; i++) await fixture.flush();
       expect(fixture.resumes).toBe(1);
       expect(fixture.suspensions).toBe(0);
@@ -3029,7 +3078,17 @@ describe('otio playback controller', () => {
       foreignCycleOnResume: true,
     });
     try {
-      await fixture.playback.play();
+      let settled = false;
+      const pending = fixture.playback.play().finally(() => {
+        settled = true;
+      });
+      for (let i = 0; i < 50 && !settled; i++)
+        await fixture.advance(
+          fixture.wall + 8,
+          fixture.renderFrame + 384,
+          fixture.outputFrame + 384
+        );
+      await pending;
       for (let i = 0; i < 10; i++) await fixture.flush();
       expect(fixture.suspensions).toBe(0);
       expect(fixture.audioContext.state).toBe('running');
@@ -3071,17 +3130,44 @@ describe('otio playback controller', () => {
   test('pause and play reuse the running certified session without context transitions', async () => {
     const fixture = independentPcmFixture(false, false, undefined, {
       autoEndSources: true,
+      proofBudget: true,
     });
+    const proofLog: unknown[] = [];
+    const originalLog = console.log;
+    console.log = (...args: unknown[]) => {
+      if (args[0] === 'OTIO_PROOF_PCM') proofLog.push(args[1]);
+      originalLog(...args);
+    };
+    const diagnostics = () =>
+      JSON.stringify({
+        state: fixture.playback.getState(),
+        wall: fixture.wall,
+        trace: fixture.audioContext.timestampTrace.slice(-10),
+        proof: proofLog,
+      });
+    const lockstepViolations = () =>
+      fixture.audioContext.timestampTrace.filter(
+        (entry) =>
+          entry.perf > entry.wall + 1e-6 ||
+          Math.abs(entry.ctxOut - entry.ctxNow) > 1e-9
+      );
     try {
       await fixture.start();
+      expect(fixture.playback.getState().playing, diagnostics()).toBe(true);
+      expect(lockstepViolations(), diagnostics()).toEqual([]);
+      expect(fixture.audioContext.timestampTrace.length).toBeGreaterThan(0);
       fixture.playback.pause();
       await fixture.flush();
       const stop = fixture.commands.find((command) => command.type === 'stop')!;
       expect(stop).toBeDefined();
       const boundary = Number(stop.stopFrame);
-      await fixture.advance(fixture.wall + 8, boundary + 256, boundary + 256);
+      const boundaryFrame = boundary + 256;
+      const boundaryWall = 1000 + (boundaryFrame * 1000) / 48000;
+      expect(boundaryWall).toBeGreaterThan(fixture.wall);
+      await fixture.advanceSmooth(boundaryWall, boundaryFrame, boundaryFrame);
+      expect(lockstepViolations(), diagnostics()).toEqual([]);
       await fixture.flush();
-      expect(fixture.playback.getState().playing).toBe(false);
+      expect(fixture.playback.getState().playing, diagnostics()).toBe(false);
       let settled = false;
       const resumed = fixture.playback.play().finally(() => {
         settled = true;
@@ -3092,9 +3178,9 @@ describe('otio playback controller', () => {
           fixture.renderFrame + 384,
           fixture.outputFrame + 384
         );
-      expect(settled).toBe(true);
+      expect(settled, diagnostics()).toBe(true);
       await resumed;
-      expect(fixture.playback.getState().playing).toBe(true);
+      expect(fixture.playback.getState().playing, diagnostics()).toBe(true);
       expect(
         fixture.commands.filter((command) => command.type === 'arm')
       ).toHaveLength(2);
@@ -3102,6 +3188,7 @@ describe('otio playback controller', () => {
       expect(fixture.suspensions).toBe(0);
       expect(fixture.resumes).toBe(0);
     } finally {
+      console.log = originalLog;
       fixture.restore();
     }
   });

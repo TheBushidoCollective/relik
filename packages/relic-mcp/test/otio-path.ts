@@ -1748,6 +1748,9 @@ interface ChromeSession {
 }
 interface OpenBrowserOptions {
   readonly label?: string;
+  // Cold-start proofs need Chrome's default autoplay policy so a fresh AudioContext is
+  // suspended until a real user gesture; the general harness relaxes it.
+  readonly defaultAutoplay?: boolean;
   readonly recordMediaSeekTargets?: boolean;
   readonly blockWebCodecs?: boolean;
   readonly blockRequestVideoFrameCallback?: boolean;
@@ -2026,7 +2029,9 @@ async function openBrowser(
               ? '--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1'
               : arg
         ),
-        '--autoplay-policy=no-user-gesture-required',
+        ...(options.defaultAutoplay
+          ? []
+          : ['--autoplay-policy=no-user-gesture-required']),
       ],
       profile
     );
@@ -14142,10 +14147,18 @@ function assertColdMeasurementControls(): void {
     { before: 0, after: 1, contextTime: 0.0, performanceTime: 1000 },
     { before: 50, after: 51, contextTime: 0.5, performanceTime: 1500 },
   ];
-  const mapped = mapFrameToWall(obs, 24000, 48000);
+  // Frame 12000 at 48 kHz is 0.25 s: nearest prior observation is the first one, so the
+  // wall time is 1000 ms plus 250 ms of extrapolation.
+  const quarter = mapFrameToWall(obs, 12000, 48000);
   assert.ok(
-    mapped !== null && Math.abs(mapped.wallMs - 1250) < 1e-9,
-    'cold mapping used the wrong observation'
+    quarter !== null && Math.abs(quarter.wallMs - 1250) < 1e-9,
+    'cold mapping did not extrapolate from the nearest prior observation'
+  );
+  // Frame 24000 at 48 kHz is exactly the second observation (0.5 s), which counts as prior.
+  const exact = mapFrameToWall(obs, 24000, 48000);
+  assert.ok(
+    exact !== null && Math.abs(exact.wallMs - 1500) < 1e-9,
+    'cold mapping did not use the exact prior observation'
   );
   assert.equal(
     mapFrameToWall(obs.slice(1), 100, 48000),
@@ -14371,6 +14384,7 @@ async function runColdStartProof(
 
   const isolated = await openBrowser(url, sessionToken, {
     label: `cold-start-${rate}`,
+    defaultAutoplay: true,
     recordProofTrace: true,
     proofSampleRate: rate,
   });

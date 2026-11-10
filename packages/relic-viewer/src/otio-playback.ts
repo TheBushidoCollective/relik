@@ -3226,7 +3226,7 @@ export function createOtioPlayback(
                     }
                   );
               }
-              if (pcmClockSession?.gate === gate) {
+              if (gate !== undefined && pcmClockSession?.gate === gate) {
                 retirePcmClockSession();
                 failScheduledAudio(`transport gate failed: ${error.message}`);
               }
@@ -4919,7 +4919,47 @@ export function createOtioPlayback(
       after,
       selectionReserve
     );
+    const proofDetail =
+      coldProofGlobal.__otioProofPcm === true
+        ? (() => {
+            const vsync = vsyncTracker.medianSeconds;
+            const contributions = samples.map((sample) => {
+              const preferred =
+                sample.dL +
+                1000 *
+                  (sample.wMinSeconds +
+                    vsync / 2 -
+                    (sample.iL0Plus1Start - sample.sourceT0Seconds) /
+                      sample.rL);
+              const half = 1000 * (sample.wMinSeconds - vsync / 2);
+              return {
+                dL: sample.dL,
+                iL0Plus1Start: sample.iL0Plus1Start,
+                sourceT0Seconds: sample.sourceT0Seconds,
+                rL: sample.rL,
+                wMinSeconds: sample.wMinSeconds,
+                intervalLower: preferred - half,
+                intervalUpper: preferred + half,
+              };
+            });
+            return {
+              vsyncSeconds: vsync,
+              contributions,
+              intersectionLower: contributions.reduce(
+                (max, item) => Math.max(max, item.intervalLower),
+                -Infinity
+              ),
+              intersectionUpper: contributions.reduce(
+                (min, item) => Math.min(min, item.intervalUpper),
+                Infinity
+              ),
+              bridge,
+              bridgeAllowanceMs: bridge.mappingAllowanceMs,
+            };
+          })()
+        : {};
     pcmProof('clock-selection', run.generation, {
+      ...proofDetail,
       certifiedQuantum: quantum,
       guardFrames: OTIO_PCM_EPOCH_GUARD_FRAMES,
       selectionReserve,
