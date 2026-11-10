@@ -14,6 +14,67 @@ function block(
 }
 
 describe('render-thread transport gate', () => {
+  test('rejects wrong epochs and frontiers beyond certified coverage', () => {
+    const gate = new OtioTransportGateState(17);
+    expect(
+      gate.command(
+        {
+          type: 'arm',
+          clockEpoch: 16,
+          generation: 1,
+          sequence: 1,
+          f0: 10,
+          throughFrame: 20,
+        },
+        0,
+        20
+      ).accepted
+    ).toBe(false);
+    expect(
+      gate.command(
+        {
+          type: 'arm',
+          clockEpoch: 17,
+          generation: 1,
+          sequence: 1,
+          f0: 10,
+          throughFrame: 21,
+        },
+        0,
+        20
+      ).accepted
+    ).toBe(false);
+    expect(
+      gate.command(
+        {
+          type: 'arm',
+          clockEpoch: 17,
+          generation: 1,
+          sequence: 2,
+          f0: 10,
+          throughFrame: 20,
+        },
+        0,
+        20
+      ).accepted
+    ).toBe(true);
+    expect(
+      gate.command(
+        {
+          type: 'extend',
+          clockEpoch: 17,
+          generation: 1,
+          sequence: 3,
+          expectedThroughFrame: 20,
+          throughFrame: 21,
+        },
+        1,
+        20
+      ).accepted
+    ).toBe(false);
+    expect(block(gate, 18, 4)).toEqual([19, 20, 0, 0]);
+  });
+
   test('slices the exact prefix and seals without main-thread participation', () => {
     const gate = new OtioTransportGateState();
     expect(

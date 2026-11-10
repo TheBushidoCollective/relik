@@ -17,6 +17,7 @@ export type OtioGateCommand =
   | { type: 'abort'; generation: number; sequence: number };
 
 export interface OtioGateAck {
+  clockEpoch: number;
   type: OtioGateCommand['type'] | 'closed';
   generation: number;
   sequence: number;
@@ -31,6 +32,8 @@ const frame = (value: unknown): value is number =>
 
 /** Render-thread authority. A generation, once sealed, cannot be armed again. */
 export class OtioTransportGateState {
+  constructor(private readonly clockEpoch = 0) {}
+
   private generation = -1;
   private sequence = -1;
   private f0 = 0;
@@ -47,6 +50,7 @@ export class OtioTransportGateState {
   ): OtioGateAck {
     return {
       type,
+      clockEpoch: this.clockEpoch,
       generation,
       sequence,
       accepted,
@@ -68,9 +72,14 @@ export class OtioTransportGateState {
     return this.result('closed', this.generation, this.sequence, true);
   }
 
-  command(raw: unknown, now: number): OtioGateAck {
+  command(
+    raw: unknown,
+    now: number,
+    coverage = Number.MAX_SAFE_INTEGER
+  ): OtioGateAck {
     const value = raw as {
       type?: unknown;
+      clockEpoch?: unknown;
       generation?: unknown;
       sequence?: unknown;
       f0?: unknown;
@@ -83,6 +92,7 @@ export class OtioTransportGateState {
     const sequence = value?.sequence;
     if (
       !value ||
+      (this.clockEpoch !== 0 && value.clockEpoch !== this.clockEpoch) ||
       !frame(generation) ||
       !frame(sequence) ||
       !frame(now) ||
@@ -111,6 +121,7 @@ export class OtioTransportGateState {
       if (
         !frame(value.f0) ||
         !frame(value.throughFrame) ||
+        value.throughFrame > coverage ||
         value.throughFrame <= value.f0 ||
         value.f0 < now ||
         generation <= this.generation ||
@@ -161,6 +172,7 @@ export class OtioTransportGateState {
         this.stopFrame !== null ||
         !frame(value.expectedThroughFrame) ||
         !frame(value.throughFrame) ||
+        value.throughFrame > coverage ||
         value.expectedThroughFrame !== this.frontier ||
         value.throughFrame <= this.frontier
       )
