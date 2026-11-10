@@ -3,12 +3,13 @@
 // comparisons must qualify it before a trace can support a playback claim.
 export const otioProofWorkletSource = `
 class RelicProofTap extends AudioWorkletProcessor {
- constructor() { super(); this.active = false; this.used = 0; this.first = 0; this.left = new Float32Array(1024); this.right = new Float32Array(1024);
-  this.port.onmessage = ({data}) => { if (data === 'start') { this.active = true; this.used = 0; this.port.postMessage({kind:'started', frame:currentFrame}); }
+ constructor() { super(); this.active = false; this.used = 0; this.first = 0; this.sequence = 0; this.quantumFrames = []; this.quantumTimes = []; this.quantumLengths = []; this.left = new Float32Array(1024); this.right = new Float32Array(1024);
+  this.port.onmessage = ({data}) => { if (data === 'start') { this.active = true; this.used = 0; this.quantumFrames = []; this.quantumTimes = []; this.quantumLengths = []; this.sequence = 0; this.port.postMessage({kind:'started', frame:currentFrame}); }
    if (data === 'stop') { this.flush(); this.active = false; this.port.postMessage({kind:'stopped', frame:currentFrame}); } }; }
- flush() { if (!this.used) return; this.port.postMessage({kind:'pcm', frame:this.first, channels:[this.left.slice(0,this.used),this.right.slice(0,this.used)]}); this.used = 0; }
+ flush() { if (!this.used) return; this.port.postMessage({kind:'pcm', frame:this.first, sequence:this.sequence++, quantumFrames:this.quantumFrames, quantumTimes:this.quantumTimes, quantumLengths:this.quantumLengths, channels:[this.left.slice(0,this.used),this.right.slice(0,this.used)]}); this.used = 0; this.quantumFrames = []; this.quantumTimes = []; this.quantumLengths = []; }
  process(inputs, outputs) { const output=outputs[0]; for (const channel of output) channel.fill(0); if (!this.active) return true;
   const channels=inputs[0] || []; const count=output[0].length; if (!this.used) this.first=currentFrame;
+  this.quantumFrames.push(currentFrame); this.quantumTimes.push(currentTime); this.quantumLengths.push(count);
   for (let i=0; i<count; i++) { this.left[this.used+i]=channels[0]?.[i] || 0; this.right[this.used+i]=channels[1]?.[i] ?? channels[0]?.[i] ?? 0; }
   this.used += count; if (this.used === 1024) this.flush(); return true; }
 }
@@ -22,6 +23,24 @@ export const otioProofTracePrelude = String.raw`(() => {
   const NativeWorker = globalThis.Worker;
   let holdPcmResponses = false;
   let failNextPcm = false;
+  let failNextSourceStart = false;
+  let invalidControllerClock = false;
+  const originalSourceStart = AudioBufferSourceNode.prototype.start;
+  AudioBufferSourceNode.prototype.start = function(...args) {
+    if (failNextSourceStart) {
+      failNextSourceStart = false;
+      recordEvent('source-start-fault', null, null);
+      throw new Error('proof-injected-source-start-failure');
+    }
+    return originalSourceStart.apply(this, args);
+  };
+  const originalOutputTimestamp = AudioContext.prototype.getOutputTimestamp;
+  if (typeof originalOutputTimestamp === 'function') {
+    AudioContext.prototype.getOutputTimestamp = function() {
+      if (invalidControllerClock) return {contextTime: NaN, performanceTime: NaN};
+      return originalOutputTimestamp.call(this);
+    };
+  }
   const heldPcmResponses = [];
   const releasedPcmResponses = new WeakSet();
   globalThis.Worker = class extends NativeWorker {
@@ -147,6 +166,36 @@ export const otioProofTracePrelude = String.raw`(() => {
   }
   let bufferingObserver = null;
   const originalConnect = AudioNode.prototype.connect;
+  // Only the transport worklet's detached, zero-gain retirement route is
+  // exempt from master discovery. Other destination gains remain ambiguous.
+  const transportNodes = new WeakSet();
+  const detachedTransports = new WeakSet();
+  const retirementSinks = new Set();
+  const NativeAudioWorkletNode = globalThis.AudioWorkletNode;
+  if (typeof NativeAudioWorkletNode === 'function') {
+    globalThis.AudioWorkletNode = class extends NativeAudioWorkletNode {
+      constructor(context, name, options) {
+        super(context, name, options);
+        if (name === 'otio-transport-gate') {
+          transportNodes.add(this);
+          this.port.addEventListener('message', event => {
+            if (event.data?.type === 'clock-fault')
+              recordEvent('transport-render-clock-fault', null, {
+                expectedFrame:event.data.expectedFrame,
+                observedFrame:event.data.observedFrame
+              });
+          });
+          this.port.start();
+        }
+      }
+    };
+  }
+  const originalDisconnect = AudioNode.prototype.disconnect;
+  AudioNode.prototype.disconnect = function(...args) {
+    const result = originalDisconnect.apply(this, args);
+    if (transportNodes.has(this) && args.length === 0) detachedTransports.add(this);
+    return result;
+  };
   function command(graph, name) {
     const {promise, resolve, reject} = Promise.withResolvers();
     const timer = setTimeout(() => { graph.pending = null; reject(new Error('audio worklet ' + name + ' timed out')); }, 5000);
@@ -157,6 +206,13 @@ export const otioProofTracePrelude = String.raw`(() => {
   }
   AudioNode.prototype.connect = function(destination, ...rest) {
     const result = originalConnect.call(this, destination, ...rest);
+    if (detachedTransports.has(this) && destination instanceof GainNode &&
+        destination.gain.value === 0) retirementSinks.add(destination);
+    if (retirementSinks.has(this) && destination === this.context.destination) {
+      if (this.gain.value !== 0) throw new Error('transport retirement sink is audible');
+      recordEvent('transport-retirement-sink', null, {gain:this.gain.value});
+      return result;
+    }
     if (this instanceof GainNode && destination === this.context.destination &&
         !graphs.some(graph => graph.master === this)) {
       const master = this, context = this.context;
@@ -182,7 +238,7 @@ export const otioProofTracePrelude = String.raw`(() => {
             const channels = data.channels.map(channel => Array.from(channel));
             const size = channels.reduce((sum, channel) => sum + channel.length, 0);
             if (graph.samples + size > MAX_AUDIO_SAMPLES) graph.overflow = true;
-            else { graph.chunks.push({sampleFrame:data.frame, channels}); graph.samples += size; }
+            else { graph.chunks.push({sampleFrame:data.frame, sequence:data.sequence, quantumFrames:data.quantumFrames, quantumTimes:data.quantumTimes, quantumLengths:data.quantumLengths, channels}); graph.samples += size; }
           } else if (graph.pending?.kind === data.kind) graph.pending.resolve(data.frame);
         };
         originalConnect.call(master, node);
@@ -197,8 +253,8 @@ export const otioProofTracePrelude = String.raw`(() => {
   function audioBridge(graph) {
     const before = performance.now();
     const currentBefore = graph.context.currentTime;
-    const output = typeof graph.context.getOutputTimestamp === 'function'
-      ? graph.context.getOutputTimestamp() : null;
+    const output = typeof originalOutputTimestamp === 'function'
+      ? originalOutputTimestamp.call(graph.context) : null;
     const currentAfter = graph.context.currentTime;
     const after = performance.now();
     return {before, after, currentBefore, currentAfter,
@@ -274,6 +330,8 @@ export const otioProofTracePrelude = String.raw`(() => {
         entry.value?.event === 'cancel' && entry.value?.reason === reason);
     },
     failNextPcm() { failNextPcm = true; },
+    failNextSourceStart() { failNextSourceStart = true; },
+    setInvalidControllerClock(value) { invalidControllerClock = Boolean(value); },
     heldPcmCount() { return heldPcmResponses.length; },
     holdPcmResponses(value) {
       holdPcmResponses = Boolean(value);
@@ -367,6 +425,8 @@ export const otioProofTracePrelude = String.raw`(() => {
     },
     async stop() {
       if (graphs.length !== 1) throw new Error('controller destination gain ambiguous');
+      for (const sink of retirementSinks)
+        if (sink.gain.value !== 0) throw new Error('transport retirement sink became audible');
       const graph = graphs[0]; visual.active = false;
       bufferingObserver?.disconnect();
       const timestamp = performance.now();

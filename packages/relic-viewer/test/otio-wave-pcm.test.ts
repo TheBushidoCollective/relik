@@ -6,7 +6,12 @@ import {
   WAVE_MAX_FILE_BYTES,
 } from '../src/otio-wave-pcm';
 
-function wave(frames = 8, channels = 2, bits = 16, tag = 1): Uint8Array {
+function wave(
+  frames = 8,
+  channels = 2,
+  bits = 16,
+  tag = 1
+): Uint8Array<ArrayBuffer> {
   const align = (channels * bits) / 8;
   const bytes = new Uint8Array(44 + frames * align);
   const v = new DataView(bytes.buffer);

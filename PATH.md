@@ -73,6 +73,10 @@ The cold initial presentation limit is 350 ms from the play request through the 
 
 Scheduled PCM qualification must observe the selected backend and compare the post-gain output against independently decoded source samples at the reported context-frame epoch, without fitting an offset. It must cover stereo, cuts and dissolves, a run longer than the 500 ms queue horizon, cancellation and starvation, and native compatibility for unsupported scopes. A diagnostic event alone is not playback proof.
 
+The scheduled path must distinguish recoverable withholding of future media from loss of pixels already committed to output. A recoverable stop requires a render-thread gate closure and a new epoch at the exact committed sample; a lost committed frame or invalid output clock must report an interruption without inventing a resume position. Scope replacement remains paused. Record the actual gate boundary, error stage, captured stereo PCM and independently derived pixel evidence, including failing or missing observations. The future-video withholding proof must produce a recovery receipt; the existence of a fault hook alone proves nothing.
+
+The two-frame A/V check compares browser-estimated output timing with observed presentation. Its mapping allowance reflects the sampled bridge spread, read duration and render quantum; it is not a bound on physical speaker or display timing. The timestamp-bias negative control demonstrates that a common-mode error can remain invisible to that check. Physical synchronization requires a separate instrumented measurement.
+
 The complete source path passed locally at `5a4bd6d` with Node 24.15.0, Bun 1.4.3, and the owned Chromium headless shell 1228. It exercised the original archive/playback/encrypted-feedback/revision stages, both exact-identity sidebar reveals after 40 coincident UI comments, and the zero-mail assertion, ending `OTIO_PATH_OK`. The matched old renderer failed the exact marker-center reveal assertion after the same 40 UI posts. Release qualification, CI, deployment, and the published npm client remain separate gates.
 
 # Anchored comment popovers on every class

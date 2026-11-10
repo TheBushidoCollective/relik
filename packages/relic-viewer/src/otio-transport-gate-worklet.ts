@@ -11,21 +11,83 @@ declare function registerProcessor(
 
 class OtioTransportGateProcessor extends AudioWorkletProcessor {
   private readonly gate = new OtioTransportGateState();
+  private disposed = false;
+  private expectedFrame: number | null = null;
+  private firstCommand: unknown;
+  private secondCommand: unknown;
+  private commandCount = 0;
+  private commandOverflow = false;
 
   constructor() {
     super();
     this.port.onmessage = (event: MessageEvent<unknown>) => {
-      const expired = this.gate.expire(currentFrame);
-      if (expired) this.port.postMessage(expired);
-      this.port.postMessage(this.gate.command(event.data, currentFrame));
+      if (this.disposed) return;
+      if (
+        event.data !== null &&
+        typeof event.data === 'object' &&
+        'type' in event.data &&
+        event.data.type === 'dispose'
+      ) {
+        this.disposed = true;
+        return;
+      }
+      if (this.commandCount === 0) this.firstCommand = event.data;
+      else if (this.commandCount === 1) this.secondCommand = event.data;
+      else {
+        this.commandOverflow = true;
+        return;
+      }
+      this.commandCount++;
     };
   }
 
   process(inputs: Float32Array[][], outputs: Float32Array[][]): boolean {
+    if (this.disposed) {
+      for (const output of outputs) {
+        for (const channel of output) channel.fill(0);
+      }
+      this.port.postMessage({ type: 'disposed' });
+      return false;
+    }
     const output = outputs[0];
     if (!output || output.length === 0) return true;
-    this.gate.render(inputs[0], output, currentFrame);
-    const expired = this.gate.expire(currentFrame + output[0]!.length);
+    const observed = currentFrame;
+    if (
+      !Number.isSafeInteger(observed) ||
+      observed < 0 ||
+      (this.expectedFrame !== null && observed !== this.expectedFrame)
+    ) {
+      for (let channel = 0; channel < output.length; channel++)
+        output[channel]!.fill(0);
+      this.disposed = true;
+      this.port.postMessage({
+        type: 'clock-fault',
+        expectedFrame: this.expectedFrame,
+        observedFrame: observed,
+      });
+      return false;
+    }
+    this.expectedFrame = observed + output[0]!.length;
+    if (this.commandOverflow) {
+      for (let channel = 0; channel < output.length; channel++)
+        output[channel]!.fill(0);
+      this.disposed = true;
+      this.port.postMessage({ type: 'protocol-fault' });
+      return false;
+    }
+    const expiredBefore = this.gate.expire(observed);
+    if (expiredBefore) this.port.postMessage(expiredBefore);
+    if (this.commandCount > 0) {
+      this.port.postMessage(this.gate.command(this.firstCommand, observed));
+      this.firstCommand = undefined;
+    }
+    if (this.commandCount > 1) {
+      this.port.postMessage(this.gate.command(this.secondCommand, observed));
+      this.secondCommand = undefined;
+    }
+    this.commandCount = 0;
+    this.gate.render(inputs[0], output, observed);
+    const expired = this.gate.expire(this.expectedFrame);
     if (expired) this.port.postMessage(expired);
     return true;
   }

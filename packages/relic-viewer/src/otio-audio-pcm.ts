@@ -15,6 +15,21 @@ import type { WavePcmHeader } from './otio-wave-pcm';
 export class OtioPcmBudget {
   private bytes = 0;
   private nodes = 0;
+  private readonly listeners = new Set<() => void>();
+  subscribe(listener: () => void): () => void {
+    const subscription = () => listener();
+    this.listeners.add(subscription);
+    return () => {
+      this.listeners.delete(subscription);
+    };
+  }
+  private notifyRelease(): void {
+    for (const listener of this.listeners) {
+      queueMicrotask(() => {
+        if (this.listeners.has(listener)) listener();
+      });
+    }
+  }
   reserveBytes(bytes: number): void {
     if (
       !Number.isSafeInteger(bytes) ||
@@ -26,6 +41,7 @@ export class OtioPcmBudget {
   }
   releaseBytes(bytes: number): void {
     this.bytes -= bytes;
+    if (bytes > 0) this.notifyRelease();
   }
   reserveNodes(count: number): void {
     if (
@@ -38,6 +54,7 @@ export class OtioPcmBudget {
   }
   releaseNodes(count: number): void {
     this.nodes -= count;
+    if (count > 0) this.notifyRelease();
   }
   get usedBytes(): number {
     return this.bytes;
@@ -355,9 +372,9 @@ export class OtioPcmScheduler {
     let owned: PcmOwnedSource;
     try {
       const buffer = this.context.createBuffer(planes.length, count, rate);
-      planes.forEach((plane, channel) =>
-        buffer.copyToChannel(plane as Float32Array<ArrayBuffer>, channel)
-      );
+      planes.forEach((plane, channel) => {
+        buffer.copyToChannel(plane as Float32Array<ArrayBuffer>, channel);
+      });
       source = this.context.createBufferSource();
       source.buffer = buffer;
       let previous: AudioNode = source;

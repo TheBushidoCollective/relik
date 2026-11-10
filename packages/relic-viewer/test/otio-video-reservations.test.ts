@@ -105,7 +105,8 @@ function fixture(
     video as unknown as HTMLVideoElement,
     'occurrence',
     'clip.mov',
-    budget
+    budget,
+    { strictProducerOrder: true }
   );
   try {
     fn({
@@ -213,6 +214,84 @@ describe('native video snapshot reservations', () => {
       second.release();
     }));
 
+  test('progress subscriptions wake on capture, backpressure and invalidation', () =>
+    fixture(({ ring, video }) => {
+      ring.allocate(10, 10);
+      let calls = 0;
+      const unsubscribe = ring.subscribeProgress(() => {
+        calls++;
+      });
+      const unsubscribeThrowing = ring.subscribeProgress(() => {
+        throw new Error('listener');
+      });
+      for (let tag = 0; tag < 3; tag++) capture(ring, video, tag);
+      expect(calls).toBe(3);
+      const lease = ring.reserveTags([0, 1, 2], 0)!;
+      expect(capture(ring, video, 3)).toEqual({ kind: 'backpressure' });
+      expect(calls).toBe(4);
+      ring.resetEpoch(1);
+      expect(calls).toBe(5);
+      expect(lease.isValid()).toBe(false);
+      unsubscribe();
+      unsubscribe();
+      unsubscribeThrowing();
+      capture(ring, video, 0);
+      expect(calls).toBe(5);
+    }));
+
+  test('native mode permits regression while switching mode seals the old epoch', () =>
+    fixture(({ ring, video }) => {
+      ring.allocate(10, 10);
+      ring.setStrictProducerOrder(false);
+      expect(capture(ring, video, 1)).toEqual({ kind: 'producer-fault' });
+      ring.resetEpoch(1);
+      expect(capture(ring, video, 1)).toEqual({ kind: 'match', index: 1 });
+      expect(capture(ring, video, 0)).toEqual({ kind: 'match', index: 0 });
+      expect(ring.highestObservedTag).toBe(1);
+      ring.setStrictProducerOrder(true);
+      expect(capture(ring, video, 0)).toEqual({ kind: 'producer-fault' });
+      ring.resetEpoch(2);
+      expect(capture(ring, video, 1)).toEqual({ kind: 'match', index: 1 });
+      expect(capture(ring, video, 0)).toEqual({ kind: 'producer-fault' });
+    }));
+
+  test('paused seek ignores stale presented tag before its expected frame', () =>
+    fixture(({ ring, video, closed }) => {
+      ring.allocate(10, 10);
+      video.timestamp = 1;
+      expect(ring.capturePausedFrame(0, 0, timing)).toBe(false);
+      expect(ring.highestObservedTag).toBeNull();
+      expect(ring.hasTag(1, 0)).toBe(false);
+      expect(closed()).toBe(1);
+      video.timestamp = 0;
+      expect(ring.capturePausedFrame(0, 0, timing)).toBe(true);
+      expect(ring.highestObservedTag).toBe(0);
+    }));
+
+  test('observes actual tags under pressure and faults on regression until reset', () =>
+    fixture(({ ring, video }) => {
+      ring.allocate(10, 10);
+      expect(ring.highestObservedTag).toBeNull();
+      for (let tag = 0; tag < 3; tag++) capture(ring, video, tag);
+      const lease = ring.reserveTags([0, 1, 2], 0)!;
+      expect(capture(ring, video, 3)).toEqual({ kind: 'backpressure' });
+      expect(ring.highestObservedTag).toBe(3);
+      expect(capture(ring, video, 3)).toEqual({ kind: 'backpressure' });
+      video.timestamp = 5;
+      expect(ring.readoutFrame(timing, 0)).toEqual({ kind: 'outside' });
+      expect(ring.highestObservedTag).toBe(3);
+      expect(capture(ring, video, 2)).toEqual({ kind: 'producer-fault' });
+      expect(ring.highestObservedTag).toBe(3);
+      expect(lease.isValid()).toBe(false);
+      expect(ring.reserveTags([0], 0)).toBeNull();
+      expect(capture(ring, video, 3)).toEqual({ kind: 'producer-fault' });
+      ring.resetEpoch(1);
+      expect(ring.highestObservedTag).toBeNull();
+      expect(capture(ring, video, 0)).toEqual({ kind: 'match', index: 0 });
+      ring.release();
+      expect(ring.highestObservedTag).toBeNull();
+    }));
+
   test('validates element, path, dimensions, slot identity and notifies invalidation once', () =>
     fixture(({ ring, video, surfaces }) => {
       expect(ring.allocate(10, 10)).toBe(true);
@@ -274,7 +353,7 @@ describe('native video snapshot reservations', () => {
     }));
 
   test('late cancelled callback cannot touch new callback or budget', () =>
-    fixture(({ ring, video, budget, callbacks }) => {
+    fixture(({ ring, budget, callbacks }) => {
       ring.allocate(10, 10);
       ring.startCallbacks(timing, 1, () => {});
       const stale = callbacks.get(1)!;

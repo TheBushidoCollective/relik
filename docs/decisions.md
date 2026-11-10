@@ -951,6 +951,10 @@ Every change to the set of drawn video occurrences (cuts, unhiding a track, solo
 
 The scheduled PCM design is limited to independently validated local WAV PCM16 or float32, mono or stereo, at the context's 44.1 or 48 kHz sample rate, with unit-rate sample-aligned mappings. Other codecs, layouts, rates, retimes and mappings retain scope-wide browser-native playback with an explicit compatibility reason. Scheduled qualification requires captured post-gain output against source samples at the actual context-frame epoch, not a fitted offset; it does not establish equivalent timing for native compatibility mode. The video producer and readiness frontier remain part of the smooth-playback requirement.
 
+The scheduled path uses an audio-render-thread gate to enforce the committed prefix. Expiry cannot be renewed after it has occurred. Recoverable starvation resumes at a new epoch on the committed sample lattice; losing committed pixels or a trustworthy output clock is an interruption, not evidence of a future stop or permission to switch to native audio. Scope replacement stays paused. The existing three-slot native video ring remains subject to measured sustained-playback qualification; it cannot recover a frame the native element already passed. A direct video producer would require a separate architecture decision.
+
+Playback synchronization uses the browser's estimated audio-output timestamp. The existing two-frame A/V comparison is a browser-estimated check, not a guarantee about physical sound and display output. Its observed mapping allowance describes measured timestamp variation, not hardware accuracy. Audio-device changes or browser interruptions may require resynchronization. Qualification retains the approved startup, steady presentation and source-aware dropout limits and must report failures rather than infer hardware accuracy.
+
 **Residuals:**
 - Paused inspection, transport seeks, and scrubbing remain exact midpoint seeks into certified presentation windows.
 - Any media path failing native admission criteria runs on today's exact midpoint seek cadence with existing diagnostic reporting.

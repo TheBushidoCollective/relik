@@ -47,12 +47,23 @@ export type ClockRecord = {
 export class OutputClock {
   readonly deadline: number;
   readonly observations: ClockRecord[] = [];
+  readonly inheritedObservations: ClockObservation[] = [];
   lastRejection: ClockRecord | null = null;
   state: ClockState = 'preparing';
   private first: ClockObservation | null = null;
   private last: ClockObservation | null = null;
   private advances = 0;
   private min = Infinity;
+  private readonly runtimeOffsets: {
+    time: number;
+    offset: number;
+    observation: ClockObservation;
+  }[] = [];
+  private readonly recoveryOffsets: {
+    time: number;
+    offset: number;
+    observation: ClockObservation;
+  }[] = [];
   private max = -Infinity;
   constructor(
     readonly requestMs: number,
@@ -94,7 +105,61 @@ export class OutputClock {
   }
   start(): void {
     if (this.state !== 'armed') throw new Error('clock not armed');
+    const last = this.last!;
+    this.runtimeOffsets.push({
+      time: last.performanceTime!,
+      offset: last.performanceTime! - 1000 * last.contextTime!,
+      observation: last,
+    });
+    this.recoveryOffsets.push(this.runtimeOffsets[0]!);
+    this.min = this.max = this.runtimeOffsets[0]!.offset;
     this.state = 'playing';
+  }
+  // Caller must bind this to the same uninterrupted AudioContext and sink.
+  // The returned candidate is not armed until a new advancing observation.
+  forkForRequest(
+    requestMs: number,
+    nowMs: number,
+    onObservation?: (record: ClockRecord) => void
+  ): OutputClock | null {
+    const window = this.recoveryOffsets.filter(
+      (entry) => nowMs - entry.time <= this.policy.freshnessMs
+    );
+    const first = window[0];
+    const last = window[window.length - 1];
+    if (
+      this.state !== 'playing' ||
+      !Number.isFinite(requestMs) ||
+      !Number.isFinite(nowMs) ||
+      nowMs < requestMs ||
+      nowMs > requestMs + 350 ||
+      !first ||
+      !last ||
+      nowMs < last.observation.readEnd ||
+      nowMs - last.time > this.policy.freshnessMs ||
+      window.length < this.policy.minAdvances + 1 ||
+      window.length >= this.policy.maxSamples ||
+      last.time - first.time < this.policy.minWindowMs
+    )
+      return null;
+    let min = Infinity;
+    let max = -Infinity;
+    for (const entry of window) {
+      min = Math.min(min, entry.offset);
+      max = Math.max(max, entry.offset);
+    }
+    if (max - min > this.policy.maxOffsetSpreadMs) return null;
+    const fork = new OutputClock(requestMs, this.policy, onObservation);
+    for (const entry of window)
+      fork.inheritedObservations.push({ ...entry.observation });
+    fork.first = fork.inheritedObservations[0]!;
+    fork.last =
+      fork.inheritedObservations[fork.inheritedObservations.length - 1]!;
+    fork.advances = window.length - 1;
+    fork.min = min;
+    fork.max = max;
+    fork.state = 'calibrating';
+    return fork;
   }
   observe(observation: ClockObservation): ClockResult {
     const o = { ...observation };
@@ -167,9 +232,26 @@ export class OutputClock {
       reason = 'duplicate';
     else {
       const offset = performanceTime! - 1000 * contextTime!;
-      const min = Math.min(this.min, offset),
-        max = Math.max(this.max, offset);
-      if (max - min > this.policy.maxOffsetSpreadMs) {
+      let min = Math.min(this.min, offset);
+      let max = Math.max(this.max, offset);
+      if (priorState === 'playing') {
+        const window = this.runtimeOffsets;
+        const cutoff = performanceTime! - this.policy.minWindowMs;
+        while (window.length > 1 && window[1]!.time < cutoff) window.shift();
+        min = offset;
+        max = offset;
+        for (const entry of window) {
+          min = Math.min(min, entry.offset);
+          max = Math.max(max, entry.offset);
+        }
+        if (window.length >= this.policy.maxSamples) {
+          reason = 'runtime-window-cap';
+          this.invalidate(reason);
+        }
+      }
+      if (reason === 'runtime-window-cap') {
+        // Do not discard in-window evidence to make room for a new sample.
+      } else if (max - min > this.policy.maxOffsetSpreadMs) {
         reason = 'discontinuity';
         if (priorState === 'playing' || priorState === 'armed')
           this.invalidate(reason);
@@ -187,6 +269,18 @@ export class OutputClock {
         if (!this.first) this.first = o;
         if (this.last) this.advances++;
         this.last = o;
+        if (priorState === 'playing') {
+          const entry = { time: performanceTime!, offset, observation: o };
+          this.runtimeOffsets.push(entry);
+          this.recoveryOffsets.push(entry);
+          while (
+            this.recoveryOffsets.length > 1 &&
+            this.recoveryOffsets[0]!.time < entry.time - this.policy.freshnessMs
+          )
+            this.recoveryOffsets.shift();
+          if (this.recoveryOffsets.length > this.policy.maxSamples)
+            this.recoveryOffsets.shift();
+        }
         if (priorState !== 'playing' && priorState !== 'armed') {
           this.state =
             this.advances >= this.policy.minAdvances &&

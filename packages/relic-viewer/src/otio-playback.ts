@@ -8,6 +8,8 @@
 
 import type {
   OtioAudioContribution,
+  OtioAudioScheduleSpan,
+  OtioAudioSampleLattice,
   OtioBundleEntryName,
   OtioDiagnostic,
   OtioDocumentV1,
@@ -21,14 +23,41 @@ import type {
 } from '@relic/format';
 import {
   addRationalTimes,
+  audioScheduleForOtioRange,
   compareRationalTimes,
   evaluateOtioAt,
   otioPlaybackBoundaries,
+  otioAudioSampleLattice,
   otioSamplingMap,
   rangeContainsTime,
   rescaleTime,
 } from '@relic/format';
 import { inferMediaMimeType, type OtioMediaResolver } from './otio-media.ts';
+import { preflightWavePcm, type WavePcmHeader } from './otio-wave-pcm.ts';
+import {
+  OtioPcmBudget,
+  OtioPcmProvider,
+  OtioPcmScheduler,
+  type OtioPcmGainFactor,
+  type OtioPcmPrepared,
+} from './otio-audio-pcm.ts';
+import {
+  createOtioTransportGate,
+  OtioGateModuleLoadError,
+  OtioGateRenderClockError,
+  type OtioTransportGate,
+  type OtioGateAck,
+} from './otio-transport-gate.ts';
+import { OutputClock } from './otio-output-clock.ts';
+import {
+  OTIO_PCM_MAX_BYTES,
+  OTIO_PCM_PULL_SCRATCH_BYTES,
+  OTIO_PCM_MAX_HORIZON_SECONDS,
+  OTIO_PCM_MAX_NODES,
+  OTIO_PCM_PACKET_FRAMES,
+  OTIO_PCM_MAX_STREAMS,
+  OTIO_PCM_MIN_LEAD_FRAMES,
+} from './otio-audio-pcm-protocol.ts';
 import {
   type OtioVideoTiming,
   readOtioVideoTiming,
@@ -48,11 +77,13 @@ import {
   presentedWindowOutcome,
   readPresentedFrame,
   SNAPSHOT_SLOTS_PER_DECODER,
+  selectOtioCausalEpoch,
   SnapshotPixelBudget,
   videoDecoderTime,
   VsyncTracker,
   type DecoderPhaseSample,
   type HTMLVideoElementWithRvfc,
+  type NativeSnapshotReservation,
   type NativeSnapshotSlot,
   type PhaseAnchorResult,
   type PresentedWindowOutcome,
@@ -75,10 +106,42 @@ export type {
   PhaseAnchorResult,
   PresentedWindowOutcome,
 };
+
+/** Keeps worklet-node credits until render-thread or owned-context retirement. */
+export class OtioPcmGateRetirements {
+  private readonly releases = new Set<() => void>();
+  constructor(private readonly budget: OtioPcmBudget) {}
+
+  reserve(): () => void {
+    this.budget.reserveNodes(2);
+    const release = () => {
+      if (!this.releases.delete(release)) return;
+      this.budget.releaseNodes(2);
+    };
+    this.releases.add(release);
+    return release;
+  }
+
+  retire(gate: Pick<OtioTransportGate, 'dispose'>, release: () => void): void {
+    try {
+      void gate.dispose().then(release, () => undefined);
+    } catch {
+      // Failed shutdown is not evidence that the processor retired.
+    }
+  }
+
+  contextClosed(): void {
+    for (const release of this.releases) release();
+  }
+}
 export const OTIO_MAX_IMAGE_EDGE = 4096;
 export const OTIO_MAX_IMAGE_PIXELS = 4096 * 4096;
 export const OTIO_RETAINED_IMAGE_PIXELS = 32 * 1024 * 1024;
 const HAVE_CURRENT_DATA = 2;
+// Operational candidate; integrated startup qualification must measure this guard.
+const OTIO_PCM_EPOCH_GUARD_FRAMES = 512;
+const OTIO_PCM_SELECTION_RESERVE_FRAMES = 704;
+const OTIO_PCM_TARGET_LEAD_SECONDS = 0.4;
 // Chromium can quantize an assigned midpoint twice: the loopback proof saw
 // 4.020833333333334 report 4.020832 on seeked. Two microseconds cover that
 // measured granularity without accepting a neighboring ordinary video frame.
@@ -227,6 +290,7 @@ export class ImageFrameCache {
     { pixels: number; release: () => void }
   >();
   private readonly pinned = new Set<string>();
+  private readonly leased = new Map<string, number>();
   private pixels = 0;
 
   constructor(private readonly budget: number) {}
@@ -256,6 +320,10 @@ export class ImageFrameCache {
       release();
       return false;
     }
+    if (this.leased.has(key)) {
+      release();
+      return false;
+    }
     const existing = this.entries.get(key);
     if (existing) {
       this.pixels -= existing.pixels;
@@ -279,17 +347,37 @@ export class ImageFrameCache {
   evict(): void {
     for (const [key, entry] of this.entries) {
       if (this.pixels <= this.budget) break;
-      if (this.pinned.has(key)) continue;
+      if (this.pinned.has(key) || this.leased.has(key)) continue;
       this.pixels -= entry.pixels;
       entry.release();
       this.entries.delete(key);
     }
   }
 
+  reserve(key: string): { isValid(): boolean; release(): void } | null {
+    const entry = this.entries.get(key);
+    if (!entry) return null;
+    this.leased.set(key, (this.leased.get(key) ?? 0) + 1);
+    let released = false;
+    return {
+      isValid: () =>
+        !released && this.entries.get(key) === entry && this.leased.has(key),
+      release: () => {
+        if (released) return;
+        released = true;
+        if (this.entries.get(key) !== entry) return;
+        const count = this.leased.get(key) ?? 0;
+        if (count <= 1) this.leased.delete(key);
+        else this.leased.set(key, count - 1);
+      },
+    };
+  }
+
   releaseAll(): void {
     for (const entry of this.entries.values()) entry.release();
     this.entries.clear();
     this.pinned.clear();
+    this.leased.clear();
     this.pixels = 0;
   }
 }
@@ -302,17 +390,23 @@ export function renderOtioVideoTree(
   leaves: readonly (OtioPreparedLeaf | null)[],
   checkout: (depth: number) => HTMLCanvasElement,
   hidden?: (nodeId: string, ancestry: readonly string[]) => boolean
-): void {
-  output.globalCompositeOperation = 'source-over';
-  output.globalAlpha = 1;
-  output.fillStyle = '#000000';
-  output.fillRect(0, 0, width, height);
-  if (!tree) return;
-  const root = paintNode(tree, 0, width, height, leaves, checkout, hidden);
-  if (!root) return;
-  output.globalCompositeOperation = 'source-over';
-  output.globalAlpha = 1;
-  output.drawImage(root, 0, 0, width, height);
+): 'painted' | 'empty' | 'failed' {
+  try {
+    const root = tree
+      ? paintNode(tree, 0, width, height, leaves, checkout, hidden)
+      : null;
+    output.globalCompositeOperation = 'source-over';
+    output.globalAlpha = 1;
+    output.fillStyle = '#000000';
+    output.fillRect(0, 0, width, height);
+    if (!root) return 'empty';
+    output.globalCompositeOperation = 'source-over';
+    output.globalAlpha = 1;
+    output.drawImage(root, 0, 0, width, height);
+    return 'painted';
+  } catch {
+    return 'failed';
+  }
 }
 
 function closeFrames(frames: VideoFrame[]): void {
@@ -365,10 +459,11 @@ function paintNode(
   }
   if (node.kind === 'leaf') {
     const leaf = leaves[node.contribution_index] ?? null;
-    if (!leaf || leaf.kind === 'empty') return null;
+    if (!leaf) throw new Error('Composition leaf is unavailable');
+    if (leaf.kind === 'empty') return null;
     const surface = checkout(depth);
     const ctx = surface.getContext('2d');
-    if (!ctx) return null;
+    if (!ctx) throw new Error('Canvas surface context unavailable');
     ctx.clearRect(0, 0, width, height);
     ctx.globalCompositeOperation = 'source-over';
     if (leaf.kind === 'black') {
@@ -400,7 +495,7 @@ function paintNode(
       if (!surface || !ctx) {
         surface = checkout(depth);
         ctx = surface.getContext('2d');
-        if (!ctx) return null;
+        if (!ctx) throw new Error('Canvas surface context unavailable');
         ctx.clearRect(0, 0, width, height);
         ctx.globalAlpha = 1;
       }
@@ -428,7 +523,7 @@ function paintNode(
     if (!surface || !ctx) {
       surface = checkout(depth);
       ctx = surface.getContext('2d');
-      if (!ctx) return null;
+      if (!ctx) throw new Error('Canvas surface context unavailable');
       ctx.clearRect(0, 0, width, height);
       ctx.globalAlpha = 1;
     }
@@ -911,6 +1006,10 @@ export function createOtioPlayback(
   const surfacePool: HTMLCanvasElement[] = [];
   const coldProofGlobal = globalThis as typeof globalThis & {
     __otioProofCold?: boolean;
+    __otioProofPcm?: boolean;
+    __otioProofPcmFault?:
+      | 'invalidate-next-reserved-tag'
+      | 'withhold-future-video';
   };
   function coldProof(
     event: string,
@@ -922,6 +1021,107 @@ export function createOtioPlayback(
         wall: presentClockMs(),
         ...details,
       });
+  }
+  function pcmProof(
+    event: string,
+    generation: number,
+    details: Record<string, unknown> = {}
+  ): void {
+    if (coldProofGlobal.__otioProofPcm === true)
+      console.log('OTIO_PROOF_PCM', {
+        event,
+        generation,
+        wallMs: presentClockMs(),
+        ...details,
+      });
+  }
+  type PcmLattice = Extract<OtioAudioSampleLattice, { eligible: true }>;
+  type PcmSpan = { span: OtioAudioScheduleSpan; lattice: PcmLattice };
+  type PcmAsset = { blob: Blob; header: WavePcmHeader };
+  type PcmAdmission = {
+    rate: number;
+    spans: PcmSpan[];
+    assets: Map<OtioBundleEntryName, PcmAsset>;
+  };
+  type PcmSelection =
+    | { kind: 'pcm'; admission: PcmAdmission }
+    | { kind: 'native'; reason: string };
+  type PcmChunk = {
+    plan: PcmSpan;
+    timelineStart: number;
+    sourceStart: number;
+    prepared: OtioPcmPrepared;
+    count: number;
+  };
+  type PcmRun = {
+    generation: number;
+    context: AudioContext;
+    routeVersion: number;
+    admission: PcmAdmission;
+    provider: OtioPcmProvider;
+    scheduler: OtioPcmScheduler;
+    outputClock: OutputClock;
+    clockCalibration: Promise<boolean> | null;
+    gate: OtioTransportGate;
+    releaseGateCredit: () => void;
+    tracks: Map<string, GainNode>;
+    streams: Map<OtioBundleEntryName, string>;
+    chunks: PcmChunk[];
+    startFrame: number;
+    startTime: OtioRationalTime;
+    preparedThrough: number;
+    scheduledThrough: number;
+    contextFrame: number | null;
+    phaseSamples: readonly DecoderPhaseSample[];
+    frontierFrame: number | null;
+    frontierCrossedAt: number | null;
+    bridge: {
+      contextTime: number;
+      performanceTime: number;
+      mappingAllowanceMs: number;
+    } | null;
+    holds: PcmVideoHold[];
+    loading: Promise<void> | null;
+    stopping: boolean;
+    command: Promise<boolean> | null;
+    stopWatchdog: ReturnType<typeof setTimeout> | null;
+    onContextState: () => void;
+    closeReason: 'pause' | 'frontier' | 'resync' | 'resource' | 'error';
+    stopped: boolean;
+  };
+  let pcmRun: PcmRun | null = null;
+  let pcmAdmission: PcmAdmission | null = null;
+  let audioBackend: 'native' | 'pcm' = 'native';
+  let pcmGeneration = 0;
+  const pcmBudget = new OtioPcmBudget();
+  const pcmGateRetirements = new OtioPcmGateRetirements(pcmBudget);
+  let pcmPlayIntent = false;
+  let pcmBackendStarted = false;
+  let pcmRecoveryWake: (() => void) | null = null;
+  let pcmResumeFrame: number | null = null;
+  let pcmRequestWall = 0;
+  async function beforePcmDeadline<T>(
+    operation: Promise<T>,
+    requestMs: number
+  ): Promise<T> {
+    const deadline = new OutputClock(requestMs).deadline;
+    const remaining = deadline - presentClockMs();
+    if (remaining <= 0)
+      throw new Error('scheduled audio startup deadline expired');
+    const timeout = Promise.withResolvers<never>();
+    const timer = setTimeout(
+      () =>
+        timeout.reject(new Error('scheduled audio startup deadline expired')),
+      remaining
+    );
+    try {
+      const result = await Promise.race([operation, timeout.promise]);
+      if (presentClockMs() > deadline)
+        throw new Error('scheduled audio startup deadline expired');
+      return result;
+    } finally {
+      clearTimeout(timer);
+    }
   }
   let coldFirstTick = false;
   let coldFirstPaint = false;
@@ -1018,10 +1218,276 @@ export function createOtioPlayback(
   ): NativeDecoderRing {
     let ring = nativeRings.get(key);
     if (!ring) {
-      ring = new NativeDecoderRing(element, key, bundlePath, snapshotBudget);
+      ring = new NativeDecoderRing(element, key, bundlePath, snapshotBudget, {
+        strictProducerOrder: audioBackend === 'pcm',
+      });
       nativeRings.set(key, ring);
     }
+    ring.setStrictProducerOrder(audioBackend === 'pcm');
     return ring;
+  }
+
+  type PcmVisualInterval = {
+    end: OtioRationalTime;
+    reservations: NativeSnapshotReservation[];
+    images: Array<{
+      path: OtioBundleEntryName;
+      isValid(): boolean;
+      release(): void;
+    }>;
+  };
+  type PcmVideoHold = {
+    through: OtioRationalTime;
+    intervals: PcmVisualInterval[];
+    isValid(): boolean;
+    releaseThrough(time: OtioRationalTime): void;
+    release(): void;
+  };
+
+  /** Reserve only an actually captured contiguous visual prefix. */
+  function reserveVisualPrefix(
+    from: OtioRationalTime,
+    limit: OtioRationalTime
+  ): PcmVideoHold {
+    let cursor = from;
+    const intervals: PcmVisualInterval[] = [];
+    const ownerGeneration = renderGeneration;
+    const ownerScope = scopeEpoch;
+    const ownerAnchor = nativeAnchor;
+    const ownerSize = outputSize();
+    const ownerRun = pcmRun;
+    const proofHost = typeof location === 'undefined' ? '' : location.hostname;
+    const withholdFuture =
+      coldProofGlobal.__otioProofPcm === true &&
+      coldProofGlobal.__otioProofPcmFault === 'withhold-future-video' &&
+      (proofHost === '127.0.0.1' ||
+        proofHost === 'localhost' ||
+        proofHost.endsWith('.localhost') ||
+        proofHost === '[::1]');
+    let released = false;
+    for (
+      let iteration = 0;
+      !withholdFuture &&
+      iteration < 512 &&
+      compareRationalTimes(cursor, limit) < 0;
+      iteration++
+    ) {
+      if (graphicsLost || isCanvasContextLost(canvas)) break;
+      const evaluation = scopedEvaluation(cursor);
+      if (previewBlocked(evaluation)) break;
+      const tree = videoTree(evaluation);
+      if (!tree && evaluation.video_contributions.length > 0) break;
+      const blocked = blockedTracks(evaluation);
+      const indices = getDrawnLeafIndices(
+        tree,
+        (id, ancestry) => videoHidden(id, ancestry) || blocked.has(id),
+        true
+      );
+      const keys = collectVideoOccurrenceKeys(evaluation.video_contributions);
+      let end = limit;
+      for (const boundary of playbackBoundaries) {
+        if (
+          compareRationalTimes(boundary.time, cursor) > 0 &&
+          compareRationalTimes(boundary.time, end) < 0
+        )
+          end = boundary.time;
+      }
+      const requested = new Map<NativeDecoderRing, Set<number>>();
+      const intervalImages = new Set<OtioBundleEntryName>();
+      let valid = true;
+      for (const index of indices) {
+        const contribution = evaluation.video_contributions[index];
+        if (!contribution || sampleKind(contribution) === 'black') continue;
+        const path = contribution.bundle_path;
+        if (!path || sampleUnavailable(doc, contribution)) {
+          valid = false;
+          break;
+        }
+        const node = doc.nodes[contribution.node_id];
+        if (
+          node?.active_media_reference_key &&
+          node.media_references?.[node.active_media_reference_key]?.schema ===
+            'ImageSequenceReference.1'
+        ) {
+          valid = false;
+          break;
+        }
+        const mime = inferMediaMimeType(path);
+        if (mime.startsWith('image/')) {
+          if (!imageElements.has(path)) {
+            valid = false;
+            break;
+          }
+          intervalImages.add(path);
+          continue;
+        }
+        if (!mime.startsWith('video/')) {
+          valid = false;
+          break;
+        }
+        const fidelity = effectFidelity(
+          contribution.active_effects,
+          contribution.node_id
+        );
+        const key = keys[index];
+        if (
+          !key ||
+          fidelity.kind === 'rate' ||
+          (fidelity.kind === 'effect' && !baseMediaPreviewAllowed)
+        ) {
+          valid = false;
+          break;
+        }
+        const timing = videoTimingCache.get(path);
+        if (fidelity.kind === 'freeze') {
+          valid = false;
+          break;
+        }
+        const ring = nativeRings.get(key);
+        const candidate = preparedBoundary;
+        const owned =
+          lastDrawnOccurrenceKeys.has(key) ||
+          (candidate?.status === 'ready' &&
+            candidate.anchor === nativeAnchor &&
+            candidate.generation === renderGeneration &&
+            candidate.scope === scopeEpoch &&
+            !candidate.abort.signal.aborted &&
+            candidate.rings.get(key) === ring);
+        const rate = fidelity.kind === 'effect' ? 1 : fidelity.rate;
+        const tag = certifiedWindowIndex(
+          contribution.source_time,
+          timing ?? null
+        );
+        const size = outputSize();
+        if (
+          !ring ||
+          ring.bundlePath !== path ||
+          videos.get(key)?.element !== ring.videoElement ||
+          !owned ||
+          !timing ||
+          timing.kind !== 'windows' ||
+          tag === null ||
+          ring.videoElement.playbackRate !== rate ||
+          ring.hasLostContext() ||
+          ring.slots.some(
+            (slot) =>
+              slot.canvas.width !== size.width ||
+              slot.canvas.height !== size.height
+          )
+        ) {
+          valid = false;
+          break;
+        }
+        const windowEnd = timing.ends[tag];
+        if (windowEnd === undefined) {
+          valid = false;
+          break;
+        }
+        const remaining =
+          (windowEnd - decoderLocalSeconds(contribution.source_time)) / rate;
+        if (!(remaining > 0)) {
+          valid = false;
+          break;
+        }
+        const packetEnd = addRationalTimes(cursor, {
+          value: remaining * clock.rate,
+          rate: clock.rate,
+        });
+        if (compareRationalTimes(packetEnd, end) < 0) end = packetEnd;
+        let tags = requested.get(ring);
+        if (!tags) {
+          tags = new Set();
+          requested.set(ring, tags);
+        }
+        tags.add(tag);
+      }
+      if (!valid || compareRationalTimes(end, cursor) <= 0) break;
+      const intervalReservations: NativeSnapshotReservation[] = [];
+      for (const [ring, tags] of requested) {
+        const reservation = ring.reserveTags([...tags], ring.captureEpoch, {
+          videoElement: ring.videoElement,
+          bundlePath: ring.bundlePath,
+          width: ownerSize.width,
+          onInvalidated: () => {
+            if (ownerRun && pcmRun === ownerRun && !ownerRun.stopped) {
+              pcmProof('error', ownerRun.generation, {
+                stage: 'visual',
+                code: 'certified video reservation was invalidated',
+              });
+              failScheduledAudio('certified video reservation was invalidated');
+            }
+          },
+          height: ownerSize.height,
+        });
+        if (!reservation) {
+          valid = false;
+          break;
+        }
+        intervalReservations.push(reservation);
+      }
+      const intervalLeases: PcmVisualInterval['images'] = [];
+      if (valid) {
+        for (const path of intervalImages) {
+          const lease = images.reserve(path);
+          if (!lease) {
+            valid = false;
+            break;
+          }
+          intervalLeases.push({ path, ...lease });
+        }
+      }
+      if (!valid) {
+        for (const reservation of intervalReservations) reservation.release();
+        for (const lease of intervalLeases) lease.release();
+        break;
+      }
+      intervals.push({
+        end,
+        reservations: intervalReservations,
+        images: intervalLeases,
+      });
+      cursor = end;
+    }
+    return {
+      through: cursor,
+      intervals,
+      isValid: () =>
+        !released &&
+        !isDisposed &&
+        !graphicsLost &&
+        !isCanvasContextLost(canvas) &&
+        renderGeneration === ownerGeneration &&
+        scopeEpoch === ownerScope &&
+        nativeAnchor === ownerAnchor &&
+        outputSize().width === ownerSize.width &&
+        outputSize().height === ownerSize.height &&
+        intervals.every(
+          (interval) =>
+            interval.reservations.every((reservation) =>
+              reservation.isValid()
+            ) && interval.images.every((lease) => lease.isValid())
+        ),
+      releaseThrough: (time) => {
+        while (
+          intervals.length &&
+          compareRationalTimes(intervals[0]!.end, time) <= 0
+        ) {
+          const interval = intervals.shift()!;
+          for (const reservation of interval.reservations)
+            reservation.release();
+          for (const lease of interval.images) lease.release();
+        }
+      },
+      release: () => {
+        if (released) return;
+        released = true;
+        for (const interval of intervals.splice(0)) {
+          for (const reservation of interval.reservations)
+            reservation.release();
+          for (const lease of interval.images) lease.release();
+        }
+      },
+    };
   }
 
   function cancelPreparedBoundary(): void {
@@ -1092,18 +1558,19 @@ export function createOtioPlayback(
       const audioKeys = collectAudioOccurrenceKeys(
         evaluation.audio_contributions
       );
-      const incomingAudio = evaluation.audio_contributions.flatMap(
-        (contribution, index) => {
-          const key = audioKeys[index];
-          if (
-            !key ||
-            previousAudio.has(key) ||
-            !trackAudible(contribution.track_id)
-          )
-            return [];
-          return [{ contribution, key }];
-        }
-      );
+      const incomingAudio =
+        audioBackend === 'pcm'
+          ? []
+          : evaluation.audio_contributions.flatMap((contribution, index) => {
+              const key = audioKeys[index];
+              if (
+                !key ||
+                previousAudio.has(key) ||
+                !trackAudible(contribution.track_id)
+              )
+                return [];
+              return [{ contribution, key }];
+            });
       const incomingImages = new Set<OtioBundleEntryName>();
       for (const index of indices) {
         const path = evaluation.video_contributions[index]?.bundle_path;
@@ -1149,6 +1616,8 @@ export function createOtioPlayback(
       const fail = (): void => {
         if (preparedBoundary !== candidate) return;
         candidate.status = 'failed';
+        pcmProof('boundary-failed', pcmGeneration, { at: candidate.at });
+        pcmRecoveryWake?.();
         candidate.abort.abort();
         for (const [key, ring] of candidate.rings) {
           if (nativeRings.get(key) !== ring) continue;
@@ -1336,8 +1805,13 @@ export function createOtioPlayback(
                 ring.startCallbacks(timing, fidelity.rate, () => {
                   nativeIneligiblePaths.add(path);
                   if (preparedBoundary === candidate) fail();
-                  else if (nativeRings.get(key) === ring && isPlaying)
-                    void startSequence(currentTime, true);
+                  else if (nativeRings.get(key) === ring && isPlaying) {
+                    if (audioBackend === 'pcm')
+                      failScheduledAudio(
+                        'video decoder lost certified progress'
+                      );
+                    else void startSequence(currentTime, true);
+                  }
                 });
                 const [sample] = await bounded(
                   Promise.all([advanced.promise, playing]),
@@ -1478,7 +1952,11 @@ export function createOtioPlayback(
       void Promise.all([worker(), worker()])
         .then(() => Promise.all(starts))
         .then(() => {
-          if (valid()) candidate.status = 'ready';
+          if (valid()) {
+            candidate.status = 'ready';
+            pcmProof('boundary-ready', pcmGeneration, { at: candidate.at });
+            pcmRecoveryWake?.();
+          }
         });
       return;
     }
@@ -1556,6 +2034,9 @@ export function createOtioPlayback(
     depth: number
   ): void {
     if (isDisposed) return;
+    if (audioBackend === 'pcm' && (pcmRun || pcmPlayIntent))
+      failScheduledAudio('pooled graphics context lost');
+    else stopPcm('context');
     cancelPreparedBoundary();
     removeSurfaceListener(surface);
     surface.width = 0;
@@ -1573,6 +2054,9 @@ export function createOtioPlayback(
 
   function onVisibleContextLost(): void {
     if (isDisposed) return;
+    if (audioBackend === 'pcm' && (pcmRun || pcmPlayIntent))
+      failScheduledAudio('visible graphics context lost');
+    else stopPcm('context');
     cancelPreparedBoundary();
     hideVisibleCanvas();
     graphicsLost = true;
@@ -1632,6 +2116,19 @@ export function createOtioPlayback(
   }
 
   let audioContext: AudioContext | null = options.audioContext ?? null;
+  let pcmRouteVersion = 0;
+  let observedAudioContext: AudioContext | null = null;
+  const onPcmSinkChange = () => {
+    pcmRouteVersion++;
+    if (audioBackend === 'pcm' && (pcmRun || pcmPlayIntent))
+      failScheduledAudio('audio output route changed');
+  };
+  const onPcmContextChange = () => {
+    if (audioContext?.state === 'running') return;
+    pcmRouteVersion++;
+    if (audioBackend === 'pcm' && !pcmRun && pcmPlayIntent)
+      failScheduledAudio('audio context interrupted during recovery');
+  };
   let masterGain: GainNode | null = null;
   const trackGains = new Map<string, GainNode>();
   let audioGraph: HTMLElement | null = null;
@@ -1699,6 +2196,20 @@ export function createOtioPlayback(
       } catch {
         audioContext = null;
       }
+    }
+    if (
+      audioContext &&
+      observedAudioContext !== audioContext &&
+      typeof audioContext.addEventListener === 'function'
+    ) {
+      observedAudioContext?.removeEventListener('sinkchange', onPcmSinkChange);
+      observedAudioContext?.removeEventListener(
+        'statechange',
+        onPcmContextChange
+      );
+      audioContext.addEventListener('sinkchange', onPcmSinkChange);
+      audioContext.addEventListener('statechange', onPcmContextChange);
+      observedAudioContext = audioContext;
     }
     if (audioContext && !masterGain) {
       try {
@@ -1917,6 +2428,1478 @@ export function createOtioPlayback(
     const pending = resolveBlob(path);
     blobPromises.set(path, pending);
     return pending;
+  }
+
+  function pcmInitialDemand(
+    admission: PcmAdmission,
+    start: number
+  ): { nodes: number; bytes: number; streams: number } {
+    const end = Math.min(
+      Math.floor((scopeEnd().value * admission.rate) / scopeEnd().rate),
+      start + Math.floor(admission.rate * OTIO_PCM_TARGET_LEAD_SECONDS)
+    );
+    const tracks = new Set<string>();
+    const streams = new Set<OtioBundleEntryName>();
+    let nodes = 2;
+    let bytes = OTIO_PCM_PULL_SCRATCH_BYTES;
+    let largestBlock = 0;
+    for (const { span, lattice } of admission.spans) {
+      const frames = Math.max(
+        0,
+        Math.min(end, lattice.timeline_end) -
+          Math.max(start, lattice.timeline_start)
+      );
+      if (!frames || !span.bundle_path) continue;
+      tracks.add(span.track_id);
+      streams.add(span.bundle_path);
+      nodes += 1 + span.gain_factors.length;
+      const asset = admission.assets.get(span.bundle_path);
+      if (!asset) throw new Error('PCM admitted asset is unavailable');
+      const channels = asset.header.channels;
+      bytes += frames * channels * 4;
+      largestBlock = Math.max(largestBlock, frames * channels * 4);
+    }
+    return {
+      nodes: nodes + tracks.size,
+      bytes: bytes + largestBlock,
+      streams: streams.size,
+    };
+  }
+
+  async function admitPcmScope(context: AudioContext): Promise<PcmSelection> {
+    const rate = context.sampleRate;
+    if (
+      (rate !== 44100 && rate !== 48000) ||
+      typeof context.getOutputTimestamp !== 'function' ||
+      typeof context.audioWorklet?.addModule !== 'function' ||
+      typeof AudioWorkletNode === 'undefined' ||
+      typeof Worker === 'undefined'
+    )
+      return {
+        kind: 'native',
+        reason:
+          'the PCM output clock, sample rate, worker, or transport worklet is unavailable',
+      };
+    if (
+      graphicsLost ||
+      isCanvasContextLost(canvas) ||
+      !canvas.getContext('2d')
+    ) {
+      return { kind: 'native', reason: 'compositor context is unavailable' };
+    }
+    const selectedNodes = scope ? scopeNodes : new Set<string>();
+    if (!scope) {
+      const pending = [timelineId];
+      while (pending.length) {
+        const id = pending.pop()!;
+        if (selectedNodes.has(id)) continue;
+        selectedNodes.add(id);
+        const node = doc.nodes[id];
+        if (node) pending.push(...node.children_ids);
+      }
+    }
+    const cursor = Math.round((currentTime.value * rate) / currentTime.rate);
+    if (
+      !Number.isSafeInteger(cursor) ||
+      compareRationalTimes(currentTime, { value: cursor, rate }) !== 0
+    ) {
+      return {
+        kind: 'native',
+        reason: 'requested position is not on the audio sample lattice',
+      };
+    }
+    for (const node of Object.values(doc.nodes)) {
+      if (!selectedNodes.has(node.id)) continue;
+      const sequence =
+        node.active_media_reference_key &&
+        node.media_references?.[node.active_media_reference_key]?.schema ===
+          'ImageSequenceReference.1';
+      const freeze = node.effects?.some(
+        (effect) => effect.enabled && isFreeze(effect)
+      );
+      if (sequence || freeze)
+        return {
+          kind: 'native',
+          reason: 'scope contains a sequence or freeze requiring native timing',
+        };
+    }
+    const range = scope?.range ?? {
+      start_time: { value: 0, rate: clock.rate },
+      duration: clock.duration,
+    };
+    const planned = audioScheduleForOtioRange(doc, timelineId, range);
+    const spans: PcmSpan[] = [];
+    const assets = new Map<OtioBundleEntryName, PcmAsset>();
+    for (const span of planned) {
+      if (
+        scope &&
+        !scopeNodes.has(span.node_id) &&
+        span.node_id !== scope.nodeId
+      )
+        continue;
+      if (span.disposition === 'silence') continue;
+      if (span.disposition !== 'media' || !span.bundle_path)
+        return {
+          kind: 'native',
+          reason: 'audio contains unavailable or unsupported media',
+        };
+      const lattice = otioAudioSampleLattice(span, rate);
+      if (!lattice.eligible) return { kind: 'native', reason: lattice.reason };
+      let asset = assets.get(span.bundle_path);
+      if (!asset) {
+        const blob = await sharedBlob(span.bundle_path);
+        if (!blob)
+          return {
+            kind: 'native',
+            reason: 'local audio bytes are unavailable',
+          };
+        try {
+          const header = await preflightWavePcm(blob);
+          if (header.sampleRate !== rate)
+            return {
+              kind: 'native',
+              reason: 'sample-rate conversion is required',
+            };
+          asset = { blob, header };
+          assets.set(span.bundle_path, asset);
+        } catch {
+          return {
+            kind: 'native',
+            reason: 'audio format is not supported by scheduled PCM',
+          };
+        }
+      }
+      if (lattice.source_end > asset.header.totalFrames)
+        return {
+          kind: 'native',
+          reason: 'audio source exceeds certified WAV extent',
+        };
+      spans.push({ span, lattice });
+    }
+    if (!spans.length)
+      return { kind: 'native', reason: 'scope has no scheduled audio voices' };
+    const scopeEndTime = addRationalTimes(range.start_time, range.duration);
+    const probes = [
+      range.start_time,
+      ...otioPlaybackBoundaries(doc, timelineId, range)
+        .map((boundary) => boundary.time)
+        .filter((time) => compareRationalTimes(time, scopeEndTime) < 0),
+    ];
+    const checkedVideo = new Set<string>();
+    for (const time of probes) {
+      for (const contribution of scopedEvaluation(time).video_contributions) {
+        if (sampleKind(contribution) === 'black') continue;
+        const path = contribution.bundle_path;
+        if (!path || sampleUnavailable(doc, contribution))
+          return { kind: 'native', reason: 'video media is unavailable' };
+        const mime = inferMediaMimeType(path);
+        if (mime.startsWith('image/')) continue;
+        if (
+          !mime.startsWith('video/') ||
+          typeof VideoFrame !== 'function' ||
+          typeof HTMLVideoElement === 'undefined' ||
+          typeof HTMLVideoElement.prototype.requestVideoFrameCallback !==
+            'function'
+        )
+          return {
+            kind: 'native',
+            reason: 'certified video capture is unavailable',
+          };
+        const fidelity = effectFidelity(
+          contribution.active_effects,
+          contribution.node_id
+        );
+        if (
+          fidelity.kind === 'freeze' ||
+          fidelity.kind === 'rate' ||
+          (fidelity.kind === 'effect' && !baseMediaPreviewAllowed)
+        )
+          return {
+            kind: 'native',
+            reason: 'video timing requires native playback',
+          };
+        const videoRate = fidelity.kind === 'effect' ? 1 : fidelity.rate;
+        const key = `${path}\u0000${videoRate}`;
+        if (checkedVideo.has(key)) continue;
+        const timing = await sharedVideoTiming(path, mime);
+        if (
+          !timing ||
+          timing.kind !== 'windows' ||
+          !checkNativeTimingEligibility(
+            timing,
+            videoRate,
+            vsyncTracker.medianSeconds
+          )
+        )
+          return { kind: 'native', reason: 'video timing cannot be certified' };
+        checkedVideo.add(key);
+      }
+    }
+    const events = spans.flatMap(({ span, lattice }) => [
+      { at: lattice.timeline_start, end: false, occurrence: span.occurrence },
+      { at: lattice.timeline_end, end: true, occurrence: span.occurrence },
+    ]);
+    events.sort((a, b) => a.at - b.at || Number(b.end) - Number(a.end));
+    const active = new Map<string, number>();
+    for (const event of events) {
+      const count = active.get(event.occurrence) ?? 0;
+      if (event.end) {
+        if (count <= 1) active.delete(event.occurrence);
+        else active.set(event.occurrence, count - 1);
+      } else {
+        active.set(event.occurrence, count + 1);
+        if (active.size > 8)
+          return {
+            kind: 'native',
+            reason: 'scope exceeds the simultaneous audio voice limit',
+          };
+      }
+    }
+    // Reject only demand that is intrinsic to the scope or the actual initial
+    // batch. Later node retirement is governed by real ended callbacks and the
+    // shared budget, not by an assumed callback-latency bound.
+    const streamEvents = spans
+      .flatMap(({ span, lattice }) => [
+        {
+          at: lattice.timeline_start,
+          delta: 1,
+          path: span.bundle_path!,
+        },
+        { at: lattice.timeline_end, delta: -1, path: span.bundle_path! },
+      ])
+      .sort((a, b) => a.at - b.at || a.delta - b.delta);
+    const streamUse = new Map<OtioBundleEntryName, number>();
+    for (const event of streamEvents) {
+      const count = (streamUse.get(event.path) ?? 0) + event.delta;
+      if (count) streamUse.set(event.path, count);
+      else streamUse.delete(event.path);
+      if (streamUse.size > OTIO_PCM_MAX_STREAMS)
+        return {
+          kind: 'native',
+          reason: 'simultaneous audio exceeds the stream budget',
+        };
+    }
+    const trackNodes = new Set(spans.map(({ span }) => span.track_id)).size;
+    if (trackNodes + 2 > OTIO_PCM_MAX_NODES)
+      return { kind: 'native', reason: 'audio tracks exceed the graph budget' };
+    const nodeEvents = spans
+      .flatMap(({ span, lattice }) => [
+        { at: lattice.timeline_start, delta: 1 + span.gain_factors.length },
+        { at: lattice.timeline_end, delta: -(1 + span.gain_factors.length) },
+      ])
+      .sort((a, b) => a.at - b.at || a.delta - b.delta);
+    let simultaneousNodes = 2;
+    for (const event of nodeEvents) {
+      simultaneousNodes += event.delta;
+      if (simultaneousNodes > OTIO_PCM_MAX_NODES)
+        return {
+          kind: 'native',
+          reason: 'simultaneous audio exceeds the graph budget',
+        };
+    }
+    const admission = { rate, spans, assets };
+    const initial = pcmInitialDemand(admission, cursor);
+    if (
+      initial.nodes > OTIO_PCM_MAX_NODES ||
+      initial.bytes > OTIO_PCM_MAX_BYTES ||
+      initial.streams > OTIO_PCM_MAX_STREAMS
+    )
+      return {
+        kind: 'native',
+        reason: 'initial audio exceeds the resource budget',
+      };
+    return { kind: 'pcm', admission };
+  }
+
+  function stopPcm(reason: string): void {
+    const run = pcmRun;
+    if (!run) return;
+    pcmRun = null;
+    run.stopped = true;
+    clearTimeout(run.stopWatchdog ?? undefined);
+    pcmGeneration++;
+    run.context.removeEventListener('statechange', run.onContextState);
+    pcmProof('cancel', run.generation, { reason });
+    let retirementStarted = false;
+    let retirementTimer: ReturnType<typeof setTimeout> | undefined;
+    const retireGate = () => {
+      if (retirementStarted) return;
+      retirementStarted = true;
+      clearTimeout(retirementTimer);
+      pcmGateRetirements.retire(run.gate, run.releaseGateCredit);
+    };
+    retirementTimer = setTimeout(retireGate, 100);
+    if (run.context.state !== 'running') retireGate();
+    void run.gate
+      .abort(run.generation)
+      .then((ack) => {
+        if (
+          !ack.accepted ||
+          ack.closedFrame === null ||
+          run.contextFrame === null
+        )
+          return;
+        pcmProof('gate-close', run.generation, {
+          reason: 'abort',
+          contextStopFrame: ack.closedFrame,
+          compositionStop: {
+            value: run.startFrame + ack.closedFrame - run.contextFrame,
+            rate: run.admission.rate,
+          },
+        });
+      })
+      .catch(() => undefined)
+      .finally(retireGate);
+    run.scheduler.dispose();
+    for (const hold of run.holds) hold.release();
+    for (const chunk of run.chunks) chunk.prepared.cancel();
+    run.chunks.length = 0;
+    run.provider.dispose();
+    for (const node of run.tracks.values()) {
+      node.disconnect();
+      pcmBudget.releaseNodes(1);
+    }
+  }
+
+  function pcmTrack(run: PcmRun, trackId: string): GainNode {
+    const existing = run.tracks.get(trackId);
+    if (existing) return existing;
+    pcmBudget.reserveNodes(1);
+    try {
+      const track = run.context.createGain();
+      track.gain.value = trackAudible(trackId) ? 1 : 0;
+      track.connect(run.gate.node);
+      run.tracks.set(trackId, track);
+      return track;
+    } catch (error) {
+      pcmBudget.releaseNodes(1);
+      throw error;
+    }
+  }
+
+  async function fillPcm(
+    run: PcmRun,
+    target: number,
+    blockLimit = OTIO_PCM_PACKET_FRAMES
+  ): Promise<void> {
+    if (run.stopping || run.stopped)
+      throw new Error('PCM generation is draining');
+    if (run.loading) return run.loading;
+    const work = (async () => {
+      const from = run.preparedThrough;
+      if (target <= from) return;
+      const pending: PcmChunk[] = [];
+      try {
+        const needed = new Set<OtioBundleEntryName>();
+        for (const plan of run.admission.spans) {
+          if (
+            plan.lattice.timeline_end > from &&
+            plan.lattice.timeline_start < target &&
+            plan.span.bundle_path
+          )
+            needed.add(plan.span.bundle_path);
+        }
+        if (needed.size > OTIO_PCM_MAX_STREAMS)
+          throw new Error('PCM stream budget exceeded');
+        for (const [path, streamId] of run.streams) {
+          if (!needed.has(path)) {
+            run.provider.cancel(streamId);
+            run.streams.delete(path);
+          }
+        }
+        for (const plan of run.admission.spans) {
+          const path = plan.span.bundle_path;
+          if (!path) continue;
+          const start = Math.max(from, plan.lattice.timeline_start);
+          const end = Math.min(target, plan.lattice.timeline_end);
+          if (end <= start) continue;
+          let streamId = run.streams.get(path);
+          if (!streamId) {
+            const asset = run.admission.assets.get(path);
+            if (!asset || run.stopped) throw new Error('PCM asset unavailable');
+            streamId = `stream-${run.streams.size}-${run.generation}-${run.preparedThrough}`;
+            await run.provider.open(streamId, asset.blob, asset.header);
+            if (run.stopped || run.stopping)
+              throw new Error('PCM generation cancelled');
+            run.streams.set(path, streamId);
+          }
+          for (let frame = start; frame < end; ) {
+            const count = Math.min(blockLimit, end - frame);
+            const source =
+              plan.lattice.source_start + frame - plan.lattice.timeline_start;
+            const block = await run.provider.pull(streamId, source, count);
+            if (run.stopped || run.stopping) {
+              run.provider.release(block.planes);
+              throw new Error('PCM generation cancelled');
+            }
+            try {
+              const prepared = run.scheduler.prepare({
+                generation: run.generation,
+                planes: block.planes,
+                gainFactorCount: plan.span.gain_factors.length,
+                destination: pcmTrack(run, plan.span.track_id),
+              });
+              pending.push({
+                plan,
+                timelineStart: frame,
+                sourceStart: source,
+                prepared,
+                count,
+              });
+            } finally {
+              run.provider.release(block.planes);
+            }
+            frame += count;
+          }
+        }
+        if (run.stopped || run.stopping)
+          throw new Error('PCM generation cancelled');
+        run.chunks.push(...pending);
+        pending.length = 0;
+        run.preparedThrough = target;
+      } finally {
+        for (const chunk of pending) chunk.prepared.cancel();
+      }
+    })();
+    run.loading = work;
+    try {
+      await work;
+    } finally {
+      if (run.loading === work) run.loading = null;
+    }
+  }
+
+  async function preparePcmRun(
+    context: AudioContext,
+    admission: PcmAdmission,
+    start: OtioRationalTime,
+    inheritedClock?: OutputClock
+  ): Promise<PcmRun> {
+    const rate = admission.rate;
+    const frame = Math.round((start.value * rate) / start.rate);
+    if (
+      !Number.isSafeInteger(frame) ||
+      compareRationalTimes(start, { value: frame, rate }) !== 0
+    )
+      throw new Error('fractional PCM start');
+    if (!masterGain) throw new Error('audio graph unavailable');
+    const destination = masterGain;
+    const preparationGeneration = renderGeneration;
+    const generation = ++pcmGeneration;
+    const budget = pcmBudget;
+    // Reserve before construction: a timed-out or failed constructor must not
+    // leave an unaccounted worklet that may still be alive.
+    const releaseGateCredit = pcmGateRetirements.reserve();
+    let gate: OtioTransportGate;
+    try {
+      gate = await createOtioTransportGate(
+        context,
+        (ack) => onPcmGateClosed(ack),
+        (error) => {
+          if (pcmRun?.generation !== generation || pcmRun.stopped) return;
+          pcmProof('error', generation, {
+            stage: 'gate',
+            code:
+              error instanceof OtioGateRenderClockError
+                ? 'render-clock-discontinuity'
+                : error.message,
+            ...(error instanceof OtioGateRenderClockError
+              ? {
+                  expectedFrame: error.expectedFrame,
+                  observedFrame: error.observedFrame,
+                }
+              : {}),
+          });
+          failScheduledAudio(`transport gate failed: ${error.message}`);
+        }
+      );
+    } catch (error) {
+      if (error instanceof OtioGateModuleLoadError) releaseGateCredit();
+      throw error;
+    }
+    if (
+      isDisposed ||
+      !isPlaying ||
+      generation !== pcmGeneration ||
+      renderGeneration !== preparationGeneration
+    ) {
+      pcmGateRetirements.retire(gate, releaseGateCredit);
+      throw new Error('PCM generation cancelled');
+    }
+    let provider: OtioPcmProvider | undefined;
+    try {
+      provider = new OtioPcmProvider(generation, budget);
+      gate.node.connect(destination);
+    } catch (error) {
+      provider?.dispose();
+      pcmGateRetirements.retire(gate, releaseGateCredit);
+      throw error;
+    }
+    const scheduler = new OtioPcmScheduler(
+      context,
+      gate.node,
+      generation,
+      budget
+    );
+    const run: PcmRun = {
+      generation,
+      context,
+      routeVersion: pcmRouteVersion,
+      admission,
+      provider,
+      scheduler,
+      gate,
+      releaseGateCredit,
+      outputClock: inheritedClock ?? new OutputClock(pcmRequestWall),
+      clockCalibration: null,
+      tracks: new Map(),
+      streams: new Map(),
+      chunks: [],
+      startFrame: frame,
+      startTime: start,
+      preparedThrough: frame,
+      scheduledThrough: frame,
+      contextFrame: null,
+      phaseSamples: [],
+      frontierFrame: null,
+      frontierCrossedAt: null,
+      bridge: null,
+      holds: [],
+      loading: null,
+      stopping: false,
+      stopWatchdog: null,
+      command: null,
+      closeReason: 'frontier',
+      onContextState: () => {
+        if (pcmRun?.generation === generation && context.state !== 'running') {
+          pcmProof('error', generation, {
+            stage: 'clock',
+            code: 'context-not-running',
+          });
+          failScheduledAudio('audio context interrupted');
+        }
+      },
+      stopped: false,
+    };
+    pcmRun = run;
+    context.addEventListener('statechange', run.onContextState);
+    run.clockCalibration = calibratePcmClock(run);
+    const end = Math.floor((scopeEnd().value * rate) / scopeEnd().rate);
+    await fillPcm(
+      run,
+      Math.min(end, frame + Math.floor(rate * OTIO_PCM_TARGET_LEAD_SECONDS)),
+      Math.floor(rate * OTIO_PCM_TARGET_LEAD_SECONDS)
+    );
+    if (run.stopped) throw new Error('PCM generation cancelled');
+    return run;
+  }
+
+  function schedulePreparedPcm(run: PcmRun): void {
+    if (run.contextFrame === null) throw new Error('PCM epoch not established');
+    const rate = run.admission.rate;
+    const maxFrame = Math.floor(
+      (run.context.currentTime + OTIO_PCM_MAX_HORIZON_SECONDS) * rate
+    );
+    for (let index = 0; index < run.chunks.length; ) {
+      const chunk = run.chunks[index]!;
+      const first = run.contextFrame + chunk.timelineStart - run.startFrame;
+      const count = chunk.count;
+      if (first + count > maxFrame) {
+        index++;
+        continue;
+      }
+      const gainFactors: OtioPcmGainFactor[] = chunk.plan.span.gain_factors.map(
+        (factor) => {
+          const start = rescaleTime(factor.range.start_time, rate).value;
+          const end = rescaleTime(
+            addRationalTimes(factor.range.start_time, factor.range.duration),
+            rate
+          ).value;
+          return {
+            startFrame: run.contextFrame! + start - run.startFrame,
+            endFrame: run.contextFrame! + end - run.startFrame,
+            startGain: factor.direction === 'in' ? 0 : 1,
+            endGain: factor.direction === 'in' ? 1 : 0,
+          };
+        }
+      );
+      try {
+        chunk.prepared.start(first, gainFactors);
+        pcmProof('scheduled', run.generation, {
+          occurrenceId: chunk.plan.span.occurrence,
+          trackId: chunk.plan.span.track_id,
+          sourceStartFrame: chunk.sourceStart,
+          sourceEndFrame: chunk.sourceStart + count,
+          contextStartFrame: first,
+          contextEndFrame: first + count,
+          sampleRate: rate,
+        });
+      } finally {
+        run.chunks.splice(index, 1);
+      }
+    }
+    const earliestPending = run.chunks.reduce(
+      (min, chunk) => Math.min(min, chunk.timelineStart),
+      run.preparedThrough
+    );
+    run.scheduledThrough = Math.max(run.scheduledThrough, earliestPending);
+  }
+
+  function paintRetainedPcmAt(time: OtioRationalTime): boolean {
+    const evaluation = scopedEvaluation(time);
+    const tree = videoTree(evaluation);
+    if (!tree && evaluation.video_contributions.length) return false;
+    const keys = collectVideoOccurrenceKeys(evaluation.video_contributions);
+    const leaves: (OtioPreparedLeaf | null)[] =
+      evaluation.video_contributions.map((contribution, index) => {
+        if (sampleKind(contribution) === 'black') return { kind: 'black' };
+        const path = contribution.bundle_path;
+        if (!path || sampleUnavailable(doc, contribution)) return null;
+        const mime = inferMediaMimeType(path);
+        if (mime.startsWith('image/')) {
+          const image = imageElements.get(path);
+          return image
+            ? {
+                kind: 'image',
+                source: image.element,
+                alpha: contribution.alpha,
+              }
+            : null;
+        }
+        if (!mime.startsWith('video/')) return null;
+        const key = keys[index];
+        const ring = key ? nativeRings.get(key) : undefined;
+        const timing = videoTimingCache.get(path);
+        const tag = certifiedWindowIndex(
+          contribution.source_time,
+          timing ?? null
+        );
+        const slot =
+          ring && tag !== null
+            ? ring.findSlotWithTag(tag, ring.captureEpoch)
+            : null;
+        return slot
+          ? { kind: 'image', source: slot.canvas, alpha: contribution.alpha }
+          : null;
+      });
+    return paint(evaluation, tree, leaves);
+  }
+
+  function onPcmGateClosed(ack: OtioGateAck): void {
+    const run = pcmRun;
+    if (
+      !run ||
+      run.generation !== ack.generation ||
+      run.stopped ||
+      ack.closedFrame === null ||
+      run.contextFrame === null
+    )
+      return;
+    clearTimeout(run.stopWatchdog ?? undefined);
+    run.stopWatchdog = null;
+    run.stopping = true;
+    const closedFrame = ack.closedFrame;
+    run.provider.dispose();
+    const compositionStop = {
+      value: run.startFrame + ack.closedFrame - run.contextFrame,
+      rate: run.admission.rate,
+    };
+    pcmProof('gate-close', run.generation, {
+      reason: run.closeReason,
+      contextStopFrame: ack.closedFrame,
+      compositionStop,
+    });
+    void (async () => {
+      const deadline = presentClockMs() + 1000;
+      while (pcmRun === run && !run.stopped && !isDisposed) {
+        if (run.context.state !== 'running') {
+          failScheduledAudio('audio context interrupted during drain');
+          return;
+        }
+        const readBegin = presentClockMs();
+        const contextBefore = run.context.currentTime;
+        let stamp: AudioTimestamp | null = null;
+        try {
+          stamp = run.context.getOutputTimestamp();
+        } catch {}
+        const contextAfter = run.context.currentTime;
+        const readEnd = presentClockMs();
+        const result = run.outputClock.observe({
+          readBegin,
+          readEnd,
+          contextBefore,
+          contextAfter,
+          state: run.context.state,
+          contextTime: stamp?.contextTime,
+          performanceTime: stamp?.performanceTime,
+        });
+        if (
+          !stamp ||
+          result.status === 'failed' ||
+          typeof stamp.contextTime !== 'number' ||
+          !Number.isFinite(stamp.contextTime) ||
+          typeof stamp.performanceTime !== 'number' ||
+          !Number.isFinite(stamp.performanceTime) ||
+          result.status === 'interrupted'
+        ) {
+          failScheduledAudio(
+            `audio output clock interrupted during drain: ${result.reason}`
+          );
+          return;
+        }
+        if (stamp.contextTime * run.admission.rate >= closedFrame) {
+          const ended = compareRationalTimes(compositionStop, scopeEnd()) >= 0;
+          const settledTime = ended ? scopeLastSample() : compositionStop;
+          if (ended || !pcmPlayIntent) {
+            for (const video of videos.values()) video.element.pause();
+            if (!paintRetainedPcmAt(settledTime)) {
+              pcmProof('error', run.generation, {
+                stage: 'visual',
+                code: 'paused-frame-unavailable',
+              });
+              failScheduledAudio(
+                'paused video frame unavailable at the acknowledged boundary'
+              );
+              return;
+            }
+            restoreVisibleCanvas();
+          }
+          pcmResumeFrame = compositionStop.value;
+          stopPcm(ended ? 'end' : run.closeReason);
+          currentTime = settledTime;
+          if (ended) {
+            pcmPlayIntent = false;
+            isPlaying = false;
+            isBuffering = false;
+          } else if (pcmPlayIntent) {
+            isBuffering = true;
+            const request = playRequestEpoch;
+            notify();
+            void recoverPcmAt(
+              compositionStop,
+              request,
+              run.context,
+              run.routeVersion,
+              run.outputClock
+            ).catch((error: unknown) => {
+              if (!isDisposed && pcmPlayIntent && request === playRequestEpoch)
+                failScheduledAudio(
+                  error instanceof Error ? error.message : String(error)
+                );
+            });
+            return;
+          } else {
+            isPlaying = false;
+            isBuffering = false;
+          }
+          notify();
+          return;
+        }
+        if (readEnd > deadline) {
+          failScheduledAudio('audio output drain was not observed');
+          return;
+        }
+        const { promise, resolve } = Promise.withResolvers<void>();
+        setTimeout(resolve, 8);
+        await promise;
+      }
+    })();
+  }
+  function watchPcmClosure(run: PcmRun): void {
+    if (run.stopWatchdog !== null) return;
+    run.stopWatchdog = setTimeout(() => {
+      run.stopWatchdog = null;
+      if (pcmRun === run && run.stopping && !run.stopped)
+        failScheduledAudio('transport gate closure was not acknowledged');
+    }, 100);
+  }
+
+  function armPcmStop(run: PcmRun, stopFrame: number, reason: string): void {
+    if (run.stopped || run.stopping) return;
+    run.stopping = true;
+    run.provider.dispose();
+    watchPcmClosure(run);
+    run.closeReason =
+      reason === 'pause'
+        ? 'pause'
+        : reason === 'resync'
+          ? 'resync'
+          : reason === 'resource'
+            ? 'resource'
+            : 'error';
+    void (async () => {
+      if (run.command) await run.command;
+      if (pcmRun !== run || run.stopped) return;
+      const frontier = run.frontierFrame;
+      if (frontier === null) {
+        failScheduledAudio('transport has no committed frontier');
+        return;
+      }
+      const boundary = Math.min(stopFrame, frontier);
+      const ack = await run.gate.stop(run.generation, boundary);
+      if (pcmRun !== run || run.stopped) return;
+      if (!ack.accepted || ack.throughFrame !== boundary) {
+        failScheduledAudio(
+          `transport stop rejected: ${ack.reason ?? 'invalid acknowledgment'}`
+        );
+        return;
+      }
+      run.frontierFrame = boundary;
+      try {
+        run.scheduler.stopAtFrame(boundary);
+      } catch {
+        failScheduledAudio('PCM source stop failed');
+      }
+    })().catch(() => {
+      if (pcmRun === run) failScheduledAudio('transport stop failed');
+    });
+  }
+
+  function pcmCommitClockValid(run: PcmRun): boolean {
+    if (run.contextFrame === null || !run.bridge) return false;
+    const readBegin = presentClockMs();
+    const contextBefore = run.context.currentTime;
+    let stamp: AudioTimestamp | null = null;
+    try {
+      stamp = run.context.getOutputTimestamp();
+    } catch {}
+    const contextAfter = run.context.currentTime;
+    const readEnd = presentClockMs();
+    const observation = run.outputClock.observe({
+      readBegin,
+      readEnd,
+      contextBefore,
+      contextAfter,
+      state: run.context.state,
+      contextTime: stamp?.contextTime,
+      performanceTime: stamp?.performanceTime,
+    });
+    if (
+      !stamp ||
+      typeof stamp.contextTime !== 'number' ||
+      !Number.isFinite(stamp.contextTime) ||
+      typeof stamp.performanceTime !== 'number' ||
+      !Number.isFinite(stamp.performanceTime) ||
+      observation.status !== 'calibrated' ||
+      observation.offsetMin === null ||
+      observation.offsetMax === null ||
+      readEnd > run.outputClock.deadline ||
+      run.contextFrame <
+        Math.ceil(contextAfter * run.admission.rate) +
+          OTIO_PCM_EPOCH_GUARD_FRAMES
+    ) {
+      pcmProof('clock-commit-detail', run.generation, {
+        reason: 'observation-or-lead',
+        stamp,
+        observation,
+        readBegin,
+        readEnd,
+        contextBefore,
+        contextAfter,
+        contextFrame: run.contextFrame,
+        deadline: run.outputClock.deadline,
+        guardFrames: OTIO_PCM_EPOCH_GUARD_FRAMES,
+      });
+      return false;
+    }
+    const allowance = observation.offsetMax - observation.offsetMin;
+    const mapped =
+      stamp.performanceTime +
+      1000 * (run.contextFrame / run.admission.rate - stamp.contextTime);
+    const original =
+      run.bridge.performanceTime +
+      1000 * (run.contextFrame / run.admission.rate - run.bridge.contextTime);
+    if (Math.abs(mapped - original) > allowance + 1e-6 || mapped < readEnd) {
+      pcmProof('clock-commit-detail', run.generation, {
+        reason: 'mapping-or-time',
+        mapped,
+        original,
+        allowance,
+        readEnd,
+      });
+      return false;
+    }
+    const vsync = vsyncTracker.medianSeconds;
+    for (const sample of run.phaseSamples) {
+      const preferred =
+        sample.dL +
+        1000 *
+          (sample.wMinSeconds +
+            vsync / 2 -
+            (sample.iL0Plus1Start - sample.sourceT0Seconds) / sample.rL);
+      const half = 1000 * (sample.wMinSeconds - vsync / 2);
+      if (
+        mapped - allowance < preferred - half ||
+        mapped + allowance > preferred + half
+      ) {
+        pcmProof('clock-commit-detail', run.generation, {
+          reason: 'phase-band',
+          mapped,
+          allowance,
+          preferred,
+          half,
+          sample,
+        });
+        return false;
+      }
+    }
+    return true;
+  }
+
+  async function renewPcmFrontier(run: PcmRun): Promise<boolean> {
+    if (
+      run.stopped ||
+      run.contextFrame === null ||
+      !run.bridge ||
+      pcmRun !== run
+    )
+      return false;
+    if (run.stopping) return true;
+    if (run.command) return run.command;
+    const rate = run.admission.rate;
+    const nowFrame = Math.ceil(run.context.currentTime * rate);
+    const old = run.frontierFrame;
+    if (old !== null && run.holds.some((hold) => !hold.isValid())) {
+      pcmProof('error', run.generation, {
+        stage: 'visual',
+        code: 'certified video reservation was invalidated',
+      });
+      failScheduledAudio('certified video reservation was invalidated');
+      return false;
+    }
+    if (old !== null && nowFrame + OTIO_PCM_MIN_LEAD_FRAMES >= old) return true;
+    schedulePreparedPcm(run);
+    const fromFrame =
+      old === null ? run.startFrame : run.startFrame + old - run.contextFrame;
+    const limitFrame = run.scheduledThrough;
+    if (limitFrame <= fromFrame) return old !== null;
+    const hold = reserveVisualPrefix(
+      { value: fromFrame, rate },
+      { value: limitFrame, rate }
+    );
+    const visualFrame = Math.floor(
+      (hold.through.value * rate) / hold.through.rate
+    );
+    const next =
+      run.contextFrame + Math.min(limitFrame, visualFrame) - run.startFrame;
+    if (next <= (old ?? run.contextFrame) || !hold.isValid()) {
+      hold.release();
+      return old !== null;
+    }
+    const afterWorkFrame = Math.ceil(run.context.currentTime * rate);
+    const protectedDeadline = old ?? run.contextFrame;
+    if (
+      !hold.isValid() ||
+      afterWorkFrame + OTIO_PCM_MIN_LEAD_FRAMES >= protectedDeadline
+    ) {
+      hold.release();
+      if (old !== null) {
+        run.stopping = true;
+        run.provider.dispose();
+        watchPcmClosure(run);
+        return true;
+      }
+      return false;
+    }
+    const command = (async () => {
+      if (old === null) {
+        if (!pcmCommitClockValid(run)) {
+          pcmProof('error', run.generation, {
+            stage: 'clock',
+            code: 'commit-clock-rejected',
+          });
+          hold.release();
+          return false;
+        }
+        run.outputClock.arm();
+      }
+      const ack =
+        old === null
+          ? await run.gate.arm(run.generation, run.contextFrame!, next)
+          : await run.gate.extend(run.generation, old, next);
+      if (
+        pcmRun !== run ||
+        run.stopped ||
+        !ack.accepted ||
+        ack.throughFrame !== next ||
+        !hold.isValid()
+      ) {
+        hold.release();
+        return false;
+      }
+      run.frontierFrame = next;
+      run.frontierCrossedAt = null;
+      run.holds.push(hold);
+      if (old === null) {
+        run.outputClock.start();
+        pcmBackendStarted = true;
+        pcmProof('epoch', run.generation, {
+          f0: run.contextFrame,
+          c0: run.contextFrame! / rate,
+          contextSampleRate: rate,
+          compositionT0: run.startTime,
+          bridge: run.bridge,
+          bridgeMappingAllowanceMs: run.bridge!.mappingAllowanceMs,
+        });
+      }
+      return true;
+    })();
+    run.command = command;
+    let accepted: boolean;
+    try {
+      accepted = await command;
+    } catch (error) {
+      hold.release();
+      throw error;
+    } finally {
+      if (run.command === command) run.command = null;
+    }
+    if (!accepted) return false;
+    const hostname = typeof location === 'undefined' ? '' : location.hostname;
+    if (
+      coldProofGlobal.__otioProofPcm === true &&
+      coldProofGlobal.__otioProofPcmFault === 'invalidate-next-reserved-tag' &&
+      (hostname === '127.0.0.1' ||
+        hostname === 'localhost' ||
+        hostname.endsWith('.localhost') ||
+        hostname === '[::1]')
+    ) {
+      const reservation = hold.intervals.flatMap(
+        (interval) => interval.reservations
+      )[0];
+      if (reservation) {
+        delete coldProofGlobal.__otioProofPcmFault;
+        reservation.release();
+        pcmProof('fault', run.generation, {
+          code: 'reserved-frame-invalidated',
+          occurrenceId: reservation.occurrence,
+          tag: reservation.tags[0],
+        });
+        pcmProof('error', run.generation, {
+          stage: 'visual',
+          code: 'certified video reservation was invalidated',
+        });
+        failScheduledAudio('certified video reservation was invalidated');
+        return false;
+      }
+    }
+    // The accepted acknowledgment, not a timer, is the frontier authority.
+    const compositionStop = {
+      value: run.startFrame + next - run.contextFrame,
+      rate,
+    };
+    pcmProof('frontier', run.generation, {
+      compositionThrough: compositionStop,
+      contextFrameThrough: next,
+      gateFrame: next,
+    });
+    return true;
+  }
+
+  async function calibratePcmClock(run: PcmRun): Promise<boolean> {
+    while (
+      !run.stopped &&
+      pcmRun === run &&
+      presentClockMs() <= run.outputClock.deadline
+    ) {
+      const readBegin = presentClockMs();
+      const contextBefore = run.context.currentTime;
+      let stamp: AudioTimestamp | null = null;
+      try {
+        stamp = run.context.getOutputTimestamp();
+      } catch {}
+      const contextAfter = run.context.currentTime;
+      const readEnd = presentClockMs();
+      const result = run.outputClock.observe({
+        readBegin,
+        readEnd,
+        contextBefore,
+        contextAfter,
+        state: run.context.state,
+        contextTime: stamp?.contextTime,
+        performanceTime: stamp?.performanceTime,
+      });
+      if (result.status === 'calibrated') return true;
+      if (result.status === 'failed' || result.status === 'interrupted') {
+        pcmProof('error', run.generation, {
+          stage: 'clock',
+          code: result.reason,
+        });
+        return false;
+      }
+      const { promise, resolve } = Promise.withResolvers<void>();
+      setTimeout(resolve, run.outputClock.inheritedObservations.length ? 1 : 8);
+      await promise;
+    }
+    return false;
+  }
+
+  async function selectPcmEpoch(
+    run: PcmRun,
+    samples: readonly DecoderPhaseSample[],
+    time: OtioRationalTime
+  ): Promise<number | null> {
+    if (compareRationalTimes(run.startTime, time) !== 0) return null;
+    if (run.clockCalibration && !(await run.clockCalibration)) return null;
+    let stamp: AudioTimestamp | null = null;
+    let after = presentClockMs();
+    let mappingAllowanceMs = 0;
+    while (
+      !run.stopped &&
+      pcmRun === run &&
+      after <= run.outputClock.deadline
+    ) {
+      const before = presentClockMs();
+      const contextBefore = run.context.currentTime;
+      try {
+        stamp = run.context.getOutputTimestamp();
+      } catch {
+        stamp = null;
+      }
+      const contextAfter = run.context.currentTime;
+      after = presentClockMs();
+      const result = run.outputClock.observe({
+        readBegin: before,
+        readEnd: after,
+        contextBefore,
+        contextAfter,
+        state: run.context.state,
+        contextTime: stamp?.contextTime,
+        performanceTime: stamp?.performanceTime,
+      });
+      if (result.status === 'failed' || result.status === 'interrupted') {
+        pcmProof('error', run.generation, {
+          stage: 'clock',
+          code: result.reason,
+        });
+        return null;
+      }
+      if (
+        result.status === 'calibrated' &&
+        stamp &&
+        result.offsetMin !== null &&
+        result.offsetMax !== null
+      ) {
+        mappingAllowanceMs = result.offsetMax - result.offsetMin;
+        break;
+      }
+      const { promise, resolve } = Promise.withResolvers<void>();
+      setTimeout(resolve, 8);
+      await promise;
+    }
+    if (
+      !stamp ||
+      typeof stamp.contextTime !== 'number' ||
+      !Number.isFinite(stamp.contextTime) ||
+      typeof stamp.performanceTime !== 'number' ||
+      !Number.isFinite(stamp.performanceTime) ||
+      run.outputClock.state !== 'calibrated' ||
+      run.stopped
+    ) {
+      if (!run.stopped && pcmRun === run)
+        pcmProof('error', run.generation, {
+          stage: 'clock',
+          code: 'clock-admission-expired',
+        });
+      return null;
+    }
+    // This allowance describes the observed browser mapping, not a bound on
+    // physical speaker or display timing.
+    const bridge = {
+      contextTime: stamp.contextTime,
+      performanceTime: stamp.performanceTime,
+      mappingAllowanceMs,
+    };
+    const epoch = selectOtioCausalEpoch(
+      samples,
+      vsyncTracker.medianSeconds,
+      bridge,
+      run.admission.rate,
+      run.context.currentTime,
+      pcmRequestWall,
+      after,
+      OTIO_PCM_SELECTION_RESERVE_FRAMES
+    );
+    if (!epoch || epoch.performanceTime > run.outputClock.deadline) return null;
+    run.contextFrame = epoch.contextFrame;
+    run.phaseSamples = samples;
+    run.bridge = bridge;
+    return epoch.performanceTime;
+  }
+
+  // Wait against the existing decoder rings. Never restart or seek a producer
+  // while deciding whether the exact committed boundary can be recovered.
+  async function recoverPcmAt(
+    time: OtioRationalTime,
+    request: number,
+    previousContext: AudioContext,
+    previousRouteVersion: number,
+    previousClock: OutputClock
+  ): Promise<void> {
+    const admission = pcmAdmission;
+    const context = audioContext;
+    if (
+      !admission ||
+      !context ||
+      context !== previousContext ||
+      previousRouteVersion !== pcmRouteVersion
+    ) {
+      failScheduledAudio('PCM recovery graph unavailable');
+      return;
+    }
+    const generation = renderGeneration;
+    const scopeAtStart = scopeEpoch;
+    const alive = () =>
+      !isDisposed &&
+      pcmPlayIntent &&
+      request === playRequestEpoch &&
+      generation === renderGeneration &&
+      scopeAtStart === scopeEpoch &&
+      previousRouteVersion === pcmRouteVersion &&
+      audioContext === previousContext;
+    const deadline = presentClockMs() + 3000;
+    let readiness: PcmVideoHold | null = null;
+    while (alive()) {
+      if (
+        context.state !== 'running' ||
+        graphicsLost ||
+        isCanvasContextLost(canvas)
+      ) {
+        failScheduledAudio('PCM recovery lost audio or graphics context');
+        return;
+      }
+      const limit = { value: time.value + 1, rate: admission.rate };
+      const hold = reserveVisualPrefix(time, limit);
+      const demand = pcmInitialDemand(admission, time.value);
+      const capacityReady =
+        pcmBudget.usedNodes + demand.nodes <= OTIO_PCM_MAX_NODES &&
+        pcmBudget.usedBytes + demand.bytes <= OTIO_PCM_MAX_BYTES;
+      if (
+        capacityReady &&
+        hold.isValid() &&
+        compareRationalTimes(hold.through, time) > 0
+      ) {
+        readiness = hold;
+        break;
+      }
+      hold.release();
+      const evaluation = scopedEvaluation(time);
+      const tree = videoTree(evaluation);
+      const blocked = blockedTracks(evaluation);
+      const keys = collectVideoOccurrenceKeys(evaluation.video_contributions);
+      const indices = getDrawnLeafIndices(
+        tree,
+        (id, ancestry) => videoHidden(id, ancestry) || blocked.has(id),
+        true
+      );
+      for (const index of indices) {
+        const contribution = evaluation.video_contributions[index];
+        const key = keys[index];
+        if (
+          !contribution?.bundle_path ||
+          !key ||
+          !inferMediaMimeType(contribution.bundle_path).startsWith('video/')
+        )
+          continue;
+        const ring = nativeRings.get(key);
+        const timing = videoTimingCache.get(contribution.bundle_path);
+        const tag = certifiedWindowIndex(
+          contribution.source_time,
+          timing ?? null
+        );
+        if (
+          !ring ||
+          ring.hasLostContext() ||
+          tag === null ||
+          (ring.highestObservedTag !== null &&
+            ring.highestObservedTag > tag &&
+            !ring.hasTag(tag, ring.captureEpoch))
+        ) {
+          pcmProof('error', pcmGeneration, {
+            stage: 'visual',
+            code: 'recovery-frame-unavailable',
+          });
+          failScheduledAudio('committed recovery frame is unavailable');
+          return;
+        }
+        if (
+          timing?.kind === 'windows' &&
+          ring.lastProgressTag !== null &&
+          ring.lastProgressWallMs !== null
+        ) {
+          const start = timing.starts[ring.lastProgressTag];
+          const fidelity = effectFidelity(
+            contribution.active_effects,
+            contribution.node_id
+          );
+          const videoRate = fidelity.kind === 'effect' ? 1 : fidelity.rate;
+          if (start !== undefined && videoRate > 0) {
+            const w = minWindowDuration(timing, videoRate);
+            const vsync = vsyncTracker.medianSeconds;
+            const preferred =
+              ring.lastProgressWallMs +
+              1000 *
+                (w +
+                  vsync / 2 -
+                  (start - decoderLocalSeconds(contribution.source_time)) /
+                    videoRate);
+            const upper = preferred + 1000 * (w - vsync / 2);
+            if (presentClockMs() > upper) {
+              pcmProof('error', pcmGeneration, {
+                stage: 'visual',
+                code: 'recovery-phase-expired',
+              });
+              failScheduledAudio('video recovery phase expired');
+              return;
+            }
+          }
+        }
+      }
+      if (presentClockMs() >= deadline) {
+        failScheduledAudio('video recovery readiness timed out');
+        return;
+      }
+      const { promise, resolve } = Promise.withResolvers<void>();
+      let wakeQueued = false;
+      const wake = () => {
+        if (wakeQueued) return;
+        wakeQueued = true;
+        queueMicrotask(resolve);
+      };
+      pcmRecoveryWake = wake;
+      const unsubscribe = [...nativeRings.values()].map((ring) =>
+        ring.subscribeProgress(wake)
+      );
+      unsubscribe.push(pcmBudget.subscribe(wake));
+      const timer = setTimeout(
+        resolve,
+        Math.min(250, Math.max(0, deadline - presentClockMs()))
+      );
+      await promise;
+      clearTimeout(timer);
+      if (pcmRecoveryWake === wake) pcmRecoveryWake = null;
+      for (const remove of unsubscribe) remove();
+    }
+    if (!alive() || !readiness) {
+      readiness?.release();
+      return;
+    }
+    let run: PcmRun | null = null;
+    try {
+      pcmRequestWall = presentClockMs();
+      const inherited = previousClock.forkForRequest(
+        pcmRequestWall,
+        presentClockMs()
+      );
+      run = await beforePcmDeadline(
+        preparePcmRun(context, admission, time, inherited ?? undefined),
+        pcmRequestWall
+      );
+      if (!alive() || pcmRun !== run) return;
+      if (!readiness.isValid())
+        throw new Error('video recovery reservation lost');
+      const evaluation = scopedEvaluation(time);
+      const blocked = blockedTracks(evaluation);
+      const keys = collectVideoOccurrenceKeys(evaluation.video_contributions);
+      const indices = getDrawnLeafIndices(
+        videoTree(evaluation),
+        (id, ancestry) => videoHidden(id, ancestry) || blocked.has(id),
+        true
+      );
+      const samples: DecoderPhaseSample[] = [];
+      for (const index of indices) {
+        const contribution = evaluation.video_contributions[index];
+        const key = keys[index];
+        if (
+          !contribution?.bundle_path ||
+          !key ||
+          !inferMediaMimeType(contribution.bundle_path).startsWith('video/')
+        )
+          continue;
+        const ring = nativeRings.get(key);
+        const timing = videoTimingCache.get(contribution.bundle_path);
+        const fidelity = effectFidelity(
+          contribution.active_effects,
+          contribution.node_id
+        );
+        const rate = fidelity.kind === 'effect' ? 1 : fidelity.rate;
+        const targetTag = certifiedWindowIndex(
+          contribution.source_time,
+          timing ?? null
+        );
+        if (
+          ring &&
+          timing?.kind === 'windows' &&
+          ring.videoElement.paused &&
+          targetTag === timing.starts.length - 1 &&
+          ring.hasTag(targetTag, ring.captureEpoch)
+        )
+          continue;
+        const tag = ring?.lastProgressTag;
+        if (
+          !ring ||
+          !timing ||
+          timing.kind !== 'windows' ||
+          tag === null ||
+          tag === undefined ||
+          ring.lastProgressWallMs === null ||
+          timing.starts[tag] === undefined
+        ) {
+          throw new Error('video recovery phase unavailable');
+        }
+        samples.push({
+          dL: ring.lastProgressWallMs,
+          iL0Plus1Start: timing.starts[tag]!,
+          sourceT0Seconds: decoderLocalSeconds(contribution.source_time),
+          rL: rate,
+          wMinSeconds: minWindowDuration(timing, rate),
+        });
+      }
+      const epochWall = await beforePcmDeadline(
+        selectPcmEpoch(run, samples, time),
+        pcmRequestWall
+      );
+      if (!alive() || pcmRun !== run) return;
+      if (!readiness.isValid())
+        throw new Error('video recovery reservation lost');
+      if (epochWall === null)
+        throw new Error('video recovery phase has no causal audio epoch');
+      const candidate = preparedBoundary;
+      if (
+        candidate?.status === 'ready' &&
+        candidate.anchor === nativeAnchor &&
+        compareRationalTimes(candidate.at, time) <= 0
+      ) {
+        const required = drawnVideoKeys(evaluation, videoTree(evaluation));
+        for (const key of required) {
+          const ring = candidate.rings.get(key);
+          if (!ring || nativeRings.get(key) !== ring) continue;
+          lastDrawnOccurrenceKeys.add(key);
+          candidate.keys.delete(key);
+          candidate.rings.delete(key);
+        }
+      }
+      nativeAnchor = { wallMs: epochWall, time };
+      readiness.release();
+      readiness = null;
+      if (candidate && preparedBoundary === candidate) cancelPreparedBoundary();
+      if (!(await beforePcmDeadline(renewPcmFrontier(run), pcmRequestWall)))
+        throw new Error('recovery frontier unavailable');
+      if (!alive() || pcmRun !== run) return;
+      isStarting = false;
+      isBuffering = false;
+      nativeLastPresentMs = null;
+      notify();
+      scheduleTick();
+    } catch (error) {
+      if (alive())
+        failScheduledAudio(
+          error instanceof Error ? error.message : String(error)
+        );
+    } finally {
+      readiness?.release();
+      if (!alive() && run && pcmRun === run) stopPcm('recovery-cancelled');
+    }
   }
 
   function reserveVideoTiming(timing: OtioVideoTiming): OtioVideoTiming {
@@ -2326,6 +4309,7 @@ export function createOtioPlayback(
   }
 
   function pauseAllMedia(): void {
+    stopPcm('pause');
     cancelStartupSampling?.();
     audioReconcileRevision++;
     for (const video of videos.values()) video.element.pause();
@@ -2591,6 +4575,7 @@ export function createOtioPlayback(
     result: OtioEvaluationResult,
     gen: number
   ): Promise<void> {
+    if (audioBackend === 'pcm') return;
     const revision = ++audioReconcileRevision;
     const active = new Set<string>();
     const seen = new Map<string, number>();
@@ -2743,7 +4728,24 @@ export function createOtioPlayback(
     if (!ctx) return false;
     const { width, height } = outputSize();
     const blocked = blockedTracks(evaluation);
-    renderOtioVideoTree(
+    if (audioBackend === 'pcm' && pcmRun) {
+      const drawn = getDrawnLeafIndices(
+        tree,
+        (id, ancestry) => videoHidden(id, ancestry) || blocked.has(id)
+      );
+      if (
+        drawn.some((index) => {
+          const contribution = evaluation.video_contributions[index];
+          return (
+            contribution &&
+            sampleKind(contribution) !== 'black' &&
+            (!leaves[index] || leaves[index]?.kind === 'empty')
+          );
+        })
+      )
+        return false;
+    }
+    const outcome = renderOtioVideoTree(
       ctx,
       width,
       height,
@@ -2771,6 +4773,7 @@ export function createOtioPlayback(
       },
       (nodeId, ancestry) => videoHidden(nodeId, ancestry) || blocked.has(nodeId)
     );
+    if (outcome === 'failed') return false;
     if (graphicsLost || isCanvasContextLost(canvas)) {
       if (isCanvasContextLost(canvas)) {
         hideVisibleCanvas();
@@ -2812,6 +4815,14 @@ export function createOtioPlayback(
       }
       closeFrames(frames);
       images.evict();
+      if (!presented && audioBackend === 'pcm' && pcmRun) {
+        pcmProof('error', pcmRun.generation, {
+          stage: 'visual',
+          code: 'compositor-failed',
+        });
+        failScheduledAudio('video compositor failed');
+        return;
+      }
       await reconcileAudio(evaluation, gen);
       if (stale(gen)) return;
       if (presented && !graphicsLost && !isCanvasContextLost(canvas)) {
@@ -2895,7 +4906,40 @@ export function createOtioPlayback(
     }
   }
 
+  function failScheduledAudio(code: string): void {
+    // Abort on clock, compositor, or source failure. A future boundary inferred
+    // from an old wall bridge is not evidence of an audible drain.
+    const generation = pcmRun?.generation ?? pcmGeneration;
+    pcmResumeFrame = null;
+    pcmPlayIntent = false;
+    playRequestEpoch++;
+    pcmRecoveryWake?.();
+    stopPcm('underflow');
+    isPlaying = false;
+    isStarting = false;
+    isBuffering = false;
+    nativeAnchor = null;
+    pauseAllMedia();
+    mediaFailures.set(
+      'pcm-scheduler',
+      diagnostic(
+        'error',
+        'unsupported-browser',
+        `Scheduled audio stopped: ${code}`,
+        timelineId
+      )
+    );
+    pcmProof('error', generation, { stage: 'schedule', code });
+    notify();
+  }
+
   function fallbackToSeekCadence(): void {
+    if (audioBackend === 'pcm') {
+      failScheduledAudio(
+        'native video cannot sustain the scheduled audio epoch'
+      );
+      return;
+    }
     cancelPreparedBoundary();
     isNativeHolding = false;
     nativeEpoch++;
@@ -2920,6 +4964,30 @@ export function createOtioPlayback(
     T0: OtioRationalTime,
     buffering: boolean = false
   ): Promise<void> {
+    const outgoing = pcmRun;
+    if (
+      audioBackend === 'pcm' &&
+      outgoing?.frontierFrame !== null &&
+      outgoing?.frontierFrame !== undefined &&
+      !outgoing.stopped
+    ) {
+      if (!outgoing.stopping) {
+        pcmPlayIntent = isPlaying;
+        isBuffering = true;
+        const stop = Math.min(
+          outgoing.frontierFrame,
+          Math.max(
+            outgoing.contextFrame ?? 0,
+            Math.ceil(outgoing.context.currentTime * outgoing.admission.rate) +
+              OTIO_PCM_MIN_LEAD_FRAMES * 2
+          )
+        );
+        armPcmStop(outgoing, stop, 'resync');
+        notify();
+      }
+      return;
+    }
+    stopPcm('replacement');
     cancelPreparedBoundary();
     if (frameHandle !== null && typeof cancelAnimationFrame === 'function') {
       cancelAnimationFrame(frameHandle);
@@ -2942,6 +5010,20 @@ export function createOtioPlayback(
     // The new time is published by renderAt together with the exact paint, so
     // the clock never runs ahead of the canvas during the resync.
     currentTime = T0;
+    if (audioBackend === 'pcm') {
+      const context = getAudioContext();
+      if (!context || !pcmAdmission) {
+        failScheduledAudio('PCM audio context unavailable');
+        return;
+      }
+      try {
+        await preparePcmRun(context, pcmAdmission, T0);
+      } catch {
+        if (!stale(gen)) failScheduledAudio('PCM preparation failed');
+        return;
+      }
+      if (stale(gen)) return;
+    }
 
     await enqueueRender(T0, gen);
     if (stale(gen)) return;
@@ -3092,7 +5174,71 @@ export function createOtioPlayback(
       }
     }
 
-    if (!eligible || drawnVideoLeaves.length === 0) {
+    const finalWindowOnly =
+      audioBackend === 'pcm' &&
+      eligible &&
+      drawnVideoLeaves.length > 0 &&
+      drawnVideoLeaves.every(
+        (leaf) => leaf.iL0 + 1 >= leaf.timing.starts.length
+      );
+    if (!eligible || drawnVideoLeaves.length === 0 || finalWindowOnly) {
+      if (audioBackend === 'pcm') {
+        if (!eligible || !pcmRun) {
+          failScheduledAudio(
+            'native video timing is not eligible for a scheduled epoch'
+          );
+          return;
+        }
+        if (finalWindowOnly) {
+          for (const leaf of drawnVideoLeaves) {
+            const ring = nativeRings.get(leaf.key);
+            if (!ring) {
+              failScheduledAudio('final video window is unavailable');
+              return;
+            }
+            ring.resetEpoch(nativeEpoch);
+            if (!ring.capturePausedFrame(leaf.iL0, nativeEpoch, leaf.timing)) {
+              failScheduledAudio('final video window could not be captured');
+              return;
+            }
+          }
+        }
+        const epochWall = await selectPcmEpoch(pcmRun, [], T0);
+        if (epochWall === null) {
+          failScheduledAudio('audio output clock bridge unavailable');
+          return;
+        }
+        nativeMode = true;
+        nativeAnchor = { wallMs: epochWall, time: T0 };
+        nativeLastPresentMs = null;
+        lastDrawnOccurrenceKeys = new Set(
+          drawnVideoLeaves.map((leaf) => leaf.key)
+        );
+        playbackBoundaries = otioPlaybackBoundaries(
+          doc,
+          timelineId,
+          scope?.range ?? {
+            start_time: { value: 0, rate: clock.rate },
+            duration: clock.duration,
+          }
+        );
+        try {
+          if (!(await renewPcmFrontier(pcmRun))) {
+            failScheduledAudio('no certified initial audiovisual frontier');
+            return;
+          }
+        } catch {
+          failScheduledAudio('PCM scheduling failed');
+          return;
+        }
+        if (stale(gen) || !pcmRun) return;
+        isStarting = false;
+        isBuffering = false;
+        prepareNextBoundary();
+        notify();
+        scheduleTick();
+        return;
+      }
       for (const ring of nativeRings.values()) {
         decodedAt.delete(ring.videoElement);
         ring.release();
@@ -3119,6 +5265,10 @@ export function createOtioPlayback(
     for (let attempt = 0; attempt < 2; attempt++) {
       if (stale(gen)) return;
       if (attempt > 0) {
+        if (audioBackend === 'pcm') {
+          failScheduledAudio('native video startup could not establish phase');
+          return;
+        }
         nativeEpoch++;
         pauseAllMedia();
         await enqueueRender(T0, gen);
@@ -3171,7 +5321,9 @@ export function createOtioPlayback(
         ring.startCallbacks(leaf.timing, leaf.rL, () => {
           nativeIneligiblePaths.add(leaf.contrib.bundle_path);
           if (isPlaying && !isStarting) {
-            void startSequence(currentTime, true);
+            if (audioBackend === 'pcm')
+              failScheduledAudio('video decoder lost certified progress');
+            else void startSequence(currentTime, true);
           }
         });
       }
@@ -3201,6 +5353,10 @@ export function createOtioPlayback(
           if (!ring || ring.videoElement.paused || ring.hasLostContext())
             continue;
           const outcome = ring.readoutFrame(leaf.timing, ring.captureEpoch);
+          if (outcome.kind === 'producer-fault' && audioBackend === 'pcm') {
+            failScheduledAudio('video decoder timestamp regressed');
+            return;
+          }
           ring.recordProgress(outcome, now);
           ring.admitStartupCapture(
             outcome,
@@ -3345,13 +5501,36 @@ export function createOtioPlayback(
           spreadAcceptable: anchorResult.spreadAcceptable,
         });
       }
-      if (!anchorResult.spreadAcceptable) {
+      if (audioBackend !== 'pcm' && !anchorResult.spreadAcceptable) {
         if (attempt === 0) continue;
         fallbackToSeekCadence();
         return;
       }
 
-      nativeAnchor = { wallMs: anchorResult.tauStar, time: T0 };
+      let anchorWall = anchorResult.tauStar;
+      if (audioBackend === 'pcm') {
+        const run = pcmRun;
+        const epochWall = run
+          ? await selectPcmEpoch(run, phaseSamples, T0)
+          : null;
+        if (
+          epochWall === null ||
+          drawnVideoLeaves.some((leaf, index) => {
+            const ring = nativeRings.get(leaf.key);
+            const sample = advancedSamples[index];
+            return (
+              !ring || !sample || !ring.hasTag(sample.tag, ring.captureEpoch)
+            );
+          })
+        ) {
+          failScheduledAudio(
+            'no causal audio epoch inside the certified video phase intersection'
+          );
+          return;
+        }
+        anchorWall = epochWall;
+      }
+      nativeAnchor = { wallMs: anchorWall, time: T0 };
       nativeLastPresentMs = null;
       for (const leaf of drawnVideoLeaves) {
         const ring = nativeRings.get(leaf.key);
@@ -3366,8 +5545,10 @@ export function createOtioPlayback(
       return;
     }
 
-    isStarting = false;
-    isBuffering = false;
+    if (audioBackend !== 'pcm') {
+      isStarting = false;
+      isBuffering = false;
+    }
     coldFirstTick = true;
     coldFirstPaint = true;
     coldProof('startup-complete', { chosenAnchor: nativeAnchor?.wallMs });
@@ -3379,6 +5560,21 @@ export function createOtioPlayback(
         duration: clock.duration,
       }
     );
+    if (audioBackend === 'pcm') {
+      const run = pcmRun;
+      try {
+        if (!run || !(await renewPcmFrontier(run))) {
+          failScheduledAudio('no certified initial audiovisual frontier');
+          return;
+        }
+      } catch {
+        failScheduledAudio('PCM scheduling failed');
+        return;
+      }
+      if (stale(gen) || pcmRun !== run) return;
+      isStarting = false;
+      isBuffering = false;
+    }
     prepareNextBoundary();
     notify();
     if (isPlaying) scheduleTick();
@@ -3393,6 +5589,50 @@ export function createOtioPlayback(
   function onTick(now: number): void {
     frameHandle = null;
     if (!isPlaying || isDisposed) return;
+    let outputTime: number | null = null;
+    if (audioBackend === 'pcm') {
+      const run = pcmRun;
+      if (!run && isBuffering && pcmPlayIntent) return;
+      if (!run) {
+        failScheduledAudio('audio context unavailable');
+        return;
+      }
+      const readBegin = presentClockMs();
+      const contextBefore = run.context.currentTime;
+      let stamp: AudioTimestamp | null = null;
+      try {
+        stamp = run.context.getOutputTimestamp();
+      } catch {}
+      const contextAfter = run.context.currentTime;
+      const readEnd = presentClockMs();
+      const result = run.outputClock.observe({
+        readBegin,
+        readEnd,
+        contextBefore,
+        contextAfter,
+        state: run.context.state,
+        contextTime: stamp?.contextTime,
+        performanceTime: stamp?.performanceTime,
+      });
+      if (
+        !stamp ||
+        typeof stamp.contextTime !== 'number' ||
+        !Number.isFinite(stamp.contextTime) ||
+        typeof stamp.performanceTime !== 'number' ||
+        !Number.isFinite(stamp.performanceTime) ||
+        result.status === 'failed' ||
+        result.status === 'interrupted'
+      ) {
+        pcmProof('error', run.generation, {
+          stage: 'clock',
+          code: result.reason,
+        });
+        failScheduledAudio(`audio output clock interrupted: ${result.reason}`);
+        return;
+      }
+      outputTime =
+        stamp.contextTime + Math.max(0, readEnd - stamp.performanceTime) / 1000;
+    }
     vsyncTracker.recordTick(now);
     if (renderInFlight || isBuffering || isStarting) {
       clockAnchor = null;
@@ -3410,13 +5650,22 @@ export function createOtioPlayback(
           !ring.hasLostContext()
         ) {
           const outcome = ring.readoutFrame(ring.timing, ring.captureEpoch);
+          if (outcome.kind === 'producer-fault' && audioBackend === 'pcm') {
+            failScheduledAudio('video decoder timestamp regressed');
+            return;
+          }
           ring.recordProgress(outcome, now);
         }
       }
       if (nativeLastPresentMs === null) {
         nativeLastPresentMs = now;
       }
-      const elapsed = (now - nativeAnchor.wallMs) / 1000;
+      const elapsed =
+        outputTime !== null &&
+        pcmRun?.contextFrame !== null &&
+        pcmRun?.contextFrame !== undefined
+          ? outputTime - pcmRun.contextFrame / pcmRun.admission.rate
+          : (now - nativeAnchor.wallMs) / 1000;
       let T: OtioRationalTime;
       if (elapsed <= 0) {
         T = nativeAnchor.time;
@@ -3425,6 +5674,30 @@ export function createOtioPlayback(
           value: elapsed * clock.rate,
           rate: clock.rate,
         });
+      }
+      const pcm = pcmRun;
+      if (
+        audioBackend === 'pcm' &&
+        pcm?.contextFrame !== null &&
+        pcm?.frontierFrame !== null &&
+        pcm?.contextFrame !== undefined &&
+        pcm?.frontierFrame !== undefined &&
+        compareRationalTimes(T, {
+          value: pcm.startFrame + pcm.frontierFrame - pcm.contextFrame,
+          rate: pcm.admission.rate,
+        }) >= 0
+      ) {
+        if (pcm.frontierCrossedAt === null)
+          pcm.frontierCrossedAt = presentClockMs();
+        else if (
+          !pcm.stopping &&
+          presentClockMs() - pcm.frontierCrossedAt > 100
+        ) {
+          failScheduledAudio('transport gate closure was not acknowledged');
+          return;
+        }
+        scheduleTick();
+        return;
       }
       if (coldFirstTick) {
         coldFirstTick = false;
@@ -3437,6 +5710,10 @@ export function createOtioPlayback(
       }
 
       if (compareRationalTimes(T, scopeEnd()) >= 0) {
+        if (audioBackend === 'pcm' && pcmRun) {
+          scheduleTick();
+          return;
+        }
         cancelPreparedBoundary();
         currentTime = scopeLastSample();
         isPlaying = false;
@@ -3572,8 +5849,9 @@ export function createOtioPlayback(
         contribution: OtioAudioContribution;
       }[] = [];
       if (
-        drawnSetChanged ||
-        (candidate && compareRationalTimes(T, candidate.at) >= 0)
+        audioBackend === 'native' &&
+        (drawnSetChanged ||
+          (candidate && compareRationalTimes(T, candidate.at) >= 0))
       ) {
         const previousKeys = new Set(
           collectAudioOccurrenceKeys(
@@ -3593,7 +5871,8 @@ export function createOtioPlayback(
             enteringAudio.push({ key, contribution });
         });
       }
-      const hasEnteringAudio = enteringAudio.length > 0;
+      const hasEnteringAudio =
+        audioBackend === 'native' && enteringAudio.length > 0;
 
       const onlyRetiring =
         drawnSetChanged &&
@@ -3806,8 +6085,24 @@ export function createOtioPlayback(
       try {
         presented = paint(evaluation, tree, leaves);
       } catch {}
+      if (!presented && audioBackend === 'pcm' && pcmRun) {
+        pcmProof('error', pcmRun.generation, {
+          stage: 'visual',
+          code: 'compositor-failed',
+        });
+        failScheduledAudio('video compositor failed');
+        return;
+      }
 
       if (presented && !graphicsLost && !isCanvasContextLost(canvas)) {
+        if (audioBackend === 'pcm' && pcmRun) {
+          for (const hold of pcmRun.holds) hold.releaseThrough(T);
+          pcmRun.holds = pcmRun.holds.filter((hold) => {
+            if (compareRationalTimes(hold.through, T) > 0) return true;
+            hold.release();
+            return false;
+          });
+        }
         if (onlyRetiring || joinedPrepared) {
           for (const key of lastDrawnOccurrenceKeys) {
             if (currentDrawnOccurrenceKeys.has(key)) continue;
@@ -3874,6 +6169,63 @@ export function createOtioPlayback(
         nativeLastPresentMs = now;
         isNativeHolding = false;
         currentTime = T;
+        if (audioBackend === 'pcm' && pcmRun) {
+          const run = pcmRun;
+          void renewPcmFrontier(run)
+            .then((accepted) => {
+              if (!accepted && pcmRun === run && !run.stopping)
+                failScheduledAudio('audiovisual frontier is unavailable');
+            })
+            .catch(() => {
+              if (pcmRun === run && !run.stopping)
+                failScheduledAudio('PCM scheduling failed');
+            });
+          const frame = Math.floor((T.value * run.admission.rate) / T.rate);
+          const target = Math.min(
+            Math.floor(
+              (scopeEnd().value * run.admission.rate) / scopeEnd().rate
+            ),
+            Math.ceil(
+              (frame +
+                Math.floor(run.admission.rate * OTIO_PCM_TARGET_LEAD_SECONDS)) /
+                OTIO_PCM_PACKET_FRAMES
+            ) * OTIO_PCM_PACKET_FRAMES
+          );
+          if (!run.stopping && !run.loading && target > run.preparedThrough) {
+            void fillPcm(run, target).catch((error: unknown) => {
+              if (pcmRun !== run || run.stopping) return;
+              if (
+                error instanceof Error &&
+                (error.message === 'PCM byte budget exceeded' ||
+                  error.message === 'PCM graph node limit exceeded')
+              ) {
+                const frontier = run.frontierFrame;
+                if (frontier === null) {
+                  failScheduledAudio(
+                    'PCM resources exhausted before a committed frontier'
+                  );
+                  return;
+                }
+                const stop = Math.min(
+                  frontier,
+                  Math.max(
+                    run.contextFrame ?? 0,
+                    Math.ceil(run.context.currentTime * run.admission.rate) +
+                      OTIO_PCM_MIN_LEAD_FRAMES * 2
+                  )
+                );
+                pcmProof('starvation', run.generation, { code: error.message });
+                armPcmStop(run, stop, 'resource');
+                return;
+              }
+              pcmProof('error', run.generation, {
+                stage: 'provider',
+                code: error instanceof Error ? error.message : String(error),
+              });
+              failScheduledAudio('PCM provider failed');
+            });
+          }
+        }
         if (coldFirstPaint) {
           coldFirstPaint = false;
           coldProof('first-paint', {
@@ -3956,6 +6308,10 @@ export function createOtioPlayback(
       }
     }
 
+    if (audioBackend === 'pcm' && pcmRun) {
+      failScheduledAudio('scheduled audio lost its video clock');
+      return;
+    }
     if (clockAnchor !== null && clock.rate > 0) {
       const elapsed = (now - clockAnchor.wallMs) / 1000;
       if (elapsed > 0) {
@@ -4118,7 +6474,18 @@ export function createOtioPlayback(
     getState,
 
     async play(): Promise<void> {
+      if (pcmRun?.stopping) {
+        pcmPlayIntent = true;
+        isPlaying = true;
+        isBuffering = true;
+        notify();
+        return;
+      }
       if (isDisposed || isPlaying) return;
+      if (pcmResumeFrame !== null && pcmAdmission) {
+        currentTime = { value: pcmResumeFrame, rate: pcmAdmission.rate };
+      }
+      pcmRequestWall = presentClockMs();
       coldProof('play-request', { compositionTime: currentTime });
       if (previewBlocked()) {
         notify();
@@ -4132,30 +6499,126 @@ export function createOtioPlayback(
           };
       if (
         clock.known &&
-        (compareRationalTimes(currentTime, lastFrameTime) >= 0 ||
+        ((pcmResumeFrame === null &&
+          compareRationalTimes(currentTime, lastFrameTime) >= 0) ||
           compareRationalTimes(currentTime, scopeEnd()) >= 0)
       ) {
         currentTime = scope?.range.start_time ?? { value: 0, rate: clock.rate };
+        pcmResumeFrame = null;
       }
       const playGeneration = renderGeneration;
       const requestEpoch = ++playRequestEpoch;
       const ctx = getAudioContext();
-      if (ctx && ctx.state === 'suspended') {
-        try {
-          await ctx.resume();
-        } catch {
-          // Ignore resume failure; fallback volume still applies.
-        }
+      let selection: PcmSelection;
+      try {
+        if (ctx?.state === 'suspended')
+          await beforePcmDeadline(ctx.resume(), pcmRequestWall);
+        if (stale(playGeneration) || requestEpoch !== playRequestEpoch) return;
+        if (!ctx)
+          selection = { kind: 'native', reason: 'audio context unavailable' };
+        else if (
+          typeof ctx.getOutputTimestamp === 'function' &&
+          typeof ctx.audioWorklet?.addModule === 'function' &&
+          typeof AudioWorkletNode !== 'undefined' &&
+          typeof Worker !== 'undefined'
+        )
+          selection = await beforePcmDeadline(
+            admitPcmScope(ctx),
+            pcmRequestWall
+          );
+        else selection = await admitPcmScope(ctx);
+      } catch (error) {
+        if (!stale(playGeneration) && requestEpoch === playRequestEpoch)
+          failScheduledAudio(
+            error instanceof Error ? error.message : String(error)
+          );
+        return;
       }
       if (stale(playGeneration) || requestEpoch !== playRequestEpoch) return;
+      if (selection.kind === 'pcm') {
+        // PCM selection is scope-wide and made before authored sound starts.
+        audioBackend = 'pcm';
+        pcmAdmission = selection.admission;
+        pcmPlayIntent = true;
+        mediaFailures.delete('pcm-admission');
+      } else {
+        if (pcmBackendStarted) {
+          failScheduledAudio(
+            `scheduled audio cannot resume: ${selection.reason}`
+          );
+          return;
+        }
+        audioBackend = 'native';
+        pcmAdmission = null;
+        mediaFailures.set(
+          'pcm-admission',
+          diagnostic(
+            'info',
+            'supported',
+            `Browser-native audio timing is in use because ${selection.reason}.`,
+            timelineId
+          )
+        );
+      }
+      pcmProof('backend', pcmGeneration, {
+        backend: audioBackend,
+        reason: selection.kind === 'native' ? selection.reason : undefined,
+        scopeNodeId: scope?.nodeId ?? null,
+      });
       isPlaying = true;
       failureSeekCadence = false;
-      await startSequence(currentTime);
+      if (audioBackend === 'pcm') {
+        try {
+          await beforePcmDeadline(startSequence(currentTime), pcmRequestWall);
+        } catch (error) {
+          if (requestEpoch !== playRequestEpoch || isDisposed) return;
+          renderGeneration++;
+          failScheduledAudio(
+            error instanceof Error ? error.message : String(error)
+          );
+        }
+      } else {
+        await startSequence(currentTime);
+      }
     },
 
     pause(): void {
       if (isDisposed) return;
+      pcmPlayIntent = false;
       playRequestEpoch++;
+      pcmRecoveryWake?.();
+      if (audioBackend === 'pcm' && !pcmRun && isBuffering) {
+        isPlaying = false;
+        isStarting = false;
+        isBuffering = false;
+        pauseAllMedia();
+        notify();
+        return;
+      }
+      if (
+        audioBackend === 'pcm' &&
+        pcmRun?.frontierFrame !== null &&
+        pcmRun?.frontierFrame !== undefined &&
+        !pcmRun.stopped
+      ) {
+        const run = pcmRun;
+        const frontier = run.frontierFrame;
+        if (frontier === null) return;
+        const stop = Math.min(
+          frontier,
+          Math.max(
+            run.contextFrame ?? 0,
+            Math.ceil(run.context.currentTime * run.admission.rate) +
+              OTIO_PCM_MIN_LEAD_FRAMES * 2
+          )
+        );
+        isPlaying = false;
+        isStarting = false;
+        isBuffering = true;
+        armPcmStop(run, stop, 'pause');
+        notify();
+        return;
+      }
       if (!isPlaying && isBuffering && !isStarting) {
         pauseAllMedia();
         return;
@@ -4201,6 +6664,10 @@ export function createOtioPlayback(
 
     async seek(time: OtioRationalTime): Promise<void> {
       if (isDisposed) return;
+      playRequestEpoch++;
+      pcmRecoveryWake?.();
+      pcmResumeFrame = null;
+      stopPcm('seek');
       cancelPreparedBoundary();
       renderGeneration++;
       scopeAbort.abort();
@@ -4213,6 +6680,24 @@ export function createOtioPlayback(
       nativeAnchor = null;
       nativeLastPresentMs = null;
       if (isPlaying) {
+        if (audioBackend === 'pcm') {
+          const context = getAudioContext();
+          const seekGeneration = renderGeneration;
+          if (!context) {
+            failScheduledAudio('audio context unavailable after seek');
+            return;
+          }
+          const selection = await admitPcmScope(context);
+          if (stale(seekGeneration)) return;
+          if (selection.kind !== 'pcm') {
+            failScheduledAudio(
+              `seek cannot use scheduled audio: ${selection.reason}`
+            );
+            return;
+          }
+          pcmAdmission = selection.admission;
+          pcmRequestWall = presentClockMs();
+        }
         await startSequence(currentTime);
       } else {
         const gen = ++renderGeneration;
@@ -4278,6 +6763,12 @@ export function createOtioPlayback(
         }
         context.add(target.id);
       }
+      pcmPlayIntent = false;
+      pcmBackendStarted = false;
+      playRequestEpoch++;
+      pcmRecoveryWake?.();
+      pcmResumeFrame = null;
+      stopPcm('scope');
       cancelPreparedBoundary();
       isNativeHolding = false;
       scope = next
@@ -4350,10 +6841,16 @@ export function createOtioPlayback(
 
     setTrackMute(trackId: string, muted: boolean): void {
       if (isDisposed) return;
-      cancelPreparedBoundary();
       const track = tracks[trackId];
       if (!track) return;
       tracks[trackId] = { ...track, muted };
+      if (audioBackend === 'pcm' && pcmRun) {
+        const node = pcmRun.tracks.get(trackId);
+        if (node) node.gain.value = trackAudible(trackId) ? 1 : 0;
+        notify();
+        return;
+      }
+      cancelPreparedBoundary();
       for (const entry of audios.values()) {
         if (entry.trackId !== trackId) continue;
         applyAudioGain(
@@ -4373,6 +6870,13 @@ export function createOtioPlayback(
       if (isDisposed) return;
       const track = tracks[trackId];
       if (!track) return;
+      if (audioBackend === 'pcm' && pcmRun && track.kind === 'Audio') {
+        tracks[trackId] = { ...track, solo };
+        for (const [id, node] of pcmRun.tracks)
+          node.gain.value = trackAudible(id) ? 1 : 0;
+        notify();
+        return;
+      }
       tracks[trackId] = { ...track, solo };
       notify();
       if (isPlaying) {
@@ -4384,14 +6888,25 @@ export function createOtioPlayback(
 
     setBaseMediaPreviewAllowed(allowed: boolean): void {
       if (isDisposed) return;
+      if (audioBackend === 'pcm' && (pcmRun || pcmPlayIntent))
+        failScheduledAudio('preview policy changed during scheduled playback');
+      else stopPcm('policy');
       cancelPreparedBoundary();
       baseMediaPreviewAllowed = allowed;
       notify();
-      void enqueueRender(currentTime, ++renderGeneration);
+      if (isPlaying) {
+        void startSequence(currentTime, true);
+      } else {
+        void enqueueRender(currentTime, ++renderGeneration);
+      }
     },
 
     dispose(): void {
       if (isDisposed) return;
+      pcmPlayIntent = false;
+      pcmRecoveryWake?.();
+      pcmResumeFrame = null;
+      stopPcm('dispose');
       cancelPreparedBoundary();
       restoreVisibleCanvas();
       isDisposed = true;
@@ -4440,9 +6955,18 @@ export function createOtioPlayback(
       videoHost?.remove();
       audioGraph = null;
       videoHost = null;
+      observedAudioContext?.removeEventListener('sinkchange', onPcmSinkChange);
+      observedAudioContext?.removeEventListener(
+        'statechange',
+        onPcmContextChange
+      );
+      observedAudioContext = null;
       if (audioContext && !options.audioContext) {
         try {
-          void audioContext.close();
+          void audioContext.close().then(
+            () => pcmGateRetirements.contextClosed(),
+            () => undefined
+          );
         } catch {
           // Ignore context close errors.
         }

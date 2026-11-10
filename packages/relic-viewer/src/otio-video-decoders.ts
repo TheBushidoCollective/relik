@@ -40,6 +40,7 @@ export type PresentedWindowOutcome =
   | { readonly kind: 'uncovered' }
   | { readonly kind: 'outside' }
   | { readonly kind: 'backpressure' }
+  | { readonly kind: 'producer-fault' }
   | { readonly kind: 'readout-failed' };
 
 export function compareDecoderSourceTimes(
@@ -478,7 +479,7 @@ export function computePhaseAnchor(
 export interface OtioAudioClockBridge {
   readonly contextTime: number;
   readonly performanceTime: number;
-  readonly uncertaintyMs: number;
+  readonly mappingAllowanceMs: number;
 }
 
 export interface OtioCausalEpoch {
@@ -509,8 +510,8 @@ export function selectOtioCausalEpoch(
     vsyncSeconds <= 0 ||
     !Number.isFinite(bridge.contextTime) ||
     !Number.isFinite(bridge.performanceTime) ||
-    !Number.isFinite(bridge.uncertaintyMs) ||
-    bridge.uncertaintyMs < 0 ||
+    !Number.isFinite(bridge.mappingAllowanceMs) ||
+    bridge.mappingAllowanceMs < 0 ||
     !Number.isFinite(contextNow) ||
     !Number.isFinite(requestWall) ||
     !Number.isFinite(nowWall)
@@ -539,7 +540,11 @@ export function selectOtioCausalEpoch(
     lower = Math.max(lower, preferred - halfWidth);
     upper = Math.min(upper, preferred + halfWidth);
   }
-  const safeWall = Math.max(lower + bridge.uncertaintyMs, requestWall, nowWall);
+  const safeWall = Math.max(
+    lower + bridge.mappingAllowanceMs,
+    requestWall,
+    nowWall
+  );
   const contextAtSafeWall =
     bridge.contextTime + (safeWall - bridge.performanceTime) / 1000;
   const contextFrame = Math.max(
@@ -552,7 +557,7 @@ export function selectOtioCausalEpoch(
     bridge.performanceTime + 1000 * (contextTime - bridge.contextTime);
   if (
     performanceTime < safeWall ||
-    performanceTime + bridge.uncertaintyMs > upper
+    performanceTime + bridge.mappingAllowanceMs > upper
   )
     return null;
   return {
@@ -597,9 +602,23 @@ export class NativeDecoderRing {
   private reservationGeneration = 0;
   private readonly pinnedSlots = new Map<NativeSnapshotSlot, number>();
   private readonly invalidationListeners = new Set<() => void>();
+  private readonly progressListeners = new Set<() => void>();
   private callbackGeneration = 0;
+  private strictProducerOrder: boolean;
+  private observedTag: number | null = null;
+  private producerFault = false;
   private width = 0;
   private height = 0;
+
+  private notifyProgress(): void {
+    for (const listener of [...this.progressListeners]) {
+      try {
+        listener();
+      } catch {
+        // A subscriber cannot prevent capture or invalidate other subscribers.
+      }
+    }
+  }
 
   private invalidateReservations(): void {
     this.reservationGeneration++;
@@ -613,6 +632,7 @@ export class NativeDecoderRing {
         // One consumer must not prevent the other leases being invalidated.
       }
     }
+    this.notifyProgress();
   }
 
   private readonly onContextLost = (): void => {
@@ -636,11 +656,33 @@ export class NativeDecoderRing {
     readonly videoElement: HTMLVideoElement,
     readonly key: string,
     readonly bundlePath: string,
-    private readonly budget: SnapshotPixelBudget
-  ) {}
+    private readonly budget: SnapshotPixelBudget,
+    options: { readonly strictProducerOrder?: boolean } = {}
+  ) {
+    this.strictProducerOrder = options.strictProducerOrder === true;
+  }
 
   get captureEpoch(): number {
     return this.currentEpoch;
+  }
+
+  get highestObservedTag(): number | null {
+    return this.observedTag;
+  }
+
+  /** Changing mode seals the old epoch; call resetEpoch before further capture. */
+  setStrictProducerOrder(strict: boolean): void {
+    if (this.strictProducerOrder === strict) return;
+    this.strictProducerOrder = strict;
+    this.producerFault = true;
+    this.invalidateReservations();
+  }
+
+  subscribeProgress(listener: () => void): () => void {
+    this.progressListeners.add(listener);
+    return () => {
+      this.progressListeners.delete(listener);
+    };
   }
 
   allocate(width: number, height: number): boolean {
@@ -697,6 +739,8 @@ export class NativeDecoderRing {
 
   release(): void {
     this.invalidateReservations();
+    this.observedTag = null;
+    this.producerFault = false;
     this.cancelCallback();
     if (this.startupWaiter) {
       const waiter = this.startupWaiter;
@@ -744,6 +788,8 @@ export class NativeDecoderRing {
       waiter.reject?.(new Error('epoch-reset'));
     }
     this.currentEpoch = newEpoch;
+    this.observedTag = null;
+    this.producerFault = false;
     this.nextSlotIndex = 0;
     this.consecutiveUncovered = 0;
     this.startupFirstAdvancedTag = null;
@@ -785,14 +831,42 @@ export class NativeDecoderRing {
     waiter.resolve({ now, capturedAt, tag: outcome.index });
   }
 
-  readoutFrame(timing: OtioVideoTiming, epoch: number): PresentedWindowOutcome {
+  readoutFrame(
+    timing: OtioVideoTiming,
+    epoch: number,
+    initialExpectedTag?: number
+  ): PresentedWindowOutcome {
+    if (this.producerFault) return { kind: 'producer-fault' };
     if (epoch !== this.currentEpoch || this.hasLostContext()) {
       if (epoch === this.currentEpoch) this.invalidateReservations();
       return { kind: 'readout-failed' };
     }
     const { outcome, frame } = readPresentedFrame(this.videoElement, timing);
     if (outcome.kind !== 'match' || frame === null) return outcome;
+    let notify = false;
     try {
+      // A paused seek can still expose the preceding presented frame. It is
+      // not evidence about the new epoch until the sought frame appears.
+      if (
+        initialExpectedTag !== undefined &&
+        this.observedTag === null &&
+        outcome.index !== initialExpectedTag
+      )
+        return { kind: 'outside' };
+      notify = true;
+      if (
+        this.strictProducerOrder &&
+        this.observedTag !== null &&
+        outcome.index < this.observedTag
+      ) {
+        this.producerFault = true;
+        this.invalidateReservations();
+        return { kind: 'producer-fault' };
+      }
+      this.observedTag = Math.max(
+        this.observedTag ?? outcome.index,
+        outcome.index
+      );
       if (this.findSlotWithTag(outcome.index, epoch)) {
         this.lastCapturedTag = outcome.index;
         return outcome;
@@ -826,6 +900,7 @@ export class NativeDecoderRing {
       return outcome;
     } finally {
       frame.close();
+      if (notify) this.notifyProgress();
     }
   }
 
@@ -844,12 +919,12 @@ export class NativeDecoderRing {
     if (this.currentEpoch !== epoch) {
       return false;
     }
-    const outcome = this.readoutFrame(effectiveTiming, epoch);
+    const outcome = this.readoutFrame(effectiveTiming, epoch, expectedTag);
     return outcome.kind === 'match' && outcome.index === expectedTag;
   }
 
   findSlotWithTag(tag: number, epoch: number): NativeSnapshotSlot | null {
-    if (epoch !== this.currentEpoch) return null;
+    if (epoch !== this.currentEpoch || this.producerFault) return null;
     if (this.hasLostContext()) {
       this.invalidateReservations();
       return null;
@@ -877,6 +952,7 @@ export class NativeDecoderRing {
     epoch: number,
     identity?: NativeSnapshotIdentity
   ): NativeSnapshotReservation | null {
+    if (this.producerFault) return null;
     if (this.hasLostContext()) {
       this.invalidateReservations();
       return null;
@@ -1028,19 +1104,26 @@ export class NativeDecoderRing {
               loop();
             } else if (
               outcome.kind === 'uncovered' ||
-              outcome.kind === 'readout-failed'
+              outcome.kind === 'readout-failed' ||
+              outcome.kind === 'producer-fault'
             ) {
               this.consecutiveUncovered += 1;
               this.totalUncovered += 1;
-              if (this.isStarting || this.consecutiveUncovered >= 2) {
+              if (
+                outcome.kind === 'producer-fault' ||
+                this.isStarting ||
+                this.consecutiveUncovered >= 2
+              ) {
                 if (this.startupWaiter) {
                   const waiter = this.startupWaiter;
                   this.startupWaiter = null;
                   waiter.reject?.(
                     new Error(
-                      outcome.kind === 'readout-failed'
-                        ? 'readout-failed-during-startup'
-                        : 'uncovered-during-startup'
+                      outcome.kind === 'producer-fault'
+                        ? 'producer-regression-during-startup'
+                        : outcome.kind === 'readout-failed'
+                          ? 'readout-failed-during-startup'
+                          : 'uncovered-during-startup'
                     )
                   );
                 }

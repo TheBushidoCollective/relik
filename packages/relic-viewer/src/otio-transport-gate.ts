@@ -3,9 +3,31 @@ export type { OtioGateAck } from './otio-transport-gate-state';
 
 const ASSET = '/assets/otio-transport-gate-worklet.js';
 
+/** Module loading failed before any AudioWorkletNode was constructed. */
+export class OtioGateModuleLoadError extends Error {
+  constructor(cause: unknown) {
+    super('Transport gate module load failed', { cause });
+    this.name = 'OtioGateModuleLoadError';
+  }
+}
+
+export class OtioGateRenderClockError extends Error {
+  constructor(
+    readonly expectedFrame: number | null,
+    readonly observedFrame: number
+  ) {
+    super(
+      `Transport render clock discontinuity: expected ${expectedFrame}, observed ${observedFrame}`
+    );
+    this.name = 'OtioGateRenderClockError';
+  }
+}
+
 type Pending = {
   resolve: (ack: OtioGateAck) => void;
   reject: (error: Error) => void;
+  type: OtioGateCommand['type'];
+  generation: number;
 };
 
 export interface OtioTransportGate {
@@ -22,15 +44,20 @@ export interface OtioTransportGate {
   ): Promise<OtioGateAck>;
   stop(generation: number, stopFrame: number): Promise<OtioGateAck>;
   abort(generation: number): Promise<OtioGateAck>;
-  dispose(): void;
+  dispose(): Promise<void>;
 }
 
 /** Load only the fixed, same-origin worklet. The caller owns the AudioContext. */
 export async function createOtioTransportGate(
   context: AudioContext,
-  onClosed: (ack: OtioGateAck) => void
+  onClosed: (ack: OtioGateAck) => void,
+  onError?: (error: Error) => void
 ): Promise<OtioTransportGate> {
-  await context.audioWorklet.addModule(ASSET);
+  try {
+    await context.audioWorklet.addModule(ASSET);
+  } catch (cause) {
+    throw new OtioGateModuleLoadError(cause);
+  }
   const node = new AudioWorkletNode(context, 'otio-transport-gate', {
     numberOfInputs: 1,
     numberOfOutputs: 1,
@@ -49,31 +76,150 @@ export async function createOtioTransportGate(
     promise: Promise<OtioGateAck>;
   } | null = null;
   let failed: Error | null = null;
+  let activeGeneration: number | null = null;
+  let processorTerminated = false;
+  let shutdown: Promise<void> | null = null;
+  let shutdownResolve: (() => void) | null = null;
+  let shutdownReject: ((error: Error) => void) | null = null;
+  let sink: GainNode | null = null;
+  const finishShutdown = (error?: Error) => {
+    node.disconnect();
+    sink?.disconnect();
+    sink = null;
+    node.port.onmessage = null;
+    node.port.onmessageerror = null;
+    node.onprocessorerror = null;
+    node.port.close();
+    if (error) shutdownReject?.(error);
+    else shutdownResolve?.();
+    shutdownResolve = null;
+    shutdownReject = null;
+  };
   const pending = new Map<number, Pending>();
   const fail = (error: Error) => {
+    if (failed) return;
     failed = error;
     for (const p of pending.values()) p.reject(error);
     pending.clear();
     normalPending = null;
     abortPending = null;
+    if (!disposed) onError?.(error);
   };
-  node.port.onmessage = (event: MessageEvent<OtioGateAck>) => {
-    const ack = event.data;
-    if (ack?.type === 'closed') {
-      onClosed(ack);
+  const validFrame = (value: unknown): value is number =>
+    typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+  node.port.onmessage = (event: MessageEvent<unknown>) => {
+    const message = event.data;
+    if (
+      message &&
+      typeof message === 'object' &&
+      'type' in message &&
+      message.type === 'protocol-fault'
+    ) {
+      processorTerminated = true;
+      if (disposed) finishShutdown();
+      else fail(new Error('Transport gate command queue overflow'));
       return;
     }
-    const item = pending.get(ack?.sequence);
-    if (!item) return;
+    if (
+      message &&
+      typeof message === 'object' &&
+      'type' in message &&
+      message.type === 'clock-fault'
+    ) {
+      if (
+        !('expectedFrame' in message) ||
+        !('observedFrame' in message) ||
+        !(
+          message.expectedFrame === null || validFrame(message.expectedFrame)
+        ) ||
+        typeof message.observedFrame !== 'number'
+      ) {
+        if (disposed)
+          finishShutdown(new Error('Malformed transport clock fault'));
+        else fail(new Error('Malformed transport clock fault'));
+        return;
+      }
+      processorTerminated = true;
+      if (disposed) finishShutdown();
+      else
+        fail(
+          new OtioGateRenderClockError(
+            message.expectedFrame,
+            message.observedFrame
+          )
+        );
+      return;
+    }
+    if (disposed) {
+      if (
+        event.data &&
+        typeof event.data === 'object' &&
+        'type' in event.data &&
+        event.data.type === 'disposed'
+      )
+        finishShutdown();
+      return;
+    }
+    const ack = event.data as Partial<OtioGateAck> | null;
+    if (
+      !ack ||
+      !validFrame(ack.generation) ||
+      !validFrame(ack.sequence) ||
+      typeof ack.accepted !== 'boolean' ||
+      !(ack.throughFrame === null || validFrame(ack.throughFrame)) ||
+      !(ack.closedFrame === null || validFrame(ack.closedFrame)) ||
+      (ack.reason !== undefined && typeof ack.reason !== 'string')
+    ) {
+      fail(new Error('Malformed transport gate acknowledgment'));
+      return;
+    }
+    if (ack.type === 'closed') {
+      if (
+        !ack.accepted ||
+        ack.generation !== activeGeneration ||
+        ack.sequence > sequence ||
+        ack.throughFrame === null ||
+        ack.closedFrame !== ack.throughFrame
+      ) {
+        fail(new Error('Mismatched transport gate closure'));
+        return;
+      }
+      onClosed(ack as OtioGateAck);
+      return;
+    }
+    const item = pending.get(ack.sequence);
+    if (!item || item.type !== ack.type || item.generation !== ack.generation) {
+      fail(new Error('Mismatched transport gate acknowledgment'));
+      return;
+    }
+    if (
+      ack.accepted &&
+      (ack.throughFrame === null ||
+        (ack.type === 'abort'
+          ? ack.closedFrame === null
+          : ack.type === 'stop'
+            ? ack.closedFrame !== null && ack.closedFrame !== ack.throughFrame
+            : ack.closedFrame !== null))
+    ) {
+      fail(new Error('Malformed accepted transport gate acknowledgment'));
+      return;
+    }
     pending.delete(ack.sequence);
     if (normalPending === ack.sequence) normalPending = null;
     if (abortPending === ack.sequence) abortPending = null;
-    item.resolve(ack);
+    if (ack.type === 'arm' && ack.accepted) activeGeneration = ack.generation;
+    item.resolve(ack as OtioGateAck);
   };
-  node.port.onmessageerror = () =>
-    fail(new Error('Transport gate message error'));
-  node.onprocessorerror = () =>
-    fail(new Error('Transport gate processor error'));
+  node.port.onmessageerror = () => {
+    const error = new Error('Transport gate message error');
+    if (disposed) finishShutdown(error);
+    else fail(error);
+  };
+  node.onprocessorerror = () => {
+    const error = new Error('Transport gate processor error');
+    if (disposed) finishShutdown(error);
+    else fail(error);
+  };
   const send = (
     command:
       | Omit<Extract<OtioGateCommand, { type: 'arm' }>, 'sequence'>
@@ -95,7 +241,12 @@ export async function createOtioTransportGate(
     else normalPending = next;
     // ES2022 browsers do not necessarily provide Promise.withResolvers.
     return new Promise((resolve, reject) => {
-      pending.set(next, { resolve, reject });
+      pending.set(next, {
+        resolve,
+        reject,
+        type: command.type,
+        generation: command.generation,
+      });
       try {
         node.port.postMessage({ ...command, sequence: next });
       } catch (error) {
@@ -133,14 +284,34 @@ export async function createOtioTransportGate(
     },
     abort: (generation) => send({ type: 'abort', generation }),
     dispose: () => {
-      if (disposed) return;
+      if (shutdown) return shutdown;
       disposed = true;
       fail(new Error('Transport gate disposed'));
-      node.port.onmessage = null;
-      node.port.onmessageerror = null;
-      node.onprocessorerror = null;
-      node.port.close();
-      node.disconnect();
+      // Keep an inaudible route alive until the worklet returns false.
+      shutdown = new Promise<void>((resolve, reject) => {
+        shutdownResolve = resolve;
+        shutdownReject = reject;
+      });
+      // Callers may intentionally defer awaiting retirement while suspended.
+      if (processorTerminated) {
+        shutdown = Promise.resolve();
+        finishShutdown();
+        return shutdown;
+      }
+      void shutdown.catch(() => {});
+      try {
+        node.disconnect();
+        sink = context.createGain();
+        sink.gain.value = 0;
+        node.connect(sink);
+        sink.connect(context.destination);
+        node.port.postMessage({ type: 'dispose' });
+      } catch (error) {
+        finishShutdown(
+          error instanceof Error ? error : new Error(String(error))
+        );
+      }
+      return shutdown;
     },
   };
 }
