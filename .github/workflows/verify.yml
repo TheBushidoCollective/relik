@@ -86,6 +86,9 @@ jobs:
       - name: Test
         run: bun run test
 
+      - name: Deploy smoke read-only path
+        run: bun scripts/deploy-smoke-path.ts
+
       - name: Build MCP bundle
         run: bun run --cwd packages/relic-mcp build
 
