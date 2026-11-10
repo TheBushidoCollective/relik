@@ -9,16 +9,6 @@ let nextEpoch = 0;
 const integer = (value: unknown): value is number =>
   typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 
-export interface OtioClockSnapshot {
-  clockEpoch: number;
-  nonce: number;
-  bankSerial: number;
-  callbackOrdinal: number;
-  sampleCount: number;
-  lastCertifiedEnd: number;
-  quantumLength: number;
-  fault: false;
-}
 interface ClockBank {
   clockEpoch: number;
   bank: 0 | 1;
@@ -27,7 +17,7 @@ interface ClockBank {
   endFrame: number;
 }
 type ClockPending = {
-  type: 'anchor' | 'bank';
+  type: 'bank';
   id: number;
   resolve: () => void;
   reject: (error: Error) => void;
@@ -70,8 +60,6 @@ export interface OtioTransportGate {
   readonly clockEpoch: number;
   readonly clockCoverageEnd: number | null;
   ready(): Promise<void>;
-  checkpoint(nonce: number): Promise<OtioClockSnapshot>;
-  acceptAnchor(snapshot: OtioClockSnapshot): Promise<void>;
   prepareNextBank(): Promise<void>;
   arm(
     generation: number,
@@ -94,7 +82,9 @@ export async function createOtioTransportGate(
   onClosed: (ack: OtioGateAck) => void,
   onError?: (error: Error) => void,
   initialFrame?: number,
-  proof?: { proofInitialSerial: number }
+  proof?: { proofInitialSerial: number },
+  releaseCarrier: () => void = () => {},
+  registerCarrierCleanup: (cleanup: () => void) => void = () => {}
 ): Promise<OtioTransportGate> {
   let frozen: number;
   let initialSerial: number;
@@ -152,19 +142,25 @@ export async function createOtioTransportGate(
       cause
     );
   }
-  const node = new AudioWorkletNode(context, 'otio-transport-gate', {
-    numberOfInputs: 1,
-    numberOfOutputs: 1,
-    channelCount: 2,
-    channelCountMode: 'explicit',
-    channelInterpretation: 'speakers',
-    outputChannelCount: [2],
-    processorOptions: {
-      clockEpoch,
-      initialFrame: frozen,
-      ...(proof ? { proofInitialSerial: initialSerial } : {}),
-    },
-  });
+  let node: AudioWorkletNode;
+  try {
+    node = new AudioWorkletNode(context, 'otio-transport-gate', {
+      numberOfInputs: 2,
+      numberOfOutputs: 1,
+      channelCount: 2,
+      channelCountMode: 'explicit',
+      channelInterpretation: 'speakers',
+      outputChannelCount: [2],
+      processorOptions: {
+        clockEpoch,
+        initialFrame: frozen,
+        ...(proof ? { proofInitialSerial: initialSerial } : {}),
+      },
+    });
+  } catch (error) {
+    releaseCarrier();
+    throw error;
+  }
   let active: ClockBank = {
     clockEpoch,
     bank: 0,
@@ -189,12 +185,6 @@ export async function createOtioTransportGate(
     promise: Promise<OtioGateAck>;
   } | null = null;
   let clockPending: ClockPending | null = null;
-  let checkpointPending: {
-    nonce: number;
-    resolve: (snapshot: OtioClockSnapshot) => void;
-    reject: (error: Error) => void;
-  } | null = null;
-  let lastSnapshot: OtioClockSnapshot | null = null;
   let observedQuantum = 0;
   let readyResolve!: () => void, readyReject!: (error: Error) => void;
   const readyPromise = new Promise<void>((resolve, reject) => {
@@ -207,7 +197,26 @@ export async function createOtioTransportGate(
     shutdownResolve: (() => void) | null = null,
     shutdownReject: ((error: Error) => void) | null = null;
   let sink: GainNode | null = null;
+  let carrier: AudioBufferSourceNode | null = null;
+  let carrierStartAttempted = false;
+  let carrierStopRequested = false;
+  const stopCarrier = () => {
+    if (!carrier || carrierStopRequested) return;
+    carrierStopRequested = true;
+    try {
+      carrier.stop(0);
+    } catch {}
+  };
+  const releaseEndedCarrier = () => {
+    if (!carrier) return;
+    carrier.onended = null;
+    carrier.disconnect();
+    carrier.buffer = null;
+    carrier = null;
+    releaseCarrier();
+  };
   const finishShutdown = () => {
+    stopCarrier();
     node.disconnect();
     sink?.disconnect();
     sink = null;
@@ -228,14 +237,13 @@ export async function createOtioTransportGate(
   const fail = (error: Error) => {
     if (failed) return;
     failed = error;
+    stopCarrier();
     readyReject(error);
     for (const item of pending.values()) item.reject(error);
     pending.clear();
     normalPending = abortPending = null;
     clockPending?.reject(error);
     clockPending = null;
-    checkpointPending?.reject(error);
-    checkpointPending = null;
     if (!disposed) onError?.(error);
   };
   const schedule = (bank: ClockBank) => {
@@ -259,11 +267,35 @@ export async function createOtioTransportGate(
   };
   try {
     schedule(active);
+    const buffer = context.createBuffer(2, 8192, context.sampleRate);
+    const high = buffer.getChannelData(0);
+    const low = buffer.getChannelData(1);
+    for (let i = 0; i < 8192; i++) {
+      const frame = frozen + i;
+      high[i] = 1 + Math.floor(frame / 65536);
+      low[i] = frame % 65536;
+    }
+    carrier = context.createBufferSource();
+    registerCarrierCleanup(releaseEndedCarrier);
+    carrier.buffer = buffer;
+    carrier.playbackRate.value = 1;
+    carrier.detune.value = 0;
+    carrier.loop = false;
+    carrier.channelCount = 2;
+    carrier.channelCountMode = 'explicit';
+    carrier.channelInterpretation = 'discrete';
+    carrier.connect(node, 0, 1);
+    carrier.onended = releaseEndedCarrier;
+    carrierStartAttempted = true;
+    carrier.start(frozen / context.sampleRate, 0);
     sink = context.createGain();
     sink.gain.value = 0;
     node.connect(sink);
     sink.connect(context.destination);
   } catch (error) {
+    if (carrierStartAttempted) stopCarrier();
+    else if (carrier) releaseEndedCarrier();
+    else releaseCarrier();
     node.disconnect();
     sink?.disconnect();
     node.port.close();
@@ -313,62 +345,34 @@ export async function createOtioTransportGate(
       message.type === 'clock-trace-stopped'
     )
       return;
-    if (message.type === 'clock-ready') {
-      if (readySeen) {
-        fail(new Error('Duplicate transport clock readiness'));
+    if (message.type === 'anchor-certified') {
+      if (
+        readySeen ||
+        coverage !== null ||
+        message.firstFrame !== frozen ||
+        !integer(message.lastCertifiedEnd) ||
+        !integer(message.sampleCount) ||
+        message.lastCertifiedEnd !== frozen + message.sampleCount ||
+        message.callbackOrdinal !== 2 ||
+        !integer(message.quantumLength) ||
+        message.quantumLength < 2 ||
+        message.quantumLength > MAX_QUANTUM ||
+        message.sampleCount < message.quantumLength + 2 ||
+        message.sampleCount > 8192 ||
+        message.bankSerial !== active.serial ||
+        message.clockCoverageEnd !== active.endFrame - MAX_QUANTUM
+      ) {
+        fail(new Error('Malformed clock anchor certification'));
         return;
       }
       readySeen = true;
+      observedQuantum = message.quantumLength;
+      coverage = active.endFrame - MAX_QUANTUM;
+      stopCarrier();
       readyResolve();
       return;
     }
     if (
-      message.type === 'checkpoint' ||
-      message.type === 'checkpoint-rejected'
-    ) {
-      const item = checkpointPending;
-      if (!item || message.nonce !== item.nonce) {
-        fail(new Error('Mismatched clock checkpoint'));
-        return;
-      }
-      checkpointPending = null;
-      if (message.type === 'checkpoint-rejected') {
-        item.reject(new Error('Clock checkpoint rejected'));
-        return;
-      }
-      if (
-        !integer(message.bankSerial) ||
-        message.bankSerial !== active.serial ||
-        !integer(message.callbackOrdinal) ||
-        message.callbackOrdinal < 2 ||
-        !integer(message.sampleCount) ||
-        !integer(message.lastCertifiedEnd) ||
-        !integer(message.quantumLength) ||
-        message.quantumLength < 2 ||
-        message.quantumLength > MAX_QUANTUM ||
-        message.fault !== false
-      ) {
-        fail(new Error('Malformed clock checkpoint'));
-        item.reject(failed!);
-        return;
-      }
-      const snapshot: OtioClockSnapshot = {
-        clockEpoch,
-        nonce: item.nonce,
-        bankSerial: message.bankSerial,
-        callbackOrdinal: message.callbackOrdinal,
-        sampleCount: message.sampleCount,
-        lastCertifiedEnd: message.lastCertifiedEnd,
-        quantumLength: message.quantumLength,
-        fault: false,
-      };
-      observedQuantum = snapshot.quantumLength;
-      lastSnapshot = snapshot;
-      item.resolve(snapshot);
-      return;
-    }
-    if (
-      message.type === 'anchor-accepted' ||
       message.type === 'bank-installed' ||
       message.type === 'bank-rejected' ||
       message.type === 'clock-promoted'
@@ -397,20 +401,6 @@ export async function createOtioTransportGate(
         }
         clockPending = null;
         item.reject(new Error('Clock bank rejected'));
-        return;
-      }
-      if (message.type === 'anchor-accepted') {
-        if (
-          item.type !== 'anchor' ||
-          message.clockCoverageEnd !== active.endFrame - MAX_QUANTUM
-        ) {
-          fail(new Error('Malformed clock anchor'));
-          return;
-        }
-        coverage = active.endFrame - MAX_QUANTUM;
-        lastSnapshot = null;
-        clockPending = null;
-        item.resolve();
         return;
       }
       if (
@@ -537,55 +527,6 @@ export async function createOtioTransportGate(
       return coverage;
     },
     ready: () => readyPromise,
-    checkpoint: (nonce) => {
-      if (disposed || failed)
-        return Promise.reject(failed ?? new Error('Transport gate disposed'));
-      if (
-        !integer(nonce) ||
-        !readySeen ||
-        coverage !== null ||
-        clockPending ||
-        checkpointPending ||
-        lastSnapshot ||
-        context.state !== 'suspended'
-      )
-        return Promise.reject(new Error('Invalid clock checkpoint request'));
-      return new Promise((resolve, reject) => {
-        checkpointPending = { nonce, resolve, reject };
-        try {
-          node.port.postMessage({ type: 'checkpoint', clockEpoch, nonce });
-        } catch (error) {
-          checkpointPending = null;
-          reject(error);
-        }
-      });
-    },
-    acceptAnchor: (snapshot) => {
-      if (disposed || failed)
-        return Promise.reject(failed ?? new Error('Transport gate disposed'));
-      if (
-        clockPending ||
-        !lastSnapshot ||
-        snapshot !== lastSnapshot ||
-        coverage !== null
-      )
-        return Promise.reject(new Error('Invalid clock anchor'));
-      const id = ++requestId;
-      return new Promise((resolve, reject) => {
-        clockPending = { type: 'anchor', id, resolve, reject };
-        try {
-          node.port.postMessage({
-            type: 'accept-anchor',
-            clockEpoch,
-            requestId: id,
-            snapshot,
-          });
-        } catch (error) {
-          clockPending = null;
-          reject(error);
-        }
-      });
-    },
     prepareNextBank: () => {
       if (disposed || failed)
         return Promise.reject(failed ?? new Error('Transport gate disposed'));
@@ -660,6 +601,7 @@ export async function createOtioTransportGate(
     dispose: () => {
       if (shutdown) return shutdown;
       disposed = true;
+      stopCarrier();
       fail(new Error('Transport gate disposed'));
       shutdown = new Promise<void>((resolve, reject) => {
         shutdownResolve = resolve;

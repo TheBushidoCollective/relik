@@ -6,7 +6,7 @@ import {
   FakeGateNode,
 } from './otio-transport-gate-fixture';
 
-test('session correlates checkpoints, anchors, commands and retirement', async () => {
+test('session correlates anchor certification, commands and retirement', async () => {
   const globals = globalThis as unknown as Record<string, unknown>;
   const original = globals.AudioWorkletNode;
   const sent: Array<Record<string, unknown>> = [];
@@ -34,14 +34,7 @@ test('session correlates checkpoints, anchors, commands and retirement', async (
   }
   globals.AudioWorkletNode = Node;
   try {
-    const context = {
-      state: 'suspended',
-      sampleRate: 48000,
-      currentTime: 0,
-      destination: {},
-      audioWorklet: { addModule: async () => {} },
-      createGain: () => ({ gain: { value: 1 }, connect() {}, disconnect() {} }),
-    } as unknown as AudioContext;
+    const context = fakeGateContext();
     const closed: unknown[] = [];
     const gate = await createOtioTransportGate(
       context,
@@ -54,27 +47,17 @@ test('session correlates checkpoints, anchors, commands and retirement', async (
       node.port.onmessage?.({
         data: { clockEpoch: gate.clockEpoch, ...message },
       });
-    emit({ type: 'clock-ready' });
-    await gate.ready();
-    const checkpoint = gate.checkpoint(9);
     emit({
-      type: 'checkpoint',
-      nonce: 9,
-      bankSerial: 1,
-      callbackOrdinal: 2,
-      sampleCount: 256,
+      type: 'anchor-certified',
+      firstFrame: 0,
       lastCertifiedEnd: 256,
+      sampleCount: 256,
+      callbackOrdinal: 2,
       quantumLength: 128,
-      fault: false,
-    });
-    const snapshot = await checkpoint;
-    const anchor = gate.acceptAnchor(snapshot);
-    emit({
-      type: 'anchor-accepted',
-      requestId: sent[sent.length - 1]!.requestId,
+      bankSerial: 1,
       clockCoverageEnd: 65536 - 2048,
     });
-    await anchor;
+    await gate.ready();
     expect(gate.clockCoverageEnd).toBe(65536 - 2048);
     const arm = gate.arm(1, 300, 500);
     await expect(gate.extend(1, 500, 600)).rejects.toThrow('pending');
@@ -199,5 +182,63 @@ test('serial exhaustion is proof-only, refuses renewal and does not wrap', async
     if (originalLocation)
       Object.defineProperty(globalThis, 'location', originalLocation);
     else delete globals.location;
+  }
+});
+
+test('frozen native carrier encodes exact frame words and is routed only to input one', async () => {
+  const globals = globalThis as unknown as Record<string, unknown>;
+  const original = globals.AudioWorkletNode;
+  globals.AudioWorkletNode = FakeGateNode;
+  const high = new Float32Array(8192);
+  const low = new Float32Array(8192);
+  const connections: unknown[][] = [];
+  const starts: number[][] = [];
+  const source = {
+    buffer: null as unknown,
+    onended: null as (() => void) | null,
+    playbackRate: { value: 9 },
+    detune: { value: 9 },
+    loop: true,
+    connect(...args: unknown[]) {
+      connections.push(args);
+    },
+    disconnect() {},
+    start(...args: number[]) {
+      starts.push(args);
+    },
+    stop() {},
+  };
+  const initialFrame = 65534;
+  const context = {
+    ...fakeGateContext(),
+    currentTime: initialFrame / 48000,
+    createBuffer: () => ({
+      getChannelData: (channel: number) => (channel === 0 ? high : low),
+    }),
+    createBufferSource: () => source,
+  } as unknown as AudioContext;
+  try {
+    const gate = await createOtioTransportGate(
+      context,
+      () => {},
+      undefined,
+      initialFrame
+    );
+    const node = gate.node as unknown as FakeGateNode;
+    expect(node.options.numberOfInputs).toBe(2);
+    expect(node.options.channelInterpretation).toBe('speakers');
+    expect(connections).toEqual([[node, 0, 1]]);
+    expect(starts).toEqual([[initialFrame / 48000, 0]]);
+    expect(Array.from(high.slice(0, 4))).toEqual([1, 1, 2, 2]);
+    expect(Array.from(low.slice(0, 4))).toEqual([65534, 65535, 0, 1]);
+    expect(source.playbackRate.value).toBe(1);
+    expect(source.detune.value).toBe(0);
+    expect(source.loop).toBe(false);
+    const retired = gate.dispose();
+    node.emit({ type: 'disposed', clockEpoch: gate.clockEpoch });
+    await retired;
+    source.onended?.();
+  } finally {
+    globals.AudioWorkletNode = original;
   }
 });

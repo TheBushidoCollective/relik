@@ -43,6 +43,19 @@ export const fakeGateContext = () =>
     currentTime: 0,
     destination: {},
     audioWorklet: { addModule: async () => {} },
+    createBuffer: (_channels: number, frames: number) => ({
+      getChannelData: () => new Float32Array(frames),
+    }),
+    createBufferSource: () => ({
+      buffer: null,
+      playbackRate: { value: 1 },
+      detune: { value: 0 },
+      onended: null,
+      connect() {},
+      disconnect() {},
+      start() {},
+      stop() {},
+    }),
     createGain: () => ({ gain: { value: 0 }, connect() {}, disconnect() {} }),
   }) as unknown as AudioContext;
 
@@ -59,28 +72,17 @@ export async function anchoredGate(
     proof
   );
   const node = gate.node as unknown as FakeGateNode;
-  node.emit({ type: 'clock-ready', clockEpoch: gate.clockEpoch });
-  await gate.ready();
-  const checkpoint = gate.checkpoint(1);
   node.emit({
-    type: 'checkpoint',
+    type: 'anchor-certified',
     clockEpoch: gate.clockEpoch,
-    nonce: 1,
-    bankSerial: proof?.proofInitialSerial ?? 1,
-    callbackOrdinal: 2,
-    sampleCount: 256,
+    firstFrame: 0,
     lastCertifiedEnd: 256,
+    sampleCount: 256,
+    callbackOrdinal: 2,
     quantumLength: 128,
-    fault: false,
-  });
-  const snapshot = await checkpoint;
-  const anchor = gate.acceptAnchor(snapshot);
-  node.emit({
-    type: 'anchor-accepted',
-    clockEpoch: gate.clockEpoch,
-    requestId: node.sent[node.sent.length - 1]!.requestId,
+    bankSerial: proof?.proofInitialSerial ?? 1,
     clockCoverageEnd: 63488,
   });
-  await anchor;
+  await gate.ready();
   return { gate, node };
 }

@@ -18,16 +18,6 @@ type Bank = {
   startFrame: number;
   endFrame: number;
 };
-type Snapshot = {
-  clockEpoch: number;
-  nonce: number;
-  bankSerial: number;
-  callbackOrdinal: number;
-  sampleCount: number;
-  lastCertifiedEnd: number;
-  quantumLength: number;
-  fault: false;
-};
 const SPAN = 65536;
 const STEP = 32768;
 const MAX_QUANTUM = 2048;
@@ -49,9 +39,7 @@ class OtioTransportGateProcessor extends AudioWorkletProcessor {
   private ordinal = 0;
   private samples = 0;
   private quantum = 0;
-  private readySent = false;
   private anchored = false;
-  private checkpoint: Snapshot | null = null;
   private clockCommand: Record<string, unknown> | null = null;
   private firstCommand: Record<string, unknown> | null = null;
   private secondCommand: Record<string, unknown> | null = null;
@@ -119,38 +107,11 @@ class OtioTransportGateProcessor extends AudioWorkletProcessor {
         });
         return;
       }
-      if (msg.type === 'checkpoint') {
-        if (
-          !integer(msg.nonce) ||
-          this.checkpoint ||
-          this.ordinal < 2 ||
-          this.expected === null
-        ) {
-          this.port.postMessage({
-            type: 'checkpoint-rejected',
-            clockEpoch: this.epoch,
-            nonce: msg.nonce,
-          });
-          return;
-        }
-        this.checkpoint = {
-          clockEpoch: this.epoch,
-          nonce: msg.nonce,
-          bankSerial: this.active.serial,
-          callbackOrdinal: this.ordinal,
-          sampleCount: this.samples,
-          lastCertifiedEnd: this.expected,
-          quantumLength: this.quantum,
-          fault: false,
-        };
-        this.port.postMessage({ type: 'checkpoint', ...this.checkpoint });
-        return;
-      }
       if (msg.type === 'dispose') {
         this.terminal = true;
         return;
       }
-      if (msg.type === 'install-bank' || msg.type === 'accept-anchor') {
+      if (msg.type === 'install-bank') {
         if (this.clockCommand) this.overflow = true;
         else this.clockCommand = msg;
         return;
@@ -242,6 +203,41 @@ class OtioTransportGateProcessor extends AudioWorkletProcessor {
       parameters['clockTag' + suffix],
       length
     );
+    if (
+      observed === null ||
+      (this.expected !== null && observed !== this.expected)
+    )
+      return this.end(outputs, 'clock-fault', {
+        expectedFrame: this.expected,
+        observedFrame: observed ?? -1,
+      });
+    if (this.overflow) return this.end(outputs, 'protocol-fault');
+    if (!this.anchored) {
+      const carrier = inputs[1];
+      if (
+        observed !== this.active.startFrame + this.samples ||
+        !carrier ||
+        carrier.length !== 2 ||
+        carrier[0]?.length !== length ||
+        carrier[1]?.length !== length ||
+        this.samples + length > 8192
+      )
+        return this.end(outputs, 'clock-fault', {
+          expectedFrame: this.active.startFrame + this.samples,
+          observedFrame: observed,
+        });
+      for (let i = 0; i < length; i++) {
+        const frame = observed + i;
+        if (
+          carrier[0]![i] !== 1 + Math.floor(frame / 65536) ||
+          carrier[1]![i] !== frame % 65536
+        )
+          return this.end(outputs, 'clock-fault', {
+            expectedFrame: frame,
+            observedFrame: -1,
+          });
+      }
+    }
     if (this.traceRemaining > 0) {
       let certifiedFrame =
         observed !== null &&
@@ -289,63 +285,29 @@ class OtioTransportGateProcessor extends AudioWorkletProcessor {
         clockEpoch: this.epoch,
       });
     }
-    if (
-      observed === null ||
-      (this.expected !== null && observed !== this.expected)
-    )
-      return this.end(outputs, 'clock-fault', {
-        expectedFrame: this.expected,
-        observedFrame: observed ?? -1,
-      });
-    if (this.overflow) return this.end(outputs, 'protocol-fault');
     this.expected = observed + length;
     this.ordinal++;
     this.samples += length;
     this.quantum = length;
     if (!Number.isSafeInteger(this.samples))
       return this.end(outputs, 'protocol-fault');
-    if (!this.readySent && this.ordinal >= 2) {
-      this.readySent = true;
-      this.port.postMessage({ type: 'clock-ready', clockEpoch: this.epoch });
+    if (!this.anchored && this.ordinal === 2) {
+      this.anchored = true;
+      this.port.postMessage({
+        type: 'anchor-certified',
+        clockEpoch: this.epoch,
+        firstFrame: this.active.startFrame,
+        lastCertifiedEnd: this.expected,
+        sampleCount: this.samples,
+        callbackOrdinal: this.ordinal,
+        quantumLength: this.quantum,
+        bankSerial: this.active.serial,
+        clockCoverageEnd: this.active.endFrame - MAX_QUANTUM,
+      });
     }
     const clockCommand = this.clockCommand;
     this.clockCommand = null;
-    if (clockCommand?.type === 'accept-anchor') {
-      const snapshot = clockCommand.snapshot;
-      const saved = this.checkpoint;
-      if (
-        !saved ||
-        !snapshot ||
-        typeof snapshot !== 'object' ||
-        !('clockEpoch' in snapshot) ||
-        snapshot.clockEpoch !== saved.clockEpoch ||
-        !('nonce' in snapshot) ||
-        snapshot.nonce !== saved.nonce ||
-        !('bankSerial' in snapshot) ||
-        snapshot.bankSerial !== saved.bankSerial ||
-        !('callbackOrdinal' in snapshot) ||
-        snapshot.callbackOrdinal !== saved.callbackOrdinal ||
-        !('sampleCount' in snapshot) ||
-        snapshot.sampleCount !== saved.sampleCount ||
-        !('lastCertifiedEnd' in snapshot) ||
-        snapshot.lastCertifiedEnd !== saved.lastCertifiedEnd ||
-        !('quantumLength' in snapshot) ||
-        snapshot.quantumLength !== saved.quantumLength ||
-        !('fault' in snapshot) ||
-        snapshot.fault !== false ||
-        saved.callbackOrdinal >= this.ordinal ||
-        saved.lastCertifiedEnd > observed
-      )
-        return this.end(outputs, 'protocol-fault');
-      this.checkpoint = null;
-      this.anchored = true;
-      this.port.postMessage({
-        type: 'anchor-accepted',
-        clockEpoch: this.epoch,
-        requestId: clockCommand.requestId,
-        clockCoverageEnd: this.active.endFrame - MAX_QUANTUM,
-      });
-    } else if (clockCommand?.type === 'install-bank') {
+    if (clockCommand?.type === 'install-bank') {
       const b = clockCommand.descriptor as Bank;
       const valid =
         b &&

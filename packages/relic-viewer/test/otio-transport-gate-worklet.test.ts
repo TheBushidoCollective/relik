@@ -65,18 +65,24 @@ test('native render clock certifies promotions and silences a held ramp', async 
         new Float32Array(128).fill(9),
         new Float32Array(128).fill(9),
       ];
-      const alive = processor.process([input], [output], params);
+      const carrier = [
+        Float32Array.from(
+          { length: 128 },
+          (_, i) => 1 + Math.floor((start + i) / 65536)
+        ),
+        Float32Array.from({ length: 128 }, (_, i) => (start + i) % 65536),
+      ];
+      const alive = processor.process([input, carrier], [output], params);
       return { alive, output };
     };
     send({ type: 'proof-trace-start' });
     run(0);
     run(128);
-    send({ type: 'checkpoint', nonce: 7 });
-    const snapshot = processor.port.messages.find(
-      (message) => message.type === 'checkpoint'
-    );
-    expect(snapshot?.lastCertifiedEnd).toBe(256);
-    send({ type: 'accept-anchor', requestId: 1, snapshot });
+    expect(
+      processor.port.messages.find(
+        (message) => message.type === 'anchor-certified'
+      )?.lastCertifiedEnd
+    ).toBe(256);
     run(256);
     expect(
       processor.port.messages.filter(
@@ -172,7 +178,14 @@ test('native render clock certifies promotions and silences a held ramp', async 
     ) => {
       const output = [new Float32Array(4).fill(9), new Float32Array(4).fill(9)];
       const source = [new Float32Array(4).fill(1), new Float32Array(4).fill(1)];
-      const alive = instance.process([source], [output], {
+      const carrier = [
+        Float32Array.from(
+          { length: 4 },
+          (_, i) => 1 + Math.floor((start + i) / 65536)
+        ),
+        Float32Array.from({ length: 4 }, (_, i) => (start + i) % 65536),
+      ];
+      const alive = instance.process([source, carrier], [output], {
         clockFrameA:
           values ??
           Float32Array.from({ length: 4 }, (_, index) => start + index),
@@ -185,15 +198,6 @@ test('native render clock certifies promotions and silences a held ramp', async 
     const prefix = fresh();
     block(prefix, 0);
     block(prefix, 4);
-    command(prefix, { type: 'checkpoint', nonce: 3 });
-    const prefixSnapshot = prefix.port.messages.find(
-      (message) => message.type === 'checkpoint'
-    );
-    command(prefix, {
-      type: 'accept-anchor',
-      requestId: 1,
-      snapshot: prefixSnapshot,
-    });
     command(prefix, {
       type: 'arm',
       generation: 1,
@@ -226,16 +230,11 @@ test('native render clock certifies promotions and silences a held ramp', async 
     });
     block(exhausted, 0, undefined, maximum);
     block(exhausted, 4, undefined, maximum);
-    command(exhausted, { type: 'checkpoint', nonce: 9 });
-    const exhaustedSnapshot = exhausted.port.messages.find(
-      (message) => message.type === 'checkpoint'
-    );
-    expect(exhaustedSnapshot?.bankSerial).toBe(maximum);
-    command(exhausted, {
-      type: 'accept-anchor',
-      requestId: 1,
-      snapshot: exhaustedSnapshot,
-    });
+    expect(
+      exhausted.port.messages.find(
+        (message) => message.type === 'anchor-certified'
+      )?.bankSerial
+    ).toBe(maximum);
     command(exhausted, {
       type: 'arm',
       generation: 1,
@@ -274,6 +273,83 @@ test('native render clock certifies promotions and silences a held ramp', async 
       expect(Array.from(result.output[0]!)).toEqual([0, 0, 0, 0]);
       expect(faulted.port.messages.at(-1)?.type).toBe('clock-fault');
     }
+    for (const scenario of [
+      'missing',
+      'one-channel',
+      'shifted',
+      'corrupt',
+      'skipped',
+    ] as const) {
+      const instance = fresh();
+      const start = scenario === 'skipped' ? 4 : 0;
+      const carrier = [
+        Float32Array.of(1, 1, 1, 1),
+        Float32Array.from(
+          { length: 4 },
+          (_, i) => start + i + (scenario === 'shifted' ? 1 : 0)
+        ),
+      ];
+      if (scenario === 'corrupt') carrier[0]![2] = NaN;
+      const output = [new Float32Array(4).fill(9), new Float32Array(4).fill(9)];
+      const input =
+        scenario === 'missing'
+          ? []
+          : scenario === 'one-channel'
+            ? [carrier[0]!]
+            : carrier;
+      const alive = instance.process(
+        [[new Float32Array(4).fill(1), new Float32Array(4).fill(1)], input],
+        [output],
+        {
+          clockFrameA: Float32Array.from({ length: 4 }, (_, i) => start + i),
+          clockTagA: Float32Array.of(1),
+          clockFrameB: new Float32Array(4),
+          clockTagB: Float32Array.of(0),
+        }
+      );
+      expect(alive).toBe(false);
+      expect(Array.from(output[0]!)).toEqual([0, 0, 0, 0]);
+      expect(instance.port.messages.at(-1)?.type).toBe('clock-fault');
+    }
+    const carryOrigin = 65534;
+    const carry = new ProcessorClass({
+      processorOptions: { clockEpoch: 2, initialFrame: carryOrigin },
+    });
+    for (const relative of [0, 4]) {
+      const input = [new Float32Array(4), new Float32Array(4)];
+      const carrier = [
+        Float32Array.from(
+          { length: 4 },
+          (_, i) => 1 + Math.floor((carryOrigin + relative + i) / 65536)
+        ),
+        Float32Array.from(
+          { length: 4 },
+          (_, i) => (carryOrigin + relative + i) % 65536
+        ),
+      ];
+      expect(
+        carry.process(
+          [input, carrier],
+          [[new Float32Array(4), new Float32Array(4)]],
+          {
+            clockFrameA: Float32Array.from(
+              { length: 4 },
+              (_, i) => relative + i
+            ),
+            clockTagA: Float32Array.of(1),
+            clockFrameB: new Float32Array(4),
+            clockTagB: Float32Array.of(0),
+          }
+        )
+      ).toBe(true);
+    }
+    expect(
+      carry.port.messages.find((message) => message.type === 'anchor-certified')
+    ).toMatchObject({
+      firstFrame: carryOrigin,
+      lastCertifiedEnd: carryOrigin + 8,
+      sampleCount: 8,
+    });
     const overloaded = fresh();
     for (let sequence = 1; sequence <= 3; sequence++)
       command(overloaded, {

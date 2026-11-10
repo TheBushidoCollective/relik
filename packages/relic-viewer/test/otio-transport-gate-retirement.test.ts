@@ -4,6 +4,7 @@ import {
   OtioGateModuleLoadError,
   OtioGatePreconstructionError,
 } from '../src/otio-transport-gate';
+import { fakeGateContext, FakeGateNode } from './otio-transport-gate-fixture';
 
 test('module load failure is classified before node construction', async () => {
   const globals = globalThis as unknown as Record<string, unknown>;
@@ -117,6 +118,19 @@ test('repeated disposal waits for render-thread retirement and removes its silen
     currentTime: 0,
     audioWorklet: { addModule: async () => {} },
     destination: {},
+    createBuffer: (_channels: number, frames: number) => ({
+      getChannelData: () => new Float32Array(frames),
+    }),
+    createBufferSource: () => ({
+      buffer: null,
+      playbackRate: { value: 1 },
+      detune: { value: 0 },
+      onended: null,
+      connect() {},
+      disconnect() {},
+      start() {},
+      stop() {},
+    }),
     createGain: () => ({
       gain: { value: 1 },
       connect: (_destination: unknown) => {},
@@ -154,6 +168,67 @@ test('repeated disposal waits for render-thread retirement and removes its silen
       expect(node.disconnects).toBe(1);
       expect(sinkDisconnects).toBe(i + 1);
     }
+  } finally {
+    globals.AudioWorkletNode = original;
+  }
+});
+
+test('carrier credit survives gate disposal until source ended', async () => {
+  const globals = globalThis as unknown as Record<string, unknown>;
+  const original = globals.AudioWorkletNode;
+  globals.AudioWorkletNode = FakeGateNode;
+  const source = {
+    buffer: null as unknown,
+    playbackRate: { value: 1 },
+    detune: { value: 0 },
+    onended: null as (() => void) | null,
+    stops: 0,
+    connect() {},
+    disconnect() {},
+    start() {},
+    stop() {
+      this.stops++;
+    },
+  };
+  let releases = 0;
+  const context = {
+    ...fakeGateContext(),
+    createBufferSource: () => source,
+  } as unknown as AudioContext;
+  try {
+    const gate = await createOtioTransportGate(
+      context,
+      () => {},
+      undefined,
+      0,
+      undefined,
+      () => {
+        releases++;
+      }
+    );
+    const node = gate.node as unknown as FakeGateNode;
+    node.emit({
+      type: 'anchor-certified',
+      clockEpoch: gate.clockEpoch,
+      firstFrame: 0,
+      lastCertifiedEnd: 256,
+      sampleCount: 256,
+      callbackOrdinal: 2,
+      quantumLength: 128,
+      bankSerial: 1,
+      clockCoverageEnd: 63488,
+    });
+    await gate.ready();
+    expect(source.stops).toBe(1);
+    expect(releases).toBe(0);
+    const retired = gate.dispose();
+    node.emit({ type: 'disposed', clockEpoch: gate.clockEpoch });
+    await retired;
+    expect(source.stops).toBe(1);
+    expect(releases).toBe(0);
+    source.onended?.();
+    expect(releases).toBe(1);
+    expect(source.buffer).toBeNull();
   } finally {
     globals.AudioWorkletNode = original;
   }

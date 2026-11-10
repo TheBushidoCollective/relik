@@ -109,10 +109,15 @@ export type {
 /** Keeps worklet-node credits until render-thread or owned-context retirement. */
 export class OtioPcmGateRetirements {
   private readonly releases = new Set<() => void>();
+  private readonly carrierReleases = new Set<() => void>();
+  private readonly carrierCleanup = new Map<() => void, () => void>();
   constructor(private readonly budget: OtioPcmBudget) {}
 
   get reservedGates(): number {
     return this.releases.size;
+  }
+  get reservedCarriers(): number {
+    return this.carrierReleases.size;
   }
 
   reserve(): () => void {
@@ -132,6 +137,28 @@ export class OtioPcmGateRetirements {
     return release;
   }
 
+  reserveCarrier(): () => void {
+    this.budget.reserveNodes(1);
+    try {
+      this.budget.reserveBytes(64 * 1024);
+    } catch (error) {
+      this.budget.releaseNodes(1);
+      throw error;
+    }
+    const release = () => {
+      this.carrierCleanup.delete(release);
+      if (!this.carrierReleases.delete(release)) return;
+      this.budget.releaseNodes(1);
+      this.budget.releaseBytes(64 * 1024);
+    };
+    this.carrierReleases.add(release);
+    return release;
+  }
+  registerCarrierCleanup(release: () => void, cleanup: () => void): void {
+    if (this.carrierReleases.has(release))
+      this.carrierCleanup.set(release, cleanup);
+  }
+
   retire(gate: Pick<OtioTransportGate, 'dispose'>, release: () => void): void {
     try {
       void gate.dispose().then(release, () => undefined);
@@ -142,6 +169,8 @@ export class OtioPcmGateRetirements {
 
   contextClosed(): void {
     for (const release of this.releases) release();
+    for (const cleanup of this.carrierCleanup.values()) cleanup();
+    for (const release of this.carrierReleases) release();
   }
 }
 export const OTIO_MAX_IMAGE_EDGE = 4096;
@@ -909,6 +938,7 @@ export function createOtioPlayback(
       nodes: number;
       bytes: number;
       gateReservations: number;
+      carrierReservations: number;
       activeSession: boolean;
       otherGateReservations: number;
     };
@@ -1166,7 +1196,6 @@ export function createOtioPlayback(
   let pcmBootstrapToken = 0;
   let pcmBootstrapAbort = new AbortController();
   let pcmIntentionalTransition: AudioContextState | null = null;
-  let pcmCheckpointNonce = 0;
   let pcmRun: PcmRun | null = null;
   let pcmAdmission: PcmAdmission | null = null;
   let audioBackend: 'native' | 'pcm' = 'native';
@@ -2545,8 +2574,8 @@ export function createOtioPlayback(
     );
     const tracks = new Set<string>();
     const streams = new Set<OtioBundleEntryName>();
-    let nodes = 2;
-    let bytes = OTIO_PCM_PULL_SCRATCH_BYTES + 32 * 1024;
+    let nodes = 3;
+    let bytes = OTIO_PCM_PULL_SCRATCH_BYTES + 96 * 1024;
     let largestBlock = 0;
     for (const { span, lattice } of admission.spans) {
       const frames = Math.max(
@@ -2867,6 +2896,46 @@ export function createOtioPlayback(
       () => undefined
     );
   }
+  function quarantineSealedGate(
+    context: AudioContext,
+    gate: OtioTransportGate
+  ): void {
+    const shutdown = gate.dispose();
+    if (
+      options.audioContext ||
+      audioContext !== context ||
+      context.state !== 'suspended' ||
+      pcmRun ||
+      audios.size !== 0 ||
+      trackGains.size !== 0
+    ) {
+      quarantinePcmContext(context, shutdown);
+      return;
+    }
+    // No media-element graph can be rebound across contexts. In the empty
+    // owned graph, confirmed close is an alternative retirement proof.
+    const closed = Promise.resolve()
+      .then(() => context.close())
+      .then(() => {
+        if (audioContext !== context)
+          throw new Error('audio context ownership changed');
+        observedAudioContext?.removeEventListener(
+          'sinkchange',
+          onPcmSinkChange
+        );
+        observedAudioContext?.removeEventListener(
+          'statechange',
+          onPcmContextChange
+        );
+        observedAudioContext = null;
+        masterGain?.disconnect();
+        masterGain = null;
+        audioContext = null;
+        pcmGateRetirements.contextClosed();
+      });
+    quarantinePcmContext(context, closed);
+    void shutdown.catch(() => undefined);
+  }
 
   function acquirePcmClockSession(
     context: AudioContext
@@ -2914,7 +2983,7 @@ export function createOtioPlayback(
         );
       } catch (error) {
         retirePcmClockSession();
-        quarantinePcmContext(context, existing.gate.dispose());
+        quarantineSealedGate(context, existing.gate);
         throw error;
       }
       if (pcmClockSession !== existing || existing.retired)
@@ -3020,104 +3089,89 @@ export function createOtioPlayback(
         lease.signal.addEventListener('abort', onLeaseRevoked, { once: true });
         valid();
       }
-      for (let attempt = 0; attempt < 2; attempt++) {
-        valid();
-        if (context.state !== 'suspended') await suspend();
-        valid();
-        const initialFrame = frozenFrame();
-        const release = pcmGateRetirements.reserve();
-        let gate: OtioTransportGate | undefined;
-        let clockFault: Error | null = null;
+      valid();
+      await suspend();
+      valid();
+      const initialFrame = frozenFrame();
+      const release = pcmGateRetirements.reserve();
+      let releaseCarrier: () => void;
+      try {
+        releaseCarrier = pcmGateRetirements.reserveCarrier();
+      } catch (error) {
+        release();
+        throw error;
+      }
+      let gate: OtioTransportGate | undefined;
+      let clockFault: Error | null = null;
+      try {
+        const construction = createOtioTransportGate(
+          context,
+          onPcmGateClosed,
+          (error) => {
+            clockFault = error;
+            if (pcmClockSession?.gate === gate) {
+              retirePcmClockSession();
+              failScheduledAudio(`transport gate failed: ${error.message}`);
+            }
+          },
+          initialFrame,
+          coldProofGlobal.__otioProofPcm === true &&
+            coldProofGlobal.__otioProofClockSerialExhaustion === true &&
+            typeof location !== 'undefined' &&
+            (location.hostname === '127.0.0.1' ||
+              location.hostname === 'localhost' ||
+              location.hostname.endsWith('.localhost') ||
+              location.hostname === '[::1]')
+            ? { proofInitialSerial: 2 ** 24 - 1 }
+            : undefined,
+          releaseCarrier,
+          (cleanup) =>
+            pcmGateRetirements.registerCarrierCleanup(releaseCarrier, cleanup)
+        );
         try {
-          const construction = createOtioTransportGate(
-            context,
-            onPcmGateClosed,
-            (error) => {
-              clockFault = error;
-              if (pcmClockSession?.gate === gate) {
-                retirePcmClockSession();
-                failScheduledAudio(`transport gate failed: ${error.message}`);
-              }
-            },
-            initialFrame,
-            coldProofGlobal.__otioProofPcm === true &&
-              coldProofGlobal.__otioProofClockSerialExhaustion === true &&
-              typeof location !== 'undefined' &&
-              (location.hostname === '127.0.0.1' ||
-                location.hostname === 'localhost' ||
-                location.hostname.endsWith('.localhost') ||
-                location.hostname === '[::1]')
-              ? { proofInitialSerial: 2 ** 24 - 1 }
-              : undefined
-          );
-          try {
-            gate = await bounded(trackNative(construction));
-          } catch (error) {
-            void construction.then(
-              (lateGate) => pcmGateRetirements.retire(lateGate, release),
-              (cause) => {
-                if (cause instanceof OtioGatePreconstructionError) release();
-              }
-            );
-            throw error;
-          }
-          valid();
-          if (!masterGain) throw new Error('audio graph unavailable');
-          gate.node.connect(masterGain);
-          await resume();
-          valid();
-          await bounded(gate.ready());
-          valid();
-          if (clockFault) throw clockFault;
-          await suspend();
-          valid();
-          const before = frozenFrame();
-          const nonce = ++pcmCheckpointNonce;
-          if (!Number.isSafeInteger(nonce))
-            throw new Error('clock checkpoint nonce exhausted');
-          const snapshot = await bounded(gate.checkpoint(nonce));
-          valid();
-          const after = frozenFrame();
-          if (
-            snapshot.clockEpoch !== gate.clockEpoch ||
-            snapshot.nonce !== nonce ||
-            snapshot.fault ||
-            !Number.isSafeInteger(snapshot.lastCertifiedEnd)
-          )
-            throw new Error('invalid transport clock checkpoint');
-          if (before !== after || before !== snapshot.lastCertifiedEnd) {
-            pcmGateRetirements.retire(gate, release);
-            gate = undefined;
-            if (attempt === 0) continue;
-            throw new Error('transport clock checkpoint mismatch');
-          }
-          const acceptance = gate.acceptAnchor(snapshot);
-          await resume();
-          valid();
-          await bounded(acceptance);
-          valid();
-          if (clockFault) throw clockFault;
-          const session: PcmClockSession = {
-            context,
-            routeVersion: route,
-            gate,
-            release,
-            sealed: Promise.resolve(),
-            renewal: null,
-            renewalFailed: false,
-            retired: false,
-          };
-          pcmClockSession = session;
-          succeeded = true;
-          renewPcmClock(session);
-          return session;
+          gate = await bounded(trackNative(construction));
         } catch (error) {
-          if (gate) pcmGateRetirements.retire(gate, release);
-          else if (error instanceof OtioGatePreconstructionError) release();
+          void construction.then(
+            (lateGate) => pcmGateRetirements.retire(lateGate, release),
+            (cause) => {
+              if (cause instanceof OtioGatePreconstructionError) {
+                release();
+                releaseCarrier();
+              }
+            }
+          );
           throw error;
         }
+        valid();
+        if (!masterGain) throw new Error('audio graph unavailable');
+        gate.node.connect(masterGain);
+        await resume();
+        valid();
+        await bounded(gate.ready());
+        valid();
+        if (clockFault) throw clockFault;
+        const session: PcmClockSession = {
+          context,
+          routeVersion: route,
+          gate,
+          release,
+          sealed: Promise.resolve(),
+          renewal: null,
+          renewalFailed: false,
+          retired: false,
+        };
+        pcmClockSession = session;
+        succeeded = true;
+        renewPcmClock(session);
+        return session;
+      } catch (error) {
+        if (gate) pcmGateRetirements.retire(gate, release);
+        else if (error instanceof OtioGatePreconstructionError) {
+          release();
+          releaseCarrier();
+        }
+        throw error;
       }
-      throw new Error('transport clock checkpoint mismatch');
     } catch (error) {
       if (token === pcmBootstrapToken) retirePcmClockSession();
       throw error;
@@ -4113,11 +4167,11 @@ export function createOtioPlayback(
       const hold = reserveVisualPrefix(time, limit);
       const demand = pcmInitialDemand(admission, time.value);
       const capacityReady =
-        pcmBudget.usedNodes + demand.nodes - (pcmClockSession ? 2 : 0) <=
+        pcmBudget.usedNodes + demand.nodes - (pcmClockSession ? 3 : 0) <=
           OTIO_PCM_MAX_NODES &&
         pcmBudget.usedBytes +
           demand.bytes -
-          (pcmClockSession ? 32 * 1024 : 0) <=
+          (pcmClockSession ? 96 * 1024 : 0) <=
           OTIO_PCM_MAX_BYTES;
       if (
         capacityReady &&
@@ -7362,7 +7416,7 @@ export function createOtioPlayback(
           await beforePcmDeadline(session.sealed, presentClockMs());
         } catch (error) {
           retirePcmClockSession();
-          quarantinePcmContext(session.context, session.gate.dispose());
+          quarantineSealedGate(session.context, session.gate);
           throw error;
         }
       }
@@ -7570,6 +7624,7 @@ export function createOtioPlayback(
         nodes: pcmBudget.usedNodes,
         bytes: pcmBudget.usedBytes,
         gateReservations,
+        carrierReservations: pcmGateRetirements.reservedCarriers,
         activeSession,
         otherGateReservations: gateReservations - (activeSession ? 1 : 0),
       };
