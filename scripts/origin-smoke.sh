@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
+scratch="$(mktemp -d "${TMPDIR:-/tmp}/relik-origin-smoke.XXXXXXXX")"
+trap 'rm -rf -- "$scratch"' EXIT
 
 # The retired host must actually be retired. A reachable second
 # origin is a name somebody can be handed that will not render, and
@@ -18,20 +20,20 @@ esac
 
 echo "the usercontent origin serves its page"
 curl -fsS --retry 10 --retry-all-errors --retry-delay 3 \
-  -D/tmp/sh -o/dev/null "$USERCONTENT/sandbox.html"
+  -D "$scratch/sh" -o/dev/null "$USERCONTENT/sandbox.html"
 
 echo "and names the service origin as the only page allowed to frame it"
-grep -qi "^content-security-policy:.*frame-ancestors $ORIGIN\(;\|\$\)" /tmp/sh || {
+grep -qi "^content-security-policy:.*frame-ancestors $ORIGIN\(;\|\$\)" "$scratch/sh" || {
   echo "usercontent frame-ancestors does not name $ORIGIN:"
-  grep -i '^content-security-policy:' /tmp/sh
+  grep -i '^content-security-policy:' "$scratch/sh"
   exit 1
 }
 
 echo "and the service allows exactly that usercontent origin as a frame source"
-curl -fsS -D/tmp/vh -o/dev/null "$SERVICE/aaaaaaaaaaaaaaaaaaaaaaaaaa"
-grep -qi "^content-security-policy:.*frame-src $USERCONTENT\(;\|\$\)" /tmp/vh || {
+curl -fsS -D "$scratch/vh" -o/dev/null "$SERVICE/aaaaaaaaaaaaaaaaaaaaaaaaaa"
+grep -qi "^content-security-policy:.*frame-src $USERCONTENT\(;\|\$\)" "$scratch/vh" || {
   echo "service frame-src does not name $USERCONTENT:"
-  grep -i '^content-security-policy:' /tmp/vh
+  grep -i '^content-security-policy:' "$scratch/vh"
   exit 1
 }
 
@@ -52,14 +54,14 @@ esac
 # refused, which renders as a blank frame and an empty console. The
 # script has to be inline, and this is the only place that can tell.
 echo "and the usercontent page carries its script inline, fetching nothing"
-curl -fsS "$USERCONTENT/sandbox.html" -o /tmp/sandbox.html
+curl -fsS "$USERCONTENT/sandbox.html" -o "$scratch/sandbox.html"
 
-if ! grep -q 'relic:sandbox-ready' /tmp/sandbox.html; then
+if ! grep -q 'relic:sandbox-ready' "$scratch/sandbox.html"; then
   echo "sandbox.html does not carry its handler inline; the frame will never render"
   exit 1
 fi
 
-if grep -qE '<script[^>]+src=' /tmp/sandbox.html; then
+if grep -qE '<script[^>]+src=' "$scratch/sandbox.html"; then
   echo "sandbox.html links a script; an opaque-origin document cannot fetch it"
   exit 1
 fi

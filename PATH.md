@@ -1,6 +1,6 @@
 # Deployment smoke safety
 
-After `bun run build`, run `bun scripts/deploy-smoke-path.ts`. It executes both deployment smoke scripts against a loopback application with in-memory state and checks the exact read-only request sequence. Success ends with `DEPLOY_SMOKE_PATH_OK`, after both restored POST probes and a missing asset have been rejected. No production requests are made.
+After `bun run build`, run `bun scripts/deploy-smoke-path.ts`. It executes both deployment smoke scripts against a loopback application with in-memory state and checks the exact read-only request sequence. Success ends with `DEPLOY_SMOKE_PATH_OK`, after concurrent runs preserve planted symlinks and clean up their private temporary directories, both restored POST probes are rejected, and a missing asset fails the smoke check. No production requests are made.
 
 # Email code sign-in
 

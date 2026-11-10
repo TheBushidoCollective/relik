@@ -1,5 +1,12 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import {
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,6 +20,22 @@ const viewer = fileURLToPath(
   new URL('../packages/relic-viewer/dist/', import.meta.url)
 );
 const scratch = await mkdtemp(join(tmpdir(), 'relik-smoke-proof-'));
+const sentinel = join(scratch, 'sentinel');
+const legacyNames = [
+  'health',
+  'h',
+  'root',
+  'install',
+  'policy',
+  'policy-page',
+  'abuse',
+  'shell',
+  'sh',
+  'vh',
+  'sandbox.html',
+];
+await writeFile(sentinel, 'untouched');
+for (const name of legacyNames) await symlink(sentinel, join(scratch, name));
 const requests: string[] = [];
 let missingAsset = false;
 let app: RelicApp;
@@ -44,6 +67,7 @@ app = createApp({
 });
 const env = {
   ...process.env,
+  TMPDIR: scratch,
   SERVICE: origin,
   ORIGIN: origin,
   USERCONTENT: usercontent,
@@ -94,6 +118,21 @@ try {
   ].map((path) => `GET ${path}`);
   assert.deepEqual(requests, expected);
   console.log('SMOKE_READ_ONLY_OK');
+  requests.length = 0;
+  const concurrent = await Promise.all([
+    run('scripts/deploy-smoke.sh'),
+    run('scripts/deploy-smoke.sh'),
+    run('scripts/origin-smoke.sh'),
+    run('scripts/origin-smoke.sh'),
+  ]);
+  assert.deepEqual(concurrent, [0, 0, 0, 0]);
+  assert.deepEqual([...requests].sort(), [...expected, ...expected].sort());
+  assert.equal(await readFile(sentinel, 'utf8'), 'untouched');
+  assert.deepEqual(
+    (await readdir(scratch)).sort(),
+    [...legacyNames, 'sentinel'].sort()
+  );
+  console.log('SMOKE_PRIVATE_TEMP_CONCURRENT_OK');
   for (const route of ['mint', 'cover']) {
     requests.length = 0;
     const source = await readFile(
