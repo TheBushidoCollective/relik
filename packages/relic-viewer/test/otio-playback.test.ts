@@ -2173,10 +2173,8 @@ describe('otio playback controller', () => {
     if (clockOptions?.ownedContext) {
       Object.defineProperty(globalThis, 'AudioContext', {
         configurable: true,
-        value: class {
-          constructor() {
-            return audioContext;
-          }
+        value: function () {
+          return audioContext;
         },
       });
     }
