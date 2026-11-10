@@ -6,6 +6,16 @@
  * milliseconds from performance.now(). Each trusted pointerdown writes a performance.mark, which
  * appears in the trace under blink.user_timing with the same name. That mark is the only bridge
  * between the two clocks, and an absent mark is a failure, never a zero.
+ *
+ * Cold means the first trusted event found an idle output. The trace must cover QUIET_WINDOW_MS
+ * before that event with no device activity inside the window, the OS must read the default
+ * output idle at the event (otio-program-device-state.ts), and a device start must follow. A
+ * device start is OutputController::Play. Stream creation is telemetry only: Chrome names one
+ * creation in more than one event, so creation counts never gate.
+ *
+ * The first new frame is the first presented frame whose media time is one program frame past
+ * the frame shown at the trusted Play. A frame that repeats one already shown is not new, so a
+ * freeze appears as a gap between kept frames and never as a late start.
  */
 
 export interface TraceEvent {
@@ -17,32 +27,41 @@ export interface TraceEvent {
 export const PREPARE_MARK = 'relic-prepare-pointerdown';
 export const PLAY_MARK = 'relic-play-pointerdown';
 export const UNMUTE_MARK = 'relic-unmute-pointerdown';
+/** Written after Tracing.start and before any trusted event. The quiet window is measured from it. */
+export const TRACE_START_MARK = 'relic-trace-start';
 export const PRIMER_TRACE_CATEGORIES = 'audio,media,blink.user_timing';
 
-/** A stream start appears under any of these names. Counted per name, reported per name. */
-export const STREAM_START_EVENTS = [
+/** A device start: the output begins rendering. Counted, gated, and the only start that is cold. */
+export const DEVICE_START_EVENT = 'OutputController::Play';
+/** Stream creation. Telemetry only, reported per name in the receipts. */
+export const STREAM_CREATION_EVENTS: readonly string[] = [
   'AudioOutputDevice::Start',
   'CreateStream',
-  'OutputController::Play',
-] as const;
-/** Renders the first buffer. Its count is the number of streams created. */
-export const FIRST_BUFFER_EVENT = 'OutputController::Play';
+];
 /** Device-side callback: the real output clock. Not an AudioContext tap. */
 export const DEVICE_CALLBACK_EVENT = 'AUHALStream::Render';
+/** Any of these inside the quiet window means the output was already active at the trusted event. */
+export const QUIET_WINDOW_EVENTS: readonly string[] = [
+  ...STREAM_CREATION_EVENTS,
+  DEVICE_START_EVENT,
+  DEVICE_CALLBACK_EVENT,
+];
 
 /** Bounds from the user's acceptance. None of these may be loosened to pass a trial. */
+export const QUIET_WINDOW_MS = 500;
 export const WINDOW_MS = 4000;
-export const COLD_START_MS = 100;
-export const WARM_START_MS = 60;
 export const FIRST_FRAME_BUDGET_MS = 350;
 export const GAP_BUDGET_MS = 100;
 export const P95_BUDGET_MS = 50;
-export const FIRST_CLICK_CALLBACK_SLACK_MS = 50;
 export const MIN_DEVICE_CALLBACKS = 10;
-/** 24 fps over the 4 s window gives 95 intervals. Fewer means the video did not play. */
+/**
+ * The program runs at 30 fps (otio-program-reference.ts), so 4 s of it gives about 119 intervals.
+ * Fewer than 90 means the video did not play.
+ */
 export const MIN_WINDOW_INTERVALS = 90;
 
-export type StartClass = 'cold' | 'warm' | 'ambiguous' | 'absent';
+/** Media times are in seconds, so one program frame at 30 fps and float noise are both below this. */
+const MEDIA_EPSILON_S = 1e-6;
 
 /** Trace time of the first mark with this name, or null when the trace has none. */
 export function markTs(
@@ -67,46 +86,44 @@ function timesNamed(
     .sort((a, b) => a - b);
 }
 
-export function streamStartCounts(
+/** Device starts (OutputController::Play) in the window. Stream creation is never counted here. */
+export function deviceStarts(
+  events: readonly TraceEvent[],
+  fromTs: number,
+  toTs = Number.POSITIVE_INFINITY
+): number {
+  return timesNamed(events, DEVICE_START_EVENT, fromTs, toTs).length;
+}
+
+/** Stream-creation events in the window, per name. Telemetry for the receipts only. */
+export function creationCounts(
   events: readonly TraceEvent[],
   fromTs: number,
   toTs = Number.POSITIVE_INFINITY
 ): Record<string, number> {
   return Object.fromEntries(
-    STREAM_START_EVENTS.map((name) => [
+    STREAM_CREATION_EVENTS.map((name) => [
       name,
       timesNamed(events, name, fromTs, toTs).length,
     ])
   );
 }
 
-/**
- * Stream starts in the window. Chrome names one start in several events, so the honest count is
- * the largest per-name count, not their sum.
- */
-export function streamStarts(
-  events: readonly TraceEvent[],
-  fromTs: number,
-  toTs = Number.POSITIVE_INFINITY
-): number {
-  return Math.max(...Object.values(streamStartCounts(events, fromTs, toTs)));
-}
-
 export interface FirstStart {
   readonly playTs: number;
   readonly callbackTs: number | null;
-  /** D: first buffer render to first device callback. */
+  /** D: first device start to first device callback. Telemetry only. */
   readonly dMs: number | null;
 }
 
-/** The first stream created at or after fromTs, with its D. Null when none was created. */
+/** The first device start at or after fromTs, with its D. Null when none started. */
 export function firstStart(
   events: readonly TraceEvent[],
   fromTs: number
 ): FirstStart | null {
   const playTs = timesNamed(
     events,
-    FIRST_BUFFER_EVENT,
+    DEVICE_START_EVENT,
     fromTs,
     Number.POSITIVE_INFINITY
   )[0];
@@ -125,13 +142,54 @@ export function firstStart(
   };
 }
 
-export function classifyStart(dMs: number | null): StartClass {
-  if (dMs === null) return 'absent';
-  if (dMs >= COLD_START_MS) return 'cold';
-  if (dMs <= WARM_START_MS) return 'warm';
-  return 'ambiguous';
+export interface QuietWindow {
+  /** The trace start mark sits at least QUIET_WINDOW_MS before the trusted event. */
+  readonly covered: boolean;
+  /** Names of quiet-window events found inside the window, without repeats. */
+  readonly offending: readonly string[];
 }
 
+/**
+ * What the trace shows in the QUIET_WINDOW_MS before the first trusted event. An uncovered window
+ * is unproven, not quiet: the trace did not start early enough to show the output's state.
+ */
+export function quietWindow(
+  events: readonly TraceEvent[],
+  firstTrustedTs: number
+): QuietWindow {
+  const start = markTs(events, TRACE_START_MARK);
+  const windowStart = firstTrustedTs - QUIET_WINDOW_MS * 1000;
+  const covered = start !== null && start <= windowStart;
+  const names = new Set<string>();
+  for (const event of events) {
+    if (event.ts < windowStart || event.ts >= firstTrustedTs) continue;
+    if (QUIET_WINDOW_EVENTS.includes(event.name)) names.add(event.name);
+  }
+  return { covered, offending: [...names] };
+}
+
+export type Coldness = 'cold' | 'warm' | 'absent' | 'unproven';
+
+export interface ColdnessInput {
+  readonly quiet: QuietWindow;
+  /** The OS read the default output idle immediately before the trusted event. */
+  readonly osIdleAtTrusted: boolean;
+  /** Device starts after the first trusted event. */
+  readonly startsAfterTrusted: number;
+}
+
+/**
+ * What the first trusted event found. Only 'cold' is a cold start. Each other value says why the
+ * trial is not cold, so a control can never count a warm or unmeasured start as cold.
+ */
+export function classifyColdness(input: ColdnessInput): Coldness {
+  if (!input.quiet.covered) return 'unproven';
+  if (input.quiet.offending.length > 0 || !input.osIdleAtTrusted) return 'warm';
+  if (input.startsAfterTrusted === 0) return 'absent';
+  return 'cold';
+}
+
+/** Telemetry only: callback spacing from the trace. Never gates and never proves audio. */
 export function deviceCallbacks(
   events: readonly TraceEvent[],
   fromTs: number,
@@ -204,19 +262,59 @@ export function gateGaps(
   return failures;
 }
 
+export interface MediaFrame {
+  /** Page milliseconds. */
+  readonly now: number;
+  /** Seconds of program media. */
+  readonly mediaTime: number;
+}
+
+export interface NewFrames<F extends MediaFrame> {
+  /** The first new frame, or null when none was presented. */
+  readonly firstNew: F | null;
+  /** New frames in order: media time strictly increasing, repeats of a shown frame removed. */
+  readonly kept: readonly F[];
+  /** True when media time moved backward after the first new frame. Always a failure. */
+  readonly backward: boolean;
+}
+
+/**
+ * New frames after the trusted Play. The resting frame is the program frame shown at the trusted
+ * event, rounded down to a whole frame. A new frame sits at least one program frame past it.
+ * Frames before the first new frame are the resting frame repeated, and they are not counted.
+ */
+export function newFrames<F extends MediaFrame>(
+  frames: readonly F[],
+  restCurrentTime: number,
+  fps: number
+): NewFrames<F> {
+  const restMedia = Math.floor(restCurrentTime * fps + MEDIA_EPSILON_S) / fps;
+  const threshold = restMedia + 1 / fps - MEDIA_EPSILON_S;
+  const kept: F[] = [];
+  let backward = false;
+  for (const frame of frames) {
+    const last = kept[kept.length - 1];
+    if (last === undefined) {
+      if (frame.mediaTime >= threshold) kept.push(frame);
+    } else if (frame.mediaTime > last.mediaTime + MEDIA_EPSILON_S) {
+      kept.push(frame);
+    } else if (frame.mediaTime < last.mediaTime - MEDIA_EPSILON_S) {
+      backward = true;
+    }
+  }
+  return { firstNew: kept[0] ?? null, kept, backward };
+}
+
 export interface PrimerWindow {
-  /** First presented frame minus the trusted pointerdown, page clock. */
+  /** First new frame minus the trusted Play, page clock. */
   readonly startupMs: number | null;
-  /** Consecutive presented-frame gaps inside the window. */
+  /** Gaps between consecutive kept frames inside the window. */
   readonly gapsMs: readonly number[];
   readonly bufferingBeforeFirstFrame: boolean | null;
-  readonly streamStarts: number;
-  readonly expectedStreamStarts: number;
-  /** First device callback minus the trusted pointerdown, trace clock. */
-  readonly firstCallbackMs: number | null;
-  readonly deviceExcessMs: number | null;
-  readonly deviceCallbacks: number;
-  /** Only the first-click arm: Buffering, and the first frame not later than the device + slack. */
+  /** Device starts (OutputController::Play) after the trusted Play. */
+  readonly deviceStarts: number;
+  readonly expectedDeviceStarts: number;
+  /** Only the first-click arm: Buffering must show before the first new frame. */
   readonly firstClick: boolean;
 }
 
@@ -227,28 +325,17 @@ export interface PrimerWindow {
 export function gatePrimerWindow(w: PrimerWindow): string[] {
   const failures: string[] = [];
   if (w.startupMs === null)
-    failures.push('no presented frame after the trusted Play');
+    failures.push('no new frame after the trusted Play');
   else if (w.startupMs > FIRST_FRAME_BUDGET_MS)
     failures.push(
       `first frame ${w.startupMs.toFixed(1)} ms > ${FIRST_FRAME_BUDGET_MS} ms`
     );
   failures.push(...gateGaps(w.gapsMs, MIN_WINDOW_INTERVALS, 'window'));
-  if (w.streamStarts !== w.expectedStreamStarts)
+  if (w.deviceStarts !== w.expectedDeviceStarts)
     failures.push(
-      `${w.streamStarts} stream start(s) after Play, expected ${w.expectedStreamStarts}`
+      `${w.deviceStarts} device start(s) after Play, expected ${w.expectedDeviceStarts}`
     );
-  if (w.firstClick) {
-    if (w.bufferingBeforeFirstFrame !== true)
-      failures.push('Buffering was not shown before the first frame');
-    if (w.firstCallbackMs === null)
-      failures.push('no device callback after the trusted Play');
-    else if (
-      w.startupMs !== null &&
-      w.startupMs > w.firstCallbackMs + FIRST_CLICK_CALLBACK_SLACK_MS
-    )
-      failures.push(
-        `first frame ${w.startupMs.toFixed(1)} ms is later than the first device callback ${w.firstCallbackMs.toFixed(1)} ms + ${FIRST_CLICK_CALLBACK_SLACK_MS} ms`
-      );
-  }
+  if (w.firstClick && w.bufferingBeforeFirstFrame !== true)
+    failures.push('Buffering was not shown before the first frame');
   return failures;
 }

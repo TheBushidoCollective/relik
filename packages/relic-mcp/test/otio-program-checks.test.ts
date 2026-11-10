@@ -1,16 +1,21 @@
 import {
-  classifyStart,
+  classifyColdness,
+  creationCounts,
   DEVICE_CALLBACK_EVENT,
+  DEVICE_START_EVENT,
   deviceExcessMs,
+  deviceStarts,
   firstStart,
   gatePrimerWindow,
+  intervals,
   markTs,
+  newFrames,
   p95,
   type PrimerWindow,
   PREPARE_MARK,
+  quietWindow,
   stalls,
-  streamStarts,
-  streamStartCounts,
+  TRACE_START_MARK,
   type TraceEvent,
 } from './otio-program-trace.ts';
 import { describe, expect, test } from 'bun:test';
@@ -305,65 +310,143 @@ const callbacks = (fromUs: number, count: number, periodUs = 21_333) =>
   Array.from({ length: count }, (_, i) =>
     traced(DEVICE_CALLBACK_EVENT, fromUs + i * periodUs)
   );
-/** 24 fps presented frames: 41.7 ms gaps, which is the steady budget case. */
-const steadyGaps = (n = 95) => Array.from({ length: n }, () => 41.7);
+/** 30 fps presented frames: 33.3 ms gaps, the program's steady cadence. */
+const steadyGaps = (n = 95) =>
+  Array.from({ length: n }, () => 1000 / PROGRAM.fps);
 
 const passingWindow = (over: Partial<PrimerWindow> = {}): PrimerWindow => ({
   startupMs: 120,
   gapsMs: steadyGaps(),
   bufferingBeforeFirstFrame: null,
-  streamStarts: 0,
-  expectedStreamStarts: 0,
-  firstCallbackMs: null,
-  deviceExcessMs: 0.4,
-  deviceCallbacks: 180,
+  deviceStarts: 0,
+  expectedDeviceStarts: 0,
   firstClick: false,
   ...over,
 });
 
-describe('primer trace: marks and stream starts', () => {
+describe('primer trace: marks, device starts and creation telemetry', () => {
   test('a mark is found only on the user-timing category', () => {
     const events = [traced(PREPARE_MARK, 5), mark(PREPARE_MARK, 900)];
     expect(markTs(events, PREPARE_MARK)).toBe(900);
     expect(markTs(events, 'relic-play-pointerdown')).toBeNull();
   });
 
-  test('a stream start is the largest per-name count, not their sum', () => {
+  test('a device start is OutputController::Play alone; stream creation is telemetry', () => {
     const events = [
       traced('AudioOutputDevice::Start', 100),
       traced('CreateStream', 101),
-      traced('OutputController::Play', 102),
+      traced(DEVICE_START_EVENT, 102),
     ];
-    expect(streamStarts(events, 0)).toBe(1);
-    expect(streamStartCounts(events, 0)['OutputController::Play']).toBe(1);
+    expect(deviceStarts(events, 0)).toBe(1);
+    expect(creationCounts(events, 0)).toEqual({
+      'AudioOutputDevice::Start': 1,
+      CreateStream: 1,
+    });
   });
 
-  test('stream starts before the window are not counted', () => {
+  test('device starts before the window are not counted', () => {
     const events = [
-      traced('OutputController::Play', 50),
-      traced('OutputController::Play', 500),
+      traced(DEVICE_START_EVENT, 50),
+      traced(DEVICE_START_EVENT, 500),
     ];
-    expect(streamStarts(events, 100)).toBe(1);
-    expect(streamStarts(events, 100, 400)).toBe(0);
+    expect(deviceStarts(events, 100)).toBe(1);
+    expect(deviceStarts(events, 100, 400)).toBe(0);
   });
 });
 
-describe('primer trace: D and cold classification', () => {
-  test('D runs from the first buffer render to the first device callback', () => {
-    const events = [
-      traced('OutputController::Play', 1_000),
-      traced(DEVICE_CALLBACK_EVENT, 1_000 + 250_000),
-    ];
-    const first = firstStart(events, 0);
-    expect(first?.dMs).toBe(250);
-    expect(classifyStart(first?.dMs ?? null)).toBe('cold');
+describe('primer trace: quiet window before the trusted event', () => {
+  const trusted = 1_000_000;
+  const start = (ts: number) => mark(TRACE_START_MARK, ts);
+
+  test('a covered window with no activity is quiet', () => {
+    const quiet = quietWindow([start(0), mark(PREPARE_MARK, trusted)], trusted);
+    expect(quiet).toEqual({ covered: true, offending: [] });
   });
 
-  test('the cold, warm and ambiguous bands are the measured thresholds', () => {
-    expect(classifyStart(100)).toBe('cold');
-    expect(classifyStart(60)).toBe('warm');
-    expect(classifyStart(80)).toBe('ambiguous');
-    expect(classifyStart(null)).toBe('absent');
+  test('a trace started less than 500 ms before the event is not covered', () => {
+    const quiet = quietWindow(
+      [start(600_000), mark(PREPARE_MARK, trusted)],
+      trusted
+    );
+    expect(quiet.covered).toBe(false);
+  });
+
+  test('each device-activity name inside the window is flagged', () => {
+    for (const name of [
+      'AudioOutputDevice::Start',
+      'CreateStream',
+      DEVICE_START_EVENT,
+      DEVICE_CALLBACK_EVENT,
+    ]) {
+      const quiet = quietWindow(
+        [
+          start(0),
+          traced(name, trusted - 100_000),
+          mark(PREPARE_MARK, trusted),
+        ],
+        trusted
+      );
+      expect(quiet.offending).toEqual([name]);
+    }
+  });
+
+  test('activity before the window is not offending', () => {
+    const quiet = quietWindow(
+      [
+        start(0),
+        traced(DEVICE_CALLBACK_EVENT, 100_000),
+        mark(PREPARE_MARK, trusted),
+      ],
+      trusted
+    );
+    expect(quiet).toEqual({ covered: true, offending: [] });
+  });
+});
+
+describe('primer trace: coldness and device-start evidence', () => {
+  const quiet = { covered: true, offending: [] };
+
+  test('a covered quiet window, an idle OS and a later device start is cold', () => {
+    expect(
+      classifyColdness({ quiet, osIdleAtTrusted: true, startsAfterTrusted: 1 })
+    ).toBe('cold');
+  });
+
+  test('no device start after the event is absent, never cold', () => {
+    expect(
+      classifyColdness({ quiet, osIdleAtTrusted: true, startsAfterTrusted: 0 })
+    ).toBe('absent');
+  });
+
+  test('activity in the window or a running OS output is warm', () => {
+    expect(
+      classifyColdness({
+        quiet: { covered: true, offending: ['CreateStream'] },
+        osIdleAtTrusted: true,
+        startsAfterTrusted: 1,
+      })
+    ).toBe('warm');
+    expect(
+      classifyColdness({ quiet, osIdleAtTrusted: false, startsAfterTrusted: 1 })
+    ).toBe('warm');
+  });
+
+  test('an uncovered window is unproven, whatever else it shows', () => {
+    expect(
+      classifyColdness({
+        quiet: { covered: false, offending: [] },
+        osIdleAtTrusted: true,
+        startsAfterTrusted: 1,
+      })
+    ).toBe('unproven');
+  });
+
+  test('D runs from the first device start to the first device callback', () => {
+    const events = [
+      traced(DEVICE_START_EVENT, 1_000),
+      traced(DEVICE_CALLBACK_EVENT, 251_000),
+    ];
+    expect(firstStart(events, 0)?.dMs).toBe(250);
   });
 });
 
@@ -415,32 +498,37 @@ describe('primer gates: passing evidence and negative controls', () => {
     expect(failures.some((f) => f.includes('max gap'))).toBe(false);
   });
 
-  test('a stream start the primer should have shared fails the zero-start gate', () => {
-    const failures = gatePrimerWindow(passingWindow({ streamStarts: 1 }));
-    expect(failures).toEqual(['1 stream start(s) after Play, expected 0']);
+  test('a device start the primer should have shared fails the zero-start gate', () => {
+    const failures = gatePrimerWindow(passingWindow({ deviceStarts: 1 }));
+    expect(failures).toEqual(['1 device start(s) after Play, expected 0']);
   });
 
-  test('first-click needs Buffering before the first frame and exactly one start', () => {
+  test('first-click needs Buffering before the first frame and exactly one device start', () => {
     const failures = gatePrimerWindow(
       passingWindow({
         firstClick: true,
-        expectedStreamStarts: 1,
-        streamStarts: 1,
+        expectedDeviceStarts: 1,
+        deviceStarts: 1,
         bufferingBeforeFirstFrame: false,
-        firstCallbackMs: 60,
         startupMs: 120,
       })
     );
     expect(failures).toEqual([
       'Buffering was not shown before the first frame',
-      'first frame 120.0 ms is later than the first device callback 60.0 ms + 50 ms',
     ]);
   });
 
-  test('callback excess is telemetry: a 25 ms excess does not fail the video gate', () => {
-    // Audio is judged only from sampled signal (otio-program-audio-signal.test.ts). Callback
-    // spacing never proves an audio gap, so a large excess must leave the video gate passing.
-    expect(gatePrimerWindow(passingWindow({ deviceExcessMs: 25 }))).toEqual([]);
+  test('first-click has no device-callback clause: a late callback never fails the gate', () => {
+    const failures = gatePrimerWindow(
+      passingWindow({
+        firstClick: true,
+        expectedDeviceStarts: 1,
+        deviceStarts: 1,
+        bufferingBeforeFirstFrame: true,
+        startupMs: 120,
+      })
+    );
+    expect(failures).toEqual([]);
   });
 
   test('a window with too few presented frames fails rather than passing empty', () => {
@@ -448,5 +536,67 @@ describe('primer gates: passing evidence and negative controls', () => {
       passingWindow({ gapsMs: steadyGaps(10) })
     );
     expect(failures.some((f) => f.includes('presented frames'))).toBe(true);
+  });
+});
+
+describe('primer trace: first new frame and freezes', () => {
+  const fps = PROGRAM.fps;
+  // Round 0 shape: the resting frame repeats at +8 and +16.2 ms; new frames run from +149.6 ms.
+  const round0 = [
+    { now: 8, mediaTime: 0 },
+    { now: 16.2, mediaTime: 0 },
+    ...Array.from({ length: 119 }, (_, i) => ({
+      now: 149.6 + (i * 1000) / fps,
+      mediaTime: (i + 1) / fps,
+    })),
+  ];
+  const restCurrentTime = 0.016666;
+  const gatedFromFirstNew = (
+    frames: readonly { now: number; mediaTime: number }[]
+  ) => {
+    const fresh = newFrames(frames, restCurrentTime, fps);
+    return gatePrimerWindow({
+      startupMs: fresh.firstNew ? fresh.firstNew.now : null,
+      gapsMs: intervals(fresh.kept.map((f) => f.now)),
+      bufferingBeforeFirstFrame: true,
+      deviceStarts: 1,
+      expectedDeviceStarts: 1,
+      firstClick: true,
+    });
+  };
+
+  test('the first new frame, not the resting frame, starts the window', () => {
+    const fresh = newFrames(round0, restCurrentTime, fps);
+    expect(fresh.firstNew?.now).toBe(149.6);
+    expect(fresh.backward).toBe(false);
+    expect(gatedFromFirstNew(round0)).toEqual([]);
+  });
+
+  test('read the old way, from every presented frame, the same round fails at 133.4 ms', () => {
+    const gaps = intervals(round0.map((f) => f.now));
+    const failures = gatePrimerWindow({
+      startupMs: 149.6,
+      gapsMs: gaps,
+      bufferingBeforeFirstFrame: true,
+      deviceStarts: 1,
+      expectedDeviceStarts: 1,
+      firstClick: true,
+    });
+    expect(failures.some((f) => f.includes('max gap 133.4'))).toBe(true);
+  });
+
+  test('a freeze in the middle of the window still fails the 100 ms gate', () => {
+    const frozen = [...round0.slice(0, 62), ...round0.slice(66)];
+    const failures = gatedFromFirstNew(frozen);
+    expect(failures.some((f) => f.includes('max gap'))).toBe(true);
+  });
+
+  test('a backward media-time step fails', () => {
+    const fresh = newFrames(
+      [...round0, { now: 4000, mediaTime: 0.5 }],
+      restCurrentTime,
+      fps
+    );
+    expect(fresh.backward).toBe(true);
   });
 });

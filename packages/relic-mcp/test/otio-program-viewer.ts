@@ -25,6 +25,42 @@ export const VIEWER_CONTRACT = {
   hook: '__relicOtioPlayback',
 } as const;
 
+/** The primer's state attribute on `.otio-view`. */
+export const PRIMER_ATTRIBUTE = 'data-otio-audio-output';
+/** How long the hidden leg freezes the viewer. */
+const HIDE_FREEZE_MS = 1500;
+
+/** One timestamped entry from the hidden leg. Times are page-clock milliseconds. */
+export interface HideEvent {
+  readonly at: number;
+  readonly kind: string;
+  readonly value: string | null;
+}
+
+export interface HideLog {
+  readonly visibility: string;
+  readonly events: readonly HideEvent[];
+}
+
+/**
+ * Installed before the freeze. Logs visibility changes, lifecycle freeze and resume, and every
+ * change of the primer attribute. A frozen page cannot run its own listeners, so an entry logged
+ * after resume shows what was delivered late, and the verdict uses those times as they are.
+ */
+const HIDE_INSTALL = `(() => {
+  const log = [];
+  window.__hideLog = log;
+  const view = document.querySelector('.otio-view');
+  if (!view) throw new Error('hideViewer: viewer missing');
+  const attr = ${JSON.stringify(PRIMER_ATTRIBUTE)};
+  const record = (kind, value) => log.push({ at: performance.now(), kind: kind, value: value });
+  document.addEventListener('visibilitychange', () => record('visibilitychange', document.visibilityState));
+  window.addEventListener('freeze', () => record('freeze', null));
+  window.addEventListener('resume', () => record('resume', null));
+  new MutationObserver(() => record('primer', view.getAttribute(attr))).observe(view, { attributes: true, attributeFilter: [attr] });
+  record('primer', view.getAttribute(attr));
+})()`;
+
 /** Default Chrome trace categories for the viewer proofs. */
 export const DEFAULT_TRACE_CATEGORIES =
   'devtools.timeline,disabled-by-default-devtools.timeline.frame,media,audio,gpu,viz,disabled-by-default-media,disabled-by-default-viz.debug';
@@ -57,8 +93,11 @@ export interface ViewerPage {
   /** Reopen only this proof-owned page at its original keyed URL. */
   reopen(): Promise<void>;
   startPerformanceTrace(categories?: string): Promise<unknown>;
-  /** Activates a second tab this proof opens, then reports whether the viewer became hidden. */
-  foregroundOtherTab(): Promise<{ hidden: boolean; visibility: string }>;
+  /**
+   * Freezes this proof-owned page for HIDE_FREEZE_MS, then reports its visibility and the
+   * timestamped log its listeners wrote. The hidden leg is proven only from that log.
+   */
+  hideViewer(): Promise<HideLog>;
   stopPerformanceTrace(): Promise<{
     metrics: unknown;
     events: unknown[];
@@ -346,14 +385,24 @@ export async function openViewer(
       return { metrics, events: traceEvents, truncated: traceTruncated };
     },
     click: async (selector: string) => {
-      const rect = await evaluate<{ x: number; y: number } | null>(`(() => {
+      const target = await evaluate<{
+        x: number;
+        y: number;
+        hittable: boolean;
+      } | null>(`(() => {
         const el = document.querySelector(${JSON.stringify(selector)});
         if (!el) return null;
         el.scrollIntoView({ block: 'center', inline: 'center' });
         const box = el.getBoundingClientRect();
-        return { x: box.left + box.width / 2, y: box.top + box.height / 2 };
+        const x = box.left + box.width / 2;
+        const y = box.top + box.height / 2;
+        const hit = document.elementFromPoint(x, y);
+        const hittable = box.width > 0 && box.height > 0 && !!hit && (hit === el || el.contains(hit));
+        return { x: x, y: y, hittable: hittable };
       })()`);
-      assert.ok(rect, `no element for trusted click: ${selector}`);
+      assert.ok(target, `no element for trusted click: ${selector}`);
+      if (!target.hittable)
+        throw new Error(`trusted click target not hittable: ${selector}`);
       for (const type of [
         'mouseMoved',
         'mousePressed',
@@ -361,33 +410,31 @@ export async function openViewer(
       ] as const)
         await cdp.send(
           'Input.dispatchMouseEvent',
-          { type, x: rect.x, y: rect.y, button: 'left', clickCount: 1 },
+          { type, x: target.x, y: target.y, button: 'left', clickCount: 1 },
           sessionId
         );
     },
-    foregroundOtherTab: async () => {
-      const other = (await cdp.send('Target.createTarget', {
-        url: 'about:blank',
-      })) as { targetId: string };
-      try {
-        await cdp.send('Target.activateTarget', { targetId: other.targetId });
-        const visibility = await waitFor<string>(
-          'viewer hidden by a second proof-owned tab',
-          async () => {
-            const value = await evaluate<string>('document.visibilityState');
-            return value === 'hidden' ? value : undefined;
-          },
-          1500
-        ).catch(() => evaluate<string>('document.visibilityState'));
-        return { hidden: visibility === 'hidden', visibility };
-      } finally {
-        await cdp
-          .send('Target.activateTarget', { targetId: created.targetId })
-          .catch(() => {});
-        await cdp
-          .send('Target.closeTarget', { targetId: other.targetId })
-          .catch(() => {});
-      }
+    hideViewer: async (): Promise<HideLog> => {
+      await evaluate<void>(HIDE_INSTALL);
+      await evaluate<void>(
+        `window.__hideLog.push({ at: performance.now(), kind: 'freeze-sent', value: null })`
+      );
+      await cdp.send(
+        'Page.setWebLifecycleState',
+        { state: 'frozen' },
+        sessionId
+      );
+      const frozen = Promise.withResolvers<void>();
+      setTimeout(frozen.resolve, HIDE_FREEZE_MS);
+      await frozen.promise;
+      await cdp.send(
+        'Page.setWebLifecycleState',
+        { state: 'active' },
+        sessionId
+      );
+      return evaluate<HideLog>(
+        `({ visibility: document.visibilityState, events: window.__hideLog })`
+      );
     },
     close: async () => {
       if (tracing) await cdp.send('Tracing.end').catch(() => {});

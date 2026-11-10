@@ -16,8 +16,9 @@
  *      The pre-encode canvas matches exactly and all renders pass the source identity oracle;
  *   6. the format validator must accept the archive;
  *   7. the primer's first Play, in owned headless chrome-headless-shell with --mute-audio. Every
- *      trial is a fresh browser. The primer shares the program's device stream, and first frame,
- *      frame gaps, stream starts and device callbacks are gated. Bare and sham controls must stall,
+ *      trial is a fresh browser that waits for the default output to go idle. The primer shares the
+ *      program's device stream, so the first new frame, frame gaps and device starts are gated. Bare
+ *      and sham controls must stall,
  *      and the viewer's time mapping, focus, comment and audio stages still run after them.
  *
  * Prints OTIO_PROGRAM_PATH_OK only after all twenty-five stages pass. Nothing is skipped or softened.
@@ -47,6 +48,7 @@ import {
 } from './otio-program-builds.ts';
 import { compareSyntheticCanvases } from './otio-program-canvas-proof.ts';
 import { runPrimerProof } from './otio-program-primer-controls.ts';
+import { buildDeviceProbe } from './otio-program-device-state.ts';
 import { runAudioArm } from './otio-program-audio-arm.ts';
 import { discoverChrome } from '../src/cover/chrome.ts';
 import {
@@ -668,6 +670,7 @@ try {
   // --mute-audio. The budgets are the user's acceptance and are never loosened here. A group
   // with too few cold trials fails as inconclusive, and a control that does not stall fails.
   try {
+    const deviceProbe = await buildDeviceProbe(harness.scratch);
     const primerStages = await runPrimerProof({
       harness,
       scratch: harness.scratch,
@@ -676,6 +679,7 @@ try {
       router,
       productionBuild,
       shamBuild,
+      deviceProbe,
     });
     for (const stage of primerStages) {
       if (stage.failures.length === 0) pass(stage.stage);
