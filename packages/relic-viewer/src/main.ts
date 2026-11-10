@@ -245,13 +245,7 @@ import {
   sharedSummary,
   shareRefusal,
 } from './share.ts';
-import {
-  createEditTracker,
-  createLifecycle,
-  healStaleShell,
-  hasUnsentWork,
-  type UnsentWorkProbe,
-} from './stale-shell.ts';
+import { createLifecycle, healStaleShell } from './stale-shell.ts';
 import { buildCodeTable, buildProse } from './text-views.ts';
 import {
   type CachedPrefix,
@@ -428,9 +422,9 @@ let openGeneration = 0;
  * Reloads the page once when a JSX compile failed because this page is a
  * stale deploy. True when a reload started, so the caller leaves the page
  * alone. The key is recalled from the vault, so the reloaded page reopens the
- * relic by itself. The reload is refused while the reader is no longer in the
- * state that asked, and while the page holds unsent work: a comment, share or
- * sign-in field with content, or a decision ceremony waiting on a passkey.
+ * relic by itself. Only the initial open and a submitted key entry call this:
+ * both are pages with no established view and no unsent work. Everywhere else
+ * a compiler failure is shown with a manual reload instruction instead.
  */
 function healForRelic(
   relicId: string,
@@ -440,56 +434,26 @@ function healForRelic(
   return healStaleShell({
     serviceOrigin: deps.serviceOrigin,
     recallKey: () => deps.keyVault.recall(relicId),
-    isCurrent: () => isCurrent() && !hasUnsentWork(pageDraftProbe()),
+    isCurrent,
     fetch: deps.fetch,
   });
 }
 
-/**
- * Every edit the reader makes in this page, by element identity. Installed
- * once, in the capturing phase, so a field's own handlers cannot hide it.
- */
-const draftTracker = createEditTracker();
-if (typeof document !== 'undefined') {
-  document.addEventListener(
-    'input',
-    (event) => draftTracker.onInput(event.target),
-    true
-  );
-}
+/** The reload instruction shown beside a compiler failure on a comparison. */
+const MANUAL_RELOAD_HINT = 'Reload this page to try again.';
 
 /**
- * What the page holds that a reload would discard. Only fields the reader has
- * typed into count, so a remembered display name or a range slider is not
- * work. The key entry's field is excluded: it holds the key the reader just
- * submitted, which the vault already keeps. A comment target placed but not
- * posted, an awaited email code, and a decision or passkey ceremony all count.
- * A focused sandboxed frame counts, because its contents cannot be read here.
+ * What a reader is shown when a historical version or comparison cannot load.
+ * A compiler failure is named with the way out, a reload, because the page may
+ * hold drafts that an automatic reload would discard.
  */
-function pageDraftProbe(): UnsentWorkProbe {
-  return {
-    fields: () =>
-      Array.from(
-        document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(
-          'input:not(.key-entry-input), textarea'
-        ),
-        (field) => ({
-          value: field.value,
-          type: field.type,
-          edited: draftTracker.isEdited(field),
-        })
-      ),
-    waiting: () =>
-      document.querySelector(
-        [
-          '.decision-waiting',
-          '[data-state="working"]',
-          '[data-sign-in-code]:not([data-state="verified"])',
-          '[data-comment-id="pending:target"]',
-        ].join(', ')
-      ) !== null,
-    frameFocused: () => document.activeElement?.tagName === 'IFRAME',
-  };
+function failureText(res: {
+  readonly detail: string;
+  readonly jsxCompilerUnavailable?: true | undefined;
+}): string {
+  return res.jsxCompilerUnavailable === true
+    ? `${res.detail} ${MANUAL_RELOAD_HINT}`
+    : res.detail;
 }
 
 function decodeText(content: Uint8Array): string {
@@ -3302,26 +3266,16 @@ export function renderComparison(
       getVersion(rightVersion, (p) => updateLoadingLine(rightVersion, p)),
     ]);
     if (thisRequest !== request) return;
-    const compilerStale = [leftRes, rightRes].some(
-      (res) => res.kind === 'unavailable' && res.jsxCompilerUnavailable === true
-    );
-    if (
-      compilerStale &&
-      (await healForRelic(relicId, deps, () => thisRequest === request))
-    ) {
-      return;
-    }
-    if (thisRequest !== request) return;
     if (typeof document === 'undefined') return;
     scaffold.result.setAttribute('aria-busy', 'false');
 
     if (leftRes.kind === 'unavailable') {
-      scaffold.result.replaceChildren(notice(leftRes.detail));
+      scaffold.result.replaceChildren(notice(failureText(leftRes)));
       changesSidebar.setChanges(0, undefined);
       return;
     }
     if (rightRes.kind === 'unavailable') {
-      scaffold.result.replaceChildren(notice(rightRes.detail));
+      scaffold.result.replaceChildren(notice(failureText(rightRes)));
       changesSidebar.setChanges(0, undefined);
       return;
     }
@@ -9639,15 +9593,7 @@ export function renderReady(
       // use, but it does not repaint over the reader's newer choice.
       if (lifecycle.isCurrent(selection)) showSingle(res.view);
     } else if (res.kind === 'unavailable') {
-      if (
-        res.jsxCompilerUnavailable === true &&
-        (await healForRelic(relicId, deps, () =>
-          lifecycle.isCurrent(selection)
-        ))
-      ) {
-        return;
-      }
-      if (lifecycle.isCurrent(selection)) toast(res.detail);
+      if (lifecycle.isCurrent(selection)) toast(failureText(res));
     }
   };
 
