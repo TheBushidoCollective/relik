@@ -54,20 +54,78 @@ async function readMediabunnyDistribution(): Promise<MediabunnyDistribution> {
   };
 }
 
-/** Present only in a pdf.js worker that carries patches/pdfjs-dist@5.4.149.patch. */
-export const PDF_WORKER_PATCH_MARKER =
-  'class IndirectObjectLexer extends Lexer';
+// Digest of the unminified pdfjs-dist@5.4.149 worker with the checked-in patch.
+// Update it when regenerating the patch, not when an installed worker differs.
+const PDF_WORKER_PATCH_SHA256 =
+  '6a0c641a4d3fdcda9832059d8a655fc05a7ce5e9ab586e5bafdc19528b430bef';
+
+const PDF_WORKER_PATCH_SITES = [
+  [
+    'Linearization.create',
+    `    const parser = new Parser({
+      lexer: new IndirectObjectLexer(stream),
+      xref: null
+    });
+    const obj1 = parser.getObj();`,
+  ],
+  [
+    'XRef.readXRef',
+    `        stream.pos = startXRef + stream.start;
+        const parser = new Parser({
+          lexer: new IndirectObjectLexer(stream),
+          xref: this,
+          allowStreams: true
+        });`,
+  ],
+  [
+    'XRef.fetchUncompressed',
+    `    const stream = this.stream.makeSubStream(xrefEntry.offset + this.stream.start);
+    const parser = new Parser({
+      lexer: new IndirectObjectLexer(stream),
+      xref: this,
+      allowStreams: true
+    });`,
+  ],
+] as const;
+
+/** Refuse a worker missing any call site or differing from the exact patch. */
+export function assertPatchedPdfWorker(worker: string): void {
+  for (const [site, source] of PDF_WORKER_PATCH_SITES) {
+    const first = worker.indexOf(source);
+    if (first === -1 || worker.indexOf(source, first + source.length) !== -1) {
+      throw new Error(`pdfjs-dist patch missing or duplicated at ${site}`);
+    }
+  }
+  const lexerCall = 'new IndirectObjectLexer(stream)';
+  let calls = 0;
+  let offset = worker.indexOf(lexerCall);
+  while (offset !== -1) {
+    calls++;
+    offset = worker.indexOf(lexerCall, offset + lexerCall.length);
+  }
+  if (calls !== 3) {
+    throw new Error(
+      'pdfjs-dist patch must have exactly three lexer call sites'
+    );
+  }
+  const digest = new Bun.CryptoHasher('sha256').update(worker).digest('hex');
+  if (digest !== PDF_WORKER_PATCH_SHA256) {
+    throw new Error(
+      'pdfjs-dist patched worker contents do not match the patch'
+    );
+  }
+}
 
 /**
  * The pdf.js worker both builds ship, refused unless it carries
  * patches/pdfjs-dist@5.4.149.patch.
  *
- * pdf.js parses one token past every object's `endobj`. When an object is
- * followed by a long whitespace run, which PDF allows, that lookahead lexes the
- * run through range requests, restarting the object's parse at each missing
- * 64 KiB chunk and keeping every chunk in the worker. The patch ends an object
- * at its top-level `endobj`. Only the readable build is patched, so the viewer
- * ships it rather than `pdf.worker.min.mjs` (376 KB gzipped rather than 292 KB).
+ * pdf.js can lex a token past a top-level `endobj`. A long whitespace run
+ * there can restart parsing for each missing 64 KiB range and retain the
+ * fetched chunks. The patch stops that lookahead while tracking the object,
+ * falling back to the original lexer for inline images or excessive nesting.
+ * Only the readable build is patched, so both builds ship that worker rather
+ * than `pdf.worker.min.mjs` (376 KB gzipped rather than 292 KB).
  *
  * Bun installs a package without its patch, and without an error, when the
  * patch's version key no longer matches (oven-sh/bun#40106) or a cached copy
@@ -78,9 +136,12 @@ async function patchedPdfWorkerPath(): Promise<string> {
     './node_modules/pdfjs-dist/build/pdf.worker.mjs',
     import.meta.url
   ).pathname;
-  if (!(await Bun.file(path).text()).includes(PDF_WORKER_PATCH_MARKER)) {
+  try {
+    assertPatchedPdfWorker(await Bun.file(path).text());
+  } catch (error) {
     throw new Error(
-      'pdfjs-dist is installed without patches/pdfjs-dist@5.4.149.patch. Run bun install; if pdfjs-dist changed version, regenerate the patch with bun patch.'
+      `Invalid pdfjs-dist@5.4.149 patch: ${error instanceof Error ? error.message : String(error)}. Reinstall dependencies with the checked-in patch.`,
+      { cause: error }
     );
   }
   return path;

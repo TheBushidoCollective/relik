@@ -20,7 +20,7 @@
 import { describe, expect, test } from 'bun:test';
 import { unlink } from 'node:fs/promises';
 
-import { PDF_WORKER_PATCH_MARKER } from '../build.ts';
+import { assertPatchedPdfWorker } from '../build.ts';
 
 const pkgDir = new URL('..', import.meta.url).pathname;
 
@@ -206,7 +206,64 @@ describe('the app shell', () => {
     const worker = Bun.file(`${pkgDir}dist/pdf.worker.js`);
     expect(await worker.exists()).toBe(true);
     expect(worker.size).toBeGreaterThan(0);
-    expect(await worker.text()).toContain(PDF_WORKER_PATCH_MARKER);
+    assertPatchedPdfWorker(await worker.text());
+  });
+
+  test('rejects incomplete or altered PDF worker patches', async () => {
+    const worker = await Bun.file(`${pkgDir}dist/pdf.worker.js`).text();
+    const sites = [
+      {
+        name: 'Linearization.create',
+        source: `      lexer: new IndirectObjectLexer(stream),
+      xref: null
+    });
+    const obj1 = parser.getObj();`,
+      },
+      {
+        name: 'XRef.readXRef',
+        source: `        stream.pos = startXRef + stream.start;
+        const parser = new Parser({
+          lexer: new IndirectObjectLexer(stream),`,
+      },
+      {
+        name: 'XRef.fetchUncompressed',
+        source: `    const stream = this.stream.makeSubStream(xrefEntry.offset + this.stream.start);
+    const parser = new Parser({
+      lexer: new IndirectObjectLexer(stream),`,
+      },
+    ];
+    for (const { name, source } of sites) {
+      expect(worker).toContain(source);
+      const mutated = worker.replace(
+        source,
+        source.replace('new IndirectObjectLexer(stream)', 'new Lexer(stream)')
+      );
+      expect(() => assertPatchedPdfWorker(mutated)).toThrow(name);
+    }
+
+    const endCondition = 'this.#ended = this.#openers.length === 0;';
+    expect(worker).toContain(endCondition);
+    expect(() =>
+      assertPatchedPdfWorker(
+        worker.replace(endCondition, 'this.#ended = false;')
+      )
+    ).toThrow('contents');
+
+    const notice =
+      'Modified by The Bushido Collective: stop indirect-object lookahead at endobj';
+    expect(worker).toContain(notice);
+    expect(() =>
+      assertPatchedPdfWorker(worker.replace(notice, 'Modified worker'))
+    ).toThrow('contents');
+
+    expect(() =>
+      assertPatchedPdfWorker(
+        worker.replace(
+          'class Linearization {',
+          'new IndirectObjectLexer(stream);\nclass Linearization {'
+        )
+      )
+    ).toThrow('exactly three');
   });
 
   test('ships the OTIO demuxer as a licensed worker asset outside shell requests', async () => {
