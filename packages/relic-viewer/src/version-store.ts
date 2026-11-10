@@ -28,6 +28,31 @@ interface PendingVersion {
   readonly listeners: Set<(progress: LoadProgress) => void>;
 }
 
+// Unknown and ambiguous failures must remain retryable. In particular, the
+// historical loader combines transient and permanent causes under some codes.
+function cacheableFailure(code: string): boolean {
+  switch (code) {
+    case 'version_invalid':
+    case 'version_key_unavailable':
+    case 'invalid_relic_id':
+    case 'relic_not_found':
+    case 'relic_expired':
+    case 'relic_removed':
+    case 'relic_never_published':
+    case 'download_cap_exhausted':
+    case 'insecure_context':
+    case 'fragment_missing':
+    case 'fragment_malformed':
+    case 'unknown_version':
+    case 'empty_envelope':
+    case 'too_large':
+    case 'keyid_present':
+      return true;
+    default:
+      return false;
+  }
+}
+
 /** Each store belongs to one page. The boot view is pinned for its lifetime. */
 export function createVersionStore(
   relicId: string,
@@ -116,12 +141,7 @@ export function createVersionStore(
         }
       )
         .then((result) => {
-          if (
-            result.kind === 'ready' ||
-            (result.code !== 'version_too_large' &&
-              result.code !== 'large_open_cancelled' &&
-              result.code !== 'content_changed')
-          ) {
+          if (result.kind === 'ready' || cacheableFailure(result.code)) {
             cache.set(version, result);
             evict();
           }
