@@ -2952,7 +2952,8 @@ export async function mountOtioView(
       if (timelineSettled) root.dataset['ready'] = 'diagnostic';
     } else if (awaitingFocus) {
       previewStatus.hidden = false;
-      previewStatus.append(element('p', 'otio-buffering', 'Buffering'));
+      if (!state.buffering)
+        previewStatus.append(element('p', 'otio-buffering', 'Buffering'));
       root.dataset['previewState'] = 'buffering';
       root.dataset['ready'] = 'false';
     }
@@ -2968,6 +2969,14 @@ export async function mountOtioView(
         root.dataset['previewState'] = 'unavailable';
       }
     }
+    // Buffering alone is a label over the frame, which stays in view; anything
+    // to read or act on keeps the full panel.
+    const statusLines = Array.from(previewStatus.children);
+    previewStatus.dataset['presentation'] =
+      statusLines.length > 0 &&
+      statusLines.every((line) => line.classList.contains('otio-buffering'))
+        ? 'label'
+        : 'panel';
     paintedStatus = state;
     paintedStatusScope = focusedNode;
     paintedStatusUnavailable = focusUnavailable;

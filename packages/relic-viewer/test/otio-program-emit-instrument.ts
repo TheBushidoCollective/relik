@@ -92,6 +92,44 @@ const PRIMER_MUTE_LINE_ALL = /^\s*element\.muted = false;\s*$/gm;
 const PRIMER_MUTE_LINE = /^(\s*)element\.muted = false;\s*$/m;
 
 /**
+ * Compares the transformed module with its original, line by line. Fails unless exactly one line
+ * changed, that line was the primer's `element.muted = false;`, and it is now `element.muted = true;`.
+ * A transform that changes anything else cannot reach a sham build.
+ */
+export function verifySourceTransform(
+  original: string,
+  transformed: string
+): void {
+  const before = original.split('\n');
+  const after = transformed.split('\n');
+  assert.equal(
+    after.length,
+    before.length,
+    'sham transform changed the line count'
+  );
+  const changed: number[] = [];
+  before.forEach((line, index) => {
+    if (line !== after[index]) changed.push(index);
+  });
+  assert.equal(
+    changed.length,
+    1,
+    `sham transform changed ${changed.length} line(s), expected exactly 1`
+  );
+  const index = changed[0]!;
+  assert.equal(
+    before[index]!.trim(),
+    'element.muted = false;',
+    'sham transform changed a line other than the primer mute'
+  );
+  assert.equal(
+    after[index]!.trim(),
+    'element.muted = true;',
+    'sham transform did not produce the muted form'
+  );
+}
+
+/**
  * Returns the sham module source: the primer's element.muted = false becomes true, nothing else.
  * Throws unless that line occurs exactly once. A missing landmark is never a silent production build.
  */
@@ -102,7 +140,12 @@ export function shamPrimerSource(original: string): string {
     1,
     `primer mute landmark occurs ${hits} times; the sham needs exactly one`
   );
-  return original.replace(PRIMER_MUTE_LINE, '$1element.muted = true;');
+  const transformed = original.replace(
+    PRIMER_MUTE_LINE,
+    '$1element.muted = true;'
+  );
+  verifySourceTransform(original, transformed);
+  return transformed;
 }
 
 /** Bun build plugin: rewrites otio-audio-output.ts for the sham build. Counts each rewrite. */
@@ -136,6 +179,8 @@ export async function buildInstrumentedViewer(
   readonly transforms: number;
   readonly shams: number;
   readonly entry: string;
+  /** Every file the build wrote, including each hashed chunk. Absolute paths in outdir. */
+  readonly outputs: readonly string[];
 }> {
   const state = { transforms: 0 };
   const shamState = { rewrites: 0 };
@@ -181,5 +226,6 @@ export async function buildInstrumentedViewer(
     transforms: state.transforms,
     shams: shamState.rewrites,
     entry: entry.path,
+    outputs: built.outputs.map((output) => output.path),
   };
 }

@@ -64,6 +64,8 @@ import {
   type ViewerPage,
   VIEWER_CONTRACT,
 } from './otio-program-viewer.ts';
+import type { ViewerBuild, ViewerRouter } from './otio-program-builds.ts';
+import { checkShamBuilds } from './otio-program-sham-build.ts';
 
 export const PRIMER_ROUNDS = 5;
 /** Cold trials each control needs. Fewer makes that group inconclusive, which fails. */
@@ -131,11 +133,12 @@ export interface PrimerProofInput {
   /** The positive program MP4: the same bytes the bare arms and the viewer play. */
   readonly programMp4: string;
   readonly shareUrl: string;
+  /** Serves each arm from its own complete build directory, after routing is verified. */
+  readonly router: ViewerRouter;
   /** The instrumented production build the video arms serve (emit recorder on). */
-  readonly productionEntry: string;
-  readonly shamEntry: string;
-  /** Replaces the viewer's served main.js and viewer.js with the given build. */
-  readonly installViewerBuild: (entry: string) => Promise<void>;
+  readonly productionBuild: ViewerBuild;
+  /** The same build with the primer's mute flipped. Verified against production before use. */
+  readonly shamBuild: ViewerBuild;
 }
 
 interface Frame {
@@ -584,6 +587,19 @@ async function waitForBlobSource(page: ViewerPage): Promise<void> {
   assert.equal(failure, null, `blob source failed: ${failure}`);
 }
 
+/**
+ * The build that answered this trial's JavaScript requests must be exactly the arm's build. A
+ * sham trial served from production, or a production trial served from the sham, is a failure.
+ */
+function servedFailures(input: PrimerProofInput, arm: ViewerArm): string[] {
+  const expected =
+    arm === 'sham' ? input.shamBuild.name : input.productionBuild.name;
+  const served = input.router.servedBuilds();
+  return served.length === 1 && served[0] === expected
+    ? []
+    : [`served builds ${JSON.stringify(served)}, expected only ${expected}`];
+}
+
 /** Viewer arm: one fresh browser on the real viewer, with the production or sham build installed. */
 async function runViewerTrial(
   arm: ViewerArm,
@@ -591,6 +607,7 @@ async function runViewerTrial(
   input: PrimerProofInput
 ): Promise<{ trial: PrimerTrial; visibility: string | null }> {
   const sessionToken = await input.harness.createSession();
+  input.router.resetServed();
   const page = await openViewer({
     url: input.shareUrl,
     origin: input.harness.origin,
@@ -601,6 +618,7 @@ async function runViewerTrial(
     await waitForProgramState(page);
     await waitForMetadata(page);
     const extra: string[] = [];
+    extra.push(...servedFailures(input, arm));
     // Before the first trusted event: primer idle, program paused and not moving.
     const primerBefore = await primerAttribute(page);
     const restBefore = await programState(page);
@@ -740,27 +758,6 @@ async function runViewerTrial(
   }
 }
 
-/** The sham build must differ from production by exactly the primer's mute line. */
-async function assertShamDiffers(
-  productionEntry: string,
-  shamEntry: string
-): Promise<void> {
-  const production = (await readFile(productionEntry, 'utf8')).split('\n');
-  const sham = (await readFile(shamEntry, 'utf8')).split('\n');
-  assert.equal(sham.length, production.length, 'sham build line count differs');
-  const differing = production
-    .map((_, index) => index)
-    .filter((index) => production[index] !== sham[index]);
-  assert.equal(
-    differing.length,
-    1,
-    `sham build differs from production on ${differing.length} line(s), expected 1`
-  );
-  const index = differing[0]!;
-  assert.equal(production[index]!.trim(), 'element.muted = false;');
-  assert.equal(sham[index]!.trim(), 'element.muted = true;');
-}
-
 /** Primer alone for 12 s, with or without the immediate-pause feature. Exactly one stream start. */
 async function runWrapTrial(
   immediatePause: boolean,
@@ -834,7 +831,12 @@ export async function runPrimerProof(
     process.env['RELIC_OTIO_CHROME_PATH'],
     'RELIC_OTIO_CHROME_PATH must name the owned chrome-headless-shell; the primer proof never falls back to an installed Chrome'
   );
-  await assertShamDiffers(input.productionEntry, input.shamEntry);
+  const shamFailures = await checkShamBuilds(
+    input.productionBuild,
+    input.shamBuild
+  );
+  if (shamFailures.length)
+    throw new Error(`sham build is not trusted: ${shamFailures.join('; ')}`);
   const primer = ownedBytes(otioAudioPrimerBytes());
   assert.equal(
     primer.byteLength,
@@ -958,7 +960,9 @@ export async function runPrimerProof(
         await gap();
         const isSham = arm === 'sham';
         try {
-          if (isSham) await input.installViewerBuild(input.shamEntry);
+          await input.router.activate(
+            isSham ? input.shamBuild : input.productionBuild
+          );
           const outcome = await runViewerTrial(arm, round, input);
           record(viewerGroup(arm), outcome.trial);
           if (outcome.visibility)
@@ -968,7 +972,7 @@ export async function runPrimerProof(
         } catch (error) {
           recordError(viewerGroup(arm), round, arm, error);
         } finally {
-          if (isSham) await input.installViewerBuild(input.productionEntry);
+          await input.router.activate(input.productionBuild);
         }
       }
     }

@@ -53,6 +53,8 @@ export interface SignalEvidence {
   readonly longestGapSamples: number;
   /** The same run in milliseconds, computed from the samples, not from blocks. */
   readonly longestGapMs: number;
+  /** Number of separate silent runs in tested audio. The gate reads only the longest one. */
+  readonly silentRuns: number;
   /** Reference time at which the longest gap starts, or null when there is none. */
   readonly gapStartSeconds: number | null;
   readonly windowFaults: readonly AudioFault[];
@@ -98,6 +100,7 @@ export function measureSignal(
   let testedSamples = 0;
   let run = 0;
   let longest = 0;
+  let silentRuns = 0;
   let longestEnd = -1;
   for (let n = MARGIN_SAMPLES; n < end; n++) {
     if (!tested[Math.floor((n - MARGIN_SAMPLES) / block)]) {
@@ -106,6 +109,7 @@ export function measureSignal(
     }
     testedSamples++;
     if (Math.abs(rendered[n + lag] ?? 0) <= AUDIO_SILENCE_AMPLITUDE) {
+      if (run === 0) silentRuns++;
       run++;
       if (run > longest) {
         longest = run;
@@ -130,6 +134,7 @@ export function measureSignal(
     testedMs: (testedSamples * 1000) / rate,
     longestGapSamples: longest,
     longestGapMs: (longest * 1000) / rate,
+    silentRuns,
     gapStartSeconds: longestEnd < 0 ? null : (longestEnd - longest + 1) / rate,
     windowFaults,
   };

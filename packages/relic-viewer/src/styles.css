@@ -4848,6 +4848,27 @@ canvas.relic-page {
   overflow-y: auto;
   justify-content: safe center;
 }
+/* Buffering alone is a status label, not a panel. The frame stays in view
+   under a chip in the scope label's colours and type, mirrored at the
+   bottom left. The panel stays for anything to read or act on. */
+.otio-view .otio-preview > .otio-preview-status[data-presentation="label"]:not([hidden]) {
+  position: absolute;
+  inset: auto auto .7rem .7rem;
+  z-index: 1;
+  display: block;
+  grid-area: auto;
+  align-self: end;
+  justify-self: start;
+  width: max-content;
+  max-width: calc(100% - 1.4rem);
+  margin: 0;
+  padding: .2rem .35rem;
+  overflow: visible;
+  background: #080a0bd9;
+  text-align: left;
+  pointer-events: none;
+}
+.otio-view .otio-preview > .otio-preview-status[data-presentation="label"] p { max-width: none; font: .6rem/1.5 var(--mono); }
 .otio-raw { margin-top: .6rem; min-width: 0; }
 .otio-raw summary { color: var(--ink-soft); font: .62rem/1.6 var(--mono); cursor: pointer; }
 .otio-inspector { display: flex; flex-direction: column; min-height: 0; overflow: hidden; background: var(--surface); min-width: 0; border-left: 1px solid var(--rule); }
@@ -5021,6 +5042,9 @@ canvas.relic-page {
   .otio-preview-scope { font-size: .5rem; }
   .otio-preview-status { padding: 0 .5rem; overscroll-behavior: contain; }
   .otio-preview:has(> .otio-preview-status:not([hidden])) > .otio-preview-scope { margin-top: .35rem; }
+  .otio-view .otio-preview > .otio-preview-status[data-presentation="label"] p { font-size: .5rem; }
+  /* A label leaves the scope chip where it was. */
+  .otio-preview:has(> .otio-preview-status[data-presentation="label"]:not([hidden])) > .otio-preview-scope { margin-top: .7rem; }
   .otio-preview-base { padding: .3rem .35rem; }
   .otio-selection-readout { padding: .6rem .5rem; }
   .otio-selection-readout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto auto; gap: .35rem; align-items: end; }

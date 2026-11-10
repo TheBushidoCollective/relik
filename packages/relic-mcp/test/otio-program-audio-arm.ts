@@ -13,7 +13,16 @@
  * Callback telemetry is not read here. Only the captured samples count as audio.
  */
 
+import { writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import assert from 'node:assert/strict';
+import { PROOF_GLOBAL } from '../../relic-viewer/test/otio-program-emit-instrument.ts';
+import {
+  type ViewerBuild,
+  type ViewerRouter,
+  readBuild,
+} from './otio-program-builds.ts';
+import { latin1 } from './otio-program-sham-check.ts';
 import { expectedAudio, PROGRAM } from './otio-program-reference.ts';
 import {
   gateSignal,
@@ -33,11 +42,11 @@ export interface AudioArmInput {
   readonly harness: ProofHarness;
   readonly shareUrl: string;
   readonly scratch: string;
-  /** The production build, as shipped: no emit recorder. */
-  readonly uninstrumentedEntry: string;
-  /** Restores the instrumented build that the video arms use. */
-  readonly restoreEntry: string;
-  readonly installViewerBuild: (entry: string) => Promise<void>;
+  /** The production build as shipped: no emit recorder. Served as one complete directory. */
+  readonly uninstrumentedBuild: ViewerBuild;
+  /** The instrumented production build restored after the audio arm. */
+  readonly restoreBuild: ViewerBuild;
+  readonly router: ViewerRouter;
 }
 
 type AudioArm = 'prepared' | 'first-click';
@@ -101,7 +110,8 @@ async function runAudioTrial(
   round: number,
   input: AudioArmInput
 ): Promise<{ failures: string[]; evidence: Record<string, SignalEvidence> }> {
-  await input.installViewerBuild(input.uninstrumentedEntry);
+  await input.router.activate(input.uninstrumentedBuild);
+  input.router.resetServed();
   try {
     const page = await openViewer({
       url: input.shareUrl,
@@ -124,6 +134,11 @@ async function runAudioTrial(
           : undefined
       );
       const failures: string[] = [];
+      const served = input.router.servedBuilds();
+      if (served.length !== 1 || served[0] !== input.uninstrumentedBuild.name)
+        failures.push(
+          `round ${round} ${arm}: served builds ${JSON.stringify(served)}, expected only ${input.uninstrumentedBuild.name}`
+        );
       if (arm === 'prepared') {
         // A genuine earlier interaction, as in the prepared video arm, then the same tap.
         await page.click('.otio-inspector-tab[data-tab="markers"]');
@@ -162,12 +177,27 @@ async function runAudioTrial(
           ...gateSignal(measured, `${arm} round ${round} ${label}`)
         );
       }
+      // Diagnostic only: the captured channels and their evidence, kept in scratch so a failing
+      // trial can be inspected. Nothing here changes what is gated.
+      const receipt = join(input.scratch, `primer-audio-${arm}-${round}`);
+      await writeFile(
+        `${receipt}-left.f32`,
+        new Uint8Array(Float32Array.from(captured.left).buffer)
+      );
+      await writeFile(
+        `${receipt}-right.f32`,
+        new Uint8Array(Float32Array.from(captured.right).buffer)
+      );
+      await writeFile(
+        `${receipt}.json`,
+        JSON.stringify({ arm, round, rate: captured.rate, failures, evidence })
+      );
       return { failures, evidence };
     } finally {
       await page.close();
     }
   } finally {
-    await input.installViewerBuild(input.restoreEntry);
+    await input.router.activate(input.restoreBuild);
   }
 }
 
@@ -175,6 +205,13 @@ async function runAudioTrial(
 export async function runAudioArm(
   input: AudioArmInput
 ): Promise<PrimerStage[]> {
+  // The audio arm must run the production build as shipped. Any emit recorder in it is a failure.
+  const uninstrumented = await readBuild(input.uninstrumentedBuild);
+  for (const [name, bytes] of uninstrumented)
+    if (latin1(bytes).includes(PROOF_GLOBAL))
+      throw new Error(
+        `${input.uninstrumentedBuild.name} ${name} contains the emit recorder; the audio arm must use the production build`
+      );
   const failures: Record<AudioArm, string[]> = {
     prepared: [],
     'first-click': [],
@@ -221,5 +258,6 @@ function summarise(evidence: SignalEvidence | undefined) {
     longestGapMs: evidence.longestGapMs,
     gapStartSeconds: evidence.gapStartSeconds,
     windowFaults: evidence.windowFaults.length,
+    silentRuns: evidence.silentRuns,
   };
 }

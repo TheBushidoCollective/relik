@@ -29,7 +29,7 @@ import {
   type OtioZipIndex,
 } from '@relic/format';
 import { createApp } from '@relic/server/src/app.ts';
-import { diskAssets } from '@relic/server/src/assets.ts';
+import { type AssetSource, diskAssets } from '@relic/server/src/assets.ts';
 import { MemoryStorage } from '@relic/server/src/storage.ts';
 import { MemoryStore } from '@relic/server/src/store.ts';
 import { loadPublishState } from '../src/state.ts';
@@ -149,7 +149,7 @@ export interface PublishResult {
 
 export async function createProofHarness(
   label: string,
-  options: { viewerDist?: string } = {}
+  options: { viewerDist?: string; assets?: AssetSource } = {}
 ): Promise<ProofHarness> {
   const scratch = await mkdtemp(
     join(await realpath(tmpdir()), `relic-${label}-`)
@@ -174,7 +174,7 @@ export async function createProofHarness(
     storage,
     now: () => Date.now(),
     operatorTokens: new Map([['operator-token', 'test-operator-secret']]),
-    assets: diskAssets(options.viewerDist ?? VIEWER_DIST),
+    assets: options.assets ?? diskAssets(options.viewerDist ?? VIEWER_DIST),
     mailer: {
       send: async () => {},
       sendMail: async () => {},

@@ -104,6 +104,7 @@ function evidence(over: Partial<SignalEvidence>): SignalEvidence {
     testedMs: 5000,
     longestGapSamples: 0,
     longestGapMs: 0,
+    silentRuns: 0,
     gapStartSeconds: null,
     windowFaults: [],
     ...over,

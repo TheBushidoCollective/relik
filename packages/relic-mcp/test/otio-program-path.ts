@@ -40,6 +40,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { indexOtioZip, readOtioProgramArchive } from '@relic/format';
 import { buildInstrumentedViewer } from '../../relic-viewer/test/otio-program-emit-instrument.ts';
+import {
+  listJavaScript,
+  viewerBuild,
+  ViewerRouter,
+} from './otio-program-builds.ts';
 import { compareSyntheticCanvases } from './otio-program-canvas-proof.ts';
 import { runPrimerProof } from './otio-program-primer-controls.ts';
 import { runAudioArm } from './otio-program-audio-arm.ts';
@@ -399,22 +404,26 @@ await copyFile(
   instrumentedViewer.entry,
   join(instrumentedViewerDir, 'viewer.js')
 );
-// The sham build is the same instrumented production build with one line changed: the primer's
-// element.muted = false becomes true, so the primer cannot share the device stream. The production
-// entry is copied aside before any swap, so every restore writes production bytes back.
+// Each arm is served from its own complete build directory, switched whole. The sham is the same
+// instrumented build with the primer's mute flipped, built into a private directory of its own.
+// Nothing is copied between arms, and no production directory or VIEWER_DIST file is written.
 const shamViewerDir = await mkdtemp(join(tmpdir(), 'relic-otio-sham-viewer-'));
 await cp(VIEWER_DIST, shamViewerDir, { recursive: true });
-const productionEntry = join(shamViewerDir, 'production-main.js');
-await copyFile(instrumentedViewer.entry, productionEntry);
 const shamViewer = await buildInstrumentedViewer(shamViewerDir, {
   sham: true,
 });
-// Replaces what the viewer serves. Each sham trial installs the sham build, then restores production.
-const installViewerBuild = async (entry: string): Promise<void> => {
-  const bytes = await readFile(entry);
-  await writeFile(join(instrumentedViewerDir, 'main.js'), bytes);
-  await writeFile(join(instrumentedViewerDir, 'viewer.js'), bytes);
-};
+assert.equal(
+  shamViewer.entry,
+  join(shamViewerDir, 'main.js'),
+  'unexpected sham viewer entry'
+);
+// The sham entry is also viewer.js inside its own directory, as production is.
+await copyFile(shamViewer.entry, join(shamViewerDir, 'viewer.js'));
+assert.deepEqual(
+  await readFile(join(shamViewerDir, 'main.js')),
+  await readFile(join(shamViewerDir, 'viewer.js')),
+  'sham main.js and viewer.js must be the same sham entry'
+);
 // The Bun entry can reference ./main.js through its import.meta.url bootstrap.
 // The normal viewer build copies main.js to viewer.js too. Keep both copies
 // instrumented, so any self-reference cannot silently load the old graph.
@@ -423,8 +432,23 @@ assert.deepEqual(
   await readFile(join(instrumentedViewerDir, 'viewer.js')),
   'main.js and viewer.js must be the same instrumented entry'
 );
+const productionBuild = viewerBuild('production', instrumentedViewerDir, [
+  ...instrumentedViewer.outputs,
+  join(instrumentedViewerDir, 'viewer.js'),
+]);
+const shamBuild = viewerBuild('sham', shamViewerDir, [
+  ...shamViewer.outputs,
+  join(shamViewerDir, 'viewer.js'),
+]);
+// The production build as shipped: VIEWER_DIST, read only. Used by the sampled audio arm.
+const uninstrumentedBuild = viewerBuild(
+  'uninstrumented',
+  VIEWER_DIST,
+  await listJavaScript(VIEWER_DIST)
+);
+const router = new ViewerRouter(productionBuild);
 const harness = await createProofHarness('otio-program-path', {
-  viewerDist: instrumentedViewerDir,
+  assets: router,
 });
 const measured: Record<string, number | string> = {};
 try {
@@ -649,9 +673,9 @@ try {
       scratch: harness.scratch,
       programMp4: positiveMp4,
       shareUrl: positive.shareUrl,
-      productionEntry,
-      shamEntry: shamViewer.entry,
-      installViewerBuild,
+      router,
+      productionBuild,
+      shamBuild,
     });
     for (const stage of primerStages) {
       if (stage.failures.length === 0) pass(stage.stage);
@@ -669,9 +693,9 @@ try {
       harness,
       shareUrl: positive.shareUrl,
       scratch: harness.scratch,
-      uninstrumentedEntry: join(VIEWER_DIST, 'main.js'),
-      restoreEntry: productionEntry,
-      installViewerBuild,
+      router,
+      uninstrumentedBuild,
+      restoreBuild: productionBuild,
     });
     for (const stage of audioStages) {
       if (stage.failures.length === 0) pass(stage.stage);
