@@ -809,6 +809,33 @@ const fixtures: FixtureInfo[] = [
     shareUrl: '',
     bytesLength: 0,
   },
+  {
+    classKey: 'obj',
+    filename: 'model.obj',
+    path: join(scratch, 'model.obj'),
+    relicId: '',
+    key: '',
+    shareUrl: '',
+    bytesLength: 0,
+  },
+  {
+    classKey: 'stl',
+    filename: 'model.stl',
+    path: join(scratch, 'model.stl'),
+    relicId: '',
+    key: '',
+    shareUrl: '',
+    bytesLength: 0,
+  },
+  {
+    classKey: 'binary-stl',
+    filename: 'binary.stl',
+    path: join(scratch, 'binary.stl'),
+    relicId: '',
+    key: '',
+    shareUrl: '',
+    bytesLength: 0,
+  },
 ];
 
 console.log('Generating test fixtures...');
@@ -915,11 +942,25 @@ await execFileAsync('zip', ['-q', '-r', fixtures[10]!.path, '.'], {
 // 12. bin
 await writeFile(fixtures[11]!.path, randomBytes(65536));
 
+await writeFile(
+  fixtures[12]!.path,
+  'v 0 0 0\nv 1 0 0\nv 0 1 0\nv 0 0 1\nf 1 3 2\nf 1 2 4\nf 2 3 4\nf 3 1 4\n'
+);
+await writeFile(
+  fixtures[13]!.path,
+  'solid triangle\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 1 0 0\nvertex 0 1 0\nendloop\nendfacet\nendsolid triangle\n'
+);
+const binaryStl = Buffer.alloc(134);
+binaryStl.writeUInt32LE(1, 80);
+binaryStl.writeFloatLE(1, 104);
+binaryStl.writeFloatLE(1, 120);
+await writeFile(fixtures[14]!.path, binaryStl);
+
 // 6 MB random bin for early cancel measurement
 const sixMbBinPath = join(scratch, 'large.bin');
 await writeFile(sixMbBinPath, randomBytes(6 * 1024 * 1024));
 
-console.log('Publishing 12 classes through stdio relic-mcp...');
+console.log('Publishing 15 fixtures through stdio relic-mcp...');
 for (const fix of fixtures) {
   const res = await callMcp('relic_publish', {
     path: fix.path,
@@ -1396,7 +1437,7 @@ const runSummary: Array<{
 
 try {
   // =========================================================================
-  // RUN 1: 12 classes at 1440x900 light
+  // RUN 1: 15 fixtures at 1440x900 light
   // =========================================================================
   if (
     !onlyFilter ||
@@ -1404,7 +1445,7 @@ try {
     onlyFilter === 'run1' ||
     onlyFilter === 'no-blank'
   ) {
-    console.log('\n--- Run 1: 12 classes at 1440x900 light ---');
+    console.log('\n--- Run 1: 15 fixtures at 1440x900 light ---');
 
     for (const fix of fixtures) {
       const t0 = Date.now();
@@ -1540,6 +1581,9 @@ try {
         'mp4',
         'wav',
         'otio',
+        'obj',
+        'stl',
+        'binary-stl',
       ];
       if (renderingClasses.includes(fix.classKey)) {
         const sawPillInSamples = samples.some((s) => s.renderPillVisible);
@@ -1589,6 +1633,45 @@ try {
         `ready screenshot stage region must not be uniform (${fix.classKey})`
       );
 
+      if (['obj', 'stl', 'binary-stl'].includes(fix.classKey)) {
+        const check = (await cdp.send(
+          'Runtime.evaluate',
+          {
+            expression: `(() => {
+              const root = document.querySelector('.model-view[data-model-state]');
+              const canvas = root?.querySelector('canvas');
+              return { state: root?.getAttribute('data-model-state'), ready: root?.getAttribute('data-ready'), width: canvas?.width, height: canvas?.height, triangles: root?.querySelector('.model-measures')?.textContent };
+            })()`,
+            returnByValue: true,
+          },
+          outcome.sessionId
+        )) as {
+          result?: {
+            value?: {
+              state?: string;
+              ready?: string;
+              width?: number;
+              height?: number;
+              triangles?: string;
+            };
+          };
+        };
+        const model = check.result?.value;
+        assert.equal(
+          model?.ready,
+          'true',
+          `${fix.classKey}: model failed to draw: ${JSON.stringify(model)}`
+        );
+        assert.ok(
+          (model?.width ?? 0) > 1 && (model?.height ?? 0) > 1,
+          `${fix.classKey}: model canvas has no backing pixels`
+        );
+        assert.ok(
+          model?.triangles?.includes('triangles'),
+          `${fix.classKey}: mesh statistics missing`
+        );
+      }
+
       await outcome.close();
       const dur = Date.now() - t0;
       runSummary.push({
@@ -1603,13 +1686,23 @@ try {
   }
 
   // =========================================================================
-  // RUN 2: md, png, pdf, html, otio and bin at 390x844 dark and 320x568 light
+  // RUN 2: documents, models and media at narrow viewport widths
   // =========================================================================
   if (!onlyFilter || onlyFilter === '2' || onlyFilter === 'run2') {
     console.log(
       '\n--- Run 2: Mobile responsive viewports & themes (12 runs) ---'
     );
-    const run2Classes = ['md', 'png', 'pdf', 'html', 'otio', 'bin'];
+    const run2Classes = [
+      'md',
+      'png',
+      'pdf',
+      'html',
+      'otio',
+      'bin',
+      'obj',
+      'stl',
+      'binary-stl',
+    ];
     const run2Fixtures = fixtures.filter((f) =>
       run2Classes.includes(f.classKey)
     );

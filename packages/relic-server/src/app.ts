@@ -362,6 +362,12 @@ export function createApp(options: AppOptions = {}): RelicApp {
       'cache-control': 'no-store',
       'referrer-policy': 'no-referrer',
       'x-content-type-options': 'nosniff',
+      ...(name === 'model-parse-worker.js'
+        ? {
+            'content-security-policy':
+              "default-src 'none'; script-src 'self'; connect-src 'none'; worker-src 'none'",
+          }
+        : {}),
     });
   }
 
@@ -6132,8 +6138,8 @@ site data for this origin removes every remembered key.
 
 ## What we do know
 
-- **A coarse renderer class**, one of: markdown, code, html, jsx, image, pdf, media,
-  archive, binary, otio. Nothing finer. It is now also on the relic's card, so the kind
+- **A coarse renderer class**, one of: markdown, code, html, jsx, image, pdf, model,
+  media, archive, binary, otio. Nothing finer. It is now also on the relic's card, so the kind
   of thing that was published is readable by anyone who fetches the link, not
   only by the operator.
 - **The name of the tool that published it**, so we can tell whether Relic
@@ -6155,6 +6161,7 @@ site data for this origin removes every remembered key.
   default; link previews use a generic card carrying the publisher-declared title
   and format label, preventing referenced media frames and track metadata from
   leaking into unencrypted cover previews.
+  STL and OBJ models also use a generic card, rather than exposing geometry in a preview.
 This moves us from knowing nothing to knowing what kind of thing you published
 and roughly how often it was fetched. It is metadata. It is never content.
 

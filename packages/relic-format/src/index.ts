@@ -17,6 +17,7 @@ export * from './hosted.ts';
 export * from './id.ts';
 export * from './load-copy.ts';
 export * from './mnemonic.ts';
+export * from './model.ts';
 export * from './otio-identity.ts';
 export * from './otio-json.ts';
 export * from './otio-sequence.ts';

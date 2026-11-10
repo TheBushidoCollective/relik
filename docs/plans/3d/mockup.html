@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>3D model</title>
+<style>
+:root { color-scheme: light dark; --ground:#f1f2f0; --surface:#fbfbfa; --ink:#16191a; --ink-soft:#5a6163; --rule:#d2d5d2; --rule-strong:#b3b8b4; --patina:#1f6b64; --patina-ink:#0f3b37; --diff-added:#dfeeea; --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace; --serif:Charter,"Iowan Old Style",Palatino,Georgia,serif; --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+@media(prefers-color-scheme:dark) { :root { --ground:#101314; --surface:#171b1c; --ink:#e6e9e7; --ink-soft:#969e9d; --rule:#2a3032; --rule-strong:#3b4345; --patina:#4fb3a6; --patina-ink:#a7ded6; --diff-added:#15332f; } }
+* { box-sizing:border-box; }
+html,body { margin:0; min-width:0; height:100%; }
+body { display:flex; flex-direction:column; background:var(--ground); color:var(--ink); font:16px/1.55 var(--sans); }
+.mock-header { display:flex; flex:none; align-items:center; gap:1rem; min-height:52px; padding:0 0.75rem; border-bottom:1px solid var(--rule-strong); background:var(--surface); }
+.mock-mark { font:600 1.3rem var(--serif); }
+.mock-title { flex:1; min-width:0; font:0.75rem var(--mono); }
+.mock-download { min-height:44px; padding:0.5rem 0.75rem; border:0; border-left:1px solid var(--rule); border-radius:0; background:transparent; color:var(--ink); font:0.8rem var(--sans); cursor:pointer; }
+.mock-states { display:flex; flex:none; flex-wrap:wrap; gap:0.3rem 0.5rem; padding:0.5rem 0.75rem; border-bottom:1px solid var(--rule-strong); }
+.mock-state { min-height:44px; padding:0.4rem 0.65rem; border:1px solid var(--rule); border-radius:0; background:var(--surface); color:var(--ink-soft); font:0.75rem var(--sans); cursor:pointer; }
+.mock-state[aria-pressed="true"] { border-color:var(--patina); color:var(--patina-ink); }
+.mock-state:focus-visible,.mock-download:focus-visible { outline:2px solid var(--patina); outline-offset:2px; }
+.stage-model { flex:1 1 auto; height:auto; }
+/* One inspection plate in Relik's existing accession-label chrome. The model
+   supplies the picture; the surrounding rules and patina stay viewer-owned. */
+.stage-model {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+}
+
+.stage-model > .notice {
+  flex: none;
+}
+
+.model-view {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 32rem;
+  background: var(--surface);
+  color: var(--ink);
+  font-family: var(--sans);
+}
+
+.model-view,
+.model-view * {
+  box-sizing: border-box;
+}
+
+.model-view [hidden] {
+  display: none !important;
+}
+
+.model-toolbar,
+.model-navigation {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  padding: 0.5rem 0.75rem;
+  background: var(--surface);
+}
+
+.model-toolbar {
+  border-bottom: 1px solid var(--rule-strong);
+}
+
+.model-button-group {
+  display: flex;
+  flex: none;
+  min-width: 0;
+}
+
+.model-button {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  margin: 0;
+  padding: 0.5rem 0.8rem;
+  border: 1px solid var(--rule-strong);
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  font: 0.8rem/1.3 var(--sans);
+  cursor: pointer;
+}
+
+.model-button-group > .model-button + .model-button {
+  margin-left: -1px;
+}
+
+.model-button[aria-pressed="true"] {
+  position: relative;
+  border-color: var(--patina);
+  background: var(--diff-added);
+  color: var(--patina-ink);
+}
+
+.model-button:hover:not(:disabled) {
+  position: relative;
+  border-color: var(--patina);
+  color: var(--patina);
+}
+
+.model-button:focus-visible,
+.model-help > summary:focus-visible {
+  position: relative;
+  z-index: 1;
+  outline: 2px solid var(--patina);
+  outline-offset: 2px;
+}
+
+.model-button:disabled {
+  color: var(--ink-soft);
+  opacity: 0.45;
+  cursor: default;
+}
+
+.model-icon-button {
+  width: 44px;
+  padding: 0;
+}
+
+.model-icon-button svg {
+  display: block;
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: square;
+  stroke-linejoin: miter;
+  stroke-width: 1.5;
+}
+
+.model-reset {
+  margin-left: auto;
+}
+
+.model-viewport {
+  position: relative;
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  min-height: 18rem;
+  overflow: hidden;
+  background: var(--ground);
+}
+
+.model-canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  touch-action: none;
+  cursor: grab;
+}
+
+.model-canvas:active {
+  cursor: grabbing;
+}
+
+.model-canvas:focus-visible {
+  outline: 2px solid var(--patina);
+  outline-offset: -3px;
+}
+
+.model-status {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  padding: 1.5rem;
+  background: var(--ground);
+  text-align: center;
+}
+
+.model-status-title {
+  max-width: 35rem;
+  margin: 0;
+  font: 600 1.05rem/1.4 var(--sans);
+}
+
+.model-status-detail {
+  max-width: 42ch;
+  margin: 0;
+  color: var(--ink-soft);
+  font: 0.85rem/1.65 var(--sans);
+  overflow-wrap: anywhere;
+}
+
+.model-measures {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.3rem 1.25rem;
+  padding: 0.5rem 0.75rem;
+  border-top: 1px solid var(--rule-strong);
+  color: var(--ink-soft);
+  font: 0.7rem/1.6 var(--mono);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.model-measures > span {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.model-warnings {
+  flex: none;
+  padding: 0.6rem 0.75rem;
+  border-top: 1px solid var(--rule);
+  color: var(--ink-soft);
+  font: 0.76rem/1.6 var(--sans);
+}
+
+.model-warnings p {
+  margin: 0;
+}
+
+.model-warnings p + p {
+  margin-top: 0.3rem;
+}
+
+.model-navigation {
+  justify-content: space-between;
+  border-top: 1px solid var(--rule);
+}
+
+.model-help {
+  flex: none;
+  padding: 0.25rem 0.75rem;
+  border-top: 1px solid var(--rule);
+  color: var(--ink-soft);
+  font: 0.74rem/1.65 var(--sans);
+}
+
+.model-help > summary {
+  width: fit-content;
+  max-width: 100%;
+  min-height: 44px;
+  padding: 0.65rem 0;
+  cursor: pointer;
+}
+
+.model-help p {
+  max-width: 62ch;
+  margin: 0 0 0.65rem;
+}
+
+.model-legend {
+  flex: none;
+  margin: 0;
+  padding: 0.6rem 0.75rem;
+  border-top: 1px solid var(--rule-strong);
+  color: var(--ink-soft);
+  font: 0.68rem/1.6 var(--mono);
+}
+
+@media (max-width: 34rem) {
+  .model-navigation {
+    justify-content: flex-start;
+    gap: 0.5rem;
+  }
+
+  .model-navigation > .model-button-group:first-child {
+    flex-basis: 100%;
+  }
+
+  .model-navigation > .model-button-group:last-child {
+    margin-left: auto;
+  }
+
+  .model-measures {
+    flex-direction: column;
+    gap: 0.15rem;
+  }
+}
+
+@media (forced-colors: active) {
+  .model-button[aria-pressed="true"] {
+    border: 2px solid Highlight;
+    color: Highlight;
+  }
+}
+</style>
+</head>
+<body>
+<header class="mock-header"><span class="mock-mark">Relik</span><span class="mock-title">3D model</span><button type="button" class="mock-download">Download</button></header>
+<nav class="mock-states" aria-label="Model states">
+<button type="button" class="mock-state" data-state="ready" aria-pressed="true">Ready</button>
+<button type="button" class="mock-state" data-state="geometry-only" aria-pressed="false">Geometry only</button>
+<button type="button" class="mock-state" data-state="refusal" aria-pressed="false">Refusal</button>
+<button type="button" class="mock-state" data-state="webgl-unavailable" aria-pressed="false">Unavailable WebGL</button>
+</nav>
+<main class="stage-model">
+<section class="model-view" data-ready="true" data-model-state="ready" aria-label="3D model">
+<div class="model-toolbar"><div class="model-button-group" role="group" aria-label="Model display"><button type="button" class="model-button" data-action="solid" aria-pressed="true">Solid</button><button type="button" class="model-button" data-action="wireframe" aria-pressed="false">Wireframe</button></div><button type="button" class="model-button model-reset" data-action="reset">Reset</button></div>
+<div class="model-viewport"><canvas class="model-canvas" tabindex="0" role="application" aria-label="Interactive 3D model" aria-describedby="model-help"></canvas><div class="model-status" role="status" hidden><p class="model-status-title"></p><p class="model-status-detail"></p></div></div>
+<div class="model-measures"><span class="model-triangles">12 triangles</span><span class="model-extents">2 × 2 × 2 file units</span></div>
+<div class="model-warnings" role="status" hidden><p>Geometry only. Materials, textures and colors are not shown.</p></div>
+<div class="model-navigation"><div class="model-button-group" role="group" aria-label="Model movement"><button type="button" class="model-button" data-action="orbit" aria-pressed="true">Orbit</button><button type="button" class="model-button" data-action="pan" aria-pressed="false">Pan</button></div><div class="model-button-group model-directions" role="group" aria-label="Orbit directions"><button type="button" class="model-button model-icon-button" data-action="left" aria-label="Orbit left"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3 5 8l5 5"/></svg></button><button type="button" class="model-button model-icon-button" data-action="up" aria-label="Orbit up"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m3 10 5-5 5 5"/></svg></button><button type="button" class="model-button model-icon-button" data-action="down" aria-label="Orbit down"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m3 6 5 5 5-5"/></svg></button><button type="button" class="model-button model-icon-button" data-action="right" aria-label="Orbit right"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m6 3 5 5-5 5"/></svg></button></div><div class="model-button-group" role="group" aria-label="Zoom"><button type="button" class="model-button model-icon-button" data-action="zoom-out" aria-label="Zoom out"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h10"/></svg></button><button type="button" class="model-button model-icon-button" data-action="zoom-in" aria-label="Zoom in"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg></button></div></div>
+<details class="model-help"><summary>Keyboard and touch controls</summary><p id="model-help">Arrow keys rotate. Shift + arrow keys pan. + and - zoom. Home resets. W switches wireframe. Drag to orbit or pan; two fingers pan and zoom.</p></details>
+<p class="model-legend">Shown as a 3D model, no author code.</p>
+</section>
+</main>
+<script>
+// The mock draws this authored twelve-triangle cube with Canvas 2D. It previews
+// controls and named UI states; production WebGL proof belongs to model-view.ts.
+const vertices=[[-1,-1,-1],[1,-1,-1],[1,1,-1],[-1,1,-1],[-1,-1,1],[1,-1,1],[1,1,1],[-1,1,1]];
+const faces=[[0,2,1],[0,3,2],[4,5,6],[4,6,7],[0,1,5],[0,5,4],[3,7,6],[3,6,2],[0,4,7],[0,7,3],[1,2,6],[1,6,5]];
+const root=document.querySelector('.model-view');
+const canvas=root.querySelector('canvas');
+const viewport=root.querySelector('.model-viewport');
+const context=canvas.getContext('2d');
+let yaw=0.66,pitch=0.46,magnification=1,panX=0,panY=0,wire=false,mode='orbit',state='ready';
+let pointer=null;
+function isReady(){ return state==='ready'||state==='geometry-only'; }
+function draw(){
+  if(!isReady())return;
+  const bounds=viewport.getBoundingClientRect();
+  const ratio=Math.min(2,window.devicePixelRatio||1,Math.sqrt(4000000/(bounds.width*bounds.height)));
+  canvas.width=Math.max(1,Math.floor(bounds.width*ratio));canvas.height=Math.max(1,Math.floor(bounds.height*ratio));
+  context.setTransform(ratio,0,0,ratio,0,0);context.clearRect(0,0,bounds.width,bounds.height);
+  const size=Math.min(bounds.width,bounds.height)*0.23*magnification;
+  const points=vertices.map(([x,y,z])=>{const xx=x*Math.cos(yaw)+z*Math.sin(yaw),zz=-x*Math.sin(yaw)+z*Math.cos(yaw);return [xx,y*Math.cos(pitch)-zz*Math.sin(pitch),y*Math.sin(pitch)+zz*Math.cos(pitch)];});
+  const ordered=faces.map(indices=>({indices,depth:indices.reduce((sum,index)=>sum+points[index][2],0)/3})).sort((a,b)=>a.depth-b.depth);
+  const dark=matchMedia('(prefers-color-scheme:dark)').matches;
+  for(const {indices} of ordered){
+    const a=points[indices[0]],b=points[indices[1]],c=points[indices[2]];
+    const u=b.map((value,index)=>value-a[index]),v=c.map((value,index)=>value-a[index]);
+    const n=[u[1]*v[2]-u[2]*v[1],u[2]*v[0]-u[0]*v[2],u[0]*v[1]-u[1]*v[0]],length=Math.hypot(...n)||1;
+    const shade=Math.max(0.15,Math.min(1,(n[0]*-0.35+n[1]*0.7+n[2]*0.6)/length*0.4+0.6));
+    context.beginPath();indices.forEach((index,i)=>{const p=points[index],x=bounds.width/2+panX+p[0]*size,y=bounds.height/2+panY-p[1]*size;i?context.lineTo(x,y):context.moveTo(x,y);});context.closePath();
+    if(wire){context.lineWidth=1;context.strokeStyle=getComputedStyle(root).getPropertyValue('--ink-soft');context.stroke();}
+    else{const base=dark?90:105;context.fillStyle=`rgb(${Math.round(base+shade*65)} ${Math.round(base+shade*70)} ${Math.round(base+shade*69)})`;context.fill();context.lineWidth=0.5;context.strokeStyle=context.fillStyle;context.stroke();}
+  }
+  root.dataset.camera=[yaw,pitch,magnification,panX,panY].join(',');
+}
+function setMode(next){mode=next;root.querySelector('[data-action="orbit"]').setAttribute('aria-pressed',String(mode==='orbit'));root.querySelector('[data-action="pan"]').setAttribute('aria-pressed',String(mode==='pan'));for(const direction of ['left','up','down','right'])root.querySelector(`[data-action="${direction}"]`).setAttribute('aria-label',`${mode==='orbit'?'Orbit':'Pan'} ${direction}`);}
+function move(x,y,kind=mode){if(kind==='pan'){panX+=x*18;panY+=y*18;}else{yaw+=x*Math.PI/12;pitch=Math.max(-1.5,Math.min(1.5,pitch+y*Math.PI/12));}draw();}
+function action(name){if(!isReady())return;switch(name){case'reset':yaw=0.66;pitch=0.46;magnification=1;panX=panY=0;break;case'solid':wire=false;break;case'wireframe':wire=true;break;case'orbit':setMode('orbit');break;case'pan':setMode('pan');break;case'left':move(-1,0);break;case'right':move(1,0);break;case'up':move(0,-1);break;case'down':move(0,1);break;case'zoom-in':magnification=Math.min(8,magnification*1.2);break;case'zoom-out':magnification=Math.max(0.15,magnification/1.2);break;}root.querySelector('[data-action="solid"]').setAttribute('aria-pressed',String(!wire));root.querySelector('[data-action="wireframe"]').setAttribute('aria-pressed',String(wire));draw();}
+root.querySelectorAll('[data-action]').forEach(button=>button.addEventListener('click',()=>action(button.dataset.action)));
+function setState(next){state=next;root.dataset.modelState=state;const ready=isReady();root.dataset.ready=ready?'true':'error';root.querySelectorAll('button').forEach(button=>button.disabled=!ready);root.querySelector('.model-measures').hidden=!ready;root.querySelector('.model-warnings').hidden=state!=='geometry-only';canvas.hidden=!ready;const status=root.querySelector('.model-status');status.hidden=ready;root.querySelector('.model-status-title').textContent=state==='refusal'?'Model exceeds interactive limits':'WebGL 2 unavailable';root.querySelector('.model-status-detail').textContent=(state==='refusal'?'The model is too large or complex for interactive viewing.':'This browser cannot display an interactive model.')+' Download the original file to inspect it.';document.querySelectorAll('.mock-state').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.state===state)));draw();}
+document.querySelectorAll('.mock-state').forEach(button=>button.addEventListener('click',()=>setState(button.dataset.state)));
+canvas.addEventListener('pointerdown',event=>{if(!isReady())return;canvas.focus({preventScroll:true});pointer={id:event.pointerId,x:event.clientX,y:event.clientY};canvas.setPointerCapture(event.pointerId);});
+canvas.addEventListener('pointermove',event=>{if(!pointer||pointer.id!==event.pointerId)return;const x=event.clientX-pointer.x,y=event.clientY-pointer.y;pointer.x=event.clientX;pointer.y=event.clientY;if(mode==='pan'||event.shiftKey){panX+=x;panY+=y;}else{yaw+=x*0.01;pitch=Math.max(-1.5,Math.min(1.5,pitch+y*0.01));}draw();});
+canvas.addEventListener('pointerup',()=>pointer=null);canvas.addEventListener('pointercancel',()=>pointer=null);
+canvas.addEventListener('wheel',event=>{event.preventDefault();action(event.deltaY<0?'zoom-in':'zoom-out');},{passive:false});
+canvas.addEventListener('keydown',event=>{if(event.altKey||event.metaKey||event.ctrlKey)return;switch(event.key){case'ArrowLeft':move(-1,0,event.shiftKey?'pan':'orbit');break;case'ArrowRight':move(1,0,event.shiftKey?'pan':'orbit');break;case'ArrowUp':move(0,-1,event.shiftKey?'pan':'orbit');break;case'ArrowDown':move(0,1,event.shiftKey?'pan':'orbit');break;case'Home':action('reset');break;case'+':case'=':action('zoom-in');break;case'-':action('zoom-out');break;case'w':case'W':action(wire?'solid':'wireframe');break;default:return;}event.preventDefault();});
+document.querySelector('.mock-download').addEventListener('click',()=>{const source=vertices.map(point=>'v '+point.join(' ')).concat(faces.map(face=>'f '+face.map(index=>index+1).join(' '))).join('\n')+'\n';const url=URL.createObjectURL(new Blob([source],{type:'model/obj'}));const link=document.createElement('a');link.href=url;link.download='model.obj';link.click();setTimeout(()=>URL.revokeObjectURL(url),0);});
+new ResizeObserver(draw).observe(viewport);matchMedia('(prefers-color-scheme:dark)').addEventListener('change',draw);draw();
+</script>
+</body>
+</html>

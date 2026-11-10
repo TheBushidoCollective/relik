@@ -20,6 +20,7 @@ import {
 import { createApp } from '@relic/server/src/app.ts';
 import { MemoryStorage } from '@relic/server/src/storage.ts';
 import { MemoryStore } from '@relic/server/src/store.ts';
+import { chromeCoverRenderer } from '../src/cover/render.ts';
 import {
   type FileReader,
   guessMimetype,
@@ -267,6 +268,252 @@ async function open(url: string, ip = '203.0.113.5') {
   const opened = await openRelic(bytes, key, version);
   return { mintStatus: 200, opened, mint };
 }
+
+function binaryStlTriangle(x: number): Uint8Array {
+  const bytes = new Uint8Array(134);
+  bytes.set(new TextEncoder().encode('PRIVATE_3D_MODEL'));
+  const view = new DataView(bytes.buffer);
+  view.setUint32(80, 1, true);
+  view.setFloat32(92, 1, true);
+  view.setFloat32(108, x, true);
+  view.setFloat32(124, 1, true);
+  return bytes;
+}
+
+describe('model publication', () => {
+  const encoder = new TextEncoder();
+  const asciiStl =
+    'solid PRIVATE_3D_MODEL\nfacet normal 0 0 1\nouter loop\n' +
+    'vertex 0 0 0\nvertex 1 0 0\nvertex 0 1 0\n' +
+    'endloop\nendfacet\nendsolid PRIVATE_3D_MODEL\n';
+  const obj = '# PRIVATE_3D_MODEL\nv 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n';
+  const cases = [
+    {
+      name: 'binary STL',
+      filename: 'mesh.STL',
+      mimetype: 'model/stl',
+      first: binaryStlTriangle(1),
+      second: binaryStlTriangle(2),
+    },
+    {
+      name: 'ASCII STL',
+      filename: 'mesh.stl',
+      mimetype: 'model/stl',
+      first: encoder.encode(asciiStl),
+      second: encoder.encode(asciiStl.replace('vertex 1 0 0', 'vertex 2 0 0')),
+    },
+    {
+      name: 'OBJ',
+      filename: 'mesh.Obj',
+      mimetype: 'model/obj',
+      first: encoder.encode(obj),
+      second: encoder.encode(obj.replace('v 1 0 0', 'v 2 0 0')),
+    },
+    {
+      name: 'extensionless STL',
+      filename: 'mesh',
+      mimetype: 'application/octet-stream',
+      first: binaryStlTriangle(1),
+      second: binaryStlTriangle(2),
+    },
+    {
+      name: 'extensionless OBJ',
+      filename: 'mesh',
+      mimetype: 'application/octet-stream',
+      first: encoder.encode(obj),
+      second: encoder.encode(obj.replace('v 1 0 0', 'v 2 0 0')),
+    },
+  ];
+
+  for (const fixture of cases) {
+    test(`publishes and republishes ${fixture.name} with no plaintext cover`, async () => {
+      let chromeDiscoveries = 0;
+      const coverRequests: string[] = [];
+      const grants: Record<string, unknown>[] = [];
+      const republishGrants: Record<string, unknown>[] = [];
+      const renderCover = chromeCoverRenderer(
+        {
+          chromePath: undefined,
+          ffmpegPath: null,
+          assetDir: '.',
+          deadlineMs: 10_000,
+        },
+        {
+          discoverChrome: async () => {
+            chromeDiscoveries++;
+            throw new Error('Model covers must not launch Chrome');
+          },
+        }
+      );
+      const fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = new URL(String(input)).pathname;
+        if (path.endsWith('/cover')) coverRequests.push(path);
+        if (path === '/api/grant') {
+          grants.push(
+            JSON.parse(String(init?.body)) as Record<string, unknown>
+          );
+        }
+        if (path.endsWith('/republish')) {
+          republishGrants.push(
+            JSON.parse(String(init?.body)) as Record<string, unknown>
+          );
+        }
+        return deps.fetch(input, init);
+      }) as typeof globalThis.fetch;
+      const wire = { ...deps, fetch, renderCover };
+      const path = `/work/${fixture.filename}`;
+      writeFile(path, fixture.first);
+
+      const first = await publish({ path, title: '' }, wire);
+      expect(first.renderer_class).toBe('model');
+      expect(first.title).toBeNull();
+      expect(first.cover).toMatchObject({
+        status: 'skipped',
+        reason: 'no_cover_for_class',
+      });
+      const storedFirst = await storage.read(first.relic_id);
+      expect(storedFirst).toBeDefined();
+      expect(new TextDecoder().decode(storedFirst)).not.toContain(
+        'PRIVATE_3D_MODEL'
+      );
+      now += 10 * 60 * 1000;
+      const openedFirst = await open(first.url);
+      expect(openedFirst.mintStatus).toBe(200);
+      expect(openedFirst.opened?.content).toEqual(fixture.first);
+      expect(openedFirst.opened?.envelope.entries[0]?.mimetype).toBe(
+        fixture.mimetype
+      );
+
+      writeFile(path, fixture.second);
+      const second = await republish(
+        { relic_id: first.relic_id, path, title: '', notify: false },
+        wire
+      );
+      expect(second.version).toBe(2);
+      expect(second.renderer_class).toBe('model');
+      expect(second.title).toBeNull();
+      expect(second.cover).toMatchObject({
+        status: 'skipped',
+        reason: 'no_cover_for_class',
+      });
+      const storedSecond = await storage.read(`${first.relic_id}/v2`);
+      expect(storedSecond).toBeDefined();
+      expect(new TextDecoder().decode(storedSecond)).not.toContain(
+        'PRIVATE_3D_MODEL'
+      );
+      now += 10 * 60 * 1000;
+      const openedSecond = await open(first.url);
+      expect(openedSecond.mintStatus).toBe(200);
+      expect(openedSecond.opened?.content).toEqual(fixture.second);
+      expect(openedSecond.opened?.envelope.entries[0]?.mimetype).toBe(
+        fixture.mimetype
+      );
+
+      expect(chromeDiscoveries).toBe(0);
+      expect(coverRequests).toEqual([]);
+      expect(grants).toHaveLength(1);
+      expect(republishGrants).toHaveLength(1);
+      expect(grants[0]?.['renderer_class']).toBe('model');
+      expect(republishGrants[0]?.['renderer_class']).toBe('model');
+      expect(grants[0]?.['title']).toBe('');
+      expect(republishGrants[0]?.['title']).toBe('');
+      expect(Object.keys(grants[0] ?? {}).sort()).toEqual(
+        [
+          'challenge_nonce',
+          'declared_ciphertext_bytes',
+          'declared_size_bytes',
+          'publishing_client',
+          'relic_id',
+          'renderer_class',
+          'share_verifier',
+          'title',
+        ].sort()
+      );
+      expect(Object.keys(republishGrants[0] ?? {}).sort()).toEqual(
+        [
+          'declared_ciphertext_bytes',
+          'declared_size_bytes',
+          'notify',
+          'publish_token',
+          'renderer_class',
+          'share_verifier',
+          'title',
+        ].sort()
+      );
+      expect(JSON.stringify([grants, republishGrants])).not.toContain(
+        'PRIVATE_3D_MODEL'
+      );
+    });
+  }
+
+  test('protects the source model name when a display filename is overridden', async () => {
+    let chromeDiscoveries = 0;
+    const coverRequests: string[] = [];
+    const renderCover = chromeCoverRenderer(
+      {
+        chromePath: undefined,
+        ffmpegPath: null,
+        assetDir: '.',
+        deadlineMs: 10_000,
+      },
+      {
+        discoverChrome: async () => {
+          chromeDiscoveries++;
+          throw new Error('Model covers must not launch Chrome');
+        },
+      }
+    );
+    const fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = new URL(String(input)).pathname;
+      if (path.endsWith('/cover')) coverRequests.push(path);
+      return deps.fetch(input, init);
+    }) as typeof globalThis.fetch;
+    const wire = { ...deps, fetch, renderCover };
+    const path = '/work/private.obj';
+    const firstBytes = new TextEncoder().encode('PRIVATE_PARTIAL_MODEL_1\n');
+    const secondBytes = new TextEncoder().encode('PRIVATE_PARTIAL_MODEL_2\n');
+    writeFile(path, firstBytes);
+
+    const first = await publish(
+      { path, filename: 'renamed.md', title: '' },
+      wire
+    );
+    expect(first.cover).toMatchObject({
+      status: 'skipped',
+      reason: 'no_cover_for_class',
+    });
+    now += 10 * 60 * 1000;
+    const openedFirst = await open(first.url);
+    expect(openedFirst.opened?.content).toEqual(firstBytes);
+    expect(openedFirst.opened?.envelope.entries[0]?.filename).toBe(
+      'renamed.md'
+    );
+
+    writeFile(path, secondBytes);
+    const second = await republish(
+      {
+        relic_id: first.relic_id,
+        path,
+        filename: 'renamed.md',
+        title: '',
+        notify: false,
+      },
+      wire
+    );
+    expect(second.cover).toMatchObject({
+      status: 'skipped',
+      reason: 'no_cover_for_class',
+    });
+    now += 10 * 60 * 1000;
+    const openedSecond = await open(first.url);
+    expect(openedSecond.opened?.content).toEqual(secondBytes);
+    expect(openedSecond.opened?.envelope.entries[0]?.filename).toBe(
+      'renamed.md'
+    );
+    expect(chromeDiscoveries).toBe(0);
+    expect(coverRequests).toEqual([]);
+  });
+});
 
 describe('the whole loop', () => {
   test('publishes a markdown file and a recipient reads it back byte for byte', async () => {
@@ -1532,6 +1779,10 @@ describe('guessMimetype', () => {
     expect(guessMimetype('a.md', 'markdown')).toBe('text/markdown');
     expect(guessMimetype('a.png', 'image')).toBe('image/png');
     expect(guessMimetype('a.html', 'html')).toBe('text/html');
+    expect(guessMimetype('a.stl', 'model')).toBe('model/stl');
+    expect(guessMimetype('.stl', 'model')).toBe('model/stl');
+    expect(guessMimetype('.OBJ', 'code')).toBe('model/obj');
+    expect(guessMimetype('a.OBJ', 'model')).toBe('model/obj');
   });
 
   test('declares component source as jsx, never as plain or javascript', () => {
@@ -1548,6 +1799,10 @@ describe('guessMimetype', () => {
     expect(guessMimetype('noextension', 'binary')).toBe(
       'application/octet-stream'
     );
+    expect(guessMimetype('noextension', 'model')).toBe(
+      'application/octet-stream'
+    );
+    expect(guessMimetype('obj', 'binary')).toBe('application/octet-stream');
   });
 });
 
