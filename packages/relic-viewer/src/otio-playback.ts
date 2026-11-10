@@ -44,6 +44,7 @@ import {
 } from './otio-audio-pcm.ts';
 import {
   createOtioTransportGate,
+  clockFaultEvidence,
   OtioGatePreconstructionError,
   type OtioTransportGate,
   type OtioGateAck,
@@ -2910,7 +2911,7 @@ export function createOtioPlayback(
       };
     return { kind: 'pcm', admission };
   }
-  function retirePcmClockSession(): void {
+  function retirePcmClockSession(waitForSeal = false): void {
     pcmBootstrapToken++;
     pcmBootstrapAbort.abort();
     pcmBootstrapAbort = new AbortController();
@@ -2919,7 +2920,19 @@ export function createOtioPlayback(
     if (!session || session.retired) return;
     session.retired = true;
     clearTimeout(session.renewal ?? undefined);
-    pcmGateRetirements.retire(session.gate, session.release);
+    if (!waitForSeal) {
+      pcmGateRetirements.retire(session.gate, session.release);
+      return;
+    }
+    let retired = false;
+    const finish = () => {
+      if (retired) return;
+      retired = true;
+      clearTimeout(timeout);
+      pcmGateRetirements.retire(session.gate, session.release);
+    };
+    const timeout = setTimeout(finish, 100);
+    void session.sealed.then(finish, finish);
   }
 
   function renewPcmClock(session: PcmClockSession): void {
@@ -3171,6 +3184,23 @@ export function createOtioPlayback(
           onPcmGateClosed,
           (error) => {
             clockFault = error;
+            if (
+              coldProofGlobal.__otioProofPcm === true &&
+              (proofHost === 'localhost' ||
+                proofHost === '127.0.0.1' ||
+                proofHost.endsWith('.localhost') ||
+                proofHost === '[::1]')
+            ) {
+              const evidence = clockFaultEvidence(error);
+              if (evidence)
+                pcmProof(
+                  'clock-fault-diagnostic',
+                  pcmRun?.generation ?? pcmGeneration,
+                  {
+                    ...evidence,
+                  }
+                );
+            }
             if (pcmClockSession?.gate === gate) {
               retirePcmClockSession();
               failScheduledAudio(`transport gate failed: ${error.message}`);
@@ -3899,8 +3929,23 @@ export function createOtioPlayback(
         });
       }
       candidate.prepared = true;
-      for (const plan of old.admission.spans)
-        old.scheduler.retireRetainedBefore(plan.span.occurrence, startFrame);
+      if (!old.stopping) {
+        const earliestStop = Math.min(
+          boundaryFrame,
+          Math.max(
+            old.contextFrame,
+            Math.ceil(old.context.currentTime * old.admission.rate) +
+              OTIO_PCM_MIN_LEAD_FRAMES * 2
+          )
+        );
+        const safeRetireBefore =
+          old.startFrame + earliestStop - old.contextFrame;
+        for (const plan of old.admission.spans)
+          old.scheduler.retireRetainedBefore(
+            plan.span.occurrence,
+            safeRetireBefore
+          );
+      }
       pcmProof('recovery-candidate-ready', generation, {
         oldGeneration: old.generation,
         boundaryFrame,
@@ -4128,10 +4173,17 @@ export function createOtioPlayback(
   }
 
   function samplePcmOutputClock(run: PcmRun): void {
-    if (run.stopped || run.stopping || pcmRun !== run || isDisposed) return;
+    if (run.stopped || run.closedFrame !== null || pcmRun !== run || isDisposed)
+      return;
     run.clockSampleTimer = setTimeout(() => {
       run.clockSampleTimer = null;
-      if (run.stopped || run.stopping || pcmRun !== run || isDisposed) return;
+      if (
+        run.stopped ||
+        run.closedFrame !== null ||
+        pcmRun !== run ||
+        isDisposed
+      )
+        return;
       const readBegin = presentClockMs();
       const contextBefore = run.context.currentTime;
       let stamp: AudioTimestamp | null = null;
@@ -4176,6 +4228,8 @@ export function createOtioPlayback(
     run.stopping = true;
     const closedFrame = ack.closedFrame;
     run.closedFrame = closedFrame;
+    clearTimeout(run.clockSampleTimer ?? undefined);
+    run.clockSampleTimer = null;
     const compositionStop = {
       value: run.startFrame + ack.closedFrame - run.contextFrame,
       rate: run.admission.rate,
@@ -4595,7 +4649,7 @@ export function createOtioPlayback(
       run.frontierFrame = next;
       run.frontierCrossedAt = null;
       run.holds.push(hold);
-      stagePcmCandidate(run, next);
+      if (!run.stopping) stagePcmCandidate(run, next);
       if (old === null) {
         run.outputClock.start();
         samplePcmOutputClock(run);
@@ -5189,7 +5243,28 @@ export function createOtioPlayback(
           requestWall,
           presentClockMs()
         );
-        if (!probe) throw new Error('fresh recovery output clock unavailable');
+        if (!probe) {
+          if (
+            coldProofGlobal.__otioProofPcm === true &&
+            (proofHost === 'localhost' ||
+              proofHost === '127.0.0.1' ||
+              proofHost.endsWith('.localhost') ||
+              proofHost === '[::1]')
+          ) {
+            const observedWall = presentClockMs();
+            pcmProof('recovery-clock-fork-unavailable', oldRun.generation, {
+              requestWall,
+              observedWall,
+              state: previousClock.state,
+              lastRejection: previousClock.lastRejection,
+              contextTime: context.currentTime,
+              recoveryEvidenceJson: JSON.stringify(
+                previousClock.recoveryEvidence(observedWall)
+              ),
+            });
+          }
+          throw new Error('fresh recovery output clock unavailable');
+        }
         const readBegin = presentClockMs();
         const contextBefore = context.currentTime;
         let stamp: AudioTimestamp | null = null;
@@ -5243,8 +5318,19 @@ export function createOtioPlayback(
           Math.ceil(contextAfter * admission.rate) +
             OTIO_PCM_EPOCH_GUARD_FRAMES >
             gapUpper
-        )
+        ) {
+          pcmProof('recovery-clock-observation-rejected', oldRun.generation, {
+            requestWall,
+            readBegin,
+            readEnd,
+            contextBefore,
+            contextAfter,
+            stamp,
+            observation,
+            gapUpper,
+          });
           throw new Error('fresh recovery output clock unavailable');
+        }
         const wait = Promise.withResolvers<void>();
         setTimeout(wait.resolve, 1);
         await wait.promise;
@@ -6573,7 +6659,7 @@ export function createOtioPlayback(
     playRequestEpoch++;
     pcmRecoveryWake?.();
     stopPcm('underflow');
-    retirePcmClockSession();
+    retirePcmClockSession(true);
     isPlaying = false;
     isStarting = false;
     isBuffering = false;

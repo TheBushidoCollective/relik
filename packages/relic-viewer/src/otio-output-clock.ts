@@ -115,6 +115,23 @@ export class OutputClock {
     this.min = this.max = this.runtimeOffsets[0]!.offset;
     this.state = 'playing';
   }
+  /** Diagnostic copy for a failed recovery-fork probe. */
+  recoveryEvidence(nowMs: number): {
+    retained: Array<{ time: number; offset: number; readEnd: number }>;
+    policy: ClockPolicy;
+    nowMs: number;
+  } {
+    return {
+      retained: this.recoveryOffsets.map((entry) => ({
+        time: entry.time,
+        offset: entry.offset,
+        readEnd: entry.observation.readEnd,
+      })),
+      policy: { ...this.policy },
+      nowMs,
+    };
+  }
+
   // Caller must bind this to the same uninterrupted AudioContext and sink.
   // The returned candidate is not armed until a new advancing observation.
   forkForRequest(
