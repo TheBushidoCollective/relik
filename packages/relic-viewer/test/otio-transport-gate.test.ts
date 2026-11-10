@@ -1,5 +1,14 @@
 import { describe, expect, test } from 'bun:test';
-import { OtioTransportGateState } from '../src/otio-transport-gate-state';
+import { OtioTransportGateState as GateState } from '../src/otio-transport-gate-state';
+
+// Legacy state cases exercise slot zero; dedicated cases below use the raw state.
+class OtioTransportGateState extends GateState {
+  override command(raw: unknown, now: number, coverage?: number) {
+    if (raw && typeof raw === 'object' && 'type' in raw && raw.type === 'arm')
+      return super.command({ slot: 0, ...raw }, now, coverage);
+    return super.command(raw, now, coverage);
+  }
+}
 
 function block(
   gate: OtioTransportGateState,
@@ -8,12 +17,149 @@ function block(
 ): number[] {
   const input = Float32Array.from({ length }, (_, i) => start + i + 1);
   const output = new Float32Array(length);
-  gate.render([input], [output], start);
+  gate.render([[input], [], []], [output], start);
   gate.expire(start + length);
   return Array.from(output);
 }
 
 describe('render-thread transport gate', () => {
+  test('isolates authored slots and never emits the bootstrap carrier', () => {
+    const gate = new GateState(7);
+    const output = [new Float32Array(4)];
+    const inputs = [
+      [new Float32Array(4).fill(1)],
+      [new Float32Array(4).fill(9)],
+      [new Float32Array(4).fill(2)],
+    ];
+    gate.render(inputs, output, 0);
+    expect(Array.from(output[0]!)).toEqual([0, 0, 0, 0]);
+    expect(
+      gate.command(
+        {
+          type: 'arm',
+          clockEpoch: 7,
+          generation: 1,
+          sequence: 1,
+          f0: 2,
+          throughFrame: 6,
+          slot: 0,
+        },
+        0
+      ).accepted
+    ).toBe(true);
+    expect(
+      gate.command(
+        {
+          type: 'arm',
+          clockEpoch: 7,
+          generation: 2,
+          sequence: 2,
+          f0: 3,
+          throughFrame: 9,
+          slot: 1,
+        },
+        0
+      ).accepted
+    ).toBe(false);
+    gate.render(inputs, output, 0);
+    expect(Array.from(output[0]!)).toEqual([0, 0, 1, 1]);
+    gate.expire(6);
+    expect(
+      gate.command(
+        {
+          type: 'arm',
+          clockEpoch: 7,
+          generation: 2,
+          sequence: 3,
+          f0: 8,
+          throughFrame: 12,
+          slot: 1,
+        },
+        6
+      ).accepted
+    ).toBe(true);
+    gate.render(inputs, output, 6);
+    expect(Array.from(output[0]!)).toEqual([0, 0, 2, 2]);
+    expect(
+      gate.command(
+        { type: 'abort', clockEpoch: 7, generation: 2, sequence: 4 },
+        10
+      ).accepted
+    ).toBe(true);
+    gate.render(inputs, output, 10);
+    expect(Array.from(output[0]!)).toEqual([0, 0, 0, 0]);
+    expect(
+      gate.command(
+        {
+          type: 'arm',
+          clockEpoch: 7,
+          generation: 3,
+          sequence: 5,
+          f0: 12,
+          throughFrame: 16,
+          slot: 0,
+        },
+        10
+      ).accepted
+    ).toBe(true);
+    gate.render(inputs, output, 10);
+    expect(Array.from(output[0]!)).toEqual([0, 0, 1, 1]);
+  });
+
+  test('rejects missing, malformed, and stale slot commands', () => {
+    const gate = new GateState(7);
+    for (const [index, slot] of [undefined, null, -1, 2, '0', NaN].entries()) {
+      expect(
+        gate.command(
+          {
+            type: 'arm',
+            clockEpoch: 7,
+            generation: 1,
+            sequence: index + 1,
+            f0: 0,
+            throughFrame: 10,
+            slot,
+          },
+          0
+        ).accepted
+      ).toBe(false);
+    }
+    expect(
+      gate.command(
+        {
+          type: 'arm',
+          clockEpoch: 7,
+          generation: 1,
+          sequence: 7,
+          f0: 0,
+          throughFrame: 10,
+          slot: 1,
+        },
+        0
+      ).accepted
+    ).toBe(true);
+    expect(
+      gate.command(
+        { type: 'abort', clockEpoch: 7, generation: 1, sequence: 8 },
+        1
+      ).accepted
+    ).toBe(true);
+    expect(
+      gate.command(
+        {
+          type: 'arm',
+          clockEpoch: 7,
+          generation: 1,
+          sequence: 9,
+          f0: 1,
+          throughFrame: 10,
+          slot: 0,
+        },
+        1
+      ).accepted
+    ).toBe(false);
+  });
+
   test('rejects wrong epochs and frontiers beyond certified coverage', () => {
     const gate = new OtioTransportGateState(17);
     expect(

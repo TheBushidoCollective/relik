@@ -560,7 +560,7 @@ class OtioTransportGateProcessor extends AudioWorkletProcessor {
         );
     }
     this.firstCommand = this.secondCommand = null;
-    if (this.anchored) this.gate.render(inputs[0], output, observed);
+    if (this.anchored) this.gate.render(inputs, output, observed);
     else this.silence(outputs);
     const expired = this.gate.expire(this.expected);
     if (expired) this.port.postMessage(expired);

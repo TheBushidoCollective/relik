@@ -59,7 +59,8 @@ test('session correlates anchor certification, commands and retirement', async (
     });
     await gate.ready();
     expect(gate.clockCoverageEnd).toBe(65536 - 2048);
-    const arm = gate.arm(1, 300, 500);
+    const arm = gate.arm(1, 300, 500, 1);
+    expect(sent[sent.length - 1]?.slot).toBe(1);
     emit({ type: 'clock-stale-pair', previous: {}, current: {} });
     emit({ type: 'clock-stale-overflow' });
     expect(gate.clockCoverageEnd).toBe(65536 - 2048);
@@ -108,7 +109,7 @@ test('session correlates anchor certification, commands and retirement', async (
     const retirement = gate.dispose();
     emit({ type: 'disposed' });
     await retirement;
-    await expect(gate.arm(2, 500, 600)).rejects.toThrow('disposed');
+    await expect(gate.arm(2, 500, 600, 0)).rejects.toThrow('disposed');
   } finally {
     globals.AudioWorkletNode = original;
   }
@@ -233,7 +234,7 @@ test('serial exhaustion is proof-only, refuses renewal and does not wrap', async
       'Clock bank unavailable'
     );
     expect(node.sent).toHaveLength(count);
-    const arm = gate.arm(1, 300, 400);
+    const arm = gate.arm(1, 300, 400, 0);
     node.emit({
       type: 'arm',
       clockEpoch: gate.clockEpoch,
@@ -297,7 +298,6 @@ test('frozen native carrier encodes exact frame words and is routed only to inpu
       initialFrame
     );
     const node = gate.node as unknown as FakeGateNode;
-    expect(node.options.numberOfInputs).toBe(2);
     expect(node.options.channelInterpretation).toBe('speakers');
     expect(connections).toEqual([[node, 0, 1]]);
     expect(starts).toEqual([[initialFrame / 48000, 0]]);

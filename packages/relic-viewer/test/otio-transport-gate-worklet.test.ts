@@ -46,7 +46,13 @@ test('native render clock certifies promotions and silences a held ramp', async 
       },
     });
     const send = (message: Message) =>
-      processor.port.onmessage?.({ data: { clockEpoch: 1, ...message } });
+      processor.port.onmessage?.({
+        data: {
+          clockEpoch: 1,
+          ...(message.type === 'arm' ? { slot: 0 } : {}),
+          ...message,
+        },
+      });
     const run = (start: number, corrupt = false) => {
       const frames = (base: number) =>
         Float32Array.from({ length: 128 }, (_, i) => start + i - base);
@@ -169,7 +175,13 @@ test('native render clock certifies promotions and silences a held ramp', async 
         processorOptions: { clockEpoch: 2, initialFrame: 0 },
       });
     const command = (instance: Processor, value: Message) =>
-      instance.port.onmessage?.({ data: { clockEpoch: 2, ...value } });
+      instance.port.onmessage?.({
+        data: {
+          clockEpoch: 2,
+          ...(value.type === 'arm' ? { slot: 0 } : {}),
+          ...value,
+        },
+      });
     const block = (
       instance: Processor,
       start: number,
@@ -185,7 +197,11 @@ test('native render clock certifies promotions and silences a held ramp', async 
         ),
         Float32Array.from({ length: 4 }, (_, i) => (start + i) % 65536),
       ];
-      const alive = instance.process([source, carrier], [output], {
+      const replacement = [
+        new Float32Array(4).fill(2),
+        new Float32Array(4).fill(2),
+      ];
+      const alive = instance.process([source, carrier, replacement], [output], {
         clockFrameA:
           values ??
           Float32Array.from({ length: 4 }, (_, index) => start + index),
@@ -335,6 +351,108 @@ test('native render clock certifies promotions and silences a held ramp', async 
     });
     expect(Array.from(block(prefix, 16).output[0]!)).toEqual([0, 0, 0, 0]);
     expect(prefix.port.messages.at(-1)?.accepted).toBe(false);
+    const recovery = fresh();
+    expect(Array.from(block(recovery, 0).output[0]!)).toEqual([0, 0, 0, 0]);
+    expect(Array.from(block(recovery, 4).output[0]!)).toEqual([0, 0, 0, 0]);
+    command(recovery, {
+      type: 'arm',
+      generation: 1,
+      sequence: 1,
+      f0: 10,
+      throughFrame: 14,
+      slot: 0,
+    });
+    expect(Array.from(block(recovery, 8).output[0]!)).toEqual([0, 0, 1, 1]);
+    command(recovery, {
+      type: 'arm',
+      generation: 2,
+      sequence: 2,
+      f0: 14,
+      throughFrame: 24,
+      slot: 1,
+    });
+    expect(Array.from(block(recovery, 12).output[0]!)).toEqual([1, 1, 0, 0]);
+    expect(
+      recovery.port.messages.find(
+        (message) => message.type === 'arm' && message.sequence === 2
+      )?.accepted
+    ).toBe(false);
+    command(recovery, {
+      type: 'arm',
+      generation: 2,
+      sequence: 3,
+      f0: 18,
+      throughFrame: 24,
+      slot: 1,
+    });
+    expect(Array.from(block(recovery, 16).output[0]!)).toEqual([0, 0, 2, 2]);
+    command(recovery, { type: 'abort', generation: 2, sequence: 4 });
+    expect(Array.from(block(recovery, 20).output[0]!)).toEqual([0, 0, 0, 0]);
+    command(recovery, {
+      type: 'arm',
+      generation: 3,
+      sequence: 5,
+      f0: 24,
+      throughFrame: 28,
+      slot: 0,
+    });
+    expect(Array.from(block(recovery, 24).output[0]!)).toEqual([1, 1, 1, 1]);
+    const invalidSlot = fresh();
+    block(invalidSlot, 0);
+    block(invalidSlot, 4);
+    invalidSlot.port.onmessage?.({
+      data: {
+        type: 'arm',
+        clockEpoch: 2,
+        generation: 1,
+        sequence: 1,
+        f0: 8,
+        throughFrame: 24,
+      },
+    });
+    expect(Array.from(block(invalidSlot, 8).output[0]!)).toEqual([0, 0, 0, 0]);
+    expect(
+      invalidSlot.port.messages.find(
+        (message) => message.type === 'arm' && message.sequence === 1
+      )?.accepted
+    ).toBe(false);
+    command(invalidSlot, {
+      type: 'arm',
+      generation: 1,
+      sequence: 2,
+      f0: 12,
+      throughFrame: 24,
+      slot: 2,
+    });
+    expect(Array.from(block(invalidSlot, 12).output[0]!)).toEqual([0, 0, 0, 0]);
+    expect(
+      invalidSlot.port.messages.find(
+        (message) => message.type === 'arm' && message.sequence === 2
+      )?.accepted
+    ).toBe(false);
+    command(invalidSlot, {
+      type: 'arm',
+      generation: 1,
+      sequence: 3,
+      f0: 16,
+      throughFrame: 20,
+      slot: 1,
+    });
+    expect(Array.from(block(invalidSlot, 16).output[0]!)).toEqual([2, 2, 2, 2]);
+    command(invalidSlot, {
+      type: 'arm',
+      generation: 1,
+      sequence: 4,
+      f0: 20,
+      throughFrame: 24,
+      slot: 0,
+    });
+    expect(Array.from(block(invalidSlot, 20).output[0]!)).toEqual([0, 0, 0, 0]);
+    expect(
+      invalidSlot.port.messages.find(
+        (message) => message.type === 'arm' && message.sequence === 4
+      )?.accepted
+    ).toBe(false);
     const maximum = 2 ** 24 - 1;
     const exhausted = new ProcessorClass({
       processorOptions: {

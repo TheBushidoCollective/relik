@@ -12,7 +12,7 @@ test('render clock fault interrupts pending work and establishes processor retir
       () => {},
       (error) => errors.push(error)
     );
-    const pending = gate.arm(1, 300, 400);
+    const pending = gate.arm(1, 300, 400, 0);
     node.emit({
       type: 'clock-fault',
       clockEpoch: gate.clockEpoch,

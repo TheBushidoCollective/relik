@@ -65,7 +65,8 @@ export interface OtioTransportGate {
   arm(
     generation: number,
     f0: number,
-    throughFrame: number
+    throughFrame: number,
+    slot: 0 | 1
   ): Promise<OtioGateAck>;
   extend(
     generation: number,
@@ -146,7 +147,7 @@ export async function createOtioTransportGate(
   let node: AudioWorkletNode;
   try {
     node = new AudioWorkletNode(context, 'otio-transport-gate', {
-      numberOfInputs: 2,
+      numberOfInputs: 3,
       numberOfOutputs: 1,
       channelCount: 2,
       channelCountMode: 'explicit',
@@ -588,8 +589,8 @@ export async function createOtioTransportGate(
         }
       });
     },
-    arm: (generation, f0, throughFrame) =>
-      send({ type: 'arm', generation, f0, throughFrame }),
+    arm: (generation, f0, throughFrame, slot) =>
+      send({ type: 'arm', generation, f0, throughFrame, slot }),
     extend: (generation, expectedThroughFrame, throughFrame) =>
       send({ type: 'extend', generation, expectedThroughFrame, throughFrame }),
     stop: (generation, stopFrame) => {

@@ -5,6 +5,7 @@ export type OtioGateCommand =
       sequence: number;
       f0: number;
       throughFrame: number;
+      slot: 0 | 1;
     }
   | {
       type: 'extend';
@@ -40,6 +41,7 @@ export class OtioTransportGateState {
   private frontier: number | null = null;
   private closedFrame: number | null = null;
   private stopFrame: number | null = null;
+  private slot: 0 | 1 = 0;
 
   private result(
     type: OtioGateAck['type'],
@@ -86,6 +88,7 @@ export class OtioTransportGateState {
       throughFrame?: unknown;
       expectedThroughFrame?: unknown;
       stopFrame?: unknown;
+      slot?: unknown;
     } | null;
     const type = value?.type;
     const generation = value?.generation;
@@ -119,6 +122,7 @@ export class OtioTransportGateState {
     this.sequence = sequence;
     if (type === 'arm') {
       if (
+        (value.slot !== 0 && value.slot !== 1) ||
         !frame(value.f0) ||
         !frame(value.throughFrame) ||
         value.throughFrame > coverage ||
@@ -136,6 +140,7 @@ export class OtioTransportGateState {
         );
       }
       this.generation = generation;
+      this.slot = value.slot as 0 | 1;
       this.f0 = value.f0;
       this.frontier = value.throughFrame;
       this.closedFrame = null;
@@ -200,14 +205,14 @@ export class OtioTransportGateState {
 
   /** Writes every sample, including silent prefixes and suffixes, without allocation. */
   render(
-    input: Float32Array[] | undefined,
+    inputs: Float32Array[][],
     output: Float32Array[],
     start: number
   ): void {
     const end = this.closedFrame === null ? this.frontier : null;
     for (let channel = 0; channel < output.length; channel++) {
       const out = output[channel]!;
-      const source = input?.[channel];
+      const source = inputs[this.slot === 0 ? 0 : 2]?.[channel];
       for (let i = 0; i < out.length; i++) {
         const at = start + i;
         out[i] =

@@ -45,11 +45,11 @@ test('malformed and mismatched command acknowledgments fail pending commands', a
         () => {},
         (error) => errors.push(error)
       );
-      const promise = gate.arm(1, 300, 400);
+      const promise = gate.arm(1, 300, 400, 0);
       node.emit({ ...ack, clockEpoch: gate.clockEpoch });
       await expect(promise).rejects.toThrow('transport gate');
       expect(errors).toHaveLength(1);
-      await expect(gate.arm(2, 400, 500)).rejects.toThrow('transport gate');
+      await expect(gate.arm(2, 400, 500, 0)).rejects.toThrow('transport gate');
       const retired = gate.dispose();
       node.emit({ type: 'disposed', clockEpoch: gate.clockEpoch });
       await retired;
@@ -70,7 +70,7 @@ test('malformed unsolicited closures report an error instead of a false close', 
       (ack) => closures.push(ack),
       (error) => errors.push(error)
     );
-    const arm = gate.arm(1, 300, 400);
+    const arm = gate.arm(1, 300, 400, 0);
     node.emit({
       type: 'arm',
       clockEpoch: gate.clockEpoch,
