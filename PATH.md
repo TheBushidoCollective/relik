@@ -118,3 +118,34 @@ at 1440px and 320px widths. It must check horizontal overflow, visible keyboard
 focus, and active/resolved state updates. `RELIC_IMAGE_SHOTS_DIR` retains the
 `markers-<width>-<scenario>.png` screenshots and `rectangles.json` measurements
 alongside the existing light/dark receipts.
+
+# GCS stored-byte digest proof
+
+From the candidate branch checkout with its pull request open, dispatch the trusted workflow on `main`:
+
+```sh
+gh workflow run gcs-proof.yml --ref main \
+  -f candidate_sha="$(gh pr view --json headRefOid --jq .headRefOid)" \
+  -f pr_number="$(gh pr view --json number --jq .number)"
+```
+
+Find the dispatch with `gh run list --workflow gcs-proof.yml --branch main`, set `RUN_ID` to its run ID, and run:
+
+```sh
+gh run watch "$RUN_ID" --exit-status
+gh run view "$RUN_ID" --log
+```
+
+The default includes the 500 MiB upload. A run with `large_object=false` does not prove that path. A successful default run must include all of these markers for the same run attempt:
+
+- `GCS_PROOF_PROVISIONED bucket=... account=... account_uid=... expires=...`
+- `GCS_PROOF_POLICY_VERIFIED bucket=... account=...` and `GCS_PROOF_SCOPE_VERIFIED account=...`
+- `GCS_PROOF_EXERCISE_NO_OIDC` and `GCS_PROOF_HANDOFF_OPENED`
+- `GCS_PROOF_REVOKED account=...`, `GCS_PROOF_BUCKET_GONE ...`, `GCS_PROOF_ACCOUNT_GONE ...`, and `GCS_PROOF_RESOURCES_GONE bucket=... account_uid=...`
+- `GCS_PROOF_VERIFIED candidate=... gcs_blob=... bucket=... account_uid=...`
+
+Match the candidate SHA to the PR head and the bucket, account and account UID across the markers. The final marker requires the digest checks, revocation and verified cleanup. A failed or cancelled run is not a successful proof, even if cleanup succeeds.
+
+Each attempt uses its own bucket and service account. The candidate runs in a job without GitHub OIDC request credentials or deployer credentials; a separate job seals its account token to an exercise-runner key before artifact transfer. The account can use or disclose its token and can sign as itself during its conditional grant. The account's grants have a two-hour lease; token expiry alone is not the boundary. See `docs/design/operations.md` for the scope checks, cleanup rules and limits.
+
+After a change to the workflow, live GCP authorization, the cross-job handoff, revocation and cleanup require a run from the merged `main` revision. A local fake or an earlier run does not prove those paths. The workflow needs two runners available at once for mint and exercise.

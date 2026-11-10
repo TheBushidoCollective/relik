@@ -373,3 +373,50 @@ Stated as needs, with the owner named and the behaviour that follows either way.
 2. **Whether the viewer distinguishes cap exhaustion from takedown, from `design-product-surface`.** Section 5.2 designs both branches, specifies the operator-side lookup that branch B requires, and states that branch A is cheaper for a one-person operation and creates no disclosure `service.md` 1.4 has not already made. The choice is that unit's.
 3. **The pre-launch empirical bundle, from `build`.** Three observations in one run: the Defender for Office 365 fragment test `service.md` section 6 mandates, the download-attribution question `topology.md` section 8 routes to this unit, and the signing-key rotation propagation delay `storage.md` 3.4 leaves unverified. This unit owns the first two and states them as one bundle because they need the same thing, which is a live relic and a real browser. The third is `storage.md`'s and needs a billed project, so it is named here for scheduling and is not claimed.
 4. **Nothing from `design-container-and-crypto`.** Its 125-bit ID decision is consumed in section 5.3 and recorded as settled.
+
+## 9. GCS digest proof and cleanup
+
+The trusted workflow runs from `main` against a validated candidate SHA. Each run attempt creates a bucket named `relic-gcs-proof-<run_id>-<attempt>` and a service account named `rgp-<run_id>-<attempt>@<project>.iam.gserviceaccount.com`. The account description and bucket labels identify the run, attempt, candidate and lease expiration; the account description also identifies the repository. Existing names are never adopted. GCS bucket names are global, so a collision or a name held elsewhere fails the proof.
+
+The deployer provisions the resources, but candidate code runs only in the separate `exercise` job. That job has neither `id-token: write` nor deployer credentials. Its first step requires both GitHub OIDC request environment variables to be empty or unset and emits `GCS_PROOF_EXERCISE_NO_OIDC`. Trusted provision and teardown jobs hold deployer credentials and do not execute candidate code. The `mint` job has GitHub OIDC permission but does not execute candidate code.
+
+Provisioning grants the per-run account `roles/storage.objectUser` on its bucket and self `roles/iam.serviceAccountTokenCreator`. A repository-scoped workload identity principal gets `roles/iam.workloadIdentityUser` on that account. Each binding requires `request.time` to precede the expiration set at provisioning, two hours after the lease starts. Two additional bindings, self `roles/iam.serviceAccountViewer` and bucket `roles/storage.bucketViewer`, carry already-lapsed conditions and provide negative controls. The workflow adds no project-level binding or account key. It reads the account and bucket policies back, including the existing legacy bucket convenience bindings, before use.
+
+The exercise runner creates an X25519 key pair before executing candidate code and uploads only the public key. Mint uses direct workload identity federation to obtain an account token, then seals it to that key using X25519, HKDF and AES-256-GCM. The authenticated context binds the ciphertext to the run, attempt, account and expiration. The sealed artifact crosses jobs; the private key stays on the exercise runner and is deleted after unsealing. Mint and exercise must have two runners available concurrently. The handoff artifacts are retained for one day.
+
+Before handing over the token, the scope check requires the sampled create, delete, get and update object permissions on the proof bucket, with bucket-get absent. The production relic and Terraform state buckets must return no sampled permissions, and project-level bucket and account listing must return 403. On its own account, `signBlob` must be allowed and account-get absent. The application and deployer accounts must return no sampled permissions, and `signBlob` attempts against them must return 403. These are scoped live checks, not evidence about every other resource or future IAM policy.
+
+Candidate code receives the per-run account token and can use or disclose it, sign as the account and potentially renew it during the lease. The initial token's expiry does not bound that capability. The workflow grants access to the run's bucket rather than granting access to production buckets or another attempt's bucket; inherited or independently added permissions remain outside that statement. The lease bounds the workflow's conditional IAM grants, not the lifetime of the resources. IAM changes can take time to propagate; the workflow retries within deadlines and fails if the required checks do not pass.
+
+The existing workload identity provider authorizes by repository ID rather than restricting the deployer to a protected branch or environment. Another workflow in the repository with `id-token: write` can request deployer credentials. The proof's job separation does not change that existing boundary.
+
+Treat logs and artifacts as public. Tokens, signed URLs and private keys must not be logged. The result validator rejects the proof token and recognizable credential shapes, but a candidate with the token can still disclose it through another channel. The encrypted artifact protects the cross-job handoff, not a token intentionally disclosed by candidate code.
+
+Cleanup has three layers:
+
+1. **Teardown.** Even after a failed or cancelled earlier job, teardown attempts revocation and cleanup. It validates resource names and markers, including the account's immutable ID when the provisioned record is available, disables the account and reads back its disabled state. It checks that a previously usable token is rejected within 300 seconds and that a new token cannot be minted. Cleanup clears object holds, aborts multipart uploads, removes managed folders and all object generations, then deletes the bucket and account. It requires a 404 for each absent resource and checks that no soft-deleted bucket entry remains; a 403 is a failure, not proof of absence. Subject to the marker checks, every cleanup step is attempted and any failure fails the cleanup.
+2. **Janitor.** A trusted `main` workflow sweeps both buckets and accounts, including partial provisioning. It runs hourly, after a qualifying `GCS digest proof` run completes, and on manual dispatch. It groups resources by canonical positive run and attempt IDs, validates their markers, requires the account's repository marker when the account exists, and requires matching candidate and expiration markers when both resources exist. It checks the GitHub run belongs to the expected workflow and repository, was manually dispatched on `main`, and has the same run ID. An older attempt is eligible when a newer attempt exists; the latest attempt is eligible only after the run completes. The default minimum age is 15 minutes for scheduled and manual runs and zero for the completion trigger, measured from the lease start. Active latest attempts, missing runs, marker conflicts and unconfirmed identities are skipped. API errors other than a missing run fail the job.
+3. **Bucket lifecycle.** The one-day lifecycle expires objects and aborts incomplete multipart uploads. It does not delete the bucket or service account, and lifecycle processing is asynchronous.
+
+A force-cancel can prevent teardown from running. The janitor provides a later cleanup path, subject to eligibility and successful execution; the lease still bounds the workflow's IAM grants. A flood of objects can delay deletion, and lifecycle processing can help clear them. Investigate failed or skipped cleanup rather than assuming the resources disappeared.
+
+Manual janitor dispatch defaults to dry-run. To inspect eligible resources without deleting them:
+
+```sh
+gh workflow run gcs-proof-janitor.yml --ref main \
+  -f dry_run=true -f min_age_minutes=0
+```
+
+`GCS_PROOF_JANITOR_ELIGIBLE` identifies a run attempt selected for cleanup; `GCS_PROOF_JANITOR_SKIP` includes a reason such as `marker`, `marker_conflict`, `too_young`, `run_unavailable`, `run_identity`, `run_active` or `run_attempt`. `GCS_PROOF_JANITOR_DONE` reports eligible and failed counts and whether the sweep was a dry-run. A missing GitHub run is left for operator investigation.
+
+### Live verification
+
+After the workflow changes land on `main`, run the janitor dry-run above and require `GCS_PROOF_JANITOR_DONE` with `eligible=0`. Run the default proof in `PATH.md` and require its policy, scope, no-OIDC, handoff, revocation, resource-absence and final verification markers. The proof uses the candidate's `iamSigner`, V4 signing and `gcsStorage.digest` against the disposable bucket. It does not exercise the production `metadataSigner` metadata fetch. Its memory check measures the digest process's RSS, not the full upload or total runner memory.
+
+For the force-cancel drill, dispatch another proof, set `RUN_ID` to the new run ID, and wait for `GCS_PROOF_PROVISIONED`. Cancel that run while its jobs are waiting for the handoff:
+
+```sh
+gh api -X POST "repos/{owner}/{repo}/actions/runs/$RUN_ID/force-cancel"
+```
+
+Check the completion-triggered janitor run for `GCS_PROOF_JANITOR_ELIGIBLE` for that run ID and `GCS_PROOF_RESOURCES_GONE`. Check the next scheduled sweep for `failed=0`. These live checks establish what happened on those attempts; fake-based tests and a green workflow on an earlier revision do not establish live WIF, artifact transfer, revocation or cleanup.
