@@ -661,3 +661,21 @@ Success ends with:
 ```text
 COMMENT_POPOVER_PATH_OK classes=9
 ```
+
+## 500 MiB upload and large previews
+
+From the repository root:
+
+```sh
+bun run --cwd packages/relic-viewer build
+bun run --cwd packages/relic-mcp build
+RELIC_PROOF_CHROME_PATH=/absolute/path/to/headless-chromium bun packages/relic-mcp/test/large-relic-path.ts
+```
+
+Use `chrome-headless-shell` on macOS. The path is mandatory and the owned process must attest headless mode. The proof requires Node, Bun, ffmpeg with the `libvpx-vp9` encoder, and enough scratch space for the generated fixtures and downloads. On Linux it samples `/proc`; on macOS it samples `ps` RSS, so macOS peak figures are sampled rather than process high-water marks.
+
+The loopback service uses `MemoryStore` and `MemoryStorage`. Fresh MCP stdio processes publish the fixtures; no production endpoint receives a write. The exact 500 MiB video must publish with the expected ciphertext length, refuse a 500 MiB plus one byte declaration locally and at the server, prompt before a full fetch, play and seek, and download byte-identically. A 100 MiB video must open without the prompt. The proof seeds 199 consumed mints and checks that the 200th succeeds and the 201st is refused.
+
+A large OTIO bundle contains a referenced 498 MiB video and must play, seek, expose timing windows, and retain a point comment after reopening. A 300 MiB PDF must render both distinct pages and download intact after rendering. A 120 MiB text file must expose first, middle and last source windows and download intact; the proof also checks a large image and both the 16 MiB model byte limit and 250,000-triangle limit. Corrupted ciphertext, a flipped download byte, an authenticated over-cap envelope, and a 512 MiB renderer allocation are negative controls.
+
+Success ends with `LARGE_RELIC_PATH_OK`. Output reports observed byte counts and memory samples, without share URLs or keys. Scratch files and the owned browser profile are removed. Firefox, WebKit, physical devices, version-cache eviction, and stress-rendering an exactly 100 MiB text document are outside this command.

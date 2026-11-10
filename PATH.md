@@ -118,3 +118,18 @@ at 1440px and 320px widths. It must check horizontal overflow, visible keyboard
 focus, and active/resolved state updates. `RELIC_IMAGE_SHOTS_DIR` retains the
 `markers-<width>-<scenario>.png` screenshots and `rectangles.json` measurements
 alongside the existing light/dark receipts.
+
+# Large relic upload and preview
+
+Build the viewer and MCP bundle, then run the loopback proof from the repository root:
+
+```sh
+bun run --cwd packages/relic-viewer build
+bun run --cwd packages/relic-mcp build
+RELIC_PROOF_CHROME_PATH=/absolute/path/to/headless-chromium bun packages/relic-mcp/test/large-relic-path.ts
+```
+
+The command publishes a 500 MiB file through MCP stdio to a loopback service, checks the cap boundary, exercises the confirmation and preview, and hashes the downloaded file against the source. It also checks large OTIO, PDF, text, image and model paths. Success ends with `LARGE_RELIC_PATH_OK`; failures exit nonzero. The browser has a private profile and must attest headless mode.
+
+Node, Bun, ffmpeg with `libvpx-vp9`, an explicit headless Chromium executable, and sufficient temporary disk space are required. The proof supports Linux and macOS; its memory receipts use Linux process high-water/RSS and sampled macOS RSS. It creates and removes local scratch data and makes no production writes. Cross-engine, real-device and version-cache measurements are separate proofs.
+
