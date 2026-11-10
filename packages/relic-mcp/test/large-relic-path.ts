@@ -31,8 +31,11 @@ import { MemoryStorage } from '@relic/server/src/storage.ts';
 import { MemoryStore } from '@relic/server/src/store.ts';
 import {
   hashFile,
+  memoryGrowth,
+  memoryMeasurement,
   processRssBytes,
   ProofBrowser,
+  type MemoryGrowth,
   type Page,
 } from './large-relic-browser.ts';
 import {
@@ -418,6 +421,14 @@ const timingPrelude = `(() => {
   };
 })()`;
 
+function rendererMemoryReceipt(growth: MemoryGrowth): string {
+  return `renderer_growth=${growth.footprint} renderer_rss_growth=${growth.rss} measurement=${memoryMeasurement()} added=${JSON.stringify(growth.added)} exited=${JSON.stringify(growth.exited)}`;
+}
+
+function memoryControlReceipt(label: string, growth: MemoryGrowth): string {
+  return `${label}_growth=${growth.footprint} ${label}_rss_growth=${growth.rss} ${label}_added=${JSON.stringify(growth.added)} ${label}_exited=${JSON.stringify(growth.exited)}`;
+}
+
 try {
   assert.equal(app.config.downloadCap, 200, 'download cap changed');
   const base = await makeBaseVideo(scratch);
@@ -488,6 +499,12 @@ try {
     scratch,
     service.port!,
     contentService.port!
+  );
+  const calibration = await browser.page('about:blank');
+  const calibrated = await browser.memoryNegativeControl(calibration);
+  await browser.closePage(calibration);
+  console.log(
+    `LARGE_MEMORY_NEG_OK allocation_bytes=${512 * MIB} detected_growth=${calibrated.allocation.footprint} ${memoryControlReceipt('allocation', calibrated.allocation)} ${memoryControlReceipt('retained', calibrated.retained)} ${memoryControlReceipt('churn', calibrated.churn)} measurement=${memoryMeasurement()} browser_process_storage=not_gated transient_renderer_peak=not_gated`
   );
   const canceled = await browser.page(media.url);
   await browser.waitFor(
@@ -566,7 +583,7 @@ try {
     'media confirmation'
   );
   await browser.pressure(mediaPage);
-  const mediaBaseline = await browser.rendererRss();
+  const mediaBaseline = await browser.rendererMemory();
   await acceptPrompt(browser, mediaPage, CAP);
   await browser.waitFor(
     mediaPage,
@@ -575,10 +592,13 @@ try {
     900_000
   );
   await browser.pressure(mediaPage);
-  const mediaGrowth = (await browser.rendererRss()) - mediaBaseline;
+  const mediaGrowth = memoryGrowth(
+    mediaBaseline,
+    await browser.rendererMemory()
+  );
   assert.ok(
-    mediaGrowth < 64 * MIB,
-    `renderer grew by ${mediaGrowth} bytes before playback`
+    mediaGrowth.footprint < 64 * MIB,
+    `renderer grew beyond budget before playback: ${rendererMemoryReceipt(mediaGrowth)}`
   );
   const advance = await browser.evaluate<number>(
     mediaPage,
@@ -611,13 +631,16 @@ try {
     `(() => { const v = document.querySelector('video'); v.pause(); v.removeAttribute('src'); v.load(); })()`
   );
   await browser.pressure(mediaPage);
-  const releasedGrowth = (await browser.rendererRss()) - mediaBaseline;
+  const releasedGrowth = memoryGrowth(
+    mediaBaseline,
+    await browser.rendererMemory()
+  );
   assert.ok(
-    releasedGrowth < 128 * MIB,
-    `renderer grew by ${releasedGrowth} bytes after release`
+    releasedGrowth.footprint < 128 * MIB,
+    `renderer grew beyond budget after release: ${rendererMemoryReceipt(releasedGrowth)}`
   );
   console.log(
-    `LARGE_STEP_3_MEDIA_PLAYED prefix_bytes=${beforeOpenBytes} renderer_growth=${mediaGrowth} released_growth=${releasedGrowth} advanced=${advance} seek=${seek.time} duration=${seek.duration} ready=${seek.ready}`
+    `LARGE_STEP_3_MEDIA_PLAYED prefix_bytes=${beforeOpenBytes} ${rendererMemoryReceipt(mediaGrowth)} ${memoryControlReceipt('released', releasedGrowth)} advanced=${advance} seek=${seek.time} duration=${seek.duration} ready=${seek.ready}`
   );
   const downloaded = await browser.download(mediaPage);
   const sourceHash = await hashFile(mediaPath);
@@ -784,7 +807,7 @@ try {
     'OTIO confirmation'
   );
   await browser.pressure(otioPage);
-  const otioBaseline = await browser.rendererRss();
+  const otioBaseline = await browser.rendererMemory();
   await acceptPrompt(browser, otioPage, otio.plaintextBytes);
   await browser.waitFor(
     otioPage,
@@ -799,10 +822,10 @@ try {
     60_000
   );
   await browser.pressure(otioPage);
-  const otioGrowth = (await browser.rendererRss()) - otioBaseline;
+  const otioGrowth = memoryGrowth(otioBaseline, await browser.rendererMemory());
   assert.ok(
-    otioGrowth < 128 * MIB,
-    `OTIO renderer grew by ${otioGrowth} bytes before playback`
+    otioGrowth.footprint < 128 * MIB,
+    `OTIO renderer grew beyond budget before playback: ${rendererMemoryReceipt(otioGrowth)}`
   );
   await browser.evaluate(
     otioPage,
@@ -924,7 +947,7 @@ try {
     'OTIO comment placement changed after reload'
   );
   console.log(
-    `LARGE_STEP_5_OTIO_REVIEWED archive_bytes=${otio.plaintextBytes} timing=${timing.kind} windows=${timing.count} played_frame=${playedFrame} leaf_time=${leaf.time} comment_reload=true renderer_growth=${otioGrowth}`
+    `LARGE_STEP_5_OTIO_REVIEWED archive_bytes=${otio.plaintextBytes} timing=${timing.kind} windows=${timing.count} played_frame=${playedFrame} leaf_time=${leaf.time} comment_reload=true ${rendererMemoryReceipt(otioGrowth)}`
   );
   await browser.closePage(reopenedOtio);
   await release(otio);
@@ -940,7 +963,7 @@ try {
     'PDF confirmation'
   );
   await browser.pressure(pdfPage);
-  const pdfBaseline = await browser.rendererRss(true);
+  const pdfBaseline = await browser.rendererMemory(true);
   await acceptPrompt(browser, pdfPage, PDF_BYTES);
   await browser.waitFor(
     pdfPage,
@@ -972,10 +995,13 @@ try {
     'last rendered PDF page'
   );
   await browser.pressure(pdfPage);
-  const pdfGrowth = (await browser.rendererRss(true)) - pdfBaseline;
+  const pdfGrowth = memoryGrowth(
+    pdfBaseline,
+    await browser.rendererMemory(true)
+  );
   assert.ok(
-    pdfGrowth < 128 * MIB,
-    `PDF renderer and utility processes grew by ${pdfGrowth} bytes`
+    pdfGrowth.footprint < 128 * MIB,
+    `PDF renderer and utility processes grew beyond budget: ${rendererMemoryReceipt(pdfGrowth)}`
   );
   const pdfDownload = await browser.download(pdfPage);
   assert.equal(
@@ -984,7 +1010,7 @@ try {
     'PDF download differs after rendering'
   );
   console.log(
-    `LARGE_STEP_6_PDF_PAGES rendered=first,last bytes=${PDF_BYTES} renderer_utility_growth=${pdfGrowth} sha256_match=true`
+    `LARGE_STEP_6_PDF_PAGES rendered=first,last bytes=${PDF_BYTES} renderer_utility_growth=${pdfGrowth.footprint} ${rendererMemoryReceipt(pdfGrowth)} sha256_match=true`
   );
   await browser.closePage(pdfPage);
   await release(pdf);
@@ -1130,13 +1156,7 @@ try {
   await browser.closePage(damagedPage);
   await release(damaged);
 
-  const calibration = await browser.page('about:blank');
-  const detected = await browser.memoryNegativeControl(calibration);
-  await browser.closePage(calibration);
-  console.log(
-    `LARGE_MEMORY_NEG_OK allocation_bytes=${512 * MIB} detected_growth=${detected}`
-  );
-  console.log('LARGE_RELIC_PATH_OK');
+  console.log(`LARGE_RELIC_PATH_OK measurement=${memoryMeasurement()}`);
 } finally {
   if (browser) await browser.close();
   service.stop(true);
