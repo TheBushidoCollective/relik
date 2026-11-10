@@ -1,31 +1,30 @@
 import type { CoverRenderResult } from '@relic/format/cover';
 import * as pdfjsLib from 'pdfjs-dist';
+import type { RelicContent } from '../content.ts';
+import { createPdfLoadingTask } from '../pdf.ts';
 import { findInkBox, PDF_CANVAS_WIDTH, trimPdfPage } from './pdf-trim.ts';
 
 export const PDF_CANVAS_HEIGHT = 315;
 export const PDF_DEVICE_SCALE = 2;
 
-let workerInitialized = false;
-
 export function ensurePdfWorker(): void {
-  if (!workerInitialized) {
-    pdfjsLib.GlobalWorkerOptions.workerPort = new Worker('/pdf.worker.mjs', {
-      type: 'module',
-    });
-    workerInitialized = true;
-  }
+  pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.mjs';
 }
 
 export async function renderPdfCover(
-  bytes: Uint8Array,
+  content: RelicContent,
   root: HTMLElement
 ): Promise<CoverRenderResult> {
   ensurePdfWorker();
 
-  let pdfDoc: pdfjsLib.PDFDocumentProxy;
   try {
-    const loadingTask = pdfjsLib.getDocument({ data: bytes });
-    pdfDoc = await loadingTask.promise;
+    const { task, failure } = await createPdfLoadingTask(content);
+    try {
+      const pdfDoc = await Promise.race([task.promise, failure]);
+      return await renderPdfCoverDocument(pdfDoc, root, failure);
+    } finally {
+      await task.destroy().catch(() => undefined);
+    }
   } catch (err) {
     return {
       ok: false,
@@ -33,10 +32,16 @@ export async function renderPdfCover(
       detail: err instanceof Error ? err.message : String(err),
     };
   }
+}
 
+async function renderPdfCoverDocument(
+  pdfDoc: pdfjsLib.PDFDocumentProxy,
+  root: HTMLElement,
+  failure: Promise<never>
+): Promise<CoverRenderResult> {
   let page: pdfjsLib.PDFPageProxy;
   try {
-    page = await pdfDoc.getPage(1);
+    page = await Promise.race([pdfDoc.getPage(1), failure]);
   } catch (err) {
     return {
       ok: false,
@@ -64,11 +69,14 @@ export async function renderPdfCover(
   }
 
   try {
-    await page.render({
-      canvasContext: measureCtx,
-      viewport: refViewport,
-      canvas: measureCanvas,
-    }).promise;
+    await Promise.race([
+      page.render({
+        canvasContext: measureCtx,
+        viewport: refViewport,
+        canvas: measureCanvas,
+      }).promise,
+      failure,
+    ]);
   } catch (err) {
     return {
       ok: false,
@@ -117,11 +125,14 @@ export async function renderPdfCover(
   }
 
   try {
-    await page.render({
-      canvasContext: renderCtx,
-      viewport: finalViewport,
-      canvas: renderCanvas,
-    }).promise;
+    await Promise.race([
+      page.render({
+        canvasContext: renderCtx,
+        viewport: finalViewport,
+        canvas: renderCanvas,
+      }).promise,
+      failure,
+    ]);
   } catch (err) {
     return {
       ok: false,
