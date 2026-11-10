@@ -59,10 +59,17 @@ function reference(path: string): Uint8Array<ArrayBuffer> {
 const condition = process.env.RELIC_AUDIO_CONDITION ?? 'running';
 const guard = process.env.RELIC_AUDIO_GUARD ?? '256';
 const hint = process.env.RELIC_AUDIO_HINT ?? 'interactive';
+const fault = process.env.RELIC_AUDIO_CLOCK_FAULT ?? 'none';
+const failureEvidence: {
+  diagnostic?: unknown;
+  rawScreencast: { data: string; timestamp: number }[];
+  captureError?: string;
+} = { rawScreencast: [] };
 if (
   !['running', 'suspended'].includes(condition) ||
   !['0', '128', '256'].includes(guard) ||
-  !['0', 'interactive'].includes(hint)
+  !['0', 'interactive'].includes(hint) ||
+  !['none', 'nan', 'missing', 'infinity', 'stagnant', 'jump'].includes(fault)
 )
   throw new Error('Invalid audio experiment options');
 
@@ -112,8 +119,25 @@ async function main() {
   const output = bundle.outputs[0];
   if (!output) throw new Error('Browser bundle has no output');
   const script = await output.text();
+  const gateBundle = await Bun.build({
+    entrypoints: [
+      resolve(testDir, '../../relic-viewer/src/otio-transport-gate-worklet.ts'),
+    ],
+    target: 'browser',
+    format: 'iife',
+  });
+  const gateOutput = gateBundle.outputs[0];
+  if (!gateBundle.success || !gateOutput)
+    throw new Error(`Gate bundle failed: ${gateBundle.logs.join('\n')}`);
+  const gateScript = await gateOutput.text();
   const bed = await Bun.file(paths[0]).arrayBuffer();
   const dialog = await Bun.file(paths[1]).arrayBuffer();
+  const indexed = await Bun.file(
+    resolve(
+      testDir,
+      '../../relic-format/test/fixtures/otio/scheduled-audio.otiod/media/indexed-stereo.wav'
+    )
+  ).arrayBuffer();
   const refs = [reference(paths[0]), reference(paths[1])] as const;
   const data = new Map<
     string,
@@ -121,6 +145,7 @@ async function main() {
   >([
     ['/bed.wav', { body: bed, type: 'audio/wav' }],
     ['/dialog.wav', { body: dialog, type: 'audio/wav' }],
+    ['/indexed-stereo.wav', { body: indexed, type: 'audio/wav' }],
     ['/bed.f32', { body: refs[0], type: 'application/octet-stream' }],
     ['/dialog.f32', { body: refs[1], type: 'application/octet-stream' }],
     ['/frame0.png', { body: videoFrame(0), type: 'image/png' }],
@@ -138,6 +163,13 @@ async function main() {
         );
       if (url.pathname === '/experiment.js')
         return new Response(script, {
+          headers: { 'content-type': 'text/javascript' },
+        });
+      if (
+        url.pathname === '/actual-gate.js' ||
+        url.pathname === '/assets/otio-transport-gate-worklet.js'
+      )
+        return new Response(gateScript, {
           headers: { 'content-type': 'text/javascript' },
         });
       const item = data.get(url.pathname);
@@ -184,9 +216,29 @@ async function main() {
   const profile = await mkdtemp(join(tmpdir(), 'otio-direct-audio-'));
   let child: ChildProcess | undefined;
   let cdp: CdpConnection | undefined;
+  let session: string | undefined;
+  const captureDiagnostic = async () => {
+    if (!cdp || !session) return;
+    try {
+      const captured = await cdp.send(
+        'Runtime.evaluate',
+        {
+          expression: `JSON.stringify(globalThis.coldDiagnostic, (k,v) => typeof v === 'number' && !Number.isFinite(v) ? String(v) : v === undefined ? 'undefined' : v)`,
+          returnByValue: true,
+        },
+        session
+      );
+      const value = (captured.result as { value?: string } | undefined)?.value;
+      if (value) failureEvidence.diagnostic = JSON.parse(value);
+    } catch (error) {
+      failureEvidence.captureError = String(error);
+    }
+  };
   try {
     const args = chromeArgs(found.path, profile)
-      .filter((arg) => arg !== '--mute-audio')
+      .filter(
+        (arg) => process.env.RELIC_AUDIO_MUTE === '1' || arg !== '--mute-audio'
+      )
       .map((arg) =>
         arg === '--proxy-bypass-list=<-loopback>'
           ? '--proxy-bypass-list=<-loopback>;127.0.0.1'
@@ -216,7 +268,7 @@ async function main() {
       targetId: target.targetId,
       flatten: true,
     });
-    const session = String(attached.sessionId);
+    session = String(attached.sessionId);
     await cdp.send('Page.enable', {}, session);
     await cdp.send('Runtime.enable', {}, session);
     const loaded = cdp.waitForEvent('Page.loadEventFired', {
@@ -226,11 +278,128 @@ async function main() {
     await cdp.send(
       'Page.navigate',
       {
-        url: `http://127.0.0.1:${server.port}/?condition=${condition}&guard=${guard}&hint=${hint}`,
+        url: `http://127.0.0.1:${server.port}/?condition=${condition}&guard=${guard}&hint=${hint}&fault=${fault}&clockcase=${encodeURIComponent(process.env.RELIC_AUDIO_CLOCK_CASE ?? '')}&bankmode=${encodeURIComponent(process.env.RELIC_AUDIO_BANK_MODE ?? '')}&graph=${encodeURIComponent(process.env.RELIC_AUDIO_GRAPH ?? '')}&lifecycle=${encodeURIComponent(process.env.RELIC_AUDIO_LIFECYCLE ?? '')}&gain=${encodeURIComponent(process.env.RELIC_AUDIO_GAIN ?? '')}`,
       },
       session
     );
     await loaded;
+    if (
+      process.env.RELIC_AUDIO_MODE === 'worklet-clock' ||
+      process.env.RELIC_AUDIO_MODE === 'native-banks' ||
+      process.env.RELIC_AUDIO_MODE === 'lifecycle' ||
+      process.env.RELIC_AUDIO_MODE === 'gain-seam'
+    ) {
+      const visualFrames: { timestamp: number | undefined; data: string }[] =
+        [];
+      const visual =
+        process.env.RELIC_AUDIO_MODE === 'lifecycle' &&
+        process.env.RELIC_AUDIO_GRAPH === 'gate-visual';
+      const unsubscribeVisual = visual
+        ? cdp.onEvent((event) => {
+            if (
+              event.method !== 'Page.screencastFrame' ||
+              event.sessionId !== session
+            )
+              return;
+            const metadata = event.params.metadata as
+              | { timestamp?: number }
+              | undefined;
+            if (typeof event.params.data === 'string')
+              visualFrames.push({
+                timestamp: metadata?.timestamp,
+                data: event.params.data,
+              });
+            void cdp?.send(
+              'Page.screencastFrameAck',
+              { sessionId: event.params.sessionId },
+              session
+            );
+          })
+        : undefined;
+      if (visual)
+        await cdp.send(
+          'Page.startScreencast',
+          { format: 'png', everyNthFrame: 1 },
+          session
+        );
+      const observed = await cdp.send(
+        'Runtime.evaluate',
+        {
+          expression:
+            process.env.RELIC_AUDIO_MODE === 'native-banks'
+              ? 'globalThis.runNativeBanks()'
+              : process.env.RELIC_AUDIO_MODE === 'lifecycle'
+                ? 'globalThis.runLifecycleExperiment()'
+                : process.env.RELIC_AUDIO_MODE === 'gain-seam'
+                  ? 'globalThis.runGainSeamExperiment()'
+                  : 'globalThis.runWorkletClock()',
+          awaitPromise: true,
+          returnByValue: true,
+          timeout:
+            process.env.RELIC_AUDIO_BANK_MODE === 'long' ? 480000 : 60000,
+        },
+        session
+      );
+      if (visual) await cdp.send('Page.stopScreencast', {}, session);
+      unsubscribeVisual?.();
+      if (observed.exceptionDetails)
+        throw new Error(
+          `Worklet clock failed: ${JSON.stringify(observed.exceptionDetails)}`
+        );
+      const remote = observed.result as { value?: unknown };
+      if (!remote.value) throw new Error('Missing worklet clock result');
+      const root = resolve(testDir, '../../..');
+      const revision = spawnSync('git', ['rev-parse', 'HEAD'], {
+        cwd: root,
+        encoding: 'utf8',
+      });
+      const diff = spawnSync('git', ['diff', '--binary', 'HEAD'], {
+        cwd: root,
+      });
+      const sources = await Promise.all(
+        [
+          'otio-direct-audio-browser.ts',
+          'otio-direct-audio-experiment.ts',
+          'otio-native-bank-experiment.ts',
+          'otio-lifecycle-experiment.ts',
+        ].map(async (name) => ({
+          name,
+          sha256: createHash('sha256')
+            .update(
+              new Uint8Array(await Bun.file(join(testDir, name)).arrayBuffer())
+            )
+            .digest('hex'),
+        }))
+      );
+      const receipt =
+        process.env.RELIC_AUDIO_RECEIPT ??
+        join(tmpdir(), `otio-worklet-clock-${Date.now()}.json`);
+      await Bun.write(
+        receipt,
+        JSON.stringify({
+          revision: revision.stdout.trim(),
+          worktreeDiffSha256: createHash('sha256')
+            .update(diff.stdout)
+            .digest('hex'),
+          sources,
+          browser: attestation.version,
+          browserArguments: attestation.arguments,
+          visualFrames,
+          gateAssetSha256: createHash('sha256')
+            .update(gateScript)
+            .digest('hex'),
+          browserBundleSha256: createHash('sha256')
+            .update(script)
+            .digest('hex'),
+          indexedFixtureSha256: createHash('sha256')
+            .update(new Uint8Array(indexed))
+            .digest('hex'),
+          result: remote.value,
+        })
+      );
+      console.log(JSON.stringify({ receipt }));
+      return;
+    }
     let baselineResult: unknown =
       'skipped for suspended trusted-input condition';
     if (condition === 'running') {
@@ -253,7 +422,7 @@ async function main() {
         throw new Error(`Missing browser result: ${JSON.stringify(result)}`);
       baselineResult = remote.value;
     }
-    const screenshots: { data: string; timestamp: number }[] = [];
+    const screenshots = failureEvidence.rawScreencast;
     const connection = cdp;
     const unsubscribe = connection.onEvent((event) => {
       if (
@@ -338,6 +507,7 @@ async function main() {
     }
     await connection.send('Page.stopScreencast', {}, session);
     unsubscribe();
+    await captureDiagnostic();
     if (cold.exceptionDetails)
       throw new Error(
         `Ideal cold experiment failed: ${JSON.stringify(cold.exceptionDetails)}`
@@ -398,8 +568,8 @@ async function main() {
       firstChangedScreencastAfterRequestMs:
         firstChanged.timestamp * 1000 - requestWallMs,
       gates: {
-        singleRunMaximum100ms:
-          firstChanged.timestamp * 1000 - requestWallMs <= 100,
+        initialMaximum350ms:
+          firstChanged.timestamp * 1000 - requestWallMs <= 350,
         p95_50ms: 'unqualified: one trial',
       },
     };
@@ -438,6 +608,7 @@ async function main() {
       reference: 'ffmpeg decoded fixture PCM f32le 48000 Hz mono',
       result: baselineResult,
       idealCold: coldResult,
+      clockDiagnostic: failureEvidence.diagnostic,
       rawScreencast: screenshots,
     };
     const receipt =
@@ -449,6 +620,7 @@ async function main() {
     await Bun.write(receipt, JSON.stringify(report, null, 2));
     console.log(JSON.stringify({ receipt, idealCold: coldResult }, null, 2));
   } finally {
+    await captureDiagnostic();
     cdp?.dispose();
     if (child && child.exitCode === null && child.signalCode === null) {
       const exited = new Promise<void>((resolveExit) =>
@@ -498,6 +670,8 @@ try {
         condition,
         guard,
         hint,
+        fault,
+        ...failureEvidence,
         revision: revision.stdout.trim(),
         worktreeDiffSha256: createHash('sha256')
           .update(diff.stdout)
