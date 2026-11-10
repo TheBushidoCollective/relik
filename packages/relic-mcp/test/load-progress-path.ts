@@ -3563,6 +3563,128 @@ try {
       await run.close();
     }
 
+    // 3g: a version switch whose compiler reply returns after the reader has
+    // chosen the current version must neither reload the page nor take a draft
+    // with it. The historical request is held, the reader picks the current
+    // version again, opens Share and types a draft, and the held reply is
+    // released. The page must stay on the current version and keep the draft.
+    {
+      const switchJsxPath = join(compareDir, 'Switch.jsx');
+      await writeFile(
+        switchJsxPath,
+        compareJsx('Relik JSX version one', ['Alpha', 'Beta'])
+      );
+      const switchRes = await callMcp('relic_publish', {
+        path: switchJsxPath,
+        cover: false,
+        title: '',
+      });
+      const switchId = String(switchRes['relic_id'] ?? '');
+      const switchUrl = String(
+        switchRes['url'] ?? switchRes['share_url'] ?? ''
+      );
+      assert.ok(
+        switchId !== '' && switchUrl.includes('#'),
+        '3g: publish must return an id and key'
+      );
+      const switchHtmlPath = join(compareDir, 'Switch.html');
+      await writeFile(
+        switchHtmlPath,
+        '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Switch</title></head><body><h1>Relik HTML version two</h1></body></html>\n'
+      );
+      const switchRepub = await callMcp('relic_republish', {
+        path: switchHtmlPath,
+        relic_id: switchId,
+        notify: false,
+        cover: false,
+      });
+      assert.equal(
+        switchRepub['version'],
+        2,
+        '3g: the HTML republish must advance to version 2'
+      );
+      const run = await runRelicPage(switchUrl, {
+        viewport,
+        colorScheme: 'light',
+        bypassServiceWorker: true,
+        fixedWait: true,
+        blocks: [{ urlPattern: compilerPattern, times: 0 }],
+      });
+      runsExecuted++;
+      await waitUntil(
+        async () =>
+          (await usercontentTexts(run.sessionId, 'main.stage')).some((t) =>
+            t.includes('version two')
+          ),
+        45_000,
+        '3g: current HTML version rendered'
+      );
+      run.setBlocks([{ urlPattern: compilerPattern, times: 1, hold: true }]);
+      await clickSelector(run.sessionId, '.version-option[data-version="1"]');
+      await waitUntil(
+        async () => (run.blocks[compilerPattern] ?? 0) >= 1,
+        30_000,
+        '3g: historical compiler request held'
+      );
+      await clickSelector(run.sessionId, '.version-option[data-version="2"]');
+      await clickSelector(run.sessionId, '.action-share');
+      await waitUntil(
+        () =>
+          isTrue(
+            run.sessionId,
+            `Boolean(document.querySelector('#share-addresses'))`
+          ),
+        15_000,
+        '3g: share draft box'
+      );
+      const draft = 'reader@example.com';
+      await evalMain(
+        run.sessionId,
+        `(() => {
+          const box = document.querySelector('#share-addresses');
+          if (!box) throw new Error('share draft box missing');
+          box.value = ${JSON.stringify(draft)};
+          box.dispatchEvent(new Event('input', { bubbles: true }));
+          return true;
+        })()`
+      );
+      run.releaseHeld();
+      // Longer than the server check, so a stale reload would have happened by now.
+      await Bun.sleep(6_000);
+      const reloads = run.navigationUrls.length - 1;
+      assert.equal(
+        reloads,
+        0,
+        `3g: a stale version switch reloaded the page after the reader chose the current version (${reloads} reloads)`
+      );
+      assert.equal(
+        run.blocks[compilerPattern] ?? 0,
+        1,
+        `3g: expected the held compiler fetch to be intercepted once, saw ${run.blocks[compilerPattern] ?? 0}`
+      );
+      assert.ok(
+        (await usercontentTexts(run.sessionId, 'main.stage')).some((t) =>
+          t.includes('version two')
+        ),
+        '3g: the page must still show the current version'
+      );
+      assert.equal(
+        await evalMain<string>(
+          run.sessionId,
+          `document.querySelector('#share-addresses')?.value ?? ''`
+        ),
+        draft,
+        '3g: the draft did not survive the stale reply'
+      );
+      assert.ok(
+        await isTrue(run.sessionId, readyExpr),
+        '3g: the current view must still be ready'
+      );
+      await savePng(run.sessionId, '10-3g-stale-switch-kept-draft.png');
+      console.log('JSX_STEP_3G_STALE_SWITCH_OK reloads=0 draft=kept');
+      await run.close();
+    }
+
     console.log('JSX_COMPONENT_PATH_OK');
 
     const dur = Date.now() - t0;
