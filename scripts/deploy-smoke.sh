@@ -75,3 +75,10 @@ if grep -q 'GlobalWorkerOptions' "$scratch/shell"; then
   echo "the pdf renderer is inlined in the app shell"
   exit 1
 fi
+echo "the shell does not carry the jsx compiler"
+# Sucrase loads only when routing needs it, from its own chunk. This reads the
+# shell already fetched above, so it adds no request.
+if grep -q 'enableLegacyTypeScriptModuleInterop' "$scratch/shell"; then
+  echo "the jsx compiler is inlined in the app shell"
+  exit 1
+fi

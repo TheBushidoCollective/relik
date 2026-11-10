@@ -1538,3 +1538,48 @@ describe('Dashboard rendering (DOM)', () => {
     expect(ariaLabel).toContain(visible ?? '');
   });
 });
+
+describe('a jsx relic opened by key', () => {
+  test('carries the module routing compiled from its bytes', async () => {
+    const key = new Uint8Array(16);
+    const fragment = encodeFragment(key);
+    const ciphertext = await encryptRelic({
+      content: new TextEncoder().encode(
+        'export default function App() {\n  return <div>hi</div>;\n}\n'
+      ),
+      filename: 'App.jsx',
+      mimetype: 'text/jsx',
+      key,
+    });
+    const fetchStub = async (input: RequestInfo | URL): Promise<Response> => {
+      const url = String(input);
+      if (url.endsWith('/mint')) {
+        return Response.json({
+          url: 'https://storage.example/blob',
+          url_expires_at: '2026-09-16T00:00:00Z',
+          relic_expires_at: null,
+          object_length: ciphertext.length,
+          object_crc32c: '0',
+          mints_remaining: 5,
+          version: 1,
+          current_version: 1,
+        });
+      }
+      return new Response(ciphertext as unknown as BodyInit, { status: 200 });
+    };
+    const deps: ViewerDeps = {
+      serviceOrigin: 'https://relic.example',
+      fetch: fetchStub as unknown as typeof globalThis.fetch,
+      keyVault: makeMockVault(),
+      takeFragment: () => '',
+      stripFragment: () => {},
+      locationHref: 'https://relic.example/r1',
+    };
+
+    const result = await openRelicWithKey(generateRelicId(), fragment, deps);
+    expect(result.kind).toBe('ready');
+    if (result.kind !== 'ready') return;
+    expect(result.view.route).toBe('sandboxed-jsx');
+    expect(result.view.componentModule).toContain('React.createElement');
+  });
+});

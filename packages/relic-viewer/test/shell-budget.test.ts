@@ -114,6 +114,53 @@ describe('the app shell', () => {
     expect(chunkWithSignInText).toBe(true);
   });
 
+  test('keeps the JSX compiler out of the eager shell', async () => {
+    // Sucrase is the compiler. Routing loads it on demand from its own chunk,
+    // so nothing reachable from viewer.js through static imports may carry it.
+    for (const stale of new Bun.Glob('chunk-*.js').scanSync(`${pkgDir}dist`)) {
+      await unlink(`${pkgDir}dist/${stale}`).catch(() => {});
+    }
+    const built = Bun.spawnSync([process.execPath, 'build.ts'], {
+      cwd: pkgDir,
+    });
+    expect(built.exitCode).toBe(0);
+
+    const markers = [
+      'enableLegacyTypeScriptModuleInterop',
+      'jsxFragmentPragma',
+    ];
+    const staticImport = /(?:from|import)\s*"\.\/(chunk-[a-z0-9]+\.js)"/g;
+
+    // The static closure of viewer.js: every chunk it reaches without import().
+    const eager = new Map<string, string>();
+    const pending = ['viewer.js'];
+    for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
+      if (eager.has(next)) continue;
+      const text = await Bun.file(`${pkgDir}dist/${next}`).text();
+      eager.set(next, text);
+      for (const match of text.matchAll(staticImport)) {
+        if (match[1] !== undefined) pending.push(match[1]);
+      }
+    }
+    const leaked = [...eager]
+      .filter(([, text]) => markers.some((marker) => text.includes(marker)))
+      .map(([file]) => file);
+    expect(leaked).toEqual([]);
+
+    const chunks = [...new Bun.Glob('chunk-*.js').scanSync(`${pkgDir}dist`)];
+    const carriers: string[] = [];
+    for (const chunk of chunks) {
+      const text = await Bun.file(`${pkgDir}dist/${chunk}`).text();
+      if (markers.every((marker) => text.includes(marker)))
+        carriers.push(chunk);
+    }
+    expect(carriers).toHaveLength(1);
+
+    // Routing reaches that one chunk through a dynamic import.
+    const shell = eager.get('viewer.js') ?? '';
+    expect(shell.includes(`import("./${carriers[0]}")`)).toBe(true);
+  });
+
   test('the renderer is emitted as its own chunk', async () => {
     // The other half of the same property. An empty `dist` with no chunk at
     // all would satisfy the shell assertions above while shipping a viewer

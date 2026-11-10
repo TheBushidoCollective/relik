@@ -149,6 +149,47 @@ describe('loading a historical version', () => {
     });
   });
 
+  test('a jsx historical version carries the module compiled from its own bytes', async () => {
+    const id = generateRelicId();
+    const key = generateKey();
+    const fragment = encodeFragment(key);
+    const currentBytes = await encrypted('current\n', key);
+    const historicalBytes = await encrypted(
+      'export default function App() {\n  return <div>hi</div>;\n}\n',
+      key,
+      'App.jsx',
+      'text/jsx'
+    );
+    const fetch = (async (input, init) => {
+      const url = String(input);
+      if (url.endsWith('/mint')) {
+        const requested = init?.body === undefined ? 3 : 2;
+        const bytes = requested === 3 ? currentBytes : historicalBytes;
+        return Response.json(
+          mint(
+            `https://storage.example/v${requested}`,
+            bytes.length,
+            requested,
+            3
+          )
+        );
+      }
+      const body = url.endsWith('/v2') ? historicalBytes : currentBytes;
+      return new Response(body as unknown as BodyInit);
+    }) as typeof globalThis.fetch;
+    const viewerDeps = deps(fragment, fetch);
+    const loaded = await load(id, viewerDeps);
+    if (loaded.kind !== 'ready') throw new Error('expected current version');
+
+    const history = await loadHistoricalVersion(id, 2, loaded.view, viewerDeps);
+
+    expect(history.kind).toBe('ready');
+    if (history.kind !== 'ready') return;
+    expect(history.view.route).toBe('sandboxed-jsx');
+    expect(history.view.componentModule).toContain('React.createElement');
+    expect(loaded.view.componentModule).toBeUndefined();
+  });
+
   /** A `code` current version, three revisions deep. */
   function currentCode() {
     return {

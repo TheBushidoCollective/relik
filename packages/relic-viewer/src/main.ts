@@ -210,7 +210,6 @@ import {
   type RenderedChange,
   type TreeDiff,
 } from './domdiff.ts';
-import { transpileJsx } from './jsx.ts';
 import { renderMarkdown } from './markdown.ts';
 import {
   buildCommentedDashboardRows,
@@ -1312,23 +1311,20 @@ function sandboxFrame(
 }
 
 /**
- * A component's payload, or nothing when it will not compile.
+ * A component's payload, or nothing when routing could not compile it.
  *
- * The service origin must never execute relic content, and the transform
- * never does: it is a text-to-text rewrite whose output is posted as a
- * string. The frame turns that string back into running code by importing it
- * as a module. React is bundled into the inlined frame script because the
- * opaque origin cannot fetch same-origin assets or any remote dependency.
+ * Routing already transpiled the component and carried the text on the view,
+ * so rendering never touches the compiler. The service origin never executes
+ * relic content: the transform is a text-to-text rewrite, and only its output
+ * string is posted. The frame turns that string back into running code by
+ * importing it as a module. React is bundled into the inlined frame script
+ * because the opaque origin cannot fetch same-origin assets or any remote
+ * dependency.
  */
 function jsxPayload(view: ReadyView): RenderPayload | undefined {
-  try {
-    return {
-      type: 'relic:render-jsx',
-      code: transpileJsx(decodeText(view.content), view.filename),
-    };
-  } catch {
-    return undefined;
-  }
+  return view.componentModule === undefined
+    ? undefined
+    : { type: 'relic:render-jsx', code: view.componentModule };
 }
 
 function payloadFor(view: ReadyView): RenderPayload | undefined {
@@ -1367,9 +1363,10 @@ export function renderSandboxedJsx(
 
   const payload = jsxPayload(view);
   if (payload === undefined) {
-    // Routing already established the bytes parse, so landing here means a
-    // path the route decision could not see. Source view is the honest
-    // fallback: it shows exactly what was published without running it.
+    // Routing compiles every component before it reaches here, so this is
+    // reached only when markup wears a component's name and does not
+    // transpile. Source view is the honest fallback: it shows exactly what was
+    // published without running it.
     wrapper.appendChild(
       notice(
         'This file is named like a React component, but its contents do not ' +

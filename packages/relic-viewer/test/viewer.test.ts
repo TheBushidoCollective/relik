@@ -509,6 +509,9 @@ describe('rendering', () => {
     expect(state.view.route).toBe('sandboxed-jsx');
     expect(state.view.route).not.toBe('code');
     expect(state.view.downgradeNotice).toBeUndefined();
+    const compiled = state.view.componentModule;
+    expect(compiled).toContain('React.createElement');
+    expect(compiled).not.toContain('<div');
   });
 
   test('routes a tsx relic the same way', async () => {
@@ -520,7 +523,11 @@ describe('rendering', () => {
       'text/tsx'
     );
     const state = await load(id, deps(fragment));
-    if (state.kind === 'ready') expect(state.view.route).toBe('sandboxed-jsx');
+    expect(state.kind).toBe('ready');
+    if (state.kind !== 'ready') return;
+    expect(state.view.route).toBe('sandboxed-jsx');
+    expect(state.view.componentModule).toBeDefined();
+    expect(state.view.componentModule).not.toContain('type P');
   });
 
   test('an archive is download-only in the first release', async () => {
@@ -591,6 +598,7 @@ describe('the declared versus sniffed rule', () => {
     expect(state.view.route).not.toBe('sandboxed-jsx');
     expect(state.view.route).toBe('code');
     expect(state.view.downgradeNotice).toBeDefined();
+    expect(state.view.componentModule).toBeUndefined();
   });
 
   test('a PNG wearing a jsx name renders as an image', async () => {
@@ -606,29 +614,54 @@ describe('the declared versus sniffed rule', () => {
     expect(state.view.route).not.toBe('sandboxed-jsx');
   });
 
-  test("a jsx declaration cannot upgrade somebody else's plain code", () => {
+  test('a text/jsx file that sniffs as HTML routes to the frame when it compiles', async () => {
+    // Markup and a component share a privilege tier, so the declared class
+    // decides the route with no notice. The compile decides the payload.
+    const decision = await routeFor(
+      'x.jsx',
+      'text/jsx',
+      utf8('<div>hi</div>;\nexport default () => null;\n')
+    );
+    expect(decision.route).toBe('sandboxed-jsx');
+    expect(decision.notice).toBeUndefined();
+    expect(decision.componentModule).toContain("React.createElement('div'");
+  });
+
+  test('a text/jsx file that sniffs as HTML and does not compile carries no module', async () => {
+    const decision = await routeFor(
+      'x.jsx',
+      'text/jsx',
+      utf8('<!doctype html><p>x')
+    );
+    expect(decision.route).toBe('sandboxed-jsx');
+    expect(decision.notice).toBeUndefined();
+    expect(decision.componentModule).toBeUndefined();
+  });
+
+  test("a jsx declaration cannot upgrade somebody else's plain code", async () => {
     // The content-side check only runs when the declared class is jsx, so
     // ordinary code files keep their quiet code route with no spurious
     // downgrade notice.
     const plain = utf8('const a = 1;\nif (a < 2) console.log(a);\n');
-    const decision = routeFor('script.js', 'text/plain', plain);
+    const decision = await routeFor('script.js', 'text/plain', plain);
     expect(decision.route).toBe('code');
     expect(decision.notice).toBeUndefined();
+    expect(decision.componentModule).toBeUndefined();
   });
 
-  test('routeFor never promotes to a more privileged path', () => {
+  test('routeFor never promotes to a more privileged path', async () => {
     const html = utf8('<!doctype html><p>x');
-    expect(routeFor('x.png', 'image/png', html).route).not.toBe(
+    expect((await routeFor('x.png', 'image/png', html)).route).not.toBe(
       'sandboxed-html'
     );
-    expect(routeFor('x.txt', 'text/plain', html).route).not.toBe(
+    expect((await routeFor('x.txt', 'text/plain', html)).route).not.toBe(
       'sandboxed-html'
     );
   });
 
-  test('an SVG is treated as a web page, because it carries script', () => {
+  test('an SVG is treated as a web page, because it carries script', async () => {
     const svg = utf8('<svg xmlns="http://www.w3.org/2000/svg"></svg>');
-    expect(routeFor('x.svg', 'image/svg+xml', svg).route).toBe(
+    expect((await routeFor('x.svg', 'image/svg+xml', svg)).route).toBe(
       'sandboxed-html'
     );
   });
@@ -637,12 +670,20 @@ describe('the declared versus sniffed rule', () => {
     expect(routeForClass('media')).toBe('media');
   });
 
-  test('media files route to media playback instead of download', () => {
+  test('media files route to media playback instead of download', async () => {
     const dummy = utf8('fake media content');
-    expect(routeFor('video.mp4', 'video/mp4', dummy).route).toBe('media');
-    expect(routeFor('audio.mp3', 'audio/mpeg', dummy).route).toBe('media');
-    expect(routeFor('clip.webm', 'video/webm', dummy).route).toBe('media');
-    expect(routeFor('track.wav', 'audio/wav', dummy).route).toBe('media');
+    expect((await routeFor('video.mp4', 'video/mp4', dummy)).route).toBe(
+      'media'
+    );
+    expect((await routeFor('audio.mp3', 'audio/mpeg', dummy)).route).toBe(
+      'media'
+    );
+    expect((await routeFor('clip.webm', 'video/webm', dummy)).route).toBe(
+      'media'
+    );
+    expect((await routeFor('track.wav', 'audio/wav', dummy)).route).toBe(
+      'media'
+    );
   });
 });
 

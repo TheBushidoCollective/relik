@@ -45,7 +45,7 @@ import {
   VersionMismatchError,
   versionDigest,
 } from '@relic/format';
-import { isComponentSource } from './jsx.ts';
+import type * as JsxModule from './jsx.ts';
 import type { VaultEntry } from './vault.ts';
 export type { VaultEntry };
 
@@ -116,6 +116,12 @@ export interface ReadyView {
    * run a ceremony when the service holds a different file for the version.
    */
   readonly versionDigest: string;
+  /**
+   * The transpiled component for the `sandboxed-jsx` route, compiled once by
+   * routing. Undefined when the component does not compile, and always
+   * undefined on every other route.
+   */
+  readonly componentModule?: string | undefined;
 }
 
 /** Where content is allowed to render. Never derived from the server. */
@@ -511,7 +517,11 @@ export async function load(
       );
     }
 
-    const route = routeFor(entry.filename, entry.mimetype, opened.content);
+    const route = await routeFor(
+      entry.filename,
+      entry.mimetype,
+      opened.content
+    );
 
     deps.keyVault.remember(
       relicId,
@@ -531,6 +541,7 @@ export async function load(
         content: opened.content,
         route: route.route,
         downgradeNotice: route.notice,
+        componentModule: route.componentModule,
         shareUrl,
         version: mintResponse.version,
         currentVersion: mintResponse.current_version,
@@ -538,6 +549,16 @@ export async function load(
       },
     };
   } catch (error) {
+    if (error instanceof JsxCompilerUnavailableError) {
+      return dead(
+        'This relic could not be opened',
+        'Something went wrong reaching the service.',
+        'retry',
+        'service_unreachable',
+        undefined,
+        { fragment, mint: mintResponse }
+      );
+    }
     if (error instanceof TransferIncompleteError) {
       return {
         kind: 'dead',
@@ -845,7 +866,11 @@ export async function loadHistoricalVersion(
       };
     }
 
-    const route = routeFor(entry.filename, entry.mimetype, opened.content);
+    const route = await routeFor(
+      entry.filename,
+      entry.mimetype,
+      opened.content
+    );
     const digest = await computeDigest();
     return {
       kind: 'ready',
@@ -855,6 +880,7 @@ export async function loadHistoricalVersion(
         content: opened.content,
         route: route.route,
         downgradeNotice: route.notice,
+        componentModule: route.componentModule,
         shareUrl: current.shareUrl,
         version: mintResponse.version,
         currentVersion: mintResponse.current_version,
@@ -862,6 +888,16 @@ export async function loadHistoricalVersion(
       },
     };
   } catch (error) {
+    if (error instanceof JsxCompilerUnavailableError) {
+      return {
+        kind: 'unavailable',
+        code: 'service_unreachable',
+        detail:
+          `Version ${requestedVersion} could not be loaded for comparison. ` +
+          'Something went wrong reaching the service. ' +
+          `Version ${current.version} remains open.`,
+      };
+    }
     if (error instanceof TransferIncompleteError) {
       return {
         kind: 'unavailable',
@@ -960,9 +996,64 @@ export function deadFromProblem(code: string): DeadView {
   }
 }
 
+/** The JSX compiler, typed without being loaded. Erased at build. */
+type JsxCompiler = typeof JsxModule;
+
+/**
+ * The compiler chunk could not be fetched or evaluated. Routing reports it as
+ * a service failure. The bytes are not known to be damaged, and a route chosen
+ * without the compiler would be a guess.
+ */
+class JsxCompilerUnavailableError extends Error {
+  constructor(cause: unknown) {
+    super('The JSX compiler could not be loaded.', { cause });
+    this.name = 'JsxCompilerUnavailableError';
+  }
+}
+
+/**
+ * Loads the JSX compiler on first use, never at startup.
+ *
+ * It is not a static import, because Sucrase is about 43% of this shell and
+ * the shell has a byte ceiling (shell-budget.test.ts). Only routing calls it.
+ * It compiles a component once, while deciding the route, and the frame
+ * receives that text, so rendering never needs the compiler.
+ */
+async function loadJsxCompiler(): Promise<JsxCompiler> {
+  try {
+    return await import('./jsx.ts');
+  } catch (cause) {
+    throw new JsxCompilerUnavailableError(cause);
+  }
+}
+
+/**
+ * Transpiled component text, or undefined when it does not compile. Only the
+ * `sandboxed-jsx` route asks.
+ */
+async function compileComponent(
+  content: Uint8Array,
+  filename: string
+): Promise<string | undefined> {
+  const { transpileJsx } = await loadJsxCompiler();
+  try {
+    return transpileJsx(
+      new TextDecoder('utf-8', { fatal: false }).decode(content),
+      filename
+    );
+  } catch {
+    return undefined;
+  }
+}
+
 export interface RouteDecision {
   readonly route: RenderRoute;
   readonly notice: string | undefined;
+  /**
+   * The transpiled component, set only on the `sandboxed-jsx` route and only
+   * when it compiles. Routing compiles once, so render posts this text as is.
+   */
+  readonly componentModule?: string | undefined;
 }
 
 /**
@@ -981,11 +1072,11 @@ export interface RouteDecision {
  * fragment theft in one step. The guard test in card-metadata-guard.test.ts
  * enforces that the built bundles never read the card metadata.
  */
-export function routeFor(
+export async function routeFor(
   filename: string,
   declaredMimetype: string,
   content: Uint8Array
-): RouteDecision {
+): Promise<RouteDecision> {
   const declared = classFromMimetype(declaredMimetype, filename);
   // Content only. Feeding the filename into the sniff would make this
   // comparison measure the declared name against itself, and it would agree
@@ -1039,6 +1130,7 @@ export function routeFor(
   // A component that does not parse is shown as source, which is the
   // least-privileged telling of a lie.
   if (declared === 'jsx' && sniffed === 'code') {
+    const { isComponentSource } = await loadJsxCompiler();
     const source = new TextDecoder('utf-8', { fatal: false }).decode(content);
     if (isComponentSource(source, filename)) sniffed = 'jsx';
   }
@@ -1047,7 +1139,15 @@ export function routeFor(
   // carry identical privilege, and the sniffer cannot tell them apart, so
   // comparing classes would downgrade every Markdown relic ever published.
   if (privilegeTier(declared) === privilegeTier(sniffed)) {
-    return { route: routeForClass(declared), notice: undefined };
+    // Routing is the one place a component compiles, so the frame receives
+    // exactly the text that was checked here and never recompiles it.
+    const route = routeForClass(declared);
+    if (route !== 'sandboxed-jsx') return { route, notice: undefined };
+    return {
+      route,
+      notice: undefined,
+      componentModule: await compileComponent(content, filename),
+    };
   }
 
   const resolved = leastPrivileged(declared, sniffed);
@@ -1457,7 +1557,11 @@ export async function openRelicWithKey(
       };
     }
 
-    const route = routeFor(entry.filename, entry.mimetype, opened.content);
+    const route = await routeFor(
+      entry.filename,
+      entry.mimetype,
+      opened.content
+    );
     const shareUrl = shareUrlFor(deps.locationHref, fragment);
 
     const expiresAt =
@@ -1479,6 +1583,7 @@ export async function openRelicWithKey(
         content: opened.content,
         route: route.route,
         downgradeNotice: route.notice,
+        componentModule: route.componentModule,
         shareUrl,
         version: mintResponse.version,
         currentVersion: mintResponse.current_version,
@@ -1486,6 +1591,17 @@ export async function openRelicWithKey(
       },
     };
   } catch (error) {
+    if (error instanceof JsxCompilerUnavailableError) {
+      return {
+        kind: 'dead',
+        dead: {
+          headline: 'This relic could not be opened',
+          detail: 'Something went wrong reaching the service.',
+          action: 'retry',
+          code: 'service_unreachable',
+        },
+      };
+    }
     if (error instanceof TransferIncompleteError) {
       return {
         kind: 'dead',
