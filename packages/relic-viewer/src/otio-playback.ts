@@ -936,9 +936,12 @@ export function createOtioPlayback(
     __otioProofPcmSnapshot?: () => {
       nodes: number;
       bytes: number;
+      streams: number;
       gateReservations: number;
       carrierReservations: number;
       activeSession: boolean;
+      candidatePrepared: boolean;
+      candidateBoundaryFrame: number | null;
       otherGateReservations: number;
     };
   };
@@ -1093,9 +1096,12 @@ export function createOtioPlayback(
     __otioProofCold?: boolean;
     __otioProofPcm?: boolean;
     __otioProofClockSerialExhaustion?: boolean;
+    __otioProofHoldOldDrain?: boolean;
     __otioProofPcmFault?:
       | 'invalidate-next-reserved-tag'
-      | 'withhold-future-video';
+      | 'withhold-future-video'
+      | 'recovery-phase-mismatch'
+      | 'recovery-impossible-guard';
   };
   function coldProof(
     event: string,
@@ -1138,9 +1144,12 @@ export function createOtioPlayback(
     sourceStart: number;
     prepared: OtioPcmPrepared;
     count: number;
+    gainFactors: OtioPcmGainFactor[];
+    absoluteGainFactors: OtioPcmGainFactor[];
   };
   type PcmRun = {
     generation: number;
+    slot: 0 | 1;
     context: AudioContext;
     routeVersion: number;
     admission: PcmAdmission;
@@ -1152,6 +1161,7 @@ export function createOtioPlayback(
     session: PcmClockSession;
     tracks: Map<string, GainNode>;
     streams: Map<OtioBundleEntryName, string>;
+    streamCredits: Set<string>;
     chunks: PcmChunk[];
     startFrame: number;
     startTime: OtioRationalTime;
@@ -1177,6 +1187,11 @@ export function createOtioPlayback(
     drain: Promise<void>;
     resolveDrain: () => void;
     rejectDrain: (error: Error) => void;
+    drainObserved: boolean;
+    handoffStarted: boolean;
+    resourcesReleased: boolean;
+    schedulerRetired: boolean;
+    nodesDisconnected: boolean;
     stopped: boolean;
   };
   type PcmClockSession = {
@@ -1187,8 +1202,24 @@ export function createOtioPlayback(
     sealed: Promise<void>;
     renewal: ReturnType<typeof setTimeout> | null;
     renewalFailed: boolean;
+    slots: [PcmRun | null, PcmRun | null];
     retired: boolean;
   };
+  type PcmCandidate = {
+    old: PcmRun;
+    boundaryFrame: number;
+    request: number;
+    scope: number;
+    renderGeneration: number;
+    run: PcmRun | null;
+    cancelled: boolean;
+    ready: Promise<void> | null;
+    prepared: boolean;
+    failure: string | null;
+    armPromise: Promise<OtioGateAck> | null;
+  };
+  let pcmCandidate: PcmCandidate | null = null;
+  const pendingPcmDrains = new Set<PcmRun>();
   let pcmClockSession: PcmClockSession | null = null;
   let pcmBootstrapChain: Promise<void> = Promise.resolve();
   const pcmQuarantinedContexts = new Map<AudioContext, Promise<void>>();
@@ -1199,6 +1230,9 @@ export function createOtioPlayback(
   let pcmAdmission: PcmAdmission | null = null;
   let audioBackend: 'native' | 'pcm' = 'native';
   let pcmGeneration = 0;
+  let pcmStreamCredits = 0;
+  const pcmStreamWaiters = new Set<() => void>();
+  const pcmSlotWaiters = new Set<() => void>();
   const pcmBudget = new OtioPcmBudget();
   const pcmGateRetirements = new OtioPcmGateRetirements(pcmBudget);
   const pcmSchedulers = new Set<OtioPcmScheduler>();
@@ -1378,7 +1412,11 @@ export function createOtioPlayback(
   /** Reserve only an actually captured contiguous visual prefix. */
   function reserveVisualPrefix(
     from: OtioRationalTime,
-    limit: OtioRationalTime
+    limit: OtioRationalTime,
+    handoff?: {
+      run: PcmRun;
+      anchor: { wallMs: number; time: OtioRationalTime } | null;
+    }
   ): PcmVideoHold {
     let cursor = from;
     const intervals: PcmVisualInterval[] = [];
@@ -1386,7 +1424,7 @@ export function createOtioPlayback(
     const ownerScope = scopeEpoch;
     const ownerAnchor = nativeAnchor;
     const ownerSize = outputSize();
-    const ownerRun = pcmRun;
+    const ownerRun = handoff?.run ?? pcmRun;
     const proofHost = typeof location === 'undefined' ? '' : location.hostname;
     const withholdFuture =
       coldProofGlobal.__otioProofPcm === true &&
@@ -1540,7 +1578,12 @@ export function createOtioPlayback(
           bundlePath: ring.bundlePath,
           width: ownerSize.width,
           onInvalidated: () => {
-            if (ownerRun && pcmRun === ownerRun && !ownerRun.stopped) {
+            if (
+              ownerRun &&
+              (pcmRun === ownerRun ||
+                (handoff && pcmCandidate?.run === ownerRun)) &&
+              !ownerRun.stopped
+            ) {
               pcmProof('error', ownerRun.generation, {
                 stage: 'visual',
                 code: 'certified video reservation was invalidated',
@@ -1589,7 +1632,10 @@ export function createOtioPlayback(
         !isCanvasContextLost(canvas) &&
         renderGeneration === ownerGeneration &&
         scopeEpoch === ownerScope &&
-        nativeAnchor === ownerAnchor &&
+        (nativeAnchor === ownerAnchor ||
+          (!!handoff &&
+            pcmRun === handoff.run &&
+            nativeAnchor === handoff.anchor)) &&
         outputSize().width === ownerSize.width &&
         outputSize().height === ownerSize.height &&
         intervals.every(
@@ -2935,6 +2981,7 @@ export function createOtioPlayback(
         masterGain?.disconnect();
         masterGain = null;
         audioContext = null;
+        abandonPcmDrains(context);
         releaseClosedContextSchedulers(context);
         pcmGateRetirements.contextClosed();
       });
@@ -3163,6 +3210,7 @@ export function createOtioPlayback(
           sealed: Promise.resolve(),
           renewal: null,
           renewalFailed: false,
+          slots: [null, null],
           retired: false,
         };
         pcmClockSession = session;
@@ -3214,7 +3262,96 @@ export function createOtioPlayback(
     }
   }
 
+  function releasePcmSlotIfRetired(run: PcmRun): void {
+    if (
+      !run.schedulerRetired ||
+      !run.nodesDisconnected ||
+      run.session.slots[run.slot] !== run
+    )
+      return;
+    run.session.slots[run.slot] = null;
+    for (const wake of pcmSlotWaiters) queueMicrotask(wake);
+    queueMicrotask(() => {
+      const active = pcmRun;
+      if (
+        active &&
+        !active.stopped &&
+        !active.stopping &&
+        active.frontierFrame !== null &&
+        (!pcmCandidate || pcmCandidate.failure)
+      )
+        stagePcmCandidate(active, active.frontierFrame);
+    });
+  }
+
+  function releasePcmStream(run: PcmRun, streamId: string): void {
+    if (!run.streamCredits.delete(streamId)) return;
+    pcmStreamCredits--;
+    for (const wake of pcmStreamWaiters) queueMicrotask(wake);
+    pcmRecoveryWake?.();
+  }
+
+  function closePcmProvider(run: PcmRun): void {
+    run.provider.dispose();
+    for (const streamId of run.streamCredits) releasePcmStream(run, streamId);
+    for (const wake of pcmStreamWaiters) queueMicrotask(wake);
+    run.streams.clear();
+  }
+
+  function releasePcmResources(run: PcmRun): void {
+    if (run.resourcesReleased) return;
+    run.resourcesReleased = true;
+    run.stopped = true;
+    for (const wake of pcmStreamWaiters) queueMicrotask(wake);
+    clearTimeout(run.stopWatchdog ?? undefined);
+    run.context.removeEventListener('statechange', run.onContextState);
+    run.scheduler.dispose();
+    for (const hold of run.holds) hold.release();
+    for (const chunk of run.chunks) chunk.prepared.cancel();
+    run.chunks.length = 0;
+    closePcmProvider(run);
+    for (const node of run.tracks.values()) {
+      node.disconnect();
+      pcmBudget.releaseNodes(1);
+    }
+    run.tracks.clear();
+    run.nodesDisconnected = true;
+    releasePcmSlotIfRetired(run);
+  }
+
+  function abandonPcmDrains(context?: AudioContext): void {
+    for (const run of pendingPcmDrains) {
+      if (context && run.context !== context) continue;
+      run.rejectDrain(new Error('PCM drain abandoned before observation'));
+      releasePcmResources(run);
+      if (context) pendingPcmDrains.delete(run);
+    }
+  }
+
+  function cancelPcmCandidate(): void {
+    const candidate = pcmCandidate;
+    if (!candidate) return;
+    pcmCandidate = null;
+    candidate.cancelled = true;
+    if (candidate.run && candidate.armPromise) {
+      const run = candidate.run;
+      const abort = run.gate.abort(run.generation);
+      run.session.sealed = Promise.all([candidate.armPromise, abort])
+        .then(([arm, ack]) => {
+          if (!arm.accepted || !ack.accepted || ack.closedFrame === null)
+            throw new Error('candidate arm cancellation was not acknowledged');
+        })
+        .catch((error: unknown) => {
+          if (pcmClockSession === run.session) retirePcmClockSession();
+          throw error;
+        });
+      void run.session.sealed.catch(() => undefined);
+    }
+    if (candidate.run) releasePcmResources(candidate.run);
+  }
+
   function stopPcm(reason: string, alreadyClosed = false): void {
+    cancelPcmCandidate();
     const run = pcmRun;
     if (!run) return;
     pcmRun = null;
@@ -3264,15 +3401,7 @@ export function createOtioPlayback(
         });
       void run.session.sealed.catch(() => undefined);
     }
-    run.scheduler.dispose();
-    for (const hold of run.holds) hold.release();
-    for (const chunk of run.chunks) chunk.prepared.cancel();
-    run.chunks.length = 0;
-    run.provider.dispose();
-    for (const node of run.tracks.values()) {
-      node.disconnect();
-      pcmBudget.releaseNodes(1);
-    }
+    releasePcmResources(run);
   }
 
   function pcmTrack(run: PcmRun, trackId: string): GainNode {
@@ -3282,7 +3411,7 @@ export function createOtioPlayback(
     try {
       const track = run.context.createGain();
       track.gain.value = trackAudible(trackId) ? 1 : 0;
-      track.connect(run.gate.node);
+      track.connect(run.gate.node, 0, run.slot === 0 ? 0 : 2);
       run.tracks.set(trackId, track);
       return track;
     } catch (error) {
@@ -3318,6 +3447,7 @@ export function createOtioPlayback(
         for (const [path, streamId] of run.streams) {
           if (!needed.has(path)) {
             run.provider.cancel(streamId);
+            releasePcmStream(run, streamId);
             run.streams.delete(path);
           }
         }
@@ -3332,7 +3462,28 @@ export function createOtioPlayback(
             const asset = run.admission.assets.get(path);
             if (!asset || run.stopped) throw new Error('PCM asset unavailable');
             streamId = `stream-${run.streams.size}-${run.generation}-${run.preparedThrough}`;
-            await run.provider.open(streamId, asset.blob, asset.header);
+            while (pcmStreamCredits >= OTIO_PCM_MAX_STREAMS) {
+              if (run.stopped || run.stopping)
+                throw new Error('PCM generation cancelled');
+              const available = Promise.withResolvers<void>();
+              const wake = () => available.resolve();
+              pcmStreamWaiters.add(wake);
+              try {
+                await available.promise;
+              } finally {
+                pcmStreamWaiters.delete(wake);
+              }
+            }
+            if (run.stopped || run.stopping)
+              throw new Error('PCM generation cancelled');
+            pcmStreamCredits++;
+            run.streamCredits.add(streamId);
+            try {
+              await run.provider.open(streamId, asset.blob, asset.header);
+            } catch (error) {
+              releasePcmStream(run, streamId);
+              throw error;
+            }
             if (run.stopped || run.stopping)
               throw new Error('PCM generation cancelled');
             run.streams.set(path, streamId);
@@ -3347,6 +3498,21 @@ export function createOtioPlayback(
               throw new Error('PCM generation cancelled');
             }
             try {
+              const gainFactors = plan.span.gain_factors.map((factor) => ({
+                startFrame:
+                  rescaleTime(factor.range.start_time, run.admission.rate)
+                    .value - run.startFrame,
+                endFrame:
+                  rescaleTime(
+                    addRationalTimes(
+                      factor.range.start_time,
+                      factor.range.duration
+                    ),
+                    run.admission.rate
+                  ).value - run.startFrame,
+                startGain: factor.direction === 'in' ? 0 : 1,
+                endGain: factor.direction === 'in' ? 1 : 0,
+              }));
               const prepared = run.scheduler.prepare({
                 generation: run.generation,
                 planes: block.planes,
@@ -3359,6 +3525,10 @@ export function createOtioPlayback(
                 sourceStart: source,
                 prepared,
                 count,
+                gainFactors,
+                absoluteGainFactors: gainFactors.map((factor) => ({
+                  ...factor,
+                })),
               });
             } finally {
               run.provider.release(block.planes);
@@ -3387,7 +3557,12 @@ export function createOtioPlayback(
     context: AudioContext,
     admission: PcmAdmission,
     start: OtioRationalTime,
-    inheritedClock?: OutputClock
+    inheritedClock?: OutputClock,
+    staged?: {
+      old: PcmRun;
+      created: (run: PcmRun) => void;
+      valid: () => boolean;
+    }
   ): Promise<PcmRun> {
     const rate = admission.rate;
     const frame = Math.round((start.value * rate) / start.rate);
@@ -3401,40 +3576,86 @@ export function createOtioPlayback(
     const generation = ++pcmGeneration;
     const budget = pcmBudget;
     const previousSession = pcmClockSession;
-    const session = await acquirePcmClockSession(context);
+    const session = staged
+      ? staged.old.session
+      : await acquirePcmClockSession(context);
     const gate = session.gate;
     if (
       isDisposed ||
       !isPlaying ||
-      generation !== pcmGeneration ||
+      (staged ? !staged.valid() : generation !== pcmGeneration) ||
       renderGeneration !== preparationGeneration
     ) {
-      if (session !== previousSession && pcmClockSession === session)
+      if (!staged && session !== previousSession && pcmClockSession === session)
         retirePcmClockSession();
       throw new Error('PCM generation cancelled');
     }
+    let slot: 0 | 1 | null = staged
+      ? staged.old.slot === 0
+        ? 1
+        : 0
+      : session.slots[0] === null
+        ? 0
+        : session.slots[1] === null
+          ? 1
+          : null;
+    if (staged && slot !== null && session.slots[slot] !== null)
+      throw new Error('PCM input slot is still owned by an earlier generation');
+    while (!staged && slot === null) {
+      const pending = Promise.withResolvers<void>();
+      const wake = () => pending.resolve();
+      pcmSlotWaiters.add(wake);
+      try {
+        await beforePcmAbortDeadline(
+          pending.promise,
+          pcmRequestWall,
+          pcmBootstrapAbort.signal
+        );
+      } finally {
+        pcmSlotWaiters.delete(wake);
+      }
+      if (
+        isDisposed ||
+        !isPlaying ||
+        generation !== pcmGeneration ||
+        renderGeneration !== preparationGeneration ||
+        pcmClockSession !== session
+      )
+        throw new Error('PCM generation cancelled');
+      slot =
+        session.slots[0] === null ? 0 : session.slots[1] === null ? 1 : null;
+    }
+    if (slot === null) throw new Error('PCM input slot unavailable');
     let provider: OtioPcmProvider | undefined;
     try {
       provider = new OtioPcmProvider(generation, budget);
       // The long-lived session is already connected to the output graph.
     } catch (error) {
       provider?.dispose();
-      retirePcmClockSession();
+      if (!staged) retirePcmClockSession();
       throw error;
     }
+    let run: PcmRun | undefined;
     let scheduler: OtioPcmScheduler;
     scheduler = new OtioPcmScheduler(
       context,
       gate.node,
       generation,
       budget,
-      () => pcmSchedulers.delete(scheduler)
+      () => {
+        pcmSchedulers.delete(scheduler);
+        if (run) {
+          run.schedulerRetired = true;
+          releasePcmSlotIfRetired(run);
+        }
+      }
     );
     pcmSchedulers.add(scheduler);
     const drain = Promise.withResolvers<void>();
     void drain.promise.catch(() => undefined);
-    const run: PcmRun = {
+    run = {
       generation,
+      slot,
       context,
       routeVersion: pcmRouteVersion,
       admission,
@@ -3449,6 +3670,7 @@ export function createOtioPlayback(
       clockCalibration: null,
       tracks: new Map(),
       streams: new Map(),
+      streamCredits: new Set(),
       chunks: [],
       startFrame: frame,
       startTime: start,
@@ -3469,6 +3691,11 @@ export function createOtioPlayback(
       drain: drain.promise,
       resolveDrain: drain.resolve,
       rejectDrain: drain.reject,
+      drainObserved: false,
+      handoffStarted: false,
+      resourcesReleased: false,
+      schedulerRetired: false,
+      nodesDisconnected: false,
       onContextState: () => {
         if (pcmRun?.generation === generation && context.state !== 'running') {
           pcmProof('error', generation, {
@@ -3480,9 +3707,18 @@ export function createOtioPlayback(
       },
       stopped: false,
     };
-    pcmRun = run;
-    context.addEventListener('statechange', run.onContextState);
-    run.clockCalibration = calibratePcmClock(run);
+    session.slots[slot] = run;
+    if (staged) {
+      staged.created(run);
+      if (!staged.valid()) {
+        releasePcmResources(run);
+        throw new Error('PCM candidate cancelled');
+      }
+    } else {
+      pcmRun = run;
+      context.addEventListener('statechange', run.onContextState);
+      run.clockCalibration = calibratePcmClock(run);
+    }
     const end = Math.floor((scopeEnd().value * rate) / scopeEnd().rate);
     await fillPcm(
       run,
@@ -3491,6 +3727,95 @@ export function createOtioPlayback(
     );
     if (run.stopped) throw new Error('PCM generation cancelled');
     return run;
+  }
+
+  function stagePcmCandidate(old: PcmRun, boundaryFrame: number): void {
+    if (
+      pcmRun !== old ||
+      old.stopped ||
+      old.contextFrame === null ||
+      old.frontierFrame !== boundaryFrame ||
+      !pcmPlayIntent
+    )
+      return;
+    if (
+      pcmCandidate?.old === old &&
+      pcmCandidate.boundaryFrame === boundaryFrame &&
+      !pcmCandidate.failure
+    )
+      return;
+    cancelPcmCandidate();
+    const startFrame = old.startFrame + boundaryFrame - old.contextFrame;
+    const endFrame = Math.floor(
+      (scopeEnd().value * old.admission.rate) / scopeEnd().rate
+    );
+    if (!Number.isSafeInteger(startFrame) || startFrame >= endFrame) return;
+    const candidate: PcmCandidate = {
+      old,
+      boundaryFrame,
+      request: playRequestEpoch,
+      scope: scopeEpoch,
+      renderGeneration,
+      run: null,
+      cancelled: false,
+      ready: null,
+      prepared: false,
+      failure: null,
+      armPromise: null,
+    };
+    pcmCandidate = candidate;
+    const valid = () =>
+      pcmCandidate === candidate &&
+      !candidate.cancelled &&
+      !isDisposed &&
+      pcmPlayIntent &&
+      pcmRun === old &&
+      old.frontierFrame === boundaryFrame &&
+      candidate.request === playRequestEpoch &&
+      candidate.scope === scopeEpoch &&
+      candidate.renderGeneration === renderGeneration &&
+      old.routeVersion === pcmRouteVersion &&
+      audioContext === old.context;
+    candidate.ready = preparePcmRun(
+      old.context,
+      old.admission,
+      { value: startFrame, rate: old.admission.rate },
+      old.outputClock,
+      {
+        old,
+        valid,
+        created: (run) => {
+          candidate.run = run;
+        },
+      }
+    ).then(
+      (run) => {
+        if (!valid()) {
+          releasePcmResources(run);
+          return;
+        }
+        candidate.prepared = true;
+        pcmRecoveryWake?.();
+        pcmProof('recovery-candidate-ready', run.generation, {
+          oldGeneration: old.generation,
+          boundaryFrame,
+          compositionStart: startFrame,
+          slot: run.slot,
+        });
+      },
+      (error: unknown) => {
+        candidate.failure =
+          error instanceof Error ? error.message : String(error);
+        pcmRecoveryWake?.();
+        if (candidate.run) releasePcmResources(candidate.run);
+        if (valid()) {
+          pcmProof('recovery-candidate-failed', old.generation, {
+            boundaryFrame,
+            reason: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+    );
   }
 
   function schedulePreparedPcm(run: PcmRun): void {
@@ -3507,23 +3832,15 @@ export function createOtioPlayback(
         index++;
         continue;
       }
-      const gainFactors: OtioPcmGainFactor[] = chunk.plan.span.gain_factors.map(
-        (factor) => {
-          const start = rescaleTime(factor.range.start_time, rate).value;
-          const end = rescaleTime(
-            addRationalTimes(factor.range.start_time, factor.range.duration),
-            rate
-          ).value;
-          return {
-            startFrame: run.contextFrame! + start - run.startFrame,
-            endFrame: run.contextFrame! + end - run.startFrame,
-            startGain: factor.direction === 'in' ? 0 : 1,
-            endGain: factor.direction === 'in' ? 1 : 0,
-          };
-        }
-      );
+      const gainFactors = chunk.gainFactors;
+      for (let i = 0; i < gainFactors.length; i++) {
+        chunk.absoluteGainFactors[i]!.startFrame =
+          gainFactors[i]!.startFrame + run.contextFrame;
+        chunk.absoluteGainFactors[i]!.endFrame =
+          gainFactors[i]!.endFrame + run.contextFrame;
+      }
       try {
-        chunk.prepared.start(first, gainFactors);
+        chunk.prepared.start(first, chunk.absoluteGainFactors);
         pcmProof('scheduled', run.generation, {
           occurrenceId: chunk.plan.span.occurrence,
           trackId: chunk.plan.span.track_id,
@@ -3584,6 +3901,38 @@ export function createOtioPlayback(
     return paint(evaluation, tree, leaves);
   }
 
+  function beginPcmHandoff(
+    run: PcmRun,
+    closedFrame: number,
+    compositionStop: OtioRationalTime
+  ): void {
+    if (run.handoffStarted || !pcmPlayIntent || pcmRun !== run) return;
+    run.handoffStarted = true;
+    const request = playRequestEpoch;
+    isBuffering = true;
+    pcmProof('recovery-render-closed', run.generation, {
+      boundaryFrame: closedFrame,
+      oldSlot: run.slot,
+      compositionStop,
+      clockEpoch: run.gate.clockEpoch,
+    });
+    notify();
+    void recoverPcmAt(
+      compositionStop,
+      request,
+      run.context,
+      run.routeVersion,
+      run.outputClock,
+      run,
+      closedFrame
+    ).catch((error: unknown) => {
+      if (!isDisposed && pcmPlayIntent && request === playRequestEpoch)
+        failScheduledAudio(
+          error instanceof Error ? error.message : String(error)
+        );
+    });
+  }
+
   function onPcmGateClosed(ack: OtioGateAck): void {
     const run = pcmRun;
     if (
@@ -3599,7 +3948,7 @@ export function createOtioPlayback(
     run.stopping = true;
     const closedFrame = ack.closedFrame;
     run.closedFrame = closedFrame;
-    run.provider.dispose();
+    closePcmProvider(run);
     const compositionStop = {
       value: run.startFrame + ack.closedFrame - run.contextFrame,
       rate: run.admission.rate,
@@ -3609,11 +3958,56 @@ export function createOtioPlayback(
       contextStopFrame: ack.closedFrame,
       compositionStop,
     });
+    const endedAtClose = compareRationalTimes(compositionStop, scopeEnd()) >= 0;
+    const handoff = pcmPlayIntent && !endedAtClose;
+    const request = playRequestEpoch;
+    pendingPcmDrains.add(run);
+    void run.drain.then(
+      () => pendingPcmDrains.delete(run),
+      () => undefined
+    );
+    const failDrain = (reason: string) => {
+      run.rejectDrain(new Error(reason));
+      if (!isDisposed && request === playRequestEpoch && pcmRun === run)
+        failScheduledAudio(reason);
+      if (pcmRun !== run) releasePcmResources(run);
+    };
+    if (handoff) beginPcmHandoff(run, closedFrame, compositionStop);
     void (async () => {
+      let drainHeld = false;
       const deadline = presentClockMs() + 1000;
-      while (pcmRun === run && !run.stopped && !isDisposed) {
+      while (!run.resourcesReleased && !isDisposed) {
+        const proofHold =
+          run.handoffStarted &&
+          coldProofGlobal.__otioProofPcm === true &&
+          coldProofGlobal.__otioProofHoldOldDrain === true &&
+          (proofHost === 'localhost' ||
+            proofHost === '127.0.0.1' ||
+            proofHost.endsWith('.localhost') ||
+            proofHost === '[::1]');
+        if (proofHold) {
+          if (presentClockMs() > deadline) {
+            failDrain('audio output drain was not observed');
+            return;
+          }
+          if (!drainHeld)
+            pcmProof('recovery-old-drain-held', run.generation, {
+              boundaryFrame: closedFrame,
+            });
+          drainHeld = true;
+          const wait = Promise.withResolvers<void>();
+          setTimeout(wait.resolve, 1);
+          await wait.promise;
+          continue;
+        }
+        if (drainHeld) {
+          pcmProof('recovery-old-drain-released', run.generation, {
+            boundaryFrame: closedFrame,
+          });
+          drainHeld = false;
+        }
         if (run.context.state !== 'running') {
-          failScheduledAudio('audio context interrupted during drain');
+          failDrain('audio context interrupted during drain');
           return;
         }
         const readBegin = presentClockMs();
@@ -3642,12 +4036,27 @@ export function createOtioPlayback(
           !Number.isFinite(stamp.performanceTime) ||
           result.status === 'interrupted'
         ) {
-          failScheduledAudio(
+          failDrain(
             `audio output clock interrupted during drain: ${result.reason}`
           );
           return;
         }
         if (stamp.contextTime * run.admission.rate >= closedFrame) {
+          run.drainObserved = true;
+          if (run.handoffStarted) {
+            run.resolveDrain();
+            pcmProof('recovery-old-drained', run.generation, {
+              boundaryFrame: closedFrame,
+              contextTime: stamp.contextTime,
+            });
+            if (pcmRun !== run) releasePcmResources(run);
+            return;
+          }
+          if (pcmRun !== run) {
+            run.resolveDrain();
+            releasePcmResources(run);
+            return;
+          }
           const ended = compareRationalTimes(compositionStop, scopeEnd()) >= 0;
           const settledTime = ended ? scopeLastSample() : compositionStop;
           if (ended || !pcmPlayIntent) {
@@ -3664,6 +4073,10 @@ export function createOtioPlayback(
             }
             restoreVisibleCanvas();
           }
+          if (!ended && pcmPlayIntent) {
+            failDrain('render handoff was not staged before output drain');
+            return;
+          }
           run.resolveDrain();
           pcmResumeFrame = compositionStop.value;
           stopPcm(ended ? 'end' : run.closeReason, true);
@@ -3672,23 +4085,6 @@ export function createOtioPlayback(
             pcmPlayIntent = false;
             isPlaying = false;
             isBuffering = false;
-          } else if (pcmPlayIntent) {
-            isBuffering = true;
-            const request = playRequestEpoch;
-            notify();
-            void recoverPcmAt(
-              compositionStop,
-              request,
-              run.context,
-              run.routeVersion,
-              run.outputClock
-            ).catch((error: unknown) => {
-              if (!isDisposed && pcmPlayIntent && request === playRequestEpoch)
-                failScheduledAudio(
-                  error instanceof Error ? error.message : String(error)
-                );
-            });
-            return;
           } else {
             isPlaying = false;
             isBuffering = false;
@@ -3697,7 +4093,7 @@ export function createOtioPlayback(
           return;
         }
         if (readEnd > deadline) {
-          failScheduledAudio('audio output drain was not observed');
+          failDrain('audio output drain was not observed');
           return;
         }
         const { promise, resolve } = Promise.withResolvers<void>();
@@ -3718,7 +4114,7 @@ export function createOtioPlayback(
   function armPcmStop(run: PcmRun, stopFrame: number, reason: string): void {
     if (run.stopped || run.stopping) return;
     run.stopping = true;
-    run.provider.dispose();
+    closePcmProvider(run);
     watchPcmClosure(run);
     run.closeReason =
       reason === 'pause'
@@ -3746,6 +4142,7 @@ export function createOtioPlayback(
         return;
       }
       run.frontierFrame = boundary;
+      if (pcmPlayIntent) stagePcmCandidate(run, boundary);
       try {
         run.scheduler.stopAtFrame(boundary);
       } catch {
@@ -3911,7 +4308,7 @@ export function createOtioPlayback(
       hold.release();
       if (old !== null) {
         run.stopping = true;
-        run.provider.dispose();
+        closePcmProvider(run);
         watchPcmClosure(run);
         return true;
       }
@@ -3931,7 +4328,12 @@ export function createOtioPlayback(
       }
       const ack =
         old === null
-          ? await run.gate.arm(run.generation, run.contextFrame!, next)
+          ? await run.gate.arm(
+              run.generation,
+              run.contextFrame!,
+              next,
+              run.slot
+            )
           : await run.gate.extend(run.generation, old, next);
       if (
         pcmRun !== run ||
@@ -3946,6 +4348,7 @@ export function createOtioPlayback(
       run.frontierFrame = next;
       run.frontierCrossedAt = null;
       run.holds.push(hold);
+      stagePcmCandidate(run, next);
       if (old === null) {
         run.outputClock.start();
         pcmBackendStarted = true;
@@ -4175,7 +4578,9 @@ export function createOtioPlayback(
     request: number,
     previousContext: AudioContext,
     previousRouteVersion: number,
-    previousClock: OutputClock
+    previousClock: OutputClock,
+    oldRun: PcmRun,
+    closedFrame: number
   ): Promise<void> {
     const admission = pcmAdmission;
     const context = audioContext;
@@ -4189,6 +4594,19 @@ export function createOtioPlayback(
       return;
     }
     const generation = renderGeneration;
+    const staged = pcmCandidate;
+    if (
+      !staged ||
+      staged.old !== oldRun ||
+      staged.boundaryFrame !== closedFrame
+    ) {
+      failScheduledAudio(
+        'no staged PCM candidate for the closed render boundary'
+      );
+      return;
+    }
+    const requestWall = presentClockMs();
+    const gapUpper = closedFrame + Math.floor(0.02 * admission.rate);
     const scopeAtStart = scopeEpoch;
     const alive = () =>
       !isDisposed &&
@@ -4198,8 +4616,12 @@ export function createOtioPlayback(
       scopeAtStart === scopeEpoch &&
       previousRouteVersion === pcmRouteVersion &&
       audioContext === previousContext;
-    const deadline = presentClockMs() + 3000;
+    const deadline = requestWall + 350;
     let readiness: PcmVideoHold | null = null;
+    let handoffOwner: {
+      run: PcmRun;
+      anchor: { wallMs: number; time: OtioRationalTime } | null;
+    } | null = null;
     while (alive()) {
       if (
         context.state !== 'running' ||
@@ -4209,16 +4631,32 @@ export function createOtioPlayback(
         failScheduledAudio('PCM recovery lost audio or graphics context');
         return;
       }
-      const limit = { value: time.value + 1, rate: admission.rate };
-      const hold = reserveVisualPrefix(time, limit);
-      const demand = pcmInitialDemand(admission, time.value);
+      if (pcmCandidate !== staged || staged.cancelled || staged.failure) {
+        failScheduledAudio(
+          staged.failure ?? 'staged PCM candidate unavailable'
+        );
+        return;
+      }
+      if (
+        Math.ceil(context.currentTime * admission.rate) +
+          OTIO_PCM_EPOCH_GUARD_FRAMES >
+        gapUpper
+      ) {
+        failScheduledAudio('recovery render handoff has no feasible frame');
+        return;
+      }
       const capacityReady =
-        pcmBudget.usedNodes + demand.nodes - (pcmClockSession ? 3 : 0) <=
-          OTIO_PCM_MAX_NODES &&
-        pcmBudget.usedBytes +
-          demand.bytes -
-          (pcmClockSession ? 96 * 1024 : 0) <=
-          OTIO_PCM_MAX_BYTES;
+        staged.prepared && !!staged.run && !staged.run.stopped;
+      if (capacityReady && staged.run && !handoffOwner)
+        handoffOwner = { run: staged.run, anchor: null };
+      const limit = {
+        value:
+          capacityReady && staged.run
+            ? staged.run.preparedThrough
+            : time.value + 1,
+        rate: admission.rate,
+      };
+      const hold = reserveVisualPrefix(time, limit, handoffOwner ?? undefined);
       if (
         capacityReady &&
         hold.isValid() &&
@@ -4318,7 +4756,7 @@ export function createOtioPlayback(
       unsubscribe.push(pcmBudget.subscribe(wake));
       const timer = setTimeout(
         resolve,
-        Math.min(250, Math.max(0, deadline - presentClockMs()))
+        Math.min(2, Math.max(0, deadline - presentClockMs()))
       );
       await promise;
       clearTimeout(timer);
@@ -4330,17 +4768,17 @@ export function createOtioPlayback(
       return;
     }
     let run: PcmRun | null = null;
+    let handoffHold: PcmVideoHold | null = null;
     try {
-      pcmRequestWall = presentClockMs();
-      const inherited = previousClock.forkForRequest(
-        pcmRequestWall,
-        presentClockMs()
-      );
-      run = await beforePcmDeadline(
-        preparePcmRun(context, admission, time, inherited ?? undefined),
-        pcmRequestWall
-      );
-      if (!alive() || pcmRun !== run) return;
+      const runCandidate = staged.run;
+      if (
+        !staged.prepared ||
+        !runCandidate ||
+        runCandidate.stopped ||
+        pcmRun !== oldRun
+      )
+        throw new Error('staged PCM candidate unavailable');
+      run = runCandidate;
       if (!readiness.isValid())
         throw new Error('video recovery reservation lost');
       const evaluation = scopedEvaluation(time);
@@ -4400,15 +4838,257 @@ export function createOtioPlayback(
           wMinSeconds: minWindowDuration(timing, rate),
         });
       }
-      const epochWall = await beforePcmDeadline(
-        selectPcmEpoch(run, samples, time),
-        pcmRequestWall
-      );
-      if (!alive() || pcmRun !== run) return;
-      if (!readiness.isValid())
+      const proofFault =
+        coldProofGlobal.__otioProofPcm === true &&
+        (proofHost === 'localhost' ||
+          proofHost === '127.0.0.1' ||
+          proofHost.endsWith('.localhost') ||
+          proofHost === '[::1]')
+          ? coldProofGlobal.__otioProofPcmFault
+          : undefined;
+      if (proofFault === 'recovery-phase-mismatch') {
+        samples.push(
+          {
+            dL: requestWall - 10000,
+            iL0Plus1Start: 0,
+            sourceT0Seconds: 0,
+            rL: 1,
+            wMinSeconds: 1 / 30,
+          },
+          {
+            dL: requestWall + 10000,
+            iL0Plus1Start: 0,
+            sourceT0Seconds: 0,
+            rL: 1,
+            wMinSeconds: 1 / 30,
+          }
+        );
+        pcmProof('recovery-fault', run.generation, {
+          code: proofFault,
+          boundaryFrame: closedFrame,
+        });
+      }
+      if (
+        !alive() ||
+        pcmRun !== oldRun ||
+        pcmCandidate !== staged ||
+        !readiness.isValid()
+      )
         throw new Error('video recovery reservation lost');
-      if (epochWall === null)
+      let inherited: OutputClock | null = null;
+      let bridge: {
+        contextTime: number;
+        performanceTime: number;
+        mappingAllowanceMs: number;
+      } | null = null;
+      let contextAfter = 0;
+      let readEnd = 0;
+      while (
+        alive() &&
+        pcmRun === oldRun &&
+        pcmCandidate === staged &&
+        readiness.isValid()
+      ) {
+        const probe = previousClock.forkForRequest(
+          requestWall,
+          presentClockMs()
+        );
+        if (!probe) throw new Error('fresh recovery output clock unavailable');
+        const readBegin = presentClockMs();
+        const contextBefore = context.currentTime;
+        let stamp: AudioTimestamp | null = null;
+        try {
+          stamp = context.getOutputTimestamp();
+        } catch {}
+        contextAfter = context.currentTime;
+        readEnd = presentClockMs();
+        const observation = probe.observe({
+          readBegin,
+          readEnd,
+          contextBefore,
+          contextAfter,
+          state: context.state,
+          contextTime: stamp?.contextTime,
+          performanceTime: stamp?.performanceTime,
+        });
+        if (
+          stamp &&
+          observation.status === 'calibrated' &&
+          observation.reason === 'accepted' &&
+          observation.offsetMin !== null &&
+          observation.offsetMax !== null &&
+          typeof stamp.contextTime === 'number' &&
+          typeof stamp.performanceTime === 'number'
+        ) {
+          inherited = probe;
+          bridge = {
+            contextTime: stamp.contextTime,
+            performanceTime: stamp.performanceTime,
+            mappingAllowanceMs: observation.offsetMax - observation.offsetMin,
+          };
+          break;
+        }
+        if (
+          observation.status === 'failed' ||
+          observation.status === 'interrupted' ||
+          (observation.reason !== 'duplicate' &&
+            observation.reason !== 'accepted') ||
+          readEnd > deadline ||
+          Math.ceil(contextAfter * admission.rate) +
+            OTIO_PCM_EPOCH_GUARD_FRAMES >
+            gapUpper
+        )
+          throw new Error('fresh recovery output clock unavailable');
+        const wait = Promise.withResolvers<void>();
+        setTimeout(wait.resolve, 1);
+        await wait.promise;
+      }
+      if (!inherited || !bridge)
+        throw new Error('fresh recovery output clock unavailable');
+      run.outputClock = inherited;
+      const allowance = bridge.mappingAllowanceMs;
+      const earliest = selectOtioCausalEpoch(
+        samples,
+        vsyncTracker.medianSeconds,
+        bridge,
+        admission.rate,
+        contextAfter,
+        requestWall,
+        readEnd,
+        OTIO_PCM_EPOCH_GUARD_FRAMES
+      );
+      if (!earliest)
         throw new Error('video recovery phase has no causal audio epoch');
+      const phaseDeadline = Math.min(
+        earliest.intervalUpper - allowance,
+        inherited.deadline
+      );
+      const wallUpper = Math.floor(
+        (bridge.contextTime + (phaseDeadline - bridge.performanceTime) / 1000) *
+          admission.rate
+      );
+      const firstBatch = run.chunks.reduce(
+        (max, chunk) =>
+          chunk.timelineStart === run!.startFrame
+            ? Math.max(max, chunk.count)
+            : max,
+        0
+      );
+      const horizonUpper =
+        Math.floor(
+          (contextAfter + OTIO_PCM_MAX_HORIZON_SECONDS) * admission.rate
+        ) - firstBatch;
+      const upper = Math.min(
+        proofFault === 'recovery-impossible-guard' ? closedFrame : gapUpper,
+        wallUpper,
+        horizonUpper,
+        (run.gate.clockCoverageEnd ?? 0) - 1
+      );
+      if (proofFault === 'recovery-impossible-guard')
+        pcmProof('recovery-fault', run.generation, {
+          code: proofFault,
+          boundaryFrame: closedFrame,
+        });
+      if (
+        !Number.isSafeInteger(upper) ||
+        upper < earliest.contextFrame ||
+        upper < closedFrame
+      )
+        throw new Error('recovery render handoff has no feasible frame');
+      const epochWall =
+        bridge.performanceTime +
+        1000 * (upper / admission.rate - bridge.contextTime);
+      const anchor = { wallMs: epochWall, time };
+      run.contextFrame = upper;
+      run.phaseSamples = samples;
+      run.bridge = bridge;
+      pcmProof('recovery-selection', run.generation, {
+        oldGeneration: oldRun.generation,
+        boundaryFrame: closedFrame,
+        f0: upper,
+        slot: run.slot,
+        sourceStartFrame: run.chunks[0]?.sourceStart ?? null,
+        compositionStartFrame: run.startFrame,
+        contextFrame: Math.ceil(contextAfter * admission.rate),
+        guardFrames: OTIO_PCM_EPOCH_GUARD_FRAMES,
+        phaseLower: Number.isFinite(earliest.intervalLower)
+          ? Math.ceil(
+              (bridge.contextTime +
+                (earliest.intervalLower + allowance - bridge.performanceTime) /
+                  1000) *
+                admission.rate
+            )
+          : null,
+        phaseLowerWallMs: earliest.intervalLower,
+        feasibleLower: earliest.contextFrame,
+        feasibleUpper: upper,
+        phaseUpper: Number.isFinite(earliest.intervalUpper)
+          ? Math.floor(
+              (bridge.contextTime +
+                (earliest.intervalUpper - allowance - bridge.performanceTime) /
+                  1000) *
+                admission.rate
+            )
+          : null,
+        phaseUpperWallMs: earliest.intervalUpper,
+        outputContextTime: bridge.contextTime,
+        clockEpoch: run.gate.clockEpoch,
+        deadline: inherited.deadline,
+        requestWall,
+        epochWall,
+      });
+      if (!handoffOwner || handoffOwner.run !== run)
+        throw new Error('recovery visual ownership unavailable');
+      handoffOwner.anchor = anchor;
+      handoffHold = readiness;
+      readiness = null;
+      schedulePreparedPcm(run);
+      const visualFrame = Math.floor(
+        (handoffHold.through.value * admission.rate) / handoffHold.through.rate
+      );
+      const through = Math.min(
+        upper + Math.min(run.scheduledThrough, visualFrame) - run.startFrame,
+        run.gate.clockCoverageEnd ?? 0
+      );
+      if (
+        through <= upper ||
+        !handoffHold.isValid() ||
+        !pcmCommitClockValid(run)
+      )
+        throw new Error('recovery final clock or visual guard failed');
+      const finalContextFrame = Math.ceil(context.currentTime * admission.rate);
+      if (
+        upper < finalContextFrame + OTIO_PCM_EPOCH_GUARD_FRAMES ||
+        presentClockMs() > inherited.deadline
+      )
+        throw new Error('recovery final guard exceeded');
+      inherited.arm();
+      staged.armPromise = run.gate.arm(
+        run.generation,
+        upper,
+        through,
+        run.slot
+      );
+      pcmProof('recovery-final-guard', run.generation, {
+        oldGeneration: oldRun.generation,
+        boundaryFrame: closedFrame,
+        f0: upper,
+        slot: run.slot,
+        contextFrame: finalContextFrame,
+        guardFrames: OTIO_PCM_EPOCH_GUARD_FRAMES,
+        clockEpoch: run.gate.clockEpoch,
+        outputContextTime: bridge.contextTime,
+      });
+      const ack = await beforePcmDeadline(staged.armPromise, requestWall);
+      if (
+        !alive() ||
+        pcmRun !== oldRun ||
+        pcmCandidate !== staged ||
+        !ack.accepted ||
+        ack.throughFrame !== through ||
+        !handoffHold.isValid()
+      )
+        throw new Error('recovery arm was not accepted');
       const candidate = preparedBoundary;
       if (
         candidate?.status === 'ready' &&
@@ -4424,13 +5104,41 @@ export function createOtioPlayback(
           candidate.rings.delete(key);
         }
       }
-      nativeAnchor = { wallMs: epochWall, time };
-      readiness.release();
-      readiness = null;
+      pcmCandidate = null;
+      pcmRun = run;
+      context.addEventListener('statechange', run.onContextState);
+      nativeAnchor = anchor;
+      run.frontierFrame = through;
+      run.holds.push(handoffHold);
+      handoffHold = null;
+      inherited.start();
+      pcmProof('epoch', run.generation, {
+        f0: upper,
+        c0: upper / admission.rate,
+        contextSampleRate: admission.rate,
+        compositionT0: time,
+        bridge,
+        bridgeMappingAllowanceMs: allowance,
+      });
+      pcmProof('frontier', run.generation, {
+        compositionThrough: {
+          value: run.startFrame + through - upper,
+          rate: admission.rate,
+        },
+        contextFrameThrough: through,
+        gateFrame: through,
+      });
+      pcmProof('recovery-handoff', run.generation, {
+        oldGeneration: oldRun.generation,
+        boundaryFrame: closedFrame,
+        f0: upper,
+        slot: run.slot,
+        clockEpoch: run.gate.clockEpoch,
+        oldDrainObserved: oldRun.drainObserved,
+      });
       if (candidate && preparedBoundary === candidate) cancelPreparedBoundary();
-      if (!(await beforePcmDeadline(renewPcmFrontier(run), pcmRequestWall)))
-        throw new Error('recovery frontier unavailable');
-      if (!alive() || pcmRun !== run) return;
+      if (oldRun.drainObserved) releasePcmResources(oldRun);
+      stagePcmCandidate(run, through);
       isStarting = false;
       isBuffering = false;
       nativeLastPresentMs = null;
@@ -4443,6 +5151,7 @@ export function createOtioPlayback(
         );
     } finally {
       readiness?.release();
+      handoffHold?.release();
       if (!alive() && run && pcmRun === run) stopPcm('recovery-cancelled');
     }
   }
@@ -7027,6 +7736,15 @@ export function createOtioPlayback(
         pcmPlayIntent = true;
         isPlaying = true;
         isBuffering = true;
+        const run = pcmRun;
+        if (run.frontierFrame !== null)
+          stagePcmCandidate(run, run.frontierFrame);
+        if (run.closedFrame !== null && run.contextFrame !== null) {
+          beginPcmHandoff(run, run.closedFrame, {
+            value: run.startFrame + run.closedFrame - run.contextFrame,
+            rate: run.admission.rate,
+          });
+        }
         notify();
         return;
       }
@@ -7166,6 +7884,7 @@ export function createOtioPlayback(
     pause(): void {
       if (isDisposed) return;
       pcmPlayIntent = false;
+      cancelPcmCandidate();
       playRequestEpoch++;
       if (!pcmRun) {
         pcmBootstrapToken++;
@@ -7430,7 +8149,9 @@ export function createOtioPlayback(
       if (isDisposed) return;
       const run = pcmRun;
       this.pause();
-      if (run) {
+      const drains = new Set(pendingPcmDrains);
+      if (run) drains.add(run);
+      if (drains.size) {
         const timeout = Promise.withResolvers<never>();
         const timer = setTimeout(
           () =>
@@ -7440,7 +8161,10 @@ export function createOtioPlayback(
           1000
         );
         try {
-          await Promise.race([run.drain, timeout.promise]);
+          await Promise.race([
+            Promise.all([...drains].map((item) => item.drain)),
+            timeout.promise,
+          ]);
         } catch (error) {
           if (pcmRun === run)
             failScheduledAudio(
@@ -7565,6 +8289,7 @@ export function createOtioPlayback(
       pcmPlayIntent = false;
       pcmRecoveryWake?.();
       pcmResumeFrame = null;
+      abandonPcmDrains();
       stopPcm('dispose');
       retirePcmClockSession();
       cancelPreparedBoundary();
@@ -7673,9 +8398,12 @@ export function createOtioPlayback(
       return {
         nodes: pcmBudget.usedNodes,
         bytes: pcmBudget.usedBytes,
+        streams: pcmStreamCredits,
         gateReservations,
         carrierReservations: pcmGateRetirements.reservedCarriers,
         activeSession,
+        candidatePrepared: pcmCandidate?.prepared ?? false,
+        candidateBoundaryFrame: pcmCandidate?.boundaryFrame ?? null,
         otherGateReservations: gateReservations - (activeSession ? 1 : 0),
       };
     };

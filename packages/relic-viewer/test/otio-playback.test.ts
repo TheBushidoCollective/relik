@@ -1767,6 +1767,7 @@ describe('otio playback controller', () => {
     custom?: { document: OtioDocumentV1; audio: Blob },
     clockOptions?: {
       anchorOffset?: number;
+      sampleRate?: 44100 | 48000;
       anchorQuanta?: readonly [number, number];
       scheduleAdvanceFrames?: number;
       anchorDelayMs?: number;
@@ -1783,13 +1784,15 @@ describe('otio playback controller', () => {
     }
   ) {
     let wall = 2000;
-    let renderFrame = 48000;
-    let outputFrame = 48000;
+    const sampleRate = clockOptions?.sampleRate ?? 48000;
+    let renderFrame = sampleRate;
+    let outputFrame = sampleRate;
     let outputWallOffset = 1000;
     let suspensions = 0;
     let resumes = 0;
     let closes = 0;
     let contextConstructions = 0;
+    let sourceStartAdvance = 0;
     let firstScheduleLead: number | null = null;
     let scheduleAdvanceApplied = false;
     let leaseReleases = 0;
@@ -1805,6 +1808,7 @@ describe('otio playback controller', () => {
       '__otioProofPcm',
       '__otioProofPcmSnapshot',
       '__otioProofPcmFault',
+      '__otioProofHoldOldDrain',
       'HTMLVideoElement',
       'VideoFrame',
     ] as const);
@@ -1842,6 +1846,7 @@ describe('otio playback controller', () => {
       }) as typeof document.createElement;
     }
     const commands: Array<Record<string, unknown>> = [];
+    const armOutputFrames: number[] = [];
     const pulls: number[] = [];
     const gates: FakeGate[] = [];
     const callbackQueue: Array<() => void> = [];
@@ -1872,11 +1877,20 @@ describe('otio playback controller', () => {
       detune = { value: 0 };
       onended: (() => void) | null = null;
       carrier = false;
+      started = false;
       override connect(node?: unknown, output?: number, input?: number) {
         this.carrier = input === 1;
         return super.connect(node, output, input);
       }
       start(time: number) {
+        this.started = true;
+        if (!this.carrier && sourceStartAdvance > 0) {
+          const frames = sourceStartAdvance;
+          sourceStartAdvance = 0;
+          renderFrame += frames;
+          outputFrame += frames;
+          wall += (frames * 1000) / sampleRate;
+        }
         if (
           !this.carrier &&
           !scheduleAdvanceApplied &&
@@ -1885,8 +1899,8 @@ describe('otio playback controller', () => {
           scheduleAdvanceApplied = true;
           renderFrame += clockOptions.scheduleAdvanceFrames;
           outputFrame += clockOptions.scheduleAdvanceFrames;
-          wall += clockOptions.scheduleAdvanceFrames / 48;
-          firstScheduleLead = Math.round(time * 48000) - renderFrame;
+          wall += (clockOptions.scheduleAdvanceFrames * 1000) / sampleRate;
+          firstScheduleLead = Math.round(time * sampleRate) - renderFrame;
         }
       }
       stop(_time?: number) {
@@ -1894,7 +1908,7 @@ describe('otio playback controller', () => {
       }
     }
     class FakeContext {
-      readonly sampleRate = 48000;
+      readonly sampleRate = sampleRate;
       readonly destination = new FakeNode();
       readonly audioWorklet = { addModule: async () => {} };
       state = 'running';
@@ -1906,7 +1920,7 @@ describe('otio playback controller', () => {
       getOutputTimestamp() {
         return {
           contextTime: outputFrame / this.sampleRate,
-          performanceTime: outputWallOffset + outputFrame / 48,
+          performanceTime: outputWallOffset + (outputFrame * 1000) / sampleRate,
         };
       }
       createGain() {
@@ -1955,15 +1969,17 @@ describe('otio playback controller', () => {
             : 256;
           renderFrame += quantumSamples;
           outputFrame += quantumSamples;
-          wall += quantumSamples / 48;
+          wall += (quantumSamples * 1000) / sampleRate;
           if (clockOptions?.anchorDelayMs) {
-            const delayFrames = clockOptions.anchorDelayMs * 48;
+            const delayFrames = Math.round(
+              (clockOptions.anchorDelayMs * sampleRate) / 1000
+            );
             renderFrame += delayFrames;
             outputFrame += delayFrames;
             wall += clockOptions.anchorDelayMs;
           }
           if (clockOptions?.suspendGate || clockOptions?.resumeGate)
-            outputWallOffset = wall - outputFrame / 48;
+            outputWallOffset = wall - (outputFrame * 1000) / sampleRate;
         }
         this.state = 'running';
       }
@@ -2083,6 +2099,7 @@ describe('otio playback controller', () => {
         if (closed) emit(closed as unknown as Record<string, unknown>);
         for (const message of this.pending.splice(0)) {
           commands.push(message);
+          if (message.type === 'arm') armOutputFrames.push(outputFrame);
           if (message.type === 'dispose') emit({ type: 'disposed' });
           else if (message.type === 'install-bank') {
             const descriptor = message.descriptor as Record<string, number>;
@@ -2139,7 +2156,7 @@ describe('otio playback controller', () => {
     globalThis.clearTimeout = ((id: number) => {
       timers.delete(id);
     }) as typeof clearTimeout;
-    const bytes = new Uint8Array(44 + 96000 * 2);
+    const bytes = new Uint8Array(44 + sampleRate * 4);
     const view = new DataView(bytes.buffer);
     for (const [at, text] of [
       [0, 'RIFF'],
@@ -2152,8 +2169,8 @@ describe('otio playback controller', () => {
     view.setUint32(16, 16, true);
     view.setUint16(20, 1, true);
     view.setUint16(22, 1, true);
-    view.setUint32(24, 48000, true);
-    view.setUint32(28, 96000, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * 2, true);
     view.setUint16(32, 2, true);
     view.setUint16(34, 16, true);
     view.setUint32(40, bytes.length - 44, true);
@@ -2236,7 +2253,7 @@ describe('otio playback controller', () => {
         value: function () {
           if (contextConstructions++ > 0) {
             audioContext = new FakeContext();
-            outputWallOffset = wall - outputFrame / 48;
+            outputWallOffset = wall - (outputFrame * 1000) / sampleRate;
           }
           return audioContext;
         },
@@ -2331,8 +2348,14 @@ describe('otio playback controller', () => {
           currentVideo.triggerRvfc(wall, 1 / 30);
           await flush();
         }
-        if (!settled)
-          await advance(wall + 8, renderFrame + 384, outputFrame + 384);
+        if (!settled) {
+          const step = Math.round(sampleRate * 0.008);
+          await advance(
+            wall + (step * 1000) / sampleRate,
+            renderFrame + step,
+            outputFrame + step
+          );
+        }
       }
       expect(settled).toBe(true);
       await pending;
@@ -2377,6 +2400,10 @@ describe('otio playback controller', () => {
       },
       playback,
       commands,
+      armOutputFrames,
+      advanceNextSourceStart(frames: number) {
+        sourceStartAdvance = frames;
+      },
       pulls,
       gates,
       holdPcmResponses(value: boolean) {
@@ -2756,6 +2783,88 @@ describe('otio playback controller', () => {
       fixture.restore();
     }
   });
+
+  test.each(['shared', 'disjoint'] as const)(
+    'eight simultaneous voices stage before closure with %s source identities',
+    async (identity) => {
+      const time = (value: number) => ({
+        OTIO_SCHEMA: 'RationalTime.1',
+        value,
+        rate: 30,
+      });
+      const span = {
+        OTIO_SCHEMA: 'TimeRange.1',
+        start_time: time(0),
+        duration: time(60),
+      };
+      const document = readOtioDocument(
+        JSON.stringify({
+          OTIO_SCHEMA: 'Timeline.1',
+          metadata: { relic: { id: 'timeline_1' } },
+          tracks: {
+            OTIO_SCHEMA: 'Stack.1',
+            children: Array.from({ length: 8 }, (_, index) => ({
+              OTIO_SCHEMA: 'Track.1',
+              kind: 'Audio',
+              children: [
+                {
+                  OTIO_SCHEMA: 'Clip.1',
+                  source_range: span,
+                  media_reference: {
+                    OTIO_SCHEMA: 'ExternalReference.1',
+                    target_url:
+                      identity === 'shared'
+                        ? 'media/shared.wav'
+                        : `media/voice-${index}.wav`,
+                    available_range: span,
+                  },
+                },
+              ],
+            })),
+          },
+        })
+      );
+      const audio = new Blob([
+        await Bun.file(
+          new URL(
+            '../../relic-format/test/fixtures/otio/scheduled-audio.otiod/media/indexed-stereo.wav',
+            import.meta.url
+          )
+        ).arrayBuffer(),
+      ]);
+      const fixture = independentPcmFixture(
+        false,
+        false,
+        { document, audio },
+        { proofBudget: true }
+      );
+      try {
+        await fixture.start();
+        for (let i = 0; i < 20; i++) await fixture.flush();
+        const proof = globalThis as typeof globalThis & {
+          __otioProofPcmSnapshot: () => {
+            streams: number;
+            nodes: number;
+            bytes: number;
+            candidatePrepared: boolean;
+            candidateBoundaryFrame: number | null;
+          };
+        };
+        const snapshot = proof.__otioProofPcmSnapshot();
+        expect(snapshot.streams).toBeLessThanOrEqual(10);
+        expect(snapshot.nodes).toBeLessThanOrEqual(128);
+        expect(snapshot.bytes).toBeLessThanOrEqual(8 * 1024 * 1024);
+        expect(snapshot.candidateBoundaryFrame).toBe(
+          Number(
+            fixture.commands.find((item) => item.type === 'arm')!.throughFrame
+          )
+        );
+        expect(snapshot.candidatePrepared, JSON.stringify(snapshot)).toBe(true);
+      } finally {
+        fixture.restore();
+      }
+    }
+  );
 
   test('PCM resource starvation waits for actual ended callbacks before replacement', async () => {
     const time = (value: number) => ({
@@ -3272,6 +3381,7 @@ describe('otio playback controller', () => {
     const proof = globalThis as typeof globalThis & {
       __otioProofPcm?: boolean;
       __otioProofPcmFault?: string | null;
+      __otioProofHoldOldDrain?: boolean;
     };
     try {
       await fixture.start();
@@ -3298,9 +3408,13 @@ describe('otio playback controller', () => {
         )
       ).toBe(true);
       proof.__otioProofPcm = true;
+      proof.__otioProofHoldOldDrain = true;
       proof.__otioProofPcmFault = 'withhold-future-video';
       const cutWall = 1000 + cutFrame / 48;
-      await fixture.advance(cutWall, cutFrame + 128, cutFrame);
+      await fixture.advance(cutWall, cutFrame + 128, cutFrame - 480);
+      const delayedOldEnded = fixture.audioContext.sources
+        .filter((source) => !source.carrier && source.started && source.onended)
+        .map((source) => source.onended!);
       expect(fixture.playback.getState().buffering).toBe(true);
       const incoming = fixture.videos[1]!;
       expect(incoming.paused).toBe(false);
@@ -3321,21 +3435,163 @@ describe('otio playback controller', () => {
         );
       const arms = fixture.commands.filter((item) => item.type === 'arm');
       expect(arms, JSON.stringify(fixture.playback.getState())).toHaveLength(2);
+      expect(fixture.armOutputFrames[1]).toBeLessThan(cutFrame);
       expect(Number(arms[1]!.f0) - cutFrame).toBeLessThanOrEqual(960);
-      const quiet = [new Float32Array(64)];
-      fixture.gates[0]!.machine.render(
+      const inputs = [
         [new Float32Array(64).fill(1)],
-        quiet,
-        cutFrame
-      );
+        [new Float32Array(64).fill(9)],
+        [new Float32Array(64).fill(2)],
+      ];
+      const quiet = [new Float32Array(64)];
+      fixture.gates[0]!.machine.render(inputs, quiet, cutFrame);
       expect(quiet[0]!.every((sample) => sample === 0)).toBe(true);
+      const resumed = [new Float32Array(64)];
+      fixture.gates[0]!.machine.render(inputs, resumed, Number(arms[1]!.f0));
+      expect(resumed[0]!.every((sample) => sample === 2)).toBe(true);
       expect(fixture.pulls).toContain(24000);
       expect(fixture.playback.getState().playing).toBe(true);
       expect(fixture.playback.getState().buffering).toBe(false);
+      proof.__otioProofHoldOldDrain = false;
+      await fixture.advance(
+        fixture.wall + 8,
+        fixture.renderFrame + 384,
+        fixture.outputFrame + 384
+      );
+      expect(fixture.playback.getState().playing).toBe(true);
+      for (const ended of delayedOldEnded) ended();
+      await fixture.flush();
+      expect(fixture.playback.getState().playing).toBe(true);
     } finally {
       fixture.restore();
     }
   });
+
+  test('44.1k render handoff remains within 882 frames before old output drain', async () => {
+    const rate = 44100;
+    const fixture = independentPcmFixture(true, true, undefined, {
+      sampleRate: rate,
+    });
+    const proof = globalThis as typeof globalThis & {
+      __otioProofPcm?: boolean;
+      __otioProofPcmFault?: string | null;
+      __otioProofHoldOldDrain?: boolean;
+    };
+    try {
+      await fixture.start();
+      const f0 = Number(
+        fixture.commands.find((item) => item.type === 'arm')!.f0
+      );
+      const boundary = f0 + 22050;
+      let firstTag = 1;
+      for (let tick = 1; tick < 30; tick++) {
+        const output = f0 + tick * 735;
+        const now = 1000 + (output * 1000) / rate;
+        const desired = Math.min(14, Math.floor(tick / 2) + 1);
+        if (desired > firstTag && fixture.videos[0]?.rvfcCallbacks.size) {
+          firstTag = desired;
+          fixture.videos[0].triggerRvfc(now, desired / 30);
+        }
+        await fixture.advance(now, output + 128, output);
+        raf?.(now);
+        await fixture.flush();
+      }
+      proof.__otioProofPcm = true;
+      proof.__otioProofHoldOldDrain = true;
+      proof.__otioProofPcmFault = 'withhold-future-video';
+      const wallAtBoundary = 1000 + (boundary * 1000) / rate;
+      await fixture.advance(wallAtBoundary, boundary + 128, boundary - 441);
+      proof.__otioProofPcmFault = null;
+      fixture.videos[1]!.triggerRvfc(wallAtBoundary, 1 / 30);
+      for (
+        let i = 0;
+        i < 20 &&
+        fixture.commands.filter((item) => item.type === 'arm').length < 2;
+        i++
+      )
+        await fixture.advance(
+          fixture.wall + 1,
+          fixture.renderFrame + 44,
+          fixture.outputFrame + 44
+        );
+      const arms = fixture.commands.filter((item) => item.type === 'arm');
+      expect(arms).toHaveLength(2);
+      expect(Number(arms[1]!.f0) - boundary).toBeLessThanOrEqual(882);
+      expect(fixture.armOutputFrames[1]).toBeLessThan(boundary);
+      expect(arms[1]!.slot).toBe(1);
+      expect(fixture.pulls).toContain(22050);
+      proof.__otioProofHoldOldDrain = false;
+      await fixture.advance(
+        fixture.wall + 10,
+        fixture.renderFrame + 441,
+        fixture.outputFrame + 441
+      );
+      expect(fixture.playback.getState().playing).toBe(true);
+    } finally {
+      fixture.restore();
+    }
+  });
+
+  test.each([
+    'recovery-phase-mismatch',
+    'recovery-impossible-guard',
+    'excess-source-work',
+  ] as const)(
+    'handoff rejects injected %s without arming successor',
+    async (fault) => {
+      const fixture = independentPcmFixture(true, true);
+      const proof = globalThis as typeof globalThis & {
+        __otioProofPcm?: boolean;
+        __otioProofPcmFault?: string | null;
+      };
+      try {
+        await fixture.start();
+        const firstArm = fixture.commands.find((item) => item.type === 'arm')!;
+        const f0 = Number(firstArm.f0);
+        let firstTag = 1;
+        for (let tick = 1; tick < 30; tick++) {
+          const outputFrame = f0 + tick * 800;
+          const now = 1000 + outputFrame / 48;
+          const desired = Math.min(14, Math.floor(tick / 2) + 1);
+          if (desired > firstTag && fixture.videos[0]?.rvfcCallbacks.size) {
+            firstTag = desired;
+            fixture.videos[0].triggerRvfc(now, desired / 30);
+          }
+          await fixture.advance(now, outputFrame + 128, outputFrame);
+          raf?.(now);
+          await fixture.flush();
+        }
+        proof.__otioProofPcm = true;
+        proof.__otioProofPcmFault = 'withhold-future-video';
+        const cutFrame = f0 + 24000;
+        const cutWall = 1000 + cutFrame / 48;
+        await fixture.advance(cutWall, cutFrame + 128, cutFrame);
+        proof.__otioProofPcmFault =
+          fault === 'excess-source-work' ? null : fault;
+        if (fault === 'excess-source-work')
+          fixture.advanceNextSourceStart(1024);
+        fixture.videos[1]!.triggerRvfc(cutWall, 1 / 30);
+        for (let i = 0; i < 30 && fixture.playback.getState().playing; i++)
+          await fixture.advance(
+            fixture.wall + 1,
+            fixture.renderFrame + 48,
+            fixture.outputFrame + 48
+          );
+        expect(
+          fixture.commands.filter((item) => item.type === 'arm')
+        ).toHaveLength(1);
+        expect(fixture.playback.getState().playing).toBe(false);
+        expect(
+          fixture.playback
+            .getState()
+            .diagnostics.some((item) =>
+              item.message.includes('Scheduled audio stopped')
+            )
+        ).toBe(true);
+      } finally {
+        fixture.restore();
+      }
+    }
+  );
 
   test('PCM recovery survives a queued animation callback with no active run', async () => {
     const fixture = independentPcmFixture();
