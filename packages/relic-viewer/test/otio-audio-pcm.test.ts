@@ -242,6 +242,40 @@ describe('bounded PCM graph', () => {
     context.sources[0]!.onended?.();
     expect(budget.usedNodes).toBe(0);
   });
+  test('confirmed context closure releases canceled sources without ended, exactly once', () => {
+    const context = new FakeContext();
+    const budget = new OtioPcmBudget();
+    let retired = 0;
+    const scheduler = new OtioPcmScheduler(
+      context as unknown as AudioContext,
+      new FakeNode() as unknown as AudioNode,
+      1,
+      budget,
+      () => {
+        retired++;
+      }
+    );
+    scheduler.schedule({
+      generation: 1,
+      firstContextFrame: 48200,
+      planes: [new Float32Array(480)],
+      gainFactors: [
+        { startFrame: 48200, endFrame: 48680, startGain: 0, endGain: 1 },
+      ],
+    });
+    const lateEnded = context.sources[0]!.onended!;
+    scheduler.dispose();
+    expect(budget.usedNodes).toBe(2);
+    expect(budget.usedBytes).toBe(1920);
+    expect(retired).toBe(0);
+    scheduler.contextClosed();
+    scheduler.contextClosed();
+    lateEnded();
+    expect(budget.usedNodes).toBe(0);
+    expect(budget.usedBytes).toBe(0);
+    expect(retired).toBe(1);
+  });
+
   test('prepared nodes retire immediately before start, but started nodes await ended', () => {
     const context = new FakeContext(),
       budget = new OtioPcmBudget();

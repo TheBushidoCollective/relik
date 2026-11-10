@@ -14126,6 +14126,12 @@ async function runScheduledPcmProof(
         trace: MovingTrace['trace'];
         released: number;
         releaseFrame: number;
+        paused: {
+          playing: string | null;
+          frame: string | null;
+          timestamp: number;
+        } | null;
+        resumePlayEdge: { timestamp: number } | null;
       }>(`(async () => {
         const sleep = ms => { const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, ms); return promise; };
         const deadline = performance.now() + 3000;
@@ -14133,11 +14139,22 @@ async function runScheduledPcmProof(
         if (!globalThis.__otioProofTrace.hasPcmCancel(${JSON.stringify(action)})) throw new Error('no cancellation before stale release');
         const releaseFrame = globalThis.__otioProofTrace.audioFrame();
         const released = globalThis.__otioProofTrace.holdPcmResponses(false);
-        const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, 500); await promise;
+        let paused=null, resumePlayEdge=null;
+        if (${JSON.stringify(action)} === 'seek') {
+          const root=document.querySelector('.otio-view'), button=document.querySelector('button.otio-play');
+          if (!(root instanceof HTMLElement) || !(button instanceof HTMLButtonElement)) throw new Error('seek replay controls missing');
+          const targetDeadline=performance.now()+350;
+          while ((root.dataset.playing!=='false' || Number(root.dataset.frame)!==30) && performance.now()<targetDeadline) await sleep(10);
+          paused={playing:root.dataset.playing ?? null, frame:root.dataset.frame ?? null, timestamp:performance.now()};
+          await sleep(100);
+          resumePlayEdge=globalThis.__otioProofTrace.playRequest();
+          button.click();
+        }
+        await sleep(500);
         const trace = await globalThis.__otioProofTrace.stop();
         const root = document.querySelector('.otio-view');
         if (root?.dataset.playing === 'true') document.querySelector('button.otio-play').click();
-        return {trace, released, releaseFrame};
+        return {trace, released, releaseFrame, paused, resumePlayEdge};
       })()`);
       await writeFile(
         join(shotDir, `scheduled-${action}-cancel.json`),
@@ -14171,14 +14188,77 @@ async function runScheduledPcmProof(
       const nextEpoch = events
         .slice(cancellation + 1)
         .find((event) => event['event'] === 'epoch');
-      if (action === 'seek')
-        assert.ok(nextEpoch, 'seek did not produce a replacement epoch');
-      else
+      if (action === 'seek') {
+        assert.ok(
+          outcome.paused?.playing === 'false' &&
+            Number(outcome.paused.frame) === 30,
+          'UI seek did not settle paused at the selected frame'
+        );
+        assert.ok(
+          outcome.resumePlayEdge,
+          'explicit replay request was not captured'
+        );
+        assert.ok(
+          !events
+            .slice(cancellation + 1)
+            .some(
+              (event) =>
+                event['event'] === 'epoch' &&
+                Number(event['wallMs']) < outcome.resumePlayEdge!.timestamp
+            ),
+          'paused UI seek resumed before the user requested playback'
+        );
+        assert.ok(
+          nextEpoch,
+          'explicit play after paused seek did not produce a replacement epoch'
+        );
+        assert.notEqual(
+          nextEpoch['generation'],
+          generation,
+          'seek replay reused the canceled generation'
+        );
+        const origin = nextEpoch['compositionT0'] as {
+          value: number;
+          rate: number;
+        };
+        const sourceSample = (origin.value * oracle.sample_rate) / origin.rate;
+        assert.equal(
+          sourceSample,
+          30 * unit,
+          'seek replay did not retain the requested composition sample'
+        );
+        const bridge = nextEpoch['bridge'] as {
+          contextTime: number;
+          performanceTime: number;
+        };
+        const outputStart =
+          bridge.performanceTime +
+          (Number(nextEpoch['c0']) - bridge.contextTime) * 1000;
+        assert.ok(
+          Number.isFinite(outputStart) &&
+            outputStart >= outcome.resumePlayEdge.timestamp &&
+            outputStart - outcome.resumePlayEdge.timestamp <= 350,
+          'seek replay missed the original explicit play-request budget'
+        );
+        const reference = compareScheduledPcm(
+          outcome.trace.audio,
+          Number(nextEpoch['f0']) - sourceSample,
+          expected,
+          sourceSample,
+          sourceSample + 960,
+          outcome.trace.witness
+        );
+        assert.ok(
+          reference.rmse.every((value) => value <= 0.003),
+          'seek replay changed or skipped the requested source PCM prefix'
+        );
+      } else {
         assert.equal(
           nextEpoch,
           undefined,
           'scope replacement unexpectedly resumed'
         );
+      }
       const nextFrame = nextEpoch
         ? Number(nextEpoch['f0'])
         : lastCarrierEnd(outcome.trace);

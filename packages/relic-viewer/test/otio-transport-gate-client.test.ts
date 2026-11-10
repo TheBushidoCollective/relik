@@ -60,6 +60,9 @@ test('session correlates anchor certification, commands and retirement', async (
     await gate.ready();
     expect(gate.clockCoverageEnd).toBe(65536 - 2048);
     const arm = gate.arm(1, 300, 500);
+    emit({ type: 'clock-stale-pair', previous: {}, current: {} });
+    emit({ type: 'clock-stale-overflow' });
+    expect(gate.clockCoverageEnd).toBe(65536 - 2048);
     await expect(gate.extend(1, 500, 600)).rejects.toThrow('pending');
     emit({
       type: 'arm',

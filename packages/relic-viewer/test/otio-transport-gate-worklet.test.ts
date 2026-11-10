@@ -198,6 +198,76 @@ test('native render clock certifies promotions and silences a held ramp', async 
     const prefix = fresh();
     block(prefix, 0);
     block(prefix, 4);
+    expect(
+      prefix.port.messages.some(
+        (message) => message.type === 'clock-stale-pair'
+      )
+    ).toBe(false);
+    const stale = new ProcessorClass({
+      processorOptions: {
+        clockEpoch: 2,
+        initialFrame: 0,
+        proofStaleMaxPairs: 16,
+      },
+    });
+    block(stale, 0);
+    expect(
+      stale.port.messages.some((message) => message.type === 'clock-stale-pair')
+    ).toBe(false);
+    block(stale, 4);
+    const pair = stale.port.messages.find(
+      (message) => message.type === 'clock-stale-pair'
+    ) as {
+      previous: {
+        callbackOrdinal: number;
+        certifiedFrame: number;
+        clockFrameA: number[];
+        clockTagA: number[];
+      };
+      current: {
+        callbackOrdinal: number;
+        certifiedFrame: number;
+        clockFrameA: number[];
+        clockTagA: number[];
+      };
+    };
+    expect(pair.previous).toMatchObject({
+      callbackOrdinal: 1,
+      certifiedFrame: 0,
+      clockFrameA: [0, 1, 2, 3],
+      clockTagA: [1],
+    });
+    expect(pair.current).toMatchObject({
+      callbackOrdinal: 2,
+      certifiedFrame: 4,
+      clockFrameA: [4, 5, 6, 7],
+      clockTagA: [1],
+    });
+    for (let i = 2; i < 19; i++) block(stale, i * 4);
+    expect(
+      stale.port.messages.filter(
+        (message) => message.type === 'clock-stale-pair'
+      )
+    ).toHaveLength(16);
+    expect(
+      stale.port.messages.filter(
+        (message) => message.type === 'clock-stale-overflow'
+      )
+    ).toHaveLength(1);
+    const invalidStale = new ProcessorClass({
+      processorOptions: {
+        clockEpoch: 2,
+        initialFrame: 0,
+        proofStaleMaxPairs: 16,
+      },
+    });
+    block(invalidStale, 0);
+    block(invalidStale, 4, Float32Array.of(4, 4, 4, 4));
+    expect(
+      invalidStale.port.messages.some(
+        (message) => message.type === 'clock-stale-pair'
+      )
+    ).toBe(false);
     command(prefix, {
       type: 'arm',
       generation: 1,

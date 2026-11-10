@@ -18,9 +18,27 @@ type Bank = {
   startFrame: number;
   endFrame: number;
 };
+type StalePrevious = {
+  callbackOrdinal: number;
+  sampleCount: number;
+  cachedCurrentFrame: number;
+  certifiedFrame: number;
+  quantumLength: number;
+  active: Bank;
+  warming: Bank | null;
+  frameA: Float32Array;
+  tagA: Float32Array;
+  frameB: Float32Array;
+  tagB: Float32Array;
+  frameALength: number;
+  tagALength: number;
+  frameBLength: number;
+  tagBLength: number;
+};
 const SPAN = 65536;
 const STEP = 32768;
 const MAX_QUANTUM = 2048;
+const EMPTY = new Float32Array(0);
 const integer = (n: unknown): n is number =>
   typeof n === 'number' && Number.isSafeInteger(n) && n >= 0;
 
@@ -48,6 +66,10 @@ class OtioTransportGateProcessor extends AudioWorkletProcessor {
   private terminalSent = false;
   private readonly traceMaxCallbacks: number;
   private traceRemaining = -1;
+  private stalePrevious: StalePrevious | null = null;
+  private staleCount = 0;
+  private staleStopped = false;
+  private staleLimit = 0;
 
   constructor(options?: unknown) {
     super(options);
@@ -65,6 +87,9 @@ class OtioTransportGateProcessor extends AudioWorkletProcessor {
       'proofInitialSerial' in config ? config.proofInitialSerial : undefined;
     const traceLimit =
       'traceMaxCallbacks' in config ? config.traceMaxCallbacks : 0;
+    const staleLimit =
+      'proofStaleMaxPairs' in config ? config.proofStaleMaxPairs : 0;
+    this.staleLimit = staleLimit === 16 ? 16 : 0;
     this.traceMaxCallbacks =
       integer(traceLimit) && traceLimit > 0 && traceLimit <= 512
         ? traceLimit
@@ -78,6 +103,25 @@ class OtioTransportGateProcessor extends AudioWorkletProcessor {
       startFrame: initial,
       endFrame: initial + SPAN,
     };
+    if (this.staleLimit) {
+      this.stalePrevious = {
+        callbackOrdinal: 0,
+        sampleCount: 0,
+        cachedCurrentFrame: 0,
+        certifiedFrame: 0,
+        quantumLength: 0,
+        active: this.active,
+        warming: null,
+        frameA: new Float32Array(MAX_QUANTUM),
+        tagA: new Float32Array(MAX_QUANTUM),
+        frameB: new Float32Array(MAX_QUANTUM),
+        tagB: new Float32Array(MAX_QUANTUM),
+        frameALength: 0,
+        tagALength: 0,
+        frameBLength: 0,
+        tagBLength: 0,
+      };
+    }
     this.gate = new OtioTransportGateState(this.epoch);
     if (
       !this.epoch ||
@@ -158,6 +202,95 @@ class OtioTransportGateProcessor extends AudioWorkletProcessor {
     return Number.isSafeInteger(result) && result + length <= bank.endFrame
       ? result
       : null;
+  }
+
+  private recordStale(
+    parameters: Record<string, Float32Array>,
+    frame: number,
+    length: number
+  ): void {
+    const previous = this.stalePrevious;
+    if (!previous || this.staleStopped) return;
+    const frameA = parameters.clockFrameA ?? EMPTY;
+    const tagA = parameters.clockTagA ?? EMPTY;
+    const frameB = parameters.clockFrameB ?? EMPTY;
+    const tagB = parameters.clockTagB ?? EMPTY;
+    if (
+      frameA.length > MAX_QUANTUM ||
+      tagA.length > MAX_QUANTUM ||
+      frameB.length > MAX_QUANTUM ||
+      tagB.length > MAX_QUANTUM
+    ) {
+      this.staleStopped = true;
+      this.port.postMessage({
+        type: 'clock-stale-overflow',
+        clockEpoch: this.epoch,
+      });
+      return;
+    }
+    if (
+      previous.callbackOrdinal !== 0 &&
+      previous.cachedCurrentFrame === currentFrame
+    ) {
+      if (this.staleCount >= this.staleLimit) {
+        this.staleStopped = true;
+        this.port.postMessage({
+          type: 'clock-stale-overflow',
+          clockEpoch: this.epoch,
+        });
+        return;
+      }
+      this.staleCount++;
+      this.port.postMessage({
+        type: 'clock-stale-pair',
+        clockEpoch: this.epoch,
+        previous: {
+          callbackOrdinal: previous.callbackOrdinal,
+          sampleCount: previous.sampleCount,
+          cachedCurrentFrame: previous.cachedCurrentFrame,
+          certifiedFrame: previous.certifiedFrame,
+          quantumLength: previous.quantumLength,
+          active: previous.active,
+          warming: previous.warming,
+          clockFrameA: Array.from(
+            previous.frameA.subarray(0, previous.frameALength)
+          ),
+          clockTagA: Array.from(previous.tagA.subarray(0, previous.tagALength)),
+          clockFrameB: Array.from(
+            previous.frameB.subarray(0, previous.frameBLength)
+          ),
+          clockTagB: Array.from(previous.tagB.subarray(0, previous.tagBLength)),
+        },
+        current: {
+          callbackOrdinal: this.ordinal,
+          sampleCount: this.samples - length,
+          cachedCurrentFrame: currentFrame,
+          certifiedFrame: frame,
+          quantumLength: length,
+          active: this.active,
+          warming: this.warming,
+          clockFrameA: Array.from(frameA),
+          clockTagA: Array.from(tagA),
+          clockFrameB: Array.from(frameB),
+          clockTagB: Array.from(tagB),
+        },
+      });
+    }
+    previous.callbackOrdinal = this.ordinal;
+    previous.sampleCount = this.samples - length;
+    previous.cachedCurrentFrame = currentFrame;
+    previous.certifiedFrame = frame;
+    previous.quantumLength = length;
+    previous.active = this.active;
+    previous.warming = this.warming;
+    previous.frameA.set(frameA);
+    previous.tagA.set(tagA);
+    previous.frameB.set(frameB);
+    previous.tagB.set(tagB);
+    previous.frameALength = frameA.length;
+    previous.tagALength = tagA.length;
+    previous.frameBLength = frameB.length;
+    previous.tagBLength = tagB.length;
   }
 
   private silence(outputs: Float32Array[][]) {
@@ -359,6 +492,7 @@ class OtioTransportGateProcessor extends AudioWorkletProcessor {
         });
       promote = this.warming;
     }
+    this.recordStale(parameters, observed, length);
     const expiredBefore = this.gate.expire(observed);
     if (expiredBefore) this.port.postMessage(expiredBefore);
     if (this.firstCommand || this.secondCommand) {

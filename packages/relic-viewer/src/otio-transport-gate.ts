@@ -342,7 +342,9 @@ export async function createOtioTransportGate(
       message.type === 'clock-trace' ||
       message.type === 'clock-trace-overflow' ||
       message.type === 'clock-trace-started' ||
-      message.type === 'clock-trace-stopped'
+      message.type === 'clock-trace-stopped' ||
+      message.type === 'clock-stale-pair' ||
+      message.type === 'clock-stale-overflow'
     )
       return;
     if (message.type === 'anchor-certified') {

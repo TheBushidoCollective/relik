@@ -1202,6 +1202,11 @@ export function createOtioPlayback(
   let pcmGeneration = 0;
   const pcmBudget = new OtioPcmBudget();
   const pcmGateRetirements = new OtioPcmGateRetirements(pcmBudget);
+  const pcmSchedulers = new Set<OtioPcmScheduler>();
+  const releaseClosedContextSchedulers = (context: AudioContext) => {
+    for (const scheduler of pcmSchedulers)
+      if (scheduler.context === context) scheduler.contextClosed();
+  };
   let pcmPlayIntent = false;
   let pcmBackendStarted = false;
   let pcmRecoveryWake: (() => void) | null = null;
@@ -2931,6 +2936,7 @@ export function createOtioPlayback(
         masterGain?.disconnect();
         masterGain = null;
         audioContext = null;
+        releaseClosedContextSchedulers(context);
         pcmGateRetirements.contextClosed();
       });
     quarantinePcmContext(context, closed);
@@ -3417,12 +3423,15 @@ export function createOtioPlayback(
       retirePcmClockSession();
       throw error;
     }
-    const scheduler = new OtioPcmScheduler(
+    let scheduler: OtioPcmScheduler;
+    scheduler = new OtioPcmScheduler(
       context,
       gate.node,
       generation,
-      budget
+      budget,
+      () => pcmSchedulers.delete(scheduler)
     );
+    pcmSchedulers.add(scheduler);
     const drain = Promise.withResolvers<void>();
     void drain.promise.catch(() => undefined);
     const run: PcmRun = {
@@ -7576,9 +7585,13 @@ export function createOtioPlayback(
       );
       observedAudioContext = null;
       if (audioContext && !options.audioContext) {
+        const ownedContext = audioContext;
         try {
-          void audioContext.close().then(
-            () => pcmGateRetirements.contextClosed(),
+          void ownedContext.close().then(
+            () => {
+              releaseClosedContextSchedulers(ownedContext);
+              pcmGateRetirements.contextClosed();
+            },
             () => undefined
           );
         } catch {

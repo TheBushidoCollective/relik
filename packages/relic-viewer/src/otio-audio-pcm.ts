@@ -320,6 +320,7 @@ export interface OtioPcmPrepared {
 export class OtioPcmScheduler {
   private readonly sources = new Set<PcmOwnedSource>();
   private closed = false;
+  private retirementNotified = false;
   private drain: {
     frame: number;
     ended: Promise<void>;
@@ -329,8 +330,15 @@ export class OtioPcmScheduler {
     readonly context: AudioContext,
     readonly masterGain: AudioNode,
     readonly generation: number,
-    readonly budget = new OtioPcmBudget()
+    readonly budget = new OtioPcmBudget(),
+    readonly onRetired: () => void = () => {}
   ) {}
+
+  private notifyRetired(): void {
+    if (this.retirementNotified) return;
+    this.retirementNotified = true;
+    this.onRetired();
+  }
 
   prepare(request: {
     generation: number;
@@ -512,7 +520,10 @@ export class OtioPcmScheduler {
     for (const node of owned.nodes) node.disconnect();
     this.budget.releaseBytes(owned.bytes);
     this.budget.releaseNodes(1 + owned.nodes.length);
-    if (this.sources.size === 0) this.drain?.resolve();
+    if (this.sources.size === 0) {
+      this.drain?.resolve();
+      if (this.closed) this.notifyRetired();
+    }
   }
 
   stopAtFrame(frame: number): { frame: number; ended: Promise<void> } {
@@ -549,7 +560,10 @@ export class OtioPcmScheduler {
     }
     const { promise, resolve } = Promise.withResolvers<void>();
     this.drain = { frame, ended: promise, resolve };
-    if (this.sources.size === 0) resolve();
+    if (this.sources.size === 0) {
+      resolve();
+      this.notifyRetired();
+    }
     return this.drain;
   }
 
@@ -563,6 +577,13 @@ export class OtioPcmScheduler {
         } catch {}
       }
     }
+    if (this.sources.size === 0) this.notifyRetired();
+  }
+  /** Caller must have observed successful closure of this scheduler's owned context. */
+  contextClosed(): void {
+    this.closed = true;
+    for (const owned of this.sources) this.release(owned);
+    this.notifyRetired();
   }
   dispose(): void {
     this.cancel();

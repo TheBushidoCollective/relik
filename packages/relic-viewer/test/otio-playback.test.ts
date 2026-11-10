@@ -1772,6 +1772,7 @@ describe('otio playback controller', () => {
       ownedContext?: boolean;
       suspendGate?: Promise<void>;
       resumeGate?: Promise<void>;
+      proofBudget?: boolean;
       imageCuts?: boolean;
       resolveMedia?: (
         path: OtioBundleEntryName
@@ -1797,6 +1798,7 @@ describe('otio playback controller', () => {
       'setTimeout',
       'clearTimeout',
       '__otioProofPcm',
+      '__otioProofPcmSnapshot',
       '__otioProofPcmFault',
       'HTMLVideoElement',
       'VideoFrame',
@@ -1838,6 +1840,8 @@ describe('otio playback controller', () => {
     const pulls: number[] = [];
     const gates: FakeGate[] = [];
     const callbackQueue: Array<() => void> = [];
+    let holdPcm = false;
+    const heldPcm: Array<() => void> = [];
     const audioParam = () => ({
       value: 1,
       setValueAtTime(value: number) {
@@ -1971,17 +1975,12 @@ describe('otio playback controller', () => {
             { length: this.channels },
             () => new Float32Array(frameCount)
           );
-          queueMicrotask(() =>
+          const deliver = () =>
             this.onmessage?.({
-              data: {
-                ...base,
-                kind: 'pcm',
-                firstFrame,
-                frameCount,
-                planes,
-              },
-            } as MessageEvent)
-          );
+              data: { ...base, kind: 'pcm', firstFrame, frameCount, planes },
+            } as MessageEvent);
+          if (holdPcm) heldPcm.push(deliver);
+          else queueMicrotask(deliver);
         }
       }
       terminate() {}
@@ -2211,6 +2210,11 @@ describe('otio playback controller', () => {
         },
       });
     }
+    if (clockOptions?.proofBudget)
+      Object.defineProperty(globalThis, '__otioProofPcm', {
+        configurable: true,
+        value: true,
+      });
     const playback = createOtioPlayback({
       document: audioOnly,
       timelineId,
@@ -2343,6 +2347,14 @@ describe('otio playback controller', () => {
       commands,
       pulls,
       gates,
+      holdPcmResponses(value: boolean) {
+        holdPcm = value;
+        if (!value)
+          for (const deliver of heldPcm.splice(0)) queueMicrotask(deliver);
+      },
+      get heldPcmCount() {
+        return heldPcm.length;
+      },
       start,
       advance,
       flush,
@@ -2706,13 +2718,75 @@ describe('otio playback controller', () => {
     }
   });
 
+  test('playing seek seals its old generation and starts a new epoch after a stale PCM response', async () => {
+    const fixture = independentPcmFixture();
+    try {
+      await fixture.start();
+      const oldArm = fixture.commands.find((item) => item.type === 'arm')!;
+      fixture.holdPcmResponses(true);
+      for (let i = 0; i < 20 && fixture.heldPcmCount === 0; i++) {
+        await fixture.advance(
+          fixture.wall + 16,
+          fixture.renderFrame + 768,
+          fixture.outputFrame + 768
+        );
+        raf?.(fixture.wall);
+        await fixture.flush();
+      }
+      expect(fixture.heldPcmCount).toBeGreaterThan(0);
+      let settled = false;
+      const seek = fixture.playback
+        .seek({ value: 30, rate: 30 })
+        .finally(() => {
+          settled = true;
+        });
+      await fixture.flush();
+      expect(
+        fixture.commands.some(
+          (item) =>
+            item.type === 'abort' && item.generation === oldArm.generation
+        )
+      ).toBe(true);
+      fixture.holdPcmResponses(false);
+      for (const source of fixture.audioContext.sources) source.onended?.();
+      for (let i = 0; i < 80 && !settled; i++) {
+        await fixture.advance(
+          fixture.wall + 2,
+          fixture.renderFrame + 96,
+          fixture.outputFrame + 96
+        );
+        raf?.(fixture.wall);
+      }
+      expect(settled).toBe(true);
+      await seek;
+      const arms = fixture.commands.filter((item) => item.type === 'arm');
+      expect(arms.length).toBeGreaterThanOrEqual(2);
+      expect(Number(arms.at(-1)!.generation)).toBeGreaterThan(
+        Number(oldArm.generation)
+      );
+      expect(fixture.playback.getState().playing).toBe(true);
+    } finally {
+      fixture.holdPcmResponses(false);
+      fixture.restore();
+    }
+  });
+
   test('suspended owned gate with unacknowledged seal retires by close and permits explicit replay', async () => {
     const fixture = independentPcmFixture(false, false, undefined, {
       ownedContext: true,
+      proofBudget: true,
     });
     try {
       await fixture.start();
       const original = fixture.audioContext;
+      const proof = globalThis as typeof globalThis & {
+        __otioProofPcmSnapshot: () => { nodes: number; bytes: number };
+      };
+      const snapshot = () => proof.__otioProofPcmSnapshot();
+      const staleEnded = original.sources
+        .map((source) => source.onended)
+        .filter((value) => value !== null);
+      expect(snapshot().nodes).toBeGreaterThan(2);
       const seek = fixture.playback.seek({ value: 1, rate: 30 });
       original.state = 'suspended';
       await fixture.flush();
@@ -2731,6 +2805,9 @@ describe('otio playback controller', () => {
       await preparation;
       expect(fixture.closes).toBe(1);
       expect(original.state).toBe('closed');
+      expect(snapshot()).toMatchObject({ nodes: 0, bytes: 0 });
+      for (const ended of staleEnded) ended?.();
+      expect(snapshot()).toMatchObject({ nodes: 0, bytes: 0 });
       expect(fixture.playback.getState().playing).toBe(false);
       await fixture.start();
       expect(fixture.audioContext).not.toBe(original);
@@ -2743,13 +2820,27 @@ describe('otio playback controller', () => {
   });
 
   test('suspended borrowed gate remains quarantined and is never closed by controller', async () => {
-    const fixture = independentPcmFixture();
+    const fixture = independentPcmFixture(false, false, undefined, {
+      proofBudget: true,
+    });
     try {
       await fixture.start();
       const borrowed = fixture.audioContext;
       const seek = fixture.playback.seek({ value: 1, rate: 30 });
       borrowed.state = 'suspended';
       await fixture.flush();
+      const proof = globalThis as typeof globalThis & {
+        __otioProofPcmSnapshot: () => {
+          nodes: number;
+          bytes: number;
+          gateReservations: number;
+          carrierReservations: number;
+          activeSession: boolean;
+          otherGateReservations: number;
+        };
+      };
+      const retained = proof.__otioProofPcmSnapshot();
+      expect(retained.nodes).toBeGreaterThan(2);
       const preparation = fixture.playback.prepareAudioContextChange().then(
         () => null,
         (error: unknown) => error
@@ -2765,6 +2856,16 @@ describe('otio playback controller', () => {
       expect(await preparation).toBeInstanceOf(Error);
       expect(fixture.closes).toBe(0);
       expect(borrowed.state).toBe('suspended');
+      const after = proof.__otioProofPcmSnapshot();
+      expect(after.nodes).toBe(retained.nodes);
+      expect(after.bytes).toBe(retained.bytes);
+      expect(after.gateReservations).toBe(retained.gateReservations);
+      expect(after.carrierReservations).toBe(retained.carrierReservations);
+      expect(retained.activeSession).toBe(true);
+      expect(after.activeSession).toBe(false);
+      expect(after.otherGateReservations).toBe(
+        retained.otherGateReservations + 1
+      );
       await fixture.playback.play();
       expect(fixture.closes).toBe(0);
       expect(fixture.playback.getState().playing).toBe(false);
