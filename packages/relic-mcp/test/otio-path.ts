@@ -10631,9 +10631,11 @@ function assertLatestRecoveryFrame(
   );
 }
 
-// Independent lookahead invariant: every published frontier B must lie behind the
-// decoded horizon P by at least K frames, unless P is the scope end, and must stay
-// inside the descriptor coverage that the gate actually accepted.
+// Independent lookahead invariant. Runtime frontier events carry two coordinates:
+// contextFrameThrough is the gate/context frame, while preparedThrough, scopeEndFrame,
+// decodedCap and descriptorCoverageEnd are composition frames at the sample rate.
+// The lookahead gap is therefore measured on compositionThrough.value (the
+// composition frame of the gate frontier), never on the context coordinate.
 const LOOKAHEAD_FRAMES = 4096;
 function assertLookaheadFrontiers(
   events: readonly Record<string, unknown>[],
@@ -10642,38 +10644,56 @@ function assertLookaheadFrontiers(
   let checked = 0;
   for (const event of events) {
     if (event['event'] !== 'frontier') continue;
+    const composition = event['compositionThrough'] as
+      | { value?: unknown; rate?: unknown }
+      | undefined;
+    assert.ok(
+      composition &&
+        Number.isSafeInteger(composition.value) &&
+        composition.rate === rate,
+      'frontier lacks a composition-coordinate frontier'
+    );
+    const B = Number(composition.value);
     const P = Number(event['preparedThrough']);
-    const B = Number(event['contextFrameThrough']);
     const S = Number(event['scopeEndFrame']);
     const K = Number(event['reserveFrames']);
     const E = Number(event['descriptorCoverageEnd']);
     const cap = Number(event['decodedCap']);
     assert.ok(
-      [P, B, S, K, E, cap].every(Number.isSafeInteger) &&
-        event['descriptorReady'] === true &&
-        Number.isFinite(rate) &&
-        rate > 0,
+      [B, P, S, K, E, cap].every(Number.isSafeInteger) &&
+        typeof event['descriptorReady'] === 'boolean',
       'frontier lacks independent lookahead evidence'
     );
-    const atScopeEnd = P === S;
+    const terminal = P === S;
+    if (!terminal)
+      assert.ok(
+        P - B >= LOOKAHEAD_FRAMES,
+        `frontier ${B} is within ${P - B} decoded frames of P=${P}, below K=${LOOKAHEAD_FRAMES}`
+      );
     assert.equal(
       K,
-      atScopeEnd ? 0 : LOOKAHEAD_FRAMES,
+      terminal ? 0 : LOOKAHEAD_FRAMES,
       'frontier used a non-policy lookahead'
     );
     assert.equal(
       cap,
-      atScopeEnd ? S : P - LOOKAHEAD_FRAMES,
+      terminal ? S : P - LOOKAHEAD_FRAMES,
       'decoded cap disagrees with the lookahead invariant'
     );
-    assert.ok(
-      atScopeEnd || P - B >= LOOKAHEAD_FRAMES,
-      `frontier ${B} is within ${P - B} decoded frames of P=${P}, below K=${LOOKAHEAD_FRAMES}`
-    );
-    assert.ok(
-      B <= cap && B <= E - 1,
-      'frontier exceeds decoded or descriptor coverage'
-    );
+    assert.ok(B <= cap, 'frontier exceeds the decoded horizon');
+    if (terminal) {
+      // Scope end: no successor exists, readiness is vacuous, and the half-open
+      // frontier may equal the coverage end.
+      assert.ok(
+        B === E && B <= S,
+        'terminal frontier does not end at its descriptor coverage'
+      );
+    } else {
+      assert.ok(
+        event['descriptorReady'] === true && B < E,
+        'nonterminal frontier lacks ready descriptor coverage beyond B'
+      );
+    }
     checked++;
   }
   return checked;
@@ -14267,8 +14287,15 @@ async function runScheduledPcmProof(
     const forgedFrontier = pcmEvents.find(
       (event) => event['event'] === 'frontier'
     )!;
-    const forgedB = Number(forgedFrontier['contextFrameThrough']);
+    const forgedComposition = forgedFrontier['compositionThrough'] as {
+      value: number;
+      rate: number;
+    };
+    const forgedB = Number(forgedComposition.value);
     const forgedP = forgedB + LOOKAHEAD_FRAMES - 1;
+    // Cross-coordinate control: the context coordinate is made to look safe while
+    // the composition frontier violates P-B >= K. A checker that measured the gap
+    // on contextFrameThrough would accept this; the composition checker must not.
     assert.throws(
       () =>
         assertLookaheadFrontiers(
@@ -14279,12 +14306,29 @@ async function runScheduledPcmProof(
               decodedCap: forgedP - LOOKAHEAD_FRAMES,
               scopeEndFrame: forgedP + 1,
               reserveFrames: LOOKAHEAD_FRAMES,
+              descriptorCoverageEnd: forgedP,
+              descriptorReady: true,
+              contextFrameThrough: forgedP - LOOKAHEAD_FRAMES - 5000,
             },
           ],
           rate
         ),
       /below K=/,
-      'checker accepted a frontier with P-B below K'
+      'checker measured the lookahead gap on the context coordinate'
+    );
+    assert.throws(
+      () =>
+        assertLookaheadFrontiers(
+          [
+            {
+              ...forgedFrontier,
+              compositionThrough: { value: forgedB, rate: rate + 1 },
+            },
+          ],
+          rate
+        ),
+      /composition-coordinate/,
+      'checker accepted a frontier in another sample rate'
     );
     assert.ok(
       pcmEvents.filter((event) => event['event'] === 'scheduled').length > 1,
