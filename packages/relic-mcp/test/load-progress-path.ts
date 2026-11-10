@@ -2,7 +2,7 @@
  * Local headless proof for Relic loading progress and early key cancellation.
  * Written for Spec B (§5.P).
  *
- * Runs 12 classes across viewports and dark/light modes, exercising:
+ * Runs file fixtures across viewports and dark/light modes, exercising:
  * 1. Progress phases (opening, fetching, decrypting, rendering/ready)
  * 2. Meter aria-valuenow progression on multi-chunk downloads
  * 3. Static plate from first paint (no blank frames)
@@ -14,7 +14,7 @@
  * 9. Static plate when viewer.js is blocked
  * 10. Version switching preserving stage until ready
  *
- * Output: prints LOAD_PROGRESS_PATH_OK classes=12 runs=31
+ * Output: prints LOAD_PROGRESS_PATH_OK with the fixture and run counts.
  */
 
 import assert from 'node:assert/strict';
@@ -48,13 +48,10 @@ const CHUNK_SIZE = 16384;
 const CHUNK_DELAY_MS = Number(
   process.env['RELIC_LOAD_PROOF_CHUNK_DELAY_MS'] ?? 25
 );
-// The viewer paints progress at most once per animation frame (~16.7 ms), so
-// chunks paced faster than a frame can share one painted value. The first
-// PACED_CHUNKS chunks wait at least PACED_CHUNK_DELAY_MS (three frames), which
-// guarantees distinct painted values for every 3+ chunk object; later chunks
-// use CHUNK_DELAY_MS so the 6 MB fixture stays fast.
+// Allow the headless browser time to paint between the first chunks even
+// when software WebGL is enabled. Later chunks keep larger fixtures moving.
 const PACED_CHUNKS = 8;
-const PACED_CHUNK_DELAY_MS = 50;
+const PACED_CHUNK_DELAY_MS = 200;
 
 const viewerDist =
   process.env['RELIC_VIEWER_DIST'] ??
@@ -1673,6 +1670,66 @@ try {
           model?.triangles?.includes('triangles'),
           `${fix.classKey}: mesh statistics missing`
         );
+        if (fix.classKey === 'obj') {
+          const boxResult = (await cdp.send(
+            'Runtime.evaluate',
+            {
+              expression: `(() => { const r = document.querySelector('.model-canvas').getBoundingClientRect(); return {x:r.x,y:r.y,width:r.width,height:r.height,scale:1}; })()`,
+              returnByValue: true,
+            },
+            outcome.sessionId
+          )) as {
+            result: {
+              value: {
+                x: number;
+                y: number;
+                width: number;
+                height: number;
+                scale: number;
+              };
+            };
+          };
+          const clip = boxResult.result.value;
+          const capture = async () =>
+            (await cdp.send(
+              'Page.captureScreenshot',
+              { format: 'png', clip },
+              outcome.sessionId
+            )) as { data: string };
+          const before = await capture();
+          const click = async (label: string) => {
+            await cdp.send(
+              'Runtime.evaluate',
+              {
+                expression: `new Promise(resolve => { document.querySelector(${JSON.stringify(`button[aria-label="${label}"]`)}).click(); requestAnimationFrame(() => requestAnimationFrame(resolve)); })`,
+                awaitPromise: true,
+              },
+              outcome.sessionId
+            );
+          };
+          await click('Orbit right');
+          const rotated = await capture();
+          assert.notEqual(
+            rotated.data,
+            before.data,
+            'Orbit must change the rendered model pixels'
+          );
+          await click('Wireframe');
+          const wireframe = await capture();
+          assert.notEqual(
+            wireframe.data,
+            rotated.data,
+            'Wireframe must change the rendered model pixels'
+          );
+          await click('Reset');
+          await click('Solid');
+          const reset = await capture();
+          assert.equal(
+            reset.data,
+            before.data,
+            'Reset and Solid must restore the original model view'
+          );
+        }
       }
 
       await outcome.close();
@@ -1692,9 +1749,7 @@ try {
   // RUN 2: documents, models and media at narrow viewport widths
   // =========================================================================
   if (!onlyFilter || onlyFilter === '2' || onlyFilter === 'run2') {
-    console.log(
-      '\n--- Run 2: Mobile responsive viewports & themes (12 runs) ---'
-    );
+    console.log('\n--- Run 2: Mobile responsive viewports & themes ---');
     const run2Classes = [
       'md',
       'png',
@@ -2574,7 +2629,9 @@ try {
   console.log(
     `\nWrote ${runsExecuted} runs summary and screenshots to: ${proofDir}`
   );
-  console.log(`LOAD_PROGRESS_PATH_OK classes=12 runs=${runsExecuted}`);
+  console.log(
+    `LOAD_PROGRESS_PATH_OK fixtures=${fixtures.length} runs=${runsExecuted}`
+  );
 } finally {
   child.kill('SIGKILL');
   service.stop(true);
