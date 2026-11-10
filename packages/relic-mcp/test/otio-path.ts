@@ -186,9 +186,11 @@ const REQUIRED = [
   'post-gain-tap-calibration',
   'focused-nonzero-comment',
   'scheduled-pcm-playback',
+  'scheduled-pcm-cold-start',
   'scheduled-pcm-starvation-cancel',
   'scheduled-pcm-starvation-recovery',
   'scheduled-pcm-schedule-clock-failures',
+  'scheduled-pcm-bootstrap-restore',
   'scheduled-video-future-recovery',
   'scheduled-pcm-native-compatibility',
   'scheduled-video-reservation-invalidation',
@@ -17946,11 +17948,12 @@ async function runScheduledPcmProof(
         } else {
           assert.ok(
             result.lifecycle.events.some((event) => event.name === 'acquire') &&
-              result.lifecycle.events.some(
-                (event) => event.name === 'suspend' && event.actor === 'lease'
-              ) &&
               result.lifecycle.events.some((event) => event.name === 'release'),
-            'borrowed owner lease was not acquired, used and released'
+            'borrowed owner lease was not acquired and released'
+          );
+          assert.ok(
+            !result.lifecycle.events.some((event) => event.name === 'suspend'),
+            'running owner-leased context was suspended'
           );
           assert.ok(
             backends.some((backend) => backend['backend'] === 'pcm'),
@@ -17986,6 +17989,105 @@ async function runScheduledPcmProof(
             'owner-leased context changed source PCM'
           );
         }
+      } finally {
+        await isolated.close();
+      }
+    }
+    {
+      // Fresh borrowed context, suspended before any gesture. When the PCM bootstrap fails
+      // after the lease has resumed the context, the viewer hands it back suspended through
+      // the owner's lease. That lease suspend is expected only here: it proves restoration
+      // after a failed bootstrap. A successful bootstrap never suspends.
+      const isolated = await openBrowser(url, sessionToken, {
+        label: 'borrowed-bootstrap-restore',
+        recordProofTrace: true,
+        proofBorrowed: 'lease',
+        proofSampleRate: 48000,
+      });
+      try {
+        await waitReady(isolated);
+        const provenance = await proofProvenance(isolated);
+        const button = await isolated.evaluate<{
+          x: number;
+          y: number;
+        }>(`(() => {
+          const control = document.querySelector('button.otio-play');
+          if (!(control instanceof HTMLButtonElement)) throw new Error('bootstrap restore play control missing');
+          const rect = control.getBoundingClientRect();
+          return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+        })()`);
+        const armed = await isolated.evaluate<{
+          start: { contextState: string };
+          playEdge: { timestamp: number };
+        }>(`(async () => {
+          const start = await globalThis.__otioProofTrace.start();
+          const playEdge = globalThis.__otioProofTrace.playRequest();
+          globalThis.__otioProofTrace.setInvalidControllerClock(true);
+          return { start, playEdge };
+        })()`);
+        assert.equal(
+          armed.start.contextState,
+          'suspended',
+          'bootstrap restore context was not fresh and suspended before the click'
+        );
+        await clickWithRealPointer(isolated, button.x, button.y);
+        const settled = Promise.withResolvers<void>();
+        setTimeout(settled.resolve, 2500);
+        await settled.promise;
+        const outcome = await isolated.evaluate<{
+          state: string;
+          trace: MovingTrace['trace'];
+        }>(`(async () => {
+          const root = document.querySelector('.otio-view'), control = document.querySelector('button.otio-play');
+          const context = globalThis.__otioProofBorrowedAudio?.context;
+          if (!context) throw new Error('bootstrap restore context missing');
+          const state = context.state;
+          const trace = await globalThis.__otioProofTrace.stop();
+          globalThis.__otioProofTrace.setInvalidControllerClock(false);
+          if (root?.dataset.playing === 'true' && control instanceof HTMLButtonElement) control.click();
+          return { state, trace };
+        })()`);
+        const lifecycle = await isolated.evaluate<{
+          state: string;
+          events: Array<{ name: string; actor: string }>;
+        }>(`(async () => globalThis.__otioProofTrace.disposeBorrowed())()`);
+        await writeFile(
+          join(shotDir, 'borrowed-bootstrap-restore.json'),
+          JSON.stringify({ provenance, capture: { armed, outcome, lifecycle } })
+        );
+        const leaseIndex = (name: string) =>
+          lifecycle.events.findIndex(
+            (event) => event.name === name && event.actor === 'lease'
+          );
+        const acquired = leaseIndex('acquire');
+        const resumed = leaseIndex('resume');
+        const suspended = leaseIndex('suspend');
+        const released = leaseIndex('release');
+        assert.ok(
+          acquired >= 0 &&
+            resumed > acquired &&
+            suspended > resumed &&
+            released > suspended,
+          `bootstrap restore lease order was ${lifecycle.events
+            .map((event) => `${event.name}:${event.actor}`)
+            .join(' ')}`
+        );
+        assert.ok(
+          !lifecycle.events.some(
+            (event) => event.name === 'suspend' && event.actor !== 'lease'
+          ),
+          "bootstrap restore context was suspended without its owner's lease"
+        );
+        assert.ok(
+          !lifecycle.events.some((event) => event.name === 'close'),
+          'bootstrap restore context was closed'
+        );
+        assert.equal(
+          outcome.state,
+          'suspended',
+          'failed bootstrap did not restore the fresh context to suspended'
+        );
+        pass('scheduled-pcm-bootstrap-restore');
       } finally {
         await isolated.close();
       }
