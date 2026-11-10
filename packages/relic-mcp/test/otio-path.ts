@@ -10730,16 +10730,21 @@ function assertSuccessorPolicy(
       continue;
     }
     if (event['event'] === 'frontier' && event['frontierKind'] === 'handoff') {
-      assert.ok(closure, 'successor handoff has no predecessor closure');
+      if (closure === null)
+        throw new Error('successor handoff has no predecessor closure');
+      const predecessor: Record<string, unknown> = closure;
       assert.equal(
-        closure['descriptorReady'],
+        predecessor['descriptorReady'],
         true,
         'successor emitted after a non-ready closure'
       );
-      const Bold = Number(
-        (closure['compositionStop'] as { value: number }).value
+      const stop = predecessor['compositionStop'] as { value: unknown };
+      assert.ok(
+        Number.isSafeInteger(stop.value),
+        'predecessor closure lacks a composition frontier'
       );
-      const E = Number(closure['descriptorCoverageEnd']);
+      const Bold = Number(stop.value);
+      const E = Number(predecessor['descriptorCoverageEnd']);
       const composition = event['compositionThrough'] as { value: number };
       const Bnew = Number(composition.value);
       const P = Number(event['preparedThrough']);
@@ -15574,12 +15579,14 @@ async function runScheduledPcmProof(
             result.trace.witness,
             `${label} lacks the independent carrier witness`
           );
-          const events = result.trace.events
+          const events: Record<string, unknown>[] = result.trace.events
             .filter((entry) => entry.kind === 'scheduled-pcm')
-            .map((entry) => ({
-              ...(entry.value as Record<string, unknown>),
-              timestamp: entry.timestamp,
-            }));
+            .map(
+              (entry): Record<string, unknown> => ({
+                ...(entry.value as Record<string, unknown>),
+                timestamp: entry.timestamp,
+              })
+            );
           const closures = events
             .map((event, index) => ({ event, index }))
             .filter(({ event }) => event['event'] === 'recovery-render-closed');
