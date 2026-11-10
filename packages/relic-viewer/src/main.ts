@@ -245,7 +245,13 @@ import {
   sharedSummary,
   shareRefusal,
 } from './share.ts';
-import { createLifecycle, healStaleShell } from './stale-shell.ts';
+import {
+  createEditTracker,
+  createLifecycle,
+  healStaleShell,
+  hasUnsentWork,
+  type UnsentWorkProbe,
+} from './stale-shell.ts';
 import { buildCodeTable, buildProse } from './text-views.ts';
 import {
   type CachedPrefix,
@@ -422,7 +428,9 @@ let openGeneration = 0;
  * Reloads the page once when a JSX compile failed because this page is a
  * stale deploy. True when a reload started, so the caller leaves the page
  * alone. The key is recalled from the vault, so the reloaded page reopens the
- * relic by itself.
+ * relic by itself. The reload is refused while the reader is no longer in the
+ * state that asked, and while the page holds unsent work: a comment, share or
+ * sign-in field with content, or a decision ceremony waiting on a passkey.
  */
 function healForRelic(
   relicId: string,
@@ -432,9 +440,56 @@ function healForRelic(
   return healStaleShell({
     serviceOrigin: deps.serviceOrigin,
     recallKey: () => deps.keyVault.recall(relicId),
-    isCurrent,
+    isCurrent: () => isCurrent() && !hasUnsentWork(pageDraftProbe()),
     fetch: deps.fetch,
   });
+}
+
+/**
+ * Every edit the reader makes in this page, by element identity. Installed
+ * once, in the capturing phase, so a field's own handlers cannot hide it.
+ */
+const draftTracker = createEditTracker();
+if (typeof document !== 'undefined') {
+  document.addEventListener(
+    'input',
+    (event) => draftTracker.onInput(event.target),
+    true
+  );
+}
+
+/**
+ * What the page holds that a reload would discard. Only fields the reader has
+ * typed into count, so a remembered display name or a range slider is not
+ * work. The key entry's field is excluded: it holds the key the reader just
+ * submitted, which the vault already keeps. A comment target placed but not
+ * posted, an awaited email code, and a decision or passkey ceremony all count.
+ * A focused sandboxed frame counts, because its contents cannot be read here.
+ */
+function pageDraftProbe(): UnsentWorkProbe {
+  return {
+    fields: () =>
+      Array.from(
+        document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(
+          'input:not(.key-entry-input), textarea'
+        ),
+        (field) => ({
+          value: field.value,
+          type: field.type,
+          edited: draftTracker.isEdited(field),
+        })
+      ),
+    waiting: () =>
+      document.querySelector(
+        [
+          '.decision-waiting',
+          '[data-state="working"]',
+          '[data-sign-in-code]:not([data-state="verified"])',
+          '[data-comment-id="pending:target"]',
+        ].join(', ')
+      ) !== null,
+    frameFocused: () => document.activeElement?.tagName === 'IFRAME',
+  };
 }
 
 function decodeText(content: Uint8Array): string {
@@ -9516,6 +9571,11 @@ export function renderReady(
     // earlier selection, or for a screen the reader has left, may not act.
     lifecycle.advance();
     const selection = lifecycle.token();
+    // A pill left by an earlier selection belongs to that selection. Removing
+    // it here means this selection never writes into or removes another's.
+    document
+      .querySelector?.('div.render-status[data-version-progress]')
+      ?.remove();
     if (v === activeView.version) {
       showSingle(activeView);
       return;
@@ -9571,11 +9631,13 @@ export function renderReady(
       }
     });
 
-    versionPill?.remove?.();
+    if (lifecycle.isCurrent(selection)) versionPill?.remove?.();
 
     if (res.kind === 'ready') {
       loadedViews.set(v, res.view);
-      showSingle(res.view);
+      // A late success for a selection the reader has left is cached for later
+      // use, but it does not repaint over the reader's newer choice.
+      if (lifecycle.isCurrent(selection)) showSingle(res.view);
     } else if (res.kind === 'unavailable') {
       if (
         res.jsxCompilerUnavailable === true &&

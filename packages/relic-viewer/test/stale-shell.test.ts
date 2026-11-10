@@ -1,11 +1,14 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  createEditTracker,
   createLifecycle,
   healStaleShell,
+  hasUnsentWork,
   markJsxCompilerLoaded,
   SERVER_CHECK_TIMEOUT_MS,
   STALE_SHELL_MARK,
   type StaleShellOptions,
+  type UnsentWorkProbe,
 } from '../src/stale-shell.ts';
 
 const SERVICE = 'https://relic.example';
@@ -60,6 +63,19 @@ function options(
     reload,
     ...extra,
   };
+}
+
+/** A page with nothing open: no fields, no ceremony, no focused frame. */
+const quietPage = {
+  waiting: () => false,
+  frameFocused: () => false,
+};
+
+/** A probe over fixed fields, each marked edited or prefilled explicitly. */
+function pageOf(
+  ...fields: Array<{ value: string; type: string; edited: boolean }>
+): UnsentWorkProbe {
+  return { ...quietPage, fields: () => fields };
 }
 
 describe('the stale-shell heal decision', () => {
@@ -353,6 +369,272 @@ describe('late heals after the reader has moved on', () => {
         reloads += 1;
       }),
       isCurrent: () => life.isCurrent(token),
+    });
+
+    expect(reloaded).toBe(true);
+    expect(reloads).toBe(1);
+  });
+});
+
+describe('what counts as unsent work', () => {
+  test('an empty page holds no unsent work', () => {
+    expect(
+      hasUnsentWork(pageOf({ value: '', type: 'textarea', edited: true }))
+    ).toBe(false);
+  });
+
+  test('whitespace the reader typed is not a draft', () => {
+    expect(
+      hasUnsentWork(pageOf({ value: '   ', type: 'text', edited: true }))
+    ).toBe(false);
+  });
+
+  test('a comment the reader is typing is unsent work', () => {
+    expect(
+      hasUnsentWork(
+        pageOf({ value: 'Looks right to me', type: 'textarea', edited: true })
+      )
+    ).toBe(true);
+  });
+
+  test('a signed-out share email the reader typed is unsent work', () => {
+    expect(
+      hasUnsentWork(
+        pageOf({ value: 'reader@example.com', type: 'email', edited: true })
+      )
+    ).toBe(true);
+  });
+
+  test('a remembered display name prefilled by the page is not a draft', () => {
+    expect(
+      hasUnsentWork(pageOf({ value: 'Jason W.', type: 'text', edited: false }))
+    ).toBe(false);
+  });
+
+  test('a typed value the reader then cleared is not a draft', () => {
+    expect(
+      hasUnsentWork(pageOf({ value: '', type: 'text', edited: true }))
+    ).toBe(false);
+  });
+
+  test('range, color, number and date fields never count, even when edited', () => {
+    expect(
+      hasUnsentWork(
+        pageOf(
+          { value: '5', type: 'range', edited: true },
+          { value: '#ff0000', type: 'color', edited: true },
+          { value: '3', type: 'number', edited: true },
+          { value: '2026-11-10', type: 'date', edited: true }
+        )
+      )
+    ).toBe(false);
+  });
+
+  test('checkboxes, hidden fields and buttons do not count', () => {
+    expect(
+      hasUnsentWork(
+        pageOf(
+          { value: 'on', type: 'checkbox', edited: true },
+          { value: 'token', type: 'hidden', edited: true },
+          { value: 'Go', type: 'button', edited: true }
+        )
+      )
+    ).toBe(false);
+  });
+
+  test('a decision or passkey ceremony waiting on the reader is unsent work', () => {
+    expect(
+      hasUnsentWork({ ...quietPage, fields: () => [], waiting: () => true })
+    ).toBe(true);
+  });
+
+  test('a focused sandboxed frame is unsent work, because its contents are unreadable', () => {
+    expect(
+      hasUnsentWork({
+        ...quietPage,
+        fields: () => [],
+        frameFocused: () => true,
+      })
+    ).toBe(true);
+  });
+
+  test('a page that cannot be read fails closed', () => {
+    expect(
+      hasUnsentWork({
+        ...quietPage,
+        fields: () => {
+          throw new Error('no document');
+        },
+      })
+    ).toBe(true);
+  });
+
+  test('a waiting check that cannot be read also fails closed', () => {
+    expect(
+      hasUnsentWork({
+        fields: () => [],
+        frameFocused: () => false,
+        waiting: () => {
+          throw new Error('no document');
+        },
+      })
+    ).toBe(true);
+  });
+});
+
+describe('the edit tracker records elements, never values', () => {
+  test('an element the reader typed into is edited; an untouched one is not', () => {
+    const tracker = createEditTracker();
+    const typed = { value: 'hello' };
+    const prefilled = { value: 'Jason W.' };
+
+    tracker.onInput(typed);
+
+    expect(tracker.isEdited(typed)).toBe(true);
+    expect(tracker.isEdited(prefilled)).toBe(false);
+  });
+
+  test('non-element targets are ignored rather than recorded', () => {
+    const tracker = createEditTracker();
+    tracker.onInput(null);
+    tracker.onInput('not an element');
+    expect(tracker.isEdited(null)).toBe(false);
+    expect(tracker.isEdited('not an element')).toBe(false);
+  });
+});
+
+describe('unsent work during a late heal', () => {
+  test('a draft already open means the heal does not even probe', async () => {
+    const tracker = createEditTracker();
+    const field = { value: 'half a comment', type: 'textarea' };
+    tracker.onInput(field);
+    const probe: UnsentWorkProbe = {
+      ...quietPage,
+      fields: () => [{ ...field, edited: tracker.isEdited(field) }],
+    };
+    const { storage, map } = sessionShim();
+    const { fetch, calls } = answering(200);
+    let reloads = 0;
+
+    const reloaded = await healStaleShell({
+      ...options(storage, fetch, () => {
+        reloads += 1;
+      }),
+      isCurrent: () => !hasUnsentWork(probe),
+    });
+
+    expect(reloaded).toBe(false);
+    expect(calls).toHaveLength(0);
+    expect(reloads).toBe(0);
+    expect(map.has(STALE_SHELL_MARK)).toBe(false);
+  });
+
+  test('a draft typed while the probe is held blocks the reload', async () => {
+    // The reader types into a share or sign-in field while the probe is in
+    // flight. The input event reaches the tracker, and the post-probe check
+    // sees the field as edited and filled, so the page is not reloaded.
+    const tracker = createEditTracker();
+    const { storage, map } = sessionShim();
+    const field = { value: '', type: 'email' };
+    const probe: UnsentWorkProbe = {
+      ...quietPage,
+      fields: () => [
+        {
+          value: field.value,
+          type: field.type,
+          edited: tracker.isEdited(field),
+        },
+      ],
+    };
+    const fetch = (async () => {
+      field.value = 'reader@example.com';
+      tracker.onInput(field);
+      return new Response(null, { status: 200 });
+    }) as unknown as typeof globalThis.fetch;
+    let reloads = 0;
+
+    const reloaded = await healStaleShell({
+      ...options(storage, fetch, () => {
+        reloads += 1;
+      }),
+      isCurrent: () => !hasUnsentWork(probe),
+    });
+
+    expect(reloaded).toBe(false);
+    expect(reloads).toBe(0);
+    expect(map.has(STALE_SHELL_MARK)).toBe(false);
+  });
+
+  test('a value the page sets during the probe, with no input event, does not block', async () => {
+    // A prefilled remembered name is set by script. No input event fires, so the
+    // tracker does not record it and the heal still proceeds.
+    const tracker = createEditTracker();
+    const { storage } = sessionShim();
+    const field = { value: '', type: 'text' };
+    const probe: UnsentWorkProbe = {
+      ...quietPage,
+      fields: () => [
+        {
+          value: field.value,
+          type: field.type,
+          edited: tracker.isEdited(field),
+        },
+      ],
+    };
+    const fetch = (async () => {
+      field.value = 'Jason W.';
+      return new Response(null, { status: 200 });
+    }) as unknown as typeof globalThis.fetch;
+    let reloads = 0;
+
+    const reloaded = await healStaleShell({
+      ...options(storage, fetch, () => {
+        reloads += 1;
+      }),
+      isCurrent: () => !hasUnsentWork(probe),
+    });
+
+    expect(reloaded).toBe(true);
+    expect(reloads).toBe(1);
+  });
+
+  test('focus moving into a sandboxed frame during the probe blocks the reload', async () => {
+    const { storage, map } = sessionShim();
+    let frameFocused = false;
+    const probe: UnsentWorkProbe = {
+      ...quietPage,
+      fields: () => [],
+      frameFocused: () => frameFocused,
+    };
+    const fetch = (async () => {
+      frameFocused = true;
+      return new Response(null, { status: 200 });
+    }) as unknown as typeof globalThis.fetch;
+    let reloads = 0;
+
+    const reloaded = await healStaleShell({
+      ...options(storage, fetch, () => {
+        reloads += 1;
+      }),
+      isCurrent: () => !hasUnsentWork(probe),
+    });
+
+    expect(reloaded).toBe(false);
+    expect(reloads).toBe(0);
+    expect(map.has(STALE_SHELL_MARK)).toBe(false);
+  });
+
+  test('with no draft at all the same probe lets the heal proceed', async () => {
+    const { storage } = sessionShim();
+    const { fetch } = answering(200);
+    let reloads = 0;
+
+    const reloaded = await healStaleShell({
+      ...options(storage, fetch, () => {
+        reloads += 1;
+      }),
+      isCurrent: () =>
+        !hasUnsentWork(pageOf({ value: '', type: 'textarea', edited: false })),
     });
 
     expect(reloaded).toBe(true);
