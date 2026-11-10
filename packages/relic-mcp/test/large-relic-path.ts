@@ -9,7 +9,14 @@
 import assert from 'node:assert/strict';
 import { randomBytes, createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { mkdtemp, rm, stat, truncate, writeFile } from 'node:fs/promises';
+import {
+  mkdtemp,
+  realpath,
+  rm,
+  stat,
+  truncate,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -87,7 +94,9 @@ assert.ok(
   existsSync(clientBundle),
   'build the MCP bundle before running this path'
 );
-const scratch = await mkdtemp(join(tmpdir(), 'relic-large-path-'));
+const scratch = await realpath(
+  await mkdtemp(join(tmpdir(), 'relic-large-path-'))
+);
 
 interface StorageRead {
   readonly key: string;
@@ -99,6 +108,7 @@ interface CallResult {
   readonly isError: boolean;
   readonly data: Record<string, unknown>;
   readonly peakRss: number;
+  readonly diagnostic: string;
 }
 interface Published {
   readonly id: string;
@@ -318,6 +328,7 @@ async function callMcp(
     isError: 'isError' in result && result.isError === true,
     data,
     peakRss,
+    diagnostic: JSON.stringify('content' in result ? result.content : []),
   };
 }
 
@@ -329,11 +340,7 @@ async function publish(path: string): Promise<Published> {
     ttl_days: 1,
     force_new: true,
   });
-  assert.equal(
-    result.isError,
-    false,
-    `publish refused: ${String(result.data['code'])}`
-  );
+  assert.equal(result.isError, false, `publish refused: ${result.diagnostic}`);
   const id = result.data['relic_id'];
   const url = result.data['url'];
   assert.ok(
