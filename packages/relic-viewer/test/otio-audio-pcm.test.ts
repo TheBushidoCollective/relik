@@ -26,6 +26,7 @@ class FakeSource extends FakeNode {
 class FakeGain extends FakeNode {
   calls: Array<[string, number, number]> = [];
   gain = {
+    value: 1,
     setValueAtTime: (value: number, time: number) =>
       this.calls.push(['set', value, time]),
     linearRampToValueAtTime: (value: number, time: number) =>
@@ -83,6 +84,34 @@ describe('bounded PCM graph', () => {
     context.sources[0]!.onended?.();
     expect(budget.usedNodes).toBe(0);
     expect(budget.usedBytes).toBe(0);
+  });
+  test('primes gain before rounded frame-time automation', () => {
+    const context = new FakeContext();
+    context.currentTime = 2;
+    const scheduler = new OtioPcmScheduler(
+      context as unknown as AudioContext,
+      new FakeNode() as unknown as AudioNode,
+      1
+    );
+    const frame = 112576;
+    expect((frame / 48000) * 48000).toBeGreaterThan(frame);
+    scheduler.schedule({
+      generation: 1,
+      firstContextFrame: frame,
+      planes: [new Float32Array(480)],
+      gainFactors: [
+        {
+          startFrame: frame - 100,
+          endFrame: frame + 100,
+          startGain: 0,
+          endGain: 1,
+        },
+      ],
+    });
+    const gain = context.gains[0]!;
+    expect(gain.gain.value).toBe(0.5);
+    expect(gain.calls[0]).toEqual(['set', 0.5, frame / 48000]);
+    scheduler.dispose();
   });
   test('rejects stale, late and outside-horizon sources without consuming credits', () => {
     const context = new FakeContext(),

@@ -445,10 +445,12 @@ export class OtioPcmScheduler {
                   (factor.endFrame - factor.startFrame)
               )
             );
-            gain.setValueAtTime(
-              factor.startGain + (factor.endGain - factor.startGain) * fraction,
-              firstContextFrame / rate
-            );
+            const initialGain =
+              factor.startGain + (factor.endGain - factor.startGain) * fraction;
+            // A frame/rate timestamp can round just above the frame boundary.
+            // Keep the node's pre-automation value correct at that boundary too.
+            gain.value = initialGain;
+            gain.setValueAtTime(initialGain, firstContextFrame / rate);
             if (
               factor.endFrame > firstContextFrame &&
               factor.startFrame < firstContextFrame + count
