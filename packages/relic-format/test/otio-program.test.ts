@@ -644,3 +644,27 @@ describe('readOtioProgramArchive', () => {
     ).rejects.toMatchObject({ code: 'unsafe-path' });
   });
 });
+
+describe('readOtioProgramArchive legacy and partial archives', () => {
+  test('a program MP4 without a manifest throws, never null', async () => {
+    const entries = [
+      ...baseEntries().filter((e) => !e.name.startsWith('relic/')),
+      { name: otioProgramEntryName(0), data: PROGRAM },
+    ];
+    await expect(
+      readOtioProgramArchive(await open(entries), DOCUMENT)
+    ).rejects.toMatchObject({ code: 'archive-mismatch' });
+  });
+
+  test('an all-unavailable manifest with no MP4s is a manifest, not legacy', async () => {
+    const manifest = manifestBytes({
+      timelines: [unavailable(0), unavailable(1)],
+    });
+    const entries = baseEntries({ manifest }).filter(
+      (e) => e.name !== otioProgramEntryName(0)
+    );
+    const result = await readOtioProgramArchive(await open(entries), DOCUMENT);
+    expect(result).not.toBeNull();
+    expect(result?.programs.size).toBe(0);
+  });
+});

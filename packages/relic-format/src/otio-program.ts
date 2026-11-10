@@ -667,8 +667,11 @@ async function digestHex(bytes: Uint8Array): Promise<string> {
 }
 
 /**
- * Verifies the program contract against an indexed archive. It returns null
- * when the archive carries no program, which means focus-only. Otherwise every
+ * Returns null only when the archive has no `relic/program` entry at all. That
+ * is the legacy case: no program contract applies and the viewer keeps its
+ * existing playback. It is not a focus-only outcome; focus-only is a timeline
+ * status inside a manifest. Any `relic/program` entry without a valid manifest
+ * throws, so a partial program is never reported as legacy. Otherwise every
  * check must pass, or it throws `OtioProgramError`:
  *
  * - the manifest is DEFLATE and parses under `parseOtioProgramManifest`;
