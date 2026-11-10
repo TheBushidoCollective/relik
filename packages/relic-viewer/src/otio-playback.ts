@@ -943,6 +943,9 @@ export function createOtioPlayback(
       activeSession: boolean;
       candidatePrepared: boolean;
       candidateBoundaryFrame: number | null;
+      preparedThrough: number | null;
+      materializedThrough: number | null;
+      scheduledThrough: number | null;
       otherGateReservations: number;
     };
   };
@@ -3446,6 +3449,8 @@ export function createOtioPlayback(
     const work = (async () => {
       if (run.stopping || run.stopped)
         throw new Error('PCM generation is draining');
+      while (run.materializedThrough < run.preparedThrough)
+        materializePcmLedger(run);
       while (run.preparedThrough < target) {
         const from = run.preparedThrough;
         let segmentTarget = target;
@@ -3559,6 +3564,8 @@ export function createOtioPlayback(
           }
           if (run.stopped || run.stopping)
             throw new Error('PCM generation cancelled');
+          if (run.materializedThrough !== from)
+            throw new Error('PCM materialization is not contiguous');
           for (const chunk of pending) chunk.prepared.commit();
           run.chunks.push(...pending);
           pending.length = 0;
@@ -4013,7 +4020,7 @@ export function createOtioPlayback(
     }
     const earliestPending = run.chunks.reduce(
       (min, chunk) => Math.min(min, chunk.timelineStart),
-      run.preparedThrough
+      run.materializedThrough
     );
     run.scheduledThrough = Math.max(run.scheduledThrough, earliestPending);
   }
@@ -4519,7 +4526,11 @@ export function createOtioPlayback(
       run.preparedThrough === scopeEndFrame
         ? scopeEndFrame
         : run.preparedThrough - OTIO_PCM_HANDOFF_RESERVE_FRAMES;
-    const limitFrame = Math.min(run.scheduledThrough, decodedCap);
+    const limitFrame = Math.min(
+      run.scheduledThrough,
+      run.materializedThrough,
+      decodedCap
+    );
     if (limitFrame <= fromFrame) return old !== null;
     const hold = reserveVisualPrefix(
       { value: fromFrame, rate },
@@ -8797,6 +8808,9 @@ export function createOtioPlayback(
         activeSession,
         candidatePrepared: pcmCandidate?.prepared ?? false,
         candidateBoundaryFrame: pcmCandidate?.boundaryFrame ?? null,
+        preparedThrough: pcmRun?.preparedThrough ?? null,
+        materializedThrough: pcmRun?.materializedThrough ?? null,
+        scheduledThrough: pcmRun?.scheduledThrough ?? null,
         otherGateReservations: gateReservations - (activeSession ? 1 : 0),
       };
     };

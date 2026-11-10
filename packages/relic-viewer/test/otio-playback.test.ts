@@ -1778,6 +1778,8 @@ describe('otio playback controller', () => {
       resumeGate?: Promise<void>;
       proofBudget?: boolean;
       imageCuts?: boolean;
+      cutAt?: number;
+      autoEndSources?: boolean;
       resolveMedia?: (
         path: OtioBundleEntryName
       ) => Promise<string | Blob | null>;
@@ -1895,12 +1897,19 @@ describe('otio playback controller', () => {
       onended: (() => void) | null = null;
       carrier = false;
       started = false;
+      startFrame = 0;
+      endFrame = Infinity;
       override connect(node?: unknown, output?: number, input?: number) {
         this.carrier = input === 1;
         return super.connect(node, output, input);
       }
       start(time: number) {
+        this.startFrame = Math.round(time * sampleRate);
         this.started = true;
+        if (!this.carrier)
+          this.endFrame =
+            Math.round(time * sampleRate) +
+            ((this.buffer as { length?: number } | null)?.length ?? 0);
         if (!this.carrier && sourceStartAdvance > 0) {
           const frames = sourceStartAdvance;
           sourceStartAdvance = 0;
@@ -1920,8 +1929,13 @@ describe('otio playback controller', () => {
           firstScheduleLead = Math.round(time * sampleRate) - renderFrame;
         }
       }
-      stop(_time?: number) {
+      stop(time?: number) {
         if (this.carrier) queueMicrotask(() => this.onended?.());
+        else if (clockOptions?.autoEndSources)
+          this.endFrame = Math.min(
+            this.endFrame,
+            time === undefined ? renderFrame : Math.ceil(time * sampleRate)
+          );
       }
     }
     class FakeContext {
@@ -2277,13 +2291,13 @@ describe('otio playback controller', () => {
                       children: (withCuts
                         ? [
                             {
-                              length: 15,
+                              length: clockOptions?.cutAt ?? 15,
                               path: clockOptions?.imageCuts
                                 ? 'media/a.png'
                                 : 'media/a.mp4',
                             },
                             {
-                              length: 45,
+                              length: 60 - (clockOptions?.cutAt ?? 15),
                               path: clockOptions?.imageCuts
                                 ? 'media/b.png'
                                 : 'media/b.mp4',
@@ -2338,6 +2352,7 @@ describe('otio playback controller', () => {
     if (clockOptions?.proofBudget)
       Object.defineProperty(globalThis, '__otioProofPcm', {
         configurable: true,
+        writable: true,
         value: true,
       });
     const playback = createOtioPlayback({
@@ -2391,6 +2406,17 @@ describe('otio playback controller', () => {
         renderFrame = nextRender;
         outputFrame = nextOutput;
       }
+      if (clockOptions?.autoEndSources)
+        for (const source of audioContext.sources) {
+          if (
+            source.started &&
+            !source.carrier &&
+            source.endFrame <= renderFrame
+          ) {
+            source.started = false;
+            source.onended?.();
+          }
+        }
       for (const [id, timer] of timers) {
         if (timer.at <= wall) {
           timers.delete(id);
@@ -3320,8 +3346,23 @@ describe('otio playback controller', () => {
       expect(charged.nodes).toBeLessThanOrEqual(128);
       for (const ended of oldEnded) ended();
       await fixture.flush();
-      expect(proof.__otioProofPcmSnapshot().bytes).toBeLessThan(charged.bytes);
-      expect(fixture.pulls).toContain(boundary - f0);
+      const afterEnded = proof.__otioProofPcmSnapshot();
+      expect(afterEnded.nodes).toBeLessThan(charged.nodes);
+      expect(afterEnded.bytes).toBeLessThanOrEqual(charged.bytes);
+      expect(afterEnded.bytes).toBeGreaterThan(0);
+      const successorSource = fixture.audioContext.sources.find(
+        (source) =>
+          !source.carrier &&
+          source.started &&
+          (source.buffer as { length?: number } | null)?.length === 4096
+      );
+      expect(successorSource).toBeDefined();
+      const successorSamples = (
+        successorSource!.buffer as {
+          getChannelData(channel: number): Float32Array;
+        }
+      ).getChannelData(0);
+      expect(successorSamples[0]).toBeCloseTo(((boundary - f0) % 997) / 997, 6);
       expect(fixture.gates).toHaveLength(1);
       expect(fixture.suspensions).toBe(1);
       expect(fixture.leaseReleases).toBe(1);
@@ -3360,7 +3401,8 @@ describe('otio playback controller', () => {
         )
       ).toBe(true);
       fixture.holdPcmResponses(false);
-      for (const source of fixture.audioContext.sources) source.onended?.();
+      for (const source of fixture.audioContext.sources)
+        if (!source.carrier) source.onended?.();
       for (let i = 0; i < 80 && !settled; i++) {
         await fixture.advance(
           fixture.wall + 2,
@@ -3524,7 +3566,8 @@ describe('otio playback controller', () => {
           frontier - 128,
           deliverClosure
         );
-        for (const source of fixture.audioContext.sources) source.onended?.();
+        for (const source of fixture.audioContext.sources)
+          if (!source.carrier) source.onended?.();
         void fixture.playback.seek({ value: 1, rate: 30 });
         await fixture.deliverCallbacks();
         await fixture.flush();
@@ -3582,7 +3625,10 @@ describe('otio playback controller', () => {
       const candidateArm = fixture.commands.filter(
         (item) => item.type === 'arm'
       )[1]!;
-      const seek = fixture.playback.seek({ value: 1, rate: 30 });
+      let settled = false;
+      const seek = fixture.playback.seek({ value: 1, rate: 30 }).finally(() => {
+        settled = true;
+      });
       await fixture.flush();
       const abort = fixture.commands.find(
         (item) =>
@@ -3602,6 +3648,8 @@ describe('otio playback controller', () => {
         fixture.commands.filter((item) => item.type === 'arm')
       ).toHaveLength(2);
       fixture.holdAbortResponses(false);
+      for (const source of fixture.audioContext.sources)
+        if (!source.carrier) source.onended?.();
       for (
         let i = 0;
         i < 40 &&
@@ -3613,6 +3661,7 @@ describe('otio playback controller', () => {
           fixture.renderFrame + 384,
           fixture.outputFrame + 384
         );
+      expect(settled, JSON.stringify(fixture.playback.getState())).toBe(true);
       await seek;
       expect(
         fixture.commands.filter((item) => item.type === 'arm')
@@ -3638,6 +3687,8 @@ describe('otio playback controller', () => {
     let delayedRequests = 0;
     const fixture = independentPcmFixture(true, true, undefined, {
       imageCuts: true,
+      autoEndSources: true,
+      cutAt: 45,
       resolveMedia: async (path) => {
         if (path === 'media/b.png') {
           delayedRequests++;
@@ -3648,7 +3699,7 @@ describe('otio playback controller', () => {
     });
     try {
       await fixture.start();
-      const oldSeek = fixture.playback.seek({ value: 20, rate: 30 });
+      const oldSeek = fixture.playback.seek({ value: 50, rate: 30 });
       await fixture.flush();
       expect(delayedRequests).toBeGreaterThan(0);
       const newSeek = fixture.playback.seek({ value: 2, rate: 30 });
@@ -3824,11 +3875,18 @@ describe('otio playback controller', () => {
   });
 
   test('PCM recovery transfers a prepared incoming cut before renewing its frontier', async () => {
-    const fixture = independentPcmFixture(true, true);
+    const fixture = independentPcmFixture(true, true, undefined, {
+      proofBudget: true,
+    });
     const proof = globalThis as typeof globalThis & {
       __otioProofPcm?: boolean;
       __otioProofPcmFault?: string | null;
       __otioProofHoldOldDrain?: boolean;
+      __otioProofPcmSnapshot: () => {
+        preparedThrough: number | null;
+        materializedThrough: number | null;
+        scheduledThrough: number | null;
+      };
     };
     try {
       await fixture.start();
@@ -3854,6 +3912,9 @@ describe('otio playback controller', () => {
           (item) => item.type === 'extend' && item.throughFrame === cutFrame
         )
       ).toBe(true);
+      const descriptorSources = fixture.audioContext.sources.filter(
+        (source) => !source.carrier && !source.started && source.onended
+      );
       proof.__otioProofPcm = true;
       proof.__otioProofHoldOldDrain = true;
       proof.__otioProofPcmFault = 'withhold-future-video';
@@ -3898,6 +3959,48 @@ describe('otio playback controller', () => {
       expect(fixture.pulls).toContain(24000);
       expect(fixture.playback.getState().playing).toBe(true);
       expect(fixture.playback.getState().buffering).toBe(false);
+      const inherited = proof.__otioProofPcmSnapshot();
+      expect(inherited.preparedThrough).toBeGreaterThan(24000 + 8192);
+      expect(inherited.materializedThrough).toBe(24000 + 4096);
+      const existingSources = new Set(fixture.audioContext.sources);
+      for (let i = 0; i < 5; i++) {
+        raf?.(fixture.wall);
+        await fixture.flush();
+      }
+      const afterFill = proof.__otioProofPcmSnapshot();
+      expect(afterFill.materializedThrough).toBeGreaterThanOrEqual(
+        inherited.preparedThrough!
+      );
+      expect(afterFill.scheduledThrough).toBeGreaterThanOrEqual(
+        inherited.preparedThrough!
+      );
+      const successorStart = Number(arms[1]!.f0);
+      const successorSources = fixture.audioContext.sources
+        .filter(
+          (source) =>
+            descriptorSources.includes(source) || !existingSources.has(source)
+        )
+        .filter((source) => !source.carrier && source.started)
+        .sort((a, b) => a.startFrame - b.startFrame);
+      let covered = successorStart;
+      for (const source of successorSources) {
+        const buffer = source.buffer as {
+          length: number;
+          getChannelData(channel: number): Float32Array;
+        };
+        if (source.startFrame > covered) break;
+        const data = buffer.getChannelData(0);
+        const sourceFrame = 24000 + source.startFrame - successorStart;
+        expect(data[0]).toBeCloseTo((sourceFrame % 997) / 997, 6);
+        expect(data[buffer.length - 1]).toBeCloseTo(
+          ((sourceFrame + buffer.length - 1) % 997) / 997,
+          6
+        );
+        covered = Math.max(covered, source.startFrame + buffer.length);
+      }
+      expect(covered).toBeGreaterThanOrEqual(
+        successorStart + inherited.preparedThrough! - 24000
+      );
       proof.__otioProofHoldOldDrain = false;
       await fixture.advance(
         fixture.wall + 8,
@@ -4090,7 +4193,21 @@ describe('otio playback controller', () => {
       expect(
         fixture.commands.filter((item) => item.type === 'arm')
       ).toHaveLength(2);
-      expect(fixture.pulls).toContain(boundary - Number(arm!.f0));
+      expect(fixture.pulls).toEqual([0]);
+      const source = fixture.audioContext.sources.find(
+        (item) =>
+          !item.carrier &&
+          item.started &&
+          (item.buffer as { length?: number } | null)?.length === 4096
+      );
+      expect(source).toBeDefined();
+      const samples = (
+        source!.buffer as { getChannelData(channel: number): Float32Array }
+      ).getChannelData(0);
+      expect(samples[0]).toBeCloseTo(
+        ((boundary - Number(arm!.f0)) % 997) / 997,
+        6
+      );
     } finally {
       fixture.restore();
     }
