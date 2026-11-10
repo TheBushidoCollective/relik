@@ -1,6 +1,6 @@
 /**
- * The renderer class: the coarse, eight-value taxonomy the frame concedes to
- * the operator so the success metric is computable at all.
+ * The coarse renderer taxonomy disclosed to the operator and in public
+ * link-card metadata.
  *
  * Two rules travel with it and neither is negotiable:
  *
@@ -8,7 +8,7 @@
  *    as a tool input (`spec/publish.md` 1.2). Exposing it as a parameter
  *    makes the taxonomy model-attested, and the metric's second clause would
  *    have an unreliable narrator reporting its only input.
- * 2. **It never reaches the viewer and never routes rendering**
+ * 2. **It never routes rendering**
  *    (`spec/format.md` 3.6). A publisher declaring `image` on an HTML payload
  *    would win inline rendering on the origin holding the fragment secret.
  *    Routing comes from sniffing after decryption, and it can only ever move
@@ -21,8 +21,9 @@
  */
 
 import { isOtioz, isRawOtio } from './otio-zip.ts';
+import { modelFormatFromFilename, sniffModelFormat } from './model.ts';
 
-/** The ten values. Stored server-side against the relic ID, nowhere else. */
+/** The values stored against the relic ID and exposed in link-card metadata. */
 export type RendererClass =
   | 'markdown'
   | 'code'
@@ -31,6 +32,7 @@ export type RendererClass =
   | 'image'
   | 'pdf'
   | 'media'
+  | 'model'
   | 'otio'
   | 'archive'
   | 'binary';
@@ -43,6 +45,7 @@ export const RENDERER_CLASSES: readonly RendererClass[] = [
   'image',
   'pdf',
   'media',
+  'model',
   'otio',
   'archive',
   'binary',
@@ -94,6 +97,7 @@ export const CLASS_BEHAVIOUR: Record<RendererClass, ClassBehaviour> = {
   jsx: 'renders',
   image: 'renders',
   pdf: 'renders',
+  model: 'renders',
   media: 'plays',
   otio: 'plays',
   archive: 'downloads',
@@ -389,6 +393,7 @@ export function privilegeTier(cls: RendererClass): 0 | 1 | 2 | 3 {
       return 3;
     case 'image':
     case 'pdf':
+    case 'model':
       return 2;
     case 'markdown':
     case 'code':
@@ -416,8 +421,19 @@ export function deriveRendererClass(
       return signature.cls;
     }
   }
-
   const extension = extensionOf(filename);
+  const candidate = sniffModelFormat(content);
+  const declaredModel = modelFormatFromFilename(filename);
+  if (
+    candidate &&
+    (declaredModel === candidate ||
+      (!declaredModel &&
+        (extension === undefined || EXTENSIONS[extension] === undefined))) &&
+    sniffContentClass(content) !== 'html'
+  ) {
+    return 'model';
+  }
+
   if (extension !== undefined) {
     const fromExtension = EXTENSIONS[extension];
     if (fromExtension !== undefined) {
@@ -462,6 +478,7 @@ export function leastPrivileged(
     'jsx',
     'image',
     'pdf',
+    'model',
     'markdown',
     'code',
     'media',

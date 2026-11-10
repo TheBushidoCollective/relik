@@ -45,13 +45,12 @@ about network reach, not safety: the code runs in your browser, can use your
 CPU, and can render whatever it wants. The viewer says so on the page before the
 content renders, and so does `/policy`.
 
-The viewer renders Markdown, code, HTML, JSX, still images, PDF, and provides
-in-browser players for audio and video media and OpenTimelineIO timelines
-(`.otiod` directories packaged as `.otioz`, or `.otioz` archives). Arbitrary
-directories remain refused, while general archives and binaries remain
-download-only. For OpenTimelineIO relics, unencrypted first-screen media
-rendering is skipped by default to prevent private timeline cuts or frames from
-leaking into unencrypted link unfurl previews.
+The viewer renders Markdown, code, HTML, JSX, still images, PDFs, and 3D
+geometry from STL and OBJ files. It also plays audio, video, and
+OpenTimelineIO timelines (`.otiod` directories packaged as `.otioz`, or
+`.otioz` archives). OBJ materials and external resources are not loaded.
+General archives and other binaries remain download-only. Unencrypted
+first-screen previews are skipped for models and OpenTimelineIO timelines.
 
 OTIO comment rows show the sealed revision, rational range and stable track ID
 with the feedback, distinguishing same-named tracks. Native reader screenshots,

@@ -21,6 +21,7 @@ import {
   generateKey,
   generateRelicId,
   indexOtioZip,
+  modelFormatFromFilename,
   normalizeTitle,
   PLAINTEXT_CAP_BYTES,
   parseOtioJson,
@@ -378,6 +379,12 @@ export async function publish(
   }
 
   const filename = input.filename ?? source.basename;
+  // A display-name override must not hide the source's model extension from
+  // the public-cover guard.
+  const coverFilename =
+    modelFormatFromFilename(source.basename) === undefined
+      ? filename
+      : source.basename;
   const normalizedTitle = normalizeTitle(input.title ?? filename);
   // The class is derived from bytes this process already holds, never taken as
   // a tool input. Exposing it as a parameter would make the taxonomy
@@ -404,7 +411,7 @@ export async function publish(
     try {
       coverOutcome = await deps.renderCover({
         bytes: source.bytes,
-        filename,
+        filename: coverFilename,
         mimetype: guessMimetype(filename, rendererClass),
         rendererClass,
       });
@@ -977,6 +984,7 @@ const CLASS_FALLBACK: Readonly<Record<RendererClass, string>> = {
   pdf: 'application/pdf',
   image: 'application/octet-stream',
   media: 'application/octet-stream',
+  model: 'application/octet-stream',
   otio: 'application/x-otioz',
   archive: 'application/octet-stream',
   binary: 'application/octet-stream',
@@ -994,6 +1002,8 @@ export function guessMimetype(
   rendererClass: RendererClass
 ): string {
   const base = filename.slice(filename.lastIndexOf('/') + 1).toLowerCase();
+  const modelFormat = modelFormatFromFilename(base);
+  if (modelFormat !== undefined) return `model/${modelFormat}`;
   const dot = base.lastIndexOf('.');
   if (dot > 0 && dot < base.length - 1) {
     const found = MIMETYPES[base.slice(dot + 1)];

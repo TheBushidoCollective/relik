@@ -27,6 +27,8 @@ import {
   leastPrivileged,
   LOAD_OPENING,
   MalformedFragmentError,
+  modelFormatFromFilename,
+  modelFormatFromMime,
   openEnvelope,
   openRelicStream,
   parseFragment,
@@ -37,6 +39,7 @@ import {
   privilegeTier,
   type RendererClass,
   sniffContentClass,
+  sniffModelFormat,
   TransferIncompleteError,
   UnknownVersionError,
   VersionMismatchError,
@@ -124,6 +127,7 @@ export type RenderRoute =
   | 'sandboxed-jsx'
   | 'media'
   | 'otio'
+  | 'model'
   | 'pdf'
   | 'download';
 
@@ -988,6 +992,38 @@ export function routeFor(
   // in exactly the case the rule exists to catch.
   let sniffed = sniffContentClass(content);
 
+  const filenameModel = modelFormatFromFilename(filename);
+  const mimeModel = modelFormatFromMime(declaredMimetype);
+  const mime = declaredMimetype.toLowerCase().split(';')[0]?.trim() ?? '';
+  const genericMime =
+    mime === '' || mime === 'application/octet-stream' || mime === 'text/plain';
+  const candidate =
+    sniffed === 'code' || sniffed === 'binary'
+      ? sniffModelFormat(content)
+      : undefined;
+  const declaredModel = filenameModel ?? mimeModel;
+  if (declaredModel || candidate) {
+    const namedClass = deriveRendererClass(new Uint8Array([0]), filename);
+    const conflicting =
+      (filenameModel && mimeModel && filenameModel !== mimeModel) ||
+      (declaredModel && candidate && declaredModel !== candidate) ||
+      (filenameModel && !genericMime && !mimeModel) ||
+      (candidate && !filenameModel && namedClass !== 'binary') ||
+      (candidate && !declaredModel && !genericMime);
+    if (
+      candidate &&
+      !conflicting &&
+      (!declaredModel || candidate === declaredModel)
+    ) {
+      return { route: 'model', notice: undefined };
+    }
+    return {
+      route: 'download',
+      notice:
+        'The file name or type does not match its contents. Download it to inspect it.',
+    };
+  }
+
   // JSX is the one class the byte sniffer cannot see: telling a component
   // from prose takes a parser, `@relic/format` stays dependency-free, and no
   // cheap prefix separates the two. So the question is asked here, with the
@@ -1035,6 +1071,8 @@ export function routeForClass(cls: RendererClass): RenderRoute {
       return 'media';
     case 'otio':
       return 'otio';
+    case 'model':
+      return 'model';
     case 'html':
       return 'sandboxed-html';
     case 'jsx':
@@ -1058,6 +1096,7 @@ function classFromMimetype(mimetype: string, filename: string): RendererClass {
   if (type === 'text/html' || type === 'application/xhtml+xml') return 'html';
   if (type === 'image/svg+xml') return 'html'; // SVG carries script
   if (type === 'text/jsx' || type === 'text/tsx') return 'jsx';
+  if (type === 'model/stl' || type === 'model/obj') return 'model';
   if (type.startsWith('image/')) return 'image';
   if (type.startsWith('video/') || type.startsWith('audio/')) return 'media';
   if (type === 'application/pdf') return 'pdf';
@@ -1097,6 +1136,8 @@ function describe(cls: RendererClass): string {
       return 'audio or video';
     case 'otio':
       return 'an OpenTimelineIO timeline';
+    case 'model':
+      return 'a 3D model';
     case 'archive':
       return 'an archive';
     default:

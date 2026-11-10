@@ -320,12 +320,12 @@ mise exec -- bun packages/relic-mcp/test/load-progress-path.ts
 
 A reader opening any relic link on a slow connection sees the Relik bar and a named phase, with bytes against the total, from the first painted frame until the content appears. A link whose key does not open the relic stops downloading after the first block and says the relic could not be opened. A relic whose start decrypts but whose later blocks fail says the link is fine and the stored file is damaged.
 
-At startup, the proof launches an isolated headless Chrome instance over `--remote-debugging-pipe`. It publishes one relic per class, serves storage through a throttled chunked pull stream, and asserts that no blank frames occur, that phases appear in order, that early cancellation bounds transfer size on wrong keys to at most 262,144 bytes, and that damaged files offer retry and report without key entry.
+At startup, the proof launches an isolated headless Chrome instance over `--remote-debugging-pipe`, with software WebGL enabled for model fixtures. It publishes fixtures through the client and serves storage through a throttled stream. It checks loading, early cancellation, damage handling, model rendering, and interactive model controls.
 
 Success ends with:
 
 ```text
-LOAD_PROGRESS_PATH_OK classes=12 runs=<n>
+LOAD_PROGRESS_PATH_OK fixtures=<n> runs=<n>
 ```
 
 ## Loading on the live service

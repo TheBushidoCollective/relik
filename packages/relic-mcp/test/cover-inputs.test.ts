@@ -209,6 +209,133 @@ describe('cover-inputs', () => {
     }
   });
 
+  test('never sends declared or byte-recognized models to a cover renderer', async () => {
+    const encode = (value: string) => new TextEncoder().encode(value);
+    const asciiStl = encode(
+      'solid PRIVATE_STL\nfacet normal 0 0 1\nouter loop\n' +
+        'vertex 0 0 0\nvertex 1 0 0\nvertex 0 1 0\n' +
+        'endloop\nendfacet\nendsolid PRIVATE_STL\n'
+    );
+    const obj = encode('# PRIVATE_OBJ\nv 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n');
+    const binaryStl = new Uint8Array(134);
+    // A binary STL header can resemble a different file type.
+    binaryStl.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    new DataView(binaryStl.buffer).setUint32(80, 1, true);
+    const utf8BoundaryObj = new Uint8Array(262145);
+    utf8BoundaryObj.fill(0x20);
+    utf8BoundaryObj.set(obj);
+    utf8BoundaryObj[obj.length] = 0x23;
+    // A valid character straddles the model sniffer's bounded prefix.
+    utf8BoundaryObj[262143] = 0xc3;
+    utf8BoundaryObj[262144] = 0xa9;
+    const objVertices = encode('# PRIVATE_OBJ\nv 0 0 0\nv 1 0 0\nv 0 1 0\n');
+    const vertexLine = encode('v 0 0 0\n');
+    const lateFace = encode('f 1 2 3\n');
+    const vertexCount = Math.ceil(
+      (262144 - objVertices.length) / vertexLine.length
+    );
+    const faceOffset = objVertices.length + vertexCount * vertexLine.length;
+    const lateFaceObj = new Uint8Array(faceOffset + lateFace.length);
+    lateFaceObj.set(objVertices);
+    for (
+      let offset = objVertices.length;
+      offset < faceOffset;
+      offset += vertexLine.length
+    ) {
+      lateFaceObj.set(vertexLine, offset);
+    }
+    lateFaceObj.set(lateFace, faceOffset);
+
+    const cases: CoverSource[] = [
+      {
+        filename: 'unknown',
+        mimetype: 'application/octet-stream',
+        rendererClass: 'model',
+        bytes: encode('unrecognized'),
+      },
+      {
+        filename: 'EMPTY.STL',
+        mimetype: 'text/plain',
+        rendererClass: 'code',
+        bytes: new Uint8Array(),
+      },
+      {
+        filename: 'mesh.Obj',
+        mimetype: 'image/png',
+        rendererClass: 'image',
+        bytes: encode('not a mesh'),
+      },
+      {
+        filename: 'document.txt',
+        mimetype: 'MODEL/STL; charset=utf-8',
+        rendererClass: 'code',
+        bytes: encode('sensitive source'),
+      },
+      {
+        filename: 'document.txt',
+        mimetype: 'model/obj',
+        rendererClass: 'code',
+        bytes: encode('sensitive source'),
+      },
+      {
+        filename: 'document.md',
+        mimetype: 'text/markdown',
+        rendererClass: 'markdown',
+        bytes: asciiStl,
+      },
+      {
+        filename: 'document.html',
+        mimetype: 'text/html',
+        rendererClass: 'html',
+        bytes: obj,
+      },
+      {
+        filename: 'document.txt',
+        mimetype: 'text/plain',
+        rendererClass: 'code',
+        bytes: utf8BoundaryObj,
+      },
+      {
+        filename: 'document.txt',
+        mimetype: 'text/plain',
+        rendererClass: 'code',
+        bytes: lateFaceObj,
+      },
+      {
+        filename: 'unknown',
+        mimetype: 'text/plain',
+        rendererClass: 'code',
+        bytes: encode('v 0 0 0\rv 1 0 0\rv 0 1 0\rf 1 2 3\r'),
+      },
+      {
+        filename: 'document.txt',
+        mimetype: 'text/plain',
+        rendererClass: 'code',
+        bytes: encode(
+          'solid test\nfacet\nnormal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 1 0 0\nvertex 0 1 0\nendloop\nendfacet\nendsolid test\n'
+        ),
+      },
+      {
+        filename: 'picture.png',
+        mimetype: 'image/png',
+        rendererClass: 'image',
+        bytes: binaryStl,
+      },
+    ];
+
+    for (const source of cases) {
+      expect(await planCover(source)).toEqual({
+        kind: 'skip',
+        outcome: {
+          status: 'skipped',
+          reason: 'no_cover_for_class',
+          detail:
+            'Generic cover used for 3D model (public title and format label only)',
+        },
+      });
+    }
+  });
+
   test('routes binary, WebP, and ICO to no_cover_for_class', async () => {
     // Binary
     const binSource: CoverSource = {

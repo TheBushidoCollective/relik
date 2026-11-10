@@ -20,10 +20,12 @@
     "pdfjs-dist": "5.4.149",
     "react": "19.2.0",
     "react-dom": "19.2.0",
-    "sucrase": "^3.35.0"
+    "sucrase": "^3.35.0",
+    "three": "0.187.0"
   },
   "devDependencies": {
     "@types/react": "19.2.0",
-    "@types/react-dom": "19.2.0"
+    "@types/react-dom": "19.2.0",
+    "@types/three": "0.187.0"
   }
 }

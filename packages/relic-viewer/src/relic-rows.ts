@@ -59,6 +59,8 @@ export function dashboardPreview(renderer: string | undefined): {
       return { kind: 'media', label: 'Media' };
     case 'pdf':
       return { kind: 'pdf', label: 'PDF' };
+    case 'model':
+      return { kind: 'file', label: '3D model' };
     case 'archive':
       return { kind: 'archive', label: 'Archive' };
     case 'binary':

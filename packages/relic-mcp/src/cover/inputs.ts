@@ -1,4 +1,9 @@
-import { sniffContentClass } from '@relic/format';
+import {
+  modelFormatFromFilename,
+  modelFormatFromMime,
+  sniffContentClass,
+  sniffModelFormat,
+} from '@relic/format';
 import {
   COVER_INPUT_PART_BYTES,
   type CoverOutcome,
@@ -31,6 +36,25 @@ export async function planCover(
   source: CoverSource,
   options?: PlanCoverOptions
 ): Promise<CoverPlan> {
+  // Covers are public. Never pass declared or byte-recognized model content
+  // to a text, image, or media renderer, even when declarations disagree.
+  if (
+    source.rendererClass === 'model' ||
+    modelFormatFromFilename(source.filename) !== undefined ||
+    modelFormatFromMime(source.mimetype) !== undefined ||
+    sniffModelFormat(source.bytes) !== undefined
+  ) {
+    return {
+      kind: 'skip',
+      outcome: {
+        status: 'skipped',
+        reason: 'no_cover_for_class',
+        detail:
+          'Generic cover used for 3D model (public title and format label only)',
+      },
+    };
+  }
+
   if (
     source.bytes.length === 0 &&
     (source.rendererClass === 'markdown' || source.rendererClass === 'code')
