@@ -48,8 +48,13 @@ class FakeContext {
     );
     return {
       data,
+      length: frames,
+      numberOfChannels: channels,
       copyToChannel(plane: Float32Array, channel: number) {
         data[channel]!.set(plane);
+      },
+      copyFromChannel(dest: Float32Array, channel: number, offset = 0) {
+        dest.set(data[channel]!.subarray(offset, offset + dest.length));
       },
     };
   }
@@ -293,18 +298,23 @@ describe('keyed PCM ledger', () => {
   test("retires one key's blocks before a frame without touching later ones", () => {
     const { budget, make } = harness();
     const scheduler = make(1);
-    scheduler.prepare({
+    const first = scheduler.prepare({
       generation: 1,
       planes: [ramp(480, 0)],
       gainFactorCount: 0,
       retain: { ledgerKey: 'k', compositionStartFrame: 0 },
     });
-    scheduler.prepare({
+    first.commit();
+    const second = scheduler.prepare({
       generation: 1,
       planes: [ramp(480, 0)],
       gainFactorCount: 0,
       retain: { ledgerKey: 'k', compositionStartFrame: 480 },
     });
+    second.commit();
+    // Unstarted sources hold their buffers until cancelled.
+    first.cancel();
+    second.cancel();
     scheduler.retireRetainedBefore('k', 480);
     expect(budget.usedBytes).toBe(1920);
     expect(scheduler.coveredThrough('k', 0)).toBe(0);
@@ -348,5 +358,399 @@ describe('keyed PCM ledger', () => {
     active.dispose();
     expect(budget.usedBytes).toBe(0);
     expect(budget.usedNodes).toBe(0);
+  });
+});
+
+describe('uncommitted retention', () => {
+  test('cancel rolls back an uncommitted block so the same range can be retried', () => {
+    const { budget, make } = harness();
+    const scheduler = make(1);
+    const request = {
+      generation: 1,
+      planes: [ramp(480, 0)],
+      gainFactorCount: 0,
+      retain: { ledgerKey: 'k', compositionStartFrame: 0 },
+    };
+    const first = scheduler.prepare(request);
+    expect(budget.usedBytes).toBe(1920);
+    first.cancel();
+    expect(budget.usedBytes).toBe(0);
+    expect(budget.usedNodes).toBe(0);
+    expect(scheduler.coveredThrough('k', 0)).toBe(0);
+
+    const retry = scheduler.prepare(request);
+    retry.commit();
+    expect(budget.usedBytes).toBe(1920);
+    scheduler.dispose();
+    expect(budget.usedBytes).toBe(0);
+  });
+
+  test('commit keeps retention alive through the source being cancelled', () => {
+    const { budget, make } = harness();
+    const scheduler = make(1);
+    const prepared = scheduler.prepare({
+      generation: 1,
+      planes: [ramp(480, 0)],
+      gainFactorCount: 0,
+      retain: { ledgerKey: 'k', compositionStartFrame: 0 },
+    });
+    prepared.commit();
+    prepared.commit();
+    prepared.cancel();
+    expect(budget.usedBytes).toBe(1920);
+    expect(scheduler.coveredThrough('k', 0)).toBe(480);
+    scheduler.dispose();
+    expect(budget.usedBytes).toBe(0);
+  });
+
+  test('a started uncommitted source rolled back stays charged until it actually ends', () => {
+    const { context, budget, make } = harness();
+    const scheduler = make(1);
+    const prepared = scheduler.prepare({
+      generation: 1,
+      planes: [ramp(480, 0)],
+      gainFactorCount: 0,
+      retain: { ledgerKey: 'k', compositionStartFrame: 0 },
+    });
+    prepared.start(48200, []);
+    prepared.cancel();
+    // The audible source still holds its AudioBuffer, so the bytes stay charged.
+    expect(budget.usedBytes).toBe(1920);
+    context.sources[0]!.end();
+    expect(budget.usedBytes).toBe(0);
+    expect(budget.usedNodes).toBe(0);
+  });
+
+  test('scheduler helpers address uncommitted blocks by key and start', () => {
+    const { budget, make } = harness();
+    const scheduler = make(1);
+    const request = {
+      generation: 1,
+      planes: [ramp(480, 0)],
+      gainFactorCount: 0,
+      retain: { ledgerKey: 'k', compositionStartFrame: 0 },
+    };
+    const first = scheduler.prepare(request);
+    expect(scheduler.rollbackRetained('k', 0)).toBe(true);
+    expect(scheduler.rollbackRetained('k', 0)).toBe(false);
+    // The unstarted source still holds its buffer until it is cancelled.
+    expect(budget.usedBytes).toBe(1920);
+    first.cancel();
+    expect(budget.usedBytes).toBe(0);
+
+    scheduler.prepare(request);
+    scheduler.commitRetained('k', 0);
+    expect(scheduler.rollbackRetained('k', 0)).toBe(false);
+    expect(() => scheduler.commitRetained('k', 480)).toThrow('not retained');
+    expect(budget.usedBytes).toBe(1920);
+    scheduler.dispose();
+    expect(budget.usedBytes).toBe(0);
+  });
+
+  test('retirement frees only committed blocks', () => {
+    const { budget, make } = harness();
+    const scheduler = make(1);
+    scheduler.prepare({
+      generation: 1,
+      planes: [ramp(480, 0)],
+      gainFactorCount: 0,
+      retain: { ledgerKey: 'k', compositionStartFrame: 0 },
+    });
+    scheduler.retireRetainedBefore('k', 480);
+    expect(budget.usedBytes).toBe(1920);
+    expect(scheduler.coveredThrough('k', 0)).toBe(480);
+    scheduler.dispose();
+  });
+
+  test('commit and rollback follow a block through handoff', () => {
+    const { budget, make } = harness();
+    const predecessor = make(1);
+    const committed = predecessor.prepare({
+      generation: 1,
+      planes: [ramp(480, 0)],
+      gainFactorCount: 0,
+      retain: { ledgerKey: 'a', compositionStartFrame: 0 },
+    });
+    const withdrawn = predecessor.prepare({
+      generation: 1,
+      planes: [ramp(480, 1)],
+      gainFactorCount: 0,
+      retain: { ledgerKey: 'b', compositionStartFrame: 0 },
+    });
+    predecessor.seal();
+    const successor = make(2);
+    predecessor.handOffLedger(successor);
+    committed.commit();
+    withdrawn.cancel();
+    expect(budget.usedBytes).toBe(1920);
+    expect(successor.coveredThrough('a', 0)).toBe(480);
+    expect(successor.coveredThrough('b', 0)).toBe(0);
+    // The committed block stays held until its unstarted source is cancelled.
+    committed.cancel();
+    successor.dispose();
+    expect(budget.usedBytes).toBe(0);
+  });
+
+  test('commit without retained PCM throws', () => {
+    const { make } = harness();
+    const scheduler = make(1);
+    const prepared = scheduler.prepare({
+      generation: 1,
+      planes: [ramp(480, 0)],
+      gainFactorCount: 0,
+    });
+    expect(() => prepared.commit()).toThrow('retained no PCM');
+    prepared.cancel();
+  });
+});
+
+describe('retained AudioBuffer', () => {
+  test('the ledger keeps the AudioBuffer, not the caller planes', () => {
+    const { context, budget, make } = harness();
+    const scheduler = make(1);
+    const planes = [ramp(480, 0)];
+    const original = Float32Array.from(planes[0]!);
+    scheduler
+      .prepare({
+        generation: 1,
+        planes,
+        gainFactorCount: 0,
+        retain: { ledgerKey: 'k', compositionStartFrame: 0 },
+      })
+      .commit();
+    // The caller reuses its arrays once scheduled; the retained PCM must not change.
+    planes[0]!.fill(9);
+    const target = make(2);
+    scheduler
+      .restage({
+        target,
+        generation: 2,
+        ledgerKey: 'k',
+        compositionStartFrame: 0,
+        frameCount: 480,
+        gainFactorCount: 0,
+      })
+      .start(48200, []);
+    expect(copiedPlane(context)).toEqual(original);
+    expect(budget.usedBytes).toBe(1920 + 1920);
+    context.sources.at(-1)!.end();
+    scheduler.dispose();
+    target.dispose();
+    expect(budget.usedBytes).toBe(0);
+  });
+
+  test('retiring a block keeps its AudioBuffer charged while a source still plays it', () => {
+    const { context, budget, make } = harness();
+    const scheduler = make(1);
+    const prepared = scheduler.prepare({
+      generation: 1,
+      planes: [ramp(480, 0)],
+      gainFactorCount: 0,
+      retain: { ledgerKey: 'k', compositionStartFrame: 0 },
+    });
+    prepared.commit();
+    prepared.start(48200, []);
+    scheduler.retireRetainedBefore('k', 480);
+    expect(scheduler.coveredThrough('k', 0)).toBe(0);
+    expect(budget.usedBytes).toBe(1920);
+    context.sources[0]!.end();
+    expect(budget.usedBytes).toBe(0);
+    expect(budget.usedNodes).toBe(0);
+  });
+
+  test('retiring a committed block nothing else holds frees its bytes at once', () => {
+    const { budget, make } = harness();
+    const scheduler = make(1);
+    const prepared = scheduler.prepare({
+      generation: 1,
+      planes: [ramp(480, 0)],
+      gainFactorCount: 0,
+      retain: { ledgerKey: 'k', compositionStartFrame: 0 },
+    });
+    prepared.commit();
+    prepared.cancel();
+    expect(budget.usedBytes).toBe(1920);
+    scheduler.retireRetainedBefore('k', 480);
+    expect(budget.usedBytes).toBe(0);
+    scheduler.dispose();
+  });
+});
+
+describe('stereo retained PCM and unstarted handles', () => {
+  function stereo(length: number, offset: number): Float32Array[] {
+    return [ramp(length, offset), ramp(length, offset + 500)];
+  }
+
+  test('stereo restage copies both channels exactly across a block boundary', () => {
+    const { context, budget, make } = harness();
+    const scheduler = make(1);
+    const blockA = stereo(3000, 0);
+    const blockB = stereo(3000, 3000);
+    scheduler
+      .prepare({
+        generation: 1,
+        planes: blockA,
+        gainFactorCount: 0,
+        retain: { ledgerKey: 'k', compositionStartFrame: 0 },
+      })
+      .commit();
+    scheduler
+      .prepare({
+        generation: 1,
+        planes: blockB,
+        gainFactorCount: 0,
+        retain: { ledgerKey: 'k', compositionStartFrame: 3000 },
+      })
+      .commit();
+    expect(budget.usedBytes).toBe(48000);
+
+    const target = make(2);
+    const boundary = 3000 - 2048;
+    scheduler
+      .restage({
+        target,
+        generation: 2,
+        ledgerKey: 'k',
+        compositionStartFrame: boundary,
+        frameCount: OTIO_PCM_BOUNDARY_COPY_FRAMES,
+        gainFactorCount: 0,
+      })
+      .start(48200, []);
+    const copied = context.sources.at(-1)!.buffer!.data;
+    for (let channel = 0; channel < 2; channel++) {
+      const source = channel === 0 ? blockA[0]! : blockA[1]!;
+      const later = channel === 0 ? blockB[0]! : blockB[1]!;
+      const expected = Float32Array.from(
+        { length: OTIO_PCM_BOUNDARY_COPY_FRAMES },
+        (_, j) => {
+          const frame = boundary + j;
+          return frame < 3000 ? source[frame]! : later[frame - 3000]!;
+        }
+      );
+      expect(copied[channel]).toEqual(expected);
+    }
+    expect(copied[0]).not.toEqual(copied[1]);
+    expect(budget.usedBytes).toBe(
+      48000 + OTIO_PCM_BOUNDARY_COPY_FRAMES * 2 * 4
+    );
+    context.sources.at(-1)!.end();
+    target.dispose();
+    scheduler.dispose();
+    expect(budget.usedBytes).toBe(0);
+    expect(budget.usedNodes).toBe(0);
+  });
+
+  test('a stereo late onended after handoff leaves the successor-owned block charged', () => {
+    const { context, budget, make } = harness();
+    const predecessor = make(1);
+    const original = stereo(480, 0).map((plane) => Float32Array.from(plane));
+    const playing = predecessor.prepare({
+      generation: 1,
+      planes: stereo(480, 0),
+      gainFactorCount: 0,
+      retain: { ledgerKey: 'a', compositionStartFrame: 0 },
+    });
+    playing.commit();
+    playing.start(48200, []);
+    expect(budget.usedBytes).toBe(3840);
+
+    predecessor.seal();
+    const successor = make(2);
+    predecessor.handOffLedger(successor);
+    expect(budget.usedBytes).toBe(3840);
+    // The predecessor's stereo source ends after the handoff.
+    context.sources[0]!.end();
+    expect(budget.usedBytes).toBe(3840);
+    expect(budget.usedNodes).toBe(0);
+
+    const copy = successor.restage({
+      target: successor,
+      generation: 2,
+      ledgerKey: 'a',
+      compositionStartFrame: 0,
+      frameCount: 480,
+      gainFactorCount: 0,
+    });
+    copy.start(48200, []);
+    const copied = context.sources.at(-1)!.buffer!.data;
+    expect(copied[0]).toEqual(original[0]);
+    expect(copied[1]).toEqual(original[1]);
+    expect(budget.usedBytes).toBe(3840 + 3840);
+
+    predecessor.dispose();
+    expect(budget.usedBytes).toBe(3840 + 3840);
+    successor.dispose();
+    // The restaged copy is still audible, so only its charge remains.
+    expect(budget.usedBytes).toBe(3840);
+    context.sources.at(-1)!.end();
+    expect(budget.usedBytes).toBe(0);
+    expect(budget.usedNodes).toBe(0);
+  });
+
+  test('cancelling an unstarted stereo handle releases its node, and its block only when uncommitted', () => {
+    const { budget, make } = harness();
+    const scheduler = make(1);
+    const uncommitted = scheduler.prepare({
+      generation: 1,
+      planes: stereo(480, 0),
+      gainFactorCount: 0,
+      retain: { ledgerKey: 'u', compositionStartFrame: 0 },
+    });
+    expect(budget.usedBytes).toBe(3840);
+    expect(budget.usedNodes).toBe(1);
+    uncommitted.cancel();
+    expect(budget.usedBytes).toBe(0);
+    expect(budget.usedNodes).toBe(0);
+    uncommitted.cancel();
+    expect(budget.usedBytes).toBe(0);
+    expect(() => uncommitted.start(48200, [])).toThrow();
+
+    const committed = scheduler.prepare({
+      generation: 1,
+      planes: stereo(480, 0),
+      gainFactorCount: 0,
+      retain: { ledgerKey: 'c', compositionStartFrame: 0 },
+    });
+    committed.commit();
+    committed.cancel();
+    expect(budget.usedBytes).toBe(3840);
+    expect(budget.usedNodes).toBe(0);
+    expect(scheduler.coveredThrough('c', 0)).toBe(480);
+
+    const plain = scheduler.prepare({
+      generation: 1,
+      planes: stereo(480, 0),
+      gainFactorCount: 0,
+    });
+    expect(budget.usedBytes).toBe(3840 * 2);
+    plain.cancel();
+    expect(budget.usedBytes).toBe(3840);
+    scheduler.dispose();
+    expect(budget.usedBytes).toBe(0);
+    expect(budget.usedNodes).toBe(0);
+  });
+
+  test('a mono block cannot join a stereo key and its failed admission returns its bytes', () => {
+    const { budget, make } = harness();
+    const scheduler = make(1);
+    scheduler.prepare({
+      generation: 1,
+      planes: stereo(480, 0),
+      gainFactorCount: 0,
+      retain: { ledgerKey: 's', compositionStartFrame: 0 },
+    });
+    expect(budget.usedBytes).toBe(3840);
+    expect(() =>
+      scheduler.prepare({
+        generation: 1,
+        planes: [ramp(480, 0)],
+        gainFactorCount: 0,
+        retain: { ledgerKey: 's', compositionStartFrame: 480 },
+      })
+    ).toThrow('Invalid PCM ledger block');
+    expect(budget.usedBytes).toBe(3840);
+    expect(budget.usedNodes).toBe(1);
+    scheduler.dispose();
+    expect(budget.usedBytes).toBe(0);
   });
 });

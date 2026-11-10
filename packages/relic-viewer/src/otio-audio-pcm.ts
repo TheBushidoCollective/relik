@@ -334,6 +334,16 @@ export interface OtioPcmPrepared {
     firstContextFrame: number,
     gainFactors: readonly OtioPcmGainFactor[]
   ): number;
+  /**
+   * Makes this source's retained PCM permanent. Throws if the source retained
+   * nothing or its retention is gone. Idempotent for a committed block.
+   */
+  commit(): void;
+  /**
+   * Stops or releases the source. If it retained PCM that was never committed,
+   * that uncommitted block and its byte charge are removed. Committed retention
+   * is untouched.
+   */
   cancel(): void;
 }
 
@@ -341,12 +351,13 @@ export interface OtioPcmPrepared {
 export const OTIO_PCM_BOUNDARY_COPY_FRAMES = 4096;
 
 /**
- * Byte credit with one owner at a time. Only the current owner can release it,
- * so a holder that has been superseded (a source ending late, for instance)
- * changes nothing.
+ * Byte credit held by a set of holders. A source holds its buffer while it is
+ * audible, and a ledger holds it while it is retained. The bytes are freed only
+ * when no holder remains, so a superseded holder's late release changes nothing
+ * it no longer holds.
  */
 class PcmByteCharge {
-  private owner: object | null;
+  private readonly holders = new Set<object>();
   private held: number;
 
   constructor(
@@ -354,18 +365,34 @@ class PcmByteCharge {
     bytes: number,
     owner: object
   ) {
-    this.owner = owner;
+    this.holders.add(owner);
     this.held = bytes;
   }
 
+  /** Adds a holder to a charge that is still held. */
+  add(holder: object): void {
+    if (this.holders.size === 0)
+      throw new Error('PCM byte charge already released');
+    this.holders.add(holder);
+  }
+
+  /** Replaces one holder with another without changing the charged bytes. */
   move(from: object, to: object): void {
-    if (this.owner !== from) throw new Error('PCM byte charge owner mismatch');
-    this.owner = to;
+    if (!this.holders.has(from))
+      throw new Error('PCM byte charge owner mismatch');
+    this.holders.delete(from);
+    this.holders.add(to);
+  }
+
+  /** The ledger currently holding this charge, if any. */
+  get ledgerHolder(): OtioPcmLedger | undefined {
+    for (const holder of this.holders)
+      if (holder instanceof OtioPcmLedger) return holder;
+    return undefined;
   }
 
   release(by: object): void {
-    if (this.owner !== by) return;
-    this.owner = null;
+    if (!this.holders.delete(by) || this.holders.size > 0) return;
     const bytes = this.held;
     this.held = 0;
     this.budget.releaseBytes(bytes);
@@ -375,8 +402,9 @@ class PcmByteCharge {
 interface RetainedPcm {
   readonly start: number;
   readonly end: number;
-  readonly planes: readonly Float32Array[];
+  readonly buffer: AudioBuffer;
   readonly charge: PcmByteCharge;
+  committed: boolean;
 }
 
 interface RetainedLane {
@@ -414,11 +442,11 @@ class OtioPcmLedger {
   retain(
     ledgerKey: string,
     start: number,
-    planes: readonly Float32Array[],
-    from: object,
+    buffer: AudioBuffer,
     charge: PcmByteCharge
   ): void {
-    const count = planes[0]?.length ?? 0;
+    const count = buffer.length;
+    const channels = buffer.numberOfChannels;
     const end = start + count;
     const existing = this.lanes.get(ledgerKey);
     if (
@@ -428,19 +456,21 @@ class OtioPcmLedger {
       start < 0 ||
       !Number.isSafeInteger(end) ||
       count <= 0 ||
-      planes.length < 1 ||
-      (existing !== undefined && planes.length !== existing.channels) ||
+      channels < 1 ||
+      channels > 2 ||
+      (existing !== undefined && channels !== existing.channels) ||
       (existing !== undefined && blocksOverlap(existing.blocks, start, end))
     )
       throw new Error('Invalid PCM ledger block');
-    charge.move(from, this);
-    const lane = existing ?? { blocks: [], channels: planes.length };
+    charge.add(this);
+    const lane = existing ?? { blocks: [], channels };
     const at = lane.blocks.findIndex((other) => other.start > start);
     lane.blocks.splice(at === -1 ? lane.blocks.length : at, 0, {
       start,
       end,
-      planes,
+      buffer,
       charge,
+      committed: false,
     });
     this.lanes.set(ledgerKey, lane);
   }
@@ -480,9 +510,10 @@ class OtioPcmLedger {
       const take = Math.min(block.end, end) - cursor;
       const from = cursor - block.start;
       out.forEach((plane, channel) => {
-        plane.set(
-          block.planes[channel]!.subarray(from, from + take),
-          cursor - start
+        block.buffer.copyFromChannel(
+          plane.subarray(cursor - start, cursor - start + take),
+          channel,
+          from
         );
       });
       cursor += take;
@@ -531,10 +562,36 @@ class OtioPcmLedger {
     if (this.closed || lane === undefined) return;
     const kept: RetainedPcm[] = [];
     for (const block of lane.blocks) {
-      if (block.end <= frame) block.charge.release(this);
+      if (block.committed && block.end <= frame) block.charge.release(this);
       else kept.push(block);
     }
     lane.blocks = kept;
+  }
+
+  /** Makes one retained block permanent. Throws if no such block is retained. */
+  commitBlock(ledgerKey: string, start: number): void {
+    const block = this.lanes
+      .get(ledgerKey)
+      ?.blocks.find((candidate) => candidate.start === start);
+    if (this.closed || block === undefined)
+      throw new Error('PCM block is not retained');
+    block.committed = true;
+  }
+
+  /**
+   * Removes one uncommitted block and releases its charge. Returns false when
+   * there is nothing uncommitted to remove, including for a committed block.
+   */
+  rollbackUncommitted(ledgerKey: string, start: number): boolean {
+    const lane = this.lanes.get(ledgerKey);
+    if (this.closed || lane === undefined) return false;
+    const at = lane.blocks.findIndex(
+      (block) => block.start === start && !block.committed
+    );
+    if (at === -1) return false;
+    const [block] = lane.blocks.splice(at, 1);
+    block!.charge.release(this);
+    return true;
   }
 }
 
@@ -693,6 +750,19 @@ export class OtioPcmScheduler {
     this.ledger.retireBefore(ledgerKey, compositionFrame);
   }
 
+  /** Makes one uncommitted retained block permanent, by key and start frame. */
+  commitRetained(ledgerKey: string, startFrame: number): void {
+    this.ledger.commitBlock(ledgerKey, startFrame);
+  }
+
+  /**
+   * Removes one uncommitted retained block and releases its charge, by key and
+   * start frame. Returns false when nothing uncommitted is there to remove.
+   */
+  rollbackRetained(ledgerKey: string, startFrame: number): boolean {
+    return this.ledger.rollbackUncommitted(ledgerKey, startFrame);
+  }
+
   /** Exclusive end of contiguous retained PCM for `ledgerKey` from `startFrame`. */
   coveredThrough(ledgerKey: string, startFrame: number): number {
     return this.ledger.coveredThrough(ledgerKey, startFrame);
@@ -717,6 +787,9 @@ export class OtioPcmScheduler {
     let charge: PcmByteCharge | undefined;
     const nodes: GainNode[] = [];
     let owned: PcmOwnedSource;
+    let retainedRef:
+      | { ledgerKey: string; start: number; charge: PcmByteCharge }
+      | undefined;
     try {
       this.budget.reserveNodes(1 + gainFactorCount);
       nodesReserved = true;
@@ -743,14 +816,19 @@ export class OtioPcmScheduler {
         firstFrame: 0,
         naturalEnd: 0,
       };
-      if (args.retain !== undefined)
+      if (args.retain !== undefined) {
         this.ledger.retain(
           args.retain.ledgerKey,
           args.retain.compositionStartFrame,
-          planes,
-          source,
+          buffer,
           charge
         );
+        retainedRef = {
+          ledgerKey: args.retain.ledgerKey,
+          start: args.retain.compositionStartFrame,
+          charge,
+        };
+      }
       this.sources.add(owned);
       const record = owned;
       source.onended = () => this.release(record);
@@ -845,13 +923,31 @@ export class OtioPcmScheduler {
         }
       },
       cancel: () => {
-        if (!this.sources.has(owned)) return;
-        if (!owned.started) this.release(owned);
-        else {
-          try {
-            owned.source.stop();
-          } catch {}
+        if (this.sources.has(owned)) {
+          if (!owned.started) this.release(owned);
+          else {
+            try {
+              owned.source.stop();
+            } catch {}
+          }
         }
+        // Uncommitted retention is withdrawn; committed retention stays.
+        if (retainedRef !== undefined) {
+          const holder = retainedRef.charge.ledgerHolder;
+          if (holder !== undefined)
+            holder.rollbackUncommitted(
+              retainedRef.ledgerKey,
+              retainedRef.start
+            );
+        }
+      },
+      commit: () => {
+        if (retainedRef === undefined)
+          throw new Error('PCM prepared source retained no PCM');
+        const holder = retainedRef.charge.ledgerHolder;
+        if (holder === undefined)
+          throw new Error('PCM retained block is released');
+        holder.commitBlock(retainedRef.ledgerKey, retainedRef.start);
       },
     };
   }
