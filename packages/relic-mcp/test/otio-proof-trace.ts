@@ -193,9 +193,16 @@ export const otioProofTracePrelude = String.raw`(() => {
       if (args[1]?.event === 'recovery-selection') recoverySelection=args[1];
       if (args[1]?.event === 'recovery-old-drained') {
         const graph=graphs.length===1 ? graphs[0] : null;
-        if (graph) recordEvent('recovery-old-drain-native-read',null,
-          {boundaryFrame:args[1].boundaryFrame, contextTime:graph.context.currentTime,
-            state:graph.context.state});
+        if (graph) {
+          const before=performance.now(), renderBefore=graph.context.currentTime;
+          const output=typeof originalOutputTimestamp==='function'
+            ? originalOutputTimestamp.call(graph.context) : null;
+          const renderAfter=graph.context.currentTime, after=performance.now();
+          recordEvent('recovery-old-drain-native-read',null,
+            {boundaryFrame:args[1].boundaryFrame, renderBefore, renderAfter, before, after,
+              output:output ? {contextTime:output.contextTime, performanceTime:output.performanceTime} : null,
+              state:graph.context.state});
+        }
       }
     }
     return originalConsoleLog.apply(this, args);

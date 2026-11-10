@@ -10416,6 +10416,221 @@ interface ScheduledPcmComparison {
   mutedPrefixRmse: [number, number];
 }
 
+function assertLatestRecoveryFrame(
+  trace: MovingTrace['trace'],
+  selection: Record<string, unknown>,
+  boundary: number,
+  rate: number
+): void {
+  const generation = selection['generation'];
+  const request = trace.events.find(
+    (event) =>
+      event.kind === 'scheduled-pcm' &&
+      (event.value as Record<string, unknown>)?.['event'] ===
+        'recovery-request' &&
+      (event.value as Record<string, unknown>)?.['boundaryFrame'] ===
+        boundary &&
+      (event.value as Record<string, unknown>)?.['generation'] ===
+        selection['oldGeneration']
+  );
+  const inputsEvent = trace.events.find(
+    (event) =>
+      event.kind === 'scheduled-pcm' &&
+      (event.value as Record<string, unknown>)?.['event'] ===
+        'recovery-selection-inputs' &&
+      (event.value as Record<string, unknown>)?.['generation'] === generation
+  );
+  assert.ok(
+    request && inputsEvent,
+    'missing independent recovery request or inputs'
+  );
+  const origin = request.value as Record<string, unknown>,
+    input = inputsEvent.value as Record<string, unknown>;
+  const before = Number(origin['requestPerformanceBefore']),
+    after = Number(origin['requestPerformanceAfter']);
+  const requestWall = Number(selection['requestWall']),
+    deadline = Number(selection['deadline']);
+  assert.ok(
+    Number.isFinite(before) &&
+      Number.isFinite(after) &&
+      before <= requestWall &&
+      requestWall <= after &&
+      after <= request.timestamp &&
+      deadline === requestWall + 350,
+    'recovery reset its original request deadline'
+  );
+  assert.ok(
+    input['boundaryFrame'] === boundary &&
+      input['sampleRate'] === rate &&
+      input['guardFrames'] === 512 &&
+      input['compositionStartFrame'] === selection['compositionStartFrame'] &&
+      Array.isArray(input['phaseSamples']),
+    'invalid raw recovery bounds'
+  );
+  const bridge = input['bridge'] as {
+    contextTime: number;
+    performanceTime: number;
+    mappingAllowanceMs: number;
+  };
+  const vsync = Number(input['vsyncSeconds']),
+    contextNow = Number(input['contextAfterSeconds']);
+  const firstBatch = Number(input['firstBatchFrames']),
+    coverage = Number(input['clockCoverageEnd']);
+  const horizon = Number(input['horizonSeconds']),
+    scheduled = Number(input['scheduledThrough']);
+  const visual = input['visualThrough'] as { value: number; rate: number };
+  assert.ok(
+    bridge &&
+      [
+        bridge.contextTime,
+        bridge.performanceTime,
+        bridge.mappingAllowanceMs,
+        vsync,
+        contextNow,
+        horizon,
+      ].every(Number.isFinite) &&
+      bridge.mappingAllowanceMs >= 0 &&
+      vsync > 0 &&
+      Number.isSafeInteger(firstBatch) &&
+      firstBatch > 0 &&
+      Number.isSafeInteger(coverage) &&
+      Number.isSafeInteger(scheduled) &&
+      visual &&
+      Number.isFinite(visual.value) &&
+      Number.isFinite(visual.rate) &&
+      visual.rate > 0,
+    'invalid native recovery bounds'
+  );
+  assert.equal(
+    horizon,
+    0.5,
+    'recovery horizon differs from the PCM scheduling policy'
+  );
+  const firstScheduled = trace.events
+    .filter(
+      (event) =>
+        event.kind === 'scheduled-pcm' &&
+        event.value &&
+        typeof event.value === 'object' &&
+        'event' in event.value &&
+        event.value.event === 'scheduled' &&
+        'generation' in event.value &&
+        event.value.generation === generation &&
+        'contextStartFrame' in event.value &&
+        event.value.contextStartFrame === selection['f0']
+    )
+    .map((event) => event.value as Record<string, unknown>);
+  assert.ok(
+    firstScheduled.length > 0 &&
+      Math.max(
+        ...firstScheduled.map(
+          (event) =>
+            Number(event['contextEndFrame']) -
+            Number(event['contextStartFrame'])
+        )
+      ) === firstBatch,
+    'first-batch horizon is not supported by the real scheduled sources'
+  );
+  const coverageEvents = trace.events.filter(
+    (event) =>
+      event.kind === 'transport-message' &&
+      event.timestamp <= inputsEvent.timestamp &&
+      event.value &&
+      typeof event.value === 'object' &&
+      'type' in event.value &&
+      (event.value.type === 'anchor-certified' ||
+        event.value.type === 'clock-promoted') &&
+      'clockEpoch' in event.value &&
+      event.value.clockEpoch === selection['clockEpoch'] &&
+      'clockCoverageEnd' in event.value
+  );
+  const lastCoverage = coverageEvents.at(-1)?.value as
+    | Record<string, unknown>
+    | undefined;
+  assert.equal(
+    lastCoverage?.['clockCoverageEnd'],
+    coverage,
+    'coverage upper bound did not come from the accepted carrier bank'
+  );
+  const native = trace.events.find(
+    (event) =>
+      event.kind === 'audio-output-timestamp-observed' &&
+      event.value &&
+      typeof event.value === 'object' &&
+      'output' in event.value &&
+      event.value.output &&
+      typeof event.value.output === 'object' &&
+      'contextTime' in event.value.output &&
+      'performanceTime' in event.value.output &&
+      event.value.output.contextTime === bridge.contextTime &&
+      event.value.output.performanceTime === bridge.performanceTime &&
+      'injected' in event.value &&
+      event.value.injected === false &&
+      event.timestamp <= inputsEvent.timestamp
+  );
+  assert.ok(
+    native,
+    'recovery bridge was not read from the native output clock'
+  );
+  let phaseUpper = Infinity,
+    phaseLower = -Infinity;
+  for (const raw of input['phaseSamples'] as Record<string, unknown>[]) {
+    const dL = Number(raw['dL']),
+      start = Number(raw['iL0Plus1Start']),
+      source = Number(raw['sourceT0Seconds']),
+      r = Number(raw['rL']),
+      width = Number(raw['wMinSeconds']);
+    assert.ok(
+      [dL, start, source, r, width].every(Number.isFinite) &&
+        r > 0 &&
+        width >= vsync,
+      'invalid independent phase input'
+    );
+    const preferred = dL + 1000 * (width + vsync / 2 - (start - source) / r);
+    phaseUpper = Math.min(phaseUpper, preferred + 1000 * (width - vsync / 2));
+    phaseLower = Math.max(phaseLower, preferred - 1000 * (width - vsync / 2));
+  }
+  const wallUpper = Math.floor(
+    (bridge.contextTime +
+      (Math.min(phaseUpper - bridge.mappingAllowanceMs, deadline) -
+        bridge.performanceTime) /
+        1000) *
+      rate
+  );
+  const horizonUpper = Math.floor((contextNow + horizon) * rate) - firstBatch;
+  const latest = Math.min(
+    boundary + Math.floor(0.02 * rate),
+    wallUpper,
+    horizonUpper,
+    coverage - 1
+  );
+  const frame = Number(selection['f0']);
+  const safeWall = Math.max(
+    phaseLower + bridge.mappingAllowanceMs,
+    requestWall,
+    Number(input['readEndWallMs'])
+  );
+  const earliest = Math.max(
+    boundary,
+    Math.ceil(contextNow * rate) + 512,
+    Math.ceil(
+      (bridge.contextTime + (safeWall - bridge.performanceTime) / 1000) * rate
+    )
+  );
+  assert.ok(
+    Number.isSafeInteger(frame) &&
+      frame >= earliest &&
+      frame <= latest &&
+      Math.min(scheduled, Math.floor((visual.value * rate) / visual.rate)) >
+        Number(input['compositionStartFrame']),
+    'selected recovery frame is outside independent feasibility bounds'
+  );
+  assert.ok(
+    Number.isSafeInteger(latest) && frame === latest,
+    `recovery F1 is not latest independently feasible frame: ${frame} vs ${latest}`
+  );
+}
+
 // Compare each sample against independent source planes without fitting offsets.
 function assertSourcePcmSamples(
   trace: MovingTrace['trace'],
@@ -12450,6 +12665,22 @@ async function assertVideoReservationInvalidation(
       resumeFrame - closeFrame <= Math.floor(sampleRate * 0.02),
     'future-video recovery gap exceeds the 20ms sample bound'
   );
+  const videoSelection = futureEvents.find(
+    (event) =>
+      event['event'] === 'recovery-selection' &&
+      event['generation'] === resumed['generation'] &&
+      event['boundaryFrame'] === closeFrame
+  );
+  assert.ok(
+    videoSelection && videoSelection['f0'] === resumeFrame,
+    'video recovery lacks its selected frame'
+  );
+  assertLatestRecoveryFrame(
+    future.trace,
+    videoSelection,
+    closeFrame,
+    sampleRate
+  );
   const heldDrain = futureEvents.find(
     (event) =>
       event['event'] === 'recovery-old-drain-held' &&
@@ -12474,6 +12705,41 @@ async function assertVideoReservationInvalidation(
       videoHandoff['oldDrainObserved'] === false &&
       Number(videoHandoff['wallMs']) <= Number(releasedDrain['wallMs']),
     'video successor did not start before releasing held old drain'
+  );
+  const videoDrain = future.trace.events.find(
+    (event) =>
+      event.kind === 'recovery-old-drain-native-read' &&
+      event.value &&
+      typeof event.value === 'object' &&
+      'boundaryFrame' in event.value &&
+      event.value.boundaryFrame === closeFrame
+  );
+  assert.ok(
+    videoDrain?.value &&
+      typeof videoDrain.value === 'object' &&
+      'state' in videoDrain.value &&
+      videoDrain.value.state === 'running' &&
+      'output' in videoDrain.value &&
+      videoDrain.value.output &&
+      typeof videoDrain.value.output === 'object' &&
+      'contextTime' in videoDrain.value.output &&
+      'performanceTime' in videoDrain.value.output &&
+      'after' in videoDrain.value &&
+      'renderAfter' in videoDrain.value &&
+      Number.isFinite(Number(videoDrain.value.output.contextTime)) &&
+      Number.isFinite(Number(videoDrain.value.output.performanceTime)) &&
+      Number(videoDrain.value.output.contextTime) * sampleRate >= closeFrame &&
+      Number(videoDrain.value.output.contextTime) <=
+        Number(videoDrain.value.renderAfter) +
+          DEFAULT_CLOCK_POLICY.futureToleranceMs / 1000 &&
+      Number(videoDrain.value.output.performanceTime) > 0 &&
+      Number(videoDrain.value.output.performanceTime) <=
+        Number(videoDrain.value.after) +
+          DEFAULT_CLOCK_POLICY.futureToleranceMs &&
+      Number(videoDrain.value.after) -
+        Number(videoDrain.value.output.performanceTime) <=
+        DEFAULT_CLOCK_POLICY.freshnessMs,
+    'video old drain lacked a fresh native output timestamp at D'
   );
   const videoArmClock = future.trace.events.find(
     (event) =>
@@ -14441,6 +14707,7 @@ async function runScheduledPcmProof(
         newArm.value.slot,
         'handoff selected the wrong input slot'
       );
+      assertLatestRecoveryFrame(recovery.trace, selection, stopFrame, rate);
       assert.ok(
         Number.isSafeInteger(selection['feasibleLower']) &&
           Number.isSafeInteger(selection['feasibleUpper']) &&
@@ -14601,15 +14868,39 @@ async function runScheduledPcmProof(
         drained &&
           drainRead?.value &&
           typeof drainRead.value === 'object' &&
-          'contextTime' in drainRead.value &&
+          'renderBefore' in drainRead.value &&
+          'renderAfter' in drainRead.value &&
+          'before' in drainRead.value &&
+          'after' in drainRead.value &&
+          'output' in drainRead.value &&
+          drainRead.value.output &&
+          typeof drainRead.value.output === 'object' &&
+          'contextTime' in drainRead.value.output &&
+          'performanceTime' in drainRead.value.output &&
           'state' in drainRead.value &&
           drainRead.value.state === 'running' &&
+          Number.isFinite(Number(drainRead.value.output.contextTime)) &&
+          Number.isFinite(Number(drainRead.value.output.performanceTime)) &&
+          Number(drainRead.value.output.contextTime) * rate >= stopFrame &&
+          Number(drainRead.value.output.performanceTime) > 0 &&
+          Number(drainRead.value.before) <= Number(drainRead.value.after) &&
+          Number(drainRead.value.renderBefore) <=
+            Number(drainRead.value.renderAfter) &&
+          Number(drainRead.value.output.contextTime) <=
+            Number(drainRead.value.renderAfter) +
+              DEFAULT_CLOCK_POLICY.futureToleranceMs / 1000 &&
+          Number(drainRead.value.output.performanceTime) <=
+            Number(drainRead.value.after) +
+              DEFAULT_CLOCK_POLICY.futureToleranceMs &&
+          Number(drainRead.value.after) -
+            Number(drainRead.value.output.performanceTime) <=
+            DEFAULT_CLOCK_POLICY.freshnessMs &&
           Number(drained['wallMs']) >= Number(handoff['wallMs']),
         'old output drain did not occur after successor handoff'
       );
       const postDrainFrame = Math.max(
         resumeFrame,
-        Math.ceil(Number(drainRead.value.contextTime) * rate) + 128
+        Math.ceil(Number(drainRead.value.renderAfter) * rate) + 128
       );
       const postDrainSample = resumeSample + postDrainFrame - resumeFrame;
       assert.ok(
@@ -14654,6 +14945,8 @@ async function runScheduledPcmProof(
         'recovery-phase-mismatch',
         'recovery-impossible-guard',
         'recovery-excess-work',
+        'recovery-earlier-feasible',
+        'recovery-delayed-staging',
       ] as const) {
         const isolated = await openBrowser(url, sessionToken, {
           label: `${fault}-${rate}`,
@@ -14687,7 +14980,7 @@ async function runScheduledPcmProof(
             while(!globalThis.__otioProofTrace.hasPcmEvent('recovery-fault') &&
               !globalThis.__otioProofTrace.hasTraceEvent('recovery-overrun-injected') &&
               performance.now()<faultDeadline) await sleep(10);
-            await sleep(300);
+            await sleep(${JSON.stringify(fault)}==='recovery-delayed-staging' ? 700 : 300);
             const playing=root.dataset.playing ?? '', buffering=root.dataset.buffering ?? '';
             const diagnostic=Array.from(document.querySelectorAll('.otio-diagnostic'))
               .filter(node=>{const style=getComputedStyle(node); return node.getClientRects().length>0 &&
@@ -14709,21 +15002,23 @@ async function runScheduledPcmProof(
               !result.trace.eventsOverflow,
             `${fault} control did not hold and release real PCM cleanly`
           );
-          assert.equal(
-            result.playing,
-            'false',
-            `${fault} left playback active`
-          );
-          assert.equal(
-            result.buffering,
-            'false',
-            `${fault} left playback buffering`
-          );
-          assert.match(
-            result.diagnostic,
-            /Scheduled audio stopped:/,
-            `${fault} did not render its interruption diagnostic`
-          );
+          if (fault !== 'recovery-earlier-feasible') {
+            assert.equal(
+              result.playing,
+              'false',
+              `${fault} left playback active`
+            );
+            assert.equal(
+              result.buffering,
+              'false',
+              `${fault} left playback buffering`
+            );
+            assert.match(
+              result.diagnostic,
+              /Scheduled audio stopped:/,
+              `${fault} did not render its interruption diagnostic`
+            );
+          }
           const events = result.trace.events
             .filter((event) => event.kind === 'scheduled-pcm')
             .map((event) => event.value as Record<string, unknown>);
@@ -14741,6 +15036,38 @@ async function runScheduledPcmProof(
               .some((event) => event['event'] === 'epoch'),
             `${fault} never established an old media epoch`
           );
+          if (fault === 'recovery-earlier-feasible') {
+            assert.ok(
+              events.some(
+                (event) =>
+                  event['event'] === 'recovery-fault' &&
+                  event['code'] === fault &&
+                  event['boundaryFrame'] === boundary
+              ),
+              'earlier-feasible control did not actually run'
+            );
+            const selected = events.find(
+              (event) =>
+                event['event'] === 'recovery-selection' &&
+                event['boundaryFrame'] === boundary
+            );
+            assert.ok(
+              selected,
+              'earlier-feasible control never selected a real successor'
+            );
+            assert.throws(
+              () =>
+                assertLatestRecoveryFrame(
+                  result.trace,
+                  selected,
+                  boundary,
+                  rate
+                ),
+              /recovery F1 is not latest independently feasible frame/,
+              'latest-feasible proof accepted the deliberately earlier actual selection'
+            );
+            continue;
+          }
           if (fault === 'recovery-excess-work') {
             const injection = result.trace.events.find(
               (event) => event.kind === 'recovery-overrun-injected'
@@ -14811,9 +15138,53 @@ async function runScheduledPcmProof(
                     event['code'] ===
                       (fault === 'recovery-phase-mismatch'
                         ? 'video recovery phase has no causal audio epoch'
-                        : 'recovery render handoff has no feasible frame')
+                        : fault === 'recovery-delayed-staging'
+                          ? 'PCM recovery deadline expired'
+                          : 'recovery render handoff has no feasible frame')
                 ),
               `${fault} did not produce a visible interruption`
+            );
+          }
+          if (fault === 'recovery-delayed-staging') {
+            const request = result.trace.events.find(
+              (event) =>
+                event.kind === 'scheduled-pcm' &&
+                (event.value as Record<string, unknown>)?.['event'] ===
+                  'recovery-request' &&
+                (event.value as Record<string, unknown>)?.['boundaryFrame'] ===
+                  boundary
+            );
+            const timeout = events.find(
+              (event) =>
+                event['event'] === 'recovery-timeout' &&
+                event['boundaryFrame'] === boundary
+            );
+            assert.ok(
+              request && timeout,
+              'delayed staging lacked the original request or deadline timeout'
+            );
+            const origin = request.value as Record<string, unknown>;
+            const before = Number(origin['requestPerformanceBefore']),
+              after = Number(origin['requestPerformanceAfter']);
+            const original = Number(timeout['requestWall']),
+              deadline = Number(timeout['deadline']);
+            assert.ok(
+              Number.isFinite(before) &&
+                Number.isFinite(after) &&
+                before <= original &&
+                original <= after &&
+                after <= request.timestamp &&
+                deadline === original + 350 &&
+                Number(timeout['observedWall']) > deadline,
+              'delayed staging reset the original recovery deadline'
+            );
+            assert.ok(
+              !events.some(
+                (event) =>
+                  event['event'] === 'recovery-selection' &&
+                  event['boundaryFrame'] === boundary
+              ),
+              'delayed staging selected a successor after expiry'
             );
           }
           assert.ok(
