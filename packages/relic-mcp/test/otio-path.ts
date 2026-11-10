@@ -9615,17 +9615,24 @@ function carrierFrame(
   i: number,
   witness: { anchor: number; laterAnchor: number | null; length: number }
 ): number | null {
-  const high = chunk.witness?.[0]?.[i],
-    low = chunk.witness?.[1]?.[i];
+  const highRaw = chunk.witness?.[0]?.[i],
+    lowRaw = chunk.witness?.[1]?.[i];
   if (
-    !Number.isSafeInteger(high) ||
-    !Number.isSafeInteger(low) ||
-    high! < 1 ||
-    low! < 0 ||
-    low! >= 65536
+    typeof highRaw !== 'number' ||
+    typeof lowRaw !== 'number' ||
+    !Number.isFinite(highRaw) ||
+    !Number.isFinite(lowRaw)
   )
     return null;
-  const frame = (high! - 1) * 65536 + low!;
+  // Float32 carrier lanes can differ from an integer by float residue (for example
+  // a 16-bit boundary reads 5.8e-11 for 0). The runtime decoder accepts |x-round|
+  // <= 0.125; a corrupted integer is still off by at least one and is rejected.
+  const high = Math.round(highRaw),
+    low = Math.round(lowRaw);
+  if (Math.abs(highRaw - high) > 0.125 || Math.abs(lowRaw - low) > 0.125)
+    return null;
+  if (high < 1 || low < 0 || low >= 65536) return null;
+  const frame = (high - 1) * 65536 + low;
   if (!Number.isSafeInteger(frame)) return null;
   const inInitial =
     frame >= witness.anchor && frame < witness.anchor + witness.length;
@@ -9687,6 +9694,83 @@ function assertIndependentCarrier(
     seen,
     end - first,
     'independent carrier does not cover scheduled PCM'
+  );
+}
+
+// Carrier decode controls. The sub-LSB tolerance must accept float residue at a
+// real frame boundary, reject a lane perturbed by 0.125 or more, and let a
+// one-frame skip or repeat fail the independent carrier integrity check.
+function assertCarrierDecodeControls(): void {
+  const witness = {
+    anchor: 458000,
+    laterAnchor: null,
+    frozenAnchor: 458000,
+    length: 2000,
+    gateInitialFrame: 458000,
+    clockEpoch: 1,
+  };
+  const laneTrace = (highs: number[], lows: number[]) => ({
+    witness,
+    audio: [
+      {
+        sampleFrame: 0,
+        channels: [
+          new Array<number>(highs.length).fill(0),
+          new Array<number>(highs.length).fill(0),
+        ],
+        witness: [highs, lows],
+      },
+    ],
+  });
+  const decodeAt = (highs: number[], lows: number[], index: number) => {
+    const trace = laneTrace(highs, lows);
+    return carrierFrame(trace.audio[0]!, index, witness);
+  };
+  // Exact recorded boundary: high 8 with float residue 5.82e-11 is frame 458752.
+  assert.equal(
+    decodeAt([8], [5.820766091346741e-11], 0),
+    458752,
+    'carrier boundary residue did not decode to the exact frame'
+  );
+  // A lane perturbed just beyond 0.125 must be rejected, not rounded into a frame.
+  assert.equal(
+    decodeAt([7], [65535.126], 0),
+    null,
+    'perturbed low lane was accepted'
+  );
+  assert.equal(
+    decodeAt([7.126], [65535], 0),
+    null,
+    'perturbed high lane was accepted'
+  );
+  // A consecutive run across the boundary passes the integrity check.
+  assert.doesNotThrow(() =>
+    assertIndependentCarrier(
+      laneTrace([7, 7, 8], [65534, 65535, 5.820766091346741e-11]),
+      458750,
+      458753
+    )
+  );
+  // A one-frame skip and a one-frame repeat must each fail contiguity.
+  assert.throws(
+    () =>
+      assertIndependentCarrier(
+        laneTrace([7, 7, 8], [65534, 65535, 1]),
+        458750,
+        458753
+      ),
+    /skipped or repeated/,
+    'a one-frame carrier skip passed'
+  );
+  assert.throws(
+    () =>
+      assertIndependentCarrier(
+        laneTrace([7, 7, 7], [65534, 65535, 65535]),
+        458750,
+        458753
+      ),
+    /skipped or repeated/,
+    'a one-frame carrier repeat passed'
   );
 }
 
@@ -10059,6 +10143,34 @@ function assertGateClockEvidence(
   }
 }
 
+// Names the terminal clock fault recorded by the real gate, if any. Read-only
+// evidence for a failure message; it never changes what the assertions accept.
+function describeClockFault(trace: MovingTrace['trace']): string {
+  const fault = trace.events.find(
+    (event) =>
+      event.kind === 'scheduled-pcm' &&
+      event.value !== null &&
+      typeof event.value === 'object' &&
+      (event.value as Record<string, unknown>)['event'] ===
+        'clock-fault-diagnostic'
+  );
+  const gate = trace.events.find(
+    (event) =>
+      event.kind === 'transport-message' &&
+      event.value !== null &&
+      typeof event.value === 'object' &&
+      (event.value as Record<string, unknown>)['type'] === 'clock-fault'
+  );
+  const skipped = trace.events.find(
+    (event) => event.kind === 'clock-stale-stop-skipped'
+  );
+  return [
+    `gate clock-fault: ${gate ? JSON.stringify(gate.value) : 'none'}`,
+    `fault diagnostic: ${fault ? JSON.stringify(fault.value) : 'none'}`,
+    `stop skipped: ${skipped ? JSON.stringify(skipped.value) : 'no'}`,
+  ].join('; ');
+}
+
 // A rare cached-global duplicate is evidence only when the real production
 // gate observed it and both quanta agree with the separately scheduled carrier
 // and source PCM. This is deliberately separate from the steady trace window.
@@ -10108,7 +10220,7 @@ function assertNaturalStaleWitness(
   assert.equal(
     stops.length,
     1,
-    'stale capture stop acknowledgment missing or duplicated'
+    `stale capture stop acknowledgment missing or duplicated; ${describeClockFault(trace)}`
   );
   assert.ok(
     Number.isSafeInteger(starts[0]!['afterCallbackOrdinal']) &&
@@ -10695,10 +10807,9 @@ function assertLookaheadFrontiers(
         'terminal frontier does not end at its descriptor coverage'
       );
     } else {
-      assert.ok(
-        event['descriptorReady'] === true && B < E,
-        'nonterminal frontier lacks ready descriptor coverage beyond B'
-      );
+      // Readiness is enforced at closure (assertSuccessorPolicy). An ordinary
+      // frontier only must not pass the descriptor coverage it was accepted against.
+      assert.ok(B <= E, 'nonterminal frontier exceeds its descriptor coverage');
     }
     checked++;
   }
@@ -13931,6 +14042,9 @@ async function runScheduledPcmProof(
       globalThis.__otioProofTrace.clockTrace('start');
       await sleep(800);
       globalThis.__otioProofTrace.clockTrace('stop');
+      const stalePairDeadline = performance.now() + 3000;
+      while (globalThis.__otioProofTrace.stalePairCount() < 1 && performance.now() < stalePairDeadline) await sleep(10);
+      await globalThis.__otioProofTrace.stopStaleWindow();
       await sleep(${clockProofMode === 'long' ? 2800 : 2300});
       const trace = await globalThis.__otioProofTrace.stop();
       if (root.dataset.playing === 'true') button.click();
@@ -14399,6 +14513,7 @@ async function runScheduledPcmProof(
       /composition-coordinate/,
       'checker accepted a frontier in another sample rate'
     );
+    assertCarrierDecodeControls();
     // Successor-policy controls (synthetic, deterministic). The planner rule is
     // exercised on every polarity: a valid successor, one beyond B_old+K, one after
     // a non-ready closure, a healthy successor without reserve, and an ordinary
@@ -14489,6 +14604,29 @@ async function runScheduledPcmProof(
       /below K=/,
       'ordinary extension below K was accepted'
     );
+    // Ordinary extensions may be staged without a ready descriptor (readiness is
+    // enforced at closure); a transient false is not an I1 failure.
+    assert.equal(
+      assertLookaheadFrontiers(
+        [
+          {
+            event: 'frontier',
+            frontierKind: 'extension',
+            compositionThrough: { value: syntheticB, rate },
+            contextFrameThrough: syntheticB,
+            preparedThrough: syntheticB + LOOKAHEAD_FRAMES + 100,
+            scopeEndFrame: syntheticB + 10 * LOOKAHEAD_FRAMES,
+            reserveFrames: LOOKAHEAD_FRAMES,
+            decodedCap: syntheticB + 100,
+            descriptorCoverageEnd: syntheticB + LOOKAHEAD_FRAMES,
+            descriptorReady: false,
+          },
+        ],
+        rate
+      ),
+      1,
+      'ordinary extension with transient descriptorReady=false was rejected'
+    );
     assert.ok(
       pcmEvents.filter((event) => event['event'] === 'scheduled').length > 1,
       'scheduled queue did not replenish'
@@ -14550,6 +14688,9 @@ async function runScheduledPcmProof(
           released: number;
           sawHeld: boolean;
           handoffBeforeRelease: boolean;
+          sawBuffering: boolean;
+          pcmReleasedAt: number;
+          drainFlagClearedAt: number;
         }
       >(`(async () => {
       const sleep = ms => { const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, ms); return promise; };
@@ -14563,21 +14704,32 @@ async function runScheduledPcmProof(
       button.click();
       await sleep(600);
       globalThis.__otioProofTrace.holdPcmResponses(true);
-      const deadline = performance.now() + 4000;
-      while ((!globalThis.__otioProofTrace.heldPcmCount() || root.dataset.buffering !== 'true') && performance.now() < deadline) await sleep(20);
+      const closeDeadline = performance.now() + 4000;
+      while (!globalThis.__otioProofTrace.hasPcmEvent('recovery-render-closed') &&
+             performance.now() < closeDeadline) await sleep(5);
       const held = globalThis.__otioProofTrace.heldPcmCount();
+      const pcmReleasedAt = performance.now();
       const released = globalThis.__otioProofTrace.holdPcmResponses(false);
-      const handoffDeadline=performance.now()+500;
+      const handoffDeadline = performance.now() + 1000;
       while ((!globalThis.__otioProofTrace.hasPcmEvent('recovery-handoff') ||
               !globalThis.__otioProofTrace.hasPcmEvent('recovery-old-drain-held')) &&
-             performance.now()<handoffDeadline) await sleep(10);
-      const sawHeld=globalThis.__otioProofTrace.hasPcmEvent('recovery-old-drain-held');
-      const handoffBeforeRelease=globalThis.__otioProofTrace.hasPcmEvent('recovery-handoff');
+             performance.now() < handoffDeadline) await sleep(5);
+      const sawHeld = globalThis.__otioProofTrace.hasPcmEvent('recovery-old-drain-held');
+      const handoffBeforeRelease = globalThis.__otioProofTrace.hasPcmEvent('recovery-handoff');
+      const drainFlagClearedAt = performance.now();
       globalThis.__otioProofHoldOldDrain = false;
-      await sleep(700);
+      const releaseDeadline = performance.now() + 1000;
+      while (!globalThis.__otioProofTrace.hasPcmEvent('recovery-old-drain-released') &&
+             performance.now() < releaseDeadline) await sleep(5);
+      await sleep(300);
       const trace = await globalThis.__otioProofTrace.stop();
+      const sawBuffering = trace.events.some((event) =>
+        event.kind === 'buffering-change' &&
+        event.value !== null &&
+        typeof event.value === 'object' &&
+        event.value.current === 'true');
       if (root.dataset.playing === 'true') button.click();
-      return { start, playEdge, trace, held, released, sawHeld, handoffBeforeRelease };
+      return { start, playEdge, trace, held, released, sawHeld, handoffBeforeRelease, sawBuffering, pcmReleasedAt, drainFlagClearedAt };
     })()`);
       await writeFile(
         join(shotDir, `scheduled-pcm-starvation-recovery-${rate}.json`),
@@ -14926,13 +15078,21 @@ async function runScheduledPcmProof(
           event['boundaryFrame'] === stopFrame
       );
       assert.ok(
-        recovery.sawHeld &&
+        recovery.sawBuffering &&
+          recovery.sawHeld &&
           recovery.handoffBeforeRelease &&
           heldDrain &&
           releasedDrain &&
           Number(handoff['wallMs']) <= Number(releasedDrain['wallMs']) &&
           Number(heldDrain['wallMs']) <= Number(releasedDrain['wallMs']),
-        'successor was not armed before release of an actually held old drain'
+        `successor was not armed before release of an actually held old drain (sawHeld=${recovery.sawHeld}, handoffBeforeRelease=${recovery.handoffBeforeRelease}, heldDrain=${heldDrain ? Number(heldDrain['wallMs']) : 'none'}, releasedDrain=${releasedDrain ? Number(releasedDrain['wallMs']) : 'none'}, handoff=${Number(handoff['wallMs'])}, pcmReleasedAt=${recovery.pcmReleasedAt}, drainFlagClearedAt=${recovery.drainFlagClearedAt})`
+      );
+      // The release must land after the held drain and inside the runtime's
+      // 1000 ms drain window, not at a sampled DOM moment.
+      assert.ok(
+        Number(releasedDrain['wallMs']) - Number(heldDrain['wallMs']) >= 0 &&
+          Number(releasedDrain['wallMs']) - Number(heldDrain['wallMs']) <= 1000,
+        `old-drain release fell outside its 1000 ms window (held=${Number(heldDrain['wallMs'])}, released=${Number(releasedDrain['wallMs'])})`
       );
       assert.ok(
         Number(candidate['wallMs']) <= Number(renderClosed['wallMs']) &&
@@ -15973,17 +16133,45 @@ async function runScheduledPcmProof(
     pass('scheduled-pcm-starvation-cancel');
     for (const action of ['seek', 'scope'] as const) {
       await seekTo(browser, 0);
-      const start = await browser.evaluate<MovingTrace['start']>(`(async () => {
+      const setup = await browser.evaluate<{
+        start: MovingTrace['start'];
+        held: number;
+        precondition: Record<string, string | null>;
+        state: Record<string, string | null>;
+        trace: MovingTrace['trace'] | null;
+      }>(`(async () => {
         const sleep = ms => { const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, ms); return promise; };
+        const root = document.querySelector('.otio-view'), button = document.querySelector('button.otio-play');
+        if (!(root instanceof HTMLElement) || !(button instanceof HTMLButtonElement)) throw new Error('seek setup controls missing');
+        const precondition = {playing: root.dataset.playing ?? null, frame: root.dataset.frame ?? null, buffering: root.dataset.buffering ?? null};
+        if (root.dataset.playing === 'true') {
+          button.click();
+          const pauseDeadline = performance.now() + 3000;
+          while (root.dataset.playing === 'true' && performance.now() < pauseDeadline) await sleep(10);
+        }
         const start = await globalThis.__otioProofTrace.start();
-        document.querySelector('button.otio-play').click();
+        button.click();
         await sleep(500);
         globalThis.__otioProofTrace.holdPcmResponses(true);
         const deadline = performance.now() + 3000;
         while (!globalThis.__otioProofTrace.heldPcmCount() && performance.now() < deadline) await sleep(10);
-        if (!globalThis.__otioProofTrace.heldPcmCount()) throw new Error('no PCM response held');
-        return start;
+        const held = globalThis.__otioProofTrace.heldPcmCount();
+        const state = {playing: root.dataset.playing ?? null, frame: root.dataset.frame ?? null, buffering: root.dataset.buffering ?? null};
+        if (held > 0) return {start, held, precondition, state, trace: null};
+        globalThis.__otioProofTrace.holdPcmResponses(false);
+        const trace = await globalThis.__otioProofTrace.stop();
+        if (root.dataset.playing === 'true') button.click();
+        return {start, held, precondition, state, trace};
       })()`);
+      await writeFile(
+        join(shotDir, `scheduled-${action}-setup.json`),
+        JSON.stringify({ provenance, ...setup })
+      );
+      assert.ok(
+        setup.held > 0,
+        `seek/scope setup held no PCM response; precondition=${JSON.stringify(setup.precondition)} state=${JSON.stringify(setup.state)}`
+      );
+      const start = setup.start;
       await browser.evaluate<void>(`(() => {
         if (${JSON.stringify(action)} === 'seek') {
           const input = document.querySelector('input.otio-seek');

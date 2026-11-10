@@ -263,7 +263,7 @@ export const otioProofTracePrelude = String.raw`(() => {
   const witnesses = new WeakMap();
   const proofGates = new WeakMap();
   let staleCaptureSerial = 0;
-  let activeStaleCaptureId = null;
+  let activeStaleCaptureId = null, staleWindowStopped = false;
   const staleWaiters = new Map();
   function staleControl(gate, action, captureId) {
     const epoch=gate.initialEpoch, type='clock-stale-'+(action==='start'?'started':'stopped');
@@ -849,7 +849,7 @@ export const otioProofTracePrelude = String.raw`(() => {
       visual.samples = []; visual.overflow = false; visual.active = true;
       events.length = 0; eventsOverflow = false;
       if (!Number.isSafeInteger(++staleCaptureSerial)) throw new Error('stale capture id exhausted');
-      activeStaleCaptureId = staleCaptureSerial;
+      activeStaleCaptureId = staleCaptureSerial; staleWindowStopped = false;
       recordEvent('clock-stale-window-requested', null, {captureId:activeStaleCaptureId});
       const currentGate = proofGates.get(graph.context);
       if (currentGate?.anchor) recordEvent('transport-message', null, currentGate.anchor);
@@ -900,16 +900,33 @@ export const otioProofTracePrelude = String.raw`(() => {
       graph.master.gain.setValueAtTime(value, graph.context.currentTime);
       return Math.round(graph.context.currentTime * graph.context.sampleRate);
     },
+    stalePairCount() {
+      return events.filter((entry) => entry.kind === 'transport-message' &&
+        entry.value?.type === 'clock-stale-pair').length;
+    },
+    async stopStaleWindow() {
+      if (activeStaleCaptureId === null) throw new Error('stale capture is not active');
+      if (staleWindowStopped) return;
+      if (graphs.length !== 1) throw new Error('controller destination gain ambiguous');
+      const graph = graphs[0], captureId = activeStaleCaptureId, currentGate = proofGates.get(graph.context);
+      if (currentGate && !currentGate.terminated && currentGate.staleCaptureId === captureId)
+        await staleControl(currentGate, 'stop', captureId);
+      else recordEvent('clock-stale-stop-skipped', null, {captureId, gate: Boolean(currentGate),
+        terminated: Boolean(currentGate?.terminated), gateCaptureId: currentGate?.staleCaptureId ?? null});
+      staleWindowStopped = true;
+    },
     async stop() {
       if (activeStaleCaptureId === null) throw new Error('stale capture is not active');
       if (graphs.length !== 1) throw new Error('controller destination gain ambiguous');
       for (const sink of retirementSinks)
         if (sink.gain.value !== 0) throw new Error('transport retirement sink became audible');
       const graph = graphs[0], captureId = activeStaleCaptureId, currentGate = proofGates.get(graph.context);
-      if (currentGate && !currentGate.terminated && captureId !== null && currentGate.staleCaptureId === captureId)
-        await staleControl(currentGate,'stop',captureId);
-      else recordEvent('clock-stale-stop-skipped', null, {captureId, gate: Boolean(currentGate),
-        terminated: Boolean(currentGate?.terminated), gateCaptureId: currentGate?.staleCaptureId ?? null});
+      if (!staleWindowStopped) {
+        if (currentGate && !currentGate.terminated && captureId !== null && currentGate.staleCaptureId === captureId)
+          await staleControl(currentGate,'stop',captureId);
+        else recordEvent('clock-stale-stop-skipped', null, {captureId, gate: Boolean(currentGate),
+          terminated: Boolean(currentGate?.terminated), gateCaptureId: currentGate?.staleCaptureId ?? null});
+      }
       activeStaleCaptureId = null;
       visual.active = false;
       clearInterval(startupMonitor); startupMonitor = null;
