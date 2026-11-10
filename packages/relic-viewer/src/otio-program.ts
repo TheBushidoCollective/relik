@@ -161,10 +161,12 @@ export interface ResolveOtioProgramInput {
   /** Every timeline id in the document, for ProgramFormat's document check. */
   readonly timelineIds: readonly string[];
   /**
-   * Canonical `media/...` archive paths the OTIO document references, derived
-   * from the same parsed document as `timelineIds`. Never taken from the manifest.
+   * Thunk returning the canonical `media/...` archive paths the OTIO document
+   * references, from the same parsed document as `timelineIds`. Never taken from
+   * the manifest. Called only when the archive carries program entries, so a
+   * legacy archive never evaluates it. If it throws, the result is unavailable.
    */
-  readonly mediaPaths: readonly string[];
+  readonly mediaPaths: () => readonly string[];
   readonly timelineRange: OtioTimeRange;
   readonly canPlayType?: (type: string) => CanPlayTypeResult;
 }
@@ -197,6 +199,25 @@ export class CompositionPlaybackDisabled extends Error {
 const defaultCanPlayType = (type: string): CanPlayTypeResult =>
   document.createElement('video').canPlayType(type);
 
+/** Archive names under this prefix belong to the program contract, as in ProgramFormat. */
+const PROGRAM_RESERVED_PREFIX = 'relic/program';
+
+/**
+ * True when the archive carries any program entry. Mirrors ProgramFormat: a
+ * program entry without a manifest is a mismatch, not a legacy archive, so it
+ * still reaches the verifier.
+ */
+const hasProgramEntries = (zip: OtioZipIndex): boolean => {
+  // A manifest key counts whether it is a file or a directory: a directory
+  // posing as the manifest is a mismatch in the verifier, not legacy.
+  if (zip.entries.has(OTIO_PROGRAM_MANIFEST_ENTRY)) return true;
+  for (const info of zip.entries.values()) {
+    if (!info.isDirectory && info.name.startsWith(PROGRAM_RESERVED_PREFIX))
+      return true;
+  }
+  return false;
+};
+
 const reasonFromError = (error: unknown): OtioProgramReason => {
   if (error instanceof ProgramRejection) {
     return { code: error.code, message: error.message };
@@ -206,6 +227,18 @@ const reasonFromError = (error: unknown): OtioProgramReason => {
     message:
       error instanceof Error ? error.message : 'Program could not be read.',
   };
+};
+
+/** Calls the document's media thunk. A failure becomes a fixed reason, never the thunk's own message. */
+const readMediaPaths = (thunk: () => readonly string[]): readonly string[] => {
+  try {
+    return thunk();
+  } catch {
+    throw new ProgramRejection(
+      'archive-mismatch',
+      'The document media for this program could not be described.'
+    );
+  }
 };
 
 /**
@@ -220,10 +253,12 @@ export async function resolveOtioProgram(
   if (zip === undefined) return { status: 'legacy' };
   const canPlayType = input.canPlayType ?? defaultCanPlayType;
   try {
+    // Legacy archives never evaluate the thunk: a document it cannot describe must not break them.
+    if (!hasProgramEntries(zip)) return { status: 'legacy' };
     const archive = await readOtioProgramArchive(zip, {
       document_sha256: zip.contentSha256,
       timeline_ids: input.timelineIds,
-      media_paths: [...input.mediaPaths],
+      media_paths: [...readMediaPaths(input.mediaPaths)],
     });
     if (archive === null) return { status: 'legacy' };
 

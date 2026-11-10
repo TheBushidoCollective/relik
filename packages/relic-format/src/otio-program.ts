@@ -16,7 +16,9 @@
  * Bounds. Every limit a reader enforces, and why it exists.
  * - Archive: the archive and the program MP4s it carries expand to at most
  *   MAX_EXPANDED_ZIP_BYTES (100 MiB), the same cap every archive uses. The
- *   manifest is capped at the same figure.
+ *   manifest is capped at MAX_OTIO_PROGRAM_MANIFEST_BYTES (16 MiB), a
+ *   parse-cost bound. A media key is at most 65535 UTF-8 bytes, the largest
+ *   name a ZIP central-directory entry can carry, and must be well-formed UTF-16.
  * - Representability: every integer is a safe integer (|n| <= 2^53 - 1), and
  *   every rational time is finite and positive in rate. Frame and sample
  *   counts are checked against the exact duration in floating point, with
@@ -47,7 +49,6 @@ import type {
 import {
   MAX_EXPANDED_ZIP_BYTES,
   MAX_OTIO_BUNDLE_MEDIA_ENTRIES,
-  sanitizeOtioBundlePath,
 } from './otio-zip.ts';
 
 export const OTIO_PROGRAM_SCHEMA = 'relic.otio.program/1' as const;
@@ -65,14 +66,26 @@ const ZIP_DEFLATE = 8;
 
 export const MAX_OTIO_PROGRAM_TIMELINES = 256;
 export const MAX_OTIO_PROGRAM_REASONS = 64;
-export const MAX_OTIO_PROGRAM_MANIFEST_BYTES = MAX_EXPANDED_ZIP_BYTES;
+/**
+ * Parse-cost bound for the manifest, not a format limit. The manifest is parsed
+ * whole into memory, so its size is capped before parsing. Its cardinality is
+ * already bounded by the archive: media keys number at most
+ * MAX_OTIO_BUNDLE_MEDIA_ENTRIES, and each key is at most MAX_ZIP_NAME_BYTES.
+ * A manifest over this size is refused as size-cap-exceeded before any parse.
+ */
+export const MAX_OTIO_PROGRAM_MANIFEST_BYTES = 16 * 1024 * 1024;
 export const MAX_OTIO_PROGRAM_DIMENSION = 4096;
 export const MAX_OTIO_PROGRAM_FPS = 240;
 export const MAX_OTIO_PROGRAM_VIDEO_BITRATE = 100_000_000;
 export const MAX_OTIO_RATIONAL_RATE = 1_000_000;
 
 const MAX_STRING = 512;
-const MAX_MEDIA_PATH = 1024;
+/** A ZIP central-directory name is at most 65535 UTF-8 bytes (u16 length). */
+const MAX_ZIP_NAME_BYTES = 0xffff;
+const UTF8 = new TextEncoder();
+/** Well-formed UTF-16: no lone surrogate, so the string has one UTF-8 encoding. */
+const WELL_FORMED_UTF16 =
+  /^(?:[^\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$/;
 const MAX_FRAMES = Number.MAX_SAFE_INTEGER;
 const MAX_AUDIO_SAMPLES = Number.MAX_SAFE_INTEGER;
 /** One AAC frame of priming and padding is the allowed drift in sample count. */
@@ -85,6 +98,7 @@ const FRAME_EPSILON = 1e-6;
 const MAX_ERROR_EXCERPT = 64;
 const SHA256_HEX = /^[0-9a-f]{64}$/;
 const AVC_CODEC = /^avc1\.[0-9a-fA-F]{6}$/;
+// biome-ignore lint/suspicious/noControlCharactersInRegex: reject control characters from untrusted manifests.
 const CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/;
 
 export const OTIO_PROGRAM_REASON_CODES = [
@@ -361,21 +375,38 @@ function expectEvenDimension(value: unknown, where: string): number {
   return dimension;
 }
 
+/**
+ * A media key is an archive entry name: already decoded, canonical, and taken
+ * literally. `?`, `#`, `%`, and spaces are ordinary characters, so this is not
+ * URL decoding. URL references are decoded and checked by
+ * `sanitizeOtioBundlePath` in otioDocumentMediaPaths, and that remains the only
+ * place a reference is interpreted as a URL. Here a key is refused for a missing
+ * `media/` prefix, more than MAX_ZIP_NAME_BYTES UTF-8 bytes, a lone surrogate, a
+ * control character, a backslash, or an empty, `.`, or `..` segment. Length is
+ * measured in UTF-8 bytes of the whole name and is never truncated.
+ */
 function expectMediaPath(key: string): void {
-  if (key.length > MAX_MEDIA_PATH || !key.startsWith('media/')) {
+  if (!key.startsWith('media/')) {
     unsafe(`media path must start with media/: ${excerpt(key)}`);
+  }
+  if (UTF8.encode(key).byteLength > MAX_ZIP_NAME_BYTES) {
+    unsafe(
+      `media path exceeds ${MAX_ZIP_NAME_BYTES} UTF-8 bytes: ${excerpt(key)}`
+    );
+  }
+  if (!WELL_FORMED_UTF16.test(key)) {
+    unsafe(`media path is not well-formed UTF-16: ${excerpt(key)}`);
+  }
+  if (CONTROL_CHARACTER.test(key)) {
+    unsafe(`media path contains a control character: ${excerpt(key)}`);
   }
   if (key.includes('\\')) {
     unsafe(`media path contains a backslash: ${excerpt(key)}`);
   }
-  let canonical: string;
-  try {
-    canonical = sanitizeOtioBundlePath(key);
-  } catch {
-    unsafe(`media path is not a safe bundle path: ${excerpt(key)}`);
-  }
-  if (canonical !== key) {
-    unsafe(`media path is not canonical: ${excerpt(key)}`);
+  for (const segment of key.slice('media/'.length).split('/')) {
+    if (segment === '' || segment === '.' || segment === '..') {
+      unsafe(`media path is not canonical: ${excerpt(key)}`);
+    }
   }
 }
 

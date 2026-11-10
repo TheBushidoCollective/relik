@@ -311,7 +311,7 @@ async function publishAndUnpack(
   assert.equal(
     published.program.status,
     'rendered',
-    `publish program status ${published.program.status}`
+    `publish program result ${JSON.stringify(published.program)}`
   );
   const { archive, relicKey } = await harness.openStored(published.relicId);
   const manifest = JSON.parse(

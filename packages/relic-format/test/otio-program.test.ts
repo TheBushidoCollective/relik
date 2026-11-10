@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { deflateRawSync } from 'node:zlib';
+import { otioDocumentMediaPaths } from '../src/otio-identity.ts';
+import type { OtioDocumentV1 } from '../src/otio-types.ts';
 import {
   MAX_OTIO_PROGRAM_MANIFEST_BYTES,
   OTIO_PROGRAM_MANIFEST_ENTRY,
@@ -494,9 +496,7 @@ describe('media and entry path safety', () => {
     'media/../secret.mp4',
     '/media/clip.mp4',
     'media//../x.mp4',
-    'media/%2e%2e/x.mp4',
     'media\\x.mp4',
-    'media/clip.mp4?x',
     'media/',
     'relic/program/timeline-0.mp4',
     '__proto__',
@@ -824,5 +824,154 @@ describe('manifest media must match the document references', () => {
         media_paths: ['media/clip.mp4', 'media/clip.mp4'],
       })
     ).rejects.toMatchObject({ code: 'archive-mismatch' });
+  });
+});
+
+describe('archive names are literal identities', () => {
+  test('a key with reserved URL characters is its own identity', async () => {
+    const name = 'media/a%3Fb c?#.mp4';
+    const data = encoder.encode('literal name');
+    const sha = await sha256Hex(data);
+    const entries: ZipEntry[] = [
+      { name: 'version.txt', data: encoder.encode('1.0.0') },
+      { name: 'content.otio', data: CONTENT },
+      { name, data },
+      {
+        name: OTIO_PROGRAM_MANIFEST_ENTRY,
+        data: manifestBytes({ media: { [name]: sha } }),
+        method: DEFLATE,
+      },
+      { name: otioProgramEntryName(0), data: PROGRAM },
+    ];
+    const result = await readOtioProgramArchive(await open(entries), {
+      ...DOCUMENT,
+      media_paths: [name],
+    });
+    expect(result?.programs.get(0)).toEqual(PROGRAM);
+  });
+
+  test('an encoded dot-dot segment is a literal name, not traversal', () => {
+    expect(() =>
+      parseOtioProgramManifest(
+        manifestBytes({ media: { 'media/%2e%2e/x.mp4': MEDIA_SHA } })
+      )
+    ).not.toThrow();
+  });
+
+  test('control characters in a media key are refused', () => {
+    expect(
+      parseFailure(
+        manifestBytes({ media: { 'media/a\u0001b.mp4': MEDIA_SHA } })
+      ).code
+    ).toBe('unsafe-path');
+  });
+
+  test('a raw traversal segment is refused even when encoded siblings exist', () => {
+    expect(
+      parseFailure(
+        manifestBytes({ media: { 'media/x/../../secret.mp4': MEDIA_SHA } })
+      ).code
+    ).toBe('unsafe-path');
+  });
+});
+
+describe('document media identity', () => {
+  test('a URL reference decodes to the literal archive entry it names', () => {
+    const doc = {
+      version: 1,
+      document_sha256: CONTENT_SHA,
+      timeline_ids: [],
+      nodes: {
+        ref: {
+          raw: {
+            OTIO_SCHEMA: 'ExternalReference.1',
+            target_url: 'media/a%3Fb%20c.mp4',
+          },
+        },
+      },
+      media: {
+        'media/a?b c.mp4': {
+          key: 'media/a?b c.mp4',
+          bundle_path: 'media/a?b c.mp4',
+          size: 1,
+        },
+      },
+      diagnostics: [],
+    } as unknown as OtioDocumentV1;
+    expect(otioDocumentMediaPaths(doc)).toEqual(['media/a?b c.mp4']);
+  });
+
+  test('a URL reference that traverses resolves to nothing', () => {
+    const doc = {
+      version: 1,
+      document_sha256: CONTENT_SHA,
+      timeline_ids: [],
+      nodes: {
+        ref: {
+          raw: {
+            OTIO_SCHEMA: 'ExternalReference.1',
+            target_url: 'media/%2e%2e/x.mp4',
+          },
+        },
+      },
+      media: {},
+      diagnostics: [],
+    } as unknown as OtioDocumentV1;
+    expect(otioDocumentMediaPaths(doc)).toEqual([]);
+  });
+});
+
+describe('media key length is measured in UTF-8 bytes', () => {
+  test('a legitimate name past the old 1024-character bound is accepted', () => {
+    const key = `media/${'a'.repeat(1024)}.png`;
+    expect(() =>
+      parseOtioProgramManifest(manifestBytes({ media: { [key]: MEDIA_SHA } }))
+    ).not.toThrow();
+  });
+
+  test('the largest name a ZIP central directory carries is accepted', () => {
+    const key = `media/${'a'.repeat(65529)}`;
+    expect(new TextEncoder().encode(key).byteLength).toBe(65535);
+    expect(() =>
+      parseOtioProgramManifest(manifestBytes({ media: { [key]: MEDIA_SHA } }))
+    ).not.toThrow();
+  });
+
+  test('a multibyte name exactly at the byte limit is accepted', () => {
+    const key = `media/${'€'.repeat(21843)}`;
+    expect(new TextEncoder().encode(key).byteLength).toBe(65535);
+    expect(() =>
+      parseOtioProgramManifest(manifestBytes({ media: { [key]: MEDIA_SHA } }))
+    ).not.toThrow();
+  });
+
+  test('a multibyte name one byte over the limit is refused, not truncated', () => {
+    const key = `media/${'€'.repeat(21844)}`;
+    expect(new TextEncoder().encode(key).byteLength).toBe(65538);
+    expect(
+      parseFailure(manifestBytes({ media: { [key]: MEDIA_SHA } })).code
+    ).toBe('unsafe-path');
+  });
+
+  test('an ASCII name one byte over the limit is refused', () => {
+    const key = `media/${'a'.repeat(65530)}`;
+    expect(
+      parseFailure(manifestBytes({ media: { [key]: MEDIA_SHA } })).code
+    ).toBe('unsafe-path');
+  });
+
+  test('a lone surrogate is refused because it has no UTF-8 identity', () => {
+    expect(
+      parseFailure(manifestBytes({ media: { 'media/\uD800x.png': MEDIA_SHA } }))
+        .code
+    ).toBe('unsafe-path');
+  });
+
+  test('a well-formed astral character is accepted', () => {
+    expect(() =>
+      parseOtioProgramManifest(
+        manifestBytes({ media: { 'media/😀.png': MEDIA_SHA } })
+      )
+    ).not.toThrow();
   });
 });

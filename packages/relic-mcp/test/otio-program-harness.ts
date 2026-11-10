@@ -23,8 +23,10 @@ import {
   decodeKey,
   encryptRelic,
   openRelic,
+  otioBundleMediaIndex,
   otioDocumentMediaPaths,
   readOtioDocument,
+  type OtioZipIndex,
 } from '@relic/format';
 import { createApp } from '@relic/server/src/app.ts';
 import { diskAssets } from '@relic/server/src/assets.ts';

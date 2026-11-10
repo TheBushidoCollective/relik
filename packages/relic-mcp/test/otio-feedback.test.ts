@@ -8,6 +8,7 @@ import {
   decodeKey,
   deriveCommentKey,
   encryptComment,
+  OtioZipError,
   indexOtioZip,
   type OtioAnchorV1,
   type OtioDocumentV1,
@@ -2093,7 +2094,6 @@ describe('OTIO comment anchors', () => {
 
   test('bounds Node OTIOZ expansion to the entry declaration before a large result exists', async () => {
     const text = timeline('clip-bomb', 'Bounded media companion');
-    const document = readOtioDocument(text);
     const expanded = new Uint8Array(4 * 1024 * 1024);
     expanded.fill(0x61);
     const archive = createOtioz([
@@ -2111,44 +2111,51 @@ describe('OTIO comment anchors', () => {
     ]);
     const path = join(scratch, 'underdeclared-media.otioz');
     await writeFile(path, archive);
-    const published = await publish({ path, cover: false }, deps);
-    const posted = await postComment(
-      {
-        relic_id: published.relic_id,
-        body: 'Do not expand the declared byte.',
-        anchor: {
-          kind: 'otio',
-          v: 1,
-          relic_version: 1,
-          document_sha256: document.document_sha256,
-          timeline_id: 'tl1',
-          track_id: 'track-v1',
-          item_id: 'clip-bomb',
-          range: {
-            start_time: { value: 0, rate: 24 },
-            duration: { value: 1, rate: 24 },
-          },
-          snapshot: { timeline: 'Cut', track: 'V1', item: 'Bomb' },
-        },
-      },
-      deps
-    );
-    mintBodies = [];
-    const read = await readComments(published.relic_id, deps, {
-      version: 1,
-      resolve_anchors: true,
+    // The read stops at the declared size, so the entry never expands past it.
+    // The publish refuses, rather than package an archive whose entry lies about
+    // its size, and no relic is minted.
+    await expect(publish({ path, cover: false }, deps)).rejects.toMatchObject({
+      code: 'program_refused',
+      details: { program_reason: 'archive-unreadable' },
     });
-    const comment = read.comments.find(
-      (entry) => entry.comment_id === posted.comment_id
-    );
-    expect(comment?.resolved?.kind).toBe('otio');
-    if (comment?.resolved?.kind !== 'otio') {
-      throw new Error('expected the underdeclared archive to be unresolvable');
-    }
-    expect(comment.resolved.status).toBe('unresolvable');
-    expect(comment.resolved.explanation).toContain(
-      'Failed to read OTIO document'
-    );
-    expect(mintBodies).toEqual([{ version: 1 }]);
+    expect(mintBodies).toEqual([]);
+  });
+
+  test('reader boundary: the existing OTIO read path refuses a declared-bomb entry without publication', async () => {
+    const text = timeline('clip-bomb', 'Bounded media companion');
+    const expanded = new Uint8Array(4 * 1024 * 1024);
+    expanded.fill(0x61);
+    const archive = createOtioz([
+      { name: 'version.txt', bytes: new TextEncoder().encode('1.0.0\n') },
+      { name: 'content.otio', bytes: new TextEncoder().encode(text) },
+      {
+        name: 'media/bomb.bin',
+        bytes: expanded,
+        deflate: true,
+        declared_size: 1,
+      },
+    ]);
+    const zip = await indexOtioZip(archive);
+    // No publication: the reader's own media read is the boundary under test. It
+    // must fail with the declared-limit code, not with any other failure.
+    const bomb = otioBundleMediaIndex(zip, { digests: true });
+    await expect(bomb).rejects.toBeInstanceOf(OtioZipError);
+    await expect(bomb).rejects.toMatchObject({ code: 'decompression-limit' });
+    // Control: an honest entry with the same shape reads on the same path, so the
+    // failure above is the declared limit and nothing else.
+    const honest = createOtioz([
+      { name: 'version.txt', bytes: new TextEncoder().encode('1.0.0\n') },
+      { name: 'content.otio', bytes: new TextEncoder().encode(text) },
+      {
+        name: 'media/ok.bin',
+        bytes: new TextEncoder().encode('ok'),
+        deflate: true,
+        declared_size: 2,
+      },
+    ]);
+    const honestMedia = await otioBundleMediaIndex(await indexOtioZip(honest), {
+      digests: true,
+    });
+    expect(honestMedia['media/ok.bin']?.sha256).toBeDefined();
   });
 });

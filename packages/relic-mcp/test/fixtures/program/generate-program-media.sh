@@ -4,8 +4,12 @@
 #   bash generate-program-media.sh OUT_DIR
 #
 # Video plates are 1280x720 at 30 fps. Each plate has a flat background colour and a 4 px white
-# bar in the row band y=600..619 at x = 4*n, where n is the frame number. A decoded bar index is
+# bar in the row band y=600..619 at x = 4*N, where N is the frame number. A decoded bar index is
 # therefore the source frame that produced it, which makes timing observable in the pixels.
+#
+# The bar is drawn with geq, which exposes the frame number as N and the pixel coordinates as X
+# and Y. (drawbox has no frame-number variable, so it cannot be used.) The frame-index check in
+# the proof verifies the encoding; this comment is not a claim about any particular build.
 # Audio formulas are duplicated verbatim in test/otio-program-reference.ts; the reference uses
 # the same formulas analytically, so the audio check does not depend on this encoder.
 set -euo pipefail
@@ -15,8 +19,10 @@ media="$out/media"
 mkdir -p "$media"
 
 bars() {
-  # $1 = background colour (0xRRGGBB)
-  printf 'color=c=%s:s=1280x720:r=30:d=%s,drawbox=x=4*n:y=600:w=4:h=20:color=white:t=fill' "$1" "$2"
+  # $1 = background colour (0xRRGGBB), $2 = duration in seconds
+  local inside='between(X,4*N,4*N+3)*between(Y,600,619)'
+  printf "color=c=%s:s=1280x720:r=30:d=%s,format=rgb24,geq=r='if(%s,255,r(X,Y))':g='if(%s,255,g(X,Y))':b='if(%s,255,b(X,Y))'" \
+    "$1" "$2" "$inside" "$inside" "$inside"
 }
 
 ffmpeg -y -v error -f lavfi -i "$(bars 0xC82828 4)" \
@@ -33,9 +39,6 @@ ffmpeg -y -v error -f lavfi -i "$(bars 0x1EC81E 3)" \
 
 ffmpeg -y -v error -f lavfi -i "aevalsrc=0.5*sin(2*PI*(200*t+300*t*t)):s=48000:d=6" \
   -ac 2 -c:a pcm_s16le "$media/chirp48.wav"
-
-ffmpeg -y -v error -f lavfi -i "aevalsrc=0.3*sin(2*PI*1000*t):s=48000:d=2" \
-  -ac 2 -c:a pcm_s16le "$media/tone48.wav"
 
 ffmpeg -y -v error -f lavfi -i "aevalsrc=0.3*sin(2*PI*1000*t):s=44100:d=2" \
   -ac 2 -c:a pcm_s16le "$media/tone441.wav"

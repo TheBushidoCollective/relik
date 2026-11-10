@@ -1,7 +1,9 @@
 /**
  * Builds the rendered-program proof composition into a scratch directory as a standard `.otiod`
- * bundle. The document comes from the pinned OpenTimelineIO 0.18.1 generator and the media from
- * ffmpeg. The OTIO library's own placement is written beside the bundle, never inside it.
+ * bundle. The document comes from the pinned OpenTimelineIO 0.18.1 generator. The media comes
+ * from ffmpeg and is optional: placement-only tests build the document alone, which is fast, and
+ * the publish and render proofs build everything. The OTIO library's own placement is written
+ * beside the bundle, never inside it, and records the sha256 of the content.otio it describes.
  *
  * The generator needs opentimelineio==0.18.1. Choose the interpreter with an environment
  * variable, in this order:
@@ -21,6 +23,11 @@ export type ProgramVariant =
   | 'global-start'
   | 'custom-wipe'
   | 'unknown-effect';
+
+export interface ProgramFixtureOptions {
+  /** Write the ffmpeg media too. Placement-only tests pass false. Defaults to true. */
+  readonly media?: boolean;
+}
 
 const fixtureRoot = fileURLToPath(
   new URL('./fixtures/program/', import.meta.url)
@@ -59,15 +66,19 @@ function generatorCommand(): { command: string; args: readonly string[] } {
 export interface BuiltProgramFixture {
   /** Directory to publish: a standard `.otiod` bundle. */
   readonly bundleDir: string;
-  /** Library placement from OpenTimelineIO, for the self tests only. */
+  /** The document the library oracle describes. */
+  readonly contentOtioPath: string;
+  /** Library placement from OpenTimelineIO. It records the sha256 of content.otio. */
   readonly libraryOraclePath: string;
 }
 
 export async function buildProgramFixture(
   scratch: string,
-  variant: ProgramVariant = 'positive'
+  variant: ProgramVariant = 'positive',
+  options: ProgramFixtureOptions = {}
 ): Promise<BuiltProgramFixture> {
   const bundleDir = join(scratch, `${variant}.otiod`);
+  const contentOtioPath = join(bundleDir, 'content.otio');
   const libraryOraclePath = join(scratch, `${variant}-library-oracle.json`);
   await mkdir(join(bundleDir, 'media'), { recursive: true });
   const generator = generatorCommand();
@@ -80,11 +91,12 @@ export async function buildProgramFixture(
     '--oracle-out',
     libraryOraclePath,
   ]);
-  await run('bash', [
-    join(fixtureRoot, 'generate-program-media.sh'),
-    bundleDir,
-  ]);
-  return { bundleDir, libraryOraclePath };
+  if (options.media !== false)
+    await run('bash', [
+      join(fixtureRoot, 'generate-program-media.sh'),
+      bundleDir,
+    ]);
+  return { bundleDir, contentOtioPath, libraryOraclePath };
 }
 
 export async function readLibraryOracle(path: string): Promise<unknown> {

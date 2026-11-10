@@ -156,7 +156,10 @@ def main():
         timeline.global_start_time = otio.opentime.RationalTime(86400, 24)
     otio.adapters.write_to_file(timeline, str(out / "content.otio"), adapter_name="otio_json")
     (out / "version.txt").write_text("1.0.0\n", encoding="utf-8")
-    Path(args.oracle_out).write_text(json.dumps(oracle(timeline), indent=2) + "\n", encoding="utf-8")
+    import hashlib
+    oracle_doc = oracle(timeline)
+    oracle_doc["content_sha256"] = hashlib.sha256((out / "content.otio").read_bytes()).hexdigest()
+    Path(args.oracle_out).write_text(json.dumps(oracle_doc, indent=2) + "\n", encoding="utf-8")
 
 
 if __name__ == "__main__":
