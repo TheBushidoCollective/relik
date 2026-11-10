@@ -777,6 +777,180 @@ test('native render clock certifies promotions and silences a held ramp', async 
     );
     expect(warmingSamples.tag).toEqual([3]);
     expect(diagnosticOf(warmDiagnostic).samples.active.frame).toHaveLength(128);
+
+    // Running start: exact silence until the anchor, then two exact tagged quanta certify it.
+    const RUNNING_START = 1024;
+    const zeroCarrier = (): Float32Array[] => [
+      new Float32Array(128),
+      new Float32Array(128),
+    ];
+    const runningCarrier = (first: number): Float32Array[] => [
+      Float32Array.from(
+        { length: 128 },
+        (_, i) => 1 + Math.floor((first + i) / 65536)
+      ),
+      Float32Array.from({ length: 128 }, (_, i) => (first + i) % 65536),
+    ];
+    const runningStep = (
+      instance: Processor,
+      params: Record<string, Float32Array>,
+      carrier: Float32Array[]
+    ) => {
+      const output = [
+        new Float32Array(128).fill(9),
+        new Float32Array(128).fill(9),
+      ];
+      const source = [
+        new Float32Array(128).fill(1),
+        new Float32Array(128).fill(1),
+      ];
+      const alive = instance.process(
+        [source, carrier, source],
+        [output],
+        params
+      );
+      return { alive, output };
+    };
+    const quietParams = (): Record<string, Float32Array> => ({
+      clockFrameA: new Float32Array(128),
+      clockTagA: Float32Array.of(0),
+      clockFrameB: new Float32Array(128),
+      clockTagB: Float32Array.of(0),
+    });
+    const taggedParams = (
+      relative: Float32Array,
+      tag: Float32Array
+    ): Record<string, Float32Array> => ({
+      clockFrameA: relative,
+      clockTagA: tag,
+      clockFrameB: new Float32Array(128),
+      clockTagB: Float32Array.of(0),
+    });
+    const relativeRamp = (from: number) =>
+      Float32Array.from({ length: 128 }, (_, i) => from + i);
+    const runningProcessor = (prestartBudgetFrames: number) =>
+      new ProcessorClass({
+        processorOptions: {
+          clockEpoch: 3,
+          initialFrame: RUNNING_START,
+          prestartBudgetFrames,
+        },
+      });
+
+    const exact = runningProcessor(5120);
+    expect(runningStep(exact, quietParams(), zeroCarrier()).alive).toBe(true);
+    expect(runningStep(exact, quietParams(), zeroCarrier()).alive).toBe(true);
+    expect(
+      runningStep(
+        exact,
+        taggedParams(relativeRamp(0), Float32Array.of(1)),
+        runningCarrier(RUNNING_START)
+      ).alive
+    ).toBe(true);
+    expect(
+      runningStep(
+        exact,
+        taggedParams(relativeRamp(128), Float32Array.of(1)),
+        runningCarrier(RUNNING_START + 128)
+      ).alive
+    ).toBe(true);
+    expect(
+      exact.port.messages.find((m) => m.type === 'anchor-certified')
+    ).toMatchObject({
+      firstFrame: RUNNING_START,
+      lastCertifiedEnd: RUNNING_START + 256,
+      sampleCount: 256,
+      callbackOrdinal: 2,
+    });
+    expect(
+      exact.port.messages.some(
+        (m) => m.type === 'clock-fault' || m.type === 'anchor-late'
+      )
+    ).toBe(false);
+
+    const budget = runningProcessor(256);
+    expect(runningStep(budget, quietParams(), zeroCarrier()).alive).toBe(true);
+    expect(runningStep(budget, quietParams(), zeroCarrier()).alive).toBe(true);
+    const over = runningStep(budget, quietParams(), zeroCarrier());
+    expect(over.alive).toBe(false);
+    expect(Array.from(over.output[0]!)).toEqual(Array(128).fill(0));
+    expect(budget.port.messages.at(-1)).toMatchObject({
+      type: 'anchor-late',
+      firstFrame: RUNNING_START,
+      observedFrame: null,
+      prestartSamples: 384,
+      budget: 256,
+    });
+
+    const early = runningProcessor(5120);
+    const leak = runningStep(early, quietParams(), [
+      Float32Array.from({ length: 128 }, () => 1),
+      new Float32Array(128),
+    ]);
+    expect(leak.alive).toBe(false);
+    expect(early.port.messages.at(-1)).toMatchObject({
+      type: 'clock-fault',
+      expectedFrame: RUNNING_START,
+      observedFrame: -1,
+      diagnostic: { reason: 'carrier-before-anchor', location: 'active' },
+    });
+
+    const partial = runningProcessor(5120);
+    runningStep(partial, quietParams(), zeroCarrier());
+    const split = runningStep(
+      partial,
+      taggedParams(
+        relativeRamp(0),
+        Float32Array.from({ length: 128 }, (_, i) => (i < 64 ? 1 : 0))
+      ),
+      runningCarrier(RUNNING_START)
+    );
+    expect(split.alive).toBe(false);
+    expect(partial.port.messages.at(-1)).toMatchObject({
+      type: 'clock-fault',
+      diagnostic: { reason: 'tag-mismatch', failingSample: 64 },
+    });
+
+    const late = runningProcessor(5120);
+    const lateStep = runningStep(
+      late,
+      taggedParams(relativeRamp(128), Float32Array.of(1)),
+      runningCarrier(RUNNING_START + 128)
+    );
+    expect(lateStep.alive).toBe(false);
+    expect(late.port.messages.at(-1)).toMatchObject({
+      type: 'anchor-late',
+      firstFrame: RUNNING_START,
+      observedFrame: RUNNING_START + 128,
+    });
+
+    const skewed = runningProcessor(5120);
+    runningStep(skewed, quietParams(), zeroCarrier());
+    const skew = runningStep(
+      skewed,
+      taggedParams(relativeRamp(0), Float32Array.of(1)),
+      runningCarrier(RUNNING_START + 1)
+    );
+    expect(skew.alive).toBe(false);
+    expect(skewed.port.messages.at(-1)).toMatchObject({
+      type: 'clock-fault',
+      expectedFrame: RUNNING_START,
+      observedFrame: -1,
+    });
+
+    const offset = runningProcessor(5120);
+    runningStep(offset, quietParams(), zeroCarrier());
+    const offStep = runningStep(
+      offset,
+      taggedParams(relativeRamp(128), Float32Array.of(1)),
+      runningCarrier(RUNNING_START + 128)
+    );
+    expect(offStep.alive).toBe(false);
+    expect(offset.port.messages.at(-1)).toMatchObject({
+      type: 'anchor-late',
+      firstFrame: RUNNING_START,
+      observedFrame: RUNNING_START + 128,
+    });
   } finally {
     globals.AudioWorkletProcessor = originalProcessor;
     globals.registerProcessor = originalRegister;

@@ -40,7 +40,7 @@ test('session correlates anchor certification, commands and retirement', async (
       context,
       (ack) => closed.push(ack),
       undefined,
-      0
+      { mode: 'frozen', initialFrame: 0 }
     );
     const node = gate.node as unknown as Node;
     const emit = (message: Record<string, unknown>) =>
@@ -132,7 +132,7 @@ test('certified quantum is the maximum of both validated anchor quanta', async (
           { ...fakeGateContext(), sampleRate } as AudioContext,
           () => {},
           undefined,
-          0
+          { mode: 'frozen', initialFrame: 0 }
         );
         const node = gate.node as unknown as FakeGateNode;
         expect(gate.certifiedQuantum).toBeNull();
@@ -159,7 +159,7 @@ test('certified quantum is the maximum of both validated anchor quanta', async (
         fakeGateContext(),
         () => {},
         undefined,
-        0
+        { mode: 'frozen', initialFrame: 0 }
       );
       const node = gate.node as unknown as FakeGateNode;
       node.emit({
@@ -203,9 +203,15 @@ test('serial exhaustion is proof-only, refuses renewal and does not wrap', async
     globals.__otioProofPcm = true;
     globals.__otioProofClockSerialExhaustion = true;
     await expect(
-      createOtioTransportGate(fakeGateContext(), () => {}, undefined, 0, {
-        proofInitialSerial: maximum,
-      })
+      createOtioTransportGate(
+        fakeGateContext(),
+        () => {},
+        undefined,
+        { mode: 'frozen', initialFrame: 0 },
+        {
+          proofInitialSerial: maximum,
+        }
+      )
     ).rejects.toThrow('loopback');
     Object.defineProperty(globalThis, 'location', {
       configurable: true,
@@ -213,15 +219,27 @@ test('serial exhaustion is proof-only, refuses renewal and does not wrap', async
     });
     globals.__otioProofClockSerialExhaustion = false;
     await expect(
-      createOtioTransportGate(fakeGateContext(), () => {}, undefined, 0, {
-        proofInitialSerial: maximum,
-      })
+      createOtioTransportGate(
+        fakeGateContext(),
+        () => {},
+        undefined,
+        { mode: 'frozen', initialFrame: 0 },
+        {
+          proofInitialSerial: maximum,
+        }
+      )
     ).rejects.toThrow('proof mode');
     globals.__otioProofClockSerialExhaustion = true;
     await expect(
-      createOtioTransportGate(fakeGateContext(), () => {}, undefined, 0, {
-        proofInitialSerial: maximum - 1,
-      })
+      createOtioTransportGate(
+        fakeGateContext(),
+        () => {},
+        undefined,
+        { mode: 'frozen', initialFrame: 0 },
+        {
+          proofInitialSerial: maximum - 1,
+        }
+      )
     ).rejects.toThrow('proof mode');
     const { gate, node } = await anchoredGate(() => {}, undefined, {
       proofInitialSerial: maximum,
@@ -291,12 +309,10 @@ test('frozen native carrier encodes exact frame words and is routed only to inpu
     createBufferSource: () => source,
   } as unknown as AudioContext;
   try {
-    const gate = await createOtioTransportGate(
-      context,
-      () => {},
-      undefined,
-      initialFrame
-    );
+    const gate = await createOtioTransportGate(context, () => {}, undefined, {
+      mode: 'frozen',
+      initialFrame,
+    });
     const node = gate.node as unknown as FakeGateNode;
     expect(node.options.channelInterpretation).toBe('speakers');
     expect(connections).toEqual([[node, 0, 1]]);

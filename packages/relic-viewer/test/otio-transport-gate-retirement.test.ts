@@ -27,12 +27,10 @@ test('module load failure is classified before node construction', async () => {
         },
       },
     } as unknown as AudioContext;
-    const error = await createOtioTransportGate(
-      context,
-      () => {},
-      undefined,
-      0
-    ).catch((failure: unknown) => failure);
+    const error = await createOtioTransportGate(context, () => {}, undefined, {
+      mode: 'frozen',
+      initialFrame: 0,
+    }).catch((failure: unknown) => failure);
     expect(error).toBeInstanceOf(OtioGateModuleLoadError);
     expect(error).toBeInstanceOf(OtioGatePreconstructionError);
     expect((error as Error).cause).toBe(cause);
@@ -67,7 +65,7 @@ test('repeated context changes during module loading fail before node constructi
         context as unknown as AudioContext,
         () => {},
         undefined,
-        0
+        { mode: 'frozen', initialFrame: 0 }
       );
       if (i % 2 === 0) context.state = 'running';
       else context.currentTime = 1 / 48000;
@@ -141,12 +139,10 @@ test('repeated disposal waits for render-thread retirement and removes its silen
   } as unknown as AudioContext;
   try {
     for (let i = 0; i < 20; i++) {
-      const gate = await createOtioTransportGate(
-        context,
-        () => {},
-        undefined,
-        0
-      );
+      const gate = await createOtioTransportGate(context, () => {}, undefined, {
+        mode: 'frozen',
+        initialFrame: 0,
+      });
       const node = gate.node as unknown as Node;
       const retirement = gate.dispose();
       expect(gate.dispose()).toBe(retirement);
@@ -200,7 +196,7 @@ test('carrier credit survives gate disposal until source ended', async () => {
       context,
       () => {},
       undefined,
-      0,
+      { mode: 'frozen', initialFrame: 0 },
       undefined,
       () => {
         releases++;

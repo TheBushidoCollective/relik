@@ -68,7 +68,7 @@ export async function anchoredGate(
     fakeGateContext(),
     onClosed,
     onError,
-    0,
+    { mode: 'frozen', initialFrame: 0 },
     proof
   );
   const node = gate.node as unknown as FakeGateNode;

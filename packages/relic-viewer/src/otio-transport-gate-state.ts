@@ -41,6 +41,7 @@ export type OtioGateDecodeReason =
   | 'frame-progression'
   | 'unsafe-result'
   | 'bank-overrun'
+  | 'carrier-before-anchor'
   | 'expected-mismatch';
 
 export interface OtioGateBankDescriptor {

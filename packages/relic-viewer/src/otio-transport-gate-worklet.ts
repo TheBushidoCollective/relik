@@ -113,6 +113,9 @@ class OtioTransportGateProcessor extends AudioWorkletProcessor {
   private terminalSent = false;
   private readonly traceMaxCallbacks: number;
   private traceRemaining = -1;
+  private callbacks = 0;
+  private prestartSamples = 0;
+  private readonly prestartBudget: number;
   private stalePrevious: StalePrevious | null = null;
   private staleCount = 0;
   private staleStopped = false;
@@ -133,6 +136,11 @@ class OtioTransportGateProcessor extends AudioWorkletProcessor {
     const start = 'initialFrame' in config ? config.initialFrame : undefined;
     const proofSerial =
       'proofInitialSerial' in config ? config.proofInitialSerial : undefined;
+    const budget =
+      'prestartBudgetFrames' in config
+        ? config.prestartBudgetFrames
+        : undefined;
+    this.prestartBudget = integer(budget) ? budget : 0;
     const traceLimit =
       'traceMaxCallbacks' in config ? config.traceMaxCallbacks : 0;
     const staleLimit =
@@ -175,7 +183,8 @@ class OtioTransportGateProcessor extends AudioWorkletProcessor {
       !this.epoch ||
       !integer(start) ||
       initial + SPAN > 2 ** 40 ||
-      (proofSerial !== undefined && proofSerial !== 2 ** 24 - 1)
+      (proofSerial !== undefined && proofSerial !== 2 ** 24 - 1) ||
+      !integer(budget)
     )
       this.overflow = true;
     this.port.onmessage = (event: MessageEvent<unknown>) => {
@@ -448,6 +457,42 @@ class OtioTransportGateProcessor extends AudioWorkletProcessor {
     return false;
   }
 
+  /**
+   * Classifies a block before the first tagged quantum. `silent` means every bank lane and both
+   * carrier channels are exactly zero. Anything else goes through the strict tagged decode.
+   */
+  private prestartKind(
+    inputs: Float32Array[][],
+    parameters: Record<string, Float32Array>,
+    length: number
+  ): 'silent' | 'carrier' | 'tagged' {
+    for (const name of [
+      'clockFrameA',
+      'clockTagA',
+      'clockFrameB',
+      'clockTagB',
+    ]) {
+      const lane = parameters[name];
+      if (!lane || lane.some((value) => value !== 0)) return 'tagged';
+    }
+    const carrier = inputs[1];
+    const left = carrier?.[0];
+    const right = carrier?.[1];
+    if (
+      !carrier ||
+      carrier.length !== 2 ||
+      !left ||
+      !right ||
+      left.length !== length ||
+      right.length !== length
+    )
+      return 'tagged';
+    return left.every((value) => value === 0) &&
+      right.every((value) => value === 0)
+      ? 'silent'
+      : 'carrier';
+  }
+
   process(
     inputs: Float32Array[][],
     outputs: Float32Array[][],
@@ -467,6 +512,38 @@ class OtioTransportGateProcessor extends AudioWorkletProcessor {
         expectedFrame: this.expected,
         observedFrame: -1,
       });
+    if (this.overflow) return this.end(outputs, 'protocol-fault');
+    this.callbacks++;
+    // Before the first tagged quantum the only admissible block is exact silence.
+    if (!this.anchored && this.expected === null) {
+      const kind = this.prestartKind(inputs, parameters, length);
+      if (kind === 'silent') {
+        this.prestartSamples += length;
+        if (this.prestartSamples > this.prestartBudget)
+          return this.end(outputs, 'anchor-late', {
+            firstFrame: this.active.startFrame,
+            observedFrame: null,
+            prestartSamples: this.prestartSamples,
+            budget: this.prestartBudget,
+          });
+        this.silence(outputs);
+        return true;
+      }
+      if (kind === 'carrier') {
+        this.diagnose(
+          this.active,
+          parameters,
+          length,
+          'carrier-before-anchor',
+          -1
+        );
+        return this.end(outputs, 'clock-fault', {
+          expectedFrame: this.active.startFrame,
+          observedFrame: -1,
+          diagnostic: this.lastDecode,
+        });
+      }
+    }
     const observed = this.decode(this.active, parameters, length);
     if (
       observed === null ||
@@ -483,6 +560,14 @@ class OtioTransportGateProcessor extends AudioWorkletProcessor {
     if (this.overflow) return this.end(outputs, 'protocol-fault');
     if (!this.anchored) {
       const carrier = inputs[1];
+      // The first tagged quantum landed past A: the start was missed, whether or not silence came first.
+      if (this.samples === 0 && observed > this.active.startFrame)
+        return this.end(outputs, 'anchor-late', {
+          firstFrame: this.active.startFrame,
+          observedFrame: observed,
+          prestartSamples: this.prestartSamples,
+          budget: this.prestartBudget,
+        });
       if (
         observed !== this.active.startFrame + this.samples ||
         !carrier ||

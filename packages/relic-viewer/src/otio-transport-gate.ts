@@ -151,8 +151,53 @@ export function clockFaultEvidence(
   };
 }
 
+/** Where the gate's clock starts: a suspended context the caller froze, or a running context anchored in the future. */
+export type OtioGateStart =
+  | { mode: 'frozen'; initialFrame: number }
+  | { mode: 'running'; leadFrames: 1024 | 2048 };
+
+/**
+ * The running anchor could not be certified in time. Node credits are held until `retirement`
+ * resolves. A caller may retry once with a fresh gate after that.
+ */
+export class OtioGateAnchorLateError extends Error {
+  readonly retryable = true;
+  constructor(
+    readonly anchorFrame: number,
+    readonly observedFrame: number | null,
+    readonly shortfallFrames: number | null,
+    readonly retirement: Promise<void>
+  ) {
+    super(
+      `Transport anchor late: anchor ${anchorFrame}, observed ${observedFrame ?? 'unknown'}`
+    );
+    this.name = 'OtioGateAnchorLateError';
+  }
+}
+
+const MIN_RUNNING_LEAD = 256;
+const PRESTART_SLACK_FRAMES = 4096;
+const alignUp = (value: number, quantum: number): number =>
+  Math.ceil(value / quantum) * quantum;
+/** The context's render quantum when it is exposed, otherwise the 128-frame default. */
+const renderQuantumOf = (context: AudioContext): number => {
+  const exposed =
+    'renderQuantumSize' in context ? context.renderQuantumSize : undefined;
+  const quantum = typeof exposed === 'number' ? exposed : 128;
+  if (
+    !Number.isInteger(quantum) ||
+    quantum < 128 ||
+    quantum > MAX_QUANTUM ||
+    (quantum & (quantum - 1)) !== 0
+  )
+    throw new Error('Unsupported render quantum');
+  return quantum;
+};
+
 export interface OtioTransportGate {
   readonly node: AudioWorkletNode;
+  /** The anchored start frame: the caller's frozen frame, or the frame computed for a running gate. */
+  readonly initialFrame: number;
   readonly clockEpoch: number;
   readonly clockCoverageEnd: number | null;
   readonly certifiedQuantum: number | null;
@@ -174,12 +219,12 @@ export interface OtioTransportGate {
   dispose(): Promise<void>;
 }
 
-/** The caller freezes and owns the context; this module never changes its state. */
+/** The caller owns the context. Frozen mode requires a suspended context; running mode never touches its state. */
 export async function createOtioTransportGate(
   context: AudioContext,
   onClosed: (ack: OtioGateAck) => void,
-  onError?: (error: Error) => void,
-  initialFrame?: number,
+  onError: ((error: Error) => void) | undefined,
+  start: OtioGateStart,
   proof?: { proofInitialSerial: number },
   releaseCarrier: () => void = () => {},
   registerCarrierCleanup: (cleanup: () => void) => void = () => {}
@@ -187,15 +232,20 @@ export async function createOtioTransportGate(
   let frozen: number;
   let initialSerial: number;
   let clockEpoch: number;
+  let prestartBudget = 0;
   try {
     if (
-      context.state !== 'suspended' ||
-      !integer(initialFrame) ||
-      initialFrame + SPAN > 2 ** 40 ||
-      (context.sampleRate !== 44100 && context.sampleRate !== 48000)
+      (context.sampleRate !== 44100 && context.sampleRate !== 48000) ||
+      (start.mode === 'frozen' &&
+        (context.state !== 'suspended' ||
+          !integer(start.initialFrame) ||
+          start.initialFrame + SPAN > 2 ** 40)) ||
+      (start.mode === 'running' &&
+        (context.state !== 'running' ||
+          !(start.leadFrames === 1024 || start.leadFrames === 2048)))
     )
       throw new Error(
-        'Transport clock requires a frozen supported context and checked frame'
+        'Transport clock requires a supported context and a valid start'
       );
     const proofGlobals = globalThis as typeof globalThis & {
       __otioProofPcm?: boolean;
@@ -217,17 +267,34 @@ export async function createOtioTransportGate(
       );
     }
     initialSerial = proof ? proof.proofInitialSerial : 1;
-    frozen = initialFrame;
     try {
       await context.audioWorklet.addModule(ASSET);
     } catch (cause) {
       throw new OtioGateModuleLoadError(cause);
     }
-    if (
-      context.state !== 'suspended' ||
-      Math.abs(context.currentTime * context.sampleRate - frozen) > 1 / 1024
-    )
-      throw new Error('Transport clock context changed during construction');
+    if (start.mode === 'frozen') {
+      if (
+        context.state !== 'suspended' ||
+        Math.abs(
+          context.currentTime * context.sampleRate - start.initialFrame
+        ) >
+          1 / 1024
+      )
+        throw new Error('Transport clock context changed during construction');
+      frozen = start.initialFrame;
+    } else {
+      // Synchronous from here to node construction: the anchor is read and programmed in one task.
+      if (context.state !== 'running')
+        throw new Error('Transport clock context stopped during module load');
+      const now = context.currentTime * context.sampleRate;
+      frozen = alignUp(
+        Math.ceil(now) + start.leadFrames,
+        renderQuantumOf(context)
+      );
+      if (frozen + SPAN > 2 ** 40)
+        throw new Error('Transport anchor out of range');
+      prestartBudget = Math.ceil(frozen - now) + PRESTART_SLACK_FRAMES;
+    }
     if (!Number.isSafeInteger(++nextEpoch))
       throw new Error('Transport clock epoch exhausted');
     clockEpoch = nextEpoch;
@@ -253,6 +320,9 @@ export async function createOtioTransportGate(
         clockEpoch,
         initialFrame: frozen,
         ...(proof ? { proofInitialSerial: initialSerial } : {}),
+        ...(start.mode === 'running'
+          ? { prestartBudgetFrames: prestartBudget }
+          : {}),
       },
     });
   } catch (error) {
@@ -433,6 +503,27 @@ export async function createOtioTransportGate(
           : new Error('Transport gate protocol fault');
       if (disposed) finishShutdown();
       else fail(error);
+      return;
+    }
+    if (message.type === 'anchor-late') {
+      // The processor has already returned false, so it is terminal: nothing more will arrive.
+      terminated = true;
+      stopCarrier();
+      const observed =
+        typeof message.observedFrame === 'number'
+          ? message.observedFrame
+          : null;
+      const error = new OtioGateAnchorLateError(
+        frozen,
+        observed,
+        observed === null ? null : observed - frozen,
+        Promise.resolve()
+      );
+      if (disposed) finishShutdown();
+      else {
+        finishShutdown();
+        fail(error);
+      }
       return;
     }
     if (disposed) return;
@@ -628,8 +719,9 @@ export async function createOtioTransportGate(
       }
     });
   };
-  return {
+  const gate: OtioTransportGate = {
     node,
+    initialFrame: frozen,
     clockEpoch,
     get clockCoverageEnd() {
       return coverage;
@@ -731,4 +823,18 @@ export async function createOtioTransportGate(
       return shutdown;
     },
   };
+  if (start.mode === 'running') {
+    // Re-read after scheduling. A short lead retires the node; credits hold until it does.
+    const remaining = frozen - context.currentTime * context.sampleRate;
+    if (remaining < MIN_RUNNING_LEAD) {
+      const retirement = gate.dispose();
+      throw new OtioGateAnchorLateError(
+        frozen,
+        null,
+        MIN_RUNNING_LEAD - remaining,
+        retirement
+      );
+    }
+  }
+  return gate;
 }
