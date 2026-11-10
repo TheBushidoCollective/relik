@@ -268,4 +268,21 @@ describe('bounded PCM graph', () => {
     context.sources[1]!.onended?.();
     expect(budget.usedNodes).toBe(0);
   });
+  test('budget subscribers wake only after release and can unsubscribe before delivery', async () => {
+    const budget = new OtioPcmBudget();
+    budget.reserveBytes(4);
+    budget.reserveNodes(1);
+    let calls = 0;
+    const unsubscribe = budget.subscribe(() => {
+      calls++;
+    });
+    budget.releaseBytes(4);
+    expect(calls).toBe(0);
+    await Promise.resolve();
+    expect(calls).toBe(1);
+    budget.releaseNodes(1);
+    unsubscribe();
+    await Promise.resolve();
+    expect(calls).toBe(1);
+  });
 });
