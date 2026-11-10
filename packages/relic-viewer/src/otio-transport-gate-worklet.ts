@@ -1,4 +1,10 @@
-import { OtioTransportGateState } from './otio-transport-gate-state';
+import {
+  OtioTransportGateState,
+  type OtioGateDecodeDiagnostic,
+  type OtioGateDecodeRange,
+  type OtioGateDecodeReason,
+  type OtioGateDecodeSamples,
+} from './otio-transport-gate-state';
 
 declare const currentFrame: number;
 
@@ -41,6 +47,47 @@ const MAX_QUANTUM = 2048;
 const EMPTY = new Float32Array(0);
 const integer = (n: unknown): n is number =>
   typeof n === 'number' && Number.isSafeInteger(n) && n >= 0;
+
+/** Scans at most one render quantum. Non-finite samples are counted, never folded into min or max. */
+const summarizeLane = (
+  values: Float32Array | undefined
+): OtioGateDecodeRange | null => {
+  if (!values || values.length === 0) return null;
+  const scan = Math.min(values.length, MAX_QUANTUM);
+  let min = Infinity;
+  let max = -Infinity;
+  let nonFinite = 0;
+  for (let i = 0; i < scan; i++) {
+    const value = values[i]!;
+    if (!Number.isFinite(value)) nonFinite++;
+    else {
+      if (value < min) min = value;
+      if (value > max) max = value;
+    }
+  }
+  return {
+    first: values[0]!,
+    last: values[values.length - 1]!,
+    min,
+    max,
+    nonFinite,
+    count: values.length,
+  };
+};
+
+/** Copies one bank's raw frame and tag lanes, bounded to one render quantum. Used only on fault. */
+const copyLane = (
+  parameters: Record<string, Float32Array | undefined>,
+  bank: 0 | 1
+): OtioGateDecodeSamples => {
+  const lane = bank === 0 ? 'A' : 'B';
+  const copy = (values: Float32Array | undefined): number[] =>
+    values ? Array.from(values.subarray(0, MAX_QUANTUM)) : [];
+  return {
+    frame: copy(parameters[`clockFrame${lane}`]),
+    tag: copy(parameters[`clockTag${lane}`]),
+  };
+};
 
 class OtioTransportGateProcessor extends AudioWorkletProcessor {
   static get parameterDescriptors() {
@@ -212,38 +259,84 @@ class OtioTransportGateProcessor extends AudioWorkletProcessor {
     };
   }
 
+  private lastDecode: OtioGateDecodeDiagnostic | null = null;
+
+  /** Records bounded evidence for a rejected decode. Returns null, so callers keep their rejection. */
+  private diagnose(
+    bank: Bank,
+    parameters: Record<string, Float32Array | undefined>,
+    length: number,
+    reason: OtioGateDecodeReason,
+    sample: number
+  ): null {
+    const lane = bank.bank === 0 ? 'A' : 'B';
+    const frames = parameters[`clockFrame${lane}`];
+    const tags = parameters[`clockTag${lane}`];
+    const inside = sample >= 0 && sample < length;
+    const tagIndex = tags && tags.length === 1 ? 0 : sample;
+    const warming = this.warming;
+    this.lastDecode = {
+      location: warming !== null && bank === warming ? 'warming' : 'active',
+      reason,
+      failingSample: sample,
+      failingFrame:
+        frames && inside && sample < frames.length ? frames[sample]! : null,
+      failingTag:
+        tags && inside && tagIndex < tags.length ? tags[tagIndex]! : null,
+      length,
+      cachedCurrentFrame: currentFrame,
+      bank,
+      frame: summarizeLane(frames),
+      tag: summarizeLane(tags),
+      activeBank: this.active,
+      warmingBank: warming,
+      samples: {
+        active: copyLane(parameters, this.active.bank),
+        warming: warming ? copyLane(parameters, warming.bank) : null,
+      },
+    };
+    return null;
+  }
+
   private decode(
     bank: Bank,
-    frames: Float32Array | undefined,
-    tags: Float32Array | undefined,
+    parameters: Record<string, Float32Array | undefined>,
     length: number
   ): number | null {
-    if (
-      !frames ||
-      frames.length !== length ||
-      !tags ||
-      (tags.length !== 1 && tags.length !== length)
-    )
-      return null;
+    this.lastDecode = null;
+    const lane = bank.bank === 0 ? 'A' : 'B';
+    const frames = parameters[`clockFrame${lane}`];
+    const tags = parameters[`clockTag${lane}`];
+    if (!frames)
+      return this.diagnose(bank, parameters, length, 'missing-frame', -1);
+    if (!tags)
+      return this.diagnose(bank, parameters, length, 'missing-tag', -1);
+    if (frames.length !== length)
+      return this.diagnose(bank, parameters, length, 'frame-length', -1);
+    if (tags.length !== 1 && tags.length !== length)
+      return this.diagnose(bank, parameters, length, 'tag-length', -1);
     let first = 0;
     for (let i = 0; i < length; i++) {
-      if (tags[tags.length === 1 ? 0 : i] !== bank.serial) return null;
+      if (tags[tags.length === 1 ? 0 : i] !== bank.serial)
+        return this.diagnose(bank, parameters, length, 'tag-mismatch', i);
       const value = frames[i]!;
+      if (!Number.isFinite(value))
+        return this.diagnose(bank, parameters, length, 'non-finite-frame', i);
       const rounded = Math.round(value);
-      if (
-        !Number.isFinite(value) ||
-        Math.abs(value - rounded) > 0.125 ||
-        rounded < 0 ||
-        rounded >= SPAN ||
-        (i > 0 && rounded !== first + i)
-      )
-        return null;
+      if (Math.abs(value - rounded) > 0.125)
+        return this.diagnose(bank, parameters, length, 'frame-residual', i);
+      if (rounded < 0 || rounded >= SPAN)
+        return this.diagnose(bank, parameters, length, 'frame-out-of-bank', i);
+      if (i > 0 && rounded !== first + i)
+        return this.diagnose(bank, parameters, length, 'frame-progression', i);
       if (i === 0) first = rounded;
     }
     const result = bank.startFrame + first;
-    return Number.isSafeInteger(result) && result + length <= bank.endFrame
-      ? result
-      : null;
+    if (!Number.isSafeInteger(result))
+      return this.diagnose(bank, parameters, length, 'unsafe-result', -1);
+    if (result + length > bank.endFrame)
+      return this.diagnose(bank, parameters, length, 'bank-overrun', -1);
+    return result;
   }
 
   private recordStale(
@@ -374,21 +467,19 @@ class OtioTransportGateProcessor extends AudioWorkletProcessor {
         expectedFrame: this.expected,
         observedFrame: -1,
       });
-    const suffix = this.active.bank === 0 ? 'A' : 'B';
-    const observed = this.decode(
-      this.active,
-      parameters['clockFrame' + suffix],
-      parameters['clockTag' + suffix],
-      length
-    );
+    const observed = this.decode(this.active, parameters, length);
     if (
       observed === null ||
       (this.expected !== null && observed !== this.expected)
-    )
+    ) {
+      if (observed !== null)
+        this.diagnose(this.active, parameters, length, 'expected-mismatch', -1);
       return this.end(outputs, 'clock-fault', {
         expectedFrame: this.expected,
         observedFrame: observed ?? -1,
+        diagnostic: this.lastDecode,
       });
+    }
     if (this.overflow) return this.end(outputs, 'protocol-fault');
     if (!this.anchored) {
       const carrier = inputs[1];
@@ -430,15 +521,7 @@ class OtioTransportGateProcessor extends AudioWorkletProcessor {
         certifiedFrame >= candidate.startFrame &&
         certifiedFrame + length <= candidate.endFrame
       ) {
-        const suffix = candidate.bank === 0 ? 'A' : 'B';
-        if (
-          this.decode(
-            candidate,
-            parameters['clockFrame' + suffix],
-            parameters['clockTag' + suffix],
-            length
-          ) !== certifiedFrame
-        )
+        if (this.decode(candidate, parameters, length) !== certifiedFrame)
           certifiedFrame = null;
       }
       this.port.postMessage({
@@ -523,18 +606,22 @@ class OtioTransportGateProcessor extends AudioWorkletProcessor {
       observed >= this.warming.startFrame &&
       this.expected <= this.warming.endFrame
     ) {
-      const suffix = this.warming.bank === 0 ? 'A' : 'B';
-      const compared = this.decode(
-        this.warming,
-        parameters['clockFrame' + suffix],
-        parameters['clockTag' + suffix],
-        length
-      );
-      if (compared !== observed)
+      const compared = this.decode(this.warming, parameters, length);
+      if (compared !== observed) {
+        if (compared !== null)
+          this.diagnose(
+            this.warming,
+            parameters,
+            length,
+            'expected-mismatch',
+            -1
+          );
         return this.end(outputs, 'clock-fault', {
           expectedFrame: observed,
           observedFrame: compared ?? -1,
+          diagnostic: this.lastDecode,
         });
+      }
       promote = this.warming;
     }
     this.recordStale(parameters, observed, length);

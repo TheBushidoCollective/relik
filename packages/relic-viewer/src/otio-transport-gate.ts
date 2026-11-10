@@ -1,5 +1,15 @@
-import type { OtioGateAck, OtioGateCommand } from './otio-transport-gate-state';
-export type { OtioGateAck } from './otio-transport-gate-state';
+import type {
+  OtioGateAck,
+  OtioGateBankDescriptor,
+  OtioGateCommand,
+  OtioGateDecodeDiagnostic,
+  OtioGateDecodeRange,
+  OtioGateDecodeSamples,
+} from './otio-transport-gate-state';
+export type {
+  OtioGateAck,
+  OtioGateDecodeDiagnostic,
+} from './otio-transport-gate-state';
 
 const ASSET = '/assets/otio-transport-gate-worklet.js';
 const SPAN = 65536;
@@ -8,6 +18,18 @@ const MAX_QUANTUM = 2048;
 let nextEpoch = 0;
 const integer = (value: unknown): value is number =>
   typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+
+/** Shape check for the worklet's diagnostic before it is attached to an error. */
+const isDecodeDiagnostic = (
+  value: unknown
+): value is OtioGateDecodeDiagnostic =>
+  typeof value === 'object' &&
+  value !== null &&
+  'location' in value &&
+  'reason' in value &&
+  'failingSample' in value &&
+  'bank' in value &&
+  'samples' in value;
 
 interface ClockBank {
   clockEpoch: number;
@@ -45,16 +67,90 @@ export class OtioGateModuleLoadError extends OtioGatePreconstructionError {
   }
 }
 export class OtioGateRenderClockError extends Error {
+  /**
+   * Bounded decode evidence. Non-enumerable, so generic error logging and
+   * serialisation do not print the per-sample lanes. Read it deliberately.
+   */
+  declare readonly diagnostic: OtioGateDecodeDiagnostic | null;
   constructor(
     readonly expectedFrame: number | null,
-    readonly observedFrame: number
+    readonly observedFrame: number,
+    diagnostic: OtioGateDecodeDiagnostic | null = null
   ) {
     super(
       `Transport render clock discontinuity: expected ${expectedFrame}, observed ${observedFrame}`
     );
     this.name = 'OtioGateRenderClockError';
+    Object.defineProperty(this, 'diagnostic', {
+      value: diagnostic,
+      enumerable: false,
+    });
   }
 }
+/** Bounded, JSON-safe evidence for a loopback proof. Explicit copies only; never the error object. */
+export interface OtioGateFaultEvidence {
+  location: 'active' | 'warming';
+  reason: OtioGateDecodeDiagnostic['reason'];
+  failingSample: number;
+  /** Raw value. NaN and Infinity serialise as null in JSON; `nonFinite` in the summaries counts them. */
+  failingFrame: number | null;
+  failingTag: number | null;
+  length: number;
+  cachedCurrentFrame: number;
+  expectedFrame: number | null;
+  observedFrame: number;
+  bank: OtioGateBankDescriptor;
+  activeBank: OtioGateBankDescriptor;
+  warmingBank: OtioGateBankDescriptor | null;
+  frame: OtioGateDecodeRange | null;
+  tag: OtioGateDecodeRange | null;
+  /** First four raw samples of each bank's frame and tag lanes. */
+  firstSamples: {
+    active: { frame: number[]; tag: number[] };
+    warming: { frame: number[]; tag: number[] } | null;
+  };
+}
+
+/** Returns bounded evidence for a clock fault, or null for any other error. */
+export function clockFaultEvidence(
+  error: unknown
+): OtioGateFaultEvidence | null {
+  if (!(error instanceof OtioGateRenderClockError) || error.diagnostic === null)
+    return null;
+  const d = error.diagnostic;
+  const descriptor = (b: OtioGateBankDescriptor): OtioGateBankDescriptor => ({
+    clockEpoch: b.clockEpoch,
+    bank: b.bank,
+    serial: b.serial,
+    startFrame: b.startFrame,
+    endFrame: b.endFrame,
+  });
+  const head = (s: OtioGateDecodeSamples) => ({
+    frame: s.frame.slice(0, 4),
+    tag: s.tag.slice(0, 4),
+  });
+  return {
+    location: d.location,
+    reason: d.reason,
+    failingSample: d.failingSample,
+    failingFrame: d.failingFrame,
+    failingTag: d.failingTag,
+    length: d.length,
+    cachedCurrentFrame: d.cachedCurrentFrame,
+    expectedFrame: error.expectedFrame,
+    observedFrame: error.observedFrame,
+    bank: descriptor(d.bank),
+    activeBank: descriptor(d.activeBank),
+    warmingBank: d.warmingBank ? descriptor(d.warmingBank) : null,
+    frame: d.frame ? { ...d.frame } : null,
+    tag: d.tag ? { ...d.tag } : null,
+    firstSamples: {
+      active: head(d.samples.active),
+      warming: d.samples.warming ? head(d.samples.warming) : null,
+    },
+  };
+}
+
 export interface OtioTransportGate {
   readonly node: AudioWorkletNode;
   readonly clockEpoch: number;
@@ -257,8 +353,8 @@ export async function createOtioTransportGate(
     )
       throw new Error('Transport clock endpoint conversion lost precision');
     const suffix = bank.bank === 0 ? 'A' : 'B';
-    const frame = node.parameters.get('clockFrame' + suffix),
-      tag = node.parameters.get('clockTag' + suffix);
+    const frame = node.parameters.get(`clockFrame${suffix}`),
+      tag = node.parameters.get(`clockTag${suffix}`);
     if (!frame || !tag) throw new Error('Transport clock parameters missing');
     frame.cancelScheduledValues(0);
     tag.cancelScheduledValues(0);
@@ -331,7 +427,8 @@ export async function createOtioTransportGate(
         typeof message.observedFrame === 'number'
           ? new OtioGateRenderClockError(
               message.expectedFrame,
-              message.observedFrame
+              message.observedFrame,
+              isDecodeDiagnostic(message.diagnostic) ? message.diagnostic : null
             )
           : new Error('Transport gate protocol fault');
       if (disposed) finishShutdown();

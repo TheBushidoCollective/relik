@@ -1,4 +1,5 @@
 import { expect, test } from 'bun:test';
+import type { OtioGateDecodeDiagnostic } from '../src/otio-transport-gate-state';
 test('native render clock certifies promotions and silences a held ramp', async () => {
   const globals = globalThis as unknown as Record<string, unknown>;
   const originalProcessor = globals.AudioWorkletProcessor;
@@ -612,6 +613,170 @@ test('native render clock certifies promotions and silences a held ramp', async 
       block(instance, 4);
       expect(instance.port.messages).toHaveLength(count);
     }
+    // Fault diagnostics: bounded evidence beside an unchanged rejection.
+    const isDiagnostic = (value: unknown): value is OtioGateDecodeDiagnostic =>
+      typeof value === 'object' &&
+      value !== null &&
+      'reason' in value &&
+      'samples' in value;
+    const diagnosticOf = (
+      message: Message | undefined
+    ): OtioGateDecodeDiagnostic => {
+      const diagnostic = message?.diagnostic;
+      if (!isDiagnostic(diagnostic))
+        throw new Error('clock-fault without diagnostic');
+      return diagnostic;
+    };
+    const driveQuantum = (
+      instance: Processor,
+      start: number,
+      params: Record<string, Float32Array>
+    ) => {
+      const length = 128;
+      const output = [
+        new Float32Array(length).fill(9),
+        new Float32Array(length).fill(9),
+      ];
+      const source = [
+        new Float32Array(length).fill(1),
+        new Float32Array(length).fill(1),
+      ];
+      const carrier = [
+        Float32Array.from(
+          { length },
+          (_, i) => 1 + Math.floor((start + i) / 65536)
+        ),
+        Float32Array.from({ length }, (_, i) => (start + i) % 65536),
+      ];
+      const alive = instance.process(
+        [source, carrier, source],
+        [output],
+        params
+      );
+      return { alive, output };
+    };
+    const activeLanes = (start: number) => ({
+      clockFrameA: Float32Array.from({ length: 128 }, (_, i) => start + i),
+      clockTagA: Float32Array.of(1),
+      clockFrameB: new Float32Array(128),
+      clockTagB: Float32Array.of(0),
+    });
+
+    // A wrong active tag rejects the quantum with its own predicate and lanes.
+    const tagged = new ProcessorClass({
+      processorOptions: { clockEpoch: 2, initialFrame: 0 },
+    });
+    const wrongTag = driveQuantum(tagged, 0, {
+      clockFrameA: Float32Array.from({ length: 128 }, (_, i) => i),
+      clockTagA: Float32Array.of(7),
+      clockFrameB: new Float32Array(128),
+      clockTagB: Float32Array.of(0),
+    });
+    expect(wrongTag.alive).toBe(false);
+    expect(Array.from(wrongTag.output[0]!)).toEqual(Array(128).fill(0));
+    const tagFault = tagged.port.messages.at(-1)!;
+    expect(tagFault).toMatchObject({
+      type: 'clock-fault',
+      expectedFrame: null,
+      observedFrame: -1,
+    });
+    expect(diagnosticOf(tagFault)).toMatchObject({
+      location: 'active',
+      reason: 'tag-mismatch',
+      failingSample: 0,
+      failingFrame: 0,
+      failingTag: 7,
+      length: 128,
+      cachedCurrentFrame: 0,
+      bank: { bank: 0, serial: 1, startFrame: 0, endFrame: 65536 },
+      activeBank: { bank: 0, serial: 1 },
+      warmingBank: null,
+      frame: {
+        first: 0,
+        last: 127,
+        min: 0,
+        max: 127,
+        nonFinite: 0,
+        count: 128,
+      },
+      tag: { first: 7, last: 7, min: 7, max: 7, nonFinite: 0, count: 1 },
+    });
+    expect(diagnosticOf(tagFault).samples.active.tag).toEqual([7]);
+    expect(diagnosticOf(tagFault).samples.active.frame).toHaveLength(128);
+    expect(diagnosticOf(tagFault).samples.warming).toBeNull();
+
+    // An endpoint outside the bank rejects at the offending sample.
+    const endpoint = new ProcessorClass({
+      processorOptions: { clockEpoch: 2, initialFrame: 0 },
+    });
+    const beyond = driveQuantum(endpoint, 0, {
+      clockFrameA: Float32Array.from({ length: 128 }, (_, i) =>
+        i === 5 ? 70000 : i
+      ),
+      clockTagA: Float32Array.of(1),
+      clockFrameB: new Float32Array(128),
+      clockTagB: Float32Array.of(0),
+    });
+    expect(beyond.alive).toBe(false);
+    expect(endpoint.port.messages.at(-1)?.diagnostic).toMatchObject({
+      location: 'active',
+      reason: 'frame-out-of-bank',
+      failingSample: 5,
+      failingFrame: 70000,
+      failingTag: 1,
+      frame: { min: 0, max: 70000, count: 128 },
+    });
+
+    // A warming bank whose tag is wrong reports location 'warming' and both descriptors.
+    const warm = new ProcessorClass({
+      processorOptions: { clockEpoch: 2, initialFrame: 0 },
+    });
+    let at = 0;
+    for (; at < 32128; at += 128)
+      expect(driveQuantum(warm, at, activeLanes(at)).alive).toBe(true);
+    warm.port.onmessage?.({
+      data: {
+        clockEpoch: 2,
+        type: 'install-bank',
+        requestId: 9,
+        descriptor: {
+          clockEpoch: 2,
+          bank: 1,
+          serial: 2,
+          startFrame: 32768,
+          endFrame: 98304,
+        },
+      },
+    });
+    for (; at < 32768; at += 128)
+      expect(driveQuantum(warm, at, activeLanes(at)).alive).toBe(true);
+    const warmFault = driveQuantum(warm, 32768, {
+      clockFrameA: Float32Array.from({ length: 128 }, (_, i) => 32768 + i),
+      clockTagA: Float32Array.of(1),
+      clockFrameB: Float32Array.from({ length: 128 }, (_, i) => i),
+      clockTagB: Float32Array.of(3),
+    });
+    expect(warmFault.alive).toBe(false);
+    const warmDiagnostic = warm.port.messages.at(-1);
+    expect(warmDiagnostic?.type).toBe('clock-fault');
+    expect(diagnosticOf(warmDiagnostic)).toMatchObject({
+      location: 'warming',
+      reason: 'tag-mismatch',
+      failingSample: 0,
+      failingFrame: 0,
+      failingTag: 3,
+      bank: { bank: 1, serial: 2, startFrame: 32768, endFrame: 98304 },
+      activeBank: { bank: 0, serial: 1 },
+      warmingBank: { bank: 1, serial: 2 },
+      tag: { first: 3, last: 3, count: 1 },
+    });
+    const warmingSamples = diagnosticOf(warmDiagnostic).samples.warming;
+    if (!warmingSamples) throw new Error('warming bank samples missing');
+    expect(warmingSamples.frame).toEqual(
+      Array.from({ length: 128 }, (_, i) => i)
+    );
+    expect(warmingSamples.tag).toEqual([3]);
+    expect(diagnosticOf(warmDiagnostic).samples.active.frame).toHaveLength(128);
   } finally {
     globals.AudioWorkletProcessor = originalProcessor;
     globals.registerProcessor = originalRegister;

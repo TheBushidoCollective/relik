@@ -28,6 +28,66 @@ export interface OtioGateAck {
   reason?: string;
 }
 
+/** Why a bank decode rejected a quantum. Recorded only on a failing decode. */
+export type OtioGateDecodeReason =
+  | 'missing-frame'
+  | 'missing-tag'
+  | 'frame-length'
+  | 'tag-length'
+  | 'tag-mismatch'
+  | 'non-finite-frame'
+  | 'frame-residual'
+  | 'frame-out-of-bank'
+  | 'frame-progression'
+  | 'unsafe-result'
+  | 'bank-overrun'
+  | 'expected-mismatch';
+
+export interface OtioGateBankDescriptor {
+  clockEpoch: number;
+  bank: 0 | 1;
+  serial: number;
+  startFrame: number;
+  endFrame: number;
+}
+
+/** Fixed-size summary of one raw parameter array. Scans at most one render quantum. */
+export interface OtioGateDecodeRange {
+  first: number;
+  last: number;
+  min: number;
+  max: number;
+  nonFinite: number;
+  count: number;
+}
+
+/** Raw per-sample lanes of one bank, bounded to one render quantum. */
+export interface OtioGateDecodeSamples {
+  frame: number[];
+  tag: number[];
+}
+
+/** Bounded evidence for a clock fault. Recorded once, on the terminal fault path only. */
+export interface OtioGateDecodeDiagnostic {
+  /** Which bank's decode rejected the quantum. */
+  location: 'active' | 'warming';
+  reason: OtioGateDecodeReason;
+  failingSample: number;
+  failingFrame: number | null;
+  failingTag: number | null;
+  length: number;
+  cachedCurrentFrame: number;
+  bank: OtioGateBankDescriptor;
+  frame: OtioGateDecodeRange | null;
+  tag: OtioGateDecodeRange | null;
+  activeBank: OtioGateBankDescriptor;
+  warmingBank: OtioGateBankDescriptor | null;
+  samples: {
+    active: OtioGateDecodeSamples;
+    warming: OtioGateDecodeSamples | null;
+  };
+}
+
 const frame = (value: unknown): value is number =>
   typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 
