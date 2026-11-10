@@ -29,6 +29,13 @@ export type PcmWorkerRequest =
       firstFrame: number;
       frameCount: number;
     }
+  | {
+      protocol: 1;
+      kind: 'close';
+      generation: number;
+      streamId: string;
+      requestId: number;
+    }
   | { protocol: 1; kind: 'cancel'; generation: number; streamId: string };
 export type PcmWorkerResponse =
   | {
@@ -48,6 +55,13 @@ export type PcmWorkerResponse =
       firstFrame: number;
       frameCount: number;
       planes: Float32Array[];
+    }
+  | {
+      protocol: 1;
+      kind: 'closed';
+      generation: number;
+      streamId: string;
+      requestId: number;
     }
   | {
       protocol: 1;

@@ -31,6 +31,98 @@ class FakeWorker {
     this.onmessage?.({ data: message } as MessageEvent);
   }
 }
+test('close waits for its acknowledgement and ignores stale acknowledgements on reuse', async () => {
+  const worker = new FakeWorker();
+  const provider = new OtioPcmProvider(
+    4,
+    new OtioPcmBudget(),
+    worker as unknown as Worker
+  );
+  const opening = provider.open('a', new Blob([]), header);
+  await Promise.resolve();
+  worker.reply({
+    protocol: 1,
+    generation: 4,
+    streamId: 'a',
+    requestId: worker.messages[0]!.requestId,
+    kind: 'ready',
+    header,
+  });
+  await opening;
+  const closing = provider.close('a');
+  const reopening = provider.open('a', new Blob([]), header);
+  await Promise.resolve();
+  const close = worker.messages[1]!;
+  expect(close.kind).toBe('close');
+  expect(worker.messages).toHaveLength(2);
+  worker.reply({
+    protocol: 1,
+    generation: 3,
+    streamId: 'a',
+    requestId: close.requestId,
+    kind: 'closed',
+  });
+  expect(worker.messages).toHaveLength(2);
+  worker.reply({
+    protocol: 1,
+    generation: 4,
+    streamId: 'a',
+    requestId: close.requestId,
+    kind: 'closed',
+  });
+  await closing;
+  await Promise.resolve();
+  const open = worker.messages[2]!;
+  expect(open.kind).toBe('open');
+  worker.reply({
+    protocol: 1,
+    generation: 4,
+    streamId: 'a',
+    requestId: close.requestId,
+    kind: 'closed',
+  });
+  worker.reply({
+    protocol: 1,
+    generation: 4,
+    streamId: 'a',
+    requestId: open.requestId,
+    kind: 'ready',
+    header,
+  });
+  await reopening;
+  provider.dispose();
+});
+
+test('cancelling during a held close terminates the worker and rejects queued work', async () => {
+  const worker = new FakeWorker();
+  const provider = new OtioPcmProvider(
+    4,
+    new OtioPcmBudget(),
+    worker as unknown as Worker
+  );
+  const opening = provider.open('a', new Blob([]), header);
+  await Promise.resolve();
+  worker.reply({
+    protocol: 1,
+    generation: 4,
+    streamId: 'a',
+    requestId: worker.messages[0]!.requestId,
+    kind: 'ready',
+    header,
+  });
+  await opening;
+  const closing = provider.close('a');
+  const queued = provider.open('b', new Blob([]), header);
+  const closeResult = closing.catch((error: Error) => error);
+  const queuedResult = queued.catch((error: Error) => error);
+  await Promise.resolve();
+  expect(worker.messages[1]!.kind).toBe('close');
+  provider.cancel('a');
+  expect(worker.terminated).toBe(true);
+  expect(await closeResult).toBeInstanceOf(Error);
+  expect(await queuedResult).toBeInstanceOf(Error);
+  expect(worker.messages).toHaveLength(2);
+});
 
 test('worker requests are serialized, credited and generation-scoped', async () => {
   const worker = new FakeWorker(),

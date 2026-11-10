@@ -110,7 +110,7 @@ export class OtioPcmProvider {
         m.generation !== this.generation ||
         m.protocol !== OTIO_PCM_PROTOCOL ||
         m.streamId !== pending.streamId ||
-        !['ready', 'pcm', 'eos', 'failed'].includes(m.kind) ||
+        !['ready', 'pcm', 'closed', 'eos', 'failed'].includes(m.kind) ||
         (m.kind === 'failed' && typeof m.reason !== 'string')
       ) {
         this.fail('Invalid PCM worker response');
@@ -280,6 +280,25 @@ export class OtioPcmProvider {
         this.fail('PCM worker post failed');
       }
     }
+  }
+  close(streamId: string): Promise<void> {
+    if (this.closed) {
+      this.headers.delete(streamId);
+      return Promise.resolve();
+    }
+    return this.enqueue(streamId, async () => {
+      this.headers.delete(streamId);
+      const requestId = this.nextId++;
+      const response = await this.request({
+        protocol: OTIO_PCM_PROTOCOL,
+        kind: 'close',
+        generation: this.generation,
+        streamId,
+        requestId,
+      });
+      if (response.kind !== 'closed')
+        throw new Error('Invalid PCM worker close response');
+    });
   }
   dispose(): void {
     this.fail('PCM provider disposed');

@@ -107,6 +107,17 @@ scope.onmessage = (event: MessageEvent<PcmWorkerRequest>) => {
         }
         return;
       }
+      if (message.kind === 'close') {
+        versions.set(id, (versions.get(id) ?? 0) + 1);
+        const stream = streams.get(id);
+        if (stream) {
+          stream.cancelled = true;
+          stream.input.dispose();
+          streams.delete(id);
+        }
+        send({ ...base, kind: 'closed' });
+        return;
+      }
       if (message.kind !== 'pull') throw new Error('Unknown PCM request');
       const stream = streams.get(id);
       if (!stream || stream.cancelled) throw new Error('PCM stream is closed');
