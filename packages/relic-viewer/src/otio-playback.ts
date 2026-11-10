@@ -109,6 +109,10 @@ export type {
   PresentedWindowOutcome,
 };
 
+/** One own resume or suspend whose statechange has not been observed yet. */
+type PcmIntentToken = { readonly state: AudioContextState };
+/** Bounds pending own transitions; a bootstrap starts at most a few. */
+const PCM_INTENT_TOKEN_LIMIT = 8;
 /** Keeps worklet-node credits until render-thread or owned-context retirement. */
 export class OtioPcmGateRetirements {
   private readonly releases = new Set<() => void>();
@@ -1237,7 +1241,7 @@ export function createOtioPlayback(
   const pcmQuarantinedContexts = new Map<AudioContext, Promise<void>>();
   let pcmBootstrapToken = 0;
   let pcmBootstrapAbort = new AbortController();
-  let pcmIntentionalTransition: AudioContextState | null = null;
+  let pcmIntentTokens: PcmIntentToken[] = [];
   let pcmForeignTransitions = 0;
   let pcmRun: PcmRun | null = null;
   let pcmAdmission: PcmAdmission | null = null;
@@ -2314,12 +2318,45 @@ export function createOtioPlayback(
     if (audioBackend === 'pcm' && (pcmRun || pcmPlayIntent))
       failScheduledAudio('audio output route changed');
   };
+  // Own resume and suspend calls leave a token until their statechange is observed. A browser
+  // fires statechange in a later task than the promise settles, so the token outlives the call.
+  function removeIntent(token: PcmIntentToken): void {
+    const index = pcmIntentTokens.indexOf(token);
+    if (index >= 0) pcmIntentTokens.splice(index, 1);
+  }
+  function intendedTransition(
+    context: AudioContext,
+    target: AudioContextState,
+    operation: () => Promise<void>
+  ): Promise<void> {
+    const before = context.state;
+    // Changing to the state already held fires no statechange, so there is nothing to observe.
+    if (before === target) return operation();
+    const token: PcmIntentToken = { state: target };
+    pcmIntentTokens.push(token);
+    if (pcmIntentTokens.length > PCM_INTENT_TOKEN_LIMIT)
+      pcmIntentTokens.shift();
+    const settle = () => {
+      // The state did not move, so no event is coming for this token.
+      if (context.state === before) removeIntent(token);
+    };
+    let pending: Promise<void>;
+    try {
+      pending = operation();
+    } catch (error) {
+      settle();
+      throw error;
+    }
+    return pending.finally(settle);
+  }
   const onPcmContextChange = () => {
-    const intentional =
-      pcmIntentionalTransition !== null &&
-      audioContext?.state === pcmIntentionalTransition;
-    if (!intentional) pcmForeignTransitions++;
-    if (audioContext?.state === 'running' || intentional) return;
+    const state = audioContext?.state;
+    // Each own event consumes the oldest pending token. An event that matches no token is foreign
+    // and is counted, so an extra event can block a restore but never permit one.
+    const owned = pcmIntentTokens.some((token) => token.state === state);
+    if (owned) pcmIntentTokens.shift();
+    else pcmForeignTransitions++;
+    if (state === 'running' || owned) return;
     pcmRouteVersion++;
     retirePcmClockSession();
     if (audioBackend === 'pcm' && !pcmRun && pcmPlayIntent)
@@ -3122,14 +3159,13 @@ export function createOtioPlayback(
         throw new Error('transport clock bootstrap cancelled');
     };
     const resume = async () => {
-      pcmIntentionalTransition = 'running';
       const mark = pcmForeignTransitions;
-      try {
-        await bounded(trackNative(lease ? lease.resume() : context.resume()));
-        if (lease && pcmForeignTransitions === mark) resumeMark = mark;
-      } finally {
-        pcmIntentionalTransition = null;
-      }
+      await bounded(
+        intendedTransition(context, 'running', () =>
+          trackNative(lease ? lease.resume() : context.resume())
+        )
+      );
+      if (lease && pcmForeignTransitions === mark) resumeMark = mark;
     };
     try {
       if (options.audioContext) {
@@ -3218,6 +3254,10 @@ export function createOtioPlayback(
                 if (cause instanceof OtioGatePreconstructionError) {
                   release();
                   releaseCarrier();
+                } else if (cause instanceof OtioGateAnchorLateError) {
+                  // The late gate keeps its node credits until its retirement resolves.
+                  // A rejected retirement is unacknowledged, so the credits stay reserved.
+                  void cause.retirement.then(release, () => undefined);
                 }
               }
             );
@@ -3268,48 +3308,45 @@ export function createOtioPlayback(
     } finally {
       const cleanup = (async () => {
         await Promise.all([...pendingNative]);
-        try {
-          if (lease) {
-            const restorable =
-              !succeeded &&
-              resumeMark !== null &&
-              pcmForeignTransitions === resumeMark &&
-              pcmRouteVersion === route &&
-              !lease.signal.aborted &&
-              context.state === 'running';
-            if (restorable) {
-              pcmIntentionalTransition = 'suspended';
-              try {
-                await lease.suspend();
-                if (context.state !== 'suspended')
-                  throw new Error('borrowed context did not reach suspended');
-                pcmProof('borrowed-context-restored', pcmGeneration, {});
-              } catch (error) {
-                const reason =
-                  error instanceof Error ? error.message : String(error);
-                pcmProof('borrowed-context-restore-failed', pcmGeneration, {
-                  reason,
-                });
-                if (!isDisposed)
-                  mediaFailures.set(
-                    'pcm-clock-restore',
-                    diagnostic(
-                      'error',
-                      'unsupported-browser',
-                      `Borrowed audio context restore failed: ${reason}`,
-                      timelineId
-                    )
-                  );
-                notify();
-              } finally {
-                pcmIntentionalTransition = null;
-              }
+        if (lease) {
+          const borrowed = lease;
+          const restorable =
+            !succeeded &&
+            resumeMark !== null &&
+            pcmForeignTransitions === resumeMark &&
+            pcmRouteVersion === route &&
+            !borrowed.signal.aborted &&
+            context.state === 'running';
+          if (restorable) {
+            try {
+              await intendedTransition(context, 'suspended', () =>
+                borrowed.suspend()
+              );
+              const settled = context.state as AudioContextState;
+              if (settled !== 'suspended')
+                throw new Error('borrowed context did not reach suspended');
+              pcmProof('borrowed-context-restored', pcmGeneration, {});
+            } catch (error) {
+              const reason =
+                error instanceof Error ? error.message : String(error);
+              pcmProof('borrowed-context-restore-failed', pcmGeneration, {
+                reason,
+              });
+              if (!isDisposed)
+                mediaFailures.set(
+                  'pcm-clock-restore',
+                  diagnostic(
+                    'error',
+                    'unsupported-browser',
+                    `Borrowed audio context restore failed: ${reason}`,
+                    timelineId
+                  )
+                );
+              notify();
             }
-            lease.signal.removeEventListener('abort', onLeaseRevoked);
-            await lease.release();
           }
-        } finally {
-          pcmIntentionalTransition = null;
+          borrowed.signal.removeEventListener('abort', onLeaseRevoked);
+          await borrowed.release();
         }
       })();
       quarantinePcmContext(context, cleanup);

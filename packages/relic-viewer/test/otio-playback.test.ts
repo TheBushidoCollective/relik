@@ -43,6 +43,9 @@ import type {
   readOtioVideoTiming,
 } from '../src/otio-video-timing.ts';
 
+// Captured before fixtures stub setTimeout: fake statechange delivery must use a real task.
+const realSetTimeout = globalThis.setTimeout.bind(globalThis);
+
 type ReadVideoTiming = typeof readOtioVideoTiming;
 const OTIO_GRAPHICS_RESTORE_MS = 3000;
 
@@ -1777,6 +1780,8 @@ describe('otio playback controller', () => {
       ownedContext?: boolean;
       revokeLeaseOnResume?: boolean;
       foreignOnResume?: boolean;
+      foreignCycleOnResume?: boolean;
+      moduleGate?: Promise<void>;
       suspendLeaseFails?: boolean;
       initialContextState?: 'running' | 'suspended';
       suspendGate?: Promise<void>;
@@ -1949,8 +1954,13 @@ describe('otio playback controller', () => {
     class FakeContext {
       readonly sampleRate = sampleRate;
       readonly destination = new FakeNode();
-      readonly audioWorklet = { addModule: async () => {} };
-      state = clockOptions?.initialContextState ?? 'running';
+      readonly audioWorklet = {
+        addModule: async () => {
+          await clockOptions?.moduleGate;
+        },
+      };
+      state: AudioContextState | 'closed' =
+        clockOptions?.initialContextState ?? 'running';
       readonly sources: FakeSource[] = [];
       readonly timestampReads: number[] = [];
       readonly listeners = new Map<string, Set<() => void>>();
@@ -2013,14 +2023,27 @@ describe('otio playback controller', () => {
       dispatch(type: string) {
         for (const listener of this.listeners.get(type) ?? []) listener();
       }
+      /** A browser fires statechange in a later task, after resume() or suspend() has settled. */
+      scheduleStatechange() {
+        realSetTimeout(() => this.dispatch('statechange'), 0);
+      }
+      /** A transition this owner did not request, observed after its promise settles. */
+      foreignTransition(state: AudioContextState) {
+        this.state = state;
+        this.scheduleStatechange();
+      }
       async suspend() {
         suspensions++;
         await clockOptions?.suspendGate;
-        this.state = 'suspended';
+        if (this.state !== 'suspended') {
+          this.state = 'suspended';
+          this.scheduleStatechange();
+        }
       }
       async resume() {
         resumes++;
         await clockOptions?.resumeGate;
+        const changed = this.state !== 'running';
         if (this.state === 'suspended') {
           const quantumSamples = clockOptions?.anchorQuanta
             ? clockOptions.anchorQuanta[0] + clockOptions.anchorQuanta[1]
@@ -2040,6 +2063,7 @@ describe('otio playback controller', () => {
             outputWallOffset = wall - (outputFrame * 1000) / sampleRate;
         }
         this.state = 'running';
+        if (changed) this.scheduleStatechange();
       }
       async close() {
         closes++;
@@ -2405,9 +2429,11 @@ describe('otio playback controller', () => {
                 },
                 resume: async () => {
                   await audioContext.resume();
-                  if (clockOptions?.foreignOnResume) {
-                    audioContext.state = 'suspended';
-                    audioContext.dispatch('statechange');
+                  if (clockOptions?.foreignOnResume)
+                    audioContext.foreignTransition('suspended');
+                  if (clockOptions?.foreignCycleOnResume) {
+                    audioContext.foreignTransition('suspended');
+                    audioContext.foreignTransition('running');
                   }
                   if (clockOptions?.revokeLeaseOnResume) leaseAbort.abort();
                 },
@@ -2429,6 +2455,10 @@ describe('otio playback controller', () => {
         for (const gate of gates) gate.process();
         if (deliver) for (const callback of callbackQueue.splice(0)) callback();
       }
+      // Browsers fire statechange in a later task; yield so queued events run.
+      const { promise, resolve } = Promise.withResolvers<void>();
+      realSetTimeout(resolve, 0);
+      await promise;
     }
     async function advance(
       nextWall: number,
@@ -2818,6 +2848,11 @@ describe('otio playback controller', () => {
       expect(fixture.suspensions).toBe(1);
       expect(fixture.audioContext.state).toBe('suspended');
       expect(fixture.leaseReleases).toBe(1);
+      expect(
+        fixture.playback
+          .getState()
+          .diagnostics.some((item) => item.message.includes('interrupted'))
+      ).toBe(false);
       expect(fixture.playback.getState().playing).toBe(false);
     } finally {
       fixture.restore();
@@ -2953,14 +2988,67 @@ describe('otio playback controller', () => {
       });
       try {
         await fixture.start();
+        for (let i = 0; i < 10; i++) await fixture.flush();
         expect(fixture.suspensions).toBe(0);
         expect(fixture.resumes).toBe(1);
+        expect(fixture.audioContext.state).toBe('running');
         expect(fixture.gates).toHaveLength(1);
+        expect(
+          fixture.playback
+            .getState()
+            .diagnostics.some((item) => item.message.includes('interrupted'))
+        ).toBe(false);
       } finally {
         fixture.restore();
       }
     }
   );
+
+  test('a foreign running cycle during the owner resume blocks restore even when it ends running', async () => {
+    const fixture = independentPcmFixture(false, false, undefined, {
+      anchorLateAttempts: 2,
+      initialContextState: 'suspended',
+      foreignCycleOnResume: true,
+    });
+    try {
+      await fixture.playback.play();
+      for (let i = 0; i < 10; i++) await fixture.flush();
+      expect(fixture.suspensions).toBe(0);
+      expect(fixture.audioContext.state).toBe('running');
+      expect(fixture.leaseReleases).toBe(1);
+      expect(fixture.playback.getState().playing).toBe(false);
+    } finally {
+      fixture.restore();
+    }
+  });
+
+  test('a startup cancelled during module load releases its late gate only after retirement', async () => {
+    const gate = Promise.withResolvers<void>();
+    const fixture = independentPcmFixture(false, false, undefined, {
+      anchorLateAttempts: 1,
+      proofBudget: true,
+      moduleGate: gate.promise,
+    });
+    const proof = globalThis as typeof globalThis & {
+      __otioProofPcmSnapshot: () => { gateReservations: number };
+    };
+    try {
+      const pending = fixture.playback.play().catch(() => undefined);
+      for (let i = 0; i < 5; i++) await fixture.flush();
+      expect(proof.__otioProofPcmSnapshot().gateReservations).toBe(1);
+      fixture.playback.pause();
+      gate.resolve();
+      await pending;
+      for (let i = 0; i < 20; i++) {
+        await fixture.flush();
+        if (proof.__otioProofPcmSnapshot().gateReservations === 0) break;
+      }
+      expect(proof.__otioProofPcmSnapshot().gateReservations).toBe(0);
+      expect(fixture.playback.getState().playing).toBe(false);
+    } finally {
+      fixture.restore();
+    }
+  });
 
   test('pause and play reuse the running certified session without context transitions', async () => {
     const fixture = independentPcmFixture(false, false, undefined, {
@@ -3775,7 +3863,7 @@ describe('otio playback controller', () => {
       await seek;
       await preparation;
       expect(fixture.closes).toBe(1);
-      expect(original.state).toBe('closed');
+      expect(original.state as AudioContextState).toBe('closed');
       expect(snapshot()).toMatchObject({ nodes: 0, bytes: 0 });
       for (const ended of staleEnded) ended?.();
       expect(snapshot()).toMatchObject({ nodes: 0, bytes: 0 });
