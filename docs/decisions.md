@@ -5,8 +5,8 @@ are locked inputs. Each of those documents routes a short list of open picks
 forward. This file makes those picks and records why, so no value in the code
 is a number nobody can account for.
 
-Nothing here reopens a locked decision. Where a pick is constrained by a
-locked rule, the rule is cited rather than restated.
+The original picks below remain the historical record. Dated amendments
+supersede them where they name a later decision.
 
 ## From `spec/format.md` section 4
 
@@ -63,14 +63,12 @@ reserved word is `manifest.webmanifest` at 20 (`format.md` 1.5).
 
 ### 4. The cap, and which side it lands on
 
-**100 MiB, enforced on plaintext.** `format.md` 3.11 requires the published
-number be one a user can verify with `ls`, and enforcing on the side that is
-published removes the conversion entirely. `size_basis` is therefore
-`plaintext` in every `size_over_cap` problem document.
+**500 MiB, enforced on plaintext: 524,288,000 bytes.** The previous limit was
+100 MiB; Jason Waldrip authorized the increase on 2026-11-10. `size_basis`
+remains `plaintext` in every `size_over_cap` problem document.
 
-The grant signs a ciphertext constraint computed as
-`encryptedSize(104857600)`, so a file exactly at the published cap always
-fits, which is the failure 3.11 exists to prevent.
+At the current 65,536-byte record size, `encryptedSize(524288000)` is
+524,489,608 bytes, so a file exactly at the published cap fits its grant.
 
 ### 5. Bucket padding
 
@@ -117,13 +115,14 @@ mints and a ceiling near 80 where scanners detonate with a real browser. 200
 clears the ceiling by 2.5x, which leaves room for the same relic to be
 forwarded once without dying.
 
-Worst-case egress per relic is 200 x 100 MiB, which is 20 GiB, or $2.40 at
-$0.12/GB. That is the number the kill-switch ceiling is set against.
+At the cap, 200 mints with one complete ciphertext fetch each are
+104,897,921,600 bytes, or 97.69 GiB. At $0.12 per GiB that is about $11.72.
+A signed URL can be fetched more than once, so this is a planning case, not
+an egress ceiling.
 
-The pool is per relic id across every version: republishing adds an object,
-never a second pool (`format.md` 3.12), so the 20 GiB ceiling per id survives
-versioning. What versions multiply is storage, up to 100 MiB per version,
-kept until deleted.
+The pool is per relic ID across every version (`format.md` 3.12); versions
+share the 200 mints. Each version may store up to 500 MiB of plaintext before
+encryption.
 
 ### 3. Expiry
 
@@ -145,10 +144,10 @@ controls that remain are delete-by-ID, the download cap, and the kill switch.
 
 ### 4. Signed-URL validity
 
-**15 minutes, with a minimum viable validity of 60 seconds.** Long enough for
-a 100 MiB download on a slow connection, short enough that the residual drain
-after the kill switch engages is bounded by 15 minutes of already-minted
-URLs.
+**15 minutes, with a minimum viable validity of 60 seconds.** The validity
+limits when already-minted URLs can start new requests after the kill switch
+engages. Whether a transfer continues after URL expiry remains unverified; a
+cap-sized fetch needs at least 4.66 Mbit/s to finish within 900 seconds.
 
 A mint that would clamp below 60 seconds is refused with `relic_expired`
 rather than issuing a URL that dies mid-transfer (`service.md` section 3).
@@ -811,7 +810,10 @@ Authorised by Jason Waldrip on 2026-10-20.
 2. *General archives remain download-only:* ZIP, TAR, GZ, and arbitrary archive formats continue to take class `archive` and download to the recipient's device (`CLASS_BEHAVIOUR.archive: 'downloads'`).
 3. *Single-entry container invariant:* Packaging `.otiod` into `.otioz` occurs before container encryption. The ciphertext container envelope continues to hold exactly one entry (the `.otioz` bundle), maintaining container version 1 invariants without a format bump.
 4. *Strict local bundle containment:* Relative media references resolve strictly against the bundle root. Absolute paths, parent traversals (`..`), symlinks, device files, FIFOs, sockets, and remote network schemes (HTTP, HTTPS, FTP) are rejected.
-5. *100 MiB safety ceiling:* The 100 MiB limit applies both to archive bytes and aggregate expanded bytes. Bounded decompression counts emitted bytes during inflation and rejects decompression bombs or corrupt CRCs.
+5. *Bundle and decompression limits:* The original 100 MiB archive and
+   aggregate-expanded limits were raised to 500 MiB by the 2026-11-10
+   decision. Separate limits remain on inflated data, timeline documents,
+   and the ZIP directory.
 6. *Original source identity preserved:* Logical source identity for `.otiod` remains the directory's Git-relative path or realpath rather than the transient `.otioz` package name, ensuring source lookup and republish detection work transparently across sessions.
 
 **Native confined-open exception, 2026-10-21.** The earlier client-distribution
@@ -1048,3 +1050,35 @@ The same change fixes the player for every markdown source: an indented line und
 ## 2026-11-09: Comment writes have no rate limit
 
 Jason directed that comments never be rate limited. Comment creation, edits, resolution, and reopening no longer share a per-IP quota. Authentication and author permissions, transport limits, the kill switch, and notification mail limits remain in place. This permits unbounded comment storage and readback work by an authorized actor; the mail limits do not bound that work. A fixed-clock burst exercises writes beyond the former threshold.
+
+## 2026-11-10: Larger relics and browser-managed previews
+
+Authorized by Jason Waldrip on 2026-11-10.
+
+- The plaintext publication cap is 500 MiB (524,288,000 bytes). The existing
+  200-mint limit remains shared by all versions.
+- The viewer decrypts records into a browser-managed Blob and reads bounded
+  slices for renderers. The former whole-file heap and prefix-only design is
+  superseded. Streaming plaintext through a ServiceWorker is not part of this
+  change.
+- Browser-managed Blob data may reside in memory or temporary disk, and the
+  operating system may swap memory to disk. A download also writes a file.
+  Neither where the browser stores plaintext nor its erasure on close is
+  guaranteed.
+- For files larger than 100 MiB, the viewer authenticates the envelope and
+  asks the reader to confirm before a full-file fetch. The initial request
+  needs a mint and reads record 0; buffering can transfer additional bytes.
+- Code and plain text above 100 MiB use a windowed source view across the
+  entire file. Markdown, HTML, and JSX above that threshold use the same
+  full-source view rather than rendering or executing the full document.
+- STL and OBJ preview retains the existing 16 MiB, 250,000-triangle,
+  500,000-source-vertex, and 1,024-vertices-per-face limits. Larger or invalid
+  models remain downloadable.
+- OTIO archives and their total expanded bytes may reach 500 MiB. The total
+  inflated ZIP data and the `content.otio` or raw `.otio` document each
+  retain a 100 MiB bound; the ZIP directory is bounded at 16 MiB. Existing
+  timing-array and other parser budgets remain separate.
+- The one-fetch-per-mint egress case is 97.69 GiB, about $11.72 at
+  $0.12/GiB. Reuse of a signed URL can increase that amount. The operator's
+  egress ceiling must be reviewed against this change; this record does not
+  claim that an external monitor was changed.
