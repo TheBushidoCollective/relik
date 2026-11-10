@@ -30,6 +30,7 @@ import {
   SNAPSHOT_SLOTS_PER_DECODER,
 } from '../src/otio-playback.ts';
 import { OtioPcmBudget, OtioPcmScheduler } from '../src/otio-audio-pcm.ts';
+import { OTIO_PCM_MAX_BYTES } from '../src/otio-audio-pcm-protocol.ts';
 import { OtioTransportGateState } from '../src/otio-transport-gate-state.ts';
 import {
   certifiedWindowIndex,
@@ -1807,6 +1808,7 @@ describe('otio playback controller', () => {
       'clearTimeout',
       '__otioProofPcm',
       '__otioProofPcmSnapshot',
+      '__otioProofReservePcmBytes',
       '__otioProofPcmFault',
       '__otioProofHoldOldDrain',
       'HTMLVideoElement',
@@ -1852,8 +1854,15 @@ describe('otio playback controller', () => {
     const callbackQueue: Array<() => void> = [];
     let holdPcm = false;
     const heldPcm: Array<() => void> = [];
+    let holdCandidatePcm = false;
+    const heldCandidatePcm: Array<() => void> = [];
+    let firstWorkerGeneration: number | null = null;
     let holdClose = false;
     const heldCloses: Array<() => void> = [];
+    let holdCandidateArm = false;
+    let holdAbort = false;
+    const heldCandidateArms: Array<() => void> = [];
+    const heldAborts: Array<() => void> = [];
     let liveStreams = 0;
     let peakStreams = 0;
     const workerEvents: Array<{
@@ -1923,11 +1932,13 @@ describe('otio playback controller', () => {
       readonly audioWorklet = { addModule: async () => {} };
       state = 'running';
       readonly sources: FakeSource[] = [];
+      readonly timestampReads: number[] = [];
       readonly listeners = new Map<string, Set<() => void>>();
       get currentTime() {
         return renderFrame / this.sampleRate;
       }
       getOutputTimestamp() {
+        this.timestampReads.push(wall);
         return {
           contextTime: outputFrame / this.sampleRate,
           performanceTime: outputWallOffset + (outputFrame * 1000) / sampleRate,
@@ -2022,6 +2033,7 @@ describe('otio playback controller', () => {
             : {}),
         });
         if (message.kind === 'open') {
+          firstWorkerGeneration ??= message.generation as number;
           this.streams.add(streamId);
           liveStreams++;
           peakStreams = Math.max(peakStreams, liveStreams);
@@ -2053,7 +2065,9 @@ describe('otio playback controller', () => {
             this.onmessage?.({
               data: { ...base, kind: 'pcm', firstFrame, frameCount, planes },
             } as MessageEvent);
-          if (holdPcm) heldPcm.push(deliver);
+          if (holdCandidatePcm && message.generation !== firstWorkerGeneration)
+            heldCandidatePcm.push(deliver);
+          else if (holdPcm) heldPcm.push(deliver);
           else queueMicrotask(deliver);
         }
       }
@@ -2146,7 +2160,17 @@ describe('otio playback controller', () => {
             });
           } else {
             const ack = this.machine.command(message, renderFrame);
-            emit(ack as unknown as Record<string, unknown>);
+            const deliver = () =>
+              emit(ack as unknown as Record<string, unknown>);
+            if (
+              message.type === 'arm' &&
+              message.generation !== firstWorkerGeneration &&
+              holdCandidateArm
+            )
+              heldCandidateArms.push(deliver);
+            else if (message.type === 'abort' && holdAbort)
+              heldAborts.push(deliver);
+            else deliver();
           }
         }
         if (
@@ -2358,6 +2382,27 @@ describe('otio playback controller', () => {
       }
       await flush(deliver);
     }
+    async function advanceSmooth(
+      nextWall: number,
+      nextRender: number,
+      nextOutput: number,
+      deliver = true
+    ) {
+      const startWall = wall;
+      const startRender = renderFrame;
+      const startOutput = outputFrame;
+      const duration = nextWall - startWall;
+      for (let elapsed = 8; elapsed < duration; elapsed += 8) {
+        const fraction = elapsed / duration;
+        await advance(
+          startWall + elapsed,
+          Math.round(startRender + (nextRender - startRender) * fraction),
+          Math.round(startOutput + (nextOutput - startOutput) * fraction),
+          deliver
+        );
+      }
+      await advance(nextWall, nextRender, nextOutput, deliver);
+    }
     async function deliverCallbacks() {
       for (const callback of callbackQueue.splice(0)) callback();
       await flush();
@@ -2455,6 +2500,21 @@ describe('otio playback controller', () => {
         if (!value)
           for (const deliver of heldCloses.splice(0)) queueMicrotask(deliver);
       },
+      holdCandidateArmResponses(value: boolean) {
+        holdCandidateArm = value;
+        if (!value)
+          for (const deliver of heldCandidateArms.splice(0)) deliver();
+      },
+      holdAbortResponses(value: boolean) {
+        holdAbort = value;
+        if (!value) for (const deliver of heldAborts.splice(0)) deliver();
+      },
+      get heldCandidateArmCount() {
+        return heldCandidateArms.length;
+      },
+      get heldAbortCount() {
+        return heldAborts.length;
+      },
       gates,
       holdPcmResponses(value: boolean) {
         holdPcm = value;
@@ -2464,11 +2524,21 @@ describe('otio playback controller', () => {
       get heldPcmCount() {
         return heldPcm.length;
       },
+      holdCandidatePcmResponses(value: boolean) {
+        holdCandidatePcm = value;
+        if (!value)
+          for (const deliver of heldCandidatePcm.splice(0))
+            queueMicrotask(deliver);
+      },
+      get heldCandidatePcmCount() {
+        return heldCandidatePcm.length;
+      },
       get firstScheduleLead() {
         return firstScheduleLead;
       },
       start,
       advance,
+      advanceSmooth,
       flush,
       deliverCallbacks,
       restore,
@@ -2835,15 +2905,18 @@ describe('otio playback controller', () => {
   });
 
   test.each([
-    ['shared', 44100, false],
-    ['shared', 48000, false],
-    ['disjoint', 44100, false],
-    ['disjoint', 48000, false],
-    ['disjoint', 44100, true],
-    ['disjoint', 48000, true],
+    ['shared', 44100, false, false, false],
+    ['shared', 48000, false, false, false],
+    ['disjoint', 44100, false, false, false],
+    ['disjoint', 48000, false, false, false],
+    ['disjoint', 44100, true, false, false],
+    ['disjoint', 48000, true, false, false],
+    ['disjoint', 44100, false, true, false],
+    ['disjoint', 48000, false, true, false],
+    ['disjoint', 48000, false, false, true],
   ] as const)(
-    'eight voices with %s identities at %i Hz, cancel=%s',
-    async (identity, sampleRate, cancel) => {
+    'eight voices with %s identities at %i Hz, cancel=%s, victim closes=%s, budget full=%s',
+    async (identity, sampleRate, cancel, victimCloses, budgetFull) => {
       const time = (value: number) => ({
         OTIO_SCHEMA: 'RationalTime.1',
         value,
@@ -2941,6 +3014,8 @@ describe('otio playback controller', () => {
             fixture.renderFrame + advanceFrames,
             fixture.outputFrame + advanceFrames
           );
+          raf?.(fixture.wall);
+          await fixture.flush();
           expect(
             fixture.workerEvents.filter((event) => event.kind === 'open')
           ).toHaveLength(opens);
@@ -2953,6 +3028,64 @@ describe('otio playback controller', () => {
             ).toHaveLength(opens);
             expect(fixture.liveStreams).toBe(0);
             expect(fixture.peakStreams).toBeLessThanOrEqual(10);
+            return;
+          }
+          if (budgetFull) {
+            const proof = globalThis as typeof globalThis & {
+              __otioProofPcmSnapshot: () => { bytes: number };
+              __otioProofReservePcmBytes: (bytes: number) => () => void;
+            };
+            const release = proof.__otioProofReservePcmBytes(
+              OTIO_PCM_MAX_BYTES - proof.__otioProofPcmSnapshot().bytes
+            );
+            try {
+              expect(proof.__otioProofPcmSnapshot().bytes).toBe(
+                OTIO_PCM_MAX_BYTES
+              );
+              fixture.holdCloseResponses(false);
+              for (let i = 0; i < 30; i++) await fixture.flush();
+              const arm = fixture.commands.find(
+                (event) => event.type === 'arm'
+              )!;
+              const boundary = Number(arm.throughFrame);
+              await fixture.advanceSmooth(
+                1000 + (boundary * 1000) / sampleRate,
+                boundary + 128,
+                boundary - Math.floor(sampleRate * 0.01)
+              );
+              for (let i = 0; i < 20; i++) await fixture.flush();
+              expect(
+                fixture.commands.filter((event) => event.type === 'arm')
+              ).toHaveLength(1);
+            } finally {
+              release();
+            }
+            return;
+          }
+          if (victimCloses) {
+            const arm = fixture.commands.find((event) => event.type === 'arm')!;
+            const boundary = Number(arm.throughFrame);
+            await fixture.advanceSmooth(
+              1000 + (boundary * 1000) / sampleRate,
+              boundary + 128,
+              boundary - Math.floor(sampleRate * 0.01)
+            );
+            for (let i = 0; i < 20; i++)
+              await fixture.advance(
+                fixture.wall + 1,
+                fixture.renderFrame + Math.round(sampleRate / 1000),
+                fixture.outputFrame + Math.round(sampleRate / 1000)
+              );
+            const arms = fixture.commands.filter(
+              (event) => event.type === 'arm'
+            );
+            expect(arms).toHaveLength(2);
+            expect(Number(arms[1]!.f0) - boundary).toBeLessThanOrEqual(
+              Math.floor(sampleRate * 0.02)
+            );
+            expect(fixture.peakStreams).toBeLessThanOrEqual(10);
+            expect(fixture.playback.getState().playing).toBe(true);
+            fixture.holdCloseResponses(false);
             return;
           }
           fixture.holdCloseResponses(false);
@@ -3011,7 +3144,45 @@ describe('otio playback controller', () => {
     }
   );
 
-  test('PCM resource starvation waits for actual ended callbacks before replacement', async () => {
+  test('a stalled candidate decode cannot block the active refill', async () => {
+    const fixture = independentPcmFixture(false, false, undefined, {
+      proofBudget: true,
+    });
+    try {
+      fixture.holdCandidatePcmResponses(true);
+      await fixture.start();
+      for (let i = 0; i < 20 && !fixture.heldCandidatePcmCount; i++)
+        await fixture.flush();
+      expect(fixture.heldCandidatePcmCount).toBeGreaterThan(0);
+      const oldGeneration = fixture.workerEvents.find(
+        (event) => event.kind === 'open'
+      )!.generation;
+      const before = fixture.workerEvents.filter(
+        (event) => event.kind === 'pull' && event.generation === oldGeneration
+      ).length;
+      await fixture.advanceSmooth(
+        fixture.wall + 16,
+        fixture.renderFrame + 768,
+        fixture.outputFrame + 768
+      );
+      raf?.(fixture.wall);
+      for (let i = 0; i < 20; i++) await fixture.flush();
+      const oldPulls = fixture.workerEvents.filter(
+        (event) => event.kind === 'pull' && event.generation === oldGeneration
+      );
+      expect(oldPulls.length).toBeGreaterThan(before);
+      expect(oldPulls[before]!.firstFrame).toBe(19200);
+      expect(fixture.playback.getState().playing).toBe(true);
+      expect(fixture.peakStreams).toBeLessThanOrEqual(10);
+      fixture.holdCandidatePcmResponses(false);
+      for (let i = 0; i < 20; i++) await fixture.flush();
+    } finally {
+      fixture.holdCandidatePcmResponses(false);
+      fixture.restore();
+    }
+  });
+
+  test('successor arms after render closure while old source credits remain charged', async () => {
     const time = (value: number) => ({
       OTIO_SCHEMA: 'RationalTime.1',
       value,
@@ -3028,7 +3199,7 @@ describe('otio playback controller', () => {
         metadata: { relic: { id: 'timeline_1' } },
         tracks: {
           OTIO_SCHEMA: 'Stack.1',
-          children: Array.from({ length: 8 }, () => ({
+          children: Array.from({ length: 2 }, () => ({
             OTIO_SCHEMA: 'Track.1',
             kind: 'Audio',
             children: [
@@ -3054,35 +3225,29 @@ describe('otio playback controller', () => {
         )
       ).arrayBuffer(),
     ]);
-    const fixture = independentPcmFixture(false, false, { document, audio });
+    const fixture = independentPcmFixture(
+      false,
+      false,
+      { document, audio },
+      { proofBudget: true }
+    );
     try {
       await fixture.start();
       const firstArm = fixture.commands.find((item) => item.type === 'arm')!;
       const f0 = Number(firstArm.f0);
-      for (
-        let tick = 1;
-        tick <= 60 && !fixture.commands.some((item) => item.type === 'stop');
-        tick++
-      ) {
-        const output = f0 + tick * 800;
-        await fixture.advance(1000 + output / 48, output + 128, output);
-        raf?.(fixture.wall);
-        await fixture.flush();
-      }
-      const stop = fixture.commands.find((item) => item.type === 'stop');
-      expect(stop, JSON.stringify(fixture.playback.getState())).toBeDefined();
-      const boundary = Number(stop!.stopFrame);
-      await fixture.advance(
-        1000 + boundary / 48 + 8,
-        boundary + 384,
-        boundary + 384
+      const boundary = Number(firstArm.throughFrame);
+      const oldEnded = fixture.audioContext.sources
+        .filter((source) => !source.carrier && source.started && source.onended)
+        .map((source) => source.onended!);
+      expect(oldEnded.length).toBeGreaterThan(0);
+      const proof = globalThis as typeof globalThis & {
+        __otioProofPcmSnapshot: () => { bytes: number; nodes: number };
+      };
+      await fixture.advanceSmooth(
+        1000 + boundary / 48,
+        boundary + 128,
+        boundary - 480
       );
-      expect(fixture.playback.getState().buffering).toBe(true);
-      expect(
-        fixture.commands.filter((item) => item.type === 'arm')
-      ).toHaveLength(1);
-      for (const source of fixture.audioContext.sources) source.onended?.();
-      await fixture.flush();
       for (
         let i = 0;
         i < 40 &&
@@ -3098,6 +3263,19 @@ describe('otio playback controller', () => {
         fixture.commands.filter((item) => item.type === 'arm'),
         JSON.stringify(fixture.playback.getState())
       ).toHaveLength(2);
+      const secondArm = fixture.commands.filter(
+        (item) => item.type === 'arm'
+      )[1]!;
+      expect(secondArm.slot).not.toBe(firstArm.slot);
+      expect(Number(secondArm.f0)).toBeGreaterThanOrEqual(boundary);
+      expect(Number(secondArm.f0) - boundary).toBeLessThanOrEqual(960);
+      const charged = proof.__otioProofPcmSnapshot();
+      expect(charged.bytes).toBeGreaterThan(0);
+      expect(charged.bytes).toBeLessThanOrEqual(8 * 1024 * 1024);
+      expect(charged.nodes).toBeLessThanOrEqual(128);
+      for (const ended of oldEnded) ended();
+      await fixture.flush();
+      expect(proof.__otioProofPcmSnapshot().bytes).toBeLessThan(charged.bytes);
       expect(fixture.pulls).toContain(boundary - f0);
       expect(fixture.gates).toHaveLength(1);
       expect(fixture.suspensions).toBe(1);
@@ -3295,7 +3473,7 @@ describe('otio playback controller', () => {
         await fixture.start();
         const arm = fixture.commands.find((item) => item.type === 'arm')!;
         const frontier = Number(arm.throughFrame);
-        await fixture.advance(
+        await fixture.advanceSmooth(
           1000 + (frontier - 128) / 48,
           frontier,
           frontier - 128,
@@ -3306,13 +3484,19 @@ describe('otio playback controller', () => {
         await fixture.deliverCallbacks();
         await fixture.flush();
         if (deliverClosure) {
-          expect(fixture.commands.some((item) => item.type === 'abort')).toBe(
-            false
-          );
+          expect(
+            fixture.commands.some(
+              (item) =>
+                item.type === 'abort' && item.generation === arm.generation
+            )
+          ).toBe(false);
         } else {
-          expect(fixture.commands.some((item) => item.type === 'abort')).toBe(
-            true
-          );
+          expect(
+            fixture.commands.some(
+              (item) =>
+                item.type === 'abort' && item.generation === arm.generation
+            )
+          ).toBe(true);
         }
         expect(fixture.commands.some((item) => item.type === 'dispose')).toBe(
           false
@@ -3329,6 +3513,72 @@ describe('otio playback controller', () => {
       }
     }
   );
+
+  test('replacement seek waits for the in-flight candidate abort acknowledgement', async () => {
+    const fixture = independentPcmFixture();
+    try {
+      await fixture.start();
+      const oldArm = fixture.commands.find((item) => item.type === 'arm')!;
+      const boundary = Number(oldArm.throughFrame);
+      fixture.holdCandidateArmResponses(true);
+      fixture.holdAbortResponses(true);
+      await fixture.advanceSmooth(
+        1000 + boundary / 48,
+        boundary,
+        boundary - 128
+      );
+      for (let i = 0; i < 12 && !fixture.heldCandidateArmCount; i++)
+        await fixture.advance(
+          fixture.wall + 1,
+          fixture.renderFrame + 48,
+          fixture.outputFrame + 48
+        );
+      expect(fixture.heldCandidateArmCount).toBe(1);
+      const candidateArm = fixture.commands.filter(
+        (item) => item.type === 'arm'
+      )[1]!;
+      const seek = fixture.playback.seek({ value: 1, rate: 30 });
+      await fixture.flush();
+      const abort = fixture.commands.find(
+        (item) =>
+          item.type === 'abort' && item.generation === candidateArm.generation
+      );
+      expect(abort).toBeDefined();
+      expect(fixture.heldAbortCount).toBe(1);
+      expect(
+        fixture.commands.some(
+          (item) =>
+            item.type === 'abort' && item.generation === oldArm.generation
+        )
+      ).toBe(false);
+      fixture.holdCandidateArmResponses(false);
+      await fixture.flush();
+      expect(
+        fixture.commands.filter((item) => item.type === 'arm')
+      ).toHaveLength(2);
+      fixture.holdAbortResponses(false);
+      for (
+        let i = 0;
+        i < 40 &&
+        fixture.commands.filter((item) => item.type === 'arm').length < 3;
+        i++
+      )
+        await fixture.advance(
+          fixture.wall + 8,
+          fixture.renderFrame + 384,
+          fixture.outputFrame + 384
+        );
+      await seek;
+      expect(
+        fixture.commands.filter((item) => item.type === 'arm')
+      ).toHaveLength(3);
+      expect(fixture.playback.getState().playing).toBe(true);
+    } finally {
+      fixture.holdCandidateArmResponses(false);
+      fixture.holdAbortResponses(false);
+      fixture.restore();
+    }
+  });
 
   test('a superseded seek timeout cannot stop the newer seek', async () => {
     const delayedVideo = Promise.withResolvers<string>();
@@ -3365,13 +3615,20 @@ describe('otio playback controller', () => {
         );
       await newSeek;
       expect(fixture.playback.getState().playing).toBe(true);
-      await fixture.advance(
-        fixture.wall + 400,
-        fixture.renderFrame + 19200,
-        fixture.outputFrame + 19200
-      );
+      for (let i = 0; i < 25; i++) {
+        await fixture.advanceSmooth(
+          fixture.wall + 16,
+          fixture.renderFrame + 768,
+          fixture.outputFrame + 768
+        );
+        raf?.(fixture.wall);
+        await fixture.flush();
+      }
       await oldSeek;
-      expect(fixture.playback.getState().playing).toBe(true);
+      expect(
+        fixture.playback.getState().playing,
+        JSON.stringify(fixture.playback.getState())
+      ).toBe(true);
       expect(
         fixture.playback
           .getState()
@@ -3542,7 +3799,7 @@ describe('otio playback controller', () => {
           firstTag = desired;
           fixture.videos[0].triggerRvfc(now, desired / 30);
         }
-        await fixture.advance(now, outputFrame + 128, outputFrame);
+        await fixture.advanceSmooth(now, outputFrame + 128, outputFrame);
         raf?.(now);
         await fixture.flush();
       }
@@ -3627,19 +3884,23 @@ describe('otio playback controller', () => {
         fixture.commands.find((item) => item.type === 'arm')!.f0
       );
       const boundary = f0 + 22050;
+      const readsBeforeTicks = fixture.audioContext.timestampReads.length;
       let firstTag = 1;
       for (let tick = 1; tick < 30; tick++) {
-        const output = f0 + tick * 735;
+        const output = f0 + tick * 735 + [0, 44, -44][tick % 3]!;
         const now = 1000 + (output * 1000) / rate;
         const desired = Math.min(14, Math.floor(tick / 2) + 1);
         if (desired > firstTag && fixture.videos[0]?.rvfcCallbacks.size) {
           firstTag = desired;
           fixture.videos[0].triggerRvfc(now, desired / 30);
         }
-        await fixture.advance(now, output + 128, output);
+        await fixture.advanceSmooth(now, output + 128, output);
         raf?.(now);
         await fixture.flush();
       }
+      expect(
+        fixture.audioContext.timestampReads.length - readsBeforeTicks
+      ).toBeGreaterThan(29);
       proof.__otioProofPcm = true;
       proof.__otioProofHoldOldDrain = true;
       proof.__otioProofPcmFault = 'withhold-future-video';
@@ -3702,7 +3963,7 @@ describe('otio playback controller', () => {
             firstTag = desired;
             fixture.videos[0].triggerRvfc(now, desired / 30);
           }
-          await fixture.advance(now, outputFrame + 128, outputFrame);
+          await fixture.advanceSmooth(now, outputFrame + 128, outputFrame);
           raf?.(now);
           await fixture.flush();
         }
@@ -3759,8 +4020,11 @@ describe('otio playback controller', () => {
       const boundary = Number(arm!.throughFrame);
       proof.__otioProofPcm = true;
       proof.__otioProofPcmFault = 'withhold-future-video';
-      await fixture.advance(fixture.wall, boundary, fixture.outputFrame);
-      await fixture.advance(1000 + boundary / 48, boundary, boundary);
+      await fixture.advanceSmooth(
+        1000 + boundary / 48,
+        boundary,
+        boundary - 128
+      );
       expect(fixture.playback.getState().buffering).toBe(true);
       raf?.(fixture.wall);
       await fixture.flush();
@@ -3799,11 +4063,10 @@ describe('otio playback controller', () => {
       const boundary = Number(arm.throughFrame);
       proof.__otioProofPcm = true;
       proof.__otioProofPcmFault = 'withhold-future-video';
-      await fixture.advance(fixture.wall, boundary, fixture.outputFrame);
-      await fixture.advance(
-        1000 + boundary / 48 + 8,
-        boundary + 384,
-        boundary + 384
+      await fixture.advanceSmooth(
+        1000 + boundary / 48,
+        boundary,
+        boundary - 128
       );
       expect(fixture.playback.getState().buffering).toBe(true);
       fixture.playback.pause();

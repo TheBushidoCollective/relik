@@ -944,6 +944,7 @@ export function createOtioPlayback(
       candidateBoundaryFrame: number | null;
       otherGateReservations: number;
     };
+    __otioProofReservePcmBytes?: (bytes: number) => () => void;
   };
   const proofHost = typeof location === 'undefined' ? '' : location.hostname;
   const proofBorrowed =
@@ -1183,6 +1184,7 @@ export function createOtioPlayback(
     stopping: boolean;
     command: Promise<boolean> | null;
     stopWatchdog: ReturnType<typeof setTimeout> | null;
+    clockSampleTimer: ReturnType<typeof setTimeout> | null;
     onContextState: () => void;
     closeReason: 'pause' | 'frontier' | 'resync' | 'resource' | 'error';
     closedFrame: number | null;
@@ -3306,6 +3308,7 @@ export function createOtioPlayback(
     run.resourcesReleased = true;
     run.stopped = true;
     clearTimeout(run.stopWatchdog ?? undefined);
+    clearTimeout(run.clockSampleTimer ?? undefined);
     run.context.removeEventListener('statechange', run.onContextState);
     run.scheduler.dispose();
     for (const hold of run.holds) hold.release();
@@ -3359,6 +3362,7 @@ export function createOtioPlayback(
     pcmRun = null;
     run.stopped = true;
     clearTimeout(run.stopWatchdog ?? undefined);
+    clearTimeout(run.clockSampleTimer ?? undefined);
     pcmGeneration++;
     run.context.removeEventListener('statechange', run.onContextState);
     pcmProof('cancel', run.generation, { reason });
@@ -3472,15 +3476,37 @@ export function createOtioPlayback(
               let evicted = false;
               for (const other of pcmStreamOwners) {
                 if (other === run) continue;
-                const entry = other.streams.entries().next().value;
+                const lookaheadEnd =
+                  other.preparedThrough +
+                  Math.floor(
+                    other.admission.rate * OTIO_PCM_TARGET_LEAD_SECONDS
+                  );
+                let entry: [OtioBundleEntryName, string] | undefined;
+                for (const candidate of other.streams) {
+                  entry ??= candidate;
+                  const neededSoon = other.admission.spans.some(
+                    (plan) =>
+                      plan.span.bundle_path === candidate[0] &&
+                      plan.lattice.timeline_end > other.preparedThrough &&
+                      plan.lattice.timeline_start < lookaheadEnd
+                  );
+                  if (!neededSoon) {
+                    entry = candidate;
+                    break;
+                  }
+                }
                 if (!entry) continue;
                 const [otherPath, otherStream] = entry;
                 other.streams.delete(otherPath);
                 try {
                   await other.provider.close(otherStream);
                 } catch (error) {
+                  const retired =
+                    other.stopped ||
+                    other.resourcesReleased ||
+                    !pcmStreamOwners.has(other);
                   closePcmProvider(other);
-                  throw error;
+                  if (!retired) throw error;
                 }
                 releasePcmStream(other, otherStream);
                 evicted = true;
@@ -3700,6 +3726,7 @@ export function createOtioPlayback(
       loading: null,
       stopping: false,
       stopWatchdog: null,
+      clockSampleTimer: null,
       command: null,
       closeReason: 'frontier',
       closedFrame: null,
@@ -3960,6 +3987,40 @@ export function createOtioPlayback(
     });
   }
 
+  function samplePcmOutputClock(run: PcmRun): void {
+    if (run.stopped || run.stopping || pcmRun !== run || isDisposed) return;
+    run.clockSampleTimer = setTimeout(() => {
+      run.clockSampleTimer = null;
+      if (run.stopped || run.stopping || pcmRun !== run || isDisposed) return;
+      const readBegin = presentClockMs();
+      const contextBefore = run.context.currentTime;
+      let stamp: AudioTimestamp | null = null;
+      try {
+        stamp = run.context.getOutputTimestamp();
+      } catch {}
+      const contextAfter = run.context.currentTime;
+      const readEnd = presentClockMs();
+      const result = run.outputClock.observe({
+        readBegin,
+        readEnd,
+        contextBefore,
+        contextAfter,
+        state: run.context.state,
+        contextTime: stamp?.contextTime,
+        performanceTime: stamp?.performanceTime,
+      });
+      if (
+        !stamp ||
+        result.status === 'failed' ||
+        result.status === 'interrupted'
+      ) {
+        failScheduledAudio(`audio output clock interrupted: ${result.reason}`);
+        return;
+      }
+      samplePcmOutputClock(run);
+    }, 8);
+  }
+
   function onPcmGateClosed(ack: OtioGateAck): void {
     const run = pcmRun;
     if (
@@ -4070,7 +4131,7 @@ export function createOtioPlayback(
         }
         if (stamp.contextTime * run.admission.rate >= closedFrame) {
           run.drainObserved = true;
-          if (run.handoffStarted) {
+          if (run.handoffStarted && pcmPlayIntent) {
             run.resolveDrain();
             pcmProof('recovery-old-drained', run.generation, {
               boundaryFrame: closedFrame,
@@ -4378,6 +4439,7 @@ export function createOtioPlayback(
       stagePcmCandidate(run, next);
       if (old === null) {
         run.outputClock.start();
+        samplePcmOutputClock(run);
         pcmBackendStarted = true;
         pcmProof('epoch', run.generation, {
           f0: run.contextFrame,
@@ -5219,6 +5281,7 @@ export function createOtioPlayback(
       run.holds.push(handoffHold);
       handoffHold = null;
       inherited.start();
+      samplePcmOutputClock(run);
       pcmProof('epoch', run.generation, {
         f0: upper,
         c0: upper / admission.rate,
@@ -8498,6 +8561,15 @@ export function createOtioPlayback(
       proofHost.endsWith('.localhost') ||
       proofHost === '[::1]')
   ) {
+    proofGlobal.__otioProofReservePcmBytes = (bytes) => {
+      pcmBudget.reserveBytes(bytes);
+      let released = false;
+      return () => {
+        if (released) return;
+        released = true;
+        pcmBudget.releaseBytes(bytes);
+      };
+    };
     proofGlobal.__otioProofPcmSnapshot = () => {
       const gateReservations = pcmGateRetirements.reservedGates;
       const activeSession =
