@@ -10631,6 +10631,54 @@ function assertLatestRecoveryFrame(
   );
 }
 
+// Independent lookahead invariant: every published frontier B must lie behind the
+// decoded horizon P by at least K frames, unless P is the scope end, and must stay
+// inside the descriptor coverage that the gate actually accepted.
+const LOOKAHEAD_FRAMES = 4096;
+function assertLookaheadFrontiers(
+  events: readonly Record<string, unknown>[],
+  rate: number
+): number {
+  let checked = 0;
+  for (const event of events) {
+    if (event['event'] !== 'frontier') continue;
+    const P = Number(event['preparedThrough']);
+    const B = Number(event['contextFrameThrough']);
+    const S = Number(event['scopeEndFrame']);
+    const K = Number(event['reserveFrames']);
+    const E = Number(event['descriptorCoverageEnd']);
+    const cap = Number(event['decodedCap']);
+    assert.ok(
+      [P, B, S, K, E, cap].every(Number.isSafeInteger) &&
+        event['descriptorReady'] === true &&
+        Number.isFinite(rate) &&
+        rate > 0,
+      'frontier lacks independent lookahead evidence'
+    );
+    const atScopeEnd = P === S;
+    assert.equal(
+      K,
+      atScopeEnd ? 0 : LOOKAHEAD_FRAMES,
+      'frontier used a non-policy lookahead'
+    );
+    assert.equal(
+      cap,
+      atScopeEnd ? S : P - LOOKAHEAD_FRAMES,
+      'decoded cap disagrees with the lookahead invariant'
+    );
+    assert.ok(
+      atScopeEnd || P - B >= LOOKAHEAD_FRAMES,
+      `frontier ${B} is within ${P - B} decoded frames of P=${P}, below K=${LOOKAHEAD_FRAMES}`
+    );
+    assert.ok(
+      B <= cap && B <= E - 1,
+      'frontier exceeds decoded or descriptor coverage'
+    );
+    checked++;
+  }
+  return checked;
+}
+
 // Compare each sample against independent source planes without fitting offsets.
 function assertSourcePcmSamples(
   trace: MovingTrace['trace'],
@@ -14211,6 +14259,33 @@ async function runScheduledPcmProof(
       pcmEvents.some((event) => event['event'] === 'frontier'),
       'scheduled readiness frontier missing'
     );
+    const checkedFrontiers = assertLookaheadFrontiers(pcmEvents, rate);
+    assert.ok(
+      checkedFrontiers > 0,
+      'no committed frontier carried lookahead evidence'
+    );
+    const forgedFrontier = pcmEvents.find(
+      (event) => event['event'] === 'frontier'
+    )!;
+    const forgedB = Number(forgedFrontier['contextFrameThrough']);
+    const forgedP = forgedB + LOOKAHEAD_FRAMES - 1;
+    assert.throws(
+      () =>
+        assertLookaheadFrontiers(
+          [
+            {
+              ...forgedFrontier,
+              preparedThrough: forgedP,
+              decodedCap: forgedP - LOOKAHEAD_FRAMES,
+              scopeEndFrame: forgedP + 1,
+              reserveFrames: LOOKAHEAD_FRAMES,
+            },
+          ],
+          rate
+        ),
+      /below K=/,
+      'checker accepted a frontier with P-B below K'
+    );
     assert.ok(
       pcmEvents.filter((event) => event['event'] === 'scheduled').length > 1,
       'scheduled queue did not replenish'
@@ -14312,6 +14387,10 @@ async function runScheduledPcmProof(
       const recoveryEvents = recovery.trace.events
         .filter((entry) => entry.kind === 'scheduled-pcm')
         .map((entry) => entry.value as Record<string, unknown>);
+      assert.ok(
+        assertLookaheadFrontiers(recoveryEvents, rate) > 0,
+        'recovery run committed no lookahead-checked frontier'
+      );
       const firstEpoch = recoveryEvents.find(
         (event) => event['event'] === 'epoch'
       );
@@ -14947,6 +15026,7 @@ async function runScheduledPcmProof(
         'recovery-excess-work',
         'recovery-earlier-feasible',
         'recovery-delayed-staging',
+        'descriptor-budget',
       ] as const) {
         const isolated = await openBrowser(url, sessionToken, {
           label: `${fault}-${rate}`,
@@ -15116,6 +15196,31 @@ async function runScheduledPcmProof(
                       'recovery final clock or visual guard failed')
               ),
               'post-start guard overrun did not interrupt'
+            );
+          } else if (fault === 'descriptor-budget') {
+            const refusalIndex = events.findIndex(
+              (event, index) =>
+                index > closedIndex &&
+                event['event'] === 'recovery-candidate-failed' &&
+                event['code'] === 'descriptor-budget-exhausted' &&
+                event['boundaryFrame'] === boundary
+            );
+            assert.ok(
+              refusalIndex > closedIndex,
+              'descriptor budget exhaustion did not refuse the successor candidate'
+            );
+            assert.ok(
+              events
+                .slice(refusalIndex + 1)
+                .some((event) => event['event'] === 'error'),
+              'descriptor budget refusal was not visible as an interruption'
+            );
+            assert.ok(
+              !events.some(
+                (event, index) =>
+                  index > closedIndex && event['event'] === 'recovery-selection'
+              ),
+              'descriptor budget refusal still admitted a successor epoch'
             );
           } else {
             const injectionIndex = events.findIndex(
