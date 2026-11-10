@@ -46,6 +46,7 @@ import {
   versionDigest,
 } from '@relic/format';
 import type * as JsxModule from './jsx.ts';
+import { markJsxCompilerLoaded } from './stale-shell.ts';
 import type { VaultEntry } from './vault.ts';
 export type { VaultEntry };
 
@@ -90,6 +91,7 @@ export type ViewerState =
       dead: DeadView;
       cachedPrefix?: CachedPrefix | undefined;
       cachedCiphertext?: CachedPrefix | undefined;
+      jsxCompilerUnavailable?: true | undefined;
       resume?: LoadResume | undefined;
     };
 
@@ -171,6 +173,7 @@ export type HistoricalVersionState =
       readonly kind: 'unavailable';
       readonly code: string;
       readonly detail: string;
+      readonly jsxCompilerUnavailable?: true | undefined;
     };
 
 /**
@@ -517,20 +520,23 @@ export async function load(
       );
     }
 
+    // The decrypt just proved this key. Saving it before routing means a
+    // compiler that fails to load cannot cost the reader the key, so a reload
+    // recalls it. The label has no renderer yet, and the vault keeps any it holds.
+    deps.keyVault.remember(relicId, fragment, keyExpiry(mintResponse), {
+      title: entry.filename,
+    });
+
     const route = await routeFor(
       entry.filename,
       entry.mimetype,
       opened.content
     );
 
-    deps.keyVault.remember(
-      relicId,
-      fragment,
-      mintResponse.relic_expires_at === null
-        ? Number.POSITIVE_INFINITY
-        : Date.parse(mintResponse.relic_expires_at),
-      { title: entry.filename, renderer: route.route }
-    );
+    deps.keyVault.remember(relicId, fragment, keyExpiry(mintResponse), {
+      title: entry.filename,
+      renderer: route.route,
+    });
 
     const digest = await computeDigest();
     return {
@@ -550,14 +556,17 @@ export async function load(
     };
   } catch (error) {
     if (error instanceof JsxCompilerUnavailableError) {
-      return dead(
-        'This relic could not be opened',
-        'Something went wrong reaching the service.',
-        'retry',
-        'service_unreachable',
-        undefined,
-        { fragment, mint: mintResponse }
-      );
+      return {
+        kind: 'dead',
+        dead: {
+          headline: 'This relic could not be opened',
+          detail: 'Something went wrong reaching the service.',
+          action: 'retry',
+          code: 'service_unreachable',
+        },
+        resume: { fragment, mint: mintResponse },
+        jsxCompilerUnavailable: true,
+      };
     }
     if (error instanceof TransferIncompleteError) {
       return {
@@ -896,6 +905,7 @@ export async function loadHistoricalVersion(
           `Version ${requestedVersion} could not be loaded for comparison. ` +
           'Something went wrong reaching the service. ' +
           `Version ${current.version} remains open.`,
+        jsxCompilerUnavailable: true,
       };
     }
     if (error instanceof TransferIncompleteError) {
@@ -1011,6 +1021,13 @@ class JsxCompilerUnavailableError extends Error {
   }
 }
 
+let jsxCompiler: JsxCompiler | undefined;
+
+/** Whether this page has loaded the compiler chunk successfully. */
+export function hasLoadedJsxCompiler(): boolean {
+  return jsxCompiler !== undefined;
+}
+
 /**
  * Loads the JSX compiler on first use, never at startup.
  *
@@ -1020,11 +1037,18 @@ class JsxCompilerUnavailableError extends Error {
  * receives that text, so rendering never needs the compiler.
  */
 async function loadJsxCompiler(): Promise<JsxCompiler> {
+  if (jsxCompiler !== undefined) return jsxCompiler;
+  let compiler: JsxCompiler;
   try {
-    return await import('./jsx.ts');
+    compiler = await import('./jsx.ts');
   } catch (cause) {
     throw new JsxCompilerUnavailableError(cause);
   }
+  // A compiler that loads proves this shell is current, so the one-reload
+  // guard can arm again for the next deploy.
+  jsxCompiler = compiler;
+  markJsxCompilerLoaded();
+  return compiler;
 }
 
 /**
@@ -1249,6 +1273,13 @@ export const DAMAGED_TITLE = 'The stored file is damaged';
 export const DAMAGED_DETAIL =
   'The start of the file decrypted with this link, so the link is fine. A later part did not, which means the stored file was changed or damaged.';
 
+/** When the vault should forget a key: the relic's own expiry, or never. */
+function keyExpiry(mint: MintResponse): number {
+  return mint.relic_expires_at === null
+    ? Number.POSITIVE_INFINITY
+    : Date.parse(mint.relic_expires_at);
+}
+
 function dead(
   headline: string,
   detail: string,
@@ -1390,7 +1421,11 @@ export type KeyEntryAttemptResult =
       readonly message: string;
       readonly cachedPrefix?: CachedPrefix | undefined;
     }
-  | { readonly kind: 'dead'; readonly dead: DeadView };
+  | {
+      readonly kind: 'dead';
+      readonly dead: DeadView;
+      readonly jsxCompilerUnavailable?: true | undefined;
+    };
 
 /**
  * Attempts to open a relic using manually entered key material.
@@ -1557,6 +1592,13 @@ export async function openRelicWithKey(
       };
     }
 
+    // The decrypt just proved this key. Saving it before routing means a
+    // compiler that fails to load cannot cost the reader the key, so a reload
+    // recalls it. The label has no renderer yet, and the vault keeps any it holds.
+    deps.keyVault.remember(relicId, fragment, keyExpiry(mintResponse), {
+      title: entry.filename,
+    });
+
     const route = await routeFor(
       entry.filename,
       entry.mimetype,
@@ -1564,12 +1606,7 @@ export async function openRelicWithKey(
     );
     const shareUrl = shareUrlFor(deps.locationHref, fragment);
 
-    const expiresAt =
-      mintResponse.relic_expires_at === null
-        ? Number.POSITIVE_INFINITY
-        : Date.parse(mintResponse.relic_expires_at);
-
-    deps.keyVault.remember(relicId, fragment, expiresAt, {
+    deps.keyVault.remember(relicId, fragment, keyExpiry(mintResponse), {
       title: entry.filename,
       renderer: route.route,
     });
@@ -1600,6 +1637,7 @@ export async function openRelicWithKey(
           action: 'retry',
           code: 'service_unreachable',
         },
+        jsxCompilerUnavailable: true,
       };
     }
     if (error instanceof TransferIncompleteError) {

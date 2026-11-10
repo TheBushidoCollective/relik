@@ -245,6 +245,7 @@ import {
   sharedSummary,
   shareRefusal,
 } from './share.ts';
+import { healStaleShell } from './stale-shell.ts';
 import { buildCodeTable, buildProse } from './text-views.ts';
 import {
   type CachedPrefix,
@@ -409,6 +410,25 @@ export function sniffImageType(content: Uint8Array): string {
     return 'image/webp';
   }
   return 'application/octet-stream';
+}
+
+/**
+ * Reloads the page once when a JSX compile failed because this page is a
+ * stale deploy. True when a reload started, so the caller leaves the page
+ * alone. The key is recalled from the vault, so the reloaded page reopens the
+ * relic by itself.
+ */
+function healForRelic(
+  relicId: string,
+  deps: ViewerDeps,
+  isCurrent: () => boolean
+): Promise<boolean> {
+  return healStaleShell({
+    serviceOrigin: deps.serviceOrigin,
+    recallKey: () => deps.keyVault.recall(relicId),
+    isCurrent,
+    fetch: deps.fetch,
+  });
 }
 
 function decodeText(content: Uint8Array): string {
@@ -1351,8 +1371,8 @@ export function renderSandboxedHtml(
 
 /**
  * A component renders on the usercontent origin and nowhere else, exactly
- * like HTML, but what crosses the frame boundary is different: the source is
- * transpiled here, on the service origin, into plain JavaScript first.
+ * like HTML, but what crosses the frame boundary is different: routing already
+ * transpiled the source, and the frame receives that text as it was checked.
  */
 export function renderSandboxedJsx(
   view: ReadyView,
@@ -3162,7 +3182,13 @@ export function renderComparison(
       deps,
       onProg
     );
-    versionCache.set(version, loaded);
+    // A compiler failure says nothing about the version, and a reload may fix
+    // it, so it is not remembered for the session.
+    if (
+      !(loaded.kind === 'unavailable' && loaded.jsxCompilerUnavailable === true)
+    ) {
+      versionCache.set(version, loaded);
+    }
     return loaded;
   };
 
@@ -3208,6 +3234,16 @@ export function renderComparison(
       getVersion(leftVersion, (p) => updateLoadingLine(leftVersion, p)),
       getVersion(rightVersion, (p) => updateLoadingLine(rightVersion, p)),
     ]);
+    if (thisRequest !== request) return;
+    const compilerStale = [leftRes, rightRes].some(
+      (res) => res.kind === 'unavailable' && res.jsxCompilerUnavailable === true
+    );
+    if (
+      compilerStale &&
+      (await healForRelic(relicId, deps, () => thisRequest === request))
+    ) {
+      return;
+    }
     if (thisRequest !== request) return;
     if (typeof document === 'undefined') return;
     scaffold.result.setAttribute('aria-busy', 'false');
@@ -9461,6 +9497,8 @@ export function renderReady(
     trackRenderState(stage, wrap, viewToShow.route);
   };
 
+  let versionRequest = 0;
+
   const showVersion = async (v: number): Promise<void> => {
     if (v === activeView.version) {
       showSingle(activeView);
@@ -9499,6 +9537,7 @@ export function renderReady(
       label.textContent = `Opening version ${v}`;
     }
 
+    const thisVersion = ++versionRequest;
     const res = await loadHistoricalVersion(relicId, v, view, deps, (p) => {
       if (versionPill) {
         const label =
@@ -9523,7 +9562,17 @@ export function renderReady(
       loadedViews.set(v, res.view);
       showSingle(res.view);
     } else if (res.kind === 'unavailable') {
-      toast(res.detail);
+      if (
+        res.jsxCompilerUnavailable === true &&
+        (await healForRelic(
+          relicId,
+          deps,
+          () => thisVersion === versionRequest
+        ))
+      ) {
+        return;
+      }
+      if (thisVersion === versionRequest) toast(res.detail);
     }
   };
 
@@ -10121,10 +10170,12 @@ export function renderDead(
 
     let activeCachedPrefix = cachedPrefix;
 
+    let keySubmissions = 0;
     form.addEventListener('submit', (event) => {
       event.preventDefault();
       const enteredValue = input.value;
       if (enteredValue.trim().length === 0) return;
+      const submitted = ++keySubmissions;
 
       submit.disabled = true;
       feedback.replaceChildren();
@@ -10154,7 +10205,22 @@ export function renderDead(
               activeCachedPrefix = result.cachedPrefix;
             }
           } else if (result.kind === 'dead') {
-            feedback.textContent = result.dead.detail;
+            const detail = result.dead.detail;
+            if (result.jsxCompilerUnavailable === true) {
+              // A stale deploy may heal by reloading. Only the latest submission
+              // may decide, and it keeps its error copy when no reload starts.
+              void healForRelic(
+                relicId,
+                deps,
+                () => submitted === keySubmissions
+              ).then((reloading) => {
+                if (!reloading && submitted === keySubmissions) {
+                  feedback.textContent = detail;
+                }
+              });
+            } else {
+              feedback.textContent = detail;
+            }
           }
         },
         () => {
@@ -10732,7 +10798,10 @@ export async function boot(
     return;
   }
 
+  let openGeneration = 0;
+
   const runOpen = async (resume?: LoadResume): Promise<void> => {
+    const thisOpen = ++openGeneration;
     const plate = adoptOrMountPlate(relicId);
     let state: ViewerState;
     try {
@@ -10755,6 +10824,14 @@ export async function boot(
       return;
     }
 
+    if (state.kind === 'dead' && state.jsxCompilerUnavailable === true) {
+      const reloading = await healForRelic(
+        relicId,
+        deps,
+        () => thisOpen === openGeneration
+      );
+      if (reloading || thisOpen !== openGeneration) return;
+    }
     try {
       if (state.kind === 'ready') {
         plate.remove();

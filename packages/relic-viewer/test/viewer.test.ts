@@ -530,6 +530,44 @@ describe('rendering', () => {
     expect(state.view.componentModule).not.toContain('type P');
   });
 
+  test('a successful JSX open saves the key before routing, then again with its renderer', async () => {
+    // The first save proves the key before the compiler is needed, so a
+    // compiler that fails to load cannot cost the reader the key. It carries
+    // no renderer, which leaves the one the vault already holds alone.
+    const remembered: Array<{
+      readonly fragment: string;
+      readonly meta:
+        | { readonly title?: string; readonly renderer?: string }
+        | undefined;
+    }> = [];
+    const recordingVault = {
+      remember(
+        _relicId: string,
+        fragment: string,
+        _expiresAt: number,
+        meta?: { readonly title?: string; readonly renderer?: string }
+      ) {
+        remembered.push({ fragment, meta });
+      },
+      recall: (_relicId: string): string | undefined => undefined,
+      forget: (_relicId: string): void => {},
+    };
+    const { id, fragment } = await seed(
+      utf8('export default function App() {\n  return <div>hi</div>;\n}\n'),
+      'App.jsx',
+      'text/jsx'
+    );
+
+    const state = await load(id, deps(fragment, undefined, recordingVault));
+
+    expect(state.kind).toBe('ready');
+    expect(remembered).toHaveLength(2);
+    expect(remembered[0]?.fragment).toBe(fragment);
+    expect(remembered[0]?.meta?.title).toBe('App.jsx');
+    expect(remembered[0]?.meta?.renderer).toBeUndefined();
+    expect(remembered[1]?.meta?.renderer).toBe('sandboxed-jsx');
+  });
+
   test('an archive is download-only in the first release', async () => {
     const zip = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0, 0, 0, 0]);
     const { id, fragment } = await seed(zip, 'bundle.zip', 'application/zip');
