@@ -987,7 +987,7 @@ try {
     'OTIO comment placement changed after reload'
   );
   console.log(
-    `LARGE_STEP_5_OTIO_REVIEWED archive_bytes=${otio.plaintextBytes} timing=${timing.kind} windows=${timing.count} played_frame=${playedFrame} leaf_time=${leaf.time} comment_reload=true ${rendererMemoryReceipt(otioGrowth)}`
+    `LARGE_STEP_5_OTIO_REVIEWED archive_bytes=${otio.plaintextBytes} timing=${timing.kind} windows=${timing.count} played_frame=${playedFrame} leaf_time=${leaf.time} comment_reload=true client_peak_rss=${otio.peakRss} ${rendererMemoryReceipt(otioGrowth)}`
   );
   await browser.closePage(reopenedOtio);
   await release(otio);

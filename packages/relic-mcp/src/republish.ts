@@ -15,7 +15,7 @@ import {
   decodeKey,
   deriveRendererClass,
   deriveShareProof,
-  encryptRelic,
+  encryptRelicParts,
   isValidRelicId,
   modelFormatFromFilename,
   normalizeTitle,
@@ -40,6 +40,7 @@ import {
   putContainer,
   readSource,
   reportComplete,
+  challengeSizeLimit,
 } from './publish.ts';
 import type { ProgramReport } from './program/report.ts';
 import { buildProgramArchive, isOtioBundleName } from './program/build.ts';
@@ -408,10 +409,8 @@ export async function republish(
   // before encryption. A non-OTIO republish makes no cap request.
   const otio = isOtioBundleName(source.basename);
   const sizeLimit = otio
-    ? Number(
-        (await postJson(deps, `${deps.serviceOrigin}/api/challenge`, {}))[
-          'size_limit_bytes'
-        ]
+    ? challengeSizeLimit(
+        await postJson(deps, `${deps.serviceOrigin}/api/challenge`, {})
       )
     : Number.MAX_SAFE_INTEGER;
   const programBuild = await buildProgramArchive({
@@ -422,13 +421,12 @@ export async function republish(
     renderer: deps.renderProgram,
     clientName: deps.clientName,
   });
-  const payload = programBuild.bytes;
-  if (otio && payload.length > sizeLimit) {
+  if (otio && programBuild.length > sizeLimit) {
     throw new PublishError(
       'local_size_precheck_failed',
-      `${source.basename} with its program is ${payload.length} bytes, over the ` +
+      `${source.basename} with its program is ${programBuild.length} bytes, over the ` +
         `${sizeLimit}-byte cap`,
-      { size_limit_bytes: sizeLimit, declared_size_bytes: payload.length }
+      { size_limit_bytes: sizeLimit, declared_size_bytes: programBuild.length }
     );
   }
 
@@ -436,8 +434,8 @@ export async function republish(
   // existing share URL decrypting the new version; a fresh key here would
   // silently cut every recipient off from content they were told this link
   // carries.
-  const container = await encryptRelic({
-    content: payload,
+  const container = await encryptRelicParts({
+    parts: programBuild.parts,
     filename,
     mimetype: guessMimetype(filename, rendererClass),
     key: decodeKey(state.key),
@@ -458,7 +456,7 @@ export async function republish(
     {
       publish_token: state.publish_token,
       renderer_class: rendererClass,
-      declared_size_bytes: payload.length,
+      declared_size_bytes: programBuild.length,
       declared_ciphertext_bytes: container.length,
       title: normalizedTitle,
       ...(input.ttl_days === undefined ? {} : { ttl_days: input.ttl_days }),

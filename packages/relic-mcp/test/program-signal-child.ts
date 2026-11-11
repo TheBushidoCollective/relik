@@ -15,7 +15,7 @@ await render({
   timelineIds: ['signal-control'],
   media: [],
   readMedia: async () => new Uint8Array(),
-  maxBytes: 1000000,
+  maxTotalBytes: 1000000,
   forceEncoderAbsent: false,
 });
 throw new Error('render ended before signal');

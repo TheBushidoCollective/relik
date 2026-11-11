@@ -11934,6 +11934,101 @@ async function decodeScreencastFrames(
   }));
 }
 
+// Alignment window for the cold-start screencast comparator. Every variant is one crop of the
+// measured canvas rectangle, resampled to 64x36 by the same neighbour rule as
+// decodeScreencastFrames. One ffmpeg process returns all variants side by side, so the decode
+// costs one spawn per stage, not one per variant.
+async function decodeScreencastWindows(
+  cast: { frames: Array<Record<string, unknown>>; overflow: boolean },
+  rect: { x: number; y: number; width: number; height: number; scale: number }
+): Promise<ScreenWindowFrame[]> {
+  assert.equal(
+    rect.scale,
+    1,
+    'screencast calibration requires unit device scale'
+  );
+  const frames = cast.frames.map((frame) => {
+    const metadata = frame['metadata'] as { timestamp?: number } | undefined;
+    assert.ok(
+      typeof frame['data'] === 'string' && Number.isFinite(metadata?.timestamp),
+      'screencast frame missing image or timestamp'
+    );
+    return {
+      data: Buffer.from(frame['data'] as string, 'base64'),
+      timestamp: metadata!.timestamp! * 1000,
+    };
+  });
+  assert.ok(
+    frames.length >= 2 && !cast.overflow,
+    'screencast capture unavailable or overflowed'
+  );
+  const x = Math.round(rect.x);
+  const y = Math.round(rect.y);
+  const width = Math.floor(rect.width);
+  const height = Math.floor(rect.height);
+  assert.ok(
+    x >= 0 && y >= 0 && width > 0 && height > 0,
+    'canvas outside screencast viewport'
+  );
+  const variants = WINDOW_OFFSETS_X.flatMap((dx) =>
+    WINDOW_OFFSETS_WIDTH.map((dw) => ({ x: x + dx, width: width + dw }))
+  );
+  const count = variants.length;
+  const filter = [
+    `split=${count}${variants.map((_, i) => `[s${i}]`).join('')}`,
+    ...variants.map(
+      (variant, i) =>
+        `[s${i}]crop=${variant.width}:${height}:${variant.x}:${y},scale=64:36:flags=neighbor[v${i}]`
+    ),
+    `${variants.map((_, i) => `[v${i}]`).join('')}hstack=inputs=${count}[out]`,
+  ].join(';');
+  const output = await runChild(
+    [
+      'ffmpeg',
+      '-v',
+      'error',
+      '-f',
+      'image2pipe',
+      '-vcodec',
+      'mjpeg',
+      '-i',
+      'pipe:0',
+      '-filter_complex',
+      filter,
+      '-map',
+      '[out]',
+      '-fps_mode',
+      'passthrough',
+      '-f',
+      'rawvideo',
+      '-pix_fmt',
+      'rgba',
+      'pipe:1',
+    ],
+    {
+      input: Buffer.concat(frames.map((frame) => frame.data)),
+      timeoutMs: 30000,
+    }
+  );
+  assert.equal(
+    output.exit,
+    0,
+    `screencast window decode failed: ${output.stderr}`
+  );
+  const stride = 64 * count * 4;
+  assert.equal(
+    output.stdout.length,
+    frames.length * 36 * stride,
+    'screencast window decoder dropped frames'
+  );
+  return frames.map((frame, f) => ({
+    timestamp: frame.timestamp,
+    blocks: variants.map((_, i) =>
+      blockAverage16x9(output.stdout, f * 36 * stride + i * 256, stride)
+    ),
+  }));
+}
+
 async function proofProvenance(
   browser: ChromeSession
 ): Promise<Record<string, unknown>> {
@@ -15050,6 +15145,158 @@ function classifyVideoFrame(
   return best.error < 12 && best.error < next.error ? best.index : null;
 }
 
+// Cold-start screencast comparator. The viewer resamples the 101 px canvas to 64 cells, so one
+// misplaced column of full-contrast bars alone adds about 28 to a 64x36 RMSE, and the per-cell
+// rule cannot reach its threshold of 12 on a correct frame. The comparator therefore averages
+// 4x4 cells into 16x9 blocks, and takes the best error over an alignment window on the crop
+// origin and width. The window is the only geometry freedom. The threshold (12), the best and
+// runner-up rule, and the reference set are unchanged.
+const WINDOW_OFFSETS_X = [-2, -1, 0, 1, 2, 3];
+const WINDOW_OFFSETS_WIDTH = [-4, -3, -2, -1, 0, 1, 2];
+
+type ScreenWindowFrame = { timestamp: number; blocks: Float64Array[] };
+
+// 16x9 block averages of a 64x36 RGBA frame. offset and stride are in bytes; a reference uses
+// offset 0 and stride 256, a screencast window uses its row stride in the one-process output.
+function blockAverage16x9(
+  pixels: Uint8Array,
+  offset: number,
+  stride: number
+): Float64Array {
+  const out = new Float64Array(16 * 9 * 4);
+  for (let by = 0; by < 9; by++)
+    for (let bx = 0; bx < 16; bx++)
+      for (let channel = 0; channel < 4; channel++) {
+        let sum = 0;
+        for (let y = 0; y < 4; y++)
+          for (let x = 0; x < 4; x++)
+            sum +=
+              pixels[
+                offset + (by * 4 + y) * stride + (bx * 4 + x) * 4 + channel
+              ]!;
+        out[(by * 16 + bx) * 4 + channel] = sum / 16;
+      }
+  return out;
+}
+
+// A block is compared only when all 16 of its cells survive the overlay mask.
+function blockMaskFromCells(cells: Uint8Array): Uint8Array {
+  const mask = new Uint8Array(16 * 9);
+  for (let by = 0; by < 9; by++)
+    for (let bx = 0; bx < 16; bx++) {
+      let keep = 1;
+      for (let y = 0; y < 4; y++)
+        for (let x = 0; x < 4; x++)
+          if (cells[(by * 4 + y) * 64 + bx * 4 + x] === 0) keep = 0;
+      mask[by * 16 + bx] = keep;
+    }
+  return mask;
+}
+
+function maskedBlockRmse(
+  a: Float64Array,
+  b: Float64Array,
+  mask: Uint8Array
+): number {
+  let sum = 0;
+  let count = 0;
+  for (let block = 0; block < mask.length; block++) {
+    if (mask[block] === 0) continue;
+    for (let channel = 0; channel < 4; channel++) {
+      const i = block * 4 + channel;
+      const d = a[i]! - b[i]!;
+      sum += d * d;
+      count++;
+    }
+  }
+  return Math.sqrt(sum / count);
+}
+
+// Best error over the alignment window for each reference. The accepted rule is the
+// per-cell rule: the best error is below 12 and clearly below the next reference.
+function classifyWindowedFrame(
+  blocks: readonly Float64Array[],
+  references: readonly Float64Array[],
+  mask: Uint8Array
+): {
+  best: number;
+  bestError: number;
+  nextError: number;
+  cls: number | null;
+} {
+  const ranked = references
+    .map((reference, index) => ({
+      index,
+      error: Math.min(
+        ...blocks.map((variant) => maskedBlockRmse(variant, reference, mask))
+      ),
+    }))
+    .sort((a, b) => a.error - b.error);
+  const best = ranked[0];
+  const next = ranked[1];
+  if (!best || !next) throw new Error('windowed comparator has no references');
+  return {
+    best: best.index,
+    bestError: best.error,
+    nextError: next.error,
+    cls: best.error < 12 && best.error < next.error ? best.index : null,
+  };
+}
+
+// Shifts a 64x36 frame by whole cells, replicating the edge column.
+function shiftColumns(pixels: Uint8Array, shift: number): Uint8Array {
+  const out = new Uint8Array(pixels.length);
+  for (let y = 0; y < 36; y++)
+    for (let x = 0; x < 64; x++) {
+      const source = Math.min(63, Math.max(0, x - shift));
+      for (let channel = 0; channel < 4; channel++)
+        out[(y * 64 + x) * 4 + channel] =
+          pixels[(y * 64 + source) * 4 + channel]!;
+    }
+  return out;
+}
+
+// Behavioral controls on the real fr30 references. A correct frame seen one cell off is
+// accepted only with the alignment window, a neighbouring source frame is identified as
+// itself and never as the expected frame, and the window must be load-bearing.
+function assertWindowedClassifierControls(
+  references: readonly Uint8Array[]
+): void {
+  const referenceBlocks = references.map((reference) =>
+    blockAverage16x9(reference, 0, 256)
+  );
+  const mask = new Uint8Array(16 * 9).fill(1);
+  const window = (pixels: Uint8Array) =>
+    [-2, -1, 0, 1, 2, 3].map((shift) =>
+      blockAverage16x9(shiftColumns(pixels, shift), 0, 256)
+    );
+  const misaligned = shiftColumns(references[6]!, 1);
+  assert.equal(
+    classifyWindowedFrame(window(misaligned), referenceBlocks, mask).cls,
+    6,
+    'windowed comparator refused a correct frame seen one cell off'
+  );
+  assert.equal(
+    classifyWindowedFrame(
+      [blockAverage16x9(misaligned, 0, 256)],
+      referenceBlocks,
+      mask
+    ).cls,
+    null,
+    'a misaligned frame was accepted without the alignment window'
+  );
+  assert.equal(
+    classifyWindowedFrame(window(references[7]!), referenceBlocks, mask).cls,
+    7,
+    'neighbouring source frame was not identified as itself'
+  );
+  assert.notEqual(
+    classifyWindowedFrame(window(references[5]!), referenceBlocks, mask).cls,
+    6,
+    'a wrong source frame was accepted as frame 6'
+  );
+}
+
 // Selects the first post-play presentation of a later source-correct frame. The paused
 // view may already show the expected source frame, so the pre-play class is excluded,
 // not required absent. A frame is accepted only when it is at or after the expected
@@ -16230,7 +16477,7 @@ async function runColdStartProof(
     // later source frame, within the timeline bound (selectPresentedFrame). Its time is
     // the conservative upper bound; the previous frame is the lower bound.
     const cast = await stopCast();
-    const screen = await decodeScreencastFrames(cast, canvasGeometry);
+    const screen = await decodeScreencastWindows(cast, canvasGeometry);
     const screenTime = (sample: { timestamp: number }) =>
       sample.timestamp - canvasGeometry.timeOrigin;
     // The viewer draws its scope label (.otio-preview-scope) over the frame, inside the crop.
@@ -16242,15 +16489,27 @@ async function runColdStartProof(
       .filter((element) => element.getClientRects().length > 0)
       .map((element) => { const q = element.getBoundingClientRect(); return {x: q.left, y: q.top, width: q.width, height: q.height}; }))()`);
     const screenMask = overlayCellMask(canvasGeometry, overlays);
-    const classOf = (pixels: Uint8Array) =>
-      classifyVideoFrame(pixels, videoOracle.references, screenMask);
+    assertWindowedClassifierControls(videoOracle.references);
+    const referenceBlocks = videoOracle.references.map((reference) =>
+      blockAverage16x9(reference, 0, 256)
+    );
+    const screenBlockMask = blockMaskFromCells(screenMask);
     const screenBefore = screen.filter((sample) => screenTime(sample) < playMs);
     const lastBefore = screenBefore[screenBefore.length - 1];
-    const preplayClass = lastBefore ? classOf(lastBefore.pixels) : null;
+    const preplayClass = lastBefore
+      ? classifyWindowedFrame(
+          lastBefore.blocks,
+          referenceBlocks,
+          screenBlockMask
+        ).cls
+      : null;
     const screenAfter = screen.filter((sample) => screenTime(sample) >= playMs);
-    const selectionInput = screenAfter.map((sample) => ({
+    const rankedAfter = screenAfter.map((sample) =>
+      classifyWindowedFrame(sample.blocks, referenceBlocks, screenBlockMask)
+    );
+    const selectionInput = screenAfter.map((sample, i) => ({
       elapsedMs: screenTime(sample) - playMs,
-      cls: classOf(sample.pixels),
+      cls: rankedAfter[i]!.cls,
     }));
     const presentedIndex = selectPresentedFrame(
       preplayClass,
@@ -16272,19 +16531,14 @@ async function runColdStartProof(
         );
       // Diagnostic receipt, written before the failure: every post-play screencast frame's
       // best and runner-up independent references, so the next run shows what the selector saw.
-      const detail = screenAfter.map((sample) => {
-        const ranked = videoOracle.references
-          .map((reference, index) => ({
-            index,
-            error: rmse(sample.pixels, reference),
-          }))
-          .sort((a, b) => a.error - b.error);
+      const detail = screenAfter.map((sample, i) => {
+        const ranked = rankedAfter[i]!;
         return {
           elapsedMs: screenTime(sample) - playMs,
-          best: ranked[0]?.index ?? null,
-          bestError: ranked[0]?.error ?? null,
-          nextError: ranked[1]?.error ?? null,
-          cls: classOf(sample.pixels),
+          best: ranked.best,
+          bestError: ranked.bestError,
+          nextError: ranked.nextError,
+          cls: ranked.cls,
         };
       });
       await writeFile(

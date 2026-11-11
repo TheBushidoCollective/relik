@@ -6,6 +6,7 @@
  */
 
 import { fileURLToPath } from 'node:url';
+import { PLAINTEXT_CAP_BYTES } from '@relic/format';
 
 // build.ts substitutes this for the single-file dist bundle.
 declare const __RELIC_PROGRAM_ASSET_BASE__: string | undefined;
@@ -103,7 +104,11 @@ export function programArchiveBudget(
   sizeLimit: number,
   policy: Pick<ProgramPolicy, 'maxBytes'>
 ): number {
-  return Math.min(sizeLimit, policy.maxBytes ?? sizeLimit);
+  return Math.min(
+    sizeLimit,
+    PLAINTEXT_CAP_BYTES,
+    policy.maxBytes ?? PLAINTEXT_CAP_BYTES
+  );
 }
 
 /**

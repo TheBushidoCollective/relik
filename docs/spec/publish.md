@@ -291,7 +291,7 @@ Every code names its leg in its prefix. `source_*` is the local read path with n
 | `local_comment_name_too_long` | The display name exceeds the envelope's 64-byte UTF-8 cap (1.7) | `name_bytes`, `limit_bytes` |
 | `unaddressed_comments` | A republish while a comment is unanswered, unresolved and unacknowledged, or unreadable (1.7) | `relic_id`, `open_count`, `unreadable_count`, `open_comments`, `unreadable_comments` |
 | `duplicate_version` | A republish whose content, filename and title are byte-identical to the live version | `relic_id`, `version`, `content_sha256` |
-| `app_response_unusable` | The challenge, grant, or comment-list leg returned something the client cannot classify | `app_status`, `leg`, `app_code`, `relic_id` |
+| `app_response_unusable` | The challenge, grant, or comment-list leg returned something the client cannot classify. On the challenge leg this includes a `size_limit_bytes` that is not a positive safe integer, refused before any grant or render | `app_status`, `leg`, `app_code`, `relic_id` |
 | `upload_size_refused` | The storage leg refused the body against the grant's signed size constraint | `size_limit_bytes`, `declared_size_bytes`, `size_basis`, `storage_status`, `relic_id` |
 | `upload_grant_expired` | The grant's clock ran out mid-upload | `storage_status`, `relic_id` |
 | `upload_network_failed` | Transport failure on the upload leg, terminal after retries | `relic_id`, `url`, `completion` |

@@ -389,7 +389,7 @@ describe('OTIO bundling', () => {
       },
     };
 
-    await expect(bundleOtiod('resized.otiod', files)).rejects.toMatchObject({
+    await expect(bundleOtiod(dir, files)).rejects.toMatchObject({
       code: 'otio_bundle_invalid',
       message: expect.stringContaining('changed while being read'),
     });

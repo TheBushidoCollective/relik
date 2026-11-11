@@ -1280,7 +1280,7 @@ describe('granular manifest validators', () => {
   test('parseOtioProgramRenderer accepts a valid renderer and refuses a bad client or browser', () => {
     const renderer = {
       client: 'relic-mcp/1.0',
-      protocol: 1,
+      protocol: 1 as const,
       browser: 'Chrome 130',
     };
     expect(parseOtioProgramRenderer(renderer)).toEqual(renderer);

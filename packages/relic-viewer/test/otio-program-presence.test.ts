@@ -25,6 +25,7 @@ const entry = (
     name,
     {
       name,
+      rawName,
       method: isDirectory ? 0 : 8,
       compressedSize: 0,
       uncompressedSize: 0,

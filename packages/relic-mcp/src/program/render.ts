@@ -24,7 +24,11 @@
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { OtioMediaEntry, OtioProgramReasonCode } from '@relic/format';
+import {
+  OTIO_PROGRAM_MAX_BYTES,
+  type OtioMediaEntry,
+  type OtioProgramReasonCode,
+} from '@relic/format';
 import type { CdpEvent } from '../cover/cdp.ts';
 import { launchChrome, type RunningChrome } from '../cover/chrome.ts';
 import { resolveProgramBrowser } from './browser.ts';
@@ -85,6 +89,8 @@ export const RENDER_MESSAGES = {
   deadlineBefore: 'the program deadline passed before this timeline rendered',
   deadlineDuring: 'the program deadline passed while this timeline rendered',
   noOutcome: 'the renderer returned no outcome for this timeline',
+  budgetSpent:
+    'earlier timelines used the whole program size budget, so this timeline has no program',
 } as const;
 
 const PAGE_REASON_MESSAGES: Record<OtioProgramReasonCode, string> = {
@@ -134,7 +140,7 @@ export interface ProgramRenderJob {
   readonly media: readonly OtioMediaEntry[];
   /** Reads one archive media entry, by bundle_path. */
   readonly readMedia: (bundlePath: string) => Promise<Uint8Array>;
-  readonly maxBytes: number;
+  readonly maxTotalBytes: number;
   readonly forceEncoderAbsent: boolean;
 }
 
@@ -142,25 +148,7 @@ export type ProgramTimelineOutcome =
   | {
       readonly status: 'rendered';
       readonly timelineId: string;
-      readonly program: {
-        readonly frame_rate: { readonly num: number; readonly den: number };
-        readonly frames: number;
-        readonly width: number;
-        readonly height: number;
-        readonly video_codec: string;
-        readonly video_bitrate: number;
-        readonly audio_codec: 'mp4a.40.2';
-        readonly audio_rate: 48000;
-        readonly channels: 2;
-        readonly audio_samples: number;
-        readonly range: {
-          readonly start_time: {
-            readonly value: number;
-            readonly rate: number;
-          };
-          readonly duration: { readonly value: number; readonly rate: number };
-        };
-      };
+      readonly program: unknown;
       readonly mp4: Uint8Array;
       readonly sha256: string;
     }
@@ -475,7 +463,7 @@ async function renderWithProfile(
   }
 }
 
-async function renderInBrowser(
+export async function renderInBrowser(
   running: RunningChrome,
   pages: { readonly html: Uint8Array; readonly js: Uint8Array },
   job: ProgramRenderJob,
@@ -509,6 +497,8 @@ async function renderInBrowser(
   let chunks: Array<{ seq: number; data: Buffer }> = [];
   let chunkBytes = 0;
   let chunkOverflow = false;
+  let used = 0;
+  let timelineCap = 0;
 
   const respond = (
     requestId: string,
@@ -525,7 +515,11 @@ async function renderInBrowser(
         requestId,
         responseCode: 200,
         responseHeaders: headers,
-        body: Buffer.from(body).toString('base64'),
+        body: Buffer.from(
+          body.buffer,
+          body.byteOffset,
+          body.byteLength
+        ).toString('base64'),
       },
       sessionId
     );
@@ -611,7 +605,7 @@ async function renderInBrowser(
       if (
         chunkOverflow ||
         chunks.length >= 65536 ||
-        encoded.length > Math.ceil(job.maxBytes / 3) * 4 ||
+        encoded.length > Math.ceil(timelineCap / 3) * 4 ||
         !/^[A-Za-z0-9+/]*={0,2}$/.test(encoded)
       ) {
         chunkOverflow = true;
@@ -619,7 +613,7 @@ async function renderInBrowser(
       }
       const data = Buffer.from(encoded, 'base64');
       chunkBytes += data.length;
-      if (data.length === 0 || chunkBytes > job.maxBytes) {
+      if (data.length === 0 || chunkBytes > timelineCap) {
         chunkOverflow = true;
         return;
       }
@@ -676,6 +670,14 @@ async function renderInBrowser(
         );
         continue;
       }
+      const cap = Math.min(OTIO_PROGRAM_MAX_BYTES, job.maxTotalBytes - used);
+      if (!(cap >= 1)) {
+        outcomes.push(
+          unavailable('size-cap-exceeded', RENDER_MESSAGES.budgetSpent)
+        );
+        continue;
+      }
+      timelineCap = cap;
       chunks = [];
       chunkBytes = 0;
       chunkOverflow = false;
@@ -686,7 +688,7 @@ async function renderInBrowser(
         media: job.media,
         width: PROGRAM_WIDTH,
         height: PROGRAM_HEIGHT,
-        max_bytes: job.maxBytes,
+        max_bytes: timelineCap,
         ...(job.forceEncoderAbsent ? { force_encoder_absent: true } : {}),
       };
       let evaluated: Record<string, unknown>;
@@ -721,11 +723,11 @@ async function renderInBrowser(
         outcomes.push(unavailable('render-failed', RENDER_MESSAGES.pageFailed));
         continue;
       }
-      outcomes.push(
-        chunkOverflow
-          ? unavailable('render-failed', RENDER_MESSAGES.lengthMismatch)
-          : await settleTimeline(evaluated, ids[i]!, job, chunks)
-      );
+      const outcome: ProgramTimelineOutcome = chunkOverflow
+        ? unavailable('render-failed', RENDER_MESSAGES.lengthMismatch)
+        : await settleTimeline(evaluated, ids[i]!, job, chunks);
+      if (outcome.status === 'rendered') used += outcome.mp4.length;
+      outcomes.push(outcome);
     }
     return { browser, outcomes };
   } finally {
@@ -769,7 +771,12 @@ async function settleTimeline(
       return unavailable('render-failed', RENDER_MESSAGES.chunkGaps);
     }
   }
-  const mp4 = new Uint8Array(Buffer.concat(ordered.map((c) => c.data)));
+  const joined = Buffer.concat(ordered.map((c) => c.data));
+  const mp4 = new Uint8Array(
+    joined.buffer,
+    joined.byteOffset,
+    joined.byteLength
+  );
   if (mp4.length !== byteLength) {
     return unavailable('render-failed', RENDER_MESSAGES.lengthMismatch);
   }
@@ -779,10 +786,7 @@ async function settleTimeline(
   return {
     status: 'rendered',
     timelineId,
-    program: result['program'] as Extract<
-      ProgramTimelineOutcome,
-      { status: 'rendered' }
-    >['program'],
+    program: result['program'],
     mp4,
     sha256: expectedSha,
   };

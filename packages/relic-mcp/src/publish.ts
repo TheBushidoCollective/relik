@@ -18,7 +18,7 @@ import {
   deriveRendererClass,
   deriveShareProof,
   encodeKey,
-  encryptRelic,
+  encryptRelicParts,
   generateKey,
   generateRelicId,
   indexOtioZip,
@@ -154,8 +154,8 @@ export interface SourceFile {
 export interface ConfinedBundleFile {
   /** Size returned by fstat on the held native descriptor. */
   readonly size: number;
-  /** Reads from that descriptor only, refusing more than maxBytes. */
-  readBounded(maxBytes: number): Promise<Uint8Array>;
+  /** Fills target from the held descriptor. target.length must equal size; a file that changed while held is refused. */
+  readInto(target: Uint8Array): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -340,6 +340,25 @@ export async function lookupPublishedSource(
   return lookupResolvedSource(deps.files.resolve(path), deps);
 }
 
+/**
+ * The server's program size limit from a challenge. Anything other than a
+ * positive safe integer is refused before any grant or render, so no byte is
+ * planned against a value the server did not state.
+ */
+export function challengeSizeLimit(
+  challenge: Readonly<Record<string, unknown>>
+): number {
+  const value = challenge['size_limit_bytes'];
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0) {
+    throw new PublishError(
+      'app_response_unusable',
+      'The Relic service returned a challenge with no usable size limit.',
+      { leg: 'challenge' }
+    );
+  }
+  return value;
+}
+
 export async function publish(
   input: PublishInput,
   deps: PublishDeps
@@ -380,7 +399,7 @@ export async function publish(
     `${deps.serviceOrigin}/api/challenge`,
     {}
   );
-  const sizeLimit = Number(challenge['size_limit_bytes']);
+  const sizeLimit = challengeSizeLimit(challenge);
   const sizeBasis = String(challenge['size_basis']);
 
   if (source.bytes.length > sizeLimit) {
@@ -453,15 +472,14 @@ export async function publish(
     renderer: deps.renderProgram,
     clientName: deps.clientName,
   });
-  const payload = programBuild.bytes;
-  if (payload.length > sizeLimit) {
+  if (programBuild.length > sizeLimit) {
     throw new PublishError(
       'local_size_precheck_failed',
-      `${source.basename} with its program is ${payload.length} bytes, over the ` +
+      `${source.basename} with its program is ${programBuild.length} bytes, over the ` +
         `${sizeLimit}-byte cap`,
       {
         size_limit_bytes: sizeLimit,
-        declared_size_bytes: payload.length,
+        declared_size_bytes: programBuild.length,
         size_basis: sizeBasis,
       }
     );
@@ -481,8 +499,8 @@ export async function publish(
     // Encrypt before requesting the grant, so the grant can pin the object's
     // exact byte length. A fresh salt is drawn per attempt, so this has to sit
     // inside the retry loop alongside the id and the key.
-    const container = await encryptRelic({
-      content: payload,
+    const container = await encryptRelicParts({
+      parts: programBuild.parts,
       filename,
       mimetype: guessMimetype(filename, rendererClass),
       key,
@@ -496,7 +514,7 @@ export async function publish(
         relic_id: relicId,
         renderer_class: rendererClass,
         publishing_client: deps.clientName,
-        declared_size_bytes: payload.length,
+        declared_size_bytes: programBuild.length,
         declared_ciphertext_bytes: container.length,
         title: normalizedTitle,
         // Omitted rather than sent as anything, so an unset lifetime is the
