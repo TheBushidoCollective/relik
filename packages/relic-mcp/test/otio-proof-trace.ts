@@ -116,11 +116,16 @@ export const otioProofTracePrelude = String.raw`(() => {
   // current performanceTime, with contextTime advanced by deltaUs and never below the latest
   // native contextTime. A 'perf' hold re-serves the latest returned pair with performanceTime
   // advanced by perfUs. Injected reads are marked injected and are never native evidence.
+  // A continuous context hold affects only re-reads and releases at the next
+  // performance timestamp, so the first accepted read remains native.
   let clockHold = null;
   let siteHold = null;
   let realPairByPerf = new Map();
   let latestRealContext = null;
   let latestReturned = null;
+  const releaseClockHold = () => {
+    clockHold = clockHold?.kind === 'ctx' && !clockHold.once ? {...clockHold, releasing:true} : null;
+  };
   if (typeof originalOutputTimestamp === 'function') {
     AudioContext.prototype.getOutputTimestamp = function() {
       const before = performance.now(), currentBefore = this.currentTime;
@@ -136,7 +141,10 @@ export const otioProofTracePrelude = String.raw`(() => {
         siteHold = clockHold;
         clockHold = null;
       }
-      const applied = nativeFinite ? clockHold : null;
+      const continuousCtx = clockHold?.kind === 'ctx' && !clockHold.once;
+      const reread = nativeFinite && native.performanceTime === latestReturned?.performanceTime;
+      if (continuousCtx && nativeFinite && !reread && clockHold.releasing) clockHold = null;
+      const applied = nativeFinite && !(continuousCtx && !reread) ? clockHold : null;
       if (applied) {
         if (!realPairByPerf.has(native.performanceTime)) realPairByPerf.set(native.performanceTime, native.contextTime);
         if (applied.kind === 'ctx') {
@@ -969,7 +977,7 @@ export const otioProofTracePrelude = String.raw`(() => {
     failNextSourceStart() { failNextSourceStart = true; },
     setInvalidControllerClock(value) { invalidControllerClock = Boolean(value); },
     setClockHold(spec) {
-      if (spec === null) { clockHold = null; return null; }
+      if (spec === null) { releaseClockHold(); return null; }
       if (spec && Number.isFinite(spec.deltaUs) && spec.deltaUs >= 0 && spec.deltaUs < 1e6) clockHold = {kind:'ctx', deltaUs:spec.deltaUs};
       else if (spec && Number.isFinite(spec.perfUs) && spec.perfUs > 0) clockHold = {kind:'perf', perfUs:spec.perfUs};
       else throw new Error('invalid clock hold');
@@ -1128,7 +1136,7 @@ export const otioProofTracePrelude = String.raw`(() => {
           terminated: Boolean(currentGate?.terminated), gateCaptureId: currentGate?.staleCaptureId ?? null});
       }
       activeStaleCaptureId = null;
-      clockHold = null; siteHold = null;
+      releaseClockHold(); siteHold = null;
       visual.active = false;
       clearInterval(startupMonitor); startupMonitor = null;
       bufferingObserver?.disconnect();
