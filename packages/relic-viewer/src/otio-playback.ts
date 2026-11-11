@@ -4369,6 +4369,16 @@ export function createOtioPlayback(
           );
           return;
         }
+        if (coldProofGlobal.__otioProofPcm === true)
+          pcmProof('drain-read', run.generation, {
+            boundaryFrame: closedFrame,
+            reason: result.reason,
+            readEnd,
+            contextTime: pair.contextTime,
+            performanceTime: pair.performanceTime,
+            rawContextTime: stamp.contextTime,
+            rawPerformanceTime: stamp.performanceTime,
+          });
         if (pair.contextTime * run.admission.rate >= closedFrame) {
           run.drainObserved = true;
           if (coldProofGlobal.__otioProofPcm === true)

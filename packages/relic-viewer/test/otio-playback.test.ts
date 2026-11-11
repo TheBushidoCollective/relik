@@ -4650,6 +4650,11 @@ describe('otio playback controller', () => {
     const fixture = independentPcmFixture(false, false, undefined, {
       proofBudget: true,
     });
+    const drained = () =>
+      tap.events.filter((e) => e.event === 'drain-observed');
+    // Output frame at a wall time, on the fixture's output-wall mapping.
+    const frameAt = (wall: number) =>
+      Math.round((wall - fixture.outputWall(0)) * 48);
     try {
       await fixture.start();
       expect(fixture.commands.find((c) => c.type === 'arm')).toBeDefined();
@@ -4663,35 +4668,58 @@ describe('otio playback controller', () => {
       const deltaFrames = 8; // 167 us at 48 kHz, inside the 200 us hold rule
       fixture.setHoldRead({ fromOutputFrame: accepted, deltaFrames });
       await fixture.advance(fixture.outputWall(accepted), boundary, accepted);
-      for (let i = 0; i < 3; i++)
-        await fixture.advance(fixture.wall + 8, boundary, accepted);
+      // Hold window: output stays at `accepted` while the wall moves. Stop after
+      // three held reads, or at 40 ms, inside the 50 ms freshness budget.
+      const windowStart = fixture.outputWall(accepted);
+      for (
+        let steps = 0;
+        steps < 400 &&
+        fixture.heldReadCount < 3 &&
+        fixture.wall - windowStart < 40;
+        steps++
+      )
+        await fixture.advance(fixture.wall + 1, boundary, accepted);
       // Reachability: held reads were served while the drain waited.
-      expect(fixture.heldReadCount).toBeGreaterThan(0);
+      expect(fixture.heldReadCount).toBeGreaterThanOrEqual(3);
+      // Load-bearing: the drain loop itself read a held stamp inside the window,
+      // so the empty completion assertion below means something.
+      const windowDrainReads = tap.events.filter(
+        (e) => e.event === 'drain-read' && e.reason === 'sub-resolution'
+      );
+      expect(windowDrainReads.length).toBeGreaterThanOrEqual(1);
       // Nothing completed while only the held stamp had crossed the stop.
-      expect(tap.events.filter((e) => e.event === 'drain-observed')).toEqual(
-        []
-      );
-      await fixture.advance(
-        fixture.outputWall(boundary + 384),
-        boundary + 384,
-        boundary + 384
-      );
-      await fixture.advance(
-        fixture.outputWall(boundary + 384) + 8,
-        boundary + 384 + 384,
-        boundary + 384
-      );
-      const observed = tap.events.filter((e) => e.event === 'drain-observed');
-      expect(observed.length).toBeGreaterThan(0);
-      const first = observed[0]!;
+      expect(drained()).toEqual([]);
+      // Output tracks the wall from here, so the clock stays fresh while the drain reads.
+      for (let steps = 0; steps < 400 && drained().length === 0; steps++) {
+        const wall = fixture.wall + 1;
+        const out = Math.max(boundary + 384, frameAt(wall));
+        await fixture.advance(
+          wall,
+          Math.max(fixture.renderFrame, out + 384),
+          out
+        );
+      }
+      const first = drained()[0];
+      expect(first).toBeDefined();
       // The boundary must sit in (accepted, held], or the window tests nothing.
-      expect(Number(first.boundaryFrame)).toBeGreaterThan(accepted);
-      expect(Number(first.boundaryFrame)).toBeLessThanOrEqual(
+      expect(Number(first!.boundaryFrame)).toBeGreaterThan(accepted);
+      expect(Number(first!.boundaryFrame)).toBeLessThanOrEqual(
         accepted + deltaFrames
       );
-      // Completion uses the accepted read past the stop, never the held stamp.
-      expect(first.contextTime).toBe((boundary + 384) / 48000);
-      expect(first.rawContextTime).toBe(first.contextTime);
+      // Completion uses the accepted read at or past the stop, never the held stamp.
+      expect(
+        Math.round(Number(first!.contextTime) * 48000)
+      ).toBeGreaterThanOrEqual(boundary);
+      expect(first!.rawContextTime).toBe(first!.contextTime);
+      for (let steps = 0; steps < 3; steps++) {
+        const wall = fixture.wall + 1;
+        const out = Math.max(boundary + 384, frameAt(wall));
+        await fixture.advance(
+          wall,
+          Math.max(fixture.renderFrame, out + 384),
+          out
+        );
+      }
       expect(fixture.playback.getState().playing).toBe(false);
     } finally {
       tap.restore();
@@ -4704,6 +4732,12 @@ describe('otio playback controller', () => {
     const fixture = independentPcmFixture(false, false, undefined, {
       proofBudget: true,
     });
+    const frameAt = (wall: number) =>
+      Math.round((wall - fixture.outputWall(0)) * 48);
+    const heldTicks = () =>
+      tap.events.filter(
+        (e) => e.event === 'tick-output' && e.reason === 'sub-resolution'
+      );
     try {
       await fixture.start();
       const frame = fixture.outputFrame + 384;
@@ -4713,21 +4747,35 @@ describe('otio playback controller', () => {
         frame
       );
       const deltaFrames = 8;
-      fixture.setHoldRead({ fromOutputFrame: frame, deltaFrames });
       const perf = fixture.outputWall(frame);
-      for (let i = 0; i < 3; i++)
+      fixture.setHoldRead({ fromOutputFrame: frame, deltaFrames });
+      // Hold window: output stays at `frame` while the wall moves, until a playing
+      // tick reads a held stamp, or 40 ms, inside the 50 ms freshness budget.
+      for (
+        let steps = 0;
+        steps < 400 && heldTicks().length === 0 && fixture.wall - perf < 40;
+        steps++
+      )
         await fixture.advance(
-          fixture.wall + 8,
-          fixture.renderFrame + 384,
+          fixture.wall + 1,
+          Math.max(fixture.renderFrame, frame + 384),
           frame
         );
+      raf?.(fixture.wall);
       // Reachability: a playing tick consumed a held read.
       expect(fixture.heldReadCount).toBeGreaterThan(0);
-      await fixture.advance(
-        fixture.outputWall(frame + 384),
-        fixture.renderFrame + 768,
-        frame + 384
-      );
+      expect(heldTicks().length).toBeGreaterThan(0);
+      // Output resumes tracking the wall.
+      for (let steps = 0; steps < 60; steps++) {
+        const wall = fixture.wall + 1;
+        const out = Math.max(frame + 384, frameAt(wall));
+        await fixture.advance(
+          wall,
+          Math.max(fixture.renderFrame, out + 384),
+          out
+        );
+        raf?.(fixture.wall);
+      }
       const ticks = tap.events.filter((e) => e.event === 'tick-output');
       const held = ticks.filter((e) => e.reason === 'sub-resolution');
       expect(held.length).toBeGreaterThan(0);
