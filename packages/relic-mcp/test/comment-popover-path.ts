@@ -285,6 +285,8 @@ async function callMcp(
       RELIC_PUBLISH_STATE: statePath,
       RELIC_CLIENT_NAME: 'relic-mcp/comment-popover-path',
       RELIC_CHROME_PATH: 'none',
+      // Explicit: this fixture is source-only in this test, independent of the platform.
+      RELIC_OTIO_CHROME_PATH: 'none',
     },
     stdin: 'pipe',
     stdout: 'pipe',
@@ -605,6 +607,10 @@ async function openBrowser(
                 offerButtonRect: r ? { left: r.left, top: r.top, width: r.width, height: r.height } : null,
                 elementFromPoint: el?.outerHTML?.slice(0, 100),
                 cardHtml: card?.outerHTML?.slice(0, 200),
+                otioReady: document.querySelector('.otio-view')?.dataset?.ready,
+                otioPreviewState: document.querySelector('.otio-view')?.dataset?.previewState,
+                otioProgramState: document.querySelector('.otio-view')?.getAttribute('data-otio-program-state'),
+                otioProgramReason: document.querySelector('.otio-view')?.getAttribute('data-otio-program-reason'),
               };
             })()`);
             console.error(
@@ -2289,9 +2295,28 @@ console.log('Testing Class 9: OTIO...');
     scheme: 'light',
   });
   try {
+    // This fixture is intentionally unsupported: an enabled unsupported effect
+    // and a dissolve keep the view's readiness at 'diagnostic', never 'true',
+    // and the test publishes with no renderer, so the program is unavailable.
+    // Assert that exact settled state; do not wait for 'true'.
     await session.waitFor(
-      "document.querySelector('.otio-view')?.dataset?.ready === 'true'",
+      "(() => { const v = document.querySelector('.otio-view'); return !!v && v.dataset.ready === 'diagnostic' && v.dataset.previewState === 'unavailable' && v.getAttribute('data-otio-program-state') === 'unavailable' && v.getAttribute('data-otio-program-reason') === 'unsupported-browser'; })()",
       25000
+    );
+    const commentButtonBox = await session.evaluate<{
+      width: number;
+      height: number;
+    } | null>(`(() => {
+      const b = document.querySelector('button.otio-comment-selection');
+      if (!b) return null;
+      const r = b.getBoundingClientRect();
+      return { width: r.width, height: r.height };
+    })()`);
+    assert.ok(
+      commentButtonBox &&
+        commentButtonBox.width > 0 &&
+        commentButtonBox.height > 0,
+      'OTIO comment button is not visible in the unavailable view'
     );
     // Open composer via selection Comment button
     await session.evaluate(`(() => {
