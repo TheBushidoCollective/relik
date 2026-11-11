@@ -4709,6 +4709,30 @@ canvas.relic-page {
   font-style: italic;
 }
 
+.dashboard-search {
+  margin: 0 0 1.75rem;
+}
+
+.dashboard-search-input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.dashboard-search-status {
+  margin: 0.4rem 0 0;
+  min-height: 1.2em;
+  font-size: 0.8rem;
+  color: var(--ink-soft);
+}
+
+.relic-match-snippet {
+  margin: 0.2rem 0 0;
+  font-size: 0.8rem;
+  color: var(--ink-soft);
+  line-height: 1.4;
+  word-break: break-word;
+}
+
 .relic-list-empty {
   margin: 1.25rem 0;
   padding: 1.25rem;
