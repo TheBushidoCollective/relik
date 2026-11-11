@@ -753,6 +753,19 @@ class OtioTransportGateProcessor extends AudioWorkletProcessor {
         boundary: this.expected,
         clockCoverageEnd: promote.endFrame - MAX_QUANTUM,
       });
+      if (this.staleLimit)
+        this.port.postMessage({
+          type: 'proof-promotion-tags',
+          clockEpoch: this.epoch,
+          requestId: this.warmRequest,
+          promoted: promote,
+          retiredSerial: retired.serial,
+          observed,
+          tagA: Array.from(parameters.clockTagA ?? []),
+          tagB: Array.from(parameters.clockTagB ?? []),
+          frameA: Array.from(parameters.clockFrameA ?? []),
+          frameB: Array.from(parameters.clockFrameB ?? []),
+        });
     }
     return true;
   }

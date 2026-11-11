@@ -1800,6 +1800,8 @@ describe('otio playback controller', () => {
       suspendGate?: Promise<void>;
       resumeGate?: Promise<void>;
       proofBudget?: boolean;
+      outputLatencyFrames?: number;
+      decoderClock?: boolean;
       imageCuts?: boolean;
       cutAt?: number;
       autoEndSources?: boolean;
@@ -1810,9 +1812,11 @@ describe('otio playback controller', () => {
   ) {
     let wall = 2000;
     const sampleRate = clockOptions?.sampleRate ?? 48000;
+    // The device output lags the render clock by the configured latency from construction.
+    const latencyFrames = clockOptions?.outputLatencyFrames ?? 0;
     let renderFrame: number = sampleRate;
-    let outputFrame: number = sampleRate;
-    let outputWallOffset = 1000;
+    let outputFrame: number = sampleRate - latencyFrames;
+    let outputWallOffset = 1000 + (latencyFrames * 1000) / sampleRate;
     let suspensions = 0;
     let resumes = 0;
     let closes = 0;
@@ -1841,6 +1845,22 @@ describe('otio playback controller', () => {
     const originalCreateElement = document.createElement;
     let video: MockMedia | null = null;
     const videos: MockMedia[] = [];
+    // Each decoder's media clock: media time at a wall time, advancing with the wall clock.
+    const decoderClocks = new Map<
+      MockMedia,
+      { wall: number; media: number; seeks: number } | null
+    >();
+    const anchorDecoder = (
+      media: MockMedia,
+      at: number,
+      mediaTime: number
+    ): void => {
+      decoderClocks.set(media, {
+        wall: at,
+        media: mediaTime,
+        seeks: media.seekTargets.length,
+      });
+    };
     const output = new SoftCanvas();
     if (withVideo) {
       class VideoCapability {
@@ -1864,6 +1884,24 @@ describe('otio playback controller', () => {
           seconds < 1 / 30
             ? { r: 1, g: 0, b: 0, a: 1 }
             : { r: 0, g: 0, b: 1, a: 1 };
+        if (clockOptions?.decoderClock) {
+          // The decoder's media clock anchors at the play wall, not at the first tick.
+          const play = current.play.bind(current);
+          current.play = () => {
+            const wasPaused = current.paused;
+            const started = play();
+            if (wasPaused && !current.paused) {
+              anchorDecoder(current, wall, current.currentTime);
+              (current as MockMedia & { playedAt?: number }).playedAt = wall;
+            }
+            return started;
+          };
+          const pause = current.pause.bind(current);
+          current.pause = () => {
+            pause();
+            decoderClocks.set(current, null);
+          };
+        }
         video ??= current;
         videos.push(current);
         created.push(current);
@@ -2540,6 +2578,34 @@ describe('otio playback controller', () => {
       }
       await advance(nextWall, nextRender, nextOutput, deliver);
     }
+    // Presents, at the decoder's own cadence, the frame each playing clip has reached.
+    // A clip presents at most one new frame per 1/30 s, and only after play has anchored it.
+    function presentDecoders(): void {
+      for (const media of videos) {
+        const clock = decoderClocks.get(media);
+        if (!clock || media.paused) continue;
+        if (media.seekTargets.length !== clock.seeks)
+          throw new Error('decoder clock: seek while playing is not modelled');
+        const position =
+          clock.media + ((wall - clock.wall) * media.playbackRate) / 1000;
+        const due = Math.floor(position * 30 + 1e-6);
+        const shown = Math.floor(media.currentTime * 30 + 1e-6);
+        if (due <= shown) continue;
+        if (due > shown + 1)
+          throw new Error(
+            'decoder clock: a frame was skipped between refreshes'
+          );
+        media.triggerRvfc(wall, due / 30); // presents even with no registered callback
+      }
+    }
+    // One display refresh (1/60 s), with the render clock ahead of output by the latency.
+    async function advanceVsync(): Promise<void> {
+      const nextWall = wall + 1000 / 60;
+      const nextOutput = Math.round(
+        ((nextWall - outputWallOffset) * sampleRate) / 1000
+      );
+      await advanceSmooth(nextWall, nextOutput + latencyFrames, nextOutput);
+    }
     async function deliverCallbacks() {
       for (const callback of callbackQueue.splice(0)) callback();
       await flush();
@@ -2563,6 +2629,8 @@ describe('otio playback controller', () => {
         ) {
           videoStarted = true;
           currentVideo.triggerRvfc(wall, 1 / 30);
+          if (clockOptions?.decoderClock)
+            anchorDecoder(currentVideo, wall, 1 / 30);
           await flush();
         }
         if (!settled) {
@@ -2696,6 +2764,10 @@ describe('otio playback controller', () => {
       advanceSmooth,
       flush,
       deliverCallbacks,
+      presentDecoders,
+      advanceVsync,
+      outputWall: (frame: number) =>
+        outputWallOffset + (frame * 1000) / sampleRate,
       restore,
       get wall() {
         return wall;
@@ -4770,6 +4842,133 @@ describe('otio playback controller', () => {
       await fixture.flush();
       expect(fixture.playback.getState().playing).toBe(true);
     } finally {
+      fixture.restore();
+    }
+  });
+
+  test('PCM crosses a prepared incoming cut without recovery when output latency exceeds the 3-slot decoder lead', async () => {
+    const fixture = independentPcmFixture(true, true, undefined, {
+      proofBudget: true,
+      outputLatencyFrames: 1536,
+      decoderClock: true,
+    });
+    const proof = globalThis as typeof globalThis & {
+      __otioProofPcm?: boolean;
+    };
+    const priorProof = proof.__otioProofPcm;
+    const proofEvents: string[] = [];
+    const proofRecords: Record<string, unknown>[] = [];
+    const originalLog = console.log;
+    console.log = (...args: unknown[]) => {
+      const detail = args[1];
+      if (
+        args[0] === 'OTIO_PROOF_PCM' &&
+        detail &&
+        typeof detail === 'object' &&
+        'event' in detail
+      ) {
+        proofRecords.push({ ...detail });
+        proofEvents.push(String(detail.event));
+      }
+    };
+    proof.__otioProofPcm = true;
+    try {
+      await fixture.start();
+      const f0 = Number(
+        fixture.commands.find((item) => item.type === 'arm')!.f0
+      );
+      const cutFrame = f0 + 24000;
+      // Certified composition end: the frames the decoders have presented so far.
+      // Each tag covers 1600 composition frames at 30 fps. The incoming clip counts
+      // only once it has been seeked (its paused frame), not before it is loaded.
+      const outgoing = fixture.videos[0]!;
+      const presentedEnd = (): number => {
+        const outgoingEnd = Math.min(
+          24000,
+          (Math.floor(outgoing.currentTime * 30 + 1e-6) + 1) * 1600
+        );
+        if (outgoingEnd < 24000) return outgoingEnd;
+        const next = fixture.videos[1];
+        if (!next || next.seekTargets.length === 0) return 24000;
+        return 24000 + (Math.floor(next.currentTime * 30 + 1e-6) + 1) * 1600;
+      };
+      let certified = presentedEnd();
+      let checked = 0;
+      // Every arm and extend must stay within what the decoders have presented.
+      const checkCertificate = (): void => {
+        for (const command of fixture.commands.slice(checked))
+          if (command.type === 'arm' || command.type === 'extend')
+            expect(Number(command.throughFrame) - f0).toBeLessThanOrEqual(
+              certified
+            );
+        checked = fixture.commands.length;
+      };
+      checkCertificate();
+      for (let i = 0; i < 60 && fixture.outputFrame < cutFrame + 4800; i++) {
+        await fixture.advanceVsync();
+        checkCertificate();
+        fixture.presentDecoders();
+        certified = presentedEnd();
+        await fixture.flush(); // microtask checkpoint between rVFC and rAF callbacks
+        raf?.(fixture.wall);
+        await fixture.flush();
+        checkCertificate();
+      }
+      expect(fixture.outputFrame).toBeGreaterThanOrEqual(cutFrame + 4800);
+      expect(fixture.videos).toHaveLength(2);
+      const state = fixture.playback.getState();
+      expect(
+        state.playing,
+        JSON.stringify({
+          playing: state.playing,
+          buffering: state.buffering,
+          time: state.time,
+          diagnostics: state.diagnostics.map((item) => item.message),
+          arms: fixture.commands.filter((item) => item.type === 'arm').length,
+          commandTypes: fixture.commands.map((item) => item.type),
+        })
+      ).toBe(true);
+      expect(state.buffering).toBe(false);
+      expect(
+        fixture.commands.filter((item) => item.type === 'arm')
+      ).toHaveLength(1);
+      expect(
+        fixture.commands.some(
+          (item) =>
+            item.type === 'extend' &&
+            Number(item.throughFrame) > cutFrame + 1600
+        )
+      ).toBe(true);
+      for (const name of ['gate-close', 'recovery-request', 'error', 'cancel'])
+        expect(proofEvents).not.toContain(name);
+      // The 32 ms output lead reached the measurements, not only the loop.
+      const selection = proofRecords.find((r) => r.event === 'clock-selection');
+      expect(selection, 'clock-selection record').toBeDefined();
+      expect(
+        (selection!.contextNow as number) -
+          (selection!.bridge as { contextTime: number }).contextTime
+      ).toBeCloseTo(1536 / 48000, 6);
+      expect(
+        (selection!.contributions as Array<{ residentSlots: number }>).map(
+          (c) => c.residentSlots
+        )
+      ).toEqual([5]);
+      // The incoming decoder starts one lead before its boundary, not at it.
+      const incomingPlayWall = (
+        fixture.videos[1] as MockMedia & { playedAt?: number }
+      ).playedAt;
+      expect(incomingPlayWall).toBeGreaterThanOrEqual(2488.67);
+      expect(incomingPlayWall).toBeLessThanOrEqual(2496.67);
+      // The boundary was ready before the render reached it, with the latency and margin.
+      const ready = proofRecords.find((r) => r.event === 'boundary-ready');
+      expect(ready, 'boundary-ready record').toBeDefined();
+      expect(ready!.wallMs as number).toBeLessThan(
+        fixture.outputWall(cutFrame - 128 - 1536)
+      );
+    } finally {
+      console.log = originalLog;
+      if (priorProof === undefined) delete proof.__otioProofPcm;
+      else proof.__otioProofPcm = priorProof;
       fixture.restore();
     }
   });

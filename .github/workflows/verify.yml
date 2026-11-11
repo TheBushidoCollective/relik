@@ -177,6 +177,25 @@ jobs:
               bun packages/relic-mcp/test/otio-path.ts \
               2>&1 | tee "$OTIO_BROWSER_PROOF_DIR/otio-path.log"
 
+      # Proof-only three-slot viewer: the production source with one exact landmark pinned
+      # to the old fixed ring. Never a product build; the build fails if the landmark is
+      # absent or duplicated. The forced run must refuse at the measured high latency.
+      - name: Build three-slot proof viewer
+        run: |
+          set -euo pipefail
+          bun packages/relic-mcp/test/proof-viewer-three-slot.ts "$RUNNER_TEMP/relic-viewer-three-slot"
+
+      - name: OTIO three-slot forced refusal
+        run: |
+          set -euo pipefail
+          RELIC_VIEWER_DIST="$RUNNER_TEMP/relic-viewer-three-slot" \
+          RELIC_OTIO_PROOF_VIEWER_MANIFEST="$RUNNER_TEMP/relic-viewer-three-slot/proof-viewer-manifest.json" \
+          RELIC_OTIO_PATH_CLIENT=source \
+            RELIC_OTIO_CHROME_PATH="$(command -v google-chrome)" \
+            env -u DISPLAY -u WAYLAND_DISPLAY \
+              bun packages/relic-mcp/test/otio-path.ts \
+              2>&1 | tee "$OTIO_BROWSER_PROOF_DIR/otio-path-three-slot.log"
+
 
       - name: Load progress path
         run: |

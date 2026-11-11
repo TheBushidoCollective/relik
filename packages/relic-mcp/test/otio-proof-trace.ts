@@ -151,12 +151,26 @@ export const otioProofTracePrelude = String.raw`(() => {
   const MAX_VISUAL_SAMPLES = 3000;
   let fault = 'none';
   let lastStall = 0;
+  // Draw-reason context: the callback family that is running when the canvas is drawn.
+  // rVFC, requestAnimationFrame and setTimeout are tagged; anything else is 'other'.
+  let drawReason = 'other';
+  const withDrawReason = (reason, run) => { const previous = drawReason; drawReason = reason; try { return run(); } finally { drawReason = previous; } };
+  const originalRaf = globalThis.requestAnimationFrame;
+  globalThis.requestAnimationFrame = function(callback) {
+    return originalRaf.call(globalThis, (now) => withDrawReason('raf', () => callback(now)));
+  };
+  const originalTimeout = globalThis.setTimeout;
+  globalThis.setTimeout = function(callback, delay, ...args) {
+    if (typeof callback !== 'function') return originalTimeout.call(globalThis, callback, delay, ...args);
+    return originalTimeout.call(globalThis, (...callbackArgs) => withDrawReason('timeout', () => callback(...callbackArgs)), delay, ...args);
+  };
   for (const name of ['drawImage', 'clearRect', 'fillRect']) {
     const original = CanvasRenderingContext2D.prototype[name];
     CanvasRenderingContext2D.prototype[name] = function(...args) {
       const frame = Number(document.querySelector('.otio-view')?.dataset.frame);
       const skippingStill = fault === 'skip-still' && frame >= 89 && frame < 105;
       if ((fault === 'freeze' || skippingStill) && (visual.active || screenOnlyActive) && this.canvas?.matches?.('canvas.otio-canvas')) return;
+      if (visual.active && this.canvas?.matches?.('canvas.otio-canvas')) recordEvent('canvas-draw', null, {method: name, reason: drawReason, frame: document.querySelector('.otio-view')?.getAttribute('data-frame') ?? null});
       return original.apply(this, args);
     };
   }
@@ -180,6 +194,14 @@ export const otioProofTracePrelude = String.raw`(() => {
   const events = [];
   let lastPcmBackend = null;
   let eventsOverflow = false;
+  let bankOverflow = false;
+  const bankRecords = [];
+  const BANK_RECORD_LIMIT = 4000;
+  function recordBank(value) {
+    if (!visual.active) return;
+    if (bankRecords.length >= BANK_RECORD_LIMIT) { bankOverflow = true; return; }
+    bankRecords.push({timestamp: performance.now(), value});
+  }
   const elementIds = new WeakMap();
   let nextElementId = 0;
   const sourceIds = new Map();
@@ -199,12 +221,24 @@ export const otioProofTracePrelude = String.raw`(() => {
       source: element?.dataset?.bundlePath ?? null,
       currentTime: element?.currentTime ?? null});
   }
+  // Composition-clock marker: every change to the viewer's data-frame is timestamped where
+  // the attribute is written, so composition advance can be compared with canvas draws.
+  const observeCompositionFrame = () => {
+    const root = document.documentElement;
+    if (!root) return false;
+    new MutationObserver(() => recordEvent('composition-frame', null, {frame: document.querySelector('.otio-view')?.getAttribute('data-frame') ?? null})).observe(root, {subtree: true, attributes: true, attributeFilter: ['data-frame']});
+    return true;
+  };
+  if (!observeCompositionFrame()) document.addEventListener('DOMContentLoaded', observeCompositionFrame, {once: true});
   const originalConsoleLog = console.log;
   console.log = function(...args) {
     if (args[0] === 'OTIO_PROOF_MISSING_TAG') recordEvent('missing-tag', null, args[1]);
     if (args[0] === 'OTIO_PROOF_PILOT') recordEvent('pilot', null, args[1]);
+    // Legacy retained-frame ring evidence arrives as OTIO_PROOF_COLD (kind 'cold-controller'): solver, clock-selection, ring-refused (otio-path.ts assertLegacyRingEvidence).
     if (args[0] === 'OTIO_PROOF_RING') recordEvent('ring', null, args[1]);
     if (args[0] === 'OTIO_PROOF_COLD') recordEvent('cold-controller', null, args[1]);
+    // Bank markers (schedule-cancel, schedule-set, worklet-message incl. proof-promotion-tags and failed promotions) go to their own array, so the general event cap cannot drop them.
+    if (args[0] === 'OTIO_PROOF_BANK') recordBank(args[1]);
     if (args[0] === 'OTIO_PROOF_PCM') {
       if (args[1]?.event === 'backend') lastPcmBackend = args[1];
       recordEvent('scheduled-pcm', null, args[1]);
@@ -266,7 +300,7 @@ export const otioProofTracePrelude = String.raw`(() => {
       const callbackId = originalRvfc.call(this, (now, metadata) => {
         recordEvent('rvfc', element, {callbackId, callbackTime:now, mediaTime:metadata.mediaTime,
           presentedFrames:metadata.presentedFrames, expectedDisplayTime:metadata.expectedDisplayTime});
-        try { return callback(now, metadata); }
+        try { return withDrawReason('rvfc', () => callback(now, metadata)); }
         finally { recordEvent('rvfc-return', element, {callbackId}); }
       });
       recordEvent('rvfc-request', element, {callbackId});
@@ -411,9 +445,13 @@ export const otioProofTracePrelude = String.raw`(() => {
             // (attachWitness), never to the production gate input, so it need not follow
             // the gate anchor A. It is scheduled at the earliest legal aligned frame so it
             // can cover the scheduled start F0; if F0 is still uncovered the capture fails.
-            const PROOF_CARRIER_LEAD_FRAMES = 128, PROOF_QUANTUM = 128;
+            // main-thread currentTime can trail the render by about a block plus message delay.
+            // Lead is two quanta plus a 20 ms margin, so the source start is not already past.
+            // The identity assertion in otio-path.ts proves carrier == sample label every epoch.
+            const PROOF_CARRIER_LEAD_FRAMES = 2 * 128, PROOF_QUANTUM = 128;
+            const PROOF_TRAIL_MARGIN_FRAMES = Math.ceil(context.sampleRate * 0.02);
             const now = context.currentTime * context.sampleRate;
-            const base = Math.ceil(now) + PROOF_CARRIER_LEAD_FRAMES;
+            const base = Math.ceil(now) + PROOF_TRAIL_MARGIN_FRAMES + PROOF_CARRIER_LEAD_FRAMES;
             const frozenAnchor = base + (PROOF_QUANTUM - (base % PROOF_QUANTUM)) % PROOF_QUANTUM;
             if (!Number.isSafeInteger(frozenAnchor)) throw new Error('proof carrier origin is not an integer');
             const laterAnchor = globalThis.__otioProofClockMode === 'long'
@@ -434,6 +472,7 @@ export const otioProofTracePrelude = String.raw`(() => {
             const witness = {sources, anchor:frozenAnchor, laterAnchor, frozenAnchor, length, attached:false,
               gateInitialFrame:options?.processorOptions?.initialFrame, clockEpoch:options?.processorOptions?.clockEpoch};
             witnesses.set(context, witness);
+            recordEvent('witness-attach', null, {clockEpoch: witness.clockEpoch, frozenAnchor, laterAnchor, contextFrameAtAttach: Math.ceil(context.currentTime * context.sampleRate), sampleRate: context.sampleRate, starts, base, lead: PROOF_CARRIER_LEAD_FRAMES, sourceStarts: starts.map((start) => start / context.sampleRate), contextState: context.state});
             attachWitness(context);
             for(let i=0;i<sources.length;i++) sources[i].start(starts[i] / context.sampleRate);
           }
@@ -872,7 +911,7 @@ export const otioProofTracePrelude = String.raw`(() => {
       graph.chunks = []; graph.samples = 0; graph.overflow = false;
       const sampleFrame = await command(graph, 'start');
       visual.samples = []; visual.overflow = false; visual.active = true;
-      events.length = 0; eventsOverflow = false;
+      events.length = 0; eventsOverflow = false; bankRecords.length = 0; bankOverflow = false;
       if (!Number.isSafeInteger(++staleCaptureSerial)) throw new Error('stale capture id exhausted');
       activeStaleCaptureId = staleCaptureSerial; staleWindowStopped = false;
       recordEvent('clock-stale-window-requested', null, {captureId:activeStaleCaptureId});
@@ -897,6 +936,7 @@ export const otioProofTracePrelude = String.raw`(() => {
         sampleFrame, bridge, timestamp: performance.now(),
         frame: Number(document.querySelector('.otio-view')?.dataset.frame)};
     },
+    visualSampleCount() { return visual.samples.length; },
     playRequest() {
       if (graphs.length !== 1) throw new Error('controller audio graph ambiguous at play edge');
       const edge = {timestamp:performance.now(), bridge:audioBridge(graphs[0]),
@@ -970,7 +1010,7 @@ export const otioProofTracePrelude = String.raw`(() => {
       return {sampleRate: graph.context.sampleRate, contextState: graph.context.state,
         timestamp, frame, sampleFrame, bridge, staleCaptureId:captureId,
         audio: graph.chunks, audioOverflow: graph.overflow, witness: (() => { const item = witnesses.get(graph.context); return item ? {anchor:item.anchor, laterAnchor:item.laterAnchor, frozenAnchor:item.frozenAnchor, length:item.length, gateInitialFrame:item.gateInitialFrame, clockEpoch:item.clockEpoch} : null; })(),
-        visual: visual.samples, visualOverflow: visual.overflow, events, eventsOverflow};
+        visual: visual.samples, visualOverflow: visual.overflow, events, eventsOverflow, bank: bankRecords, bankOverflow};
     },
   };
 })();`;

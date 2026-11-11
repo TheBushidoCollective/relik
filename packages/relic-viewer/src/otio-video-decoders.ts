@@ -417,6 +417,8 @@ export interface DecoderPhaseSample {
   readonly sourceT0Seconds: number; // s_L(T0) in seconds
   readonly rL: number; // playback rate
   readonly wMinSeconds: number; // smallest window / rL
+  /** Retained slots K of this decoder ring; undefined means the 3-slot ring. */
+  readonly residentSlots?: number;
 }
 
 export interface PhaseAnchorResult {
@@ -428,11 +430,11 @@ export interface PhaseAnchorResult {
 
 /**
  * Closed-form phase anchor calculation:
- * leadTarget = (vsync + 2 * W_min,L) / 2
+ * leadTarget = (vsync + (K - 1) * W_min,L) / 2
  * deltaSeconds = leadTarget - (starts[i_L0 + 1] - s_L(T0)) / r_L
  * tau_L = d_L + deltaSeconds * 1000 (ms)
  * tau* = (min tau_L + max tau_L) / 2
- * spreadLimit = min_L(2 * W_min,L - vsync) * 1000 (ms)
+ * spreadLimit = min_L((K - 1) * W_min,L - vsync) * 1000 (ms)
  */
 export function computePhaseAnchor(
   samples: readonly DecoderPhaseSample[],
@@ -452,7 +454,8 @@ export function computePhaseAnchor(
   let minSpreadLimitMs = Infinity;
 
   for (const sample of samples) {
-    const leadTarget = (vsyncSeconds + 2 * sample.wMinSeconds) / 2;
+    const retained = residentSlotCount(sample);
+    const leadTarget = (vsyncSeconds + (retained - 1) * sample.wMinSeconds) / 2;
     const uL = sample.iL0Plus1Start - sample.sourceT0Seconds;
     const deltaSeconds = leadTarget - uL / sample.rL;
     const tauL = sample.dL + deltaSeconds * 1000;
@@ -460,7 +463,8 @@ export function computePhaseAnchor(
     if (tauL < minTau) minTau = tauL;
     if (tauL > maxTau) maxTau = tauL;
 
-    const spreadLimitL = (2 * sample.wMinSeconds - vsyncSeconds) * 1000;
+    const spreadLimitL =
+      ((retained - 1) * sample.wMinSeconds - vsyncSeconds) * 1000;
     if (spreadLimitL < minSpreadLimitMs) minSpreadLimitMs = spreadLimitL;
   }
 
@@ -490,6 +494,93 @@ export interface OtioCausalEpoch {
   readonly intervalUpper: number;
 }
 
+/**
+ * Retained slots K of a phase sample. A frame presented at dL stays resident
+ * until K later frames have been captured into the ring. Absent means the
+ * 3-slot ring that every existing archive was certified with.
+ */
+export function residentSlotCount(sample: DecoderPhaseSample): number {
+  return sample.residentSlots ?? SNAPSHOT_SLOTS_PER_DECODER;
+}
+
+export function isRetainedSlotCount(slots: number): boolean {
+  return Number.isSafeInteger(slots) && slots >= SNAPSHOT_SLOTS_PER_DECODER;
+}
+
+/**
+ * Phase band of one leaf, in wall milliseconds. Let offset be the wall time
+ * from T0 to the start of the first advanced frame, (starts[i+1] - s(T0)) / r.
+ * The transition to that frame must land:
+ * - at least one vsync after dL, so the frame is presented before it is due;
+ * - at most (K-1) * wMin after dL. Frame i+1 is evicted by the K-th capture
+ *   after dL, which comes no earlier than K * wMin later, so the frame is
+ *   still resident through its own window only while the transition is within
+ *   (K-1) * wMin.
+ * At K = 3 the upper edge is dL + 2 * wMin - offset, the original band.
+ */
+export function phaseBandMs(
+  sample: DecoderPhaseSample,
+  vsyncSeconds: number
+): { readonly lower: number; readonly upper: number } {
+  const offset = (sample.iL0Plus1Start - sample.sourceT0Seconds) / sample.rL;
+  const windows = residentSlotCount(sample) - 1;
+  return {
+    lower: sample.dL + 1000 * (vsyncSeconds - offset),
+    upper: sample.dL + 1000 * (windows * sample.wMinSeconds - offset),
+  };
+}
+
+/**
+ * Retained slots a legacy cold start needs so its earliest guarded epoch lies
+ * inside the phase band. The epoch falls leadSeconds after the sampling
+ * instant, where leadSeconds is the measured output latency plus the selection
+ * reserve. Sampling trails dL by at most one vsync. Solving
+ * (K-1) * wMin >= vsync + lead + offset gives K, and K never drops below 3.
+ * Returns null when an input is unusable, so the caller keeps its ring.
+ */
+export function requiredResidentSlots(input: {
+  readonly leadSeconds: number;
+  readonly vsyncSeconds: number;
+  readonly offsetSeconds: number;
+  readonly wMinSeconds: number;
+}): number | null {
+  const { leadSeconds, vsyncSeconds, offsetSeconds, wMinSeconds } = input;
+  if (
+    !Number.isFinite(leadSeconds) ||
+    leadSeconds < 0 ||
+    !Number.isFinite(vsyncSeconds) ||
+    vsyncSeconds <= 0 ||
+    !Number.isFinite(offsetSeconds) ||
+    offsetSeconds < 0 ||
+    !Number.isFinite(wMinSeconds) ||
+    wMinSeconds < vsyncSeconds
+  )
+    return null;
+  const reach = vsyncSeconds + leadSeconds + offsetSeconds;
+  return Math.max(
+    SNAPSHOT_SLOTS_PER_DECODER,
+    1 + Math.ceil(reach / wMinSeconds)
+  );
+}
+
+/**
+ * Outcome of causal epoch selection with the evidence needed to explain a
+ * refusal. `earliestWall` is the performance time of the earliest guarded
+ * frame; `upperWall` is the lowest phase-band upper edge. Both are null when
+ * the inputs are unusable.
+ */
+export interface OtioCausalEpochPlan {
+  readonly epoch: OtioCausalEpoch | null;
+  readonly earliestWall: number | null;
+  readonly upperWall: number | null;
+}
+
+const UNUSABLE_CAUSAL_EPOCH: OtioCausalEpochPlan = {
+  epoch: null,
+  earliestWall: null,
+  upperWall: null,
+};
+
 /** Select a future integer audio frame inside every admitted video phase band. */
 export function selectOtioCausalEpoch(
   samples: readonly DecoderPhaseSample[],
@@ -501,6 +592,34 @@ export function selectOtioCausalEpoch(
   nowWall: number,
   guardFrames: number
 ): OtioCausalEpoch | null {
+  return planOtioCausalEpoch(
+    samples,
+    vsyncSeconds,
+    bridge,
+    sampleRate,
+    contextNow,
+    requestWall,
+    nowWall,
+    guardFrames
+  ).epoch;
+}
+
+/**
+ * Places the earliest guarded epoch. The epoch is refused when it lands before
+ * the safe wall or after the band's upper edge. A refusal past the upper edge
+ * means the rings were too short; the plan keeps the evidence to tell that apart
+ * from clock, deadline or input failures.
+ */
+export function planOtioCausalEpoch(
+  samples: readonly DecoderPhaseSample[],
+  vsyncSeconds: number,
+  bridge: OtioAudioClockBridge,
+  sampleRate: number,
+  contextNow: number,
+  requestWall: number,
+  nowWall: number,
+  guardFrames: number
+): OtioCausalEpochPlan {
   if (
     !Number.isSafeInteger(sampleRate) ||
     sampleRate <= 0 ||
@@ -516,7 +635,9 @@ export function selectOtioCausalEpoch(
     !Number.isFinite(requestWall) ||
     !Number.isFinite(nowWall)
   )
-    return null;
+    return UNUSABLE_CAUSAL_EPOCH;
+  if (samples.some((sample) => !isRetainedSlotCount(residentSlotCount(sample))))
+    return UNUSABLE_CAUSAL_EPOCH;
   let lower = -Infinity;
   let upper = Infinity;
   for (const sample of samples) {
@@ -529,16 +650,10 @@ export function selectOtioCausalEpoch(
       !Number.isFinite(sample.wMinSeconds) ||
       sample.wMinSeconds < vsyncSeconds
     )
-      return null;
-    const preferred =
-      sample.dL +
-      1000 *
-        (sample.wMinSeconds +
-          vsyncSeconds / 2 -
-          (sample.iL0Plus1Start - sample.sourceT0Seconds) / sample.rL);
-    const halfWidth = 1000 * (sample.wMinSeconds - vsyncSeconds / 2);
-    lower = Math.max(lower, preferred - halfWidth);
-    upper = Math.min(upper, preferred + halfWidth);
+      return UNUSABLE_CAUSAL_EPOCH;
+    const band = phaseBandMs(sample, vsyncSeconds);
+    lower = Math.max(lower, band.lower);
+    upper = Math.min(upper, band.upper);
   }
   const safeWall = Math.max(
     lower + bridge.mappingAllowanceMs,
@@ -551,22 +666,49 @@ export function selectOtioCausalEpoch(
     Math.ceil(contextAtSafeWall * sampleRate),
     Math.ceil(contextNow * sampleRate) + guardFrames
   );
-  if (!Number.isSafeInteger(contextFrame) || contextFrame < 0) return null;
+  if (!Number.isSafeInteger(contextFrame) || contextFrame < 0)
+    return UNUSABLE_CAUSAL_EPOCH;
   const contextTime = contextFrame / sampleRate;
   const performanceTime =
     bridge.performanceTime + 1000 * (contextTime - bridge.contextTime);
-  if (
-    performanceTime < safeWall ||
-    performanceTime + bridge.mappingAllowanceMs > upper
-  )
-    return null;
+  const placed =
+    performanceTime >= safeWall &&
+    performanceTime + bridge.mappingAllowanceMs <= upper;
   return {
-    contextFrame,
-    contextTime,
-    performanceTime,
-    intervalLower: lower,
-    intervalUpper: upper,
+    epoch: placed
+      ? {
+          contextFrame,
+          contextTime,
+          performanceTime,
+          intervalLower: lower,
+          intervalUpper: upper,
+        }
+      : null,
+    earliestWall: performanceTime,
+    upperWall: upper,
   };
+}
+
+/**
+ * What a cold start does with its epoch selection result. A start that was
+ * superseded by a newer start never fails anything: the newer start owns the
+ * scheduler. Only a refusal past the band's upper edge is a ring shortage.
+ */
+export type ColdEpochVerdict =
+  | 'superseded'
+  | 'placed'
+  | 'refused-slot-limited'
+  | 'refused-explicit';
+
+export function coldEpochVerdict(input: {
+  readonly superseded: boolean;
+  readonly epochPlaced: boolean;
+  readonly ringsHoldTags: boolean;
+  readonly slotLimited: boolean;
+}): ColdEpochVerdict {
+  if (input.superseded) return 'superseded';
+  if (input.epochPlaced && input.ringsHoldTags) return 'placed';
+  return input.slotLimited ? 'refused-slot-limited' : 'refused-explicit';
 }
 
 export interface NativeSnapshotSlot {
@@ -593,12 +735,50 @@ export interface NativeSnapshotIdentity {
   readonly onInvalidated?: () => void;
 }
 
+/**
+ * What a ring holds after a resize. `refused` keeps the previous count,
+ * reported as `slots`; `slots` is 0 when the ring was not held before.
+ * `restore-failed` means the ring is empty and cannot serve frames.
+ */
+export type RingResizeOutcome =
+  | { readonly kind: 'reached'; readonly slots: number }
+  | {
+      readonly kind: 'refused';
+      readonly slots: number;
+      readonly cause: 'cap' | 'allocation';
+    }
+  | { readonly kind: 'restore-failed' };
+
+export interface RetainedRingTarget {
+  readonly ring: NativeDecoderRing;
+  readonly slots: number;
+}
+
+/**
+ * Resizes rings to their targets in two passes. Every ring above its target
+ * shrinks first, so the budget it gives back is available to any ring that
+ * grows. The second pass then reports each ring's outcome.
+ */
+export function resizeRetainedRings(
+  targets: readonly RetainedRingTarget[],
+  width: number,
+  height: number
+): RingResizeOutcome[] {
+  for (const { ring, slots } of targets) {
+    if (ring.allocated && ring.slotCount > slots) {
+      ring.resize(width, height, slots);
+    }
+  }
+  return targets.map(({ ring, slots }) => ring.resize(width, height, slots));
+}
+
 export class NativeDecoderRing {
   readonly slots: NativeSnapshotSlot[] = [];
   private nextSlotIndex = 0;
   private currentEpoch = 0;
   private rVfcHandle: number | null = null;
   private allocatedPixels = 0;
+  private allocatedSlots = SNAPSHOT_SLOTS_PER_DECODER;
   private reservationGeneration = 0;
   private readonly pinnedSlots = new Map<NativeSnapshotSlot, number>();
   private readonly invalidationListeners = new Set<() => void>();
@@ -666,6 +846,11 @@ export class NativeDecoderRing {
     return this.currentEpoch;
   }
 
+  /** Retained snapshot slots this ring holds, the K in its phase bound. */
+  get slotCount(): number {
+    return this.allocatedSlots;
+  }
+
   get highestObservedTag(): number | null {
     return this.observedTag;
   }
@@ -685,7 +870,7 @@ export class NativeDecoderRing {
     };
   }
 
-  allocate(width: number, height: number): boolean {
+  allocate(width: number, height: number, slotCount?: number): boolean {
     if (
       !Number.isSafeInteger(width) ||
       !Number.isSafeInteger(height) ||
@@ -696,21 +881,25 @@ export class NativeDecoderRing {
     ) {
       return false;
     }
+    const wanted = slotCount ?? this.allocatedSlots;
+    if (!isRetainedSlotCount(wanted)) return false;
     if (
       this.width === width &&
       this.height === height &&
-      this.slots.length === SNAPSHOT_SLOTS_PER_DECODER &&
+      this.allocatedSlots === wanted &&
+      this.slots.length === wanted &&
       !this.hasLostContext()
     ) {
       return true;
     }
-    const needed = SNAPSHOT_SLOTS_PER_DECODER * width * height;
+    const needed = wanted * width * height;
     if (!Number.isSafeInteger(needed)) return false;
     this.release();
     if (!this.budget.allocate(needed)) return false;
     this.allocatedPixels = needed;
+    this.allocatedSlots = wanted;
     try {
-      for (let i = 0; i < SNAPSHOT_SLOTS_PER_DECODER; i++) {
+      for (let i = 0; i < wanted; i++) {
         const canvas = document.createElement('canvas');
         // Register the surface before any operation that can throw.
         const slot: NativeSnapshotSlot = {
@@ -737,6 +926,35 @@ export class NativeDecoderRing {
     }
   }
 
+  /** Whether canvases are held now. slotCount alone does not say so. */
+  get allocated(): boolean {
+    return this.slots.length > 0;
+  }
+
+  /**
+   * Moves the ring to `slots` retained canvases. A refused allocation has
+   * already released the ring, so the previous count and size are restored
+   * when they can be. The outcome names what the ring holds afterwards.
+   */
+  resize(width: number, height: number, slots: number): RingResizeOutcome {
+    const previous = this.allocated
+      ? { slots: this.slotCount, width: this.width, height: this.height }
+      : null;
+    if (this.allocate(width, height, slots)) {
+      return { kind: 'reached', slots: this.slotCount };
+    }
+    // The release inside allocate already returned this ring's pixels, so
+    // this asks whether the requested count fits the cap on its own.
+    const cause = this.budget.canAllocate(slots * width * height)
+      ? 'allocation'
+      : 'cap';
+    if (previous === null) return { kind: 'refused', slots: 0, cause };
+    if (this.allocate(previous.width, previous.height, previous.slots)) {
+      return { kind: 'refused', slots: previous.slots, cause };
+    }
+    return { kind: 'restore-failed' };
+  }
+
   release(): void {
     this.invalidateReservations();
     this.observedTag = null;
@@ -759,6 +977,7 @@ export class NativeDecoderRing {
     this.slots.length = 0;
     this.width = 0;
     this.height = 0;
+    this.allocatedSlots = SNAPSHOT_SLOTS_PER_DECODER;
     if (this.allocatedPixels > 0) {
       this.budget.release(this.allocatedPixels);
       this.allocatedPixels = 0;
@@ -947,6 +1166,16 @@ export class NativeDecoderRing {
     return this.findSlotWithTag(tag, epoch) !== null;
   }
 
+  /** Tags held by slots of the current epoch, each with its slot index. */
+  residentTags(): { readonly slot: number; readonly tag: number }[] {
+    const resident: { slot: number; tag: number }[] = [];
+    this.slots.forEach((slot, index) => {
+      if (slot.tag !== null && slot.epoch === this.currentEpoch)
+        resident.push({ slot: index, tag: slot.tag });
+    });
+    return resident;
+  }
+
   reserveTags(
     tags: readonly number[],
     epoch: number,
@@ -1031,7 +1260,7 @@ export class NativeDecoderRing {
 
   hasLostContext(): boolean {
     if (
-      this.slots.length !== SNAPSHOT_SLOTS_PER_DECODER ||
+      this.slots.length !== this.allocatedSlots ||
       this.width <= 0 ||
       this.height <= 0
     )

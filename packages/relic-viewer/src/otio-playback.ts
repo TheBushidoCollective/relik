@@ -52,6 +52,12 @@ import {
 } from './otio-transport-gate.ts';
 import { OutputClock } from './otio-output-clock.ts';
 import {
+  CalibrationReadBudget,
+  calibrationCadenceMs,
+  isUsableOutputStamp,
+  observationProvesOutput,
+} from './otio-clock-calibration.ts';
+import {
   OTIO_PCM_MAX_BYTES,
   OTIO_PCM_PULL_SCRATCH_BYTES,
   OTIO_PCM_MAX_HORIZON_SECONDS,
@@ -79,6 +85,12 @@ import {
   presentedWindowOutcome,
   readPresentedFrame,
   SNAPSHOT_SLOTS_PER_DECODER,
+  phaseBandMs,
+  requiredResidentSlots,
+  resizeRetainedRings,
+  residentSlotCount,
+  planOtioCausalEpoch,
+  coldEpochVerdict,
   selectOtioCausalEpoch,
   SnapshotPixelBudget,
   videoDecoderTime,
@@ -1022,6 +1034,8 @@ export function createOtioPlayback(
     scheduler: OtioPcmScheduler;
     outputClock: OutputClock;
     clockCalibration: Promise<boolean> | null;
+    /** Resolves true at the first accepted clock observation, false if none comes. */
+    outputReady: Promise<boolean>;
     gate: OtioTransportGate;
     session: PcmClockSession;
     tracks: Map<string, GainNode>;
@@ -1202,6 +1216,8 @@ export function createOtioPlayback(
     readonly audioKeys: Set<string>;
     readonly audio: Map<string, LoadedAudio>;
     readonly imagePaths: Set<OtioBundleEntryName>;
+    /** Measured PCM output lead plus the clock's spread allowance; null when not PCM. */
+    readonly pcmLeadSeconds: number | null;
   };
   let preparedBoundary: BoundaryPreparation | null = null;
   let playbackBoundaries: OtioPlaybackBoundary[] = [];
@@ -1633,6 +1649,17 @@ export function createOtioPlayback(
         continue;
       if (incoming.some(({ key }) => hiddenWarmInFlight.has(key))) return;
       if (previewBlocked(evaluation)) return;
+      // PCM candidates carry the measured output lead, so the incoming decoder
+      // starts early enough for its first frame to be presented at the boundary.
+      // Without a measured lead the boundary is not prepared yet; a later call retries.
+      let pcmLeadSeconds: number | null = null;
+      if (audioBackend === 'pcm' && incoming.length > 0) {
+        const run = pcmRun;
+        const measured = run ? measuredOutputLeadSeconds(run) : null;
+        if (!run || measured === null) return;
+        pcmLeadSeconds =
+          measured + run.outputClock.policy.maxOffsetSpreadMs / 1000;
+      }
       const candidate: BoundaryPreparation = {
         at: boundary.time,
         keys: new Set(incoming.map((item) => item.key)),
@@ -1645,6 +1672,7 @@ export function createOtioPlayback(
         audioKeys: new Set(incomingAudio.map((item) => item.key)),
         audio: new Map(),
         imagePaths: new Set(incomingImages),
+        pcmLeadSeconds,
       };
       preparedBoundary = candidate;
       for (const path of incomingImages) images.pin(path);
@@ -1761,10 +1789,31 @@ export function createOtioPlayback(
           if (tag === null || midpoint === null) return fail();
           if (nativeRings.has(key) || lastDrawnOccurrenceKeys.has(key))
             return fail();
+          const vsync = vsyncTracker.medianSeconds;
+          const wMin = minWindowDuration(timing, fidelity.rate);
+          const sB = decoderLocalSeconds(contribution.source_time);
+          const nextStart = timing.starts[tag + 1];
+          let lead = wMin + vsync / 2;
+          let slots: number | undefined;
+          if (candidate.pcmLeadSeconds !== null && nextStart !== undefined) {
+            // PCM output latency is measured. Start early enough that the first
+            // advanced frame is presented before the boundary, and size the ring
+            // for the same reach the cold start uses.
+            const offset = (nextStart - sB) / fidelity.rate;
+            const required = requiredResidentSlots({
+              leadSeconds: candidate.pcmLeadSeconds + vsync,
+              vsyncSeconds: vsync,
+              offsetSeconds: offset,
+              wMinSeconds: wMin,
+            });
+            if (required === null) return fail();
+            lead = vsync + candidate.pcmLeadSeconds + offset;
+            slots = required;
+          }
           const ring = getOrCreateNativeRing(key, video.element, path);
           candidate.rings.set(key, ring);
           const { width, height } = outputSize();
-          if (!ring.allocate(width, height)) return fail();
+          if (!ring.allocate(width, height, slots)) return fail();
           ring.resetEpoch(ring.captureEpoch + 1);
           if (
             !(await bounded(
@@ -1814,10 +1863,6 @@ export function createOtioPlayback(
               return fail();
             return;
           }
-          const vsync = vsyncTracker.medianSeconds;
-          const wMin = minWindowDuration(timing, fidelity.rate);
-          const lead = wMin + vsync / 2;
-          const sB = decoderLocalSeconds(contribution.source_time);
           const boundaryWall =
             anchor.wallMs +
             1000 *
@@ -1867,13 +1912,18 @@ export function createOtioPlayback(
                 if (!valid() || nativeRings.get(key) !== ring) return fail();
                 const sampleStart = timing.starts[sample.tag];
                 if (sampleStart === undefined) return fail();
-                const preferred =
-                  sample.now +
-                  1000 * (lead - (sampleStart - sB) / fidelity.rate);
-                if (
-                  Math.abs(boundaryWall - preferred) >
-                  1000 * (wMin - vsync / 2)
-                )
+                const band = phaseBandMs(
+                  {
+                    dL: sample.now,
+                    iL0Plus1Start: sampleStart,
+                    sourceT0Seconds: sB,
+                    rL: fidelity.rate,
+                    wMinSeconds: wMin,
+                    residentSlots: ring.slotCount,
+                  },
+                  vsync
+                );
+                if (boundaryWall < band.lower || boundaryWall > band.upper)
                   return fail();
                 ring.isStarting = false;
               } catch {
@@ -3516,6 +3566,9 @@ export function createOtioPlayback(
     }
   }
 
+  // Stops the early clock reader of the preparation in flight, when that
+  // preparation throws before its run exists.
+  let cancelPendingPcmPreparation: () => void = () => undefined;
   async function preparePcmRun(
     context: AudioContext,
     admission: PcmAdmission,
@@ -3531,6 +3584,31 @@ export function createOtioPlayback(
     if (!masterGain) throw new Error('audio graph unavailable');
     const preparationGeneration = renderGeneration;
     const generation = ++pcmGeneration;
+    // The output clock is read from here, before the run exists. `live` says
+    // whether this reader still owns the clock. The run takes it over once it
+    // exists, and a superseded or abandoned preparation stops reading.
+    const earlyClock = new OutputClock(pcmRequestWall);
+    const outputReadiness = Promise.withResolvers<boolean>();
+    let run: PcmRun | undefined;
+    let preparationAbandoned = false;
+    cancelPendingPcmPreparation = () => {
+      preparationAbandoned = true;
+    };
+    const live = (): boolean =>
+      run !== undefined
+        ? !run.stopped && pcmRun === run
+        : !isDisposed &&
+          isPlaying &&
+          generation === pcmGeneration &&
+          renderGeneration === preparationGeneration &&
+          !preparationAbandoned;
+    const earlyCalibration = calibratePcmClock(
+      context,
+      earlyClock,
+      generation,
+      live,
+      outputReadiness
+    );
     const budget = pcmBudget;
     const previousSession = pcmClockSession;
     const session = await acquirePcmClockSession(context);
@@ -3581,7 +3659,6 @@ export function createOtioPlayback(
       retirePcmClockSession();
       throw error;
     }
-    let run: PcmRun | undefined;
     let scheduler: OtioPcmScheduler;
     scheduler = new OtioPcmScheduler(
       context,
@@ -3611,8 +3688,9 @@ export function createOtioPlayback(
       scheduler,
       gate,
       session,
-      outputClock: new OutputClock(pcmRequestWall),
-      clockCalibration: null,
+      outputClock: earlyClock,
+      clockCalibration: earlyCalibration,
+      outputReady: outputReadiness.promise,
       tracks: new Map(),
       streams: new Map(),
       streamCredits: new Set(),
@@ -3657,7 +3735,6 @@ export function createOtioPlayback(
     session.slots[slot] = run;
     pcmRun = run;
     context.addEventListener('statechange', run.onContextState);
-    run.clockCalibration = calibratePcmClock(run);
     const end = Math.floor((scopeEnd().value * rate) / scopeEnd().rate);
     await fillPcm(
       run,
@@ -4404,23 +4481,14 @@ export function createOtioPlayback(
     }
     const vsync = vsyncTracker.medianSeconds;
     for (const sample of run.phaseSamples) {
-      const preferred =
-        sample.dL +
-        1000 *
-          (sample.wMinSeconds +
-            vsync / 2 -
-            (sample.iL0Plus1Start - sample.sourceT0Seconds) / sample.rL);
-      const half = 1000 * (sample.wMinSeconds - vsync / 2);
-      if (
-        mapped - allowance < preferred - half ||
-        mapped + allowance > preferred + half
-      ) {
+      const band = phaseBandMs(sample, vsync);
+      if (mapped - allowance < band.lower || mapped + allowance > band.upper) {
         pcmProof('clock-commit-detail', run.generation, {
           reason: 'phase-band',
           mapped,
           allowance,
-          preferred,
-          half,
+          lower: band.lower,
+          upper: band.upper,
           sample,
         });
         return false;
@@ -4633,49 +4701,84 @@ export function createOtioPlayback(
     return true;
   }
 
-  async function calibratePcmClock(run: PcmRun): Promise<boolean> {
-    while (
-      !run.stopped &&
-      pcmRun === run &&
-      presentClockMs() <= run.outputClock.deadline
-    ) {
+  // Reads the output clock until it calibrates, fails, is cancelled, or passes
+  // its deadline. It starts at preparePcmRun entry, before the run exists, so
+  // `live` decides whether this reader still owns the clock. Ownership passes to
+  // the run once it exists. The first accepted observation resolves `readiness`
+  // true; every other exit resolves it false, so ring sizing never waits on a
+  // clock that will not come.
+  async function calibratePcmClock(
+    context: AudioContext,
+    clock: OutputClock,
+    generation: number,
+    live: () => boolean,
+    readiness: { resolve(ready: boolean): void }
+  ): Promise<boolean> {
+    const budget = new CalibrationReadBudget();
+    let fineReads = 0;
+    const finish = (calibrated: boolean): boolean => {
+      readiness.resolve(false);
+      return calibrated;
+    };
+    while (live() && presentClockMs() <= clock.deadline) {
+      if (!budget.take()) {
+        if (live())
+          pcmProof('error', generation, {
+            stage: 'clock',
+            code: 'calibration-read-limit',
+          });
+        return finish(false);
+      }
       const readBegin = presentClockMs();
-      const contextBefore = run.context.currentTime;
+      const contextBefore = context.currentTime;
       let stamp: AudioTimestamp | null = null;
       try {
-        stamp = run.context.getOutputTimestamp();
+        stamp = context.getOutputTimestamp();
       } catch {}
-      const contextAfter = run.context.currentTime;
+      const contextAfter = context.currentTime;
       const readEnd = presentClockMs();
-      const result = run.outputClock.observe({
+      const result = clock.observe({
         readBegin,
         readEnd,
         contextBefore,
         contextAfter,
-        state: run.context.state,
+        state: context.state,
         contextTime: stamp?.contextTime,
         performanceTime: stamp?.performanceTime,
       });
+      if (observationProvesOutput(result.reason)) readiness.resolve(true);
       if (result.status === 'calibrated') return true;
       if (result.status === 'failed' || result.status === 'interrupted') {
-        pcmProof('error', run.generation, {
-          stage: 'clock',
-          code: result.reason,
-        });
-        return false;
+        if (live())
+          pcmProof('error', generation, {
+            stage: 'clock',
+            code: result.reason,
+          });
+        return finish(false);
       }
+      const usable = isUsableOutputStamp(stamp);
+      const wait = calibrationCadenceMs({ usableStamp: usable, fineReads });
+      if (usable) fineReads++;
       const { promise, resolve } = Promise.withResolvers<void>();
-      setTimeout(resolve, run.outputClock.inheritedObservations.length ? 1 : 8);
+      setTimeout(resolve, wait);
       await promise;
     }
-    return false;
+    return finish(false);
   }
 
+  // Why the last selection refused. Only a refusal past the band's upper edge
+  // is a ring shortage; clock, deadline and input failures are not.
+  let epochRefusal: {
+    readonly slotLimited: boolean;
+    readonly earliestWall: number | null;
+    readonly upperWall: number | null;
+  } | null = null;
   async function selectPcmEpoch(
     run: PcmRun,
     samples: readonly DecoderPhaseSample[],
     time: OtioRationalTime
   ): Promise<number | null> {
+    epochRefusal = null;
     if (compareRationalTimes(run.startTime, time) !== 0) return null;
     if (run.clockCalibration && !(await run.clockCalibration)) return null;
     let stamp: AudioTimestamp | null = null;
@@ -4759,7 +4862,7 @@ export function createOtioPlayback(
       OTIO_PCM_EPOCH_GUARD_FRAMES +
       Math.max(OTIO_PCM_EPOCH_GUARD_FRAMES, 2 * quantum);
     const selectionContext = run.context.currentTime;
-    const epoch = selectOtioCausalEpoch(
+    const plan = planOtioCausalEpoch(
       samples,
       vsyncTracker.medianSeconds,
       bridge,
@@ -4769,27 +4872,22 @@ export function createOtioPlayback(
       after,
       selectionReserve
     );
+    const epoch = plan.epoch;
     const proofDetail =
       coldProofGlobal.__otioProofPcm === true
         ? (() => {
             const vsync = vsyncTracker.medianSeconds;
             const contributions = samples.map((sample) => {
-              const preferred =
-                sample.dL +
-                1000 *
-                  (sample.wMinSeconds +
-                    vsync / 2 -
-                    (sample.iL0Plus1Start - sample.sourceT0Seconds) /
-                      sample.rL);
-              const half = 1000 * (sample.wMinSeconds - vsync / 2);
+              const band = phaseBandMs(sample, vsync);
               return {
                 dL: sample.dL,
                 iL0Plus1Start: sample.iL0Plus1Start,
                 sourceT0Seconds: sample.sourceT0Seconds,
                 rL: sample.rL,
                 wMinSeconds: sample.wMinSeconds,
-                intervalLower: preferred - half,
-                intervalUpper: preferred + half,
+                residentSlots: residentSlotCount(sample),
+                intervalLower: band.lower,
+                intervalUpper: band.upper,
               };
             });
             return {
@@ -4822,7 +4920,26 @@ export function createOtioPlayback(
       intervalLower: epoch?.intervalLower ?? null,
       intervalUpper: epoch?.intervalUpper ?? null,
     });
-    if (!epoch || epoch.performanceTime > run.outputClock.deadline) return null;
+    if (!epoch) {
+      const slotLimited =
+        plan.earliestWall !== null &&
+        plan.upperWall !== null &&
+        plan.earliestWall + bridge.mappingAllowanceMs > plan.upperWall;
+      epochRefusal = {
+        slotLimited,
+        earliestWall: plan.earliestWall,
+        upperWall: plan.upperWall,
+      };
+      return null;
+    }
+    if (epoch.performanceTime > run.outputClock.deadline) {
+      epochRefusal = {
+        slotLimited: false,
+        earliestWall: epoch.performanceTime,
+        upperWall: plan.upperWall,
+      };
+      return null;
+    }
     run.contextFrame = epoch.contextFrame;
     run.phaseSamples = samples;
     run.bridge = bridge;
@@ -5001,14 +5118,19 @@ export function createOtioPlayback(
           if (start !== undefined && videoRate > 0) {
             const w = minWindowDuration(timing, videoRate);
             const vsync = vsyncTracker.medianSeconds;
-            const preferred =
-              ring.lastProgressWallMs +
-              1000 *
-                (w +
-                  vsync / 2 -
-                  (start - decoderLocalSeconds(contribution.source_time)) /
-                    videoRate);
-            const upper = preferred + 1000 * (w - vsync / 2);
+            // The limit is the phase band's upper edge for the ring that is
+            // actually held, so a grown ring is not refused at the 3-slot edge.
+            const { upper } = phaseBandMs(
+              {
+                dL: ring.lastProgressWallMs,
+                iL0Plus1Start: start,
+                sourceT0Seconds: decoderLocalSeconds(contribution.source_time),
+                rL: videoRate,
+                wMinSeconds: w,
+                residentSlots: ring.slotCount,
+              },
+              vsync
+            );
             if (presentClockMs() > upper) {
               pcmProof('error', pcmGeneration, {
                 stage: 'visual',
@@ -5118,6 +5240,7 @@ export function createOtioPlayback(
           sourceT0Seconds: decoderLocalSeconds(contribution.source_time),
           rL: rate,
           wMinSeconds: minWindowDuration(timing, rate),
+          residentSlots: ring.slotCount,
         });
       }
       const proofFault =
@@ -6647,6 +6770,36 @@ export function createOtioPlayback(
     if (isPlaying) scheduleTick();
   }
 
+  /**
+   * Output lead, in seconds, past the sampling instant: the measured latency
+   * between the context time being rendered and the one being output, plus the
+   * selection reserve the epoch is placed after. Null without a running context
+   * or a certified quantum, so the 3-slot ring stays and the exact epoch check
+   * decides.
+   */
+  function measuredOutputLeadSeconds(run: PcmRun): number | null {
+    const quantum = run.gate.certifiedQuantum;
+    if (quantum === null || run.context.state !== 'running') return null;
+    let stamp: AudioTimestamp | null = null;
+    try {
+      stamp = run.context.getOutputTimestamp();
+    } catch {
+      return null;
+    }
+    const outputContextTime = stamp?.contextTime;
+    if (
+      typeof outputContextTime !== 'number' ||
+      !Number.isFinite(outputContextTime) ||
+      outputContextTime <= 0
+    )
+      return null;
+    const latency = Math.max(0, run.context.currentTime - outputContextTime);
+    const reserve =
+      OTIO_PCM_EPOCH_GUARD_FRAMES +
+      Math.max(OTIO_PCM_EPOCH_GUARD_FRAMES, 2 * quantum);
+    return latency + reserve / run.admission.rate;
+  }
+
   async function startSequence(
     T0: OtioRationalTime,
     buffering: boolean = false
@@ -6706,10 +6859,15 @@ export function createOtioPlayback(
       try {
         await preparePcmRun(context, pcmAdmission, T0);
       } catch (error) {
-        if (!stale(gen))
+        // Only a current start owns the newest preparation, so only it may stop
+        // that preparation's clock reader. A superseded start's reader has
+        // already stopped, because its generation no longer matches.
+        if (!stale(gen)) {
+          cancelPendingPcmPreparation();
           failScheduledAudio(
             `PCM preparation failed: ${error instanceof Error ? error.message : String(error)}`
           );
+        }
         return;
       }
       if (stale(gen)) return;
@@ -6760,10 +6918,13 @@ export function createOtioPlayback(
       wMinSeconds: number;
       key: string;
       iL0: number;
+      ring: NativeDecoderRing;
     }[] = [];
 
     let eligible = !failureSeekCadence && !hasImageSequence;
 
+    let retainedCapRefusal = false;
+    const retainedRequired = new Map<string, number>();
     if (eligible) {
       const drawnKeys = new Set<string>();
       for (const idx of drawnLeafIndices) {
@@ -6844,11 +7005,6 @@ export function createOtioPlayback(
           video.element,
           contrib.bundle_path
         );
-        const { width, height } = outputSize();
-        if (!ring || !ring.allocate(width, height)) {
-          eligible = false;
-          break;
-        }
 
         drawnVideoLeaves.push({
           contrib: contrib as OtioVideoContribution & {
@@ -6860,7 +7016,114 @@ export function createOtioPlayback(
           wMinSeconds: wMin,
           key,
           iL0,
+          ring,
         });
+      }
+    }
+
+    // Each leaf's ring targets the slot count its measured output lead needs
+    // (see requiredResidentSlots); the 3-slot ring is the floor and the target
+    // for any leaf without a usable lead. Rings shrink before any grows, so a
+    // seek that needs fewer slots frees budget for other tracks. Refusals keep
+    // whatever the ring still holds, and the exact epoch check decides.
+    if (eligible && drawnVideoLeaves.length > 0) {
+      // Ring sizing needs the measured output lead, which is real only after the
+      // clock has accepted an observation. This await follows every frame
+      // preparation step above, so it holds none of them. A start superseded
+      // while waiting returns silently. A clock that never proves output fails.
+      const sizedRun = audioBackend === 'pcm' ? pcmRun : null;
+      if (sizedRun) {
+        const outputProven = await sizedRun.outputReady;
+        if (stale(gen) || pcmRun !== sizedRun) return;
+        if (!outputProven) {
+          failScheduledAudio('audio output clock not ready before ring sizing');
+          return;
+        }
+      }
+      // Selection waits for every leaf's first advanced frame, so the epoch
+      // trails each leaf by the slowest arrival, not by its own offset. The
+      // mapping allowance is bounded by the clock policy: an observation whose
+      // spread exceeds maxOffsetSpreadMs is rejected, so no calibrated clock
+      // can widen past it at selection. Sizing with that bound, rather than the
+      // spread observed so far, keeps the rings large enough for that selection.
+      // Nothing here awaits: a calibration failure is judged at selection.
+      const leadSeconds =
+        audioBackend === 'pcm' && pcmRun
+          ? measuredOutputLeadSeconds(pcmRun)
+          : null;
+      const allowanceSeconds =
+        audioBackend === 'pcm' && pcmRun
+          ? pcmRun.outputClock.policy.maxOffsetSpreadMs / 1000
+          : null;
+      const sizingLead =
+        leadSeconds === null || allowanceSeconds === null
+          ? null
+          : leadSeconds + allowanceSeconds;
+      const vsync = vsyncTracker.medianSeconds;
+      const { width, height } = outputSize();
+      let slowestArrival = 0;
+      let everyLeafAdvances = true;
+      for (const leaf of drawnVideoLeaves) {
+        const nextStart = leaf.timing.starts[leaf.iL0 + 1];
+        if (nextStart === undefined) {
+          everyLeafAdvances = false;
+          break;
+        }
+        slowestArrival = Math.max(
+          slowestArrival,
+          (nextStart - decoderLocalSeconds(leaf.contrib.source_time)) / leaf.rL
+        );
+      }
+      const slotTargets = drawnVideoLeaves.map((leaf) => {
+        const required =
+          sizingLead === null || !everyLeafAdvances
+            ? null
+            : requiredResidentSlots({
+                leadSeconds: sizingLead,
+                vsyncSeconds: vsync,
+                offsetSeconds: slowestArrival,
+                wMinSeconds: leaf.wMinSeconds,
+              });
+        if (required !== null) retainedRequired.set(leaf.key, required);
+        return { leaf, slots: required ?? SNAPSHOT_SLOTS_PER_DECODER };
+      });
+      const outcomes = resizeRetainedRings(
+        slotTargets.map(({ leaf, slots }) => ({ ring: leaf.ring, slots })),
+        width,
+        height
+      );
+      for (let i = 0; i < slotTargets.length; i++) {
+        const { leaf, slots } = slotTargets[i]!;
+        const outcome = outcomes[i]!;
+        if (outcome.kind === 'reached') continue;
+        if (outcome.kind === 'restore-failed') {
+          eligible = false;
+          coldProof('ring-refused', {
+            code: 'ring-restore-failed',
+            decoder: leaf.key,
+            slots: 0,
+            requiredSlots: slots,
+            capPixels: snapshotBudget.maxPixels,
+            usedPixels: snapshotBudget.allocatedPixels,
+          });
+          continue;
+        }
+        const code =
+          outcome.cause === 'cap'
+            ? 'ring-cap-exhausted'
+            : 'ring-allocation-failed';
+        if (outcome.cause === 'cap') retainedCapRefusal = true;
+        coldProof('ring-refused', {
+          code,
+          decoder: leaf.key,
+          slots: outcome.slots,
+          requiredSlots: slots,
+          capPixels: snapshotBudget.maxPixels,
+          usedPixels: snapshotBudget.allocatedPixels,
+        });
+        // A ring that holds nothing cannot serve frames. A ring that kept its
+        // previous count stays, and the epoch check refuses if it is too short.
+        if (outcome.slots === 0) eligible = false;
       }
     }
 
@@ -6875,7 +7138,9 @@ export function createOtioPlayback(
       if (audioBackend === 'pcm') {
         if (!eligible || !pcmRun) {
           failScheduledAudio(
-            'native video timing is not eligible for a scheduled epoch'
+            retainedCapRefusal
+              ? 'native video snapshots exceed the retained 32 Mi pixel cap'
+              : 'native video timing is not eligible for a scheduled epoch'
           );
           return;
         }
@@ -6893,8 +7158,17 @@ export function createOtioPlayback(
             }
           }
         }
-        const epochWall = await selectPcmEpoch(pcmRun, [], T0);
-        if (epochWall === null) {
+        const run = pcmRun;
+        const epochWall = await selectPcmEpoch(run, [], T0);
+        // A start superseded during selection must not fail the newer run.
+        const verdict = coldEpochVerdict({
+          superseded: stale(gen) || pcmRun !== run,
+          epochPlaced: epochWall !== null,
+          ringsHoldTags: true,
+          slotLimited: false,
+        });
+        if (verdict === 'superseded') return;
+        if (verdict !== 'placed' || epochWall === null) {
           failScheduledAudio('audio output clock bridge unavailable');
           return;
         }
@@ -7148,12 +7422,14 @@ export function createOtioPlayback(
           rate: leaf.rL,
           wMin: leaf.wMinSeconds,
         });
+        const sampleRing = nativeRings.get(leaf.key);
         phaseSamples.push({
           dL: adv.now,
           iL0Plus1Start: actualStart,
           sourceT0Seconds,
           rL: leaf.rL,
           wMinSeconds: leaf.wMinSeconds,
+          ...(sampleRing ? { residentSlots: sampleRing.slotCount } : {}),
         });
       }
 
@@ -7169,24 +7445,17 @@ export function createOtioPlayback(
       );
       if (coldProofGlobal.__otioProofCold === true) {
         const phaseVsync = vsyncTracker.medianSeconds;
-        const intervals = phaseSamples.map((sample) => {
-          const preferred =
-            sample.dL +
-            1000 *
-              (sample.wMinSeconds +
-                phaseVsync / 2 -
-                (sample.iL0Plus1Start - sample.sourceT0Seconds) / sample.rL);
-          const half = 1000 * (sample.wMinSeconds - phaseVsync / 2);
-          return { lower: preferred - half, upper: preferred + half };
-        });
+        const bands = phaseSamples.map((sample) =>
+          phaseBandMs(sample, phaseVsync)
+        );
+        const phaseLowerMs = Math.max(...bands.map((band) => band.lower));
+        const phaseUpperMs = Math.min(...bands.map((band) => band.upper));
         coldProof('solver', {
           samples: phaseSamples,
-          intervalLower: Math.max(
-            ...intervals.map((interval) => interval.lower)
-          ),
-          intervalUpper: Math.min(
-            ...intervals.map((interval) => interval.upper)
-          ),
+          intervalLower: phaseLowerMs,
+          intervalUpper: phaseUpperMs,
+          phaseLowerMs,
+          phaseUpperMs,
           chosenAnchor: anchorResult.tauStar,
           spreadAcceptable: anchorResult.spreadAcceptable,
         });
@@ -7203,19 +7472,52 @@ export function createOtioPlayback(
         const epochWall = run
           ? await selectPcmEpoch(run, phaseSamples, T0)
           : null;
-        if (
-          epochWall === null ||
-          drawnVideoLeaves.some((leaf, index) => {
-            const ring = nativeRings.get(leaf.key);
-            const sample = advancedSamples[index];
-            return (
-              !ring || !sample || !ring.hasTag(sample.tag, ring.captureEpoch)
-            );
-          })
-        ) {
-          failScheduledAudio(
-            'no causal audio epoch inside the certified video phase intersection'
+        const ringsHoldTags = drawnVideoLeaves.every((leaf, index) => {
+          const ring = nativeRings.get(leaf.key);
+          const sample = advancedSamples[index];
+          return Boolean(
+            ring && sample && ring.hasTag(sample.tag, ring.captureEpoch)
           );
+        });
+        // A superseded start was replaced by a newer one, which owns the
+        // scheduler. It must return without failing or proving anything.
+        const verdict = coldEpochVerdict({
+          superseded: stale(gen),
+          epochPlaced: epochWall !== null,
+          ringsHoldTags,
+          slotLimited: epochRefusal?.slotLimited === true,
+        });
+        if (verdict === 'superseded') return;
+        if (verdict !== 'placed' || epochWall === null) {
+          if (verdict === 'refused-slot-limited') {
+            for (const leaf of drawnVideoLeaves)
+              coldProof('ring-refused', {
+                code: retainedCapRefusal
+                  ? 'ring-cap-exhausted'
+                  : 'ring-slots-insufficient',
+                decoder: leaf.key,
+                slots: nativeRings.get(leaf.key)?.slotCount,
+                requiredSlots: retainedRequired.get(leaf.key) ?? null,
+                earliestWall: epochRefusal?.earliestWall ?? null,
+                upperWall: epochRefusal?.upperWall ?? null,
+                capPixels: snapshotBudget.maxPixels,
+                usedPixels: snapshotBudget.allocatedPixels,
+              });
+            failScheduledAudio(
+              'no causal audio epoch: the earliest guarded epoch is past the video phase band'
+            );
+          } else {
+            coldProof('epoch-unplaceable', {
+              reason: epochRefusal
+                ? 'epoch-unplaceable'
+                : 'clock-or-input-failure',
+              earliestWall: epochRefusal?.earliestWall ?? null,
+              upperWall: epochRefusal?.upperWall ?? null,
+            });
+            failScheduledAudio(
+              'no causal audio epoch inside the certified video phase intersection'
+            );
+          }
           return;
         }
         anchorWall = epochWall;

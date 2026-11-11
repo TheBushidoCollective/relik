@@ -15,6 +15,21 @@ const ASSET = '/assets/otio-transport-gate-worklet.js';
 const SPAN = 65536;
 const STEP = 32768;
 const MAX_QUANTUM = 2048;
+/**
+ * The tag is a step, and the engine applies a step at the first sample at or
+ * after its time. startFrame / sampleRate can round just above its frame
+ * (99584 / 48000 * 48000 is 99584.0000000000146), which lands the step one
+ * sample late. A quarter-sample lead keeps every tag edge on its intended frame.
+ * The frame ramp is time-based and keeps the exact times.
+ */
+export const TAG_STEP_LEAD_SAMPLES = 0.25;
+export const bankTagEdgeTimes = (
+  bank: { startFrame: number; endFrame: number },
+  sampleRate: number
+): { start: number; end: number } => ({
+  start: Math.max(0, bank.startFrame - TAG_STEP_LEAD_SAMPLES) / sampleRate,
+  end: Math.max(0, bank.endFrame - TAG_STEP_LEAD_SAMPLES) / sampleRate,
+});
 let nextEpoch = 0;
 const integer = (value: unknown): value is number =>
   typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
@@ -414,6 +429,15 @@ export async function createOtioTransportGate(
     clockPending = null;
     if (!disposed) onError?.(error);
   };
+  // Proof-only: records bank scheduling and worklet bank messages. Silent unless
+  // the PCM proof flag is set, so the real-time path allocates nothing here.
+  const bankProof = (event: string, detail: Record<string, unknown>): void => {
+    if (
+      (globalThis as typeof globalThis & { __otioProofPcm?: boolean })
+        .__otioProofPcm === true
+    )
+      console.log('OTIO_PROOF_BANK', { event, ...detail });
+  };
   const schedule = (bank: ClockBank) => {
     const start = bank.startFrame / context.sampleRate,
       end = bank.endFrame / context.sampleRate;
@@ -426,12 +450,29 @@ export async function createOtioTransportGate(
     const frame = node.parameters.get(`clockFrame${suffix}`),
       tag = node.parameters.get(`clockTag${suffix}`);
     if (!frame || !tag) throw new Error('Transport clock parameters missing');
+    bankProof('schedule-cancel', {
+      suffix,
+      serial: bank.serial,
+      bank: bank.bank,
+      startFrame: bank.startFrame,
+      endFrame: bank.endFrame,
+      contextTime: context.currentTime,
+    });
     frame.cancelScheduledValues(0);
     tag.cancelScheduledValues(0);
     frame.setValueAtTime(0, start);
     frame.linearRampToValueAtTime(SPAN, end);
-    tag.setValueAtTime(bank.serial, start);
-    tag.setValueAtTime(0, end);
+    // Tag steps use the shared edge helper; the frame ramp keeps the exact times.
+    const tagEdges = bankTagEdgeTimes(bank, context.sampleRate);
+    tag.setValueAtTime(bank.serial, tagEdges.start);
+    tag.setValueAtTime(0, tagEdges.end);
+    bankProof('schedule-set', {
+      suffix,
+      serial: bank.serial,
+      start,
+      end,
+      contextTime: context.currentTime,
+    });
   };
   try {
     schedule(active);
@@ -471,6 +512,16 @@ export async function createOtioTransportGate(
   }
   node.port.onmessage = (event: MessageEvent<unknown>) => {
     const raw = event.data;
+    if (
+      raw &&
+      typeof raw === 'object' &&
+      'type' in raw &&
+      (raw.type === 'bank-installed' ||
+        raw.type === 'bank-rejected' ||
+        raw.type === 'clock-promoted' ||
+        raw.type === 'proof-promotion-tags')
+    )
+      bankProof('worklet-message', { raw, contextTime: context.currentTime });
     if (
       !raw ||
       typeof raw !== 'object' ||
@@ -537,7 +588,8 @@ export async function createOtioTransportGate(
       message.type === 'clock-stale-overflow' ||
       message.type === 'clock-stale-started' ||
       message.type === 'clock-stale-stopped' ||
-      message.type === 'clock-stale-control-error'
+      message.type === 'clock-stale-control-error' ||
+      message.type === 'proof-promotion-tags'
     )
       return;
     if (message.type === 'anchor-certified') {
