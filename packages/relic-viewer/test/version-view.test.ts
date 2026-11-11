@@ -14,6 +14,7 @@
  */
 
 import { describe, expect, test } from 'bun:test';
+import { contentFromBytes } from '../src/content.ts';
 import {
   comparisonAvailability,
   versionHistoryAvailability,
@@ -31,7 +32,8 @@ function view(
   return {
     filename,
     declaredMimetype: 'text/markdown',
-    content,
+    content: contentFromBytes(content),
+    document: { bytes: content, truncated: false },
     route,
     downgradeNotice: undefined,
     shareUrl: 'https://relik.link/aaaaaaaaaaaaaaaaaaaaaaaaaa#AByGl0K5dY3iw9g',

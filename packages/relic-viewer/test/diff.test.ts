@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { contentFromBytes } from '../src/content.ts';
 import {
   comparisonAvailability,
   createImageDiff,
@@ -22,7 +23,8 @@ function ready(
   return {
     filename: 'artifact.txt',
     declaredMimetype: 'text/plain',
-    content,
+    content: contentFromBytes(content),
+    document: { bytes: content, truncated: false },
     route,
     downgradeNotice: undefined,
     shareUrl: 'https://relik.example/aaaaaaaaaaaaaaaaaaaaaaaaaa#key',
@@ -202,7 +204,7 @@ describe('comparison availability', () => {
     expect(result.code).toBe('comparison_too_large');
     expect(result.detail).toContain('16 MiB');
     expect(current.route).toBe('code');
-    expect(current.content).toHaveLength(MAX_DIFF_BYTES + 1);
+    expect(current.content.size).toBe(MAX_DIFF_BYTES + 1);
   });
 
   test('every comparable mode shares the same ceiling', () => {
@@ -223,6 +225,6 @@ describe('comparison availability', () => {
     expect(result.code).toBe('comparison_too_large');
     expect(result.detail).toContain('16 MiB');
     expect(current.route).toBe('markdown');
-    expect(current.content).toHaveLength(MAX_DIFF_BYTES + 1);
+    expect(current.content.size).toBe(MAX_DIFF_BYTES + 1);
   });
 });

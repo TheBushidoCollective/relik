@@ -1,15 +1,13 @@
 /**
  * Google Cloud Storage, through V4 signed URLs only.
  *
- * The app server never handles relic bytes on either leg. The publishing
- * client PUTs ciphertext straight to GCS under a signed grant, and the
- * recipient GETs it straight from GCS under a signed URL. That is what makes
- * the zero-knowledge claim structural rather than a promise: the server has
- * no opportunity to observe anything, because the bytes never cross it.
+ * Publishing clients PUT ciphertext straight to GCS and recipients GET it
+ * from GCS under signed URLs. The app server is outside both of those data
+ * paths. Control-plane operations can stream stored ciphertext for hashing,
+ * but never receive the decryption key.
  *
- * Everything here is signed URLs rather than the JSON API with an access
- * token, including `stat`. One credential path, one signing routine, and no
- * OAuth token cache to go stale mid-incident.
+ * Data requests use signed URLs. Before hashing, the JSON API reads and,
+ * when needed, updates object metadata to prevent GCS transcoding.
  *
  * The kill switch is worth stating plainly, because it shapes the validity
  * window. Disabling minting does nothing to URLs already minted: the residual
@@ -19,7 +17,10 @@
  * window is a cost-control parameter, not a convenience one.
  */
 
+import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
+import type { ClientRequest, IncomingMessage, RequestOptions } from 'node:http';
+import { request as httpsRequest } from 'node:https';
 import type { ObjectStat, ObjectStorage, SignedUpload } from './storage.ts';
 
 /**
@@ -36,6 +37,8 @@ import type { ObjectStat, ObjectStorage, SignedUpload } from './storage.ts';
 export interface Signer {
   readonly clientEmail: string;
   sign(bytes: Uint8Array): Promise<Uint8Array>;
+  /** OAuth token for metadata changes, when the signer has ambient credentials. */
+  getAccessToken?(): Promise<string>;
 }
 
 export interface GcsOptions {
@@ -44,6 +47,14 @@ export interface GcsOptions {
   /** Prefix inside the bucket. Relic ids are appended to it. */
   readonly prefix?: string;
   readonly host?: string;
+  /** Optional injection points for a local storage fake. */
+  readonly getAccessToken?: () => Promise<string>;
+  readonly metadataFetch?: typeof globalThis.fetch;
+  readonly rawRequest?: (
+    url: string,
+    options: RequestOptions,
+    callback: (response: IncomingMessage) => void
+  ) => ClientRequest;
 }
 
 /** GCS caps signed URL lifetime here, and it is asserted rather than assumed. */
@@ -284,6 +295,7 @@ export function iamSigner(options: {
 }): Signer {
   return {
     clientEmail: options.clientEmail,
+    getAccessToken: options.getAccessToken,
     async sign(bytes: Uint8Array): Promise<Uint8Array> {
       const token = await options.getAccessToken();
       const response = await fetch(
@@ -354,14 +366,158 @@ export async function metadataSigner(): Promise<Signer> {
   });
 }
 
+interface DigestMetadata {
+  readonly generation: string;
+  readonly metageneration: string;
+  readonly length: number;
+  readonly contentEncoding: string | undefined;
+  readonly cacheControl: string | undefined;
+}
+
+function digestMetadata(value: unknown): DigestMetadata {
+  if (typeof value !== 'object' || value === null) {
+    throw new Error('digest metadata is invalid');
+  }
+  const data = value as Record<string, unknown>;
+  if (
+    typeof data['generation'] !== 'string' ||
+    !/^[1-9]\d*$/.test(data['generation']) ||
+    typeof data['metageneration'] !== 'string' ||
+    !/^[1-9]\d*$/.test(data['metageneration']) ||
+    typeof data['size'] !== 'string' ||
+    !/^\d+$/.test(data['size']) ||
+    !Number.isSafeInteger(Number(data['size'])) ||
+    (data['contentEncoding'] !== undefined &&
+      typeof data['contentEncoding'] !== 'string') ||
+    (data['cacheControl'] !== undefined &&
+      typeof data['cacheControl'] !== 'string')
+  ) {
+    throw new Error('digest metadata is missing a valid generation or size');
+  }
+  return {
+    generation: data['generation'],
+    metageneration: data['metageneration'],
+    length: Number(data['size']),
+    contentEncoding: data['contentEncoding'] as string | undefined,
+    cacheControl: data['cacheControl'] as string | undefined,
+  };
+}
+
+function hasNoTransform(cacheControl: string | undefined): boolean {
+  if (!cacheControl) return false;
+  let start = 0;
+  let quoted = false;
+  let escaped = false;
+  for (let i = 0; i < cacheControl.length; i++) {
+    const char = cacheControl[i];
+    if (escaped) {
+      escaped = false;
+    } else if (quoted && char === '\\') {
+      escaped = true;
+    } else if (char === '"') {
+      quoted = !quoted;
+    } else if (!quoted && char === ',') {
+      if (
+        cacheControl.slice(start, i).trim().toLowerCase() === 'no-transform'
+      ) {
+        return true;
+      }
+      start = i + 1;
+    }
+  }
+  return (
+    !quoted && cacheControl.slice(start).trim().toLowerCase() === 'no-transform'
+  );
+}
+
+/** Node HTTP streams encoded response bytes; fetch transparently decompresses. */
+function rawGet(
+  url: string,
+  headers: Record<string, string>,
+  request: NonNullable<GcsOptions['rawRequest']>
+): Promise<IncomingMessage> {
+  const { promise, resolve, reject } = Promise.withResolvers<IncomingMessage>();
+  const pending = request(url, { method: 'GET', headers }, resolve);
+  pending.on('error', reject);
+  pending.end();
+  return promise;
+}
+
+/** Exchange a locally signed service-account assertion for the JSON API. */
+async function tokenForSigner(
+  signer: Signer,
+  doFetch: typeof globalThis.fetch
+): Promise<{ value: string; expiresAt: number }> {
+  const issued = Math.floor(Date.now() / 1000);
+  const audience = 'https://oauth2.googleapis.com/token';
+  const encode = (value: unknown): string =>
+    Buffer.from(JSON.stringify(value)).toString('base64url');
+  const unsigned = [
+    encode({ alg: 'RS256', typ: 'JWT' }),
+    encode({
+      iss: signer.clientEmail,
+      scope: 'https://www.googleapis.com/auth/devstorage.read_write',
+      aud: audience,
+      iat: issued,
+      exp: issued + 3600,
+    }),
+  ].join('.');
+  const signature = await signer.sign(new TextEncoder().encode(unsigned));
+  const assertion = `${unsigned}.${Buffer.from(signature).toString('base64url')}`;
+  const response = await doFetch(audience, {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+      assertion,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(`digest token exchange failed with ${response.status}`);
+  }
+  const body = (await response.json()) as Record<string, unknown>;
+  if (
+    typeof body['access_token'] !== 'string' ||
+    body['access_token'].length === 0 ||
+    typeof body['expires_in'] !== 'number' ||
+    !Number.isFinite(body['expires_in']) ||
+    body['expires_in'] <= 0
+  ) {
+    throw new Error('digest token exchange returned invalid credentials');
+  }
+  return {
+    value: body['access_token'],
+    expiresAt: Date.now() + Math.max(0, body['expires_in'] - 60) * 1000,
+  };
+}
+
 export function gcsStorage(options: GcsOptions): ObjectStorage {
   const host = options.host ?? DEFAULT_HOST;
   const prefix = (options.prefix ?? '').replace(/^\/+|\/+$/g, '');
+  const doFetch = options.metadataFetch ?? globalThis.fetch;
+  const request =
+    options.rawRequest ??
+    ((
+      url: string,
+      init: RequestOptions,
+      callback: (r: IncomingMessage) => void
+    ) => httpsRequest(url, init, callback));
+  let signerToken: { value: string; expiresAt: number } | undefined;
 
-  const pathFor = (relicId: string): string => {
-    const object = prefix.length > 0 ? `${prefix}/${relicId}` : relicId;
-    return `/${encodeObjectPath(options.bucket)}/${encodeObjectPath(object)}`;
+  const accessToken = async (): Promise<string> => {
+    if (options.getAccessToken) return options.getAccessToken();
+    if (options.signer.getAccessToken) return options.signer.getAccessToken();
+    if (!signerToken || Date.now() >= signerToken.expiresAt) {
+      signerToken = await tokenForSigner(options.signer, doFetch);
+    }
+    return signerToken.value;
   };
+
+  const objectFor = (relicId: string): string =>
+    prefix.length > 0 ? `${prefix}/${relicId}` : relicId;
+
+  const pathFor = (relicId: string): string =>
+    `/${encodeObjectPath(options.bucket)}/${encodeObjectPath(objectFor(relicId))}`;
 
   const sign = async (
     method: SignRequestInput['method'],
@@ -441,16 +597,6 @@ export function gcsStorage(options: GcsOptions): ObjectStorage {
       return { length, crc32c, generation };
     },
 
-    async read(relicId: string): Promise<Uint8Array | undefined> {
-      // The delete path's hash, and nothing else. This is the operator
-      // handling inert ciphertext through the control plane, never the
-      // serving data path.
-      const url = await sign('GET', relicId, 60, Date.now());
-      const response = await fetch(url);
-      if (!response.ok) return undefined;
-      return new Uint8Array(await response.arrayBuffer());
-    },
-
     async delete(relicId: string): Promise<void> {
       const url = await sign('DELETE', relicId, 60, Date.now());
       const response = await fetch(url, { method: 'DELETE' });
@@ -462,55 +608,108 @@ export function gcsStorage(options: GcsOptions): ObjectStorage {
     },
 
     async digest(relicId: string): Promise<string | undefined> {
-      const object = await this.stat(relicId);
-      if (object === undefined) return undefined;
-
-      const headers: Record<string, string> = {};
-      if (object.generation !== undefined) {
-        headers['x-goog-if-generation-match'] = object.generation;
-      }
-      const url = await sign('GET', relicId, 60, Date.now(), headers);
-      const response = await fetch(url, { headers });
-      if (response.status === 404 || response.status === 412) return undefined;
-      if (!response.ok) {
-        throw new Error(`digest failed with ${response.status}`);
-      }
-
-      const responseClHeader = response.headers.get('content-length');
-      const responseCl =
-        responseClHeader !== null
-          ? Number.parseInt(responseClHeader, 10)
-          : undefined;
-      if (
-        responseCl !== undefined &&
-        !Number.isNaN(responseCl) &&
-        responseCl !== object.length
-      ) {
+      const metadataUrl =
+        `https://${host}/storage/v1/b/${rfc3986(options.bucket)}` +
+        `/o/${rfc3986(objectFor(relicId))}`;
+      const token = await accessToken();
+      const authorization = `Bearer ${token}`;
+      const metadataResponse = await doFetch(metadataUrl, {
+        headers: { authorization },
+      });
+      if (metadataResponse.status === 404) return undefined;
+      if (!metadataResponse.ok) {
         throw new Error(
-          `digest content-length mismatch: stat=${object.length}, header=${responseCl}`
+          `digest metadata failed with ${metadataResponse.status}`
         );
+      }
+      let object = digestMetadata(await metadataResponse.json());
+
+      // Even Accept-Encoding: gzip does not prevent GCS from transcoding a
+      // doubly compressed object. Set no-transform on the stored metadata,
+      // preserving all other fields and the existing cache directives.
+      if (object.contentEncoding && !hasNoTransform(object.cacheControl)) {
+        const cacheControl = object.cacheControl
+          ? `no-transform, ${object.cacheControl}`
+          : 'no-transform';
+        const params = new URLSearchParams({
+          ifGenerationMatch: object.generation,
+          ifMetagenerationMatch: object.metageneration,
+        });
+        const patched = await doFetch(`${metadataUrl}?${params}`, {
+          method: 'PATCH',
+          headers: { authorization, 'content-type': 'application/json' },
+          body: JSON.stringify({ cacheControl }),
+        });
+        if (!patched.ok) {
+          throw new Error(
+            `digest metadata update failed with ${patched.status}`
+          );
+        }
+        const updated = digestMetadata(await patched.json());
+        if (
+          updated.generation !== object.generation ||
+          updated.length !== object.length ||
+          updated.contentEncoding !== object.contentEncoding ||
+          BigInt(updated.metageneration) !==
+            BigInt(object.metageneration) + 1n ||
+          updated.cacheControl !== cacheControl
+        ) {
+          throw new Error('digest metadata update did not preserve the object');
+        }
+        object = updated;
+      }
+
+      const headers = {
+        'accept-encoding': 'gzip',
+        'x-goog-if-generation-match': object.generation,
+        'x-goog-if-metageneration-match': object.metageneration,
+      };
+      const url = await sign('GET', relicId, 60, Date.now(), headers);
+      const response = await rawGet(url, headers, request);
+      if (response.statusCode !== 200) {
+        response.destroy();
+        throw new Error(
+          `digest failed with ${response.statusCode ?? 'no status'}`
+        );
+      }
+
+      const responseCl = response.headers['content-length'];
+      const responseGeneration = response.headers['x-goog-generation'];
+      const responseMetageneration = response.headers['x-goog-metageneration'];
+      const responseEncoding = response.headers['content-encoding'] ?? '';
+      const expectedEncoding = (object.contentEncoding ?? '')
+        .trim()
+        .toLowerCase();
+      if (
+        (responseCl !== undefined &&
+          (!/^\d+$/.test(responseCl) ||
+            !Number.isSafeInteger(Number(responseCl)) ||
+            Number(responseCl) !== object.length)) ||
+        (responseGeneration !== undefined &&
+          responseGeneration !== object.generation) ||
+        (responseMetageneration !== undefined &&
+          responseMetageneration !== object.metageneration) ||
+        typeof responseEncoding !== 'string' ||
+        responseEncoding.trim().toLowerCase() !== expectedEncoding
+      ) {
+        response.destroy();
+        throw new Error('digest response metadata mismatch');
       }
 
       const hash = createHash('sha256');
       let bytesHashed = 0;
-      if (response.body) {
-        for await (const chunk of response.body as unknown as AsyncIterable<Uint8Array>) {
-          hash.update(chunk);
-          bytesHashed += chunk.byteLength;
+      for await (const chunk of response) {
+        const bytes = chunk as Uint8Array;
+        bytesHashed += bytes.byteLength;
+        if (bytesHashed > object.length) {
+          response.destroy();
+          throw new Error('digest length exceeds stored object size');
         }
+        hash.update(bytes);
       }
-      if (bytesHashed !== object.length) {
+      if (!response.complete || bytesHashed !== object.length) {
         throw new Error(
-          `digest length mismatch: stat=${object.length}, hashed=${bytesHashed}`
-        );
-      }
-      if (
-        responseCl !== undefined &&
-        !Number.isNaN(responseCl) &&
-        bytesHashed !== responseCl
-      ) {
-        throw new Error(
-          `digest length mismatch: header=${responseCl}, hashed=${bytesHashed}`
+          `digest length mismatch: stored=${object.length}, hashed=${bytesHashed}`
         );
       }
       return hash.digest('hex');

@@ -4,19 +4,26 @@ This document decides the art direction, the type and icon system the viewing or
 
 `docs/frame.md`, `docs/preconditions.md`, `docs/spec/viewer.md`, `docs/spec/service.md`, `docs/spec/publish.md`, and `docs/spec/format.md` are locked inputs. `docs/design/container.md`, `docs/design/topology.md`, and `docs/design/storage.md` are sibling inputs, consumed here and never reopened. None had landed on the station branch when this was written; section 12 records which path each was read from.
 
+The 2026-11-10 decision in `docs/decisions.md` supersedes the original
+100 MiB publication cap, prefix-only large-text design, and whole-file
+memory assumptions. The current policy is 500 MiB of plaintext and 200
+mints shared across versions.
+
 Every number in recipient-facing copy below is taken from a sibling and cited to it. None is invented here and none is left abstract.
 
 ## 0. What this decides
 
-- **`viewer.md` 7.1** the platform memory ceiling and whether it is hardcoded or feature-detected, section 5.
-- **`viewer.md` 7.3** the truncated-prefix size, section 4.4.
-- **`viewer.md` 7.4** the highlighted-region cap, section 4.3.
+- **`viewer.md` 7.1** browser-managed content and bounded heap reads, section 5.
+- **`viewer.md` 7.3** full windowed source for large text, section 4.4.
+- **`viewer.md` 7.4** historical highlighting design, section 4.3.
 
-**`viewer.md` 7.2, the hard size cap, is not decided here.** It belongs to `design-storage-grant-and-cost` and arrives in `docs/design/storage.md` section 1.1 as 100 MiB of plaintext content octets. **`viewer.md` 7.5, PSL registration, is not decided here either.** It belongs to `design-topology-and-origins` and arrives in `docs/design/topology.md` section 1.1 as not filed, on eligibility, at this scale. Neither is reopened below and neither needed to be.
+The plaintext publication cap is 500 MiB; `docs/design/storage.md` section
+1.1 records the cap and its ciphertext conversion. PSL registration belongs
+to `design-topology-and-origins`.
 
 ## 1. The art direction: continuous form
 
-**One direction, committed. The surface is a records office's continuous-form output handled under an archivist's protocol.** Not a reliquary and not reverence. A handling protocol documents an item's transit through custody: received, held under stated conditions, released a bounded number of times, then out of custody. That is a relic's actual life, and it is the framing that reconciles a name meaning old and static with payloads that are new and expire in 72 hours (`docs/design/storage.md` 7.2) [Amendment: the mandatory 72-hour TTL was reversed in `docs/decisions.md`; a relic is kept until deleted, though a publisher may set a lifetime]. The mandatory TTL and the 64-open cap stop being limitations to apologize for and become the custody terms the document states about itself, which is what an archivist's form does.
+**One direction, committed. The surface is a records office's continuous-form output handled under an archivist's protocol.** A handling protocol documents an item's transit through custody: received, held under stated conditions, and released a bounded number of times. The current cap is 200 mints; a publisher may set a lifetime, but a relic has no mandatory expiry.
 
 **Two materials, and only two.**
 
@@ -108,55 +115,35 @@ That is the real lever, and it is a bytes decision. lowlight's `common` set is d
 
 ### 4.3 The highlighted-region cap (`viewer.md` 7.4)
 
-**Decision: 262,144 octets, 256 KiB of decoded content measured from the start of the content stream. Beyond it the remainder renders as plain text under a stated cutoff.**
+The original design proposed a 256 KiB highlight region and an 8,192-byte
+long-line guard. Those cutoffs were not implemented in the baseline and are
+not the basis for the large-file design. Large text uses bounded, plain-text
+source windows as described in section 4.4.
 
-**A second guard, independent of the first: any single line longer than 8,192 octets disables highlighting for the whole payload.** `viewer.md` 3.3 names the pathological input precisely, a code file that is many megabytes on one line, and a byte cap alone does not answer it, because a grammar can go superlinear inside a single long line that sits well within 256 KiB. The two guards catch different failures and both ship.
+### 4.4 Large text (`viewer.md` 7.3)
 
-**Why 256 KiB.** It is one eighth of the truncated-prefix size in 4.4, so a payload above the highlight cap still renders in full up to eight times over before truncation begins, and the two notices stack in a stated order rather than firing together on ordinary content. Nothing in the sources separates 256 KiB from 128 KiB or 512 KiB, and that is stated rather than dressed up: what the sources fix is that the cap exists and that its purpose is CPU, and the value inside that band is a judgment. It moves cheaply in either direction, because nothing downstream keys on it and the cutoff is visible copy rather than a contract.
+The original design proposed showing only the first 2 MiB. Jason Waldrip
+superseded that choice on 2026-11-10: code and plain text larger than 100 MiB
+use a windowed source view that can reach the whole file. Markdown, HTML, and
+JSX larger than 100 MiB use the same source view rather than rendering or
+executing the full document. Download retains the original bytes.
 
-**The copy, which `viewer.md` 3.3 requires be visible rather than silent:**
+The source view reads bounded slices and uses a line index and scrolling
+controls instead of decoding the entire file into one string and DOM tree.
+Comment targets can be resolved beyond the visible window.
 
-> Highlighted to 256 KB. The rest is shown as plain text.
+## 5. Browser-managed content (`viewer.md` 7.1)
 
-### 4.4 The truncated-prefix size (`viewer.md` 7.3)
+The former 500,000,000-octet whole-file memory ceiling and its tier-collapse
+calculation are superseded. The viewer decrypts records into a
+browser-managed Blob and limits individual heap reads. A ServiceWorker that
+streams decrypted content is not part of this change.
 
-**Decision: 2,097,152 octets, 2 MiB of decoded content.** This is both a number and a string, and the string is in the same voice as the taskbar's truncation banner.
-
-**Why 2 MiB, and this is the load-bearing reason.** `docs/design/storage.md` 1.2 establishes that the tier collapse in section 5 holds under every candidate in-memory ceiling **given a truncated prefix materially below the cap**, and names the single way to break it: setting the truncated-prefix size at or near the 100 MiB cap while the ceiling sits at 500 MB. It found a four-copy case at 524,729,136 octets that breaches a 500 MB floor candidate rather than clearing it, driven by a whole-plaintext decode into a UTF-16 string.
-
-At 2 MiB the decode term is 4,194,304 octets rather than 209,715,200, so the same four-copy set becomes 105,298,736 of ciphertext plus 104,857,600 of plaintext plus 104,857,600 of Blob plus 4,194,304 of decoded string, which is **319,208,240 octets, 319.21 MB**. That is a factor of 1.57 under a 500 MB ceiling, 2.51 under 800 MB, and 3.13 under 1 GB. **The break condition is closed outright rather than narrowly**, and the margin is restored to just above the three-copy figure that document already carries.
-
-2 MiB is also a factor of 50 below the cap, which is what "materially below" has to mean to be a rule rather than a hope. Two MiB of text is far past what anyone reads in a viewer, and the download always carries the whole file, so nothing is lost that the recipient wanted. Download-only classes refuse rather than truncate, per `viewer.md` 5.
-
-**The copy:**
-
-> Showing the first 2 MB. Download the file for all of it.
-
-## 5. The platform memory ceiling (`viewer.md` 7.1), and what the pair produces
-
-**Decision: the in-memory ceiling is hardcoded at 500,000,000 octets. It is not feature-detected, and the reason it can be hardcoded is that the size cap makes it unreachable.**
-
-**What the number rests on, stated rather than inherited silently.** `viewer.md` 7.1 names three candidates and this picks the weakest of them on purpose. It is the bottom of the 500 to 800 MB band, which that section correctly records as traceable to one forum thread reporting an `OperationError` at 800 MB. It is a practitioner report and not a vendor limit, read at its most conservative point. It is **not** hat.sh's 1 GB, because `viewer.md` 5 already records that hat.sh's stated rationale is service-worker fetch support and that the rationale no longer matches compatibility data, which makes the number an artifact of a superseded belief. It is **not** derived from Apple, because Apple publishes no per-tab ceiling and inventing one would be a fabrication.
-
-**This is not the hardcoded browser list `viewer.md` 5 forbids, and the distinction gets stated because it will be misread.** That ban is on selecting a tier from a compiled-in list of user agents, and it stands. Feature detection for the streaming tier stays required by 5 and is unaffected. What is decided here is one global scalar, applied identically on every platform, with no branch on any user agent.
-
-**Feature detection was considered and eliminated with the reason.** `navigator.deviceMemory` reports device RAM rather than a per-tab allocation ceiling and is not implemented across the browsers that matter here. `performance.memory` is non-standard and single-vendor. `performance.measureUserAgentSpecificMemory()` is the one standardized answer and it requires cross-origin isolation, which would mean adopting COOP and COEP on the viewing origin and obtaining an opt-in from every cross-origin resource it embeds, starting with the shim that `viewer.md` 4 makes the whole architecture. That is a large architectural commitment made to read one number that one engine reports. **Detection buys nothing here anyway, which is the decisive point:** the pair below makes the ceiling unreachable, so a detected value and a hardcoded one produce the same behaviour on every relic that can exist.
-
-**What the pair produces: three tiers become one.** The ceiling is 500,000,000 octets and the cap is 104,857,600 plaintext content octets with an enforced ciphertext bound of 105,298,736 (`docs/design/storage.md` 1.1). Worst-case peak resident set under section 4.4's truncated prefix is 319,208,240 octets, a factor of 1.57 below the ceiling.
-
-- **Tier 2, in-memory decrypt then Blob download, serves every relic that can exist.**
-- **Tier 1, the streaming decrypt through a ServiceWorker, is not built in the first release.**
-- **Tier 3, refusal, is unreachable.**
-
-**The cost, carried rather than hidden.** A viewer with one tier has no streaming path, so raising the size cap later is not a configuration change, it is building tier 1 and every ServiceWorker rule `viewer.md` 5 attaches to it. `docs/design/storage.md` 1.2 states the same asymmetry from the cap's side. The ServiceWorker rules in `viewer.md` 5 stay written and unimplemented, which is correct rather than dead weight: they are the contract for whoever builds tier 1, and the most valuable of them, that the worker carries no telemetry of any kind, is exactly the rule a later implementer would otherwise have to rediscover.
-
-**Tier 3's screen still ships, and the reason is that it is an invariant alarm rather than a capacity message.** The refuse-before-allocating check in `viewer.md` 5 still runs, because it is cheap and it is the guard behind that section's flattest rule, "The tab must never die." If it ever fires, the object is larger than the cap permits, which means the cap moved or an object escaped its signed grant, and the honest copy says so:
-
-> This file is larger than Relic allows. Report this link, because that should not be possible.
-
-**A deliberate divergence from the prior art, named.** Mozilla warned and let the user proceed at this boundary: `noStreamsWarning = This browser might not be able to decrypt a file this big.` offering `noStreamsOptionDownload = Continue with this browser` ([Firefox Send v3](https://gitlab.com/timvisee/send/-/raw/send-v3/public/locales/en-US/send.ftl)). Relic refuses instead, because `viewer.md` 5 locks the refusal and states its reason: "A refusal is a screen; a dead tab is a bug report with nothing in it."
-
-**The number is unmeasured, and that gap gets a name and an owner rather than staying implicit.** Nothing above proves the platform obeys the 500 to 800 MB band under this document's actual four-copy worst case; it proves only that the band is the most conservative reading of the one report available. Measuring it is a pre-Build task, ahead of treating the single-tier architecture as locked, owned by `build` the same way `design-storage-grant-and-cost` 2.2 assigns its five unrun probes to `build` ahead of committing that branch: the real `OperationError` or crash threshold for the four-copy worst case, against the 319,208,240-octet peak section 4.4's truncated prefix produces, on every target engine and mobile Safari by name, because section 6's primary targets are phones, a 375px iPhone SE and a 393px iPhone 15, and mobile Safari has historically carried tighter per-tab limits than desktop. If the measured threshold comes in at or below that peak, or leaves less margin than the 1.57x this document currently assumes, tier 1 stops being deferred and becomes the next task rather than a later configuration change.
+The browser may back a Blob with memory or temporary disk, and OS swap can
+write memory to disk. Downloading also writes plaintext to disk. The design
+does not guarantee a browser-specific memory ceiling or erasure on close.
+Failure to hold or read the Blob requires a named error rather than an
+assurance that every device can open every file.
 
 ## 6. The taskbar hierarchy at a phone width
 
@@ -164,18 +151,24 @@ Thirteen mandated elements, none optional, on a surface that is mobile-first and
 
 **Zone A, the header rail. Fixed, top, 44px, present in every state.**
 
-Two items. The **service name** as a fixed-width wordmark that never truncates and never flexes. The **custody line**, which is the bounded filename as a DOM text node under `viewer.md` 1.9 rule 1, or the state name once a state mark applies. **The custody line is the only flexible element anywhere on the chrome.** It takes `min-width: 0` with a middle ellipsis so an extension stays visible, and it is hard-clamped to two lines before the clamp becomes a hard truncation. The filename arrives capped at 255 octets by `docs/design/container.md` 3.2, so the clamp is a display bound rather than the only bound. Everything else in every zone is fixed-width, which is how `viewer.md` 1.9 rule 3 is satisfied structurally rather than by hoping: **an attacker-chosen string cannot push a fixed-width element off a bar it does not share a flex context with.**
+Two items. The **service name** is a fixed-width wordmark. The **custody line**
+displays the bounded filename as a DOM text node or a state name. It is the
+flexible element on the chrome, with a middle ellipsis and a two-line clamp.
+The current envelope caps the UTF-8 filename at 1,024 octets; the display
+clamp is a separate bound.
 
-**The custody line's content by state, stated explicitly because it was not.** Before the gesture it reads `Unopened`, a neutral placeholder rather than a stamp, because no filename exists yet and nothing has failed. From the gesture through the mint response, the fetch, and the start of decryption, it reads `Opening…`, an unstamped progress label, because the filename lives inside record 0 and stays unreadable until that record decrypts (`docs/design/container.md` 3.2), which section 7.1 and section 7.2 both fix as happening after the fetch completes. Record 0 decrypting is the single moment the custody line has real content to show: the real filename replaces `Opening…` there, the same moment section 7.2's plaintext size becomes available. On any terminal state in section 7, the state name replaces it instead, in the short form the corresponding stamp carries, for example `REMOVED` or `EXPIRED`. `Unopened` and `Opening…` are never stamped, because nothing has been invalidated yet; the stamp treatment section 1 defines is reserved for a state that actually ends the record's custody.
+The filename comes from the authenticated envelope in record 0. For a file
+larger than 100 MiB, the reader can see the filename and size before choosing
+whether to begin the full-file fetch.
 
 **Zone B, the notice stack. Inline, directly under the header, zero height when empty.**
 
-Five conditional notices in one fixed priority order, each one line with its inline SVG mark:
+The notice-stack design groups these conditional notices:
 
 1. **The contents do not match the name.** `viewer.md` 1.3 clause 3 mandates it even on the branch that renders. Highest, because it is the only notice about the payload lying.
-2. **Truncated.** Section 4.4's string. Above the highlight cutoff because it is about missing content rather than about presentation.
+2. **Large source view.** Section 4.4 explains when the full document is shown as windowed source.
 3. **Blocked external resources.** `viewer.md` 3.2 requires the viewer explain the blocking rather than leave broken-image icons to read as a corrupt file.
-4. **Highlight cutoff.** Section 4.3's string.
+4. **Highlight cutoff.** The cutoff was proposed in section 4.3.
 5. **Opens remaining.** Section 7.7's warning.
 
 **At most two render expanded. The remainder collapse into one row reading `N more notices`, where N is however many are collapsed, at most three since five notices minus two always-expanded leaves no more, and the row never renders at zero.** It expands in place and never navigates. The priority order is fixed rather than computed, so two relics with the same notices always present them the same way.
@@ -187,7 +180,10 @@ The content iframe never fills the viewport, so the letterbox is presented as a 
 - **The sandbox legend**, permanently on the plate's bottom edge: one line stating the content is sandboxed and what that blocks. `viewer.md` 4 requires the sandbox be presented as deliberate. Anchoring it to the plate rather than to the header is what guarantees a long filename can never displace it.
 - **The Markdown source toggle**, on the plate's top edge, a two-state segmented control, present only for Markdown. `viewer.md` 3.1 makes the toggle switch which origin is showing, so it belongs to the plate that both origins render into, and the taskbar owns it because the taskbar is the only surface spanning both.
 
-**What the plate holds, phase by phase, because `viewer.md` 6.4 requires three named phases rather than one spinner.** Before the gesture, the plate holds section 3's one line of explanation and section 7.1's control. That is the honest home for the explanation: it is exactly the window `viewer.md` 6.3 describes and it costs nothing after. From the gesture until the mint response, the plate holds the same explanation under a working state, since nothing else is known yet. Once the mint response returns, the plate enters Fetching and shows the bytes-against-total line section 7.2 states. Once the fetch completes, the plate enters Decrypting and shows the record-boundary progress `viewer.md` 6.4 requires rather than a guess. Once record 0 decrypts, the plaintext size in section 7.2 is authenticated and the custody line in Zone A carries the real filename; the plate enters Rendering for the span the content takes to mount, and then the content replaces it.
+The plate distinguishes opening, transfer, decryption, and rendering.
+Record 0 authenticates the filename and content size. A file above 100 MiB
+then waits for confirmation before a full-file fetch; fetch and decryption can
+proceed incrementally.
 
 **Zone D, the margin. Fixed, bottom, 48px, present in every state including every error state.**
 
@@ -195,53 +191,31 @@ Four fixed-width controls, evenly divided, each a 48px touch target: **copy link
 
 **At a desk width nothing about the hierarchy changes.** The margin rotates to a vertical rail on the left edge, the notice stack moves to a right column beside the plate, and the priority order, the fixed widths, and the flex rule are identical.
 
-**The thirteen, accounted:** service name and the one line of explanation in A and C; the bounded filename in A; copy, download, report, and disclosure in D; the sandbox notice and the source toggle on the plate in C; the name mismatch, blocked resources, truncation banner, highlight cutoff, and cap warning in B.
+The notice stack covers mismatches, source-view state, blocked resources, and
+remaining opens where those notices apply.
 
 ## 7. Every recipient-facing state
 
 Copy below is Relic's, in Mozilla's register: it names what is true and what cannot be verified, and it never blames the recipient or the sender.
 
-### 7.1 The commit point, which the gesture gate created
+### 7.1 Confirmation for larger files
 
-`docs/design/topology.md` 5.1 fires the mint on the first trusted user input event and never on load, with `wheel` deliberately excluded. That makes the recipient's first interaction a commit point, and it is a bare one. Nothing about the file is known before it, because the mint has not happened, so the plate before the gesture carries only section 3's one line of explanation and the control:
+For plaintext larger than 100 MiB, the viewer reads and authenticates record 0,
+then presents the filename, type, and size and asks the reader to confirm
+before a full-file fetch. The mint and initial request precede that choice;
+network buffering can transfer more than record 0. Files at or below 100 MiB
+do not require this confirmation.
 
-> Open relic
+### 7.2 The size shown to the reader
 
-**The commit is honest about being uninformed, and that is the correct trade rather than a gap.** `viewer.md` 6.3 fixes the set that renders before the gesture at the branded taskbar, the service name, one line of explanation, and the two links, and none of the five is a fact about the file. Attaching a size or an expiry to the button would mean showing a number the mint has not yet returned, which is worse than showing none.
+The mint's `object_length` is a ciphertext transfer size. The content size in
+the authenticated envelope is the plaintext size; a size derived before
+record 0 authenticates is not an authenticated content-size claim.
 
-**Between the click and the mint response, the custody line reads `Opening…` and the plate holds the explanation under a working state**, per section 6, because nothing new is known yet and the recipient has already committed. Once the mint response returns, the transfer size and the expiry both exist for the first time: `service.md` 2.1 puts them on that response as `object_length` and `relic_expires_at`, and the plate moves into the Fetching phase `viewer.md` 6.4 defines, carrying the bytes-against-total line section 7.2 states. The custody line stays `Opening…` through Fetching and into Decrypting, because the filename itself is inside record 0 and does not exist to the browser until that record decrypts (`docs/design/container.md` 3.2). It swaps to the real filename at that moment, the same moment section 7.2's plaintext size becomes available.
-
-### 7.2 The pre-decryption byte count, decided
-
-**Decision: no exact plaintext byte count appears before decryption starts. The transfer size appears instead, and the plaintext size appears at the first moment it is authenticated.**
-
-This honors `viewer.md` 5's rule literally and it is a decision on the merits rather than deference, so the merits get stated.
-
-**The discharge is real.** `docs/design/container.md` section 4 refuses bucket padding and emits minimal padding only, so `format.md` 3.3's qualifier is discharged at version 1 and the size derivation is exact rather than an upper bound. `viewer.md` 5's stated reason for withholding the number was that qualifier, in its own words, "because it changes what the viewer may display." That reason is gone.
-
-**A different reason survives, and `viewer.md` 5 does not state it.** `docs/design/container.md` 3.2 fixes the property: the derived size comes from the object's length, which sits outside every AEAD tag and is operator-mutable, so it is an allocation guard only, while the envelope's content length sits inside the AEAD and is authoritative. Exactly derivable and trustworthy are different properties, and only the first was discharged. Presenting an unauthenticated number as a fact about the file is the one claim the operator could quietly falsify on a surface whose entire posture is that the operator cannot.
-
-**What the recipient's decision is actually about, which is the second reason.** At the commit point the recipient is deciding whether to spend bytes and time. The number that answers that is the ciphertext object length, which `service.md` 2.1 already puts in the mint response as `object_length` and which `viewer.md` 6.4 already requires the viewer display as the total on the fetching phase. `viewer.md` 5 is the section that certifies it, saying of that phase that it counts encrypted bytes against the encrypted object length "and both of those are exact." It needs no authentication either, because it is a prediction about a transfer the browser is about to perform, and the browser's own byte counter contradicts it within seconds if it is wrong.
-
-**So the plaintext number is not withheld, it is deferred to the moment it becomes authenticated.** Record 0 decrypts before any content renders (`docs/design/container.md` 3.1), and it carries the envelope's content length inside the AEAD. That is where the plaintext size appears, labelled as coming from inside the file.
-
-**The copy, at a relic sitting exactly at the cap.**
-
-On the mint response, once `object_length` exists and before the fetch begins:
-
-> TRANSFER 105.3 MB
-
-During the fetch, which is `viewer.md` 6.4's bytes against a known total and matches Mozilla's shipped `fileSizeProgress = ({ $partialSize } of { $totalSize })`:
-
-> Fetching 41.2 of 105.3 MB
-
-After record 0 decrypts:
-
-> CONTENTS 104.9 MB
-
-**The unit rule, stated so two screens never disagree.** All recipient-facing sizes are decimal MB, because that is what a browser's download shelf and a phone's data counter report, and a viewer that says MiB while the operating system says MB has manufactured a discrepancy. The cap's two numbers in decimal are 104.9 MB of plaintext content and 105.3 MB on the wire, from `docs/design/storage.md` 1.1's 104,857,600 and 105,298,736 octets.
-
-**This routes one drift item and reverses nothing.** Section 10 carries it.
+At the publication cap, 524,288,000 plaintext octets are approximately
+524.3 MB, and 524,489,608 ciphertext octets are approximately 524.5 MB.
+These are decimal display values for an example at the cap, not evidence of a
+particular screen's rendered copy.
 
 ### 7.3 No JavaScript
 
@@ -313,11 +287,11 @@ Third, and this is the support-load argument running opposite to the intuition. 
 
 > **This link has been opened as many times as it can be.**
 >
-> Every relic allows 64 opens. This one has used all of them, so Relic will not hand out another download, and the count does not reset. The file itself has not been removed.
+> Every relic allows 200 mints, shared across its versions. This one has used all of them.
 >
-> Ask the sender to publish it again. A new relic gets a new link and a fresh count. If the list this was sent to is bigger than 64 people, one relic will not cover it, and it may need to go out as more than one link.
+> Ask the sender to publish a new relic for a fresh link and count.
 >
-> If nobody you know opened it 64 times, something automated may have. That is worth telling us about.
+> Automated requests may also consume the count.
 >
 > Report this relic · How Relic handles your data
 
@@ -329,7 +303,8 @@ Third, and this is the support-load argument running opposite to the intuition. 
 >
 > Report this relic · How Relic handles your data
 
-The 64 is `docs/design/storage.md` 4.4's per-object download cap, which that document states as a judgment value inside a band whose sourced floor is 40. The second screen's middle paragraph is `service.md` 1.4's rule that the fact of removal is disclosed and the reason is not, written so a publisher understands the silence is uniform rather than pointed.
+The 200-mint cap is recorded in `docs/design/storage.md` 4.4. The second
+screen distinguishes removal from cap exhaustion.
 
 **One more screen that looks like these and is not.** `docs/design/storage.md` 7.3 sets the retention window at 90 days, and states the consequence: after 90 days the relic row and the tombstone age out, so a relic that was removed or that expired returns `relic_not_found`. That means the never-existed screen is served for relics that did exist, and its copy cannot lead with a typo.
 
@@ -341,11 +316,9 @@ The 64 is `docs/design/storage.md` 4.4's per-object download cap, which that doc
 
 ### 7.7 The `mints_remaining` consumer
 
-**Decision: the viewer warns, and the threshold is 8, which is one eighth of the 64-mint per-object download cap in `docs/design/storage.md` 4.4.**
-
-`service.md` 2.1 justifies the field with a viewer warning: `mints_remaining` exists "so the viewer can warn before the cap kills the link rather than after." `viewer.md` never specified it. This specifies it, which makes that justification true.
-
-**The threshold against the denominator, which is what makes it meaningful.** `service.md` 2.3's arithmetic gives a floor of 40 legitimate mints for a 40-person distribution list, and `docs/design/storage.md` 4.4 adopts that floor against the gated branch. An ordinary complete distribution therefore leaves 24 remaining, so **any threshold above 24 fires on the scenario the cap was sized around**, which is noise on correct behaviour. Below 24 the value is a judgment and it is stated as one. 8 of 64 leaves a recipient a real signal, roughly two or three more opens in practice, while sitting well clear of the ordinary case.
+The original design proposed warning at eight remaining mints against a
+64-mint cap. That denominator is historical; the current cap is 200 mints
+shared across versions.
 
 **Who the warning is for.** The recipient cannot raise the cap, so the warning's job is to make them act now and tell the sender, which is what the copy does.
 
@@ -451,8 +424,11 @@ The sentence whose basis is gone:
 1. **The reason class and handling path for the `personal_data` category, and whether reporter contact becomes required on it, from `design-operations-and-abuse`.** Section 8 fixes the label, the machine value, the placement, and the field copy. The pipeline behind them is that unit's, and this document's screens work under either answer.
 2. **The published response time in hours, from `design-operations-and-abuse`.** The report confirmation screen is recipient-facing and this document's, and the number that goes on it is not. `service.md` 4.1 routes the number and `docs/preconditions.md` section 1 makes it a go/no-go obligation.
 3. **A measured byte count for the purpose-built font subset, from `build`.** Section 2 states 20,172 octets measured on a general Latin subset, which is an upper bound. The 60 KB script and CSS budget is a target and is not measured, because the highlighter core's cost separated from its grammars is not in the measured table this document had. Both get measured before the budget is treated as met.
-4. **The `blob:` download-attribution observation, from whoever runs the pre-launch channel test `service.md` section 6 already mandates.** `docs/design/topology.md` section 2 puts bytes on disk only through a `blob:` URL materialized on the viewing origin under `a[download]`, which is why the download control in section 6's margin sits on the viewing origin and never links to the signed object URL. Nothing here changes under either outcome; what changes is whether the service domain's download-category exposure is a closed question or a residual to watch.
-5. **A measured per-tab crash or `OperationError` threshold for the four-copy worst case, from `build`.** Section 5 hardcodes the in-memory ceiling at 500,000,000 octets from one forum report, read at its most conservative point, and never independently measured. The number is validated before the single-tier architecture is treated as locked, not reversed here: measured against the 319,208,240-octet peak section 4.4 computes, on mobile Safari by name because section 6's primary targets are phones. If the measured threshold sits at or below that peak, tier 1 stops being deferred.
+4. **Download attribution.** Whether browsers attribute a `blob:` download to
+the viewing origin for reputation purposes remains an observation to make.
+Browser-managed Blob storage may also use temporary disk before a download.
+5. **Browser memory behavior.** The old four-copy calculation is superseded
+by section 5. Device and browser memory limits remain implementation-dependent.
 
 ## 12. Sibling inputs, and the paths used
 
@@ -464,8 +440,14 @@ None of the three had landed on `darkrun/relic/shape` when this was written, so 
 
 **What each was read for, and what this document takes from it.**
 
-From `container.md`: bucket padding refused, which discharges the qualifier section 7.2 decides against; the derived-versus-authenticated size distinction in 3.2, which is what section 7.2 actually rests on; the 255-octet filename cap that bounds the custody line in section 6; and the 25-character ID, 24-character fragment, and 71-character relic URL on a twelve-character domain, which is what the copy-link control has to carry and what any displayed URL is bounded by at a phone width. **The copy-link control copies rather than displays for the reason section 1 already gives: nothing shaped like a credential-adjacent string belongs on the viewing origin, and a bare URL sitting in a text field reads as exactly that.** The measure corroborates the decision rather than carrying it: 71 characters clears even the desk-width 62-character measure, so a full relic URL never fits on one line at any width section 2 now defines, from the 32-character phone floor up, and wraps rather than displaying whole. That is why no screen in section 7 renders the URL as text.
+The original `container.md` input supplied the custody-line filename bound
+and the link-length rationale. The current envelope filename cap is 1,024
+octets; the browser display clamp remains separate.
 
-From `topology.md`: the mint fires on the first trusted user input event and never on load, which is the commit point section 7.1 attaches the transfer size to; the dedup interval of 300 seconds, which section 7.7's silent re-mint sits inside; and the decision that bytes reach disk only through a `blob:` URL on the viewing origin under `a[download]`, which puts the download control in section 6's margin on the viewing origin. None of those is redefined here.
+From `topology.md`: the original gesture-gate and download-link design.
+Section 7.1 records the later large-file confirmation, and section 5 states
+the browser-storage caveat.
 
-From `storage.md`: every number this document's copy states. The 100 MiB size cap of 104,857,600 plaintext content octets and the 105,298,736-octet ciphertext bound (1.1); the per-object download cap of 64 mints against a sourced floor of 40 (4.4); the signed-URL validity window of 900 seconds and the 300-second minimum viable validity (4.2); the TTL of 72 hours, 259,200 seconds (7.2); the retention window of 90 days (7.3); soft delete held at the documented seven-day minimum (7.1); the published byte lifetime of up to roughly twelve days (7.4); and the tier-collapse analysis in 1.2, including the four-copy case at 524,729,136 octets that section 4.4's truncated prefix is sized to close.
+From `storage.md`: the current cap is 524,288,000 plaintext octets, its
+cap-sized ciphertext is 524,489,608 octets, and the per-relic mint cap is
+200. The older 100 MiB and 64-mint figures are historical.

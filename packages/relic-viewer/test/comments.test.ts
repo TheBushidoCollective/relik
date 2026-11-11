@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { contentFromBytes } from '../src/content.ts';
 import {
   COMMENT_NONCE_BYTES,
   CommentDecryptFailedError,
@@ -187,7 +188,11 @@ function view(overrides: Partial<ReadyView> = {}): ReadyView {
   return {
     filename: 'notes.md',
     declaredMimetype: 'text/markdown',
-    content: new TextEncoder().encode('# notes\n'),
+    content: contentFromBytes(new TextEncoder().encode('# notes\n')),
+    document: {
+      bytes: new TextEncoder().encode('# notes\n'),
+      truncated: false,
+    },
     route: 'markdown',
     downgradeNotice: undefined,
     shareUrl: `https://relik.example/${RELIC_ID}${FRAGMENT}`,

@@ -395,7 +395,7 @@ export function comparisonAvailability(
   }
 
   const ceiling = diffCeilingFor(mode);
-  if (view.content.length > ceiling.bytes) {
+  if (view.content.size > ceiling.bytes) {
     return {
       kind: 'unavailable',
       code: 'comparison_too_large',

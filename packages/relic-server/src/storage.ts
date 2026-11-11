@@ -11,6 +11,7 @@
  * delete-by-ID is a v1 abuse control.
  */
 import { createHash } from 'node:crypto';
+import { Crc32c } from '@relic/format';
 
 export interface SignedUpload {
   readonly url: string;
@@ -62,8 +63,6 @@ export interface ObjectStorage {
     now: number
   ): Promise<{ url: string; expiresAt: number }>;
   stat(relicId: string): Promise<ObjectStat | undefined>;
-  /** Read the bytes once, for the delete path's hash. Never for serving. */
-  read(relicId: string): Promise<Uint8Array | undefined>;
   delete(relicId: string): Promise<void>;
   /** Streaming sha256 hex of the object at that key; undefined iff absent; throws on other errors. */
   digest(relicId: string): Promise<string | undefined>;
@@ -71,7 +70,10 @@ export interface ObjectStorage {
 
 /** In-memory storage, for tests and local development. */
 export class MemoryStorage implements ObjectStorage {
-  private readonly objects = new Map<string, Uint8Array>();
+  private readonly objects = new Map<
+    string,
+    { bytes: Uint8Array; crc32c: string }
+  >();
   private readonly uploads = new Map<string, { maxBytes: number }>();
 
   constructor(private readonly origin = 'https://storage.invalid') {}
@@ -106,13 +108,13 @@ export class MemoryStorage implements ObjectStorage {
   }
 
   async stat(relicId: string): Promise<ObjectStat | undefined> {
-    const bytes = this.objects.get(relicId);
-    if (bytes === undefined) return undefined;
-    return { length: bytes.length, crc32c: crc32cBase64(bytes) };
+    const object = this.objects.get(relicId);
+    if (object === undefined) return undefined;
+    return { length: object.bytes.length, crc32c: object.crc32c };
   }
 
   async read(relicId: string): Promise<Uint8Array | undefined> {
-    return this.objects.get(relicId);
+    return this.objects.get(relicId)?.bytes;
   }
 
   async delete(relicId: string): Promise<void> {
@@ -122,7 +124,7 @@ export class MemoryStorage implements ObjectStorage {
   async digest(relicId: string): Promise<string | undefined> {
     const object = await this.stat(relicId);
     if (object === undefined) return undefined;
-    const bytes = this.objects.get(relicId);
+    const bytes = this.objects.get(relicId)?.bytes;
     if (bytes === undefined) return undefined;
     const hash = createHash('sha256');
     let bytesHashed = 0;
@@ -135,56 +137,11 @@ export class MemoryStorage implements ObjectStorage {
     }
     return hash.digest('hex');
   }
-  /** Test seam: stand in for the client's direct-to-storage PUT. */
+  /** Test seam: stand in for the client's direct-to-storage PUT. Treat bytes as immutable. */
   put(relicId: string, bytes: Uint8Array): void {
-    this.objects.set(relicId, bytes);
+    this.objects.set(relicId, {
+      bytes,
+      crc32c: new Crc32c().update(bytes).base64(),
+    });
   }
-}
-
-const CRC32C_POLY = 0x82f63b78;
-const CRC32C_TABLE = (() => {
-  const table = new Uint32Array(256);
-  for (let index = 0; index < 256; index++) {
-    let value = index;
-    for (let bit = 0; bit < 8; bit++) {
-      value = value & 1 ? (value >>> 1) ^ CRC32C_POLY : value >>> 1;
-    }
-    table[index] = value >>> 0;
-  }
-  return table;
-})();
-
-export function crc32c(bytes: Uint8Array): number {
-  let crc = 0xffffffff;
-  for (const byte of bytes) {
-    crc = (CRC32C_TABLE[(crc ^ byte) & 0xff] as number) ^ (crc >>> 8);
-  }
-  return (crc ^ 0xffffffff) >>> 0;
-}
-
-export function crc32cBase64(bytes: Uint8Array): string {
-  const value = crc32c(bytes);
-  const out = new Uint8Array(4);
-  new DataView(out.buffer).setUint32(0, value, false);
-  return btoa(String.fromCharCode(...out));
-}
-
-/**
- * The abuse blocklist hash.
- *
- * SHA-256 over the ciphertext, never the CRC32C: 32 bits is unfit for a
- * blocklist. A delete with no hash is refused, because by then it is the
- * payload you most want blocklisted.
- */
-export async function ciphertextHash(bytes: Uint8Array): Promise<string> {
-  const digest = await crypto.subtle.digest(
-    'SHA-256',
-    bytes.buffer.slice(
-      bytes.byteOffset,
-      bytes.byteOffset + bytes.byteLength
-    ) as ArrayBuffer
-  );
-  return [...new Uint8Array(digest)]
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('');
 }

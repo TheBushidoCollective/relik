@@ -1,9 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { contentFromBytes } from '../src/content.ts';
 import {
   deriveCommentKey,
   encodeFragment,
   encryptRelic,
   generateKey,
+  generateRelicId,
+  HEADER_BYTES,
   type OtioAnchorV1,
 } from '@relic/format';
 import { commentCipher } from '../src/comments.ts';
@@ -37,7 +40,16 @@ import type { ReadyView, ViewerDeps } from '../src/viewer.ts';
 class ElementStub {
   readonly tagName: string;
   className = '';
-  textContent = '';
+  private _textContent = '';
+  onTextChange: (() => void) | undefined;
+  onChildrenReplaced: (() => void) | undefined;
+  get textContent(): string {
+    return this._textContent;
+  }
+  set textContent(value: string) {
+    this._textContent = value;
+    this.onTextChange?.();
+  }
   private _innerHTML = '';
   get innerHTML(): string {
     return this._innerHTML;
@@ -61,6 +73,8 @@ class ElementStub {
   min = '';
   max = '';
   value = '';
+  naturalWidth = 64;
+  naturalHeight = 64;
   readonly children: ElementStub[] = [];
   get firstElementChild(): ElementStub | null {
     return this.children[0] ?? null;
@@ -116,6 +130,7 @@ class ElementStub {
 
   replaceChildren(...children: ElementStub[]): void {
     this.children.splice(0, this.children.length, ...children);
+    this.onChildrenReplaced?.();
   }
 
   contains(): boolean {
@@ -130,6 +145,7 @@ class ElementStub {
   }
 
   focus(): void {}
+  async decode(): Promise<void> {}
 
   addEventListener(type: string, listener: (event?: unknown) => void): void {
     const list = this.listeners[type] ?? [];
@@ -157,7 +173,8 @@ function view(
     filename: route === 'download' ? 'archive.zip' : 'notes.ts',
     declaredMimetype:
       route === 'download' ? 'application/zip' : 'text/typescript',
-    content,
+    content: contentFromBytes(content),
+    document: { bytes: content, truncated: false },
     route,
     downgradeNotice: undefined,
     shareUrl,
@@ -180,6 +197,26 @@ function withClass(element: ElementStub, name: string): ElementStub[] {
     candidate.className.split(' ').includes(name)
   );
 }
+
+async function waitForImageComparison(element: ElementStub): Promise<void> {
+  const status = withClass(element, 'diff-summary')[0]?.children[1];
+  if (!status) throw new Error('Image comparison status missing');
+  if (status.textContent === 'Loading image dimensions.') {
+    const { promise, resolve } = Promise.withResolvers<void>();
+    status.onTextChange = () => resolve();
+    element.onChildrenReplaced = () => resolve();
+    try {
+      await promise;
+    } finally {
+      status.onTextChange = undefined;
+      element.onChildrenReplaced = undefined;
+    }
+  }
+  expect(withClass(element, 'diff-summary')[0]?.children[1]?.textContent).toBe(
+    'Version dimensions: 64 x 64 px to 64 x 64 px. Width 0 px, height 0 px.'
+  );
+}
+
 function getBody(): ElementStub {
   const globalDoc = (globalThis as Record<string, unknown>).document;
   if (globalDoc && typeof globalDoc === 'object' && 'body' in globalDoc) {
@@ -522,7 +559,11 @@ describe('version comparison affordance', () => {
         if (url.endsWith('/mint')) {
           return Response.json({
             url: 'https://storage.example/v2',
+            url_expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+            relic_expires_at: null,
             object_length: v2Bytes.length,
+            object_crc32c: 'AAAAAA==',
+            mints_remaining: 7,
             version: 2,
             current_version: 3,
           });
@@ -661,18 +702,39 @@ describe('version comparison affordance', () => {
   });
 
   test('a version that cannot be decrypted shows the refusal notice', async () => {
-    const current = view('code', 3);
-    const deps = dummyDeps((async (input) => {
+    const id = generateRelicId();
+    const key = generateKey();
+    const current = view(
+      'code',
+      3,
+      encoder.encode('current content'),
+      3,
+      `https://relik.example/${id}#${encodeFragment(key)}`
+    );
+    const damaged = await encryptRelic({
+      key,
+      content: encoder.encode('historical content'),
+      filename: 'notes.ts',
+      mimetype: 'text/typescript',
+    });
+    damaged[HEADER_BYTES] = damaged[HEADER_BYTES]! ^ 1;
+    const requests: Array<{ url: string; init: RequestInit | undefined }> = [];
+    const deps = dummyDeps((async (input, init) => {
       const url = String(input);
+      requests.push({ url, init });
       if (url.endsWith('/mint')) {
         return Response.json({
           url: 'https://storage.example/v2',
-          object_length: 100,
+          url_expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+          relic_expires_at: null,
+          object_length: damaged.length,
+          object_crc32c: 'AAAAAA==',
+          mints_remaining: 7,
           version: 2,
           current_version: 3,
         });
       }
-      return new Response(new Uint8Array(100) as unknown as BodyInit);
+      return new Response(damaged as unknown as BodyInit);
     }) as typeof globalThis.fetch);
 
     const { promise, resolve } = Promise.withResolvers<void>();
@@ -690,7 +752,7 @@ describe('version comparison affordance', () => {
     try {
       renderComparison(
         current,
-        'aaaaaaaaaaaaaaaaaaaaaaaaaa',
+        id,
         'https://relik-usercontent.example',
         deps,
         () => {},
@@ -703,8 +765,20 @@ describe('version comparison affordance', () => {
     }
 
     const docBody = getBody();
-    expect(withClass(docBody, 'notice')).toHaveLength(1);
-    expect(textOf(docBody)).toContain('could not be decrypted');
+    const notices = withClass(docBody, 'notice');
+    expect(notices).toHaveLength(1);
+    expect(notices[0]?.children[1]?.textContent).toBe(
+      'Version 2 could not be decrypted. Version 3 remains open.'
+    );
+    expect(requests.map((request) => request.url)).toEqual([
+      `https://relik.example/api/relics/${id}/mint`,
+      'https://storage.example/v2',
+    ]);
+    expect(requests[0]?.init?.body).toBe(JSON.stringify({ version: 2 }));
+    expect(current.version).toBe(3);
+    expect(
+      new TextDecoder().decode(await current.content.readWhole(MAX_DIFF_BYTES))
+    ).toBe('current content');
   });
 
   test('uncomparableReason explains when left or right is download-only or different route', () => {
@@ -723,7 +797,7 @@ describe('version comparison affordance', () => {
     );
   });
 
-  test('a side is labelled current only when it is the current version', () => {
+  test('a side is labelled current only when it is the current version', async () => {
     // Left is v2, Right is v3 (current on v3 relic):
     // Left pane is "Version 2", Right pane is "Version 3, current"
     const compareA = renderRenderedComparison(
@@ -765,10 +839,31 @@ describe('version comparison affordance', () => {
     expect(afterLabelC?.textContent).toBe('Version 1');
 
     // Image diff follows the exact same truth in labeling
+    const limits: number[] = [];
+    const image = (version: number, content: string, currentVersion = 3) => {
+      const ready = view(
+        'image',
+        version,
+        encoder.encode(content),
+        currentVersion
+      );
+      const source = ready.content;
+      return {
+        ...ready,
+        content: {
+          ...source,
+          readWhole(limit: number) {
+            limits.push(limit);
+            return source.readWhole(limit);
+          },
+        },
+      };
+    };
     const imgA = renderImageComparison(
-      view('image', 3, encoder.encode('current-img')),
-      view('image', 2, encoder.encode('older-img'), 3)
+      image(3, 'current-img'),
+      image(2, 'older-img')
     ) as unknown as ElementStub;
+    await waitForImageComparison(imgA);
     expect(withClass(imgA, 'image-diff-label-before')[0]?.textContent).toBe(
       'Version 2'
     );
@@ -777,9 +872,10 @@ describe('version comparison affordance', () => {
     );
 
     const imgB = renderImageComparison(
-      view('image', 2, encoder.encode('v2-img'), 3),
-      view('image', 1, encoder.encode('v1-img'), 3)
+      image(2, 'v2-img'),
+      image(1, 'v1-img')
     ) as unknown as ElementStub;
+    await waitForImageComparison(imgB);
     expect(withClass(imgB, 'image-diff-label-before')[0]?.textContent).toBe(
       'Version 1'
     );
@@ -787,6 +883,19 @@ describe('version comparison affordance', () => {
       'Version 2'
     );
     expect(textOf(imgB)).not.toContain('current');
+
+    const imgC = renderImageComparison(
+      image(1, 'v1-img'),
+      image(3, 'current-img')
+    ) as unknown as ElementStub;
+    await waitForImageComparison(imgC);
+    expect(withClass(imgC, 'image-diff-label-before')[0]?.textContent).toBe(
+      'Version 3, current'
+    );
+    expect(withClass(imgC, 'image-diff-label-current')[0]?.textContent).toBe(
+      'Version 1'
+    );
+    expect(limits).toEqual(Array(6).fill(MAX_DIFF_BYTES));
   });
 
   test('comparison copy names the versions accurately without falsehoods', () => {

@@ -1,3 +1,12 @@
+import {
+  closeSync,
+  ftruncateSync,
+  mkdtempSync,
+  openSync,
+  rmSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, test } from 'bun:test';
 import type { OtioVideoTiming } from '../src/otio-video-timing.ts';
 import {
@@ -390,6 +399,45 @@ describe('OTIO metadata scanner budgets and cleanup', () => {
     expect(state.inputDisposals).toBe(1);
     expect(state.listeners.warn.size).toBe(0);
     expect(state.listeners.error.size).toBe(0);
+  });
+
+  test('scans a sparse 500 MiB Blob and rejects one byte more', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'relik-otio-timing-'));
+    const path = join(dir, 'large.webm');
+    const file = openSync(path, 'w+');
+    try {
+      ftruncateSync(file, 524_288_000);
+      const boundary = Bun.file(path);
+      expect(boundary.size).toBe(524_288_000);
+      const demux = fakeDemux({
+        read: [524_287_999, 524_288_000],
+        packets: [{ timestamp: 0, duration: 0.04 }],
+      });
+      const result = await scanOtioVideoTimingWithApi(
+        boundary,
+        'video/webm',
+        demux.api
+      );
+      expect(result.kind).toBe('windows');
+      expect(demux.state.sourceOptions?.getSize()).toBe(524_288_000);
+      expect(OTIO_VIDEO_TIMING_LIMITS.maxTotalReadBytes).toBe(524_288_000);
+
+      const overPath = join(dir, 'too-large.webm');
+      const overFile = openSync(overPath, 'w+');
+      try {
+        ftruncateSync(overFile, 524_288_001);
+      } finally {
+        closeSync(overFile);
+      }
+      const overBoundary = Bun.file(overPath);
+      expect(overBoundary.size).toBe(524_288_001);
+      await expect(
+        scanOtioVideoTimingWithApi(overBoundary, 'video/webm', fakeDemux().api)
+      ).resolves.toEqual({ kind: 'unknown', reason: 'file-too-large' });
+    } finally {
+      closeSync(file);
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   test('fails explicit scanner caps and warnings without returning partial windows', async () => {

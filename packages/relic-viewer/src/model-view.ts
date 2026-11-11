@@ -27,6 +27,7 @@ import type {
   ModelParseResponse,
   ModelWarning,
 } from './model-parse.ts';
+import type { RelicContent } from './content.ts';
 
 const MAX_SOURCE_BYTES = 16 * 1024 * 1024;
 const MAX_TRIANGLES = 250_000;
@@ -155,13 +156,13 @@ function modelResponse(value: unknown): ModelParseResponse | null {
 }
 
 /**
- * Mount one model. The caller owns original bytes and Download, and must call
- * the returned disposer when replacing a stage or historical version.
+ * Mount one model. The caller owns the content and Download, and must call the
+ * returned disposer when replacing a stage or historical version.
  */
 export function mountModelView(
   container: HTMLElement,
   format: ModelFormat,
-  bytes: Uint8Array
+  content: RelicContent
 ): () => void {
   const doc = container.ownerDocument;
   const win = doc.defaultView;
@@ -831,42 +832,54 @@ export function mountModelView(
 
   if (format !== 'stl' && format !== 'obj') {
     failParse('invalid-format');
-  } else if (bytes.byteLength > MAX_SOURCE_BYTES) {
+  } else if (content.size > MAX_SOURCE_BYTES) {
     failParse('limit-exceeded');
   } else {
-    try {
-      worker = new Worker('/assets/model-parse-worker.js', { type: 'module' });
-      worker.onmessage = (event: MessageEvent<unknown>) => {
+    void content.readWhole(MAX_SOURCE_BYTES).then(
+      (bytes) => {
         if (!active()) return;
-        stopWorker();
-        const response = modelResponse(event.data);
-        if (!response) failParse('internal-error');
-        else if (!response.ok) failParse(response.error);
-        else mountGeometry(response);
-      };
-      worker.onerror = (event) => {
-        event.preventDefault();
-        failParse('internal-error');
-      };
-      worker.onmessageerror = () => failParse('internal-error');
-      deadline = win.setTimeout(() => {
-        fail(
-          'parser-timeout',
-          'Model parsing timed out',
-          'The model parser exceeded its interactive limit.'
-        );
-      }, PARSER_DEADLINE_MS);
-      const copy = bytes.slice().buffer;
-      const request: ModelParseRequest = {
-        type: 'parse',
-        id: 1,
-        format,
-        bytes: copy,
-      };
-      worker.postMessage(request, [copy]);
-    } catch {
-      failParse('internal-error');
-    }
+        if (!bytes || bytes.byteLength !== content.size) {
+          failParse('internal-error');
+          return;
+        }
+        try {
+          worker = new Worker('/assets/model-parse-worker.js', {
+            type: 'module',
+          });
+          worker.onmessage = (event: MessageEvent<unknown>) => {
+            if (!active()) return;
+            stopWorker();
+            const response = modelResponse(event.data);
+            if (!response) failParse('internal-error');
+            else if (!response.ok) failParse(response.error);
+            else mountGeometry(response);
+          };
+          worker.onerror = (event) => {
+            event.preventDefault();
+            failParse('internal-error');
+          };
+          worker.onmessageerror = () => failParse('internal-error');
+          deadline = win.setTimeout(() => {
+            fail(
+              'parser-timeout',
+              'Model parsing timed out',
+              'The model parser exceeded its interactive limit.'
+            );
+          }, PARSER_DEADLINE_MS);
+          const copy = bytes.slice().buffer;
+          const request: ModelParseRequest = {
+            type: 'parse',
+            id: 1,
+            format,
+            bytes: copy,
+          };
+          worker.postMessage(request, [copy]);
+        } catch {
+          failParse('internal-error');
+        }
+      },
+      () => failParse('internal-error')
+    );
   }
   return dispose;
 }

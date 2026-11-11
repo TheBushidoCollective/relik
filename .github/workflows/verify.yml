@@ -215,6 +215,94 @@ jobs:
           retention-days: 7
           compression-level: 9
 
+  # Run the full-size path on its own runner so its scratch files and memory
+  # do not compete with the other browser proofs.
+  large-relic-path:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare large relic proof receipt
+        run: |
+          mkdir -p "$RUNNER_TEMP/large-relic-proof"
+          git rev-parse HEAD > "$RUNNER_TEMP/large-relic-proof/candidate-revision.txt"
+          echo "LARGE_RELIC_PROOF_DIR=$RUNNER_TEMP/large-relic-proof" >> "$GITHUB_ENV"
+
+      - uses: jdx/mise-action@v2
+        with:
+          install: true
+          cache: true
+
+      - name: Install proof prerequisites
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends binutils ca-certificates ffmpeg iproute2 util-linux wget
+          command -v docker
+          docker version --format '{{.Server.Version}}'
+          command -v readelf
+          command -v unshare
+          command -v runuser
+          ffmpeg -hide_banner -encoders 2>/dev/null | grep 'libvpx-vp9'
+          if ! command -v google-chrome >/dev/null 2>&1; then
+            wget -q -O "$RUNNER_TEMP/chrome.deb" https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+            sudo apt-get install -y "$RUNNER_TEMP/chrome.deb"
+          fi
+          google-chrome --version
+          echo "RELIC_READELF=$(command -v readelf)" >> "$GITHUB_ENV"
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile 2>&1 | tee "$LARGE_RELIC_PROOF_DIR/install.log"
+
+      - name: Build viewer and MCP bundle
+        run: |
+          set -euo pipefail
+          unset CC
+          bun run --cwd packages/relic-viewer build 2>&1 | tee "$LARGE_RELIC_PROOF_DIR/viewer-build.log"
+          bun run --cwd packages/relic-mcp build 2>&1 | tee "$LARGE_RELIC_PROOF_DIR/mcp-build.log"
+
+      - name: Exercise the large relic path
+        run: |
+          set -euo pipefail
+          printf 'Candidate revision: %s\n' "$(git rev-parse HEAD)" | tee "$LARGE_RELIC_PROOF_DIR/large-relic-path.log"
+          df -h "$RUNNER_TEMP" | tee -a "$LARGE_RELIC_PROOF_DIR/large-relic-path.log"
+          # Resolve the installed binaries before env -i removes mise's trust settings.
+          bun_bin="$(mise which bun)"
+          node_bin="$(mise which node)"
+          proof_path="$(dirname "$node_bin"):$(dirname "$bun_bin"):/usr/local/bin:/usr/bin:/bin"
+          # The test and its browser inherit a fresh network namespace with
+          # only loopback, and no inherited credentials or proxy settings.
+          sudo unshare --net -- bash -c '
+            set -euo pipefail
+            ip link set lo up
+            ip -brief address
+            if [ "$(ip -o link show | wc -l)" -ne 1 ]; then
+              echo "expected a loopback-only network namespace" >&2
+              exit 1
+            fi
+            exec runuser -u "$1" -- env -i \
+              HOME="$2" PATH="$3" TMPDIR="$4" \
+              RELIC_PROOF_CHROME_PATH="$5" \
+              "$6" packages/relic-mcp/test/large-relic-path.ts
+          ' _ "$USER" "$HOME" "$proof_path" "$RUNNER_TEMP" \
+            "$(command -v google-chrome)" "$bun_bin" \
+            2>&1 | tee -a "$LARGE_RELIC_PROOF_DIR/large-relic-path.log"
+
+      - name: Upload large relic proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: large-relic-proof-linux
+          path: ${{ env.LARGE_RELIC_PROOF_DIR }}
+          if-no-files-found: warn
+          retention-days: 7
+
   otio-headless-smoke-macos:
     runs-on: macos-15
     timeout-minutes: 15
@@ -349,6 +437,7 @@ jobs:
 
           for P in \
             /assets/viewer.js \
+            /assets/pdf.worker.js \
             /assets/landing-html.png \
             /assets/landing-markdown.png \
             /assets/landing-code-dark.png \
@@ -365,6 +454,7 @@ jobs:
               exit 1
             fi
           done
+          grep -q 'class IndirectObjectLexer extends Lexer' "$SMOKE_DIR/assets_pdf.worker.js"
 
       - name: Collect image logs and remove the container
         if: always()

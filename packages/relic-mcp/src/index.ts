@@ -35,6 +35,7 @@ import {
   chromeProgramRenderer,
   installProgramSignalCleanup,
 } from './program/render.ts';
+import { nodeUploader } from './upload.ts';
 
 // Node 18 exposes Web Crypto through node:crypto without a global binding.
 if (typeof globalThis.crypto === 'undefined') {
@@ -88,6 +89,7 @@ const deps: PublishDeps = {
       : requiredOrigin('RELIC_ORIGIN', process.env['RELIC_ORIGIN']),
   files: nodeFiles,
   fetch: globalThis.fetch,
+  upload: nodeUploader,
   // Recorded against the grant, so the service can tell what published. No
   // version baked in: a literal here goes stale the first release nobody
   // remembers to edit, and a wrong version in a log is worse than none.

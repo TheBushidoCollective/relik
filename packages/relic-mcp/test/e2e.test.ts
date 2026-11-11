@@ -1,3 +1,4 @@
+import { fetchUpload } from './upload-fixture.ts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
   chmod,
@@ -11,6 +12,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   encodeKey,
+  OTIO_DOCUMENT_MAX_BYTES,
   MAX_TITLE_CHARS,
   openRelic,
   PLAINTEXT_CAP_BYTES,
@@ -27,6 +29,7 @@ import {
   type PublishDeps,
   PublishError,
   publish,
+  readSource,
   ServerRefusal,
 } from '../src/publish.ts';
 import { republish } from '../src/republish.ts';
@@ -185,6 +188,7 @@ beforeEach(async () => {
     relicOrigin: SERVICE,
     files: fakeFiles(),
     fetch: shimFetch(),
+    upload: fetchUpload,
     clientName: 'relic-mcp/0.1.0 (test)',
     identifySource: async (path) => ({
       identity: `realpath:${encodeURIComponent(path)}`,
@@ -516,6 +520,40 @@ describe('model publication', () => {
 });
 
 describe('the whole loop', () => {
+  test('publish and republish preserve the ciphertext SHA-256 digest', async () => {
+    const fallback: PublishDeps = {
+      ...deps,
+      fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input).endsWith('/complete')) return Response.json({});
+        return deps.fetch(input, init);
+      }) as typeof globalThis.fetch,
+    };
+    writeFile('/work/digest.md', 'version one');
+    const first = await publish({ path: 'digest.md', cover: false }, fallback);
+    const firstBytes = await storage.read(first.relic_id);
+    if (firstBytes === undefined) throw new Error('missing first ciphertext');
+    const firstDigest = await crypto.subtle.digest(
+      'SHA-256',
+      firstBytes.slice().buffer as ArrayBuffer
+    );
+    expect(first.version_digest).toBe(Buffer.from(firstDigest).toString('hex'));
+
+    writeFile('/work/digest.md', 'version two');
+    const second = await republish(
+      { relic_id: first.relic_id, path: 'digest.md', cover: false },
+      fallback
+    );
+    const secondBytes = await storage.read(`${first.relic_id}/v2`);
+    if (secondBytes === undefined) throw new Error('missing second ciphertext');
+    const secondDigest = await crypto.subtle.digest(
+      'SHA-256',
+      secondBytes.slice().buffer as ArrayBuffer
+    );
+    expect(second.version_digest).toBe(
+      Buffer.from(secondDigest).toString('hex')
+    );
+  });
+
   test('publishes a markdown file and a recipient reads it back byte for byte', async () => {
     const body = '# Q3 report\n\nRevenue was up.\n';
     writeFile('/work/report.md', body);
@@ -715,6 +753,47 @@ describe('local refusals, before any HTTP', () => {
     await expect(
       publish({ path: 'oversized.otioz' }, { ...deps, files: oversized })
     ).rejects.toMatchObject({ code: 'local_size_precheck_failed' });
+    expect(reads).toBe(0);
+  });
+
+  test('the local file precheck accepts a stat above the former 100 MiB cap', async () => {
+    let reads = 0;
+    let size = 100 * 1024 * 1024 + 1;
+    const files: FileReader = {
+      ...fakeFiles(),
+      async stat() {
+        return { kind: 'file', size };
+      },
+      async read() {
+        reads += 1;
+        return new Uint8Array();
+      },
+    };
+    await readSource('large.bin', files);
+    size = PLAINTEXT_CAP_BYTES;
+    await readSource('large.bin', files);
+    expect(reads).toBe(2);
+  });
+
+  test('rejects an oversized raw OTIO document before reading or parsing it', async () => {
+    let reads = 0;
+    const files: FileReader = {
+      ...fakeFiles(),
+      async stat() {
+        return { kind: 'file', size: OTIO_DOCUMENT_MAX_BYTES + 1 };
+      },
+      async read() {
+        reads += 1;
+        return new Uint8Array();
+      },
+    };
+    await expect(readSource('large.otio', files)).rejects.toMatchObject({
+      code: 'local_size_precheck_failed',
+      details: {
+        size_limit_bytes: OTIO_DOCUMENT_MAX_BYTES,
+        declared_size_bytes: OTIO_DOCUMENT_MAX_BYTES + 1,
+      },
+    });
     expect(reads).toBe(0);
   });
 

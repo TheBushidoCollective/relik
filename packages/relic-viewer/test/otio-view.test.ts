@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
   crc32,
@@ -6,6 +7,7 @@ import {
   readOtioDocument,
 } from '@relic/format';
 import { otioAdapter, otioTargetLabel } from '../src/annotate-otio.ts';
+import { contentFromBytes } from '../src/content.ts';
 import {
   otioControllerFor,
   type OtioUiController,
@@ -13,12 +15,22 @@ import {
 import {
   createOtioSelection,
   formatOtioTime,
-  mountOtioView,
+  mountOtioView as mountContentOtioView,
   otioLanes,
   otioProjectionTarget,
   otioScopeRange,
   readOtioForProjection,
 } from '../src/otio-view.ts';
+
+function mountOtioView(
+  root: HTMLElement,
+  options: { readonly content: Uint8Array; readonly revision: number }
+): Promise<void> {
+  return mountContentOtioView(root, {
+    ...options,
+    content: contentFromBytes(options.content),
+  });
+}
 
 const range = (start: number, duration: number) => ({
   start_time: { value: start, rate: 24 },
@@ -794,12 +806,14 @@ describe('OTIO archive projection reader', () => {
   test('keeps JSON identities while indexing every bundled media digest', async () => {
     const content = projectionContent();
     const projected = await readOtioForProjection(
-      otioz(content, [
-        {
-          name: 'media/clip.mp4',
-          bytes: new Uint8Array([1, 2, 3, 4]),
-        },
-      ])
+      contentFromBytes(
+        otioz(content, [
+          {
+            name: 'media/clip.mp4',
+            bytes: new Uint8Array([1, 2, 3, 4]),
+          },
+        ])
+      )
     );
     const raw = readOtioDocument(content);
 
@@ -813,6 +827,30 @@ describe('OTIO archive projection reader', () => {
     }
   });
 
+  test('hashes bundled media for projection using bounded source reads', async () => {
+    const media = new Uint8Array(8 * 1024 * 1024 + 97).fill(23);
+    const stored = contentFromBytes(
+      otioz(projectionContent(), [{ name: 'media/clip.mp4', bytes: media }])
+    );
+    const reads: number[] = [];
+    const content = {
+      ...stored,
+      async read(start: number, end: number) {
+        reads.push(end - start);
+        return stored.read(start, end);
+      },
+      async readWhole(): Promise<Uint8Array> {
+        throw new Error('archive must not be materialized');
+      },
+    };
+    const projected = await readOtioForProjection(content);
+    expect(projected.media['media/clip.mp4']?.sha256).toBe(
+      createHash('sha256').update(media).digest('hex')
+    );
+    expect(Math.max(...reads)).toBeLessThanOrEqual(8 * 1024 * 1024);
+    expect(reads.some((length) => length === 8 * 1024 * 1024)).toBe(true);
+  });
+
   describe('mounted projection', () => {
     let restoreDom: (() => void) | undefined;
 
@@ -823,6 +861,46 @@ describe('OTIO archive projection reader', () => {
     afterEach(() => {
       restoreDom?.();
       restoreDom = undefined;
+    });
+
+    test('retains only the most recently projected original document', async () => {
+      const bytes = projectionContent();
+      const document = readOtioDocument(bytes);
+      const timeline = document.timeline_ids[0];
+      if (!timeline) throw new Error('expected projection timeline');
+      const anchor = createOtioSelection(
+        document,
+        timeline,
+        'projection-track',
+        1,
+        range(0, 12)
+      );
+      const root = new ViewElement('div');
+      await mountOtioView(root as unknown as HTMLElement, {
+        content: bytes,
+        revision: 3,
+      });
+      const controller = otioControllerFor(root as unknown as HTMLElement);
+      if (!controller) throw new Error('expected OTIO controller');
+      const stored = contentFromBytes(bytes);
+      let wholeReads = 0;
+      const original = {
+        ...stored,
+        async readWhole(limit: number) {
+          wholeReads++;
+          return stored.readWhole(limit);
+        },
+      };
+      try {
+        await controller.project(anchor, original);
+        await controller.project(anchor, original);
+        expect(wholeReads).toBe(1);
+        await controller.project({ ...anchor, relic_version: 2 }, original);
+        await controller.project(anchor, original);
+        expect(wholeReads).toBe(3);
+      } finally {
+        controller.dispose();
+      }
     });
 
     test('reads hashed original and current revisions through the controller', async () => {
@@ -869,7 +947,7 @@ describe('OTIO archive projection reader', () => {
           (
             await controller.project(
               { ...browserAnchor, relic_version: 1 },
-              original
+              contentFromBytes(original)
             )
           ).status
         ).toBe('same');
@@ -877,7 +955,7 @@ describe('OTIO archive projection reader', () => {
           (
             await controller.project(
               { ...browserAnchor, relic_version: 2 },
-              changed
+              contentFromBytes(changed)
             )
           ).status
         ).toBe('changed');
@@ -1118,7 +1196,7 @@ describe('OTIO archive projection reader', () => {
         await expect(
           controller.project(
             { ...browserAnchor, relic_version: 1 },
-            wrongOriginal
+            contentFromBytes(wrongOriginal)
           )
         ).rejects.toThrow(
           'Original OTIO document digest differs from the encrypted anchor.'
@@ -1168,12 +1246,18 @@ describe('OTIO archive projection reader', () => {
       if (!controller) throw new Error('expected OTIO controller');
 
       try {
-        const invalid = await controller.project(invalidAnchor, original);
+        const invalid = await controller.project(
+          invalidAnchor,
+          contentFromBytes(original)
+        );
         expect(invalid.status).toBe('changed');
         expect(invalid.diagnostics[0]?.code).toBe('invalid-timing');
         expect(Object.hasOwn(invalid, 'mapped_range')).toBe(false);
 
-        const cached = await controller.project(invalidAnchor, original);
+        const cached = await controller.project(
+          invalidAnchor,
+          contentFromBytes(original)
+        );
         expect(cached).toBe(invalid);
       } finally {
         controller.dispose();
@@ -2062,7 +2146,10 @@ describe('OTIO focused element activation', () => {
     controller.reveal(anchor, 'focused-comment');
     expect(root.dataset['scopeNodeId']).toBe('focused-a');
     const earlier = { ...anchor, relic_version: 1 };
-    await controller.project(earlier, focusedSelectionContent());
+    await controller.project(
+      earlier,
+      contentFromBytes(focusedSelectionContent())
+    );
     controller.reveal(earlier);
     expect(root.dataset['scopeNodeId']).toBe('focused-a');
     expect(root.querySelector('.otio-comment-selection')?.disabled).toBe(true);

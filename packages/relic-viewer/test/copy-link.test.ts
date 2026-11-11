@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { contentFromBytes } from '../src/content.ts';
 import { encodeFragment, generateKey, parseFragment } from '@relic/format';
 import { mnemonicToKey } from '@relic/format/mnemonic';
 import {
@@ -373,7 +374,8 @@ describe('Copy link panel (Spec C)', () => {
   const view: ReadyView = {
     filename: 'doc.md',
     declaredMimetype: 'text/markdown',
-    content: new Uint8Array([1, 2, 3]),
+    content: contentFromBytes(new Uint8Array([1, 2, 3])),
+    document: { bytes: new Uint8Array([1, 2, 3]), truncated: false },
     route: 'markdown',
     downgradeNotice: undefined,
     shareUrl,

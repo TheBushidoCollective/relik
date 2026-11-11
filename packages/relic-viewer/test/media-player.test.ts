@@ -24,6 +24,7 @@ import type { AnchorSurface } from '../src/anchoring.ts';
 import { paintTimeMark, revealTimeMark } from '../src/annotate-time.ts';
 import { createMediaPlayer, FULLSCREEN_IDLE_MS } from '../src/media-player.ts';
 import { spanFromDrag, stepSpanEnd } from '../src/media-timeline.ts';
+import { preserveGlobalDescriptors } from './global-descriptors.ts';
 
 class TestNode {
   readonly tagName: string;
@@ -329,28 +330,29 @@ function fullscreenVideoPlayer(): {
 }
 
 describe('custom media player and comment timeline', () => {
-  let origDocument: unknown;
-  let origWindow: unknown;
+  let restoreGlobals: () => void;
 
   beforeEach(() => {
-    origDocument = (globalThis as { document?: unknown }).document;
-    origWindow = (globalThis as { window?: unknown }).window;
+    restoreGlobals = preserveGlobalDescriptors(
+      'document',
+      'window',
+      'CustomEvent'
+    );
     if (
       typeof (globalThis as { CustomEvent?: unknown }).CustomEvent !==
       'function'
     ) {
-      (globalThis as { CustomEvent?: unknown }).CustomEvent = class CustomEvent<
-        T,
-      > {
-        readonly type: string;
-        readonly detail: T;
-        readonly bubbles: boolean;
-        constructor(type: string, init?: { detail?: T; bubbles?: boolean }) {
-          this.type = type;
-          this.detail = init?.detail as T;
-          this.bubbles = init?.bubbles ?? false;
-        }
-      };
+      Object.defineProperty(globalThis, 'CustomEvent', {
+        configurable: true,
+        writable: true,
+        value: class CustomEvent<T> extends Event {
+          readonly detail: T | null;
+          constructor(type: string, init?: CustomEventInit<T>) {
+            super(type, init);
+            this.detail = init?.detail ?? null;
+          }
+        },
+      });
     }
 
     const docNode = new TestNode('#document');
@@ -407,8 +409,7 @@ describe('custom media player and comment timeline', () => {
   });
 
   afterEach(() => {
-    (globalThis as { document?: unknown }).document = origDocument;
-    (globalThis as { window?: unknown }).window = origWindow;
+    restoreGlobals();
   });
 
   test('controls are keyboard complete and native controls are removed', () => {

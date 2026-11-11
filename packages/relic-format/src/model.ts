@@ -18,14 +18,17 @@ export function modelFormatFromMime(mimetype: string): ModelFormat | undefined {
   return undefined;
 }
 
-export function sniffModelFormat(content: Uint8Array): ModelFormat | undefined {
+export function sniffModelFormat(
+  content: Uint8Array,
+  totalLength = content.length
+): ModelFormat | undefined {
   if (content.length >= 84) {
     const count = new DataView(
       content.buffer,
       content.byteOffset,
       content.byteLength
     ).getUint32(80, true);
-    if (count > 0 && 84 + count * 50 === content.length) return 'stl';
+    if (count > 0 && 84 + count * 50 === totalLength) return 'stl';
   }
   const decoder = new TextDecoder('utf-8', { fatal: true });
   let pending = '';

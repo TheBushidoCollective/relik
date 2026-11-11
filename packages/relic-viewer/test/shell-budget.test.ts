@@ -20,6 +20,8 @@
 import { describe, expect, test } from 'bun:test';
 import { unlink } from 'node:fs/promises';
 
+import { assertPatchedPdfWorker } from '../build.ts';
+
 const pkgDir = new URL('..', import.meta.url).pathname;
 
 /**
@@ -31,9 +33,54 @@ const pkgDir = new URL('..', import.meta.url).pathname;
  * regression cannot hide under it.
  *
  * The smoke test of the deployed shell in .github/workflows/deploy.yml holds
- * the same number in bytes (486400). Change both together.
+ * the same number in bytes (486400). Change both together. The guards below
+ * measure the file's bytes, as that smoke does, not its UTF-16 length.
  */
 const SHELL_CEILING_BYTES = 475 * 1024;
+
+/** Strings only the windowed source renderer emits, never its shell bridge. */
+const TEXT_WINDOW_MARKERS = [
+  'relic:text-window-paint',
+  'text-window-page',
+  'text-window-scroll',
+];
+
+/** The asset list the built service worker precaches on install. */
+async function precachedAssets(): Promise<string[]> {
+  const sw = await Bun.file(`${pkgDir}dist/sw.js`).text();
+  const listeners = new Map<string, (event: unknown) => void>();
+  const requests: string[] = [];
+  const workerScope = {
+    skipWaiting: () => undefined,
+    clients: { claim: () => undefined },
+    addEventListener(name: string, listener: (event: unknown) => void) {
+      listeners.set(name, listener);
+    },
+  };
+  const caches = {
+    open: async () => ({
+      addAll: async (assets: string[]) => {
+        requests.push(...assets);
+      },
+    }),
+    keys: async () => [],
+    delete: async () => true,
+    match: async () => undefined,
+  };
+  new Function('self', 'caches', sw)(workerScope, caches);
+  const install = listeners.get('install');
+  if (!install) throw new Error('built service worker has no install listener');
+  let installation: Promise<unknown> | undefined;
+  install({
+    waitUntil(work: Promise<unknown>) {
+      installation = work;
+    },
+  });
+  if (!installation)
+    throw new Error('install handler did not schedule cache work');
+  await installation;
+  return requests;
+}
 
 describe('the app shell', () => {
   test('does not carry the PDF renderer', async () => {
@@ -50,7 +97,9 @@ describe('the app shell', () => {
     const inlined = markers.filter((marker) => shell.includes(marker));
     expect(inlined).toEqual([]);
 
-    expect(shell.length).toBeLessThan(SHELL_CEILING_BYTES);
+    expect(Bun.file(`${pkgDir}dist/viewer.js`).size).toBeLessThan(
+      SHELL_CEILING_BYTES
+    );
   });
 
   test('does not carry the mnemonic wordlist', async () => {
@@ -96,7 +145,9 @@ describe('the app shell', () => {
     const inlined = markers.filter((marker) => shell.includes(marker));
     expect(inlined).toEqual([]);
 
-    expect(shell.length).toBeLessThan(SHELL_CEILING_BYTES);
+    expect(Bun.file(`${pkgDir}dist/viewer.js`).size).toBeLessThan(
+      SHELL_CEILING_BYTES
+    );
 
     const chunks = [...new Bun.Glob('chunk-*.js').scanSync(`${pkgDir}dist`)];
     let chunksWithCeremonyAborted = 0;
@@ -161,6 +212,24 @@ describe('the app shell', () => {
     expect(shell.includes(`import("./${carriers[0]}")`)).toBe(true);
   });
 
+  test('loads the windowed source renderer on demand, as a precached chunk', async () => {
+    // Runs on the clean build above, so no stale chunk can satisfy it.
+    const shell = await Bun.file(`${pkgDir}dist/viewer.js`).text();
+    expect(
+      TEXT_WINDOW_MARKERS.filter((marker) => shell.includes(marker))
+    ).toEqual([]);
+
+    const carriers: string[] = [];
+    for (const chunk of new Bun.Glob('chunk-*.js').scanSync(`${pkgDir}dist`)) {
+      const content = await Bun.file(`${pkgDir}dist/${chunk}`).text();
+      if (TEXT_WINDOW_MARKERS.every((marker) => content.includes(marker)))
+        carriers.push(chunk);
+    }
+    expect(carriers).toHaveLength(1);
+    // viewer.js imports it by its content-hashed name.
+    expect(shell).toContain(carriers[0]!);
+    expect(await precachedAssets()).toContain(`/assets/${carriers[0]}`);
+  });
   test('the renderer is emitted as its own chunk', async () => {
     // The other half of the same property. An empty `dist` with no chunk at
     // all would satisfy the shell assertions above while shipping a viewer
@@ -183,6 +252,64 @@ describe('the app shell', () => {
     const worker = Bun.file(`${pkgDir}dist/pdf.worker.js`);
     expect(await worker.exists()).toBe(true);
     expect(worker.size).toBeGreaterThan(0);
+    assertPatchedPdfWorker(await worker.text());
+  });
+
+  test('rejects incomplete or altered PDF worker patches', async () => {
+    const worker = await Bun.file(`${pkgDir}dist/pdf.worker.js`).text();
+    const sites = [
+      {
+        name: 'Linearization.create',
+        source: `      lexer: new IndirectObjectLexer(stream),
+      xref: null
+    });
+    const obj1 = parser.getObj();`,
+      },
+      {
+        name: 'XRef.readXRef',
+        source: `        stream.pos = startXRef + stream.start;
+        const parser = new Parser({
+          lexer: new IndirectObjectLexer(stream),`,
+      },
+      {
+        name: 'XRef.fetchUncompressed',
+        source: `    const stream = this.stream.makeSubStream(xrefEntry.offset + this.stream.start);
+    const parser = new Parser({
+      lexer: new IndirectObjectLexer(stream),`,
+      },
+    ];
+    for (const { name, source } of sites) {
+      expect(worker).toContain(source);
+      const mutated = worker.replace(
+        source,
+        source.replace('new IndirectObjectLexer(stream)', 'new Lexer(stream)')
+      );
+      expect(() => assertPatchedPdfWorker(mutated)).toThrow(name);
+    }
+
+    const endCondition = 'this.#ended = this.#openers.length === 0;';
+    expect(worker).toContain(endCondition);
+    expect(() =>
+      assertPatchedPdfWorker(
+        worker.replace(endCondition, 'this.#ended = false;')
+      )
+    ).toThrow('contents');
+
+    const notice =
+      'Modified by The Bushido Collective: stop indirect-object lookahead at endobj';
+    expect(worker).toContain(notice);
+    expect(() =>
+      assertPatchedPdfWorker(worker.replace(notice, 'Modified worker'))
+    ).toThrow('contents');
+
+    expect(() =>
+      assertPatchedPdfWorker(
+        worker.replace(
+          'class Linearization {',
+          'new IndirectObjectLexer(stream);\nclass Linearization {'
+        )
+      )
+    ).toThrow('exactly three');
   });
 
   test('ships the OTIO demuxer as a licensed worker asset outside shell requests', async () => {
@@ -219,40 +346,7 @@ describe('the app shell', () => {
     expect(await distributedLicense.text()).toBe(await installedLicense.text());
     expect(shellText).not.toContain('Mediabunny 1.62.0 by Vanilagy');
 
-    const sw = await Bun.file(`${pkgDir}dist/sw.js`).text();
-    const listeners = new Map<string, (event: unknown) => void>();
-    const requests: string[] = [];
-    const workerScope = {
-      skipWaiting: () => undefined,
-      clients: { claim: () => undefined },
-      addEventListener(name: string, listener: (event: unknown) => void) {
-        listeners.set(name, listener);
-      },
-    };
-    const caches = {
-      open: async () => ({
-        addAll: async (assets: string[]) => {
-          requests.push(...assets);
-        },
-      }),
-      keys: async () => [],
-      delete: async () => true,
-      match: async () => undefined,
-    };
-    new Function('self', 'caches', sw)(workerScope, caches);
-    const install = listeners.get('install');
-    if (!install)
-      throw new Error('built service worker has no install listener');
-    let installation: Promise<unknown> | undefined;
-    install({
-      waitUntil(work: Promise<unknown>) {
-        installation = work;
-      },
-    });
-    if (!installation)
-      throw new Error('install handler did not schedule cache work');
-    await installation;
-
+    const requests = await precachedAssets();
     expect(requests).toContain('/assets/viewer.js');
     expect(requests).not.toContain('/assets/otio-video-timing-worker.js');
     expect(requests).not.toContain('/assets/otio-audio-pcm-worker.js');

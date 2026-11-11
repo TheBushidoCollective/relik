@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { contentFromBytes } from '../src/content.ts';
 import {
   encryptRelic,
   encodeFragment,
@@ -696,7 +697,8 @@ describe('Spec B: Viewer load progress and early key check', () => {
     const currentReady = {
       filename: 'v3.txt',
       declaredMimetype: 'text/plain',
-      content: bytes(50),
+      content: contentFromBytes(bytes(50)),
+      document: { bytes: bytes(50), truncated: false },
       route: 'markdown' as const,
       downgradeNotice: undefined,
       shareUrl: `https://relic.example/r1#${fragment}`,

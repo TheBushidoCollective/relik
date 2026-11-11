@@ -1,3 +1,4 @@
+import { fetchUpload } from './upload-fixture.ts';
 /**
  * The unfurl card, as a repeatable command.
  *
@@ -119,6 +120,7 @@ const deps: PublishDeps = {
   relicOrigin: origin,
   files: nodeFiles,
   fetch: routedFetch(),
+  upload: fetchUpload,
   clientName: 'relic-mcp/unfurl-card-path',
   // Repin to the fallback: when cover rendering is skipped, link previews
   // fall back to the constant card.v1.png.

@@ -1,3 +1,4 @@
+import { fetchUpload } from './upload-fixture.ts';
 /**
  * The question this feature exists to answer, as a repeatable command.
  *
@@ -211,6 +212,7 @@ try {
     relicOrigin: origin(),
     files: nodeFiles,
     fetch: globalThis.fetch,
+    upload: fetchUpload,
     clientName: 'relic-mcp/inventory-path',
     renderCover: async () => ({
       status: 'skipped',

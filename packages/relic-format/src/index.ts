@@ -9,6 +9,7 @@
 
 export * from './comments.ts';
 export * from './container.ts';
+export * from './crc32c.ts';
 export * from './decision.ts';
 export * from './envelope.ts';
 export * from './errors.ts';
@@ -28,6 +29,7 @@ export * from './otio-zip.ts';
 export * from './passkey.ts';
 export * from './renderer-class.ts';
 export * from './rfc8188.ts';
+export * from './sha256.ts';
 export * from './stream.ts';
 export * from './share.ts';
 export * from './title.ts';

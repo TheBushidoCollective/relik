@@ -1,3 +1,4 @@
+import { fetchUpload } from './upload-fixture.ts';
 /**
  * The inventory, against the real service and real encryption.
  *
@@ -65,6 +66,7 @@ beforeEach(async () => {
     relicOrigin: SERVICE,
     files: fakeFiles(),
     fetch: shimFetch(),
+    upload: fetchUpload,
     clientName: 'relic-mcp/inventory-test',
     identifySource: async (path) => ({
       identity: `realpath:${encodeURIComponent(path)}`,

@@ -1,0 +1,115 @@
+diff --git a/build/pdf.worker.mjs b/build/pdf.worker.mjs
+index 10a244a1cc1b4a5288efbe1520baf3defe3000e1..a36a093be0f94611a728212ebfcc484dee640381 100644
+--- a/build/pdf.worker.mjs
++++ b/build/pdf.worker.mjs
+@@ -19,6 +19,11 @@
+  * @licend The above is the entire license notice for the
+  * JavaScript code in this page
+  */
++
++/**
++ * Modified by The Bushido Collective: stop indirect-object lookahead at endobj
++ * to avoid scanning the following whitespace in range-loaded PDFs.
++ */
+ 
+ /**
+  * pdfjsVersion = 5.4.149
+@@ -11481,6 +11486,71 @@ class Lexer {
+     }
+   }
+ }
++class IndirectObjectLexer extends Lexer {
++  // Stop before lookahead reads beyond an indirect object's top-level endobj.
++  // Dictionary entries alternate between names and values; a closer in value
++  // position is a value, and a mismatched closer never closes a container.
++  #openers = [];
++  #ended = false;
++  #tracking = true;
++  getObj() {
++    if (this.#ended) {
++      return EOF;
++    }
++    const obj = super.getObj();
++    if (!this.#tracking) {
++      return obj;
++    }
++    // Inline images have their own parser and delimiter rules.
++    if (obj instanceof Cmd && obj.cmd === "BI") {
++      this.#openers.length = 0;
++      this.#tracking = false;
++      return obj;
++    }
++    const top = this.#openers.at(-1);
++    if (top === "<<") {
++      if (obj instanceof Name) {
++        this.#openers[this.#openers.length - 1] = "<<value";
++      }
++      if (!(obj instanceof Cmd) || obj.cmd !== ">>") {
++        return obj;
++      }
++    } else if (top === "<<value") {
++      this.#openers[this.#openers.length - 1] = "<<";
++      if (obj instanceof Cmd && (obj.cmd === ">>" || obj.cmd === "]")) {
++        return obj;
++      }
++    }
++    if (obj instanceof Cmd) {
++      switch (obj.cmd) {
++        case "<<":
++        case "[":
++          // Fall back to the original lexer on excessive nesting.
++          if (this.#openers.length === 1024) {
++            this.#openers.length = 0;
++            this.#tracking = false;
++          } else {
++            this.#openers.push(obj.cmd);
++          }
++          break;
++        case ">>":
++          if (top === "<<") {
++            this.#openers.pop();
++          }
++          break;
++        case "]":
++          if (top === "[") {
++            this.#openers.pop();
++          }
++          break;
++        case "endobj":
++          this.#ended = this.#openers.length === 0;
++          break;
++      }
++    }
++    return obj;
++  }
++}
+ class Linearization {
+   static create(stream) {
+     function getInt(linDict, name, allowZeroValue = false) {
+@@ -11505,7 +11575,7 @@ class Linearization {
+       throw new Error("Hint array in the linearization dictionary is invalid.");
+     }
+     const parser = new Parser({
+-      lexer: new Lexer(stream),
++      lexer: new IndirectObjectLexer(stream),
+       xref: null
+     });
+     const obj1 = parser.getObj();
+@@ -54884,7 +54954,7 @@ class XRef {
+         startXRefParsedCache.add(startXRef);
+         stream.pos = startXRef + stream.start;
+         const parser = new Parser({
+-          lexer: new Lexer(stream),
++          lexer: new IndirectObjectLexer(stream),
+           xref: this,
+           allowStreams: true
+         });
+@@ -55002,7 +55072,7 @@ class XRef {
+     }
+     const stream = this.stream.makeSubStream(xrefEntry.offset + this.stream.start);
+     const parser = new Parser({
+-      lexer: new Lexer(stream),
++      lexer: new IndirectObjectLexer(stream),
+       xref: this,
+       allowStreams: true
+     });

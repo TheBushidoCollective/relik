@@ -78,6 +78,7 @@ import { MemoryStore } from '@relic/server/src/store.ts';
 import { DEFAULT_CLOCK_POLICY } from '../../relic-viewer/src/otio-output-clock';
 import { type CdpConnection, connectPipe } from '../src/cover/cdp.ts';
 import { chromeArgs, discoverChrome } from '../src/cover/chrome.ts';
+import { nodeUploader } from '../src/upload.ts';
 import { loadPublishState } from '../src/state.ts';
 import { nodeFiles } from '../src/files.ts';
 import {
@@ -7570,6 +7571,7 @@ async function publishLegacyDirectory(
     relicOrigin: origin,
     files: nodeFiles,
     fetch: globalThis.fetch,
+    upload: nodeUploader,
     clientName: 'relic-mcp/legacy-proof',
     renderCover: async () => ({
       status: 'skipped',

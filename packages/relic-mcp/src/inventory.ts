@@ -182,7 +182,7 @@ export interface ShowResult extends RelicRow {
 /**
  * The ceiling on content returned inline.
  *
- * An agent's context is the constraint, not the format's 100 MB cap. Above
+ * An agent's context is the constraint, not the format's file size cap. Above
  * this the relic is reported with its size and its type and no body, which is
  * still enough to decide what to do; a truncated body would read as the whole
  * file and get republished as one.

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { type CommentAnchor, deriveCommentKey, encodeKey } from '@relic/format';
+import { contentFromBytes } from '../src/content.ts';
 import { type CommentCipher, commentCipher } from '../src/comments.ts';
 import {
   buildStageWrap,
@@ -447,7 +448,13 @@ function view(overrides: Partial<ReadyView> = {}): ReadyView {
   return {
     filename: 'notes.md',
     declaredMimetype: 'text/markdown',
-    content: new TextEncoder().encode('# notes\n\nthe second paragraph\n'),
+    content: contentFromBytes(
+      new TextEncoder().encode('# notes\n\nthe second paragraph\n')
+    ),
+    document: {
+      bytes: new TextEncoder().encode('# notes\n\nthe second paragraph\n'),
+      truncated: false,
+    },
     route: 'markdown',
     downgradeNotice: undefined,
     shareUrl: `https://relik.example/${RELIC_ID}${FRAGMENT}`,
@@ -881,10 +888,12 @@ describe('aiming a comment at a quote', () => {
   });
 
   test('pressing Comment writes it on the words, carrying the quote', async () => {
+    const bytes = new TextEncoder().encode(
+      '# notes\n\nfirst: the second paragraph\n\nsecond: the second paragraph\n'
+    );
     const mounted = await mount({
-      content: new TextEncoder().encode(
-        '# notes\n\nfirst: the second paragraph\n\nsecond: the second paragraph\n'
-      ),
+      content: contentFromBytes(bytes),
+      document: { bytes, truncated: false },
     });
     scripted.prefix = 'second: ';
     scripted.suffix = '\n';
@@ -1218,7 +1227,11 @@ describe('a relic that renders in a sandboxed frame', () => {
     route: 'sandboxed-html' as const,
     filename: 'page.html',
     declaredMimetype: 'text/html',
-    content: new TextEncoder().encode('<p>hello</p>'),
+    content: contentFromBytes(new TextEncoder().encode('<p>hello</p>')),
+    document: {
+      bytes: new TextEncoder().encode('<p>hello</p>'),
+      truncated: false,
+    },
   };
 
   test('frame image requests cannot redirect a populated image draft', async () => {

@@ -56,11 +56,7 @@ import {
 } from './mail.ts';
 import { newOccurrenceId, ProblemError, problemResponse } from './problems.ts';
 import { RateLimiter, rateLimitKey } from './ratelimit.ts';
-import {
-  ciphertextHash,
-  MemoryStorage,
-  type ObjectStorage,
-} from './storage.ts';
+import { MemoryStorage, type ObjectStorage } from './storage.ts';
 import {
   type CommentPatch,
   type DecisionRow,
@@ -792,28 +788,6 @@ export function createApp(options: AppOptions = {}): RelicApp {
       return refuse('relic_id_collision', { relic_id: relicId });
     }
 
-    // The publish token is the relic's one credential: possession of it is
-    // the only way to ever republish this id. It is minted here, returned
-    // exactly once below, and stored only as a hash, so the store's JSON
-    // documents can never leak a replayable bearer token.
-    const publishToken = mintPublishToken();
-
-    await store.putRelic({
-      id: relicId,
-      publishIp: ip,
-      grantedAt: now,
-      expiresAt,
-      rendererClass: rendererClass as RendererClass,
-      publishingClient,
-      declaredSizeBytes: declared,
-      version: 1,
-      publishTokenHash: await sha256Hex(publishToken),
-      mintsUsed: 0,
-      title,
-      ownerEmail,
-      shareVerifier,
-    });
-
     // The grant signs the object's exact byte length, so the upload has to be
     // precisely that size or the signature fails. That is stronger than a cap
     // and it costs nothing extra, because for non-empty content the ciphertext
@@ -849,10 +823,32 @@ export function createApp(options: AppOptions = {}): RelicApp {
       return refuse('invalid_publish_metadata', { relic_id: relicId });
     }
 
+    // The publish token is the relic's one credential: possession of it is
+    // the only way to ever republish this id. It is minted here, returned
+    // exactly once below, and stored only as a hash, so the store's JSON
+    // documents can never leak a replayable bearer token.
+    const publishToken = mintPublishToken();
+
+    await store.putRelic({
+      id: relicId,
+      publishIp: ip,
+      grantedAt: now,
+      expiresAt,
+      rendererClass: rendererClass as RendererClass,
+      publishingClient,
+      declaredSizeBytes: declared,
+      version: 1,
+      publishTokenHash: await sha256Hex(publishToken),
+      mintsUsed: 0,
+      title,
+      ownerEmail,
+      shareVerifier,
+    });
+
     const upload = await storage.signUpload(
       objectKey(relicId, 1),
       declaredCiphertext,
-      config.urlValiditySeconds,
+      config.uploadUrlValiditySeconds,
       now
     );
 
@@ -1068,7 +1064,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
     const upload = await storage.signUpload(
       objectKey(relicId, next.version),
       declaredCiphertext,
-      config.urlValiditySeconds,
+      config.uploadUrlValiditySeconds,
       now
     );
 
@@ -2534,8 +2530,8 @@ export function createApp(options: AppOptions = {}): RelicApp {
       // one republish wide.
       const hashes: string[] = [];
       for (let version = 1; version <= row.version; version++) {
-        const bytes = await storage.read(objectKey(relicId, version));
-        if (bytes !== undefined) hashes.push(await ciphertextHash(bytes));
+        const versionHash = await storage.digest(objectKey(relicId, version));
+        if (versionHash !== undefined) hashes.push(versionHash);
       }
       // The tombstone's hash of record is the newest version that had bytes:
       // the content the relic was serving when it was taken down. An empty

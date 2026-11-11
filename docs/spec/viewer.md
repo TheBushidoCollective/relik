@@ -2,6 +2,10 @@
 
 This document fixes how the viewer routes, renders, isolates, and what the recipient sees in every state. `docs/frame.md` and `docs/preconditions.md` are locked inputs. `docs/spec/format.md` owns the URL, the relic ID, and the container, and everything it settled is honored here rather than restated or reopened.
 
+The 2026-11-10 decision in `docs/decisions.md` supersedes the original
+100 MiB publication cap, prefix-only large-text behavior, and whole-file
+memory tiers described by earlier revisions of this document.
+
 One framing runs through the whole document and decides most of the hard cases on its own:
 
 > **The viewing origin never lets attacker bytes choose what markup gets built.** It may place them into text nodes, and it may run a renderer whose element and attribute set is fixed regardless of input. **Any path where attacker bytes select elements, attributes, or URLs runs on the usercontent origin.**
@@ -116,9 +120,16 @@ Redirects and rewrites performed by third parties, including link shorteners and
 
 **The cost a fixed origin appears to carry isn't real, and the argument has to rest on the one that is.** The obvious objection is that relic A's rendered content would share an origin with relic B's, so one malicious relic could reach another's rendered document. Under the two-layer boundary §4 mandates, every rendered document already sits in its own opaque origin, so two relics on a single hostname are already mutually cross-origin. The frame's sandbox flags answer that objection, not the hostname.
 
-**What per-relic subdomains actually buy is process-level isolation**, and the page this section already leans on names the boundary precisely: "While not all web browsers implement process isolation for sandbox documents... If SpectreJS and renderer compromise attacks are outside of your threat model, then using CSP sandbox is likely a sufficient solution" ([web.dev](https://web.dev/articles/securely-hosting-user-data)). They aren't outside Relic's threat model: a relic's entire plaintext sits in a neighbouring frame for as long as the tab is open, which is exactly what a same-process reader wants. The same page prescribes the shape: "by adding `exampleusercontent.com` to the PSL, you can ensure that `foo.exampleusercontent.com` and `bar.exampleusercontent.com` are cross-site and thus fully isolated from each other." The second reason is the durable one. A per-relic hostname is defense in depth against Relic's own future bugs, so a misconfigured sandbox flag costs one relic instead of every relic the recipient has open.
+Per-relic subdomains are intended as defense in depth for rendered content.
+Browser process isolation for sandboxed documents varies by engine and site
+classification ([web.dev](https://web.dev/articles/securely-hosting-user-data)).
+The large-source view and browser-managed Blob do not require the full
+plaintext to sit in a neighboring frame.
 
-**The cost is real and it's the Immich pattern.** Per-relic subdomains mean unbounded auto-generated hostnames under a wildcard, which is exactly what `preconditions.md` §2 names as the trigger. The answer is that Relic's generated hostnames have nothing on them. **The usercontent origin serves exactly one static file, the shim, which never touches ciphertext and whose own code makes no requests.** Untrusted bytes exist only inside a document the shim builds in memory, and that document has no URL a crawler can reach. A crawler that resolves every label Relic ever generates finds the same few hundred bytes of relay code at every one.
+Per-relic subdomains use the Immich pattern. The usercontent origin serves a
+static shim; rendered content arrives from the parent rather than a
+crawler-addressable content URL. The browser controls where the resulting
+plaintext is backed, including any temporary storage (§5).
 
 Four consequences:
 
@@ -142,6 +153,9 @@ Note what stripping raw HTML does not buy. It narrows the surface to the Markdow
 **Wherever sanitization runs, it's pinned past every advisory known at build time, and it's never the only layer.** The evidence for treating that as a standing rule rather than a nicety is CVE-2026-41238, which affects DOMPurify "3.0.1 through 3.3.3 (latest)" with 3.4.0 patched, CVSS 6.9. One qualification the shorthand loses, and it changes how much weight the citation carries: the advisory's prerequisite is that an "Attacker must have a prototype pollution primitive in the same execution context." So the sanitizer isn't independently bypassable here. What is true is that no special configuration is needed, and a prototype pollution gadget anywhere else in the same context converts a standard `sanitize(userInput)` call into a full bypass ([GHSA-v9jr-rg53-9pgp](https://github.com/advisories/GHSA-v9jr-rg53-9pgp)). Which sanitizer gets used is `shape`'s call, along with the rest of the stack. That it's never load-bearing on its own is this document's.
 
 **The source toggle lives across the origin boundary.** `frame.md` locks the first release as rendering Markdown with a source toggle, and the two sides land on different origins. Raw Markdown source is plain text, so by §1.4 rule 2 the **source view renders on the viewing origin** as DOM text nodes, optionally highlighted under §3.3's rules. The **rendered view is on the usercontent origin.** So the toggle switches which origin is showing, not which mode a single frame is in. The taskbar owns the control, because the taskbar is the only surface that spans both. The parent already holds the plaintext, so the source view costs no round trip. **Switching away from rendered tears the shim frame down, and switching back re-posts the payload with a fresh render nonce**, so a relic can't keep a live frame running behind a source view the recipient thinks is the whole page.
+
+For Markdown larger than 100 MiB, the windowed source view in §5 replaces
+the full rendered view and source toggle.
 
 **This changes the usercontent origin's role from "HTML only" to "all rich text."** The `postMessage` surface carries a routing type covering both, and the split of the viewer across domains is: the viewing origin owns fetch, decrypt, JSX transpiling (§3.5), the taskbar, the download blob, plain text, highlighted code, the Markdown source view, and raster images; the usercontent origin owns everything that becomes markup and everything that executes.
 
@@ -211,7 +225,7 @@ The composition, native admission, and snapshot rules below apply to legacy arch
 Movie samples outside their available range are withheld for video and silent for audio. When paused, scrubbing, or seeking, video decoders seek the exact midpoint of a certified presentation window, preserving the sampled frame at decoder boundaries. During continuous playback, decoders run continuously under native decode whenever admitted to native mode, falling back to exact midpoint seeks when native admission is unmet. Before an image sequence begins, `hold` selects the first archived frame, skipping missing entries; after its end it still selects backward.
 
 - **Certified movie timing:** Movie timing comes only from actual, sorted packet-presentation windows in the local bundled Blob. For a source sample, the viewer binary-searches window starts with rational comparison in that sample's units and confirms the half-open end. For paused inspection, transport seeks, and scrubbing, it seeks the certified window midpoint. When the browser exposes a classifiable VideoFrame timestamp, it paints only a frame matching the certified window. If the decoder continues to present another window, the leaf is withheld with an `invalid-timing` diagnostic. Browsers without a usable frame timestamp retain the unverified element paint. It never reconstructs an FPS grid, shifts the first PTS to zero, or treats OTIO units as media cadence. An unknown index, window gap, or uncovered sample seeks exact normalized source seconds and reports `invalid-timing` rather than guessing. A representationally negative value that compares equal to zero is normalized only in decoder-local state; true negatives and missing handles remain withheld or silent.
-- **Timing limits and certified spans:** The timing reader admits a media Blob up to 100 MiB, and one playback controller reserves at most 16 MiB for retained timing arrays. Reader caps return an explicit unknown result rather than a partial index. The scanner certifies a single contiguous presentation span from the first packet start to the final packet end: `[starts[0], ends[last])`. An uncertified tail is omitted from the index, so evaluating an uncertified sample is an explicit uncovered sample.
+- **Timing limits and certified spans:** The timing reader's file-size and total-read limits are 500 MiB; one playback controller retains at most 16 MiB of timing arrays. Packet, index, scheduler, codec, and other parser limits remain separate. Reader caps return an explicit unknown result rather than a partial index. The scanner certifies a single contiguous presentation span from the first packet start to the final packet end: `[starts[0], ends[last])`. An uncertified tail is omitted from the index.
 - **Playback modes and continuous native decode:** Continuous native playback activates only when every drawn video leaf passes native admission: certified presentation windows (`timing.kind === 'windows'`), every window duration and every gap between packet starts greater than 2Q (`Q = 2e-6` seconds), `requestVideoFrameCallback` and `VideoFrame` available, rate application succeeds, the smallest presentation window divided by rate is at least the display refresh interval, the media path has not been marked runtime-ineligible, and the snapshot budget permits. Freeze frames and still images are static and admitted; image sequences run on seek cadence. When any drawn video leaf fails native admission, the composition falls back to seek cadence, preserving exact midpoint seeks and existing diagnostics.
 - **Snapshot ring and synchronous capture:** Each native decoder maintains three reused output-sized snapshot surfaces, counted against `OTIO_RETAINED_SNAPSHOT_PIXELS` and reallocated on resize or context loss. The decoder's `requestVideoFrameCallback` and one supplemental readout per render tick capture a `VideoFrame` from each running owned decoder. Both paths classify the frame's own timestamp against certified packet starts with Q = 2 microseconds; callback metadata is not a frame-identity oracle. Duplicate tags reuse their slot, unsuccessful readouts preserve existing slots, and frames are closed after capture. If packet starts fall within 2Q, native admission fails. The render tick still requires the exact tag and holds when neither capture path provides it.
 - **Certified-span tail rule:** Callbacks outside the certified contiguous span (`mediaTime < starts[0] - Q` or `mediaTime >= ends[last] - Q`), such as decoders running ahead into uncertified tail frames or lead-in, are ignored: no capture, no tag, no sticky ineligibility mark, and no resync. Inside the certified span, an unmatched callback is an uncovered presentation. Any uncovered callback during startup or two consecutive uncovered callbacks marks that media path sticky-ineligible for native playback. When transport required time reaches an uncertified sample (`certifiedWindowIndex` returns null), the leaf becomes uncertified at T. This triggers an eligibility discontinuity: one exact resync into seek cadence, seeking exact normalized source seconds and reporting `invalid-timing`. The uncertified tail frame is never approved for native display. Eligibility-driven fallback applies only to the current drawn set and re-evaluates at each discontinuity, returning subsequent certified clips to native playback.
@@ -256,7 +270,9 @@ Shim to parent: a `ready` handshake, a rendered-or-failed ack that names blocked
 
 **Untrusted numbers.** A requested-height channel is a message type an attacker also gets to send. The parent treats the value as untrusted input: it rejects anything non-finite, negative, or non-numeric, clamps to a range bounded by the viewport minus the taskbar, and rate-limits the message so a relic can't drive a resize loop. A relic can't make itself taller than the viewport.
 
-**Transfer, don't copy.** Plaintext is posted as a transferable `ArrayBuffer`. Structured-cloning doubles memory on exactly the large payloads the wedge exists to carry.
+**Copies across the boundary.** Rendered text can be sent to the usercontent
+frame as a string, so message cloning can add a copy. The browser-managed
+Blob path does not establish a total process-memory bound.
 
 **The main origin materializes the download Blob**, so the download affordance never lives inside the untrusted frame.
 
@@ -274,25 +290,42 @@ cross the boundary, and the sandbox attribute remains `allow-scripts` only.
 
 **Secure context first.** `crypto.subtle` is restricted to secure contexts ([MDN](https://developer.mozilla.org/en-US/docs/Web/API/Crypto/subtle)), so the viewer checks `window.isSecureContext` and the presence of `crypto.subtle` before anything else and shows a specific named error. This isn't only a development concern: a recipient behind a TLS-terminating proxy that serves plain HTTP hits it in production, and a generic failure there is unresolvable by the person seeing it.
 
-**Refuse before allocating.** A single `subtle.decrypt` over a whole-file buffer blocks the main thread and freezes the tab. Plaintext size is computable from encrypted size without decrypting (`format.md` §3.3), so the viewer compares against a platform ceiling before touching memory. **The tab must never die.** A refusal is a screen; a dead tab is a bug report with nothing in it.
+**Bounded reads.** The publication limit is 500 MiB of plaintext. The viewer
+decrypts records into a browser-managed Blob and reads bounded slices for
+renderers instead of allocating a whole-file plaintext buffer. Images, PDF,
+audio, video, and OTIO can use the Blob path, subject to their format,
+decoder, and parser limits. Download-only content retains its full bytes.
 
-**Carry `format.md` §3.3's qualifier, because it changes what the viewer may display.** The derivation is exact only when records carry minimal padding. Under discretionary padding it's an upper bound. An upper bound is the safe direction for a refuse-before-allocating check, and it's the wrong direction for anything user-visible, so **the viewer never shows a plaintext byte count before decryption starts.** Whether the container pads is `shape`'s, routed by `format.md`. The fetching phase in §6.4 is unaffected: it counts encrypted bytes against the encrypted object length, and both of those are exact.
+The Blob's backing storage is controlled by the browser. It may reside in
+memory or on temporary disk, and OS swap may write memory to disk. Explicit
+downloads write plaintext to a file. This design makes no guarantee that
+plaintext stays off disk, is erased on close, or fits every device.
 
-**Three tiers.** Streaming decrypt to disk through a ServiceWorker intercepting a synthetic request; in-memory decrypt then Blob download, capped at a memory ceiling; refuse with a named reason and a concrete alternative.
+**Large-open confirmation.** After a mint and the authenticated record-0
+envelope read, a file larger than 100 MiB presents its filename, type, and
+plaintext size and asks the reader to confirm before a full-file fetch. The
+initial request may transfer additional buffered bytes before cancellation.
+At or below 100 MiB the confirmation is not required.
 
-**The ServiceWorker is the only part of the viewer that outlives the tab, so it gets its own rules.** It's origin-wide, persistent, and first-party by construction, which makes it the most attractive place in the system to quietly add something.
+The plaintext size in record 0 is authenticated. A size derived from the
+ciphertext length before authentication is an allocation guard, not an
+authenticated statement about the file.
 
-- **First-party and part of the viewer's own bundle.** The locked precondition on third-party scripts, analytics, and error reporting applies in full, including the bundled-SDK trap a `script-src 'self'` check can't see.
-- **Scoped to the path the streaming tier uses**, never registered at the origin root. It has no business seeing requests it doesn't serve.
-- **It never sees a fragment.** Fragments aren't part of a request, so the URL on the `FetchEvent` it intercepts carries no key even though the request came from the origin that holds one. That's a property of the mechanism rather than a control, worth stating so nobody adds a "scrub the key" step implying it was ever there.
-- **Plaintext crosses it and the key never does.** The parent decrypts and pipes plaintext records through the synthetic response, so the worker handles content transiently and holds no secret.
-- **No telemetry of any kind.** Not counters, not timings, not error beacons.
+**Large text.** Code and plain text larger than 100 MiB use a windowed source
+view across the whole file. Markdown, HTML, and JSX above that threshold use
+the same source view rather than rendering or executing the full document.
+The view reads slices, supports scrolling and line navigation, and resolves
+comment targets beyond the visible window. The original truncated-prefix
+choice is superseded.
 
-**Which platform gets which tier is a runtime question, and a hardcoded browser list is forbidden.** The viewer detects ServiceWorker registration and fetch interception at runtime and picks the streaming tier on that result. Two claims commonly attached to this decision don't survive checking, and that's the reason for the ban rather than a footnote to it. First, iOS Safari and mobile do have the service-worker fetch support the streaming path needs: `FetchEvent` and `FetchEvent.respondWith` have been supported since Safari 11.1, with iOS mirroring it ([MDN compat data](https://github.com/mdn/browser-compat-data)). hat.sh caps Safari and mobile browsers at 1 GB and states its reason as "lack of support with server-worker fetch api" ([hat.sh](https://github.com/sh-dv/hat.sh)), so that 1 GB is an empirical project decision whose rationale no longer matches compatibility data. Second, the 500 to 800 MB band traces to one forum thread reporting an `OperationError` at 800 MB and, separately, a 2 GB `ArrayBuffer` constraint ([DFINITY forum](https://forum.dfinity.org/t/using-aes-gcm-with-large-files-800mb/21929)). Practitioner report, not a vendor limit, and Apple publishes no per-tab ceiling. A hardcoded list encodes exactly the kind of claim that just failed twice.
+**Format-specific bounds remain.** The model parser keeps its 16 MiB and
+geometry limits (§3.7). OTIO ZIP archive and expanded-data limits are 500 MiB;
+inflated ZIP data and the timeline document each have a separate 100 MiB
+limit, and the ZIP directory is bounded at 16 MiB.
 
-**One Safari-specific gap is real and it's narrower than the folklore.** `ReadableStream` async iteration lands in Safari 27, which hasn't shipped, so **no shipping Safari supports `for await` over a `ReadableStream` today** and the portable path is `getReader()` loops. That constraint has a known expiry, and the `getReader()` loop stays correct after it lapses.
-
-**Degraded render.** The four renderable classes may render a truncated prefix behind an explicit banner stating that it's truncated and why. Download-only classes refuse instead, because a truncated binary is not a partial view of anything.
+The earlier three-tier design included a future ServiceWorker streaming path.
+That path is not built by this change. A root ServiceWorker used for other
+viewer behavior is separate from it.
 
 ## 6. Every screen the recipient sees
 
@@ -312,17 +345,18 @@ cross the boundary, and the sandbox attribute remains `allow-scripts` only.
 12. **No changes.** Every diffable mode detects byte-identical content before rendering an empty comparison and says **"No changes. These versions have identical content."** Text modes also arrive here when decoded source strings are identical. An empty result area is never used to mean no changes.
 13. **History present but comparison unavailable.** A class with no comparison mode does not get a broken control: the taskbar offers **Earlier versions**, which opens a chosen version on its own. Media, OpenTimelineIO and PDF relics play or render in the browser and nothing on their page offers a comparison, so the current page carries no comparison notice; opening an earlier version says why it is alone, in that class's words, for example **"Relik cannot show version 1 of this timeline beside version 2. It is open here on its own."** A download-only relic keeps its notice on the current page: **"This file is download-only, so Relik cannot show two versions side by side in the browser. Each version can still be opened on its own."** A current plaintext above the ceiling also keeps rendering normally, under **"This version is larger than the 16 MiB comparison limit, so Relik cannot show it beside another. Earlier versions can still be opened on their own."** for every comparable class. An earlier version shown on its own carries its own reason and never the current page's notice as well. A historical version above the ceiling is refused after its mint and before its ciphertext fetch, naming that version and confirming the current version remains open. Other historical fetch or decrypt failures stay inside the comparison panel.
 
-**One comparison ceiling, 16 MiB per version, separate from the 100 MiB one-version render ceiling and the 100 MiB plaintext publication cap.** An earlier version of this paragraph split rendered classes to 1 MiB and code to 4 MiB, sized so a comparison working set stayed under 64 MiB for mobile Safari. That is reversed. Documents need to compare, and a 1 MiB refusal was blocking real markdown and HTML relics while the current version still opened. 16 MiB is large enough for an inlined HTML report and still a named stop before two 100 MiB trees try to share a tab. A phone may feel a comparison near the ceiling. A document that cannot be compared is worse.
+**The comparison ceiling is 16 MiB per version.** It is separate from the
+500 MiB publication cap and the 100 MiB threshold for windowed source.
+Versions too large to compare can still be opened individually.
 
 **Version history does not change the trust boundary.** The viewer mints each selected ciphertext through the existing service path, decrypts both versions with the one fragment key, and computes the result client-side. No plaintext and no diff result reaches the service. **An earlier version of this paragraph said the frame receives neither historical source nor diff output, and that no comparison message type is added to its `postMessage` protocol. Both of those are reversed.** Each frame receives only its own version's payload. Two comparison message types exist, `relic:tree` and `relic:annotate`, and they are safe because of what they cannot carry: the tree is tags, an attribute allowlist, and normalised text, never markup, and the annotate channel carries no content. The diff runs client side, in the service-origin bundle.
 
-**Separating corruption from a wrong key is possible with a facility that already exists.** Cloud Storage states that "All Cloud Storage objects have a CRC32C hash" ([GCS metadata](https://docs.cloud.google.com/storage/docs/metadata)). Rightly rejected as a blocklist hash, because 32 bits is trivial to collide on purpose, it's exactly right as a transport-integrity check. If the mint response carries object length and CRC32C, a mismatch is transport corruption with a retry that will plausibly fix it, and a match followed by `OperationError` makes a wrong key the clean residual. **This is an integrity check and not an authenticity one.** It doesn't prove the object wasn't replaced, since anyone who can write the object gets a recomputed CRC32C for free. `spec-service-surface` owns whether those fields exist; §8 states the need.
-
-**The check applies differently per tier, because tier 1 by definition never holds the whole object.**
-
-- **Tier 2 verifies before decrypting.** It holds the complete object, so the check runs first and a mismatch means nothing gets decrypted.
-- **Tier 1 computes CRC32C incrementally as bytes arrive and compares at the end**, which is after the file is on disk. That's the honest consequence of streaming and reordering can't fix it. **On a mismatch, the viewer says the download completed and failed its integrity check, names the file it wrote, and offers a retry.** It doesn't call the file corrupt: every record already passed its own AEAD tag on the way through, so a final CRC mismatch with clean tags points at a stale checksum or an object that changed under a resumed fetch. It also can't delete what it wrote, because the file went to disk through a download the browser owns.
-- **Tier 3 refuses before fetching**, so the check never arises.
+**Transport integrity and authenticity are distinct.** CRC32C, when checked,
+can detect transport corruption but is not an authenticity proof. Each
+encrypted record has an AEAD tag, and a later tag or length failure must not
+be presented as a wrong-key failure after record 0 has authenticated. The
+former tier-specific CRC ordering described a whole-buffer and a
+ServiceWorker download design that this change supersedes.
 
 ### 6.2 The unfurl card
 
@@ -400,7 +434,9 @@ Everything except the content renders immediately: the branded taskbar, the serv
 
 ### 6.4 Progress, input, and errors
 
-**Three named phases, never one indeterminate spinner.** Fetching is network-bound and retryable, and the total is known from the mint response's object length, so it shows bytes against a total. Decrypting is CPU-bound and isn't retryable, and the framing gives record boundaries, so it shows real progress rather than a guess. Rendering is the third. A single spinner turns a slow 400 MB fetch and a hung decrypt into the same screen, and they need different responses from the recipient.
+**Progress identifies fetching, decryption, and rendering.** Fetching uses the
+mint response's ciphertext object length for its total; decryption uses
+authenticated record progress. Fetch and decryption can overlap.
 
 **Key entry appears only after an open has failed.** This paragraph banned any key-entry field on the viewing origin, not configurable and not conditional, as a purpose-built phishing surface aimed at the system's only secret. A field shipped anyway on the missing-key and could-not-be-opened screens, and on 2026-10-24 Jason Waldrip chose a Copy link panel whose keyless link works only because the recipient types the key phrase there, so the ban is amended to the field as it ships. It never appears on a page that opened. It accepts the key phrase or the full link, nothing typed into it leaves the browser, and it is never offered unprompted. The phishing concern stands, and it is the reason for each of those limits.
 
@@ -709,10 +745,14 @@ The input deliberately omits `required`, `pattern`, or `maxlength` attributes so
 
 Five items, and only these five.
 
-1. **Platform memory ceilings, and whether they're hardcoded or feature-detected.** §5 requires feature detection for the streaming tier. What remains is the in-memory ceiling's value. State what each candidate number rests on: Apple publishes no per-tab ceiling, hat.sh's 1 GB is an empirical project decision whose stated rationale doesn't match current compatibility data, and the 500 to 800 MB band is one forum report.
-2. **The hard size cap value.** This determines whether §5's tiering is required at all: a cap below the in-memory ceiling collapses three tiers into one.
-3. **The truncated-prefix size**, which the viewer states in its own copy.
-4. **The highlighted-region cap** from §3.3, also user-visible.
+1. **Browser memory behavior.** Browser-managed Blob backing and device
+   limits vary; the earlier whole-file memory ceiling is superseded (§5).
+2. **The hard size cap.** 500 MiB of plaintext; the ciphertext bound is
+   derived from the current framing.
+3. **Large source.** A windowed source view reaches the full file above
+   100 MiB rather than stopping at a truncated prefix.
+4. **Highlighted-region cap.** The original proposal is historical; large
+   source windows are plain text.
 5. **PSL registration for the usercontent parent.** **Lead time: there is none published, and that's the finding rather than a gap in the research.** The list's own guidelines state "There are NO SERVICE LEVEL AGREEMENTS ON TIME nor any expectation of processing speed or urgency," and on reaching production, "Unfortunately, there is no way to expedite," because propagation rides each browser and OS vendor's release train ([PSL guidelines](https://github.com/publicsuffix/list/wiki/Guidelines)). Unbounded and unexpeditable makes it the first thing started in the domain workstream, ahead of work that looks more urgent.
 
 ## 8. What this document needs from `spec-service-surface`

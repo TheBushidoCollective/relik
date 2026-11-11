@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { contentFromBytes } from '../src/content.ts';
 import {
   encodeFragment,
   encryptRelic,
@@ -485,16 +486,21 @@ describe('renderDead and Key Entry Form (DOM)', () => {
   let rootBody: ElementStub;
   let createdElements: ElementStub[];
 
-  const threadFetch = (ciphertext: Uint8Array): typeof globalThis.fetch =>
-    (async (input: RequestInfo | URL) => {
+  const threadFetch = (
+    ciphertext: Uint8Array,
+    relicId: string,
+    requests: Array<{ url: string; method: string }>
+  ): typeof globalThis.fetch =>
+    (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
+      requests.push({ url, method: init?.method ?? 'GET' });
       if (url === 'https://storage.example/blob') {
         return new Response(ciphertext as unknown as BodyInit);
       }
       if (url.endsWith('/api/auth/session')) {
         return Response.json({ email: null });
       }
-      if (url.endsWith('/api/relics/relic123/comments')) {
+      if (url.endsWith(`/api/relics/${relicId}/comments`)) {
         return Response.json([]);
       }
       return new Response(null, { status: 404 });
@@ -516,6 +522,21 @@ describe('renderDead and Key Entry Form (DOM)', () => {
       createdElements.filter((element) => element.id === 'comment-thread')
     ).toHaveLength(1);
     expect(rootBody.querySelector('.action-comments')).not.toBeNull();
+  };
+
+  const expectCachedRecoveryRequests = (
+    requests: Array<{ url: string; method: string }>,
+    relicId: string
+  ): void => {
+    expect(
+      requests.filter(({ url }) => url === 'https://storage.example/blob')
+    ).toEqual([{ url: 'https://storage.example/blob', method: 'GET' }]);
+    expect(requests.filter(({ url }) => url.endsWith('/mint'))).toHaveLength(0);
+    expect(
+      requests.some(({ url }) =>
+        url.endsWith(`/api/relics/${relicId}/comments`)
+      )
+    ).toBe(true);
   };
 
   beforeEach(() => {
@@ -781,6 +802,8 @@ describe('renderDead and Key Entry Form (DOM)', () => {
       code: 'fragment_missing',
     };
 
+    const relicId = generateRelicId();
+    const requests: Array<{ url: string; method: string }> = [];
     const correctKey = generateKey();
     const correctFragment = encodeFragment(correctKey);
 
@@ -795,11 +818,11 @@ describe('renderDead and Key Entry Form (DOM)', () => {
     const vault = makeMockVault();
     const deps: ViewerDeps = {
       serviceOrigin: 'https://relic.example',
-      fetch: threadFetch(ciphertext),
+      fetch: threadFetch(ciphertext, relicId, requests),
       keyVault: vault,
       takeFragment: () => '',
       stripFragment: () => {},
-      locationHref: 'https://relic.example/r1',
+      locationHref: `https://relic.example/${relicId}`,
     };
 
     const cachedPrefix = {
@@ -818,7 +841,7 @@ describe('renderDead and Key Entry Form (DOM)', () => {
 
     renderDead(
       dead,
-      'relic123',
+      relicId,
       'https://usercontent.example',
       deps,
       cachedPrefix
@@ -832,11 +855,12 @@ describe('renderDead and Key Entry Form (DOM)', () => {
     await waitUntil(() => rootBody.querySelector('.stage-dead') === null);
     expect(rootBody.querySelector('.action-comments')).not.toBeNull();
     await expectInitialThreadReady();
+    expectCachedRecoveryRequests(requests, relicId);
 
     // Decryption succeeded in place: dead card is gone and document is rendered
     expect(rootBody.querySelector('.stage-dead')).toBeNull();
     expect(rootBody.querySelector('.doc')).not.toBeNull();
-    expect(vault.recall('relic123')).toBe(correctFragment);
+    expect(vault.recall(relicId)).toBe(correctFragment);
   });
 
   test('submitting a correct mnemonic opens the relic in place and saves to vault', async () => {
@@ -847,6 +871,8 @@ describe('renderDead and Key Entry Form (DOM)', () => {
       code: 'decrypt_failed',
     };
 
+    const relicId = generateRelicId();
+    const requests: Array<{ url: string; method: string }> = [];
     const correctKey = generateKey();
     const mnemonicWords = keyToMnemonic(correctKey);
     const phrase = mnemonicWords.join(' ');
@@ -862,11 +888,11 @@ describe('renderDead and Key Entry Form (DOM)', () => {
     const vault = makeMockVault();
     const deps: ViewerDeps = {
       serviceOrigin: 'https://relic.example',
-      fetch: threadFetch(ciphertext),
+      fetch: threadFetch(ciphertext, relicId, requests),
       keyVault: vault,
       takeFragment: () => '',
       stripFragment: () => {},
-      locationHref: 'https://relic.example/r1',
+      locationHref: `https://relic.example/${relicId}`,
     };
 
     const cachedPrefix = {
@@ -885,7 +911,7 @@ describe('renderDead and Key Entry Form (DOM)', () => {
 
     renderDead(
       dead,
-      'relic123',
+      relicId,
       'https://usercontent.example',
       deps,
       cachedPrefix
@@ -899,10 +925,11 @@ describe('renderDead and Key Entry Form (DOM)', () => {
     await waitUntil(() => rootBody.querySelector('.stage-dead') === null);
     expect(rootBody.querySelector('.action-comments')).not.toBeNull();
     await expectInitialThreadReady();
+    expectCachedRecoveryRequests(requests, relicId);
 
     expect(rootBody.querySelector('.stage-dead')).toBeNull();
     expect(rootBody.querySelector('.doc')).not.toBeNull();
-    expect(vault.recall('relic123')).toBe(encodeFragment(correctKey));
+    expect(vault.recall(relicId)).toBe(encodeFragment(correctKey));
   });
 });
 
@@ -1513,7 +1540,8 @@ describe('Dashboard rendering (DOM)', () => {
     const dummyView: ReadyView = {
       filename: 'test.md',
       declaredMimetype: 'text/markdown',
-      content: new TextEncoder().encode('# Test'),
+      content: contentFromBytes(new TextEncoder().encode('# Test')),
+      document: { bytes: new TextEncoder().encode('# Test'), truncated: false },
       route: 'markdown',
       downgradeNotice: undefined,
       shareUrl: 'https://relic.example/r1#key',

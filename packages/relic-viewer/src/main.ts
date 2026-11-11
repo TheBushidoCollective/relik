@@ -27,6 +27,8 @@ import {
   POLICY_LINK_LABEL,
   REPORT_LINK_LABEL,
   shareMailtoUrl,
+  modelFormatFromFilename,
+  modelFormatFromMime,
   sniffModelFormat,
   TRANSFER_LABEL,
 } from '@relic/format';
@@ -98,6 +100,13 @@ import {
 } from './scroll-landmark.ts';
 import { syncFrameScrollers, syncScrollers } from './scroll-sync.ts';
 import { localStorageKeyVault } from './vault.ts';
+import { DOCUMENT_RENDER_LIMIT_BYTES } from './content.ts';
+import { mountTextWindow, textWindowFor } from './text-window-bridge.ts';
+import {
+  AUTO_PROJECTION_MAX_BYTES,
+  createVersionStore,
+  type VersionStore,
+} from './version-store.ts';
 
 // The adapter table is installed once, from the one module that knows the
 // complete built-in set. See `anchor-adapters.ts` for why registration is not
@@ -193,6 +202,8 @@ import {
 export { quotedTargetLabel } from './comments.ts';
 
 import {
+  MAX_DIFF_BYTES,
+  DIFF_LIMIT_LABEL,
   bytesEqual,
   comparisonAvailability,
   createImageDiff,
@@ -259,7 +270,6 @@ import {
   type LoadProgress,
   type LoadResume,
   loadCommentedRelics,
-  loadHistoricalVersion,
   openRelicWithKey,
   progressLine,
   type ReadyView,
@@ -478,6 +488,93 @@ function decodeText(content: Uint8Array): string {
   return new TextDecoder('utf-8', { fatal: false }).decode(content);
 }
 
+function documentBytes(view: ReadyView): Uint8Array {
+  if (view.document === undefined)
+    throw new Error('Document exceeds render limit');
+  return view.document.bytes;
+}
+
+const pageStores = new WeakMap<ViewerDeps, Map<string, VersionStore>>();
+function versionsFor(
+  relicId: string,
+  boot: ReadyView,
+  deps: ViewerDeps
+): VersionStore {
+  let stores = pageStores.get(deps);
+  if (!stores) {
+    stores = new Map();
+    pageStores.set(deps, stores);
+  }
+  let store = stores.get(relicId);
+  if (!store) {
+    store = createVersionStore(relicId, boot, deps);
+    stores.set(relicId, store);
+  }
+  return store;
+}
+
+/** Authenticated metadata only; full-body fetching waits for Open. */
+export function confirmLargeOpen(
+  size: number,
+  metadata?: { filename: string; mimetype: string }
+): Promise<boolean> {
+  const { promise, resolve } = Promise.withResolvers<boolean>();
+  const opener = document.activeElement as HTMLElement | null;
+  const dialog = document.createElement('dialog');
+  dialog.className = 'large-open';
+  dialog.dataset['largeOpen'] = '';
+  dialog.dataset['largeOpenBytes'] = String(size);
+  const heading = document.createElement('h1');
+  heading.id = 'large-open-heading';
+  heading.textContent = metadata?.filename || 'Open';
+  const detail = document.createElement('p');
+  detail.id = 'large-open-detail';
+  detail.textContent = `${metadata?.mimetype ? `${metadata.mimetype} · ` : ''}${formatBytes(size)}`;
+  dialog.setAttribute('aria-labelledby', heading.id);
+  dialog.setAttribute('aria-describedby', detail.id);
+  const actions = document.createElement('div');
+  actions.className = 'large-open-actions';
+  // Nothing beyond record zero has been fetched while the reader decides, so
+  // the card behind the dialog says Opening and drops the transfer size; the
+  // dialog alone states the size being asked about. The marker keeps a late
+  // progress frame from putting Fetching back.
+  const plate = document.querySelector<HTMLElement>(
+    'main.stage-loading[data-load-plate]'
+  );
+  const phase = plate?.querySelector<HTMLElement>('.load-phase');
+  const transfer = plate?.querySelector<HTMLElement>('[data-load-transfer]');
+  const heldTransfer = transfer?.hidden ?? false;
+  if (plate) plate.dataset['largeOpenPending'] = '';
+  if (phase) phase.textContent = LOAD_OPENING;
+  if (transfer) transfer.hidden = true;
+  let settled = false;
+  const finish = (accepted: boolean) => {
+    if (settled) return;
+    settled = true;
+    if (plate) delete plate.dataset['largeOpenPending'];
+    if (transfer) transfer.hidden = heldTransfer;
+    if (accepted && phase) phase.textContent = PHASE_FETCHING;
+    dialog.remove();
+    opener?.focus?.();
+    resolve(accepted);
+  };
+  const open = button('Open', ICONS.rendered, () => finish(true));
+  open.classList.add('primary');
+  open.dataset['largeOpenAccept'] = '';
+  const cancel = button('Cancel', ICONS.close, () => finish(false));
+  cancel.dataset['largeOpenDecline'] = '';
+  dialog.addEventListener('cancel', (event) => {
+    event.preventDefault();
+    finish(false);
+  });
+  actions.append(cancel, open);
+  dialog.append(heading, detail, actions);
+  document.body.appendChild(dialog);
+  dialog.showModal();
+  cancel.focus();
+  return promise;
+}
+
 function toast(message: string): void {
   document.querySelector('.toast')?.remove();
   const element = document.createElement('div');
@@ -508,9 +605,7 @@ function notice(text: string): HTMLElement {
 }
 
 function downloadContent(view: ReadyView): void {
-  const blob = new Blob([view.content as unknown as BlobPart], {
-    type: 'application/octet-stream',
-  });
+  const blob = view.content.blob('application/octet-stream');
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
@@ -1103,7 +1198,7 @@ function renderCodeView(view: ReadyView): HTMLElement {
   const wrapper = document.createElement('div');
   wrapper.className = 'doc';
 
-  const source = decodeText(view.content);
+  const source = decodeText(documentBytes(view));
   const table = buildCodeTable(source);
   wrapper.appendChild(table);
   return wrapper;
@@ -1113,9 +1208,7 @@ function renderImageView(view: ReadyView): HTMLElement {
   const wrapper = document.createElement('div');
   wrapper.className = 'doc doc-image';
 
-  const blob = new Blob([view.content as unknown as BlobPart], {
-    type: sniffImageType(view.content),
-  });
+  const blob = view.content.blob(sniffImageType(view.content.head));
   const url = URL.createObjectURL(blob);
 
   const image = document.createElement('img');
@@ -1393,7 +1486,7 @@ function jsxPayload(view: ReadyView): RenderPayload | undefined {
 function payloadFor(view: ReadyView): RenderPayload | undefined {
   return view.route === 'sandboxed-jsx'
     ? jsxPayload(view)
-    : { type: 'relic:render', html: decodeText(view.content) };
+    : { type: 'relic:render', html: decodeText(documentBytes(view)) };
 }
 
 /** HTML renders on the usercontent origin and nowhere else. */
@@ -1406,7 +1499,7 @@ export function renderSandboxedHtml(
   wrapper.appendChild(
     sandboxFrame(view, usercontentOrigin, {
       type: 'relic:render',
-      html: decodeText(view.content),
+      html: decodeText(documentBytes(view)),
     }).frame
   );
   return wrapper;
@@ -1457,7 +1550,7 @@ function renderDownloadView(view: ReadyView): HTMLElement {
 
   const meta = document.createElement('div');
   meta.className = 'card-meta';
-  meta.textContent = `${view.declaredMimetype} · ${formatBytes(view.content.length)}`;
+  meta.textContent = `${view.declaredMimetype} · ${formatBytes(view.content.size)}`;
 
   const action = button('Download', ICONS.download, () =>
     downloadContent(view)
@@ -1490,12 +1583,25 @@ export function renderPdfView(view: ReadyView): HTMLElement {
     'Loading the PDF renderer. It is loaded on demand so other documents do not pay for it.';
   loading.append(headline, detail);
   wrapper.appendChild(loading);
+  let cleanedUp = false;
+  let disposePdf: (() => void) | undefined;
+  wrapper.addEventListener(
+    'cleanup',
+    () => {
+      cleanedUp = true;
+      disposePdf?.();
+    },
+    { once: true }
+  );
 
   void import('./pdf.ts')
-    .then(({ mountPdf }) => {
-      void mountPdf(wrapper, view.content, view.filename);
+    .then(async ({ mountPdf }) => {
+      if (cleanedUp || wrapper.isConnected === false) return;
+      disposePdf = await mountPdf(wrapper, view.content, view.filename);
+      if (cleanedUp || !wrapper.isConnected) disposePdf();
     })
     .catch(() => {
+      if (cleanedUp || wrapper.isConnected === false) return;
       const win =
         wrapper.ownerDocument?.defaultView ??
         (typeof window !== 'undefined' ? window : undefined);
@@ -1531,9 +1637,7 @@ export function renderMediaView(view: ReadyView): HTMLElement {
   const wrapper = document.createElement('div');
   wrapper.className = 'doc doc-media';
 
-  const blob = new Blob([view.content as unknown as BlobPart], {
-    type: view.declaredMimetype,
-  });
+  const blob = view.content.blob(view.declaredMimetype);
   const blobUrl = URL.createObjectURL(blob);
 
   let revoked = false;
@@ -1607,7 +1711,7 @@ export function renderMediaView(view: ReadyView): HTMLElement {
 
   const details = document.createElement('span');
   details.className = 'media-meta-details';
-  details.textContent = `${view.declaredMimetype} · ${formatBytes(view.content.length)}`;
+  details.textContent = `${view.declaredMimetype} · ${formatBytes(view.content.size)}`;
 
   info.append(name, details);
 
@@ -1639,9 +1743,19 @@ export function buildCurrentStage(
     main.appendChild(notice(view.downgradeNotice));
   }
 
+  if (
+    view.content.size > DOCUMENT_RENDER_LIMIT_BYTES &&
+    ['code', 'markdown', 'sandboxed-html', 'sandboxed-jsx'].includes(view.route)
+  ) {
+    const source = document.createElement('section');
+    main.appendChild(source);
+    mountTextWindow(source, view.content);
+    return main;
+  }
+
   switch (view.route) {
     case 'markdown':
-      main.appendChild(renderMarkdownSource(decodeText(view.content)));
+      main.appendChild(renderMarkdownSource(decodeText(documentBytes(view))));
       break;
     case 'code':
       main.appendChild(renderCodeView(view));
@@ -1673,7 +1787,6 @@ export function buildCurrentStage(
       root.className = 'model-view';
       root.textContent = 'Loading 3D model';
       main.appendChild(root);
-      const format = sniffModelFormat(view.content);
       const moduleUrl = '/assets/model-view.js';
       let dispose: (() => void) | undefined;
       const observer = new MutationObserver(() => {
@@ -1685,7 +1798,16 @@ export function buildCurrentStage(
       });
       observer.observe(document.body, { childList: true, subtree: true });
       void import(moduleUrl)
-        .then((module: { mountModelView: typeof mountModelView }) => {
+        .then(async (module: { mountModelView: typeof mountModelView }) => {
+          if (root.dataset['disposed'] === 'true') return;
+          const prefix =
+            view.content.size <= 16 * 1024 * 1024
+              ? await view.content.read(0, view.content.size)
+              : view.content.head;
+          const format =
+            sniffModelFormat(prefix, view.content.size) ??
+            modelFormatFromFilename(view.filename) ??
+            modelFormatFromMime(view.declaredMimetype);
           if (root.dataset['disposed'] === 'true') return;
           if (!format) throw new Error('Unrecognized model');
           dispose = module.mountModelView(root, format, view.content);
@@ -1774,10 +1896,21 @@ export function renderCodeComparison(
 ): HTMLElement {
   const wrapper = document.createElement('section');
   wrapper.className = 'diff-view diff-view-code';
+  if (
+    current.content.size > MAX_DIFF_BYTES ||
+    historical.content.size > MAX_DIFF_BYTES
+  ) {
+    wrapper.appendChild(
+      notice(
+        `This version is larger than the ${DIFF_LIMIT_LABEL} comparison limit.`
+      )
+    );
+    return wrapper;
+  }
 
   const result = createTextDiff(
-    decodeText(historical.content),
-    decodeText(current.content)
+    decodeText(documentBytes(historical)),
+    decodeText(documentBytes(current))
   );
   const summary = document.createElement('div');
   summary.className = 'diff-summary';
@@ -2071,7 +2204,7 @@ const TREE_TIMEOUT_MS = 6000;
 function markdownPane(view: ReadyView): ComparisonPane {
   const prose = document.createElement('article');
   prose.className = 'prose';
-  prose.innerHTML = renderMarkdown(decodeText(view.content));
+  prose.innerHTML = renderMarkdown(decodeText(documentBytes(view)));
   return {
     element: prose,
     tree: Promise.resolve(captureTree(prose)),
@@ -2442,101 +2575,111 @@ export function renderImageComparison(
   heading.append(label, status);
   wrapper.appendChild(heading);
 
-  if (bytesEqual(historical.content, current.content)) {
-    status.textContent = 'No changed pixels or metadata bytes.';
-    wrapper.appendChild(
-      noChanges('No changes. These versions have identical content.')
-    );
-    return wrapper;
-  }
-
-  const canvas = document.createElement('div');
-  canvas.className = 'image-diff-canvas';
-  canvas.style.setProperty('--split', '50%');
-
-  const before = document.createElement('img');
-  before.className = 'image-diff-before';
-  before.alt = `Version ${historical.version}`;
-
-  const after = document.createElement('img');
-  after.className = 'image-diff-current';
-  after.alt = `Version ${current.version}`;
-
-  const historicalUrl = URL.createObjectURL(
-    new Blob([historical.content as unknown as BlobPart], {
-      type: sniffImageType(historical.content),
-    })
-  );
-  const currentUrl = URL.createObjectURL(
-    new Blob([current.content as unknown as BlobPart], {
-      type: sniffImageType(current.content),
-    })
-  );
-
-  const beforeLabel = document.createElement('span');
-  beforeLabel.className = 'image-diff-label image-diff-label-before';
-  beforeLabel.textContent =
-    historical.version === historical.currentVersion
-      ? `Version ${historical.version}, current`
-      : `Version ${historical.version}`;
-  const currentLabel = document.createElement('span');
-  currentLabel.className = 'image-diff-label image-diff-label-current';
-  currentLabel.textContent =
-    current.version === current.currentVersion
-      ? `Version ${current.version}, current`
-      : `Version ${current.version}`;
-  const divider = document.createElement('span');
-  divider.className = 'image-diff-divider';
-  divider.setAttribute('aria-hidden', 'true');
-  canvas.append(before, after, beforeLabel, currentLabel, divider);
-
-  const control = document.createElement('label');
-  control.className = 'image-diff-control';
-  const controlText = document.createElement('span');
-  controlText.textContent = `Reveal version ${current.version} over version ${historical.version}`;
-  const slider = document.createElement('input');
-  slider.type = 'range';
-  slider.min = '0';
-  slider.max = '100';
-  slider.value = '50';
-  slider.setAttribute(
-    'aria-label',
-    `Reveal version ${current.version} over version ${historical.version}`
-  );
-  slider.addEventListener('input', () => {
-    canvas.style.setProperty('--split', `${slider.value}%`);
-  });
-  control.append(controlText, slider);
-
-  wrapper.append(canvas, control);
-
+  // Both reads are ceiling-bounded even for callers outside the comparison shell.
   void Promise.all([
-    loadImage(before, historicalUrl),
-    loadImage(after, currentUrl),
-  ]).then(
-    ([loadedBefore, loadedCurrent]) => {
-      const result = createImageDiff(
-        historical.content,
-        current.content,
-        {
-          width: loadedBefore.naturalWidth,
-          height: loadedBefore.naturalHeight,
+    historical.content.readWhole(MAX_DIFF_BYTES),
+    current.content.readWhole(MAX_DIFF_BYTES),
+  ])
+    .then(([beforeBytes, currentBytes]) => {
+      if (!beforeBytes || !currentBytes) {
+        status.textContent = `This version is larger than the ${DIFF_LIMIT_LABEL} comparison limit.`;
+        return;
+      }
+      if (bytesEqual(beforeBytes, currentBytes)) {
+        status.textContent = 'No changed pixels or metadata bytes.';
+        wrapper.appendChild(
+          noChanges('No changes. These versions have identical content.')
+        );
+        return;
+      }
+
+      const canvas = document.createElement('div');
+      canvas.className = 'image-diff-canvas';
+      canvas.style.setProperty('--split', '50%');
+
+      const before = document.createElement('img');
+      before.className = 'image-diff-before';
+      before.alt = `Version ${historical.version}`;
+
+      const after = document.createElement('img');
+      after.className = 'image-diff-current';
+      after.alt = `Version ${current.version}`;
+
+      const historicalUrl = URL.createObjectURL(
+        historical.content.blob(sniffImageType(historical.content.head))
+      );
+      const currentUrl = URL.createObjectURL(
+        current.content.blob(sniffImageType(current.content.head))
+      );
+
+      const beforeLabel = document.createElement('span');
+      beforeLabel.className = 'image-diff-label image-diff-label-before';
+      beforeLabel.textContent =
+        historical.version === historical.currentVersion
+          ? `Version ${historical.version}, current`
+          : `Version ${historical.version}`;
+      const currentLabel = document.createElement('span');
+      currentLabel.className = 'image-diff-label image-diff-label-current';
+      currentLabel.textContent =
+        current.version === current.currentVersion
+          ? `Version ${current.version}, current`
+          : `Version ${current.version}`;
+      const divider = document.createElement('span');
+      divider.className = 'image-diff-divider';
+      divider.setAttribute('aria-hidden', 'true');
+      canvas.append(before, after, beforeLabel, currentLabel, divider);
+
+      const control = document.createElement('label');
+      control.className = 'image-diff-control';
+      const controlText = document.createElement('span');
+      controlText.textContent = `Reveal version ${current.version} over version ${historical.version}`;
+      const slider = document.createElement('input');
+      slider.type = 'range';
+      slider.min = '0';
+      slider.max = '100';
+      slider.value = '50';
+      slider.setAttribute(
+        'aria-label',
+        `Reveal version ${current.version} over version ${historical.version}`
+      );
+      slider.addEventListener('input', () => {
+        canvas.style.setProperty('--split', `${slider.value}%`);
+      });
+      control.append(controlText, slider);
+
+      wrapper.append(canvas, control);
+
+      void Promise.all([
+        loadImage(before, historicalUrl),
+        loadImage(after, currentUrl),
+      ]).then(
+        ([loadedBefore, loadedCurrent]) => {
+          const result = createImageDiff(
+            beforeBytes,
+            currentBytes,
+            {
+              width: loadedBefore.naturalWidth,
+              height: loadedBefore.naturalHeight,
+            },
+            {
+              width: loadedCurrent.naturalWidth,
+              height: loadedCurrent.naturalHeight,
+            }
+          );
+          status.textContent = result.summary;
         },
-        {
-          width: loadedCurrent.naturalWidth,
-          height: loadedCurrent.naturalHeight,
+        () => {
+          wrapper.replaceChildren(
+            notice(
+              'One of these image versions could not be decoded by the browser.'
+            )
+          );
         }
       );
-      status.textContent = result.summary;
-    },
-    () => {
-      wrapper.replaceChildren(
-        notice(
-          'One of these image versions could not be decoded by the browser.'
-        )
-      );
-    }
-  );
+    })
+    .catch(() => {
+      status.textContent = 'This image could not be decoded by the browser.';
+    });
 
   return wrapper;
 }
@@ -2964,6 +3107,16 @@ export function renderLoadedVersion(
     onJump?: (index: number) => void
   ) => void
 ): HTMLElement {
+  if (
+    current.content.size > MAX_DIFF_BYTES ||
+    historical.content.size > MAX_DIFF_BYTES
+  ) {
+    return renderSingleVersion(
+      historical,
+      usercontentOrigin,
+      `This version is larger than the ${DIFF_LIMIT_LABEL} comparison limit.`
+    );
+  }
   const mode = diffModeForRoutes(current.route, historical.route);
   if (mode === undefined) {
     return renderSingleVersion(
@@ -3177,16 +3330,16 @@ export function renderComparison(
   let leftVersion = initialLeft ?? defaultPair.left;
   let rightVersion = initialRight ?? defaultPair.right;
 
-  const versionCache = new Map<number, HistoricalVersionState>();
-  if (current.version !== undefined) {
-    versionCache.set(current.version, { kind: 'ready', view: current });
-  }
+  const store = versionsFor(relicId, current, deps);
+  const pinned = new Set<number>();
 
   let request = 0;
 
   /** Leaving the comparison invalidates any result still in flight. */
   const closeComparison = (): void => {
     request += 1;
+    for (const version of pinned) store.unpin(version);
+    pinned.clear();
     onClose();
   };
 
@@ -3219,26 +3372,7 @@ export function renderComparison(
     version: number,
     onProg?: (p: LoadProgress) => void
   ): Promise<HistoricalVersionState> => {
-    if (version === current.version) {
-      return { kind: 'ready', view: current };
-    }
-    const cached = versionCache.get(version);
-    if (cached !== undefined) return cached;
-    const loaded = await loadHistoricalVersion(
-      relicId,
-      version,
-      current,
-      deps,
-      onProg
-    );
-    // A compiler failure says nothing about the version, and a reload may fix
-    // it, so it is not remembered for the session.
-    if (
-      !(loaded.kind === 'unavailable' && loaded.jsxCompilerUnavailable === true)
-    ) {
-      versionCache.set(version, loaded);
-    }
-    return loaded;
+    return store.get(version, { onProgress: onProg, maxBytes: MAX_DIFF_BYTES });
   };
 
   const updateSelected = async (): Promise<void> => {
@@ -3286,6 +3420,14 @@ export function renderComparison(
     if (thisRequest !== request) return;
     if (typeof document === 'undefined') return;
     scaffold.result.setAttribute('aria-busy', 'false');
+    for (const version of pinned) store.unpin(version);
+    pinned.clear();
+    for (const loaded of [leftRes, rightRes]) {
+      if (loaded.kind === 'ready') {
+        store.pin(loaded.view.version);
+        pinned.add(loaded.view.version);
+      }
+    }
 
     if (leftRes.kind === 'unavailable') {
       scaffold.result.replaceChildren(
@@ -3313,8 +3455,8 @@ export function renderComparison(
 
     if (mode === 'code') {
       const textDiff = createTextDiff(
-        decodeText(leftRes.view.content),
-        decodeText(rightRes.view.content)
+        decodeText(documentBytes(leftRes.view)),
+        decodeText(documentBytes(rightRes.view))
       );
       const changedParts = textDiff.parts.filter((p) => p.kind !== 'unchanged');
       changesSidebar.setChanges(
@@ -3324,10 +3466,12 @@ export function renderComparison(
           : undefined
       );
     } else if (mode === 'image') {
-      const isChanged = !bytesEqual(
-        leftRes.view.content,
-        rightRes.view.content
-      );
+      const [leftBytes, rightBytes] = await Promise.all([
+        leftRes.view.content.readWhole(MAX_DIFF_BYTES),
+        rightRes.view.content.readWhole(MAX_DIFF_BYTES),
+      ]);
+      if (thisRequest !== request || !leftBytes || !rightBytes) return;
+      const isChanged = !bytesEqual(leftBytes, rightBytes);
       changesSidebar.setChanges(
         isChanged ? 1 : 0,
         isChanged ? renderImageChangeNotice() : undefined
@@ -5831,10 +5975,10 @@ export function buildThread(
     | { readonly body: string; readonly revision: number }
     | undefined;
   let sessionGeneration = 0;
-  const originalViews = new Map<number, Promise<ReadyView | undefined>>();
   const projectionAttempts = new WeakMap<OtioUiController, Set<string>>();
   const otioProjectionWork = new WeakMap<OtioUiController, Promise<void>>();
   let otioMarkPaintGeneration = 0;
+  const versionStore = versionsFor(relicId, view, deps);
   const projectionFailures = new Set<string>();
 
   const addOtioFeedbackContext = (
@@ -5865,6 +6009,16 @@ export function buildThread(
     }
     row.querySelector('.comment-body')?.before(target);
     if (anchor.relic_version === view.version) return;
+    if (view.content.size > AUTO_PROJECTION_MAX_BYTES) {
+      context.dataset['projectionStatus'] = 'unavailable';
+      label.textContent = `Made on version ${anchor.relic_version}. Open version ${anchor.relic_version} to see where it lands.`;
+      const original = button('View original', ICONS.source, () =>
+        onViewOriginal?.(anchor.relic_version)
+      );
+      context.append(label, original);
+      row.appendChild(context);
+      return;
+    }
     const projection =
       host === undefined
         ? undefined
@@ -5894,13 +6048,14 @@ export function buildThread(
     entries: readonly CommentEntry[]
   ): Promise<void> => {
     if (host === undefined) return;
+    if (view.content.size > AUTO_PROJECTION_MAX_BYTES) return;
     const controller = otioControllerFor(host);
     if (controller === undefined || controller.disposed) return;
     const attempts = projectionAttempts.get(controller) ?? new Set<string>();
     projectionAttempts.set(controller, attempts);
     let changed = false;
-    const started = Promise.all(
-      entries.map(async (entry) => {
+    const pass = async (): Promise<void> => {
+      for (const entry of entries) {
         if (
           entry.kind !== 'open' ||
           entry.anchor?.kind !== 'otio' ||
@@ -5908,24 +6063,15 @@ export function buildThread(
           entry.anchor.relic_version === view.version ||
           attempts.has(entry.id)
         ) {
-          return;
+          continue;
         }
         attempts.add(entry.id);
         const anchor = entry.anchor;
+        versionStore.pin(anchor.relic_version);
         try {
-          let original = originalViews.get(anchor.relic_version);
-          if (original === undefined) {
-            original = loadHistoricalVersion(
-              relicId,
-              anchor.relic_version,
-              view,
-              deps
-            ).then((result) =>
-              result.kind === 'ready' ? result.view : undefined
-            );
-            originalViews.set(anchor.relic_version, original);
-          }
-          const originalView = await original;
+          const original = await versionStore.get(anchor.relic_version, {
+            maxBytes: AUTO_PROJECTION_MAX_BYTES,
+          });
           if (
             typeof document === 'undefined' ||
             controller.disposed ||
@@ -5935,9 +6081,9 @@ export function buildThread(
             attempts.delete(entry.id);
             return;
           }
-          if (originalView === undefined)
+          if (original.kind !== 'ready')
             throw new Error('Original context unavailable');
-          await controller.project(anchor, originalView.content);
+          await controller.project(anchor, original.view.content);
         } catch {
           if (
             controller.disposed ||
@@ -5948,17 +6094,21 @@ export function buildThread(
             return;
           }
           projectionFailures.add(entry.id);
+        } finally {
+          versionStore.unpin(anchor.relic_version);
         }
         changed = true;
-      })
+      }
+    };
+    // One pass per controller, chained: a later call joins the earlier work,
+    // so loads run one at a time and completion covers the latest paint.
+    const joined = (
+      otioProjectionWork.get(controller) ?? Promise.resolve()
+    ).then(pass);
+    otioProjectionWork.set(
+      controller,
+      joined.catch(() => {})
     );
-    // A repaint may skip an already-started projection. Join the previous
-    // controller-local work too, rather than declaring that empty pass done.
-    const joined = Promise.all([
-      otioProjectionWork.get(controller),
-      started,
-    ]).then(() => {});
-    otioProjectionWork.set(controller, joined);
     await joined;
     if (
       changed &&
@@ -6170,7 +6320,7 @@ export function buildThread(
     frameRects.clear();
     frameConcealed.clear();
     pendingImagePlaced = false;
-    unwrapTextQuotes(host);
+    if (!textWindowFor(host)) unwrapTextQuotes(host);
     host.querySelector('.comment-pins')?.remove();
     markController?.clearMarks();
     host
@@ -6184,6 +6334,19 @@ export function buildThread(
     // nothing. Rebuilt every pass, because whether a mark lands depends on
     // the content currently rendered.
     unplaceable.clear();
+    textWindowFor(host)?.setMarks(
+      entries.flatMap((entry) =>
+        entry.kind === 'open' && entry.anchor !== null
+          ? [
+              {
+                id: entry.id,
+                anchor: entry.anchor,
+                resolved: entry.resolution != null,
+              },
+            ]
+          : []
+      )
+    );
     for (const entry of entries) {
       if (entry.kind !== 'open' || entry.anchor === null) continue;
       if (
@@ -6193,6 +6356,11 @@ export function buildThread(
         continue;
       }
       number += 1;
+      if (
+        textWindowFor(host) &&
+        (entry.anchor.kind === 'text' || entry.anchor.kind === 'quote')
+      )
+        continue;
       if (entry.anchor.kind === 'text') {
         wrapTextQuote(host, entry.anchor.quote, entry.id);
         continue;
@@ -7964,6 +8132,22 @@ export function buildThread(
       return;
     }
     if (entry.anchor.kind === 'image' && unplaceable.has(commentId)) return;
+    if (entry.anchor.kind === 'text' || entry.anchor.kind === 'quote') {
+      const windowed = textWindowFor(host);
+      if (windowed) {
+        // The window paints a quote only after locating it, so the card opens
+        // over the mark once the reveal settles, as on a document painted
+        // whole. A later row press or card supersedes this one.
+        const generation = ++cardGeneration;
+        void windowed.reveal(commentId).then(() => {
+          setActiveMark(commentId);
+          if (generation !== cardGeneration) return;
+          const box = anchorBoxFor(commentId);
+          if (box !== undefined) openCard(entry, box, true);
+        });
+        return;
+      }
+    }
     const surface = anchorSurfaceFor(host);
     if (surface === undefined) return;
     const adapter = adapterFor(entry.anchor, surface);
@@ -9388,8 +9572,7 @@ export function renderReady(
   let decisionPanelLoading = false;
 
   let activeView = view;
-  const loadedViews = new Map<number, ReadyView>();
-  loadedViews.set(view.version, view);
+  const versionStore = versionsFor(relicId, view, deps);
 
   /** Swaps in a band carrying the new counts, while this page still shows it. */
   const replaceBar = (): void => {
@@ -9504,11 +9687,19 @@ export function renderReady(
     if (decisionPanel !== undefined && decide) decisionPanel.setOpener(decide);
     return built;
   }
-  const showSingle = (viewToShow: ReadyView): void => {
+  let pinnedView: number | undefined;
+  const showSingle = (viewToShow: ReadyView, alreadyPinned = false): void => {
     lifecycle.advance();
     decisionPanel?.close();
     if (viewToShow !== activeView || decisionTally === undefined) {
       refreshDecisionTally(viewToShow);
+    }
+    if (pinnedView !== viewToShow.version) {
+      if (pinnedView !== undefined) versionStore.unpin(pinnedView);
+      if (!alreadyPinned) versionStore.pin(viewToShow.version);
+      pinnedView = viewToShow.version;
+    } else if (alreadyPinned) {
+      versionStore.unpin(viewToShow.version);
     }
     activeView = viewToShow;
     if (viewToShow.route !== 'download') {
@@ -9556,11 +9747,6 @@ export function renderReady(
       showSingle(activeView);
       return;
     }
-    const cached = loadedViews.get(v);
-    if (cached !== undefined) {
-      showSingle(cached);
-      return;
-    }
 
     let versionPill: HTMLElement | null = null;
     if (document.createElement) {
@@ -9580,41 +9766,48 @@ export function renderReady(
         document.body.appendChild(versionPill);
       }
     }
+    versionStore.pin(v);
 
-    const res = await loadHistoricalVersion(relicId, v, view, deps, (p) => {
-      if (versionPill) {
-        const label =
-          versionPill.querySelector?.('.render-status-label') ?? versionPill;
-        if (p.phase === 'opening') {
-          label.textContent = `Opening version ${v}`;
-        } else if (p.phase === 'fetching') {
-          label.replaceChildren();
-          const vSpan = document.createElement('span');
-          vSpan.className = 'render-status-version';
-          vSpan.textContent = `Version ${v}: `;
-          const progSpan = document.createElement('span');
-          progSpan.textContent = `${PHASE_FETCHING} ${formatTransfer(p.received, p.total)}`;
-          label.append(vSpan, progSpan);
+    const res = await versionStore.get(v, {
+      onProgress: (p) => {
+        if (!lifecycle.isCurrent(selection)) return;
+        if (versionPill) {
+          const label =
+            versionPill.querySelector?.('.render-status-label') ?? versionPill;
+          if (p.phase === 'opening') {
+            label.textContent = `Opening version ${v}`;
+          } else if (p.phase === 'fetching') {
+            label.replaceChildren();
+            const vSpan = document.createElement('span');
+            vSpan.className = 'render-status-version';
+            vSpan.textContent = `Version ${v}: `;
+            const progSpan = document.createElement('span');
+            progSpan.textContent = `${PHASE_FETCHING} ${formatTransfer(p.received, p.total)}`;
+            label.append(vSpan, progSpan);
+          }
         }
-      }
+      },
     });
 
     if (lifecycle.isCurrent(selection)) versionPill?.remove?.();
 
+    if (!lifecycle.isCurrent(selection)) {
+      versionStore.unpin(v);
+      return;
+    }
     if (res.kind === 'ready') {
-      loadedViews.set(v, res.view);
-      // A late success for a selection the reader has left is cached for later
-      // use, but it does not repaint over the reader's newer choice.
-      if (lifecycle.isCurrent(selection)) showSingle(res.view);
-    } else if (res.kind === 'unavailable') {
-      if (lifecycle.isCurrent(selection))
-        toast(failureText(res, vaultHoldsKey(relicId, deps)));
+      showSingle(res.view, true);
+    } else {
+      versionStore.unpin(v);
+      toast(failureText(res, vaultHoldsKey(relicId, deps)));
     }
   };
 
   const showComparison = (left?: number, right?: number): void => {
     lifecycle.advance();
     decisionPanel?.close();
+    if (pinnedView !== undefined) versionStore.unpin(pinnedView);
+    pinnedView = undefined;
     renderComparison(
       activeView,
       relicId,
@@ -9779,7 +9972,12 @@ export function adoptOrMountPlate(relicId: string): PlateHandles {
   const applyProgress = (p: LoadProgress) => {
     plate.dataset['loadPhase'] = p.phase;
     if (phaseEl) {
-      if (p.phase === 'opening') {
+      // A pending large-open question holds the card at Opening; a progress
+      // frame landing behind the dialog must not claim the body is fetching.
+      if (
+        p.phase === 'opening' ||
+        plate.dataset['largeOpenPending'] !== undefined
+      ) {
         phaseEl.textContent = LOAD_OPENING;
       } else if (p.phase === 'fetching') {
         phaseEl.textContent = PHASE_FETCHING;
@@ -10811,6 +11009,7 @@ export function makeBrowserDeps(): ViewerDeps {
       );
     },
     locationHref: window.location.href,
+    onLargeOpen: confirmLargeOpen,
   };
 }
 

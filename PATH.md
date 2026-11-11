@@ -143,3 +143,24 @@ at 1440px and 320px widths. It must check horizontal overflow, visible keyboard
 focus, and active/resolved state updates. `RELIC_IMAGE_SHOTS_DIR` retains the
 `markers-<width>-<scenario>.png` screenshots and `rectangles.json` measurements
 alongside the existing light/dark receipts.
+
+# Large relic upload and preview
+
+Build the viewer and MCP bundle, then run the loopback proof from the repository root:
+
+```sh
+bun run --cwd packages/relic-viewer build
+bun run --cwd packages/relic-mcp build
+RELIC_PROOF_CHROME_PATH=/absolute/path/to/headless-chromium bun packages/relic-mcp/test/large-relic-path.ts
+```
+
+The command publishes a 500 MiB file through MCP stdio to a loopback service, checks the cap boundary, exercises the confirmation and preview, and hashes the downloaded file against the source. It also checks large OTIO, PDF, text, image and model paths. Success ends with `LARGE_RELIC_PATH_OK`; failures exit nonzero. The browser has a private profile and must attest headless mode.
+
+Node, Bun, ffmpeg with `libvpx-vp9`, an explicit headless Chromium executable, and sufficient temporary disk space are required. The proof supports Linux and macOS. The MCP peak RSS receipt uses sampled Linux process high-water marks or sampled macOS RSS.
+
+Before the browser memory gates, a calibration must detect a touched 512 MiB allocation and a retained 96 MiB allocation, then show less than 64 MiB growth after those allocations are released and churned. The gates compare post-pressure per-process snapshots using `phys_footprint` on macOS or `RssAnon + VmSwap` on Linux. They retain the 64 MiB media pre-playback, 128 MiB media after-release, and 128 MiB OTIO and PDF limits. Receipts also report RSS growth and added or exited process IDs. The PDF gate includes utility processes; the others cover renderers.
+
+During either page pixel check, the PDF step fails if a worker range overlaps the whitespace between the first and final MiB. A range assertion also requires at least one recorded worker request. The `LARGE_STEP_6_PDF_PAGES` receipt includes `worker_ranges`.
+
+These are post-pressure growth gates, not bounds on transient renderer peaks or browser-process storage. The proof creates and removes local scratch data and makes no production writes. Cross-engine, real-device and version-cache measurements are separate proofs.
+

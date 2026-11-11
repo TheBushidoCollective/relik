@@ -1,3 +1,4 @@
+import { fetchUpload } from './upload-fixture.ts';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -129,6 +130,7 @@ try {
     relicOrigin: SERVICE,
     files: nodeFiles,
     fetch: grantFetch(),
+    upload: fetchUpload,
     clientName: 'relic-mcp/path-check',
     renderCover: async () => ({
       status: 'skipped',

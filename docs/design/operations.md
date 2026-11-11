@@ -198,7 +198,9 @@ For Relic the fragment is the key. The operator visits the sample and sees the m
 2. The triage policy from section 1, verbatim, as the standing rule.
 3. The published SLA from section 6.3, with the operator's measured median and maximum over the reporting period, taken from the intake timestamps and the delete tooling's log per `preconditions.md` section 1.
 4. The takedown log in aggregate: reports received, relics deleted, and the count by reason class, over the period. Never per-relic detail, because `service.md` 1.4 withholds the reason publicly and a log that names reasons per ID reverses that.
-5. The controls that bound circulation regardless of any individual takedown: the 72-hour TTL, the 64-mint per-object cap, the 100 MiB size cap, and the per-IP publish quota, each as a number from `docs/design/storage.md`.
+5. The controls relevant to circulation: the 200-mint per-relic cap shared
+   across versions, the 500 MiB plaintext size cap, and the publish quota.
+   A publisher may set an expiry; there is no mandatory 72-hour TTL.
 6. The statement that the sample URLs supplied are canonicalized without their fragments and are therefore not openable by the operator, with the Safe Browsing canonicalization quoted above as the reason.
 7. The intake path and the named human behind it.
 
@@ -216,7 +218,12 @@ and whose remediation is hobbled before it starts:
 
 > Note that example URLs are not always given for this issue.
 
-Every relic is unique ciphertext under a unique key, so every relic is by construction a file the reputation system has never seen, and the auto-lift condition can never fire on an encrypted object. **Whether that surfaces as a user-visible browser download warning depends on the download delivery path and is unverified.** `docs/design/topology.md` section 2 decides that bytes reach disk only through a `blob:` URL materialized on the viewing origin under `a[download]`, and states that no source it consulted says whether Chrome attributes such a download to the initiating page's origin for reputation purposes. **That observation goes into the same pre-launch empirical bundle as the mail-gateway test `service.md` section 6 already mandates**, which is the test this unit owns, and it answers `topology.md` section 8's second stated need. It costs one relic and one browser.
+Every relic is unique ciphertext under a unique key, so the ciphertext is a
+file the reputation system has not previously seen. Whether a browser shows
+a download warning for the viewing origin is unverified. The explicit download
+uses a `blob:` URL and `a[download]`; browser-managed Blob storage may also
+place plaintext on temporary disk before a download. The browser's download
+attribution remains an empirical question.
 
 ## 4. The monitoring surface
 
@@ -229,6 +236,12 @@ Nine standing checks. Each names what it catches and what its absence loses, bec
 5. **Registrar expiry and auto-renew status on both registrable domains.** *Catches:* a lapsing registration. *Absence loses:* the domain, to whoever buys it next, and with it every link ever shared. `preconditions.md` puts this correctly as worse than a flag.
 6. **The designated agent's renewal clock.** 37 CFR 201.38(c)(4) ([37 CFR 201.38](https://www.ecfr.gov/current/title-37/section-201.38)), under the heading "Periodic renewal": "A service provider's designation will expire and become invalid three years after it is registered with the Office, unless the service provider renews such designation". *Catches:* a designation about to lapse. *Absence loses:* the designation, and with it the condition 17 U.S.C. 512(c)(2) attaches to the subsection's protection, which is that "The limitations on liability established in this subsection apply to a service provider only if the service provider has designated an agent to receive notifications of claimed infringement described in paragraph (3)". This is the same expiry-nobody-is-watching class as items 4 and 5, and it has the longest period, which is what makes it the easiest to forget.
 7. **Egress against the ceiling, from the billing export, plus the faster coarse estimate the app server owns.** *Catches:* the spend condition `frame.md` names and `preconditions.md` makes a deploy gate. *Absence loses:* the kill switch's trigger. **Two limits travel with this one and both are `docs/design/storage.md`'s findings.** Billing data lags, so the switch trips after the spend rather than during it. And per `storage.md` 3.2, Cloud Storage is not on the eligibility list for platform spend-cap budgets, so capping the app server stops minting and nothing at the platform level stops GCS egress. The signing-key rotation in `storage.md` 3.4 is the second stage, and it is the only instrument that truncates an already-minted URL, because "Anyone who knows the URL can access the resource until the expiration time for the URL is reached or the key used to sign the URL is rotated" ([signed URLs](https://docs.cloud.google.com/storage/docs/access-control/signed-urls)). Its propagation timing is unverified and routed to `build`.
+
+   At the 500 MiB plaintext cap, 200 mints with one complete fetch each transfer
+   97.69 GiB of ciphertext, about $11.72 at the $0.12/GiB rate recorded in
+   `storage.md`. URL reuse can increase that figure. Review the external egress
+   threshold against this case; this document does not establish that the
+   monitor has been changed.
 8. **The SLA's own median and maximum hours, computed from the intake timestamp and the delete timestamp.** *Catches:* the operator drifting past the number they published. *Absence loses:* the meaning of section 6.3, since a published number nobody measures is a claim rather than a commitment. **It measures responsiveness on reports received and it is never coverage**, for the reason `preconditions.md` and `service.md` 4.1 both give: unreported abuse is invisible by construction and there is no denominator.
 9. **Deletion rate and report rate against a rolling baseline.** *Catches:* the volumetric attack section 1 prices, where an attacker harvests relic URLs and submits one plausible report per URL. Every deletion it produces is individually indistinguishable from a routine one, so no per-report check sees it; only the rate does. *Absence loses:* the only signal that a wave of technically valid reports is a coordinated attack rather than ordinary abuse traffic, and it is the check that turns check 8 reading better during the attack into the anomaly it actually is.
 
@@ -258,9 +271,15 @@ Nine standing checks. Each names what it catches and what its absence loses, bec
 
 Both return `410`. `service.md` 1.2 accepts the cost that cap exhaustion, expiry, and all three flavors of deletion share one status, and pays it with a rule: the mint log records the `code`, not only the status. The distinct codes are for the operator's log rather than the recipient's screen.
 
-**Whether the exhaustion case can arise at all turns on the mint trigger, which is in this document's inputs.** `docs/design/topology.md` section 5.1 took the gated branch: **the mint fires on the first trusted user input event on the page, and never on load**, with `wheel` deliberately excluded from the qualifying set because scrolling is what an automated previewer that screenshots a page does. Section 5.2 of the same document sets the mint dedup interval at 300 seconds. **That branch removes the observed previewer population and topology.md is explicit that it removes nothing else**, saying in terms that the gate "is not a barrier against an adversary who sets out to burn the cap", that such an adversary drives a browser and injects trusted input at no cost, and that deliberate cap abuse is this document's to own.
+The original topology design assumed minting began only after a trusted
+gesture. Large-file confirmation now occurs after a mint and the record-0
+read, so it does not by itself prevent an automated client from spending a
+mint.
 
-**So exhaustion arises two ways.** Legitimate over-distribution past 64 mints (`storage.md` 4.4), which a list larger than the 40-person scenario reaches honestly. And deliberate cap burn by somebody holding the link. **The control on the second is the per-IP download rate limit already in the v1 set, and its bound is honest rather than reassuring:** it limits mints per address, an attacker rotates addresses cheaply, and each unit of cap costs the attacker one mint request. The signature is visible in the mint log, which carries the requesting IP, the outcome, and the cap remaining after each attempt, so a relic burned from a narrow address set in a short window is detectable after the fact. **The remedy is republication and nothing else**, because there is no cap reset (`service.md` 1.2 reads permanence off its own counter) and no republish-to-same-URL. Cap burn is the same griefing vector as section 1's, bounded the same way, with the same remedy, and the design has nothing better.
+Exhaustion can arise from legitimate distribution or automated mint requests.
+The current cap is 200 mints per relic ID, shared across versions. The
+original 64-mint calculation is historical. Per-IP limits add friction but do
+not prevent a party with multiple addresses from consuming the allowance.
 
 **The screen is `design-product-surface`'s decision and this document does not have its answer, so both branches are designed.**
 

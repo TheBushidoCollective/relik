@@ -2,6 +2,7 @@ import type {
   CoverRenderRequest,
   CoverRenderResult,
 } from '@relic/format/cover';
+import { contentFromBlob } from '../content.ts';
 import { buildCodeTable, buildProse } from '../text-views.ts';
 import { renderFrameCover } from './frame.ts';
 import {
@@ -15,13 +16,13 @@ import { renderPdfCover } from './pdf.ts';
 export async function fetchInputBlob(
   input: NonNullable<CoverRenderRequest['input']>
 ): Promise<Blob> {
-  const parts: ArrayBuffer[] = [];
+  const parts: Blob[] = [];
   for (let i = 0; i < input.parts; i++) {
     const res = await fetch(`/input/${i}`);
     if (!res.ok) {
       throw new Error(`Failed to fetch input part ${i}: ${res.status}`);
     }
-    parts.push(await res.arrayBuffer());
+    parts.push(await res.blob());
   }
   return new Blob(parts, { type: input.mimetype });
 }
@@ -226,8 +227,7 @@ export async function renderKind(
     }
 
     case 'pdf': {
-      const arrayBuffer = await blob.arrayBuffer();
-      return renderPdfCover(new Uint8Array(arrayBuffer), root);
+      return renderPdfCover(await contentFromBlob(blob), root);
     }
   }
 }

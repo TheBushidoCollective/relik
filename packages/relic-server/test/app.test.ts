@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
 import { deflateSync } from 'node:zlib';
 import {
+  ciphertextCapBytes,
   decryptComment,
   deriveCommentKey,
   encryptComment,
@@ -8,6 +9,7 @@ import {
   encryptRelic,
   generateKey,
   generateRelicId,
+  PLAINTEXT_CAP_BYTES,
   RESERVED_SEGMENTS,
 } from '@relic/format';
 import {
@@ -25,7 +27,7 @@ import {
 import { memoryAssets } from '../src/assets.ts';
 import { sha256Hex } from '../src/gcs.ts';
 import { MailRefusedError, type OutboundMail } from '../src/mail.ts';
-import { ciphertextHash, MemoryStorage } from '../src/storage.ts';
+import { MemoryStorage } from '../src/storage.ts';
 import { MemoryStore } from '../src/store.ts';
 
 const OPERATOR = new Map([['jason', 'operator-secret']]);
@@ -940,8 +942,29 @@ describe('the grant', () => {
     const body = (await app
       .fetch(req('/api/challenge', { method: 'POST' }))
       .then((r) => r.json())) as Record<string, unknown>;
-    expect(body['size_limit_bytes']).toBe(100 * 1024 * 1024);
+    expect(body['size_limit_bytes']).toBe(PLAINTEXT_CAP_BYTES);
     expect(body['size_basis']).toBe('plaintext');
+  });
+
+  test('grants the plaintext cap with a full-length signed upload', async () => {
+    const id = generateRelicId();
+    const response = await grantFor({
+      relic_id: id,
+      declared_size_bytes: PLAINTEXT_CAP_BYTES,
+      declared_ciphertext_bytes: ciphertextCapBytes(),
+    });
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      upload_headers: Record<string, string>;
+      upload_expires_at: string;
+    };
+    expect(PLAINTEXT_CAP_BYTES).toBe(524_288_000);
+    expect(ciphertextCapBytes()).toBe(524_489_608);
+    expect(body.upload_headers['content-length']).toBe('524489608');
+    expect(Date.parse(body.upload_expires_at)).toBe(now + 4_500_000);
+    expect((await app.store.getRelic(id))?.declaredSizeBytes).toBe(
+      PLAINTEXT_CAP_BYTES
+    );
   });
 
   test('refuses a dead challenge nonce with a code the client can key on', async () => {
@@ -1012,17 +1035,18 @@ describe('the grant', () => {
     const challenge = (await app
       .fetch(req('/api/challenge', { method: 'POST' }))
       .then((r) => r.json())) as { challenge_nonce: string };
+    const id = generateRelicId();
 
     const response = await app.fetch(
       req('/api/grant', {
         method: 'POST',
         body: JSON.stringify({
           challenge_nonce: challenge.challenge_nonce,
-          relic_id: generateRelicId(),
+          relic_id: id,
           renderer_class: 'markdown',
           publishing_client: 'test',
-          declared_size_bytes: 200 * 1024 * 1024,
-          declared_ciphertext_bytes: encryptedSize(200 * 1024 * 1024),
+          declared_size_bytes: PLAINTEXT_CAP_BYTES + 1,
+          declared_ciphertext_bytes: encryptedSize(PLAINTEXT_CAP_BYTES + 1),
         }),
       })
     );
@@ -1030,8 +1054,9 @@ describe('the grant', () => {
     expect(response.status).toBe(413);
     expect(body.code).toBe('size_over_cap');
     expect(body.size_basis).toBe('plaintext');
-    expect(body.size_limit_bytes).toBe(100 * 1024 * 1024);
-    expect(body.declared_size_bytes).toBe(200 * 1024 * 1024);
+    expect(body.size_limit_bytes).toBe(PLAINTEXT_CAP_BYTES);
+    expect(body.declared_size_bytes).toBe(PLAINTEXT_CAP_BYTES + 1);
+    expect(await app.store.getRelic(id)).toBeUndefined();
   });
 
   test('refuses a renderer class outside the seven', async () => {
@@ -1139,13 +1164,13 @@ describe('the grant', () => {
       )
       .then((r) => r.json())) as { upload_headers: Record<string, string> };
 
-    // Signing the cap would mean the upload had to be 100 MiB exactly, which
-    // is the bug that made every real publish fail with a 403.
+    // Signing the cap would require every upload to be cap-sized, the bug
+    // that made real publishes fail with a 403.
     expect(grant.upload_headers['content-length']).toBe(
       String(encryptedSize(5000))
     );
     expect(grant.upload_headers['content-length']).not.toBe(
-      String(100 * 1024 * 1024)
+      String(ciphertextCapBytes())
     );
   });
 
@@ -1177,22 +1202,24 @@ describe('the grant', () => {
     const challenge = (await app
       .fetch(req('/api/challenge', { method: 'POST' }))
       .then((r) => r.json())) as { challenge_nonce: string };
+    const id = generateRelicId();
 
     const response = await app.fetch(
       req('/api/grant', {
         method: 'POST',
         body: JSON.stringify({
           challenge_nonce: challenge.challenge_nonce,
-          relic_id: generateRelicId(),
+          relic_id: id,
           renderer_class: 'binary',
           publishing_client: 'test',
           declared_size_bytes: 1,
-          declared_ciphertext_bytes: 500 * 1024 * 1024,
+          declared_ciphertext_bytes: ciphertextCapBytes() + 1,
         }),
       })
     );
     expect(response.status).toBe(413);
     expect((await response.json()).code).toBe('size_over_cap');
+    expect(await app.store.getRelic(id)).toBeUndefined();
   });
 
   test('signs no x-goog-meta header, because nothing needs object metadata', async () => {
@@ -1852,11 +1879,22 @@ describe('republish and versions', () => {
     const { id, key, grant } = await publish();
     const v1Bytes = await storage.read(id);
     if (v1Bytes === undefined) throw new Error('v1 bytes missing');
-    const v1Hash = await ciphertextHash(v1Bytes);
+    const v1Hash = await sha256Hex(v1Bytes);
 
     await republish(id, grant['publish_token'] as string);
-    storage.put(`${id}/v2`, await encrypted('a second payload', key));
+    const v2Bytes = await encrypted('a second payload', key);
+    const v2Hash = await sha256Hex(v2Bytes);
+    storage.put(`${id}/v2`, v2Bytes);
     await app.fetch(req(`/api/relics/${id}/complete`, { method: 'POST' }));
+    const hashedKeys: string[] = [];
+    const digest = storage.digest.bind(storage);
+    storage.digest = async (objectKey) => {
+      hashedKeys.push(objectKey);
+      return digest(objectKey);
+    };
+    storage.read = async () => {
+      throw new Error('delete must not load whole objects');
+    };
 
     const response = await app.fetch(
       req(`/api/relics/${id}?reason=abuse`, {
@@ -1865,6 +1903,8 @@ describe('republish and versions', () => {
       })
     );
     expect(response.status).toBe(200);
+    expect((await response.json()).ciphertext_hash).toBe(v2Hash);
+    expect(hashedKeys).toEqual([id, `${id}/v2`]);
 
     expect(await storage.stat(id)).toBeUndefined();
     expect(await storage.stat(`${id}/v2`)).toBeUndefined();
@@ -1873,7 +1913,7 @@ describe('republish and versions', () => {
     // blocklist covers the older payload too: one republish must not be
     // able to hide a payload from the abuse control.
     const stone = await app.store.getTombstone(id);
-    expect(stone?.ciphertextHash).not.toBe(v1Hash);
+    expect(stone?.ciphertextHash).toBe(v2Hash);
     expect(await app.store.isBlocklisted(stone?.ciphertextHash ?? '')).toBe(
       true
     );
@@ -1883,11 +1923,27 @@ describe('republish and versions', () => {
   test('a republish declaration obeys the same size cap arithmetic', async () => {
     const { id, grant } = await publish();
     const response = await republish(id, grant['publish_token'] as string, {
-      size: 200 * 1024 * 1024,
+      size: PLAINTEXT_CAP_BYTES + 1,
     });
     expect(response.status).toBe(413);
     expect((await response.json()).code).toBe('size_over_cap');
     expect((await app.store.getRelic(id))?.version).toBe(1);
+  });
+
+  test('a republish at the cap receives the longer upload window', async () => {
+    const { id, grant } = await publish();
+    const response = await republish(id, grant['publish_token'] as string, {
+      size: PLAINTEXT_CAP_BYTES,
+    });
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      version: number;
+      upload_headers: Record<string, string>;
+      upload_expires_at: string;
+    };
+    expect(body.version).toBe(2);
+    expect(body.upload_headers['content-length']).toBe('524489608');
+    expect(Date.parse(body.upload_expires_at)).toBe(now + 4_500_000);
   });
 
   test('a republish on an unknown id is 404, an unparseable one is 400', async () => {
@@ -1926,10 +1982,25 @@ describe('the download cap', () => {
     expect(body.download_cap).toBe(2);
   });
 
-  test('the default cap clears the 40-person Defender arithmetic with room', async () => {
-    // A 40-person list draws a floor of 40 legitimate mints and a ceiling near
-    // 80 where scanners detonate with a real browser.
-    expect(app.config.downloadCap).toBeGreaterThanOrEqual(80);
+  test('the default allows the 200th mint and refuses the 201st', async () => {
+    expect(app.config.downloadCap).toBe(200);
+    const { id } = await publish();
+    const row = await app.store.getRelic(id);
+    if (row === undefined) throw new Error('relic row missing');
+    await app.store.putRelic({ ...row, mintsUsed: 199 });
+
+    const last = await app.fetch(
+      req(`/api/relics/${id}/mint`, { method: 'POST', ip: '203.0.113.5' })
+    );
+    expect(last.status).toBe(200);
+    expect((await last.json()).mints_remaining).toBe(0);
+    const over = await app.fetch(
+      req(`/api/relics/${id}/mint`, { method: 'POST', ip: '203.0.113.6' })
+    );
+    expect(over.status).toBe(410);
+    const problem = await over.json();
+    expect(problem.code).toBe('download_cap_exhausted');
+    expect(problem.download_cap).toBe(200);
   });
 });
 
@@ -2505,6 +2576,56 @@ describe('delete by id', () => {
     );
     expect(response.status).toBe(409);
   });
+
+  test('a missing later version is skipped and the last present hash is retained', async () => {
+    const { id, grant } = await publish();
+    const bytes = await storage.read(id);
+    if (bytes === undefined) throw new Error('v1 bytes missing');
+    const expected = await sha256Hex(bytes);
+    expect((await republish(id, grant['publish_token'] as string)).status).toBe(
+      200
+    );
+
+    const response = await app.fetch(
+      req(`/api/relics/${id}`, {
+        method: 'DELETE',
+        headers: { authorization: 'Bearer operator-secret' },
+      })
+    );
+    expect(response.status).toBe(200);
+    expect((await response.json()).ciphertext_hash).toBe(expected);
+    expect(await app.store.isBlocklisted(expected)).toBe(true);
+  });
+
+  test('a failed version digest leaves every payload and tombstone untouched', async () => {
+    const { id, key, grant } = await publish();
+    const bytes = await storage.read(id);
+    if (bytes === undefined) throw new Error('v1 bytes missing');
+    const v1Hash = await sha256Hex(bytes);
+    expect((await republish(id, grant['publish_token'] as string)).status).toBe(
+      200
+    );
+    storage.put(`${id}/v2`, await encrypted('second version', key));
+
+    const digest = storage.digest.bind(storage);
+    storage.digest = async (objectKey) => {
+      if (objectKey === `${id}/v2`) throw new Error('digest failed with 503');
+      return digest(objectKey);
+    };
+    await expect(
+      app.fetch(
+        req(`/api/relics/${id}`, {
+          method: 'DELETE',
+          headers: { authorization: 'Bearer operator-secret' },
+        })
+      )
+    ).rejects.toThrow('digest failed with 503');
+
+    expect(await app.store.getTombstone(id)).toBeUndefined();
+    expect(await app.store.isBlocklisted(v1Hash)).toBe(false);
+    expect(await storage.stat(id)).toBeDefined();
+    expect(await storage.stat(`${id}/v2`)).toBeDefined();
+  });
 });
 
 describe('the abuse form', () => {
@@ -2577,6 +2698,32 @@ describe('config invariants', () => {
     expect(() =>
       createApp({ config: { urlValiditySeconds: 700_000 } })
     ).toThrow(/ceiling/);
+  });
+
+  test('bounds upload validity by the GCS ceiling and the slow-upload floor', () => {
+    expect(app.config.uploadUrlValiditySeconds).toBe(4_500);
+    const minimum = Math.ceil(ciphertextCapBytes() / 250_000);
+    expect(() =>
+      createApp({ config: { uploadUrlValiditySeconds: minimum } })
+    ).not.toThrow();
+    expect(() =>
+      createApp({ config: { uploadUrlValiditySeconds: minimum - 1 } })
+    ).toThrow(/2 Mbit\/s/);
+    for (const value of [
+      0,
+      -1,
+      2_100.5,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      604_801,
+    ]) {
+      expect(() =>
+        createApp({ config: { uploadUrlValiditySeconds: value } })
+      ).toThrow(/uploadUrlValiditySeconds/);
+    }
+    expect(() =>
+      createApp({ config: { uploadUrlValiditySeconds: 604_800 } })
+    ).not.toThrow();
   });
 });
 

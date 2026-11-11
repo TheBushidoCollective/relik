@@ -6,6 +6,10 @@ Everything else in a stored object can be migrated or redeployed inside one TTL.
 
 `docs/frame.md`, `docs/preconditions.md`, and `docs/spec/format.md` are locked inputs. Nothing here reopens any of them.
 
+The 4,096-octet record-size choice below is historical. The current writer's
+default is 65,536 octets as recorded in `docs/decisions.md`; the 2026-11-10
+500 MiB cap uses that default.
+
 ## 0. What this decides, and the two items it does not
 
 `format.md` section 4 routes six items. Four are decided here:
@@ -25,7 +29,7 @@ Everything else in a stored object can be migrated or redeployed inside one TTL.
 
 - **Range decryption.** "A consequence of this record structure is that range requests [RFC7233] and random access to encrypted payload bodies are possible at the granularity of the record size. Partial records at the ends of a range cannot be decrypted" ([RFC 8188](https://www.rfc-editor.org/rfc/rfc8188.txt)). `frame.md`'s wedge boundary makes this non-negotiable even though archive browsing is out of the first release.
 - **Per-record AEAD.** Every record carries its own 16-octet tag, so a corrupted or substituted record fails locally instead of poisoning the whole object.
-- **Plaintext size derivable from encrypted length before decryption** (`format.md` 3.3). Section 3 makes this derivation exact rather than an upper bound.
+- **Plaintext size bounded from encrypted length before decryption** (`format.md` 3.3). The authenticated envelope carries the content length.
 - **A header readable before allocation** (`format.md` 3.1). It is the object's first 21 octets.
 
 ### 1.1 The exact byte layout at `idlen = 0`
@@ -46,7 +50,9 @@ Inside a record: plaintext of "any length up to rs-17 octets", then a single del
 
 ### 1.2 The reader takes `rs` from the header, never from a compiled-in default
 
-**Mandatory rule: the reader parses `rs` from octets 16 to 19 of the object it is about to decrypt and passes that value to every downstream call. No compiled-in record size reaches a decrypt path.** The writer's `rs` is a build-time constant. The reader has none. That asymmetry is the whole content of the rule.
+**The reader parses `rs` from octets 16 to 19 of the object it is about to
+decrypt.** The current streaming path also enforces a record-size bound of
+65,536 octets. A writer default change must account for that reader bound.
 
 **The failure it prevents.** `rs` lives in each object's own plaintext header, so moving the writer's default keeps every existing relic readable. That only holds if readers read it. The reference implementation compares a caller-supplied record size against the stream's and throws `Record size declared in constructor does not match record size in encrypted stream` ([lib/ece.js](https://github.com/webtorrent/wormhole-crypto/blob/master/lib/ece.js)). A viewer compiled with today's default that meets a relic written under tomorrow's throws on its first record, and the recipient lands on `viewer.md` 6.1's decrypt-failure screen, which `format.md` 3.5 already forbids reading as a wrong key. The recipient sees a bad-key symptom for a relic whose key is fine and whose bytes are intact.
 
@@ -56,7 +62,8 @@ Range decryption makes it worse rather than louder. `decryptStreamRange` takes `
 
 **That header read is asked for twice on the first range operation, and the second one is the implementer's to elide.** `decryptStreamRange` returns its own range list, and its first entry is `{ offset: 0, length: 21 }`, the header again. A viewer that hands each returned range straight to a fetch issues two requests for the same 21 octets: one to learn `rs`, one because the library asked. The caller supplies streams for those ranges, so the fix is local and needs no library change: keep the 21 octets already read and serve the first range from memory, issuing a network request only for the second. On the range path this is one saved round trip per open, which matters because the range path is the one the archive reader drives repeatedly.
 
-**Consequence of the whole rule: the `rs` default is a low-reversal-cost decision sitting next to an irreversible one.** The framing can never change. The record size can move on any release, and section 3's value is chosen for what ships first rather than for all time.
+The record size is carried per object. A change to the writer default also
+requires checking the reader's accepted record-size bound.
 
 ## 2. The key material is input-keying material, and the cipher is AES-128 either way (4.2)
 
@@ -92,29 +99,31 @@ Multi-target batching does not change that. The salt is 16 fresh random octets p
 
 **The dynamic half stands as `format.md` 2.3 wrote it:** mint a batch of real relic URLs, run each through a GFM autolink renderer, and assert the extracted href is byte-identical to the input. The static half proves it for all keys; the dynamic half catches a renderer trimming something the spec does not mention.
 
-## 3. The record size, and the envelope header as a fixed block
+## 3. The record size and envelope
 
-### 3.1 The decision: `rs = 4096`, and the envelope header is exactly `rs - 17` octets
+### 3.1 Current record size
 
-`format.md` 3.1 requires that the envelope header "occupies record 0 alone and never spans records". A non-final record is exactly `rs` octets on the wire, so record 0 costs a full record whatever it contains. **The envelope header is therefore a fixed-width block of exactly `rs - 17` octets: its fields, then zero fill.** That is not a cost added by this decision. It is the cost `format.md` 3.1 already fixed, made explicit and made useful.
+The current writer uses **`rs = 65,536` octets**, with 65,519 plaintext
+octets available per full record. For nonempty content, record 0 holds the
+envelope and is padded to a full record; content starts at record 1. For
+empty content, record 0 is final and may be shorter.
 
-Making the block exactly `rs - 17` buys four things a variable-length header in a padded record does not. The first two are why it was chosen. The second two were found afterwards, under challenge, and they are why it holds up rather than why it was picked.
+The current maximum encoded envelope is 1,301 octets. The format
+implementation is in `packages/relic-format/src/envelope.ts` and
+`packages/relic-format/src/container.ts`.
 
-- **The writer needs no custom encryptor.** The reference implementation slices its input at `rs - 17` boundaries, so feeding it `block || content` produces record 0 holding the block alone and content starting at record 1, with no fork and no record-level driving.
-- **The size derivation becomes exact.** Total plaintext is `(rs - 17) + content`, so `content = plaintextSize(L, rs) - (rs - 17)`. Verified exact at content lengths of 0, 1, 15, 4078, 4079, 4080, 10000, 65536, 1048576, and 12345678 octets, and on a round-tripped object.
-- **It puts the library's degenerate case out of reach.** `encryptedSize(0, rs)` returns 21: a header and no records at all. No decrypter can accept that object, because RFC 8188's rules are written against a last record that carries padding delimiter 2 and there is no record to carry it. Total plaintext is never zero once the block is mandatory, so record 0 always exists and the degenerate case is unreachable by construction rather than by a guard somebody has to remember to write.
-- **It keeps the padding delimiter as the final octet of every record.** RFC 8188 decrypts padding by scanning backwards: "On decryption, the padding delimiter is the last non-zero-valued octet of the record. A decrypter MUST fail if the record contains no non-zero octet." The block makes every non-final record exactly full at `rs - 17` plaintext octets, so its padding is exactly one octet, so the delimiter is the record's last octet and the backward scan terminates on the first octet it examines. It never runs into content, which means content that is entirely NUL octets can never trip the no-non-zero-octet failure. Exercised directly against the reference implementation's own `pad` and `unpad`: 3,000 NUL octets of content round-trip exact, across one, two, and three records, with the deepest backward scan one octet in every case.
-
-**The value is 4096.** The arithmetic, re-derived exact:
+The table below is the original design comparison. It led to the historical
+4,096-octet proposal, not the current default.
 
 | `rs` | Envelope block | A 2 KB relic on the wire | Per-record overhead | Records for 100 MiB of content |
 |---|---|---|---|---|
 | 1024 | 1,007 | 3,144 | 1.660% | 104,130 |
-| **4096** | **4,079** | **6,182** | **0.415%** | **25,708** |
+| 4096 | 4,079 | 6,182 | 0.415% | 25,708 |
 | 16384 | 16,367 | 18,470 | 0.104% | 6,408 |
-| 65536 | 65,519 | 67,622 | 0.026% | 1,602 |
+| **65536** | **65,519** | **67,622** | **0.026%** | **1,602** |
 
-**Measure both arms before ranking them, because the measurement is what says how much this decision is worth.** 64 MiB through WebCrypto AES-GCM on Node v26.5.0, one call per record, the same shape the reference implementation uses, run twice:
+The original design recorded this comparison on Node v26.5.0. It describes
+that measurement, not a guarantee for the current viewer:
 
 | `rs` | Records | Decrypt, 64 MiB | Extrapolated to 100 MiB |
 |---|---|---|---|
@@ -124,18 +133,21 @@ Making the block exactly `rs - 17` buys four things a variable-length header in 
 
 The other arm, in octets rather than in dollars: 65536 spends 61,440 more octets on every relic than 4096 does. At 100,000 relics opened five times each that is 30.7 GB of extra egress in total, a few dollars at commodity rates.
 
-**So the finding is that this decision is unimportant, not that it is finely balanced.** Roughly a quarter of a second of extra decrypt on a 100 MiB relic, against a few dollars saved per 100,000 relics, and both are negligible while pointing opposite ways. 4096 is chosen on the two reasons below, and it would be defensible to be wrong about both.
+The original decision favored 4,096 on the two grounds below. The current
+writer default is 65,536.
 
-1. **The block is a fixed per-relic tax and the wedge's median payload is small.** Agent output is reports, diffs, and generated charts of a few kilobytes. At the reference implementation's default of 65536 a 2 KB relic is 67,622 octets and is 97 percent padding, and every open pays it against a global egress ceiling that `preconditions.md` makes a go/no-go condition. At 4096 the same relic is 6,182 octets.
-2. **Range granularity is the wedge's reversibility constraint.** The RFC: "Smaller records also reduce the additional data required if random access into the ciphertext is needed." The archive path composes a range fetch with a range decrypt, and its reader avoids downloading the whole archive only when it can ask for narrow ranges ([unzipit](https://github.com/greggman/unzipit)). A central-directory read overfetches by at most one record either side, which is 8 KB at 4096 and 128 KB at 65536.
+1. A smaller envelope record reduces the fixed overhead of small objects.
+2. Smaller records reduce range overfetch. At 65,536, a range can overfetch
+   at most one record at either end.
 
-**One constraint any value has to satisfy, and it is not a reason to prefer 4096 over the alternatives.** The record size must be a multiple of 16, which is the condition RFC 8188 4.4 attaches to its safe-encryption figure: "If the record size is a multiple of 16 octets, this means that 398 terabytes can be encrypted safely, including padding and overhead." Every value in the table satisfies it.
-
-**The cost, stated in the terms that have a user-visible meaning.** Per-record overhead is 0.415 percent against 0.026 percent at the library default, and decrypt wall time on a 100 MiB relic is roughly 0.3 s against 0.04 s. AEAD invocation count is not restated as a cost, because 16 times the calls buys nothing a user or an operator can observe once the wall time is on the table. The RFC names the trade directly: "A larger record size reduces processing and data overheads." Section 1.2 is why paying it now is cheap: `rs` is per-object and readers take it from the header, so the default moves on any release without touching a single existing relic.
+RFC 8188's cited safe-encryption figure applies when the record size is a
+multiple of 16. Both 4,096 and 65,536 satisfy that condition.
 
 ### 3.2 The envelope header's byte layout and field caps
 
-Inside record 0's `rs - 17` octets, in order. **Every offset in this table is relative to the first octet of record 0's decrypted plaintext, not to the stored object.** Envelope octet 0 sits at absolute object octet 21, which is where section 1.1's table stops.
+The table below records the original proposed field layout. The current
+encoded envelope layout and field caps are defined by
+`packages/relic-format/src/envelope.ts`.
 
 | Octet offset inside record 0's decrypted plaintext | Field |
 |---|---|
@@ -150,15 +162,21 @@ Inside record 0's `rs - 17` octets, in order. **Every offset in this table is re
 
 **The field caps are 255 octets for the filename and 255 for the declared mimetype.** The filename cap is conservative against the filesystem the download lands on rather than equal to it, and the difference is worth stating because the mainstream per-component limits are counted in characters or in UTF-16 code units, not in octets. A 255-octet UTF-8 string is never more than 255 characters, because UTF-8 spends at least one octet per character, and never more than 255 UTF-16 code units, because the characters that cost two code units cost four octets. So a name that fits this cap fits a 255-character limit and a 255-code-unit limit both, and the cap can be under those limits but never over one. That is what `viewer.md` 1.9 rule 4 writes into `a[download]`.
 
-**The floor this puts under `rs`.** A maximal version-1 envelope uses 21 fixed octets plus 255 plus 255, so 531 octets, and it has to fit in `rs - 17`. **So the format floors `rs` at 548**, and 4096 leaves 3,548 octets of zero fill in the worst case. The floor is 548 and not a round number near it: a reader that refuses anything below 1024 refuses a legal relic written at any `rs` from 548 to 1023, and refuses it with a decrypt-path error rather than a named one. RFC 8188's own floor of 18 is lower still and is not the binding one here. An empty filename is legal (`format.md` 3.1).
+The current maximum encoded envelope is 1,301 octets; fitting it in record 0
+requires at least 1,318 octets including the 17-octet record overhead. The
+current default of 65,536 leaves room for that maximum.
 
-**The strict-parser rule from `format.md` 3.1 becomes checkable: every octet after the last declared field and before `rs - 17` is zero, and a non-zero octet there is a refusal.** That is what `format.md` 3.1 means by "Unknown fields are refused rather than ignored" once the header is a fixed block.
+The current envelope parser rejects bytes left after the declared structure.
+The record's RFC 8188 padding is removed before envelope parsing.
 
 **Content offset is relative to the content stream, not to the plaintext stream.** Content octet 0 sits at plaintext offset `rs - 17`. A range decrypt of content octets `[a, a+n)` asks for plaintext offset `a + (rs - 17)`. Version 1 fixes the single entry's content offset at 0.
 
-**Two size numbers exist and they are not a second copy that can disagree.** The derived size from section 3.1 comes from the object's length, which sits outside every AEAD tag and is operator-mutable, so it is an allocation guard only. The envelope's content length sits inside the AEAD and is authoritative for everything after decryption. **Disagreement is a refusal**, and it converts a truncated or extended object from a tag failure at the end of the stream into a named refusal at record 0.
+The pre-decryption length calculation is an allocation guard. The envelope's
+content length is authenticated and authoritative after decryption.
 
-**Zero-byte content.** `format.md` 3.9 makes it legal. Record 0 is then the final record, carries delimiter 2, and the object is `21 + rs` octets, which is 4,117 at the shipping default. Never zero on the wire.
+**Zero-byte content.** Record 0 is final and carries delimiter 2. Its wire
+length is 21 octets plus the encoded envelope length and 17 octets of record
+overhead; it is not necessarily a full `rs`-sized record.
 
 ## 4. Bucket padding is refused (4.5)
 
@@ -172,24 +190,14 @@ Inside record 0's `rs - 17` octets, in order. **Every offset in this table is re
 
 **Two consequences.**
 
-Ciphertext length reveals content length to within one record, which is 4,079 octets at the shipping default, plus the fixed envelope block. `format.md` 3.8 already assigns that disclosure to the published statement.
+Ciphertext length reveals an estimate of content length. The published
+disclosure describes that length leak.
 
-`format.md` 3.3's minimal-padding qualifier is discharged at version 1. The derivation is exact, not an upper bound, and `format.md` 3.11's conversion from a published plaintext cap to an enforced ciphertext bound becomes a closed form.
-
-**That conversion is stated here in a refined form, and the refinement is deliberate rather than a transcription slip.** `format.md` 3.11 writes it as `encryptedSize(published_plaintext_cap)`. The form that holds once record 0 is an envelope block is:
-
-```
-encryptedSize(cap + (rs - 17), rs)
-```
-
-Two differences, both of which change the number.
-
-- **`rs` is passed rather than defaulted.** The reference implementation's `encryptedSize` defaults `rs` to 65536. Called the way 3.11 writes it against an object written at 4096, it returns a bound computed for a record size the object does not use.
-- **The envelope block is added before the call.** `encryptedSize` takes plaintext-stream octets. The cap is content octets. The two differ by exactly the block, which is 4,079 at the shipping record size, so omitting it under-bounds the ciphertext by more than a full record.
-
-**`cap` here counts content octets and excludes the envelope block.** That is not a new decision, it is what `format.md` 3.11 already fixed by requiring "The number shown to a user is a plaintext number, one they can verify with `ls`", because what `ls` reports is the file the publisher selected and not the framing wrapped around it. Naming it matters because the two readings of `cap` differ by 4,079 octets and nothing in the expression itself says which one is meant.
-
-This document supplies the function and names its units. `design-storage-grant-and-cost` picks the cap and its referent, and nothing here narrows either choice: the expression is the conversion to use if enforcement lands on ciphertext, and it is unused if enforcement lands on plaintext.
+The current `encryptedSize(contentLength, rs)` function counts content bytes
+and includes the padded envelope record. At the current 65,536-octet default,
+`encryptedSize(524288000)` is 524,489,608 octets. A zero-byte file uses the
+separate short-final-record case. The pre-decryption calculation remains a
+bound; the encrypted envelope supplies the authenticated content length.
 
 ## 5. The reference implementation, and the second-implementation problem
 
@@ -209,7 +217,8 @@ The module needs `crypto.subtle`, `ReadableStream`, `TransformStream`, and `Text
 
 - **Rust, [`mozilla/rust-ece`](https://github.com/mozilla/rust-ece), 29 stars, the only maintained crate.** Its README carries "This crate has not been security reviewed yet, use at your own risk", its public API is web-push shaped with the `aes128gcm` module private, and "We do not implement streaming encryption or decryption, although the ECE scheme is designed to permit it." No streaming means no progressive range decryption, which is the one property `frame.md`'s wedge boundary makes non-negotiable, so that line alone costs the reason this framing was chosen. **One further line is individually disqualifying:** "We currently select the padding length at random for each encryption, but this is an implementation detail and should not be relied on", which turns the size derivation into an upper bound with unknown slop and reintroduces the qualifier section 4 just discharged. Rust means hand-rolling the coding.
 
-  **One line that reads as disqualifying and is not, stated so nobody re-derives the wrong conclusion.** The README also says "We do not support customizing the record size parameter during encryption, but do check it during decryption." That forecloses neither of this document's decisions. Its next sub-bullet reads "The default record size is 4096 bytes", which is the value section 3 picks, so the crate's fixed record size and Relic's chosen one agree. And the envelope block is ordinary plaintext handed to the encryptor ahead of the content, so it needs no `rs` customization at all. Reading this line as fatal would have been an argument built to favour the option already chosen, which is worth naming since the rejection does not need it.
+  The Rust crate's documented fixed 4,096-octet encryption record size
+  differs from the current 65,536-octet writer default.
 - **Go, [`crow-misia/http-ece`](https://github.com/crow-misia/http-ece), 4 stars, the only one.** Actively maintained by one person. Effectively hand-rolling with a four-star dependency underneath.
 - **JS, [`web-push-libs/encrypted-content-encoding`](https://github.com/web-push-libs/encrypted-content-encoding), 33 stars.** Real and maintained, and it has no progressive range decryption. Using it for the writer and `wormhole-crypto` for the reader would buy two implementations and no capability.
 
@@ -219,7 +228,9 @@ None of these is disqualified by its star count. They are disqualified by the ca
 
 **No second writer implementation ships without passing both of RFC 8188's published vectors and a round-trip against the JS implementation at the shipping record size. The two vectors are asserted differently, and the asymmetry is mandatory rather than a convenience.**
 
-- **Section 3.1 is the round-trip vector.** Encrypt its plaintext from its published IKM and salt and assert the produced body equals the published body octet for octet, then decrypt the published body and assert the plaintext. Its record size is 4096, which is this document's shipping default, so the encrypt assertion runs the writer at the value it ships at.
+- **Section 3.1 is the round-trip vector.** Its 4,096-octet record size is
+  distinct from the current 65,536-octet default, so test the current
+  default separately.
 - **Section 3.2 is decrypt-only.** Assert that the published body decrypts to `I am the walrus`. Never assert that a conforming Relic writer reproduces it.
 
 **Why section 3.2 cannot be an encrypt assertion, since the obvious harness gets this wrong and fails a correct writer.** RFC 8188 padding is discretionary, and the section 3.2 vector exercises that discretion: at `rs = 25` the RFC states "The first record includes one 0x00 padding octet. This means that there are 7 octets of message in the first record and 8 in the second." A minimal-padding encryptor slices at `rs - 17`, which is 8, so it puts 8 octets in record 0 and 7 in record 1. Both objects are valid RFC 8188 and both decrypt to the same string, and they are different octets. Reproduced both ways: the RFC's 7/8 split rebuilds the published 73-octet body exactly, and the 8/7 split a minimal-padding writer emits produces 72 octets that do not match. Section 4 mandates minimal padding, so a writer that satisfies this document fails a section 3.2 encrypt assertion by construction. **A harness that asserts it is testing its own padding policy against the RFC's, not conformance.** An implementer who wants an encrypt assertion at a second record size writes it against the JS implementation's output, which is the round-trip half of the gate, rather than against a vector whose padding was chosen to demonstrate that padding is discretionary.
@@ -249,15 +260,16 @@ Three further notes an implementer needs before writing that harness.
 4. **Retry resumes at a byte offset into that artifact and never re-enters the encryptor.** There is no path from a failed upload back into record framing, so no path reaches a repeated sequence number.
 5. **The writer exposes no function that accepts a starting sequence number for encryption.** This is enforced by API shape rather than by discipline. The reference implementation already has the asymmetry: its seek options are read only on the decrypt branch. Preserve it in anything vendored or forked, because an encrypt-side resume entry point is the one signature from which a nonce reuse is reachable at all.
 6. **A publish that exhausts its retries and runs again is a new relic**: new ID, new IKM, new salt, new ciphertext, new URL. The previous IKM is never reused with any salt (`publish.md` 4.5).
-7. **On any failure the ciphertext artifact is removed and the IKM is dropped from memory.** A crash that skips cleanup leaves ciphertext whose key never existed on disk (`publish.md` 4.8), so the residue is inert.
-8. **Two ceilings exist, the record ceiling is the tighter one at the shipping record size, and neither binds at any plausible cap.** Take them in that order, because the ordering is the part that is easy to get backwards.
+7. A crash can leave a ciphertext artifact. Cleanup and the handling of its
+   key depend on the client and operating system; process memory can be
+   swapped to disk, so memory residency alone does not prove disk absence.
+8. The original design compared limits using 4,096-octet records and a
+   reference implementation's 32-bit record counter. The current default is
+   65,536 octets, so those earlier record-count calculations are historical.
 
-   - **The record ceiling.** The reference implementation XORs only the low 32 bits of the nonce base and throws above `0xffffffff` records. At `rs = 4096` that is 2^32 records of 4,079 plaintext octets each: **17,519,171,600,384 octets, roughly 17.5 terabytes** in one relic. Above that boundary an implementation XORing the full 96 bits diverges from this one, so it is a conformance boundary as well as a limit.
-   - **The encryption limit.** RFC 8188 4.4 puts 398 terabytes of plaintext under one content-encryption key, on the multiple-of-16 condition section 3.1 satisfies. It is per relic here, because every relic has its own CEK.
-
-   **At `rs = 4096` the record ceiling is 22.7 times tighter than the encryption limit, not looser than it.** The two swap places as `rs` grows, because the record ceiling scales with `rs` and the encryption limit does not: they cross at `rs = 92,684`, above which the 398 terabyte figure becomes the binding one. At every record size in section 3.1's table the record ceiling binds first.
-
-9. **Neither ceiling is reachable, and that conclusion survives the corrected ordering.** The tighter of the two is 17.5 terabytes in a single relic. A single relic that large would have to be encrypted in one pass by one publishing client and fetched whole by every recipient, against an egress ceiling `preconditions.md` makes a go/no-go condition. The ceiling sits far above any cap a product with that constraint would set, and `design-storage-grant-and-cost` sets the cap without needing to consult this number at all. The reason to state the arithmetic rather than assert the conclusion is that the conclusion is the same either way and the numbers are not, and a later reader who needs the real headroom should find the real number rather than one that is wrong by a factor of a thousand.
+9. A file exactly at the current 500 MiB plaintext cap uses 8,004 records
+   including record 0. The cap, rather than the historical multi-terabyte
+   examples, bounds ordinary publication.
 
 10. **The writer treats an ID collision at mint as a CSPRNG fault and stops, because it is the only remaining path to a reused CEK across relics.** Rules 3 through 7 close every path inside one publish: re-encryption, retry re-entry, encrypt-side seek, and republish. What they cannot close is the randomness itself. A CSPRNG that replays state, from a fork, a restored VM snapshot, or a fixed seed, hands out the same IKM and the same salt twice, and two relics then share a CEK and a nonce progression, which is exactly the condition the RFC calls not safe. **The detector is already in the system and costs nothing.** `format.md` 1.3 draws the ID and the key independently from that same CSPRNG in the same pass, so a replayed generator replays the ID too, and `format.md` 1.4 refuses to mint a grant for an ID that already exists. The refusal lands before the grant, so it stops the publish before a byte is encrypted or uploaded. 1.4 already names the symptom, that a collision "is astronomical bad luck or a broken RNG, and both should fail loudly", without connecting it to nonce reuse. The connection is the rule, and it sits inside what 1.4 already prescribes rather than beside it: **the writer draws a new ID and retries exactly as 1.4 says, and it treats a second collision in one process as the broken-RNG branch 1.4 names.** It stops there instead of looping, and it surfaces the generator as the fault. Two collisions from one process is not bad luck, and an unbounded redraw-and-continue loop responds to a replaying generator by publishing anyway, under a key it has already used.
 

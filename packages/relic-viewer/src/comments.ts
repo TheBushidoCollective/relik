@@ -1074,7 +1074,7 @@ export interface QuoteContext {
  */
 const NON_CONTENT =
   '.comment-pins, .comment-region, .mark-bubble, .mark-hint,' +
-  ' .mark-quote-action, .popover, script, style, [hidden], pre.raw';
+  ' .mark-quote-action, .text-window-tools, .popover, script, style, [hidden], pre.raw';
 
 /**
  * The document's content text, in order, as the reader sees it.

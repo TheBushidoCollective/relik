@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { contentFromBytes } from '../src/content.ts';
 import { deriveShareProof, encodeKey } from '@relic/format';
 import {
   buildBar,
@@ -194,7 +195,11 @@ function view(key: Uint8Array = KEY_BYTES): ReadyView {
   return {
     filename: 'notes.md',
     declaredMimetype: 'text/markdown',
-    content: new TextEncoder().encode('# notes\n'),
+    content: contentFromBytes(new TextEncoder().encode('# notes\n')),
+    document: {
+      bytes: new TextEncoder().encode('# notes\n'),
+      truncated: false,
+    },
     route: 'markdown',
     downgradeNotice: undefined,
     shareUrl: shareUrlFor(key),

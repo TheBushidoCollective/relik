@@ -327,7 +327,8 @@ describe('size arithmetic', () => {
   });
 
   test('the cap is a round plaintext number a user can check with ls', () => {
-    expect(PLAINTEXT_CAP_BYTES).toBe(100 * 1024 * 1024);
+    expect(PLAINTEXT_CAP_BYTES).toBe(500 * 1024 * 1024);
+    expect(ciphertextCapBytes()).toBe(524_489_608);
   });
 });
 

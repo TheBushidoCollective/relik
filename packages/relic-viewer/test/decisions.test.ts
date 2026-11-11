@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { contentFromBytes } from '../src/content.ts';
 import {
   type CreationOptionsJSON,
   type DecisionRecord,
@@ -251,7 +252,8 @@ function view(overrides: Partial<ReadyView> = {}): ReadyView {
   return {
     filename: 'cut.md',
     declaredMimetype: 'text/markdown',
-    content: new TextEncoder().encode('# cut\n'),
+    content: contentFromBytes(new TextEncoder().encode('# cut\n')),
+    document: { bytes: new TextEncoder().encode('# cut\n'), truncated: false },
     route: 'markdown',
     downgradeNotice: undefined,
     shareUrl: `${ORIGIN}/${RELIC_ID}#r1${encodeKey(KEY_BYTES)}`,
