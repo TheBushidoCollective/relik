@@ -184,6 +184,23 @@ describe('the app shell', () => {
     expect(await precachedAssets()).toContain(`/assets/${carriers[0]}`);
   });
 
+  test('loads the Word exporter on demand, as a precached chunk', async () => {
+    // Runs on the clean build above. The converter is the docx library, and
+    // every reader of every relic would otherwise download it to open a page.
+    const shell = await Bun.file(`${pkgDir}dist/viewer.js`).text();
+    const marker = 'wordprocessingml';
+    expect(shell.includes(marker)).toBe(false);
+
+    const carriers: string[] = [];
+    for (const chunk of new Bun.Glob('chunk-*.js').scanSync(`${pkgDir}dist`)) {
+      const content = await Bun.file(`${pkgDir}dist/${chunk}`).text();
+      if (content.includes(marker)) carriers.push(chunk);
+    }
+    expect(carriers).toHaveLength(1);
+    expect(shell).toContain(carriers[0]!);
+    expect(await precachedAssets()).toContain(`/assets/${carriers[0]}`);
+  });
+
   test('the renderer is emitted as its own chunk', async () => {
     // The other half of the same property. An empty `dist` with no chunk at
     // all would satisfy the shell assertions above while shipping a viewer
