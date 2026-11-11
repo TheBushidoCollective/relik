@@ -220,9 +220,11 @@ import {
 } from './domdiff.ts';
 import { transpileJsx } from './jsx.ts';
 import { renderMarkdown } from './markdown.ts';
+import type { DashboardSearch, RowMatch } from './dashboard-search.ts';
 import {
   buildCommentedDashboardRows,
   buildLocalDashboardRows,
+  type CommentedRelic,
   type DashboardRelicRow,
 } from './relic-rows.ts';
 import {
@@ -10074,6 +10076,68 @@ export async function renderDashboard(deps: ViewerDeps): Promise<void> {
   h1.textContent = 'Relic Dashboard';
   container.appendChild(h1);
 
+  // Search over titles and contents. The search itself loads on the first
+  // keystroke; until then every row is shown and nothing is read.
+  let search: DashboardSearch | undefined;
+  let localRows: readonly DashboardRelicRow[] = [];
+  let commentedRows: readonly DashboardRelicRow[] = [];
+  let repaintLocal = (): void => {};
+  let repaintCommented = (): void => {};
+
+  const searchField = document.createElement('div');
+  searchField.className = 'dashboard-search';
+  const searchInput = document.createElement('input');
+  searchInput.type = 'search';
+  searchInput.className = 'compose-input dashboard-search-input';
+  searchInput.placeholder = 'Search titles and contents';
+  searchInput.setAttribute('aria-label', 'Search relics by title and contents');
+  searchInput.autocomplete = 'off';
+  const searchStatus = document.createElement('p');
+  searchStatus.className = 'dashboard-search-status';
+  searchStatus.setAttribute('role', 'status');
+  searchField.append(searchInput, searchStatus);
+  container.appendChild(searchField);
+
+  const visibleRows = (
+    rows: readonly DashboardRelicRow[]
+  ): ReadonlyArray<{ row: DashboardRelicRow; match: RowMatch }> =>
+    rows.flatMap((row) => {
+      const match =
+        search === undefined
+          ? ({ where: 'title' } as const)
+          : search.match(row);
+      return match === undefined ? [] : [{ row, match }];
+    });
+
+  const matchSnippet = (match: RowMatch): HTMLElement | undefined => {
+    if (match.where !== 'content' || !match.snippet) return undefined;
+    const snippet = document.createElement('p');
+    snippet.className = 'relic-match-snippet';
+    snippet.textContent = match.snippet;
+    return snippet;
+  };
+
+  searchInput.addEventListener('input', () => {
+    if (search !== undefined) {
+      search.setQuery(searchInput.value);
+      return;
+    }
+    if (searchInput.value.trim() === '') return;
+    void import('./dashboard-search.ts').then(({ createDashboardSearch }) => {
+      search ??= createDashboardSearch(deps, {
+        rows: () => [...localRows, ...commentedRows],
+        repaint: () => {
+          repaintLocal();
+          repaintCommented();
+        },
+        status: (text) => {
+          searchStatus.textContent = text;
+        },
+      });
+      search.setQuery(searchInput.value);
+    });
+  });
+
   // Section 1: Relics this browser can open
   const localSection = document.createElement('section');
   localSection.className = 'dashboard-section local-relics-section';
@@ -10094,11 +10158,15 @@ export async function renderDashboard(deps: ViewerDeps): Promise<void> {
 
   const paintLocalList = (): void => {
     localListContainer.replaceChildren();
-    const rows = buildLocalDashboardRows(deps.keyVault);
-    if (rows.length === 0) {
+    localRows = buildLocalDashboardRows(deps.keyVault);
+    const shown = visibleRows(localRows);
+    if (shown.length === 0) {
       const empty = document.createElement('p');
       empty.className = 'relic-list-empty';
-      empty.textContent = 'No relics currently saved in this browser.';
+      empty.textContent =
+        localRows.length === 0
+          ? 'No relics currently saved in this browser.'
+          : 'No relics saved in this browser match your search.';
       localListContainer.appendChild(empty);
       return;
     }
@@ -10106,7 +10174,7 @@ export async function renderDashboard(deps: ViewerDeps): Promise<void> {
     const ul = document.createElement('ul');
     ul.className = 'dashboard-relic-list';
 
-    for (const row of rows) {
+    for (const { row, match } of shown) {
       const li = document.createElement('li');
       li.className = 'dashboard-relic-item';
 
@@ -10118,6 +10186,8 @@ export async function renderDashboard(deps: ViewerDeps): Promise<void> {
       link.href = `/${encodeURIComponent(row.relicId)}#${row.fragment ?? ''}`;
       link.textContent = row.title;
       info.appendChild(link);
+      const snippet = matchSnippet(match);
+      if (snippet !== undefined) info.appendChild(snippet);
 
       const actions = document.createElement('div');
       actions.className = 'dashboard-relic-actions';
@@ -10138,6 +10208,7 @@ export async function renderDashboard(deps: ViewerDeps): Promise<void> {
     localListContainer.appendChild(ul);
   };
 
+  repaintLocal = paintLocalList;
   paintLocalList();
   localSection.appendChild(localListContainer);
 
@@ -10299,24 +10370,35 @@ export async function renderDashboard(deps: ViewerDeps): Promise<void> {
 
     container.appendChild(commentedSection);
 
-    void loadCommentedRelics(deps).then((commented) => {
+    let commentedLoaded: readonly CommentedRelic[] | null | undefined;
+
+    repaintCommented = (): void => {
+      if (commentedLoaded === undefined) return;
       commentedList.replaceChildren();
-      if (commented === null || commented.length === 0) {
+      if (commentedLoaded === null || commentedLoaded.length === 0) {
         const empty = document.createElement('p');
         empty.className = 'relic-list-empty';
         empty.textContent =
-          commented === null
+          commentedLoaded === null
             ? 'Could not load commented relics.'
             : 'You have not commented on any relics yet.';
         commentedList.appendChild(empty);
         return;
       }
 
-      const rows = buildCommentedDashboardRows(commented, deps.keyVault);
+      const shown = visibleRows(commentedRows);
+      if (shown.length === 0) {
+        const empty = document.createElement('p');
+        empty.className = 'relic-list-empty';
+        empty.textContent =
+          'No relics you have commented on match your search.';
+        commentedList.appendChild(empty);
+        return;
+      }
       const ul = document.createElement('ul');
       ul.className = 'dashboard-relic-list';
 
-      for (const row of rows) {
+      for (const { row, match } of shown) {
         const li = document.createElement('li');
         li.className = `dashboard-relic-item ${row.hasKey ? 'relic-openable' : 'relic-unopenable'}`;
 
@@ -10329,6 +10411,8 @@ export async function renderDashboard(deps: ViewerDeps): Promise<void> {
           link.href = `/${encodeURIComponent(row.relicId)}#${row.fragment}`;
           link.textContent = row.title;
           info.appendChild(link);
+          const snippet = matchSnippet(match);
+          if (snippet !== undefined) info.appendChild(snippet);
         } else {
           const titleSpan = document.createElement('span');
           titleSpan.className = 'relic-title-unopenable';
@@ -10346,6 +10430,16 @@ export async function renderDashboard(deps: ViewerDeps): Promise<void> {
         ul.appendChild(li);
       }
       commentedList.appendChild(ul);
+    };
+
+    void loadCommentedRelics(deps).then((commented) => {
+      commentedLoaded = commented;
+      commentedRows =
+        commented === null
+          ? []
+          : buildCommentedDashboardRows(commented, deps.keyVault);
+      repaintCommented();
+      search?.refresh();
     });
   } else {
     // Signed-out state: show local section plus magic-link sign-in affordance

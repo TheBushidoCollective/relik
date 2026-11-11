@@ -165,6 +165,20 @@ describe('the app shell', () => {
     expect(chunkWithSignInText).toBe(true);
   });
 
+  test('loads dashboard search on demand, not in viewer.js', async () => {
+    // Runs on the clean build above, so no stale chunk can satisfy it.
+    const marker = 'Reading contents, ';
+    const shell = await Bun.file(`${pkgDir}dist/viewer.js`).text();
+    expect(shell.includes(marker)).toBe(false);
+
+    let carriers = 0;
+    for (const chunk of new Bun.Glob('chunk-*.js').scanSync(`${pkgDir}dist`)) {
+      const content = await Bun.file(`${pkgDir}dist/${chunk}`).text();
+      if (content.includes(marker)) carriers++;
+    }
+    expect(carriers).toBe(1);
+  });
+
   test('loads the windowed source renderer on demand, as a precached chunk', async () => {
     // Runs on the clean build above, so no stale chunk can satisfy it.
     const shell = await Bun.file(`${pkgDir}dist/viewer.js`).text();
