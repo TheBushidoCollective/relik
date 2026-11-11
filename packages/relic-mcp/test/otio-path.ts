@@ -10090,6 +10090,93 @@ async function writeClockShot(
   assertClockAudit(clockAudit, label);
   return clockAudit;
 }
+const BORROWED_NO_LEASE_REASON =
+  'the borrowed audio context has no exclusive clock bootstrap lease';
+const BORROWED_NO_LEASE_NO_CLOCK =
+  'native compatibility for a borrowed context without a clock lease: the viewer never reads its output clock';
+function noLeaseClockViolations(
+  events: MovingTrace['trace']['events']
+): string[] {
+  const violations: string[] = [];
+  const pcm = events.filter((entry) => entry.kind === 'scheduled-pcm');
+  if (pcm.length === 0) violations.push('no-backend-selection');
+  pcm.forEach((entry, index) => {
+    const value = (entry.value ?? {}) as Record<string, unknown>;
+    if (
+      value['event'] !== 'backend' ||
+      value['backend'] !== 'native' ||
+      value['reason'] !== BORROWED_NO_LEASE_REASON
+    )
+      violations.push(
+        `scheduled-pcm#${index}:${String(value['event'])}:${String(value['backend'])}:${String(value['reason'])}`
+      );
+  });
+  const reads = events.filter(
+    (entry) => entry.kind === 'audio-output-timestamp-observed'
+  ).length;
+  if (reads > 0) violations.push(`output-clock-reads-${reads}`);
+  return violations;
+}
+function assertNoLeaseClockControls(): void {
+  type Event = MovingTrace['trace']['events'][number];
+  const backend = (kind: string, reason: string): Event => ({
+    kind: 'scheduled-pcm',
+    timestamp: 1,
+    value: { event: 'backend', backend: kind, reason },
+  });
+  const read = (injected: boolean, time: number): Event => ({
+    kind: 'audio-output-timestamp-observed',
+    timestamp: 2,
+    value: { injected, output: { contextTime: time, performanceTime: time } },
+  });
+  const selected = backend('native', BORROWED_NO_LEASE_REASON);
+  assert.deepEqual(noLeaseClockViolations([selected]), []);
+  const shot = clockShot(
+    'no-lease-control',
+    { events: [selected] },
+    BORROWED_NO_LEASE_NO_CLOCK
+  );
+  assert.deepEqual(shot.violations, []);
+  assert.equal(shot.noDataReason, BORROWED_NO_LEASE_NO_CLOCK);
+  const rejected: Array<[string, Event[]]> = [
+    ['native read', [selected, read(false, 1)]],
+    ['injected read', [selected, read(true, 1)]],
+    ['non-finite read', [selected, read(false, Number.NaN)]],
+    ['missing selection', []],
+    [
+      'other native reason',
+      [backend('native', 'audio format is not supported by scheduled PCM')],
+    ],
+    ['scheduled backend', [backend('pcm', BORROWED_NO_LEASE_REASON)]],
+    [
+      'clock session',
+      [
+        selected,
+        {
+          kind: 'scheduled-pcm',
+          timestamp: 3,
+          value: { event: 'epoch', f0: 0 },
+        },
+      ],
+    ],
+  ];
+  for (const [label, events] of rejected)
+    assert.ok(
+      noLeaseClockViolations(events).length > 0,
+      `no-lease clock premise accepted ${label}`
+    );
+  assert.deepEqual(
+    clockShot(
+      'no-lease-nan-control',
+      { events: [selected, read(false, Number.NaN)] },
+      BORROWED_NO_LEASE_NO_CLOCK
+    ).violations,
+    []
+  );
+  assert.deepEqual(clockShot('lease-control', { events: [] }).violations, [
+    'no-native-clock-reads',
+  ]);
+}
 // Every continuity fault in the capture window, each with its code. The first fault alone hides
 // the cause: a clock interrupt is followed by its underflow cancel, so every fault is named.
 function describeContinuityFaults(
@@ -16998,6 +17085,7 @@ async function runScheduledPcmProof(
   sessionToken: string,
   rate: 44100 | 48000 = 48000
 ): Promise<void> {
+  assertNoLeaseClockControls();
   const originalDirectory = fileURLToPath(
     new URL(
       '../../relic-format/test/fixtures/otio/scheduled-audio.otiod/',
@@ -20430,11 +20518,16 @@ async function runScheduledPcmProof(
           const lifecycle = await globalThis.__otioProofTrace.disposeBorrowed();
           return {start, playEdge, trace, lifecycle};
         })()`);
-        await writeClockShot(
+        const noLeaseViolations =
+          ownership === 'no-lease'
+            ? noLeaseClockViolations(result.trace.events)
+            : null;
+        const clockAudit = await writeClockShot(
           join(shotDir, `borrowed-context-${ownership}.json`),
-          { provenance, capture: result },
+          { provenance, capture: result, noLeaseViolations },
           `borrowed-context-${ownership}`,
-          result.trace
+          result.trace,
+          ownership === 'no-lease' ? BORROWED_NO_LEASE_NO_CLOCK : null
         );
         assert.equal(
           result.lifecycle.state,
@@ -20470,16 +20563,32 @@ async function runScheduledPcmProof(
             !result.lifecycle.events.some((event) => event.name === 'suspend'),
             'no-lease context was suspended'
           );
+          assert.deepEqual(
+            noLeaseViolations,
+            [],
+            'no-lease clock premise failed'
+          );
           assert.ok(
-            backends.some(
-              (backend) =>
-                backend['backend'] === 'native' &&
-                typeof backend['reason'] === 'string' &&
-                backend['reason'].length > 0
+            result.trace.events.some(
+              (entry) => entry.kind === 'play' && entry.mediaType === 'AUDIO'
             ),
-            'borrowed context without a lease did not select explicit native compatibility'
+            'no-lease native compatibility did not play an audio element'
+          );
+          assert.ok(
+            result.trace.audio
+              .flatMap((chunk) => chunk.channels[0] ?? [])
+              .some((value) => Math.abs(value) > 0.001),
+            'no-lease native compatibility output was silent'
+          );
+          assert.ok(
+            !result.trace.audioOverflow && !result.trace.eventsOverflow,
+            'no-lease trace overflow'
           );
         } else {
+          assert.ok(
+            clockAudit.nativeReads > 0 && clockAudit.noDataReason === null,
+            'owner-leased borrowed context recorded no native clock read'
+          );
           assert.ok(
             result.lifecycle.events.some((event) => event.name === 'acquire') &&
               result.lifecycle.events.some((event) => event.name === 'release'),
