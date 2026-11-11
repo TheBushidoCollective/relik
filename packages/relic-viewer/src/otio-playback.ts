@@ -4506,7 +4506,11 @@ export function createOtioPlayback(
     const readBegin = presentClockMs();
     const contextBefore = run.context.currentTime;
     let stamp: AudioTimestamp | null = null;
-    pcmProof('clock-site', run.generation, { site: 'commit', phase: 'read' });
+    pcmProof('clock-site', run.generation, {
+      site: 'commit',
+      phase: 'read',
+      lastAccepted: run.outputClock.lastAccepted,
+    });
     try {
       stamp = run.context.getOutputTimestamp();
     } catch {}
@@ -4895,6 +4899,7 @@ export function createOtioPlayback(
       pcmProof('clock-site', run.generation, {
         site: 'select-epoch',
         phase: 'read',
+        lastAccepted: run.outputClock.lastAccepted,
       });
       try {
         stamp = run.context.getOutputTimestamp();
@@ -5456,6 +5461,7 @@ export function createOtioPlayback(
         pcmProof('clock-site', oldRun.generation, {
           site: 'recovery-bridge',
           phase: 'read',
+          lastAccepted: fork.lastAccepted,
         });
         try {
           stamp = context.getOutputTimestamp();

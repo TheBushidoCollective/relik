@@ -118,6 +118,10 @@ export const otioProofTracePrelude = String.raw`(() => {
   // advanced by perfUs. Injected reads are marked injected and are never native evidence.
   // A continuous context hold affects only re-reads and releases at the next
   // performance timestamp, so the first accepted read remains native.
+  // A site hold makes that site's read a held read of the clock it observes: the last accepted
+  // pair named on the site's read marker, with contextTime advanced by deltaUs at the same
+  // performanceTime. It then holds every read of that performanceTime and releases at the next
+  // one, so no later read falls below it.
   let clockHold = null;
   let siteHold = null;
   let realPairByPerf = new Map();
@@ -133,30 +137,33 @@ export const otioProofTracePrelude = String.raw`(() => {
       const nativeFinite = native !== null && Number.isFinite(native.contextTime) && Number.isFinite(native.performanceTime);
       let result = native === null ? {contextTime: NaN, performanceTime: NaN} : native;
       let hold = null;
-      // A recovery hold must repeat the last returned native stamp. If the
-      // clock advanced, leave the real sample intact and try the next site read.
-      const recoveryHoldNotReady = nativeFinite && clockHold?.site === 'recovery-bridge' &&
-        native.performanceTime !== latestReturned?.performanceTime;
-      if (recoveryHoldNotReady) {
-        siteHold = clockHold;
+      let applied = null;
+      if (clockHold?.once) {
+        const site = clockHold;
         clockHold = null;
-      }
-      const continuousCtx = clockHold?.kind === 'ctx' && !clockHold.once;
-      const reread = nativeFinite && native.performanceTime === latestReturned?.performanceTime;
-      if (continuousCtx && nativeFinite && !reread && clockHold.releasing) clockHold = null;
-      const applied = nativeFinite && !(continuousCtx && !reread) ? clockHold : null;
-      if (applied) {
-        if (!realPairByPerf.has(native.performanceTime)) realPairByPerf.set(native.performanceTime, native.contextTime);
-        if (applied.kind === 'ctx') {
-          hold = {contextTime: Math.max(realPairByPerf.get(native.performanceTime) + applied.deltaUs / 1e6, latestRealContext ?? -Infinity), performanceTime: native.performanceTime};
-        } else {
-          const previous = latestReturned ?? native;
-          hold = {contextTime: previous.contextTime, performanceTime: previous.performanceTime + applied.perfUs / 1000};
+        if (!nativeFinite) siteHold = {site: site.site, kind: 'ctx', deltaUs: site.deltaUs, perfUs: null};
+        else {
+          applied = site;
+          hold = {contextTime: site.anchor.contextTime + site.deltaUs / 1e6, performanceTime: site.anchor.performanceTime};
+          realPairByPerf.set(hold.performanceTime, site.anchor.contextTime);
+          clockHold = {kind: 'ctx', site: site.site, deltaUs: site.deltaUs, releasing: true};
+          result = hold;
+          recordEvent('clock-site-hold-consumed', null, {site: site.site, kind: 'ctx', deltaUs: site.deltaUs, perfUs: null, contextTime: hold.contextTime, performanceTime: hold.performanceTime, anchor: site.anchor});
         }
-        result = hold;
-        if (applied.once) {
-          clockHold = null;
-          recordEvent('clock-site-hold-consumed', null, {site: applied.site, kind: applied.kind, deltaUs: applied.deltaUs ?? null, perfUs: applied.perfUs ?? null, contextTime: hold.contextTime, performanceTime: hold.performanceTime});
+      } else {
+        const continuousCtx = clockHold?.kind === 'ctx' && !clockHold.once;
+        const reread = nativeFinite && native.performanceTime === latestReturned?.performanceTime;
+        if (continuousCtx && nativeFinite && !reread && clockHold.releasing) clockHold = null;
+        applied = nativeFinite && !(continuousCtx && !reread) ? clockHold : null;
+        if (applied) {
+          if (!realPairByPerf.has(native.performanceTime)) realPairByPerf.set(native.performanceTime, native.contextTime);
+          if (applied.kind === 'ctx') {
+            hold = {contextTime: Math.max(realPairByPerf.get(native.performanceTime) + applied.deltaUs / 1e6, latestRealContext ?? -Infinity), performanceTime: native.performanceTime};
+          } else {
+            const previous = latestReturned ?? native;
+            hold = {contextTime: previous.contextTime, performanceTime: previous.performanceTime + applied.perfUs / 1000};
+          }
+          result = hold;
         }
       }
       if (nativeFinite) latestRealContext = native.contextTime;
@@ -316,8 +323,11 @@ export const otioProofTracePrelude = String.raw`(() => {
         pcmReleaseChannel.port2.postMessage(0);
       }
       if (args[1]?.event === 'clock-site' && args[1]?.phase === 'read' && siteHold !== null && siteHold.site === args[1].site) {
-        clockHold = {...siteHold, once:true};
-        siteHold = null;
+        const anchor = args[1].lastAccepted;
+        if (Number.isFinite(anchor?.contextTime) && Number.isFinite(anchor?.performanceTime)) {
+          clockHold = {...siteHold, once:true, anchor:{contextTime:anchor.contextTime, performanceTime:anchor.performanceTime}};
+          siteHold = null;
+        }
       }
       if (args[1]?.event === 'recovery-render-closed') recoveryClosureSeen=true;
       if (args[1]?.event === 'recovery-selection') recoverySelection=args[1];
@@ -987,7 +997,6 @@ export const otioProofTracePrelude = String.raw`(() => {
       if (spec === null) { siteHold = null; return null; }
       if (!spec || !['select-epoch', 'commit', 'recovery-bridge'].includes(spec.site)) throw new Error('unknown clock site');
       if (Number.isFinite(spec.deltaUs) && spec.deltaUs >= 0 && spec.deltaUs < 1e6) siteHold = {site:spec.site, kind:'ctx', deltaUs:spec.deltaUs, perfUs:null};
-      else if (Number.isFinite(spec.perfUs) && spec.perfUs > 0) siteHold = {site:spec.site, kind:'perf', deltaUs:null, perfUs:spec.perfUs};
       else throw new Error('invalid site clock hold');
       return {site:siteHold.site, kind:siteHold.kind, deltaUs:siteHold.deltaUs, perfUs:siteHold.perfUs};
     },

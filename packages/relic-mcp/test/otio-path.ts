@@ -20877,8 +20877,9 @@ async function runScheduledPcmProof(
       }
     }
     // Per-site clock controls. A one-shot 86 us hold lands on the single read that one site makes.
-    // The site's consumed stamp must equal lastAccepted and must be native. A raw-stamp substitution
-    // makes the consumed stamp the held read, which the audit fails as used-held-read.
+    // The hold is that site clock's lastAccepted +86 us at its performanceTime, and it is held through
+    // that performanceTime. The site's consumed stamp must equal lastAccepted and must be native. A
+    // raw-stamp substitution makes the consumed stamp the held read, which the audit fails as used-held-read.
     for (const control of [
       { label: 'site-select-epoch', site: 'select-epoch', recovery: false },
       { label: 'site-commit', site: 'commit', recovery: false },
@@ -20927,7 +20928,7 @@ async function runScheduledPcmProof(
           if (root.dataset.playing === 'true') button.click();
           return {start, armed, playEdge, trace, playing};
         })()`);
-        const clockAudit = await writeClockShot(
+        await writeClockShot(
           join(shotDir, `scheduled-${control.label}.json`),
           { provenance, capture: fault },
           control.label,
@@ -20942,8 +20943,35 @@ async function runScheduledPcmProof(
           consumed.length >= 1,
           `${control.label}: the one-shot hold never reached a ${control.site} read`
         );
+        const consumedValue = consumed[0]!.value as Record<string, unknown>;
+        const held = clockStamp(consumedValue);
+        const anchor = clockStamp(consumedValue['anchor']);
+        const pcm = fault.trace.events
+          .filter((entry) => entry.kind === 'scheduled-pcm')
+          .map((entry) => entry.value as Record<string, unknown>);
         assert.ok(
-          clockAudit.siteUses >= 1,
+          held !== null &&
+            anchor !== null &&
+            pcm.some((value) => {
+              const stamp = clockStamp(value);
+              const last = clockStamp(value['lastAccepted']);
+              return (
+                value['event'] === 'clock-hold' &&
+                stamp !== null &&
+                last !== null &&
+                sameClockStamp(stamp, held) &&
+                sameClockStamp(last, anchor)
+              );
+            }),
+          `${control.label}: the ${control.site} read was not judged a held read of its last accepted pair`
+        );
+        assert.ok(
+          pcm.some(
+            (value) =>
+              value['event'] === 'clock-site' &&
+              value['phase'] === 'use' &&
+              value['site'] === control.site
+          ),
           `${control.label}: ${control.site} never reported the stamp it consumed`
         );
         if (control.recovery) {
