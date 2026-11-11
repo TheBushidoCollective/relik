@@ -13706,17 +13706,25 @@ async function calibratePostGainTap(
     'secondary_b.mp4',
   ])
     await cp(join(fixtureDir, 'media', name), join(media, name));
-  const published = await callMcp('relic_publish', {
-    path: directory,
-    title: 'OTIO playback boundary proof',
-    cover: false,
-  });
-  const relicId = String(published['relic_id'] ?? '');
-  const url = String(published['url'] ?? published['link'] ?? '');
-  assert.ok(
-    relicId && url.startsWith(origin) && url.includes('#'),
-    'boundary fixture publish failed'
-  );
+  let url: string;
+  if (interactionOnly) {
+    const published = await callMcp('relic_publish', {
+      path: directory,
+      title: 'OTIO playback boundary proof',
+      cover: false,
+    });
+    const relicId = String(published['relic_id'] ?? '');
+    url = String(published['url'] ?? published['link'] ?? '');
+    assert.ok(
+      relicId && url.startsWith(origin) && url.includes('#'),
+      'boundary fixture publish failed'
+    );
+  } else {
+    url = await publishLegacyDirectory(
+      directory,
+      'OTIO playback boundary proof'
+    );
+  }
   const browser = await openBrowser(url, sessionToken, {
     label: interactionOnly ? 'interaction-only' : 'post-gain-calibration',
     recordProofTrace: !interactionOnly,
@@ -13729,6 +13737,8 @@ async function calibratePostGainTap(
       mobile: false,
     });
     await waitReady(browser);
+    if (!interactionOnly)
+      await assertLegacyProgramState(browser, 'post-gain-calibration');
     const provenance = await proofProvenance(browser);
     if (!interactionOnly) {
       const stopCast = await browser.startScreencast();
@@ -14183,13 +14193,17 @@ async function runNativeAudioCompatibilityProof(
     join(directory, 'content.otio'),
     document.replaceAll('media/indexed-stereo.wav', 'media/indexed-stereo.mp3')
   );
-  const url = await publishDecoderDirectory('native-compatibility', directory);
+  const url = await publishLegacyDirectory(
+    directory,
+    'OTIO legacy native-compatibility'
+  );
   const browser = await openBrowser(url, sessionToken, {
     label: 'native-audio-compatibility',
     recordProofTrace: true,
   });
   try {
     await waitReady(browser);
+    await assertLegacyProgramState(browser, 'native-compatibility');
     const provenance = await proofProvenance(browser);
     const capture = await browser.evaluate<MovingTrace>(`(async () => {
       const sleep = ms => { const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, ms); return promise; };
@@ -14902,7 +14916,7 @@ async function runScheduledPcmProof(
     `OTIO legacy scheduled-pcm ${rate}`
   );
   const coldUrl = await publishColdBoundaryDocument();
-  await runFocusOnlyPublishCheck(sessionToken, directory);
+  // Linux focus-only publish is asserted once, at the top of the composition stages.
   await runColdStartProof(coldUrl, sessionToken, rate);
   const browser = await openBrowser(url, sessionToken, {
     label: `scheduled-pcm-${rate}`,
@@ -18311,6 +18325,17 @@ try {
     console.log('OTIO_DECODER_OK');
     throw new DecoderOnlyComplete();
   }
+  // Real new-publish output, asserted before any composition proof: on Linux it must be
+  // focus-only with its reason; on macOS it must be playable. Neither branch skips.
+  await runFocusOnlyPublishCheck(
+    sessionToken,
+    fileURLToPath(
+      new URL(
+        '../../relic-format/test/fixtures/otio/scheduled-audio.otiod/',
+        import.meta.url
+      )
+    )
+  );
   await runNativeAudioCompatibilityProof(sessionToken);
   await runScheduledPcmProof(sessionToken);
   if (clockProofMode !== 'long')
