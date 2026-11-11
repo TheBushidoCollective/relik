@@ -162,7 +162,7 @@ describe('output clock admission', () => {
       reason: 'runtime-window-cap',
     });
   });
-  test('recovery inherits actual fresh samples but requires a new advancing read', () => {
+  test('recovery re-reads the newest inherited stamp once after the request', () => {
     const c = ready();
     c.arm();
     c.start();
@@ -175,11 +175,40 @@ describe('output clock admission', () => {
     );
     expect(() => fork!.arm()).toThrow();
     expect(
-      fork!.observe({ ...sample(70), readBegin: 1072, readEnd: 1073 }).reason
+      fork!.observe({ ...sample(70), readBegin: 1072, readEnd: 1073 })
+    ).toMatchObject({ status: 'calibrated', reason: 'accepted' });
+    expect(
+      fork!.observe({ ...sample(70), readBegin: 1073, readEnd: 1074 }).reason
     ).toBe('duplicate');
-    expect(() => fork!.arm()).toThrow();
-    expect(fork!.observe(sample(80)).status).toBe('calibrated');
     fork!.arm();
+  });
+  test('a playback pre-read cannot change recovery evidence or its bounds', () => {
+    const parent = (takeClosingStamp: boolean) => {
+      const c = ready();
+      c.arm();
+      c.start();
+      for (const t of takeClosingStamp ? [50, 60, 70] : [50, 60])
+        c.observe(sample(t));
+      return c;
+    };
+    const read = { ...sample(70), readBegin: 1072, readEnd: 1073 };
+    const taken = parent(true).forkForRequest(1071, 1071)!;
+    const untaken = parent(false).forkForRequest(1071, 1071)!;
+    expect(taken.observe(read)).toEqual(untaken.observe(read));
+    expect(taken.lastAccepted).toEqual(untaken.lastAccepted);
+    expect(taken.state).toBe('calibrated');
+    const older = parent(true).forkForRequest(1071, 1071)!;
+    expect(
+      older.observe({ ...sample(60), readBegin: 1072, readEnd: 1073 }).reason
+    ).toBe('regression');
+    const early = parent(true).forkForRequest(1071, 1071)!;
+    expect(
+      early.observe({ ...sample(70), readBegin: 1070, readEnd: 1073 }).reason
+    ).toBe('invalid-bracket');
+    const stale = parent(true).forkForRequest(1071, 1071)!;
+    expect(
+      stale.observe({ ...sample(70), readBegin: 1121, readEnd: 1121 }).reason
+    ).toBe('stale');
   });
   test('60 Hz observations support recovery without widening the runtime window', () => {
     const c = ready();
@@ -687,14 +716,14 @@ describe('recovery fork at the recorded starvation close', () => {
         [26855.900000000023, 26866.100000000035, 26876, 26885.79999999999]
       );
       expect(() => fork!.arm()).toThrow();
-      // Re-reading the last inherited stamp is not a new advance.
+      // A post-request re-read counts once; the 29.9 ms span is still short.
       expect(
         fork!.observe({
           ...closingRead(),
           contextTime: 26.07438983333333,
           performanceTime: 26885.79999999999,
-        }).reason
-      ).toBe('duplicate');
+        })
+      ).toMatchObject({ status: 'calibrating', reason: 'accepted' });
       expect(() => fork!.arm()).toThrow();
       // 26896 - 26855.9 = 40.1 ms with four advances.
       expect(fork!.observe(closingRead())).toMatchObject({

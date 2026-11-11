@@ -160,6 +160,8 @@ export class OutputClock {
   // request, completes calibration under the rule every clock uses: minAdvances
   // advances spanning minWindowMs. Only samples within freshnessMs of that
   // read's readEnd count, so inherited samples age out instead of carrying over.
+  // A playback read can take the closing stamp before the request. Its first
+  // valid re-read after the request counts once as that stamp's fork read.
   forkForRequest(
     requestMs: number,
     nowMs: number,
@@ -229,6 +231,15 @@ export class OutputClock {
       contextTime,
       performanceTime,
     ];
+    const rereadInherited =
+      this.evidence !== null &&
+      this.last !== null &&
+      this.last === this.inheritedObservations.at(-1) &&
+      contextTime === this.last.contextTime &&
+      performanceTime === this.last.performanceTime;
+    const last = rereadInherited
+      ? (this.evidence!.at(-2)?.observation ?? null)
+      : this.last;
     if (terminal) reason = 'terminal';
     else if (priorState !== 'playing' && readEnd > this.deadline) {
       this.invalidate('deadline');
@@ -260,17 +271,17 @@ export class OutputClock {
     else if (readEnd - performanceTime! > this.policy.freshnessMs)
       reason = 'stale';
     else if (
-      this.last &&
+      last &&
       (contextTime! <
-        Math.max(this.last.contextTime!, this.heldContextTime ?? -Infinity) ||
-        performanceTime! < this.last.performanceTime!)
+        Math.max(last.contextTime!, this.heldContextTime ?? -Infinity) ||
+        performanceTime! < last.performanceTime!)
     )
       reason = 'regression';
     else if (
-      this.last &&
-      performanceTime === this.last.performanceTime &&
-      contextTime !== this.last.contextTime &&
-      Math.round(1e6 * (contextTime! - this.last.contextTime!)) <
+      last &&
+      performanceTime === last.performanceTime &&
+      contextTime !== last.contextTime &&
+      Math.round(1e6 * (contextTime! - last.contextTime!)) <
         2 * PERFORMANCE_RESOLUTION_US
     ) {
       reason = 'sub-resolution';
@@ -279,15 +290,15 @@ export class OutputClock {
         contextTime!
       );
     } else if (
-      this.last &&
-      (contextTime === this.last.contextTime) !==
-        (performanceTime === this.last.performanceTime)
+      last &&
+      (contextTime === last.contextTime) !==
+        (performanceTime === last.performanceTime)
     )
       reason = 'partial-advance';
     else if (
-      this.last &&
-      contextTime === this.last.contextTime &&
-      performanceTime === this.last.performanceTime
+      last &&
+      contextTime === last.contextTime &&
+      performanceTime === last.performanceTime
     )
       reason = 'duplicate';
     else {
@@ -329,6 +340,7 @@ export class OutputClock {
         this.min = min;
         this.max = max;
         if (this.evidence) {
+          if (rereadInherited) this.evidence.pop();
           while (
             this.evidence.length > 0 &&
             readEnd - this.evidence[0]!.time > this.policy.freshnessMs
