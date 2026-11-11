@@ -4469,14 +4469,23 @@ export function createOtioPlayback(
             ? 'resource'
             : 'error';
     void (async () => {
-      if (run.command) await run.command;
-      if (pcmRun !== run || run.stopped) return;
       const frontier = run.frontierFrame;
       if (frontier === null) {
         failScheduledAudio('transport has no committed frontier');
         return;
       }
       const boundary = Math.min(stopFrame, frontier);
+      // Reserve the source stop before the gate round trip consumes its lead.
+      try {
+        run.scheduler.stopAtFrame(boundary);
+      } catch (error) {
+        failScheduledAudio(
+          `PCM source stop failed: ${error instanceof Error ? error.message : String(error)}`
+        );
+        return;
+      }
+      if (run.command) await run.command;
+      if (pcmRun !== run || run.stopped) return;
       const ack = await run.gate.stop(run.generation, boundary);
       if (pcmRun !== run || run.stopped) return;
       if (!ack.accepted || ack.throughFrame !== boundary) {
@@ -4487,11 +4496,6 @@ export function createOtioPlayback(
       }
       run.frontierFrame = boundary;
       if (pcmPlayIntent) stagePcmCandidate(run, boundary);
-      try {
-        run.scheduler.stopAtFrame(boundary);
-      } catch {
-        failScheduledAudio('PCM source stop failed');
-      }
     })().catch(() => {
       if (pcmRun === run) failScheduledAudio('transport stop failed');
     });
