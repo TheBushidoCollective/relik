@@ -4371,6 +4371,13 @@ export function createOtioPlayback(
         }
         if (pair.contextTime * run.admission.rate >= closedFrame) {
           run.drainObserved = true;
+          if (coldProofGlobal.__otioProofPcm === true)
+            pcmProof('drain-observed', run.generation, {
+              boundaryFrame: closedFrame,
+              contextTime: pair.contextTime,
+              rawContextTime: stamp.contextTime,
+              reason: result.reason,
+            });
           if (run.handoffStarted && pcmPlayIntent) {
             run.resolveDrain();
             pcmProof('recovery-old-drained', run.generation, {
@@ -7755,6 +7762,16 @@ export function createOtioPlayback(
       }
       outputTime =
         pair.contextTime + Math.max(0, readEnd - pair.performanceTime) / 1000;
+      if (coldProofGlobal.__otioProofPcm === true)
+        pcmProof('tick-output', run.generation, {
+          outputTime,
+          readEnd,
+          reason: result.reason,
+          contextTime: pair.contextTime,
+          performanceTime: pair.performanceTime,
+          rawContextTime: stamp.contextTime,
+          rawPerformanceTime: stamp.performanceTime,
+        });
     }
     vsyncTracker.recordTick(now);
     if (renderInFlight || isBuffering || isStarting) {

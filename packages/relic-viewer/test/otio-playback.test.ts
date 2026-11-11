@@ -1827,6 +1827,12 @@ describe('otio playback controller', () => {
     let leaseReleases = 0;
     let timerId = 0;
     const timers = new Map<number, { at: number; callback: () => void }>();
+    // Fake held read: at fromOutputFrame, every read after the first repeats that
+    // first read's performanceTime and promotes contextTime by deltaFrames.
+    let holdRead: { fromOutputFrame: number; deltaFrames: number } | null =
+      null;
+    let holdPerf: number | null = null;
+    let heldReads = 0;
     const descriptors = propertyDescriptors(globalThis, [
       'AudioContext',
       'Worker',
@@ -2028,6 +2034,17 @@ describe('otio playback controller', () => {
       }
       getOutputTimestamp() {
         this.timestampReads.push(wall);
+        if (holdRead && outputFrame === holdRead.fromOutputFrame) {
+          if (holdPerf !== null) {
+            heldReads++;
+            return {
+              contextTime:
+                (outputFrame + holdRead.deltaFrames) / this.sampleRate,
+              performanceTime: holdPerf,
+            };
+          }
+          holdPerf = outputWallOffset + (outputFrame * 1000) / sampleRate;
+        }
         this.timestampTrace.push({
           wall,
           renderFrame,
@@ -2777,6 +2794,16 @@ describe('otio playback controller', () => {
       },
       get outputFrame() {
         return outputFrame;
+      },
+      setHoldRead(
+        value: { fromOutputFrame: number; deltaFrames: number } | null
+      ) {
+        holdRead = value;
+        holdPerf = null;
+        heldReads = 0;
+      },
+      get heldReadCount() {
+        return heldReads;
       },
     };
   }
@@ -4597,6 +4624,128 @@ describe('otio playback controller', () => {
         rate: 48000,
       });
     } finally {
+      fixture.restore();
+    }
+  });
+
+  // Taps the PCM proof stream: pcmProof logs each event as console.log('OTIO_PROOF_PCM', event).
+  function tapPcmProof() {
+    const events: Array<Record<string, unknown>> = [];
+    const originalLog = console.log;
+    console.log = (...args: unknown[]) => {
+      if (args[0] === 'OTIO_PROOF_PCM')
+        events.push(args[1] as Record<string, unknown>);
+      originalLog(...args);
+    };
+    return {
+      events,
+      restore: () => {
+        console.log = originalLog;
+      },
+    };
+  }
+
+  test('a held clock read in the drain window cannot complete the drain early', async () => {
+    const tap = tapPcmProof();
+    const fixture = independentPcmFixture(false, false, undefined, {
+      proofBudget: true,
+    });
+    try {
+      await fixture.start();
+      expect(fixture.commands.find((c) => c.type === 'arm')).toBeDefined();
+      fixture.playback.pause();
+      await fixture.flush();
+      const stop = fixture.commands.find((c) => c.type === 'stop');
+      expect(stop).toBeDefined();
+      const boundary = Number(stop!.stopFrame);
+      // Accepted output sits 4 frames short of the stop; the held stamp sits 4 past it.
+      const accepted = boundary - 4;
+      const deltaFrames = 8; // 167 us at 48 kHz, inside the 200 us hold rule
+      fixture.setHoldRead({ fromOutputFrame: accepted, deltaFrames });
+      await fixture.advance(fixture.outputWall(accepted), boundary, accepted);
+      for (let i = 0; i < 3; i++)
+        await fixture.advance(fixture.wall + 8, boundary, accepted);
+      // Reachability: held reads were served while the drain waited.
+      expect(fixture.heldReadCount).toBeGreaterThan(0);
+      // Nothing completed while only the held stamp had crossed the stop.
+      expect(tap.events.filter((e) => e.event === 'drain-observed')).toEqual(
+        []
+      );
+      await fixture.advance(
+        fixture.outputWall(boundary + 384),
+        boundary + 384,
+        boundary + 384
+      );
+      await fixture.advance(
+        fixture.outputWall(boundary + 384) + 8,
+        boundary + 384 + 384,
+        boundary + 384
+      );
+      const observed = tap.events.filter((e) => e.event === 'drain-observed');
+      expect(observed.length).toBeGreaterThan(0);
+      const first = observed[0]!;
+      // The boundary must sit in (accepted, held], or the window tests nothing.
+      expect(Number(first.boundaryFrame)).toBeGreaterThan(accepted);
+      expect(Number(first.boundaryFrame)).toBeLessThanOrEqual(
+        accepted + deltaFrames
+      );
+      // Completion uses the accepted read past the stop, never the held stamp.
+      expect(first.contextTime).toBe((boundary + 384) / 48000);
+      expect(first.rawContextTime).toBe(first.contextTime);
+      expect(fixture.playback.getState().playing).toBe(false);
+    } finally {
+      tap.restore();
+      fixture.restore();
+    }
+  });
+
+  test('a held clock read on a playing tick maps output time from the accepted pair', async () => {
+    const tap = tapPcmProof();
+    const fixture = independentPcmFixture(false, false, undefined, {
+      proofBudget: true,
+    });
+    try {
+      await fixture.start();
+      const frame = fixture.outputFrame + 384;
+      await fixture.advance(
+        fixture.outputWall(frame),
+        fixture.renderFrame + 384,
+        frame
+      );
+      const deltaFrames = 8;
+      fixture.setHoldRead({ fromOutputFrame: frame, deltaFrames });
+      const perf = fixture.outputWall(frame);
+      for (let i = 0; i < 3; i++)
+        await fixture.advance(
+          fixture.wall + 8,
+          fixture.renderFrame + 384,
+          frame
+        );
+      // Reachability: a playing tick consumed a held read.
+      expect(fixture.heldReadCount).toBeGreaterThan(0);
+      await fixture.advance(
+        fixture.outputWall(frame + 384),
+        fixture.renderFrame + 768,
+        frame + 384
+      );
+      const ticks = tap.events.filter((e) => e.event === 'tick-output');
+      const held = ticks.filter((e) => e.reason === 'sub-resolution');
+      expect(held.length).toBeGreaterThan(0);
+      for (const e of held) {
+        // The raw held stamp is ahead of the accepted pair; mapping uses the accepted one.
+        expect(e.rawContextTime).toBe((frame + deltaFrames) / 48000);
+        expect(e.contextTime).toBe(frame / 48000);
+        expect(e.performanceTime).toBe(perf);
+        expect(e.outputTime).toBe(
+          frame / 48000 + Math.max(0, Number(e.readEnd) - perf) / 1000
+        );
+      }
+      // Normal reads map from their own stamp.
+      for (const e of ticks.filter((t) => t.reason !== 'sub-resolution'))
+        expect(e.contextTime).toBe(e.rawContextTime);
+      expect(fixture.playback.getState().playing).toBe(true);
+    } finally {
+      tap.restore();
       fixture.restore();
     }
   });
