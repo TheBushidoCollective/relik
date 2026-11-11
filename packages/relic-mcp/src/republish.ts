@@ -405,14 +405,31 @@ export async function republish(
   }
 
   // The program and the server's cap are read after the comment gate, so a
-  // refused republish never reaches the network for them. The program goes in
-  // before encryption. A non-OTIO republish makes no cap request.
+  // refused republish never reaches the network for them. An OTIO republish
+  // checks the source against the cap before any render, exactly as publish
+  // does, so both refuse the same file with the same reason. A non-OTIO
+  // republish makes no cap request.
   const otio = isOtioBundleName(source.basename);
-  const sizeLimit = otio
-    ? challengeSizeLimit(
-        await postJson(deps, `${deps.serviceOrigin}/api/challenge`, {})
-      )
-    : Number.MAX_SAFE_INTEGER;
+  const challenge = otio
+    ? await postJson(deps, `${deps.serviceOrigin}/api/challenge`, {})
+    : undefined;
+  const sizeLimit =
+    challenge === undefined
+      ? Number.MAX_SAFE_INTEGER
+      : challengeSizeLimit(challenge);
+  const sizeBasis = String(challenge?.['size_basis']);
+  if (otio && source.bytes.length > sizeLimit) {
+    throw new PublishError(
+      'local_size_precheck_failed',
+      `${source.basename} is ${source.bytes.length} bytes, over the ` +
+        `${sizeLimit}-byte cap`,
+      {
+        size_limit_bytes: sizeLimit,
+        declared_size_bytes: source.bytes.length,
+        size_basis: sizeBasis,
+      }
+    );
+  }
   const programBuild = await buildProgramArchive({
     archive: source.bytes,
     sourceName: source.basename,
@@ -426,7 +443,11 @@ export async function republish(
       'local_size_precheck_failed',
       `${source.basename} with its program is ${programBuild.length} bytes, over the ` +
         `${sizeLimit}-byte cap`,
-      { size_limit_bytes: sizeLimit, declared_size_bytes: programBuild.length }
+      {
+        size_limit_bytes: sizeLimit,
+        declared_size_bytes: programBuild.length,
+        size_basis: sizeBasis,
+      }
     );
   }
 

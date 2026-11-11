@@ -33,6 +33,7 @@ import {
   MAX_OTIO_PROGRAM_MANIFEST_BYTES,
   MAX_OTIO_PROGRAM_TIMELINES,
   MAX_ZIP_DIRECTORY_BYTES,
+  OTIO_DOCUMENT_MAX_BYTES,
   OTIO_PROGRAM_MANIFEST_ENTRY,
   OTIO_PROGRAM_MAX_BYTES,
   OTIO_PROGRAM_PROTOCOL,
@@ -172,6 +173,8 @@ export const BUILD_MESSAGES = {
     'the archive contains an entry whose name is not a canonical OTIO bundle path',
   archiveUnreadable: 'the archive cannot be read as an OTIO bundle',
   documentUnreadable: 'the document in the archive cannot be read',
+  entryTooLarge:
+    'a DEFLATE entry is larger than 100 MiB compressed or expanded, which a reader cannot load, so the publish is refused',
 } as const;
 
 /** Refuse the publish with an exact reason. Nothing is degraded on this path. */
@@ -483,6 +486,20 @@ async function censusArchive(
     }
     if (!isCanonicalFile(name) || info.rawName !== name) {
       refuse('unsafe-entry', BUILD_MESSAGES.unsafeEntry);
+    }
+    // A reader loads a DEFLATE entry whole, and a range source refuses one
+    // over 100 MiB compressed or expanded. A STORED entry is streamed when it
+    // is digested, so its size is not a loading limit: it is never refused here.
+    if (info.method === 8) {
+      const declared = Math.max(info.compressedSize, info.uncompressedSize);
+      if (declared > OTIO_DOCUMENT_MAX_BYTES) {
+        refuse('entry-too-large', BUILD_MESSAGES.entryTooLarge, {
+          limit: 'entry-bytes',
+          size_limit_bytes: OTIO_DOCUMENT_MAX_BYTES,
+          declared_size_bytes: declared,
+          size_basis: 'deflate-entry',
+        });
+      }
     }
     let data: Uint8Array;
     try {
@@ -1088,11 +1105,15 @@ export async function buildProgramArchive(
     mu0 +
     timelineCount * PROGRAM_RECORD_RESERVE_BYTES +
     RENDERER_IDENTITY_RESERVE_BYTES;
+  // The one-program precheck: the entry count, the directory and the archive
+  // must leave room for one program beside the reserved manifest. The last
+  // timeline's name is the longest, so it is the worst case for the directory.
+  // Without that room no browser starts.
   const reserveBreak = brokenProgramLimit(budget, facts, {
     manifestBytes: reserved,
     manifestCompressedBytes: deflateRawBound(reserved),
-    programCount: 0,
-    programNameBytes: 0,
+    programCount: 1,
+    programNameBytes: utf8Length(otioProgramEntryName(timelineCount - 1)),
     programBytes: 0,
   });
   let contentText: string;

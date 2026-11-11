@@ -353,6 +353,76 @@ describe('OTIO bundling', () => {
     expect(result.bytes.buffer.byteLength).toBe(result.bytes.length);
   });
 
+  test('bundles an alternate media/ root and Unicode names byte-identically to buildZipArchive', async () => {
+    const dir = join(scratch, 'alt-unicode.otiod');
+    await mkdir(join(dir, 'media'), { recursive: true });
+    const unicodeName = 'café-日本語.mov';
+    const contentText = JSON.stringify(
+      timelineWithClips('alt', [
+        // The root has no clip.mp4, so it resolves through media/clip.mp4.
+        externalClip('alt', 'clip.mp4'),
+        externalClip('uni', `media/${unicodeName}`),
+      ])
+    );
+    await writeFile(join(dir, 'content.otio'), contentText);
+    await writeFile(join(dir, 'media', 'clip.mp4'), 'alt-root-bytes');
+    await writeFile(join(dir, 'media', unicodeName), 'unicode-bytes');
+
+    // Records every target handed to readInto, to prove each media read lands in the archive.
+    const targets: Uint8Array[] = [];
+    const files: FileReader = {
+      ...nodeFiles,
+      async openBundleRoot(path) {
+        const root = await nodeFiles.openBundleRoot(path);
+        return {
+          async openRegular(relativePath) {
+            const file = await root.openRegular(relativePath);
+            return {
+              size: file.size,
+              async readInto(target) {
+                targets.push(target);
+                return file.readInto(target);
+              },
+              close: () => file.close(),
+            };
+          },
+          close: () => root.close(),
+        };
+      },
+    };
+
+    const result = await bundleOtiod(dir, files);
+    const encoder = new TextEncoder();
+    // Entries sort by archive name: the Unicode name sorts before media/clip.mp4.
+    expect(result.bytes).toEqual(
+      buildZipArchive([
+        { name: 'content.otio', data: encoder.encode(contentText), method: 8 },
+        { name: 'version.txt', data: encoder.encode('1.0.0'), method: 8 },
+        {
+          name: `media/${unicodeName}`,
+          data: encoder.encode('unicode-bytes'),
+          method: 0,
+        },
+        {
+          name: 'media/clip.mp4',
+          data: encoder.encode('alt-root-bytes'),
+          method: 0,
+        },
+      ])
+    );
+
+    // content.otio is read into its own buffer. Each media read lands in an archive slot.
+    const archiveTargets = targets.filter(
+      (target) => target.buffer === result.bytes.buffer
+    );
+    expect(targets.length).toBe(3);
+    expect(archiveTargets.length).toBe(2);
+    expect(
+      archiveTargets.map((target) => target.length).sort((a, b) => a - b)
+    ).toEqual(['unicode-bytes'.length, 'alt-root-bytes'.length]);
+    expect(result.bytes.buffer.byteLength).toBe(result.bytes.length);
+  });
+
   test('refuses a media file whose size changes between the sizing and reading passes', async () => {
     const dir = join(scratch, 'resized.otiod');
     await mkdir(join(dir, 'media'), { recursive: true });
@@ -1457,14 +1527,11 @@ describe('OTIO bundling', () => {
       held = heldFile;
       await rename(heldPath, join(media, 'held-original.mp4'));
       await symlink(outsidePath, heldPath);
-      try {
-        const bytes = new Uint8Array(heldFile.size);
-        await heldFile.readInto(bytes);
-        expect(new TextDecoder().decode(bytes)).toBe('held bytes');
-      } catch {
-        // A platform may refuse the descriptor after a concurrent rename. It
-        // must never read the replacement path.
-      }
+      // The held descriptor still names the original inode, so it reads the
+      // original bytes. A refusal or a replacement read fails this test.
+      const bytes = new Uint8Array(heldFile.size);
+      await heldFile.readInto(bytes);
+      expect(new TextDecoder().decode(bytes)).toBe('held bytes');
     } finally {
       await held?.close();
       await root.close();
