@@ -110,15 +110,38 @@ export const otioProofTracePrelude = String.raw`(() => {
     return result;
   };
   const originalOutputTimestamp = AudioContext.prototype.getOutputTimestamp;
+  // Clock-hold injection (I5). A 'ctx' hold re-serves the first native pair that carried the
+  // current performanceTime, with contextTime advanced by deltaUs and never below the latest
+  // native contextTime. A 'perf' hold re-serves the latest returned pair with performanceTime
+  // advanced by perfUs. Injected reads are marked injected and are never native evidence.
+  let clockHold = null;
+  let realPairByPerf = new Map();
+  let latestRealContext = null;
+  let latestReturned = null;
   if (typeof originalOutputTimestamp === 'function') {
     AudioContext.prototype.getOutputTimestamp = function() {
       const before = performance.now(), currentBefore = this.currentTime;
-      const result = invalidControllerClock
-        ? {contextTime: NaN, performanceTime: NaN}
-        : originalOutputTimestamp.call(this);
+      const native = invalidControllerClock ? null : originalOutputTimestamp.call(this);
+      const nativeFinite = native !== null && Number.isFinite(native.contextTime) && Number.isFinite(native.performanceTime);
+      let result = native === null ? {contextTime: NaN, performanceTime: NaN} : native;
+      let hold = null;
+      if (nativeFinite && clockHold) {
+        if (!realPairByPerf.has(native.performanceTime)) realPairByPerf.set(native.performanceTime, native.contextTime);
+        if (clockHold.kind === 'ctx') {
+          hold = {contextTime: Math.max(realPairByPerf.get(native.performanceTime) + clockHold.deltaUs / 1e6, latestRealContext ?? -Infinity), performanceTime: native.performanceTime};
+        } else {
+          const previous = latestReturned ?? native;
+          hold = {contextTime: previous.contextTime, performanceTime: previous.performanceTime + clockHold.perfUs / 1000};
+        }
+        result = hold;
+      }
+      if (nativeFinite) latestRealContext = native.contextTime;
+      if (Number.isFinite(result.contextTime) && Number.isFinite(result.performanceTime))
+        latestReturned = {contextTime: result.contextTime, performanceTime: result.performanceTime};
       const currentAfter = this.currentTime, after = performance.now();
       recordEvent('audio-output-timestamp-observed', null, {before, after, currentBefore, currentAfter,
-        state:this.state, injected:invalidControllerClock,
+        state:this.state, injected:invalidControllerClock || hold !== null, hold:hold === null ? null : clockHold.kind,
+        native:nativeFinite ? {contextTime:native.contextTime, performanceTime:native.performanceTime} : null,
         output:{contextTime:result.contextTime, performanceTime:result.performanceTime}});
       return result;
     };
@@ -886,6 +909,13 @@ export const otioProofTracePrelude = String.raw`(() => {
     failNextPcm() { failNextPcm = true; },
     failNextSourceStart() { failNextSourceStart = true; },
     setInvalidControllerClock(value) { invalidControllerClock = Boolean(value); },
+    setClockHold(spec) {
+      if (spec === null) { clockHold = null; return null; }
+      if (spec && Number.isFinite(spec.deltaUs) && spec.deltaUs >= 0 && spec.deltaUs < 1e6) clockHold = {kind:'ctx', deltaUs:spec.deltaUs};
+      else if (spec && Number.isFinite(spec.perfUs) && spec.perfUs > 0) clockHold = {kind:'perf', perfUs:spec.perfUs};
+      else throw new Error('invalid clock hold');
+      return {kind:clockHold.kind, deltaUs:clockHold.deltaUs ?? null, perfUs:clockHold.perfUs ?? null};
+    },
     heldPcmCount() { return heldPcmResponses.length; },
     holdPcmResponses(value) {
       holdPcmResponses = Boolean(value);
@@ -944,6 +974,7 @@ export const otioProofTracePrelude = String.raw`(() => {
       const sampleFrame = await command(graph, 'start');
       visual.samples = []; visual.overflow = false; visual.active = true;
       events.length = 0; eventsOverflow = false; bankRecords.length = 0; bankOverflow = false;
+      realPairByPerf = new Map(); latestRealContext = null; latestReturned = null;
       if (!Number.isSafeInteger(++staleCaptureSerial)) throw new Error('stale capture id exhausted');
       activeStaleCaptureId = staleCaptureSerial; staleWindowStopped = false;
       recordEvent('clock-stale-window-requested', null, {captureId:activeStaleCaptureId});
@@ -1025,6 +1056,7 @@ export const otioProofTracePrelude = String.raw`(() => {
           terminated: Boolean(currentGate?.terminated), gateCaptureId: currentGate?.staleCaptureId ?? null});
       }
       activeStaleCaptureId = null;
+      clockHold = null;
       visual.active = false;
       clearInterval(startupMonitor); startupMonitor = null;
       bufferingObserver?.disconnect();

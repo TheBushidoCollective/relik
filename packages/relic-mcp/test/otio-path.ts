@@ -9790,6 +9790,300 @@ interface MovingTrace {
     sampleRate: number;
   };
 }
+
+// Clock evidence. The audit reads only what the proof wrapper recorded from the native output
+// clock, so a viewer bridge, hold or clock error is checked against reads Chromium returned.
+// Injected reads (I5) are counted and are never native evidence. A pair whose two reads straddle
+// a clock epoch spans two clock sessions, so it is counted, not classified. A shot with no native
+// clock reads must name why; an unnamed absence is a violation.
+const CLOCK_PAIR_EPS_US = 1e-3;
+const CLOCK_HOLD_LIMIT_US = 200;
+interface ClockStamp {
+  contextTime: number;
+  performanceTime: number;
+}
+interface ClockEvidence {
+  nativeReads: number;
+  injectedReads: number;
+  epochs: number;
+  pairs: number;
+  crossEpochPairs: number;
+  identical: number;
+  contextOnly: number;
+  performanceOnly: number;
+  bothAdvance: number;
+  regressions: number;
+  maxContextOnlyUs: number;
+  maxPerformanceOnlyUs: number;
+  maxContextAdvanceUs: number;
+  clockHolds: number;
+  holdsMatched: number;
+  epochBridges: number;
+  clockErrors: number;
+  violations: string[];
+}
+function clockStamp(value: unknown): ClockStamp | null {
+  if (!value || typeof value !== 'object') return null;
+  const record = value as Record<string, unknown>;
+  const contextTime = record['contextTime'];
+  const performanceTime = record['performanceTime'];
+  if (typeof contextTime !== 'number' || typeof performanceTime !== 'number')
+    return null;
+  if (!Number.isFinite(contextTime) || !Number.isFinite(performanceTime))
+    return null;
+  return { contextTime, performanceTime };
+}
+function sameClockStamp(a: ClockStamp, b: ClockStamp): boolean {
+  return (
+    a.contextTime === b.contextTime && a.performanceTime === b.performanceTime
+  );
+}
+function auditClockEvidence(
+  trace: Pick<MovingTrace['trace'], 'events'> | null
+): ClockEvidence {
+  const violations: string[] = [];
+  const native: Array<ClockStamp & { timestamp: number }> = [];
+  const observed: ClockStamp[] = [];
+  const pcmEvents: Array<Record<string, unknown>> = [];
+  const epochTimes: number[] = [];
+  let injectedReads = 0;
+  for (const entry of trace?.events ?? []) {
+    if (
+      entry.kind === 'audio-output-timestamp-observed' &&
+      entry.value &&
+      typeof entry.value === 'object'
+    ) {
+      const value = entry.value as Record<string, unknown>;
+      const injected = value['injected'] === true;
+      if (injected) injectedReads++;
+      const output = clockStamp(value['output']);
+      if (!output) continue;
+      observed.push(output);
+      if (!injected) native.push({ ...output, timestamp: entry.timestamp });
+    } else if (
+      entry.kind === 'scheduled-pcm' &&
+      entry.value &&
+      typeof entry.value === 'object'
+    ) {
+      const value = entry.value as Record<string, unknown>;
+      pcmEvents.push(value);
+      if (value['event'] === 'epoch') epochTimes.push(entry.timestamp);
+    }
+  }
+  if (native.length === 0) violations.push('no-native-clock-reads');
+  let identical = 0,
+    contextOnly = 0,
+    performanceOnly = 0,
+    bothAdvance = 0,
+    regressions = 0,
+    crossEpochPairs = 0;
+  let maxContextOnlyUs = 0,
+    maxPerformanceOnlyUs = 0,
+    maxContextAdvanceUs = 0;
+  for (let i = 1; i < native.length; i++) {
+    const a = native[i - 1]!,
+      b = native[i]!;
+    if (epochTimes.some((time) => time > a.timestamp && time <= b.timestamp)) {
+      crossEpochPairs++;
+      continue;
+    }
+    const dContextUs = (b.contextTime - a.contextTime) * 1e6;
+    const dPerformanceUs = (b.performanceTime - a.performanceTime) * 1e3;
+    if (
+      dContextUs < -CLOCK_PAIR_EPS_US ||
+      dPerformanceUs < -CLOCK_PAIR_EPS_US
+    ) {
+      regressions++;
+      continue;
+    }
+    maxContextAdvanceUs = Math.max(maxContextAdvanceUs, dContextUs);
+    const contextMoved = dContextUs > CLOCK_PAIR_EPS_US;
+    const performanceMoved = dPerformanceUs > CLOCK_PAIR_EPS_US;
+    if (!contextMoved && !performanceMoved) identical++;
+    else if (!performanceMoved) {
+      contextOnly++;
+      maxContextOnlyUs = Math.max(maxContextOnlyUs, dContextUs);
+      if (dContextUs >= CLOCK_HOLD_LIMIT_US)
+        violations.push(
+          `context-only-advance-${Math.round(dContextUs)}us@pair-${i}`
+        );
+    } else if (!contextMoved) {
+      performanceOnly++;
+      maxPerformanceOnlyUs = Math.max(maxPerformanceOnlyUs, dPerformanceUs);
+      if (b.contextTime > 0)
+        violations.push(
+          `performance-only-advance-${Math.round(dPerformanceUs)}us-with-context@pair-${i}`
+        );
+    } else bothAdvance++;
+  }
+  let clockHolds = 0,
+    holdsMatched = 0,
+    epochBridges = 0,
+    clockErrors = 0;
+  pcmEvents.forEach((value, index) => {
+    if (value['event'] === 'clock-hold') {
+      clockHolds++;
+      const label = `clock-hold#${index}`;
+      const held = clockStamp(value);
+      const last = clockStamp(value['lastAccepted']);
+      const deltaUs = value['deltaUs'];
+      if (
+        typeof deltaUs !== 'number' ||
+        !Number.isFinite(deltaUs) ||
+        deltaUs < 0 ||
+        deltaUs >= CLOCK_HOLD_LIMIT_US
+      )
+        violations.push(`${label}:delta-out-of-band`);
+      if (!held) violations.push(`${label}:held-read-missing`);
+      if (!last) violations.push(`${label}:last-accepted-missing`);
+      else if (!native.some((stamp) => sameClockStamp(stamp, last)))
+        violations.push(`${label}:last-accepted-unobserved`);
+      if (held) {
+        if (observed.some((stamp) => sameClockStamp(stamp, held)))
+          holdsMatched++;
+        else violations.push(`${label}:held-read-unobserved`);
+      }
+      if (held && last) {
+        const heldDeltaUs = (held.contextTime - last.contextTime) * 1e6;
+        if (held.performanceTime !== last.performanceTime)
+          violations.push(`${label}:performance-moved`);
+        if (heldDeltaUs < 0 || heldDeltaUs >= CLOCK_HOLD_LIMIT_US)
+          violations.push(`${label}:context-out-of-band`);
+        // deltaUs is rounded to whole microseconds by the viewer, so half a microsecond is the bound.
+        if (
+          typeof deltaUs === 'number' &&
+          Math.abs(heldDeltaUs - deltaUs) > 0.5
+        )
+          violations.push(`${label}:delta-mismatch`);
+      }
+    }
+    if (value['event'] === 'epoch' && 'bridge' in value) {
+      const label = `epoch#${index}`;
+      const bridge = clockStamp(value['bridge']);
+      if (!bridge) violations.push(`${label}:bridge-malformed`);
+      else {
+        epochBridges++;
+        if (!native.some((stamp) => sameClockStamp(stamp, bridge))) {
+          violations.push(
+            observed.some((stamp) => sameClockStamp(stamp, bridge))
+              ? `${label}:bridge-is-injected-read`
+              : `${label}:bridge-unobserved`
+          );
+        }
+      }
+    }
+    if (value['event'] === 'error') {
+      const code = String(value['code'] ?? '');
+      if (
+        value['stage'] === 'clock' ||
+        code.startsWith('audio output clock interrupted')
+      ) {
+        clockErrors++;
+        const label = `clock-error#${index}:${code}`;
+        if (!('lastAccepted' in value))
+          violations.push(`${label}:evidence-missing`);
+        else if (value['lastAccepted'] !== null) {
+          const last = clockStamp(value['lastAccepted']);
+          if (!last) violations.push(`${label}:last-accepted-malformed`);
+          else if (!native.some((stamp) => sameClockStamp(stamp, last)))
+            violations.push(`${label}:last-accepted-unobserved`);
+        }
+      }
+    }
+  });
+  return {
+    nativeReads: native.length,
+    injectedReads,
+    epochs: epochTimes.length,
+    pairs: Math.max(0, native.length - 1),
+    crossEpochPairs,
+    identical,
+    contextOnly,
+    performanceOnly,
+    bothAdvance,
+    regressions,
+    maxContextOnlyUs,
+    maxPerformanceOnlyUs,
+    maxContextAdvanceUs,
+    clockHolds,
+    holdsMatched,
+    epochBridges,
+    clockErrors,
+    violations,
+  };
+}
+function assertClockAudit(audit: ClockEvidence, label: string): void {
+  assert.deepEqual(
+    audit.violations,
+    [],
+    `${label} clock evidence failed audit: ${audit.violations.join(', ')}`
+  );
+}
+interface ClockShot extends ClockEvidence {
+  label: string;
+  noDataReason: string | null;
+}
+// Every scheduled-pcm shot carries its clock audit. A shot with no native clock reads must name
+// the reason; a declared reason is recorded and withdraws only the zero-read violation.
+function clockShot(
+  label: string,
+  trace: Pick<MovingTrace['trace'], 'events'> | null,
+  declaredNoData: string | null = null
+): ClockShot {
+  const audit = auditClockEvidence(trace);
+  const noDataReason =
+    audit.nativeReads === 0
+      ? (declaredNoData ?? 'no native output-clock reads; no reason declared')
+      : null;
+  const violations =
+    declaredNoData === null || audit.nativeReads > 0
+      ? audit.violations
+      : audit.violations.filter(
+          (violation) => violation !== 'no-native-clock-reads'
+        );
+  return { ...audit, violations, label, noDataReason };
+}
+async function writeClockShot(
+  path: string,
+  body: Record<string, unknown>,
+  label: string,
+  trace: Pick<MovingTrace['trace'], 'events'> | null,
+  declaredNoData: string | null = null
+): Promise<ClockShot> {
+  const clockAudit = clockShot(label, trace, declaredNoData);
+  await writeFile(path, JSON.stringify({ ...body, clockAudit }));
+  assertClockAudit(clockAudit, label);
+  return clockAudit;
+}
+// Every continuity fault in the capture window, each with its code. The first fault alone hides
+// the cause: a clock interrupt is followed by its underflow cancel, so every fault is named.
+function describeContinuityFaults(
+  events: MovingTrace['trace']['events'],
+  playMs: number
+): string[] {
+  return events
+    .filter((entry) => {
+      if (entry.kind !== 'scheduled-pcm') return false;
+      const value = entry.value as Record<string, unknown>;
+      return (
+        value['event'] === 'error' ||
+        (value['event'] === 'cancel' && value['reason'] === 'underflow')
+      );
+    })
+    .map((entry) => {
+      const value = entry.value as Record<string, unknown>;
+      const parts = [String(value['event'])];
+      if (value['stage'] !== undefined)
+        parts.push(`stage=${String(value['stage'])}`);
+      parts.push(`code=${String(value['code'] ?? value['reason'])}`);
+      parts.push(`at ${Math.round(entry.timestamp - playMs)} ms after play`);
+      if ('lastAccepted' in value)
+        parts.push(`lastAccepted=${JSON.stringify(value['lastAccepted'])}`);
+      if ('lastRejection' in value)
+        parts.push(`lastRejection=${JSON.stringify(value['lastRejection'])}`);
+      return parts.join(' ');
+    });
+}
 function assertPcmSequence(
   start: number,
   end: number,
@@ -16298,7 +16592,13 @@ async function runColdStartProof(
     })()`);
     await writeFile(
       join(shotDir, `scheduled-pcm-cold-start-${rate}.json`),
-      JSON.stringify({ provenance, start, playEdge, outcome })
+      JSON.stringify({
+        provenance,
+        start,
+        playEdge,
+        outcome,
+        clockAudit: auditClockEvidence(outcome.trace),
+      })
     );
     const playMs = playEdge.timestamp;
     const trace = outcome.trace;
@@ -16312,19 +16612,13 @@ async function runColdStartProof(
       !trace.bankOverflow,
       'bank marker records overflowed; a promotion record may be missing'
     );
-    const continuityFaults = trace.events.filter((entry) => {
-      if (entry.kind !== 'scheduled-pcm') return false;
-      const value = entry.value as Record<string, unknown>;
-      return (
-        value['event'] === 'error' ||
-        (value['event'] === 'cancel' && value['reason'] === 'underflow')
-      );
-    });
+    const continuityFaults = describeContinuityFaults(trace.events, playMs);
     assert.equal(
       continuityFaults.length,
       0,
-      `cold playback faulted inside the capture window: ${JSON.stringify(continuityFaults[0]?.value)} at ${continuityFaults[0] ? Math.round(continuityFaults[0].timestamp - playMs) : 'n/a'} ms after play`
+      `cold playback faulted inside the capture window: ${continuityFaults.join(' | ')}`
     );
+    assertClockAudit(auditClockEvidence(trace), 'cold start');
     assert.equal(
       outcome.playing,
       'true',
@@ -16750,9 +17044,11 @@ async function runScheduledPcmProof(
         if (document.querySelector('.otio-view')?.dataset.playing === 'true') button.click();
         return {identity,trace};
       })()`);
-      await writeFile(
+      await writeClockShot(
         join(shotDir, 'scheduled-clock-long-bootstrap.json'),
-        JSON.stringify({ provenance, capture: warmup })
+        { provenance, capture: warmup },
+        'scheduled-clock-long-bootstrap',
+        warmup.trace
       );
       warmAnchor = assertAnchorEvidence(warmup.trace);
       const initial = warmup.identity;
@@ -16785,9 +17081,12 @@ async function runScheduledPcmProof(
           'long proof clock session changed'
         );
       }
-      await writeFile(
+      await writeClockShot(
         join(shotDir, 'scheduled-clock-long-checkpoint.json'),
-        JSON.stringify({ provenance, initial, current })
+        { provenance, initial, current },
+        'scheduled-clock-long-checkpoint',
+        null,
+        'identity checkpoint only; the clock trace is in scheduled-clock-long-bootstrap'
       );
     }
     const capture = await browser.evaluate<MovingTrace>(`(async () => {
@@ -16812,14 +17111,11 @@ async function runScheduledPcmProof(
       return {start, playEdge, trace};
     })()`);
     const provenanceAfter = await proofProvenance(browser);
-    await writeFile(
+    await writeClockShot(
       join(shotDir, `scheduled-pcm-${rate}.json`),
-      JSON.stringify({
-        provenance,
-        provenanceAfter,
-        capture,
-        fixtureHash: oracle.pcm_sha256,
-      })
+      { provenance, provenanceAfter, capture, fixtureHash: oracle.pcm_sha256 },
+      `scheduled-pcm-${rate}`,
+      capture.trace
     );
     assert.equal(
       provenanceAfter['workingTreeSha256'],
@@ -17009,15 +17305,17 @@ async function runScheduledPcmProof(
       () => assertIndependentCarrier(carrierControl, f0, f0 + length),
       'shifted captured carrier passed admission'
     );
-    await writeFile(
+    await writeClockShot(
       join(shotDir, `scheduled-carrier-control-${rate}.json`),
-      JSON.stringify({
+      {
         provenance,
         control: 'one-sample-carrier-shift',
         injected: true,
         boundary: f0,
         admission: 'rejected',
-      })
+      },
+      `scheduled-carrier-control-${rate}`,
+      capture.trace
     );
     const comparison = compareScheduledPcm(
       capture.trace.audio,
@@ -17524,9 +17822,11 @@ async function runScheduledPcmProof(
       if (root.dataset.playing === 'true') button.click();
       return { start, playEdge, trace, held, released, sawHeld, handoffBeforeRelease, sawBuffering, pcmReleasedAt, drainFlagClearedAt };
     })()`);
-      await writeFile(
+      await writeClockShot(
         join(shotDir, `scheduled-pcm-starvation-recovery-${rate}.json`),
-        JSON.stringify({ provenance, capture: recovery })
+        { provenance, capture: recovery },
+        `scheduled-pcm-starvation-recovery-${rate}`,
+        recovery.trace
       );
       assert.ok(
         recovery.held > 0 && recovery.released === recovery.held,
@@ -18701,9 +19001,11 @@ async function runScheduledPcmProof(
           const credits=globalThis.__otioProofPcmSnapshot();
           return {start,playEdge,trace,credits};
         })()`);
-          await writeFile(
+          await writeClockShot(
             join(shotDir, `scheduled-anchor-${rate}-${kind}.json`),
-            JSON.stringify({ provenance, capture: outcome })
+            { provenance, capture: outcome },
+            `scheduled-anchor-${rate}-${kind}`,
+            outcome.trace
           );
           assert.ok(
             !outcome.trace.audioOverflow && !outcome.trace.eventsOverflow,
@@ -18817,9 +19119,11 @@ async function runScheduledPcmProof(
       if (document.querySelector('.otio-view')?.dataset.playing === 'true') button.click();
       return {start, playEdge, trace, edges};
     })()`);
-    await writeFile(
+    await writeClockShot(
       join(shotDir, 'scheduled-pcm-track-controls.json'),
-      JSON.stringify({ provenance, capture: tracks })
+      { provenance, capture: tracks },
+      'scheduled-pcm-track-controls',
+      tracks.trace
     );
     const trackEpochs = tracks.trace.events
       .filter((entry) => entry.kind === 'scheduled-pcm')
@@ -18896,9 +19200,11 @@ async function runScheduledPcmProof(
       const trace = await globalThis.__otioProofTrace.stop();
       return {start, playEdge, trace, held, released, releaseFrame};
     })()`);
-    await writeFile(
+    await writeClockShot(
       join(shotDir, 'scheduled-pcm-starvation.json'),
-      JSON.stringify({ provenance, capture: interrupted })
+      { provenance, capture: interrupted },
+      'scheduled-pcm-starvation',
+      interrupted.trace
     );
     assert.ok(
       interrupted.held > 0 && interrupted.released === interrupted.held,
@@ -18959,9 +19265,14 @@ async function runScheduledPcmProof(
         if (root.dataset.playing === 'true') button.click();
         return {start, held, precondition, state, trace};
       })()`);
-      await writeFile(
+      await writeClockShot(
         join(shotDir, `scheduled-${action}-setup.json`),
-        JSON.stringify({ provenance, ...setup })
+        { provenance, ...setup },
+        `scheduled-${action}-setup`,
+        setup.trace,
+        setup.trace === null
+          ? 'setup held PCM before stop; its clock evidence is in the cancel shot'
+          : null
       );
       assert.ok(
         setup.held > 0,
@@ -19016,9 +19327,11 @@ async function runScheduledPcmProof(
         if (root?.dataset.playing === 'true') document.querySelector('button.otio-play').click();
         return {trace, released, releaseFrame, paused, resumePlayEdge};
       })()`);
-      await writeFile(
+      await writeClockShot(
         join(shotDir, `scheduled-${action}-cancel.json`),
-        JSON.stringify({ provenance, start, ...outcome })
+        { provenance, start, ...outcome },
+        `scheduled-${action}-cancel`,
+        outcome.trace
       );
       assert.ok(
         outcome.released > 0,
@@ -19158,9 +19471,11 @@ async function runScheduledPcmProof(
       if (root?.dataset.playing === 'true') document.querySelector('button.otio-play').click();
       return {start, playEdge, trace, playing, diagnostic};
     })()`);
-    await writeFile(
+    await writeClockShot(
       join(shotDir, 'scheduled-pcm-terminal-failure.json'),
-      JSON.stringify({ provenance, capture: failure })
+      { provenance, capture: failure },
+      'scheduled-pcm-terminal-failure',
+      failure.trace
     );
     const failureEvents = failure.trace.events
       .filter((entry) => entry.kind === 'scheduled-pcm')
@@ -19251,8 +19566,13 @@ async function runScheduledPcmProof(
       })()`);
       await writeFile(
         join(shotDir, `scheduled-pcm-${stage}-failure.json`),
-        JSON.stringify({ provenance, capture: fault })
+        JSON.stringify({
+          provenance,
+          capture: fault,
+          clockAudit: auditClockEvidence(fault.trace),
+        })
       );
+      assertClockAudit(auditClockEvidence(fault.trace), `${stage} fault`);
       const faultEvents = fault.trace.events
         .filter((entry) => entry.kind === 'scheduled-pcm')
         .map((entry) => entry.value as Record<string, unknown>);
@@ -19357,13 +19677,21 @@ async function runScheduledPcmProof(
         })()`);
         await writeFile(
           join(shotDir, `scheduled-clock-${kind}.json`),
-          JSON.stringify({ provenance, capture: fault })
+          JSON.stringify({
+            provenance,
+            capture: fault,
+            clockAudit: auditClockEvidence(fault.trace),
+          })
         );
         assert.ok(
           fault.injected &&
             !fault.trace.audioOverflow &&
             !fault.trace.eventsOverflow,
           `${kind} control was not injected or its capture overflowed`
+        );
+        assertClockAudit(
+          auditClockEvidence(fault.trace),
+          `scheduled-clock-${kind}`
         );
         const failure = fault.trace.events.find(
           (entry) =>
@@ -19454,9 +19782,11 @@ async function runScheduledPcmProof(
           if (document.querySelector('.otio-view')?.dataset.playing === 'true') button.click();
           return {start, playEdge, trace};
         })()`);
-        await writeFile(
+        await writeClockShot(
           join(shotDir, `scheduled-bank-${kind}.json`),
-          JSON.stringify({ provenance, capture: outcome })
+          { provenance, capture: outcome },
+          `scheduled-bank-${kind}`,
+          outcome.trace
         );
         assert.ok(
           !outcome.trace.audioOverflow && !outcome.trace.eventsOverflow,
@@ -19717,9 +20047,11 @@ async function runScheduledPcmProof(
           if (document.querySelector('.otio-view')?.dataset.playing === 'true') button.click();
           return {start, playEdge, trace};
         })()`);
-        await writeFile(
+        await writeClockShot(
           join(shotDir, 'scheduled-clock-serial-exhaustion.json'),
-          JSON.stringify({ provenance, capture: outcome })
+          { provenance, capture: outcome },
+          'scheduled-clock-serial-exhaustion',
+          outcome.trace
         );
         const messages = outcome.trace.events
           .filter((event) => event.kind === 'transport-message')
@@ -19866,9 +20198,11 @@ async function runScheduledPcmProof(
           const trace = await globalThis.__otioProofTrace.stop();
           return {start, playEdge, trace, before, after};
         })()`);
-        await writeFile(
+        await writeClockShot(
           join(shotDir, 'borrowed-failed-retirement.json'),
-          JSON.stringify({ provenance, capture: result })
+          { provenance, capture: result },
+          'borrowed-failed-retirement',
+          result.trace
         );
         assert.ok(
           result.before.activeSession && result.before.gateReservations >= 1,
@@ -19922,9 +20256,11 @@ async function runScheduledPcmProof(
           const lifecycle = await globalThis.__otioProofTrace.disposeBorrowed();
           return {start, playEdge, trace, lifecycle};
         })()`);
-        await writeFile(
+        await writeClockShot(
           join(shotDir, `borrowed-context-${ownership}.json`),
-          JSON.stringify({ provenance, capture: result })
+          { provenance, capture: result },
+          `borrowed-context-${ownership}`,
+          result.trace
         );
         assert.equal(
           result.lifecycle.state,
@@ -20075,9 +20411,12 @@ async function runScheduledPcmProof(
           state: string;
           events: Array<{ name: string; actor: string }>;
         }>(`(async () => globalThis.__otioProofTrace.disposeBorrowed())()`);
-        await writeFile(
+        await writeClockShot(
           join(shotDir, 'borrowed-bootstrap-restore.json'),
-          JSON.stringify({ provenance, capture: { armed, outcome, lifecycle } })
+          { provenance, capture: { armed, outcome, lifecycle } },
+          'borrowed-bootstrap-restore',
+          outcome.trace,
+          'controller clock invalidated by proof injection: every read is NaN, so no native read exists'
         );
         const leaseIndex = (name: string) =>
           lifecycle.events.findIndex(
@@ -20112,6 +20451,106 @@ async function runScheduledPcmProof(
           'failed bootstrap did not restore the fresh context to suspended'
         );
         pass('scheduled-pcm-bootstrap-restore');
+      } finally {
+        await isolated.close();
+      }
+    }
+    // Clock-hold controls (I5), injected through the proof wrapper after playback is steady.
+    // An 86 us context hold is sub-resolution and must play through. A 200 us context hold and a
+    // performance-only hold must interrupt with partial-advance. Each injected read is marked
+    // injected, so the audit still certifies every native read and every bridge.
+    for (const control of [
+      { label: 'clock-hold-86', hold: { deltaUs: 86 }, expect: 'playing' },
+      {
+        label: 'clock-hold-200',
+        hold: { deltaUs: 200 },
+        expect: 'partial-advance',
+      },
+      {
+        label: 'clock-perf-only',
+        hold: { perfUs: 100 },
+        expect: 'partial-advance',
+      },
+    ]) {
+      const isolated = await openBrowser(url, sessionToken, {
+        label: control.label,
+        recordProofTrace: true,
+      });
+      try {
+        await waitReady(isolated);
+        const provenance = await proofProvenance(isolated);
+        const fault = await isolated.evaluate<{
+          start: { contextState: string };
+          playEdge: { timestamp: number };
+          hold: { kind: string; deltaUs: number | null; perfUs: number | null };
+          trace: MovingTrace['trace'];
+          playing: string;
+        }>(`(async () => {
+          const sleep = ms => { const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, ms); return promise; };
+          const root = document.querySelector('.otio-view');
+          const button = document.querySelector('button.otio-play');
+          if (!(root instanceof HTMLElement) || !(button instanceof HTMLButtonElement)) throw new Error('clock hold controls missing');
+          const start = await globalThis.__otioProofTrace.start();
+          const playEdge = globalThis.__otioProofTrace.playRequest();
+          button.click();
+          await sleep(800);
+          const hold = globalThis.__otioProofTrace.setClockHold(${JSON.stringify(control.hold)});
+          await sleep(1500);
+          globalThis.__otioProofTrace.setClockHold(null);
+          const trace = await globalThis.__otioProofTrace.stop();
+          const playing = root.dataset.playing ?? '';
+          if (root.dataset.playing === 'true') button.click();
+          return {start, playEdge, hold, trace, playing};
+        })()`);
+        const clockAudit = auditClockEvidence(fault.trace);
+        await writeFile(
+          join(shotDir, `scheduled-${control.label}.json`),
+          JSON.stringify({ provenance, capture: { ...fault, clockAudit } })
+        );
+        assert.ok(
+          !fault.trace.audioOverflow && !fault.trace.eventsOverflow,
+          `${control.label} capture overflowed`
+        );
+        assertClockAudit(clockAudit, control.label);
+        assert.ok(
+          clockAudit.injectedReads > 0,
+          `${control.label} injected no reads`
+        );
+        const faultValues = fault.trace.events
+          .filter((entry) => entry.kind === 'scheduled-pcm')
+          .map((entry) => entry.value as Record<string, unknown>);
+        const errorCodes = faultValues
+          .filter((value) => value['event'] === 'error')
+          .map((value) => String(value['code']));
+        if (control.expect === 'playing') {
+          assert.equal(
+            fault.playing,
+            'true',
+            `${control.label} stopped playback under a sub-resolution hold`
+          );
+          assert.deepEqual(
+            errorCodes,
+            [],
+            `${control.label} faulted: ${errorCodes.join(', ')}`
+          );
+          assert.ok(
+            clockAudit.clockHolds > 0 &&
+              clockAudit.holdsMatched === clockAudit.clockHolds,
+            `${control.label} clock-hold events ${clockAudit.holdsMatched}/${clockAudit.clockHolds} matched recorded reads`
+          );
+        } else {
+          assert.equal(
+            fault.playing,
+            'false',
+            `${control.label} left playback active`
+          );
+          assert.ok(
+            errorCodes.includes(
+              `audio output clock interrupted: ${control.expect}`
+            ),
+            `${control.label} did not report ${control.expect}: ${errorCodes.join(', ')}`
+          );
+        }
       } finally {
         await isolated.close();
       }
