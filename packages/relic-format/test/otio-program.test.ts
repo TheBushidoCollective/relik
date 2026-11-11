@@ -2,7 +2,7 @@ import { beforeAll, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import { deflateRawSync } from 'node:zlib';
 import { otioDocumentMediaPaths } from '../src/otio-identity.ts';
-import type { OtioDocumentV1 } from '../src/otio-types.ts';
+import type { OtioDocumentV1, OtioZipIndex } from '../src/otio-types.ts';
 import {
   MAX_OTIO_PROGRAM_MANIFEST_BYTES,
   OTIO_PROGRAM_MANIFEST_ENTRY,
@@ -10,6 +10,8 @@ import {
   OtioProgramError,
   otioProgramEntryName,
   parseOtioProgramManifest,
+  parseOtioProgramRenderer,
+  parseOtioProgramTimelineRecord,
   readOtioProgramArchive,
   stringifyOtioProgramManifest,
 } from '../src/otio-program.ts';
@@ -1117,6 +1119,74 @@ describe('program byte bound', () => {
       readOtioProgramArchive(await open(baseEntries({ manifest })), DOCUMENT)
     ).rejects.toMatchObject({ code: 'size-cap-exceeded' });
   });
+
+  /**
+   * A manifest whose own length plus the program total is exactly
+   * OTIO_PROGRAM_MAX_BYTES + delta. The manifest records the program sizes, so
+   * its length is solved by iteration.
+   */
+  function aggregateManifest(delta: number): Uint8Array {
+    let manifest = manifestBytes({
+      timelines: [rendered(0, { bytes: 1 }), rendered(1, { bytes: 1 })],
+    });
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const programs = OTIO_PROGRAM_MAX_BYTES - manifest.length + delta;
+      const first = Math.floor(programs / 2);
+      const next = manifestBytes({
+        timelines: [
+          rendered(0, { bytes: first }),
+          rendered(1, { bytes: programs - first }),
+        ],
+      });
+      if (next.length === manifest.length) return next;
+      manifest = next;
+    }
+    throw new Error('manifest size did not converge');
+  }
+
+  /** Records every entry read through the index, to prove what was not read. */
+  function countReads(zip: OtioZipIndex): {
+    reads: string[];
+    zip: OtioZipIndex;
+  } {
+    const reads: string[] = [];
+    return {
+      reads,
+      zip: {
+        ...zip,
+        readEntry: (name, inflater) => {
+          reads.push(name);
+          return zip.readEntry(name, inflater);
+        },
+      },
+    };
+  }
+
+  test('one byte over the aggregate bound is refused before any program is read', async () => {
+    const counted = countReads(
+      await open(baseEntries({ manifest: aggregateManifest(1) }))
+    );
+    await expect(
+      readOtioProgramArchive(counted.zip, DOCUMENT)
+    ).rejects.toMatchObject({ code: 'size-cap-exceeded' });
+    expect(counted.reads).toEqual([OTIO_PROGRAM_MANIFEST_ENTRY]);
+  });
+
+  test('exactly the aggregate bound clears the size gate', async () => {
+    const counted = countReads(
+      await open(baseEntries({ manifest: aggregateManifest(0) }))
+    );
+    const failure = await readOtioProgramArchive(counted.zip, DOCUMENT).then(
+      () => null,
+      (err: unknown) => err
+    );
+    expect(failure).toBeInstanceOf(OtioProgramError);
+    expect(failure).toMatchObject({ code: 'archive-mismatch' });
+    expect((failure as OtioProgramError).message).toMatch(
+      /size differs from the manifest/
+    );
+    expect(counted.reads).toEqual([OTIO_PROGRAM_MANIFEST_ENTRY]);
+  });
 });
 
 describe('range-backed media one byte past the document bound', () => {
@@ -1163,5 +1233,64 @@ describe('range-backed media one byte past the document bound', () => {
     await expect(
       readOtioProgramArchive(await indexOtioZip(source), BIG_DOCUMENT)
     ).rejects.toMatchObject({ code: 'corrupt-archive' });
+  });
+});
+
+describe('granular manifest validators', () => {
+  test('parseOtioProgramTimelineRecord accepts every record of a valid manifest', () => {
+    const records = manifestObject().timelines as unknown[];
+    records.forEach((record, position) => {
+      expect(() =>
+        parseOtioProgramTimelineRecord(record, position)
+      ).not.toThrow();
+    });
+  });
+
+  test('parseOtioProgramTimelineRecord refuses each invalid rendered descriptor', () => {
+    const cases: Record<string, unknown>[] = [
+      { width: 4098 },
+      { height: 241 },
+      { video_bitrate: 100_000_001 },
+      { frame_rate: { num: 24, den: 1.5 } },
+      { video_codec: 'hev1.1.6.L93.B0' },
+      { audio_rate: 44100 },
+      { frames: 50 },
+      {
+        range: {
+          start_time: { value: 1, rate: 24 },
+          duration: { value: 48, rate: 24 },
+        },
+      },
+      { bytes: 0 },
+      { bytes: OTIO_PROGRAM_MAX_BYTES + 1 },
+    ];
+    for (const patch of cases) {
+      expect(() =>
+        parseOtioProgramTimelineRecord(rendered(0, patch), 0)
+      ).toThrow(OtioProgramError);
+    }
+  });
+
+  test('parseOtioProgramTimelineRecord refuses a record whose index is not its position', () => {
+    expect(() => parseOtioProgramTimelineRecord(rendered(1), 0)).toThrow(
+      OtioProgramError
+    );
+  });
+
+  test('parseOtioProgramRenderer accepts a valid renderer and refuses a bad client or browser', () => {
+    const renderer = {
+      client: 'relic-mcp/1.0',
+      protocol: 1,
+      browser: 'Chrome 130',
+    };
+    expect(parseOtioProgramRenderer(renderer)).toEqual(renderer);
+    for (const bad of [
+      { ...renderer, client: '' },
+      { ...renderer, client: 'c'.repeat(129) },
+      { ...renderer, browser: '' },
+      { ...renderer, browser: 'Chrome\u0007' },
+    ]) {
+      expect(() => parseOtioProgramRenderer(bad)).toThrow(OtioProgramError);
+    }
   });
 });

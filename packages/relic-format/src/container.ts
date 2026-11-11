@@ -50,15 +50,29 @@ export interface EncryptRelicInput {
   readonly salt?: Uint8Array;
 }
 
+export type EncryptRelicPartsInput = Omit<EncryptRelicInput, 'content'> & {
+  /** Ordered content parts. Their concatenation is the plaintext. */
+  readonly parts: readonly Uint8Array[];
+};
+
 export async function encryptRelic(
   input: EncryptRelicInput
 ): Promise<Uint8Array> {
+  const { content, ...rest } = input;
+  return encryptRelicParts({ ...rest, parts: [content] });
+}
+
+/**
+ * Encrypts content given as ordered parts without joining them first. The
+ * output is byte-identical to `encryptRelic` over the concatenation. The cap
+ * is checked from the part lengths before any key or buffer is allocated.
+ */
+export async function encryptRelicParts(
+  input: EncryptRelicPartsInput
+): Promise<Uint8Array> {
   const rs = input.rs ?? RECORD_SIZE;
   const capacity = recordCapacity(rs);
-
-  if (input.content.length > PLAINTEXT_CAP_BYTES) {
-    throw new ContentTooLargeError(input.content.length, PLAINTEXT_CAP_BYTES);
-  }
+  const total = plaintextLength(input.parts);
 
   const salt = input.salt ?? randomSalt();
   const keys = await deriveKeys(input.key, salt);
@@ -70,7 +84,7 @@ export async function encryptRelic(
         filename: input.filename,
         mimetype: input.mimetype,
         offset: 0,
-        length: input.content.length,
+        length: total,
       },
     ],
   };
@@ -83,14 +97,12 @@ export async function encryptRelic(
     );
   }
 
-  const result = new Uint8Array(
-    encryptedSize(input.content.length, rs, envelopeBytes.length)
-  );
+  const result = new Uint8Array(encryptedSize(total, rs, envelopeBytes.length));
   const header = encodeHeader(salt, rs);
   result.set(header);
   let offset = header.length;
 
-  if (input.content.length === 0) {
+  if (total === 0) {
     result.set(await encryptRecord(keys, 0, envelopeBytes, true), offset);
     return result;
   }
@@ -98,10 +110,11 @@ export async function encryptRelic(
   const first = await encryptRecord(keys, 0, envelopeBytes, false, capacity);
   result.set(first, offset);
   offset += first.length;
-  const recordCount = Math.ceil(input.content.length / capacity);
+  const recordAt = partRecords(input.parts);
+  const recordCount = Math.ceil(total / capacity);
   for (let index = 0; index < recordCount; index++) {
     const start = index * capacity;
-    const chunk = input.content.subarray(start, start + capacity);
+    const chunk = recordAt(start, Math.min(capacity, total - start));
     const encrypted = await encryptRecord(
       keys,
       index + 1,
@@ -112,6 +125,58 @@ export async function encryptRelic(
     offset += encrypted.length;
   }
   return result;
+}
+
+/** Sums part lengths and refuses past the cap. Allocates nothing. */
+function plaintextLength(parts: readonly Uint8Array[]): number {
+  let total = 0;
+  for (const part of parts) total += part.length;
+  if (!Number.isSafeInteger(total) || total > PLAINTEXT_CAP_BYTES) {
+    throw new ContentTooLargeError(total, PLAINTEXT_CAP_BYTES);
+  }
+  return total;
+}
+
+/**
+ * Returns the logical bytes `[start, start + length)` of the concatenated
+ * parts. Calls must be in nondecreasing `start` order. A range inside one part
+ * is a view; a range that spans parts is copied into a fresh buffer.
+ */
+function partRecords(
+  parts: readonly Uint8Array[]
+): (start: number, length: number) => Uint8Array {
+  let index = 0;
+  let base = 0;
+  return (start, length) => {
+    while (index < parts.length && start >= base + parts[index]!.length) {
+      base += parts[index]!.length;
+      index++;
+    }
+    const head = parts[index];
+    if (head === undefined) {
+      throw new MalformedContainerError('content parts end before the record');
+    }
+    const offset = start - base;
+    if (offset + length <= head.length) {
+      return head.subarray(offset, offset + length);
+    }
+    const out = new Uint8Array(length);
+    let written = 0;
+    let at = offset;
+    for (let i = index; written < length; i++) {
+      const part = parts[i];
+      if (part === undefined) {
+        throw new MalformedContainerError(
+          'content parts end before the record'
+        );
+      }
+      const take = Math.min(part.length - at, length - written);
+      out.set(part.subarray(at, at + take), written);
+      written += take;
+      at = 0;
+    }
+    return out;
+  };
 }
 
 export interface OpenedRelic {

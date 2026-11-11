@@ -361,6 +361,8 @@ export type InflaterFn = (
 
 export interface OtioZipEntryInfo {
   readonly name: string;
+  /** Decoded central-directory name, before normalization. */
+  readonly rawName: string;
   readonly method: number;
   readonly compressedSize: number;
   readonly uncompressedSize: number;
@@ -369,8 +371,19 @@ export interface OtioZipEntryInfo {
   readonly isDirectory: boolean;
 }
 
+/** The central directory as the end-of-central-directory record declares it. */
+export interface OtioZipDirectory {
+  /** Central directory start, which is also the end of the local-entry region. */
+  readonly offset: number;
+  readonly size: number;
+  readonly entryCount: number;
+  /** Archive size is `offset + size + 22 + commentLength`. */
+  readonly commentLength: number;
+}
+
 export interface OtioZipIndex {
   readonly entries: ReadonlyMap<string, OtioZipEntryInfo>;
+  readonly directory: OtioZipDirectory;
   readonly versionText: string;
   readonly contentOtioBytes: Uint8Array;
   readonly contentSha256: string;

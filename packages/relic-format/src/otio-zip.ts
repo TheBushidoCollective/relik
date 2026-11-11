@@ -633,6 +633,7 @@ export async function indexOtioZip(
   const cdTotalRecords = endView.getUint16(tailEocd + 10, true);
   const cdSize = endView.getUint32(tailEocd + 12, true);
   const cdOffset = endView.getUint32(tailEocd + 16, true);
+  const commentLength = endView.getUint16(tailEocd + 20, true);
   const eocdSig = endView.getUint32(tailEocd, true);
   if (eocdSig !== EOCD_SIG) {
     throw new OtioZipError(
@@ -947,6 +948,7 @@ export async function indexOtioZip(
 
     const entryInfo: OtioZipEntryInfo = {
       name: normName,
+      rawName,
       method,
       compressedSize: compSize,
       uncompressedSize: uncompSize,
@@ -986,6 +988,9 @@ export async function indexOtioZip(
   const successByEntry = new Map<string, Uint8Array>();
   const permanentFailureByEntry = new Map<string, OtioZipError>();
   const inflightByEntry = new Map<string, Promise<Uint8Array>>();
+  // Verified digests, one promise per entry for this index. Concurrent callers
+  // share a single scan. A transient failure is not remembered.
+  const digestByEntry = new Map<string, Promise<string>>();
 
   async function loadEntry(
     entry: OtioZipEntryInfo,
@@ -1141,9 +1146,30 @@ export async function indexOtioZip(
         `Entry not found in archive: ${name}`
       );
     }
-    if (entry.method !== 0) return sha256Hex(await readEntryData(name));
+    const key = entry.name;
+    const cached = digestByEntry.get(key);
+    if (cached) return cached;
+    const pending = computeDigest(entry);
+    digestByEntry.set(key, pending);
+    try {
+      return await pending;
+    } catch (err) {
+      if (
+        digestByEntry.get(key) === pending &&
+        !isPermanentArchiveFailure(err)
+      ) {
+        digestByEntry.delete(key);
+      }
+      throw err;
+    }
+  }
+
+  async function computeDigest(entry: OtioZipEntryInfo): Promise<string> {
+    // STORED media streams through the hash; DEFLATE media is inflated and
+    // held by readEntryData under the archive-wide bounds.
+    if (entry.method !== 0) return sha256Hex(await readEntryData(entry.name));
     const hash = new Sha256();
-    await scanStoredEntry(name, hash);
+    await scanStoredEntry(entry.name, hash);
     return hash.hex();
   }
 
@@ -1164,6 +1190,12 @@ export async function indexOtioZip(
 
   return {
     entries,
+    directory: {
+      offset: cdOffset,
+      size: cdSize,
+      entryCount: cdTotalRecords,
+      commentLength,
+    },
     versionText,
     contentOtioBytes,
     contentSha256,

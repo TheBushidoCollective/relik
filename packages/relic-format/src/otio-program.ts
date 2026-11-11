@@ -17,7 +17,9 @@
  * - Program: the manifest and the rendered program MP4s together expand to at
  *   most OTIO_PROGRAM_MAX_BYTES (100 MiB), and each declared program is bounded
  *   by it. This bound is separate from the archive-wide cap, MAX_EXPANDED_ZIP_BYTES.
- *   Media is verified by a streaming digest under the archive-wide bounds.
+ *   STORED media is verified by a streaming digest and never materialized.
+ *   DEFLATE media is inflated under the archive-wide bounds, and the index keeps
+ *   those bytes for its lifetime.
  *   The manifest is capped at
  *   MAX_OTIO_PROGRAM_MANIFEST_BYTES (16 MiB), a parse-cost bound. A media key is
  *   at most 65535 UTF-8 bytes, the largest name a ZIP central-directory entry can
@@ -654,6 +656,24 @@ function expectRenderer(value: unknown): OtioProgramManifestV1['renderer'] {
   return { client, protocol: OTIO_PROGRAM_PROTOCOL, browser };
 }
 
+/**
+ * Validates one manifest timeline record at `position`, with the same checks
+ * `parseOtioProgramManifest` applies to each element of `timelines`.
+ */
+export function parseOtioProgramTimelineRecord(
+  value: unknown,
+  position: number
+): OtioProgramTimelineRecord {
+  return expectTimeline(value, `manifest.timelines[${position}]`, position);
+}
+
+/** Validates a manifest `renderer` object with the same checks the parser uses. */
+export function parseOtioProgramRenderer(
+  value: unknown
+): OtioProgramManifestV1['renderer'] {
+  return expectRenderer(value);
+}
+
 const MANIFEST_KEYS = [
   'schema',
   'document_sha256',
@@ -784,8 +804,8 @@ async function digestHex(bytes: Uint8Array): Promise<string> {
  * - no `relic/program` entry exists beyond the manifest and the rendered MP4s;
  * - each rendered MP4 is STORED, matches its size, and matches its sha256;
  * - the manifest's media map is exactly `document.media_paths`, and each of
- *   those media entries is present and matches its sha256, streamed and never
- *   materialized;
+ *   those media entries is present and matches its sha256. STORED entries are
+ *   streamed; DEFLATE entries are inflated under the archive-wide bounds;
  * - the manifest and the rendered programs total at most OTIO_PROGRAM_MAX_BYTES.
  *
  * `document` comes from `readOtioDocument(zip.contentOtioBytes)`. `media_paths`
