@@ -1149,8 +1149,8 @@ describe('central directory facts and raw names', () => {
     expect(index.entries.get('media/clip.mp4')?.rawName).toBe(
       'media\\clip.mp4'
     );
-    expect(index.entries.get('media/')?.rawName).toBe('media/');
-    expect(index.entries.get('media/')?.isDirectory).toBe(true);
+    expect(index.entries.get('media')?.rawName).toBe('media/');
+    expect(index.entries.get('media')?.isDirectory).toBe(true);
     expect(index.entries.get('content.otio')?.rawName).toBe('content.otio');
   });
 
