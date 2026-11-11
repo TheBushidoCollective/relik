@@ -103,6 +103,7 @@ import {
 } from './otio-proof-trace.ts';
 import {
   assertDescriptorBudgetRefusal,
+  assertHeldReleaseBeforeSuccessor,
   assertShiftedBankRefusal,
 } from './otio-recovery-checks.ts';
 
@@ -18934,19 +18935,21 @@ async function runScheduledPcmProof(
             const start=await proof.start(),playEdge=proof.playRequest();
             button.click(); await sleep(600);
             proof.holdPcmResponses(true);
+            ${releaseAfterClosure ? "proof.releasePcmResponsesOn('recovery-render-closed');" : ''}
             const until=performance.now()+4000;
             while(!proof.hasPcmEvent('recovery-render-closed') && performance.now()<until) await sleep(10);
-            const held=proof.heldPcmCount();
-            ${releaseAfterClosure ? '' : 'await sleep(2500);'}
-            const releaseAt=performance.now();
-            const released=proof.holdPcmResponses(false);
-            await sleep(${releaseAfterClosure ? 1500 : 400});
+            ${
+              releaseAfterClosure
+                ? "while(!proof.hasTraceEvent('pcm-hold-release') && performance.now()<until) await sleep(10); await sleep(1500);"
+                : 'const held=proof.heldPcmCount(); await sleep(2500); const releaseAt=performance.now(); const released=proof.holdPcmResponses(false); await sleep(400);'
+            }
             const playing=root.dataset.playing ?? '', buffering=root.dataset.buffering ?? '';
             const diagnostic=Array.from(document.querySelectorAll('.otio-diagnostic'))
               .filter(node=>{const style=getComputedStyle(node); return node.getClientRects().length>0 &&
                 style.visibility!=='hidden' && style.display!=='none' && Number(style.opacity)>0;})
               .map(node=>node.textContent ?? '').join(' ');
             const captured=await proof.stop();
+            ${releaseAfterClosure ? "const release=captured.events.find(e=>e.kind==='pcm-hold-release'); const held=release?.value?.released ?? 0, released=held, releaseAt=release?.timestamp ?? NaN;" : ''}
             if(root.dataset.playing==='true') button.click();
             return {start,playEdge,trace:captured,held,released,releaseAt,playing,buffering,diagnostic};
           })()`);
@@ -19053,12 +19056,7 @@ async function runScheduledPcmProof(
               `${label} emitted PCM after the no-reserve refusal`
             );
           } else {
-            const releaseTime = result.releaseAt;
-            const handoff = events[handoffAt]!;
-            assert.ok(
-              releaseTime <= Number(handoff['timestamp']),
-              'pulls were not released before the successor frontier; ordering not reached'
-            );
+            assertHeldReleaseBeforeSuccessor(result.trace.events);
             assert.ok(
               !events.some(
                 (event) =>

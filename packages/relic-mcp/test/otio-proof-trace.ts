@@ -163,6 +163,26 @@ export const otioProofTracePrelude = String.raw`(() => {
   }
   const heldPcmResponses = [];
   const releasedPcmResponses = new WeakSet();
+  let pcmReleaseTrigger = null;
+  let pendingPcmRelease = null;
+  const pcmReleaseChannel = new MessageChannel();
+  const takeHeldPcm = () => { holdPcmResponses = false; return heldPcmResponses.splice(0); };
+  const deliverHeldPcm = held => {
+    for (const item of held) {
+      const event = new MessageEvent('message', {data:item.data});
+      releasedPcmResponses.add(event);
+      item.worker.dispatchEvent(event);
+    }
+  };
+  // Release on a separate message task, never inside the trace hook or a microtask.
+  pcmReleaseChannel.port1.onmessage = () => {
+    const pending = pendingPcmRelease;
+    if (pending === null) return;
+    pendingPcmRelease = null;
+    const held = takeHeldPcm();
+    recordEvent('pcm-hold-release', null, {trigger:pending.name, triggerIndex:pending.index, released:held.length});
+    deliverHeldPcm(held);
+  };
   globalThis.Worker = class extends NativeWorker {
     constructor(url, options) {
       super(url, options);
@@ -280,6 +300,12 @@ export const otioProofTracePrelude = String.raw`(() => {
     if (args[0] === 'OTIO_PROOF_PCM') {
       if (args[1]?.event === 'backend') lastPcmBackend = args[1];
       recordEvent('scheduled-pcm', null, args[1]);
+      if (pcmReleaseTrigger !== null && args[1]?.event === pcmReleaseTrigger) {
+        const last = events[events.length - 1];
+        pendingPcmRelease = {name:pcmReleaseTrigger, index:last?.value === args[1] ? events.length - 1 : null};
+        pcmReleaseTrigger = null;
+        pcmReleaseChannel.port2.postMessage(0);
+      }
       if (args[1]?.event === 'clock-site' && args[1]?.phase === 'read' && siteHold !== null && siteHold.site === args[1].site) {
         clockHold = {...siteHold, once:true};
         siteHold = null;
@@ -958,13 +984,16 @@ export const otioProofTracePrelude = String.raw`(() => {
     holdPcmResponses(value) {
       holdPcmResponses = Boolean(value);
       if (holdPcmResponses) return heldPcmResponses.length;
-      const held = heldPcmResponses.splice(0);
-      for (const item of held) {
-        const event = new MessageEvent('message', {data:item.data});
-        releasedPcmResponses.add(event);
-        item.worker.dispatchEvent(event);
-      }
+      pcmReleaseTrigger = null; pendingPcmRelease = null;
+      const held = takeHeldPcm();
+      deliverHeldPcm(held);
       return held.length;
+    },
+    releasePcmResponsesOn(name) {
+      if (!holdPcmResponses) throw new Error('pcm release requires an active hold');
+      if (pcmReleaseTrigger !== null || pendingPcmRelease !== null) throw new Error('pcm release already armed');
+      if (typeof name !== 'string' || name === '') throw new Error('pcm release trigger must be a non-empty event name');
+      pcmReleaseTrigger = name;
     },
     setFault(value) {
       if (!['none', 'freeze', 'stall', 'skip-still'].includes(value)) throw new Error('unknown proof fault');
@@ -1003,6 +1032,7 @@ export const otioProofTracePrelude = String.raw`(() => {
         samples:lightweightEvents, overflow:lightweightOverflow};
     },
     async start() {
+      pcmReleaseTrigger = null; pendingPcmRelease = null;
       nextAnchorControl = null;
       if (activeStaleCaptureId !== null) throw new Error('stale capture already active');
       await awaitControllerGraph(8000);
@@ -1105,6 +1135,7 @@ export const otioProofTracePrelude = String.raw`(() => {
       const sampleFrame = await command(graph, 'stop');
       nextRecoveryMarker=false;
       nextAnchorControl = null;
+      pcmReleaseTrigger = null; pendingPcmRelease = null;
       recoveryOverrunRequested=false; recoveryClosureSeen=false; recoverySelection=null;
       if (currentGate?.marker) {
         const marker=currentGate.marker; currentGate.marker=null;

@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test';
 import {
   assertDescriptorBudgetRefusal,
+  assertHeldReleaseBeforeSuccessor,
   assertShiftedBankRefusal,
 } from './otio-recovery-checks.ts';
 
@@ -152,4 +153,171 @@ test('shifted banks must refuse both bounded attempts before admission', () => {
   expect(() => assertShiftedBankRefusal(valid.slice(0, -1))).toThrow(
     'did not report'
   );
+});
+
+type TraceEvent = {
+  kind: string;
+  timestamp: number;
+  value?: Record<string, unknown>;
+};
+const pcm = (
+  timestamp: number,
+  value: Record<string, unknown>
+): TraceEvent => ({ kind: 'scheduled-pcm', timestamp, value });
+const release = (
+  timestamp: number,
+  triggerIndex: number | null,
+  released = 1
+): TraceEvent => ({
+  kind: 'pcm-hold-release',
+  timestamp,
+  value: { trigger: 'recovery-render-closed', triggerIndex, released },
+});
+const frontier = pcm(891.3, {
+  event: 'frontier',
+  generation: 1,
+  frontierKind: 'extension',
+  compositionThrough: { value: 36864 },
+  preparedThrough: 40960,
+  decodedCap: 36864,
+  reserveFrames: 4096,
+});
+const gate = (stop: number, reason = 'frontier'): TraceEvent =>
+  pcm(1210.8, {
+    event: 'gate-close',
+    generation: 1,
+    reason,
+    compositionStop: { value: stop },
+  });
+const closure = (
+  stop: number,
+  prepared: number,
+  descriptorReady = true
+): TraceEvent =>
+  pcm(1211.1, {
+    event: 'recovery-render-closed',
+    generation: 1,
+    descriptorReady,
+    compositionStop: { value: stop },
+    preparedThrough: prepared,
+  });
+const handoff = pcm(1216.1, {
+  event: 'frontier',
+  generation: 13,
+  frontierKind: 'handoff',
+  compositionThrough: { value: 40960 },
+  preparedThrough: 40960,
+});
+type Overrides = {
+  stop?: number;
+  prepared?: number;
+  reason?: string;
+  descriptorReady?: boolean;
+  release?: TraceEvent | null;
+};
+// The 7Roe0Z shape: closure 1211.1, release 1212.6 armed on it, handoff 1216.1.
+const trace = (o: Overrides = {}): TraceEvent[] => {
+  const events = [
+    frontier,
+    gate(o.stop ?? 36864, o.reason ?? 'frontier'),
+    closure(o.stop ?? 36864, o.prepared ?? 40960, o.descriptorReady ?? true),
+  ];
+  if (o.release !== null) events.push(o.release ?? release(1212.6, 2));
+  events.push(handoff);
+  return events;
+};
+
+test('held release check accepts the released ordering and returns its indices', () => {
+  expect(assertHeldReleaseBeforeSuccessor(trace())).toEqual({
+    closureIndex: 2,
+    releaseIndex: 3,
+    handoffIndex: 4,
+  });
+});
+
+test('held release check rejects the captured release after the handoff', () => {
+  const captured = [
+    frontier,
+    gate(36864),
+    closure(36864, 40960),
+    handoff,
+    release(1218.8, 2),
+  ];
+  expect(() => assertHeldReleaseBeforeSuccessor(captured)).toThrow(
+    'ordering not reached'
+  );
+});
+
+test('held release check rejects each ordering violation', () => {
+  const beforeClosure = [
+    frontier,
+    gate(36864),
+    release(1210.9, 3),
+    closure(36864, 40960),
+    handoff,
+  ];
+  expect(() => assertHeldReleaseBeforeSuccessor(beforeClosure)).toThrow(
+    'ordering not reached'
+  );
+  const equalAfterHandoff = [
+    frontier,
+    gate(36864),
+    closure(36864, 40960),
+    handoff,
+    release(1216.1, 2),
+  ];
+  expect(() => assertHeldReleaseBeforeSuccessor(equalAfterHandoff)).toThrow(
+    'ordering not reached'
+  );
+  const regressed = [
+    frontier,
+    gate(36864),
+    closure(36864, 40960),
+    release(1210.0, 2),
+    handoff,
+  ];
+  expect(() => assertHeldReleaseBeforeSuccessor(regressed)).toThrow(
+    'ordering not reached'
+  );
+});
+
+test('held release check rejects each broken release', () => {
+  const misarmed = [
+    frontier,
+    gate(36864),
+    closure(36864, 40960),
+    release(1212.6, 5),
+    handoff,
+    closure(40960, 45056),
+  ];
+  expect(() => assertHeldReleaseBeforeSuccessor(misarmed)).toThrow(
+    'not armed on the first closure'
+  );
+  expect(() =>
+    assertHeldReleaseBeforeSuccessor(trace({ release: release(1212.6, null) }))
+  ).toThrow('not armed on the first closure');
+  expect(() =>
+    assertHeldReleaseBeforeSuccessor(trace({ release: release(1212.6, 2, 0) }))
+  ).toThrow('freed no held pulls');
+  expect(() =>
+    assertHeldReleaseBeforeSuccessor(trace({ release: null }))
+  ).toThrow('no pcm-hold-release');
+  expect(() =>
+    assertHeldReleaseBeforeSuccessor([...trace(), release(1213.0, 2)])
+  ).toThrow('more than one');
+});
+
+test('held release check rejects a predecessor that was not starved', () => {
+  expect(() =>
+    assertHeldReleaseBeforeSuccessor(trace({ descriptorReady: false }))
+  ).toThrow('not descriptor-ready');
+  expect(() =>
+    assertHeldReleaseBeforeSuccessor(trace({ reason: 'pause' }))
+  ).toThrow('not gate-closed at a frontier');
+  expect(() =>
+    assertHeldReleaseBeforeSuccessor(trace({ stop: 40960 }))
+  ).toThrow("not at the predecessor's decode cap");
+  expect(() =>
+    assertHeldReleaseBeforeSuccessor(trace({ prepared: 45056 }))
+  ).toThrow('moved between');
 });
