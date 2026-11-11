@@ -24,6 +24,13 @@ registerProcessor('relic-proof-pcm', RelicProofTap);`;
 export const otioProofTracePrelude = String.raw`(() => {
   globalThis.__otioProofCold = true;
   globalThis.__otioProofPcm = true;
+  let audioContextsConstructed = 0;
+  if (typeof globalThis.AudioContext === 'function') {
+    const CountedAudioContext = globalThis.AudioContext;
+    globalThis.AudioContext = class extends CountedAudioContext {
+      constructor(options) { audioContextsConstructed++; super(options); }
+    };
+  }
   if (globalThis.__otioProofSampleRate != null) {
     const NativeAudioContext = globalThis.AudioContext;
     globalThis.AudioContext = class extends NativeAudioContext {
@@ -154,6 +161,18 @@ export const otioProofTracePrelude = String.raw`(() => {
     };
   }
   const graphs = [];
+  function controllerGraphSnapshot() {
+    const root = document.querySelector('.otio-view');
+    return {audioContextsConstructed, graphs: graphs.length,
+      audioElements: document.querySelectorAll('audio[data-track-id]').length,
+      ready: root ? root.dataset.ready ?? null : null,
+      playing: root ? root.dataset.playing ?? null : null};
+  }
+  async function awaitControllerGraph(timeoutMs) {
+    const until = performance.now() + timeoutMs;
+    while (graphs.length === 0 && performance.now() < until)
+      await new Promise(resolve => setTimeout(resolve, 25));
+  }
   const violations = [];
   document.addEventListener('securitypolicyviolation', event => {
     violations.push({directive:event.effectiveDirective, blockedURI:event.blockedURI});
@@ -846,7 +865,8 @@ export const otioProofTracePrelude = String.raw`(() => {
     },
     async start() {
       if (activeStaleCaptureId !== null) throw new Error('stale capture already active');
-      if (graphs.length !== 1) throw new Error('expected exactly one controller destination gain, got ' + graphs.length);
+      await awaitControllerGraph(8000);
+      if (graphs.length !== 1) throw new Error('expected exactly one controller destination gain, got ' + graphs.length + ' ' + JSON.stringify(controllerGraphSnapshot()));
       const graph = graphs[0];
       await graph.ready;
       graph.chunks = []; graph.samples = 0; graph.overflow = false;
