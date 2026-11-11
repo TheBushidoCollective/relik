@@ -211,6 +211,29 @@ describe('output clock admission', () => {
     c.invalidate('sinkchange');
     expect(c.forkForRequest(1071, 1071)).toBeNull();
   });
+  test('recovery calibrates on the confirming read, never below 30 ms', () => {
+    const c = ready();
+    c.arm();
+    c.start();
+    for (const t of [50, 59, 66, 73, 79])
+      expect(c.observe(sample(t)).status).toBe('playing');
+    // 1050 is 51 ms old at 1101: four fresh samples span 20 ms.
+    const fork = c.forkForRequest(1101, 1101);
+    expect(fork).not.toBeNull();
+    expect(fork!.inheritedObservations).toEqual(
+      [59, 66, 73, 79].map((t) => sample(t))
+    );
+    // Advancing and fresh, but 1085 - 1059 = 26 ms.
+    expect(
+      fork!.observe({ ...sample(85), readBegin: 1101, readEnd: 1102 })
+    ).toMatchObject({ status: 'calibrating', reason: 'accepted' });
+    expect(() => fork!.arm()).toThrow();
+    // 1089 - 1059 = 30 ms completes the window.
+    expect(
+      fork!.observe({ ...sample(89), readBegin: 1102, readEnd: 1103 })
+    ).toMatchObject({ status: 'calibrated', reason: 'accepted' });
+    fork!.arm();
+  });
 });
 
 // Recorded CI rows (scheduled-pcm-cold-start-48000.json), each as
@@ -561,5 +584,130 @@ describe('evidencePair', () => {
       offsetMax: null,
     };
     expect(evidencePair(fresh, held, 0.01, 1010)).toBeNull();
+  });
+});
+
+// Recorded CI rows (scheduled-pcm-starvation-recovery-48000.json, run 42989394727):
+// the first read of each output stamp before the gate closed at 26895.9, as
+// [readEnd, contextAfter, contextTime, performanceTime]. Rows 0-4 calibrate a
+// replay clock; rows 5-9 are the five samples the failed fork retained.
+const STARVATION: readonly (readonly [number, number, number, number])[] = [
+  [26797.20000000001, 26.026666666666667, 25.98426933333333, 26795.70000000001],
+  [
+    26810.20000000001, 26.034666666666666, 25.994201166666667,
+    26805.70000000001,
+  ],
+  [
+    26818.400000000023, 26.045333333333332, 26.004426000000002,
+    26815.900000000023,
+  ],
+  [26826.400000000023, 26.056, 26.014309833333336, 26825.79999999999],
+  [
+    26842.600000000035, 26.066666666666666, 26.024363666666666,
+    26835.70000000001,
+  ],
+  [
+    26847.20000000001, 26.074666666666666, 26.034211499999998,
+    26845.70000000001,
+  ],
+  [
+    26858.79999999999, 26.085333333333335, 26.044447333333334,
+    26855.900000000023,
+  ],
+  [26866.79999999999, 26.096, 26.054702166666665, 26866.100000000035],
+  [26880.600000000035, 26.106666666666666, 26.064547, 26876],
+  [26891.100000000035, 26.11466666666667, 26.07438983333333, 26885.79999999999],
+];
+const STARVATION_REQUEST = 26896.29999999999; // recovery-request requestClockNow
+const STARVATION_OBSERVED = 26897.79999999999; // fork-unavailable observedWall
+const STARVATION_CONTEXT = 26.125333333333334; // currentTime then: the closed frame
+const replayStarvation = () => {
+  const clock = new OutputClock(26790);
+  for (const row of STARVATION.slice(0, 5)) clock.observe(recordedRead(row));
+  expect(clock.state).toBe('calibrated');
+  clock.arm();
+  clock.start();
+  for (const row of STARVATION.slice(5))
+    expect(clock.observe(recordedRead(row)).status).toBe('playing');
+  return clock;
+};
+// The closing callback's stamp. Nothing read it before the fork, so it was never
+// recorded; values sit on the recorded cadence between 26885.8 and 26906.2.
+const closingRead = () => ({
+  readBegin: 26897.900000000023,
+  readEnd: 26897.900000000023,
+  contextBefore: STARVATION_CONTEXT,
+  contextAfter: STARVATION_CONTEXT,
+  state: 'running',
+  contextTime: 26.0846,
+  performanceTime: 26896,
+});
+
+describe('recovery fork at the recorded starvation close', () => {
+  test('replays the retained evidence of the failed fork exactly', () => {
+    const clock = replayStarvation();
+    expect(clock.recoveryEvidence(STARVATION_OBSERVED).retained).toEqual([
+      {
+        time: 26845.70000000001,
+        offset: 811.488500000014,
+        readEnd: 26847.20000000001,
+      },
+      {
+        time: 26855.900000000023,
+        offset: 811.4526666666898,
+        readEnd: 26858.79999999999,
+      },
+      {
+        time: 26866.100000000035,
+        offset: 811.3978333333689,
+        readEnd: 26866.79999999999,
+      },
+      { time: 26876, offset: 811.4529999999977, readEnd: 26880.600000000035 },
+      {
+        time: 26885.79999999999,
+        offset: 811.4101666666575,
+        readEnd: 26891.100000000035,
+      },
+    ]);
+    expect(clock.lastRejection).toBeNull();
+  });
+
+  test('a 29.9 ms fresh window forks and the closing read calibrates it', () => {
+    for (const now of [STARVATION_REQUEST, STARVATION_OBSERVED]) {
+      const fork = replayStarvation().forkForRequest(STARVATION_REQUEST, now);
+      expect(fork).not.toBeNull();
+      expect(fork!.deadline).toBe(STARVATION_REQUEST + 350);
+      // 26845.7 is 50.6 ms old at the request: freshness still excludes it.
+      expect(fork!.inheritedObservations.map((o) => o.performanceTime)).toEqual(
+        [26855.900000000023, 26866.100000000035, 26876, 26885.79999999999]
+      );
+      expect(() => fork!.arm()).toThrow();
+      // Re-reading the last inherited stamp is not a new advance.
+      expect(
+        fork!.observe({
+          ...closingRead(),
+          contextTime: 26.07438983333333,
+          performanceTime: 26885.79999999999,
+        }).reason
+      ).toBe('duplicate');
+      expect(() => fork!.arm()).toThrow();
+      // 26896 - 26855.9 = 40.1 ms with four advances.
+      expect(fork!.observe(closingRead())).toMatchObject({
+        status: 'calibrated',
+        reason: 'accepted',
+      });
+      fork!.arm();
+      expect(fork!.lastAccepted).toEqual({
+        contextTime: 26.0846,
+        performanceTime: 26896,
+      });
+    }
+  });
+
+  test('the recorded window cannot fork once its oldest sample passes 50 ms', () => {
+    // At 26906, 26855.9 is 50.1 ms old; three fresh samples remain.
+    expect(
+      replayStarvation().forkForRequest(STARVATION_REQUEST, 26906)
+    ).toBeNull();
   });
 });

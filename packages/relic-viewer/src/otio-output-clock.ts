@@ -149,7 +149,10 @@ export class OutputClock {
   }
 
   // Caller must bind this to the same uninterrupted AudioContext and sink.
-  // The returned candidate is not armed until a new advancing observation.
+  // A fork inherits only fresh, consistent samples that hold minAdvances
+  // advances. It is not armed until a new advancing observation, read after
+  // the request, completes calibration under the rule every clock uses:
+  // minAdvances advances spanning minWindowMs from the first inherited sample.
   forkForRequest(
     requestMs: number,
     nowMs: number,
@@ -171,8 +174,7 @@ export class OutputClock {
       nowMs < last.observation.readEnd ||
       nowMs - last.time > this.policy.freshnessMs ||
       window.length < this.policy.minAdvances + 1 ||
-      window.length >= this.policy.maxSamples ||
-      last.time - first.time < this.policy.minWindowMs
+      window.length >= this.policy.maxSamples
     )
       return null;
     let min = Infinity;
