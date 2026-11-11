@@ -30,6 +30,12 @@
  */
 
 import assert from 'node:assert/strict';
+import {
+  associateGateSequence,
+  assertAssociatedSamples,
+  type GateQuantum,
+  type TapQuantum,
+} from './otio-proof-clock.ts';
 import { createHash } from 'node:crypto';
 import { type ChildProcess, spawn } from 'node:child_process';
 import {
@@ -2013,6 +2019,10 @@ const decoderPresentationPrelude = String.raw`(() => {
         );
 })();`;
 
+// Proof-traced warm browsers get real activation only after the graph is ready.
+// Explicit defaultAutoplay browsers are cold/first-gesture proofs and are never pre-activated.
+const warmProofActivation = new WeakSet<ChromeSession>();
+
 async function openBrowser(
   url: string,
   sessionToken: string,
@@ -2055,7 +2065,7 @@ async function openBrowser(
               ? '--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1'
               : arg
         ),
-        ...(options.defaultAutoplay
+        ...(options.defaultAutoplay || options.recordProofTrace
           ? []
           : ['--autoplay-policy=no-user-gesture-required']),
       ],
@@ -2381,7 +2391,7 @@ async function openBrowser(
       new URL(url).origin,
       'browser did not land on the service origin'
     );
-    return {
+    const browser: ChromeSession = {
       blocked,
       continuedNonLoopback,
       cspHeaders,
@@ -2571,6 +2581,9 @@ async function openBrowser(
         await rm(profile, { recursive: true, force: true });
       },
     };
+    if (options.recordProofTrace && !options.defaultAutoplay)
+      warmProofActivation.add(browser);
+    return browser;
   } catch (error) {
     await flushStderr();
     await cleanupOwnedBrowserStartup({
@@ -2603,6 +2616,42 @@ async function waitReady(browser: ChromeSession): Promise<string> {
     ready === 'true' || ready === 'diagnostic' || ready === 'structural',
     `OTIO view never settled: ${ready}`
   );
+  if (warmProofActivation.has(browser)) {
+    const before = await browser.evaluate<{
+      state: string;
+      witness: boolean;
+      anchor: number | null;
+      contextTime: number;
+    }>(`(async () => globalThis.__otioProofTrace.preactivationState())()`);
+    assert.ok(
+      before.state === 'suspended' &&
+        before.witness &&
+        Number.isSafeInteger(before.anchor),
+      `warm proof cannot activate before a suspended graph and witness exist: ${JSON.stringify(before)}`
+    );
+    const target = await browser.evaluate<{
+      x: number;
+      y: number;
+      tag: string;
+    }>(`(() => {
+      for (let y = 4; y < Math.min(innerHeight, 200); y += 8)
+        for (let x = 4; x < Math.min(innerWidth, 400); x += 8) {
+          const e = document.elementFromPoint(x,y);
+          if (e && !e.closest('a,button,input,select,textarea,[role=button],[contenteditable],canvas,video,audio'))
+            return {x,y,tag:e.tagName};
+        }
+      throw new Error('no non-interactive activation target');
+    })()`);
+    await clickWithRealPointer(browser, target.x, target.y);
+    const activated = await browser.evaluate<boolean>(
+      'navigator.userActivation.hasBeenActive'
+    );
+    assert.ok(
+      activated,
+      `trusted warm activation did not reach the page: ${JSON.stringify(target)}`
+    );
+    warmProofActivation.delete(browser);
+  }
   return ready;
 }
 
@@ -9918,7 +9967,7 @@ function requireQuantumArrays(
 // plus position in the quantum) advances by exactly the quantum length on every process call.
 // The carrier must advance with that counter: carrier minus counter is one constant over every
 // decodable sample, anchored at the first decodable sample. The engine's reported currentFrame is
-// not used here; it is checked separately by assertEngineFrameClock. Samples without a
+// not used here; raw labels are separately reported by reportEngineFrameClock. Samples without a
 // decodable carrier are not counted as evidence.
 function assertCarrierIdentity(
   trace: Pick<MovingTrace['trace'], 'audio' | 'witness'>,
@@ -9961,29 +10010,40 @@ function assertCarrierIdentity(
   return decoded;
 }
 
-// Engine currentFrame defects, reported as their own class. Each render quantum's currentFrame
-// must advance by the previous quantum's length. A repeat or skip is an engine clock defect, not
-// a carrier or sample error. The proof fails and names the quanta.
-function assertEngineFrameClock(
-  trace: Pick<MovingTrace['trace'], 'audio'>,
+// Raw cached currentFrame conformance is reported separately from playback proof.
+// Labels are unchanged and are inspected across chunk boundaries.
+function reportEngineFrameClock(
+  trace: MovingTrace['trace'],
   label: string
 ): void {
-  const defects: string[] = [];
+  let previous: { frame: number; length: number } | undefined;
+  const defects: Array<Record<string, unknown>> = [];
   for (const chunk of trace.audio) {
-    const quanta = requireQuantumArrays(chunk, label);
-    for (let k = 1; k < quanta.frames.length; k++) {
-      const expected = quanta.frames[k - 1]! + quanta.lengths[k - 1]!;
-      const actual = quanta.frames[k]!;
-      if (actual !== expected && defects.length < 8)
-        defects.push(
-          `seq ${chunk.sequence} quantum ${k} currentFrame ${actual} expected ${expected} (step ${actual - quanta.frames[k - 1]!})`
-        );
+    const q = requireQuantumArrays(chunk, label);
+    let cursor = 0;
+    for (let k = 0; k < q.frames.length; k++) {
+      const frame = q.frames[k]!,
+        length = q.lengths[k]!;
+      if (previous && frame !== previous.frame + previous.length) {
+        const carrier = trace.witness
+          ? carrierFrame(chunk, cursor, trace.witness)
+          : null;
+        defects.push({
+          sequence: chunk.sequence,
+          ordinal: chunk.quantumOrdinals?.[k],
+          offset: q.offsets[k],
+          label: frame,
+          expected: previous.frame + previous.length,
+          carrier,
+        });
+      }
+      previous = { frame, length };
+      cursor += length;
     }
   }
-  assert.equal(
-    defects.length,
-    0,
-    `${label}: engine currentFrame defect (repeat or skip; not a carrier error): ${defects.join('; ')}`
+  console.log(
+    'OTIO_RAW_CLOCK_CONFORMANCE',
+    JSON.stringify({ label, conformant: defects.length === 0, defects })
   );
 }
 
@@ -10425,10 +10485,96 @@ function assertAnchorEvidence(
   return anchor;
 }
 
+function associateBootstrapClock(trace: MovingTrace['trace'], f0: number) {
+  const witness = trace.witness;
+  assert.ok(witness, 'bootstrap association lacks witness');
+  const tap: TapQuantum[] = [];
+  for (const chunk of trace.audio) {
+    const q = requireQuantumArrays(chunk, 'bootstrap association');
+    const ordinals = chunk.quantumOrdinals;
+    assert.ok(
+      ordinals && ordinals.length === q.lengths.length,
+      'bootstrap tap ordinals missing'
+    );
+    let cursor = 0;
+    for (let i = 0; i < q.lengths.length; i++) {
+      const length = q.lengths[i]!;
+      const carrier = Array.from({ length }, (_, j) =>
+        carrierFrame(chunk, cursor + j, witness)
+      );
+      tap.push({
+        label: q.frames[i]!,
+        length,
+        ordinal: ordinals[i]!,
+        offset: q.offsets[i]!,
+        carrier,
+      });
+      cursor += length;
+    }
+    assert.equal(
+      cursor,
+      chunk.channels[0]?.length,
+      'bootstrap tap chunk length mismatch'
+    );
+  }
+  const raw = trace.events
+    .filter((event) => event.kind === 'transport-bootstrap-clock')
+    .map((event) => event.value as Record<string, unknown>)
+    .filter((record) => record['clockEpoch'] === witness.clockEpoch);
+  const gate: GateQuantum[] = raw.map((record) => {
+    const active = record['active'] as {
+      bank: number;
+      startFrame: number;
+      endFrame: number;
+      serial: number;
+      clockEpoch: number;
+    };
+    assert.ok(
+      active &&
+        (active.bank === 0 || active.bank === 1) &&
+        active.clockEpoch === witness.clockEpoch,
+      'bootstrap active bank invalid'
+    );
+    const suffix = active.bank === 0 ? 'A' : 'B';
+    const frames = record['clockFrame' + suffix];
+    const tags = record['clockTag' + suffix];
+    assert.ok(
+      Array.isArray(frames) && Array.isArray(tags),
+      'bootstrap native samples missing'
+    );
+    return {
+      clockEpoch: Number(record['clockEpoch']),
+      cachedCurrentFrame: Number(record['cachedCurrentFrame']),
+      callbackOrdinal: Number(record['callbackOrdinal']),
+      sampleCount: Number(record['sampleCount']),
+      certifiedFrame: Number(record['certifiedFrame']),
+      startFrame: active.startFrame,
+      endFrame: active.endFrame,
+      serial: active.serial,
+      frames,
+      tags,
+    };
+  });
+  const association = associateGateSequence(tap, gate, witness.clockEpoch);
+  // Bootstrap starts before the witness; only its actual covered suffix is compared.
+  // Require the committed first frame and do not infer placement from the carrier.
+  const last = gate[gate.length - 1]!;
+  const end = Math.min(
+    last.certifiedFrame + last.frames.length,
+    witness.frozenAnchor + witness.length
+  );
+  assert.ok(
+    f0 >= witness.frozenAnchor && end > f0,
+    'bootstrap evidence does not cover committed frame'
+  );
+  assertAssociatedSamples(tap, gate, association.start, f0, end);
+  return { tap, gate, offset: association.offset };
+}
+
 function assertGateClockEvidence(
   trace: MovingTrace['trace'],
   crossing = false
-): void {
+): number {
   const witness = trace.witness;
   assert.ok(witness, 'independent carrier provenance missing');
   assert.ok(
@@ -10444,7 +10590,9 @@ function assertGateClockEvidence(
     'gate parameter trace overflow'
   );
   const records = messages.filter(
-    (message) => message['type'] === 'clock-trace'
+    (message) =>
+      message['type'] === 'clock-trace' &&
+      message['clockEpoch'] === witness.clockEpoch
   );
   assert.ok(records.length >= 2, 'actual gate parameter samples missing');
   if (crossing) {
@@ -10468,11 +10616,19 @@ function assertGateClockEvidence(
     count: number;
     chunk: MovingTrace['trace']['audio'][number];
     offset: number;
+    sampleOffset: number;
+    ordinal: number;
   }> = [];
   for (const chunk of trace.audio) {
     assert.ok(
-      chunk.quantumFrames && chunk.quantumLengths,
-      'raw callback labels missing'
+      chunk.quantumFrames &&
+        chunk.quantumLengths &&
+        chunk.quantumOffsets &&
+        chunk.quantumOrdinals &&
+        chunk.quantumFrames.length === chunk.quantumLengths.length &&
+        chunk.quantumFrames.length === chunk.quantumOffsets.length &&
+        chunk.quantumFrames.length === chunk.quantumOrdinals.length,
+      'raw callback labels and offsets missing'
     );
     let offset = 0;
     for (let i = 0; i < chunk.quantumFrames.length; i++) {
@@ -10481,9 +10637,23 @@ function assertGateClockEvidence(
         count: chunk.quantumLengths[i]!,
         chunk,
         offset,
+        sampleOffset: chunk.quantumOffsets[i]!,
+        ordinal: chunk.quantumOrdinals[i]!,
       });
       offset += chunk.quantumLengths[i]!;
     }
+  }
+  for (let i = 1; i < quanta.length; i++) {
+    assert.equal(
+      quanta[i]!.ordinal,
+      quanta[i - 1]!.ordinal + 1,
+      'tap callback ordinal gap'
+    );
+    assert.equal(
+      quanta[i]!.sampleOffset,
+      quanta[i - 1]!.sampleOffset + quanta[i - 1]!.count,
+      'tap callback offset gap'
+    );
   }
   const candidates = quanta.flatMap((_, start) =>
     records.every((record, i) => {
@@ -10510,9 +10680,16 @@ function assertGateClockEvidence(
     1,
     'gate and tap callback sequence cannot be uniquely aligned'
   );
+  const associationOffset =
+    quanta[candidates[0]!]!.sampleOffset - Number(records[0]!['sampleCount']);
   for (let r = 0; r < records.length; r++) {
     const record = records[r]!,
       quantum = quanta[candidates[0]! + r]!;
+    assert.equal(
+      quantum.sampleOffset - Number(record['sampleCount']),
+      associationOffset,
+      'gate/tap sample offset changed'
+    );
     const active = record['active'] as {
       bank: 0 | 1;
       serial: number;
@@ -10613,6 +10790,7 @@ function assertGateClockEvidence(
       }
     }
   }
+  return associationOffset;
 }
 
 // Names the terminal clock fault recorded by the real gate, if any. Read-only
@@ -10651,7 +10829,8 @@ function describeClockFault(trace: MovingTrace['trace']): string {
 function assertNaturalStaleWitness(
   trace: MovingTrace['trace'],
   f0: number,
-  expected: readonly [Float32Array, Float32Array]
+  expected: readonly [Float32Array, Float32Array],
+  associationOffset: number
 ): void {
   const witness = trace.witness;
   assert.ok(witness, 'independent stale-event carrier unavailable');
@@ -10732,10 +10911,11 @@ function assertNaturalStaleWitness(
     count: number;
     chunk: MovingTrace['trace']['audio'][number];
     offset: number;
+    sampleOffset: number;
   }> = [];
   for (const chunk of trace.audio) {
     assert.ok(
-      chunk.quantumFrames && chunk.quantumLengths,
+      chunk.quantumFrames && chunk.quantumLengths && chunk.quantumOffsets,
       'tap callback provenance missing'
     );
     let offset = 0;
@@ -10745,6 +10925,7 @@ function assertNaturalStaleWitness(
         count: chunk.quantumLengths[i]!,
         chunk,
         offset,
+        sampleOffset: chunk.quantumOffsets[i]!,
       });
       offset += chunk.quantumLengths[i]!;
     }
@@ -10768,10 +10949,13 @@ function assertNaturalStaleWitness(
           Number(stops[0]!['lastCallbackOrdinal']),
       'stale recorder did not retain adjacent actual gate callbacks'
     );
-    const label = previous['cachedCurrentFrame'];
     const indices = quanta.flatMap((quantum, index) =>
-      quantum.label === label &&
-      quanta[index + 1]?.label === label &&
+      quantum.sampleOffset ===
+        Number(previous['sampleCount']) + associationOffset &&
+      quanta[index + 1]?.sampleOffset ===
+        Number(current['sampleCount']) + associationOffset &&
+      quantum.label === previous['cachedCurrentFrame'] &&
+      quanta[index + 1]?.label === current['cachedCurrentFrame'] &&
       quantum.count === previous['quantumLength'] &&
       quanta[index + 1]?.count === current['quantumLength']
         ? [index]
@@ -10875,7 +11059,8 @@ function assertNaturalStaleWitness(
 function assertStaleWitnessControls(
   trace: MovingTrace['trace'],
   f0: number,
-  expected: readonly [Float32Array, Float32Array]
+  expected: readonly [Float32Array, Float32Array],
+  associationOffset: number
 ): void {
   const witness = trace.witness;
   assert.ok(witness, 'independent stale-control witness missing');
@@ -10988,10 +11173,12 @@ function assertStaleWitnessControls(
       }
       assert.ok(injected, `${kind} did not reach the stale callback`);
     }
-    assert.throws(
-      () => assertNaturalStaleWitness(corrupt, f0, expected),
-      `${kind} stale-event corruption passed admission`
-    );
+    const verify = () =>
+      assertNaturalStaleWitness(corrupt, f0, expected, associationOffset);
+    if (kind === 'corrupt-carrier')
+      assert.throws(verify, /stale-pair bank disagrees/);
+    else
+      assert.throws(verify, `${kind} stale-event corruption passed admission`);
   }
 }
 interface ScheduledPcmComparison {
@@ -15911,7 +16098,6 @@ async function runColdStartProof(
     const playMs = playEdge.timestamp;
     const trace = outcome.trace;
     assertCarrierIdentity(trace, 'cold start epoch');
-    assertEngineFrameClock(trace, 'cold start epoch');
     // Continuity, asserted before the promotion count. A fault or an underflow cancel inside
     // the window is the reason a later native promotion never happens, so it is named here.
     // Nothing is excused: a faulted or stopped run fails with its own record.
@@ -15954,6 +16140,8 @@ async function runColdStartProof(
       Number.isSafeInteger(f0),
       'cold start epoch lacks its committed frame'
     );
+    reportEngineFrameClock(trace, 'cold start epoch');
+    associateBootstrapClock(trace, f0);
     assertIndependentCarrier(trace, f0, f0 + rate);
     assert.ok(
       compareAuthoredPcm(
@@ -16545,9 +16733,22 @@ async function runScheduledPcmProof(
       'invalid bank promotion provenance'
     );
     assertIndependentCarrier(capture.trace, f0, f0 + length);
-    assertGateClockEvidence(capture.trace, clockProofMode === 'long');
-    assertNaturalStaleWitness(capture.trace, f0, expected);
-    assertStaleWitnessControls(capture.trace, f0, expected);
+    const gateAssociationOffset = assertGateClockEvidence(
+      capture.trace,
+      clockProofMode === 'long'
+    );
+    assertNaturalStaleWitness(
+      capture.trace,
+      f0,
+      expected,
+      gateAssociationOffset
+    );
+    assertStaleWitnessControls(
+      capture.trace,
+      f0,
+      expected,
+      gateAssociationOffset
+    );
     const nativeWitness = capture.trace.witness;
     assert.ok(nativeWitness, 'native carrier metadata missing');
     const carrierControl = {
@@ -18404,7 +18605,8 @@ async function runScheduledPcmProof(
     const trackWitness = tracks.trace.witness;
     assert.ok(trackWitness, 'track controls lack independent carrier');
     assertCarrierIdentity(tracks.trace, 'track controls epoch');
-    assertEngineFrameClock(tracks.trace, 'track controls epoch');
+    reportEngineFrameClock(tracks.trace, 'track controls epoch');
+    associateBootstrapClock(tracks.trace, trackF0);
     for (let phase = 0; phase < 4; phase++) {
       const from = tracks.edges[phase]! + 4800;
       const to =

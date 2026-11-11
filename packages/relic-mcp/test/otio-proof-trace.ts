@@ -335,6 +335,44 @@ export const otioProofTracePrelude = String.raw`(() => {
   let nextRecoveryMarker = false;
   let nextAnchorControl = null;
   const syntheticAnchors = new WeakSet();
+  // Create the independent carrier before the transport gate selects its bootstrap
+  // frame. Only a suspended context has a stable main-thread clock. Running contexts
+  // need a render-thread handshake and are rejected rather than assigned a guessed lead.
+  function prepareWitness(context) {
+    const existing = witnesses.get(context);
+    if (existing) return existing;
+    if (context.state !== 'suspended')
+      throw new Error('proof witness requires a suspended context before gate construction');
+    const rate = context.sampleRate, quantum = 128;
+    const now = context.currentTime * rate;
+    if (!Number.isFinite(now) || now < 0)
+      throw new Error('proof witness suspended context time invalid');
+    const frozenAnchor = Math.ceil(Math.ceil(now) / quantum) * quantum;
+    const laterAnchor = globalThis.__otioProofClockMode === 'long'
+      ? Math.max(frozenAnchor + rate * 21, 2 ** 24 - rate) : null;
+    const length = Math.ceil(rate * 20);
+    const starts = laterAnchor === null ? [frozenAnchor] : [frozenAnchor, laterAnchor];
+    const sources = starts.map(anchor => {
+      if (!Number.isSafeInteger(anchor) || Math.abs((anchor / rate) * rate - anchor) > 1 / 1024)
+        throw new Error('proof witness start cannot round-trip to a frame');
+      const buffer = context.createBuffer(2, length, rate);
+      const high = buffer.getChannelData(0), low = buffer.getChannelData(1);
+      for (let i = 0; i < length; i++) {
+        const frame = anchor + i;
+        high[i] = 1 + Math.floor(frame / 65536);
+        low[i] = frame % 65536;
+      }
+      const source = context.createBufferSource();
+      source.buffer = buffer; source.channelCount = 2;
+      source.channelCountMode = 'explicit'; source.channelInterpretation = 'discrete';
+      return source;
+    });
+    const witness = {sources, anchor:frozenAnchor, laterAnchor, frozenAnchor, length,
+      attached:false, gateInitialFrame:null, clockEpoch:null};
+    witnesses.set(context, witness);
+    for (let i = 0; i < sources.length; i++) sources[i].start(starts[i] / rate);
+    return witness;
+  }
   function attachWitness(context) {
     const witness = witnesses.get(context);
     const graph = graphs.find(item => item.context === context);
@@ -435,47 +473,28 @@ export const otioProofTracePrelude = String.raw`(() => {
             }
             return send(...args);
           };
-          // This source is not connected to the destination or to the gate.
-          // Its non-looping position carrier is anchored only while native
-          // context time is frozen, never from a production bank descriptor.
-          if (context.state === 'suspended' || context.state === 'running') {
-            const prior = witnesses.get(context);
-            if (prior) for (const source of prior.sources) source.disconnect();
-            // Independent proof carrier origin W. It is routed only to the proof tap
-            // (attachWitness), never to the production gate input, so it need not follow
-            // the gate anchor A. It is scheduled at the earliest legal aligned frame so it
-            // can cover the scheduled start F0; if F0 is still uncovered the capture fails.
-            // main-thread currentTime can trail the render by about a block plus message delay.
-            // Lead is two quanta plus a 20 ms margin, so the source start is not already past.
-            // The identity assertion in otio-path.ts proves carrier == sample label every epoch.
-            const PROOF_CARRIER_LEAD_FRAMES = 2 * 128, PROOF_QUANTUM = 128;
-            const PROOF_TRAIL_MARGIN_FRAMES = Math.ceil(context.sampleRate * 0.02);
-            const now = context.currentTime * context.sampleRate;
-            const base = Math.ceil(now) + PROOF_TRAIL_MARGIN_FRAMES + PROOF_CARRIER_LEAD_FRAMES;
-            const frozenAnchor = base + (PROOF_QUANTUM - (base % PROOF_QUANTUM)) % PROOF_QUANTUM;
-            if (!Number.isSafeInteger(frozenAnchor)) throw new Error('proof carrier origin is not an integer');
-            const laterAnchor = globalThis.__otioProofClockMode === 'long'
-              ? Math.max(frozenAnchor + context.sampleRate * 21, 2 ** 24 - context.sampleRate) : null;
-            const length = Math.ceil(context.sampleRate * 20);
-            const starts = laterAnchor === null ? [frozenAnchor] : [frozenAnchor,laterAnchor];
-            const sources = starts.map(anchor => {
-              if (!Number.isSafeInteger(anchor) || Math.abs((anchor / context.sampleRate) * context.sampleRate - anchor) > 1 / 1024)
-                throw new Error('proof witness start cannot round-trip to a frame');
-              const buffer = context.createBuffer(2, length, context.sampleRate);
-              const high = buffer.getChannelData(0), low = buffer.getChannelData(1);
-              for (let i = 0; i < length; i++) { const frame = anchor + i; high[i] = 1 + Math.floor(frame / 65536); low[i] = frame % 65536; }
-              const source = context.createBufferSource();
-              source.buffer = buffer; source.channelCount = 2;
-              source.channelCountMode = 'explicit'; source.channelInterpretation = 'discrete';
-              return source;
-            });
-            const witness = {sources, anchor:frozenAnchor, laterAnchor, frozenAnchor, length, attached:false,
-              gateInitialFrame:options?.processorOptions?.initialFrame, clockEpoch:options?.processorOptions?.clockEpoch};
-            witnesses.set(context, witness);
-            recordEvent('witness-attach', null, {clockEpoch: witness.clockEpoch, frozenAnchor, laterAnchor, contextFrameAtAttach: Math.ceil(context.currentTime * context.sampleRate), sampleRate: context.sampleRate, starts, base, lead: PROOF_CARRIER_LEAD_FRAMES, sourceStarts: starts.map((start) => start / context.sampleRate), contextState: context.state});
-            attachWitness(context);
-            for(let i=0;i<sources.length;i++) sources[i].start(starts[i] / context.sampleRate);
-          }
+          // Reuse the independently prearmed carrier across sequential gate epochs.
+          // A late gate must not restart the source or move its sample origin.
+          const witness = witnesses.get(context);
+          if (!witness) throw new Error('proof witness was not prearmed while suspended');
+          witness.gateInitialFrame = options?.processorOptions?.initialFrame;
+          witness.clockEpoch = options?.processorOptions?.clockEpoch;
+          if (!Number.isSafeInteger(witness.gateInitialFrame) ||
+              !Number.isSafeInteger(witness.clockEpoch))
+            throw new Error('proof gate epoch or initial frame missing');
+          const inInitial = witness.gateInitialFrame >= witness.frozenAnchor &&
+            witness.gateInitialFrame < witness.frozenAnchor + witness.length;
+          const inLater = witness.laterAnchor !== null &&
+            witness.gateInitialFrame >= witness.laterAnchor &&
+            witness.gateInitialFrame < witness.laterAnchor + witness.length;
+          if (!inInitial && !inLater)
+            throw new Error('proof witness does not cover gate bootstrap frame');
+          recordEvent('witness-attach', null, {
+            clockEpoch:witness.clockEpoch, frozenAnchor:witness.frozenAnchor,
+            laterAnchor:witness.laterAnchor, gateInitialFrame:witness.gateInitialFrame,
+            contextState:context.state, reused:true
+          });
+          attachWitness(context);
           this.port.addEventListener('message', event => {
             if (syntheticAnchors.has(event)) return;
             if (event.data?.type === 'anchor-certified' && proofGate.anchorControl === 'stale-epoch') {
@@ -603,6 +622,10 @@ export const otioProofTracePrelude = String.raw`(() => {
       const graph = {master, context, node: null, chunks: [], samples: 0,
         overflow: false, pending: null, ready: null};
       graphs.push(graph);
+      // Prearm only when the context clock is frozen. Native playback does not require
+      // this carrier. A later PCM gate without one fails closed at gate construction.
+      // Never throw from connect(): the viewer may retry by creating another master gain.
+      if (context.state === 'suspended') prepareWitness(context);
       graph.ready = (async () => {
         if (!context.audioWorklet || typeof AudioWorkletNode !== 'function')
           throw new Error('AudioWorklet unavailable in viewer sandbox');
@@ -747,6 +770,15 @@ export const otioProofTracePrelude = String.raw`(() => {
   }
   requestAnimationFrame(tick);
   globalThis.__otioProofTrace = {
+    async preactivationState() {
+      await awaitControllerGraph(8000);
+      if (graphs.length !== 1) throw new Error('preactivation graph count: ' + JSON.stringify(controllerGraphSnapshot()));
+      const graph = graphs[0];
+      await graph.ready;
+      const witness = witnesses.get(graph.context);
+      return {state:graph.context.state, witness:!!witness, anchor:witness?.frozenAnchor ?? null,
+        contextTime:graph.context.currentTime, sampleRate:graph.context.sampleRate};
+    },
     async resumeBorrowed() {
       if (!borrowedProof) throw new Error('borrowed context unavailable');
       await borrowedProof.call('resume', 'owner');
