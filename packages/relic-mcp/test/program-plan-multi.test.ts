@@ -314,7 +314,8 @@ describe('the reserved record sizes bound every shipped record', () => {
 
   test('a maximal rendered descriptor is at most PROGRAM_RECORD_RESERVE_BYTES above the size-cap record', () => {
     // -1.2345678901234567e-300 is 24 characters: the widest number a descriptor carries.
-    const wide = -1.2345678901234567e-300;
+    const wide = Number('-1.2345678901234567e-300');
+    expect(JSON.stringify(wide)).toHaveLength(24);
     const record = {
       timeline_id: 'timeline-0',
       index: 0,
