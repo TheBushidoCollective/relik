@@ -20334,6 +20334,7 @@ async function runScheduledPcmProof(
         await waitReady(isolated);
         const result = await isolated.evaluate<
           MovingTrace & {
+            prepareError: string | null;
             before: {
               nodes: number;
               bytes: number;
@@ -20358,17 +20359,24 @@ async function runScheduledPcmProof(
           button.click(); await sleep(700);
           const before = globalThis.__otioProofPcmSnapshot();
           globalThis.__otioProofTrace.withholdRetirement();
-          await globalThis.__otioProofBorrowedAudio.controller.prepareAudioContextChange();
+          let prepareError = null;
+          try { await globalThis.__otioProofBorrowedAudio.controller.prepareAudioContextChange(); }
+          catch (error) { prepareError = String(error); }
           await sleep(300);
           const after = globalThis.__otioProofPcmSnapshot();
           const trace = await globalThis.__otioProofTrace.stop();
-          return {start, playEdge, trace, before, after};
+          return {start, playEdge, trace, before, after, prepareError};
         })()`);
         await writeClockShot(
           join(shotDir, 'borrowed-failed-retirement.json'),
           { provenance, capture: result },
           'borrowed-failed-retirement',
           result.trace
+        );
+        assert.equal(
+          result.prepareError,
+          null,
+          'preparing the borrowed audio context failed'
         );
         assert.ok(
           result.before.activeSession && result.before.gateReservations >= 1,
