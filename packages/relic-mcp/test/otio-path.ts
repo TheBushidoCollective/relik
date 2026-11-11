@@ -50,10 +50,19 @@ import { deflateSync } from 'node:zlib';
 import {
   compareRationalTimes,
   decodeKey,
+  deriveRendererClass,
+  deriveShareProof,
+  encryptRelic,
   evaluateOtioAt,
+  generateKey,
+  generateRelicId,
   indexOtioZip,
+  OTIO_PROGRAM_MANIFEST_ENTRY,
   openRelic,
   readOtioDocument,
+  relicUrl,
+  shareVerifierFor,
+  versionDigest,
 } from '@relic/format';
 import { createApp } from '@relic/server/src/app.ts';
 import { diskAssets } from '@relic/server/src/assets.ts';
@@ -64,6 +73,15 @@ import { DEFAULT_CLOCK_POLICY } from '../../relic-viewer/src/otio-output-clock';
 import { type CdpConnection, connectPipe } from '../src/cover/cdp.ts';
 import { chromeArgs, discoverChrome } from '../src/cover/chrome.ts';
 import { loadPublishState } from '../src/state.ts';
+import { nodeFiles } from '../src/files.ts';
+import {
+  guessMimetype,
+  postJson,
+  type PublishDeps,
+  putContainer,
+  readSource,
+  reportComplete,
+} from '../src/publish.ts';
 import {
   attestBrowserHeadless,
   type BrowserHeadlessLaunch,
@@ -7482,6 +7500,161 @@ function decoderDocument(
   )}\n`;
 }
 
+// Publishes a manifest-free legacy archive through the app's public challenge, grant,
+// upload and complete endpoints. It repeats publish()'s legs without the program build,
+// so this proof can produce the pre-program layout the viewer resolves as legacy. The
+// absence of any program entry is checked on the bytes before anything is encrypted.
+async function publishLegacyDirectory(
+  directory: string,
+  title: string
+): Promise<string> {
+  const deps: PublishDeps = {
+    serviceOrigin: origin,
+    relicOrigin: origin,
+    files: nodeFiles,
+    fetch: globalThis.fetch,
+    clientName: 'relic-mcp/legacy-proof',
+    renderCover: async () => ({
+      status: 'skipped',
+      reason: 'browser_disabled',
+      detail: 'legacy proof fixture',
+    }),
+  };
+  const source = await readSource(directory, nodeFiles);
+  const index = await indexOtioZip(source.bytes);
+  for (const info of index.entries.values()) {
+    assert.ok(
+      info.name !== OTIO_PROGRAM_MANIFEST_ENTRY &&
+        (info.isDirectory || !info.name.startsWith('relic/program')),
+      `legacy fixture carries program entry ${info.name}; it is not a legacy archive`
+    );
+  }
+  const challenge = await postJson(deps, `${origin}/api/challenge`, {});
+  const sizeLimit = Number(challenge['size_limit_bytes']);
+  assert.ok(
+    source.bytes.length <= sizeLimit,
+    'legacy fixture exceeds the app size cap'
+  );
+  const filename = source.basename;
+  const rendererClass = deriveRendererClass(source.bytes, filename);
+  const relicId = generateRelicId();
+  const key = generateKey();
+  const container = await encryptRelic({
+    content: source.bytes,
+    filename,
+    mimetype: guessMimetype(filename, rendererClass),
+    key,
+  });
+  const grant = await postJson(deps, `${origin}/api/grant`, {
+    challenge_nonce: challenge['challenge_nonce'],
+    relic_id: relicId,
+    renderer_class: rendererClass,
+    publishing_client: deps.clientName,
+    declared_size_bytes: source.bytes.length,
+    declared_ciphertext_bytes: container.length,
+    title,
+    share_verifier: await shareVerifierFor(await deriveShareProof(key)),
+  });
+  const publishToken = grant['publish_token'];
+  assert.ok(
+    typeof publishToken === 'string' && publishToken.length > 0,
+    'legacy grant carried no publish token'
+  );
+  await putContainer(deps, relicId, String(grant['upload_url']), container);
+  const complete = await reportComplete(deps, relicId);
+  const serverDigest = complete?.['version_digest'];
+  const localDigest = await versionDigest(container);
+  assert.ok(
+    typeof serverDigest !== 'string' || serverDigest === localDigest,
+    'legacy archive version digest disagrees with the server'
+  );
+  const url = relicUrl(origin, relicId, key);
+  assert.ok(
+    url.startsWith(origin) && url.includes('#'),
+    'legacy publish left loopback or lost its key'
+  );
+  return url;
+}
+
+// Reads what the viewer resolved for this composition: the program state, its first
+// reason, and the ready flag. Read only after waitReady has settled.
+async function readProgramState(browser: ChromeSession): Promise<{
+  state: string | null;
+  reason: string | null;
+  ready: string | null;
+}> {
+  return browser.evaluate<{
+    state: string | null;
+    reason: string | null;
+    ready: string | null;
+  }>(`(() => {
+    const view = document.querySelector('.otio-view');
+    return {
+      state: view?.dataset.otioProgramState ?? null,
+      reason: view?.dataset.otioProgramReason ?? null,
+      ready: view?.dataset.ready ?? null,
+    };
+  })()`);
+}
+
+// The legacy fixture must reach the viewer as the legacy program state, so the original
+// live-player and controller path is what the proof exercises.
+async function assertLegacyProgramState(
+  browser: ChromeSession,
+  label: string
+): Promise<void> {
+  const observed = await readProgramState(browser);
+  assert.equal(
+    observed.state,
+    'legacy',
+    `${label} legacy fixture resolved to program state ${observed.state} (reason ${observed.reason})`
+  );
+}
+
+// The real new-publish output, checked separately from the legacy fixture. On Linux the
+// publisher cannot render a program, so the view must show the timeline unavailable with
+// its reason. On macOS the publisher renders one, so the program must be playable. Both
+// branches assert; neither skips.
+async function runFocusOnlyPublishCheck(
+  sessionToken: string,
+  directory: string
+): Promise<void> {
+  const url = await publishDecoderDirectory('focus-only-publish', directory);
+  const browser = await openBrowser(url, sessionToken, {
+    label: 'focus-only-publish',
+    recordProofTrace: false,
+  });
+  try {
+    await waitReady(browser);
+    const observed = await readProgramState(browser);
+    if (process.platform === 'linux') {
+      assert.equal(
+        observed.state,
+        'unavailable',
+        `Linux publish was not focus-only: program state ${observed.state}`
+      );
+      assert.equal(
+        observed.reason,
+        'unsupported-browser',
+        `Linux focus-only reason was ${observed.reason}`
+      );
+      assert.equal(
+        observed.ready,
+        'diagnostic',
+        'Linux focus-only view did not render its diagnostic'
+      );
+    } else {
+      assert.equal(
+        observed.state,
+        'program',
+        `macOS publish did not render a playable program: ${observed.state} (${observed.reason})`
+      );
+    }
+  } finally {
+    await browser.close();
+  }
+}
+
 async function publishDecoderDirectory(
   name: string,
   directory: string
@@ -13318,7 +13491,7 @@ async function publishColdBoundaryDocument(): Promise<string> {
     'secondary_b.mp4',
   ])
     await cp(join(fixtureDir, 'media', name), join(media, name));
-  return publishDecoderDirectory('cold-playback-boundaries', directory);
+  return publishLegacyDirectory(directory, 'OTIO legacy cold boundaries');
 }
 
 // Independent references for the cold document, decoded by ffmpeg and never taken from
@@ -14390,6 +14563,7 @@ async function runColdStartProof(
   });
   try {
     await waitReady(isolated);
+    await assertLegacyProgramState(isolated, 'cold-start');
     const provenance = await proofProvenance(isolated);
     const canvasGeometry = await isolated.evaluate<{
       x: number;
@@ -14723,8 +14897,12 @@ async function runScheduledPcmProof(
       expected[ch]![n] = sum;
     }
   }
-  const url = await publishDecoderDirectory(`scheduled-pcm-${rate}`, directory);
+  const url = await publishLegacyDirectory(
+    directory,
+    `OTIO legacy scheduled-pcm ${rate}`
+  );
   const coldUrl = await publishColdBoundaryDocument();
+  await runFocusOnlyPublishCheck(sessionToken, directory);
   await runColdStartProof(coldUrl, sessionToken, rate);
   const browser = await openBrowser(url, sessionToken, {
     label: `scheduled-pcm-${rate}`,
@@ -14733,6 +14911,7 @@ async function runScheduledPcmProof(
   });
   try {
     await waitReady(browser);
+    await assertLegacyProgramState(browser, 'scheduled-pcm');
     const provenance = await proofProvenance(browser);
     let longEpoch: number | undefined;
     let warmAnchor: Record<string, unknown> | undefined;
