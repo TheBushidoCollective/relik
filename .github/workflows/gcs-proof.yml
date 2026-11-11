@@ -1,0 +1,643 @@
+name: GCS digest proof
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: 'Full SHA of a branch head in this repository'
+        required: true
+        type: string
+      pr_number:
+        description: 'Optional open PR whose head is the candidate SHA'
+        required: false
+        type: string
+      large_object:
+        description: 'Exercise the 500 MiB upload and digest path'
+        type: boolean
+        default: true
+
+permissions: {}
+
+# Each attempt has its own bucket, account and handoff artifacts.
+concurrency:
+  group: gcs-proof
+  cancel-in-progress: false
+
+jobs:
+  cleanup_safety:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Require verified safe bucket cleanup
+        run: |
+          echo 'GCS_PROOF_BLOCKED safe bucket cleanup unavailable; this run created no proof resources' >&2
+          exit 1
+
+  provision:
+    needs: cleanup_safety
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: read
+      id-token: write
+    outputs:
+      provisioned: ${{ steps.resources.outputs.provisioned }}
+      bucket: ${{ steps.resources.outputs.bucket }}
+      account: ${{ steps.resources.outputs.account }}
+      account_uid: ${{ steps.resources.outputs.account_uid }}
+      expires: ${{ steps.resources.outputs.expires }}
+      sha: ${{ steps.candidate.outputs.sha }}
+      manifest: ${{ steps.fixtures.outputs.manifest }}
+      expected: ${{ steps.fixtures.outputs.expected }}
+      large_seed: ${{ steps.fixtures.outputs.large_seed }}
+      large_bytes: ${{ steps.fixtures.outputs.large_bytes }}
+    steps:
+      - name: Check out trusted proof code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: trusted
+          persist-credentials: false
+
+      - name: Validate candidate and derive bucket name
+        id: candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_INPUT: ${{ inputs.candidate_sha }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          REPOSITORY_ID: ${{ github.repository_id }}
+          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_INPUT" =~ ^[0-9a-fA-F]{40}$ ]] || { echo 'Invalid candidate SHA' >&2; exit 1; }
+          sha="${CANDIDATE_INPUT,,}"
+          [[ "$REPOSITORY_ID" =~ ^[0-9]+$ ]] || { echo 'Invalid repository ID' >&2; exit 1; }
+          [[ "$GCP_PROJECT_ID" =~ ^[a-z][a-z0-9-]{4,28}[a-z0-9]$ ]] || { echo 'Invalid GCP project ID' >&2; exit 1; }
+          bucket="relic-gcs-proof-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          [[ "$bucket" =~ ^relic-gcs-proof-[0-9]+-[0-9]+$ ]] || { echo 'Invalid proof bucket name' >&2; exit 1; }
+          gh api -H 'Accept: application/vnd.github+json' "/repos/${GITHUB_REPOSITORY}/commits/${sha}/branches-where-head" > "$RUNNER_TEMP/branches.json"
+          jq -e --arg sha "$sha" 'type == "array" and any(.[]; .commit.sha == $sha)' "$RUNNER_TEMP/branches.json" > /dev/null || {
+            echo 'Candidate is not a branch head in this repository' >&2
+            exit 1
+          }
+          if [[ -n "$PR_NUMBER" ]]; then
+            [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]] || { echo 'Invalid PR number' >&2; exit 1; }
+            gh api -H 'Accept: application/vnd.github+json' "/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" > "$RUNNER_TEMP/pr.json"
+            jq -e --arg sha "$sha" --argjson repo "$REPOSITORY_ID" \
+              '.state == "open" and .head.sha == $sha and .head.repo.id == $repo' "$RUNNER_TEMP/pr.json" > /dev/null || {
+              echo 'PR is not open with this repository and candidate at its head' >&2
+              exit 1
+            }
+          fi
+          printf 'sha=%s\nbucket=%s\n' "$sha" "$bucket" >> "$GITHUB_OUTPUT"
+
+      - name: Authenticate as deployer
+        uses: google-github-actions/auth@v2
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.DEPLOYER_SA }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Create and verify leased proof resources
+        id: resources
+        env:
+          EXPECTED_BUCKET: ${{ steps.candidate.outputs.bucket }}
+          CANDIDATE_SHA: ${{ steps.candidate.outputs.sha }}
+          REPOSITORY_ID: ${{ github.repository_id }}
+          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          GCP_REGION: ${{ vars.GCP_REGION }}
+          WIF_PROVIDER: ${{ vars.WIF_PROVIDER }}
+        run: |
+          set -euo pipefail
+          publish_identity() {
+            local status=$? partial
+            trap - EXIT
+            if [[ -f "$RUNNER_TEMP/provisioned.json" ]]; then
+              if partial="$(jq -ce . "$RUNNER_TEMP/provisioned.json")"; then
+                printf 'provisioned=%s\n' "$partial" >> "$GITHUB_OUTPUT"
+              else
+                echo 'Invalid partial provisioned identity' >&2
+                status=1
+              fi
+            fi
+            exit "$status"
+          }
+          trap publish_identity EXIT
+          python3 trusted/scripts/gcs-proof/resources.py provision \
+            --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
+            --run "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" \
+            --candidate "$CANDIDATE_SHA" --repo-id "$REPOSITORY_ID" \
+            --wif-provider "$WIF_PROVIDER" --output "$RUNNER_TEMP/provisioned.json"
+          provisioned="$(jq -ce . "$RUNNER_TEMP/provisioned.json")"
+          python3 trusted/scripts/gcs-proof/resources.py check-provisioned \
+            --project "$GCP_PROJECT_ID" --run "$GITHUB_RUN_ID" \
+            --attempt "$GITHUB_RUN_ATTEMPT" --provisioned-json "$provisioned"
+          jq -e --arg bucket "$EXPECTED_BUCKET" --arg candidate "$CANDIDATE_SHA" \
+            '.bucket == $bucket and .candidate == $candidate' <<< "$provisioned" > /dev/null
+          bucket="$(jq -er '.bucket' <<< "$provisioned")"
+          account="$(jq -er '.account' <<< "$provisioned")"
+          account_uid="$(jq -er '.account_uid | select(type == "string" and test("^[1-9][0-9]{0,62}$"))' <<< "$provisioned")"
+          expires="$(jq -er '.expires | select(type == "number" and floor == .)' <<< "$provisioned")"
+          printf 'bucket=%s\naccount=%s\naccount_uid=%s\nexpires=%s\n' \
+            "$bucket" "$account" "$account_uid" "$expires" >> "$GITHUB_OUTPUT"
+
+      - name: Create and independently measure fixtures
+        id: fixtures
+        env:
+          BUCKET: ${{ steps.resources.outputs.bucket }}
+          ACCOUNT_UID: ${{ steps.resources.outputs.account_uid }}
+          EXPIRES: ${{ steps.resources.outputs.expires }}
+          CANDIDATE_SHA: ${{ steps.candidate.outputs.sha }}
+          LARGE_OBJECT: ${{ inputs.large_object }}
+        run: |
+          set -euo pipefail
+          python3 trusted/scripts/gcs-proof/fixtures.py --bucket "$BUCKET" --candidate "$CANDIDATE_SHA" \
+            --account-uid "$ACCOUNT_UID" --expires "$EXPIRES" --large-object "$LARGE_OBJECT" \
+            --output "$RUNNER_TEMP/expected.json"
+          expected="$(jq -ce . "$RUNNER_TEMP/expected.json")"
+          manifest="$(jq -ce '.manifest | select(type == "object")' "$RUNNER_TEMP/expected.json")"
+          seed="$(jq -er '.large_seed | select(test("^[0-9a-f]{64}$"))' "$RUNNER_TEMP/expected.json")"
+          bytes="$(jq -er '.large_bytes | select(. == 0 or . == 524288000)' "$RUNNER_TEMP/expected.json")"
+          if [[ "$LARGE_OBJECT" == true ]]; then
+            [[ "$bytes" == 524288000 ]] || { echo 'Missing large fixture parameters' >&2; exit 1; }
+          else
+            [[ "$LARGE_OBJECT" == false && "$bytes" == 0 ]] || { echo 'Invalid large fixture parameters' >&2; exit 1; }
+          fi
+          printf 'expected=%s\nmanifest=%s\nlarge_seed=%s\nlarge_bytes=%s\n' "$expected" "$manifest" "$seed" "$bytes" >> "$GITHUB_OUTPUT"
+
+  mint:
+    needs: provision
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    outputs:
+      scope_ok: ${{ steps.scope.outputs.ok }}
+    steps:
+      - name: Check out trusted proof code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: trusted
+          persist-credentials: false
+
+      - name: Validate this attempt's resource identity
+        env:
+          PROVISIONED: ${{ needs.provision.outputs.provisioned }}
+          CANDIDATE_SHA: ${{ needs.provision.outputs.sha }}
+          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+          python3 trusted/scripts/gcs-proof/resources.py check-provisioned \
+            --project "$GCP_PROJECT_ID" --run "$GITHUB_RUN_ID" \
+            --attempt "$GITHUB_RUN_ATTEMPT" --provisioned-json "$PROVISIONED"
+          jq -e --arg sha "$CANDIDATE_SHA" '.candidate == $sha' <<< "$PROVISIONED" > /dev/null
+
+      - name: Await the exercise public key
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          install -d -m 0700 "$RUNNER_TEMP/handoff"
+          bash trusted/scripts/gcs-proof/await-artifact.sh \
+            "gcs-proof-handoff-key-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            handoff-key.json "$RUNNER_TEMP/handoff/handoff-key.json" 720 1024
+
+      - name: Obtain a federated identity
+        id: wif
+        uses: google-github-actions/auth@v2
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          create_credentials_file: false
+          export_environment_variables: false
+
+      - name: Mint the leased account token
+        env:
+          GCS_PROOF_FEDERATED_TOKEN: ${{ steps.wif.outputs.auth_token }}
+          PROVISIONED: ${{ needs.provision.outputs.provisioned }}
+        run: |
+          set -euo pipefail
+          account="$(jq -er '.account' <<< "$PROVISIONED")"
+          python3 trusted/scripts/gcs-proof/resources.py mint \
+            --account "$account" --lifetime-seconds 2700 --deadline-seconds 420 \
+            --token-file "$RUNNER_TEMP/handoff/token" --meta-file "$RUNNER_TEMP/handoff/token-meta.json"
+
+      - name: Verify the token's complete scope
+        id: scope
+        env:
+          PROVISIONED: ${{ needs.provision.outputs.provisioned }}
+          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          DEPLOYER_ACCOUNT: ${{ vars.DEPLOYER_SA }}
+        run: |
+          set -euo pipefail
+          bucket="$(jq -er '.bucket' <<< "$PROVISIONED")"
+          account="$(jq -er '.account' <<< "$PROVISIONED")"
+          python3 trusted/scripts/gcs-proof/resources.py check-scope \
+            --project "$GCP_PROJECT_ID" --bucket "$bucket" --account "$account" \
+            --app-account "relic-app@${GCP_PROJECT_ID}.iam.gserviceaccount.com" \
+            --deployer-account "$DEPLOYER_ACCOUNT" --token-file "$RUNNER_TEMP/handoff/token"
+          echo 'ok=true' >> "$GITHUB_OUTPUT"
+
+      - name: Seal the token for this attempt
+        env:
+          PROVISIONED: ${{ needs.provision.outputs.provisioned }}
+        run: |
+          set -euo pipefail
+          token="$RUNNER_TEMP/handoff/token"
+          trap 'rm -f "$token"' EXIT
+          account="$(jq -er '.account' <<< "$PROVISIONED")"
+          expires="$(jq -er '.expires' <<< "$PROVISIONED")"
+          token_expires="$(jq -er '.expire_time | select(type == "string" and length > 0)' "$RUNNER_TEMP/handoff/token-meta.json")"
+          context="run=${GITHUB_RUN_ID} attempt=${GITHUB_RUN_ATTEMPT} account=${account} expires=${expires}"
+          node trusted/scripts/gcs-proof/handoff.js seal \
+            --key-json "$RUNNER_TEMP/handoff/handoff-key.json" --token-file "$token" \
+            --expire-time "$token_expires" --context "$context" --out "$RUNNER_TEMP/handoff/sealed.json"
+
+      - name: Upload the sealed token
+        uses: actions/upload-artifact@v4
+        with:
+          name: gcs-proof-handoff-token-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/handoff/sealed.json
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Remove any plaintext token after failure
+        if: always()
+        run: rm -f "$RUNNER_TEMP/handoff/token"
+
+  exercise:
+    needs: provision
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      gcs_blob: ${{ steps.prepare.outputs.gcs_blob }}
+      image: ${{ steps.prepare.outputs.image }}
+      result: ${{ steps.result.outputs.result }}
+    steps:
+      - name: Require no OIDC credentials
+        run: |
+          set -euo pipefail
+          [[ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" && -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]] || {
+            echo 'GCS_PROOF_ERROR exercise: OIDC is available' >&2
+            exit 1
+          }
+          echo 'GCS_PROOF_EXERCISE_NO_OIDC'
+
+      - name: Check out trusted proof code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: trusted
+          persist-credentials: false
+
+      - name: Check out candidate without credentials
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.provision.outputs.sha }}
+          path: candidate
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Prepare only the candidate GCS module and runtime image
+        id: prepare
+        env:
+          CANDIDATE_SHA: ${{ needs.provision.outputs.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'Invalid candidate SHA' >&2; exit 1; }
+          [[ "$(git -C candidate rev-parse HEAD)" == "$CANDIDATE_SHA" ]] || { echo 'Candidate checkout differs from validated SHA' >&2; exit 1; }
+          gcs_path=packages/relic-server/src/gcs.ts
+          dockerfile=deploy/docker/server/Dockerfile
+          for file in "$gcs_path" "$dockerfile"; do
+            [[ "$(git -C candidate ls-tree --format='%(objectmode) %(objecttype)' HEAD -- "$file")" == '100644 blob' ]] || {
+              echo 'Candidate input is not a regular Git blob' >&2
+              exit 1
+            }
+          done
+          blob="$(git -C candidate rev-parse "HEAD:$gcs_path")"
+          [[ "$blob" =~ ^[0-9a-f]{40}$ ]] || { echo 'Invalid GCS blob ID' >&2; exit 1; }
+          size="$(git -C candidate cat-file -s "$blob")"
+          [[ "$size" =~ ^[0-9]+$ ]] && (( size <= 4194304 )) || { echo 'Candidate module is too large' >&2; exit 1; }
+          install -d -m 0755 "$RUNNER_TEMP/proof-candidate/packages/relic-server/src"
+          git -C candidate cat-file blob "$blob" > "$RUNNER_TEMP/proof-candidate/packages/relic-server/src/gcs.ts"
+          chmod 0444 "$RUNNER_TEMP/proof-candidate/packages/relic-server/src/gcs.ts"
+          git -C candidate show "HEAD:$dockerfile" > "$RUNNER_TEMP/candidate-Dockerfile"
+          count=0
+          tag=''
+          while IFS= read -r line || [[ -n "$line" ]]; do
+            if [[ "$line" =~ ^FROM\ oven/bun:([0-9]+\.[0-9]+\.[0-9]+-alpine)\ AS\ runtime$ ]]; then
+              count=$((count + 1))
+              tag="${BASH_REMATCH[1]}"
+            fi
+          done < "$RUNNER_TEMP/candidate-Dockerfile"
+          [[ "$count" == 1 ]] || { echo 'Expected exactly one pinned Bun Alpine runtime' >&2; exit 1; }
+          image="oven/bun:$tag"
+          docker pull "$image"
+          digests="$(docker image inspect --format '{{json .RepoDigests}}' "$image")"
+          digest="$(jq -er '[.[] | select(test("(^|/)oven/bun@sha256:[0-9a-f]{64}$"))] | if length == 1 then .[0] else error("missing or ambiguous image digest") end' <<< "$digests")"
+          version="${tag%-alpine}"
+          printf 'gcs_blob=%s\nimage=%s\nbun_version=%s\n' "$blob" "$digest" "$version" >> "$GITHUB_OUTPUT"
+          printf 'GCS_PROOF candidate=%s gcs_blob=%s image=%s\n' "$CANDIDATE_SHA" "$blob" "$digest"
+
+      - name: Validate this attempt's resource identity
+        env:
+          PROVISIONED: ${{ needs.provision.outputs.provisioned }}
+          CANDIDATE_SHA: ${{ needs.provision.outputs.sha }}
+          BUCKET: ${{ needs.provision.outputs.bucket }}
+          ACCOUNT: ${{ needs.provision.outputs.account }}
+          EXPIRES: ${{ needs.provision.outputs.expires }}
+          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+          python3 trusted/scripts/gcs-proof/resources.py check-provisioned \
+            --project "$GCP_PROJECT_ID" --run "$GITHUB_RUN_ID" \
+            --attempt "$GITHUB_RUN_ATTEMPT" --provisioned-json "$PROVISIONED"
+          jq -e --arg sha "$CANDIDATE_SHA" --arg bucket "$BUCKET" \
+            --arg account "$ACCOUNT" --arg expires "$EXPIRES" \
+            '.candidate == $sha and .bucket == $bucket and .account == $account and (.expires | tostring) == $expires' \
+            <<< "$PROVISIONED" > /dev/null
+
+      - name: Create the handoff key
+        run: |
+          set -euo pipefail
+          install -d -m 0700 "$RUNNER_TEMP/handoff"
+          node trusted/scripts/gcs-proof/handoff.js keygen --dir "$RUNNER_TEMP/handoff"
+
+      - name: Upload the handoff public key
+        uses: actions/upload-artifact@v4
+        with:
+          name: gcs-proof-handoff-key-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/handoff/handoff-key.json
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Await and open the sealed token
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ACCOUNT: ${{ needs.provision.outputs.account }}
+          EXPIRES: ${{ needs.provision.outputs.expires }}
+        run: |
+          set -euo pipefail
+          bash trusted/scripts/gcs-proof/await-artifact.sh \
+            "gcs-proof-handoff-token-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            sealed.json "$RUNNER_TEMP/handoff/sealed.json" 1200 16384
+          context="run=${GITHUB_RUN_ID} attempt=${GITHUB_RUN_ATTEMPT} account=${ACCOUNT} expires=${EXPIRES}"
+          node trusted/scripts/gcs-proof/handoff.js open \
+            --key-pem "$RUNNER_TEMP/handoff/handoff-key.pem" \
+            --sealed "$RUNNER_TEMP/handoff/sealed.json" --context "$context" \
+            --token-out "$RUNNER_TEMP/handoff/token" --meta-out "$RUNNER_TEMP/handoff/open-meta.json"
+          rm -f "$RUNNER_TEMP/handoff/handoff-key.pem"
+          echo "::add-mask::$(< "$RUNNER_TEMP/handoff/token")"
+          python3 - "$EXPIRES" "$RUNNER_TEMP/handoff/open-meta.json" <<'PY'
+          import datetime
+          import json
+          import sys
+          import time
+
+          lease_end = int(sys.argv[1])
+          with open(sys.argv[2], encoding="utf-8") as file:
+              metadata = json.load(file)
+          token_end = datetime.datetime.fromisoformat(metadata["expire_time"].replace("Z", "+00:00"))
+          if token_end.tzinfo is None:
+              raise SystemExit("Proof token expiry has no timezone")
+          now = time.time()
+          if now + 1620 > lease_end or token_end.timestamp() - now < 1440:
+              raise SystemExit("Insufficient remaining proof lease or token lifetime")
+          PY
+
+      - name: Run candidate in isolated Bun container
+        id: container
+        env:
+          IMAGE: ${{ steps.prepare.outputs.image }}
+          GCS_PROOF_BUCKET: ${{ needs.provision.outputs.bucket }}
+          GCS_PROOF_CLIENT_EMAIL: ${{ needs.provision.outputs.account }}
+          GCS_PROOF_PROJECT: ${{ vars.GCP_PROJECT_ID }}
+          GCS_PROOF_PREFIX: r
+          GCS_PROOF_MANIFEST: ${{ needs.provision.outputs.manifest }}
+          GCS_PROOF_LARGE_SEED: ${{ needs.provision.outputs.large_seed }}
+          GCS_PROOF_LARGE_BYTES: ${{ needs.provision.outputs.large_bytes }}
+          GCS_PROOF_CANDIDATE_SHA: ${{ needs.provision.outputs.sha }}
+          GCS_PROOF_BUN_VERSION: ${{ steps.prepare.outputs.bun_version }}
+        run: |
+          set -euo pipefail
+          export GCS_PROOF_TOKEN="$(< "$RUNNER_TEMP/handoff/token")"
+          install -d -m 0777 "$RUNNER_TEMP/proof-work"
+          container_name="gcs-proof-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          cleanup_container() {
+            docker rm --force "$container_name" > /dev/null 2>&1 || true
+          }
+          trap cleanup_container EXIT
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
+          # Print only fixed diagnostic lines. Candidate output is untrusted
+          # and can contain tokens or signed URLs, so never persist it.
+          set +e
+          timeout --signal=TERM --kill-after=10s 1320s docker run --rm \
+            --name "$container_name" --pull never \
+            --read-only --tmpfs /tmp:rw,nosuid,nodev,size=64m --cap-drop ALL \
+            --security-opt no-new-privileges --pids-limit 256 --memory 2g \
+            --user 1000:1000 -w /work -e HOME=/tmp \
+            -e GCS_PROOF_TOKEN -e GCS_PROOF_BUCKET -e GCS_PROOF_CLIENT_EMAIL -e GCS_PROOF_PROJECT \
+            -e GCS_PROOF_PREFIX -e GCS_PROOF_MANIFEST -e GCS_PROOF_LARGE_SEED \
+            -e GCS_PROOF_LARGE_BYTES -e GCS_PROOF_CANDIDATE_SHA -e GCS_PROOF_BUN_VERSION \
+            --mount "type=bind,src=$GITHUB_WORKSPACE/trusted/scripts/gcs-proof,dst=/harness,readonly" \
+            --mount "type=bind,src=$RUNNER_TEMP/proof-candidate,dst=/candidate,readonly" \
+            --mount "type=bind,src=$RUNNER_TEMP/proof-work,dst=/work" \
+            "$IMAGE" bun /harness/harness.ts 2>&1 | python3 -c '
+          import sys
+          stages = (
+              b"setup", b"candidate-import", b"large-create", b"large-upload",
+              b"large-digest", b"before-reads", b"digests", b"after-reads",
+              b"preconditions", b"absent", b"vector", b"write-result"
+          )
+          allowed = {b"GCS_PROOF_HARNESS_COMPLETE"} | {
+              b"GCS_PROOF_ERROR harness stage=" + stage for stage in stages
+          }
+          pending = bytearray()
+          oversized = False
+          while chunk := sys.stdin.buffer.read1(4096):
+              for char in chunk:
+                  if char == 10:
+                      line = bytes(pending).rstrip(b"\r")
+                      if not oversized and line in allowed:
+                          print(line.decode("ascii"), flush=True)
+                      pending.clear()
+                      oversized = False
+                  elif not oversized:
+                      if len(pending) < 128:
+                          pending.append(char)
+                      else:
+                          pending.clear()
+                          oversized = True
+          '
+          statuses=("${PIPESTATUS[@]}")
+          set -e
+          if (( statuses[0] != 0 || statuses[1] != 0 )); then
+            printf 'GCS_PROOF candidate container status=%s diagnostic_filter_status=%s\n' "${statuses[0]}" "${statuses[1]}" >&2
+            exit 1
+          fi
+          echo 'GCS_PROOF candidate container completed'
+
+      - name: Validate and publish bounded result
+        id: result
+        env:
+          CANDIDATE_SHA: ${{ needs.provision.outputs.sha }}
+        run: |
+          set -euo pipefail
+          trap 'rm -f "$RUNNER_TEMP/handoff/token"' EXIT
+          result="$RUNNER_TEMP/proof-work/result.json"
+          [[ -f "$result" && ! -L "$result" ]] || { echo 'Missing regular proof result' >&2; exit 1; }
+          size="$(stat -c %s "$result")"
+          (( size > 0 && size <= 262144 )) || { echo 'Invalid proof result size' >&2; exit 1; }
+          python3 trusted/scripts/gcs-proof/verify.py validate --result "$result" \
+            --candidate "$CANDIDATE_SHA" --token-file "$RUNNER_TEMP/handoff/token" > "$RUNNER_TEMP/validated-result.json"
+          compact="$(jq -ce -s 'if length == 1 then .[0] else error("invalid result stream") end' "$RUNNER_TEMP/validated-result.json")"
+          install -d -m 0700 "$RUNNER_TEMP/proof-artifact"
+          printf '%s\n' "$compact" > "$RUNNER_TEMP/proof-artifact/result.json"
+          printf 'result=%s\n' "$compact" >> "$GITHUB_OUTPUT"
+
+      - name: Upload validated proof result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gcs-proof-result-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/proof-artifact/result.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Remove handoff secrets after failure
+        if: always()
+        run: rm -f "$RUNNER_TEMP/handoff/token" "$RUNNER_TEMP/handoff/handoff-key.pem"
+
+  teardown:
+    needs: [cleanup_safety, provision, mint, exercise]
+    if: always() && github.ref == 'refs/heads/main' && needs.cleanup_safety.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out trusted proof code
+        if: always()
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: trusted
+          persist-credentials: false
+
+      - name: Authenticate as deployer
+        id: auth
+        if: always()
+        uses: google-github-actions/auth@v2
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.DEPLOYER_SA }}
+
+      - if: always()
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Verify results independently
+        id: verify
+        if: always() && needs.provision.result == 'success' && needs.mint.result == 'success' && needs.exercise.result == 'success'
+        continue-on-error: true
+        env:
+          EXPECTED: ${{ needs.provision.outputs.expected }}
+          RESULT: ${{ needs.exercise.outputs.result }}
+          CANDIDATE_SHA: ${{ needs.provision.outputs.sha }}
+          SCOPE_OK: ${{ needs.mint.outputs.scope_ok }}
+          PROVISIONED: ${{ needs.provision.outputs.provisioned }}
+          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+          python3 trusted/scripts/gcs-proof/resources.py check-provisioned \
+            --project "$GCP_PROJECT_ID" --run "$GITHUB_RUN_ID" \
+            --attempt "$GITHUB_RUN_ATTEMPT" --provisioned-json "$PROVISIONED"
+          [[ -n "$EXPECTED" && -n "$RESULT" && "$SCOPE_OK" == true ]] || { echo 'Missing proof inputs' >&2; exit 1; }
+          printf '%s\n' "$EXPECTED" > "$RUNNER_TEMP/expected.json"
+          printf '%s\n' "$RESULT" > "$RUNNER_TEMP/result.json"
+          python3 trusted/scripts/gcs-proof/verify.py check --expected "$RUNNER_TEMP/expected.json" \
+            --result "$RUNNER_TEMP/result.json" --candidate "$CANDIDATE_SHA" --scope-ok "$SCOPE_OK"
+
+      - name: Obtain a fresh federated identity for revocation
+        id: wif
+        if: always() && needs.provision.result == 'success'
+        continue-on-error: true
+        uses: google-github-actions/auth@v2
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          create_credentials_file: false
+          export_environment_variables: false
+
+      - name: Revoke and verify the leased account
+        id: revoke
+        if: always() && needs.provision.result == 'success'
+        continue-on-error: true
+        env:
+          GCS_PROOF_FEDERATED_TOKEN: ${{ steps.wif.outputs.auth_token }}
+          PROVISIONED: ${{ needs.provision.outputs.provisioned }}
+          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          REPOSITORY_ID: ${{ github.repository_id }}
+        run: |
+          set -euo pipefail
+          python3 trusted/scripts/gcs-proof/resources.py revoke \
+            --project "$GCP_PROJECT_ID" --run "$GITHUB_RUN_ID" \
+            --attempt "$GITHUB_RUN_ATTEMPT" --repo-id "$REPOSITORY_ID" \
+            --provisioned-json "$PROVISIONED"
+
+      - name: Delete and confirm absence of proof resources
+        id: cleanup
+        if: always()
+        env:
+          PROVISIONED: ${{ needs.provision.outputs.provisioned }}
+          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          REPOSITORY_ID: ${{ github.repository_id }}
+        run: |
+          set -euo pipefail
+          args=(--project "$GCP_PROJECT_ID" --run "$GITHUB_RUN_ID" \
+            --attempt "$GITHUB_RUN_ATTEMPT" --repo-id "$REPOSITORY_ID")
+          if [[ -n "$PROVISIONED" ]]; then
+            args+=(--provisioned-json "$PROVISIONED")
+          fi
+          python3 trusted/scripts/gcs-proof/resources.py teardown "${args[@]}"
+
+      - name: Require complete verification and cleanup
+        if: always()
+        env:
+          PROVISION_RESULT: ${{ needs.provision.result }}
+          MINT_RESULT: ${{ needs.mint.result }}
+          EXERCISE_RESULT: ${{ needs.exercise.result }}
+          VERIFY_RESULT: ${{ steps.verify.outcome }}
+          REVOKE_RESULT: ${{ steps.revoke.outcome }}
+          CLEANUP_RESULT: ${{ steps.cleanup.outcome }}
+          CANDIDATE_SHA: ${{ needs.provision.outputs.sha }}
+          GCS_BLOB: ${{ needs.exercise.outputs.gcs_blob }}
+          BUCKET: ${{ needs.provision.outputs.bucket }}
+          PROVISIONED: ${{ needs.provision.outputs.provisioned }}
+        run: |
+          set -euo pipefail
+          if [[ "$PROVISION_RESULT" != success || "$MINT_RESULT" != success || "$EXERCISE_RESULT" != success || "$VERIFY_RESULT" != success || "$REVOKE_RESULT" != success || "$CLEANUP_RESULT" != success ]]; then
+            printf 'GCS_PROOF_ERROR final provision=%s mint=%s exercise=%s verify=%s revoke=%s cleanup=%s\n' \
+              "$PROVISION_RESULT" "$MINT_RESULT" "$EXERCISE_RESULT" "$VERIFY_RESULT" \
+              "$REVOKE_RESULT" "$CLEANUP_RESULT" >&2
+            exit 1
+          fi
+          [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ && "$GCS_BLOB" =~ ^[0-9a-f]{40}$ ]] || { echo 'Missing proof identity' >&2; exit 1; }
+          [[ "$BUCKET" == "relic-gcs-proof-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" ]] || { echo 'Proof bucket mismatch' >&2; exit 1; }
+          account_uid="$(jq -er '.account_uid | select(type == "string" and test("^[1-9][0-9]{0,62}$"))' <<< "$PROVISIONED")"
+          printf 'GCS_PROOF_VERIFIED candidate=%s gcs_blob=%s bucket=%s account_uid=%s\n' \
+            "$CANDIDATE_SHA" "$GCS_BLOB" "$BUCKET" "$account_uid"

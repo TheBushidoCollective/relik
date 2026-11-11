@@ -28,6 +28,7 @@ fixtures = load_module("gcs_proof_fixtures", "fixtures.py")
 verify = load_module("gcs_proof_verify", "verify.py")
 CANDIDATE = "a" * 40
 BUCKET = "relic-gcs-proof-123-2"
+ACCOUNT_UID = "123456789012345678901"
 TOKEN = "local_proof_token_0123456789"
 
 
@@ -235,48 +236,73 @@ class IdentityTests(unittest.TestCase):
         completed = subprocess.run(["bun", "--eval", script], capture_output=True, text=True, check=False)
         self.assertEqual(completed.returncode, 0, completed.stderr)
 
-    def test_fixture_labels_include_exact_expiry(self):
+    def test_fixture_labels_include_exact_expiry_and_account_uid(self):
         labels = {"purpose": "relic-gcs-proof", "run": "123", "attempt": "2",
-                  "candidate": CANDIDATE, "expires": "1800007200"}
+                  "candidate": CANDIDATE, "expires": "1800007200", "account_uid": ACCOUNT_UID}
         bucket = {"name": BUCKET, "labels": labels}
-        fixtures.validate_bucket(bucket, BUCKET, "123", "2", CANDIDATE, "1800007200")
+        fixtures.validate_bucket(bucket, BUCKET, "123", "2", CANDIDATE, "1800007200", ACCOUNT_UID)
         for wrong in ({**labels, "expires": "1800007201"},
                       {key: value for key, value in labels.items() if key != "expires"},
-                      {**labels, "expires": 1800007200}, {**labels, "foreign": "extra"},
+                      {**labels, "expires": 1800007200},
+                      {key: value for key, value in labels.items() if key != "account_uid"},
+                      {**labels, "account_uid": "123456789012345678902"},
+                      {**labels, "account_uid": int(ACCOUNT_UID)},
+                      {**labels, "foreign": "extra"},
                       {**labels, "run": "124"}, {**labels, "attempt": "3"},
                       {**labels, "candidate": "b" * 40}, {**labels, "purpose": "other"}):
             with self.subTest(labels=wrong), self.assertRaises(ValueError):
                 fixtures.validate_bucket({"name": BUCKET, "labels": wrong}, BUCKET,
-                                         "123", "2", CANDIDATE, "1800007200")
+                                         "123", "2", CANDIDATE, "1800007200", ACCOUNT_UID)
         with self.assertRaises(ValueError):
             fixtures.validate_bucket({"name": "other-bucket", "labels": labels}, BUCKET,
-                                     "123", "2", CANDIDATE, "1800007200")
+                                     "123", "2", CANDIDATE, "1800007200", ACCOUNT_UID)
 
-    def test_fixture_rejects_bad_lease_before_upload(self):
+    def test_fixture_rejects_bad_lease_or_uid_before_upload(self):
         args = ["fixtures.py", "--bucket", BUCKET, "--candidate", CANDIDATE,
-                "--expires", "1800007200", "--large-object", "false", "--output", "unused"]
-        wrong = {"name": BUCKET, "labels": {"purpose": "relic-gcs-proof", "run": "123", "attempt": "2",
-                                             "candidate": CANDIDATE, "expires": "1800007201"}}
-        with mock.patch.object(sys, "argv", args), \
-             mock.patch.dict(os.environ, {"GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "2"}), \
-             mock.patch.object(fixtures, "token_from_gcloud", return_value=TOKEN), \
-             mock.patch.object(fixtures, "request", return_value=(200, json.dumps(wrong).encode(), {})) as request:
-            with self.assertRaisesRegex(ValueError, "labels differ"):
-                fixtures.main()
-            self.assertEqual(request.call_count, 1)
-            self.assertEqual(request.call_args.args[0], "GET")
+                "--expires", "1800007200", "--account-uid", ACCOUNT_UID,
+                "--large-object", "false", "--output", "unused"]
+        labels = {"purpose": "relic-gcs-proof", "run": "123", "attempt": "2",
+                  "candidate": CANDIDATE, "expires": "1800007200", "account_uid": ACCOUNT_UID}
+        for wrong_labels in ({**labels, "expires": "1800007201"},
+                             {**labels, "account_uid": "123456789012345678902"},
+                             {key: value for key, value in labels.items() if key != "account_uid"},
+                             {**labels, "foreign": "extra"}):
+            wrong = {"name": BUCKET, "labels": wrong_labels}
+            with self.subTest(labels=wrong_labels), \
+                 mock.patch.object(sys, "argv", args), \
+                 mock.patch.dict(os.environ, {"GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "2"}), \
+                 mock.patch.object(fixtures, "token_from_gcloud", return_value=TOKEN), \
+                 mock.patch.object(fixtures, "request", return_value=(200, json.dumps(wrong).encode(), {})) as request:
+                with self.assertRaisesRegex(ValueError, "labels differ"):
+                    fixtures.main()
+                self.assertEqual(request.call_count, 1)
+                self.assertEqual(request.call_args.args[0], "GET")
 
     def test_fixture_rejects_invalid_expiry_and_run_before_credentials(self):
         for expiry, run, attempt in (("0", "123", "2"), ("01", "123", "2"),
                                      ("1800007200\n", "123", "2"), ("1800007200", "0123", "2"),
                                      ("1800007200", "123", "1000")):
             args = ["fixtures.py", "--bucket", BUCKET, "--candidate", CANDIDATE,
-                    "--expires", expiry, "--large-object", "false", "--output", "unused"]
+                    "--expires", expiry, "--account-uid", ACCOUNT_UID,
+                    "--large-object", "false", "--output", "unused"]
             with self.subTest(expiry=expiry, run=run, attempt=attempt), \
                  mock.patch.object(sys, "argv", args), \
                  mock.patch.dict(os.environ, {"GITHUB_RUN_ID": run, "GITHUB_RUN_ATTEMPT": attempt}), \
                  mock.patch.object(fixtures, "token_from_gcloud") as token:
                 with self.assertRaises(ValueError):
+                    fixtures.main()
+                token.assert_not_called()
+
+    def test_fixture_rejects_invalid_uid_before_credentials(self):
+        self.assertIsNotNone(fixtures.UID_RE.fullmatch("1" * 63))
+        for uid in ("", "0", "01", "a123", "123\n", "1" * 64):
+            args = ["fixtures.py", "--bucket", BUCKET, "--candidate", CANDIDATE,
+                    "--expires", "1800007200", "--account-uid", uid,
+                    "--large-object", "false", "--output", "unused"]
+            with self.subTest(uid=uid), \
+                 mock.patch.object(sys, "argv", args), \
+                 mock.patch.object(fixtures, "token_from_gcloud") as token:
+                with self.assertRaisesRegex(ValueError, "invalid proof account UID"):
                     fixtures.main()
                 token.assert_not_called()
 

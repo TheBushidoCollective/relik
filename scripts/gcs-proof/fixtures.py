@@ -16,6 +16,7 @@ import urllib.request
 
 BUCKET_RE = re.compile(r"^relic-gcs-proof-[1-9][0-9]{0,18}-[1-9][0-9]{0,2}$")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+UID_RE = re.compile(r"^[1-9][0-9]{0,62}$")
 LARGE_BYTES = 500 * 1024 * 1024
 PREFIX = "r"
 
@@ -137,10 +138,10 @@ def large_hashes(seed):
             zeros.wait()
 
 
-def validate_bucket(bucket, name, run, attempt, candidate, expires):
+def validate_bucket(bucket, name, run, attempt, candidate, expires, account_uid):
     require(isinstance(bucket, dict) and bucket.get("name") == name and
             bucket.get("labels") == {"purpose": "relic-gcs-proof", "run": run, "attempt": attempt,
-                                     "candidate": candidate, "expires": expires},
+                                     "candidate": candidate, "expires": expires, "account_uid": account_uid},
             "proof bucket labels differ")
 
 
@@ -149,12 +150,14 @@ def main():
     parser.add_argument("--bucket", required=True)
     parser.add_argument("--candidate", required=True)
     parser.add_argument("--expires", required=True)
+    parser.add_argument("--account-uid", required=True)
     parser.add_argument("--large-object", required=True, choices=("true", "false"))
     parser.add_argument("--output", required=True)
     args = parser.parse_args()
     require(BUCKET_RE.fullmatch(args.bucket) is not None, "invalid proof bucket")
     require(SHA_RE.fullmatch(args.candidate) is not None, "invalid candidate SHA")
     require(re.fullmatch(r"[1-9][0-9]{0,18}", args.expires) is not None, "invalid lease expiry")
+    require(UID_RE.fullmatch(args.account_uid) is not None, "invalid proof account UID")
     run = os.environ.get("GITHUB_RUN_ID", "")
     attempt = os.environ.get("GITHUB_RUN_ATTEMPT", "")
     require(re.fullmatch(r"[1-9][0-9]{0,18}", run) is not None and
@@ -164,7 +167,7 @@ def main():
     bucket_url = "https://storage.googleapis.com/storage/v1/b/" + urllib.parse.quote(args.bucket, safe="")
     status, raw, _ = request("GET", bucket_url, token)
     require(status == 200, f"proof bucket read returned HTTP {status}")
-    validate_bucket(json.loads(raw), args.bucket, run, attempt, args.candidate, args.expires)
+    validate_bucket(json.loads(raw), args.bucket, run, attempt, args.candidate, args.expires, args.account_uid)
 
     labels = ("plain", "gzip-single", "gzip-double", "already-nt", "quoted-cc", "mislabeled",
               "control-single", "control-double", "control-mislabeled", "large", "vector", "absent")

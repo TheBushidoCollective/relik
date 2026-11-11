@@ -86,6 +86,9 @@ jobs:
       - name: Test
         run: bun run test
 
+      - name: Test GCS proof resource guards
+        run: python3 -m unittest discover -s scripts/gcs-proof -p 'test_*.py'
+
       - name: Deploy smoke read-only path
         run: bun scripts/deploy-smoke-path.ts
 

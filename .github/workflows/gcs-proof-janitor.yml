@@ -1,0 +1,74 @@
+name: GCS proof janitor
+
+on:
+  schedule:
+    - cron: '0 * * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: List eligible proof resources without deleting them
+        type: boolean
+        default: true
+      min_age_minutes:
+        description: Minimum proof resource age in minutes
+        type: string
+        default: '15'
+  workflow_run:
+    workflows: ['GCS digest proof']
+    types: [completed]
+
+permissions: {}
+
+concurrency:
+  group: gcs-proof-janitor
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name != 'workflow_run' ||
+        (github.event.workflow_run.event == 'workflow_dispatch' &&
+         github.event.workflow_run.head_branch == 'main' &&
+         github.event.workflow_run.head_repository.id == github.repository_id))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    steps:
+      - name: Check out trusted janitor code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Authenticate as deployer
+        uses: google-github-actions/auth@v2
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.DEPLOYER_SA }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Sweep eligible completed proof attempts
+        env:
+          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          REPOSITORY_ID: ${{ github.repository_id }}
+          GH_TOKEN: ${{ github.token }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          MIN_AGE_MINUTES: ${{ inputs.min_age_minutes }}
+        run: |
+          set -euo pipefail
+          case "$GITHUB_EVENT_NAME" in
+            schedule) dry_run=false; age=15 ;;
+            workflow_run) dry_run=false; age=0 ;;
+            workflow_dispatch) dry_run="$DRY_RUN"; age="$MIN_AGE_MINUTES" ;;
+            *) echo 'Unsupported janitor trigger' >&2; exit 1 ;;
+          esac
+          [[ "$dry_run" == true || "$dry_run" == false ]] || { echo 'Invalid dry_run' >&2; exit 1; }
+          [[ "$age" =~ ^[0-9]{1,7}$ ]] || { echo 'Invalid minimum age' >&2; exit 1; }
+          python3 scripts/gcs-proof/resources.py janitor --project "$GCP_PROJECT_ID" \
+            --repo-id "$REPOSITORY_ID" --dry-run "$dry_run" --min-age-minutes "$age"

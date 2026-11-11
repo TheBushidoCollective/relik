@@ -121,7 +121,9 @@ alongside the existing light/dark receipts.
 
 # GCS stored-byte digest proof
 
-From the candidate branch checkout with its pull request open, dispatch the trusted workflow on `main`:
+**Blocked: do not dispatch the proof or run its provisioning script.** GCS does not offer an atomic bucket deletion precondition tied to an immutable bucket generation. A bucket can be replaced between an identity check and a name-based delete. Cleanup therefore refuses to mutate an extant bucket, and provisioning must fail before creating a bucket while safe cleanup cannot be proven. The real-GCS path and automatic cleanup are unproven.
+
+Once that blocker is resolved and the trusted workflow is available on `main`, dispatch it from the candidate branch checkout with its pull request open:
 
 ```sh
 gh workflow run gcs-proof.yml --ref main \
@@ -136,7 +138,7 @@ gh run watch "$RUN_ID" --exit-status
 gh run view "$RUN_ID" --log
 ```
 
-The default includes the 500 MiB upload. A run with `large_object=false` does not prove that path. A successful default run must include all of these markers for the same run attempt:
+The default includes the 500 MiB upload. A run with `large_object=false` does not prove that path. Once the blocker is resolved, acceptance of a default run requires all of these markers for the same run attempt:
 
 - `GCS_PROOF_PROVISIONED bucket=... account=... account_uid=... expires=...`
 - `GCS_PROOF_POLICY_VERIFIED bucket=... account=...` and `GCS_PROOF_SCOPE_VERIFIED account=...`
@@ -144,8 +146,8 @@ The default includes the 500 MiB upload. A run with `large_object=false` does no
 - `GCS_PROOF_REVOKED account=...`, `GCS_PROOF_BUCKET_GONE ...`, `GCS_PROOF_ACCOUNT_GONE ...`, and `GCS_PROOF_RESOURCES_GONE bucket=... account_uid=...`
 - `GCS_PROOF_VERIFIED candidate=... gcs_blob=... bucket=... account_uid=...`
 
-Match the candidate SHA to the PR head and the bucket, account and account UID across the markers. The final marker requires the digest checks, revocation and verified cleanup. A failed or cancelled run is not a successful proof, even if cleanup succeeds.
+Match the candidate SHA to the PR head and the bucket, account and account UID across the markers. The final marker must require the digest checks, revocation and verified cleanup. A failed or cancelled run is not a successful proof, even if cleanup succeeds.
 
-Each attempt uses its own bucket and service account. The candidate runs in a job without GitHub OIDC request credentials or deployer credentials; a separate job seals its account token to an exercise-runner key before artifact transfer. The account can use or disclose its token and can sign as itself during its conditional grant. The account's grants have a two-hour lease; token expiry alone is not the boundary. See `docs/design/operations.md` for the scope checks, cleanup rules and limits.
+The design calls for a unique bucket and service account per attempt. Candidate code must run in a job without GitHub OIDC request credentials or deployer credentials; a separate job seals its account token to an exercise-runner key before artifact transfer. The account can use or disclose its token and can sign as itself during its conditional grant. The account's grants have a two-hour lease; token expiry alone is not the boundary. See `docs/design/operations.md` for the cleanup blocker and the intended scope checks.
 
 After a change to the workflow, live GCP authorization, the cross-job handoff, revocation and cleanup require a run from the merged `main` revision. A local fake or an earlier run does not prove those paths. The workflow needs two runners available at once for mint and exercise.
