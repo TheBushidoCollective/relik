@@ -168,3 +168,26 @@ export function assertAssociatedSamples(
     'required carrier interval missing or duplicated'
   );
 }
+
+/**
+ * Decides when the proof driver may stop a natural stale-pair capture.
+ * The stop is count-based: once `quota` pairs are recorded the window ends,
+ * so the gate never has to reach the hard `cap`. Exceeding `cap` before a
+ * stop is always an error, never a silent truncation.
+ */
+export function staleStopDecision(input: {
+  pairs: number;
+  quota: number;
+  cap: number;
+  elapsedMs: number;
+  deadlineMs: number;
+}): 'continue' | 'stop' {
+  if (!Number.isSafeInteger(input.pairs) || input.pairs < 0)
+    throw new Error('stale pair count invalid');
+  if (!(input.quota >= 1 && input.quota <= input.cap))
+    throw new Error('stale quota outside cap');
+  if (input.pairs > input.cap) throw new Error('stale-pair recorder overflow');
+  if (input.pairs >= input.quota) return 'stop';
+  if (input.elapsedMs >= input.deadlineMs) return 'stop';
+  return 'continue';
+}

@@ -35,6 +35,7 @@ import {
   assertAssociatedSamples,
   type GateQuantum,
   type TapQuantum,
+  staleStopDecision,
 } from './otio-proof-clock.ts';
 import { createHash } from 'node:crypto';
 import { type ChildProcess, spawn } from 'node:child_process';
@@ -104,6 +105,10 @@ import {
 const clientMode = process.env['RELIC_OTIO_PATH_CLIENT'] ?? 'source';
 const isNpxMode = clientMode.startsWith('npx:');
 const OTIO_PIN = 'opentimelineio==0.18.1';
+// Natural stale-pair capture stops once this many cached-duplicate pairs exist.
+// The gate's hard cap (proofStaleMaxPairs) is unchanged; overflow still fails closed.
+const STALE_PAIR_QUOTA = 2;
+const STALE_PAIR_CAP = 16;
 const clockProofMode = process.env['RELIC_OTIO_CLOCK_PROOF'] ?? '';
 if (
   clockProofMode !== '' &&
@@ -11415,6 +11420,8 @@ function assertStaleWitnessControls(
   const targetFrame = pair.current.certifiedFrame;
   for (const kind of [
     'missing-pair',
+    'missing-stop',
+    'stop-short',
     'overflow',
     'foreign-capture',
     'shifted-bank',
@@ -11478,6 +11485,33 @@ function assertStaleWitnessControls(
         'stale bank samples missing'
       );
       frames[0] = Number(frames[0]) + 1;
+    } else if (kind === 'missing-stop') {
+      corrupt.events = corrupt.events.filter(
+        (event) =>
+          !(
+            event.kind === 'transport-message' &&
+            event.value &&
+            typeof event.value === 'object' &&
+            'type' in event.value &&
+            event.value.type === 'clock-stale-stopped'
+          )
+      );
+    } else if (kind === 'stop-short') {
+      const event = corrupt.events.find(
+        (entry) =>
+          entry.kind === 'transport-message' &&
+          entry.value &&
+          typeof entry.value === 'object' &&
+          'type' in entry.value &&
+          entry.value.type === 'clock-stale-stopped'
+      );
+      assert.ok(
+        event?.value &&
+          typeof event.value === 'object' &&
+          'pairs' in event.value,
+        'stale stop record unavailable'
+      );
+      event.value.pairs = Number(event.value.pairs) - 1;
     } else {
       let injected = false;
       for (const chunk of corrupt.audio) {
@@ -17114,7 +17148,11 @@ async function runScheduledPcmProof(
         'identity checkpoint only; the clock trace is in scheduled-clock-long-bootstrap'
       );
     }
-    const capture = await browser.evaluate<MovingTrace>(`(async () => {
+    const capture = await browser.evaluate<
+      MovingTrace & {
+        staleStop: { pairsAtStop: number; msFromWindow: number } | null;
+      }
+    >(`(async () => {
       const sleep = ms => { const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, ms); return promise; };
       const root = document.querySelector('.otio-view');
       const button = document.querySelector('button.otio-play');
@@ -17125,15 +17163,26 @@ async function runScheduledPcmProof(
       await sleep(${clockProofMode === 'long' ? 100 : 600});
       for (let i = 0; i < 70 && !globalThis.__otioProofTrace.clockTraceReady(); i++) await sleep(10);
       globalThis.__otioProofTrace.clockTrace('start');
-      await sleep(800);
+      const staleBegin = performance.now();
+      const staleQuota = ${STALE_PAIR_QUOTA}, staleCap = ${STALE_PAIR_CAP};
+      const decideStale = ${staleStopDecision.toString()};
+      let staleStop = null;
+      const tryStaleStop = async () => {
+        if (staleStop) return;
+        const pairs = globalThis.__otioProofTrace.stalePairCount();
+        const decision = decideStale({pairs, quota: staleQuota, cap: staleCap,
+          elapsedMs: performance.now() - staleBegin, deadlineMs: 800 + 3000});
+        if (decision !== 'stop') return;
+        staleStop = {pairsAtStop: pairs, msFromWindow: performance.now() - staleBegin};
+        await globalThis.__otioProofTrace.stopStaleWindow();
+      };
+      while (performance.now() - staleBegin < 800) { await tryStaleStop(); await sleep(10); }
       globalThis.__otioProofTrace.clockTrace('stop');
-      const stalePairDeadline = performance.now() + 3000;
-      while (globalThis.__otioProofTrace.stalePairCount() < 1 && performance.now() < stalePairDeadline) await sleep(10);
-      await globalThis.__otioProofTrace.stopStaleWindow();
+      while (!staleStop) { await tryStaleStop(); if (!staleStop) await sleep(10); }
       await sleep(${clockProofMode === 'long' ? 2800 : 2300});
       const trace = await globalThis.__otioProofTrace.stop();
       if (root.dataset.playing === 'true') button.click();
-      return {start, playEdge, trace};
+      return {start, playEdge, trace, staleStop};
     })()`);
     const provenanceAfter = await proofProvenance(browser);
     await writeClockShot(

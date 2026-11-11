@@ -4,6 +4,7 @@ import {
   assertAssociatedSamples,
   type GateQuantum,
   type TapQuantum,
+  staleStopDecision,
 } from './otio-proof-clock.ts';
 
 function fixture(labels = [10, 10, 10, 14]) {
@@ -128,5 +129,52 @@ describe('independent callback association', () => {
     expect(() => associateGateSequence(tap, gate.slice(0, 2), 7)).toThrow(
       'uniquely aligned'
     );
+  });
+});
+
+describe('count-based natural stale stop', () => {
+  const base = { quota: 2, cap: 16, deadlineMs: 3800 };
+  test('continues below quota and stops exactly at quota', () => {
+    expect(staleStopDecision({ ...base, pairs: 0, elapsedMs: 100 })).toBe(
+      'continue'
+    );
+    expect(staleStopDecision({ ...base, pairs: 1, elapsedMs: 100 })).toBe(
+      'continue'
+    );
+    expect(staleStopDecision({ ...base, pairs: 2, elapsedMs: 100 })).toBe(
+      'stop'
+    );
+  });
+  test('stops with zero pairs only at the deadline, never before', () => {
+    expect(staleStopDecision({ ...base, pairs: 0, elapsedMs: 3799 })).toBe(
+      'continue'
+    );
+    expect(staleStopDecision({ ...base, pairs: 0, elapsedMs: 3800 })).toBe(
+      'stop'
+    );
+  });
+  test('stops at the quota even when the hard cap is far above it', () => {
+    expect(staleStopDecision({ ...base, pairs: 16, elapsedMs: 1 })).toBe(
+      'stop'
+    );
+  });
+  test('overflow beyond the cap is an error, never a silent stop', () => {
+    expect(() =>
+      staleStopDecision({ ...base, pairs: 17, elapsedMs: 1 })
+    ).toThrow('stale-pair recorder overflow');
+  });
+  test('rejects malformed counts and quotas outside the cap', () => {
+    expect(() =>
+      staleStopDecision({ ...base, pairs: -1, elapsedMs: 1 })
+    ).toThrow();
+    expect(() =>
+      staleStopDecision({ ...base, pairs: 1.5, elapsedMs: 1 })
+    ).toThrow();
+    expect(() =>
+      staleStopDecision({ ...base, quota: 0, pairs: 0, elapsedMs: 1 })
+    ).toThrow();
+    expect(() =>
+      staleStopDecision({ ...base, quota: 17, pairs: 0, elapsedMs: 1 })
+    ).toThrow();
   });
 });
