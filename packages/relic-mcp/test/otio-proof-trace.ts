@@ -93,6 +93,7 @@ export const otioProofTracePrelude = String.raw`(() => {
       if (fault === 'source-offset') return originalSourceStart.call(this, args[0], 1 / rate);
       if (fault === 'start-time') return originalSourceStart.call(this, args[0] + 1 / rate);
       if (fault === 'missing-first-quantum') return originalSourceStart.call(this, args[0] + 128 / rate);
+      if (fault === 'truncated') return originalSourceStart.call(this, args[0], args[1] ?? 0, 128 / rate);
     }
     const result=originalSourceStart.apply(this, args);
     if (recoveryOverrunRequested && recoveryClosureSeen && !anchorSource && Number.isFinite(args[0])) {
@@ -645,12 +646,7 @@ export const otioProofTracePrelude = String.raw`(() => {
           channels:this.buffer.numberOfChannels, rate:this.buffer.sampleRate, input:1,
           channelCount:this.channelCount, channelCountMode:this.channelCountMode,
           channelInterpretation:this.channelInterpretation});
-      if (kind === 'truncated') {
-        const original=this.buffer, shortened=this.context.createBuffer(2,128,this.context.sampleRate);
-        for(let ch=0;ch<2;ch++) shortened.copyToChannel(original.getChannelData(ch).subarray(0,128),ch);
-        this.buffer=shortened; gate.anchorControl=null;
-        recordEvent('anchor-carrier-control-injected', null, {kind, originalFrames:original.length, frames:128});
-      } else if (['source-offset','start-time','missing-first-quantum','missing'].includes(kind)) {
+      if (['source-offset','start-time','missing-first-quantum','missing','truncated'].includes(kind)) {
         anchorSourceFaults.set(this,kind); gate.anchorControl=null;
       } else if (kind === 'held-bank' || kind === 'shift-bank') {
         const param=destination.parameters.get('clockFrameA'), start=gate.initialFrame/this.context.sampleRate;

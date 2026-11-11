@@ -19197,6 +19197,30 @@ async function runScheduledPcmProof(
               `${kind} never reached native render-clock rejection`
             );
           }
+          if (kind === 'truncated') {
+            const witness = outcome.trace.events.find(
+              (event) => event.kind === 'witness-attach'
+            );
+            const initial = (
+              witness?.value as Record<string, unknown> | undefined
+            )?.['gateInitialFrame'];
+            assert.ok(
+              typeof initial === 'number' && Number.isSafeInteger(initial)
+            );
+            assert.ok(
+              outcome.trace.events.some(
+                (event) =>
+                  event.kind === 'transport-message' &&
+                  (event.value as Record<string, unknown> | null)?.['type'] ===
+                    'clock-fault' &&
+                  (event.value as Record<string, unknown> | null)?.[
+                    'expectedFrame'
+                  ] ===
+                    initial + 128
+              ),
+              'truncated carrier did not fail on the second anchor quantum'
+            );
+          }
           for (const chunk of outcome.trace.audio)
             for (const channel of chunk.channels)
               assert.ok(
