@@ -208,3 +208,269 @@ describe('output clock admission', () => {
     expect(c.forkForRequest(1071, 1071)).toBeNull();
   });
 });
+
+// Recorded CI rows (scheduled-pcm-cold-start-48000.json), each as
+// [readEnd, contextAfter, contextTime, performanceTime]. readBegin is readEnd
+// and contextBefore is contextAfter, as the browser recorded them.
+const RECORDED: readonly (readonly [number, number, number, number])[] = [
+  [2475.2999999999884, 1.616, 1.5737023333333333, 2468.2999999999884],
+  [2478.0999999999767, 1.624, 1.5835541666666668, 2478.0999999999767],
+  [2483.5999999999767, 1.624, 1.5835541666666668, 2478.0999999999767],
+  [2491.5999999999767, 1.6346666666666667, 1.593615, 2488.0999999999767],
+  [2494.7999999999884, 1.6346666666666667, 1.593615, 2488.0999999999767],
+  [
+    2499.6999999999534, 1.6453333333333333, 1.6036628333333336,
+    2498.1999999999534,
+  ],
+  [
+    2507.7999999999884, 1.6453333333333333, 1.6036628333333336,
+    2498.1999999999534,
+  ],
+  [2511.399999999965, 1.656, 1.6135296666666668, 2508.0999999999767],
+  [2516.7999999999884, 1.656, 1.6135296666666668, 2508.0999999999767],
+  [2524.899999999965, 1.664, 1.6235275, 2518.0999999999767],
+  [
+    2528.0999999999767, 1.6693333333333333, 1.6335173333333333,
+    2528.0999999999767,
+  ],
+  [
+    2532.899999999965, 1.6746666666666667, 1.6336033333333333,
+    2528.0999999999767,
+  ],
+];
+const recordedRead = ([
+  readEnd,
+  contextAfter,
+  contextTime,
+  performanceTime,
+]: readonly [number, number, number, number]) => ({
+  readBegin: readEnd,
+  readEnd,
+  contextBefore: contextAfter,
+  contextAfter,
+  state: 'running',
+  contextTime,
+  performanceTime,
+});
+// A read whose bracket collapses to one instant at readEnd.
+const read = (
+  contextTime: number,
+  performanceTime: number,
+  readEnd = 2532.9
+) => ({
+  readBegin: readEnd,
+  readEnd,
+  contextBefore: contextTime,
+  contextAfter: contextTime,
+  state: 'running',
+  contextTime,
+  performanceTime,
+});
+// A sample() read whose contextTime moves by `us` microseconds, performanceTime kept.
+const holdOf = (time: number, us: number) => ({
+  ...sample(time),
+  contextTime: time / 1000 + us / 1e6,
+});
+// Replays rows 1 to 11. Row 8 calibrates; rows 9 to 11 run in playback.
+const replayRecorded = () => {
+  const clock = new OutputClock(2470);
+  for (const row of RECORDED.slice(0, 7)) clock.observe(recordedRead(row));
+  expect(clock.state).toBe('calibrating');
+  expect(clock.observe(recordedRead(RECORDED[7]!)).status).toBe('calibrated');
+  clock.arm();
+  clock.start();
+  const results = RECORDED.slice(8, 11).map((row) =>
+    clock.observe(recordedRead(row))
+  );
+  expect(results.map((r) => r.reason)).toEqual([
+    'duplicate',
+    'accepted',
+    'accepted',
+  ]);
+  expect(results.every((r) => r.status === 'playing')).toBe(true);
+  return { clock, row11: results[2]! };
+};
+
+describe('held reads at the performance rounding step', () => {
+  test('replays the recorded running pair as a held read, not an interruption', () => {
+    const { clock, row11 } = replayRecorded();
+    const accepted = clock.lastAccepted;
+    expect(accepted).toEqual({
+      contextTime: 1.6335173333333333,
+      performanceTime: 2528.0999999999767,
+    });
+    const held = clock.observe(recordedRead(RECORDED[11]!));
+    expect(held.status).toBe('playing');
+    expect(held.reason).toBe('sub-resolution');
+    expect(held.offsetMin).toBe(row11.offsetMin);
+    expect(held.offsetMax).toBe(row11.offsetMax);
+    expect(clock.lastAccepted).toEqual(accepted);
+    expect(clock.lastRejection).toBeNull();
+  });
+
+  test('a context-only advance of 199 us is held', () => {
+    const { clock } = replayRecorded();
+    const base = clock.lastAccepted!;
+    const r = clock.observe(
+      read(base.contextTime + 0.000199, base.performanceTime)
+    );
+    expect(r.reason).toBe('sub-resolution');
+    expect(r.status).toBe('playing');
+  });
+
+  test('a context-only advance of 200 us still interrupts', () => {
+    const { clock } = replayRecorded();
+    const base = clock.lastAccepted!;
+    const r = clock.observe(
+      read(base.contextTime + 0.0002, base.performanceTime)
+    );
+    expect(r.reason).toBe('partial-advance');
+    expect(r.status).toBe('interrupted');
+  });
+
+  test('a performance-only advance still interrupts', () => {
+    const { clock } = replayRecorded();
+    const base = clock.lastAccepted!;
+    const r = clock.observe(read(base.contextTime, base.performanceTime + 0.1));
+    expect(r.reason).toBe('partial-advance');
+    expect(r.status).toBe('interrupted');
+  });
+
+  test('holds at 86 and 150 us are fine, a third at 210 us interrupts', () => {
+    const { clock } = replayRecorded();
+    const base = clock.lastAccepted!;
+    expect(
+      clock.observe(read(base.contextTime + 0.000086, base.performanceTime))
+        .reason
+    ).toBe('sub-resolution');
+    expect(
+      clock.observe(read(base.contextTime + 0.00015, base.performanceTime))
+        .reason
+    ).toBe('sub-resolution');
+    const r = clock.observe(
+      read(base.contextTime + 0.00021, base.performanceTime)
+    );
+    expect(r.reason).toBe('partial-advance');
+    expect(r.status).toBe('interrupted');
+  });
+
+  test('no creep: each hold is measured from the accepted pair, so 200 us ends them', () => {
+    const { clock } = replayRecorded();
+    const base = clock.lastAccepted!;
+    for (const us of [90, 120, 150, 180, 199]) {
+      expect(
+        clock.observe(read(base.contextTime + us / 1e6, base.performanceTime))
+          .reason
+      ).toBe('sub-resolution');
+    }
+    const r = clock.observe(
+      read(base.contextTime + 0.0002, base.performanceTime)
+    );
+    expect(r.reason).toBe('partial-advance');
+    expect(r.status).toBe('interrupted');
+  });
+
+  test('a held read past the freshness window is stale, not stagnant', () => {
+    const { clock } = replayRecorded();
+    const base = clock.lastAccepted!;
+    const r = clock.observe(
+      read(
+        base.contextTime + 0.000086,
+        base.performanceTime,
+        base.performanceTime + 50.1
+      )
+    );
+    expect(r.reason).toBe('stale');
+    expect(r.status).toBe('interrupted');
+  });
+
+  test('a held read below the held mark regresses', () => {
+    const { clock } = replayRecorded();
+    const base = clock.lastAccepted!;
+    expect(
+      clock.observe(read(base.contextTime + 0.00015, base.performanceTime))
+        .reason
+    ).toBe('sub-resolution');
+    const r = clock.observe(
+      read(base.contextTime + 0.0001, base.performanceTime)
+    );
+    expect(r.reason).toBe('regression');
+    expect(r.status).toBe('interrupted');
+  });
+
+  test('a held read neither calibrates nor resets calibration', () => {
+    const c = new OutputClock(1000);
+    c.observe(sample(10));
+    c.observe(sample(25));
+    c.observe(sample(40));
+    expect(c.state).toBe('calibrating');
+    const held = c.observe(holdOf(40, 86));
+    expect(held.reason).toBe('sub-resolution');
+    expect(held.status).toBe('calibrating');
+    expect(c.observe(sample(45)).status).toBe('calibrated');
+  });
+
+  test('a held read keeps a calibrated or armed clock in its state', () => {
+    const c = ready();
+    const calibrated = c.observe(holdOf(40, 86));
+    expect(calibrated.reason).toBe('sub-resolution');
+    expect(calibrated.status).toBe('calibrated');
+    c.arm();
+    const armed = c.observe(holdOf(40, 150));
+    expect(armed.reason).toBe('sub-resolution');
+    expect(armed.status).toBe('armed');
+    c.start();
+    expect(c.state).toBe('playing');
+  });
+
+  test('a held read is never inherited by a recovery fork', () => {
+    const c = ready();
+    c.arm();
+    c.start();
+    for (const t of [50, 60, 70]) c.observe(sample(t));
+    expect(c.observe(holdOf(70, 86)).reason).toBe('sub-resolution');
+    const fork = c.forkForRequest(1000, 1075);
+    expect(fork).not.toBeNull();
+    expect(fork!.inheritedObservations.map((o) => o.contextTime)).toEqual([
+      0.04, 0.05, 0.06, 0.07,
+    ]);
+    expect(fork!.lastAccepted).toEqual({
+      contextTime: 0.07,
+      performanceTime: 1070,
+    });
+  });
+
+  test('lastAccepted is the last accepted pair, copied, and never a held read', () => {
+    const c = new OutputClock(1000);
+    expect(c.lastAccepted).toBeNull();
+    c.observe(sample(10));
+    const first = c.lastAccepted!;
+    expect(first).toEqual({ contextTime: 0.01, performanceTime: 1010 });
+    first.contextTime = 9;
+    expect(c.lastAccepted).toEqual({
+      contextTime: 0.01,
+      performanceTime: 1010,
+    });
+    c.observe(sample(20));
+    c.observe(holdOf(20, 86));
+    expect(c.lastAccepted).toEqual({
+      contextTime: 0.02,
+      performanceTime: 1020,
+    });
+  });
+
+  test('a held read leaves the last rejection and the last accepted pair alone', () => {
+    const c = new OutputClock(1000);
+    c.observe(sample(10));
+    c.observe({ ...sample(20), state: 'suspended' });
+    const rejection = c.lastRejection;
+    expect(rejection?.result.reason).toBe('context-not-running');
+    for (const t of [30, 40]) c.observe(sample(t));
+    expect(c.observe(holdOf(40, 86)).reason).toBe('sub-resolution');
+    expect(c.lastRejection).toBe(rejection);
+    expect(c.lastAccepted).toEqual({
+      contextTime: 0.04,
+      performanceTime: 1040,
+    });
+  });
+});

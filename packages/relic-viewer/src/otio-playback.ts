@@ -50,7 +50,12 @@ import {
   type OtioTransportGate,
   type OtioGateAck,
 } from './otio-transport-gate.ts';
-import { OutputClock } from './otio-output-clock.ts';
+import {
+  OutputClock,
+  type ClockObservation,
+  type ClockRecord,
+  type ClockResult,
+} from './otio-output-clock.ts';
 import {
   CalibrationReadBudget,
   calibrationCadenceMs,
@@ -3726,6 +3731,7 @@ export function createOtioPlayback(
           pcmProof('error', generation, {
             stage: 'clock',
             code: 'context-not-running',
+            ...clockEvidence(pcmRun?.outputClock),
           });
           failScheduledAudio('audio context interrupted');
         }
@@ -4151,6 +4157,40 @@ export function createOtioPlayback(
     });
   }
 
+  type ClockEvidence = {
+    lastRejection: ClockRecord | null;
+    lastAccepted: { contextTime: number; performanceTime: number } | null;
+  };
+  // Clock evidence carried by proof events. A held read never moves the last
+  // accepted pair, so both fields name what the clock actually trusted.
+  function clockEvidence(clock: OutputClock | null | undefined): ClockEvidence {
+    return {
+      lastRejection: clock?.lastRejection ?? null,
+      lastAccepted: clock?.lastAccepted ?? null,
+    };
+  }
+  // Observes the output clock. A held read emits proof-only evidence: the exact
+  // prior accepted pair, read before the observation, and the held stamp.
+  function observeOutputClock(
+    clock: OutputClock,
+    generation: number,
+    observation: ClockObservation
+  ): ClockResult {
+    const prior = clock.lastAccepted;
+    const result = clock.observe(observation);
+    if (result.reason === 'sub-resolution' && prior)
+      pcmProof('clock-hold', generation, {
+        deltaUs: Math.round(
+          1e6 * (observation.contextTime! - prior.contextTime)
+        ),
+        contextTime: observation.contextTime,
+        performanceTime: observation.performanceTime,
+        readEnd: observation.readEnd,
+        lastAccepted: prior,
+      });
+    return result;
+  }
+
   function samplePcmOutputClock(run: PcmRun): void {
     if (run.stopped || run.closedFrame !== null || pcmRun !== run || isDisposed)
       return;
@@ -4171,7 +4211,7 @@ export function createOtioPlayback(
       } catch {}
       const contextAfter = run.context.currentTime;
       const readEnd = presentClockMs();
-      const result = run.outputClock.observe({
+      const result = observeOutputClock(run.outputClock, run.generation, {
         readBegin,
         readEnd,
         contextBefore,
@@ -4185,7 +4225,16 @@ export function createOtioPlayback(
         result.status === 'failed' ||
         result.status === 'interrupted'
       ) {
-        failScheduledAudio(`audio output clock interrupted: ${result.reason}`);
+        const evidence = clockEvidence(run.outputClock);
+        pcmProof('error', run.generation, {
+          stage: 'clock',
+          code: result.reason,
+          ...evidence,
+        });
+        failScheduledAudio(
+          `audio output clock interrupted: ${result.reason}`,
+          evidence
+        );
         return;
       }
       samplePcmOutputClock(run);
@@ -4226,10 +4275,13 @@ export function createOtioPlayback(
       () => pendingPcmDrains.delete(run),
       () => undefined
     );
-    const failDrain = (reason: string) => {
+    const failDrain = (
+      reason: string,
+      clockProof: ClockEvidence | null = null
+    ) => {
       run.rejectDrain(new Error(reason));
       if (!isDisposed && request === playRequestEpoch && pcmRun === run)
-        failScheduledAudio(reason);
+        failScheduledAudio(reason, clockProof);
       if (pcmRun !== run) releasePcmResources(run);
     };
     if (handoff) beginPcmHandoff(run, closedFrame, compositionStop);
@@ -4278,7 +4330,7 @@ export function createOtioPlayback(
         } catch {}
         const contextAfter = run.context.currentTime;
         const readEnd = presentClockMs();
-        const result = run.outputClock.observe({
+        const result = observeOutputClock(run.outputClock, run.generation, {
           readBegin,
           readEnd,
           contextBefore,
@@ -4297,7 +4349,8 @@ export function createOtioPlayback(
           result.status === 'interrupted'
         ) {
           failDrain(
-            `audio output clock interrupted during drain: ${result.reason}`
+            `audio output clock interrupted during drain: ${result.reason}`,
+            clockEvidence(run.outputClock)
           );
           return;
         }
@@ -4422,7 +4475,7 @@ export function createOtioPlayback(
     } catch {}
     const contextAfter = run.context.currentTime;
     const readEnd = presentClockMs();
-    const observation = run.outputClock.observe({
+    const observation = observeOutputClock(run.outputClock, run.generation, {
       readBegin,
       readEnd,
       contextBefore,
@@ -4431,6 +4484,7 @@ export function createOtioPlayback(
       contextTime: stamp?.contextTime,
       performanceTime: stamp?.performanceTime,
     });
+    const accepted = run.outputClock.lastAccepted;
     if (
       !stamp ||
       typeof stamp.contextTime !== 'number' ||
@@ -4438,6 +4492,7 @@ export function createOtioPlayback(
       typeof stamp.performanceTime !== 'number' ||
       !Number.isFinite(stamp.performanceTime) ||
       observation.status !== 'calibrated' ||
+      accepted === null ||
       observation.offsetMin === null ||
       observation.offsetMax === null ||
       readEnd > run.outputClock.deadline ||
@@ -4464,8 +4519,8 @@ export function createOtioPlayback(
     }
     const allowance = observation.offsetMax - observation.offsetMin;
     const mapped =
-      stamp.performanceTime +
-      1000 * (run.contextFrame / run.admission.rate - stamp.contextTime);
+      accepted.performanceTime +
+      1000 * (run.contextFrame / run.admission.rate - accepted.contextTime);
     const original =
       run.bridge.performanceTime +
       1000 * (run.contextFrame / run.admission.rate - run.bridge.contextTime);
@@ -4591,6 +4646,7 @@ export function createOtioPlayback(
           pcmProof('error', run.generation, {
             stage: 'clock',
             code: 'commit-clock-rejected',
+            ...clockEvidence(run.outputClock),
           });
           hold.release();
           return false;
@@ -4726,6 +4782,7 @@ export function createOtioPlayback(
           pcmProof('error', generation, {
             stage: 'clock',
             code: 'calibration-read-limit',
+            ...clockEvidence(clock),
           });
         return finish(false);
       }
@@ -4737,7 +4794,7 @@ export function createOtioPlayback(
       } catch {}
       const contextAfter = context.currentTime;
       const readEnd = presentClockMs();
-      const result = clock.observe({
+      const result = observeOutputClock(clock, generation, {
         readBegin,
         readEnd,
         contextBefore,
@@ -4753,6 +4810,7 @@ export function createOtioPlayback(
           pcmProof('error', generation, {
             stage: 'clock',
             code: result.reason,
+            ...clockEvidence(clock),
           });
         return finish(false);
       }
@@ -4798,7 +4856,7 @@ export function createOtioPlayback(
       }
       const contextAfter = run.context.currentTime;
       after = presentClockMs();
-      const result = run.outputClock.observe({
+      const result = observeOutputClock(run.outputClock, run.generation, {
         readBegin: before,
         readEnd: after,
         contextBefore,
@@ -4811,6 +4869,7 @@ export function createOtioPlayback(
         pcmProof('error', run.generation, {
           stage: 'clock',
           code: result.reason,
+          ...clockEvidence(run.outputClock),
         });
         return null;
       }
@@ -4827,6 +4886,8 @@ export function createOtioPlayback(
       setTimeout(resolve, 8);
       await promise;
     }
+    // A held read is not evidence: the bridge is the last accepted pair.
+    const accepted = run.outputClock.lastAccepted;
     if (
       !stamp ||
       typeof stamp.contextTime !== 'number' ||
@@ -4834,20 +4895,22 @@ export function createOtioPlayback(
       typeof stamp.performanceTime !== 'number' ||
       !Number.isFinite(stamp.performanceTime) ||
       run.outputClock.state !== 'calibrated' ||
+      accepted === null ||
       run.stopped
     ) {
       if (!run.stopped && pcmRun === run)
         pcmProof('error', run.generation, {
           stage: 'clock',
           code: 'clock-admission-expired',
+          ...clockEvidence(run.outputClock),
         });
       return null;
     }
     // This allowance describes the observed browser mapping, not a bound on
     // physical speaker or display timing.
     const bridge = {
-      contextTime: stamp.contextTime,
-      performanceTime: stamp.performanceTime,
+      contextTime: accepted.contextTime,
+      performanceTime: accepted.performanceTime,
       mappingAllowanceMs,
     };
     const quantum = run.gate.certifiedQuantum;
@@ -4855,6 +4918,7 @@ export function createOtioPlayback(
       pcmProof('error', run.generation, {
         stage: 'clock',
         code: 'missing-certified-quantum',
+        ...clockEvidence(run.outputClock),
       });
       return null;
     }
@@ -5338,7 +5402,7 @@ export function createOtioPlayback(
         } catch {}
         contextAfter = context.currentTime;
         readEnd = presentClockMs();
-        const observation = probe.observe({
+        const observation = observeOutputClock(probe, oldRun.generation, {
           readBegin,
           readEnd,
           contextBefore,
@@ -5347,8 +5411,10 @@ export function createOtioPlayback(
           contextTime: stamp?.contextTime,
           performanceTime: stamp?.performanceTime,
         });
+        const accepted = probe.lastAccepted;
         if (
           stamp &&
+          accepted !== null &&
           observation.status === 'calibrated' &&
           observation.reason === 'accepted' &&
           observation.offsetMin !== null &&
@@ -5358,8 +5424,8 @@ export function createOtioPlayback(
         ) {
           inherited = probe;
           bridge = {
-            contextTime: stamp.contextTime,
-            performanceTime: stamp.performanceTime,
+            contextTime: accepted.contextTime,
+            performanceTime: accepted.performanceTime,
             mappingAllowanceMs: observation.offsetMax - observation.offsetMin,
           };
           bridgeObservation = {
@@ -5367,8 +5433,8 @@ export function createOtioPlayback(
             readEnd,
             contextBefore,
             contextAfter,
-            contextTime: stamp.contextTime,
-            performanceTime: stamp.performanceTime,
+            contextTime: accepted.contextTime,
+            performanceTime: accepted.performanceTime,
             offsetMin: observation.offsetMin,
             offsetMax: observation.offsetMax,
           };
@@ -5378,7 +5444,8 @@ export function createOtioPlayback(
           observation.status === 'failed' ||
           observation.status === 'interrupted' ||
           (observation.reason !== 'duplicate' &&
-            observation.reason !== 'accepted') ||
+            observation.reason !== 'accepted' &&
+            observation.reason !== 'sub-resolution') ||
           readEnd > deadline ||
           Math.ceil(contextAfter * admission.rate) +
             OTIO_PCM_EPOCH_GUARD_FRAMES >
@@ -6715,7 +6782,10 @@ export function createOtioPlayback(
     }
   }
 
-  function failScheduledAudio(code: string): void {
+  function failScheduledAudio(
+    code: string,
+    clockProof: ClockEvidence | null = null
+  ): void {
     // Abort on clock, compositor, or source failure. A future boundary inferred
     // from an old wall bridge is not evidence of an audible drain.
     const generation = pcmRun?.generation ?? pcmGeneration;
@@ -6739,7 +6809,7 @@ export function createOtioPlayback(
         timelineId
       )
     );
-    pcmProof('error', generation, { stage: 'schedule', code });
+    pcmProof('error', generation, { stage: 'schedule', code, ...clockProof });
     notify();
   }
 
@@ -7597,7 +7667,7 @@ export function createOtioPlayback(
       } catch {}
       const contextAfter = run.context.currentTime;
       const readEnd = presentClockMs();
-      const result = run.outputClock.observe({
+      const result = observeOutputClock(run.outputClock, run.generation, {
         readBegin,
         readEnd,
         contextBefore,
@@ -7615,15 +7685,31 @@ export function createOtioPlayback(
         result.status === 'failed' ||
         result.status === 'interrupted'
       ) {
+        const evidence = clockEvidence(run.outputClock);
         pcmProof('error', run.generation, {
           stage: 'clock',
           code: result.reason,
+          ...evidence,
         });
-        failScheduledAudio(`audio output clock interrupted: ${result.reason}`);
+        failScheduledAudio(
+          `audio output clock interrupted: ${result.reason}`,
+          evidence
+        );
         return;
       }
+      // A held read is not evidence: time the output from the last accepted pair.
+      const heldPair =
+        result.reason === 'sub-resolution'
+          ? run.outputClock.lastAccepted
+          : null;
+      const outputContextTime = heldPair
+        ? heldPair.contextTime
+        : stamp.contextTime;
+      const outputPerformanceTime = heldPair
+        ? heldPair.performanceTime
+        : stamp.performanceTime;
       outputTime =
-        stamp.contextTime + Math.max(0, readEnd - stamp.performanceTime) / 1000;
+        outputContextTime + Math.max(0, readEnd - outputPerformanceTime) / 1000;
     }
     vsyncTracker.recordTick(now);
     if (renderInFlight || isBuffering || isStarting) {

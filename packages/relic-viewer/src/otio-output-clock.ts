@@ -8,6 +8,13 @@ export const DEFAULT_CLOCK_POLICY = Object.freeze({
   futureToleranceMs: 2,
   maxOffsetSpreadMs: 10,
 });
+
+// Chromium rounds performanceTime to a 100 us grid on a pseudo-random threshold
+// (time_clamper.cc:43-58). Its per-quantum promotion (audio_destination.cc:739-758)
+// can move contextTime while performanceTime holds still. An advance under two
+// grid steps is therefore a held read: it never interrupts and never counts as
+// evidence. Inputs 200 us or more apart never collapse onto one performanceTime.
+export const PERFORMANCE_RESOLUTION_US = 100;
 export type ClockPolicy = {
   maxSamples: number;
   minAdvances: number;
@@ -52,6 +59,7 @@ export class OutputClock {
   state: ClockState = 'preparing';
   private first: ClockObservation | null = null;
   private last: ClockObservation | null = null;
+  private heldContextTime: number | null = null;
   private advances = 0;
   private min = Infinity;
   private readonly runtimeOffsets: {
@@ -114,6 +122,14 @@ export class OutputClock {
     this.recoveryOffsets.push(this.runtimeOffsets[0]!);
     this.min = this.max = this.runtimeOffsets[0]!.offset;
     this.state = 'playing';
+  }
+  /** Last accepted pair. Mapping evidence comes from here, never from a held read. */
+  get lastAccepted(): { contextTime: number; performanceTime: number } | null {
+    if (!this.last) return null;
+    return {
+      contextTime: this.last.contextTime!,
+      performanceTime: this.last.performanceTime!,
+    };
   }
   /** Diagnostic copy for a failed recovery-fork probe. */
   recoveryEvidence(nowMs: number): {
@@ -231,11 +247,24 @@ export class OutputClock {
       reason = 'stale';
     else if (
       this.last &&
-      (contextTime! < this.last.contextTime! ||
+      (contextTime! <
+        Math.max(this.last.contextTime!, this.heldContextTime ?? -Infinity) ||
         performanceTime! < this.last.performanceTime!)
     )
       reason = 'regression';
     else if (
+      this.last &&
+      performanceTime === this.last.performanceTime &&
+      contextTime !== this.last.contextTime &&
+      Math.round(1e6 * (contextTime! - this.last.contextTime!)) <
+        2 * PERFORMANCE_RESOLUTION_US
+    ) {
+      reason = 'sub-resolution';
+      this.heldContextTime = Math.max(
+        this.heldContextTime ?? -Infinity,
+        contextTime!
+      );
+    } else if (
       this.last &&
       (contextTime === this.last.contextTime) !==
         (performanceTime === this.last.performanceTime)
@@ -275,6 +304,7 @@ export class OutputClock {
         else {
           this.first = null;
           this.last = null;
+          this.heldContextTime = null;
           this.advances = 0;
           this.min = Infinity;
           this.max = -Infinity;
@@ -286,6 +316,7 @@ export class OutputClock {
         if (!this.first) this.first = o;
         if (this.last) this.advances++;
         this.last = o;
+        this.heldContextTime = null;
         if (priorState === 'playing') {
           const entry = { time: performanceTime!, offset, observation: o };
           this.runtimeOffsets.push(entry);
@@ -312,12 +343,13 @@ export class OutputClock {
       !terminal &&
       reason !== 'accepted' &&
       reason !== 'duplicate' &&
+      reason !== 'sub-resolution' &&
       reason !== 'discontinuity' &&
       priorState === 'playing'
     )
       this.invalidate(reason);
     if (
-      reason === 'duplicate' &&
+      (reason === 'duplicate' || reason === 'sub-resolution') &&
       this.last &&
       readEnd - this.last.performanceTime! > this.policy.freshnessMs
     ) {
@@ -329,6 +361,7 @@ export class OutputClock {
       reason !== 'accepted' &&
       reason !== 'duplicate' &&
       reason !== 'discontinuity' &&
+      reason !== 'sub-resolution' &&
       priorState === 'armed'
     )
       this.invalidate(reason);
@@ -337,12 +370,14 @@ export class OutputClock {
       reason !== 'accepted' &&
       reason !== 'duplicate' &&
       reason !== 'discontinuity' &&
+      reason !== 'sub-resolution' &&
       priorState !== 'playing' &&
       priorState !== 'armed' &&
       this.state !== 'failed'
     ) {
       this.first = null;
       this.last = null;
+      this.heldContextTime = null;
       this.advances = 0;
       this.min = Infinity;
       this.max = -Infinity;
@@ -351,7 +386,11 @@ export class OutputClock {
     const result = this.result(reason);
     const record = { observation: o, result };
     if (priorState !== 'playing' && !terminal) this.observations.push(record);
-    if (reason !== 'accepted' && reason !== 'duplicate')
+    if (
+      reason !== 'accepted' &&
+      reason !== 'duplicate' &&
+      reason !== 'sub-resolution'
+    )
       this.lastRejection = record;
     this.onObservation?.(record);
     return result;

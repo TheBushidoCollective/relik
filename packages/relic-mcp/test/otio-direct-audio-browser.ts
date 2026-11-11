@@ -594,9 +594,10 @@ async function runIdealCold() {
     const bridgeAfterPerf = performance.now();
     if (validator.state !== 'calibrated')
       throw new Error('clock lost before scheduling');
-    const { contextTime, performanceTime } = bridge;
-    if (contextTime === undefined || performanceTime === undefined)
-      throw new Error('clock missing');
+    // Mapping evidence is the last accepted pair. A held read is not evidence.
+    const accepted = validator.lastAccepted;
+    if (accepted === null) throw new Error('clock missing');
+    const { contextTime, performanceTime } = accepted;
     const minimumTimerStep = null;
     validator.arm();
     const requestContextTime = ctx.currentTime;

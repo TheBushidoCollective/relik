@@ -139,6 +139,7 @@ describe('ring sizing waits only for an accepted observation', () => {
       'invalid-bracket',
       'discontinuity',
       'stagnant',
+      'sub-resolution',
     ]) {
       expect(observationProvesOutput(reason)).toBe(false);
     }
