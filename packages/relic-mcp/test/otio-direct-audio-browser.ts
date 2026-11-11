@@ -576,11 +576,18 @@ async function runIdealCold() {
         contextTime: injectedContext,
         performanceTime: injectedPerformance,
       });
-      bridgeSamples.push({ before, after, clock });
+      // Mapping, tick and spread use the last accepted pair. A held read adds no
+      // evidence; the raw stamp stays in rawBridgeSamples only.
+      const held = outcome.reason === 'sub-resolution';
+      const accepted = validator.lastAccepted;
+      if (held && accepted === null)
+        throw new Error('held read without accepted pair');
+      const evidence: AudioTimestamp = held ? accepted! : clock;
+      bridgeSamples.push({ before, after, clock: evidence });
       diagnostic.state = validator.state;
       if (validator.state === 'failed' || validator.state === 'interrupted')
         throw new Error(`output clock ${outcome.reason}`);
-      return clock;
+      return evidence;
     };
     for (;;) {
       recordBridge();
@@ -594,10 +601,9 @@ async function runIdealCold() {
     const bridgeAfterPerf = performance.now();
     if (validator.state !== 'calibrated')
       throw new Error('clock lost before scheduling');
-    // Mapping evidence is the last accepted pair. A held read is not evidence.
-    const accepted = validator.lastAccepted;
-    if (accepted === null) throw new Error('clock missing');
-    const { contextTime, performanceTime } = accepted;
+    const { contextTime, performanceTime } = bridge;
+    if (contextTime === undefined || performanceTime === undefined)
+      throw new Error('clock missing');
     const minimumTimerStep = null;
     validator.arm();
     const requestContextTime = ctx.currentTime;

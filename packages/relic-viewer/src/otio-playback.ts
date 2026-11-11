@@ -52,6 +52,7 @@ import {
 } from './otio-transport-gate.ts';
 import {
   OutputClock,
+  evidencePair,
   type ClockObservation,
   type ClockRecord,
   type ClockResult,
@@ -4354,13 +4355,27 @@ export function createOtioPlayback(
           );
           return;
         }
-        if (stamp.contextTime * run.admission.rate >= closedFrame) {
+        // A held read adds no evidence: the drain waits on the last accepted pair.
+        const pair = evidencePair(
+          run.outputClock,
+          result,
+          stamp.contextTime,
+          stamp.performanceTime
+        );
+        if (pair === null) {
+          failDrain(
+            'audio output clock held without accepted pair',
+            clockEvidence(run.outputClock)
+          );
+          return;
+        }
+        if (pair.contextTime * run.admission.rate >= closedFrame) {
           run.drainObserved = true;
           if (run.handoffStarted && pcmPlayIntent) {
             run.resolveDrain();
             pcmProof('recovery-old-drained', run.generation, {
               boundaryFrame: closedFrame,
-              contextTime: stamp.contextTime,
+              contextTime: pair.contextTime,
             });
             if (pcmRun !== run) releasePcmResources(run);
             return;
@@ -4470,6 +4485,7 @@ export function createOtioPlayback(
     const readBegin = presentClockMs();
     const contextBefore = run.context.currentTime;
     let stamp: AudioTimestamp | null = null;
+    pcmProof('clock-site', run.generation, { site: 'commit', phase: 'read' });
     try {
       stamp = run.context.getOutputTimestamp();
     } catch {}
@@ -4524,6 +4540,12 @@ export function createOtioPlayback(
     const original =
       run.bridge.performanceTime +
       1000 * (run.contextFrame / run.admission.rate - run.bridge.contextTime);
+    pcmProof('clock-site', run.generation, {
+      site: 'commit',
+      phase: 'use',
+      usedStamp: accepted,
+      lastAccepted: run.outputClock.lastAccepted ?? null,
+    });
     if (Math.abs(mapped - original) > allowance + 1e-6 || mapped < readEnd) {
       pcmProof('clock-commit-detail', run.generation, {
         reason: 'mapping-or-time',
@@ -4849,6 +4871,10 @@ export function createOtioPlayback(
     ) {
       const before = presentClockMs();
       const contextBefore = run.context.currentTime;
+      pcmProof('clock-site', run.generation, {
+        site: 'select-epoch',
+        phase: 'read',
+      });
       try {
         stamp = run.context.getOutputTimestamp();
       } catch {
@@ -4913,6 +4939,12 @@ export function createOtioPlayback(
       performanceTime: accepted.performanceTime,
       mappingAllowanceMs,
     };
+    pcmProof('clock-site', run.generation, {
+      site: 'select-epoch',
+      phase: 'use',
+      usedStamp: bridge,
+      lastAccepted: run.outputClock.lastAccepted ?? null,
+    });
     const quantum = run.gate.certifiedQuantum;
     if (quantum === null) {
       pcmProof('error', run.generation, {
@@ -5397,6 +5429,10 @@ export function createOtioPlayback(
         const readBegin = presentClockMs();
         const contextBefore = context.currentTime;
         let stamp: AudioTimestamp | null = null;
+        pcmProof('clock-site', oldRun.generation, {
+          site: 'recovery-bridge',
+          phase: 'read',
+        });
         try {
           stamp = context.getOutputTimestamp();
         } catch {}
@@ -5470,6 +5506,12 @@ export function createOtioPlayback(
       if (!inherited || !bridge)
         throw new Error('fresh recovery output clock unavailable');
       run.outputClock = inherited;
+      pcmProof('clock-site', oldRun.generation, {
+        site: 'recovery-bridge',
+        phase: 'use',
+        usedStamp: bridge,
+        lastAccepted: inherited.lastAccepted ?? null,
+      });
       const allowance = bridge.mappingAllowanceMs;
       const earliest = selectOtioCausalEpoch(
         samples,
@@ -7697,19 +7739,22 @@ export function createOtioPlayback(
         );
         return;
       }
-      // A held read is not evidence: time the output from the last accepted pair.
-      const heldPair =
-        result.reason === 'sub-resolution'
-          ? run.outputClock.lastAccepted
-          : null;
-      const outputContextTime = heldPair
-        ? heldPair.contextTime
-        : stamp.contextTime;
-      const outputPerformanceTime = heldPair
-        ? heldPair.performanceTime
-        : stamp.performanceTime;
+      // A held read adds no evidence: time the output from the last accepted pair.
+      const pair = evidencePair(
+        run.outputClock,
+        result,
+        stamp.contextTime,
+        stamp.performanceTime
+      );
+      if (pair === null) {
+        failScheduledAudio(
+          'audio output clock held without accepted pair',
+          clockEvidence(run.outputClock)
+        );
+        return;
+      }
       outputTime =
-        outputContextTime + Math.max(0, readEnd - outputPerformanceTime) / 1000;
+        pair.contextTime + Math.max(0, readEnd - pair.performanceTime) / 1000;
     }
     vsyncTracker.recordTick(now);
     if (renderInFlight || isBuffering || isStarting) {

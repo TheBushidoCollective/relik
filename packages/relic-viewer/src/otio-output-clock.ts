@@ -396,3 +396,20 @@ export class OutputClock {
     return result;
   }
 }
+
+/**
+ * The pair a read may map time with. A held read adds no evidence, so it
+ * resolves to the clock's last accepted pair. Every other read keeps its own
+ * stamp. Null only for a held read with no accepted pair, which the hold rule
+ * never produces.
+ */
+export function evidencePair(
+  clock: OutputClock,
+  result: ClockResult,
+  contextTime: number,
+  performanceTime: number
+): { contextTime: number; performanceTime: number } | null {
+  if (result.reason !== 'sub-resolution')
+    return { contextTime, performanceTime };
+  return clock.lastAccepted;
+}

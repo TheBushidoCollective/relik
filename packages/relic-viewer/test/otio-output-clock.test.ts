@@ -1,5 +1,9 @@
 import { describe, expect, test } from 'bun:test';
-import { OutputClock } from '../src/otio-output-clock';
+import {
+  OutputClock,
+  evidencePair,
+  type ClockResult,
+} from '../src/otio-output-clock';
 
 const sample = (time: number, offset = 1000) => ({
   readBegin: time + offset,
@@ -472,5 +476,90 @@ describe('held reads at the performance rounding step', () => {
       contextTime: 0.04,
       performanceTime: 1040,
     });
+  });
+});
+
+// Recorded-pair guards. Removing the equal-performance condition from the hold
+// rule must turn one of these red: a 40 ms performance move with a 150 us
+// context move is a real discontinuity, and a 0.1 ms performance move is
+// accepted, not held.
+describe('recorded pair: hold condition needs equal performance', () => {
+  test('150 us context with 40 ms performance interrupts as a discontinuity', () => {
+    const { clock } = replayRecorded();
+    const base = clock.lastAccepted!;
+    const r = clock.observe(
+      read(
+        base.contextTime + 0.00015,
+        base.performanceTime + 40,
+        base.performanceTime + 40.01
+      )
+    );
+    expect(r.reason).toBe('discontinuity');
+    expect(r.status).toBe('interrupted');
+    expect(clock.lastAccepted).toEqual(base);
+  });
+
+  test('150 us context with 0.1 ms performance is accepted, not held', () => {
+    const { clock } = replayRecorded();
+    const base = clock.lastAccepted!;
+    const next = {
+      contextTime: base.contextTime + 0.00015,
+      performanceTime: base.performanceTime + 0.1,
+    };
+    const r = clock.observe(
+      read(next.contextTime, next.performanceTime, next.performanceTime + 0.01)
+    );
+    expect(r.reason).toBe('accepted');
+    expect(r.status).toBe('playing');
+    expect(clock.lastAccepted).toEqual(next);
+  });
+});
+
+describe('evidencePair', () => {
+  test('a held read resolves to the last accepted pair, not its own stamp', () => {
+    const { clock } = replayRecorded();
+    const base = clock.lastAccepted!;
+    const heldContext = base.contextTime + 0.000086;
+    const held = clock.observe(read(heldContext, base.performanceTime));
+    expect(held.reason).toBe('sub-resolution');
+    expect(
+      evidencePair(clock, held, heldContext, base.performanceTime)
+    ).toEqual(base);
+  });
+
+  test('an accepted read resolves to its own stamp', () => {
+    const { clock } = replayRecorded();
+    const base = clock.lastAccepted!;
+    const next = {
+      contextTime: base.contextTime + 0.00015,
+      performanceTime: base.performanceTime + 0.1,
+    };
+    const r = clock.observe(
+      read(next.contextTime, next.performanceTime, next.performanceTime + 0.01)
+    );
+    expect(
+      evidencePair(clock, r, next.contextTime, next.performanceTime)
+    ).toEqual(next);
+  });
+
+  test('a duplicate read resolves to its own stamp, which equals the accepted pair', () => {
+    const { clock } = replayRecorded();
+    const base = clock.lastAccepted!;
+    const r = clock.observe(read(base.contextTime, base.performanceTime));
+    expect(r.reason).toBe('duplicate');
+    expect(
+      evidencePair(clock, r, base.contextTime, base.performanceTime)
+    ).toEqual(base);
+  });
+
+  test('a held result with no accepted pair resolves to null', () => {
+    const fresh = new OutputClock(1000);
+    const held: ClockResult = {
+      status: 'calibrating',
+      reason: 'sub-resolution',
+      offsetMin: null,
+      offsetMax: null,
+    };
+    expect(evidencePair(fresh, held, 0.01, 1010)).toBeNull();
   });
 });
