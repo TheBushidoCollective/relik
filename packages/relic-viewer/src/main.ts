@@ -594,8 +594,9 @@ export interface BarOptions {
    */
   readonly onDecide?: (opener: HTMLElement) => void;
   /**
-   * The counts on the version shown: numbers once listed, `null` when
-   * decisions are not open on this relic, absent while loading.
+   * The counts on the version shown. The Decisions control is drawn only
+   * once they are known: `null` (the author did not ask for decisions on
+   * this relic) and absent (still loading) both leave it off the band.
    */
   readonly decisionTally?: DecisionTally | null;
 }
@@ -897,9 +898,10 @@ export function buildBar(
   // Beside Comments and on the narrow must-survive list: the tally is the one
   // thing on the band that says whether this version has been signed off.
   const onDecide = options.onDecide;
-  if (onDecide !== undefined) {
+  const tally = options.decisionTally;
+  if (onDecide !== undefined && tally !== undefined && tally !== null) {
     const decide = button('Decisions', ICONS.stamp, () => onDecide(decide));
-    decorateDecisionControl(decide, view.version, options.decisionTally);
+    decorateDecisionControl(decide, view.version, tally);
     actions.appendChild(decide);
   }
 

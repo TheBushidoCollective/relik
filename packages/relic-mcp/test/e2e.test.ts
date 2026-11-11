@@ -1005,6 +1005,7 @@ describe('the MCP surface', () => {
       'ttl_days',
       'force_new',
       'cover',
+      'decisions',
     ]);
     expect(schema.properties.force_new).toMatchObject({
       type: 'boolean',
@@ -1275,6 +1276,7 @@ describe('republish', () => {
       'addresses',
       'cover',
       'notify',
+      'decisions',
     ]);
     expect(schema.required).toEqual(['relic_id', 'path']);
     expect(schema.additionalProperties).toBe(false);

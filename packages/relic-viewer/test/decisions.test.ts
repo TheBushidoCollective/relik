@@ -681,6 +681,7 @@ describe('the band control', () => {
       onComments: () => {},
       onDecide: () => {},
       onShare: () => {},
+      decisionTally: { approve: 0, reject: 0 },
     }) as unknown as ElementStub;
     const actions = withClass(bar, 'actions')[0] as ElementStub;
     const order = actions.children.map((child) => {
@@ -693,24 +694,15 @@ describe('the band control', () => {
     expect(order.indexOf('decisions')).toBeLessThan(order.indexOf('share'));
   });
 
-  test('shows no numbers while loading or when decisions are closed', () => {
+  test('is not drawn while loading or when the author did not ask for decisions', () => {
     for (const tally of [undefined, null] as const) {
       const bar = buildBar(view(), RELIC_ID, {
         onDecide: () => {},
         ...(tally === undefined ? {} : { decisionTally: tally }),
       }) as unknown as ElementStub;
-      const control = one(bar, 'data-decision-open');
-      expect(control.hasAttribute('data-decision-approvals')).toBe(false);
-      expect(control.hasAttribute('data-decision-rejections')).toBe(false);
-      expect(withClass(control, 'decision-tally')).toHaveLength(0);
+      expect(withAttr(bar, 'data-decision-open')).toHaveLength(0);
+      expect(withClass(bar, 'action-decisions')).toHaveLength(0);
     }
-    const closed = buildBar(view(), RELIC_ID, {
-      onDecide: () => {},
-      decisionTally: null,
-    }) as unknown as ElementStub;
-    expect(one(closed, 'data-decision-open').getAttribute('aria-label')).toBe(
-      'Decisions, not open on this relic yet'
-    );
   });
 
   test('is absent without a handler', () => {
