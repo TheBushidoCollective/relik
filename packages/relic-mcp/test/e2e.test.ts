@@ -88,10 +88,12 @@ function fakeFiles(): FileReader {
           let fileClosed = false;
           return {
             size: bytes.length,
-            async readBounded(maxBytes) {
+            async readInto(target) {
               if (fileClosed) throw new Error('bundle file is closed');
-              if (bytes.length > maxBytes) throw new Error('EFBIG');
-              return bytes;
+              if (target.length !== bytes.length) {
+                throw new Error('target length does not match file size');
+              }
+              target.set(bytes);
             },
             async close() {
               fileClosed = true;

@@ -1,6 +1,6 @@
 export interface NativeOpenedRegularFile {
   readonly size: number;
-  read(maxBytes: number): Promise<Uint8Array>;
+  readInto(target: Uint8Array): Promise<void>;
   close(): Promise<void>;
 }
 

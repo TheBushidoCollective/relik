@@ -278,7 +278,7 @@ async function assertPackagedNativeFiles(packageRoot) {
     'installed package.json.relicNativeSecureOpen'
   );
   if (
-    nativeContract.abiVersion !== 1 ||
+    nativeContract.abiVersion !== 2 ||
     nativeContract.napiVersion !== 8
   ) {
     throw new Error('installed package has the wrong native ABI or Node-API version');
@@ -583,13 +583,19 @@ async function withNativeFile(file, action) {
   return result;
 }
 
+async function readNativeBytes(opened) {
+  const bytes = new Uint8Array(opened.size);
+  await opened.readInto(bytes);
+  return bytes;
+}
+
 async function readNative(root, relativePath) {
   const file = await root.openRegular(relativePath);
   return withNativeFile(file, async (opened) => {
     if (!Number.isSafeInteger(opened.size) || opened.size < 0) {
       throw new Error(`native file ${relativePath} reported an invalid size`);
     }
-    const bytes = await opened.read(opened.size);
+    const bytes = await readNativeBytes(opened);
     if (bytes.length !== opened.size) {
       throw new Error(`native file ${relativePath} returned the wrong byte count`);
     }
@@ -718,7 +724,7 @@ async function proveInstalledNativeLoader(loaderPath, runtime) {
       await mkdir(heldRootPath);
       await writeFile(join(heldRootPath, 'inside.txt'), 'replacement bytes');
       assertBytes(
-        await file.read(file.size),
+        await readNativeBytes(file),
         heldBytes,
         'held native file descriptor after root replacement'
       );

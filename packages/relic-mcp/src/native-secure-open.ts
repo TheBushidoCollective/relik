@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 export interface NativeOpenedRegularFile {
   readonly size: number;
-  read(maxBytes: number): Promise<Uint8Array>;
+  readInto(target: Uint8Array): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -20,11 +20,12 @@ type NativeSecureOpenErrorCode =
   | 'ERR_RELIC_NATIVE_UNSUPPORTED_NAPI'
   | 'ERR_RELIC_NATIVE_PREBUILD_MISSING'
   | 'ERR_RELIC_NATIVE_LOAD_FAILED'
+  | 'ERR_RELIC_NATIVE_INVALID_BUFFER'
   | 'ERR_RELIC_NATIVE_ABI_MISMATCH';
 
 interface NativeBindingFile {
   readonly size: unknown;
-  read(maxBytes: number): unknown;
+  readInto(target: Uint8Array): unknown;
   close(): unknown;
 }
 
@@ -160,7 +161,7 @@ function assertBinding(value: unknown): NativeSecureOpenBinding {
   if (typeof value !== 'object' || value === null) {
     throw nativeError(
       'ERR_RELIC_NATIVE_ABI_MISMATCH',
-      'native secure-open prebuild does not expose ABI version 1'
+      'native secure-open prebuild does not expose ABI version 2'
     );
   }
   const binding = value as {
@@ -168,12 +169,12 @@ function assertBinding(value: unknown): NativeSecureOpenBinding {
     openBundleRoot?: unknown;
   };
   if (
-    binding.abiVersion !== 1 ||
+    binding.abiVersion !== 2 ||
     typeof binding.openBundleRoot !== 'function'
   ) {
     throw nativeError(
       'ERR_RELIC_NATIVE_ABI_MISMATCH',
-      'native secure-open prebuild does not expose ABI version 1'
+      'native secure-open prebuild does not expose ABI version 2'
     );
   }
   return binding as NativeSecureOpenBinding;
@@ -211,14 +212,14 @@ function assertFile(value: unknown): NativeBindingFile {
   }
   const file = value as {
     close?: unknown;
-    read?: unknown;
+    readInto?: unknown;
     size?: unknown;
   };
   if (
     typeof file.size !== 'number' ||
     !Number.isSafeInteger(file.size) ||
     file.size < 0 ||
-    typeof file.read !== 'function' ||
+    typeof file.readInto !== 'function' ||
     typeof file.close !== 'function'
   ) {
     throw nativeError(
@@ -268,15 +269,14 @@ function wrapFile(file: NativeBindingFile): NativeOpenedRegularFile {
     get size(): number {
       return size;
     },
-    async read(maxBytes: number): Promise<Uint8Array> {
-      const bytes = file.read(maxBytes);
-      if (!(bytes instanceof Uint8Array)) {
+    async readInto(target: Uint8Array): Promise<void> {
+      if (!(target instanceof Uint8Array)) {
         throw nativeError(
-          'ERR_RELIC_NATIVE_ABI_MISMATCH',
-          'native secure-open read did not return a Uint8Array'
+          'ERR_RELIC_NATIVE_INVALID_BUFFER',
+          'native secure-open readInto requires a Uint8Array target'
         );
       }
-      return bytes;
+      file.readInto(target);
     },
     async close(): Promise<void> {
       file.close();

@@ -39,7 +39,7 @@
     "mcp-servers.json"
   ],
   "relicNativeSecureOpen": {
-    "abiVersion": 1,
+    "abiVersion": 2,
     "napiVersion": 8,
     "prebuilds": {
       "darwin-arm64": {
