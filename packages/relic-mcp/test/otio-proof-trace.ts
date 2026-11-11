@@ -126,6 +126,14 @@ export const otioProofTracePrelude = String.raw`(() => {
       const nativeFinite = native !== null && Number.isFinite(native.contextTime) && Number.isFinite(native.performanceTime);
       let result = native === null ? {contextTime: NaN, performanceTime: NaN} : native;
       let hold = null;
+      // A recovery hold must repeat the last returned native stamp. If the
+      // clock advanced, leave the real sample intact and try the next site read.
+      const recoveryHoldNotReady = nativeFinite && clockHold?.site === 'recovery-bridge' &&
+        native.performanceTime !== latestReturned?.performanceTime;
+      if (recoveryHoldNotReady) {
+        siteHold = clockHold;
+        clockHold = null;
+      }
       const applied = nativeFinite ? clockHold : null;
       if (applied) {
         if (!realPairByPerf.has(native.performanceTime)) realPairByPerf.set(native.performanceTime, native.contextTime);

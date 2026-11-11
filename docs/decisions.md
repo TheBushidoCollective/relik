@@ -1160,3 +1160,13 @@ A missing manifest is legacy. A present manifest that is corrupt, unparseable, o
 **Locked inputs.** `frame.md` and `preconditions.md` are unchanged. This decision adds a program for OpenTimelineIO only. It does not make general archives first-party rendered.
 
 
+## 2026-11-11: Rolling evidence for scheduled audio recovery
+
+Jason chose a rolling window for recovery clock calibration. At the confirming
+read, every counted timestamp must be no more than 50 ms old. The evidence
+must contain at least three advances spanning at least 30 ms, including a read
+after the recovery request. The 20 ms audio gap limit is unchanged.
+
+Devices whose output timestamps advance too slowly to satisfy those conditions
+cannot use this recovery path. They stop with an error rather than treating
+insufficient evidence as a successful recovery.
