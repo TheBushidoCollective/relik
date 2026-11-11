@@ -161,7 +161,7 @@ const TITLE: Readonly<Record<ProblemCode, string>> = {
   decision_requires_reader:
     'A decision needs a signed-in reader, never the publish token',
   invalid_decision: 'Invalid decision request',
-  decision_unavailable: 'Decisions unavailable until the publisher republishes',
+  decision_unavailable: 'Decisions are not open on this relic',
   decision_digest_mismatch:
     'The stored version is not the version this page shows',
   decision_rate_limited: 'Too many decision requests',

@@ -206,6 +206,12 @@ export interface PublishInput {
    * rendering and uploading a cover image for link previews.
    */
   readonly cover?: boolean | undefined;
+  /**
+   * Ask for decisions (approve or reject, confirmed with a passkey) on this
+   * relic. Defaults to false: the viewer shows no Decisions control unless
+   * the author asked. Sent only when true.
+   */
+  readonly decisions?: boolean | undefined;
 }
 
 export interface PublishResult {
@@ -464,6 +470,7 @@ export async function publish(
         // server's default (kept until deleted) and never a value this
         // client guessed on the publisher's behalf.
         ...(input.ttl_days === undefined ? {} : { ttl_days: input.ttl_days }),
+        ...(input.decisions === true ? { decisions: true } : {}),
         share_verifier: shareVerifier,
       });
     } catch (error) {

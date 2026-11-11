@@ -4178,9 +4178,6 @@ canvas.relic-page {
   .action-decisions > .icon {
     display: none;
   }
-  .action-decisions:not([data-decision-approvals]) > .icon {
-    display: inline-block;
-  }
 }
 
 /* More: the version list's chrome, dropped from the band's last control and
@@ -5778,12 +5775,6 @@ canvas.relic-page {
 
   .action-decisions > .icon {
     display: none;
-  }
-
-  /* Unless there is no tally to stand in for it (decisions not open on this
-     relic), when the stamp is all that is left to press. */
-  .action-decisions:not([data-decision-approvals]) > .icon {
-    display: inline-block;
   }
 
   /* Inside the sheet every button keeps its words, as in the share sheet:

@@ -448,7 +448,8 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
       titleUpdate?: { readonly title: string | undefined },
       ownerUpdate?: { readonly ownerEmail: string | undefined },
       noticePending?: boolean,
-      shareVerifierUpdate?: { readonly shareVerifier: string }
+      shareVerifierUpdate?: { readonly shareVerifier: string },
+      decisionsUpdate?: { readonly decisionsOpen: boolean }
     ): Promise<RelicRow | undefined> {
       return mutateRelic(id, (row) => {
         const { noticePending: _priorPending, ...restRow } = row;
@@ -468,6 +469,10 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
             shareVerifierUpdate !== undefined
               ? shareVerifierUpdate.shareVerifier
               : row.shareVerifier,
+          decisionsOpen:
+            decisionsUpdate !== undefined
+              ? decisionsUpdate.decisionsOpen
+              : row.decisionsOpen,
           ...(noticePending === true ? { noticePending: true } : {}),
         };
       });
