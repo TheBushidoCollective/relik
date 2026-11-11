@@ -50,9 +50,10 @@ export const otioProofTracePrelude = String.raw`(() => {
       const native = context[name].bind(context);
       context[name] = (...args) => { events.push({name, actor, state:context.state}); return native(...args); };
     }
-    const acquireLease = async signal => {
+    const acquireLease = async () => {
       events.push({name:'acquire', actor:'lease', state:context.state});
-      return {context, signal,
+      const revocation = new AbortController();
+      return {context, signal:revocation.signal,
         suspend:() => call('suspend', 'lease'), resume:() => call('resume', 'lease'),
         release:async () => { events.push({name:'release', actor:'lease', state:context.state}); }};
     };

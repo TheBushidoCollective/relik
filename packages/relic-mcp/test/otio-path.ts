@@ -20637,10 +20637,8 @@ async function runScheduledPcmProof(
       }
     }
     {
-      // Fresh borrowed context, suspended before any gesture. When the PCM bootstrap fails
-      // after the lease has resumed the context, the viewer hands it back suspended through
-      // the owner's lease. That lease suspend is expected only here: it proves restoration
-      // after a failed bootstrap. A successful bootstrap never suspends.
+      // Refuse the leased bootstrap at its anchor after resume. The owner
+      // receives its context suspended before the failed lease is released.
       const isolated = await openBrowser(url, sessionToken, {
         label: 'borrowed-bootstrap-restore',
         recordProofTrace: true,
@@ -20665,7 +20663,7 @@ async function runScheduledPcmProof(
         }>(`(async () => {
           const start = await globalThis.__otioProofTrace.start();
           const playEdge = globalThis.__otioProofTrace.playRequest();
-          globalThis.__otioProofTrace.setInvalidControllerClock(true);
+          globalThis.__otioProofTrace.nextAnchorControl('source-offset');
           return { start, playEdge };
         })()`);
         assert.equal(
@@ -20686,7 +20684,6 @@ async function runScheduledPcmProof(
           if (!context) throw new Error('bootstrap restore context missing');
           const state = context.state;
           const trace = await globalThis.__otioProofTrace.stop();
-          globalThis.__otioProofTrace.setInvalidControllerClock(false);
           if (root?.dataset.playing === 'true' && control instanceof HTMLButtonElement) control.click();
           return { state, trace };
         })()`);
@@ -20698,8 +20695,49 @@ async function runScheduledPcmProof(
           join(shotDir, 'borrowed-bootstrap-restore.json'),
           { provenance, capture: { armed, outcome, lifecycle } },
           'borrowed-bootstrap-restore',
-          outcome.trace,
-          'controller clock invalidated by proof injection: every read is NaN, so no native read exists'
+          outcome.trace
+        );
+        const pcm = outcome.trace.events
+          .filter((event) => event.kind === 'scheduled-pcm')
+          .map((event) => (event.value ?? {}) as Record<string, unknown>);
+        const transport = outcome.trace.events
+          .filter((event) => event.kind === 'transport-message')
+          .map((event) => (event.value ?? {}) as Record<string, unknown>);
+        assert.ok(
+          outcome.trace.events.some(
+            (event) => event.kind === 'anchor-carrier-control-injected'
+          ),
+          'bootstrap restore fault did not reach the anchor carrier'
+        );
+        assert.ok(
+          transport.some((message) => message['type'] === 'clock-fault') &&
+            !transport.some(
+              (message) => message['type'] === 'anchor-certified'
+            ),
+          'bootstrap restore clock was not refused before anchor certification'
+        );
+        assert.ok(
+          !pcm.some((value) => value['event'] === 'epoch') &&
+            pcm.some(
+              (value) =>
+                value['event'] === 'error' &&
+                String(value['code'] ?? '').startsWith(
+                  'PCM preparation failed:'
+                )
+            ),
+          'bootstrap restore did not fail inside the leased clock bootstrap'
+        );
+        assert.equal(
+          pcm.filter((value) => value['event'] === 'borrowed-context-restored')
+            .length,
+          1,
+          'borrowed context restore was not reported exactly once'
+        );
+        assert.ok(
+          !pcm.some(
+            (value) => value['event'] === 'borrowed-context-restore-failed'
+          ),
+          'borrowed context restore failed'
         );
         const leaseIndex = (name: string) =>
           lifecycle.events.findIndex(
