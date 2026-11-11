@@ -335,6 +335,8 @@ const ICONS = {
   source:
     'M5.7 3.3 2 7l3.7 3.7.7-.7L3.4 7l3-3-.7-.7zm4.6 0-.7.7 3 3-3 3 .7.7L14 7l-3.7-3.7z',
   rendered: 'M2 3h12v1H2V3zm0 3h12v1H2V6zm0 3h8v1H2V9zm0 3h10v1H2v-1z',
+  print:
+    'M4 1h8v4H4V1zm1 1v2h6V2H5zM2 6h12a1 1 0 0 1 1 1v5h-3v-2H4v2H1V7a1 1 0 0 1 1-1zm2 5h8v4H4v-4zm1 1v2h6v-2H5z',
   flag: 'M3 1h1v14H3V1zm2 1h8l-2 3 2 3H5V2z',
   chevron: 'M3.4 5.7 8 10.3l4.6-4.6-.7-.7L8 8.9 4.1 5l-.7.7z',
   swipe: 'M7.5 1h1v14h-1V1zM2 7.5h3.5v1H2v-1zm8.5 0H14v1h-3.5v-1z',
@@ -539,16 +541,22 @@ function notice(text: string): HTMLElement {
   return element;
 }
 
-function downloadContent(view: ReadyView): void {
-  const blob = view.content.blob('application/octet-stream');
+function saveBlob(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
-  link.download = safeDownloadName(view.filename);
+  link.download = filename;
   document.body.appendChild(link);
   link.click();
   link.remove();
   URL.revokeObjectURL(url);
+}
+
+function downloadContent(view: ReadyView): void {
+  saveBlob(
+    view.content.blob('application/octet-stream'),
+    safeDownloadName(view.filename)
+  );
 }
 
 export interface BarOptions {
@@ -1097,8 +1105,80 @@ export function buildBar(
   return bar;
 }
 
+/** The file name without its markdown extension, for an export's name. */
+function exportStem(filename: string): string {
+  return safeDownloadName(filename).replace(
+    /\.(md|markdown|mdown|mkd|txt)$/i,
+    ''
+  );
+}
+
+/** Ends the print in progress, so a second never stacks on a stale root. */
+let endPrint: (() => void) | undefined;
+
+/**
+ * Opens the browser's print dialog for one document, not the page around it.
+ *
+ * The prose is rebuilt from the source into a root of its own, and the print
+ * stylesheet hides everything else in the body. Printing the live page would
+ * drag in the taskbar, the comments, and the shell's scroll container, and it
+ * would print only the part of a long document that is currently laid out.
+ * Rebuilding also keeps comment highlights and selection marks off the paper.
+ *
+ * The document title becomes the default file name in the dialog, so it is
+ * the filename for the duration and is put back afterwards.
+ */
+function printProse(source: string, filename: string): void {
+  endPrint?.();
+  const root = document.createElement('div');
+  root.className = 'print-root';
+  root.appendChild(buildProse(source));
+
+  const title = document.title;
+  document.title = exportStem(filename);
+  document.body.appendChild(root);
+  document.documentElement.classList.add('printing');
+
+  const finish = (): void => {
+    window.removeEventListener('afterprint', finish);
+    root.remove();
+    document.documentElement.classList.remove('printing');
+    document.title = title;
+    if (endPrint === finish) endPrint = undefined;
+  };
+  endPrint = finish;
+  window.addEventListener('afterprint', finish);
+  window.print();
+}
+
+/**
+ * Builds the Word file here and hands it to the browser as a download.
+ *
+ * The converter is its own chunk, fetched on the first click, so readers who
+ * never export never download it. The source is the decrypted document and
+ * stays in this page: nothing is sent anywhere to be converted.
+ */
+async function downloadDocx(
+  source: string,
+  filename: string,
+  trigger: HTMLButtonElement
+): Promise<void> {
+  trigger.disabled = true;
+  try {
+    // Dynamic on purpose: a static import would put the Word library in the
+    // app shell every reader downloads. test/shell-budget.test.ts enforces it.
+    const { markdownToDocx } = await import('./docx-export.ts');
+    const stem = exportStem(filename);
+    saveBlob(await markdownToDocx(source, stem), `${stem}.docx`);
+  } catch {
+    toast('Could not build the Word file. Try again, or download the source.');
+  } finally {
+    trigger.disabled = false;
+  }
+}
+
 /** The markdown player: rendered prose with a toggle to the source. */
-function renderMarkdownSource(source: string): HTMLElement {
+function renderMarkdownSource(source: string, filename: string): HTMLElement {
   const wrapper = document.createElement('div');
   wrapper.className = 'doc';
 
@@ -1121,9 +1201,22 @@ function renderMarkdownSource(source: string): HTMLElement {
     toggle.appendChild(label);
   });
 
+  const pdf = button('Save as PDF', ICONS.print, () =>
+    printProse(source, filename)
+  );
+  pdf.title = 'Opens your print dialog. Choose Save as PDF as the destination.';
+  // The label collapses to its icon on a phone, so the name is stated outright.
+  pdf.setAttribute('aria-label', 'Save as PDF');
+
+  const docx = button('Download .docx', ICONS.download, () => {
+    void downloadDocx(source, filename, docx);
+  });
+  docx.title = 'A Word document built in this page. Nothing is uploaded.';
+  docx.setAttribute('aria-label', 'Download .docx');
+
   const toggleRow = document.createElement('div');
   toggleRow.className = 'toggle-row';
-  toggleRow.appendChild(toggle);
+  toggleRow.append(toggle, pdf, docx);
 
   wrapper.append(toggleRow, prose, raw);
   return wrapper;
@@ -1692,7 +1785,9 @@ export function buildCurrentStage(
 
   switch (view.route) {
     case 'markdown':
-      main.appendChild(renderMarkdownSource(decodeText(documentBytes(view))));
+      main.appendChild(
+        renderMarkdownSource(decodeText(documentBytes(view)), view.filename)
+      );
       break;
     case 'code':
       main.appendChild(renderCodeView(view));
@@ -10437,7 +10532,7 @@ export async function renderDocument(
     title.textContent = heading;
     document.title = `${heading} · Relic`;
   }
-  main.appendChild(renderMarkdownSource(source));
+  main.appendChild(renderMarkdownSource(source, `${heading ?? 'document'}.md`));
 }
 
 export { localStorageKeyVault };
