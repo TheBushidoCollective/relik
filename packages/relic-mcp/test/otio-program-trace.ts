@@ -233,24 +233,38 @@ export function maxOf(values: readonly number[]): number | null {
   return values.length === 0 ? null : Math.max(...values);
 }
 
-/** True when some presented-frame gap exceeds the gap budget. Used to judge the cold controls. */
-export function stalls(gapsMs: readonly number[]): boolean {
-  return (maxOf(gapsMs) ?? 0) > GAP_BUDGET_MS;
+/**
+ * Program frame slots skipped by presented gaps: each gap is rounded to whole program frames (the
+ * rounding droppedFrames uses), and every frame past the first is a missed slot. At 30 fps that is
+ * any gap of 50 ms or more.
+ */
+export function missedSlots(gapsMs: readonly number[], fps: number): number {
+  let missed = 0;
+  for (const gap of gapsMs)
+    missed += Math.max(0, Math.round((gap * fps) / 1000) - 1);
+  return missed;
 }
 
-/** Frame cadence gates for a window: no gap over 100 ms and p95 within 50 ms. */
+/**
+ * Frame cadence gates for a window: no gap over 100 ms and p95 within 50 ms. gapsMs are the gaps
+ * between presented frames inside the window. boundaryGapsMs are the gaps that touch a window edge,
+ * such as a stall that runs to the window end or one that runs in from its start. They count toward
+ * the max and p95, and never toward the interval minimum.
+ */
 export function gateGaps(
   gapsMs: readonly number[],
   minIntervals: number,
-  label: string
+  label: string,
+  boundaryGapsMs: readonly number[] = []
 ): string[] {
   const failures: string[] = [];
   if (gapsMs.length < minIntervals)
     failures.push(
       `${label}: only ${gapsMs.length + 1} presented frames, need ${minIntervals + 1}`
     );
-  const max = maxOf(gapsMs);
-  const tail = p95(gapsMs);
+  const all = [...gapsMs, ...boundaryGapsMs];
+  const max = maxOf(all);
+  const tail = p95(all);
   if (max !== null && max > GAP_BUDGET_MS)
     failures.push(
       `${label}: max gap ${max.toFixed(1)} ms > ${GAP_BUDGET_MS} ms`
@@ -260,6 +274,41 @@ export function gateGaps(
       `${label}: p95 gap ${tail.toFixed(1)} ms > ${P95_BUDGET_MS} ms`
     );
   return failures;
+}
+
+export interface WindowEdgeGaps {
+  /** Gaps between presented frames inside the window. */
+  readonly gapsMs: number[];
+  /** From the window start to the first presented frame inside it. Null unless a frame came earlier. */
+  readonly leadingGapMs: number | null;
+  /** From the last presented frame inside the window to the window end. Null when there is no frame at all. */
+  readonly trailingGapMs: number | null;
+}
+
+/**
+ * Presented gaps over one window, with both edges counted. Times are page milliseconds in
+ * presentation order. Only frames within [startMs, endMs] belong to the window. A window that starts
+ * after a presented frame and shows none inside is one stall spanning the whole window. The start of
+ * a run, before its first presented frame, is not a gap: the caller gates it as the startup budget.
+ */
+export function windowEdgeGaps(
+  presentedMs: readonly number[],
+  startMs: number,
+  endMs: number
+): WindowEdgeGaps {
+  const inside = presentedMs.filter((t) => t >= startMs && t <= endMs);
+  const before = presentedMs.some((t) => t < startMs);
+  if (inside.length === 0)
+    return {
+      gapsMs: [],
+      leadingGapMs: null,
+      trailingGapMs: before ? endMs - startMs : null,
+    };
+  return {
+    gapsMs: intervals(inside),
+    leadingGapMs: before ? inside[0]! - startMs : null,
+    trailingGapMs: endMs - inside[inside.length - 1]!,
+  };
 }
 
 export interface MediaFrame {
@@ -308,8 +357,10 @@ export function newFrames<F extends MediaFrame>(
 export interface PrimerWindow {
   /** First new frame minus the trusted Play, page clock. */
   readonly startupMs: number | null;
-  /** Gaps between consecutive kept frames inside the window. */
+  /** Gaps between consecutive presented frames inside the window. */
   readonly gapsMs: readonly number[];
+  /** From the last presented frame inside the window to the window end. Null when there is none. */
+  readonly trailingGapMs: number | null;
   readonly bufferingBeforeFirstFrame: boolean | null;
   /** Device starts (OutputController::Play) after the trusted Play. */
   readonly deviceStarts: number;
@@ -331,7 +382,14 @@ export function gatePrimerWindow(w: PrimerWindow): string[] {
     failures.push(
       `first frame ${w.startupMs.toFixed(1)} ms > ${FIRST_FRAME_BUDGET_MS} ms`
     );
-  failures.push(...gateGaps(w.gapsMs, MIN_WINDOW_INTERVALS, 'window'));
+  failures.push(
+    ...gateGaps(
+      w.gapsMs,
+      MIN_WINDOW_INTERVALS,
+      'window',
+      w.trailingGapMs === null ? [] : [w.trailingGapMs]
+    )
+  );
   if (
     w.expectedDeviceStarts !== null &&
     w.deviceStarts !== w.expectedDeviceStarts

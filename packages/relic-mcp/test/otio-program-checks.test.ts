@@ -6,16 +6,20 @@ import {
   deviceExcessMs,
   deviceStarts,
   firstStart,
+  gateGaps,
   gatePrimerWindow,
   intervals,
+  MIN_WINDOW_INTERVALS,
   markTs,
+  missedSlots,
   newFrames,
   p95,
   type PrimerWindow,
   PREPARE_MARK,
   quietWindow,
-  stalls,
   TRACE_START_MARK,
+  WINDOW_MS,
+  windowEdgeGaps,
   type TraceEvent,
 } from './otio-program-trace.ts';
 import { describe, expect, test } from 'bun:test';
@@ -27,6 +31,7 @@ import {
   findAudioFaults,
   type RgbFrame,
 } from './otio-program-checks.ts';
+import { bareControlFailures } from './otio-program-primer-controls.ts';
 import { framePsnrDb, PROGRAM_MIN_PSNR_DB } from './otio-program-media.ts';
 import {
   EXPECTED_PLACEMENTS,
@@ -317,6 +322,7 @@ const steadyGaps = (n = 95) =>
 const passingWindow = (over: Partial<PrimerWindow> = {}): PrimerWindow => ({
   startupMs: 120,
   gapsMs: steadyGaps(),
+  trailingGapMs: 16,
   bufferingBeforeFirstFrame: null,
   deviceStarts: 0,
   expectedDeviceStarts: 0,
@@ -480,8 +486,23 @@ describe('primer gates: passing evidence and negative controls', () => {
     const plateau = [...steadyGaps(60), 291.8, ...steadyGaps(34)];
     const failures = gatePrimerWindow(passingWindow({ gapsMs: plateau }));
     expect(failures.some((f) => f.includes('max gap 291.8'))).toBe(true);
-    expect(stalls(plateau)).toBe(true);
-    expect(stalls(steadyGaps())).toBe(false);
+    expect(missedSlots(plateau, PROGRAM.fps)).toBeGreaterThan(0);
+    expect(missedSlots(steadyGaps(), PROGRAM.fps)).toBe(0);
+  });
+
+  test('missed program frame slots: a gap of 50 ms or more skips a slot, and the trailing gap counts', () => {
+    expect(missedSlots([49.9], PROGRAM.fps)).toBe(0);
+    expect(missedSlots([50], PROGRAM.fps)).toBe(1);
+    expect(missedSlots([66.8], PROGRAM.fps)).toBe(1);
+    expect(missedSlots([99.4], PROGRAM.fps)).toBe(2);
+    expect(missedSlots([100], PROGRAM.fps)).toBe(2);
+    expect(missedSlots([100.6], PROGRAM.fps)).toBe(2);
+    expect(missedSlots([35.3, 38.9], PROGRAM.fps)).toBe(0);
+    expect(missedSlots([880], PROGRAM.fps)).toBe(25);
+  });
+
+  test('the bare negative controls and the cold comparator reject and accept their own windows', () => {
+    expect(bareControlFailures()).toEqual([]);
   });
 
   test('a first frame over 350 ms fails the first-frame budget', () => {
@@ -555,9 +576,15 @@ describe('primer trace: first new frame and freezes', () => {
     frames: readonly { now: number; mediaTime: number }[]
   ) => {
     const fresh = newFrames(frames, restCurrentTime, fps);
+    const edges = windowEdgeGaps(
+      fresh.kept.map((f) => f.now),
+      0,
+      WINDOW_MS
+    );
     return gatePrimerWindow({
       startupMs: fresh.firstNew ? fresh.firstNew.now : null,
-      gapsMs: intervals(fresh.kept.map((f) => f.now)),
+      gapsMs: edges.gapsMs,
+      trailingGapMs: edges.trailingGapMs,
       bufferingBeforeFirstFrame: true,
       deviceStarts: 1,
       expectedDeviceStarts: 1,
@@ -577,6 +604,7 @@ describe('primer trace: first new frame and freezes', () => {
     const failures = gatePrimerWindow({
       startupMs: 149.6,
       gapsMs: gaps,
+      trailingGapMs: null,
       bufferingBeforeFirstFrame: true,
       deviceStarts: 1,
       expectedDeviceStarts: 1,
@@ -598,5 +626,119 @@ describe('primer trace: first new frame and freezes', () => {
       fps
     );
     expect(fresh.backward).toBe(true);
+  });
+});
+
+describe('primer window edges: a terminal stall fails and startup is not a gap', () => {
+  const pointerAt = 1000;
+  const end = pointerAt + WINDOW_MS;
+  const stepMs = 1000 / PROGRAM.fps;
+  /** Presented times every frame step from fromMs through toMs, inclusive. */
+  const presentedFrom = (fromMs: number, toMs: number) =>
+    Array.from(
+      { length: Math.round((toMs - fromMs) / stepMs) + 1 },
+      (_, i) => fromMs + i * stepMs
+    );
+
+  test('a stall that runs to the window end fails the 100 ms gate; the gaps alone miss it', () => {
+    // Frames stop 3.12 s after the Play and nothing follows, so no gap between frames shows it.
+    const edges = windowEdgeGaps(
+      presentedFrom(pointerAt + 120, pointerAt + 3120),
+      pointerAt,
+      end
+    );
+    expect(missedSlots(edges.gapsMs, PROGRAM.fps)).toBe(0);
+    expect(edges.trailingGapMs).toBeCloseTo(880, 6);
+    expect(
+      gatePrimerWindow(
+        passingWindow({
+          startupMs: 120,
+          gapsMs: edges.gapsMs,
+          trailingGapMs: null,
+        })
+      )
+    ).toEqual([]);
+    const failures = gatePrimerWindow(
+      passingWindow({
+        startupMs: 120,
+        gapsMs: edges.gapsMs,
+        trailingGapMs: edges.trailingGapMs,
+      })
+    );
+    expect(failures.some((f) => f.includes('max gap 880.0'))).toBe(true);
+  });
+
+  test('startup before the first frame is the startup budget, not a gap', () => {
+    const edges = windowEdgeGaps(
+      presentedFrom(pointerAt + 340, end - 20),
+      pointerAt,
+      end
+    );
+    expect(edges.leadingGapMs).toBeNull();
+    expect(edges.gapsMs.every((gap) => gap < 40)).toBe(true);
+    expect(edges.trailingGapMs).toBeCloseTo(20, 6);
+    expect(
+      gatePrimerWindow(
+        passingWindow({
+          startupMs: 340,
+          gapsMs: edges.gapsMs,
+          trailingGapMs: edges.trailingGapMs,
+        })
+      )
+    ).toEqual([]);
+  });
+
+  test('a frame presented after the window end is outside the window', () => {
+    const presented = [...presentedFrom(pointerAt + 340, end - 20), end + 30];
+    const edges = windowEdgeGaps(presented, pointerAt, end);
+    expect(edges.trailingGapMs).toBeCloseTo(20, 6);
+    expect(edges.gapsMs.every((gap) => gap < 40)).toBe(true);
+  });
+
+  test('a window that starts after a presented frame and shows none inside is one stall', () => {
+    const edges = windowEdgeGaps(presentedFrom(0, 900), pointerAt, end);
+    expect(edges.gapsMs).toEqual([]);
+    expect(edges.trailingGapMs).toBe(WINDOW_MS);
+    const failures = gatePrimerWindow(
+      passingWindow({
+        startupMs: 340,
+        gapsMs: edges.gapsMs,
+        trailingGapMs: edges.trailingGapMs,
+      })
+    );
+    expect(failures.some((f) => f.includes('max gap 4000.0'))).toBe(true);
+  });
+
+  test('a leading edge gap is the stall that runs in from the window start', () => {
+    // The last frame before the window is at 900 ms and the first inside it at 1250 ms.
+    const edges = windowEdgeGaps(
+      [900, ...presentedFrom(pointerAt + 250, end - 20)],
+      pointerAt,
+      end
+    );
+    expect(edges.leadingGapMs).toBeCloseTo(250, 6);
+    expect(edges.gapsMs.every((gap) => gap < 40)).toBe(true);
+    const failures = gateGaps(
+      edges.gapsMs,
+      MIN_WINDOW_INTERVALS,
+      'unmute window',
+      [edges.leadingGapMs!, edges.trailingGapMs!]
+    );
+    expect(failures.some((f) => f.includes('max gap 250.0'))).toBe(true);
+  });
+
+  test('an edge gap counts toward max and p95 but never toward the interval minimum', () => {
+    const edgeOnly = Array.from({ length: 80 }, () => 1000 / PROGRAM.fps);
+    expect(
+      gateGaps(steadyGaps(10), MIN_WINDOW_INTERVALS, 'w', edgeOnly).some((f) =>
+        f.includes('only 11 presented frames')
+      )
+    ).toBe(true);
+    expect(
+      gateGaps(steadyGaps(95), MIN_WINDOW_INTERVALS, 'w', [150]).some((f) =>
+        f.includes('max gap 150.0')
+      )
+    ).toBe(true);
+    expect(gateGaps(steadyGaps(95), MIN_WINDOW_INTERVALS, 'w', [])).toEqual([]);
   });
 });
