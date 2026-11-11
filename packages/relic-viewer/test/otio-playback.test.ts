@@ -4161,6 +4161,66 @@ describe('otio playback controller', () => {
     }
   });
 
+  test('coordinated context change stops the PCM source before a held gate acknowledgement', async () => {
+    const fixture = independentPcmFixture(false, false, undefined, {
+      autoEndSources: true,
+    });
+    try {
+      await fixture.start();
+      await fixture.advanceSmooth(
+        fixture.wall + 40,
+        fixture.renderFrame + 1920,
+        fixture.outputFrame + 1920
+      );
+      const issuedAt = fixture.renderFrame;
+      let settled = false;
+      const prepared = fixture.playback
+        .prepareAudioContextChange()
+        .then(
+          () => null,
+          (error: unknown) => error
+        )
+        .finally(() => {
+          settled = true;
+        });
+      // The gate accepts the stop and queues its acknowledgement; nothing is delivered yet.
+      await fixture.flush(false);
+      const stop = fixture.commands.find((command) => command.type === 'stop');
+      expect(stop).toBeDefined();
+      const boundary = Number(stop!.stopFrame);
+      // Precondition: the stop lies inside the window one 256-frame callback consumes.
+      // A stop further out would never reach the deadline this test guards.
+      expect(boundary - issuedAt).toBeGreaterThanOrEqual(256);
+      expect(boundary - issuedAt).toBeLessThan(256 + 128);
+      // One device callback renders 256 frames while the acknowledgement is still held.
+      await fixture.advance(
+        fixture.wall + 256 / 48,
+        fixture.renderFrame + 256,
+        fixture.outputFrame + 256,
+        false
+      );
+      await fixture.deliverCallbacks();
+      for (let i = 0; i < 50 && !settled; i++)
+        await fixture.advance(
+          fixture.wall + 8,
+          fixture.renderFrame + 384,
+          fixture.outputFrame + 384
+        );
+      expect(settled).toBe(true);
+      expect(await prepared, 'context change preparation').toBeNull();
+      expect(fixture.playback.getState().playing).toBe(false);
+      const diagnostics = fixture.playback.getState().diagnostics;
+      expect(
+        diagnostics.some((item) =>
+          item.message.includes('PCM source stop failed')
+        ),
+        JSON.stringify(diagnostics)
+      ).toBe(false);
+    } finally {
+      fixture.restore();
+    }
+  });
+
   test.each([true, false])(
     'seek accepts a closed gate whether closure arrived before abort: %s',
     async (deliverClosure) => {
