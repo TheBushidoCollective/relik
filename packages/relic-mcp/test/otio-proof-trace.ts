@@ -115,6 +115,7 @@ export const otioProofTracePrelude = String.raw`(() => {
   // native contextTime. A 'perf' hold re-serves the latest returned pair with performanceTime
   // advanced by perfUs. Injected reads are marked injected and are never native evidence.
   let clockHold = null;
+  let siteHold = null;
   let realPairByPerf = new Map();
   let latestRealContext = null;
   let latestReturned = null;
@@ -125,22 +126,27 @@ export const otioProofTracePrelude = String.raw`(() => {
       const nativeFinite = native !== null && Number.isFinite(native.contextTime) && Number.isFinite(native.performanceTime);
       let result = native === null ? {contextTime: NaN, performanceTime: NaN} : native;
       let hold = null;
-      if (nativeFinite && clockHold) {
+      const applied = nativeFinite ? clockHold : null;
+      if (applied) {
         if (!realPairByPerf.has(native.performanceTime)) realPairByPerf.set(native.performanceTime, native.contextTime);
-        if (clockHold.kind === 'ctx') {
-          hold = {contextTime: Math.max(realPairByPerf.get(native.performanceTime) + clockHold.deltaUs / 1e6, latestRealContext ?? -Infinity), performanceTime: native.performanceTime};
+        if (applied.kind === 'ctx') {
+          hold = {contextTime: Math.max(realPairByPerf.get(native.performanceTime) + applied.deltaUs / 1e6, latestRealContext ?? -Infinity), performanceTime: native.performanceTime};
         } else {
           const previous = latestReturned ?? native;
-          hold = {contextTime: previous.contextTime, performanceTime: previous.performanceTime + clockHold.perfUs / 1000};
+          hold = {contextTime: previous.contextTime, performanceTime: previous.performanceTime + applied.perfUs / 1000};
         }
         result = hold;
+        if (applied.once) {
+          clockHold = null;
+          recordEvent('clock-site-hold-consumed', null, {site: applied.site, kind: applied.kind, deltaUs: applied.deltaUs ?? null, perfUs: applied.perfUs ?? null, contextTime: hold.contextTime, performanceTime: hold.performanceTime});
+        }
       }
       if (nativeFinite) latestRealContext = native.contextTime;
       if (Number.isFinite(result.contextTime) && Number.isFinite(result.performanceTime))
         latestReturned = {contextTime: result.contextTime, performanceTime: result.performanceTime};
       const currentAfter = this.currentTime, after = performance.now();
       recordEvent('audio-output-timestamp-observed', null, {before, after, currentBefore, currentAfter,
-        state:this.state, injected:invalidControllerClock || hold !== null, hold:hold === null ? null : clockHold.kind,
+        state:this.state, injected:invalidControllerClock || hold !== null, hold:hold === null ? null : applied.kind, site:hold === null ? null : applied.site,
         native:nativeFinite ? {contextTime:native.contextTime, performanceTime:native.performanceTime} : null,
         output:{contextTime:result.contextTime, performanceTime:result.performanceTime}});
       return result;
@@ -265,6 +271,10 @@ export const otioProofTracePrelude = String.raw`(() => {
     if (args[0] === 'OTIO_PROOF_PCM') {
       if (args[1]?.event === 'backend') lastPcmBackend = args[1];
       recordEvent('scheduled-pcm', null, args[1]);
+      if (args[1]?.event === 'clock-site' && args[1]?.phase === 'read' && siteHold !== null && siteHold.site === args[1].site) {
+        clockHold = {...siteHold, once:true};
+        siteHold = null;
+      }
       if (args[1]?.event === 'recovery-render-closed') recoveryClosureSeen=true;
       if (args[1]?.event === 'recovery-selection') recoverySelection=args[1];
       if (args[1]?.event === 'recovery-old-drained') {
@@ -358,6 +368,16 @@ export const otioProofTracePrelude = String.raw`(() => {
   let nextRecoveryMarker = false;
   let nextAnchorControl = null;
   const syntheticAnchors = new WeakSet();
+  // Proof-only carrier horizon, fixed at 60 s. The carrier must cover every frame a playback
+  // capture can observe. It was 20 s, but a CI track-controls epoch was traced at gate frame
+  // 1320448, which is 27.5 s of observed warm elapsed playback, past the 20 s carrier, so the
+  // gate fell outside it. 60 s leaves margin over the longest proof capture. The horizon is a
+  // fixed bound, not derived from the trace, so coverage stays fail-closed: the harness refuses
+  // any frame outside the carrier.
+  // Memory: each source holds two Float32 channels of length frames. At 48 kHz that is 23 MB
+  // per source. Long mode adds a second source, 46 MB in total. WITNESS_MAX_BYTES caps the total.
+  const WITNESS_HORIZON_SECONDS = 60;
+  const WITNESS_MAX_BYTES = 128 * 1024 * 1024;
   // Create the independent carrier before the transport gate selects its bootstrap
   // frame. Only a suspended context has a stable main-thread clock. Running contexts
   // need a render-thread handshake and are rejected rather than assigned a guessed lead.
@@ -371,9 +391,15 @@ export const otioProofTracePrelude = String.raw`(() => {
     if (!Number.isFinite(now) || now < 0)
       throw new Error('proof witness suspended context time invalid');
     const frozenAnchor = Math.ceil(Math.ceil(now) / quantum) * quantum;
+    // Long mode adds a second, separate interval near 2^24 frames. It starts at or after the end
+    // of the frozen interval, so the two never overlap, and it still crosses the 2^24 boundary.
     const laterAnchor = globalThis.__otioProofClockMode === 'long'
-      ? Math.max(frozenAnchor + rate * 21, 2 ** 24 - rate) : null;
-    const length = Math.ceil(rate * 20);
+      ? Math.max(frozenAnchor + rate * WITNESS_HORIZON_SECONDS, 2 ** 24 - rate) : null;
+    const length = Math.ceil(rate * WITNESS_HORIZON_SECONDS);
+    if (laterAnchor !== null && laterAnchor < frozenAnchor + length)
+      throw new Error('proof witness intervals overlap');
+    const bytes = (laterAnchor === null ? 1 : 2) * 2 * length * 4;
+    if (bytes > WITNESS_MAX_BYTES) throw new Error('proof witness exceeds its memory cap');
     const starts = laterAnchor === null ? [frozenAnchor] : [frozenAnchor, laterAnchor];
     const sources = starts.map(anchor => {
       if (!Number.isSafeInteger(anchor) || Math.abs((anchor / rate) * rate - anchor) > 1 / 1024)
@@ -391,7 +417,7 @@ export const otioProofTracePrelude = String.raw`(() => {
       return source;
     });
     const witness = {sources, anchor:frozenAnchor, laterAnchor, frozenAnchor, length,
-      attached:false, gateInitialFrame:null, clockEpoch:null};
+      horizonSeconds:WITNESS_HORIZON_SECONDS, bytes, attached:false, gateInitialFrame:null, clockEpoch:null};
     witnesses.set(context, witness);
     for (let i = 0; i < sources.length; i++) sources[i].start(starts[i] / rate);
     return witness;
@@ -916,6 +942,14 @@ export const otioProofTracePrelude = String.raw`(() => {
       else throw new Error('invalid clock hold');
       return {kind:clockHold.kind, deltaUs:clockHold.deltaUs ?? null, perfUs:clockHold.perfUs ?? null};
     },
+    setSiteClockHold(spec) {
+      if (spec === null) { siteHold = null; return null; }
+      if (!spec || !['select-epoch', 'commit', 'recovery-bridge'].includes(spec.site)) throw new Error('unknown clock site');
+      if (Number.isFinite(spec.deltaUs) && spec.deltaUs >= 0 && spec.deltaUs < 1e6) siteHold = {site:spec.site, kind:'ctx', deltaUs:spec.deltaUs, perfUs:null};
+      else if (Number.isFinite(spec.perfUs) && spec.perfUs > 0) siteHold = {site:spec.site, kind:'perf', deltaUs:null, perfUs:spec.perfUs};
+      else throw new Error('invalid site clock hold');
+      return {site:siteHold.site, kind:siteHold.kind, deltaUs:siteHold.deltaUs, perfUs:siteHold.perfUs};
+    },
     heldPcmCount() { return heldPcmResponses.length; },
     holdPcmResponses(value) {
       holdPcmResponses = Boolean(value);
@@ -1056,7 +1090,7 @@ export const otioProofTracePrelude = String.raw`(() => {
           terminated: Boolean(currentGate?.terminated), gateCaptureId: currentGate?.staleCaptureId ?? null});
       }
       activeStaleCaptureId = null;
-      clockHold = null;
+      clockHold = null; siteHold = null;
       visual.active = false;
       clearInterval(startupMonitor); startupMonitor = null;
       bufferingObserver?.disconnect();
@@ -1073,7 +1107,7 @@ export const otioProofTracePrelude = String.raw`(() => {
       }
       return {sampleRate: graph.context.sampleRate, contextState: graph.context.state,
         timestamp, frame, sampleFrame, bridge, staleCaptureId:captureId,
-        audio: graph.chunks, audioOverflow: graph.overflow, witness: (() => { const item = witnesses.get(graph.context); return item ? {anchor:item.anchor, laterAnchor:item.laterAnchor, frozenAnchor:item.frozenAnchor, length:item.length, gateInitialFrame:item.gateInitialFrame, clockEpoch:item.clockEpoch} : null; })(),
+        audio: graph.chunks, audioOverflow: graph.overflow, witness: (() => { const item = witnesses.get(graph.context); return item ? {anchor:item.anchor, laterAnchor:item.laterAnchor, frozenAnchor:item.frozenAnchor, length:item.length, horizonSeconds:item.horizonSeconds, bytes:item.bytes, gateInitialFrame:item.gateInitialFrame, clockEpoch:item.clockEpoch} : null; })(),
         visual: visual.samples, visualOverflow: visual.overflow, events, eventsOverflow, bank: bankRecords, bankOverflow};
     },
   };

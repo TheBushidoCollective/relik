@@ -9820,6 +9820,8 @@ interface ClockEvidence {
   holdsMatched: number;
   epochBridges: number;
   clockErrors: number;
+  siteUses: number;
+  siteHoldsConsumed: number;
   violations: string[];
 }
 function clockStamp(value: unknown): ClockStamp | null {
@@ -9919,7 +9921,8 @@ function auditClockEvidence(
   let clockHolds = 0,
     holdsMatched = 0,
     epochBridges = 0,
-    clockErrors = 0;
+    clockErrors = 0,
+    siteUses = 0;
   pcmEvents.forEach((value, index) => {
     if (value['event'] === 'clock-hold') {
       clockHolds++;
@@ -9990,6 +9993,24 @@ function auditClockEvidence(
         }
       }
     }
+    if (value['event'] === 'clock-site' && value['phase'] === 'use') {
+      siteUses++;
+      const label = `site-${String(value['site'])}#${index}`;
+      const used = clockStamp(value['usedStamp']);
+      const last = clockStamp(value['lastAccepted']);
+      if (!used) violations.push(`${label}:used-stamp-malformed`);
+      else {
+        if (!native.some((stamp) => sameClockStamp(stamp, used)))
+          violations.push(
+            observed.some((stamp) => sameClockStamp(stamp, used))
+              ? `${label}:used-held-read`
+              : `${label}:used-unobserved`
+          );
+        if (!last) violations.push(`${label}:last-accepted-missing`);
+        else if (!sameClockStamp(used, last))
+          violations.push(`${label}:used-not-last-accepted`);
+      }
+    }
   });
   return {
     nativeReads: native.length,
@@ -10009,6 +10030,10 @@ function auditClockEvidence(
     holdsMatched,
     epochBridges,
     clockErrors,
+    siteUses,
+    siteHoldsConsumed: (trace?.events ?? []).filter(
+      (entry) => entry.kind === 'clock-site-hold-consumed'
+    ).length,
     violations,
   };
 }
@@ -20549,6 +20574,97 @@ async function runScheduledPcmProof(
               `audio output clock interrupted: ${control.expect}`
             ),
             `${control.label} did not report ${control.expect}: ${errorCodes.join(', ')}`
+          );
+        }
+      } finally {
+        await isolated.close();
+      }
+    }
+    // Per-site clock controls. A one-shot 86 us hold lands on the single read that one site makes.
+    // The site's consumed stamp must equal lastAccepted and must be native. A raw-stamp substitution
+    // makes the consumed stamp the held read, which the audit fails as used-held-read.
+    for (const control of [
+      { label: 'site-select-epoch', site: 'select-epoch', recovery: false },
+      { label: 'site-commit', site: 'commit', recovery: false },
+      {
+        label: 'site-recovery-bridge',
+        site: 'recovery-bridge',
+        recovery: true,
+      },
+    ] as const) {
+      const isolated = await openBrowser(url, sessionToken, {
+        label: control.label,
+        recordProofTrace: true,
+      });
+      try {
+        await waitReady(isolated);
+        const provenance = await proofProvenance(isolated);
+        const fault = await isolated.evaluate<{
+          armed: { site: string; kind: string; deltaUs: number | null };
+          trace: MovingTrace['trace'];
+          playing: string;
+        }>(`(async () => {
+          const sleep = ms => { const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, ms); return promise; };
+          const root = document.querySelector('.otio-view');
+          const button = document.querySelector('button.otio-play');
+          if (!(root instanceof HTMLElement) || !(button instanceof HTMLButtonElement)) throw new Error('site hold controls missing');
+          const recovery = ${JSON.stringify(control.recovery)};
+          const start = await globalThis.__otioProofTrace.start();
+          const armed = globalThis.__otioProofTrace.setSiteClockHold({site: ${JSON.stringify(control.site)}, deltaUs: 86});
+          if (recovery) {
+            globalThis.__otioProofTrace.enableRecoveryMarker();
+            globalThis.__otioProofHoldOldDrain = true;
+          }
+          const playEdge = globalThis.__otioProofTrace.playRequest();
+          button.click();
+          await sleep(500);
+          if (recovery) {
+            globalThis.__otioProofPcmFault = 'withhold-future-video';
+            const deadline = performance.now() + 4000;
+            while (root.dataset.buffering !== 'true' && performance.now() < deadline) await sleep(20);
+            globalThis.__otioProofPcmFault = null;
+            globalThis.__otioProofHoldOldDrain = false;
+          }
+          await sleep(${control.recovery ? 1200 : 1500});
+          const trace = await globalThis.__otioProofTrace.stop();
+          const playing = root.dataset.playing ?? '';
+          if (root.dataset.playing === 'true') button.click();
+          return {start, armed, playEdge, trace, playing};
+        })()`);
+        const clockAudit = await writeClockShot(
+          join(shotDir, `scheduled-${control.label}.json`),
+          { provenance, capture: fault },
+          control.label,
+          fault.trace
+        );
+        const consumed = fault.trace.events.filter(
+          (entry) =>
+            entry.kind === 'clock-site-hold-consumed' &&
+            (entry.value as { site?: string } | null)?.site === control.site
+        );
+        assert.ok(
+          consumed.length >= 1,
+          `${control.label}: the one-shot hold never reached a ${control.site} read`
+        );
+        assert.ok(
+          clockAudit.siteUses >= 1,
+          `${control.label}: ${control.site} never reported the stamp it consumed`
+        );
+        if (control.recovery) {
+          assert.ok(
+            fault.trace.events.some(
+              (entry) =>
+                entry.kind === 'scheduled-pcm' &&
+                (entry.value as { event?: string } | null)?.event ===
+                  'recovery-selection'
+            ),
+            `${control.label}: recovery never selected a successor`
+          );
+        } else {
+          assert.equal(
+            fault.playing,
+            'true',
+            `${control.label}: playback stopped under a sub-resolution hold at ${control.site}`
           );
         }
       } finally {
