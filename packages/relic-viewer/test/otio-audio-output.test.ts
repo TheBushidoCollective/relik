@@ -1089,3 +1089,10 @@ describe('stall, pending frames, hidden gestures and park', () => {
     expect(done.out.state).toBe('unsupported');
   });
 });
+
+describe('supported', () => {
+  test('mirrors the constructor option', () => {
+    expect(setup({ supported: true }).out.supported).toBe(true);
+    expect(setup({ supported: false }).out.supported).toBe(false);
+  });
+});

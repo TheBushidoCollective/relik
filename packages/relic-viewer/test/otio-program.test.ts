@@ -7,6 +7,7 @@ import {
 import {
   CompositionPlaybackDisabled,
   createOtioPlaybackSession,
+  createOtioProgramPlayer,
   OTIO_PROGRAM_OUTPUT_HOLD_MS,
   OTIO_PROGRAM_UNMUTE_HOLD_MS,
   type OtioPlaybackSession,
@@ -243,6 +244,11 @@ class FakeVideo extends EventTarget {
   playbackRate = 1;
   preload = '';
   src = '';
+  readyState = 0;
+  /** readyState when metadata loads: 1 is HAVE_METADATA, 3 is HAVE_FUTURE_DATA. */
+  metadataReadyState = 1;
+  /** When set, load() stops at metadata; canPlay() fires canplay. */
+  withholdCanPlay = false;
   /** Element calls in order: each play with the mute state it started under, pauses and seeks. */
   readonly calls: string[] = [];
   private time = 0;
@@ -263,8 +269,19 @@ class FakeVideo extends EventTarget {
   }
 
   load(): void {
-    if (this.src !== '')
-      queueMicrotask(() => this.dispatchEvent(new Event('loadedmetadata')));
+    if (this.src === '') return;
+    queueMicrotask(() => {
+      this.readyState = this.metadataReadyState;
+      this.dispatchEvent(new Event('loadedmetadata'));
+      if (this.readyState >= 3 || this.withholdCanPlay) return;
+      queueMicrotask(() => this.canPlay());
+    });
+  }
+
+  /** The element can play: readyState reaches HAVE_FUTURE_DATA and canplay fires. */
+  canPlay(): void {
+    this.readyState = 3;
+    this.dispatchEvent(new Event('canplay'));
   }
 
   removeAttribute(name: string): void {
@@ -293,6 +310,7 @@ interface PendingWait {
 }
 
 interface FakeOutput extends OtioProgramAudioOutput {
+  readonly supported: boolean;
   /** Every wait the player started, in order, with the promise it got back. */
   readonly waits: {
     readonly target: 'rendering' | 'running';
@@ -311,13 +329,17 @@ interface FakeOutput extends OtioProgramAudioOutput {
 }
 
 /** The primer's contract: a wait ends on reach, timeout or abort and never rejects; park goes idle. */
-function fakeOutput(initial: OtioAudioOutputState): FakeOutput {
+function fakeOutput(
+  initial: OtioAudioOutputState,
+  supported = true
+): FakeOutput {
   let state = initial;
   let parks = 0;
   const pending = new Set<PendingWait>();
   const waits: FakeOutput['waits'] = [];
   const watchers: (() => void)[] = [];
   return {
+    supported,
     get state() {
       return state;
     },
@@ -764,5 +786,147 @@ describe('native program and the audio output primer', () => {
     session.setMuted(false);
     expect(video.muted).toBe(false);
     expect(output.waits).toEqual([]);
+  });
+});
+
+/** Drains the microtasks that load events are queued on. No wall-clock wait. */
+const settleEvents = async (): Promise<void> => {
+  for (let i = 0; i < 10; i++) await Promise.resolve();
+};
+
+/** Starts a program session without awaiting it, so a test can watch when it opens. */
+function startProgram(
+  video: FakeVideo,
+  audioOutput?: OtioProgramAudioOutput
+): { readonly session: Promise<OtioPlaybackSession>; opened(): boolean } {
+  let opened = false;
+  const session = createOtioPlaybackSession({
+    resolution: { status: 'available', program },
+    timelineRange,
+    video: video as unknown as HTMLVideoElement,
+    ...(audioOutput === undefined ? {} : { audioOutput }),
+    createController: () => fakeController([]),
+  }).then((next) => {
+    opened = true;
+    return next;
+  });
+  return { session, opened: () => opened };
+}
+
+describe('readiness and the audio output primer', () => {
+  let globals: ProgramGlobals;
+  beforeEach(() => {
+    globals = installProgramGlobals();
+  });
+  afterEach(() => {
+    globals.restore();
+  });
+
+  test('a supported primer opens the program only once the element can play', async () => {
+    const video = new FakeVideo();
+    video.withholdCanPlay = true;
+    const started = startProgram(video, fakeOutput('idle', true));
+    await settleEvents();
+    expect(video.readyState).toBe(1);
+    expect(started.opened()).toBe(false);
+    // Readiness alone starts no media, whatever state the element is in.
+    expect(video.calls).toEqual([]);
+    video.canPlay();
+    const session = await started.session;
+    expect(started.opened()).toBe(true);
+    expect(session.availability().state).toBe('program');
+    expect(video.calls).toEqual([]);
+    // Playback still starts only when the caller asks for it.
+    await session.play();
+    expect(video.calls).toEqual(['play']);
+  });
+
+  test('a supported primer opens at once when the element is already ready at metadata', async () => {
+    const video = new FakeVideo();
+    video.metadataReadyState = 3;
+    const session = await startProgram(video, fakeOutput('idle', true)).session;
+    expect(session.availability().state).toBe('program');
+    expect(video.calls).toEqual([]);
+  });
+
+  test('an unsupported primer opens at metadata without waiting for canplay', async () => {
+    const video = new FakeVideo();
+    video.withholdCanPlay = true;
+    const started = startProgram(video, fakeOutput('unsupported', false));
+    await settleEvents();
+    expect(started.opened()).toBe(true);
+    expect((await started.session).availability().state).toBe('program');
+  });
+
+  test('no primer opens at metadata without waiting for canplay', async () => {
+    const video = new FakeVideo();
+    video.withholdCanPlay = true;
+    const started = startProgram(video);
+    await settleEvents();
+    expect(started.opened()).toBe(true);
+    expect((await started.session).availability().state).toBe('program');
+  });
+
+  test('a load error before canplay leaves the program unavailable and never pauses it', async () => {
+    const video = new FakeVideo();
+    video.withholdCanPlay = true;
+    const started = startProgram(video, fakeOutput('idle', true));
+    await settleEvents();
+    expect(started.opened()).toBe(false);
+    video.dispatchEvent(new Event('error'));
+    const session = await started.session;
+    expect(session.availability().state).toBe('unavailable');
+    expect(session.availability().reasons[0]?.code).toBe('unsupported-browser');
+    expect(video.calls).toEqual([]);
+  });
+
+  test('a pre-canplay error rejects ready and never reaches the failure handler', async () => {
+    const video = new FakeVideo();
+    video.withholdCanPlay = true;
+    const failures: unknown[] = [];
+    const player = createOtioProgramPlayer({
+      video: video as unknown as HTMLVideoElement,
+      program,
+      onFailure: (reason) => {
+        failures.push(reason);
+      },
+      audioOutput: fakeOutput('idle', true),
+    });
+    await settleEvents();
+    video.dispatchEvent(new Event('error'));
+    await expect(player.ready).rejects.toMatchObject({
+      code: 'unsupported-browser',
+    });
+    expect(failures).toEqual([]);
+    player.dispose();
+  });
+
+  test('dispose while waiting for canplay settles ready and releases the element', async () => {
+    const video = new FakeVideo();
+    video.withholdCanPlay = true;
+    const player = createOtioProgramPlayer({
+      video: video as unknown as HTMLVideoElement,
+      program,
+      onFailure: () => {},
+      audioOutput: fakeOutput('idle', true),
+    });
+    await settleEvents();
+    player.dispose();
+    await expect(player.ready).rejects.toMatchObject({
+      code: 'unsupported-browser',
+    });
+    expect(video.src).toBe('');
+    expect(video.calls).toEqual([]);
+  });
+
+  test('a supported and an unsupported primer open the same program', async () => {
+    for (const supported of [true, false]) {
+      const video = new FakeVideo();
+      const session = await startProgram(video, fakeOutput('idle', supported))
+        .session;
+      expect(session.availability().state).toBe('program');
+      expect(session.getState().playing).toBe(false);
+      expect(video.calls).toEqual([]);
+    }
   });
 });

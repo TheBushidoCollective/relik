@@ -49,6 +49,8 @@ export function otioAudioOutputSupported(
 }
 
 export interface OtioAudioOutput {
+  /** Whether this browser can run the primer. A supported program waits for canplay before it is ready. */
+  readonly supported: boolean;
   readonly state: OtioAudioOutputState;
   whenReached(
     target: 'rendering' | 'running',
@@ -374,6 +376,7 @@ export function createOtioAudioOutput(o: {
   }
 
   return {
+    supported: o.supported,
     get state() {
       return state;
     },

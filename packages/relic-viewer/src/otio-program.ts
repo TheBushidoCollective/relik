@@ -43,7 +43,10 @@
  * mute ends it early and the play starts. A page pause parks the primer first,
  * so a media key resumes the program, not the silent primer; a scope switch
  * keeps it. Without a primer, or with one idle, unsupported or failed, play
- * and mute act at once.
+ * and mute act at once. Where the primer is supported, readiness also waits
+ * for the element to reach canplay, so Play is offered only once the element
+ * can play, and a first press never lands while Chrome is still creating the
+ * output stream. Readiness starts no media, so nothing plays before a gesture.
  */
 
 import {
@@ -368,7 +371,11 @@ export async function resolveOtioProgram(
 }
 
 export interface OtioProgramPlayer {
-  /** Resolves once metadata matches the manifest; rejects with a ProgramRejection otherwise. */
+  /**
+   * Resolves once metadata matches the manifest and, when the view's primer is
+   * supported, the element can play (canplay). Rejects with a ProgramRejection
+   * otherwise, including a load error before canplay.
+   */
   readonly ready: Promise<void>;
   getState(): OtioPlaybackState;
   /** The native element's media time in seconds. */
@@ -394,7 +401,7 @@ export interface OtioProgramPlayer {
 /** What the player uses of the view's audio output primer. */
 export type OtioProgramAudioOutput = Pick<
   OtioAudioOutput,
-  'state' | 'whenReached' | 'park'
+  'state' | 'supported' | 'whenReached' | 'park'
 >;
 
 /** Longest an unmuted play waits for a starting audio output to render. */
@@ -426,6 +433,9 @@ interface FrameBounds {
   readonly end: number;
 }
 
+/** readyState at HAVE_FUTURE_DATA: the element can play. */
+const HAVE_FUTURE_DATA = 3;
+
 const isAbortError = (error: unknown): boolean =>
   error instanceof Error && error.name === 'AbortError';
 
@@ -440,6 +450,8 @@ export function createOtioProgramPlayer(
   const cleanup: (() => void)[] = [];
   const loaded = Promise.withResolvers<void>();
   let isLoaded = false;
+  /** The metadata matched the manifest. With a primer, readiness still waits for canplay. */
+  let metadataVerified = false;
   let disposed = false;
   let buffering = false;
   let frame = 0;
@@ -673,11 +685,20 @@ export function createOtioProgramPlayer(
     }
   };
 
+  // Readiness waits for canplay only where the primer is supported. Elsewhere
+  // the verified metadata alone settles it, as before.
+  const awaitsCanPlay = audioOutput?.supported === true;
+  const finishLoad = (): void => {
+    if (isLoaded || !metadataVerified) return;
+    if (awaitsCanPlay && video.readyState < HAVE_FUTURE_DATA) return;
+    isLoaded = true;
+    loaded.resolve();
+  };
   const onMetadata = (): void => {
     try {
       verifyMetadata();
-      isLoaded = true;
-      loaded.resolve();
+      metadataVerified = true;
+      finishLoad();
     } catch (error) {
       loaded.reject(
         error instanceof ProgramRejection
@@ -698,9 +719,11 @@ export function createOtioProgramPlayer(
     );
   };
   video.addEventListener('loadedmetadata', onMetadata, { once: true });
+  video.addEventListener('canplay', finishLoad);
   video.addEventListener('error', onLoadError, { once: true });
   cleanup.push(() => {
     video.removeEventListener('loadedmetadata', onMetadata);
+    video.removeEventListener('canplay', finishLoad);
     video.removeEventListener('error', onLoadError);
   });
   // The session observes a failed load through `ready`.
@@ -868,6 +891,14 @@ export function createOtioProgramPlayer(
     dispose() {
       if (disposed) return;
       disposed = true;
+      if (!isLoaded) {
+        loaded.reject(
+          new ProgramRejection(
+            'unsupported-browser',
+            'The program player was disposed before it loaded.'
+          )
+        );
+      }
       cancelOutputHold();
       unmuteHold?.abort();
       unmuteHold = undefined;

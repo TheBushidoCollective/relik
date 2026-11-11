@@ -22,10 +22,13 @@
  *     Device starts gate; callbacks and stream creation are telemetry and never prove an audio gap;
  *   - the default output's running state: the OS, read through otio-program-device-state.ts;
  *   - trusted pointer events: performance.mark, which bridges the two clocks.
+ *   - bare display tick: the bare page's own per-frame loop, recording its page times in the page.
  *
  * Arms (PATH.md has the full table):
  *   wrap:   primer alone for 12 s, with and without AudioRendererMixerImmediatePause (sequence L);
  *   bare:   none | sham | av | av-blob | audio-only | context | video-only (Prepare, 1500 ms, Play);
+ *     Bare pages run a per-frame loop like the viewer's tick: from the program's play event until
+ *     pause or end, each animation frame writes video.currentTime into a non-media output. It only reads the media element.
  *   viewer: prepared | sham | first-click | unmute on the real viewer, production or sham build.
  *
  * Each group returns its failures. A control group with too few cold trials is inconclusive, and
@@ -64,11 +67,13 @@ import {
   deviceStarts,
   firstStart,
   framesAfter,
+  GAP_BUDGET_MS,
   gateGaps,
   gatePrimerWindow,
   intervals,
   markTs,
   maxOf,
+  MIN_WINDOW_INTERVALS,
   newFrames,
   p95,
   PLAY_MARK,
@@ -79,6 +84,7 @@ import {
   type QuietWindow,
   quietWindow,
   STREAM_CREATION_EVENTS,
+  stalls,
   TRACE_START_MARK,
   type TraceEvent,
   UNMUTE_MARK,
@@ -117,6 +123,10 @@ const MUTE_PRESS_BUDGET_MS = 2000;
 const BARE_PREPARE_WAIT_MS = 1500;
 const WRAP_MS = 12_000;
 const PRIMER_SEEK_BACK_S = 3;
+/** Bare primer arms: share of presented frames in one tick class around the median offset. */
+const TICK_CLASS_MIN_SHARE = 0.99;
+/** Bare primer arms: p95 of presented intervals, from presentation time, not the callback clock. */
+const BARE_PRESENTATION_P95_MS = 35;
 /** A hidden viewer's primer must read idle this soon after the hidden event. */
 const HIDDEN_IDLE_BUDGET_MS = 1500;
 const MARKERS_TAB = '.otio-inspector-tab[data-tab="markers"]';
@@ -190,6 +200,8 @@ export interface PrimerTrial {
     readonly excessMs: number | null;
     readonly firstCallbackMs: number | null;
   };
+  /** Bare arms: presentation and tick evidence of the window. Null for every other arm. */
+  readonly bare: BareEvidence | null;
   readonly failures: string[];
 }
 
@@ -297,6 +309,21 @@ const BARE_SCRIPT = `
     if (!event.isTrusted) return;
     video.play().catch(fail);
   });
+  // Viewer-matched tick. While the program plays, each animation frame writes its clock into a
+  // non-media output, as the viewer's tick does. The loop only reads video.currentTime.
+  const tickOutput = document.querySelector('output.otio-tick');
+  let tickFrame = 0;
+  window.__primerTickLog = [];
+  const tick = () => {
+    tickFrame = 0;
+    window.__primerTickLog.push(performance.now());
+    tickOutput.textContent = String(video.currentTime);
+    if (!video.paused && !video.ended) tickFrame = requestAnimationFrame(tick);
+  };
+  video.addEventListener('play', () => { if (tickFrame === 0) tickFrame = requestAnimationFrame(tick); });
+  const stopTick = () => { if (tickFrame !== 0) cancelAnimationFrame(tickFrame); tickFrame = 0; };
+  video.addEventListener('pause', stopTick);
+  video.addEventListener('ended', stopTick);
   window.__primerReport = () => ({
     error: state.error,
     primer: state.primer ? { paused: state.primer.paused, currentTime: state.primer.currentTime, muted: state.primer.muted } : null,
@@ -339,6 +366,7 @@ export function bareHtml(arm: BareArm, programSha256: string): string {
 <button class="otio-prepare" type="button">Prepare</button>
 <button class="otio-play" type="button">Play</button>
 <video class="otio-program-video" playsinline preload="auto"${srcAttr} style="width:640px;height:360px"></video>
+<output class="otio-tick" style="display:block;font:12px monospace"></output>
 <script>window.__primerArm = ${JSON.stringify(arm)};</script>
 <script>${BARE_SCRIPT}</script>
 ${blob}`;
@@ -819,6 +847,402 @@ function shamTrialFailures(events: readonly TraceEvent[]): string[] {
     : ['sham started the output device before Play; control invalid'];
 }
 
+/** One presented frame for the bare gate. Both times are page milliseconds. */
+interface BareFrame {
+  readonly now: number;
+  readonly mediaTime: number;
+  readonly presentationTime: number | null;
+}
+
+interface BareMeasureInput {
+  /** New frames in order from newFrames. Their presentation times are the presentation evidence. */
+  readonly kept: readonly BareFrame[];
+  readonly pointerAt: number;
+  /** Page times of the display-tick writes, or null when the page reported no log. */
+  readonly ticksMs: readonly number[] | null;
+  readonly windowMs: number;
+  readonly fps: number;
+}
+
+/** What one bare window showed. Null means the evidence is missing, never a defaulted value. */
+export interface BareEvidence {
+  readonly keptFrames: number;
+  readonly presentationP95Ms: number | null;
+  readonly presentationMaxGapMs: number | null;
+  readonly presentationMissing: boolean;
+  /** Median interval between display-tick writes: one display tick. */
+  readonly tickPeriodMs: number | null;
+  /** Share of frames within half a tick of the median offset between callback and presentation time. */
+  readonly tickClassShare: number | null;
+  readonly droppedFrames: number;
+  readonly tickCount: number;
+  readonly tickMaxGapMs: number | null;
+  /** Measured in this trial: a presented gap over the stall budget. Never assumed. */
+  readonly stalled: boolean;
+}
+
+function medianOf(values: readonly number[]): number | null {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 1
+    ? sorted[mid]!
+    : (sorted[mid - 1]! + sorted[mid]!) / 2;
+}
+
+/** Measures one window from presented frames and the page's tick log. Pure: no browser. */
+export function measureBare(input: BareMeasureInput): BareEvidence {
+  const presentation = input.kept.map((frame) => frame.presentationTime);
+  const presentationMissing = presentation.some((time) => time === null);
+  const presented = presentation.filter(
+    (time): time is number => time !== null
+  );
+  const presentedIntervals = presentationMissing ? [] : intervals(presented);
+
+  const offsets: number[] = [];
+  for (const frame of input.kept)
+    if (frame.presentationTime !== null)
+      offsets.push(frame.now - frame.presentationTime);
+
+  const end = input.pointerAt + input.windowMs;
+  const ticks =
+    input.ticksMs === null
+      ? null
+      : input.ticksMs.filter((t) => t >= input.pointerAt && t <= end);
+  const tickPeriodMs =
+    ticks !== null && ticks.length >= 3 ? medianOf(intervals(ticks)) : null;
+  const center = medianOf(offsets);
+  const tickClassShare =
+    tickPeriodMs === null || center === null || offsets.length === 0
+      ? null
+      : offsets.filter((o) => Math.abs(o - center) < tickPeriodMs / 2).length /
+        offsets.length;
+
+  let droppedFrames = 0;
+  for (let i = 1; i < input.kept.length; i++) {
+    const steps = Math.round(
+      (input.kept[i]!.mediaTime - input.kept[i - 1]!.mediaTime) * input.fps
+    );
+    droppedFrames += Math.max(0, steps - 1);
+  }
+
+  const tickStamps = ticks === null ? [] : [input.pointerAt, ...ticks, end];
+  return {
+    keptFrames: input.kept.length,
+    presentationP95Ms: p95(presentedIntervals),
+    presentationMaxGapMs: maxOf(presentedIntervals),
+    presentationMissing,
+    tickPeriodMs,
+    tickClassShare,
+    droppedFrames,
+    tickCount: ticks?.length ?? 0,
+    tickMaxGapMs: ticks === null ? null : maxOf(intervals(tickStamps)),
+    stalled: stalls(presentedIntervals),
+  };
+}
+
+export interface BareRules {
+  readonly label: string;
+  /**
+   * Presentation checks: frame count, p95, tick class, dropped frames and stall. Always applied:
+   * the tick, and presentation time when present. Only the stall of a cold control is pooled.
+   */
+  readonly presentationGate: boolean;
+}
+
+/** The bare trial gate. Every failure it returns fails the trial. */
+export function bareFailures(e: BareEvidence, rules: BareRules): string[] {
+  const label = rules.label;
+  const failures: string[] = [];
+  if (e.tickCount === 0)
+    failures.push(`${label}: no display tick during the window (tick missing)`);
+  else if (e.tickMaxGapMs !== null && e.tickMaxGapMs > GAP_BUDGET_MS)
+    failures.push(
+      `${label}: display tick stalled for ${e.tickMaxGapMs.toFixed(1)} ms > ${GAP_BUDGET_MS} ms`
+    );
+  if (e.presentationMissing)
+    failures.push(`${label}: presented frame without presentation time`);
+  if (rules.presentationGate) {
+    if (e.keptFrames - 1 < MIN_WINDOW_INTERVALS)
+      failures.push(
+        `${label}: only ${e.keptFrames} presented frames, need ${MIN_WINDOW_INTERVALS + 1}`
+      );
+    if (
+      e.presentationP95Ms !== null &&
+      e.presentationP95Ms > BARE_PRESENTATION_P95_MS
+    )
+      failures.push(
+        `${label}: presentation p95 ${e.presentationP95Ms.toFixed(1)} ms > ${BARE_PRESENTATION_P95_MS} ms`
+      );
+    if (e.tickClassShare === null)
+      failures.push(
+        `${label}: no tick class (tick period or frame offsets missing)`
+      );
+    else if (e.tickClassShare < TICK_CLASS_MIN_SHARE)
+      failures.push(
+        `${label}: ${(e.tickClassShare * 100).toFixed(1)}% of frames in one tick class, need ${TICK_CLASS_MIN_SHARE * 100}%`
+      );
+    if (e.droppedFrames > 0)
+      failures.push(
+        `${label}: ${e.droppedFrames} program frame(s) dropped between presented frames`
+      );
+    if (e.stalled)
+      failures.push(
+        `${label}: presented gap ${(e.presentationMaxGapMs ?? 0).toFixed(1)} ms > ${GAP_BUDGET_MS} ms (stalled playback)`
+      );
+  }
+  return failures;
+}
+
+/**
+ * Population check for the cold none and sham controls. No single trial must stall: a device start
+ * of 24.4 ms has produced a presented gap of only 66.8 ms. The comparator is proven when every cold
+ * control trial carries presentation evidence and the pooled trials measure at least one stall. The
+ * injected stalls in bareControlFailures prove that the detector itself fires.
+ */
+export function coldStallComparator(trials: readonly PrimerTrial[]): string[] {
+  const failures: string[] = [];
+  for (const trial of trials)
+    if (trial.bare === null)
+      failures.push(
+        `round ${trial.round} ${trial.arm}: cold control has no presentation evidence`
+      );
+  if (
+    trials.length > 0 &&
+    !trials.some((trial) => trial.bare?.stalled === true)
+  )
+    failures.push(
+      `no cold none or sham trial measured a presented gap over ${GAP_BUDGET_MS} ms: stall comparator unproven`
+    );
+  return failures;
+}
+
+/** Synthetic window for the negative controls: pointer at 1000 ms, a 4 s window at 30 fps. */
+const SYNTH_POINTER_MS = 1000;
+const SYNTH_FRAME_MS = 1000 / PROGRAM.fps;
+const SYNTH_TICK_MS = 1000 / 120;
+
+interface SyntheticFrames {
+  readonly count?: number;
+  readonly intervalMs?: (i: number) => number;
+  readonly mediaSteps?: (i: number) => number;
+  readonly offsetMs?: (i: number) => number;
+  readonly presentation?: boolean;
+}
+
+function syntheticFrames(spec: SyntheticFrames): BareFrame[] {
+  const frames: BareFrame[] = [];
+  let presented = SYNTH_POINTER_MS + 20;
+  let media = 0;
+  for (let i = 0; i < (spec.count ?? 100); i++) {
+    if (i > 0) {
+      presented += spec.intervalMs?.(i) ?? SYNTH_FRAME_MS;
+      media += (spec.mediaSteps?.(i) ?? 1) / PROGRAM.fps;
+    }
+    frames.push({
+      now: presented + (spec.offsetMs?.(i) ?? 3),
+      mediaTime: media,
+      presentationTime: spec.presentation === false ? null : presented,
+    });
+  }
+  return frames;
+}
+
+/** Display ticks every SYNTH_TICK_MS across the window, skipping an optional hole. */
+function syntheticTicks(hole?: { fromMs: number; lengthMs: number }): number[] {
+  const ticks: number[] = [];
+  for (
+    let t = SYNTH_POINTER_MS + SYNTH_TICK_MS;
+    t <= SYNTH_POINTER_MS + WINDOW_MS;
+    t += SYNTH_TICK_MS
+  ) {
+    if (hole && t >= hole.fromMs && t < hole.fromMs + hole.lengthMs) continue;
+    ticks.push(t);
+  }
+  return ticks;
+}
+
+/**
+ * Behavioural negative controls, run on every proof. Each synthetic window has one defect the gate
+ * must reject, plus clean windows it must accept. The comparator cases check the stall detector on
+ * injected stalls and on the observed 66.8 ms cold gap, which is not a stall. Returns every control
+ * the gate got wrong. The stage fails on any entry.
+ */
+export function bareControlFailures(): string[] {
+  const measure = (kept: BareFrame[], ticks: number[] | null) =>
+    measureBare({
+      kept,
+      pointerAt: SYNTH_POINTER_MS,
+      ticksMs: ticks,
+      windowMs: WINDOW_MS,
+      fps: PROGRAM.fps,
+    });
+  const full = syntheticTicks();
+  const gated: BareRules = { label: 'control', presentationGate: true };
+  const ungated: BareRules = { label: 'control', presentationGate: false };
+  const cases: Array<{
+    name: string;
+    evidence: BareEvidence;
+    rules: BareRules;
+    accept: boolean;
+  }> = [
+    {
+      name: 'steady presentation with one tick class',
+      evidence: measure(syntheticFrames({}), full),
+      rules: gated,
+      accept: true,
+    },
+    {
+      name: 'missing tick log',
+      evidence: measure(syntheticFrames({}), null),
+      rules: gated,
+      accept: false,
+    },
+    {
+      name: 'tick loop never wrote',
+      evidence: measure(syntheticFrames({}), []),
+      rules: gated,
+      accept: false,
+    },
+    {
+      name: 'stalled tick loop',
+      evidence: measure(
+        syntheticFrames({}),
+        syntheticTicks({ fromMs: 2000, lengthMs: 150 })
+      ),
+      rules: gated,
+      accept: false,
+    },
+    {
+      name: 'dropped program frame',
+      evidence: measure(
+        syntheticFrames({
+          intervalMs: (i) => (i === 50 ? 2 * SYNTH_FRAME_MS : SYNTH_FRAME_MS),
+          mediaSteps: (i) => (i === 50 ? 2 : 1),
+        }),
+        full
+      ),
+      rules: gated,
+      accept: false,
+    },
+    {
+      name: 'stalled playback',
+      evidence: measure(
+        syntheticFrames({
+          intervalMs: (i) => (i === 60 ? 150 : SYNTH_FRAME_MS),
+        }),
+        full
+      ),
+      rules: gated,
+      accept: false,
+    },
+    {
+      name: 'callback offsets split across tick classes',
+      evidence: measure(
+        syntheticFrames({
+          offsetMs: (i) => 3 + [-SYNTH_TICK_MS, 0, SYNTH_TICK_MS][i % 3]!,
+        }),
+        full
+      ),
+      rules: gated,
+      accept: false,
+    },
+    {
+      name: 'presentation time missing',
+      evidence: measure(syntheticFrames({ presentation: false }), full),
+      rules: ungated,
+      accept: false,
+    },
+    {
+      name: 'too few presented frames',
+      evidence: measure(syntheticFrames({ count: 40 }), full),
+      rules: gated,
+      accept: false,
+    },
+    {
+      name: 'cold trial with a 66.8 ms gap is not a failure',
+      evidence: measure(
+        syntheticFrames({
+          intervalMs: (i) => (i === 60 ? 66.8 : SYNTH_FRAME_MS),
+        }),
+        full
+      ),
+      rules: ungated,
+      accept: true,
+    },
+    {
+      name: 'cold trial with a missing tick log',
+      evidence: measure(syntheticFrames({}), null),
+      rules: ungated,
+      accept: false,
+    },
+  ];
+  const comparator: Array<{
+    name: string;
+    evidence: BareEvidence;
+    stalled: boolean;
+  }> = [
+    {
+      name: 'injected 150 ms presented stall',
+      evidence: measure(
+        syntheticFrames({
+          intervalMs: (i) => (i === 60 ? 150 : SYNTH_FRAME_MS),
+        }),
+        full
+      ),
+      stalled: true,
+    },
+    {
+      name: 'injected 300 ms presented stall',
+      evidence: measure(
+        syntheticFrames({
+          intervalMs: (i) => (i === 60 ? 300 : SYNTH_FRAME_MS),
+        }),
+        full
+      ),
+      stalled: true,
+    },
+    {
+      name: 'observed 66.8 ms cold gap',
+      evidence: measure(
+        syntheticFrames({
+          intervalMs: (i) => (i === 60 ? 66.8 : SYNTH_FRAME_MS),
+        }),
+        full
+      ),
+      stalled: false,
+    },
+    {
+      name: 'clean presentation',
+      evidence: measure(syntheticFrames({}), full),
+      stalled: false,
+    },
+    {
+      name: 'presentation time missing',
+      evidence: measure(syntheticFrames({ presentation: false }), full),
+      stalled: false,
+    },
+  ];
+  const failures: string[] = [];
+  for (const c of cases) {
+    const reasons = bareFailures(c.evidence, c.rules);
+    if (c.accept && reasons.length > 0)
+      failures.push(
+        `negative control "${c.name}": rejected a valid window: ${reasons.join('; ')}`
+      );
+    if (!c.accept && reasons.length === 0)
+      failures.push(
+        `negative control "${c.name}": accepted a window it must reject`
+      );
+  }
+  for (const c of comparator)
+    if (c.evidence.stalled !== c.stalled)
+      failures.push(
+        `stall comparator "${c.name}": measured stalled=${c.evidence.stalled}, expected ${c.stalled}`
+      );
+  return failures;
+}
+
 function trialOf(
   sequence: Sequence,
   arm: string,
@@ -849,6 +1273,7 @@ function trialOf(
       excessMs: analysis.callbackExcessMs,
       firstCallbackMs: analysis.firstCallbackMs,
     },
+    bare: null,
     failures: [...analysis.failures, ...extra],
   };
 }
@@ -947,6 +1372,9 @@ async function runBareTrial(
     await page.click('button.otio-play');
     const obs = await pointerObservation(page, PLAY_MARK);
     const report = await page.evaluate<BareReport>('window.__primerReport()');
+    const ticksMs = await page.evaluate<number[] | null>(
+      'window.__primerTickLog ?? null'
+    );
     const blobError = await page.evaluate<string | null>(
       'window.__barePlayError ?? null'
     );
@@ -957,6 +1385,17 @@ async function runBareTrial(
       firstClick: false,
       expectedDeviceStarts: primerArm ? 0 : null,
       osIdleAtTrusted: !settled.state.running,
+    });
+    const rest = obs.restCurrentTime ?? null;
+    const evidence = measureBare({
+      kept:
+        rest === null
+          ? []
+          : newFrames(obs.frames ?? [], rest, PROGRAM.fps).kept,
+      pointerAt: obs.pointerAt,
+      ticksMs,
+      windowMs: WINDOW_MS,
+      fps: PROGRAM.fps,
     });
     const extra: string[] = [];
     if (done.truncated) extra.push('trace truncated: window is incomplete');
@@ -978,8 +1417,17 @@ async function runBareTrial(
           );
       }
       if (primerArm) extra.push(...gatePrimerWindow(analysis.window));
+      extra.push(
+        ...bareFailures(evidence, {
+          label: arm,
+          presentationGate: primerArm,
+        })
+      );
     }
-    const trial = trialOf(sequence, arm, round, analysis, extra, settled);
+    const trial: PrimerTrial = {
+      ...trialOf(sequence, arm, round, analysis, extra, settled),
+      bare: evidence,
+    };
     await writeReceipt(
       scratch,
       `primer-bare-${sequence}-${arm}-${round}.json`,
@@ -1516,6 +1964,19 @@ export async function runPrimerProof(
       stage: 'primer-wrap-single-start',
       failures: wrapFailures,
       trials: [],
+    },
+    {
+      stage: 'primer-bare-negative-controls',
+      failures: bareControlFailures(),
+      trials: [],
+    },
+    {
+      stage: 'primer-bare-cold-stall-comparator',
+      failures: coldStallComparator([
+        ...cold(lateBare('none')),
+        ...cold(lateBare('sham')),
+      ]),
+      trials: [...cold(lateBare('none')), ...cold(lateBare('sham'))],
     },
     {
       stage: 'primer-bare-none-cold-start',
