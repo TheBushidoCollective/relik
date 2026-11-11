@@ -12,6 +12,7 @@
  * make deliberate.
  */
 
+import { createHash } from 'node:crypto';
 import { inflateRawSync } from 'node:zlib';
 import {
   deriveRendererClass,
@@ -21,6 +22,8 @@ import {
   generateKey,
   generateRelicId,
   indexOtioZip,
+  MAX_INFLATED_ZIP_BYTES,
+  OTIO_DOCUMENT_MAX_BYTES,
   modelFormatFromFilename,
   normalizeTitle,
   PLAINTEXT_CAP_BYTES,
@@ -28,7 +31,6 @@ import {
   type RendererClass,
   relicUrl,
   shareVerifierFor,
-  versionDigest,
 } from '@relic/format';
 import type {
   CoverOutcome,
@@ -44,6 +46,7 @@ import {
   type SourceIdentity,
   savePublishState,
 } from './state.ts';
+import type { ObjectUploader } from './upload.ts';
 
 /**
  * Codes for the legs the app server is not in.
@@ -236,6 +239,7 @@ export interface PublishDeps {
   readonly relicOrigin: string;
   readonly files: FileReader;
   readonly fetch: typeof globalThis.fetch;
+  readonly upload: ObjectUploader;
   readonly clientName: string;
   /** Test seam for a filesystem that does not exist outside memory. */
   readonly identifySource?: (path: string) => Promise<SourceIdentity>;
@@ -491,7 +495,9 @@ export async function publish(
     // 3. Straight to storage, then report completion. Both legs are shared
     //    with republish, because a version-2 object earns the same handling
     //    a version-1 one does.
-    const localVersionDigest = await versionDigest(container);
+    const localVersionDigest = createHash('sha256')
+      .update(container)
+      .digest('hex');
     await putContainer(deps, relicId, String(grant['upload_url']), container);
     const complete = await reportComplete(deps, relicId);
     const serverDigest = complete?.['version_digest'];
@@ -641,24 +647,20 @@ export async function contentDigest(input: {
   readonly filename: string;
   readonly title: string;
 }): Promise<string> {
-  const header = new TextEncoder().encode(
-    `${JSON.stringify([input.filename, input.title])}\0`
-  );
-  const material = new Uint8Array(header.length + input.content.length);
-  material.set(header, 0);
-  material.set(input.content, header.length);
-  const digest = await crypto.subtle.digest(
-    'SHA-256',
-    material.slice().buffer as ArrayBuffer
-  );
-  return Array.from(new Uint8Array(digest))
-    .map((byte) => byte.toString(16).padStart(2, '0'))
-    .join('');
+  return createHash('sha256')
+    .update(`${JSON.stringify([input.filename, input.title])}\0`, 'utf8')
+    .update(input.content)
+    .digest('hex');
 }
 
 function inflateRawBounded(compressed: Uint8Array, budget: number): Uint8Array {
+  const result = inflateRawSync(compressed, {
+    maxOutputLength: Math.max(1, budget),
+  });
   const inflated = new Uint8Array(
-    inflateRawSync(compressed, { maxOutputLength: Math.max(1, budget) })
+    result.buffer,
+    result.byteOffset,
+    result.byteLength
   );
   if (inflated.length > budget) {
     throw new Error(`Inflated ZIP entry exceeds byte budget of ${budget}`);
@@ -719,7 +721,25 @@ export async function readSource(
   ) {
     throw new PublishError(
       'local_size_precheck_failed',
-      `${resolvedPath} size (${stat.size} bytes) exceeds the ${PLAINTEXT_CAP_BYTES}-byte plaintext cap`
+      `${resolvedPath} size (${stat.size} bytes) exceeds the ${PLAINTEXT_CAP_BYTES}-byte plaintext cap`,
+      {
+        size_limit_bytes: PLAINTEXT_CAP_BYTES,
+        ...(Number.isSafeInteger(stat.size) && stat.size >= 0
+          ? { declared_size_bytes: stat.size }
+          : {}),
+        size_basis: 'plaintext',
+      }
+    );
+  }
+  const base = files.basename(resolvedPath).toLowerCase();
+  if (base.endsWith('.otio') && stat.size > OTIO_DOCUMENT_MAX_BYTES) {
+    throw new PublishError(
+      'local_size_precheck_failed',
+      `${resolvedPath} exceeds the ${OTIO_DOCUMENT_MAX_BYTES}-byte OTIO document limit`,
+      {
+        size_limit_bytes: OTIO_DOCUMENT_MAX_BYTES,
+        declared_size_bytes: stat.size,
+      }
     );
   }
 
@@ -740,12 +760,22 @@ export async function readSource(
     );
   }
 
-  const base = files.basename(resolvedPath).toLowerCase();
+  if (base.endsWith('.otio') && bytes.length > OTIO_DOCUMENT_MAX_BYTES) {
+    throw new PublishError(
+      'local_size_precheck_failed',
+      `${resolvedPath} changed beyond the ${OTIO_DOCUMENT_MAX_BYTES}-byte OTIO document limit while being read`,
+      {
+        size_limit_bytes: OTIO_DOCUMENT_MAX_BYTES,
+        declared_size_bytes: bytes.length,
+      }
+    );
+  }
   if (base.endsWith('.otioz')) {
     // Validate existing .otioz archive structurally before grant/upload.
     try {
       await indexOtioZip(bytes, {
         maxExpandedBytes: PLAINTEXT_CAP_BYTES,
+        maxInflatedBytes: MAX_INFLATED_ZIP_BYTES,
         inflater: async (compressed, _uncompressedSize, maxBytes) =>
           inflateRawBounded(compressed, maxBytes),
       });
@@ -899,12 +929,24 @@ export async function putContainer(
   uploadUrl: string,
   container: Uint8Array
 ): Promise<void> {
-  const upload = await deps.fetch(uploadUrl, {
-    method: 'PUT',
-    headers: { 'content-length': String(container.length) },
-    body: container as unknown as BodyInit,
-  });
-  if (!upload.ok) {
+  let upload: { readonly status: number };
+  try {
+    upload = await deps.upload(
+      uploadUrl,
+      { 'content-length': String(container.length) },
+      container
+    );
+  } catch (error) {
+    const cause = error instanceof Error ? error.message : String(error);
+    throw new PublishError('upload_failed', 'could not upload ciphertext', {
+      relic_id: relicId,
+      cause:
+        uploadUrl.length > 0
+          ? cause.split(uploadUrl).join('[signed upload URL]')
+          : cause,
+    });
+  }
+  if (upload.status < 200 || upload.status >= 300) {
     throw new PublishError(
       'upload_failed',
       `upload returned ${upload.status}`,

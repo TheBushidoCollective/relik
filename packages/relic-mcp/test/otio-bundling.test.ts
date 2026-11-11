@@ -1,3 +1,4 @@
+import { fetchUpload } from './upload-fixture.ts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { execFile } from 'node:child_process';
 import {
@@ -16,6 +17,8 @@ import { inflateRawSync } from 'node:zlib';
 import {
   evaluateOtioAt,
   indexOtioZip,
+  OTIO_DOCUMENT_MAX_BYTES,
+  PLAINTEXT_CAP_BYTES,
   otioBundleMediaIndex,
   otioSequenceFrameEntries,
   readOtioDocument,
@@ -30,6 +33,7 @@ import {
 } from '../src/otio-bundle.ts';
 import {
   type ConfinedBundleFile,
+  type FileReader,
   type PublishDeps,
   PublishError,
   publish,
@@ -56,6 +60,7 @@ beforeEach(async () => {
     relicOrigin: SERVICE,
     files: nodeFiles,
     fetch: grantFetch(),
+    upload: fetchUpload,
     clientName: 'relic-mcp/otio-bundling-test',
     renderCover: async () => ({
       status: 'skipped',
@@ -203,6 +208,69 @@ async function writeBundleRelative(
 }
 
 describe('OTIO bundling', () => {
+  test('allows large stored media while retaining archive and document budgets', async () => {
+    const content = new TextEncoder().encode(
+      JSON.stringify(
+        timelineWithClips('large', [externalClip('clip', 'media/large.mp4')])
+      )
+    );
+    let documentSize = content.length;
+    let mediaSize = 100 * 1024 * 1024 + 1;
+    let mediaBudget = 0;
+    let mediaReads = 0;
+    let documentReads = 0;
+    const files: FileReader = {
+      ...nodeFiles,
+      async openBundleRoot() {
+        return {
+          async openRegular(path) {
+            if (path === 'content.otio') {
+              return {
+                size: documentSize,
+                async readBounded() {
+                  documentReads += 1;
+                  return content;
+                },
+                async close() {},
+              };
+            }
+            return {
+              size: mediaSize,
+              async readBounded(maxBytes) {
+                mediaReads += 1;
+                mediaBudget = maxBytes;
+                throw new Error('media read reached');
+              },
+              async close() {},
+            };
+          },
+          async close() {},
+        };
+      },
+    };
+
+    await expect(bundleOtiod('large.otiod', files)).rejects.toMatchObject({
+      code: 'source_unreadable',
+      message: expect.stringContaining('media read reached'),
+    });
+    expect(mediaReads).toBe(1);
+    expect(mediaBudget).toBeGreaterThan(mediaSize);
+    expect(mediaBudget).toBeLessThanOrEqual(PLAINTEXT_CAP_BYTES);
+
+    mediaSize = PLAINTEXT_CAP_BYTES + 1;
+    await expect(bundleOtiod('large.otiod', files)).rejects.toMatchObject({
+      code: 'local_size_precheck_failed',
+    });
+    expect(mediaReads).toBe(1);
+
+    documentSize = OTIO_DOCUMENT_MAX_BYTES + 1;
+    const readsBefore = documentReads;
+    await expect(bundleOtiod('large.otiod', files)).rejects.toMatchObject({
+      code: 'local_size_precheck_failed',
+    });
+    expect(documentReads).toBe(readsBefore);
+  });
+
   test('bundles .otiod directory into deterministic official .otioz archive', async () => {
     const dir = join(scratch, 'film.otiod');
     await mkdir(join(dir, 'media'), { recursive: true });

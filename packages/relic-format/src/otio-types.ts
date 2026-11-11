@@ -331,4 +331,6 @@ export interface OtioZipIndex {
     name: string,
     customInflater?: InflaterFn
   ) => Promise<Uint8Array>;
+  readonly verifyStoredEntry: (name: string) => Promise<void>;
+  readonly digestEntry: (name: string) => Promise<string>;
 }

@@ -22,6 +22,7 @@ import {
 } from './envelope.ts';
 import { ContentTooLargeError, MalformedContainerError } from './errors.ts';
 import { FORMAT_VERSION } from './fragment.ts';
+import { PLAINTEXT_CAP_BYTES } from './limits.ts';
 import { openRelicStream } from './stream.ts';
 import {
   type DerivedKeys,
@@ -37,8 +38,7 @@ import {
   SALT_BYTES,
 } from './rfc8188.ts';
 
-/** The published cap, on plaintext, verifiable with `ls`. */
-export const PLAINTEXT_CAP_BYTES = 100 * 1024 * 1024;
+export { PLAINTEXT_CAP_BYTES } from './limits.ts';
 
 export interface EncryptRelicInput {
   readonly content: Uint8Array;
@@ -83,27 +83,35 @@ export async function encryptRelic(
     );
   }
 
-  const parts: Uint8Array[] = [encodeHeader(salt, rs)];
+  const result = new Uint8Array(
+    encryptedSize(input.content.length, rs, envelopeBytes.length)
+  );
+  const header = encodeHeader(salt, rs);
+  result.set(header);
+  let offset = header.length;
 
   if (input.content.length === 0) {
-    // Record 0 is also the final record, so it is left short and carries
-    // delimiter 2. The object is never zero bytes on the wire.
-    parts.push(await encryptRecord(keys, 0, envelopeBytes, true));
-    return concat(parts);
+    result.set(await encryptRecord(keys, 0, envelopeBytes, true), offset);
+    return result;
   }
 
-  // Padded to full `rs` so content records land at fixed offsets.
-  parts.push(await encryptRecord(keys, 0, envelopeBytes, false, capacity));
-
+  const first = await encryptRecord(keys, 0, envelopeBytes, false, capacity);
+  result.set(first, offset);
+  offset += first.length;
   const recordCount = Math.ceil(input.content.length / capacity);
   for (let index = 0; index < recordCount; index++) {
     const start = index * capacity;
-    const chunk = input.content.slice(start, start + capacity);
-    const isLast = index === recordCount - 1;
-    parts.push(await encryptRecord(keys, index + 1, chunk, isLast));
+    const chunk = input.content.subarray(start, start + capacity);
+    const encrypted = await encryptRecord(
+      keys,
+      index + 1,
+      chunk,
+      index === recordCount - 1
+    );
+    result.set(encrypted, offset);
+    offset += encrypted.length;
   }
-
-  return concat(parts);
+  return result;
 }
 
 export interface OpenedRelic {

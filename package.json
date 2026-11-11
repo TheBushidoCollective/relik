@@ -13,6 +13,9 @@
     "test": "bun run build && bun test",
     "verify": "bun run lint && bun run typecheck && bun run test"
   },
+  "patchedDependencies": {
+    "pdfjs-dist@5.4.149": "patches/pdfjs-dist@5.4.149.patch"
+  },
   "devDependencies": {
     "@types/bun": "latest",
     "typescript": "^5.7.0"

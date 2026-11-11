@@ -3,6 +3,7 @@ import type {
   OtioAnchorV1,
   OtioDocumentV1,
 } from '@relic/format';
+import type { RelicContent } from './content.ts';
 
 /** Type-only boundary: the eager shell never imports the OTIO parser/player. */
 export interface OtioUiController {
@@ -14,7 +15,7 @@ export interface OtioUiController {
   measure(commentId?: string): DOMRect | undefined;
   project(
     anchor: OtioAnchorV1,
-    originalContent: Uint8Array
+    originalContent: RelicContent
   ): Promise<OtioAnchorResolution>;
   projection(anchor: OtioAnchorV1): OtioAnchorResolution | undefined;
   dispose(): void;

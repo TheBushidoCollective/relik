@@ -16,6 +16,8 @@ WORKDIR /src
 
 # Manifests first, so a source-only change does not reinstall dependencies.
 COPY package.json bun.lock ./
+# bun install applies patchedDependencies, and fails if a patch file is missing.
+COPY patches ./patches
 COPY packages/relic-format/package.json packages/relic-format/
 COPY packages/relic-server/package.json packages/relic-server/
 COPY packages/relic-mcp/package.json packages/relic-mcp/

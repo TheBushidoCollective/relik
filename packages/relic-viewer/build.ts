@@ -54,6 +54,99 @@ async function readMediabunnyDistribution(): Promise<MediabunnyDistribution> {
   };
 }
 
+// Digest of the unminified pdfjs-dist@5.4.149 worker with the checked-in patch.
+// Update it when regenerating the patch, not when an installed worker differs.
+const PDF_WORKER_PATCH_SHA256 =
+  '6a0c641a4d3fdcda9832059d8a655fc05a7ce5e9ab586e5bafdc19528b430bef';
+
+const PDF_WORKER_PATCH_SITES = [
+  [
+    'Linearization.create',
+    `    const parser = new Parser({
+      lexer: new IndirectObjectLexer(stream),
+      xref: null
+    });
+    const obj1 = parser.getObj();`,
+  ],
+  [
+    'XRef.readXRef',
+    `        stream.pos = startXRef + stream.start;
+        const parser = new Parser({
+          lexer: new IndirectObjectLexer(stream),
+          xref: this,
+          allowStreams: true
+        });`,
+  ],
+  [
+    'XRef.fetchUncompressed',
+    `    const stream = this.stream.makeSubStream(xrefEntry.offset + this.stream.start);
+    const parser = new Parser({
+      lexer: new IndirectObjectLexer(stream),
+      xref: this,
+      allowStreams: true
+    });`,
+  ],
+] as const;
+
+/** Refuse a worker missing any call site or differing from the exact patch. */
+export function assertPatchedPdfWorker(worker: string): void {
+  for (const [site, source] of PDF_WORKER_PATCH_SITES) {
+    const first = worker.indexOf(source);
+    if (first === -1 || worker.indexOf(source, first + source.length) !== -1) {
+      throw new Error(`pdfjs-dist patch missing or duplicated at ${site}`);
+    }
+  }
+  const lexerCall = 'new IndirectObjectLexer(stream)';
+  let calls = 0;
+  let offset = worker.indexOf(lexerCall);
+  while (offset !== -1) {
+    calls++;
+    offset = worker.indexOf(lexerCall, offset + lexerCall.length);
+  }
+  if (calls !== 3) {
+    throw new Error(
+      'pdfjs-dist patch must have exactly three lexer call sites'
+    );
+  }
+  const digest = new Bun.CryptoHasher('sha256').update(worker).digest('hex');
+  if (digest !== PDF_WORKER_PATCH_SHA256) {
+    throw new Error(
+      'pdfjs-dist patched worker contents do not match the patch'
+    );
+  }
+}
+
+/**
+ * The pdf.js worker both builds ship, refused unless it carries
+ * patches/pdfjs-dist@5.4.149.patch.
+ *
+ * pdf.js can lex a token past a top-level `endobj`. A long whitespace run
+ * there can restart parsing for each missing 64 KiB range and retain the
+ * fetched chunks. The patch stops that lookahead while tracking the object,
+ * falling back to the original lexer for inline images or excessive nesting.
+ * Only the readable build is patched, so both builds ship that worker rather
+ * than `pdf.worker.min.mjs` (376 KB gzipped rather than 292 KB).
+ *
+ * Bun installs a package without its patch, and without an error, when the
+ * patch's version key no longer matches (oven-sh/bun#40106) or a cached copy
+ * was linked unpatched (oven-sh/bun#33520), so the build checks the file.
+ */
+async function patchedPdfWorkerPath(): Promise<string> {
+  const path = new URL(
+    './node_modules/pdfjs-dist/build/pdf.worker.mjs',
+    import.meta.url
+  ).pathname;
+  try {
+    assertPatchedPdfWorker(await Bun.file(path).text());
+  } catch (error) {
+    throw new Error(
+      `Invalid pdfjs-dist@5.4.149 patch: ${error instanceof Error ? error.message : String(error)}. Reinstall dependencies with the checked-in patch.`,
+      { cause: error }
+    );
+  }
+  return path;
+}
+
 /**
  * Computes a deterministic content hash over the shell assets that sw.ts precaches.
  * Any change to viewer.js, styles.css, or manifest.webmanifest alters this hash,
@@ -191,11 +284,7 @@ export async function buildViewer(options?: {
     await copyFile(`${pkgDir}public/${name}`, `${out}${name}`);
   }
 
-  const workerPath = new URL(
-    './node_modules/pdfjs-dist/build/pdf.worker.min.mjs',
-    import.meta.url
-  ).pathname;
-  await copyFile(workerPath, `${out}pdf.worker.js`);
+  await copyFile(await patchedPdfWorkerPath(), `${out}pdf.worker.js`);
   const timingWorkerPath = `${out}otio-video-timing-worker.js`;
   if (!(await Bun.file(timingWorkerPath).exists())) {
     throw new Error('Timing worker build did not emit its fixed worker asset');
@@ -406,11 +495,7 @@ export async function buildCover(options?: { outdir?: string }): Promise<void> {
 `;
   await Bun.write(`${out}index.html`, indexHtml);
 
-  const workerPath = new URL(
-    './node_modules/pdfjs-dist/build/pdf.worker.mjs',
-    import.meta.url
-  ).pathname;
-  await copyFile(workerPath, `${out}pdf.worker.mjs`);
+  await copyFile(await patchedPdfWorkerPath(), `${out}pdf.worker.mjs`);
 }
 
 if (import.meta.main) {

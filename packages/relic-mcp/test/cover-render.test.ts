@@ -12,7 +12,10 @@ import {
 } from '@relic/format/cover';
 import type { CdpConnection, CdpEvent } from '../src/cover/cdp.ts';
 import type { RunningChrome } from '../src/cover/chrome.ts';
-import { chromeCoverRenderer } from '../src/cover/render.ts';
+import {
+  chromeCoverRenderer,
+  COVER_MAX_SOURCE_BYTES,
+} from '../src/cover/render.ts';
 import { handleRequestPaused } from '../src/cover/virtual-origin.ts';
 
 const PNG_SIGNATURE = new Uint8Array([
@@ -303,6 +306,45 @@ describe('cover-render', () => {
 
   afterAll(async () => {
     await rm(tempAssetDir, { recursive: true, force: true });
+  });
+
+  test('uses the fallback over 100 MiB without opening Chrome and keeps the boundary eligible', async () => {
+    let discoveries = 0;
+    const renderer = chromeCoverRenderer(
+      {
+        chromePath: undefined,
+        ffmpegPath: undefined,
+        assetDir: tempAssetDir,
+        deadlineMs: 10000,
+      },
+      {
+        discoverChrome: async () => {
+          discoveries += 1;
+          return { kind: 'disabled', detail: 'disabled for test' };
+        },
+      }
+    );
+    const bytes = new Uint8Array(COVER_MAX_SOURCE_BYTES + 1);
+    bytes.set(PNG_SIGNATURE);
+    const source: CoverSource = {
+      filename: 'large.png',
+      mimetype: 'image/png',
+      rendererClass: 'image',
+      bytes,
+    };
+
+    expect(await renderer(source)).toMatchObject({
+      status: 'skipped',
+      reason: 'over_render_ceiling',
+    });
+    expect(discoveries).toBe(0);
+    expect(
+      await renderer({
+        ...source,
+        bytes: bytes.subarray(0, COVER_MAX_SOURCE_BYTES),
+      })
+    ).toMatchObject({ status: 'skipped', reason: 'browser_disabled' });
+    expect(discoveries).toBe(1);
   });
 
   test('asserts exact CDP call sequence and returns rendered outcome', async () => {

@@ -6,6 +6,8 @@
  * by a passkey.
  */
 
+import { sha256Hex } from './sha256.ts';
+
 /**
  * A decision verdict: either 'approve' or 'reject'.
  */
@@ -48,21 +50,14 @@ export function isVersionDigest(value: unknown): value is string {
   return typeof value === 'string' && HEX_DIGEST_REGEX.test(value);
 }
 
-function toBufferSource(bytes: Uint8Array): ArrayBuffer {
-  return bytes.slice().buffer as ArrayBuffer;
-}
-
 /**
- * Compute the lowercase hex SHA-256 digest of arbitrary bytes using WebCrypto.
+ * Compute the lowercase hex SHA-256 digest of arbitrary bytes.
  *
  * @param bytes - The input bytes (for example, the container or ciphertext).
  * @returns 64-character lowercase hex SHA-256 string.
  */
 export async function versionDigest(bytes: Uint8Array): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', toBufferSource(bytes));
-  return Array.from(new Uint8Array(digest), (b) =>
-    b.toString(16).padStart(2, '0')
-  ).join('');
+  return sha256Hex(bytes);
 }
 
 /**

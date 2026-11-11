@@ -30,6 +30,8 @@ export interface RelicConfig {
    * storage arithmetic the operator already pays for, not an open-ended one.
    */
   readonly maxTtlDays: number;
+  /** Signed upload URL validity, long enough for a cap-sized slow upload. */
+  readonly uploadUrlValiditySeconds: number;
   /** Signed download URL validity. */
   readonly urlValiditySeconds: number;
   /** Below this, a clamped mint is refused rather than issuing a dying URL. */
@@ -199,6 +201,7 @@ export const DEFAULT_CONFIG: RelicConfig = {
 
   coverCapBytes: COVER_CAP_BYTES,
   maxTtlDays: 3650,
+  uploadUrlValiditySeconds: 4_500,
   urlValiditySeconds: 15 * 60,
   minViableValiditySeconds: 60,
   downloadCap: 200,
@@ -257,6 +260,21 @@ export function assertConfig(config: RelicConfig): void {
   if (config.urlValiditySeconds > GCS_MAX_SIGNED_URL_SECONDS) {
     throw new Error(
       `url validity ${config.urlValiditySeconds}s exceeds the GCS ceiling`
+    );
+  }
+  if (
+    !Number.isSafeInteger(config.uploadUrlValiditySeconds) ||
+    config.uploadUrlValiditySeconds <= 0 ||
+    config.uploadUrlValiditySeconds > GCS_MAX_SIGNED_URL_SECONDS
+  ) {
+    throw new Error(
+      'uploadUrlValiditySeconds must be a positive whole number within the GCS ceiling'
+    );
+  }
+  // At 2 Mbit/s an upload must still have time to carry the full ciphertext.
+  if (config.uploadUrlValiditySeconds * 250_000 < config.ciphertextCapBytes) {
+    throw new Error(
+      'upload URL validity cannot carry the ciphertext cap at 2 Mbit/s'
     );
   }
   if (config.minViableValiditySeconds > config.urlValiditySeconds) {

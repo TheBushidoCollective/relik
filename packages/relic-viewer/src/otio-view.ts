@@ -5,6 +5,7 @@ import {
   indexOtioZip,
   isRawOtio,
   markersForOtioTimeline,
+  OTIO_DOCUMENT_MAX_BYTES,
   type OtioAnchorResolution,
   type OtioAnchorV1,
   type OtioDocumentV1,
@@ -24,6 +25,7 @@ import {
   timeToSeconds,
 } from '@relic/format';
 import { otioTargetLabel } from './annotate-otio.ts';
+import type { RelicContent } from './content.ts';
 import {
   attachOtioController,
   type OtioAimDetail,
@@ -190,10 +192,14 @@ interface ParsedOtioContent {
 }
 
 async function parseContent(
-  content: Uint8Array,
+  content: RelicContent,
   digests: boolean
 ): Promise<ParsedOtioContent> {
-  if (isRawOtio(content)) return { document: readOtioDocument(content) };
+  if (isRawOtio(content.head)) {
+    const bytes = await content.readWhole(OTIO_DOCUMENT_MAX_BYTES);
+    if (!bytes) throw new Error('OTIO document exceeds the supported size.');
+    return { document: readOtioDocument(bytes) };
+  }
   const zip = await indexOtioZip(content);
   const media = await otioBundleMediaIndex(zip, { digests });
   return {
@@ -203,7 +209,7 @@ async function parseContent(
 }
 
 export async function readOtioForProjection(
-  content: Uint8Array
+  content: RelicContent
 ): Promise<OtioDocumentV1> {
   return (await parseContent(content, true)).document;
 }
@@ -266,7 +272,7 @@ export function otioScopeRange(
 }
 
 export interface MountOtioViewOptions {
-  readonly content: Uint8Array;
+  readonly content: RelicContent;
   readonly revision: number;
 }
 
@@ -298,7 +304,12 @@ export async function mountOtioView(
   }
   if (root.dataset['disposed'] === 'true') return;
   const doc = parsed.document;
-  const resolver = parsed.zip ? createOtioMediaResolver(parsed.zip) : undefined;
+  const resolver = parsed.zip
+    ? createOtioMediaResolver(
+        parsed.zip,
+        options.content.blob('application/octet-stream')
+      )
+    : undefined;
   let playback: OtioPlaybackController | undefined;
   let unsubscribe: (() => void) | undefined;
   let timelineId =
@@ -330,7 +341,9 @@ export async function mountOtioView(
   let repackQueued = false;
   const rows = new Map<string, HTMLElement>();
   const projections = new Map<string, OtioAnchorResolution>();
-  const originals = new Map<string, Promise<OtioDocumentV1>>();
+  let originalProjectionDocument:
+    | { readonly key: string; readonly document: Promise<OtioDocumentV1> }
+    | undefined;
   let currentProjectionDocument: Promise<OtioDocumentV1> | undefined;
   const marks = new Map<string, readonly HTMLElement[]>();
   const cleanup: (() => void)[] = [];
@@ -2371,12 +2384,13 @@ export async function mountOtioView(
         return cached;
       }
       const key = `${anchor.relic_version}:${anchor.document_sha256}`;
-      let original = originals.get(key);
-      if (!original) {
-        original = readOtioForProjection(content);
-        originals.set(key, original);
+      if (originalProjectionDocument?.key !== key) {
+        originalProjectionDocument = {
+          key,
+          document: readOtioForProjection(content),
+        };
       }
-      const originalDocument = await original;
+      const originalDocument = await originalProjectionDocument.document;
       if (originalDocument.document_sha256 !== anchor.document_sha256) {
         throw new Error(
           'Original OTIO document digest differs from the encrypted anchor.'

@@ -6,6 +6,7 @@
  * itself, and a test whose stub stays silent would pass on code that loops
  * forever in a real page.
  */
+import { contentFromBytes } from '../src/content.ts';
 
 import { describe, expect, test } from 'bun:test';
 import { diffModeForRoute } from '../src/diff.ts';
@@ -256,7 +257,8 @@ function testView(
   return {
     filename: route === 'download' ? 'archive.zip' : 'notes.md',
     declaredMimetype: route === 'markdown' ? 'text/markdown' : 'text/plain',
-    content,
+    content: contentFromBytes(content),
+    document: { bytes: content, truncated: false },
     route,
     downgradeNotice: undefined,
     shareUrl: 'https://relik.example/test#key',

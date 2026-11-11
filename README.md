@@ -27,6 +27,11 @@ against the Relic operator. It does not hold against your model provider or
 whoever stores your transcripts, and that is structural rather than a defect
 on a schedule.
 
+The browser holds decrypted content in a browser-managed Blob. The browser
+may keep that plaintext in memory or temporary disk, and the operating system
+may swap memory to disk. Downloading writes plaintext to a file. Relic cannot
+guarantee that the plaintext never touches disk or is erased on close.
+
 Rendered content is not inert. A relic that renders as HTML or JSX runs its
 author's code in a sandboxed frame whose policy permits no remote source, so
 the code cannot make outbound HTTP, WebSocket, or worker requests, and a page
@@ -51,6 +56,22 @@ OpenTimelineIO timelines (`.otiod` directories packaged as `.otioz`, or
 `.otioz` archives). OBJ materials and external resources are not loaded.
 General archives and other binaries remain download-only. Unencrypted
 first-screen previews are skipped for models and OpenTimelineIO timelines.
+
+The plaintext limit is 500 MiB (524,288,000 bytes) per version. For a file
+larger than 100 MiB, the viewer authenticates its envelope and asks before a
+full-file fetch. The initial request needs a mint and reads record 0; buffering
+can transfer additional bytes. The 200-mint limit is shared across versions.
+
+Code and plain text larger than 100 MiB open as a windowed source view of the
+whole file. Larger Markdown, HTML, and JSX also use that source view rather
+than rendering or executing the full document. Original bytes remain
+downloadable.
+
+OTIO archives and aggregate expanded data can reach 500 MiB, subject to
+separate 100 MiB limits on inflated ZIP data and timeline documents, and a
+16 MiB ZIP directory limit. STL and OBJ preview retains its 16 MiB,
+250,000-triangle, 500,000-source-vertex, and 1,024-vertices-per-face limits;
+larger models remain downloadable.
 
 OTIO comment rows show the sealed revision, rational range and stable track ID
 with the feedback, distinguishing same-named tracks. Native reader screenshots,

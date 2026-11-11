@@ -1,3 +1,4 @@
+import { fetchUpload } from './upload-fixture.ts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -71,6 +72,7 @@ beforeEach(async () => {
     relicOrigin: SERVICE,
     files: nodeFiles,
     fetch: shimFetch(),
+    upload: fetchUpload,
     clientName: 'relic-mcp/republish-comments-test',
     renderCover: async () => ({
       status: 'skipped',

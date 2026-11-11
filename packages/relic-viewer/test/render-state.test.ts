@@ -1,10 +1,12 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { fileURLToPath } from 'node:url';
+import { contentFromBytes } from '../src/content.ts';
 import {
   trackRenderState,
   renderReady,
   renderComparison,
-  renderPdfView,
 } from '../src/main.ts';
+import { preserveGlobalDescriptors } from './global-descriptors.ts';
 import {
   type ViewerDeps,
   type ReadyView,
@@ -371,9 +373,15 @@ class MockMutationObserver {
 describe('Spec B: V3 Render State, Version Progress, and Comparison Bytes', () => {
   let rootBody: ElementStub;
   let windowEventListeners: Map<string, Array<(e: unknown) => void>>;
-  let installedCustomEvent = false;
+  let restoreGlobals: () => void;
 
   beforeEach(() => {
+    restoreGlobals = preserveGlobalDescriptors(
+      'document',
+      'window',
+      'MutationObserver',
+      'CustomEvent'
+    );
     rootBody = new ElementStub('body');
     windowEventListeners = new Map();
     MockMutationObserver.observers = [];
@@ -384,17 +392,11 @@ describe('Spec B: V3 Render State, Version Progress, and Comparison Bytes', () =
     const customEventClass =
       typeof CustomEvent !== 'undefined'
         ? CustomEvent
-        : class CustomEventStub<T = unknown> {
-            readonly type: string;
-            readonly detail: T | undefined;
-            readonly bubbles: boolean;
-            constructor(
-              type: string,
-              init?: { detail?: T; bubbles?: boolean }
-            ) {
-              this.type = type;
-              this.detail = init?.detail;
-              this.bubbles = init?.bubbles ?? false;
+        : class CustomEventStub<T = unknown> extends Event {
+            readonly detail: T | null;
+            constructor(type: string, init?: CustomEventInit<T>) {
+              super(type, init);
+              this.detail = init?.detail ?? null;
             }
           };
 
@@ -404,7 +406,6 @@ describe('Spec B: V3 Render State, Version Progress, and Comparison Bytes', () =
     ) {
       (globalThis as unknown as { CustomEvent?: unknown }).CustomEvent =
         customEventClass;
-      installedCustomEvent = true;
     }
 
     const win = {
@@ -482,14 +483,7 @@ describe('Spec B: V3 Render State, Version Progress, and Comparison Bytes', () =
   });
 
   afterEach(() => {
-    delete (globalThis as unknown as { document?: unknown }).document;
-    delete (globalThis as unknown as { window?: unknown }).window;
-    delete (globalThis as unknown as { MutationObserver?: unknown })
-      .MutationObserver;
-    if (installedCustomEvent) {
-      delete (globalThis as unknown as { CustomEvent?: unknown }).CustomEvent;
-      installedCustomEvent = false;
-    }
+    restoreGlobals();
   });
 
   test('1. Image: rendering, aria-busy="true", and Rendering pill until load; then ready, pill gone, aria-busy="false"; error gives data-render-state="error"', () => {
@@ -643,7 +637,7 @@ describe('Spec B: V3 Render State, Version Progress, and Comparison Bytes', () =
     expect(stageReady.dataset['renderState']).toBe('ready');
   });
 
-  test('3. PDF: ready/error via relic:render-state; renderer import failure dispatches error', async () => {
+  test('3. PDF: ready/error via relic:render-state', () => {
     // 3a. PDF ready event
     const stage = new ElementStub('main');
     stage.className = 'stage';
@@ -688,35 +682,22 @@ describe('Spec B: V3 Render State, Version Progress, and Comparison Bytes', () =
     expect(
       rootBody.querySelector('div.render-status[data-render-status]')
     ).toBeNull();
-
-    // 3c. renderPdfView dispatches relic:render-state error when import fails
-    const dummyPdfView: ReadyView = {
-      filename: 'doc.pdf',
-      declaredMimetype: 'application/pdf',
-      content: new Uint8Array([1, 2, 3]),
-      route: 'pdf',
-      downgradeNotice: undefined,
-      shareUrl: 'https://relic.example/r1#key',
-      version: 1,
-      currentVersion: 1,
-      versionDigest: '0'.repeat(64),
-    };
-    let eventReceived: string | undefined;
-    const parentContainer = new ElementStub('div');
-    parentContainer.addEventListener('relic:render-state', (e: unknown) => {
-      const detail = (e as { detail: string }).detail;
-      eventReceived = detail;
-    });
-
-    const renderedPdf = renderPdfView(dummyPdfView);
-    parentContainer.appendChild(renderedPdf as unknown as ElementStub);
-
-    const start = Date.now();
-    while (eventReceived === undefined && Date.now() - start < 2000) {
-      await new Promise((resolve) => setImmediate(resolve));
-    }
-    expect(eventReceived).toBe('error');
   });
+
+  test('3c. PDF renderer import failure dispatches an error and shows the failure card', () => {
+    // The intentionally rejected import must not poison PDF.js for later tests.
+    const child = Bun.spawnSync([
+      process.execPath,
+      fileURLToPath(
+        new URL('./pdf-import-failure-fixture.ts', import.meta.url)
+      ),
+    ]);
+    if (child.exitCode !== 0) {
+      throw new Error(
+        `PDF import-failure fixture exited ${child.exitCode}:\n${new TextDecoder().decode(child.stderr)}`
+      );
+    }
+  }, 15_000);
 
   test('4. OTIO: ready on relic:otio-ready or data-ready; data-ready="error" gives error; later data-ready="false" does not return to rendering', () => {
     // 4a. OTIO ready via relic:otio-ready event
@@ -875,7 +856,11 @@ describe('Spec B: V3 Render State, Version Progress, and Comparison Bytes', () =
     const viewV1: ReadyView = {
       filename: 'v1.txt',
       declaredMimetype: 'text/plain',
-      content: new TextEncoder().encode('Version 1 content'),
+      content: contentFromBytes(new TextEncoder().encode('Version 1 content')),
+      document: {
+        bytes: new TextEncoder().encode('Version 1 content'),
+        truncated: false,
+      },
       route: 'markdown',
       downgradeNotice: undefined,
       shareUrl: 'https://relic.example/r1#key1',
@@ -973,7 +958,11 @@ describe('Spec B: V3 Render State, Version Progress, and Comparison Bytes', () =
     const currentView: ReadyView = {
       filename: 'current.txt',
       declaredMimetype: 'text/plain',
-      content: new TextEncoder().encode('Current content'),
+      content: contentFromBytes(new TextEncoder().encode('Current content')),
+      document: {
+        bytes: new TextEncoder().encode('Current content'),
+        truncated: false,
+      },
       route: 'markdown',
       downgradeNotice: undefined,
       shareUrl: 'https://relic.example/r1#key',

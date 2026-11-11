@@ -1,3 +1,4 @@
+import { fetchUpload } from './upload-fixture.ts';
 /**
  * A controlled stdio EOF probe for the built Node MCP bundle.
  *
@@ -459,6 +460,7 @@ try {
     relicOrigin: origin,
     files: nodeFiles,
     fetch: globalThis.fetch,
+    upload: fetchUpload,
     clientName: 'relic-mcp/stdio-eof-path',
     renderCover: async () => ({
       status: 'skipped',

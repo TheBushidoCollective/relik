@@ -4,13 +4,16 @@ import {
   encryptRelic,
   generateKey,
   generateRelicId,
+  HEADER_BYTES,
+  RECORD_SIZE,
+  SALT_BYTES,
 } from '@relic/format';
+import { contentFromBytes } from '../src/content.ts';
 import { MAX_DIFF_BYTES } from '../src/diff.ts';
 import {
   type KeyVault,
   load,
   loadHistoricalVersion,
-  MAX_RENDER_BYTES,
   type MintResponse,
   type ViewerDeps,
 } from '../src/viewer.ts';
@@ -137,7 +140,11 @@ describe('loading a historical version', () => {
     if (history.kind !== 'ready') return;
     expect(history.view.version).toBe(2);
     expect(history.view.currentVersion).toBe(3);
-    expect(new TextDecoder().decode(history.view.content)).toBe('before\n');
+    expect(
+      new TextDecoder().decode(
+        await history.view.content.blob('').arrayBuffer()
+      )
+    ).toBe('before\n');
     const explicitMint = requests.find(
       (request) =>
         request.url.endsWith('/mint') && request.init?.body !== undefined
@@ -150,18 +157,115 @@ describe('loading a historical version', () => {
   });
 
   /** A `code` current version, three revisions deep. */
-  function currentCode() {
+  function currentCode(
+    key = generateKey(),
+    relicId = 'aaaaaaaaaaaaaaaaaaaaaaaaaa',
+    version = 3
+  ) {
+    const bytes = new TextEncoder().encode('current\n');
     return {
       filename: 'notes.txt',
       declaredMimetype: 'text/plain',
-      content: new TextEncoder().encode('current\n'),
+      content: contentFromBytes(bytes),
+      document: { bytes, truncated: false },
       route: 'code' as const,
       downgradeNotice: undefined,
-      shareUrl: `${SERVICE}/aaaaaaaaaaaaaaaaaaaaaaaaaa#${encodeFragment(generateKey())}`,
-      version: 3,
+      shareUrl: `${SERVICE}/${relicId}#${encodeFragment(key)}`,
+      version,
       currentVersion: 3,
       versionDigest: '0'.repeat(64),
     };
+  }
+
+  const corruptions: Array<{
+    name: string;
+    mutate: (bytes: Uint8Array) => void;
+    rawCode: string;
+    historicalCode: string;
+    detail: string;
+  }> = [
+    {
+      name: 'the first encrypted record cannot be authenticated',
+      mutate: (bytes) => {
+        bytes[HEADER_BYTES] = bytes[HEADER_BYTES]! ^ 1;
+      },
+      rawCode: 'decrypt_failed',
+      historicalCode: 'version_decrypt_failed',
+      detail: 'Version 1 could not be decrypted. Version 2 remains open.',
+    },
+    {
+      name: 'a later encrypted record cannot be authenticated',
+      mutate: (bytes) => {
+        const offset = HEADER_BYTES + RECORD_SIZE;
+        bytes[offset] = bytes[offset]! ^ 1;
+      },
+      rawCode: 'content_damaged',
+      historicalCode: 'version_decrypt_failed',
+      detail: 'Version 1 could not be decrypted. Version 2 remains open.',
+    },
+    {
+      name: 'the container header is malformed',
+      mutate: (bytes) => {
+        bytes.fill(0, SALT_BYTES, SALT_BYTES + 4);
+      },
+      rawCode: 'malformed_container',
+      historicalCode: 'malformed_container',
+      detail:
+        'Its contents are not in a shape this viewer understands. Version 2 remains open.',
+    },
+  ];
+
+  for (const corruption of corruptions) {
+    test(`${corruption.name} preserves the open version and its distinct failure`, async () => {
+      const id = generateRelicId();
+      const key = generateKey();
+      const fragment = encodeFragment(key);
+      const current = currentCode(key, id, 2);
+      const damaged = await encrypted('historical\n', key);
+      corruption.mutate(damaged);
+      const requests: Array<{ url: string; init: RequestInit | undefined }> =
+        [];
+      const fetch = (async (input, init) => {
+        const url = String(input);
+        requests.push({ url, init });
+        if (url.endsWith('/mint')) {
+          return Response.json(
+            mint('https://storage.example/v1', damaged.length, 1, 3)
+          );
+        }
+        return new Response(damaged as unknown as BodyInit);
+      }) as typeof globalThis.fetch;
+      const viewerDeps = {
+        ...deps(fragment, fetch),
+        now: () => Date.parse('2029-01-01T00:00:00.000Z'),
+      };
+
+      const direct = await load(id, viewerDeps);
+      expect(direct.kind).toBe('dead');
+      if (direct.kind !== 'dead') throw new Error('expected direct refusal');
+      expect(direct.dead.code).toBe(corruption.rawCode);
+
+      requests.length = 0;
+      const result = await loadHistoricalVersion(id, 1, current, viewerDeps);
+      expect(result.kind).toBe('unavailable');
+      if (result.kind !== 'unavailable') {
+        throw new Error('expected historical refusal');
+      }
+      expect(result.code).toBe(corruption.historicalCode);
+      expect(result.detail).toBe(corruption.detail);
+      expect(requests.map((request) => request.url)).toEqual([
+        `${SERVICE}/api/relics/${id}/mint`,
+        'https://storage.example/v1',
+      ]);
+      expect(requests[0]?.init?.body).toBe(JSON.stringify({ version: 1 }));
+      expect(current.version).toBe(2);
+      expect(current.currentVersion).toBe(3);
+      expect(
+        new TextDecoder().decode(
+          await current.content.readWhole(MAX_DIFF_BYTES)
+        )
+      ).toBe('current\n');
+    });
   }
 
   test('a version past the comparison limit is still fetched, because it can be read alone', async () => {
@@ -213,10 +317,7 @@ describe('loading a historical version', () => {
     expect(result.code).toBe('version_truncated');
   });
 
-  test('a version past what the viewer will allocate is refused before fetching', async () => {
-    // The limit that does still stop a version being opened, and it is the
-    // same one `load` applies to the current version rather than a second
-    // number invented for history.
+  test('a requested comparison limit refuses before fetching', async () => {
     const current = currentCode();
     const requests: string[] = [];
     const fetch = (async (input) => {
@@ -224,7 +325,7 @@ describe('loading a historical version', () => {
       return Response.json(
         mint(
           'https://storage.example/v2',
-          MAX_RENDER_BYTES * 2,
+          MAX_DIFF_BYTES * 2,
           2,
           current.currentVersion
         )
@@ -235,15 +336,17 @@ describe('loading a historical version', () => {
       generateRelicId(),
       2,
       current,
-      deps('', fetch)
+      deps('', fetch),
+      undefined,
+      { maxBytes: MAX_DIFF_BYTES }
     );
-
     expect(result.kind).toBe('unavailable');
     if (result.kind !== 'unavailable') return;
     expect(result.code).toBe('version_too_large');
-    // Refused on the declared length, so the bytes are never downloaded.
     expect(requests).toHaveLength(1);
     expect(current.route).toBe('code');
-    expect(new TextDecoder().decode(current.content)).toBe('current\n');
+    expect(
+      new TextDecoder().decode(await current.content.blob('').arrayBuffer())
+    ).toBe('current\n');
   });
 });

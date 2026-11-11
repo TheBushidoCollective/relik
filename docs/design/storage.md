@@ -4,6 +4,10 @@ This document decides the hard size cap, the grant construction, the cost contro
 
 `docs/frame.md`, `docs/preconditions.md`, `docs/spec/format.md`, `docs/spec/publish.md`, `docs/spec/service.md`, and `docs/spec/viewer.md` are locked inputs. `docs/design/container.md` and `docs/design/topology.md` are sibling inputs, consumed here and never reopened. Neither had landed on the station branch when this was written, so both were read from their unit branches; section 9 records which.
 
+The 2026-11-10 decision in `docs/decisions.md` supersedes the original
+100 MiB cap and the original viewer memory model. The original 64-mint pick
+was also superseded; the current cap is 200 mints.
+
 ## 0. What this closes, by name
 
 Twelve routed items, and no others implied.
@@ -18,51 +22,52 @@ Twelve routed items, and no others implied.
 - **`service.md` 7.4** the signed-URL validity window and the minimum viable validity, section 4.2.
 - **`service.md` 7.5** the retention window, section 7.3.
 
-Adjacent and not this document's: `viewer.md` 7.1 platform memory ceilings, 7.3 the truncated-prefix size, and 7.4 the highlighted-region cap belong to `design-product-surface`. `service.md` 7.1 edge fidelity and 7.7 the mint dedup interval are decided in `docs/design/topology.md`. `service.md` 7.6 the published SLA belongs to `design-operations-and-abuse`. `format.md` 4.1, 4.2, 4.3, and 4.5 are decided in `docs/design/container.md`.
+Viewer heap reads and source-window behavior are covered in
+`docs/design/surface.md`. The remaining sibling design references below
+describe the original design context.
 
 ## 1. The hard size cap
 
 ### 1.1 The referent and the value
 
-**The cap is 100 MiB, and its referent is plaintext content octets: 104,857,600 octets, the number `ls` reports for the file the publisher selected.**
+**The plaintext content cap is 500 MiB, or 524,288,000 octets.** It is the
+size of the selected file, excluding the encrypted envelope.
 
-`format.md` 3.11 constrains the referent rather than leaving it open: the number shown to a user is a plaintext number, one they can verify with `ls`, and if enforcement lands on ciphertext the enforced limit is computed so that a file exactly at the published cap always fits. `docs/design/container.md` refines that conversion at version 1 to `encryptedSize(cap + (rs - 17), rs)`, where `cap` counts content octets and excludes the envelope block, and fixes `rs` at 4096.
+The current record size is 65,536 octets, with 65,519 content octets per
+full record. A cap-sized file uses 8,004 records including the envelope and
+produces 524,489,608 ciphertext octets. The 201,608-octet difference includes
+the envelope record and framing overhead.
 
-Applying it: the plaintext stream is the 4,079-octet envelope block plus 104,857,600 content octets, which is 25,708 records, so the enforced ciphertext bound is **105,298,736 octets**. Total framing overhead is 441,136 octets, **0.421 percent of the plaintext cap**.
+`size_limit_bytes` is 524,288,000 and `size_basis` is `plaintext`. The
+challenge and size refusal expose the plaintext limit; an upload grant binds
+the exact declared ciphertext length. The ciphertext length at the cap is a
+conversion of the same policy, not a second plaintext limit.
 
-**That is not the same quantity as the 0.415 percent `container.md` section 3.1 measured, and neither confirms the other.** That figure is 17/4096, the per-record tag and padding delimiter as a fraction of the wire record. This one is total overhead against plaintext. The third form, per-record against plaintext, is 17/4079 and comes to 0.417 percent. Three different denominators, three different numbers, all correct. They are stated separately because reading one as a check on another is how a re-derivation gets skipped.
+The original 100 MiB design and its 4,096-octet-record calculations are
+superseded by the 2026-11-10 decision. With the unchanged 200-mint cap, the
+one-complete-fetch-per-mint case is 97.69 GiB of ciphertext per relic. Signed
+URLs can be reused, so actual egress is not bounded by that product.
 
-**Every egress figure in this document is priced on the ciphertext bound, because that is what GCS bills.** The plaintext cap is what a publisher compares against; 105,298,736 is what leaves the bucket.
+### 1.2 Viewer consequences
 
-**`size_limit_bytes` is 104,857,600 and `size_basis` is `plaintext`.** Both are published in the challenge response (`publish.md` 3.1), both feed the client pre-check in 1.2, and both appear on `size_over_cap` under `service.md` 1.5. The signed constraint on the wire is 105,298,736, because GCS only ever sees ciphertext, and that number is an implementation of the same cap rather than a second policy number. That distinction is the whole point of `size_basis`: the field exists so a client can tell a user which number to compare, and the answer is the one from `ls`.
+The viewer decrypts records into browser-managed Blobs and reads bounded
+slices for renderers, rather than holding the whole file as a JavaScript
+buffer. It asks for confirmation before the full fetch when the authenticated
+plaintext exceeds 100 MiB. Large text remains accessible through a windowed
+source view.
 
-**The binding constraint is `service.md` 2.3's arithmetic, and it binds through a multiplier rather than directly.** That section fixes a floor of 40 legitimate mints for a 40-person distribution list and a ceiling near 80 where scanners detonate with a browser. Worst-case egress for one relic is the size cap times that mint count, so 2.3 is what converts a size in octets into a dollar figure, and neither number is decidable without the other. Section 4.4 settles the mint count at 64 against the branch `docs/design/topology.md` chose, which prices this cap at 6.276 GiB and $0.75 per relic at the worldwide rate, $1.19 to Australia, and $1.44 to China, one fetch per mint. **That product is the constraint, and it is what makes 100 MiB a decision rather than a preference: the same cap at the auto-mint-on-load branch's mint count of 128 would price a single relic at $2.89 to China.**
-
-**The value inside that band is a judgment call and gets stated as one.** Nothing in the sources separates 100 MiB from 64 MiB or from 128 MiB; what the arithmetic fixes is the order of magnitude and the direction of the costs. Being wrong high means a single relic can cost more than the operator expected and the tier collapse in 1.2 loses margin. Being wrong low means refusing payloads the wedge exists to carry. It is cheap to move down and expensive to move up, per the last paragraph of 1.2, which is why the band's lower half is the safer place to sit and 100 MiB sits there.
-
-**What fixes the band from the other side.** Artifacts caps rendered output at 16 MiB and restricts source types to three extensions (`frame.md`), so a cap at or below that concedes the comparison the wedge is built on. `frame.md`'s value case names archives, scraped datasets, and seekable media as precisely the payloads Artifacts cannot carry, so the cap has to clear the scale where those become interesting. And `container.md` measured decrypt wall time on a 100 MiB relic at roughly 0.3 seconds at `rs = 4096`, so the top of this band is a scale the station has already priced and found cheap. Above it the worst-case egress grows linearly with nothing buying it back.
-
-**This one value closes three routings**, which is why it could not be settled by any sibling: `format.md` 4.4 asks for the cap side and its value, `publish.md` 6.3 for the value and its referent, and `viewer.md` 7.2 for the hard size cap value. They are one decision.
-
-### 1.2 What it does to the viewer, which is the largest structural consequence here
-
-`viewer.md` 7.2 states the consequence plainly: the cap determines whether §5's tiering is required at all, because a cap below the in-memory ceiling collapses three tiers into one. `viewer.md` §5 names three tiers: streaming decrypt to disk through a ServiceWorker, in-memory decrypt then Blob download capped at a memory ceiling, and refusal with a named reason.
-
-**At 100 MiB the three tiers collapse to one. Tier 2 serves every relic that can exist, tier 1 is not required in the first release, and tier 3 is unreachable.**
-
-The in-memory ceiling itself is `design-product-surface`'s under `viewer.md` 7.1 and it runs after this document, so the value is stated against each candidate that document names rather than picked here. **`viewer.md` 7.1 names two candidate values and one stated absence:** hat.sh's 1 GB, the 500 to 800 MB band traced to a single forum report, and Apple publishing no per-tab ceiling at all. The third is an absence rather than a candidate, and it is what makes the collapse worth establishing against the other two rather than waiting for a number nobody can supply. The collapse point sits wherever that ceiling lands, because the collapse condition is simply that the cap is below it.
-
-**The honest comparison is against peak memory, not against the cap, and the copy set has to be enumerated rather than assumed.** Two copies is the floor: 105,298,736 octets of ciphertext plus 104,857,600 of plaintext is 210,156,336 octets, **200.42 MiB**. Against the 500 MB floor candidate that is a factor of **2.38**, and against 1 GB a factor of **4.76**. Both candidate sources state their numbers in MB and GB, so both comparisons read decimal; reading them as binary inflates every factor by about five percent, in the direction that flatters the conclusion.
-
-**Two copies is not what tier 2 holds.** `viewer.md` §5 defines tier 2 as in-memory decrypt then Blob download, so the Blob is a third resident copy unless the browser keeps it off the JS heap, and nothing in §5 requires that. **At three copies the peak is 315,013,936 octets, 315.01 MB**, which is a factor of **1.59** against the 500 MB floor candidate, 2.54 against 800 MB, and 3.17 against 1 GB. **The collapse holds under every candidate, and it holds with the least margin at the floor.** That is the number to carry, because it is the one the path actually produces.
-
-**The scope of that claim, stated rather than asserted as universal.** It is priced on that copy set and on one further condition: that a renderable class never holds the whole plaintext as a decoded representation as well. A JS string is UTF-16, so a cap-sized text payload decoded in one piece adds 209,715,200 octets. **On a render the Blob is not the third copy**, because a rendered class is displayed rather than downloaded, so the resident set is ciphertext, plaintext, and the decoded string: 419,871,536 octets, **419.87 MB**, which leaves a 500 MB ceiling a margin of **1.19** and no room for anything else on the heap. **Hold a Blob and a whole-plaintext decode at the same instant and the set is four copies, 524,729,136 octets, and a 500 MB ceiling is breached rather than approached.** Both cases need the same thing to happen first, a decode of the whole plaintext in one piece, and `viewer.md` §5 supplies the instrument that keeps it off the table: the four renderable classes may render a truncated prefix behind an explicit banner, and the truncated-prefix size is `design-product-surface`'s under `viewer.md` 7.3. **So the collapse holds under every candidate ceiling given a truncated prefix materially below the cap, and the single way to break it is to set the truncated-prefix size at or near the cap while the in-memory ceiling sits at 500 MB.** Both of those values belong to the same owner, which is where the interaction is visible and cheap to avoid, and it is stated here so that owner sees it as a pair rather than as two independent numbers.
-
-The cost of the collapse is stated rather than hidden. A viewer built with one tier has no streaming path, so raising the cap later is not a config change, it is building tier 1 and the ServiceWorker rules `viewer.md` §5 attaches to it. The cap moves down cheaply and up expensively, which is the opposite of the download cap in section 4.4, and both asymmetries run toward the same discipline: pick the number that makes the expensive direction the one you are least likely to need.
+Browser-managed storage may use memory or temporary disk; OS swap and
+explicit downloads may also write plaintext to disk. The design does not
+guarantee erasure when the page closes. Streaming plaintext through a
+ServiceWorker remains unbuilt, and the former three-tier collapse and its
+four-copy calculation no longer describe this architecture. Actual browser
+memory behavior is platform-dependent.
 
 ### 1.3 What it fixes downstream
 
-From `publish.md` 6.3: `size_limit_bytes`, `size_basis`, the client pre-check in 1.2, and the signed constraint in 3.6, which is section 2's decision tree. From `format.md` 4.4: the grant's signed size constraint and the worst-case egress arithmetic, which is section 4.4. From `viewer.md` 7.2: the tiering answer above.
+The cap determines the challenge response, client pre-check, maximum accepted
+ciphertext size, and the egress calculation in section 4.4. Viewer behavior
+follows the Blob and source-window design in section 1.2.
 
 ## 2. The grant shape
 
@@ -166,43 +171,47 @@ Rotation is the one instrument that truncates the residual, because it is named 
 
 ### 4.1 Which branch topology chose
 
-`docs/design/topology.md` section 5.1 decides that **the mint fires on the first trusted user input event on the page and never on load**, with `wheel` deliberately excluded, and section 5.2 sets **the mint dedup interval at 300 seconds**. That is the gated branch, not auto-mint-on-load, and the cap below is computed against it.
-
-`service.md` 2.3 gives the arithmetic. One relic mailed to a 40-person list inside a Defender tenant draws up to 40 pre-delivery scans and 40 time-of-click fetches, and the shell rule removes the non-executing scans, leaving a floor of 40 legitimate mints and a ceiling near 80 where scanners detonate with a browser. **The gesture gate removes the detonating scanners too**, because link-preview fetchers do not click, so the ceiling collapses toward the floor and the binding number is 40 rather than 80. `topology.md` states the same conclusion from its own side: the gate changes which population the cap has to cover, in the direction that makes the cap smaller.
+The original design assumed a first-gesture mint. The 2026-11-10 design asks
+for confirmation after the mint and authenticated envelope read for files
+larger than 100 MiB. A mint and initial transfer can therefore occur before
+confirmation; the prompt does not itself prevent cap consumption.
 
 ### 4.2 The signed-URL validity window
 
-**The window is 900 seconds. The minimum viable validity below which a clamped mint is refused is 300 seconds.**
+**The download URL validity is 900 seconds; the minimum viable validity is
+60 seconds.** The separate upload grant validity is 4,500 seconds.
 
-The upper bound is fixed: "The longest expiration value is 604800 seconds (7 days)" ([signed URLs](https://cloud.google.com/storage/docs/access-control/signed-urls)). The binding lower bound is not ergonomic, it is mechanical. `topology.md` section 8 routes it explicitly: a deduped mint returns the URL already issued rather than a fresh one (`service.md` 2.2), so a validity window shorter than the 300-second dedup interval means the stored URL has routinely fallen below its minimum viable validity when a repeat arrives, and 2.2's exception path fires on the ordinary case instead of the exceptional one. At 900 the stored URL retains at least 600 seconds anywhere inside the dedup window, so the exception path stays exceptional with a factor of two in hand.
-
-**Why not shorter, given section 3.3 makes this the blast time.** Shortening trades kill-switch blast against download-cap consumption, and the second is the scarcer resource. A validity window short enough that one recipient's single viewing session needs two mints doubles the effective floor from 40 to 80 and breaks the cap in section 4.4 on legitimate traffic. 900 seconds clears a slow fetch of a cap-sized object outright: the 105,298,736 ciphertext octets that actually cross the wire are 421 seconds at 2 Mbit/s and 84 seconds at 10 Mbit/s, so the window covers the whole transfer at either rate without relying on the in-flight assumption flagged in section 3.3. If that assumption holds, the window only has to cover mint to fetch-start, which the gesture gate makes immediate, and 900 seconds is then generous by more than an order of magnitude.
-
-**Why not longer.** Every additional second is blast time on a residual nothing else bounds. 900 seconds is a 15-minute ceiling on how long a tripped kill switch keeps leaking, which is short enough to be survivable and long enough not to fight the dedup interval.
-
-**What the 300-second minimum actually costs.** Validity clamps to `min(url_validity, relic_expiry)` at mint (`service.md` §3), so the floor bites only near the TTL boundary: the last 300 seconds of a relic's life are unmintable and return `relic_expired`. Against the 259,200-second TTL in section 7.2 that is the final 0.12 percent of the relic's life, and the recipient gets the specific expired state rather than a URL that dies before the transfer starts.
+A full-size ciphertext fetch needs at least 4.66 Mbit/s to finish within the
+900-second download window. Whether an in-flight transfer completes after its
+signed URL expires is unverified. The validity limits when new requests can
+start after the kill switch, but does not by itself bound their total bytes.
 
 ### 4.3 The per-IP publish quota
 
-**60 grants per hour per IP, with a ceiling of 600 per day per IP.** Charged at grant-mint per `publish.md` 3.8, so a refused grant costs nothing and an idempotent retry charges once.
+The original design proposed 60 grants per hour and 600 per day per IP.
+Those historical figures are the basis of the illustration below; they are
+not evidence that both limits are enforced by the current service.
 
-The arithmetic that sizes it runs from the legitimate side, because the illegitimate side does not bound. A CI fleet behind one corporate egress address running a couple of hundred jobs a day, each publishing one report, sits inside 600 comfortably, and 60 per hour absorbs a burst without letting a single address sustain the daily figure in an hour. `docs/preconditions.md` already names why the address is a weak proxy in both directions: corporate NAT collapses many humans into one address, and rotating addresses is cheap for anyone who cares.
-
-**What the quota does not do, stated so nobody reads it as a spend bound.** 600 grants at section 4.4's figure is 3.68 TiB of egress from one address in a day, roughly $452 at the worldwide rate, **and that is the one-fetch-per-mint case rather than a ceiling**, for the reason section 4.4 gives. The quota is friction and an attribution handle, not a bound in either dimension. The ceiling is the kill switch, and its blast time is section 4.2's window. Refusals are free at both layers: the app returns `429` per `docs/preconditions.md`, never `401` or `403`, and GCS generally charges nothing for operations returning 4xx, with the single documented exception, website-configuration 404s, inapplicable to a bucket that has neither (section 3.1).
+At the historical quota of 600 grants, 600 cap-sized relics with 200 mints
+and one complete fetch per mint would transfer about 57.24 TiB of ciphertext.
+That is an illustrative case, not a spending ceiling: signed URLs can be
+reused and pricing varies with destination and volume.
 
 ### 4.4 The per-object download cap
 
-**The cap is 64 mints per relic. It is a judgment value inside a band, and it is stated as one, the same way section 1.1 states the size cap.**
+**The cap is 200 mints per relic ID, shared across versions.** The original
+64-mint decision was superseded before the 2026-11-10 size increase.
 
-**The band has a sourced floor and a top set by cost tolerance.** The floor is 40, from `service.md` 2.3's arithmetic read against the gated branch: 40 legitimate mints for a 40-person distribution list, with the detonating scanners removed by the gesture gate. The top is not in any source. Every unit above the floor is worst-case egress the operator pays for, and nothing in the sources says where an operator stops paying, so the top is whatever spend per relic the collective will absorb. **64 sits at 1.6 times the floor, and that multiplier is chosen rather than derived.** Naming it that way is the point: the arithmetic fixes the floor and the direction, and the value inside the band is a judgment.
+At the 500 MiB plaintext cap, 200 full ciphertext fetches of 524,489,608
+octets each total **97.69 GiB**. Using the rates recorded in section 3.1, the
+corresponding one-fetch-per-mint figures are about $11.72 worldwide, $18.56
+to Australia, and $22.47 to China. These are illustrations at those rates,
+not a claim about a current bill.
 
-**Two things justify headroom above the floor, and a third that reads like one does not.** A recipient who reopens the link the next day spends another unit. And a 40-person list is `service.md` 2.3's stated scenario rather than a ceiling on list size, so a 55-person list is ordinary and still inside 64. **What does not belong here is dedup**, though it looks like it should: a deduped mint still consumes the cap (`service.md` 2.2), so 40 colleagues behind one corporate egress address inside five minutes spend 40 units and register one open. Those 40 colleagues **are** the floor of 40. Dedup makes the open metric undercount; it adds nothing above the floor and it is not a reason for headroom.
-
-**Egress per relic on the ciphertext GCS bills: 64 mints times 105,298,736 octets is 6.276 GiB.** At the worldwide rate that is $0.75, at the Australian rate $1.19, and at the Chinese rate $1.44.
-
-**That figure is the one-fetch-per-mint case, and a mint cap cannot make it a byte ceiling.** `docs/preconditions.md` section 3 defines worst-case egress as a three-factor product: the size cap, times the per-object cap counted in mints, times the number of fetches one minted URL can serve inside its validity window, times the rate. This cap fixes the second factor, which is the only factor a mint cap reaches. The third is bounded by nothing but the validity window, and the preconditions concede the mechanism themselves: the app server rate-limits mints and not bytes, so the control does not bound egress and the spend kill switch does. **Section 3.3 says the same thing from the residual side and this section agrees with it: bounded in time, not in bytes.** The true per-relic ceiling is 64 live URLs, each refetchable for as long as its 900 seconds run, with section 3.2's kill switch stopping the next mint rather than the current fetch. 6.276 GiB is the floor of that, not the roof.
-
-**How this would differ under the branch topology did not take.** Under auto-mint-on-load the ceiling near 80 binds instead of the floor of 40, because JS-executing previewers mint before a human clicks. The same chosen 1.6 gives 128, **which inherits the judgment rather than deriving it and would carry the same label**, and one-fetch-per-mint egress doubles to 12.55 GiB and $1.51 at the worldwide rate. Sizing at 64 against that branch would break ordinary email distribution on legitimate traffic alone, which `service.md` 2.3 already warns about; sizing at 128 against the gated branch would leave 88 units of slack in exactly the dimension `docs/preconditions.md` calls the go/no-go. Both directions are real failures, which is why the branch had to be read rather than guessed.
+The mint cap is not a byte cap. A signed URL can serve multiple requests
+before it expires, and the kill switch stops new mints rather than revoking
+already-issued URLs. Billing, URL reuse, and the kill-switch residual must be
+considered separately from the one-fetch-per-mint calculation.
 
 **The cap moves up cheaply and down expensively**, and that asymmetry is worth carrying. `service.md` 1.2 gives cap exhaustion no reset window and reads permanence off its own counter, so lowering a published cap can exhaust live relics the moment it takes effect. Raising it affects nothing already issued. `download_cap` is echoed on `download_cap_exhausted` under `service.md` 1.5, so the value is published policy and a change is visible.
 
@@ -224,7 +233,10 @@ The arithmetic that sizes it runs from the legitimate side, because the illegiti
 
 **Five retries per publish, six attempts total. Backoff base one second, multiplier two, per-interval ceiling 30 seconds, full jitter, and a cumulative backoff budget of five minutes.** The counter is per publish and shared with collision redraws and re-challenges, per `publish.md` 4.6.
 
-**The budget counts time spent waiting between attempts and never wall clock, and that scoping is the whole of it.** A five-minute wall clock would fire `upload_retries_exhausted` with `attempts: 1` on a cap-sized object over a slow link, because section 4.2 already prices that transfer at 421 seconds at 2 Mbit/s, and it would do it to precisely the population the retry machinery exists to serve. It would also contradict `publish.md` 3.4, which sizes grant expiry to a slow upload of a cap-sized object. Scoped to backoff, the budget stops interacting with transfer time at all: at base one second, multiplier two, and a 30-second per-interval ceiling, five retries wait at most 1 + 2 + 4 + 8 + 16 seconds, so the ceiling never binds and **maximum cumulative wait is 31 seconds against a 300-second budget**. The budget is therefore slack under the stated parameters and exists as a guard on a later change to them, which is the right shape for a constraint that must not become the thing that breaks slow publishers.
+**The budget counts backoff wait rather than upload wall clock.** A transfer
+of a cap-sized object on a slow connection can exceed the backoff budget
+without exhausting its retries. This distinction keeps that budget from
+acting as a total upload timeout.
 
 This fixes when `upload_retries_exhausted` fires: on the sixth failed attempt, or if cumulative backoff wait ever exceeds five minutes, whichever comes first, carrying `attempts` and `last_code`. Six attempts is enough that a transient storage `5xx` or a dropped connection does not surface to the publisher, and few enough that a genuinely broken CSPRNG produces a loud bounded failure rather than a loop, which is what `service.md` 1.6 asks the shared counter to deliver.
 
@@ -324,7 +336,9 @@ Neither sibling input had landed on the station branch. `docs/design/container.m
 
 Stated as needs, with the owner named.
 
-1. **The in-memory ceiling, from `design-product-surface` under `viewer.md` 7.1.** Section 1.2 states the cap against every candidate that document names and finds the tier collapse holds under all of them, so nothing here is blocked. What the ceiling decides is the margin, not the outcome.
+1. **Browser memory behavior.** The former whole-file memory calculation is
+superseded by section 1.2. Browser-managed Blob placement and device limits
+remain implementation-dependent.
 2. **A grant-time refusal code for an invalid or expired proof-of-work solution, from `specify` as owner of `docs/spec/service.md`, and only if difficulty ever goes non-zero.** Section 5.1 sets the trigger and the target solve time; the code is not this document's to invent.
 3. **The probes in section 2.2 run before the grant branch is committed, from `build`.** A negative result eliminates a branch rather than filing a bug, and every leaf of section 2.3 except leaf 1 obliges a drift routing that should travel with the result.
 4. **The rotation propagation measurement in section 3.4, from `build`, alongside needs 3 and 5.** One observation, recorded once: the delay between deleting a user-managed signing key and an outstanding signed URL failing. **It sits with `build` for the same reason the probes do.** It needs a billed project, a live signing identity, a real object, and an outstanding URL against it, and no `shape` design unit has any of those, which is the reason section 2.2 gives for not running the probes here. It is specifically not `design-operations-and-abuse`'s: that unit's brief puts the grant construction out of scope, none of its criteria produces a signing-key measurement, and it holds exactly the GCP access this document holds, which is none. Routing it there would leave the kill switch's second stage permanently unproven while looking assigned. Until the measurement exists the second stage is bounded by the 900-second validity window rather than by rotation, per section 3.4.

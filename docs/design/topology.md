@@ -1,6 +1,8 @@
 # Relic: the origins, the edge, and when the mint fires
 
-This document decides which origin serves which response, where bytes reach a recipient's disk, what sits in front of the app server and how it gets a certificate, the order of the domain workstream, when the mint fires and over what interval it is counted, and what the deployed edge does when it sheds load. It also states the naming decision as a blocker, because the domain workstream cannot start ahead of it.
+This document records origin routing, explicit download delivery, the edge
+and TLS, mint timing, and the naming decision. Browser-managed temporary
+storage is separate from an explicit download.
 
 `docs/frame.md`, `docs/preconditions.md`, `docs/spec/format.md`, `docs/spec/service.md`, and `docs/spec/viewer.md` are locked inputs. `docs/design/container.md` is a sibling input and its decisions are consumed here rather than restated: a 25-character Crockford base32 relic ID, a 24-character fragment, and a 71-character relic URL on a twelve-character domain. Nothing here reopens any of them.
 
@@ -168,11 +170,13 @@ together with the requirement two sentences later:
 
 That routed item is resolved here as not filed, on eligibility, at this scale, which leaves the first sentence stating a benefit the design cannot obtain at launch. **This routes back to `specify` as drift.** Both branches above are designed so whoever revisits it has the material, and the honest scope from 1.1 travels with it: the entry is unavailable at this scale, so the process-isolation rationale is recoverable if Relic reaches the scale the list's guidelines describe, rather than permanently void.
 
-## 2. Which origin serves which response, and where bytes reach disk
+## 2. Which origin serves which response, and explicit downloads
 
 **The split is backwards from how it reads.** The shared URL is on the service origin. The sandbox origin appears only in an iframe `src` and never in anything a human pastes. So the domain hosting attacker-controlled markup is the one nobody links to, and it costs one DNS change to replace. The domain hosting nothing untrusted is the one in every shared link, every abuse report, and every Safe Browsing sample. **Losing the sandbox domain breaks rich-text rendering. Losing the service domain breaks every relic ever shared.**
 
-The two Safe Browsing categories Relic will actually sit in are the download categories, and they attach to whichever origin serves bytes to disk. Both are verbatim from Google's Security Issues report ([Search Console](https://support.google.com/webmasters/answer/9044101)). The permanent one:
+Google's Security Issues report describes two download categories that may
+affect the service. Attribution of a browser-generated `blob:` download to
+the initiating origin is unverified ([Search Console](https://support.google.com/webmasters/answer/9044101)). The first category:
 
 > Uncommon downloads Your site is offering a download that Google Safe Browsing hasn't seen before.
 
@@ -202,13 +206,24 @@ so the sample URL handed to the operator is the one form of the URL that cannot 
 
 **Three paths, not two.**
 
-1. **The service origin serves the bytes.** A link, a navigation, or a redirect from the service origin to the object. This is the path that attaches download-category reputation to the one domain Relic cannot afford to lose. **Rejected.**
+1. **The service origin serves the bytes.** A link, a navigation, or a redirect
+   from the service origin to the object would expose that origin to download
+   reputation. **Rejected.**
 2. **The sandbox origin serves the bytes.** Attractive, because the sandbox domain is the disposable one and a listing there costs one DNS change. **It cannot be done, and the reason is two locked rules rather than a preference.** The sandbox origin never receives the key, so it cannot fetch ciphertext and turn it into a file: the only way it obtains plaintext is by `postMessage` from the parent. That is available for renderable classes and it is closed anyway, because `viewer.md` §4 puts Blob materialization on the main origin precisely to keep the download affordance out of the untrusted frame. For download-only classes it is worse: `viewer.md` §1.2 orders browser-side privilege as download-only, then the sandbox origin, then the viewing origin, and routing a binary the design refuses to render into a frame that runs script moves it up that order for zero rendering benefit. **Rejected.**
 3. **A `blob:` save of already-decrypted content on the viewing origin.** `viewer.md` §1.6 already fixes its shape, typing every download blob as `application/octet-stream` whatever the container declared, triggering it through an `a[download]` attribute, and barring navigation to it. **Chosen.**
 
-**Decision: bytes reach disk only through a `blob:` URL materialized on the viewing origin under `a[download]`. The viewer never navigates to, links to, or redirects to the signed object URL, and no path on the service origin returns object bytes.** The signed URL is consumed by `fetch` from script and nowhere else.
+**Decision: an explicit plaintext download uses a `blob:` URL materialized on
+the viewing origin under `a[download]`.** The viewer consumes the signed
+object URL with `fetch`, rather than navigating or redirecting to it.
 
-What that buys, and the limit on it. The ciphertext transfer already runs client to storage on a signed URL, so the service origin is not in the byte path at the transport layer either. What remains unresolved is whether Chrome attributes a `blob:` download to the initiating page's origin for download-reputation purposes. **No source consulted here states it, and this document does not assert it.** The empirical test `service.md` §6 already mandates before launch is where that answer comes from, and it costs one relic and one browser to run. Until it runs, the design is built so the service origin is as far out of the download chain as the architecture can put it, which is the only lever available given the sandbox origin is closed by the rules above.
+This delivery choice does not determine where the browser backs a Blob.
+Plaintext can be held in memory or temporary disk, and the operating system
+may swap memory to disk. A user's explicit download writes a file; neither
+disk avoidance nor erasure on close is guaranteed.
+
+The ciphertext transfer runs from client to storage on a signed URL. Whether
+Chrome attributes a `blob:` download to the initiating page's origin for
+download-reputation purposes remains unverified.
 
 ## 3. The edge and TLS
 

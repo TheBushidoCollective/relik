@@ -6,10 +6,12 @@ import {
   TransferIncompleteError,
   TruncatedContainerError,
 } from './errors.ts';
+import { PLAINTEXT_CAP_BYTES } from './limits.ts';
 import {
   type ContainerHeader,
   type DerivedKeys,
   HEADER_BYTES,
+  RECORD_SIZE,
   decodeHeader,
   decryptRecord,
   deriveKeys,
@@ -32,22 +34,122 @@ export interface StreamOpenOptions {
   readonly onProgress?: (progress: StreamOpenProgress) => void; // after every chunk read and every record decrypted
 }
 
+export interface StreamContentOptions extends StreamOpenOptions {
+  readonly onContent: (chunk: Uint8Array) => void | Promise<void>;
+}
+
 /**
- * Open an encrypted Relic container from a ReadableStream.
- *
- * Implements Spec B streaming opener with record-0 early key check and strict end-of-stream.
+ * Open a stream into a caller-owned sink. A sink must discard its output if
+ * this promise rejects: later records or the final length may be invalid.
  */
+export async function streamRelicContent(
+  source: ReadableStream<Uint8Array>,
+  key: Uint8Array,
+  options: StreamContentOptions
+): Promise<Envelope> {
+  if (
+    options.maxContentBytes !== undefined &&
+    (!Number.isSafeInteger(options.maxContentBytes) ||
+      options.maxContentBytes < 0)
+  ) {
+    throw new RangeError('Invalid maximum content length');
+  }
+  return processRelicStream(
+    source,
+    key,
+    {
+      ...options,
+      maxContentBytes: Math.min(
+        options.maxContentBytes ?? PLAINTEXT_CAP_BYTES,
+        PLAINTEXT_CAP_BYTES
+      ),
+    },
+    false,
+    true
+  );
+}
+
+/** Open a stream into a single in-memory content buffer. */
 export async function openRelicStream(
   source: ReadableStream<Uint8Array>,
   key: Uint8Array,
   options: StreamOpenOptions
 ): Promise<OpenedRelic> {
+  let content = new Uint8Array(0);
+  let offset = 0;
+  let contentLength = 0;
+  let allocated = false;
+  const envelope = await processRelicStream(
+    source,
+    key,
+    {
+      ...options,
+      onEnvelope(value) {
+        contentLength = value.entries[0]!.length;
+        options.onEnvelope?.(value);
+      },
+      onContent(chunk) {
+        if (!allocated) {
+          content = new Uint8Array(contentLength);
+          allocated = true;
+        }
+        content.set(chunk, offset);
+        offset += chunk.length;
+      },
+    },
+    false,
+    false
+  );
+  return { envelope, content };
+}
+
+export interface ReadEnvelopeOptions {
+  readonly objectLength: number;
+  readonly fragmentVersion?: number;
+  readonly onPrefix?: (prefix: Uint8Array) => void;
+}
+
+/** Authenticate record 0, then cancel the remaining transfer. */
+export async function readRelicEnvelope(
+  source: ReadableStream<Uint8Array>,
+  key: Uint8Array,
+  options: ReadEnvelopeOptions
+): Promise<{ envelope: Envelope; prefix: Uint8Array }> {
+  let prefix: Uint8Array | undefined;
+  const envelope = await processRelicStream(
+    source,
+    key,
+    {
+      objectLength: options.objectLength,
+      ...(options.fragmentVersion === undefined
+        ? {}
+        : { fragmentVersion: options.fragmentVersion }),
+      maxContentBytes: PLAINTEXT_CAP_BYTES,
+      onPrefix(value) {
+        prefix = value;
+        options.onPrefix?.(value);
+      },
+      onContent() {},
+    },
+    true,
+    true
+  );
+  return { envelope, prefix: prefix! };
+}
+
+async function processRelicStream(
+  source: ReadableStream<Uint8Array>,
+  key: Uint8Array,
+  options: StreamContentOptions,
+  stopAfterEnvelope: boolean,
+  boundedRecords: boolean
+): Promise<Envelope> {
   const objectLength = options.objectLength;
   const fragmentVersion = options.fragmentVersion ?? FORMAT_VERSION;
 
-  if (objectLength < HEADER_BYTES) {
+  if (!Number.isSafeInteger(objectLength) || objectLength < HEADER_BYTES) {
     throw new MalformedContainerError(
-      `container is ${objectLength} bytes, shorter than the header`
+      `container length ${objectLength} is invalid or shorter than the header`
     );
   }
 
@@ -60,7 +162,6 @@ export async function openRelicStream(
   let header: ContainerHeader | undefined;
   let keys: DerivedKeys | undefined;
   let envelope: Envelope | undefined;
-  let contentBuffer: Uint8Array | undefined;
 
   let record0Length = 0;
   let prefixLength = 0;
@@ -113,6 +214,11 @@ export async function openRelicStream(
     if (!header && bufferedLength >= HEADER_BYTES) {
       const headerBytes = peekBytes(HEADER_BYTES);
       header = decodeHeader(headerBytes);
+      if (boundedRecords && header.rs > RECORD_SIZE) {
+        throw new MalformedContainerError(
+          `record size ${header.rs} exceeds limit ${RECORD_SIZE}`
+        );
+      }
       keys = await deriveKeys(key, header.salt);
       const bodyLength = objectLength - HEADER_BYTES;
       if (bodyLength <= 0) {
@@ -166,7 +272,6 @@ export async function openRelicStream(
             `container truncated: expected ${entry.length} content bytes, got 0`
           );
         }
-        contentBuffer = new Uint8Array(0);
         options.onProgress?.({
           receivedBytes,
           objectLength,
@@ -179,9 +284,9 @@ export async function openRelicStream(
             'positional last record 0 has delimiter 1, expected delimiter 2'
           );
         }
-        contentBuffer = new Uint8Array(entry.length);
       }
     }
+    if (stopAfterEnvelope && record0Processed) return;
 
     // 3. Process subsequent content records
     while (
@@ -221,7 +326,7 @@ export async function openRelicStream(
             `content length ${newTotal} exceeds declared entry length ${entry.length}`
           );
         }
-        contentBuffer!.set(record.data, openedContentBytes);
+        await options.onContent(record.data);
         openedContentBytes = newTotal;
         options.onProgress?.({
           receivedBytes,
@@ -241,7 +346,7 @@ export async function openRelicStream(
             `content length ${newTotal} exceeds declared entry length ${entry.length}`
           );
         }
-        contentBuffer!.set(record.data, openedContentBytes);
+        await options.onContent(record.data);
         openedContentBytes = newTotal;
         options.onProgress?.({
           receivedBytes,
@@ -281,6 +386,13 @@ export async function openRelicStream(
         const envelopeBefore = record0Processed;
 
         await processAvailableRecords();
+        if (stopAfterEnvelope && record0Processed) {
+          try {
+            await reader.cancel();
+          } catch {}
+          reader.releaseLock();
+          return envelope!;
+        }
 
         if (!record0Processed) {
           options.onProgress?.({
@@ -315,10 +427,7 @@ export async function openRelicStream(
     }
 
     reader.releaseLock();
-    return {
-      envelope: envelope!,
-      content: contentBuffer!,
-    };
+    return envelope!;
   } catch (error) {
     try {
       await reader.cancel();

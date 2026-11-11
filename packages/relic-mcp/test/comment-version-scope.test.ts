@@ -1,3 +1,4 @@
+import { fetchUpload } from './upload-fixture.ts';
 /**
  * Version scoping on the comment read, and the comment state it carries.
  *
@@ -69,6 +70,7 @@ beforeEach(async () => {
     relicOrigin: SERVICE,
     files: nodeFiles,
     fetch: scopeFetch(),
+    upload: fetchUpload,
     clientName: 'relic-mcp/comment-scope-test',
     renderCover: async () => ({
       status: 'skipped',

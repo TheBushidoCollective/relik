@@ -1,3 +1,4 @@
+import { fetchUpload } from './upload-fixture.ts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { execFile } from 'node:child_process';
 import {
@@ -41,6 +42,7 @@ beforeEach(async () => {
     relicOrigin: SERVICE,
     files: nodeFiles,
     fetch: grantFetch(),
+    upload: fetchUpload,
     clientName: 'relic-mcp/source-versioning-test',
     renderCover: async () => ({
       status: 'skipped',

@@ -1,3 +1,4 @@
+import { fetchUpload } from './upload-fixture.ts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -70,6 +71,7 @@ beforeEach(async () => {
     relicOrigin: SERVICE,
     files: nodeFiles,
     fetch: commentFetch(),
+    upload: fetchUpload,
     clientName: 'relic-mcp/comments-test',
     renderCover: async () => ({
       status: 'skipped',
@@ -112,10 +114,30 @@ function commentFetch(): typeof globalThis.fetch {
         uploadedContainers.get('first') ??
         uploadedContainers.get('/upload/first') ??
         new Uint8Array(0);
-      return new Response(Buffer.from(bytes), {
-        status: 200,
-        headers: { 'content-type': 'application/octet-stream' },
+      let offset = 0;
+      const response = new Response(
+        new ReadableStream<Uint8Array>({
+          pull(controller) {
+            if (offset >= bytes.length) {
+              controller.close();
+              return;
+            }
+            const end = Math.min(offset + 4096, bytes.length);
+            controller.enqueue(bytes.subarray(offset, end));
+            offset = end;
+          },
+        }),
+        {
+          status: 200,
+          headers: { 'content-type': 'application/octet-stream' },
+        }
+      );
+      Object.defineProperty(response, 'arrayBuffer', {
+        value: async () => {
+          throw new Error('ciphertext must be opened from the response stream');
+        },
       });
+      return response;
     }
 
     if (url.pathname.match(/\/api\/relics\/[^/]+\/mint$/)) {

@@ -2,29 +2,30 @@
  * OpenTimelineIO native media resolver for Relik viewer.
  *
  * Bundle-only access: validated ZIP entries, no remote URLs, no sequence
- * renumbering. The evaluator owns image-sequence paths. This module reserves
- * archive bytes before inflation, shares one in-flight read per canonical
- * entry, and remembers permanent read failures so playback cannot retry a
- * bad entry every frame.
+ * renumbering. Stored entries remain slices of the original bundle; only
+ * deflated entries consume the cumulative inflation budget. Reads and
+ * failures are shared so playback cannot repeatedly process a bad entry.
  */
 
 import {
-  MAX_EXPANDED_ZIP_BYTES,
+  Crc32,
+  MAX_INFLATED_ZIP_BYTES,
   type OtioBundleEntryName,
   type OtioZipEntryInfo,
   type OtioZipIndex,
 } from '@relic/format';
 
-export const DEFAULT_MAX_DECOMPRESSED_BYTES = MAX_EXPANDED_ZIP_BYTES;
+export const DEFAULT_MAX_INFLATED_BYTES = MAX_INFLATED_ZIP_BYTES;
+const BLOB_BATCH_BYTES = 8 * 1024 * 1024;
 
 export interface OtioMediaResolverOptions {
-  /** Maximum cumulative decompressed bytes allowed across this resolver. */
-  readonly maxDecompressedBytes?: number;
+  /** Maximum cumulative DEFLATE output retained by this resolver. */
+  readonly maxInflatedBytes?: number;
 }
 
 /**
- * Blob parts cannot take a SharedArrayBuffer-backed view. Keep normal ZIP
- * entries as views of their original ArrayBuffer, and copy only shared bytes.
+ * Blob parts cannot take a SharedArrayBuffer-backed view. Keep normal
+ * decompressor output as views, and copy only shared bytes.
  */
 function blobBytes(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
   const buffer = bytes.buffer;
@@ -41,7 +42,7 @@ export interface OtioMediaResolver {
   resolveUrl(entryName: OtioBundleEntryName): Promise<string | null>;
   /** Check whether a canonical bundle entry name exists in the archive index. */
   hasEntry(entryName: OtioBundleEntryName): boolean;
-  /** Get cumulative decompressed bytes charged so far. */
+  /** Get cumulative DEFLATE output bytes charged so far. */
   getDecompressedBytes(): number;
   /** Revoke all created Object URLs and clear memory. */
   dispose(): void;
@@ -99,13 +100,18 @@ export function inferMediaMimeType(filename: string): string {
  */
 export function createOtioMediaResolver(
   zipIndex: OtioZipIndex,
+  bundle: Blob,
   options: OtioMediaResolverOptions = {}
 ): OtioMediaResolver {
-  const maxDecompressedBytes =
-    options.maxDecompressedBytes ?? DEFAULT_MAX_DECOMPRESSED_BYTES;
+  const maxInflatedBytes =
+    options.maxInflatedBytes ?? DEFAULT_MAX_INFLATED_BYTES;
+  if (!Number.isSafeInteger(maxInflatedBytes) || maxInflatedBytes < 0) {
+    throw new RangeError('Invalid OTIO media inflation limit');
+  }
 
   let chargedBytes = 0;
   let disposed = false;
+  const abort = new AbortController();
 
   const blobByEntry = new Map<OtioBundleEntryName, Blob>();
   const urlByEntry = new Map<OtioBundleEntryName, string>();
@@ -125,9 +131,74 @@ export function createOtioMediaResolver(
   function limitError(entryName: OtioBundleEntryName, size: number): Error {
     return new Error(
       `Decompression limit exceeded: ${entryName} (${size} bytes) ` +
-        `would exceed aggregate cap of ${maxDecompressedBytes} bytes ` +
+        `would exceed aggregate cap of ${maxInflatedBytes} bytes ` +
         `(already decompressed ${chargedBytes})`
     );
+  }
+
+  async function inflateEntry(entry: OtioZipEntryInfo): Promise<Blob> {
+    if (typeof DecompressionStream === 'undefined') {
+      throw new Error('No DecompressionStream available for OTIO media');
+    }
+    const reader = bundle
+      .slice(entry.dataOffset, entry.dataOffset + entry.compressedSize)
+      .stream()
+      .pipeThrough(new DecompressionStream('deflate-raw'), {
+        signal: abort.signal,
+      })
+      .getReader();
+    const checksum = new Crc32();
+    const parts: Blob[] = [];
+    let batch: Uint8Array<ArrayBuffer>[] = [];
+    let batchBytes = 0;
+    let total = 0;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (disposed) throw new Error('resolver disposed');
+        if (!value || value.byteLength === 0) continue;
+        if (value.byteLength > entry.uncompressedSize - total) {
+          throw new Error(
+            `Inflated media exceeds declared size: ${entry.name}`
+          );
+        }
+        total += value.byteLength;
+        checksum.update(value);
+        let offset = 0;
+        while (offset < value.byteLength) {
+          const length = Math.min(
+            BLOB_BATCH_BYTES - batchBytes,
+            value.byteLength - offset
+          );
+          batch.push(blobBytes(value.subarray(offset, offset + length)));
+          batchBytes += length;
+          offset += length;
+          if (batchBytes === BLOB_BATCH_BYTES) {
+            parts.push(new Blob(batch));
+            batch = [];
+            batchBytes = 0;
+          }
+        }
+      }
+      if (total !== entry.uncompressedSize) {
+        throw new Error(`Inflated media has the wrong size: ${entry.name}`);
+      }
+      if (checksum.value() !== entry.crc32) {
+        throw new Error(`CRC32 mismatch: ${entry.name}`);
+      }
+      if (batchBytes) parts.push(new Blob(batch));
+      return new Blob(parts, { type: inferMediaMimeType(entry.name) });
+    } catch (error) {
+      try {
+        await reader.cancel(error);
+      } catch {
+        // Preserve the inflation, size, or checksum failure.
+      }
+      throw error;
+    } finally {
+      reader.releaseLock();
+    }
   }
 
   function loadEntry(entryName: OtioBundleEntryName): Promise<Blob> {
@@ -144,46 +215,48 @@ export function createOtioMediaResolver(
     }
     const declared = entry.uncompressedSize;
     if (
-      !Number.isFinite(declared) ||
+      !Number.isSafeInteger(entry.dataOffset) ||
+      !Number.isSafeInteger(entry.compressedSize) ||
+      !Number.isSafeInteger(declared) ||
+      entry.dataOffset < 0 ||
+      entry.compressedSize < 0 ||
       declared < 0 ||
-      chargedBytes + declared > maxDecompressedBytes
+      entry.dataOffset > bundle.size - entry.compressedSize ||
+      (entry.method !== 0 && entry.method !== 8) ||
+      (entry.method === 0 && entry.compressedSize !== declared)
     ) {
+      const err = new Error(`Invalid media entry bounds: ${entryName}`);
+      failures.set(entryName, err);
+      return Promise.reject(err);
+    }
+    const charge = entry.method === 8 ? declared : 0;
+    if (charge > maxInflatedBytes - chargedBytes) {
       const err = limitError(entryName, declared);
       failures.set(entryName, err);
       return Promise.reject(err);
     }
 
-    chargedBytes += declared;
-    let adjusted = false;
+    chargedBytes += charge;
     const promise = (async () => {
       try {
-        const bytes = await zipIndex.readEntry(entryName);
-        if (disposed) {
-          throw new Error('resolver disposed');
-        }
-        const actual = bytes.byteLength;
-        chargedBytes += actual - declared;
-        adjusted = true;
-        if (chargedBytes > maxDecompressedBytes) {
-          const err = new Error(
-            `Decompression limit exceeded: aggregate decompressed bytes ` +
-              `${chargedBytes} exceeds limit ${maxDecompressedBytes}`
+        let blob: Blob;
+        if (entry.method === 0) {
+          await zipIndex.verifyStoredEntry(entryName);
+          blob = bundle.slice(
+            entry.dataOffset,
+            entry.dataOffset + declared,
+            inferMediaMimeType(entryName)
           );
-          chargedBytes -= actual;
-          failures.set(entryName, err);
-          throw err;
+        } else {
+          blob = await inflateEntry(entry);
         }
-        const blob = new Blob([blobBytes(bytes)], {
-          type: inferMediaMimeType(entryName),
-        });
+        if (disposed) throw new Error('resolver disposed');
         blobByEntry.set(entryName, blob);
         return blob;
       } catch (error) {
-        if (!adjusted) chargedBytes -= declared;
+        chargedBytes -= charge;
         const err = error instanceof Error ? error : new Error(String(error));
-        if (err.message !== 'resolver disposed') {
-          failures.set(entryName, err);
-        }
+        if (!disposed) failures.set(entryName, err);
         throw err;
       } finally {
         blobInflight.delete(entryName);
@@ -248,6 +321,7 @@ export function createOtioMediaResolver(
     dispose(): void {
       if (disposed) return;
       disposed = true;
+      abort.abort();
       if (
         typeof URL !== 'undefined' &&
         typeof URL.revokeObjectURL === 'function'

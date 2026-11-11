@@ -19,6 +19,7 @@ export const RENDER_TIMEOUT_MS = 20_000;
 export const PAGE_SIDE_RENDER_TIMEOUT_MS = 15_000;
 export const FRAME_SETTLE_MS = 1_000;
 export const DEFAULT_DEADLINE_MS = 45_000;
+export const COVER_MAX_SOURCE_BYTES = 100 * 1024 * 1024;
 
 export interface CoverRendererOptions {
   readonly chromePath: string | undefined;
@@ -49,6 +50,14 @@ export function chromeCoverRenderer(
     options.deadlineMs > 0 ? options.deadlineMs : DEFAULT_DEADLINE_MS;
 
   return async (source: CoverSource): Promise<CoverOutcome> => {
+    if (source.bytes.length > COVER_MAX_SOURCE_BYTES) {
+      return {
+        status: 'skipped',
+        reason: 'over_render_ceiling',
+        detail: `Cover source exceeds ${COVER_MAX_SOURCE_BYTES} bytes; using the generic cover`,
+      };
+    }
+
     let running: RunningChrome | undefined;
     let deadlineTimer: NodeJS.Timeout | undefined;
     let deadlineTimedOut = false;

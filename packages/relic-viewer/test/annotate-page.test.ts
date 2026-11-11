@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { AnchorRect, CommentAnchor } from '@relic/format';
 import { type AnchorSurface, boxFromUnit } from '../src/anchoring.ts';
 import { pageAnchorAdapter } from '../src/annotate-page.ts';
+import { preserveGlobalDescriptors } from './global-descriptors.ts';
 
 class ElementStub {
   readonly tagName: string;
@@ -101,24 +102,29 @@ class ElementStub {
   }
 }
 
+let restoreGlobals: () => void;
+
 function installDom(): void {
+  restoreGlobals = preserveGlobalDescriptors('document', 'CustomEvent');
   (globalThis as { document?: unknown }).document = {
     createElement: (tag: string) => new ElementStub(tag),
     createElementNS: (_namespace: string, tag: string) => new ElementStub(tag),
   };
-  (globalThis as { CustomEvent?: unknown }).CustomEvent = class CustomEvent {
-    readonly type: string;
-    readonly detail: unknown;
-    constructor(type: string, init?: { detail?: unknown; bubbles?: boolean }) {
-      this.type = type;
-      this.detail = init?.detail;
-    }
-  };
+  Object.defineProperty(globalThis, 'CustomEvent', {
+    configurable: true,
+    writable: true,
+    value: class CustomEvent extends Event {
+      readonly detail: unknown;
+      constructor(type: string, init?: CustomEventInit) {
+        super(type, init);
+        this.detail = init?.detail ?? null;
+      }
+    },
+  });
 }
 
 function clearDom(): void {
-  delete (globalThis as { document?: unknown }).document;
-  delete (globalThis as { CustomEvent?: unknown }).CustomEvent;
+  restoreGlobals();
 }
 
 function createMockSurface(

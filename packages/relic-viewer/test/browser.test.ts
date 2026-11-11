@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { contentFromBytes } from '../src/content.ts';
 import {
   buildBar,
   markerLabelFor,
@@ -381,7 +382,8 @@ describe('the usercontent frame the render routes build', () => {
   ): ReadyView => ({
     filename: route === 'sandboxed-jsx' ? 'Widget.tsx' : 'page.html',
     declaredMimetype: 'text/html',
-    content: new TextEncoder().encode(source),
+    content: contentFromBytes(new TextEncoder().encode(source)),
+    document: { bytes: new TextEncoder().encode(source), truncated: false },
     route,
     downgradeNotice: undefined,
     shareUrl: 'https://relik.example/aaaaaaaaaaaaaaaaaaaaaaaaaa#k',
