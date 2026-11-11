@@ -101,7 +101,10 @@ import {
   otioProofTracePrelude,
   otioProofWorkletSource,
 } from './otio-proof-trace.ts';
-import { assertDescriptorBudgetRefusal } from './otio-recovery-checks.ts';
+import {
+  assertDescriptorBudgetRefusal,
+  assertShiftedBankRefusal,
+} from './otio-recovery-checks.ts';
 
 const clientMode = process.env['RELIC_OTIO_PATH_CLIENT'] ?? 'source';
 const isNpxMode = clientMode.startsWith('npx:');
@@ -19112,6 +19115,7 @@ async function runScheduledPcmProof(
           const outcome = await isolated.evaluate<
             MovingTrace & {
               credits: {
+                gateReservations: number;
                 carrierReservations: number;
                 bytes: number;
                 nodes: number;
@@ -19139,6 +19143,13 @@ async function runScheduledPcmProof(
           assert.ok(
             !outcome.trace.audioOverflow && !outcome.trace.eventsOverflow,
             `${kind} anchor control capture overflow`
+          );
+          assert.equal(
+            outcome.trace.events.filter(
+              (event) => event.kind === 'witness-attach'
+            ).length,
+            kind === 'shift-bank' ? 2 : 1,
+            `${kind} used an unexpected number of anchor gates`
           );
           const injectionKind =
             kind === 'stale-epoch'
@@ -19184,6 +19195,10 @@ async function runScheduledPcmProof(
               ),
               'stale anchor epoch was not rejected by the client'
             );
+          } else if (kind === 'shift-bank') {
+            assertShiftedBankRefusal(outcome.trace.events);
+            assert.equal(outcome.credits.gateReservations, 0);
+            assert.equal(outcome.credits.carrierReservations, 0);
           } else {
             assert.ok(
               outcome.trace.events.some(

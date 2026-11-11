@@ -1,5 +1,8 @@
 import { expect, test } from 'bun:test';
-import { assertDescriptorBudgetRefusal } from './otio-recovery-checks.ts';
+import {
+  assertDescriptorBudgetRefusal,
+  assertShiftedBankRefusal,
+} from './otio-recovery-checks.ts';
 
 const boundary = 41473;
 const staged = {
@@ -62,5 +65,91 @@ test('descriptor budget check rejects each broken refusal boundary', () => {
   ];
   expect(() => assertDescriptorBudgetRefusal(admitted, 1, boundary)).toThrow(
     'still admitted'
+  );
+});
+
+test('shifted banks must refuse both bounded attempts before admission', () => {
+  const gate = (epoch: number, frame: number) => ({
+    kind: 'witness-attach',
+    value: { clockEpoch: epoch, gateInitialFrame: frame },
+  });
+  const inject = (frame: number) => ({
+    kind: 'anchor-bank-control-injected',
+    value: { kind: 'shift-bank', initialFrame: frame },
+  });
+  const late = (epoch: number, frame: number) => ({
+    kind: 'transport-message',
+    value: {
+      type: 'anchor-late',
+      clockEpoch: epoch,
+      firstFrame: frame,
+      observedFrame: frame + 1,
+    },
+  });
+  const a = 1280,
+    b = 3584;
+  const terminal = {
+    kind: 'scheduled-pcm',
+    value: {
+      event: 'error',
+      code: `PCM preparation failed: Transport anchor late: anchor ${b}, observed ${b + 1}`,
+    },
+  };
+  const valid = [
+    gate(1, a),
+    inject(a),
+    late(1, a),
+    gate(2, b),
+    inject(b),
+    late(2, b),
+    terminal,
+  ];
+  expect(() => assertShiftedBankRefusal(valid)).not.toThrow();
+  expect(() =>
+    assertShiftedBankRefusal(valid.filter((_, i) => i !== 4))
+  ).toThrow('without the shifted bank');
+  expect(() => assertShiftedBankRefusal([...valid, gate(3, 6000)])).toThrow(
+    'exactly one bounded retry'
+  );
+  expect(() =>
+    assertShiftedBankRefusal(
+      valid.map((e, i) =>
+        i === 5
+          ? {
+              kind: 'transport-message',
+              value: {
+                type: 'anchor-late',
+                clockEpoch: 2,
+                firstFrame: b,
+                observedFrame: b + 128,
+              },
+            }
+          : e
+      )
+    )
+  ).toThrow('expected native refusals');
+  expect(() =>
+    assertShiftedBankRefusal(
+      valid.map((e, i) =>
+        i === 5
+          ? { kind: 'transport-message', value: { type: 'clock-fault' } }
+          : e
+      )
+    )
+  ).toThrow('expected native refusals');
+  expect(() =>
+    assertShiftedBankRefusal([
+      ...valid,
+      { kind: 'transport-message', value: { type: 'anchor-certified' } },
+    ])
+  ).toThrow('admitted');
+  expect(() =>
+    assertShiftedBankRefusal([
+      ...valid,
+      { kind: 'scheduled-pcm', value: { event: 'epoch' } },
+    ])
+  ).toThrow('admitted');
+  expect(() => assertShiftedBankRefusal(valid.slice(0, -1))).toThrow(
+    'did not report'
   );
 });

@@ -452,7 +452,7 @@ export const otioProofTracePrelude = String.raw`(() => {
           const proofGate = {node:this, epoch:null, active:null, anchor:null, initialFrame:options?.processorOptions?.initialFrame,
             initialEpoch:options?.processorOptions?.clockEpoch,
             anchorControl:nextAnchorControl, control:nextBankControl, bootstrapTrace:true, bootstrapTimer:null, bootstrapSettled:false, traceOverlap:false, terminated:false, staleCaptureId:null};
-          nextAnchorControl = null; nextBankControl = null;
+          nextBankControl = null;
           proofGates.set(context, proofGate);
           if (!observedContexts.has(context)) {
             observedContexts.add(context);
@@ -1003,6 +1003,7 @@ export const otioProofTracePrelude = String.raw`(() => {
         samples:lightweightEvents, overflow:lightweightOverflow};
     },
     async start() {
+      nextAnchorControl = null;
       if (activeStaleCaptureId !== null) throw new Error('stale capture already active');
       await awaitControllerGraph(8000);
       if (graphs.length !== 1) throw new Error('expected exactly one controller destination gain, got ' + graphs.length + ' ' + JSON.stringify(controllerGraphSnapshot()));
@@ -1103,6 +1104,7 @@ export const otioProofTracePrelude = String.raw`(() => {
       const bridge = audioBridge(graph);
       const sampleFrame = await command(graph, 'stop');
       nextRecoveryMarker=false;
+      nextAnchorControl = null;
       recoveryOverrunRequested=false; recoveryClosureSeen=false; recoverySelection=null;
       if (currentGate?.marker) {
         const marker=currentGate.marker; currentGate.marker=null;
