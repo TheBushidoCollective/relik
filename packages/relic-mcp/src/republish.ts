@@ -89,6 +89,11 @@ export interface RepublishInput {
    * emailing a change notice for this version.
    */
   readonly notify?: boolean | undefined;
+  /**
+   * Open or close decisions on this relic. Omitted keeps what the relic had;
+   * only an explicit true or false changes it.
+   */
+  readonly decisions?: boolean | undefined;
 }
 
 export interface RepublishResult {
@@ -482,6 +487,7 @@ export async function republish(
       title: normalizedTitle,
       ...(input.ttl_days === undefined ? {} : { ttl_days: input.ttl_days }),
       ...(input.notify === false ? { notify: false } : {}),
+      ...(input.decisions === undefined ? {} : { decisions: input.decisions }),
       share_verifier: shareVerifier,
     }
   );

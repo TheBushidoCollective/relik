@@ -205,15 +205,15 @@ function glyph(path: string): SVGSVGElement {
 /**
  * Dresses the band's Decisions control.
  *
- * `undefined` is the loading state and `null` means decisions are not open on
- * this relic: neither carries numbers, because a `0` before the list lands, or
- * on a relic that cannot take decisions, would be a claim. The attributes are
- * what the stylesheet and the proofs read; the chip is what a reader sees.
+ * The control only exists once the list has landed, so there is always a
+ * tally to show: a `0` before the list lands, or on a relic whose author did
+ * not ask for decisions, would be a claim. The attributes are what the
+ * stylesheet and the proofs read; the chip is what a reader sees.
  */
 export function decorateDecisionControl(
   control: HTMLElement,
   version: number,
-  tally: DecisionTally | null | undefined
+  tally: DecisionTally
 ): void {
   control.classList.add('action-decisions');
   control.setAttribute('data-decision-open', '');
@@ -221,14 +221,6 @@ export function decorateDecisionControl(
   control.setAttribute('aria-controls', 'decision-panel');
   control.setAttribute('aria-expanded', 'false');
   control.title = 'Approve or reject this version';
-  if (tally === undefined) {
-    control.setAttribute('aria-label', `Decisions on version ${version}`);
-    return;
-  }
-  if (tally === null) {
-    control.setAttribute('aria-label', 'Decisions, not open on this relic yet');
-    return;
-  }
   control.setAttribute('data-decision-approvals', String(tally.approve));
   control.setAttribute('data-decision-rejections', String(tally.reject));
   control.setAttribute(

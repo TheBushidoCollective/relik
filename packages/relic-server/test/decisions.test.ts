@@ -115,6 +115,8 @@ interface PublishedRelic {
 
 async function publishRelic(options?: {
   omitShareVerifier?: boolean;
+  /** Publish without asking for decisions, as an author who did not. */
+  decisions?: boolean;
 }): Promise<PublishedRelic> {
   const challengeRes = await app.fetch(
     req('/api/challenge', { method: 'POST' })
@@ -140,6 +142,7 @@ async function publishRelic(options?: {
         declared_size_bytes: 12,
         declared_ciphertext_bytes: encryptedSize(12),
         ...(options?.omitShareVerifier ? {} : { share_verifier: verifier }),
+        ...(options?.decisions === false ? {} : { decisions: true }),
       }),
     })
   );
@@ -948,6 +951,141 @@ describe('decisions and passkeys end to end (S2 acceptance)', () => {
     expect(((await listRes.json()) as { code: string }).code).toBe(
       'decision_unavailable'
     );
+  });
+
+  test('a verifier alone does not open decisions: the author has to ask', async () => {
+    const relic = await publishRelic({ decisions: false });
+    const cookie = await signIn('reader@example.com', relic.id);
+
+    const listRes = await app.fetch(
+      req(`/api/relics/${relic.id}/decisions/list`, {
+        method: 'POST',
+        body: JSON.stringify({ share_proof: relic.shareProof }),
+      })
+    );
+    expect(listRes.status).toBe(409);
+    expect(((await listRes.json()) as { code: string }).code).toBe(
+      'decision_unavailable'
+    );
+
+    const optRes = await app.fetch(
+      req(`/api/relics/${relic.id}/decisions/options`, {
+        method: 'POST',
+        headers: { cookie },
+        body: JSON.stringify({
+          version: 1,
+          verdict: 'approve',
+          share_proof: relic.shareProof,
+        }),
+      })
+    );
+    expect(optRes.status).toBe(409);
+    expect(((await optRes.json()) as { code: string }).code).toBe(
+      'decision_unavailable'
+    );
+
+    const decRes = await app.fetch(
+      req(`/api/relics/${relic.id}/decisions`, {
+        method: 'POST',
+        headers: { cookie },
+        body: JSON.stringify({
+          version: 1,
+          verdict: 'approve',
+          share_proof: relic.shareProof,
+          version_digest: '0'.repeat(64),
+          credential: {},
+        }),
+      })
+    );
+    expect(decRes.status).toBe(409);
+    expect(((await decRes.json()) as { code: string }).code).toBe(
+      'decision_unavailable'
+    );
+  });
+
+  test('republish opens, keeps, and closes decisions only on an explicit flag', async () => {
+    const relic = await publishRelic({ decisions: false });
+
+    const listStatus = async (): Promise<number> =>
+      (
+        await app.fetch(
+          req(`/api/relics/${relic.id}/decisions/list`, {
+            method: 'POST',
+            body: JSON.stringify({ share_proof: relic.shareProof }),
+          })
+        )
+      ).status;
+    const republishWith = async (
+      extra: Record<string, unknown>
+    ): Promise<number> =>
+      (
+        await app.fetch(
+          req(`/api/relics/${relic.id}/republish`, {
+            method: 'POST',
+            body: JSON.stringify({
+              publish_token: relic.token,
+              renderer_class: 'markdown',
+              declared_size_bytes: 12,
+              declared_ciphertext_bytes: encryptedSize(12),
+              share_verifier: relic.verifier,
+              ...extra,
+            }),
+          })
+        )
+      ).status;
+
+    expect(await listStatus()).toBe(409);
+    expect(await republishWith({})).toBe(200);
+    expect(await listStatus()).toBe(409);
+    expect(await republishWith({ decisions: true })).toBe(200);
+    expect(await listStatus()).toBe(200);
+    expect(await republishWith({})).toBe(200);
+    expect(await listStatus()).toBe(200);
+    expect(await republishWith({ decisions: false })).toBe(200);
+    expect(await listStatus()).toBe(409);
+  });
+
+  test('a non-boolean decisions flag is refused on grant and on republish', async () => {
+    const challengeRes = await app.fetch(
+      req('/api/challenge', { method: 'POST' })
+    );
+    const { challenge_nonce } = (await challengeRes.json()) as {
+      challenge_nonce: string;
+    };
+    const grantRes = await app.fetch(
+      req('/api/grant', {
+        method: 'POST',
+        body: JSON.stringify({
+          challenge_nonce,
+          relic_id: generateRelicId(),
+          renderer_class: 'markdown',
+          publishing_client: 'relic-mcp/test',
+          declared_size_bytes: 12,
+          declared_ciphertext_bytes: encryptedSize(12),
+          decisions: 'yes',
+        }),
+      })
+    );
+    expect(grantRes.status).toBe(400);
+    expect(((await grantRes.json()) as { code: string }).code).toBe(
+      'invalid_publish_metadata'
+    );
+
+    const relic = await publishRelic({ decisions: false });
+    const republishRes = await app.fetch(
+      req(`/api/relics/${relic.id}/republish`, {
+        method: 'POST',
+        body: JSON.stringify({
+          publish_token: relic.token,
+          renderer_class: 'markdown',
+          declared_size_bytes: 12,
+          declared_ciphertext_bytes: encryptedSize(12),
+          share_verifier: relic.verifier,
+          decisions: 1,
+        }),
+      })
+    );
+    expect(republishRes.status).toBe(400);
   });
 
   test('operator delete reports decisions_deleted and list then gives 410', async () => {

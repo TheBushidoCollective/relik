@@ -538,7 +538,7 @@ describe('wire protocol and mint safety', () => {
     const sourceFile = join(scratch, 'real-doc.txt');
     await writeFile(sourceFile, 'Real server decisions test content\n');
 
-    const pub = await publish({ path: sourceFile }, deps);
+    const pub = await publish({ path: sourceFile, decisions: true }, deps);
     expect(pub.relic_id).toBeDefined();
     expect(pub.version_digest).toBeDefined();
 
@@ -698,7 +698,7 @@ describe('REFUSAL_GUIDANCE', () => {
     };
     expect(r.isError).toBe(true);
     expect(r.content[0]?.text).toContain(
-      'republish once with relic_republish; the link does not change'
+      'relic_republish and decisions: true; the link does not change'
     );
   });
 

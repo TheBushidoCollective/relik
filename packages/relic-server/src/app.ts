@@ -748,6 +748,18 @@ export function createApp(options: AppOptions = {}): RelicApp {
       shareVerifier = rawVerifier;
     }
 
+    let decisionsOpen = false;
+    if (
+      'decisions' in body &&
+      body['decisions'] !== undefined &&
+      body['decisions'] !== null
+    ) {
+      if (typeof body['decisions'] !== 'boolean') {
+        return refuse('invalid_publish_metadata', { relic_id: relicId });
+      }
+      decisionsOpen = body['decisions'];
+    }
+
     const declared = Number(body['declared_size_bytes']);
     if (!Number.isSafeInteger(declared) || declared < 0) {
       return refuse('invalid_publish_metadata', { relic_id: relicId });
@@ -843,6 +855,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
       title,
       ownerEmail,
       shareVerifier,
+      decisionsOpen,
     });
 
     const upload = await storage.signUpload(
@@ -1012,6 +1025,19 @@ export function createApp(options: AppOptions = {}): RelicApp {
       shareVerifierUpdate = { shareVerifier: rawVerifier };
     }
 
+    // Absent keeps what the relic had; only an explicit true or false changes it.
+    let decisionsUpdate: { readonly decisionsOpen: boolean } | undefined;
+    if (
+      'decisions' in body &&
+      body['decisions'] !== undefined &&
+      body['decisions'] !== null
+    ) {
+      if (typeof body['decisions'] !== 'boolean') {
+        return refuse('invalid_publish_metadata', { relic_id: relicId });
+      }
+      decisionsUpdate = { decisionsOpen: body['decisions'] };
+    }
+
     const declared = Number(body['declared_size_bytes']);
     if (!Number.isSafeInteger(declared) || declared < 0) {
       return refuse('invalid_publish_metadata', { relic_id: relicId });
@@ -1054,7 +1080,8 @@ export function createApp(options: AppOptions = {}): RelicApp {
       titleUpdate,
       ownerUpdate,
       notify,
-      shareVerifierUpdate
+      shareVerifierUpdate,
+      decisionsUpdate
     );
     if (next === undefined) {
       return refuse('relic_not_found', { relic_id: relicId });
@@ -3742,7 +3769,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
     }
 
     const proofResult = await checkShareProof(row, body['share_proof']);
-    if (proofResult === 'unavailable') {
+    if (proofResult === 'unavailable' || row.decisionsOpen !== true) {
       throw new ProblemError('decision_unavailable', { relic_id: relicId });
     }
     if (proofResult === 'malformed') {
@@ -4104,7 +4131,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
     }
 
     const proofResult = await checkShareProof(row, body['share_proof']);
-    if (proofResult === 'unavailable') {
+    if (proofResult === 'unavailable' || row.decisionsOpen !== true) {
       return refuse('decision_unavailable', { relic_id: relicId });
     }
     if (proofResult === 'malformed') {

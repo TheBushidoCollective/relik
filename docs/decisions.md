@@ -1172,3 +1172,10 @@ confirms that timestamp once. It does not add another clock advance.
 Devices whose output timestamps advance too slowly to satisfy those conditions
 cannot use this recovery path. They stop with an error rather than treating
 insufficient evidence as a successful recovery.
+## 2026-11-11: Decisions are open only when the author asks
+
+- Decided with Jason, in the moment: the band's Decisions control shows only on a relic whose author asked for decisions. Before this the control was on every relic published by a client that sent a share verifier, and read "not open yet" on older ones.
+- `relic_publish` takes `decisions` (default `false`); `relic_republish` takes `decisions` and, when omitted, keeps what the relic had. Only an explicit `true` or `false` changes it. The grant and republish bodies carry it as `decisions`, a non-boolean is `400 invalid_publish_metadata`, and the row stores `decisionsOpen`.
+- The list, options, and record routes refuse with `409 decision_unavailable` unless `decisionsOpen` is `true`, ahead of the proof check. The viewer already read that refusal as "closed" and now draws no control for it.
+- The control is also not drawn while the list is loading or after a transient list failure, so a closed relic never flashes it. A reload recovers an open one.
+- Relics published before this change have no `decisionsOpen` and stay closed until their author republishes with `decisions: true`. Decisions already recorded on them are not deleted and are not shown. The share verifier no longer implies a decision surface.
