@@ -114,6 +114,11 @@ export interface OpenViewerOptions {
   readonly instrumentEmits?: boolean;
   /** Extra Chrome switches. Only the primer wrap check may name one. */
   readonly extraArgs?: readonly PrimerChromeArg[];
+  /**
+   * Runs after the page target exists and before its navigation. The primer proof starts its
+   * trace and reads the output here. Throwing closes the owned browser and rethrows.
+   */
+  readonly beforeNavigate?: (page: ViewerPage) => Promise<void>;
 }
 
 export async function openViewer(
@@ -232,16 +237,6 @@ export async function openViewer(
     },
     sessionId
   );
-  const navigation = await cdp.send(
-    'Page.navigate',
-    { url: options.url },
-    sessionId
-  );
-  assert.equal(
-    navigation['errorText'],
-    undefined,
-    `viewer navigation failed: ${String(navigation['errorText'])}`
-  );
 
   const evaluate = async <T>(expression: string): Promise<T> => {
     const response = (await cdp.send(
@@ -329,7 +324,7 @@ export async function openViewer(
   const snapshot = () =>
     evaluate<ViewerSnapshot>(`window.${VIEWER_CONTRACT.hook}.snapshot()`);
 
-  return {
+  const page: ViewerPage = {
     evaluate,
     waitFor,
     snapshot,
@@ -451,6 +446,25 @@ export async function openViewer(
       });
     },
   };
+  if (options.beforeNavigate) {
+    try {
+      await options.beforeNavigate(page);
+    } catch (error) {
+      await page.close();
+      throw error;
+    }
+  }
+  const navigation = await cdp.send(
+    'Page.navigate',
+    { url: options.url },
+    sessionId
+  );
+  assert.equal(
+    navigation['errorText'],
+    undefined,
+    `viewer navigation failed: ${String(navigation['errorText'])}`
+  );
+  return page;
 }
 
 /**

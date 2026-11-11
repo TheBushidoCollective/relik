@@ -313,7 +313,8 @@ export interface PrimerWindow {
   readonly bufferingBeforeFirstFrame: boolean | null;
   /** Device starts (OutputController::Play) after the trusted Play. */
   readonly deviceStarts: number;
-  readonly expectedDeviceStarts: number;
+  /** null: reported only, never gated (sequence F first-click, where Chrome's start may land either side). */
+  readonly expectedDeviceStarts: number | null;
   /** Only the first-click arm: Buffering must show before the first new frame. */
   readonly firstClick: boolean;
 }
@@ -331,7 +332,10 @@ export function gatePrimerWindow(w: PrimerWindow): string[] {
       `first frame ${w.startupMs.toFixed(1)} ms > ${FIRST_FRAME_BUDGET_MS} ms`
     );
   failures.push(...gateGaps(w.gapsMs, MIN_WINDOW_INTERVALS, 'window'));
-  if (w.deviceStarts !== w.expectedDeviceStarts)
+  if (
+    w.expectedDeviceStarts !== null &&
+    w.deviceStarts !== w.expectedDeviceStarts
+  )
     failures.push(
       `${w.deviceStarts} device start(s) after Play, expected ${w.expectedDeviceStarts}`
     );

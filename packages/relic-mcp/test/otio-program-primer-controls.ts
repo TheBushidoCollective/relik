@@ -3,20 +3,28 @@
  * --mute-audio, so nothing reaches a speaker. Gates live in otio-program-trace.ts; this module only
  * drives the browser and records what it saw.
  *
+ * Two sequences, both starting from an idle default output:
+ *   - pre-navigation: two OS readings 250 ms apart, the same device, both idle. Otherwise the trial
+ *     fails with "external audio before navigation". The trace starts on about:blank and writes
+ *     its start mark there, before navigation, so preload is inside the trace.
+ *   - F, fresh visit: navigate and interact as soon as metadata loads. The user budgets are gated
+ *     on prepared, first-click and unmute. Sham and the bare arms are reported only. F makes no
+ *     cold claim.
+ *   - L, late interaction: after metadata, the output must first run (within 3 s), then read idle
+ *     on two consecutive polls (within 30 s of load). The trial then holds a quiet window and a
+ *     quiet OS reading before its first trusted event. Only a trial that meets that is cold, and
+ *     the cold controls (bare none and sham, viewer sham) must stall.
+ *
  * Measured sources, none of them an audio tap:
  *   - presented frames: requestVideoFrameCallback on the program video, page clock, with the
- *     element clock and the frame's own timing metadata beside each frame;
- *   - device starts and device callbacks: Chrome's own trace, trace clock. Device starts gate;
- *     callbacks and stream creation are telemetry and never prove an audio gap;
+ *     element clock and the frame's timing metadata beside each frame;
+ *   - device starts (OutputController::Play) and device callbacks: Chrome's own trace, trace clock.
+ *     Device starts gate; callbacks and stream creation are telemetry and never prove an audio gap;
  *   - the default output's running state: the OS, read through otio-program-device-state.ts;
  *   - trusted pointer events: performance.mark, which bridges the two clocks.
  *
- * Every trial waits for the OS to read the default output idle, starts the trace, writes the
- * trace-start mark and waits QUIET_WINDOW_MS before its first trusted event. A trial whose output
- * is still running at that event throws, so a warm start is never measured as a cold one.
- *
  * Arms (PATH.md has the full table):
- *   wrap:   primer alone for 12 s, with and without AudioRendererMixerImmediatePause;
+ *   wrap:   primer alone for 12 s, with and without AudioRendererMixerImmediatePause (sequence L);
  *   bare:   none | sham | av | av-blob | audio-only | context | video-only (Prepare, 1500 ms, Play);
  *   viewer: prepared | sham | first-click | unmute on the real viewer, production or sham build.
  *
@@ -35,10 +43,10 @@ import {
 } from '../../relic-viewer/src/otio-audio-primer-media.ts';
 import { clockDeficitSummary } from './otio-program-clock-deficit.ts';
 import {
+  DEVICE_IDLE_LIMIT_MS,
   type DeviceProbe,
   type DeviceState,
   readDeviceState,
-  waitForDeviceIdle,
 } from './otio-program-device-state.ts';
 import type { ProofHarness } from './otio-program-harness.ts';
 import { PROGRAM } from './otio-program-reference.ts';
@@ -50,6 +58,7 @@ import {
   type Coldness,
   classifyColdness,
   creationCounts,
+  DEVICE_START_EVENT,
   deviceCallbacks,
   deviceExcessMs,
   deviceStarts,
@@ -70,6 +79,7 @@ import {
   QUIET_WINDOW_MS,
   type QuietWindow,
   quietWindow,
+  STREAM_CREATION_EVENTS,
   TRACE_START_MARK,
   type TraceEvent,
   UNMUTE_MARK,
@@ -90,6 +100,14 @@ import { checkShamBuilds } from './otio-program-sham-build.ts';
 export const PRIMER_ROUNDS = 5;
 /** Cold trials each control needs. Fewer makes that group inconclusive, which fails. */
 export const MIN_COLD_TRIALS = 3;
+/** Sequence F and L: two OS readings this far apart, both idle, before navigation. */
+const PRE_NAV_SPACING_MS = 250;
+/** Sequence L: the output must start within this long after metadata. */
+const LATE_RUNNING_LIMIT_MS = 3000;
+/** Sequence L: how often the OS is read while the running-then-idle pattern is awaited. */
+const SETTLE_POLL_MS = 25;
+/** Sequence L: quiet time after the idle pair, so the 500 ms before the trusted event is idle. */
+const QUIET_SETTLE_MS = QUIET_WINDOW_MS + 100;
 /** Unmute window: [-500, +2000] ms around the Unmute pointerdown. */
 const UNMUTE_WINDOW_BEFORE_MS = 500;
 const UNMUTE_WINDOW_AFTER_MS = 2000;
@@ -100,12 +118,10 @@ const MUTE_PRESS_BUDGET_MS = 2000;
 const BARE_PREPARE_WAIT_MS = 1500;
 const WRAP_MS = 12_000;
 const PRIMER_SEEK_BACK_S = 3;
-/** Time from the trace-start mark to the first trusted event: the quiet window plus a margin. */
-const QUIET_SETTLE_MS = QUIET_WINDOW_MS + 100;
 /** A hidden viewer's primer must read idle this soon after the hidden event. */
 const HIDDEN_IDLE_BUDGET_MS = 1500;
-
-/** The mute control's pressed state, read through the production contract. */
+const MARKERS_TAB = '.otio-inspector-tab[data-tab="markers"]';
+const MUTE_CONTROL = 'button.otio-program-mute';
 const MUTE_PRESSED = `document.querySelector('button.otio-program-mute')?.getAttribute('aria-pressed') ?? null`;
 
 const BARE_ARMS = [
@@ -118,15 +134,39 @@ const BARE_ARMS = [
   'video-only',
 ] as const;
 type BareArm = (typeof BARE_ARMS)[number];
+export type { BareArm };
 /** Arms that run the real primer, and therefore gate on device starts and frame cadence. */
 const PRIMER_BARE_ARMS: readonly BareArm[] = ['av', 'av-blob'];
 const VIEWER_ARMS = ['prepared', 'sham', 'first-click', 'unmute'] as const;
 type ViewerArm = (typeof VIEWER_ARMS)[number];
 
+/** F: fresh visit, no cold claim. L: late interaction, cold controls. */
+export type Sequence = 'fresh' | 'late';
+
+/** Sequence L's wait for the running-then-idle pattern, relative to metadata. */
+export interface SettleHold {
+  readonly runningAfterMetadataMs: number | null;
+  /** Last running reading before the idle pair: the start of the hold window. */
+  readonly holdFromMs: number | null;
+  /** First idle reading of the idle pair: the end of the hold window. */
+  readonly holdToMs: number | null;
+  /** Time from load to the first idle reading of the pair. */
+  readonly idleAfterLoadMs: number | null;
+}
+
+/** Telemetry: where Chrome's start and stream creation landed. Never gates. */
+export interface Reported {
+  readonly firstDeviceStartFromTraceStartMs: number | null;
+  readonly firstCreationFromTraceStartMs: number | null;
+  readonly firstDeviceStartFromTrustedMs: number | null;
+  readonly bufferingBeforeFirstFrame: boolean | null;
+}
+
 export interface PrimerTrial {
   readonly arm: string;
   readonly round: number;
-  /** What the first trusted event found. Only 'cold' counts toward a control's cold trials. */
+  readonly sequence: Sequence;
+  /** Sequence L's cold label. Sequence F never uses it. */
   readonly coldness: Coldness;
   /** Telemetry only: first device start to first device callback. Never gates. */
   readonly dMs: number | null;
@@ -134,16 +174,17 @@ export interface PrimerTrial {
   readonly maxGapMs: number | null;
   readonly p95GapMs: number | null;
   readonly intervals: number;
-  /** Device starts (OutputController::Play) after the trusted Play. These gate. */
+  /** Device starts (OutputController::Play) after the trusted Play. These gate where stated. */
   readonly deviceStartsAfterPlay: number;
-  /** Time from page load until the OS read the default output idle. */
-  readonly idleAfterMs: number;
-  /** The OS reading of the default output just before the first trusted event. */
+  /** Sequence L only: the running-then-idle wait. Null for sequence F. */
+  readonly settle: SettleHold | null;
+  /** The OS reading of the default output at the first trusted event. */
   readonly osIdleAtTrusted: boolean;
   readonly restCurrentTime: number | null;
   readonly quiet: QuietWindow;
   /** Telemetry only: stream-creation events seen before the first trusted event, per name. */
   readonly creationBeforeTrusted: Record<string, number>;
+  readonly reported: Reported;
   /** Telemetry only: callback spacing from the trace. Never gates and never proves audio. */
   readonly callbackTelemetry: {
     readonly count: number;
@@ -208,9 +249,11 @@ interface ProgramState {
   readonly muted: boolean;
 }
 
-/** The OS reading taken before a trial's first trusted event, and how long the device took to idle. */
+/** What the OS showed before the first trusted event. Sequence F only reads it, never waits. */
 interface Settled {
-  readonly idleAfterMs: number;
+  /** Sequence L only: no running reading within 3 s, or no idle pair within 30 s of load. */
+  readonly failures: string[];
+  readonly hold: SettleHold | null;
   readonly state: DeviceState;
 }
 
@@ -283,7 +326,7 @@ function blobScript(programSha256: string): string {
 })();`;
 }
 
-function bareHtml(arm: BareArm, programSha256: string): string {
+export function bareHtml(arm: BareArm, programSha256: string): string {
   const src =
     arm === 'video-only'
       ? '/video-only.mp4'
@@ -415,7 +458,8 @@ async function programState(page: ViewerPage): Promise<ProgramState> {
   })()`);
 }
 
-async function waitForMetadata(page: ViewerPage): Promise<void> {
+/** Resolves when the program video reports metadata. Returns the wall time it was observed. */
+async function waitForMetadata(page: ViewerPage): Promise<number> {
   await page.waitFor('program video metadata', async () =>
     (await page.evaluate<boolean>(
       `document.querySelector('video.otio-program-video')?.readyState >= 1`
@@ -423,6 +467,7 @@ async function waitForMetadata(page: ViewerPage): Promise<void> {
       ? true
       : undefined
   );
+  return Date.now();
 }
 
 async function waitForProgramState(page: ViewerPage): Promise<void> {
@@ -449,6 +494,143 @@ function ownedBytes(source: Uint8Array): Uint8Array<ArrayBuffer> {
   return copy;
 }
 
+/**
+ * Runs before navigation, on the about:blank target, after the page exists. Starts the trace and
+ * writes its start mark so that preload is inside the trace. Then two OS readings 250 ms apart
+ * must both read idle on the same device. Returns the wall time, which starts the 30 s budget.
+ */
+async function beforeNavigation(
+  page: ViewerPage,
+  probe: DeviceProbe
+): Promise<number> {
+  await page.startPerformanceTrace(PRIMER_TRACE_CATEGORIES);
+  await page.evaluate(`performance.mark(${JSON.stringify(TRACE_START_MARK)})`);
+  const first = await readDeviceState(probe);
+  await sleep(PRE_NAV_SPACING_MS);
+  const second = await readDeviceState(probe);
+  if (first.running || second.running)
+    throw new Error(
+      `external audio before navigation: ${second.name} is running`
+    );
+  if (first.deviceId !== second.deviceId)
+    throw new Error(
+      `external audio before navigation: default output changed from ${first.name} to ${second.name}`
+    );
+  return Date.now();
+}
+
+/**
+ * Sequence L. After metadata the output must first run, within LATE_RUNNING_LIMIT_MS, then read
+ * idle on two consecutive polls, within DEVICE_IDLE_LIMIT_MS of load. A device change throws. A
+ * missed pattern is recorded as a failure but the trial still runs, so its evidence is kept. The
+ * idle pair is followed by a quiet settle and a fresh OS reading at the first trusted event.
+ */
+async function lateSettle(
+  probe: DeviceProbe,
+  loadedAt: number,
+  metadataAt: number
+): Promise<Settled> {
+  const failures: string[] = [];
+  let device: number | null = null;
+  let runningAt: number | null = null;
+  let lastRunning: number | null = null;
+  let priorIdle: number | null = null;
+  let idleFirst: number | null = null;
+  const deadline = loadedAt + DEVICE_IDLE_LIMIT_MS;
+  for (;;) {
+    const at = Date.now();
+    const state = await readDeviceState(probe);
+    if (device === null) device = state.deviceId;
+    else if (state.deviceId !== device)
+      throw new Error(
+        `default output changed to ${state.name} during the wait`
+      );
+    if (state.running) {
+      runningAt ??= at;
+      lastRunning = at;
+      priorIdle = null;
+    } else if (runningAt !== null) {
+      if (priorIdle !== null) {
+        idleFirst = priorIdle;
+        break;
+      }
+      priorIdle = at;
+    } else if (at - metadataAt >= LATE_RUNNING_LIMIT_MS) {
+      failures.push(
+        `default output not running within ${LATE_RUNNING_LIMIT_MS} ms after metadata`
+      );
+      break;
+    }
+    if (at >= deadline) break;
+    await sleep(SETTLE_POLL_MS);
+  }
+  if (idleFirst !== null) await sleep(QUIET_SETTLE_MS);
+  else if (runningAt !== null)
+    failures.push(
+      `default output not quiet within ${DEVICE_IDLE_LIMIT_MS / 1000} s of load`
+    );
+  else if (failures.length === 0)
+    failures.push('default output never ran after metadata');
+  const state = await readDeviceState(probe);
+  return {
+    failures,
+    hold: {
+      runningAfterMetadataMs:
+        runningAt === null ? null : runningAt - metadataAt,
+      holdFromMs: lastRunning === null ? null : lastRunning - metadataAt,
+      holdToMs: idleFirst === null ? null : idleFirst - metadataAt,
+      idleAfterLoadMs: idleFirst === null ? null : idleFirst - loadedAt,
+    },
+    state,
+  };
+}
+
+/** Sequence F. No wait: the OS is read as telemetry and the trusted events follow metadata. */
+async function freshSettle(probe: DeviceProbe): Promise<Settled> {
+  return { failures: [], hold: null, state: await readDeviceState(probe) };
+}
+
+/** The cold-state failures for a sequence L trial, read from its trace and its OS reading. */
+function quietFailures(quiet: QuietWindow, state: DeviceState): string[] {
+  const failures: string[] = [];
+  if (!quiet.covered)
+    failures.push(
+      `trace does not cover ${QUIET_WINDOW_MS} ms before the first trusted event`
+    );
+  if (quiet.offending.length > 0)
+    failures.push(
+      `output device activity before the first trusted event: ${quiet.offending.join(', ')}`
+    );
+  if (state.running)
+    failures.push(
+      `default output ${state.name} running at the first trusted event`
+    );
+  return failures;
+}
+
+/** The earliest trace event with one of these names at or after fromTs. Null when none. */
+function earliestAfter(
+  events: readonly TraceEvent[],
+  names: readonly string[],
+  fromTs: number
+): number | null {
+  let best: number | null = null;
+  for (const event of events) {
+    if (!names.includes(event.name) || event.ts < fromTs) continue;
+    if (best === null || event.ts < best) best = event.ts;
+  }
+  return best;
+}
+
+/** Device starts after Play that a sequence gates on. Null means reported only. */
+function expectedDeviceStarts(
+  sequence: Sequence,
+  arm: ViewerArm
+): number | null {
+  if (arm !== 'first-click') return 0;
+  return sequence === 'late' ? 1 : null;
+}
+
 interface Analysis {
   readonly coldness: Coldness;
   readonly dMs: number | null;
@@ -463,6 +645,7 @@ interface Analysis {
   readonly callbackCount: number;
   readonly callbackExcessMs: number | null;
   readonly firstCallbackMs: number | null;
+  readonly reported: Reported;
   readonly window: PrimerWindow;
   readonly failures: string[];
 }
@@ -476,7 +659,7 @@ function analyse(
   obs: PointerObservation,
   options: {
     firstClick: boolean;
-    expectedDeviceStarts: number;
+    expectedDeviceStarts: number | null;
     osIdleAtTrusted: boolean;
   }
 ): Analysis {
@@ -490,16 +673,6 @@ function analyse(
     firstTs === null
       ? { covered: false, offending: [] }
       : quietWindow(events, firstTs);
-  if (!quiet.covered)
-    failures.push(
-      `trace does not cover ${QUIET_WINDOW_MS} ms before the first trusted event`
-    );
-  if (quiet.offending.length > 0)
-    failures.push(
-      `output device activity before the first trusted event: ${quiet.offending.join(', ')}`
-    );
-  const creationBeforeTrusted =
-    firstTs === null ? {} : creationCounts(events, 0, firstTs - 1);
   const startsAfterTrusted =
     firstTs === null ? 0 : deviceStarts(events, firstTs);
   const coldness = classifyColdness({
@@ -541,6 +714,20 @@ function analyse(
       ? null
       : (firstCallback - playTs) / 1000;
 
+  const traceStart = markTs(events, TRACE_START_MARK);
+  const deviceAt =
+    traceStart === null
+      ? null
+      : earliestAfter(events, [DEVICE_START_EVENT], traceStart);
+  const creationAt =
+    traceStart === null
+      ? null
+      : earliestAfter(events, [...STREAM_CREATION_EVENTS], traceStart);
+  const trustedDeviceAt =
+    firstTs === null
+      ? null
+      : earliestAfter(events, [DEVICE_START_EVENT], firstTs);
+
   return {
     coldness,
     dMs: first?.dMs ?? null,
@@ -549,11 +736,27 @@ function analyse(
     gapsMs,
     keptMs,
     quiet,
-    creationBeforeTrusted,
+    creationBeforeTrusted:
+      firstTs === null ? {} : creationCounts(events, 0, firstTs - 1),
     deviceStartsAfterPlay: playedAfter,
     callbackCount: callbackTs.length,
     callbackExcessMs: deviceExcessMs(callbackTs),
     firstCallbackMs,
+    reported: {
+      firstDeviceStartFromTraceStartMs:
+        traceStart === null || deviceAt === null
+          ? null
+          : (deviceAt - traceStart) / 1000,
+      firstCreationFromTraceStartMs:
+        traceStart === null || creationAt === null
+          ? null
+          : (creationAt - traceStart) / 1000,
+      firstDeviceStartFromTrustedMs:
+        firstTs === null || trustedDeviceAt === null
+          ? null
+          : (trustedDeviceAt - firstTs) / 1000,
+      bufferingBeforeFirstFrame,
+    },
     window: {
       startupMs,
       gapsMs,
@@ -578,6 +781,7 @@ function shamTrialFailures(events: readonly TraceEvent[]): string[] {
 }
 
 function trialOf(
+  sequence: Sequence,
   arm: string,
   round: number,
   analysis: Analysis,
@@ -587,6 +791,7 @@ function trialOf(
   return {
     arm,
     round,
+    sequence,
     coldness: analysis.coldness,
     dMs: analysis.dMs,
     startupMs: analysis.startupMs,
@@ -594,11 +799,12 @@ function trialOf(
     p95GapMs: p95(analysis.gapsMs),
     intervals: analysis.gapsMs.length,
     deviceStartsAfterPlay: analysis.deviceStartsAfterPlay,
-    idleAfterMs: settled.idleAfterMs,
+    settle: settled.hold,
     osIdleAtTrusted: !settled.state.running,
     restCurrentTime: analysis.restCurrentTime,
     quiet: analysis.quiet,
     creationBeforeTrusted: analysis.creationBeforeTrusted,
+    reported: analysis.reported,
     callbackTelemetry: {
       count: analysis.callbackCount,
       excessMs: analysis.callbackExcessMs,
@@ -614,85 +820,6 @@ async function writeReceipt(
   value: unknown
 ): Promise<void> {
   await writeFile(join(scratch, name), JSON.stringify(value));
-}
-
-/**
- * Waits for the default output to go idle, then starts the trace and writes the trace-start mark.
- * The OS reading comes after the quiet window and before any trusted event. A running output there
- * throws: the trial is then a failure, never a warm start counted as a cold one.
- */
-async function settleBeforeTrusted(
-  page: ViewerPage,
-  probe: DeviceProbe,
-  loadedAt: number
-): Promise<Settled> {
-  const idle = await waitForDeviceIdle(probe, loadedAt);
-  await page.startPerformanceTrace(PRIMER_TRACE_CATEGORIES);
-  await page.evaluate(`performance.mark(${JSON.stringify(TRACE_START_MARK)})`);
-  await sleep(QUIET_SETTLE_MS);
-  const state = await readDeviceState(probe);
-  if (state.running)
-    throw new Error(
-      `default output ${state.name} running at the first trusted event`
-    );
-  return { idleAfterMs: idle.idleAfterMs, state };
-}
-
-/** Bare arm: fresh browser, Prepare, 1500 ms, then trusted Play. Receipts stay in scratch. */
-async function runBareTrial(
-  arm: BareArm,
-  round: number,
-  origin: string,
-  scratch: string,
-  probe: DeviceProbe
-): Promise<PrimerTrial> {
-  const page = await openViewer({
-    url: `${origin}/?arm=${arm}`,
-    origin,
-    sessionToken: 'primer-bare',
-  });
-  const loadedAt = Date.now();
-  try {
-    if (arm === 'av-blob') await waitForBlobSource(page);
-    await waitForMetadata(page);
-    const settled = await settleBeforeTrusted(page, probe, loadedAt);
-    await armPointer(page, 'button.otio-prepare', PREPARE_MARK, 0);
-    await page.click('button.otio-prepare');
-    await sleep(BARE_PREPARE_WAIT_MS);
-    await armPointer(page, 'button.otio-play', PLAY_MARK, WINDOW_MS);
-    await page.click('button.otio-play');
-    const obs = await pointerObservation(page, PLAY_MARK);
-    const report = await page.evaluate<BareReport>('window.__primerReport()');
-    const blobError = await page.evaluate<string | null>(
-      'window.__barePlayError ?? null'
-    );
-    const done = await page.stopPerformanceTrace();
-    const events = done.events as TraceEvent[];
-    const primerArm = PRIMER_BARE_ARMS.includes(arm);
-    const analysis = analyse(events, obs, {
-      firstClick: false,
-      expectedDeviceStarts: 0,
-      osIdleAtTrusted: !settled.state.running,
-    });
-    const extra: string[] = [];
-    if (done.truncated) extra.push('trace truncated: window is incomplete');
-    if (report.error) extra.push(`bare play failed: ${report.error}`);
-    if (blobError) extra.push(`blob source failed: ${blobError}`);
-    if (arm === 'sham') extra.push(...shamTrialFailures(events));
-    if (primerArm) extra.push(...gatePrimerWindow(analysis.window));
-    const trial = trialOf(arm, round, analysis, extra, settled);
-    await writeReceipt(scratch, `primer-bare-${arm}-${round}.json`, {
-      trial,
-      obs,
-      report,
-      clockDeficit: clockDeficitSummary(obs.frames ?? []),
-      trace: done,
-    });
-    console.log(`OTIO_PRIMER_TRIAL ${JSON.stringify(trial)}`);
-    return trial;
-  } finally {
-    await page.close();
-  }
 }
 
 /** The blob source is set asynchronously after the SHA-256 check. Wait until it is attached. */
@@ -724,7 +851,7 @@ function servedFailures(input: PrimerProofInput, arm: ViewerArm): string[] {
 }
 
 /**
- * Empty when the hidden leg is proven: the viewer is hidden, a visibility change to hidden was
+ * Null when the hidden leg is proven: the viewer is hidden, a visibility change to hidden was
  * logged before the freeze, and the primer read idle within the budget of that change. Otherwise
  * the reason, which the trial reports as an unproven hidden leg.
  */
@@ -746,26 +873,106 @@ function hiddenLegFailure(result: HideLog): string | null {
   return null;
 }
 
+/** Bare arm: fresh browser, Prepare, 1500 ms, then trusted Play. Receipts stay in scratch. */
+async function runBareTrial(
+  sequence: Sequence,
+  arm: BareArm,
+  round: number,
+  origin: string,
+  scratch: string,
+  probe: DeviceProbe
+): Promise<PrimerTrial> {
+  let loadedAt = 0;
+  const page = await openViewer({
+    url: `${origin}/?arm=${arm}`,
+    origin,
+    sessionToken: 'primer-bare',
+    beforeNavigate: async (target) => {
+      loadedAt = await beforeNavigation(target, probe);
+    },
+  });
+  try {
+    if (arm === 'av-blob') await waitForBlobSource(page);
+    const metadataAt = await waitForMetadata(page);
+    const settled =
+      sequence === 'late'
+        ? await lateSettle(probe, loadedAt, metadataAt)
+        : await freshSettle(probe);
+    await armPointer(page, 'button.otio-prepare', PREPARE_MARK, 0);
+    await page.click('button.otio-prepare');
+    await sleep(BARE_PREPARE_WAIT_MS);
+    await armPointer(page, 'button.otio-play', PLAY_MARK, WINDOW_MS);
+    await page.click('button.otio-play');
+    const obs = await pointerObservation(page, PLAY_MARK);
+    const report = await page.evaluate<BareReport>('window.__primerReport()');
+    const blobError = await page.evaluate<string | null>(
+      'window.__barePlayError ?? null'
+    );
+    const done = await page.stopPerformanceTrace();
+    const events = done.events as TraceEvent[];
+    const primerArm = PRIMER_BARE_ARMS.includes(arm);
+    const analysis = analyse(events, obs, {
+      firstClick: false,
+      expectedDeviceStarts: primerArm ? 0 : null,
+      osIdleAtTrusted: !settled.state.running,
+    });
+    const extra: string[] = [];
+    if (done.truncated) extra.push('trace truncated: window is incomplete');
+    if (report.error) extra.push(`bare play failed: ${report.error}`);
+    if (blobError) extra.push(`blob source failed: ${blobError}`);
+    if (sequence === 'late') {
+      extra.push(...settled.failures);
+      extra.push(...quietFailures(analysis.quiet, settled.state));
+      if (arm === 'sham') extra.push(...shamTrialFailures(events));
+      if (primerArm) extra.push(...gatePrimerWindow(analysis.window));
+    }
+    const trial = trialOf(sequence, arm, round, analysis, extra, settled);
+    await writeReceipt(
+      scratch,
+      `primer-bare-${sequence}-${arm}-${round}.json`,
+      {
+        trial,
+        obs,
+        report,
+        clockDeficit: clockDeficitSummary(obs.frames ?? []),
+        trace: done,
+      }
+    );
+    console.log(`OTIO_PRIMER_TRIAL ${JSON.stringify(trial)}`);
+    return trial;
+  } finally {
+    await page.close();
+  }
+}
+
 /** Viewer arm: one fresh browser on the real viewer, with the production or sham build installed. */
 async function runViewerTrial(
+  sequence: Sequence,
   arm: ViewerArm,
   round: number,
   input: PrimerProofInput
 ): Promise<{ trial: PrimerTrial; visibility: string | null }> {
   const sessionToken = await input.harness.createSession();
   input.router.resetServed();
+  let loadedAt = 0;
   const page = await openViewer({
     url: input.shareUrl,
     origin: input.harness.origin,
     sessionToken,
     instrumentEmits: true,
+    beforeNavigate: async (target) => {
+      loadedAt = await beforeNavigation(target, input.deviceProbe);
+    },
   });
-  const loadedAt = Date.now();
   try {
     await waitForProgramState(page);
-    await waitForMetadata(page);
-    const extra: string[] = [];
-    extra.push(...servedFailures(input, arm));
+    const metadataAt = await waitForMetadata(page);
+    const late = sequence === 'late';
+    const settled = late
+      ? await lateSettle(input.deviceProbe, loadedAt, metadataAt)
+      : await freshSettle(input.deviceProbe);
+    const extra: string[] = [...servedFailures(input, arm)];
+    if (late) extra.push(...settled.failures);
     // Before the first trusted event: primer idle, program paused and not moving.
     const primerBefore = await primerAttribute(page);
     const restBefore = await programState(page);
@@ -774,18 +981,9 @@ async function runViewerTrial(
     if (!restBefore.paused)
       extra.push('program was playing before the first trusted event');
 
-    const settled = await settleBeforeTrusted(
-      page,
-      input.deviceProbe,
-      loadedAt
-    );
-
     if (arm !== 'first-click') {
       // Prepared, sham and unmute: one genuine earlier interaction arms the primer.
-      const control =
-        arm === 'unmute'
-          ? 'button.otio-program-mute'
-          : '.otio-inspector-tab[data-tab="markers"]';
+      const control = arm === 'unmute' ? MUTE_CONTROL : MARKERS_TAB;
       if (arm === 'unmute') {
         const before = await page.evaluate<string | null>(MUTE_PRESSED);
         if (before !== 'false')
@@ -832,12 +1030,11 @@ async function runViewerTrial(
       extra.push('program moved before Play');
 
     await armPointer(page, 'button.otio-play', PLAY_MARK, WINDOW_MS);
-    if (arm === 'unmute')
-      await armPointer(page, 'button.otio-program-mute', UNMUTE_MARK, 0);
+    if (arm === 'unmute') await armPointer(page, MUTE_CONTROL, UNMUTE_MARK, 0);
     await page.click('button.otio-play');
     if (arm === 'unmute') {
       await sleep(UNMUTE_DELAY_MS);
-      await page.click('button.otio-program-mute');
+      await page.click(MUTE_CONTROL);
       try {
         await page.waitFor(
           'mute control aria-pressed false',
@@ -874,12 +1071,18 @@ async function runViewerTrial(
 
     const analysis = analyse(events, obs, {
       firstClick: arm === 'first-click',
-      expectedDeviceStarts: arm === 'first-click' ? 1 : 0,
+      expectedDeviceStarts: expectedDeviceStarts(sequence, arm),
       osIdleAtTrusted: !settled.state.running,
     });
-    if (arm === 'sham') extra.push(...shamTrialFailures(events));
+    if (late) extra.push(...quietFailures(analysis.quiet, settled.state));
+    if (arm === 'sham' && late) extra.push(...shamTrialFailures(events));
     if (arm === 'prepared' || arm === 'first-click')
-      extra.push(...gatePrimerWindow(analysis.window));
+      // Sequence F gates the user budgets only. Buffering is reported there, not gated.
+      extra.push(
+        ...gatePrimerWindow(
+          late ? analysis.window : { ...analysis.window, firstClick: false }
+        )
+      );
     if (arm === 'unmute') {
       if (unmuteAt === undefined) {
         extra.push('no Unmute pointer mark');
@@ -907,10 +1110,11 @@ async function runViewerTrial(
         extra.push('instrumented emits missing session or player');
     }
 
-    // Hidden leg: the primer must stop when the viewer is hidden. It is proven or it fails.
+    // Hidden leg, sequence F only: the primer must stop when the viewer is hidden. It is proven or
+    // it fails. Headless may keep the viewer visible, in which case the leg is unproven.
     let visibility: string | null = null;
     let hidden: HideLog | null = null;
-    if (arm === 'prepared' && round === 0) {
+    if (sequence === 'fresh' && arm === 'prepared' && round === 0) {
       hidden = await page.hideViewer();
       const reason = hiddenLegFailure(hidden);
       if (reason === null) {
@@ -921,15 +1125,19 @@ async function runViewerTrial(
       }
     }
 
-    const trial = trialOf(arm, round, analysis, extra, settled);
-    await writeReceipt(input.scratch, `primer-viewer-${arm}-${round}.json`, {
-      trial,
-      obs,
-      trace: done,
-      unmuteAt: unmuteAt ?? null,
-      hidden,
-      clockDeficit: clockDeficitSummary(obs.frames ?? []),
-    });
+    const trial = trialOf(sequence, arm, round, analysis, extra, settled);
+    await writeReceipt(
+      input.scratch,
+      `primer-viewer-${sequence}-${arm}-${round}.json`,
+      {
+        trial,
+        obs,
+        trace: done,
+        unmuteAt: unmuteAt ?? null,
+        hidden,
+        clockDeficit: clockDeficitSummary(obs.frames ?? []),
+      }
+    );
     console.log(`OTIO_PRIMER_TRIAL ${JSON.stringify(trial)}`);
     return { trial, visibility };
   } finally {
@@ -937,7 +1145,10 @@ async function runViewerTrial(
   }
 }
 
-/** Primer alone for 12 s, with or without the immediate-pause feature. Exactly one device start. */
+/**
+ * Primer alone for 12 s, with or without the immediate-pause feature. Sequence L, so the output is
+ * idle and quiet before Prepare. Exactly one device start after Prepare.
+ */
 async function runWrapTrial(
   immediatePause: boolean,
   origin: string,
@@ -950,23 +1161,26 @@ async function runWrapTrial(
   const extraArgs: PrimerChromeArg[] = immediatePause
     ? [PRIMER_IMMEDIATE_PAUSE_ARG]
     : [];
+  let loadedAt = 0;
   const page = await openViewer({
     url: `${origin}/?arm=av`,
     origin,
     sessionToken: 'primer-wrap',
     extraArgs,
+    beforeNavigate: async (target) => {
+      loadedAt = await beforeNavigation(target, probe);
+    },
   });
-  const loadedAt = Date.now();
   try {
-    await waitForMetadata(page);
-    await settleBeforeTrusted(page, probe, loadedAt);
+    const metadataAt = await waitForMetadata(page);
+    const settled = await lateSettle(probe, loadedAt, metadataAt);
+    const failures: string[] = [...settled.failures];
     await armPointer(page, 'button.otio-prepare', PREPARE_MARK, 0);
     await page.click('button.otio-prepare');
     await sleep(WRAP_MS);
     const report = await page.evaluate<WrapReport>('window.__primerReport()');
     const done = await page.stopPerformanceTrace();
     const events = done.events as TraceEvent[];
-    const failures: string[] = [];
     if (done.truncated) failures.push('trace truncated');
     if (report.error) failures.push(`primer failed: ${report.error}`);
     if (report.primer?.paused !== false)
@@ -980,15 +1194,9 @@ async function runWrapTrial(
         primerPaused: report.primer?.paused ?? null,
       };
     }
-    const quiet = quietWindow(events, prepareTs);
-    if (!quiet.covered)
-      failures.push(
-        `trace does not cover ${QUIET_WINDOW_MS} ms before the first trusted event`
-      );
-    if (quiet.offending.length > 0)
-      failures.push(
-        `output device activity before the first trusted event: ${quiet.offending.join(', ')}`
-      );
+    failures.push(
+      ...quietFailures(quietWindow(events, prepareTs), settled.state)
+    );
     const starts = deviceStarts(events, prepareTs);
     if (starts !== 1)
       failures.push(
@@ -998,14 +1206,6 @@ async function runWrapTrial(
   } finally {
     await page.close();
   }
-}
-
-function bareGroup(arm: BareArm): string {
-  return `bare:${arm}`;
-}
-
-function viewerGroup(arm: ViewerArm): string {
-  return `viewer:${arm}`;
 }
 
 /**
@@ -1084,24 +1284,72 @@ export async function runPrimerProof(
   const trials = new Map<string, PrimerTrial[]>();
   const failures = new Map<string, string[]>();
   const wrapFailures: string[] = [];
-  const record = (group: string, trial: PrimerTrial) => {
-    trials.set(group, [...(trials.get(group) ?? []), trial]);
+  const group = (sequence: Sequence, kind: 'bare' | 'viewer', arm: string) =>
+    `${sequence}/${kind}/${arm}`;
+  const record = (name: string, trial: PrimerTrial) => {
+    trials.set(name, [...(trials.get(name) ?? []), trial]);
     const messages = trial.failures.map(
       (failure) => `round ${trial.round} ${trial.arm}: ${failure}`
     );
     if (messages.length)
-      failures.set(group, [...(failures.get(group) ?? []), ...messages]);
+      failures.set(name, [...(failures.get(name) ?? []), ...messages]);
   };
   const recordError = (
-    group: string,
+    name: string,
     round: number,
     arm: string,
     error: unknown
   ) =>
-    failures.set(group, [
-      ...(failures.get(group) ?? []),
+    failures.set(name, [
+      ...(failures.get(name) ?? []),
       `round ${round} ${arm}: ${messageOf(error)}`,
     ]);
+
+  const bareCase = async (sequence: Sequence, arm: BareArm, round: number) => {
+    const name = group(sequence, 'bare', arm);
+    if (arm === 'video-only' && remuxFailure) {
+      recordError(name, round, arm, remuxFailure);
+      return;
+    }
+    try {
+      record(
+        name,
+        await runBareTrial(
+          sequence,
+          arm,
+          round,
+          origin,
+          input.scratch,
+          input.deviceProbe
+        )
+      );
+    } catch (error) {
+      recordError(name, round, arm, error);
+    }
+  };
+
+  const viewerCase = async (
+    sequence: Sequence,
+    arm: ViewerArm,
+    round: number
+  ) => {
+    const name = group(sequence, 'viewer', arm);
+    try {
+      await input.router.activate(
+        arm === 'sham' ? input.shamBuild : input.productionBuild
+      );
+      const outcome = await runViewerTrial(sequence, arm, round, input);
+      record(name, outcome.trial);
+      if (outcome.visibility)
+        console.log(
+          `OTIO_PRIMER_VISIBILITY ${JSON.stringify({ sequence, arm, round, visibility: outcome.visibility })}`
+        );
+    } catch (error) {
+      recordError(name, round, arm, error);
+    } finally {
+      await input.router.activate(input.productionBuild);
+    }
+  };
 
   try {
     for (const immediatePause of [false, true]) {
@@ -1124,57 +1372,28 @@ export async function runPrimerProof(
     }
 
     for (let round = 0; round < PRIMER_ROUNDS; round++) {
-      for (const arm of rotate(BARE_ARMS, round)) {
-        if (arm === 'video-only' && remuxFailure) {
-          recordError(bareGroup(arm), round, arm, remuxFailure);
-          continue;
-        }
-        try {
-          record(
-            bareGroup(arm),
-            await runBareTrial(
-              arm,
-              round,
-              origin,
-              input.scratch,
-              input.deviceProbe
-            )
-          );
-        } catch (error) {
-          recordError(bareGroup(arm), round, arm, error);
-        }
-      }
-
+      for (const arm of rotate(BARE_ARMS, round))
+        await bareCase('late', arm, round);
       const viewerArms = rotate(
         VIEWER_ARMS.filter((arm) => arm !== 'unmute' || round < 3),
         round
       );
-      for (const arm of viewerArms) {
-        const isSham = arm === 'sham';
-        try {
-          await input.router.activate(
-            isSham ? input.shamBuild : input.productionBuild
-          );
-          const outcome = await runViewerTrial(arm, round, input);
-          record(viewerGroup(arm), outcome.trial);
-          if (outcome.visibility)
-            console.log(
-              `OTIO_PRIMER_VISIBILITY ${JSON.stringify({ arm, round, visibility: outcome.visibility })}`
-            );
-        } catch (error) {
-          recordError(viewerGroup(arm), round, arm, error);
-        } finally {
-          await input.router.activate(input.productionBuild);
-        }
-      }
+      for (const arm of viewerArms) await viewerCase('late', arm, round);
+      for (const arm of viewerArms) await viewerCase('fresh', arm, round);
+      for (const arm of rotate(BARE_ARMS, round))
+        await bareCase('fresh', arm, round);
     }
   } finally {
     await server.stop(true);
   }
 
-  const bare = (arm: BareArm) => trials.get(bareGroup(arm)) ?? [];
-  const viewer = (arm: ViewerArm) => trials.get(viewerGroup(arm)) ?? [];
-  const failuresOf = (group: string) => failures.get(group) ?? [];
+  const lateBare = (arm: BareArm) =>
+    trials.get(group('late', 'bare', arm)) ?? [];
+  const lateViewer = (arm: ViewerArm) =>
+    trials.get(group('late', 'viewer', arm)) ?? [];
+  const freshViewer = (arm: ViewerArm) =>
+    trials.get(group('fresh', 'viewer', arm)) ?? [];
+  const failuresOf = (name: string) => failures.get(name) ?? [];
   const cold = (list: readonly PrimerTrial[]) =>
     list.filter((trial) => trial.coldness === 'cold');
   const inconclusive = (name: string, list: readonly PrimerTrial[]) =>
@@ -1199,6 +1418,12 @@ export async function runPrimerProof(
     'context',
     'video-only',
   ];
+  const freshReported: PrimerTrial[] = [
+    ...BARE_ARMS.flatMap(
+      (arm) => trials.get(group('fresh', 'bare', arm)) ?? []
+    ),
+    ...(trials.get(group('fresh', 'viewer', 'sham')) ?? []),
+  ];
   return [
     {
       stage: 'primer-wrap-single-start',
@@ -1208,71 +1433,96 @@ export async function runPrimerProof(
     {
       stage: 'primer-bare-none-stalls',
       failures: [
-        ...failuresOf(bareGroup('none')),
-        ...inconclusive('bare none', bare('none')),
-        ...stallRequired('bare none', bare('none')),
+        ...failuresOf(group('late', 'bare', 'none')),
+        ...inconclusive('bare none', lateBare('none')),
+        ...stallRequired('bare none', lateBare('none')),
       ],
-      trials: bare('none'),
+      trials: lateBare('none'),
     },
     {
       stage: 'primer-bare-sham-stalls',
       failures: [
-        ...failuresOf(bareGroup('sham')),
-        ...inconclusive('bare sham', bare('sham')),
-        ...stallRequired('bare sham', bare('sham')),
+        ...failuresOf(group('late', 'bare', 'sham')),
+        ...inconclusive('bare sham', lateBare('sham')),
+        ...stallRequired('bare sham', lateBare('sham')),
       ],
-      trials: bare('sham'),
+      trials: lateBare('sham'),
     },
     {
       stage: 'primer-bare-real-shares-stream',
       failures: [
-        ...failuresOf(bareGroup('av')),
-        ...inconclusive('bare av', bare('av')),
+        ...failuresOf(group('late', 'bare', 'av')),
+        ...inconclusive('bare av', lateBare('av')),
       ],
-      trials: bare('av'),
+      trials: lateBare('av'),
     },
     {
       stage: 'primer-bare-blob-shares-stream',
       failures: [
-        ...failuresOf(bareGroup('av-blob')),
-        ...inconclusive('bare av-blob', bare('av-blob')),
+        ...failuresOf(group('late', 'bare', 'av-blob')),
+        ...inconclusive('bare av-blob', lateBare('av-blob')),
       ],
-      trials: bare('av-blob'),
+      trials: lateBare('av-blob'),
     },
     {
       stage: 'primer-bare-report-controls',
       failures: [
         ...(remuxFailure ? [remuxFailure] : []),
-        ...reportArms.flatMap((arm) => failuresOf(bareGroup(arm))),
+        ...reportArms.flatMap((arm) => failuresOf(group('late', 'bare', arm))),
       ],
-      trials: reportArms.flatMap((arm) => bare(arm)),
+      trials: reportArms.flatMap((arm) => lateBare(arm)),
     },
     {
       stage: 'viewer-primer-prepared',
       failures: [
-        ...failuresOf(viewerGroup('prepared')),
-        ...inconclusive('viewer prepared', viewer('prepared')),
+        ...failuresOf(group('late', 'viewer', 'prepared')),
+        ...inconclusive('viewer prepared', lateViewer('prepared')),
       ],
-      trials: viewer('prepared'),
+      trials: lateViewer('prepared'),
     },
     {
       stage: 'viewer-primer-sham-stalls',
       failures: [
-        ...failuresOf(viewerGroup('sham')),
-        ...inconclusive('viewer sham', viewer('sham')),
-        ...stallRequired('viewer sham', viewer('sham')),
+        ...failuresOf(group('late', 'viewer', 'sham')),
+        ...inconclusive('viewer sham', lateViewer('sham')),
+        ...stallRequired('viewer sham', lateViewer('sham')),
       ],
-      trials: viewer('sham'),
+      trials: lateViewer('sham'),
     },
     {
       stage: 'viewer-first-click',
-      failures: failuresOf(viewerGroup('first-click')),
-      trials: viewer('first-click'),
+      failures: failuresOf(group('late', 'viewer', 'first-click')),
+      trials: lateViewer('first-click'),
     },
     {
       stage: 'viewer-unmute',
-      failures: failuresOf(viewerGroup('unmute')),
-      trials: viewer('unmute'),
+      failures: failuresOf(group('late', 'viewer', 'unmute')),
+      trials: lateViewer('unmute'),
+    },
+    {
+      stage: 'fresh-viewer-prepared',
+      failures: failuresOf(group('fresh', 'viewer', 'prepared')),
+      trials: freshViewer('prepared'),
+    },
+    {
+      stage: 'fresh-viewer-first-click',
+      failures: failuresOf(group('fresh', 'viewer', 'first-click')),
+      trials: freshViewer('first-click'),
+    },
+    {
+      stage: 'fresh-viewer-unmute',
+      failures: failuresOf(group('fresh', 'viewer', 'unmute')),
+      trials: freshViewer('unmute'),
+    },
+    {
+      // Reported arms: sham and the bare arms in sequence F. They gate nothing, so only their
+      // infrastructure errors and precondition failures (external audio before navigation) fail.
+      stage: 'fresh-reported',
+      failures: [
+        ...BARE_ARMS.flatMap((arm) => failuresOf(group('fresh', 'bare', arm))),
+        ...failuresOf(group('fresh', 'viewer', 'sham')),
+      ],
+      trials: freshReported,
     },
   ];
 }

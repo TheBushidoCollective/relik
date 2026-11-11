@@ -21,7 +21,7 @@
  *      and sham controls must stall,
  *      and the viewer's time mapping, focus, comment and audio stages still run after them.
  *
- * Prints OTIO_PROGRAM_PATH_OK only after all twenty-five stages pass. Nothing is skipped or softened.
+ * Prints OTIO_PROGRAM_PATH_OK only after all twenty-nine stages pass. Nothing is skipped or softened.
  *
  * Platform: the publisher renders only with its isolated profile directory (RAM disk on macOS,
  * tmpfs on Linux, as its docs define). Without it every timeline is unsupported-browser and the
@@ -709,7 +709,7 @@ try {
     deferFailure('audio-arm-setup', error);
   }
 
-  // Stages 21-25: the viewer, against the positive relic.
+  // Final viewer stages exercise the positive relic.
   const token = await harness.createSession();
   const page: ViewerPage = await openViewer({
     url: positive.shareUrl,
@@ -940,7 +940,7 @@ try {
       `OTIO proof failed: ${deferredFailures.length} independent failure(s)`
     );
   }
-  assert.equal(passed.length, 25, `expected 25 stages, ran ${passed.length}`);
+  assert.equal(passed.length, 29, `expected 29 stages, ran ${passed.length}`);
   console.log('OTIO_PROGRAM_PATH_OK');
 } finally {
   await rm(instrumentedViewerDir, { recursive: true, force: true });
