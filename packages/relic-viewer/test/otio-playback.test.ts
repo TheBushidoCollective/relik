@@ -4467,6 +4467,201 @@ describe('otio playback controller', () => {
     }
   );
 
+  const recoveryPreReadFaults: ReadonlyArray<
+    'recovery-earlier-feasible' | null
+  > = [null, 'recovery-earlier-feasible'];
+  test.each(recoveryPreReadFaults)(
+    'playback reads the closing stamp before the recovery request, recovery keeps the 960-frame bound, fault=%s',
+    async (fault) => {
+      const fixture = independentPcmFixture(false, false, undefined, {
+        proofBudget: true,
+        autoEndSources: true,
+      });
+      const proof = globalThis as typeof globalThis & {
+        __otioProofPcm?: boolean;
+        __otioProofPcmFault?: 'recovery-earlier-feasible' | null;
+      };
+      const priorProof = proof.__otioProofPcm;
+      const proofRecords: Record<string, unknown>[] = [];
+      // Timestamp reads taken before each proof record that the assertions order against.
+      const marks: { atRequest: number | null; atBridgeRead: number | null } = {
+        atRequest: null,
+        atBridgeRead: null,
+      };
+      const originalLog = console.log;
+      console.log = (...args: unknown[]) => {
+        const detail = args[1];
+        if (
+          args[0] !== 'OTIO_PROOF_PCM' ||
+          !detail ||
+          typeof detail !== 'object' ||
+          !('event' in detail)
+        )
+          return;
+        const record: Record<string, unknown> = { ...detail };
+        proofRecords.push(record);
+        const reads = fixture.audioContext.timestampReads.length;
+        if (record.event === 'recovery-request' && marks.atRequest === null)
+          marks.atRequest = reads;
+        if (
+          record.event === 'clock-site' &&
+          record.site === 'recovery-bridge' &&
+          record.phase === 'read'
+        )
+          marks.atBridgeRead = reads;
+      };
+      proof.__otioProofPcm = true;
+      try {
+        await fixture.start();
+        const arm = fixture.commands.find((command) => command.type === 'arm')!;
+        const f0 = Number(arm.f0);
+        fixture.holdExtendResponses(true);
+        for (let i = 0; i < 30 && fixture.heldExtendCount === 0; i++) {
+          await fixture.advanceSmooth(
+            fixture.wall + 16,
+            fixture.renderFrame + 768,
+            fixture.outputFrame + 768
+          );
+          raf?.(fixture.wall);
+          await fixture.flush();
+        }
+        expect(fixture.heldExtendCount).toBe(1);
+        const compositionNow = fixture.renderFrame - f0;
+        const stopComposition =
+          (Math.floor((compositionNow + 256) / 2048) + 2) * 2048 - 32;
+        const alignedFrame = f0 + stopComposition - 256;
+        const advanceFrames = alignedFrame - fixture.renderFrame;
+        expect(advanceFrames).toBeGreaterThan(2048);
+        expect(f0 + stopComposition).toBeLessThan(Number(arm.throughFrame));
+        await fixture.advanceSmooth(
+          fixture.wall + advanceFrames / 48,
+          alignedFrame,
+          fixture.outputFrame + advanceFrames
+        );
+        const recentClockReads = fixture.audioContext.timestampReads.filter(
+          (time) => fixture.wall - time <= 42
+        );
+        expect(recentClockReads.length).toBeGreaterThanOrEqual(4);
+        expect(
+          recentClockReads.at(-1)! - recentClockReads[0]!
+        ).toBeGreaterThanOrEqual(30);
+        const track = Object.keys(fixture.playback.getState().tracks)[0]!;
+        fixture.playback.setTrackVisibility(track, false);
+        const requestedStop = f0 + stopComposition;
+        await fixture.advance(
+          fixture.wall + 64 / 48,
+          fixture.renderFrame + 64,
+          fixture.outputFrame + 64
+        );
+        expect(requestedStop).toBeGreaterThan(fixture.renderFrame);
+        fixture.holdExtendResponses(false);
+        await fixture.flush();
+        const stop = fixture.commands.find(
+          (command) => command.type === 'stop'
+        )!;
+        expect(Number(stop.stopFrame)).toBe(requestedStop);
+        // Render reaches the stop: the gate closes, and its closure ACK is queued, not delivered.
+        await fixture.advance(
+          fixture.wall + 8,
+          requestedStop,
+          fixture.outputFrame + (requestedStop - fixture.renderFrame),
+          false
+        );
+        const closingOutput = fixture.outputFrame;
+        // A real playback read takes the closing stamp before the closure ACK is delivered.
+        const readsBeforeRaf = fixture.audioContext.timestampReads.length;
+        raf?.(fixture.wall);
+        expect(fixture.audioContext.timestampReads.length).toBeGreaterThan(
+          readsBeforeRaf
+        );
+        expect(fixture.audioContext.timestampTrace.at(-1)!.outputFrame).toBe(
+          closingOutput
+        );
+        const readsAfterPreRead = fixture.audioContext.timestampReads.length;
+        proof.__otioProofPcmFault = fault;
+        await fixture.deliverCallbacks();
+        // One 256-frame device callback: the render moves now, and its stamp is published later.
+        const callbackRender = fixture.renderFrame + 256;
+        await fixture.advance(fixture.wall + 1, callbackRender, closingOutput);
+        await fixture.advance(
+          fixture.wall + 4.33,
+          callbackRender,
+          closingOutput + 256
+        );
+        // The recovery request follows the playback read that took the closing stamp.
+        expect(marks.atRequest, 'recovery-request record').not.toBeNull();
+        expect(marks.atRequest!).toBeGreaterThanOrEqual(readsAfterPreRead);
+        // The recovery's accepted bridge read is the stamp the recovery used.
+        const useRecord = proofRecords.find(
+          (record) =>
+            record.event === 'clock-site' &&
+            record.site === 'recovery-bridge' &&
+            record.phase === 'use'
+        );
+        expect(useRecord, 'recovery-bridge use record').toBeDefined();
+        expect(
+          marks.atBridgeRead,
+          'recovery-bridge read record'
+        ).not.toBeNull();
+        const bridgeRead =
+          fixture.audioContext.timestampTrace[marks.atBridgeRead!];
+        expect(bridgeRead, 'recovery-bridge trace entry').toBeDefined();
+        const usedStamp: unknown = useRecord?.usedStamp;
+        if (
+          typeof usedStamp !== 'object' ||
+          usedStamp === null ||
+          !('performanceTime' in usedStamp)
+        )
+          throw new Error('recovery-bridge use record has no stamp');
+        expect(usedStamp.performanceTime).toBeCloseTo(bridgeRead!.perf, 6);
+        for (
+          let i = 0;
+          i < 20 &&
+          fixture.commands.filter((command) => command.type === 'arm').length <
+            2;
+          i++
+        )
+          await fixture.advance(
+            fixture.wall + 1,
+            fixture.renderFrame + 48,
+            fixture.outputFrame + 48
+          );
+        const arms = fixture.commands.filter(
+          (command) => command.type === 'arm'
+        );
+        expect(arms, JSON.stringify(fixture.playback.getState())).toHaveLength(
+          2
+        );
+        const successor = Number(arms[1]!.f0);
+        expect(successor - requestedStop).toBe(fault ? 959 : 960);
+        const faultRecords = proofRecords.filter(
+          (record) => record.event === 'recovery-fault'
+        );
+        if (fault)
+          expect(
+            faultRecords.filter(
+              (record) =>
+                record.code === fault && record.boundaryFrame === requestedStop
+            )
+          ).toHaveLength(1);
+        else expect(faultRecords).toHaveLength(0);
+        expect(
+          fixture.playback
+            .getState()
+            .diagnostics.some((item) =>
+              item.message.includes('no feasible frame')
+            )
+        ).toBe(false);
+      } finally {
+        fixture.holdExtendResponses(false);
+        console.log = originalLog;
+        if (priorProof === undefined) delete proof.__otioProofPcm;
+        else proof.__otioProofPcm = priorProof;
+        fixture.restore();
+      }
+    }
+  );
+
   test('an invalid output clock while a stop waits for an extend ACK fails closed', async () => {
     const fixture = independentPcmFixture(false, false, undefined, {
       proofBudget: true,
