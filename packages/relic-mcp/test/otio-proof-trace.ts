@@ -552,7 +552,7 @@ export const otioProofTracePrelude = String.raw`(() => {
                 const origin = bank.startFrame - 256;
                 param.cancelScheduledValues(origin / context.sampleRate);
                 param.setValueAtTime(-384, origin / context.sampleRate);
-                param.linearRampToValueAtTime(65536, (bank.endFrame + 128) / context.sampleRate);
+                param.linearRampToValueAtTime(131072 - 384, (origin + 131072) / context.sampleRate);
               }
             }
             return send(...args);
@@ -609,6 +609,8 @@ export const otioProofTracePrelude = String.raw`(() => {
             if (event.data?.type === 'clock-fault' || event.data?.type === 'protocol-fault' || event.data?.type === 'disposed')
               proofGate.terminated = true;
             if (event.data?.type === 'clock-trace-stopped' && proofGate.bootstrapTrace) proofGate.bootstrapSettled = true;
+            if (event.data?.type === 'clock-trace-stopped' && proofGate.traceOverlap === 'stopping') proofGate.traceOverlap = 'starting';
+            else if (event.data?.type === 'clock-trace-started' && proofGate.traceOverlap === 'starting') proofGate.traceOverlap = false;
             if (['anchor-certified', 'bank-installed', 'bank-rejected', 'clock-promoted'].includes(event.data?.type))
               recordEvent('audio-context-gate-observation', null, {direction:'receive', type:event.data.type,
                 state:context.state, contextTime:context.currentTime, clockEpoch:event.data.clockEpoch});
@@ -908,7 +910,7 @@ export const otioProofTracePrelude = String.raw`(() => {
       if (action === 'start') {
         clearTimeout(gate.bootstrapTimer);
         if (gate.bootstrapTrace && !gate.bootstrapSettled) {
-          gate.traceOverlap = true;
+          gate.traceOverlap = 'stopping';
           recordEvent('clock-trace-phase-overlap', null, {clockEpoch:gate.epoch});
           gate.node.port.postMessage({type:'proof-trace-stop', clockEpoch:gate.epoch});
         }
