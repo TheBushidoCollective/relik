@@ -848,6 +848,8 @@ body {
 .toggle-row {
   display: flex;
   justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 0.5rem;
   margin-bottom: 0.75rem;
 }
 
@@ -6435,4 +6437,101 @@ mark[data-concealed] {
   justify-content: flex-end;
   flex-wrap: wrap;
   gap: 0.5rem;
+}
+
+/* ---------- print: one document, not the page around it ---------- */
+
+/*
+ * "Save as PDF" prints a root the viewer builds from the source (see
+ * `printProse`), and everything else in the body is hidden for the job. The
+ * root is never shown on screen.
+ *
+ * The ink and rule tokens are pinned light inside it: a reader on a dark
+ * theme would otherwise print pale text meant for a dark ground onto white
+ * paper, which is a blank page that looks like a success.
+ */
+.print-root {
+  display: none;
+}
+
+@media print {
+  @page {
+    margin: 18mm 16mm;
+  }
+
+  html.printing,
+  html.printing body {
+    display: block;
+    height: auto;
+    overflow: visible;
+    background: #fff;
+  }
+
+  html.printing body > :not(.print-root) {
+    display: none !important;
+  }
+
+  html.printing .print-root {
+    display: block;
+    color-scheme: light;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+    --ink: #16191a;
+    --ink-soft: #4a5153;
+    --rule: #c4c8c4;
+    --rule-strong: #a3a9a5;
+    --surface: #f1f2f0;
+    --patina-ink: #0f3b37;
+    color: var(--ink);
+    background: #fff;
+  }
+
+  .print-root .prose {
+    font-size: 11pt;
+    line-height: 1.5;
+  }
+
+  .print-root .prose h1,
+  .print-root .prose h2,
+  .print-root .prose h3,
+  .print-root .prose h4,
+  .print-root .prose h5,
+  .print-root .prose h6 {
+    break-after: avoid;
+  }
+
+  .print-root .prose h1,
+  .print-root .prose h2 {
+    margin-top: 1.4rem;
+  }
+
+  /* Wrapped, not scrolled: paper has no horizontal scrollbar. */
+  .print-root .prose pre {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    overflow: visible;
+  }
+
+  .print-root .md-scroll {
+    overflow: visible;
+    border: 0;
+  }
+
+  .print-root .prose table {
+    font-size: 0.9em;
+  }
+
+  .print-root .prose tr,
+  .print-root .prose blockquote,
+  .print-root .prose li {
+    break-inside: avoid;
+  }
+
+  .print-root .prose thead {
+    display: table-header-group;
+  }
+
+  .print-root .prose a {
+    color: var(--patina-ink);
+  }
 }

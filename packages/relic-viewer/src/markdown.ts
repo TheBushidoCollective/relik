@@ -91,16 +91,129 @@ function inline(source: string): string {
   return out.split(SENTINEL).join('');
 }
 
-export function renderMarkdown(source: string): string {
+/**
+ * A parsed block. Inline text is kept as source rather than parsed, because
+ * `inline` is the one place that decides what emphasis, links, and code spans
+ * mean, and every emitter reads its answer through it.
+ */
+export type Block =
+  | { readonly kind: 'heading'; readonly level: number; readonly text: string }
+  | { readonly kind: 'paragraph'; readonly text: string }
+  | { readonly kind: 'code'; readonly language: string; readonly text: string }
+  | { readonly kind: 'rule' }
+  | { readonly kind: 'quote'; readonly blocks: readonly Block[] }
+  | {
+      readonly kind: 'list';
+      readonly ordered: boolean;
+      readonly items: readonly string[];
+    }
+  | {
+      readonly kind: 'table';
+      readonly header: readonly string[];
+      readonly rows: readonly (readonly string[])[];
+    };
+
+/**
+ * One styled stretch of text. Formatting is flags rather than a tree because
+ * the emphasis rules in `inline` are independent passes that can overlap, and
+ * a word processor wants runs, not nesting.
+ */
+export interface InlineRun {
+  readonly text: string;
+  readonly bold: boolean;
+  readonly italic: boolean;
+  readonly strike: boolean;
+  readonly code: boolean;
+  /** The alt text of an image, which is all that ever renders of one. */
+  readonly image: boolean;
+  /** Present only for a link that passed `safeHref`. */
+  readonly href?: string;
+}
+
+const ENTITIES: Readonly<Record<string, string>> = {
+  '&amp;': '&',
+  '&lt;': '<',
+  '&gt;': '>',
+  '&quot;': '"',
+  '&#39;': "'",
+};
+
+/** The inverse of `escapeHtml`, in one pass so `&amp;lt;` stays `&lt;`. */
+function unescapeHtml(value: string): string {
+  return value.replace(
+    /&(?:amp|lt|gt|quot|#39);/g,
+    (entity) => ENTITIES[entity] as string
+  );
+}
+
+/**
+ * The styled runs of one inline source string, for emitters that are not HTML.
+ *
+ * This reads the output of `inline` instead of re-implementing it, so a Word
+ * file and the page it was exported from cannot disagree about what is bold,
+ * what is a link, or which links survive `safeHref`. That is safe to do
+ * because the markup is closed: `inline` escapes first, so every `<` in its
+ * output is a tag it emitted itself, from a fixed set.
+ */
+export function inlineRuns(source: string): InlineRun[] {
+  const runs: InlineRun[] = [];
+  const open = { bold: 0, italic: 0, strike: 0, code: 0, image: 0 };
+  let href: string | undefined;
+
+  const pattern = /<(\/?)(strong|em|del|code|a|span)((?:\s[^>]*)?)>|([^<]+)/g;
+  for (const token of inline(source).matchAll(pattern)) {
+    const text = token[4];
+    if (text !== undefined) {
+      runs.push({
+        text: unescapeHtml(text),
+        bold: open.bold > 0,
+        italic: open.italic > 0,
+        strike: open.strike > 0,
+        code: open.code > 0,
+        image: open.image > 0,
+        ...(href === undefined ? {} : { href }),
+      });
+      continue;
+    }
+
+    const closing = token[1] === '/';
+    const delta = closing ? -1 : 1;
+    switch (token[2]) {
+      case 'strong':
+        open.bold = Math.max(0, open.bold + delta);
+        break;
+      case 'em':
+        open.italic = Math.max(0, open.italic + delta);
+        break;
+      case 'del':
+        open.strike = Math.max(0, open.strike + delta);
+        break;
+      case 'code':
+        open.code = Math.max(0, open.code + delta);
+        break;
+      case 'span':
+        open.image = Math.max(0, open.image + delta);
+        break;
+      case 'a':
+        href = closing
+          ? undefined
+          : unescapeHtml(/href="([^"]*)"/.exec(token[3] ?? '')?.[1] ?? '');
+        break;
+    }
+  }
+  return runs;
+}
+
+export function parseMarkdown(source: string): Block[] {
   const lines = source.replace(/\r\n?/g, '\n').split('\n');
-  const out: string[] = [];
+  const out: Block[] = [];
 
   let index = 0;
   let paragraph: string[] = [];
 
   const flushParagraph = (): void => {
     if (paragraph.length === 0) return;
-    out.push(`<p>${inline(paragraph.join(' '))}</p>`);
+    out.push({ kind: 'paragraph', text: paragraph.join(' ') });
     paragraph = [];
   };
 
@@ -118,26 +231,25 @@ export function renderMarkdown(source: string): string {
         index++;
       }
       index++;
-      const attribute =
-        language.length > 0 ? ` data-language="${escapeHtml(language)}"` : '';
-      out.push(
-        `<pre${attribute}><code>${escapeHtml(body.join('\n'))}</code></pre>`
-      );
+      out.push({ kind: 'code', language, text: body.join('\n') });
       continue;
     }
 
     const heading = /^(#{1,6})\s+(.*)$/.exec(line);
     if (heading !== null) {
       flushParagraph();
-      const level = (heading[1] as string).length;
-      out.push(`<h${level}>${inline(heading[2] as string)}</h${level}>`);
+      out.push({
+        kind: 'heading',
+        level: (heading[1] as string).length,
+        text: heading[2] as string,
+      });
       index++;
       continue;
     }
 
     if (/^\s*(-\s*-\s*-|\*\s*\*\s*\*|_\s*_\s*_)[-*_\s]*$/.test(line)) {
       flushParagraph();
-      out.push('<hr>');
+      out.push({ kind: 'rule' });
       index++;
       continue;
     }
@@ -149,7 +261,7 @@ export function renderMarkdown(source: string): string {
         quoted.push((lines[index] as string).replace(/^\s*>\s?/, ''));
         index++;
       }
-      out.push(`<blockquote>${renderMarkdown(quoted.join('\n'))}</blockquote>`);
+      out.push({ kind: 'quote', blocks: parseMarkdown(quoted.join('\n')) });
       continue;
     }
 
@@ -169,9 +281,7 @@ export function renderMarkdown(source: string): string {
         }
         index++;
       }
-      const tag = ordered ? 'ol' : 'ul';
-      const body = items.map((item) => `<li>${inline(item)}</li>`).join('');
-      out.push(`<${tag}>${body}</${tag}>`);
+      out.push({ kind: 'list', ordered, items });
       continue;
     }
 
@@ -188,20 +298,7 @@ export function renderMarkdown(source: string): string {
         rows.push(splitRow(lines[index] as string));
         index++;
       }
-      // Wide tables scroll inside their own container so the page body never
-      // scrolls horizontally.
-      out.push(
-        '<div class="md-scroll"><table><thead><tr>' +
-          header.map((cell) => `<th>${inline(cell)}</th>`).join('') +
-          '</tr></thead><tbody>' +
-          rows
-            .map(
-              (row) =>
-                `<tr>${row.map((cell) => `<td>${inline(cell)}</td>`).join('')}</tr>`
-            )
-            .join('') +
-          '</tbody></table></div>'
-      );
+      out.push({ kind: 'table', header, rows });
       continue;
     }
 
@@ -216,7 +313,51 @@ export function renderMarkdown(source: string): string {
   }
 
   flushParagraph();
-  return out.join('\n');
+  return out;
+}
+
+function renderBlock(block: Block): string {
+  switch (block.kind) {
+    case 'heading':
+      return `<h${block.level}>${inline(block.text)}</h${block.level}>`;
+    case 'paragraph':
+      return `<p>${inline(block.text)}</p>`;
+    case 'code': {
+      const attribute =
+        block.language.length > 0
+          ? ` data-language="${escapeHtml(block.language)}"`
+          : '';
+      return `<pre${attribute}><code>${escapeHtml(block.text)}</code></pre>`;
+    }
+    case 'rule':
+      return '<hr>';
+    case 'quote':
+      return `<blockquote>${block.blocks.map(renderBlock).join('\n')}</blockquote>`;
+    case 'list': {
+      const tag = block.ordered ? 'ol' : 'ul';
+      const body = block.items.map((item) => `<li>${inline(item)}</li>`);
+      return `<${tag}>${body.join('')}</${tag}>`;
+    }
+    case 'table':
+      // Wide tables scroll inside their own container so the page body never
+      // scrolls horizontally.
+      return (
+        '<div class="md-scroll"><table><thead><tr>' +
+        block.header.map((cell) => `<th>${inline(cell)}</th>`).join('') +
+        '</tr></thead><tbody>' +
+        block.rows
+          .map(
+            (row) =>
+              `<tr>${row.map((cell) => `<td>${inline(cell)}</td>`).join('')}</tr>`
+          )
+          .join('') +
+        '</tbody></table></div>'
+      );
+  }
+}
+
+export function renderMarkdown(source: string): string {
+  return parseMarkdown(source).map(renderBlock).join('\n');
 }
 
 function isTableSeparator(line: string | undefined): boolean {
