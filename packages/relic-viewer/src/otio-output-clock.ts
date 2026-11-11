@@ -72,6 +72,12 @@ export class OutputClock {
     offset: number;
     observation: ClockObservation;
   }[] = [];
+  // Fork only, until it calibrates or resets: the samples calibration may count,
+  // oldest first. An accepted read first drops every sample more than
+  // freshnessMs older than its readEnd; a dropped sample never returns.
+  private evidence:
+    | { time: number; offset: number; observation: ClockObservation }[]
+    | null = null;
   private max = -Infinity;
   constructor(
     readonly requestMs: number,
@@ -149,10 +155,11 @@ export class OutputClock {
   }
 
   // Caller must bind this to the same uninterrupted AudioContext and sink.
-  // A fork inherits only fresh, consistent samples that hold minAdvances
-  // advances. It is not armed until a new advancing observation, read after
-  // the request, completes calibration under the rule every clock uses:
-  // minAdvances advances spanning minWindowMs from the first inherited sample.
+  // A fork inherits only fresh, consistent samples, at least minAdvances of
+  // them. It is not armed until a new advancing observation, read after the
+  // request, completes calibration under the rule every clock uses: minAdvances
+  // advances spanning minWindowMs. Only samples within freshnessMs of that
+  // read's readEnd count, so inherited samples age out instead of carrying over.
   forkForRequest(
     requestMs: number,
     nowMs: number,
@@ -173,7 +180,7 @@ export class OutputClock {
       !last ||
       nowMs < last.observation.readEnd ||
       nowMs - last.time > this.policy.freshnessMs ||
-      window.length < this.policy.minAdvances + 1 ||
+      window.length < this.policy.minAdvances ||
       window.length >= this.policy.maxSamples
     )
       return null;
@@ -187,6 +194,11 @@ export class OutputClock {
     const fork = new OutputClock(requestMs, this.policy, onObservation);
     for (const entry of window)
       fork.inheritedObservations.push({ ...entry.observation });
+    fork.evidence = window.map((entry, index) => ({
+      time: entry.time,
+      offset: entry.offset,
+      observation: fork.inheritedObservations[index]!,
+    }));
     fork.first = fork.inheritedObservations[0]!;
     fork.last =
       fork.inheritedObservations[fork.inheritedObservations.length - 1]!;
@@ -310,13 +322,29 @@ export class OutputClock {
           this.advances = 0;
           this.min = Infinity;
           this.max = -Infinity;
+          this.evidence = null;
           this.state = 'calibrating';
         }
       } else {
         this.min = min;
         this.max = max;
-        if (!this.first) this.first = o;
-        if (this.last) this.advances++;
+        if (this.evidence) {
+          while (
+            this.evidence.length > 0 &&
+            readEnd - this.evidence[0]!.time > this.policy.freshnessMs
+          )
+            this.evidence.shift();
+          this.evidence.push({
+            time: performanceTime!,
+            offset,
+            observation: o,
+          });
+          this.first = this.evidence[0]!.observation;
+          this.advances = this.evidence.length - 1;
+        } else {
+          if (!this.first) this.first = o;
+          if (this.last) this.advances++;
+        }
         this.last = o;
         this.heldContextTime = null;
         if (priorState === 'playing') {
@@ -338,6 +366,7 @@ export class OutputClock {
               this.policy.minWindowMs
               ? 'calibrated'
               : 'calibrating';
+          if (this.state === 'calibrated') this.evidence = null;
         }
       }
     }
@@ -383,6 +412,7 @@ export class OutputClock {
       this.advances = 0;
       this.min = Infinity;
       this.max = -Infinity;
+      this.evidence = null;
       this.state = 'calibrating';
     }
     const result = this.result(reason);

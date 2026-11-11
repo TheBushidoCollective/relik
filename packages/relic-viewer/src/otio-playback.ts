@@ -5411,17 +5411,21 @@ export function createOtioPlayback(
         offsetMin: number;
         offsetMax: number;
       } | null = null;
+      // One fork serves every read of this recovery. It drops inherited samples
+      // as they pass freshnessMs and keeps its own advancing reads, which a
+      // per-read re-fork would discard while still short of minWindowMs.
+      let fork: OutputClock | null = null;
       while (
         alive() &&
         pcmRun === oldRun &&
         pcmCandidate === staged &&
-        readiness.isValid()
+        readiness.isValid() &&
+        previousClock.state === 'playing'
       ) {
-        const probe = previousClock.forkForRequest(
-          requestWall,
-          presentClockMs()
-        );
-        if (!probe) {
+        if (fork === null) {
+          fork = previousClock.forkForRequest(requestWall, presentClockMs());
+        }
+        if (!fork) {
           if (
             coldProofGlobal.__otioProofPcm === true &&
             (proofHost === 'localhost' ||
@@ -5455,7 +5459,7 @@ export function createOtioPlayback(
         } catch {}
         contextAfter = context.currentTime;
         readEnd = presentClockMs();
-        const observation = observeOutputClock(probe, oldRun.generation, {
+        const observation = observeOutputClock(fork, oldRun.generation, {
           readBegin,
           readEnd,
           contextBefore,
@@ -5464,7 +5468,7 @@ export function createOtioPlayback(
           contextTime: stamp?.contextTime,
           performanceTime: stamp?.performanceTime,
         });
-        const accepted = probe.lastAccepted;
+        const accepted = fork.lastAccepted;
         if (
           stamp &&
           accepted !== null &&
@@ -5475,7 +5479,7 @@ export function createOtioPlayback(
           typeof stamp.contextTime === 'number' &&
           typeof stamp.performanceTime === 'number'
         ) {
-          inherited = probe;
+          inherited = fork;
           bridge = {
             contextTime: accepted.contextTime,
             performanceTime: accepted.performanceTime,

@@ -191,7 +191,12 @@ describe('output clock admission', () => {
     expect(fork?.inheritedObservations).toEqual(
       [40, 56, 73, 89].map((t) => sample(t))
     );
-    expect(fork?.observe(sample(100)).status).toBe('calibrated');
+    // At readEnd 1101, 40 is 61 ms old and no longer counts. 56, 73, 89 and
+    // the confirming 100 are three advances spanning 44 ms, all within 45 ms.
+    expect(fork?.observe(sample(100))).toMatchObject({
+      status: 'calibrated',
+      reason: 'accepted',
+    });
     expect(c.observe(sample(100, 1054.015))).toMatchObject({
       status: 'interrupted',
       reason: 'discontinuity',
@@ -704,10 +709,362 @@ describe('recovery fork at the recorded starvation close', () => {
     }
   });
 
-  test('the recorded window cannot fork once its oldest sample passes 50 ms', () => {
-    // At 26906, 26855.9 is 50.1 ms old; three fresh samples remain.
+  test('a late fork inherits only fresh samples and needs minAdvances of them', () => {
+    // At 26906, 26855.9 is 50.1 ms old: three fresh samples remain.
     expect(
-      replayStarvation().forkForRequest(STARVATION_REQUEST, 26906)
+      replayStarvation()
+        .forkForRequest(STARVATION_REQUEST, 26906)
+        ?.inheritedObservations.map((o) => o.performanceTime)
+    ).toEqual([26866.100000000035, 26876, 26885.79999999999]);
+    // At 26916.2, 26866.1 is 50.1 ms old: two remain, too few to fork.
+    expect(
+      replayStarvation().forkForRequest(STARVATION_REQUEST, 26916.2)
     ).toBeNull();
+  });
+
+  test('a commit read after the oldest counted sample ages keeps the calibration', () => {
+    const fork = replayStarvation().forkForRequest(
+      STARVATION_REQUEST,
+      STARVATION_OBSERVED
+    )!;
+    expect(fork.observe(closingRead()).status).toBe('calibrated');
+    // 26906 is 50.1 ms after 26855.9, the oldest sample the closing read counted.
+    expect(
+      fork.observe({ ...closingRead(), readBegin: 26906, readEnd: 26906 })
+    ).toMatchObject({ status: 'calibrated', reason: 'duplicate' });
+    // The next callback's stamp, recorded at 26914, read as soon as it exists.
+    expect(
+      fork.observe({
+        readBegin: 26906.5,
+        readEnd: 26906.5,
+        contextBefore: 26.136,
+        contextAfter: 26.136,
+        state: 'running',
+        contextTime: 26.094806499999997,
+        performanceTime: 26906.20000000001,
+      })
+    ).toMatchObject({ status: 'calibrated', reason: 'accepted' });
+    fork.arm();
+  });
+});
+
+// Recovery loop contract: one fork is kept across every read of a recovery.
+// Playing samples at 1000 ms offset; the fork at 1101 inherits [59, 66, 73, 79]
+// because 1050 is 51 ms old.
+const playingClock = () => {
+  const c = ready();
+  c.arm();
+  c.start();
+  for (const t of [50, 59, 66, 73, 79]) c.observe(sample(t));
+  return c;
+};
+// A playing clock that started at 40, then accepted each sample(t) in `times`.
+const playingAfter = (times: readonly number[]) => {
+  const c = ready();
+  c.arm();
+  c.start();
+  for (const t of times) expect(c.observe(sample(t)).status).toBe('playing');
+  return c;
+};
+// A recovery read of sample(time, offset) that begins and ends at `end`.
+const readAt = (time: number, end: number, offset = 1000) => ({
+  ...sample(time, offset),
+  readBegin: end,
+  readEnd: end,
+});
+const inheritedTimes = (fork: OutputClock | null) =>
+  fork?.inheritedObservations.map((o) => o.performanceTime) ?? null;
+describe('recovery fork kept across reads', () => {
+  test('a short advancing read stays in the fork and the playing clock is untouched', () => {
+    const clock = playingClock();
+    const before = clock.recoveryEvidence(1101);
+    const observations = clock.observations.length;
+    const fork = clock.forkForRequest(1101, 1101)!;
+    expect(fork).not.toBeNull();
+    // 1085 - 1059 = 26 ms: advancing, fresh, not yet calibrated.
+    expect(
+      fork.observe({ ...sample(85), readBegin: 1101, readEnd: 1102 })
+    ).toMatchObject({ status: 'calibrating', reason: 'accepted' });
+    expect(() => fork.arm()).toThrow();
+    // 1089 - 1059 = 30 ms: the same fork calibrates on its next read.
+    expect(
+      fork.observe({ ...sample(89), readBegin: 1102, readEnd: 1103 })
+    ).toMatchObject({ status: 'calibrated', reason: 'accepted' });
+    fork.arm();
+    expect(clock.state).toBe('playing');
+    expect(clock.recoveryEvidence(1101)).toEqual(before);
+    expect(clock.observations).toHaveLength(observations);
+  });
+
+  test('a re-fork after the short read loses it; the kept fork calibrates', () => {
+    const clock = playingClock();
+    const fork = clock.forkForRequest(1101, 1101)!;
+    expect(
+      fork.observe({ ...sample(85), readBegin: 1101, readEnd: 1102 }).status
+    ).toBe('calibrating');
+    // At 1110, 1059 is 51 ms old: a new fork inherits [66, 73, 79], not read 85.
+    const refork = clock.forkForRequest(1101, 1110)!;
+    expect(inheritedTimes(refork)).toEqual([1066, 1073, 1079]);
+    expect(refork.observe(readAt(89, 1110))).toMatchObject({
+      status: 'calibrating',
+      reason: 'accepted',
+    });
+    // The kept fork confirms at readEnd 1109, exactly 50 ms after 1059.
+    expect(
+      fork.observe({ ...sample(89), readBegin: 1108, readEnd: 1109 })
+    ).toMatchObject({ status: 'calibrated', reason: 'accepted' });
+    fork.arm();
+  });
+
+  test('spread is checked across reads, not only against the inherited window', () => {
+    const clock = playingClock();
+    const fork = clock.forkForRequest(1101, 1101)!;
+    // Offset 998 is 2 ms from the window and 24 ms from the window start.
+    expect(
+      fork.observe({ ...sample(85, 998), readBegin: 1101, readEnd: 1102 })
+    ).toMatchObject({ status: 'calibrating', reason: 'accepted' });
+    // Offset 1008.5 is 8.5 ms from the window but 10.5 ms from read A.
+    expect(
+      fork.observe({ ...sample(89, 1008.5), readBegin: 1102, readEnd: 1103 })
+        .reason
+    ).toBe('discontinuity');
+    expect(fork.state).toBe('calibrating');
+    expect(() => fork.arm()).toThrow();
+    // A fresh fork judges the same read against the window alone and accepts it,
+    // which is why the recovery loop must keep one fork.
+    const refork = clock.forkForRequest(1101, 1102)!;
+    expect(
+      refork.observe({ ...sample(89, 1008.5), readBegin: 1102, readEnd: 1103 })
+        .reason
+    ).toBe('accepted');
+  });
+
+  test('a read that begins before the request cannot count toward recovery', () => {
+    const clock = playingClock();
+    const fork = clock.forkForRequest(1101, 1101)!;
+    expect(
+      fork.observe({ ...sample(85), readBegin: 1100, readEnd: 1102 }).reason
+    ).toBe('invalid-bracket');
+    expect(fork.state).toBe('calibrating');
+    expect(() => fork.arm()).toThrow();
+    // The rejection reset the candidate, so one later read cannot calibrate it.
+    expect(
+      fork.observe({ ...sample(89), readBegin: 1102, readEnd: 1103 }).status
+    ).toBe('calibrating');
+    expect(() => fork.arm()).toThrow();
+  });
+});
+
+// Fork at 1101 inherits [59, 66, 73, 79]. An accepted read counts only samples
+// at most 50 ms older than its readEnd, so 1059 counts through readEnd 1109.
+describe('recovery counts only samples fresh at each read', () => {
+  test('a confirming read completing exactly 50 ms after the oldest inherited stamp is accepted', () => {
+    const fork = playingClock().forkForRequest(1101, 1101)!;
+    expect(
+      fork.observe({ ...sample(89), readBegin: 1109, readEnd: 1109 })
+    ).toMatchObject({ status: 'calibrated', reason: 'accepted' });
+    fork.arm();
+  });
+
+  test('a sample 50 ms plus epsilon old stops counting; the fork lives on fresh samples', () => {
+    const fork = playingClock().forkForRequest(1101, 1101)!;
+    // 1059 is 50.001 ms old: [66, 73, 79, 89] spans 23 ms.
+    expect(
+      fork.observe({ ...sample(89), readBegin: 1109, readEnd: 1109.001 })
+    ).toMatchObject({ status: 'calibrating', reason: 'accepted' });
+    expect(() => fork.arm()).toThrow();
+    // [66, 73, 79, 89, 96] spans 30 ms, all within 44 ms of 1110.
+    expect(fork.observe(readAt(96, 1110))).toMatchObject({
+      status: 'calibrated',
+      reason: 'accepted',
+    });
+    fork.arm();
+  });
+
+  test('freshness is judged at readEnd: a read ending past 50 ms drops the sample', () => {
+    const fork = playingClock().forkForRequest(1101, 1101)!;
+    expect(
+      fork.observe({ ...sample(89), readBegin: 1108, readEnd: 1109.5 })
+    ).toMatchObject({ status: 'calibrating', reason: 'accepted' });
+    expect(() => fork.arm()).toThrow();
+  });
+
+  test('advances count only fresh samples', () => {
+    const fork = playingAfter([45, 60, 75]).forkForRequest(1076, 1076)!;
+    expect(inheritedTimes(fork)).toEqual([1040, 1045, 1060, 1075]);
+    // At readEnd 1101, 1040 and 1045 are stale: [60, 75, 100] is two advances,
+    // though it spans 40 ms and five samples were inherited or read.
+    expect(fork.observe(sample(100))).toMatchObject({
+      status: 'calibrating',
+      reason: 'accepted',
+    });
+    expect(() => fork.arm()).toThrow();
+  });
+
+  test('calibration fixes the window: a later pre-arm read never demotes it', () => {
+    const fork = playingAfter([56, 73, 89]).forkForRequest(1090, 1090)!;
+    expect(fork.observe(sample(100)).status).toBe('calibrated');
+    // 56 and 73 are past 50 ms at 1124. The read is judged on its own.
+    expect(fork.observe(readAt(120, 1124))).toMatchObject({
+      status: 'calibrated',
+      reason: 'accepted',
+    });
+    fork.arm();
+  });
+
+  test('a discontinuity reset drops every inherited sample', () => {
+    const fork = playingClock().forkForRequest(1101, 1101)!;
+    expect(
+      fork.observe({ ...sample(85, 1011), readBegin: 1101, readEnd: 1102 })
+        .reason
+    ).toBe('discontinuity');
+    // New reads rebuild the window alone: 90 to 101 spans 11 ms.
+    for (const [t, end] of [
+      [90, 1103],
+      [95, 1104],
+      [100, 1105],
+      [101, 1106],
+    ] as const)
+      expect(fork.observe(readAt(t, end))).toMatchObject({
+        status: 'calibrating',
+        reason: 'accepted',
+      });
+    expect(() => fork.arm()).toThrow();
+  });
+
+  test('a stamp between a dropped sample and the last accepted one is a regression', () => {
+    const fork = playingClock().forkForRequest(1101, 1101)!;
+    // At 1117, 1059 and 1066 no longer count; 1070 is fresh but older than 1079.
+    expect(fork.observe(readAt(70, 1117)).reason).toBe('regression');
+    expect(fork.observe(readAt(89, 1118)).status).toBe('calibrating');
+    expect(() => fork.arm()).toThrow();
+  });
+
+  test('two reads inside the budget calibrate, the second completing at the edge', () => {
+    const fork = playingClock().forkForRequest(1101, 1101)!;
+    expect(
+      fork.observe({ ...sample(85), readBegin: 1101, readEnd: 1102 }).status
+    ).toBe('calibrating');
+    expect(
+      fork.observe({ ...sample(89), readBegin: 1108, readEnd: 1109 })
+    ).toMatchObject({ status: 'calibrated', reason: 'accepted' });
+    fork.arm();
+  });
+
+  test('an offset discontinuity across two in-budget reads is a discontinuity, not staleness', () => {
+    const fork = playingClock().forkForRequest(1101, 1101)!;
+    expect(
+      fork.observe({ ...sample(85, 998), readBegin: 1101, readEnd: 1102 })
+        .status
+    ).toBe('calibrating');
+    expect(
+      fork.observe({ ...sample(89, 1008.5), readBegin: 1108, readEnd: 1109 })
+        .reason
+    ).toBe('discontinuity');
+    expect(() => fork.arm()).toThrow();
+  });
+
+  test('the budget ends at calibration: a started fork is not rejected by its inherited stamps', () => {
+    const fork = playingClock().forkForRequest(1101, 1101)!;
+    expect(
+      fork.observe({ ...sample(89), readBegin: 1109, readEnd: 1109 }).status
+    ).toBe('calibrated');
+    fork.arm();
+    fork.start();
+    expect(
+      fork.observe({ ...sample(200), readBegin: 1210, readEnd: 1210 }).status
+    ).toBe('playing');
+  });
+});
+
+// The closing stamp is the only post-request read before the next callback
+// passes the 20 ms gap (448 frames past the guard at 48 kHz, 370 at 44.1 kHz).
+describe('recovery at real callback and observation cadences', () => {
+  test('60 Hz stamps never calibrate: four of them span 50 ms', () => {
+    // Forking after the closing callback leaves two fresh samples.
+    expect(
+      playingAfter([56.7, 73.4, 90.1]).forkForRequest(1107, 1107)
+    ).toBeNull();
+    // Even forking right after 90.1, the closing read drops 56.7 (51.1 ms old).
+    const fork = playingAfter([56.7, 73.4, 90.1]).forkForRequest(
+      1091.1,
+      1091.1
+    )!;
+    expect(inheritedTimes(fork)).toEqual([1056.7, 1073.4, 1090.1]);
+    expect(fork.observe(sample(106.8))).toMatchObject({
+      status: 'calibrating',
+      reason: 'accepted',
+    });
+    expect(fork.observe(sample(123.5))).toMatchObject({
+      status: 'calibrating',
+      reason: 'accepted',
+    });
+    expect(() => fork.arm()).toThrow();
+  });
+
+  test('50 Hz stamps never calibrate: four of them span 60 ms', () => {
+    expect(playingAfter([60, 80]).forkForRequest(1100.3, 1100.3)).toBeNull();
+    const fork = playingAfter([60, 80]).forkForRequest(1081, 1081)!;
+    expect(inheritedTimes(fork)).toEqual([1040, 1060, 1080]);
+    expect(fork.observe(sample(100))).toMatchObject({
+      status: 'calibrating',
+      reason: 'accepted',
+    });
+    expect(() => fork.arm()).toThrow();
+  });
+
+  test('one dropped 10 ms stamp still recovers at the closing read', () => {
+    const fork = playingAfter([
+      50, 60, 70, 80, 90, 100, 110, 130,
+    ]).forkForRequest(1140.3, 1140.3)!;
+    expect(inheritedTimes(fork)).toEqual([1100, 1110, 1130]);
+    expect(fork.observe(readAt(140, 1141.9))).toMatchObject({
+      status: 'calibrated',
+      reason: 'accepted',
+    });
+    fork.arm();
+  });
+
+  test('two dropped 10 ms stamps cannot fork', () => {
+    expect(
+      playingAfter([50, 60, 70, 80, 90, 100, 130]).forkForRequest(
+        1140.3,
+        1140.3
+      )
+    ).toBeNull();
+  });
+
+  test('frame-tick sampling of 10 ms stamps recovers when the close follows the last read stamp', () => {
+    const fork = playingAfter([60, 80, 90]).forkForRequest(1100.3, 1100.3)!;
+    expect(inheritedTimes(fork)).toEqual([1060, 1080, 1090]);
+    expect(fork.observe(readAt(100, 1101.9))).toMatchObject({
+      status: 'calibrated',
+      reason: 'accepted',
+    });
+    fork.arm();
+  });
+
+  test('frame-tick sampling that skipped the stamp before the close cannot fork', () => {
+    expect(
+      playingAfter([50, 70, 90]).forkForRequest(1110.3, 1110.3)
+    ).toBeNull();
+  });
+
+  test('44.1 kHz 512-frame stamps: a commit read 1.8 ms after the confirming read keeps the calibration', () => {
+    const fork = playingAfter([51.6, 63.2, 74.8, 86.4]).forkForRequest(
+      1098.3,
+      1098.3
+    )!;
+    expect(inheritedTimes(fork)).toEqual([1051.6, 1063.2, 1074.8, 1086.4]);
+    expect(fork.observe(readAt(98, 1099.9))).toMatchObject({
+      status: 'calibrated',
+      reason: 'accepted',
+    });
+    // 1051.6 is 50.1 ms old at 1101.7; calibration already happened at 1099.9.
+    expect(fork.observe(readAt(98, 1101.7))).toMatchObject({
+      status: 'calibrated',
+      reason: 'duplicate',
+    });
+    fork.arm();
   });
 });
