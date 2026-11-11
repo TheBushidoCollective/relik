@@ -446,6 +446,7 @@ export async function runDecisionProofSequence(
       title: '',
       cover: false,
       ttl_days: 1,
+      decisions: true,
     }
   );
 
