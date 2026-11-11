@@ -1166,6 +1166,8 @@ Jason chose a rolling window for recovery clock calibration. At the confirming
 read, every counted timestamp must be no more than 50 ms old. The evidence
 must contain at least three advances spanning at least 30 ms, including a read
 after the recovery request. The 20 ms audio gap limit is unchanged.
+If playback already read the newest timestamp, a valid post-request re-read
+confirms that timestamp once. It does not add another clock advance.
 
 Devices whose output timestamps advance too slowly to satisfy those conditions
 cannot use this recovery path. They stop with an error rather than treating

@@ -204,6 +204,8 @@ export class OutputClock {
     fork.first = fork.inheritedObservations[0]!;
     fork.last =
       fork.inheritedObservations[fork.inheritedObservations.length - 1]!;
+    if (last.observation === this.last)
+      fork.heldContextTime = this.heldContextTime;
     fork.advances = window.length - 1;
     fork.min = min;
     fork.max = max;

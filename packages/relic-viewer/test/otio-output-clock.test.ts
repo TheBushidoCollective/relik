@@ -210,6 +210,20 @@ describe('output clock admission', () => {
       stale.observe({ ...sample(70), readBegin: 1121, readEnd: 1121 }).reason
     ).toBe('stale');
   });
+  test('a fork rejects a re-read below the parent held timestamp', () => {
+    const c = ready();
+    c.arm();
+    c.start();
+    for (const t of [50, 60, 70]) c.observe(sample(t));
+    expect(c.observe({ ...sample(70), contextTime: 0.07015 }).reason).toBe(
+      'sub-resolution'
+    );
+    const fork = c.forkForRequest(1071, 1071)!;
+    expect(
+      fork.observe({ ...sample(70), readBegin: 1072, readEnd: 1073 }).reason
+    ).toBe('regression');
+    expect(() => fork.arm()).toThrow();
+  });
   test('60 Hz observations support recovery without widening the runtime window', () => {
     const c = ready();
     c.arm();
