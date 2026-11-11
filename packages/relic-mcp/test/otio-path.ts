@@ -13713,10 +13713,9 @@ async function calibratePostGainTap(
       title: 'OTIO playback boundary proof',
       cover: false,
     });
-    const relicId = String(published['relic_id'] ?? '');
     url = String(published['url'] ?? published['link'] ?? '');
     assert.ok(
-      relicId && url.startsWith(origin) && url.includes('#'),
+      url.startsWith(origin) && url.includes('#'),
       'boundary fixture publish failed'
     );
   } else {
@@ -13725,6 +13724,8 @@ async function calibratePostGainTap(
       'OTIO playback boundary proof'
     );
   }
+  const relicId = new URL(url).pathname.split('/').filter(Boolean).at(-1);
+  assert.ok(relicId, 'boundary fixture relic ID missing');
   const browser = await openBrowser(url, sessionToken, {
     label: interactionOnly ? 'interaction-only' : 'post-gain-calibration',
     recordProofTrace: !interactionOnly,
