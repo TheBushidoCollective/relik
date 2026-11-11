@@ -96,9 +96,9 @@ export interface ViewerPage {
   reopen(): Promise<void>;
   startPerformanceTrace(categories?: string): Promise<unknown>;
   /**
-   * Makes this viewer hidden by activating a second proof-owned target in the same isolated
-   * browser. Then reads its visibility and the timestamped log its listeners wrote, closes the
-   * second target, and reactivates this one. Nothing here fakes document.hidden.
+   * Hides this viewer by minimizing its own proof-owned browser window over CDP, then reads its
+   * visibility and the timestamped log. The window is restored to normal afterward. Tab
+   * activation was probed and does not hide the page; this mechanism does.
    */
   hideViewer(): Promise<HideLog>;
   stopPerformanceTrace(): Promise<{
@@ -414,16 +414,19 @@ export async function openViewer(
     },
     hideViewer: async (): Promise<HideLog> => {
       await evaluate<void>(HIDE_INSTALL);
-      const other = (await cdp.send('Target.createTarget', {
-        url: 'about:blank',
-      })) as { targetId: string };
+      const owned = (await cdp.send('Browser.getWindowForTarget', {
+        targetId: created.targetId,
+      })) as { windowId: number };
       try {
         await evaluate<void>(
-          `window.__hideLog.push({ at: performance.now(), kind: 'activate-sent', value: null })`
+          `window.__hideLog.push({ at: performance.now(), kind: 'minimize-sent', value: null })`
         );
-        await cdp.send('Target.activateTarget', { targetId: other.targetId });
-        const visibleUntil = Date.now() + HIDE_VISIBLE_WAIT_MS;
-        while (Date.now() < visibleUntil) {
+        await cdp.send('Browser.setWindowBounds', {
+          windowId: owned.windowId,
+          bounds: { windowState: 'minimized' },
+        });
+        const hiddenUntil = Date.now() + HIDE_VISIBLE_WAIT_MS;
+        while (Date.now() < hiddenUntil) {
           const value = await evaluate<string>('document.visibilityState');
           if (value === 'hidden') break;
           await Bun.sleep(HIDE_POLL_MS);
@@ -434,10 +437,10 @@ export async function openViewer(
         );
       } finally {
         await cdp
-          .send('Target.activateTarget', { targetId: created.targetId })
-          .catch(() => {});
-        await cdp
-          .send('Target.closeTarget', { targetId: other.targetId })
+          .send('Browser.setWindowBounds', {
+            windowId: owned.windowId,
+            bounds: { windowState: 'normal' },
+          })
           .catch(() => {});
       }
     },

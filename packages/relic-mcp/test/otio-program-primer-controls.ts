@@ -897,12 +897,12 @@ function servedFailures(input: PrimerProofInput, arm: ViewerArm): string[] {
 function hiddenLegFailure(result: HideLog): string | null {
   if (result.visibility !== 'hidden')
     return `visibility reads ${result.visibility}`;
-  const activated = result.events.find((e) => e.kind === 'activate-sent');
+  const minimized = result.events.find((e) => e.kind === 'minimize-sent');
   const hidden = result.events.find(
     (e) => e.kind === 'visibilitychange' && e.value === 'hidden'
   );
-  if (!activated || !hidden || hidden.at < activated.at)
-    return 'no visibilitychange to hidden logged after the second tab was activated';
+  if (!minimized || !hidden || hidden.at < minimized.at)
+    return 'no visibilitychange to hidden logged after the owned window was minimized';
   const idle = result.events.find(
     (e) => e.kind === 'primer' && e.value === 'idle' && e.at >= hidden.at
   );
