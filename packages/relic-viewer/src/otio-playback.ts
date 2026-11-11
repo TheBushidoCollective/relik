@@ -5419,10 +5419,9 @@ export function createOtioPlayback(
         alive() &&
         pcmRun === oldRun &&
         pcmCandidate === staged &&
-        readiness.isValid() &&
-        previousClock.state === 'playing'
+        readiness.isValid()
       ) {
-        if (fork === null) {
+        if (fork === null || previousClock.state !== 'playing') {
           fork = previousClock.forkForRequest(requestWall, presentClockMs());
         }
         if (!fork) {
