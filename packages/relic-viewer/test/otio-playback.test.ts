@@ -4577,6 +4577,7 @@ describe('otio playback controller', () => {
         expect(fixture.audioContext.timestampTrace.at(-1)!.outputFrame).toBe(
           closingOutput
         );
+        const closingStamp = fixture.audioContext.timestampTrace.at(-1)!;
         const readsAfterPreRead = fixture.audioContext.timestampReads.length;
         proof.__otioProofPcmFault = fault;
         await fixture.deliverCallbacks();
@@ -4606,6 +4607,8 @@ describe('otio playback controller', () => {
         const bridgeRead =
           fixture.audioContext.timestampTrace[marks.atBridgeRead!];
         expect(bridgeRead, 'recovery-bridge trace entry').toBeDefined();
+        expect(bridgeRead!.perf).toBeCloseTo(closingStamp.perf, 6);
+        expect(bridgeRead!.outputFrame).toBe(closingStamp.outputFrame);
         const usedStamp: unknown = useRecord?.usedStamp;
         if (
           typeof usedStamp !== 'object' ||
