@@ -27,8 +27,10 @@ export const VIEWER_CONTRACT = {
 
 /** The primer's state attribute on `.otio-view`. */
 export const PRIMER_ATTRIBUTE = 'data-otio-audio-output';
-/** How long the hidden leg freezes the viewer. */
-const HIDE_FREEZE_MS = 1500;
+/** Hidden leg: how long to wait for the viewer to read hidden, then how long it must stay hidden. */
+const HIDE_VISIBLE_WAIT_MS = 1500;
+const HIDE_SETTLE_MS = 1500;
+const HIDE_POLL_MS = 50;
 
 /** One timestamped entry from the hidden leg. Times are page-clock milliseconds. */
 export interface HideEvent {
@@ -94,8 +96,9 @@ export interface ViewerPage {
   reopen(): Promise<void>;
   startPerformanceTrace(categories?: string): Promise<unknown>;
   /**
-   * Freezes this proof-owned page for HIDE_FREEZE_MS, then reports its visibility and the
-   * timestamped log its listeners wrote. The hidden leg is proven only from that log.
+   * Makes this viewer hidden by activating a second proof-owned target in the same isolated
+   * browser. Then reads its visibility and the timestamped log its listeners wrote, closes the
+   * second target, and reactivates this one. Nothing here fakes document.hidden.
    */
   hideViewer(): Promise<HideLog>;
   stopPerformanceTrace(): Promise<{
@@ -411,25 +414,32 @@ export async function openViewer(
     },
     hideViewer: async (): Promise<HideLog> => {
       await evaluate<void>(HIDE_INSTALL);
-      await evaluate<void>(
-        `window.__hideLog.push({ at: performance.now(), kind: 'freeze-sent', value: null })`
-      );
-      await cdp.send(
-        'Page.setWebLifecycleState',
-        { state: 'frozen' },
-        sessionId
-      );
-      const frozen = Promise.withResolvers<void>();
-      setTimeout(frozen.resolve, HIDE_FREEZE_MS);
-      await frozen.promise;
-      await cdp.send(
-        'Page.setWebLifecycleState',
-        { state: 'active' },
-        sessionId
-      );
-      return evaluate<HideLog>(
-        `({ visibility: document.visibilityState, events: window.__hideLog })`
-      );
+      const other = (await cdp.send('Target.createTarget', {
+        url: 'about:blank',
+      })) as { targetId: string };
+      try {
+        await evaluate<void>(
+          `window.__hideLog.push({ at: performance.now(), kind: 'activate-sent', value: null })`
+        );
+        await cdp.send('Target.activateTarget', { targetId: other.targetId });
+        const visibleUntil = Date.now() + HIDE_VISIBLE_WAIT_MS;
+        while (Date.now() < visibleUntil) {
+          const value = await evaluate<string>('document.visibilityState');
+          if (value === 'hidden') break;
+          await Bun.sleep(HIDE_POLL_MS);
+        }
+        await Bun.sleep(HIDE_SETTLE_MS);
+        return await evaluate<HideLog>(
+          `({ visibility: document.visibilityState, events: window.__hideLog })`
+        );
+      } finally {
+        await cdp
+          .send('Target.activateTarget', { targetId: created.targetId })
+          .catch(() => {});
+        await cdp
+          .send('Target.closeTarget', { targetId: other.targetId })
+          .catch(() => {});
+      }
     },
     close: async () => {
       if (tracing) await cdp.send('Tracing.end').catch(() => {});

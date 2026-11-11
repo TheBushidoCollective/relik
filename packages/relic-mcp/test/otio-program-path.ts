@@ -18,7 +18,7 @@
  *   7. the primer's first Play, in owned headless chrome-headless-shell with --mute-audio. Every
  *      trial is a fresh browser that waits for the default output to go idle. The primer shares the
  *      program's device stream, so the first new frame, frame gaps and device starts are gated. Bare
- *      and sham controls must stall,
+ *      and sham controls must start the device after Play. Their frame gaps are recorded, not gated,
  *      and the viewer's time mapping, focus, comment and audio stages still run after them.
  *
  * Prints OTIO_PROGRAM_PATH_OK only after all twenty-nine stages pass. Nothing is skipped or softened.
@@ -668,7 +668,7 @@ try {
 
   // Stages 9-18: the primer. Every trial is a fresh owned headless browser with Chrome's
   // --mute-audio. The budgets are the user's acceptance and are never loosened here. A group
-  // with too few cold trials fails as inconclusive, and a control that does not stall fails.
+  // with too few cold trials fails as inconclusive, and a cold control that starts no device fails.
   try {
     const deviceProbe = await buildDeviceProbe(harness.scratch);
     const primerStages = await runPrimerProof({

@@ -64,7 +64,6 @@ import {
   deviceStarts,
   firstStart,
   framesAfter,
-  GAP_BUDGET_MS,
   gateGaps,
   gatePrimerWindow,
   intervals,
@@ -590,6 +589,46 @@ async function freshSettle(probe: DeviceProbe): Promise<Settled> {
   return { failures: [], hold: null, state: await readDeviceState(probe) };
 }
 
+/**
+ * Video-only control. The file has no audio track, so the output must never run. The OS is read
+ * for the same window sequence L allows a start in, and any running reading fails the control.
+ * Nothing here waits for the output to start.
+ */
+async function absentSettle(
+  probe: DeviceProbe,
+  metadataAt: number
+): Promise<Settled> {
+  const failures: string[] = [];
+  while (Date.now() - metadataAt < LATE_RUNNING_LIMIT_MS) {
+    const seen = await readDeviceState(probe);
+    if (seen.running) {
+      failures.push(
+        `video-only control: default output ${seen.name} ran with no audio track`
+      );
+      break;
+    }
+    await sleep(SETTLE_POLL_MS);
+  }
+  await sleep(QUIET_SETTLE_MS);
+  return { failures, hold: null, state: await readDeviceState(probe) };
+}
+
+/**
+ * Chooses the OS wait for a bare arm. Sequence F reads only. Sequence L waits for the output
+ * pattern, except video-only, which has no output to wait for and is judged as absent.
+ */
+async function bareSettle(
+  sequence: Sequence,
+  arm: BareArm,
+  probe: DeviceProbe,
+  loadedAt: number,
+  metadataAt: number
+): Promise<Settled> {
+  if (sequence === 'fresh') return freshSettle(probe);
+  if (arm === 'video-only') return absentSettle(probe, metadataAt);
+  return lateSettle(probe, loadedAt, metadataAt);
+}
+
 /** The cold-state failures for a sequence L trial, read from its trace and its OS reading. */
 function quietFailures(quiet: QuietWindow, state: DeviceState): string[] {
   const failures: string[] = [];
@@ -858,12 +897,12 @@ function servedFailures(input: PrimerProofInput, arm: ViewerArm): string[] {
 function hiddenLegFailure(result: HideLog): string | null {
   if (result.visibility !== 'hidden')
     return `visibility reads ${result.visibility}`;
-  const freeze = result.events.find((e) => e.kind === 'freeze-sent');
+  const activated = result.events.find((e) => e.kind === 'activate-sent');
   const hidden = result.events.find(
     (e) => e.kind === 'visibilitychange' && e.value === 'hidden'
   );
-  if (!freeze || !hidden || hidden.at > freeze.at)
-    return 'no visibilitychange to hidden logged before the freeze';
+  if (!activated || !hidden || hidden.at < activated.at)
+    return 'no visibilitychange to hidden logged after the second tab was activated';
   const idle = result.events.find(
     (e) => e.kind === 'primer' && e.value === 'idle' && e.at >= hidden.at
   );
@@ -894,10 +933,13 @@ async function runBareTrial(
   try {
     if (arm === 'av-blob') await waitForBlobSource(page);
     const metadataAt = await waitForMetadata(page);
-    const settled =
-      sequence === 'late'
-        ? await lateSettle(probe, loadedAt, metadataAt)
-        : await freshSettle(probe);
+    const settled = await bareSettle(
+      sequence,
+      arm,
+      probe,
+      loadedAt,
+      metadataAt
+    );
     await armPointer(page, 'button.otio-prepare', PREPARE_MARK, 0);
     await page.click('button.otio-prepare');
     await sleep(BARE_PREPARE_WAIT_MS);
@@ -924,6 +966,17 @@ async function runBareTrial(
       extra.push(...settled.failures);
       extra.push(...quietFailures(analysis.quiet, settled.state));
       if (arm === 'sham') extra.push(...shamTrialFailures(events));
+      if (arm === 'video-only') {
+        const traceStart = markTs(events, TRACE_START_MARK);
+        const starts =
+          traceStart === null ? null : deviceStarts(events, traceStart);
+        if (starts === null)
+          extra.push('video-only control has no trace start mark');
+        else if (starts !== 0)
+          extra.push(
+            `video-only control started the output device ${starts} time(s)`
+          );
+      }
       if (primerArm) extra.push(...gatePrimerWindow(analysis.window));
     }
     const trial = trialOf(sequence, arm, round, analysis, extra, settled);
@@ -1208,6 +1261,30 @@ async function runWrapTrial(
   }
 }
 
+/** Number of audio streams in a file, read by ffprobe. Fails rather than guessing on a bad probe. */
+async function audioStreamCount(file: string): Promise<number> {
+  const child = Bun.spawn(
+    [
+      'ffprobe',
+      '-v',
+      'error',
+      '-select_streams',
+      'a',
+      '-show_entries',
+      'stream=index',
+      '-of',
+      'csv=p=0',
+      file,
+    ],
+    { stdout: 'pipe', stderr: 'pipe' }
+  );
+  const [out, code] = await Promise.all([
+    new Response(child.stdout).text(),
+    child.exited,
+  ]);
+  assert.equal(code, 0, `ffprobe failed on ${file}`);
+  return out.split('\n').filter((line) => line.trim() !== '').length;
+}
 /**
  * Runs every primer group. Each trial is isolated: a thrown error becomes a failure of its group
  * and the other groups still run. Nothing is skipped.
@@ -1248,6 +1325,15 @@ export async function runPrimerProof(
   try {
     await videoOnlyRemux(input.programMp4, noAudioPath);
     await assertVideoPacketsIdentical(input.programMp4, noAudioPath);
+    assert.ok(
+      (await audioStreamCount(input.programMp4)) > 0,
+      'program has no audio stream: the video-only control would not be a fair control'
+    );
+    assert.equal(
+      await audioStreamCount(noAudioPath),
+      0,
+      'video-only control still has an audio stream'
+    );
     videoOnly = ownedBytes(await readFile(noAudioPath));
   } catch (error) {
     remuxFailure = `video-only control is not a fair control: ${messageOf(error)}`;
@@ -1402,15 +1488,16 @@ export async function runPrimerProof(
           `${name}: ${cold(list).length} cold trial(s), need ${MIN_COLD_TRIALS}; inconclusive`,
         ]
       : [];
-  /** A control must reproduce the stall in every cold trial: a gap over the budget. */
-  const stallRequired = (name: string, list: readonly PrimerTrial[]) =>
+  /**
+   * A cold control must start the output after its Play. That is the mechanism the cold label
+   * rests on. Frame gaps stay in every trial record as telemetry and never gate here.
+   */
+  const deviceStartRequired = (name: string, list: readonly PrimerTrial[]) =>
     cold(list)
-      .filter(
-        (trial) => trial.maxGapMs === null || trial.maxGapMs <= GAP_BUDGET_MS
-      )
+      .filter((trial) => trial.deviceStartsAfterPlay < 1)
       .map(
         (trial) =>
-          `${name} round ${trial.round}: cold start did not stall (max gap ${trial.maxGapMs ?? 'none'} ms)`
+          `${name} round ${trial.round}: cold trial started no device after Play`
       );
 
   const reportArms: readonly BareArm[] = [
@@ -1431,20 +1518,20 @@ export async function runPrimerProof(
       trials: [],
     },
     {
-      stage: 'primer-bare-none-stalls',
+      stage: 'primer-bare-none-cold-start',
       failures: [
         ...failuresOf(group('late', 'bare', 'none')),
         ...inconclusive('bare none', lateBare('none')),
-        ...stallRequired('bare none', lateBare('none')),
+        ...deviceStartRequired('bare none', lateBare('none')),
       ],
       trials: lateBare('none'),
     },
     {
-      stage: 'primer-bare-sham-stalls',
+      stage: 'primer-bare-sham-cold-start',
       failures: [
         ...failuresOf(group('late', 'bare', 'sham')),
         ...inconclusive('bare sham', lateBare('sham')),
-        ...stallRequired('bare sham', lateBare('sham')),
+        ...deviceStartRequired('bare sham', lateBare('sham')),
       ],
       trials: lateBare('sham'),
     },
@@ -1481,11 +1568,11 @@ export async function runPrimerProof(
       trials: lateViewer('prepared'),
     },
     {
-      stage: 'viewer-primer-sham-stalls',
+      stage: 'viewer-primer-sham-cold-start',
       failures: [
         ...failuresOf(group('late', 'viewer', 'sham')),
         ...inconclusive('viewer sham', lateViewer('sham')),
-        ...stallRequired('viewer sham', lateViewer('sham')),
+        ...deviceStartRequired('viewer sham', lateViewer('sham')),
       ],
       trials: lateViewer('sham'),
     },
