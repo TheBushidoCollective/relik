@@ -823,6 +823,10 @@ try {
   const otioDirectory = await makeLargeOtiod(base, scratch, otioTemplate);
   const otio = await publish(otioDirectory);
   assert.ok(
+    otio.peakRss <= 1_400_000_000,
+    `OTIO MCP peak RSS exceeded budget: ${otio.peakRss}`
+  );
+  assert.ok(
     otio.plaintextBytes >= 498 * MIB && otio.plaintextBytes <= CAP,
     `unexpected OTIO archive size: ${otio.plaintextBytes}`
   );
@@ -837,9 +841,19 @@ try {
   await acceptPrompt(browser, otioPage, otio.plaintextBytes);
   await browser.waitFor(
     otioPage,
-    `!!document.querySelector('.otio-view[data-ready="true"]')`,
-    'large OTIO preview',
+    `!!document.querySelector('.otio-view[data-ready="diagnostic"][data-otio-program-state="unavailable"][data-otio-program-reason="size-cap-exceeded"]')`,
+    'large OTIO focus-only diagnostic',
     900_000
+  );
+  await browser.evaluate(
+    otioPage,
+    `(() => {
+      const play = document.querySelector('button.otio-play');
+      if (!(play instanceof HTMLButtonElement) || !play.disabled) throw new Error('focus-only Play must be disabled');
+      const clip = document.querySelector('button.otio-item[data-schema^="Clip."][data-focus-node-id]');
+      if (!(clip instanceof HTMLButtonElement)) throw new Error('OTIO clip focus missing');
+      clip.click();
+    })()`
   );
   const timing = await browser.waitFor<{ kind: string; count: number }>(
     otioPage,
@@ -950,7 +964,7 @@ try {
   await acceptPrompt(browser, reopenedOtio, otio.plaintextBytes);
   await browser.waitFor(
     reopenedOtio,
-    `!!document.querySelector('.otio-view[data-ready="true"]') && !!document.querySelector('.otio-comment-mark[data-comment-id]')`,
+    `!!document.querySelector('.otio-view[data-ready="diagnostic"][data-otio-program-state="unavailable"][data-otio-program-reason="size-cap-exceeded"]') && !!document.querySelector('.otio-comment-mark[data-comment-id]')`,
     'OTIO comment after reload',
     900_000
   );

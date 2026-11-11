@@ -1,17 +1,24 @@
-import { describe, expect, test } from 'bun:test';
+import { beforeAll, describe, expect, test } from 'bun:test';
+import { createHash } from 'node:crypto';
 import { deflateRawSync } from 'node:zlib';
 import { otioDocumentMediaPaths } from '../src/otio-identity.ts';
 import type { OtioDocumentV1 } from '../src/otio-types.ts';
 import {
   MAX_OTIO_PROGRAM_MANIFEST_BYTES,
   OTIO_PROGRAM_MANIFEST_ENTRY,
+  OTIO_PROGRAM_MAX_BYTES,
   OtioProgramError,
   otioProgramEntryName,
   parseOtioProgramManifest,
   readOtioProgramArchive,
   stringifyOtioProgramManifest,
 } from '../src/otio-program.ts';
-import { crc32, indexOtioZip } from '../src/otio-zip.ts';
+import {
+  crc32,
+  indexOtioZip,
+  OTIO_DOCUMENT_MAX_BYTES,
+  type ZipSource,
+} from '../src/otio-zip.ts';
 
 const STORED = 0;
 const DEFLATE = 8;
@@ -973,5 +980,188 @@ describe('media key length is measured in UTF-8 bytes', () => {
         manifestBytes({ media: { 'media/😀.png': MEDIA_SHA } })
       )
     ).not.toThrow();
+  });
+});
+
+const MIB = 1024 * 1024;
+const BIG_MEDIA = 'media/large.bin';
+const BIG_MEDIA_SIZE = OTIO_DOCUMENT_MAX_BYTES + 1;
+const BIG_DOCUMENT = {
+  document_sha256: CONTENT_SHA,
+  timeline_ids: TIMELINE_IDS,
+  media_paths: [BIG_MEDIA],
+};
+
+const CRC_TABLE = Uint32Array.from({ length: 256 }, (_, n) => {
+  let c = n;
+  for (let k = 0; k < 8; k += 1) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+  return c >>> 0;
+});
+
+/** CRC-32 of `length` zero bytes, computed without materializing them. */
+function crc32OfZeros(length: number): number {
+  let c = 0xffffffff;
+  for (let i = 0; i < length; i += 1) {
+    c = (CRC_TABLE[c & 0xff] ?? 0) ^ (c >>> 8);
+  }
+  return (c ^ 0xffffffff) >>> 0;
+}
+
+/** SHA-256 of `length` zero bytes, hashed in 8 MiB steps. */
+function sha256OfZeros(length: number): string {
+  const hash = createHash('sha256');
+  const zeros = new Uint8Array(8 * MIB);
+  for (let left = length; left > 0; left -= zeros.length) {
+    hash.update(zeros.subarray(0, Math.min(zeros.length, left)));
+  }
+  return hash.digest('hex');
+}
+
+/**
+ * A range-backed archive whose last member is a STORED media entry of zero
+ * bytes, generated on request so the archive exists only as ranges. The media
+ * is the last local and central record, so the ZIP is patched in place to
+ * declare `mediaSize` bytes. `corruptAt` flips one media byte, counted from
+ * the media's start.
+ */
+function rangeArchive(options: {
+  readonly mediaSize: number;
+  readonly mediaCrc: number;
+  readonly manifest: Uint8Array;
+  readonly corruptAt?: number;
+}): ZipSource & { readonly reads: number[] } {
+  const zip = buildZip([
+    { name: 'version.txt', data: encoder.encode('1.0.0') },
+    { name: 'content.otio', data: CONTENT },
+    {
+      name: OTIO_PROGRAM_MANIFEST_ENTRY,
+      data: options.manifest,
+      method: DEFLATE,
+    },
+    { name: otioProgramEntryName(0), data: PROGRAM },
+    { name: BIG_MEDIA, data: new Uint8Array([0]) },
+  ]);
+  const view = new DataView(zip.buffer, zip.byteOffset, zip.byteLength);
+  const eocd = zip.length - 22;
+  const cdStart = view.getUint32(eocd + 16, true);
+  const nameLength = encoder.encode(BIG_MEDIA).length;
+  const local = cdStart - (30 + nameLength + 1);
+  const central = eocd - (46 + nameLength);
+  const dataStart = cdStart - 1;
+  const mediaEnd = dataStart + options.mediaSize;
+  view.setUint32(local + 14, options.mediaCrc, true);
+  view.setUint32(local + 18, options.mediaSize, true);
+  view.setUint32(local + 22, options.mediaSize, true);
+  view.setUint32(central + 16, options.mediaCrc, true);
+  view.setUint32(central + 20, options.mediaSize, true);
+  view.setUint32(central + 24, options.mediaSize, true);
+  view.setUint32(eocd + 16, mediaEnd, true);
+  const prefix = zip.subarray(0, dataStart);
+  const suffix = zip.subarray(dataStart + 1);
+  const corrupt =
+    options.corruptAt === undefined ? -1 : dataStart + options.corruptAt;
+  const reads: number[] = [];
+  return {
+    size: mediaEnd + suffix.length,
+    reads,
+    async read(start: number, end: number): Promise<Uint8Array> {
+      reads.push(end - start);
+      const out = new Uint8Array(end - start);
+      if (start < prefix.length) {
+        out.set(prefix.subarray(start, Math.min(end, prefix.length)));
+      }
+      if (end > mediaEnd) {
+        const from = Math.max(start, mediaEnd);
+        out.set(suffix.subarray(from - mediaEnd, end - mediaEnd), from - start);
+      }
+      if (corrupt >= start && corrupt < end) out[corrupt - start] = 0xff;
+      return out;
+    },
+  };
+}
+
+describe('program byte bound', () => {
+  test('is exactly 100 MiB', () => {
+    expect(OTIO_PROGRAM_MAX_BYTES).toBe(100 * MIB);
+  });
+
+  test('a program at the bound parses, and one byte over is refused', () => {
+    expect(() =>
+      parseOtioProgramManifest(
+        manifestBytes({
+          timelines: [
+            rendered(0, { bytes: OTIO_PROGRAM_MAX_BYTES }),
+            unavailable(),
+          ],
+        })
+      )
+    ).not.toThrow();
+    expect(
+      parseFailure(
+        manifestBytes({
+          timelines: [
+            rendered(0, { bytes: OTIO_PROGRAM_MAX_BYTES + 1 }),
+            unavailable(),
+          ],
+        })
+      ).code
+    ).toBe('malformed-manifest');
+  });
+
+  test('a manifest whose programs total past the bound is refused before any program is read', async () => {
+    const half = OTIO_PROGRAM_MAX_BYTES / 2 + 1;
+    const manifest = manifestBytes({
+      timelines: [rendered(0, { bytes: half }), rendered(1, { bytes: half })],
+    });
+    await expect(
+      readOtioProgramArchive(await open(baseEntries({ manifest })), DOCUMENT)
+    ).rejects.toMatchObject({ code: 'size-cap-exceeded' });
+  });
+});
+
+describe('range-backed media one byte past the document bound', () => {
+  let mediaCrc = 0;
+  let mediaSha = '';
+  beforeAll(() => {
+    mediaCrc = crc32OfZeros(BIG_MEDIA_SIZE);
+    mediaSha = sha256OfZeros(BIG_MEDIA_SIZE);
+  });
+
+  test('verifies with no read over 8 MiB and no decompression-limit', async () => {
+    const source = rangeArchive({
+      mediaSize: BIG_MEDIA_SIZE,
+      mediaCrc,
+      manifest: manifestBytes({ media: { [BIG_MEDIA]: mediaSha } }),
+    });
+    const result = await readOtioProgramArchive(
+      await indexOtioZip(source),
+      BIG_DOCUMENT
+    );
+    expect(result?.programs.get(0)).toEqual(PROGRAM);
+    expect(Math.max(...source.reads)).toBeLessThanOrEqual(8 * MIB);
+  });
+
+  test('a flipped digest is still refused as digest-mismatch', async () => {
+    const wrong = (mediaSha[0] === '0' ? '1' : '0') + mediaSha.slice(1);
+    const source = rangeArchive({
+      mediaSize: BIG_MEDIA_SIZE,
+      mediaCrc,
+      manifest: manifestBytes({ media: { [BIG_MEDIA]: wrong } }),
+    });
+    await expect(
+      readOtioProgramArchive(await indexOtioZip(source), BIG_DOCUMENT)
+    ).rejects.toMatchObject({ code: 'digest-mismatch' });
+  });
+
+  test('a corrupted media byte is refused by the stored CRC', async () => {
+    const source = rangeArchive({
+      mediaSize: BIG_MEDIA_SIZE,
+      mediaCrc,
+      manifest: manifestBytes({ media: { [BIG_MEDIA]: mediaSha } }),
+      corruptAt: 3 * MIB + 17,
+    });
+    await expect(
+      readOtioProgramArchive(await indexOtioZip(source), BIG_DOCUMENT)
+    ).rejects.toMatchObject({ code: 'corrupt-archive' });
   });
 });

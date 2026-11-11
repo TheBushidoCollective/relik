@@ -439,17 +439,17 @@ Success ends with:
 OTIO_PATH_OK
 ```
 
-## Rendered OpenTimelineIO program (not yet implemented)
+## Rendered OpenTimelineIO program
 
-Status: specified, not built. No command in this section runs yet, and nothing here proves that a program exists. The `OTIO_PATH_OK` run above proves the composition archive path that ships today. It does not prove a program, a manifest, or focus-only reasons.
+The publisher and viewer paths are implemented on PR 155. Release requires the checks below, including current-revision playback proof. The `OTIO_PATH_OK` run above covers legacy composition playback, not program rendering.
 
-Once the program exists, publishing a timeline must produce an archive that `format.md` 3.17 requires. Each of the following must hold.
+Publishing a timeline must produce an archive that `format.md` 3.17 requires. Each of the following must hold.
 
 **Contents.** The archive contains `relic/program.json` and one MP4 per rendered timeline outside `content.otio`. The manifest is present on every archive published under this path.
 
 **Identity.** `content.otio`, `document_sha256`, and `relic_version` are unchanged from the composition path.
 
-**Size.** The archive fits within 100 MiB as plaintext, after trying 1080p, then 720p, then 540p per timeline.
+**Size.** The plaintext archive fits within 500 MiB. Manifest and program bytes have a separate 100 MiB bound. The current renderer uses one 1280x720 output; the proposed resolution ladder is not implemented.
 
 **Reasons.** Every timeline that cannot be rendered records a specific code and reason. No approximate render is stored.
 

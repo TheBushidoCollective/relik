@@ -134,13 +134,31 @@ function checkedAdd(left: number, right: number, where: string): number {
 }
 
 /**
- * Build a standard deterministic ZIP archive. Count validation deliberately
- * happens before compression or an entries-sized allocation.
+ * One entry after validation and compression. For a STORED entry `compressed`
+ * is the entry's own bytes, so the archive references them and never copies.
  */
-export function buildZipArchive(
+export interface PreparedZipEntry {
+  readonly data: Uint8Array;
+  readonly nameBytes: Uint8Array;
+  readonly method: 0 | 8;
+  readonly compressed: Uint8Array;
+}
+
+/** A validated ZIP layout and its exact size. Writing it allocates the archive once. */
+export interface PreparedZipArchive {
+  readonly entries: readonly PreparedZipEntry[];
+  readonly totalSize: number;
+}
+
+/**
+ * Validates an archive's entries and computes its exact size without writing
+ * it. Count and size checks run before any archive-sized buffer exists, so an
+ * oversized archive is refused without being allocated.
+ */
+export function prepareZipArchive(
   entries: readonly ZipFileEntry[],
   maxArchiveBytes = PLAINTEXT_CAP_BYTES
-): Uint8Array {
+): PreparedZipArchive {
   if (entries.length >= MAX_ZIP_ENTRY_COUNT) {
     bundleRefusal(
       `ZIP has ${entries.length} entries; this non-ZIP64 writer permits at most ${MAX_ZIP_ENTRY_COUNT - 1}`
@@ -148,15 +166,7 @@ export function buildZipArchive(
   }
   assertSafeLimit(maxArchiveBytes, 'maxArchiveBytes');
 
-  const dosTime = 0x0000;
-  const dosDate = 0x0021; // 1980-01-01
-  const prepared: Array<{
-    readonly entry: ZipFileEntry;
-    readonly nameBytes: Uint8Array;
-    readonly crc: number;
-    readonly compressed: Uint8Array;
-  }> = [];
-
+  const prepared: PreparedZipEntry[] = [];
   let localHeadersTotal = 0;
   let centralDirTotal = 0;
   for (const entry of entries) {
@@ -167,7 +177,6 @@ export function buildZipArchive(
     if (entry.data.length > 0xffffffff) {
       bundleRefusal(`ZIP entry ${entry.name} exceeds the ZIP32 size limit`);
     }
-    const nameBytes = TEXT_ENCODER.encode(entry.name);
     const compressed =
       entry.method === 8
         ? deflateRawSync(entry.data, { level: 9 })
@@ -177,7 +186,6 @@ export function buildZipArchive(
         `Compressed ZIP entry ${entry.name} exceeds the ZIP32 size limit`
       );
     }
-
     localHeadersTotal = checkedAdd(
       localHeadersTotal,
       checkedAdd(30 + nameLength, compressed.length, 'ZIP local header size'),
@@ -188,7 +196,12 @@ export function buildZipArchive(
       46 + nameLength,
       'ZIP central directory'
     );
-    prepared.push({ entry, nameBytes, crc: crc32(entry.data), compressed });
+    prepared.push({
+      data: entry.data,
+      nameBytes: TEXT_ENCODER.encode(entry.name),
+      method: entry.method,
+      compressed,
+    });
   }
 
   const totalSize = checkedAdd(
@@ -201,28 +214,40 @@ export function buildZipArchive(
       `Generated .otioz archive size (${totalSize} bytes) exceeds limit of ${maxArchiveBytes} bytes`
     );
   }
+  return { entries: prepared, totalSize };
+}
 
-  const buffer = new Uint8Array(totalSize);
+/**
+ * Writes a prepared archive. The bytes equal buildZipArchive's output for the
+ * same entries: standard, deterministic, and free of timestamps.
+ */
+export function assembleZipArchive(archive: PreparedZipArchive): Uint8Array {
+  const dosTime = 0x0000;
+  const dosDate = 0x0021; // 1980-01-01
+  const buffer = new Uint8Array(archive.totalSize);
   const view = new DataView(
     buffer.buffer,
     buffer.byteOffset,
     buffer.byteLength
   );
-  let localCursor = 0;
+  const crcs: number[] = [];
   const localHeaderOffsets: number[] = [];
+  let localCursor = 0;
 
-  for (const item of prepared) {
+  for (const item of archive.entries) {
+    const crc = crc32(item.data);
+    crcs.push(crc);
     const offset = localCursor;
     localHeaderOffsets.push(offset);
     view.setUint32(offset + 0, 0x04034b50, true);
     view.setUint16(offset + 4, 20, true);
     view.setUint16(offset + 6, ZIP_UTF8_FILENAME_FLAG, true);
-    view.setUint16(offset + 8, item.entry.method, true);
+    view.setUint16(offset + 8, item.method, true);
     view.setUint16(offset + 10, dosTime, true);
     view.setUint16(offset + 12, dosDate, true);
-    view.setUint32(offset + 14, item.crc, true);
+    view.setUint32(offset + 14, crc, true);
     view.setUint32(offset + 18, item.compressed.length, true);
-    view.setUint32(offset + 22, item.entry.data.length, true);
+    view.setUint32(offset + 22, item.data.length, true);
     view.setUint16(offset + 26, item.nameBytes.length, true);
     view.setUint16(offset + 28, 0, true);
     buffer.set(item.nameBytes, offset + 30);
@@ -232,19 +257,19 @@ export function buildZipArchive(
 
   const centralDirectoryOffset = localCursor;
   let centralCursor = centralDirectoryOffset;
-  for (let index = 0; index < prepared.length; index++) {
-    const item = prepared[index]!;
+  for (let index = 0; index < archive.entries.length; index++) {
+    const item = archive.entries[index]!;
     const localOffset = localHeaderOffsets[index]!;
     view.setUint32(centralCursor + 0, 0x02014b50, true);
     view.setUint16(centralCursor + 4, 0x0014, true);
     view.setUint16(centralCursor + 6, 20, true);
     view.setUint16(centralCursor + 8, ZIP_UTF8_FILENAME_FLAG, true);
-    view.setUint16(centralCursor + 10, item.entry.method, true);
+    view.setUint16(centralCursor + 10, item.method, true);
     view.setUint16(centralCursor + 12, dosTime, true);
     view.setUint16(centralCursor + 14, dosDate, true);
-    view.setUint32(centralCursor + 16, item.crc, true);
+    view.setUint32(centralCursor + 16, crcs[index]!, true);
     view.setUint32(centralCursor + 20, item.compressed.length, true);
-    view.setUint32(centralCursor + 24, item.entry.data.length, true);
+    view.setUint32(centralCursor + 24, item.data.length, true);
     view.setUint16(centralCursor + 28, item.nameBytes.length, true);
     view.setUint16(centralCursor + 30, 0, true);
     view.setUint16(centralCursor + 32, 0, true);
@@ -260,12 +285,34 @@ export function buildZipArchive(
   view.setUint32(centralCursor + 0, 0x06054b50, true);
   view.setUint16(centralCursor + 4, 0, true);
   view.setUint16(centralCursor + 6, 0, true);
-  view.setUint16(centralCursor + 8, entries.length, true);
-  view.setUint16(centralCursor + 10, entries.length, true);
+  view.setUint16(centralCursor + 8, archive.entries.length, true);
+  view.setUint16(centralCursor + 10, archive.entries.length, true);
   view.setUint32(centralCursor + 12, centralDirectorySize, true);
   view.setUint32(centralCursor + 16, centralDirectoryOffset, true);
   view.setUint16(centralCursor + 20, 0, true);
   return buffer;
+}
+
+/**
+ * Build a standard deterministic ZIP archive. Count and size validation happen
+ * before any compression or archive-sized allocation.
+ */
+export function buildZipArchive(
+  entries: readonly ZipFileEntry[],
+  maxArchiveBytes = PLAINTEXT_CAP_BYTES
+): Uint8Array {
+  return assembleZipArchive(prepareZipArchive(entries, maxArchiveBytes));
+}
+
+/**
+ * The exact size buildZipArchive would produce, computed without writing the
+ * archive. It runs the same validation and sizing with no archive buffer.
+ */
+export function measureZipArchive(
+  entries: readonly ZipFileEntry[],
+  maxArchiveBytes = PLAINTEXT_CAP_BYTES
+): number {
+  return prepareZipArchive(entries, maxArchiveBytes).totalSize;
 }
 
 interface CollectedMedia {

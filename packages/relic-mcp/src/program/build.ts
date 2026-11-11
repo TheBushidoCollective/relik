@@ -21,6 +21,7 @@ import {
   MAX_EXPANDED_ZIP_BYTES,
   MAX_OTIO_PROGRAM_MANIFEST_BYTES,
   MAX_OTIO_PROGRAM_FPS,
+  OTIO_PROGRAM_MAX_BYTES,
   otioDocumentMediaPaths,
   type OtioMediaEntry,
   type OtioProgramManifestV1,
@@ -34,9 +35,17 @@ import {
   readOtioProgramArchive,
   stringifyOtioProgramManifest,
 } from '@relic/format';
-import { buildZipArchive } from '../otio-bundle.ts';
+import {
+  assembleZipArchive,
+  measureZipArchive,
+  prepareZipArchive,
+} from '../otio-bundle.ts';
 import { PublishError } from '../publish.ts';
-import type { ProgramPolicy } from './policy.ts';
+import {
+  programArchiveBudget,
+  programRenderInputWithinBounds,
+  type ProgramPolicy,
+} from './policy.ts';
 import {
   RENDER_MESSAGES,
   type ProgramRenderer,
@@ -93,15 +102,17 @@ interface Decision {
 }
 
 /** Headroom for the manifest's JSON, sized for timelines with several reasons. */
-const MANIFEST_RESERVE_BYTES = 8192;
-const MANIFEST_RESERVE_PER_TIMELINE = 2048;
+export const MANIFEST_RESERVE_BYTES = 8192;
+export const MANIFEST_RESERVE_PER_TIMELINE = 2048;
 /** Local and central directory headers plus the entry name, per program entry. */
-const ZIP_ENTRY_OVERHEAD_BYTES = 512;
+export const ZIP_ENTRY_OVERHEAD_BYTES = 512;
+/** The size_basis every size refusal in this publisher reports. */
+const SIZE_BASIS = 'whole-archive';
 const MAX_REASON_MESSAGE_CHARS = 512;
 const MAX_REASONS_PER_TIMELINE = 64;
 
 /** Fixed sentences for the decisions this module makes. No local detail appears in any of them. */
-const BUILD_MESSAGES = {
+export const BUILD_MESSAGES = {
   sizeCap: 'the program would take the archive past the program budget',
   manifestWontFit:
     'the program manifest does not fit the cap, so focus-only playback cannot be delivered honestly',
@@ -109,11 +120,18 @@ const BUILD_MESSAGES = {
   storageRelease: 'program storage made for this publish could not be released',
   storageEnforce: 'program storage could not be enforced for this publish',
   invalidTiming: 'the program timing is outside the supported bounds',
+  renderInput:
+    'the program media is over the render input limit, so this timeline is focus-only',
 } as const;
 
 /** Refuse the publish with an exact reason. Nothing is degraded on this path. */
-function refuse(reason: string, message: string): never {
+function refuse(
+  reason: string,
+  message: string,
+  details: Readonly<Record<string, unknown>> = {}
+): never {
   throw new PublishError('program_refused', message, {
+    ...details,
     program_reason: reason,
   });
 }
@@ -258,6 +276,39 @@ function noRendererOutput(timelineIds: readonly string[]): ProgramRenderOutput {
   };
 }
 
+/**
+ * The renderer's byte cap for one timeline: the program bound, or the room left
+ * after the base archive, the manifest reserve and one entry's overhead, which
+ * is smaller. A value below one means no render may run.
+ */
+export function programRenderBudget(input: {
+  readonly budget: number;
+  readonly baseSize: number;
+  readonly timelineCount: number;
+}): number {
+  const headroom =
+    input.budget -
+    input.baseSize -
+    MANIFEST_RESERVE_BYTES -
+    MANIFEST_RESERVE_PER_TIMELINE * input.timelineCount -
+    ZIP_ENTRY_OVERHEAD_BYTES;
+  return Math.min(OTIO_PROGRAM_MAX_BYTES, headroom);
+}
+
+/** Every timeline is unavailable for one stated reason, and no browser ran. */
+function skippedRenderOutput(
+  timelineIds: readonly string[],
+  message: string
+): ProgramRenderOutput {
+  return {
+    browser: 'none',
+    outcomes: timelineIds.map(() => ({
+      status: 'unavailable' as const,
+      reasons: [{ code: 'size-cap-exceeded' as const, message }],
+    })),
+  };
+}
+
 /** True for a name that publishes as an OTIO archive, which always carries a manifest. */
 export function isOtioBundleName(name: string): boolean {
   return archiveKind(name) === 'otioz';
@@ -342,57 +393,69 @@ export async function buildProgramArchive(
     );
   }
 
-  // The program budget is the lower of the server's cap and the local knob.
-  const budget = Math.min(
-    input.sizeLimit,
-    input.policy.maxBytes ?? input.sizeLimit
-  );
+  // The program budget: the server's cap, lowered by the local knob and never raised.
+  const budget = programArchiveBudget(input.sizeLimit, input.policy);
+  // The base archive is measured, not built, before any render starts. Its size
+  // leaves the renderer exactly the room the program can use.
+  const baseSize = measureZipArchive(base, MAX_EXPANDED_ZIP_BYTES);
+  const renderBudget = programRenderBudget({
+    budget,
+    baseSize,
+    timelineCount: timelineIds.length,
+  });
   const contentText = new TextDecoder('utf-8', { fatal: true }).decode(
     index.contentOtioBytes
   );
 
   let output: ProgramRenderOutput;
-  try {
-    output =
-      input.renderer === undefined
-        ? noRendererOutput(timelineIds)
-        : await input.renderer({
-            contentText,
-            documentSha256: index.contentSha256,
-            timelineIds,
-            media,
-            readMedia: (bundlePath) => index.readEntry(bundlePath),
-            maxBytes: budget,
-            forceEncoderAbsent: input.policy.forceEncoderAbsent,
-          });
-  } catch (error) {
-    if (error instanceof ProgramStorageError) {
-      // Storage this publisher made could not be released or enforced. Degrading
-      // would leave that state behind unreported, so the publish is refused.
-      refuse(
-        error.cleanupFailed
-          ? 'profile-storage-failed'
-          : 'profile-storage-unenforced',
-        error.cleanupFailed
-          ? BUILD_MESSAGES.storageRelease
-          : BUILD_MESSAGES.storageEnforce
-      );
+  if (!programRenderInputWithinBounds(media)) {
+    // The page would receive more media than one render may take. No browser starts.
+    output = skippedRenderOutput(timelineIds, BUILD_MESSAGES.renderInput);
+  } else if (!(renderBudget >= 1)) {
+    // Nothing is left for a program. No browser starts.
+    output = skippedRenderOutput(timelineIds, BUILD_MESSAGES.sizeCap);
+  } else {
+    try {
+      output =
+        input.renderer === undefined
+          ? noRendererOutput(timelineIds)
+          : await input.renderer({
+              contentText,
+              documentSha256: index.contentSha256,
+              timelineIds,
+              media,
+              readMedia: (bundlePath) => index.readEntry(bundlePath),
+              maxBytes: renderBudget,
+              forceEncoderAbsent: input.policy.forceEncoderAbsent,
+            });
+    } catch (error) {
+      if (error instanceof ProgramStorageError) {
+        // Storage this publisher made could not be released or enforced. Degrading
+        // would leave that state behind unreported, so the publish is refused.
+        refuse(
+          error.cleanupFailed
+            ? 'profile-storage-failed'
+            : 'profile-storage-unenforced',
+          error.cleanupFailed
+            ? BUILD_MESSAGES.storageRelease
+            : BUILD_MESSAGES.storageEnforce
+        );
+      }
+      output = {
+        browser: 'none',
+        outcomes: timelineIds.map(() => ({
+          status: 'unavailable' as const,
+          reasons: [
+            {
+              code: 'render-failed' as const,
+              message: RENDER_MESSAGES.renderFailed,
+            },
+          ],
+        })),
+      };
     }
-    output = {
-      browser: 'none',
-      outcomes: timelineIds.map(() => ({
-        status: 'unavailable' as const,
-        reasons: [
-          {
-            code: 'render-failed' as const,
-            message: RENDER_MESSAGES.renderFailed,
-          },
-        ],
-      })),
-    };
   }
 
-  const baseSize = buildZipArchive(base, MAX_EXPANDED_ZIP_BYTES).length;
   let used =
     baseSize +
     MANIFEST_RESERVE_BYTES +
@@ -498,6 +561,8 @@ export async function buildProgramArchive(
   });
 
   // Build the archive and prove it verifies before it can leave this function.
+  // Sizing and writing are separate: an archive over the budget is refused
+  // before any archive-sized buffer is allocated.
   const attempt = async (plan: readonly Decision[]): Promise<Uint8Array> => {
     const manifest = stringifyOtioProgramManifest(manifestFor(plan));
     if (manifest.length > MAX_OTIO_PROGRAM_MANIFEST_BYTES) {
@@ -518,7 +583,7 @@ export async function buildProgramArchive(
             },
           ]
     );
-    const bytes = buildZipArchive(
+    const prepared = prepareZipArchive(
       [
         ...base,
         {
@@ -528,8 +593,20 @@ export async function buildProgramArchive(
         },
         ...programs,
       ],
-      budget
+      Number.MAX_SAFE_INTEGER
     );
+    if (prepared.totalSize > budget) {
+      throw new PublishError(
+        'local_size_precheck_failed',
+        `the program archive is ${prepared.totalSize} bytes, over the ${budget}-byte budget`,
+        {
+          size_limit_bytes: budget,
+          declared_size_bytes: prepared.totalSize,
+          size_basis: SIZE_BASIS,
+        }
+      );
+    }
+    const bytes = assembleZipArchive(prepared);
     const written = await indexOtioZip(bytes, {
       maxExpandedBytes: MAX_EXPANDED_ZIP_BYTES,
     });
@@ -550,7 +627,8 @@ export async function buildProgramArchive(
   try {
     bytes = await attempt(decisions);
   } catch (first) {
-    if (first instanceof PublishError) throw first;
+    // A size refusal is a PublishError too, so it is tested first.
+    if (first instanceof PublishError && !isSizeError(first)) throw first;
     if (!isSizeError(first)) {
       // An output that fails verification is a defect in this publisher, not a
       // rendering limit. It is never reported as focus-only.
@@ -572,9 +650,13 @@ export async function buildProgramArchive(
     try {
       bytes = await attempt(finalPlan);
     } catch (second) {
-      if (second instanceof PublishError) throw second;
+      if (second instanceof PublishError && !isSizeError(second)) throw second;
       if (isSizeError(second)) {
-        refuse('manifest-unfit', BUILD_MESSAGES.manifestWontFit);
+        refuse(
+          'manifest-unfit',
+          BUILD_MESSAGES.manifestWontFit,
+          (second as PublishError).details
+        );
       }
       refuse('output-invalid', BUILD_MESSAGES.outputUnverified);
     }

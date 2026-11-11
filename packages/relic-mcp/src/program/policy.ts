@@ -89,3 +89,35 @@ export function programAssetDir(
       : '../../dist/program/';
   return fileURLToPath(new URL(base, import.meta.url));
 }
+
+/** Largest single media entry the page is given to render from. */
+export const RENDER_INPUT_MAX_ENTRY_BYTES = 64 * 1024 * 1024;
+/** Largest total media the page is given to render from, across every entry. */
+export const RENDER_INPUT_MAX_TOTAL_BYTES = 100 * 1024 * 1024;
+
+/**
+ * The archive budget: the server's cap, lowered by RELIC_PROGRAM_MAX_BYTES when
+ * that is set below it. The knob never raises the budget.
+ */
+export function programArchiveBudget(
+  sizeLimit: number,
+  policy: Pick<ProgramPolicy, 'maxBytes'>
+): number {
+  return Math.min(sizeLimit, policy.maxBytes ?? sizeLimit);
+}
+
+/**
+ * True when every media entry handed to the renderer fits the render input
+ * bounds. The check is platform-independent and runs before any browser starts.
+ */
+export function programRenderInputWithinBounds(
+  media: readonly { readonly size: number }[]
+): boolean {
+  let total = 0;
+  for (const entry of media) {
+    if (entry.size > RENDER_INPUT_MAX_ENTRY_BYTES) return false;
+    total += entry.size;
+    if (total > RENDER_INPUT_MAX_TOTAL_BYTES) return false;
+  }
+  return true;
+}

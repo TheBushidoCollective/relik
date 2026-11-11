@@ -18,7 +18,7 @@ export const PROGRAM_MEDIA_PREFIX = `${PROGRAM_VIRTUAL_ORIGIN}/media/`;
 export const PROGRAM_AUDIO_CODEC = 'mp4a.40.2' as const;
 export const PROGRAM_AUDIO_RATE = 48000 as const;
 export const PROGRAM_AUDIO_CHANNELS = 2 as const;
-export const PROGRAM_MAX_BYTES = 100 * 1024 * 1024;
+export { OTIO_PROGRAM_MAX_BYTES as PROGRAM_MAX_BYTES } from '@relic/format';
 export const PROGRAM_MAX_DIMENSION = 4096;
 export const PROGRAM_MAX_AREA = 1920 * 1080;
 export const PROGRAM_CHUNK_BYTES = 1024 * 1024;

@@ -155,6 +155,7 @@ RELIC_PROOF_CHROME_PATH=/absolute/path/to/headless-chromium bun packages/relic-m
 ```
 
 The command publishes a 500 MiB file through MCP stdio to a loopback service, checks the cap boundary, exercises the confirmation and preview, and hashes the downloaded file against the source. It also checks large OTIO, PDF, text, image and model paths. Success ends with `LARGE_RELIC_PATH_OK`; failures exit nonzero. The browser has a private profile and must attest headless mode.
+The large OTIO archive is focus-only; the proof focuses and plays a clip.
 
 Node, Bun, ffmpeg with `libvpx-vp9`, an explicit headless Chromium executable, and sufficient temporary disk space are required. The proof supports Linux and macOS. The MCP peak RSS receipt uses sampled Linux process high-water marks or sampled macOS RSS.
 

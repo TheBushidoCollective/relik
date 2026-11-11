@@ -876,7 +876,7 @@ export async function loadHistoricalVersion(
   const unavailable = (
     code: string,
     detail: string
-  ): HistoricalVersionState => ({
+  ): Extract<HistoricalVersionState, { kind: 'unavailable' }> => ({
     kind: 'unavailable',
     code,
     detail: `${detail} Version ${current.version} remains open.`,
@@ -1455,7 +1455,7 @@ function dead(
   code = 'error',
   cachedPrefix?: CachedPrefix,
   resume?: LoadResume
-): ViewerState {
+): Extract<ViewerState, { kind: 'dead' }> {
   return {
     kind: 'dead',
     dead: { headline, detail, action, code },

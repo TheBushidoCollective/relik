@@ -14,11 +14,14 @@
 
 /**
  * Bounds. Every limit a reader enforces, and why it exists.
- * - Archive: the archive and the program MP4s it carries expand to at most
- *   MAX_EXPANDED_ZIP_BYTES (100 MiB), the same cap every archive uses. The
- *   manifest is capped at MAX_OTIO_PROGRAM_MANIFEST_BYTES (16 MiB), a
- *   parse-cost bound. A media key is at most 65535 UTF-8 bytes, the largest
- *   name a ZIP central-directory entry can carry, and must be well-formed UTF-16.
+ * - Program: the manifest and the rendered program MP4s together expand to at
+ *   most OTIO_PROGRAM_MAX_BYTES (100 MiB), and each declared program is bounded
+ *   by it. This bound is separate from the archive-wide cap, MAX_EXPANDED_ZIP_BYTES.
+ *   Media is verified by a streaming digest under the archive-wide bounds.
+ *   The manifest is capped at
+ *   MAX_OTIO_PROGRAM_MANIFEST_BYTES (16 MiB), a parse-cost bound. A media key is
+ *   at most 65535 UTF-8 bytes, the largest name a ZIP central-directory entry can
+ *   carry, and must be well-formed UTF-16.
  * - Representability: every integer is a safe integer (|n| <= 2^53 - 1), and
  *   every rational time is finite and positive in rate. Frame and sample
  *   counts are checked against the exact duration in floating point, with
@@ -46,10 +49,7 @@ import type {
   OtioTimeRange,
   OtioZipIndex,
 } from './otio-types.ts';
-import {
-  MAX_EXPANDED_ZIP_BYTES,
-  MAX_OTIO_BUNDLE_MEDIA_ENTRIES,
-} from './otio-zip.ts';
+import { MAX_OTIO_BUNDLE_MEDIA_ENTRIES } from './otio-zip.ts';
 
 export const OTIO_PROGRAM_SCHEMA = 'relic.otio.program/1' as const;
 export const OTIO_PROGRAM_PROTOCOL = 1 as const;
@@ -74,6 +74,13 @@ export const MAX_OTIO_PROGRAM_REASONS = 64;
  * A manifest over this size is refused as size-cap-exceeded before any parse.
  */
 export const MAX_OTIO_PROGRAM_MANIFEST_BYTES = 16 * 1024 * 1024;
+/**
+ * The most program bytes one archive may declare, per program and in total
+ * (manifest plus rendered MP4s). This is the program bound, not the archive cap.
+ * It equals OTIO_DOCUMENT_MAX_BYTES, so every program fits the stored-entry
+ * limit that `readEntry` enforces.
+ */
+export const OTIO_PROGRAM_MAX_BYTES = 100 * 1024 * 1024;
 export const MAX_OTIO_PROGRAM_DIMENSION = 4096;
 export const MAX_OTIO_PROGRAM_FPS = 240;
 export const MAX_OTIO_PROGRAM_VIDEO_BITRATE = 100_000_000;
@@ -445,7 +452,7 @@ function expectDescriptor(
     required(record, 'bytes', where),
     `${where}.bytes`,
     1,
-    MAX_EXPANDED_ZIP_BYTES
+    OTIO_PROGRAM_MAX_BYTES
   );
   const range = expectRange(required(record, 'range', where), `${where}.range`);
   const frame_rate = expectFrameRate(
@@ -777,8 +784,9 @@ async function digestHex(bytes: Uint8Array): Promise<string> {
  * - no `relic/program` entry exists beyond the manifest and the rendered MP4s;
  * - each rendered MP4 is STORED, matches its size, and matches its sha256;
  * - the manifest's media map is exactly `document.media_paths`, and each of
- *   those media entries is present and matches its sha256;
- * - the expanded total stays within the archive cap.
+ *   those media entries is present and matches its sha256, streamed and never
+ *   materialized;
+ * - the manifest and the rendered programs total at most OTIO_PROGRAM_MAX_BYTES.
  *
  * `document` comes from `readOtioDocument(zip.contentOtioBytes)`. `media_paths`
  * is derived from that same document's media references, never from the manifest.
@@ -848,10 +856,10 @@ export async function readOtioProgramArchive(
       expandedBytes += record.program.bytes;
     }
   });
-  if (expandedBytes > MAX_EXPANDED_ZIP_BYTES) {
+  if (expandedBytes > OTIO_PROGRAM_MAX_BYTES) {
     throw new OtioProgramError(
       'size-cap-exceeded',
-      `program bytes exceed ${MAX_EXPANDED_ZIP_BYTES} bytes`
+      `program bytes exceed ${OTIO_PROGRAM_MAX_BYTES} bytes`
     );
   }
 
@@ -890,7 +898,7 @@ export async function readOtioProgramArchive(
     const info = zip.entries.get(path);
     if (!info || info.isDirectory)
       mismatch(`media ${path} is not in the archive`);
-    if ((await digestHex(await zip.readEntry(path))) !== sha) {
+    if ((await zip.digestEntry(path)) !== sha) {
       throw new OtioProgramError(
         'digest-mismatch',
         `media ${path} sha256 mismatch`

@@ -1107,11 +1107,11 @@ Authorized by Jason Waldrip on 2026-11-10.
 
 ## 2026-11-10: OpenTimelineIO timelines render locally into the archive as a program, with focus-only fallback
 
-The direction came from the PR155 work through Main, and Main added the legacy and corrupt-manifest rule the same day. This entry records both. **Status: decided, not implemented.** No file in `packages/` or `docs/` contains `relic/program.json` or the focus-only codes as of this entry. Nothing here describes working behaviour. `packages/relic-mcp/PATH.md` lists the proofs that must pass first.
+The publisher and viewer paths are implemented on PR 155. Release remains blocked on playback proof: one legacy cold start measured 411.3 ms against the 350 ms limit, and active external audio prevented the program's cold-device qualification. `packages/relic-mcp/PATH.md` lists the release checks.
 
 **The publisher renders each timeline before encryption.** `relic-mcp` renders every timeline in a composition in a local browser with networking disabled and a temporary profile. The renderer reuses the viewer's compositing and timeline evaluation. It decodes frames at the same certified source times the viewer uses, and it mixes audio at 48 kHz with the playback fade math. Output is H.264/AAC MP4, and only after the browser confirms encoder support. The archive gains `relic/program.json` and one MP4 per timeline, outside `content.otio`.
 
-**Quality ladder and cap.** Each timeline tries 1080p, then 720p, then 540p. The finished plaintext archive must fit the existing 100 MiB cap (`format.md` 3.11), which is not raised. If no rung fits, the timeline is focus-only.
+**Resolution and cap.** The current renderer uses a single 1280x720 output. The proposed 1080p, 720p, and 540p ladder remains unimplemented. The finished plaintext archive must fit the 500 MiB cap in `format.md` 3.11; manifest and program bytes also have a separate 100 MiB bound. If the program cannot fit, the timeline is focus-only.
 
 **Focus-only.** Publishing still succeeds. A timeline without a valid program carries no program, and its manifest records a specific code for the reason. The reasons are: no local Chrome, no H.264/AAC encoder, an unsupported feature, a render failure, and a size overrun. A render never approximates. No partial, lower-fidelity, or substituted program is stored. Under Jason's rule, a Linux publisher whose Chrome cannot encode H.264/AAC is focus-only.
 
@@ -1131,7 +1131,7 @@ A missing manifest is legacy. A present manifest that is corrupt, unparseable, o
 
 **Resolved on 2026-11-10 by Jason's direction, through Main.** Items 1 to 5 are settled. Item 6 is an agent-run verification, not a question for Jason.
 
-**1. Plaintext temporary file: settled.** Rendered output is plaintext and is held in memory only, within the 100 MiB cap. It is never written to disk. This is an absolute constraint. `publish.md` 4.8 is unchanged and applies in full, so there is no conflict and no amendment.
+**1. Plaintext temporary file: settled.** Rendered output is plaintext and is held in memory only, within the program bound. It is never written to disk. This is an absolute constraint. `publish.md` 4.8 is unchanged and applies in full.
 
 **2. Renderer: settled.** Local Chrome with WebCodecs encoders, producing H.264/AAC MP4 after the browser confirms support. This supersedes the 2026-11-09 WebCodecs boundary for the publisher renderer only, as annotated above.
 
