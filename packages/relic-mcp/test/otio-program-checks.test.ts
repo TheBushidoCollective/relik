@@ -676,7 +676,7 @@ describe('primer window edges: a terminal stall fails and startup is not a gap',
     );
     expect(edges.leadingGapMs).toBeNull();
     expect(edges.gapsMs.every((gap) => gap < 40)).toBe(true);
-    expect(edges.trailingGapMs).toBeCloseTo(20, 6);
+    expect(edges.trailingGapMs).toBeCloseTo(80 / 3, 6);
     expect(
       gatePrimerWindow(
         passingWindow({
@@ -691,7 +691,7 @@ describe('primer window edges: a terminal stall fails and startup is not a gap',
   test('a frame presented after the window end is outside the window', () => {
     const presented = [...presentedFrom(pointerAt + 340, end - 20), end + 30];
     const edges = windowEdgeGaps(presented, pointerAt, end);
-    expect(edges.trailingGapMs).toBeCloseTo(20, 6);
+    expect(edges.trailingGapMs).toBeCloseTo(80 / 3, 6);
     expect(edges.gapsMs.every((gap) => gap < 40)).toBe(true);
   });
 

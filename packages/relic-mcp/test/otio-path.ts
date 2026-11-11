@@ -11548,7 +11548,8 @@ function assertLatestRecoveryFrame(
   trace: MovingTrace['trace'],
   selection: Record<string, unknown>,
   boundary: number,
-  rate: number
+  rate: number,
+  audioOnly: boolean
 ): void {
   const generation = selection['generation'];
   const request = trace.events.find(
@@ -11700,9 +11701,10 @@ function assertLatestRecoveryFrame(
     native,
     'recovery bridge was not read from the native output clock'
   );
-  const band = phaseBandFromSamples(
+  const band = recoveryPhaseBand(
     input['phaseSamples'] as Record<string, unknown>[],
-    vsync
+    vsync,
+    audioOnly
   );
   const phaseUpper = band.upper;
   const phaseLower = band.lower;
@@ -14127,7 +14129,8 @@ async function assertVideoReservationInvalidation(
     future.trace,
     videoSelection,
     closeFrame,
-    sampleRate
+    sampleRate,
+    false // This fixture draws video and requires phase samples.
   );
   assert.ok(
     assertSuccessorPolicy(futureEvents, true) > 0,
@@ -15666,6 +15669,21 @@ function phaseBandFromSamples(
   return { lower, upper };
 }
 
+// Only an independently classified audio-only document has no video phase.
+function recoveryPhaseBand(
+  samples: Record<string, unknown>[],
+  vsync: number,
+  audioOnly: boolean
+): { lower: number; upper: number } {
+  if (!audioOnly) return phaseBandFromSamples(samples, vsync);
+  assert.equal(
+    samples.length,
+    0,
+    'audio-only recovery recorded a video phase sample'
+  );
+  return { lower: -Infinity, upper: Infinity };
+}
+
 // Controls for the per-sample phase band. The band must grow with K (a fixed-3 oracle would
 // not), must equal the former two-window band at K = 3, and must refuse a missing count.
 function assertPhaseBandControls(): void {
@@ -15710,6 +15728,32 @@ function assertPhaseBandControls(): void {
     /resident slot count/,
     'a two-slot sample was accepted below the three-slot floor'
   );
+  assert.deepEqual(recoveryPhaseBand([], vsync, true), {
+    lower: -Infinity,
+    upper: Infinity,
+  });
+  assert.throws(
+    () => recoveryPhaseBand([sample(3, width)], vsync, true),
+    /audio-only recovery recorded a video phase sample/
+  );
+  assert.throws(
+    () => recoveryPhaseBand([], vsync, false),
+    /phase band has no samples/
+  );
+  assert.deepEqual(recoveryPhaseBand([sample(3, width)], vsync, false), three);
+  const reference = (target_url: string) => ({
+    OTIO_SCHEMA: 'ExternalReference.1',
+    target_url,
+  });
+  assert.equal(
+    isAudioOnlyDocument([reference('media/a.wav'), reference('media/b.mp3')]),
+    true
+  );
+  assert.equal(
+    isAudioOnlyDocument([reference('media/a.wav'), reference('media/v.webm')]),
+    false
+  );
+  assert.equal(isAudioOnlyDocument([]), false);
 }
 
 // Controls: a paused view already showing the expected frame must not block the
@@ -16989,6 +17033,10 @@ async function runScheduledPcmProof(
   };
   assert.equal(oracle.sample_rate, 48000);
   assert.equal(oracle.channels, 2);
+  // Derive the expectation from published media kinds, never from the trace.
+  const audioOnly = isAudioOnlyDocument(
+    JSON.parse(await readFile(join(directory, 'content.otio'), 'utf8'))
+  );
   const decoded = await runChild(
     [
       'ffmpeg',
@@ -18320,7 +18368,13 @@ async function runScheduledPcmProof(
         newArm.value.slot,
         'handoff selected the wrong input slot'
       );
-      assertLatestRecoveryFrame(recovery.trace, selection, stopFrame, rate);
+      assertLatestRecoveryFrame(
+        recovery.trace,
+        selection,
+        stopFrame,
+        rate,
+        audioOnly
+      );
       assert.ok(
         Number.isSafeInteger(selection['feasibleLower']) &&
           Number.isSafeInteger(selection['feasibleUpper']) &&
@@ -18675,7 +18729,8 @@ async function runScheduledPcmProof(
                   result.trace,
                   selected,
                   boundary,
-                  rate
+                  rate,
+                  audioOnly
                 ),
               /recovery F1 is not latest independently feasible frame/,
               'latest-feasible proof accepted the deliberately earlier actual selection'
