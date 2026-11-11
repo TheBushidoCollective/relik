@@ -101,6 +101,7 @@ import {
   otioProofTracePrelude,
   otioProofWorkletSource,
 } from './otio-proof-trace.ts';
+import { assertDescriptorBudgetRefusal } from './otio-recovery-checks.ts';
 
 const clientMode = process.env['RELIC_OTIO_PATH_CLIENT'] ?? 'source';
 const isNpxMode = clientMode.startsWith('npx:');
@@ -18623,6 +18624,7 @@ async function runScheduledPcmProof(
         });
         try {
           await waitReady(isolated);
+          // The descriptor fault is consumed during candidate staging, before closure.
           const result = await isolated.evaluate<
             MovingTrace & {
               held: number;
@@ -18636,6 +18638,7 @@ async function runScheduledPcmProof(
             const root=document.querySelector('.otio-view'),button=document.querySelector('button.otio-play');
             if(!(root instanceof HTMLElement)||!(button instanceof HTMLButtonElement)) throw new Error('recovery fault controls missing');
             const start=await globalThis.__otioProofTrace.start(),playEdge=globalThis.__otioProofTrace.playRequest();
+            if (${JSON.stringify(fault)}==='descriptor-budget') globalThis.__otioProofPcmFault='descriptor-budget';
             button.click(); await sleep(600);
             if (${JSON.stringify(fault)}==='recovery-excess-work') globalThis.__otioProofTrace.injectRecoveryOverrun();
             else globalThis.__otioProofPcmFault=${JSON.stringify(fault)};
@@ -18787,29 +18790,26 @@ async function runScheduledPcmProof(
               'post-start guard overrun did not interrupt'
             );
           } else if (fault === 'descriptor-budget') {
-            const refusalIndex = events.findIndex(
-              (event, index) =>
-                index > closedIndex &&
-                event['event'] === 'recovery-candidate-failed' &&
-                event['code'] === 'descriptor-budget-exhausted' &&
-                event['boundaryFrame'] === boundary
+            assertDescriptorBudgetRefusal(events, closedIndex, boundary);
+            assert.match(
+              result.diagnostic,
+              /Scheduled audio stopped: descriptor-budget-exhausted/,
+              'descriptor budget refusal did not render its cause'
             );
+            const closure = result.trace.events.filter(
+              (event) => event.kind === 'scheduled-pcm'
+            )[closedIndex]!;
             assert.ok(
-              refusalIndex > closedIndex,
-              'descriptor budget exhaustion did not refuse the successor candidate'
-            );
-            assert.ok(
-              events
-                .slice(refusalIndex + 1)
-                .some((event) => event['event'] === 'error'),
-              'descriptor budget refusal was not visible as an interruption'
-            );
-            assert.ok(
-              !events.some(
-                (event, index) =>
-                  index > closedIndex && event['event'] === 'recovery-selection'
+              !result.trace.events.some(
+                (event) =>
+                  event.kind === 'transport-command' &&
+                  event.timestamp >= closure.timestamp &&
+                  event.value &&
+                  typeof event.value === 'object' &&
+                  'type' in event.value &&
+                  event.value.type === 'arm'
               ),
-              'descriptor budget refusal still admitted a successor epoch'
+              'descriptor budget refusal still armed a successor'
             );
           } else {
             const injectionIndex = events.findIndex(
