@@ -17,7 +17,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { encryptedSize } from '@relic/format';
-import { identityFingerprint } from '@relic/format/private';
+import {
+  decodeBase64url,
+  identityFingerprint,
+  kemKeyIdOf,
+} from '@relic/format/private';
 import { createApp, type RelicApp } from '@relic/server/src/app.ts';
 import { MemoryStorage } from '@relic/server/src/storage.ts';
 import { MemoryStore } from '@relic/server/src/store.ts';
@@ -115,7 +119,7 @@ function depsFor(bytes: Uint8Array = SOURCE): PublishDeps {
     fetch: serviceFetch(),
     upload: async (url, _headers, body) => {
       // The signed upload leg, served by the storage seam keyed by relic id.
-      const relicId = new URL(url).pathname.split('/').pop() ?? '';
+      const relicId = new URL(url).pathname.slice('/upload/'.length);
       storage.put(relicId, body);
       return { status: 200 };
     },
@@ -145,6 +149,10 @@ async function seedOwnerAndDevice(): Promise<{
 }> {
   const owner = await makePerson('owner@example.com');
   const device = await makeDevice('relic-mcp on the test machine');
+  const kemKeyIdHex = async (kemPublicKey: string): Promise<string> =>
+    Array.from(await kemKeyIdOf(decodeBase64url(kemPublicKey)), (b) =>
+      b.toString(16).padStart(2, '0')
+    ).join('');
   const store = app.store;
   await store.createIdentity({
     identityId: owner.identityId,
@@ -152,7 +160,7 @@ async function seedOwnerAndDevice(): Promise<{
     address: owner.email,
     kemPublicKey: owner.kem,
     sigPublicKey: owner.sig,
-    kemKeyId: '0'.repeat(64),
+    kemKeyId: await kemKeyIdHex(owner.kem),
     createdAt: now,
     registration: {
       statements: [],
@@ -179,7 +187,7 @@ async function seedOwnerAndDevice(): Promise<{
     ownerIdentityId: owner.identityId,
     kemPublicKey: device.kem,
     sigPublicKey: device.sig,
-    kemKeyId: '0'.repeat(64),
+    kemKeyId: await kemKeyIdHex(device.kem),
     label: device.label,
     backend: 'file',
     notAfter: now + 365 * DAY_MS,

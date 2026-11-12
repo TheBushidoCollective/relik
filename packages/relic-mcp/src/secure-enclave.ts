@@ -92,7 +92,7 @@ function invoke(
   path: string,
   request: Record<string, string>
 ): Promise<Record<string, unknown>> {
-  // Promise.withResolvers needs Node 22, and the package floor is Node 18.
+  // The Promise executor form keeps this on the Node 18 floor.
   return new Promise((resolve, reject) => {
     const child = spawn(path, [], {
       env: {},
