@@ -258,6 +258,11 @@ export async function createPrivateRamVolume(
   // A name nobody else is using, so it can be told apart if the process dies.
   const volumeName = `relicprof${randomBytes(6).toString('hex')}`;
   let mountPoint: string | undefined;
+  // diskutil reports a volume name only for a volume it has mounted: a device
+  // formatted but never mounted reads as having no file system. So the name
+  // identifies the device only after the mount. Before that, the device node
+  // and its ram:// image are the identity, as they were when it was attached.
+  let named = false;
   try {
     await assertOurImage(device, sectors);
 
@@ -281,6 +286,7 @@ export async function createPrivateRamVolume(
         `could not mount the RAM disk: ${mounted.stderr.trim()}`
       );
     }
+    named = true;
 
     const info = await diskInfo(device);
     const canonicalMount = await realpath(mountPoint);
@@ -299,7 +305,12 @@ export async function createPrivateRamVolume(
     return { device, volumeName, sectors, mountPoint: canonicalMount };
   } catch (error) {
     try {
-      await releaseOwned(device, sectors, mountPoint, volumeName);
+      await releaseOwned(
+        device,
+        sectors,
+        mountPoint,
+        named ? volumeName : undefined
+      );
     } catch (cleanupError) {
       throw new ProgramStorageError(
         `${(error as Error).message}; the cleanup also failed: ${(cleanupError as Error).message}`,
