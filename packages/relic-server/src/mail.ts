@@ -456,6 +456,97 @@ export function passkeyAddedMail(p: {
     headers: undefined,
   };
 }
+
+/**
+ * Private relics send these four messages and no others. They name neither
+ * the relic's title nor the requester's address, so a mailbox learns that
+ * something happened and nothing about what it was (4.14, verbatim copy).
+ */
+export function accessRequestedMail(p: {
+  readonly requestUrl: string;
+}): OutboundMail {
+  const paragraphs = [
+    'Someone asked for access to a relic you own on Relic.',
+    `Review the request: ${p.requestUrl}`,
+    "Before you grant access, ask them to read you their fingerprint on a phone or video call. Don't accept it by email or chat.",
+  ];
+  return {
+    subject: 'Someone asked for access to a relic',
+    text: paragraphs.join('\n\n'),
+    html: htmlParagraphs(paragraphs, [p.requestUrl]),
+  };
+}
+
+export function accessGrantedMail(p: {
+  readonly relicUrl: string;
+}): OutboundMail {
+  const paragraphs = [
+    'You can now open a relic on Relic.',
+    `Open it: ${p.relicUrl}`,
+    "You'll confirm with your passkey.",
+  ];
+  return {
+    subject: 'You have access to a relic',
+    text: paragraphs.join('\n\n'),
+    html: htmlParagraphs(paragraphs, [p.relicUrl]),
+  };
+}
+
+export function privateActivityMail(p: {
+  readonly relicUrl: string;
+  readonly stopUrl: string;
+}): OutboundMail {
+  const paragraphs = [
+    "There's new activity on a relic you follow on Relic.",
+    p.relicUrl,
+    `Stop these emails: ${p.stopUrl}`,
+  ];
+  return {
+    subject: 'Activity on a relic',
+    text: paragraphs.join('\n\n'),
+    html: htmlParagraphs(paragraphs, [p.relicUrl, p.stopUrl]),
+    headers: {
+      'List-Unsubscribe': `<${p.stopUrl}>`,
+      'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+    },
+  };
+}
+
+export function identityReplacedMail(p: {
+  readonly address: string;
+  readonly at: number;
+}): OutboundMail {
+  const d = new Date(p.at);
+  const hh = String(d.getUTCHours()).padStart(2, '0');
+  const mm = String(d.getUTCMinutes()).padStart(2, '0');
+  const when = `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()} at ${hh}:${mm} UTC`;
+  const paragraphs = [
+    `A new private-share key was set up for ${p.address} on Relic at ${when}.`,
+    "Relics shared with your old key can't be opened with the new one until each owner shares them again.",
+    "If this wasn't you, someone can read mail sent to this address. Secure your mailbox.",
+  ];
+  return {
+    subject: 'Your Relic private-share key was replaced',
+    text: paragraphs.join('\n\n'),
+    html: htmlParagraphs(paragraphs, []),
+  };
+}
+
+/** Paragraphs, each escaped. A URL in `links` is also rendered as a link. */
+function htmlParagraphs(
+  paragraphs: readonly string[],
+  links: readonly string[]
+): string {
+  return paragraphs
+    .map((para) => {
+      const link = links.find((url) => para.includes(url));
+      if (link === undefined) return `<p>${escapeHtml(para)}</p>`;
+      const [before, after] = para.split(link);
+      const href = escapeHtml(link);
+      return `<p>${escapeHtml(before ?? '')}<a href="${href}">${href}</a>${escapeHtml(after ?? '')}</p>`;
+    })
+    .join('');
+}
 function escapeHtml(value: string): string {
   return value
     .replace(/&/g, '&amp;')

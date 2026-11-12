@@ -27,6 +27,7 @@ import {
   MAX_HEADER_BYTES,
   NOSCRIPT_DETAIL,
   NOSCRIPT_TITLE,
+  normalizeEmail,
   parseRelicId,
   POLICY_LINK_LABEL,
   REPORT_LINK_LABEL,
@@ -63,7 +64,6 @@ import {
   type DecisionVerdict,
   MemoryStore,
   type MintLogEntry,
-  normalizeEmail,
   type PasskeyCredential,
   type PasskeyRecord,
   type ReasonClass,
@@ -79,6 +79,57 @@ import {
   verifyRegistration,
   WebauthnError,
 } from './webauthn.ts';
+import { PURPOSE_KINDS, issueAttestNonce } from './private/attest.ts';
+import {
+  accessEventsFor,
+  backfillWraps,
+  bindCredential,
+  currentIdentity,
+  designateRecovery,
+  identityState,
+  lookupRecovery,
+  ownedAndShared,
+  registerIdentity,
+  setRetention,
+} from './private/identity.ts';
+import {
+  approveDevice,
+  deviceContext,
+  enrollDevice,
+  enrollmentStatus,
+  listOwnerDevices,
+  revokeDevice,
+} from './private/devices.ts';
+import {
+  logAccess,
+  ownerRecord,
+  publishTokenOk,
+  requireRead,
+} from './private/access.ts';
+import { checkPrivatePublish, refusePrivatePolicy } from './private/publish.ts';
+import {
+  completeSeal,
+  deleteRelic,
+  declineRequest,
+  deliverKey,
+  grantAccess,
+  listGrants,
+  listRequests,
+  privateAccessView,
+  recipientsState,
+  requestAccess,
+  reissueUpload,
+  revokeAccess,
+} from './private/relic.ts';
+import {
+  identityPublicJson,
+  liveRelic,
+  privateRow,
+  type PrivateEnv,
+} from './private/context.ts';
+import type { AttestPurpose } from '@relic/format/private';
+import type { IdentityRecord } from './store.ts';
+import type { ProblemCode } from './problems.ts';
 
 const RESERVED = new Set(RESERVED_SEGMENTS);
 
@@ -437,12 +488,14 @@ export function createApp(options: AppOptions = {}): RelicApp {
     now: number
   ): Promise<Response> {
     const [first, second, third, fourth] = rest;
+    const privateResponse = await privateApi(rest, request, url, ip, now);
+    if (privateResponse !== undefined) return privateResponse;
 
     if (first === 'challenge' && request.method === 'POST') {
       return challenge(ip, now);
     }
     if (first === 'grant' && request.method === 'POST') {
-      return grant(request, ip, now);
+      return guarded(() => grant(request, ip, now));
     }
     if (
       first === 'relics' &&
@@ -604,6 +657,653 @@ export function createApp(options: AppOptions = {}): RelicApp {
     return new Response('Not found', { status: 404 });
   }
 
+  // --- private shares -----------------------------------------------------
+
+  /** The private-share environment, for one request's clock. */
+  function privateEnv(now: number): PrivateEnv {
+    return {
+      store,
+      storage,
+      config,
+      now,
+      sendMail: async (to, mail) => {
+        if (mailer?.sendMail !== undefined) await mailer.sendMail(to, mail);
+      },
+      limit: (scope, key, budget) => {
+        const verdict = limiter.check(rateLimitKey(scope, key), budget, now);
+        if (!verdict.allowed) {
+          throw new ProblemError('private_rate_limited', {
+            retry_after_seconds: verdict.retryAfterSeconds,
+          });
+        }
+      },
+      objectKey,
+      assertPasskey: (record, credential, challenge, at) =>
+        verifyStoredAssertion(record, credential, challenge, at),
+    };
+  }
+
+  async function sessionOf(
+    request: Request,
+    now: number
+  ): Promise<SessionRow | undefined> {
+    const token = sessionCookie(request);
+    if (token === undefined) return undefined;
+    const session = await store.getSession(await sha256Hex(token));
+    return session !== undefined && session.expiresAt > now
+      ? session
+      : undefined;
+  }
+
+  /** A JSON object body, under the route's own malformed-request code. */
+  async function privateBody(
+    request: Request,
+    code: ProblemCode
+  ): Promise<Record<string, unknown>> {
+    const type = request.headers.get('content-type') ?? '';
+    if (!type.toLowerCase().startsWith('application/json')) {
+      throw new ProblemError(code);
+    }
+    let parsed: unknown;
+    try {
+      parsed = await request.json();
+    } catch {
+      throw new ProblemError(code);
+    }
+    if (
+      typeof parsed !== 'object' ||
+      parsed === null ||
+      Array.isArray(parsed)
+    ) {
+      throw new ProblemError(code);
+    }
+    return parsed as Record<string, unknown>;
+  }
+
+  /** Turns a private-share refusal into its problem response. */
+  async function guarded(run: () => Promise<Response>): Promise<Response> {
+    try {
+      return await run();
+    } catch (error) {
+      if (error instanceof ProblemError)
+        return refuse(error.code, error.options);
+      throw error;
+    }
+  }
+
+  /** Owner-only attestation purposes need a relic and the signed-in owner. */
+  const OWNER_PURPOSES: ReadonlySet<string> = new Set([
+    'grant',
+    'revoke',
+    'delete',
+    'device_approve',
+    'device_revoke',
+    'recovery_designate',
+  ]);
+
+  /**
+   * Every private-share route (plan 4.7). Returns undefined for a path it
+   * does not own, so the public routes answer as before.
+   */
+  async function privateApi(
+    rest: readonly string[],
+    request: Request,
+    url: URL,
+    ip: string,
+    now: number
+  ): Promise<Response | undefined> {
+    const [first, second, third, fourth, fifth] = rest;
+    const post = request.method === 'POST';
+    const get = request.method === 'GET';
+    const env = privateEnv(now);
+
+    if (first === 'attest' && second === 'nonce' && rest.length === 2 && post) {
+      return guarded(async () => {
+        const session = await sessionOf(request, now);
+        if (session === undefined) return refuse('sign_in_required');
+        const body = await privateBody(request, 'invalid_statement');
+        const purpose = body['purpose'];
+        if (typeof purpose !== 'string' || !(purpose in PURPOSE_KINDS)) {
+          throw new ProblemError('invalid_statement', {
+            statement_check: 'purpose',
+          });
+        }
+        env.limit('attest', session.email, config.privateRateLimit);
+        const email = normalizeEmail(session.email);
+        const relicId =
+          typeof body['relic_id'] === 'string' ? body['relic_id'] : undefined;
+        if (purpose !== 'identity_register') {
+          const identity = await currentIdentity(env, email);
+          if (identity === undefined) return refuse('identity_required');
+          if (OWNER_PURPOSES.has(purpose)) {
+            if (relicId === undefined) {
+              throw new ProblemError('invalid_statement', {
+                statement_check: 'relic',
+              });
+            }
+            const owner = await ownerRecord(
+              env,
+              privateRow(await liveRelic(env, relicId))
+            );
+            if (owner.identityId !== identity.identityId)
+              return refuse('owner_required');
+          }
+        }
+        return Response.json(
+          await issueAttestNonce(env, {
+            email,
+            purpose: purpose as AttestPurpose,
+            passkeys: await store.getPasskeys(email),
+            relicId,
+            credentialId:
+              typeof body['credential_id'] === 'string'
+                ? body['credential_id']
+                : undefined,
+          })
+        );
+      });
+    }
+
+    if (first === 'identity') {
+      const matched =
+        (second === undefined && (get || post)) ||
+        second === 'credentials' ||
+        second === 'settings' ||
+        second === 'recovery' ||
+        second === 'backfill' ||
+        second === 'relics' ||
+        second === 'access-log';
+      if (!matched) return undefined;
+      return guarded(async () => {
+        const session = await sessionOf(request, now);
+        if (session === undefined) return refuse('sign_in_required');
+        const email = normalizeEmail(session.email);
+        if (second === undefined && get) {
+          return Response.json(
+            await identityState(env, email, await store.getPasskeys(email))
+          );
+        }
+        if (second === undefined && post) {
+          const body = await privateBody(request, 'invalid_identity');
+          env.limit('identity-write', email, config.privateRateLimit);
+          const record = await registerIdentity(env, {
+            email,
+            session,
+            passkeys: await store.getPasskeys(email),
+            bundle: body['encrypted_bundle'],
+            replace: body['replace'] === true,
+            attestation: body['attestation'],
+          });
+          return Response.json(
+            { identity: identityPublicJson(record) },
+            { status: 201 }
+          );
+        }
+        if (second === 'credentials' && post) {
+          const body = await privateBody(request, 'invalid_identity');
+          env.limit('identity-write', email, config.privateRateLimit);
+          const binding = await bindCredential(env, {
+            email,
+            passkeys: await store.getPasskeys(email),
+            bundle: body['encrypted_bundle'],
+            attestation: body['attestation'],
+          });
+          return Response.json(
+            { credential_id: binding.credentialId },
+            { status: 201 }
+          );
+        }
+        if (second === 'settings' && post) {
+          const body = await privateBody(request, 'invalid_statement');
+          const days = await setRetention(env, {
+            email,
+            passkeys: await store.getPasskeys(email),
+            attestation: body['attestation'],
+          });
+          return Response.json({ access_log_retention_days: days });
+        }
+        if (second === 'recovery' && third === 'lookup' && post) {
+          const body = await privateBody(request, 'invalid_identity');
+          if (typeof body['email'] !== 'string') {
+            throw new ProblemError('invalid_identity', {
+              identity_check: 'email',
+            });
+          }
+          return Response.json({
+            party: await lookupRecovery(env, body['email'], email),
+          });
+        }
+        if (second === 'recovery' && third === undefined && post) {
+          const body = await privateBody(request, 'invalid_statement');
+          return Response.json({
+            recovery: await designateRecovery(env, {
+              email,
+              passkeys: await store.getPasskeys(email),
+              attestation: body['attestation'],
+            }),
+          });
+        }
+        if (second === 'backfill' && post) {
+          const body = await privateBody(request, 'invalid_wrap');
+          return Response.json(
+            await backfillWraps(env, { email, wraps: body['wraps'] })
+          );
+        }
+        if (second === 'relics' && get) {
+          const identity = await currentIdentity(env, email);
+          if (identity === undefined) {
+            return Response.json({ owned: [], shared_with_me: [] });
+          }
+          const coverage = url.searchParams.get('coverage') === '1';
+          return Response.json(await ownedAndShared(env, identity, coverage));
+        }
+        if (second === 'access-log' && get) {
+          const identity = await currentIdentity(env, email);
+          if (identity === undefined) return refuse('identity_required');
+          return Response.json({
+            events: await accessEventsFor(
+              env,
+              identity,
+              url.searchParams.get('relic_id') ?? undefined
+            ),
+          });
+        }
+        return new Response('Method not allowed', { status: 405 });
+      });
+    }
+
+    if (first === 'devices') {
+      return guarded(async () => {
+        if (second === 'enrollments' && third === undefined && post) {
+          env.limit('device-enroll', ip, config.deviceEnrollmentRateLimit);
+          const body = await privateBody(request, 'invalid_device');
+          return Response.json(await enrollDevice(env, body), { status: 201 });
+        }
+        if (
+          second === 'enrollments' &&
+          third !== undefined &&
+          fourth === undefined &&
+          get
+        ) {
+          return Response.json(await enrollmentStatus(env, third));
+        }
+        if (second === 'enrollments' && fourth === 'approve' && post) {
+          const session = await sessionOf(request, now);
+          if (session === undefined) return refuse('sign_in_required');
+          const email = normalizeEmail(session.email);
+          const body = await privateBody(request, 'invalid_statement');
+          const device = await approveDevice(env, {
+            email,
+            enrollmentId: third ?? '',
+            passkeys: await store.getPasskeys(email),
+            attestation: body['attestation'],
+          });
+          return Response.json({ device });
+        }
+        if (second === undefined && get) {
+          const session = await sessionOf(request, now);
+          if (session === undefined) return refuse('sign_in_required');
+          return Response.json({
+            devices: await listOwnerDevices(env, normalizeEmail(session.email)),
+          });
+        }
+        if (third === 'revoke' && fourth === undefined && post) {
+          const session = await sessionOf(request, now);
+          if (session === undefined) return refuse('sign_in_required');
+          const email = normalizeEmail(session.email);
+          const body = await privateBody(request, 'invalid_statement');
+          const device = await revokeDevice(env, {
+            email,
+            deviceId: second ?? '',
+            passkeys: await store.getPasskeys(email),
+            attestation: body['attestation'],
+          });
+          return Response.json({ device });
+        }
+        if (third === 'context' && post) {
+          const body = await privateBody(request, 'invalid_device');
+          return Response.json(
+            await deviceContext(env, {
+              deviceId: second ?? '',
+              path: url.pathname,
+              body,
+              auth: body['device_auth'],
+            })
+          );
+        }
+        return new Response('Method not allowed', { status: 405 });
+      });
+    }
+
+    if (first === 'relics' && second !== undefined && third !== undefined) {
+      const relicId = second;
+      return guarded(async () => {
+        if (third === 'access' && fourth === undefined && get) {
+          const row = await liveRelic(env, relicId);
+          const session = await sessionOf(request, now);
+          if (row.access !== 'private') {
+            return Response.json({
+              access: 'public',
+              relic_id: relicId,
+              owned_by_me:
+                session !== undefined &&
+                row.ownerEmail !== undefined &&
+                normalizeEmail(session.email) ===
+                  normalizeEmail(row.ownerEmail),
+            });
+          }
+          if (session === undefined) return refuse('sign_in_required');
+          return Response.json(
+            await privateAccessView(env, relicId, session.email)
+          );
+        }
+        if (third === 'complete' && fourth === undefined && post) {
+          const row = await store.getRelic(relicId);
+          if (row?.access === 'private')
+            return completePrivate(relicId, request, now);
+          return undefined as never;
+        }
+        if (third === 'comments' && fourth === 'list' && post) {
+          const body = await privateBody(request, 'invalid_comment');
+          const row = await liveRelic(env, relicId);
+          if (!(await publishTokenOk(row, body['publish_token']))) {
+            return refuse('invalid_publish_token');
+          }
+          return listComments(relicId);
+        }
+        const session = await sessionOf(request, now);
+        if (third === 'requests' && fourth === undefined && post) {
+          if (session === undefined) return refuse('sign_in_required');
+          const body = await privateBody(request, 'invalid_statement');
+          const email = normalizeEmail(session.email);
+          const result = await requestAccess(env, {
+            email,
+            relicId,
+            passkeys: await store.getPasskeys(email),
+            attestation: body['attestation'],
+          });
+          return Response.json(
+            { status: 'pending', requested_at: result.requested_at },
+            { status: result.created ? 201 : 200 }
+          );
+        }
+        if (third === 'requests' && fourth === undefined && get) {
+          if (session === undefined) return refuse('sign_in_required');
+          return Response.json({
+            requests: await listRequests(
+              env,
+              normalizeEmail(session.email),
+              relicId
+            ),
+          });
+        }
+        if (
+          third === 'requests' &&
+          fourth !== undefined &&
+          fifth === 'decline' &&
+          post
+        ) {
+          if (session === undefined) return refuse('sign_in_required');
+          await declineRequest(
+            env,
+            normalizeEmail(session.email),
+            relicId,
+            fourth
+          );
+          return Response.json({});
+        }
+        if (third === 'grants' && fourth === undefined && post) {
+          if (session === undefined) return refuse('sign_in_required');
+          const body = await privateBody(request, 'invalid_wrap');
+          const email = normalizeEmail(session.email);
+          const result = await grantAccess(env, {
+            email,
+            relicId,
+            passkeys: await store.getPasskeys(email),
+            attestation: body['attestation'],
+            wraps: body['wraps'],
+          });
+          return Response.json({ grant: result.grant }, { status: 201 });
+        }
+        if (third === 'grants' && fourth === undefined && get) {
+          if (session === undefined) return refuse('sign_in_required');
+          return Response.json({
+            grants: await listGrants(
+              env,
+              normalizeEmail(session.email),
+              relicId
+            ),
+          });
+        }
+        if (third === 'revocations' && fourth === undefined && post) {
+          if (session === undefined) return refuse('sign_in_required');
+          const body = await privateBody(request, 'invalid_statement');
+          const email = normalizeEmail(session.email);
+          return Response.json(
+            await revokeAccess(env, {
+              email,
+              relicId,
+              passkeys: await store.getPasskeys(email),
+              attestation: body['attestation'],
+              rendererClass: body['renderer_class'],
+              declaredSizeBytes: body['declared_size_bytes'],
+              declaredCiphertextBytes: body['declared_ciphertext_bytes'],
+            })
+          );
+        }
+        if (third === 'recipients' && fourth === undefined && post) {
+          const body = await privateBody(
+            request,
+            'invalid_publish_token'
+          ).catch(() => ({}) as Record<string, unknown>);
+          return Response.json(
+            await recipientsState(env, relicId, {
+              publishToken: body['publish_token'],
+              email:
+                session === undefined
+                  ? undefined
+                  : normalizeEmail(session.email),
+            })
+          );
+        }
+        if (
+          third === 'versions' &&
+          fourth !== undefined &&
+          fifth === 'key' &&
+          post
+        ) {
+          const version = Number(fourth);
+          const body = await privateBody(request, 'invalid_wrap').catch(
+            () => ({}) as Record<string, unknown>
+          );
+          if (typeof body['publish_token'] === 'string') {
+            return Response.json(
+              await deliverKey(env, relicId, version, {
+                kind: 'publish',
+                token: body['publish_token'],
+                recipientKeyId: body['recipient_key_id'],
+              })
+            );
+          }
+          if (session === undefined) return refuse('sign_in_required');
+          return Response.json(
+            await deliverKey(env, relicId, version, {
+              kind: 'session',
+              email: normalizeEmail(session.email),
+            })
+          );
+        }
+        if (
+          third === 'versions' &&
+          fourth !== undefined &&
+          fifth === 'upload-grant' &&
+          post
+        ) {
+          if (session === undefined) return refuse('sign_in_required');
+          return Response.json(
+            await reissueUpload(
+              env,
+              normalizeEmail(session.email),
+              relicId,
+              Number(fourth)
+            )
+          );
+        }
+        if (third === 'delete' && fourth === undefined && post) {
+          if (session === undefined) return refuse('sign_in_required');
+          const body = await privateBody(request, 'invalid_statement');
+          const email = normalizeEmail(session.email);
+          return Response.json(
+            await deleteRelic(env, {
+              email,
+              relicId,
+              passkeys: await store.getPasskeys(email),
+              attestation: body['attestation'],
+            })
+          );
+        }
+        if (third === 'owner' && fourth === undefined && post) {
+          const row = await liveRelic(env, relicId);
+          if (row.ownerIdentityId !== undefined) return refuse('owner_exists');
+          return refuse('private_policy_violation', {
+            policy_check: 'owner_email',
+          });
+        }
+        return undefined as never;
+      }).then((response) => response ?? undefined);
+    }
+
+    return undefined;
+  }
+
+  /** The mint for a private relic: wrap-gated, with no raw-IP mint log (plan 4.18 item 5). */
+  async function mintPrivate(
+    relicId: string,
+    row: RelicRow,
+    body: Record<string, unknown>,
+    version: number,
+    request: Request,
+    now: number
+  ): Promise<Response> {
+    return guarded(async () => {
+      const env = privateEnv(now);
+      if (row.expiresAt !== undefined && now >= row.expiresAt) {
+        return refuse('relic_expired', { relic_id: relicId });
+      }
+      let actor: IdentityRecord | undefined;
+      if (typeof body['publish_token'] === 'string') {
+        if (!(await publishTokenOk(row, body['publish_token']))) {
+          return refuse('invalid_publish_token');
+        }
+      } else {
+        const session = await sessionOf(request, now);
+        if (session === undefined) {
+          return refuse('private_access_denied', { relic_id: relicId });
+        }
+        actor = await currentIdentity(env, session.email);
+        await requireRead(
+          env,
+          row,
+          await ownerRecord(env, row),
+          actor,
+          version
+        );
+      }
+      const object = await storage.stat(objectKey(relicId, version));
+      if (object === undefined) {
+        return refuse('relic_not_yet_published', {
+          relic_id: relicId,
+          retry_after_seconds: 5,
+        });
+      }
+      if (row.mintsUsed >= config.downloadCap) {
+        return refuse('download_cap_exhausted', {
+          relic_id: relicId,
+          download_cap: config.downloadCap,
+        });
+      }
+      const validity =
+        row.expiresAt === undefined
+          ? config.urlValiditySeconds
+          : Math.min(
+              config.urlValiditySeconds,
+              Math.floor((row.expiresAt - now) / 1000)
+            );
+      if (validity < config.minViableValiditySeconds) {
+        return refuse('relic_expired', { relic_id: relicId });
+      }
+      const signed = await storage.signDownload(
+        objectKey(relicId, version),
+        validity,
+        now
+      );
+      const capRemaining =
+        config.downloadCap - (await store.consumeMint(relicId));
+      if (actor !== undefined && row.ownerIdentityId !== undefined) {
+        await logAccess(env, row.ownerIdentityId, relicId, 'wrap_fetch', {
+          version,
+          actorIdentityId: actor.identityId,
+          subjectIdentityId: actor.identityId,
+        });
+      }
+      return Response.json(
+        {
+          url: signed.url,
+          url_expires_at: iso(signed.expiresAt),
+          relic_expires_at: relicExpiryIso(row.expiresAt),
+          object_length: object.length,
+          object_crc32c: object.crc32c,
+          mints_remaining: capRemaining,
+          version,
+          current_version: row.version,
+        },
+        { headers: { 'referrer-policy': 'no-referrer' } }
+      );
+    });
+  }
+
+  /** A private seal (plan 4.12): the digest is the stored object's, never the body's. */
+  async function completePrivate(
+    relicId: string,
+    request: Request,
+    now: number
+  ): Promise<Response> {
+    return guarded(async () => {
+      const env = privateEnv(now);
+      const body = await privateBody(request, 'invalid_seal');
+      const row = await liveRelic(env, relicId);
+      const object = await storage.stat(objectKey(relicId, row.version));
+      const digest = await storage.digest(objectKey(relicId, row.version));
+      if (object === undefined || digest === undefined) {
+        return refuse('relic_not_yet_published', {
+          relic_id: relicId,
+          retry_after_seconds: 5,
+        });
+      }
+      const result = await completeSeal(env, {
+        relicId,
+        seal: body['seal'],
+        wraps: body['wraps'],
+        publishToken: body['publish_token'],
+        objectLength: object.length,
+        objectCrc32c: object.crc32c,
+        digest,
+      });
+      return Response.json({
+        relic_id: relicId,
+        version: result.version,
+        version_digest: result.digest,
+        object_length: object.length,
+        object_crc32c: object.crc32c,
+        relic_expires_at: relicExpiryIso(row.expiresAt),
+        access: 'private',
+        access_epoch: result.access_epoch,
+        owner_epoch: result.owner_epoch,
+        sealed_version: result.version,
+      });
+    });
+  }
+
   // --- publish path -------------------------------------------------------
 
   /**
@@ -634,6 +1334,10 @@ export function createApp(options: AppOptions = {}): RelicApp {
       disclosure_url: `${config.serviceOrigin}/policy`,
       report_url: `${config.serviceOrigin}/abuse`,
       challenge_expires_at: iso(now + config.challengeTtlSeconds * 1000),
+      private_shares: {
+        default_ttl_days: config.privateDefaultTtlDays,
+        max_ttl_days: config.privateMaxTtlDays,
+      },
     });
   }
 
@@ -692,6 +1396,13 @@ export function createApp(options: AppOptions = {}): RelicApp {
     ) {
       return refuse('invalid_publish_metadata', { relic_id: relicId });
     }
+    const access = body['access'];
+    if (access !== undefined && access !== 'public' && access !== 'private') {
+      return refuse('invalid_publish_metadata', { relic_id: relicId });
+    }
+    const isPrivate = access === 'private';
+    let privateOwner: IdentityRecord | undefined;
+    if (isPrivate) refusePrivatePolicy(body);
 
     let title: string | undefined;
     if ('title' in body && body['title'] !== undefined) {
@@ -763,7 +1474,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
     // with the rest of the bad metadata rather than silently defaulted.
     const ttlDays = body['ttl_days'];
     let expiresAt: number | undefined;
-    if (ttlDays !== undefined && ttlDays !== null) {
+    if (!isPrivate && ttlDays !== undefined && ttlDays !== null) {
       if (
         typeof ttlDays !== 'number' ||
         !Number.isSafeInteger(ttlDays) ||
@@ -823,6 +1534,16 @@ export function createApp(options: AppOptions = {}): RelicApp {
     // the only way to ever republish this id. It is minted here, returned
     // exactly once below, and stored only as a hash, so the store's JSON
     // documents can never leak a replayable bearer token.
+    // A private relic takes its lifetime and owner from the signing device.
+    if (isPrivate) {
+      const verdict = await checkPrivatePublish(privateEnv(now), {
+        body,
+        relicId,
+        declaredSizeBytes: declared,
+      });
+      privateOwner = verdict.owner;
+      expiresAt = verdict.expiresAt;
+    }
     const publishToken = mintPublishToken();
 
     await store.putRelic({
@@ -839,7 +1560,22 @@ export function createApp(options: AppOptions = {}): RelicApp {
       title,
       ownerEmail,
       shareVerifier,
+      ...(isPrivate
+        ? {
+            access: 'private' as const,
+            ownerIdentityId: privateOwner?.identityId,
+            accessEpoch: 0,
+          }
+        : {}),
     });
+    if (privateOwner !== undefined) {
+      await store.putOwnedRelic({
+        relicId,
+        ownerIdentityId: privateOwner.identityId,
+        access: 'private',
+        at: now,
+      });
+    }
 
     const upload = await storage.signUpload(
       objectKey(relicId, 1),
@@ -860,6 +1596,13 @@ export function createApp(options: AppOptions = {}): RelicApp {
       relic_expires_at: relicExpiryIso(expiresAt),
       report_url: `${config.serviceOrigin}/abuse`,
       disclosure_url: `${config.serviceOrigin}/policy`,
+      ...(isPrivate
+        ? {
+            access: 'private',
+            access_epoch: 0,
+            owner_epoch: privateOwner?.recipientsEpoch,
+          }
+        : {}),
     });
   }
 
@@ -1459,6 +2202,9 @@ export function createApp(options: AppOptions = {}): RelicApp {
         'invalid_relic_version',
         { relic_id: relicId }
       );
+    }
+    if (row.access === 'private') {
+      return mintPrivate(relicId, row, body, version, request, now);
     }
 
     const object = await storage.stat(objectKey(relicId, version));
@@ -2510,7 +3256,9 @@ export function createApp(options: AppOptions = {}): RelicApp {
       'abuse') as ReasonClass;
     const reference = url.searchParams.get('reference') ?? undefined;
 
-    let hash: string | undefined = existing?.ciphertextHash;
+    // An owner tombstone carries no ciphertext hash: the owner removed the bytes.
+    const operatorStone = existing?.kind === 'owner' ? undefined : existing;
+    let hash: string | undefined = operatorStone?.ciphertextHash;
 
     if (existing === undefined) {
       if (row === undefined) {
@@ -2579,6 +3327,15 @@ export function createApp(options: AppOptions = {}): RelicApp {
     const sharesDeleted = await store.deleteSharesForRelic(relicId);
     const optOutsDeleted = await store.deleteOptOutsForRelic(relicId);
     const decisionsDeleted = await store.deleteDecisionsForRelic(relicId);
+    if (row?.access === 'private') {
+      await store.deleteWraps(relicId, {});
+      await store.deleteSeals(relicId);
+      await store.deleteGrantsForRelic(relicId);
+      await store.deleteAccessRequestsForRelic(relicId);
+      if (row.ownerIdentityId !== undefined) {
+        await store.deleteOwnedRelic(row.ownerIdentityId, relicId);
+      }
+    }
     const override = url.searchParams.get('blocklist');
     const automatic =
       reasonClass === 'abuse' || reasonClass === 'blocklist_match';
@@ -4204,6 +4961,10 @@ export function createApp(options: AppOptions = {}): RelicApp {
 
     const hasCredential =
       'credential' in body && body['credential'] !== undefined;
+    // A replacement passkey for private shares (4.4): the existing passkey
+    // proves the session, and the new credential may duplicate an old one so
+    // the identity can be re-keyed. Only the create branch reads this.
+    const forPrivateShares = body['for_private_shares'] === true;
 
     if (hasCredential) {
       const credential = body['credential'];
@@ -4291,14 +5052,17 @@ export function createApp(options: AppOptions = {}): RelicApp {
             requireResidentKey: true,
             userVerification: 'required',
           },
-          excludeCredentials: passkeyRecord.credentials.map((c) => ({
-            type: 'public-key',
-            id: c.credentialId,
-            transports:
-              c.transports && c.transports.length > 0
-                ? c.transports
-                : ['internal'],
-          })),
+          excludeCredentials: forPrivateShares
+            ? []
+            : passkeyRecord.credentials.map((c) => ({
+                type: 'public-key',
+                id: c.credentialId,
+                transports:
+                  c.transports && c.transports.length > 0
+                    ? c.transports
+                    : ['internal'],
+              })),
+          extensions: { prf: {} },
         },
       });
     }
@@ -4343,6 +5107,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
             userVerification: 'required',
           },
           excludeCredentials: [],
+          extensions: { prf: {} },
         },
       });
     }
@@ -6300,6 +7065,8 @@ creating it, and once that lifetime has passed the link is dead; without one,
 time alone never retires a relic. Deletion still is not erasure, as the
 retention section above says. Each relic can be opened ${config.downloadCap}
 times before the link stops working.
+
+> **Private relics.** A private relic's link carries no key. Each reader who is let in has their own copy of each version's key, encrypted to a key only their passkey can unlock; the service stores those encrypted copies and never the keys. To let someone in, the service records who asked and who granted, the email addresses involved, the public keys, and a signed record of each grant and revocation. It keeps an access log of requests, grants, revocations, key fetches and deletions for the owner, for the retention the owner sets. It also stores each person's private-share key encrypted under a secret held by their passkey. Private relics carry no title or cover, always expire, and their notification emails say only that there is activity on a relic. The JavaScript that decrypts them comes from this service, the same as for every relic.
 
 ## Reporting abuse
 

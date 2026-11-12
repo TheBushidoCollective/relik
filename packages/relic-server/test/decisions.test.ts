@@ -8,18 +8,19 @@ import {
   encryptRelic,
   generateKey,
   generateRelicId,
+  normalizeEmail,
   type RequestOptionsJSON,
   shareVerifierFor,
 } from '@relic/format';
 import { createApp, type RelicApp } from '../src/app.ts';
 import { sha256Hex } from '../src/gcs.ts';
 import { MemoryStorage } from '../src/storage.ts';
-import { MemoryStore, normalizeEmail, type Tombstone } from '../src/store.ts';
+import { MemoryStore, type OperatorTombstone } from '../src/store.ts';
 import { fakeAuthenticator } from './fake-authenticator.ts';
 
 const OPERATOR = new Map([['jason', 'operator-secret']]);
 
-function mockTombstone(id: string): Tombstone {
+function mockTombstone(id: string): OperatorTombstone {
   return {
     id,
     publishIp: '127.0.0.1',
