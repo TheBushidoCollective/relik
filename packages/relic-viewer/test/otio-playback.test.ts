@@ -2835,6 +2835,41 @@ describe('otio playback controller', () => {
     }
   });
 
+  test('a new play request drops the last attempt’s scheduler refusal', async () => {
+    const options = { anchorOffset: 1 };
+    const fixture = independentPcmFixture(false, false, undefined, options);
+    const refused = () =>
+      fixture.playback
+        .getState()
+        .diagnostics.some((item) =>
+          item.message.includes('Scheduled audio stopped')
+        );
+    try {
+      const first = fixture.playback.play();
+      for (let i = 0; i < 35; i++)
+        await fixture.advance(
+          fixture.wall + 8,
+          fixture.renderFrame + 384,
+          fixture.outputFrame + 384
+        );
+      await first;
+      expect(refused()).toBe(true);
+      options.anchorOffset = 0;
+      const second = fixture.playback.play();
+      for (let i = 0; i < 35; i++)
+        await fixture.advance(
+          fixture.wall + 8,
+          fixture.renderFrame + 384,
+          fixture.outputFrame + 384
+        );
+      await second;
+      expect(refused()).toBe(false);
+      expect(fixture.playback.getState().playing).toBe(true);
+    } finally {
+      fixture.restore();
+    }
+  });
+
   test.each([
     [128, 128],
     [256, 256],

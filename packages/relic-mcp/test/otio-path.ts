@@ -2766,6 +2766,25 @@ async function seekTo(browser: ChromeSession, frame: number): Promise<void> {
   );
 }
 
+// Pauses playback from its own evaluate, after a capture's result has been returned. A capture
+// returns tens of megabytes of trace. Serialising it blocks the page for longer than the
+// transport closure watchdog, so a pause clicked just before that return is judged late and
+// the viewer reports "transport gate closure was not acknowledged". Returns the diagnostics
+// the reader sees once the pause has settled.
+async function pausePlayback(browser: ChromeSession): Promise<string> {
+  return browser.evaluate<string>(`(async () => {
+    const sleep = ms => { const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, ms); return promise; };
+    const root = document.querySelector('.otio-view');
+    const button = document.querySelector('button.otio-play');
+    if (!(root instanceof HTMLElement) || !(button instanceof HTMLButtonElement)) throw new Error('pause controls missing');
+    if (root.dataset.playing === 'true') button.click();
+    const deadline = performance.now() + 3000;
+    while ((root.dataset.playing === 'true' || root.dataset.buffering === 'true') && performance.now() < deadline) await sleep(20);
+    await sleep(250);
+    return Array.from(document.querySelectorAll('.otio-diagnostic')).map(node => node.textContent ?? '').join(' ');
+  })()`);
+}
+
 interface SampledCanvas extends Uint8Array {
   dataFrame?: number | null;
   center?: number | null;
@@ -13117,10 +13136,16 @@ async function assessMovingWindowControls(
       await sleep(500);
       const trace = await globalThis.__otioProofTrace.stop();
       globalThis.__otioProofTrace.setFault('none');
-      if (root.dataset.playing === 'true') button.click();
       return {start, playEdge, warm, trace};
     })()`);
     const cast = await stopCast();
+    const paused = await pausePlayback(browser);
+    if (fault === 'none')
+      assert.doesNotMatch(
+        paused,
+        /Scheduled audio stopped:/,
+        `pause after the ${name} capture failed`
+      );
     assert.ok(capture.warm, 'warm presentation readiness not recorded');
     assert.ok(capture.playEdge, 'play request edge not recorded');
     const samples = capture.trace.visual.filter(
@@ -13372,12 +13397,19 @@ async function assessMovingWindowControls(
     if (!focused && !audio.length) issues.push('missing controller audio');
     for (let i = 1; i < audio.length; i++) {
       const previous = audio[i - 1]!;
-      if (
-        !previous.channels[0] ||
-        audio[i]!.sampleFrame !==
-          previous.sampleFrame + previous.channels[0].length
-      )
-        issues.push('missing controller audio chunk');
+      const current = audio[i]!;
+      const previousLast = previous.quantumOrdinals?.at(-1);
+      const currentFirst = current.quantumOrdinals?.[0];
+      // The renderer reports a cached currentFrame, so a chunk label can repeat one quantum and
+      // skip the next while every callback is present. When callback ordinals exist they decide
+      // whether a callback is missing. Without them the labels are all there is.
+      const contiguous =
+        previousLast !== undefined && currentFirst !== undefined
+          ? currentFirst === previousLast + 1
+          : previous.channels[0] !== undefined &&
+            current.sampleFrame ===
+              previous.sampleFrame + previous.channels[0].length;
+      if (!contiguous) issues.push('missing controller audio chunk');
     }
     const channel = audio.flatMap((chunk) => chunk.channels[0] ?? []);
     const pcmEpoch = capture.trace.events.find(
@@ -13824,10 +13856,15 @@ async function assessMovingWindowControls(
       } else await sleep(5600);
       const trace = await globalThis.__otioProofTrace.stop();
       globalThis.__otioProofTrace.setFault('none');
-      if (root.dataset.playing === 'true') button.click();
       return {start, trace};
     })()`);
       const cast = await stopCast();
+      const paused = await pausePlayback(browser);
+      assert.doesNotMatch(
+        paused,
+        /Scheduled audio stopped:/,
+        `pause after sustained capture ${repetition} failed`
+      );
       const elapsedMs = capture.trace.timestamp - capture.start.timestamp;
       const progress =
         (capture.trace.frame - capture.start.frame) / ((elapsedMs * 30) / 1000);
@@ -14109,9 +14146,9 @@ async function assertVideoReservationInvalidation(
     globalThis.__otioProofPcmFault = null;
     const playing = root.dataset.playing ?? '';
     const diagnostic = Array.from(document.querySelectorAll('.otio-diagnostic')).map(node => node.textContent ?? '').join(' ');
-    if (root.dataset.playing === 'true') button.click();
     return {start, playEdge, trace, playing, diagnostic};
   })()`);
+  await pausePlayback(browser);
   await writeFile(
     join(shotDir, 'video-reservation-invalidated.json'),
     JSON.stringify({ provenance, capture })
@@ -14218,9 +14255,9 @@ async function assertVideoReservationInvalidation(
     globalThis.__otioProofHoldOldDrain = false;
     await sleep(700);
     const trace = await globalThis.__otioProofTrace.stop();
-    if (root.dataset.playing === 'true') button.click();
     return {start, playEdge, trace, sawHeld, handoffBeforeRelease};
   })()`);
+  await pausePlayback(browser);
   await writeFile(
     join(shotDir, 'video-future-starvation.json'),
     JSON.stringify({ provenance, capture: future })
@@ -15154,10 +15191,10 @@ async function calibratePostGainTap(
       const restored = globalThis.__otioProofTrace.restore(mute.value);
       await sleep(600);
       const trace = await globalThis.__otioProofTrace.stop();
-      if (root.dataset.playing === 'true') button.click();
       return {start, mute, restored, trace};
     })()`);
       const cast = await stopCast();
+      await pausePlayback(browser);
       await writeFile(
         join(shotDir, 'post-gain-calibration.json'),
         JSON.stringify({ provenance, capture, cast })

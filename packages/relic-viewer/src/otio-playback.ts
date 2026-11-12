@@ -8730,6 +8730,9 @@ export function createOtioPlayback(
       }
       const playGeneration = renderGeneration;
       const requestEpoch = ++playRequestEpoch;
+      // A failure belongs to the attempt that raised it. A new attempt that gets as far as
+      // starting must not keep showing the last one's refusal over the picture.
+      mediaFailures.delete('pcm-scheduler');
       const ctx = getAudioContext();
       if (ctx && pcmQuarantinedContexts.has(ctx)) {
         failScheduledAudio(
