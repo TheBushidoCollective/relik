@@ -46,18 +46,22 @@ import {
   type DeviceOwner,
   type DeviceSigner,
   deviceSigner,
-  fetchDeviceContext,
-  loadDeviceEntry,
-  partyIdentity,
-  sha256Hex,
-  signDeviceStatement,
-  freshNonce,
-  verifyDeviceCert,
-  verifyDeviceList,
-  verifyRecovery,
-  type VerifiedReader,
+  expectEpoch,
   expectRecord,
   expectString,
+  fetchDeviceContext,
+  freshNonce,
+  grantKey,
+  loadDeviceEntry,
+  observeOwnerState,
+  partyIdentity,
+  type SeenStatement,
+  sha256Hex,
+  signDeviceStatement,
+  verifyDeviceCert,
+  verifyDeviceList,
+  verifyRecoveryField,
+  type VerifiedReader,
 } from './device.ts';
 import {
   contentDigest,
@@ -275,12 +279,19 @@ async function ownerDisplay(
   };
 }
 
+/** A grant the owner signed, verified: its grantee's reader, the grantee's identity, and the owner-signed `at`. */
+export interface VerifiedGrant {
+  readonly reader: VerifiedReader;
+  readonly granteeIdentityId: string;
+  readonly at: number;
+}
+
 /** Verify one grant the owner signed, and the grantee it names, before it can receive a wrap. */
 export async function verifyGrant(
   grant: Record<string, unknown>,
   pin: DeviceOwner,
   relicId: string
-): Promise<VerifiedReader> {
+): Promise<VerifiedGrant> {
   const forged = new PublishError(
     'recipient_forged_grant',
     'a grant is not signed by the pinned owner for this relic, so no key is wrapped for it'
@@ -317,17 +328,24 @@ export async function verifyGrant(
   if (!fingerprintsEqual(statement.fingerprint_typed, fingerprint))
     throw forged;
   return {
-    kind: 'grantee',
-    publicKey: party.kemBytes,
-    keyId: sha256Hex(party.kemBytes),
-    email: normalizeEmail(statement.grantee_email),
-    fingerprint: formatFingerprint(fingerprint),
+    reader: {
+      kind: 'grantee',
+      publicKey: party.kemBytes,
+      keyId: sha256Hex(party.kemBytes),
+      email: normalizeEmail(statement.grantee_email),
+      fingerprint: formatFingerprint(fingerprint),
+    },
+    granteeIdentityId: party.identityId,
+    at: statement.at,
   };
 }
 
 /**
  * The recipients of a relic that already exists, from the publish-token read,
- * verified in full. Revoked grants are not recipients and are skipped.
+ * verified in full. A revoked grant is not a recipient, but it is still
+ * verified: its owner-signed time is what holds the service to a revocation
+ * this machine has already seen. Nothing is wrapped to an answer that goes back
+ * on what the machine has accepted.
  */
 async function fetchRecipients(
   deps: PublishDeps,
@@ -357,13 +375,8 @@ async function fetchRecipients(
   });
 
   const devices = await verifyDeviceList(body['devices'], pin, Date.now());
-  const recoveryRecord = body['recovery'];
-  const recovery =
-    recoveryRecord === null || recoveryRecord === undefined
-      ? undefined
-      : await verifyRecovery(expectRecord(recoveryRecord, 'recovery'), pin);
+  const recovery = await verifyRecoveryField(body['recovery'], pin);
 
-  const grants: VerifiedReader[] = [];
   const grantList = body['grants'];
   if (!Array.isArray(grantList)) {
     throw new PublishError(
@@ -371,22 +384,37 @@ async function fetchRecipients(
       'the grant list is missing'
     );
   }
+  const grants: VerifiedReader[] = [];
+  const grantStatements: Record<string, SeenStatement> = {};
   for (const item of grantList) {
     const grant = expectRecord(item, 'grant');
-    if (grant['revoked_at'] !== null && grant['revoked_at'] !== undefined)
-      continue;
-    grants.push(await verifyGrant(grant, pin, relicId));
+    const verified = await verifyGrant(grant, pin, relicId);
+    const revoked =
+      grant['revoked_at'] !== null && grant['revoked_at'] !== undefined;
+    grantStatements[grantKey(relicId, verified.granteeIdentityId)] = {
+      at: verified.at,
+      revoked,
+    };
+    if (!revoked) grants.push(verified.reader);
   }
+
+  const ownerEpoch = expectEpoch(body['owner_epoch'], 'owner epoch');
+  await observeOwnerState(deps.serviceOrigin, {
+    ownerEpoch,
+    designatedAt: recovery?.designatedAt,
+    devices: devices.statements,
+    grants: grantStatements,
+  });
 
   const owned = await ownerReader(pin);
   return {
     version: Number(body['current_version']),
     accessEpoch: Number(body['access_epoch']),
-    ownerEpoch: Number(body['owner_epoch']),
+    ownerEpoch,
     readers: [
       owned,
-      ...devices,
-      ...(recovery === undefined ? [] : [recovery]),
+      ...devices.readers,
+      ...(recovery === undefined ? [] : [recovery.reader]),
       ...grants,
     ],
   };
@@ -613,7 +641,7 @@ export async function publishPrivate(
   const readers = [
     owner,
     ...first.devices,
-    ...(first.recovery === undefined ? [] : [first.recovery]),
+    ...(first.recovery === undefined ? [] : [first.recovery.reader]),
   ];
 
   let relicId = generateRelicId();
@@ -743,7 +771,7 @@ export async function publishPrivate(
         readers: [
           owner,
           ...next.devices,
-          ...(next.recovery === undefined ? [] : [next.recovery]),
+          ...(next.recovery === undefined ? [] : [next.recovery.reader]),
         ],
       };
     },

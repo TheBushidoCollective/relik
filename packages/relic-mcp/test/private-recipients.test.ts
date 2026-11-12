@@ -8,6 +8,7 @@ import {
   partyIdentity,
   verifyDeviceList,
   verifyRecovery,
+  verifyRecoveryField,
 } from '../src/device.ts';
 import { verifyGrant } from '../src/private.ts';
 import {
@@ -69,9 +70,14 @@ function partyJson(person: Person) {
   };
 }
 
-async function designation(owner: Person, recovery: Person, signedBy: Person) {
+async function designation(
+  owner: Person,
+  recovery: Person,
+  signedBy: Person,
+  at: number = Date.now()
+) {
   const statement = {
-    at: Date.now(),
+    at,
     fingerprint_typed: await identityFingerprint(
       recovery.identityId,
       recovery.email
@@ -103,7 +109,7 @@ describe('recipient verification before any wrap', () => {
   test('a device the pinned owner certified is accepted as a recipient', async () => {
     const owner = await makePerson('owner@example.com');
     const device = await makeDevice('relic-mcp');
-    const readers = await verifyDeviceList(
+    const { readers } = await verifyDeviceList(
       [await deviceRecord(owner, device)],
       ownerPin(owner),
       Date.now()
@@ -121,7 +127,7 @@ describe('recipient verification before any wrap', () => {
       revoked_at: new Date().toISOString(),
     };
     expect(
-      await verifyDeviceList([record], ownerPin(owner), Date.now())
+      (await verifyDeviceList([record], ownerPin(owner), Date.now())).readers
     ).toEqual([]);
   });
 
@@ -143,7 +149,7 @@ describe('recipient verification before any wrap', () => {
   test('a designation the pinned owner signed is accepted as the recovery recipient', async () => {
     const owner = await makePerson('owner@example.com');
     const recovery = await makePerson('compliance@example.com');
-    const reader = await verifyRecovery(
+    const { reader } = await verifyRecovery(
       {
         identity: partyJson(recovery).identity,
         designation: await designation(owner, recovery, owner),
@@ -199,12 +205,64 @@ describe('recipient verification before any wrap', () => {
       verifyGrant(await grantWith(attacker), ownerPin(owner), RELIC_ID)
     ).rejects.toMatchObject({ code: 'recipient_forged_grant' });
 
-    const reader = await verifyGrant(
+    const { reader } = await verifyGrant(
       await grantWith(owner),
       ownerPin(owner),
       RELIC_ID
     );
     expect(reader.kind).toBe('grantee');
     expect(reader.email).toBe(grantee.email);
+  });
+});
+
+describe('the recovery designations a response may carry', () => {
+  const EARLIER = Date.parse('2026-11-10T12:00:00.000Z');
+  const LATER = EARLIER + DAY_MS;
+
+  test('the designation with the greatest owner-signed time is used, whatever its position', async () => {
+    const owner = await makePerson('owner@example.com');
+    const older = await makePerson('older@example.com');
+    const newer = await makePerson('newer@example.com');
+    const verified = await verifyRecoveryField(
+      [
+        {
+          identity: partyJson(newer).identity,
+          designation: await designation(owner, newer, owner, LATER),
+        },
+        {
+          identity: partyJson(older).identity,
+          designation: await designation(owner, older, owner, EARLIER),
+        },
+      ],
+      ownerPin(owner)
+    );
+    expect(verified?.reader.email).toBe(newer.email);
+    expect(verified?.designatedAt).toBe(LATER);
+  });
+
+  test('a response with no designation carries none', async () => {
+    const owner = await makePerson('owner@example.com');
+    expect(await verifyRecoveryField(null, ownerPin(owner))).toBeUndefined();
+  });
+
+  test('two holders at the same time cannot be ordered, so the response is refused', async () => {
+    const owner = await makePerson('owner@example.com');
+    const first = await makePerson('first@example.com');
+    const second = await makePerson('second@example.com');
+    await expect(
+      verifyRecoveryField(
+        [
+          {
+            identity: partyJson(first).identity,
+            designation: await designation(owner, first, owner, LATER),
+          },
+          {
+            identity: partyJson(second).identity,
+            designation: await designation(owner, second, owner, LATER),
+          },
+        ],
+        ownerPin(owner)
+      )
+    ).rejects.toMatchObject({ code: 'recovery_ambiguous' });
   });
 });

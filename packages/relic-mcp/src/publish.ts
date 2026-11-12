@@ -133,6 +133,8 @@ export type ClientCode =
   | 'recipient_uncertified_device'
   | 'recipient_forged_grant'
   | 'recovery_unsigned'
+  | 'recovery_ambiguous'
+  | 'recipients_stale'
   | 'private_unsupported'
   | 'private_policy_violation'
   | 'private_ttl_out_of_range'

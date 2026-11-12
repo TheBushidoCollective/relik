@@ -188,6 +188,14 @@ one at a time, and the owner confirms each grant with a passkey in the browser.
   owner grants it. The draft never says the link opens the file.
 - **`relic_list` and `relic_show` include private relics.** Show reports the
   current version, the expiry, the owner and the readers who can open it now.
+- **Same-user threat model.** The device key file and `publish-state.json` are
+  `0600`, so other users cannot read them. Any process running as this user can
+  read them: a file-backend device key and every stored version key are
+  plaintext there. A Secure Enclave device key has no access control, so any
+  same-user process that can run the helper can use it. relic-mcp defends
+  against other users and against the service. It does not defend against code
+  already running as this user, so do not publish private relics from a machine
+  that runs software you do not trust.
 
 ## Sending a relic to people
 
