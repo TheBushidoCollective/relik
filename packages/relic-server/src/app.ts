@@ -743,14 +743,14 @@ export function createApp(options: AppOptions = {}): RelicApp {
     }
   }
 
-  /** Owner-only attestation purposes need a relic and the signed-in owner. */
+  /**
+   * Attestation purposes that act on one relic and need its owner. Device and
+   * recovery purposes are identity-scoped: they need the signed-in identity only.
+   */
   const OWNER_PURPOSES: ReadonlySet<string> = new Set([
     'grant',
     'revoke',
     'delete',
-    'device_approve',
-    'device_revoke',
-    'recovery_designate',
   ]);
 
   /**
