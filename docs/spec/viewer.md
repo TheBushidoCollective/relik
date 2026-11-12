@@ -649,7 +649,7 @@ For a private relic, the decision options, record and list carry no `share_proof
 - `409 passkey_required`: Prompts passkey enrollment.
 - `409 passkey_assertion_required`: Explains that adding another passkey requires confirmation with an existing one.
 - `401 passkey_fresh_link_required`: Shows the new-link step (`[data-passkey-link]`) and keeps the session. Nothing was recorded.
-- `409 decision_unavailable`: Displays: "Decisions open on this relic once its publisher republishes it."
+- `409 decision_unavailable`: Displays: "The publisher has not asked for decisions on this relic." The band's Decisions control is drawn only once the list has landed, so a relic whose author did not ask for decisions never shows it; this copy covers a refusal that arrives after the sheet is open.
 - `409 decision_digest_mismatch`: Displays: "The file stored for version N is not the file this page shows. Nothing was recorded."
 - `403 invalid_share_proof`: Indicates that the key proof did not match the relic's verifier.
 - `429 decision_rate_limited`: Explains that too many decision requests were made and provides retry time.

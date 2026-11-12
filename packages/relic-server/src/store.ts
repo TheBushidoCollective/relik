@@ -92,6 +92,13 @@ export interface RelicRow {
   readonly noticePending?: boolean | undefined;
   readonly shareVerifier?: string | undefined;
   /**
+   * True when the publisher asked for decisions on this relic. Decisions are
+   * closed unless it is set: the verifier alone does not open them, because
+   * the author, not the client version, decides whether a relic takes a
+   * verdict. Absent on legacy rows, which stay closed until republished.
+   */
+  readonly decisionsOpen?: boolean | undefined;
+  /**
    * Number of enrolled share addresses reserved against the per-relic cap.
    * Advanced atomically via compare-and-swap when reserving share capacity.
    */
@@ -597,7 +604,8 @@ export interface RelicStore {
     titleUpdate?: { readonly title: string | undefined },
     ownerUpdate?: { readonly ownerEmail: string | undefined },
     noticePending?: boolean,
-    shareVerifierUpdate?: { readonly shareVerifier: string }
+    shareVerifierUpdate?: { readonly shareVerifier: string },
+    decisionsUpdate?: { readonly decisionsOpen: boolean }
   ): Promise<RelicRow | undefined>;
   claimVersionNotice(
     id: string,
@@ -875,7 +883,8 @@ export class MemoryStore implements RelicStore {
     titleUpdate?: { readonly title: string | undefined },
     ownerUpdate?: { readonly ownerEmail: string | undefined },
     noticePending?: boolean,
-    shareVerifierUpdate?: { readonly shareVerifier: string }
+    shareVerifierUpdate?: { readonly shareVerifier: string },
+    decisionsUpdate?: { readonly decisionsOpen: boolean }
   ): Promise<RelicRow | undefined> {
     const row = this.relics.get(id);
     if (row === undefined) return undefined;
@@ -899,6 +908,10 @@ export class MemoryStore implements RelicStore {
       title: nextTitle,
       ownerEmail: nextOwnerEmail,
       shareVerifier: nextShareVerifier,
+      decisionsOpen:
+        decisionsUpdate !== undefined
+          ? decisionsUpdate.decisionsOpen
+          : row.decisionsOpen,
       ...(noticePending === true ? { noticePending: true } : {}),
     };
     this.relics.set(id, next);

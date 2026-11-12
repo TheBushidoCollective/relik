@@ -251,7 +251,7 @@ Success returns `structuredContent` with three members, all required:
 
 **Refusals:**
 - `no_local_publish_state`: The relic was not published from this machine, or the id was not found in local publish state.
-- `decision_unavailable`: The relic was published before sharing and decisions were supported. Guidance: "republish once with relic_republish; the link does not change".
+- `decision_unavailable`: The publisher has not asked for decisions on this relic (publish or republish with `decisions: true`), or the relic was published before sharing was supported. Guidance: "Decisions are not open on this relic. Open them by republishing with relic_republish and decisions: true; the link does not change."
 - `invalid_share_proof`: The derived key proof failed verification against the stored verifier.
 - `decision_rate_limited`: The read rate limit (600 per IP per hour) was exceeded.
 

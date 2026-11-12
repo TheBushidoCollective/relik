@@ -62,7 +62,7 @@ export const DECISION_TOFU =
 export const DECISION_LINK_REQUIRED = `${COPY_LINK_REQUIRED_LEAD} Email a new code, type it here, and setting up the passkey carries on. Nothing was recorded.`;
 export const DECISION_CANCELLED = 'Cancelled. Nothing was recorded.';
 export const DECISION_UNAVAILABLE =
-  'Decisions open on this relic once its publisher republishes it.';
+  'The publisher has not asked for decisions on this relic.';
 
 export function staleCopy(shown: number, newest: number): string {
   return (

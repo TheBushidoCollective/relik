@@ -362,6 +362,12 @@ export const TOOL_DEFINITION = {
         description:
           'Optional. Render a picture of the first screen of the file on this machine and upload it for link previews. Defaults to true. NOT encrypted: the service stores it and anyone who fetches the link sees it, with or without the key. Pass false for anything you would not show in a chat preview.',
       },
+      decisions: {
+        type: 'boolean',
+        default: false,
+        description:
+          'Optional. Ask readers for decisions: the viewer then offers Approve and Reject on this relic, each confirmed with a passkey. Defaults to false, and without it the viewer shows no Decisions control. Turn it on later with relic_republish.',
+      },
     },
     required: ['path'],
     additionalProperties: false,
@@ -519,6 +525,11 @@ export const REPUBLISH_TOOL_DEFINITION = {
         default: true,
         description:
           'Optional. Email a change notice for this version to each verified address that commented on the relic and each address added with relic_share, except any that stopped those emails. Defaults to true. The notice names the title and version and never carries the key. At most one email per person per relic per 10 minutes, and one stop link stops every email about that relic. Pass false for a change not worth an email, such as a typo fix.',
+      },
+      decisions: {
+        type: 'boolean',
+        description:
+          'Optional. Open (true) or close (false) decisions on this relic: the viewer offers Approve and Reject, each confirmed with a passkey, only while it is open. Omit it to keep what the relic already has. Relics published before this option existed are closed until republished with decisions: true.',
       },
     },
     required: ['relic_id', 'path'],
@@ -2254,6 +2265,14 @@ async function callTool(
     );
   }
   const cover = typeof rawCover === 'boolean' ? rawCover : undefined;
+  const rawDecisions = args['decisions'];
+  if (rawDecisions !== undefined && typeof rawDecisions !== 'boolean') {
+    return errorResponse(
+      id,
+      ERROR_CODES.invalidParams,
+      '`decisions` must be a boolean or omitted'
+    );
+  }
   const rawPrivate = args['private'];
   if (rawPrivate !== undefined && typeof rawPrivate !== 'boolean') {
     return errorResponse(
@@ -2273,6 +2292,7 @@ async function callTool(
         ttl_days: ttlDays.days,
         force_new: forceNew === true,
         cover,
+        decisions: rawDecisions,
       },
       deps
     );
@@ -2287,6 +2307,7 @@ async function callTool(
         ttl_days: ttlDays.days,
         force_new: forceNew === true,
         cover,
+        decisions: rawDecisions,
       },
       deps
     );
@@ -2432,6 +2453,16 @@ async function callRepublishPrivate(
       '`notify` must be a boolean or omitted'
     );
   }
+  if (
+    args['decisions'] !== undefined &&
+    typeof args['decisions'] !== 'boolean'
+  ) {
+    return errorResponse(
+      id,
+      ERROR_CODES.invalidParams,
+      '`decisions` must be a boolean or omitted'
+    );
+  }
   try {
     const result = await republishPrivate(
       {
@@ -2443,6 +2474,10 @@ async function callRepublishPrivate(
         ttl_days: ttlDays.days,
         cover: typeof args['cover'] === 'boolean' ? args['cover'] : undefined,
         notify: args['notify'] === false ? false : undefined,
+        decisions:
+          typeof args['decisions'] === 'boolean'
+            ? args['decisions']
+            : undefined,
       },
       deps
     );
@@ -3018,6 +3053,14 @@ async function callRepublish(
     );
   }
   const notify = typeof rawNotify === 'boolean' ? rawNotify : undefined;
+  const rawDecisions = args['decisions'];
+  if (rawDecisions !== undefined && typeof rawDecisions !== 'boolean') {
+    return errorResponse(
+      id,
+      ERROR_CODES.invalidParams,
+      '`decisions` must be a boolean or omitted'
+    );
+  }
   try {
     const result = await republish(
       {
@@ -3029,6 +3072,7 @@ async function callRepublish(
         addresses,
         cover,
         notify,
+        decisions: rawDecisions,
       },
       deps
     );
@@ -3732,8 +3776,8 @@ const REFUSAL_GUIDANCE: Readonly<Record<string, string>> = {
   share_rate_limited:
     'The refusal carries retry_after_seconds; wait it out rather than retrying in a loop.',
   decision_unavailable:
-    'Decisions are unavailable on this relic until it is republished. ' +
-    'republish once with relic_republish; the link does not change.',
+    'Decisions are not open on this relic. Open them by republishing with ' +
+    'relic_republish and decisions: true; the link does not change.',
   invalid_share_proof:
     'The share proof was rejected by the service. The encryption key on ' +
     'this machine may not match the published relic.',

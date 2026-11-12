@@ -281,7 +281,10 @@ async function certifyDevice(
  * A private relic published by the owner's device and sealed at version 1,
  * with the owner and the device as its recipients.
  */
-async function sealedPrivateRelic(owner: Person): Promise<{
+async function sealedPrivateRelic(
+  owner: Person,
+  options: { readonly decisions?: boolean } = {}
+): Promise<{
   deviceKeys: IdentityKeys;
   deviceId: string;
   versionKey: Uint8Array;
@@ -300,6 +303,7 @@ async function sealedPrivateRelic(owner: Person): Promise<{
     access: 'private',
     declared_size_bytes: content.byteLength,
     declared_ciphertext_bytes: encryptedSize(content.byteLength),
+    ...(options.decisions === true ? { decisions: true } : {}),
   };
   const deviceAuth = {
     device_id: deviceId,
@@ -1005,7 +1009,7 @@ describe('decisions and share on a private relic', () => {
   test('a reader with access lists decisions with no share proof, an outsider is refused, and the publish token lists too', async () => {
     const owner = await person('owner@example.com');
     await registerIdentity(owner);
-    const sealed = await sealedPrivateRelic(owner);
+    const sealed = await sealedPrivateRelic(owner, { decisions: true });
     const reader = await person('reader@example.com');
     await registerIdentity(reader);
     const outsider = await person('outsider@example.com');
@@ -1032,6 +1036,24 @@ describe('decisions and share on a private relic', () => {
       post({ publish_token: sealed.publishToken })
     );
     expect(byToken.status).toBe(200);
+  });
+
+  test('a private relic whose author did not ask for decisions refuses the list', async () => {
+    const owner = await person('owner@example.com');
+    await registerIdentity(owner);
+    const sealed = await sealedPrivateRelic(owner);
+    const reader = await person('reader@example.com');
+    await registerIdentity(reader);
+    expect((await grantTo(owner, reader, [1], sealed.versionKey)).status).toBe(
+      201
+    );
+
+    const listed = await send(
+      `/api/relics/${RELIC_ID}/decisions/list`,
+      post({}, reader.cookie)
+    );
+    expect(listed.status).toBe(409);
+    expect(listed.body['code']).toBe('decision_unavailable');
   });
 
   test('a reader with access can share, and an outsider cannot', async () => {

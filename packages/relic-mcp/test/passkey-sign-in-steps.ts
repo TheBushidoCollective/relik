@@ -111,6 +111,7 @@ export async function runPasskeySignInSequence(
       title: '',
       cover: false,
       ttl_days: 1,
+      decisions: true,
     }
   );
 

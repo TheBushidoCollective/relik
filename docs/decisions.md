@@ -1101,3 +1101,11 @@ Authorized by Jason Waldrip on 2026-11-11. The build plan is `docs/plans/private
   - Rolling back after private relics exist degrades their gating. The previous server mints their ciphertext and lists their comment authors to anyone with the URL, with no key exposure. Roll forward where possible.
   - Real providers' PRF behavior, WebKit and Gecko WebCrypto, distribution of the Secure Enclave helper, and production GCS `customTime` behavior are unproven until the post-production gate in plan section 7 runs.
   - Deleted private ciphertext, wraps and metadata stay recoverable by the operator under the soft-delete retention. The service never holds a content key, so the retained ciphertext alone discloses no plaintext, but the bytes are not gone.
+
+## 2026-11-11: Decisions are open only when the author asks
+
+- Decided with Jason, in the moment: the band's Decisions control shows only on a relic whose author asked for decisions. Before this the control was on every relic published by a client that sent a share verifier, and read "not open yet" on older ones.
+- `relic_publish` takes `decisions` (default `false`); `relic_republish` takes `decisions` and, when omitted, keeps what the relic had. Only an explicit `true` or `false` changes it. The grant and republish bodies carry it as `decisions`, a non-boolean is `400 invalid_publish_metadata`, and the row stores `decisionsOpen`.
+- The list, options, and record routes refuse with `409 decision_unavailable` unless `decisionsOpen` is `true`, ahead of the proof check. The viewer already read that refusal as "closed" and now draws no control for it.
+- The control is also not drawn while the list is loading or after a transient list failure, so a closed relic never flashes it. A reload recovers an open one.
+- Relics published before this change have no `decisionsOpen` and stay closed until their author republishes with `decisions: true`. Decisions already recorded on them are not deleted and are not shown. The share verifier no longer implies a decision surface.

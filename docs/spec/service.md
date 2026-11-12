@@ -248,7 +248,7 @@ Decisions exist. The endpoints are `POST /api/relics/{id}/decisions/options`, `P
 |---|---|---|
 | Request presents a publish token (`publish_token` key present in body) | `403` | `decision_requires_reader` |
 | Request body is malformed, not an object, invalid verdict, or malformed proof | `400` | `invalid_decision` |
-| Relic was published before sharing and decisions were supported (`shareVerifier` absent) | `409` | `decision_unavailable` |
+| The publisher did not ask for decisions on this relic (`decisionsOpen` not true), or `shareVerifier` is absent | `409` | `decision_unavailable` |
 | Provided version digest does not match the server's digest on record | `409` | `decision_digest_mismatch` |
 | Decision record or list requests rate limited | `429` | `decision_rate_limited` |
 | No passkey registered for this verified address | `409` | `passkey_required` |
@@ -264,7 +264,7 @@ Decisions exist. The endpoints are `POST /api/relics/{id}/decisions/options`, `P
 
 **A decision requires a reader, never the publish token.** If the request body carries `publish_token`, the server refuses with `403 decision_requires_reader`. Decisions cannot be recorded by publisher authority or MCP tools; only a human reader in the viewer with a verified session and a passkey can record one.
 
-**Key proof and reader authorization.** Both recording routes and the list route require proof of holding the decryption key. The caller presents `share_proof` (the unpadded base64url encoding of the 32-byte proof derived via HKDF-SHA256 with info `relic/share-proof/v1`). If `row.shareVerifier` is absent, the server returns `409 decision_unavailable`. If `share_proof` is malformed, it returns `400 invalid_decision`. If `timingSafeEqual(sha256Hex(proof), row.shareVerifier)` fails, it returns `403 invalid_share_proof`.
+**Key proof and reader authorization.** Both recording routes and the list route require proof of holding the decryption key. The caller presents `share_proof` (the unpadded base64url encoding of the 32-byte proof derived via HKDF-SHA256 with info `relic/share-proof/v1`). If the publisher did not ask for decisions (`row.decisionsOpen` is not `true`, set by `decisions: true` on the grant or republish and kept across republishes that omit it) or `row.shareVerifier` is absent, the server returns `409 decision_unavailable`, before it looks at the proof. If `share_proof` is malformed, it returns `400 invalid_decision`. If `timingSafeEqual(sha256Hex(proof), row.shareVerifier)` fails, it returns `403 invalid_share_proof`.
 
 **Version digest verification.** Recording a decision presents `version_digest` matching `/^[0-9a-f]{64}$/`. If this does not match the server's digest on record for that version, the server refuses with `409 decision_digest_mismatch` carrying extension fields `relic_id`, `version`, and `version_digest`.
 

@@ -104,6 +104,7 @@ async function publishRelic(
         challenge_nonce,
         publishing_client: 'relic-mcp/0.1.0 (test)',
         share_verifier: verifier,
+        decisions: true,
       }),
     })
   );

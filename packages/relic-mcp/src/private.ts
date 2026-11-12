@@ -88,6 +88,7 @@ export interface PrivatePublishInput {
   readonly ttl_days?: number | undefined;
   readonly cover?: boolean | undefined;
   readonly force_new?: boolean | undefined;
+  readonly decisions?: boolean | undefined;
 }
 
 export interface PrivateRepublishInput {
@@ -98,6 +99,7 @@ export interface PrivateRepublishInput {
   readonly ttl_days?: number | undefined;
   readonly cover?: boolean | undefined;
   readonly notify?: boolean | undefined;
+  readonly decisions?: boolean | undefined;
 }
 
 /** A recipient as the output shows it: public facts only. */
@@ -658,6 +660,9 @@ export async function publishPrivate(
           declared_ciphertext_bytes: container.length,
           access: 'private',
           ttl_days: ttl,
+          ...(input.decisions === undefined
+            ? {}
+            : { decisions: input.decisions }),
           device_auth: {
             device_id: session.entry.device_id,
             nonce: challengeNonce,
@@ -866,6 +871,9 @@ export async function republishPrivate(
         declared_size_bytes: source.bytes.length,
         declared_ciphertext_bytes: container.length,
         ...(input.ttl_days === undefined ? {} : { ttl_days: input.ttl_days }),
+        ...(input.decisions === undefined
+          ? {}
+          : { decisions: input.decisions }),
         ...(input.notify === false ? { notify: false } : {}),
       }
     ),
