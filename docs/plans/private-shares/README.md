@@ -250,10 +250,11 @@ New routes:
 | `POST /api/identity/recovery/lookup` | session | `{email}` | 200 `{party: PartyJSON \| null}` | 429 |
 | `POST /api/identity/recovery` | session | `{attestation}` | 200 `{recovery: RecoveryJSON \| null}` | 409 `fingerprint_mismatch`, 400 `invalid_statement` |
 | `POST /api/identity/backfill` | session (owner identity) | `{wraps: BackfillWrapJSON[]}` (at most `privateBackfillMaxWraps`) | 200 `{stored, skipped}` | 400 `invalid_wrap` |
-| `GET /api/identity/relics` | session | `?coverage=1` optional | 200 `{owned:[{relic_id, access, current_version, sealed_version, expires_at, pending_requests, coverage_gaps?}], shared_with_me:[{relic_id, readable_versions, expires_at, owner: PartyJSON}]}` | 401 |
+| `GET /api/identity/relics` | session | `?coverage=1` optional | 200 `{owned:[{relic_id, access, current_version, sealed_version, expires_at, pending_requests, coverage_gaps?: number[]}], shared_with_me:[{relic_id, readable_versions, expires_at, owner: PartyJSON}]}` (`coverage_gaps` is the list of unsealed-or-missing-recipient versions) | 401 |
 | `GET /api/identity/access-log` | session | `?relic_id=` optional | 200 `{events: AccessEventJSON[]}` (oldest first) | 401, 409 `identity_required` |
 | `POST /api/devices/enrollments` | none, IP limited | `{kem_public_key, sig_public_key, label, backend, proof:{statement, signature}}` (`device_enroll`) | 201 `{enrollment_id, approve_url, expires_at, device_id}` | 400 `invalid_device`, 429 |
-| `GET /api/devices/enrollments/{enrollmentId}` | id is the capability | | 200 `{status:'pending'\|'approved', device_id, label, expires_at, device?: DevicePublicJSON, owner?: PartyJSON}` | 404 `device_not_found`, 410 `device_enrollment_expired` |
+| `GET /api/devices/enrollments/{enrollmentId}` | id is the capability | | 200 `{status:'pending'\|'approved', device_id, label, kem_public_key, sig_public_key, expires_at, device?: DevicePublicJSON, owner?: PartyJSON}` (the two keys are returned while pending, so the owner's approval page can show the device fingerprint) | 404 `device_not_found`, 410 `device_enrollment_expired` |
+| `POST /api/relics/{id}/versions/{v}/upload-grant` | owner session | | 200 a new signed upload grant for version `v`, the current unsealed version only (`uploadFor`) | 409 `version_conflict` (not the current unsealed version), 403 `owner_required`, 401 `sign_in_required` |
 | `POST /api/devices/enrollments/{enrollmentId}/approve` | session | `{attestation}` (`device_cert`) | 200 `{device}` | 409 `fingerprint_mismatch`, 409 `identity_required`, 410 |
 | `GET /api/devices` | session | | 200 `{devices: DevicePublicJSON[]}` | 401 |
 | `POST /api/devices/{deviceId}/revoke` | session | `{attestation}` | 200 `{device}` | 403 `owner_required`, 404 |
@@ -315,6 +316,12 @@ Changed existing routes:
 | `cannot_delete_current_version` | 409 | Delete the whole relic to remove its current version |
 | `request_not_found` | 404 | No such access request |
 | `request_limit_reached` | 409 | This relic has too many pending requests |
+| `kem_key` (as `invalid_statement`, `statement_check: kem_key`) | 400 | KEM key already held by another identity or device; a request for a new identity with it is refused |
+| `kem_key` (as `invalid_device`, `device_check: kem_key`) | 400 | KEM key already held by another identity or device |
+| `replay` (as `invalid_device`, `device_check: replay`) | 400 | A device request or owner-bind nonce was already spent |
+| `exists` (as `invalid_device`, `device_check: exists`) | 400 | A device with this id is already certified |
+
+The rows marked `kem_key` and `replay` reuse `invalid_statement` and `invalid_device`. They are not new codes, and the `*_check` extension says which check failed. Request status is `pending`, `granted` or `declined`.
 
 `ProblemExtensions` gains `policy_check` (`'title' | 'cover' | 'ttl' | 'owner_email' | 'share_verifier' | 'share_proof' | 'version'`), `identity_check`, `statement_check`, `seal_check`, `device_check`, `access_epoch`, `owner_epoch`.
 
@@ -386,13 +393,14 @@ updateRelic(id: string, change: (row: RelicRow) => RelicRow): Promise<RelicRow |
 deleteRelicRow(id: string): Promise<void>;
 getIdentity(identityId: string): Promise<IdentityRecord | undefined>;
 getIdentityForAddress(email: string): Promise<IdentityRecord | undefined>; // current, non-retired
-createIdentity(record: IdentityRecord): Promise<'created' | 'address_taken'>;
-replaceIdentity(record: IdentityRecord, retiringIdentityId: string, at: number): Promise<'replaced' | 'conflict'>;
+createIdentity(record: IdentityRecord): Promise<'created' | 'address_taken' | 'kem_taken'>; // kem_taken: another identity or device holds the KEM key; a refused create claims nothing
+replaceIdentity(record: IdentityRecord, retiringIdentityId: string, at: number): Promise<'replaced' | 'conflict' | 'kem_taken'>; // kem_taken: the KEM key is held by anything other than the retiring identity; its claim moves to record
 updateIdentity(identityId: string, change: (r: IdentityRecord) => IdentityRecord): Promise<IdentityRecord | undefined>;
 putDeviceEnrollment(row: DeviceEnrollmentRow): Promise<boolean>; // create-only
 getDeviceEnrollment(enrollmentId: string): Promise<DeviceEnrollmentRow | undefined>;
 updateDeviceEnrollment(enrollmentId: string, change: (r: DeviceEnrollmentRow) => DeviceEnrollmentRow): Promise<DeviceEnrollmentRow | undefined>;
-putDevice(record: DeviceRecord): Promise<boolean>; // create-only, also writes the owner index
+putDevice(record: DeviceRecord): Promise<'created' | 'exists' | 'kem_taken'>; // create-only, also writes the owner index; exists when the device id is taken
+putDeviceNonce(nonceHash: string, expiresAt: number): Promise<boolean>; // create-only; a device_request or owner_bind nonce is spent once; false means already used
 getDevice(deviceId: string): Promise<DeviceRecord | undefined>;
 updateDevice(deviceId: string, change: (r: DeviceRecord) => DeviceRecord): Promise<DeviceRecord | undefined>;
 listDevicesForOwner(ownerIdentityId: string): Promise<readonly DeviceRecord[]>;
