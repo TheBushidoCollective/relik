@@ -57,6 +57,7 @@ import { deflateSync } from 'node:zlib';
 import {
   compareRationalTimes,
   decodeKey,
+  encodeKey,
   deriveRendererClass,
   deriveShareProof,
   encryptRelic,
@@ -80,7 +81,7 @@ import { DEFAULT_CLOCK_POLICY } from '../../relic-viewer/src/otio-output-clock';
 import { type CdpConnection, connectPipe } from '../src/cover/cdp.ts';
 import { chromeArgs, discoverChrome } from '../src/cover/chrome.ts';
 import { nodeUploader } from '../src/upload.ts';
-import { loadPublishState } from '../src/state.ts';
+import { loadPublishState, savePublishState } from '../src/state.ts';
 import { nodeFiles } from '../src/files.ts';
 import {
   guessMimetype,
@@ -7575,6 +7576,8 @@ function decoderDocument(
 // upload and complete endpoints. It repeats publish()'s legs without the program build,
 // so this proof can produce the pre-program layout the viewer resolves as legacy. The
 // absence of any program entry is checked on the bytes before anything is encrypted.
+// The relic is then recorded in the MCP's publish state exactly as publish() records
+// one, so the MCP can read its comments and republish it by relic_id.
 async function publishLegacyDirectory(
   directory: string,
   title: string
@@ -7645,6 +7648,14 @@ async function publishLegacyDirectory(
     url.startsWith(origin) && url.includes('#'),
     'legacy publish left loopback or lost its key'
   );
+  process.env['RELIC_PUBLISH_STATE'] = statePath;
+  await savePublishState(relicId, {
+    key: encodeKey(key),
+    publish_token: publishToken,
+    version: 1,
+    filename,
+    published_at: new Date().toISOString(),
+  });
   return url;
 }
 
@@ -21641,19 +21652,16 @@ try {
   }
   await calibratePostGainTap(sessionToken);
 
-  const published = await callMcp('relic_publish', {
-    path: fixtureDir,
-    title: 'Relik Feature Editorial',
-    cover: false,
-  });
-  const relicId = String(published['relic_id']);
-  const shareUrl = String(published['url'] ?? published['link'] ?? '');
-  assert.ok(relicId, 'publish returned no relic_id');
-  assert.ok(shareUrl.includes('#'), 'publish returned no keyed link');
-  assert.ok(
-    shareUrl.startsWith(origin),
-    `publish URL left loopback: ${shareUrl}`
+  // The qualification, revision and state stages below exercise the live player, which
+  // only a legacy archive reaches: a new publish of this fixture carries a program the
+  // viewer plays or refuses as a whole. New publishes are proven by the focus-only
+  // publish check and by the separate program proof.
+  const shareUrl = await publishLegacyDirectory(
+    fixtureDir,
+    'Relik Feature Editorial'
   );
+  const relicId = new URL(shareUrl).pathname.split('/').filter(Boolean).at(-1);
+  assert.ok(relicId, 'publish returned no relic_id');
   console.log(`PUBLISHED relic_id=${relicId}`);
   pass('published');
 
@@ -21724,6 +21732,7 @@ try {
   });
   try {
     await waitReady(browser);
+    await assertLegacyProgramState(browser, 'qualification');
     await runLayoutMatrix(browser, 'initial', plan);
     if (process.env.RELIC_OTIO_LAYOUT_ONLY === '1') {
       console.log('OTIO_LAYOUT_OK');
