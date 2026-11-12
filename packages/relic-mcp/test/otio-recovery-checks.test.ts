@@ -3,6 +3,7 @@ import {
   assertDescriptorBudgetRefusal,
   assertHeldReleaseBeforeSuccessor,
   assertShiftedBankRefusal,
+  recoveryFrontierOvershoot,
   siteBridgeGapInfeasibleAfterHold,
 } from './otio-recovery-checks.ts';
 
@@ -698,4 +699,181 @@ test('site-bridge classifier refuses a candidate refused after the hold', () => 
     })
   );
   expect(siteBridgeGapInfeasibleAfterHold(candidate, BRIDGE_RATE)).toBeNull();
+});
+
+// Frontier-overshoot classifier. The boundary and the last read are the recorded 44.1 kHz refusal
+// of CI run 43175372082: that read sat 128 frames short of the frontier. The context frame at the
+// check, 384 past the frontier, is computed from the refusal (384 + 512 is 896, and the 20 ms gap
+// is 882 frames); that run carried no event for it.
+const OVER_RATE = 44100;
+const OVER_BOUNDARY = 1254784;
+const OVER_GAP_UPPER = OVER_BOUNDARY + 882;
+const overRead = (frame: number, injected = false): BridgeEntry => ({
+  kind: 'audio-output-timestamp-observed',
+  value: { currentAfter: frame / OVER_RATE, injected },
+});
+const overRefusal = (
+  patch: Record<string, unknown> = {}
+): Record<string, unknown> => ({
+  event: 'recovery-gap-infeasible',
+  generation: 82,
+  boundaryFrame: OVER_BOUNDARY,
+  contextFrame: OVER_BOUNDARY + 384,
+  guardFrames: 512,
+  gapUpper: OVER_GAP_UPPER,
+  checks: 0,
+  ...patch,
+});
+const overTrace = (
+  patch: {
+    refusal?: Record<string, unknown>;
+    gate?: Record<string, unknown>;
+    lastRead?: BridgeEntry;
+    between?: BridgeEntry[];
+    error?: Record<string, unknown>;
+  } = {}
+): BridgeEntry[] => [
+  patch.lastRead ?? overRead(OVER_BOUNDARY - 128),
+  bridgePcm({
+    event: 'gate-close',
+    generation: 82,
+    reason: 'frontier',
+    contextStopFrame: OVER_BOUNDARY,
+    ...patch.gate,
+  }),
+  bridgePcm({ event: 'recovery-request', boundaryFrame: OVER_BOUNDARY }),
+  bridgePcm({ event: 'recovery-render-closed', boundaryFrame: OVER_BOUNDARY }),
+  ...(patch.between ?? []),
+  bridgePcm(overRefusal(patch.refusal)),
+  bridgePcm({ event: 'cancel', generation: 82, reason: 'underflow' }),
+  bridgePcm({
+    event: 'error',
+    stage: 'schedule',
+    code: BRIDGE_HANDOFF,
+    ...patch.error,
+  }),
+];
+
+test('frontier-overshoot classifier names the recorded 44.1 kHz refusal', () => {
+  const evidence = recoveryFrontierOvershoot(overTrace(), OVER_RATE);
+  expect(evidence).toContain('overshot by 384 frames');
+  expect(evidence).toContain(`gap upper ${OVER_GAP_UPPER}`);
+});
+
+test('frontier-overshoot classifier refuses a late or feasible recovery', () => {
+  // A second burst always puts the overshoot at one guard or more: that is a late recovery.
+  expect(
+    recoveryFrontierOvershoot(
+      overTrace({ refusal: { contextFrame: OVER_BOUNDARY + 512 } }),
+      OVER_RATE
+    )
+  ).toBeNull();
+  expect(
+    recoveryFrontierOvershoot(
+      overTrace({ refusal: { contextFrame: OVER_BOUNDARY + 768 } }),
+      OVER_RATE
+    )
+  ).toBeNull();
+  // Not the first check: the viewer waited before it refused.
+  expect(
+    recoveryFrontierOvershoot(overTrace({ refusal: { checks: 1 } }), OVER_RATE)
+  ).toBeNull();
+  // A 256-frame overshoot fits the gap, so a refusal there is not this signature.
+  expect(
+    recoveryFrontierOvershoot(
+      overTrace({ refusal: { contextFrame: OVER_BOUNDARY + 256 } }),
+      OVER_RATE
+    )
+  ).toBeNull();
+  // At 48 kHz the same overshoot fits: 384 + 512 is under 960.
+  expect(
+    recoveryFrontierOvershoot(
+      overTrace({ refusal: { gapUpper: OVER_BOUNDARY + 960 } }),
+      48000
+    )
+  ).toBeNull();
+  // The context had already passed the frontier at the last read before the closure.
+  expect(
+    recoveryFrontierOvershoot(
+      overTrace({ lastRead: overRead(OVER_BOUNDARY + 128) }),
+      OVER_RATE
+    )
+  ).toBeNull();
+});
+
+test('frontier-overshoot classifier refuses evidence that does not agree', () => {
+  for (const refusal of [
+    { gapUpper: OVER_GAP_UPPER + 1 },
+    { guardFrames: 256 },
+    { boundaryFrame: OVER_BOUNDARY - 128 },
+    { generation: 83 },
+    { contextFrame: OVER_BOUNDARY - 128 },
+    { contextFrame: 1.5 },
+  ])
+    expect(
+      recoveryFrontierOvershoot(overTrace({ refusal }), OVER_RATE)
+    ).toBeNull();
+  expect(
+    recoveryFrontierOvershoot(
+      overTrace({ gate: { reason: 'pause' } }),
+      OVER_RATE
+    )
+  ).toBeNull();
+  expect(
+    recoveryFrontierOvershoot(
+      overTrace({ error: { code: BRIDGE_CLOCK } }),
+      OVER_RATE
+    )
+  ).toBeNull();
+  expect(
+    recoveryFrontierOvershoot(
+      overTrace({ error: { stage: 'clock' } }),
+      OVER_RATE
+    )
+  ).toBeNull();
+  expect(
+    recoveryFrontierOvershoot(
+      [...overTrace(), bridgePcm({ event: 'error', code: BRIDGE_HANDOFF })],
+      OVER_RATE
+    )
+  ).toBeNull();
+  expect(
+    recoveryFrontierOvershoot(
+      overTrace().filter(
+        (entry) => entry.value?.['event'] !== 'recovery-render-closed'
+      ),
+      OVER_RATE
+    )
+  ).toBeNull();
+  expect(
+    recoveryFrontierOvershoot(
+      overTrace().filter(
+        (entry) => entry.value?.['event'] !== 'recovery-gap-infeasible'
+      ),
+      OVER_RATE
+    )
+  ).toBeNull();
+  expect(recoveryFrontierOvershoot(overTrace().slice(1), OVER_RATE)).toBeNull();
+});
+
+test('frontier-overshoot classifier refuses anything injected or any further recovery step', () => {
+  for (const entry of [
+    overRead(OVER_BOUNDARY + 384, true),
+    { kind: 'clock-site-hold-consumed', value: { site: 'recovery-bridge' } },
+    { kind: 'recovery-overrun-injected', value: {} },
+    bridgePcm({ event: 'recovery-fault', code: 'recovery-delayed-staging' }),
+    bridgePcm({ event: 'recovery-selection', boundaryFrame: OVER_BOUNDARY }),
+    bridgePcm({ event: 'recovery-candidate-failed' }),
+    bridgePcm({ event: 'epoch', generation: 83 }),
+  ] as BridgeEntry[])
+    expect(
+      recoveryFrontierOvershoot(overTrace({ between: [entry] }), OVER_RATE)
+    ).toBeNull();
+  // A native read between the closure and the refusal changes nothing.
+  expect(
+    recoveryFrontierOvershoot(
+      overTrace({ between: [overRead(OVER_BOUNDARY + 384)] }),
+      OVER_RATE
+    )
+  ).not.toBeNull();
 });

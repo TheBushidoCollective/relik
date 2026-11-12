@@ -5163,7 +5163,7 @@ export function createOtioPlayback(
       run: PcmRun;
       anchor: { wallMs: number; time: OtioRationalTime } | null;
     } | null = null;
-    while (alive()) {
+    for (let checks = 0; alive(); checks++) {
       if (presentClockMs() > deadline) {
         pcmProof('recovery-timeout', oldRun.generation, {
           boundaryFrame: closedFrame,
@@ -5188,11 +5188,17 @@ export function createOtioPlayback(
         );
         return;
       }
-      if (
-        Math.ceil(context.currentTime * admission.rate) +
-          OTIO_PCM_EPOCH_GUARD_FRAMES >
-        gapUpper
-      ) {
+      const checkFrame = Math.ceil(context.currentTime * admission.rate);
+      if (checkFrame + OTIO_PCM_EPOCH_GUARD_FRAMES > gapUpper) {
+        // Proof evidence for the refusal: the observed context frame, and whether this was the
+        // first check after the closure. The proof tells a frontier overshoot from a late recovery.
+        pcmProof('recovery-gap-infeasible', oldRun.generation, {
+          boundaryFrame: closedFrame,
+          contextFrame: checkFrame,
+          guardFrames: OTIO_PCM_EPOCH_GUARD_FRAMES,
+          gapUpper,
+          checks,
+        });
         failScheduledAudio('recovery render handoff has no feasible frame');
         return;
       }

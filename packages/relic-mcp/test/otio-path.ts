@@ -105,6 +105,7 @@ import {
   assertDescriptorBudgetRefusal,
   assertHeldReleaseBeforeSuccessor,
   assertShiftedBankRefusal,
+  recoveryFrontierOvershoot,
   siteBridgeGapInfeasibleAfterHold,
 } from './otio-recovery-checks.ts';
 
@@ -17356,6 +17357,49 @@ async function runScheduledPcmProof(
     await waitReady(browser);
     await assertLegacyProgramState(browser, 'scheduled-pcm');
     const provenance = await proofProvenance(browser);
+    // Chrome on a 10 ms sink renders 384 or 512 frames per callback. When the burst that closes
+    // a starved run overshoots its frontier far enough, overshoot plus the guard passes the 20 ms
+    // gap at the first recovery check and the viewer refuses truthfully. Jason approved, on
+    // 2026-11-12, rerunning only that exact signature in a fresh browser, at most three times.
+    // Every other failure is rethrown unchanged, and each rerun keeps the refused trace.
+    const FRONTIER_OVERSHOOT_RERUNS = 3;
+    const recoveryCapture: { trace: MovingTrace['trace'] | null } = {
+      trace: null,
+    };
+    // Read through a call: the units assign the capture, which the compiler cannot see here.
+    const refusedCapture = (): MovingTrace['trace'] | null =>
+      recoveryCapture.trace;
+    const rerunFrontierOvershoot = async (
+      label: string,
+      unit: (attempt: number) => Promise<void>
+    ): Promise<void> => {
+      for (let attempt = 1; ; attempt++) {
+        recoveryCapture.trace = null;
+        try {
+          await unit(attempt);
+          return;
+        } catch (error) {
+          const refused = refusedCapture();
+          const evidence =
+            refused === null
+              ? null
+              : recoveryFrontierOvershoot(refused.events, rate);
+          if (evidence === null) throw error;
+          await writeFile(
+            join(shotDir, `${label}-frontier-overshoot-attempt${attempt}.json`),
+            JSON.stringify({ label, attempt, evidence, trace: refused })
+          );
+          if (attempt > FRONTIER_OVERSHOOT_RERUNS)
+            throw new Error(
+              `${label}: ${attempt}/${attempt} attempts overshot the frontier (${evidence})`,
+              { cause: error }
+            );
+          console.log(
+            `OTIO_RECOVERY_FRONTIER_OVERSHOOT label=${label} attempt=${attempt} ${evidence}`
+          );
+        }
+      }
+    };
     let longEpoch: number | undefined;
     let warmAnchor: Record<string, unknown> | undefined;
     if (clockProofMode === 'long') {
@@ -18121,11 +18165,14 @@ async function runScheduledPcmProof(
     );
     pass('scheduled-pcm-playback');
     if (clockProofMode === 'long') return;
-    async function runRecoveryProof(): Promise<void> {
+    async function runRecoveryProof(
+      session: ChromeSession,
+      sessionProvenance: unknown
+    ): Promise<void> {
       const recoveryWindowFrames = Math.floor(oracle.sample_rate * 0.02);
       assert.ok(recoveryWindowFrames > 0, 'invalid recovery sample rate');
-      await seekTo(browser, 0);
-      const recovery = await browser.evaluate<
+      await seekTo(session, 0);
+      const recovery = await session.evaluate<
         MovingTrace & {
           held: number;
           released: number;
@@ -18174,9 +18221,10 @@ async function runScheduledPcmProof(
       if (root.dataset.playing === 'true') button.click();
       return { start, playEdge, trace, held, released, sawHeld, handoffBeforeRelease, sawBuffering, pcmReleasedAt, drainFlagClearedAt };
     })()`);
+      recoveryCapture.trace = recovery.trace;
       await writeClockShot(
         join(shotDir, `scheduled-pcm-starvation-recovery-${rate}.json`),
-        { provenance, capture: recovery },
+        { provenance: sessionProvenance, capture: recovery },
         `scheduled-pcm-starvation-recovery-${rate}`,
         recovery.trace
       );
@@ -18845,7 +18893,21 @@ async function runScheduledPcmProof(
         'recovery-earlier-feasible',
         'recovery-delayed-staging',
         'descriptor-budget',
-      ] as const) {
+      ] as const)
+        await rerunFrontierOvershoot(`${fault}-${rate}`, () =>
+          runRecoveryFault(fault)
+        );
+    }
+    async function runRecoveryFault(
+      fault:
+        | 'recovery-phase-mismatch'
+        | 'recovery-impossible-guard'
+        | 'recovery-excess-work'
+        | 'recovery-earlier-feasible'
+        | 'recovery-delayed-staging'
+        | 'descriptor-budget'
+    ): Promise<void> {
+      {
         const isolated = await openBrowser(url, sessionToken, {
           label: `${fault}-${rate}`,
           recordProofTrace: true,
@@ -18891,6 +18953,7 @@ async function runScheduledPcmProof(
             if(root.dataset.playing==='true') button.click();
             return {start,playEdge,trace,held,released,playing,buffering,diagnostic};
           })()`);
+          recoveryCapture.trace = result.trace;
           await writeFile(
             join(shotDir, `${fault}-${rate}.json`),
             JSON.stringify({ provenance, capture: result })
@@ -18967,7 +19030,7 @@ async function runScheduledPcmProof(
               /recovery F1 is not latest independently feasible frame/,
               'latest-feasible proof accepted the deliberately earlier actual selection'
             );
-            continue;
+            return;
           }
           if (fault === 'recovery-excess-work') {
             const injection = result.trace.events.find(
@@ -19178,6 +19241,7 @@ async function runScheduledPcmProof(
             if(root.dataset.playing==='true') button.click();
             return {start,playEdge,trace:captured,held,released,releaseAt,playing,buffering,diagnostic};
           })()`);
+          recoveryCapture.trace = result.trace;
           await writeFile(
             join(shotDir, `${label}-${rate}.json`),
             JSON.stringify({ provenance, capture: result })
@@ -19314,8 +19378,14 @@ async function runScheduledPcmProof(
           await isolated.close();
         }
       };
-      await runHeld('held-first-ready-then-no-reserve', false);
-      await runHeld('held-released-before-successor', true);
+      await rerunFrontierOvershoot(
+        `held-first-ready-then-no-reserve-${rate}`,
+        () => runHeld('held-first-ready-then-no-reserve', false)
+      );
+      await rerunFrontierOvershoot(
+        `held-released-before-successor-${rate}`,
+        () => runHeld('held-released-before-successor', true)
+      );
     }
     async function runAnchorControls(): Promise<void> {
       for (const kind of [
@@ -19481,7 +19551,27 @@ async function runScheduledPcmProof(
       }
     }
     if (rate === 44100) {
-      await runRecoveryProof();
+      // Nothing after this uses the shared browser at 44.1 kHz, so a rerun may take a fresh one.
+      await rerunFrontierOvershoot(
+        `scheduled-pcm-starvation-recovery-${rate}`,
+        async (attempt) => {
+          if (attempt === 1) {
+            await runRecoveryProof(browser, provenance);
+            return;
+          }
+          const fresh = await openBrowser(url, sessionToken, {
+            label: `scheduled-pcm-starvation-recovery-${rate}-rerun${attempt - 1}`,
+            recordProofTrace: true,
+            proofSampleRate: rate,
+          });
+          try {
+            await waitReady(fresh);
+            await runRecoveryProof(fresh, await proofProvenance(fresh));
+          } finally {
+            await fresh.close();
+          }
+        }
+      );
       await runRecoveryFaults();
       await runHeldPullSequences();
       await runAnchorControls();
@@ -19566,7 +19656,8 @@ async function runScheduledPcmProof(
       );
     }
     pass('scheduled-pcm-mute-solo');
-    await runRecoveryProof();
+    // The stages below reuse this browser, so the 48 kHz pass runs once. Its gap holds 384 + 512.
+    await runRecoveryProof(browser, provenance);
     await seekTo(browser, 0);
     const interrupted = await browser.evaluate<
       MovingTrace & { held: number; released: number; releaseFrame: number }

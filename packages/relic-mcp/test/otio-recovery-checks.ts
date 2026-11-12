@@ -493,3 +493,111 @@ export function siteBridgeGapInfeasibleAfterHold(
   if (!handoffRefusal && !clockRefusal) return null;
   return `${RECOVERY_BRIDGE_SITE} hold consumed at frame ${heldFrame} with gap upper ${gapUpper} (boundary ${boundary}); refused by "${String(code)}" via ${handoffRefusal ? 'a native read' : 'a rejected fresh clock'}`;
 }
+
+function safeInt(value: unknown): number | null {
+  return typeof value === 'number' && Number.isSafeInteger(value)
+    ? value
+    : null;
+}
+
+// A starved run closes at its frontier inside a render burst. A sink that renders 384 or 512
+// frames per callback can leave currentTime up to 384 frames past the frontier before the main
+// thread hears of the closure. When that overshoot plus the guard passes the 20 ms gap, the
+// first recovery check refuses, and no viewer delay is involved: at 44.1 kHz the gap is 882
+// frames, so an overshoot of 384 is refused by 14 frames. Jason approved rerunning this exact
+// signature on 2026-11-12. The overshoot must be under one guard, which a second burst always
+// exceeds, so a late recovery is never classified. Every clause below must hold or the
+// classifier returns null, and a null is a failed attempt, never a rerun.
+export function recoveryFrontierOvershoot(
+  events: readonly TraceEntry[],
+  rate: number
+): string | null {
+  if (!Number.isFinite(rate) || rate <= 0) return null;
+
+  // Exactly one scheduled-pcm error, and it is the handoff refusal.
+  const errorAt: number[] = [];
+  events.forEach((entry, index) => {
+    if (isPcm(entry, 'error')) errorAt.push(index);
+  });
+  if (errorAt.length !== 1) return null;
+  const terminal = errorAt[0]!;
+  const failure = entryValue(events[terminal]);
+  if (failure['code'] !== HANDOFF_REFUSAL || failure['stage'] !== 'schedule')
+    return null;
+
+  // Exactly one gap refusal, before the error, at the first recovery check.
+  const refusalAt: number[] = [];
+  events.forEach((entry, index) => {
+    if (isPcm(entry, 'recovery-gap-infeasible')) refusalAt.push(index);
+  });
+  if (refusalAt.length !== 1) return null;
+  const at = refusalAt[0]!;
+  if (at >= terminal) return null;
+  const refusal = entryValue(events[at]);
+  const boundary = safeInt(refusal['boundaryFrame']);
+  const contextFrame = safeInt(refusal['contextFrame']);
+  const gapUpper = safeInt(refusal['gapUpper']);
+  if (boundary === null || contextFrame === null || gapUpper === null)
+    return null;
+  if (refusal['checks'] !== 0) return null;
+  if (refusal['guardFrames'] !== GAP_GUARD_FRAMES) return null;
+  if (gapUpper !== boundary + Math.floor(0.02 * rate)) return null;
+
+  // The overshoot is the closing burst's alone, and it is what passes the gap.
+  const overshoot = contextFrame - boundary;
+  if (overshoot < 0 || overshoot >= GAP_GUARD_FRAMES) return null;
+  if (contextFrame + GAP_GUARD_FRAMES <= gapUpper) return null;
+
+  // The closure: this generation's frontier close at the boundary, then its render closure.
+  let closure = -1;
+  for (let i = at - 1; i >= 0 && closure < 0; i--)
+    if (isPcm(events[i], 'gate-close')) closure = i;
+  if (closure < 0) return null;
+  const gate = entryValue(events[closure]);
+  if (
+    gate['reason'] !== 'frontier' ||
+    gate['contextStopFrame'] !== boundary ||
+    gate['generation'] !== refusal['generation']
+  )
+    return null;
+  let renderClosed = false;
+  for (let i = closure + 1; i < at; i++)
+    if (
+      isPcm(events[i], 'recovery-render-closed') &&
+      entryValue(events[i])['boundaryFrame'] === boundary
+    )
+      renderClosed = true;
+  if (!renderClosed) return null;
+
+  // The last read before the closure was native and had not passed the frontier, so the
+  // overshoot happened inside the burst that closed the run.
+  let lastRead = -1;
+  for (let i = closure - 1; i >= 0 && lastRead < 0; i--)
+    if (isObservedRead(events[i])) lastRead = i;
+  if (lastRead < 0) return null;
+  const before = readFrame(events[lastRead], rate);
+  if (
+    before === null ||
+    before > boundary ||
+    entryValue(events[lastRead])['injected'] !== false
+  )
+    return null;
+
+  // Nothing was injected between the closure and the error, and recovery got no further.
+  for (let i = closure + 1; i < terminal; i++) {
+    const entry = events[i];
+    if (isObservedRead(entry) && entryValue(entry)['injected'] !== false)
+      return null;
+    if (
+      entry?.kind === 'clock-site-hold-consumed' ||
+      entry?.kind === 'recovery-overrun-injected' ||
+      isPcm(entry, 'recovery-fault') ||
+      isPcm(entry, 'recovery-selection') ||
+      isPcm(entry, 'recovery-candidate-failed') ||
+      isPcm(entry, 'epoch')
+    )
+      return null;
+  }
+
+  return `frontier ${boundary} overshot by ${overshoot} frames at the first recovery check: ${contextFrame} + ${GAP_GUARD_FRAMES} > gap upper ${gapUpper} at ${rate} Hz`;
+}
