@@ -16,6 +16,7 @@
  */
 import { PLAY_MARK } from './otio-program-trace.ts';
 import {
+  AUDIO_GAP_BUDGET_MS,
   AUDIO_SILENCE_AMPLITUDE,
   gateSignal,
   measureSignal,
@@ -719,10 +720,10 @@ const CHUNK_MIN_CORRELATION = Math.sqrt(
 
 /**
  * Correlation of one rendered chunk with the reference at the channel's global lag. Only judged
- * samples count. A rendered sample at silence level is not judged here: a zero run is a gap, and the
- * global gap budget judges it. A reference sample outside the program is not judged either. Null
- * when nothing is judged, or when the reference is silent across the window, which the sampled
- * checks cover. Zero when the judged rendered audio is absent from the reference altogether.
+ * samples count. A rendered sample at silence level is not judged here: a zero run is a gap, and
+ * chunkMatchFailures judges it against the gap budget. A reference sample outside the program is
+ * not judged either. Null when nothing is judged, or when the reference is silent across the window,
+ * which the sampled checks cover. Zero when the judged rendered audio is absent from the reference.
  */
 function chunkCorrelation(
   rendered: Float32Array,
@@ -759,7 +760,12 @@ function chunkCorrelation(
  * measured global lag. The rendered audio runs lag samples late, so rendered sample j of a chunk that
  * starts at program sample p is compared with reference sample p + j - lag. The overall SNR and the
  * offset walk can both pass one repeated chunk, since a chunk is about 21 ms of a 6 s program, so each
- * chunk is judged on its own. Zero runs are not judged here: the global gap budget judges them.
+ * chunk is judged on its own.
+ *
+ * The correlation skips silent rendered samples, so silent runs are judged here too, over the whole
+ * span. The sampled gap check does not score the span's edges, and a zeroed first or last chunk would
+ * otherwise pass. A run of silent rendered samples loses the audible program samples it covers. More
+ * than AUDIO_GAP_BUDGET_MS of them is a gap. Samples before the program starts are not program audio.
  */
 function chunkMatchFailures(
   span: readonly CapturedChunk[],
@@ -770,17 +776,35 @@ function chunkMatchFailures(
   label: string
 ): string[] {
   const failures: string[] = [];
+  const gapSamples = Math.floor((JOIN_RATE * AUDIO_GAP_BUDGET_MS) / 1000);
+  let lost = 0;
+  let reported = false;
   let programStart = startSample;
   for (const [k, chunk] of span.entries()) {
-    const best = chunkCorrelation(
-      pick(chunk),
-      reference,
-      programStart - lagSamples
-    );
+    const rendered = pick(chunk);
+    const from = programStart - lagSamples;
+    const best = chunkCorrelation(rendered, reference, from);
     if (best !== null && best < CHUNK_MIN_CORRELATION) {
       failures.push(
         `${label}: gated chunk ${k} does not match the program audio (correlation ${best.toFixed(4)} at lag ${lagSamples} < ${CHUNK_MIN_CORRELATION.toFixed(4)})`
       );
+    }
+    for (let j = 0; j < rendered.length; j++) {
+      if (Math.abs(rendered[j] ?? 0) > AUDIO_SILENCE_AMPLITUDE) {
+        lost = 0;
+        reported = false;
+        continue;
+      }
+      const index = from + j;
+      if (index < 0 || index >= reference.length) continue;
+      if (Math.abs(reference[index] ?? 0) <= AUDIO_SILENCE_AMPLITUDE) continue;
+      lost++;
+      if (lost > gapSamples && !reported) {
+        failures.push(
+          `${label}: a silent run reaching gated chunk ${k} drops over ${AUDIO_GAP_BUDGET_MS} ms of program audio`
+        );
+        reported = true;
+      }
     }
     programStart += chunk.frames;
   }

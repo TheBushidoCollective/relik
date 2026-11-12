@@ -721,6 +721,26 @@ describe('per-chunk match: global lag, zero runs judged by the gap, non-finite P
   );
 
   test(
+    'a zeroed first chunk fails: the span edge is not scored by the sampled gap check',
+    () => {
+      const gate = gateCapture(zeroRun(CLEAN, 0, 0, FRAMES), GATE);
+      expect(
+        gate.failures.some((failure) => failure.includes('silent run'))
+      ).toBe(true);
+    },
+    SLOW_MS
+  );
+
+  test(
+    'a 10 ms zero run at the start of the span passes',
+    () => {
+      const gate = gateCapture(zeroRun(CLEAN, 0, 0, 480), GATE);
+      expect(gate.failures).toEqual([]);
+    },
+    SLOW_MS
+  );
+
+  test(
     'a 21.3 ms repeated chunk in one channel fails that channel at the global lag',
     () => {
       const previous = CLEAN.chunks[MID - 1];
