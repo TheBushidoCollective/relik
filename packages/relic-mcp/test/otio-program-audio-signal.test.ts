@@ -307,3 +307,37 @@ describe('sampled audio startSample', () => {
     ).toBe(true);
   });
 });
+
+describe('sampled audio startSample timestamps', () => {
+  test('an offset step is reported in absolute program seconds when the span is shifted', () => {
+    const ref = reference();
+    const start = 2 * RATE;
+    const span = Float32Array.from(ref.subarray(start));
+    // Same shape as the unshifted step test: the step sits 3808 span samples in.
+    const evidence = measureSignal(
+      recorded(span, 1408, 1760, 2048, 1024),
+      ref,
+      RATE,
+      start
+    );
+    expect(evidence.offsetSteps).toHaveLength(1);
+    const [step] = evidence.offsetSteps;
+    expect(step?.stepMs).toBeCloseTo((1024 * 1000) / RATE, 2);
+    expect(step?.startSeconds).toBeCloseTo((start + 3808) / RATE, 6);
+  });
+
+  test('a dropout window is reported in absolute program seconds when the span is shifted', () => {
+    const ref = reference();
+    const start = 2 * RATE;
+    const rendered = Float32Array.from(ref.subarray(start));
+    // Silence 1.5 s to 2.5 s into the span: 3.5 s to 4.5 s of program.
+    rendered.fill(0, Math.round(1.5 * RATE), Math.round(2.5 * RATE));
+    const evidence = measureSignal(rendered, ref, RATE, start);
+    const dropouts = evidence.windowFaults.filter((f) => f.kind === 'dropout');
+    expect(dropouts.length).toBeGreaterThan(0);
+    for (const fault of dropouts) {
+      expect(fault.startSeconds).toBeGreaterThanOrEqual(2 + 1.4);
+      expect(fault.startSeconds).toBeLessThanOrEqual(2 + 2.6);
+    }
+  });
+});

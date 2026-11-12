@@ -348,13 +348,17 @@ export function measureSignal(
     }
   }
 
+  const startSeconds = startSample / rate;
   const windowFaults = findAudioFaults(
     rendered,
     expected,
     rate,
     lag,
     PROGRAM_AUDIO_BOUNDARIES.map((edge) => edge - startSample)
-  );
+  ).map((fault) => ({
+    ...fault,
+    startSeconds: fault.startSeconds + startSeconds,
+  }));
   return {
     lagSamples: lag,
     onsetMs: (lag * 1000) / rate,
@@ -365,7 +369,17 @@ export function measureSignal(
     silentRuns,
     gapStartSeconds:
       longestEnd < 0 ? null : (startSample + longestEnd - longest + 1) / rate,
-    offsetSteps: findOffsetSteps(rendered, expected, rate, lag, tested, block),
+    offsetSteps: findOffsetSteps(
+      rendered,
+      expected,
+      rate,
+      lag,
+      tested,
+      block
+    ).map((step) => ({
+      ...step,
+      startSeconds: step.startSeconds + startSeconds,
+    })),
     windowFaults,
   };
 }
