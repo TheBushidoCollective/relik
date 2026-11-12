@@ -511,11 +511,13 @@ describe('version comparison affordance', () => {
 
   test('clicking compare versions in the taskbar enters compare mode and view current exits', () => {
     const current = view('code', 3);
+    const handed: HTMLElement[] = [];
     renderReady(
       current,
       'aaaaaaaaaaaaaaaaaaaaaaaaaa',
       'https://relik-usercontent.example',
-      dummyDeps()
+      dummyDeps(),
+      (page) => handed.push(page)
     );
 
     const docBody = getBody();
@@ -526,6 +528,8 @@ describe('version comparison affordance', () => {
     );
     if (compareBtn === undefined) throw new Error('no compare versions button');
     compareBtn.click();
+    expect(handed).toHaveLength(2);
+    expect<unknown>(handed[1]).toBe(shellRootStub);
 
     expect(withClass(docBody, 'stage-diff')).toHaveLength(1);
     expect(withClass(docBody, 'compare-picker')).toHaveLength(1);
@@ -535,6 +539,8 @@ describe('version comparison affordance', () => {
     );
     if (viewCurrentBtn === undefined) throw new Error('no view current button');
     viewCurrentBtn.click();
+    expect(handed).toHaveLength(3);
+    expect<unknown>(handed[2]).toBe(shellRootStub);
 
     expect(withClass(docBody, 'stage-diff')).toHaveLength(0);
     expect(withClass(docBody, 'stage-code')).toHaveLength(1);
@@ -556,6 +562,7 @@ describe('version comparison affordance', () => {
       mimetype: 'text/typescript',
     });
 
+    const handed: HTMLElement[] = [];
     renderReady(
       current,
       'aaaaaaaaaaaaaaaaaaaaaaaaaa',
@@ -575,7 +582,8 @@ describe('version comparison affordance', () => {
           });
         }
         return new Response(v2Bytes as unknown as BodyInit);
-      }) as typeof globalThis.fetch)
+      }) as typeof globalThis.fetch),
+      (page) => handed.push(page)
     );
 
     const docBody = getBody();
@@ -598,6 +606,9 @@ describe('version comparison affordance', () => {
     v2Option.click();
     await promise;
     shell.replaceChildren = origReplace;
+    // The render hook saw the shell root after the version switch re-rendered it.
+    expect(handed).toHaveLength(2);
+    expect<unknown>(handed[1]).toBe(shellRootStub);
     // Version 2 renders on its own
     expect(withClass(docBody, 'stage-diff')).toHaveLength(0);
     expect(withClass(docBody, 'compare-picker')).toHaveLength(0);
