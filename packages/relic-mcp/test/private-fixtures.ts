@@ -222,6 +222,12 @@ export class FakeService {
   readonly uploads = new Map<string, Uint8Array>();
   readonly grants: Record<string, unknown>[] = [];
   readonly completions: Record<string, unknown>[] = [];
+  /** The answer to `POST /api/relics/{id}/recipients`, when a test sets one. */
+  recipients: Record<string, unknown> | undefined = undefined;
+  /** Edits the context answer before it is sent, to model a service that answers wrongly. */
+  contextEdit:
+    | ((context: Record<string, unknown>) => Record<string, unknown>)
+    | undefined = undefined;
   private readonly options: FakeServiceOptions;
 
   constructor(options: FakeServiceOptions) {
@@ -270,6 +276,15 @@ export class FakeService {
       this.grants.push(body);
       return this.grant(body);
     }
+    if (
+      method === 'POST' &&
+      /^\/api\/relics\/[a-z0-9]{26}\/recipients$/.test(path)
+    ) {
+      if (this.recipients === undefined) {
+        return jsonResponse(404, { code: 'not_found', detail: path });
+      }
+      return jsonResponse(200, this.recipients);
+    }
     const complete = path.match(/^\/api\/relics\/([a-z0-9]{26})\/complete$/);
     if (method === 'POST' && complete?.[1] !== undefined) {
       this.completions.push(body);
@@ -302,13 +317,15 @@ export class FakeService {
         deviceRecord(owner.identityId, extra.device, cert, notAfter)
       );
     }
-    return {
+    const answer: Record<string, unknown> = {
       device: deviceRecord(owner.identityId, device, own, notAfter),
       owner: partyJson(contextOwner),
       devices,
       recovery: null,
+      recovery_statement: null,
       owner_epoch: 0,
     };
+    return this.contextEdit === undefined ? answer : this.contextEdit(answer);
   }
 
   private grant(body: Record<string, unknown>): Response {
@@ -339,7 +356,7 @@ export class FakeService {
   };
 }
 
-function partyJson(person: Person): Record<string, unknown> {
+export function partyJson(person: Person): Record<string, unknown> {
   return {
     email: person.email,
     identity: {
@@ -353,7 +370,7 @@ function partyJson(person: Person): Record<string, unknown> {
   };
 }
 
-function deviceRecord(
+export function deviceRecord(
   ownerIdentityId: string,
   device: TestDevice,
   cert: { statement: Record<string, unknown>; identity_signature: string },

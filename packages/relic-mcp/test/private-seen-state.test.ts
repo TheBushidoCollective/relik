@@ -1,20 +1,16 @@
 /**
- * What the service has shown this machine about its pinned owner never goes
- * backwards (plan 4.12, PS-05). These tests drive `observeOwnerState` on a
- * real key file. It is the call the publish and read paths make after a
- * verified answer and before any key is wrapped to it.
+ * What this machine has accepted about its pinned owner never goes backwards,
+ * and only owner-signed facts move it (PS-05, PS2-04, PS2-05). These tests drive
+ * `observeOwnerState` on a real key file: the call the publish and read paths
+ * make after a verified answer and before any key is wrapped to it.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import {
-  grantKey,
-  loadDeviceEntry,
-  type OwnerObservation,
-  observeOwnerState,
-} from '../src/device.ts';
+import type { RosterObservation } from '@relic/format/private';
+import { grantKey, loadDeviceEntry, observeOwnerState } from '../src/device.ts';
 import {
   makeDevice,
   makePerson,
@@ -39,116 +35,128 @@ afterEach(async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
-function observed(over: Partial<OwnerObservation> = {}): OwnerObservation {
-  return { ownerEpoch: 1, devices: {}, ...over };
-}
-
 describe('what the service has shown this machine never goes backwards (PS-05)', () => {
-  test('an owner epoch below the one already seen is refused, and nothing is recorded', async () => {
-    await observeOwnerState(ORIGIN, observed({ ownerEpoch: 3 }));
-    const seen = (await loadDeviceEntry(ORIGIN))?.owner_seen;
+  test('a recovery designation older than the one accepted is refused, and a newer one replaces it', async () => {
+    await observeOwnerState(ORIGIN, {
+      designation: { at: 500, removed: false },
+    });
     await expect(
-      observeOwnerState(ORIGIN, observed({ ownerEpoch: 2 }))
+      observeOwnerState(ORIGIN, { designation: { at: 400, removed: false } })
     ).rejects.toMatchObject({ code: 'recipients_stale' });
-    expect((await loadDeviceEntry(ORIGIN))?.owner_seen).toEqual(seen);
-  });
-
-  test('an equal owner epoch is accepted, so a second read of the same state works', async () => {
-    await observeOwnerState(ORIGIN, observed({ ownerEpoch: 3 }));
-    await observeOwnerState(ORIGIN, observed({ ownerEpoch: 3 }));
-    expect((await loadDeviceEntry(ORIGIN))?.owner_seen?.owner_epoch).toBe(3);
-  });
-
-  test('a recovery designation older than the one seen is refused, and a newer one replaces it', async () => {
-    await observeOwnerState(ORIGIN, observed({ designatedAt: 500 }));
-    await expect(
-      observeOwnerState(ORIGIN, observed({ designatedAt: 400 }))
-    ).rejects.toMatchObject({ code: 'recipients_stale' });
-    await observeOwnerState(ORIGIN, observed({ designatedAt: 600 }));
-    expect((await loadDeviceEntry(ORIGIN))?.owner_seen?.designated_at).toBe(
-      600
-    );
-  });
-
-  test('a grant seen revoked is refused when the service reports the same grant active', async () => {
-    const key = grantKey(RELIC_ID, 'grantee-identity');
-    await observeOwnerState(
-      ORIGIN,
-      observed({ grants: { [key]: { at: 100, revoked: true } } })
-    );
-    await expect(
-      observeOwnerState(
-        ORIGIN,
-        observed({ grants: { [key]: { at: 100, revoked: false } } })
-      )
-    ).rejects.toMatchObject({ code: 'recipients_stale' });
-  });
-
-  test('a grant issued again after its revocation is accepted, because its statement is newer', async () => {
-    const key = grantKey(RELIC_ID, 'grantee-identity');
-    await observeOwnerState(
-      ORIGIN,
-      observed({ grants: { [key]: { at: 100, revoked: true } } })
-    );
-    await observeOwnerState(
-      ORIGIN,
-      observed({ grants: { [key]: { at: 200, revoked: false } } })
-    );
-    expect((await loadDeviceEntry(ORIGIN))?.owner_seen?.grants?.[key]).toEqual({
-      at: 200,
-      revoked: false,
+    await observeOwnerState(ORIGIN, {
+      designation: { at: 600, removed: false },
+    });
+    expect((await loadDeviceEntry(ORIGIN))?.owner_seen?.designation).toEqual({
+      at: 600,
+      removed: false,
     });
   });
 
-  test('a grant reported with an older statement than the one seen is refused', async () => {
-    const key = grantKey(RELIC_ID, 'grantee-identity');
-    await observeOwnerState(
-      ORIGIN,
-      observed({ grants: { [key]: { at: 200, revoked: false } } })
-    );
+  test('an answer with no signed designation is refused once a designation was accepted', async () => {
+    await observeOwnerState(ORIGIN, {
+      designation: { at: 500, removed: false },
+    });
     await expect(
-      observeOwnerState(
-        ORIGIN,
-        observed({ grants: { [key]: { at: 100, revoked: false } } })
-      )
+      observeOwnerState(ORIGIN, { designation: null })
     ).rejects.toMatchObject({ code: 'recipients_stale' });
   });
 
-  test('a device seen revoked is refused when reported active at the same certificate time', async () => {
-    await observeOwnerState(
-      ORIGIN,
-      observed({ devices: { 'device-one': { at: 100, revoked: true } } })
-    );
+  test('an accepted removal stays accepted, and a holder designated before it is refused', async () => {
+    await observeOwnerState(ORIGIN, {
+      designation: { at: 700, removed: true },
+    });
     await expect(
-      observeOwnerState(
-        ORIGIN,
-        observed({ devices: { 'device-one': { at: 100, revoked: false } } })
-      )
+      observeOwnerState(ORIGIN, { designation: { at: 650, removed: false } })
     ).rejects.toMatchObject({ code: 'recipients_stale' });
+    expect((await loadDeviceEntry(ORIGIN))?.owner_seen?.designation).toEqual({
+      at: 700,
+      removed: true,
+    });
+  });
+
+  test('an owner epoch is not pinned, so no service answer about it can refuse a later one', async () => {
+    // The observation carries no epoch: a count the service asserts alone is a
+    // hint for the seal, not a fact this machine holds to.
+    await observeOwnerState(ORIGIN, {});
+    await observeOwnerState(ORIGIN, {});
+    expect(
+      (await loadDeviceEntry(ORIGIN))?.owner_seen ?? {}
+    ).not.toHaveProperty('owner_epoch');
+  });
+});
+
+describe('grants and devices stay revoked once the owner signed a revocation (PS2-04)', () => {
+  const key = grantKey(RELIC_ID, 'grantee-identity');
+
+  test('a grant seen revoked stays revoked when the service lists the same statement live', async () => {
+    await observeOwnerState(ORIGIN, {
+      grants: { [key]: { at: 100, revoked: true } },
+    });
+    const floor = await observeOwnerState(ORIGIN, {
+      grants: { [key]: { at: 100, revoked: false } },
+    });
+    expect(floor.grants?.[key]).toEqual({ at: 100, revoked: true });
+  });
+
+  test('a grant issued again after its revocation is accepted, because its statement is newer', async () => {
+    await observeOwnerState(ORIGIN, {
+      grants: { [key]: { at: 100, revoked: true } },
+    });
+    const floor = await observeOwnerState(ORIGIN, {
+      grants: { [key]: { at: 200, revoked: false } },
+    });
+    expect(floor.grants?.[key]).toEqual({ at: 200, revoked: false });
+  });
+
+  test('a grant reported with an older live statement than the one seen is refused', async () => {
+    await observeOwnerState(ORIGIN, {
+      grants: { [key]: { at: 200, revoked: false } },
+    });
+    await expect(
+      observeOwnerState(ORIGIN, {
+        grants: { [key]: { at: 100, revoked: false } },
+      })
+    ).rejects.toMatchObject({ code: 'recipients_stale' });
+  });
+
+  test('a device seen revoked stays revoked when a live certificate at the same time comes back', async () => {
+    await observeOwnerState(ORIGIN, {
+      devices: { 'device-1': { at: 300, revoked: true } },
+    });
+    const floor = await observeOwnerState(ORIGIN, {
+      devices: { 'device-1': { at: 300, revoked: false } },
+    });
+    expect(floor.devices?.['device-1']).toEqual({ at: 300, revoked: true });
   });
 
   test('a device the service stops listing keeps its seen revocation', async () => {
-    await observeOwnerState(
-      ORIGIN,
-      observed({ devices: { 'device-one': { at: 100, revoked: true } } })
-    );
-    await observeOwnerState(ORIGIN, observed({ devices: {} }));
-    expect(
-      (await loadDeviceEntry(ORIGIN))?.owner_seen?.devices?.['device-one']
-    ).toEqual({ at: 100, revoked: true });
+    await observeOwnerState(ORIGIN, {
+      devices: { 'device-1': { at: 300, revoked: true } },
+    });
+    const floor = await observeOwnerState(ORIGIN, { devices: {} });
+    expect(floor.devices?.['device-1']).toEqual({ at: 300, revoked: true });
+  });
+
+  test('a revocation older than a live statement already accepted is refused, and nothing is recorded', async () => {
+    await observeOwnerState(ORIGIN, {
+      devices: { 'device-1': { at: 500, revoked: false } },
+    });
+    const before = (await loadDeviceEntry(ORIGIN))?.owner_seen;
+    const refused: RosterObservation = {
+      devices: { 'device-1': { at: 400, revoked: true } },
+    };
+    await expect(observeOwnerState(ORIGIN, refused)).rejects.toMatchObject({
+      code: 'recipients_stale',
+    });
+    expect((await loadDeviceEntry(ORIGIN))?.owner_seen).toEqual(before);
   });
 
   test('a first contact has nothing to hold the service to, so the answer is accepted', async () => {
-    await expect(
-      observeOwnerState(
-        ORIGIN,
-        observed({
-          ownerEpoch: 7,
-          designatedAt: 900,
-          devices: { 'device-one': { at: 100, revoked: false } },
-        })
-      )
-    ).resolves.toBeUndefined();
-    expect((await loadDeviceEntry(ORIGIN))?.owner_seen?.owner_epoch).toBe(7);
+    const floor = await observeOwnerState(ORIGIN, {
+      designation: null,
+      devices: {},
+      grants: {},
+    });
+    expect(floor.designation).toBeUndefined();
   });
 });
