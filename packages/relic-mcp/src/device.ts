@@ -20,7 +20,9 @@ import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { normalizeEmail } from '@relic/format';
 import {
+  advanceRosterFloor,
   canonicalJson,
+  type DesignationMark,
   decodeBase64url,
   deviceFingerprint,
   deviceIdOf,
@@ -33,9 +35,16 @@ import {
   identityIdOf,
   parseStatement,
   parseTypedFingerprint,
+  type RosterFloor,
+  type RosterMark,
+  type RosterObservation,
+  RosterStaleError,
+  rosterAdmits,
+  type SignedStatementBody,
   signStatement,
   type StatementMap,
   statementBytes,
+  verifySignedStatement,
   verifyStatement,
 } from '@relic/format/private';
 import {
@@ -102,55 +111,49 @@ export interface DeviceEntry {
   readonly enrollment?: DeviceEnrollment | undefined;
   readonly cert?: DeviceCert | undefined;
   readonly owner?: DeviceOwner | undefined;
-  /** What the service has shown this machine about the pinned owner. Values only move forward. */
-  readonly owner_seen?: SeenOwnerState | undefined;
+  /**
+   * What the service has shown this machine about the pinned owner. It holds
+   * owner-signed facts only (a verified designation, revocation or live
+   * statement time), so nothing the service asserts alone can move it. It only
+   * moves forward, and it persists with the device entry.
+   */
+  readonly owner_seen?: RosterFloor | undefined;
 }
 
-/** One owner-signed statement's time, and whether the service reported it revoked then. */
-export interface SeenStatement {
-  readonly at: number;
-  readonly revoked: boolean;
-}
-
-/**
- * The newest owner-signed state this machine has accepted for its pinned
- * owner. Each value only moves forward, so a service that replays an older
- * roster to a machine that has seen a newer one is refused before any key is
- * wrapped. It persists with the device entry, so the floor survives a restart.
- */
-export interface SeenOwnerState {
-  /** The highest owner epoch accepted: the service's recipients counter. */
-  readonly owner_epoch?: number | undefined;
-  /** The `at` of the highest recovery designation accepted. */
-  readonly designated_at?: number | undefined;
-  /** Per device id: the newest certificate `at` seen, and whether it was revoked then. */
-  readonly devices?: Readonly<Record<string, SeenStatement>> | undefined;
-  /** Per grantKey: the newest grant `at` seen, and whether it was revoked then. */
-  readonly grants?: Readonly<Record<string, SeenStatement>> | undefined;
-}
-
-/** What one verified service answer says about the pinned owner. */
-export interface OwnerObservation {
-  readonly ownerEpoch: number;
-  /** The verified designation's `at`, or undefined when none is in force. */
-  readonly designatedAt?: number | undefined;
-  /** Every device the answer carries, keyed by device id. */
-  readonly devices: Readonly<Record<string, SeenStatement>>;
-  /** Grants the answer carries for one relic, keyed by grantKey. Absent for a device context. */
-  readonly grants?: Readonly<Record<string, SeenStatement>> | undefined;
-}
-
-/** A recovery designation the owner signed, verified. */
+/** A recovery designation the owner signed and this machine verified. */
 export interface VerifiedRecovery {
   readonly reader: VerifiedReader;
+  readonly identityId: string;
   /** The owner-signed `at` of the designation. */
   readonly designatedAt: number;
 }
 
-/** A device list the pin verified: the readers that may hold a wrap, and every device's statement. */
+/**
+ * The newest recovery designation an answer carries, verified. `reader` is the
+ * holder in force, and is undefined when the newest owner-signed designation
+ * removed the holder.
+ */
+export interface VerifiedDesignation {
+  readonly mark: DesignationMark;
+  readonly reader: VerifiedReader | undefined;
+}
+
+/** A device the pinned owner certified that is live now. */
+export interface VerifiedLiveDevice {
+  readonly deviceId: string;
+  /** The owner-signed `at` of its certificate. */
+  readonly at: number;
+  readonly reader: VerifiedReader;
+}
+
+/**
+ * A device list the pin verified: the live devices that may hold a wrap, and
+ * the roster mark of every device the answer states (a live certificate, or a
+ * revocation the owner signed).
+ */
 export interface VerifiedDeviceList {
-  readonly readers: readonly VerifiedReader[];
-  readonly statements: Readonly<Record<string, SeenStatement>>;
+  readonly live: readonly VerifiedLiveDevice[];
+  readonly statements: Readonly<Record<string, RosterMark>>;
 }
 
 interface DeviceKeysFile {
@@ -176,13 +179,18 @@ export interface VerifiedReader {
   readonly fingerprint: string;
 }
 
-/** The device list and recovery designation a device context returns, verified. */
+/**
+ * The device list and recovery designation a device context returns, verified
+ * and admitted against what this machine has accepted for the owner. Only
+ * `ownerEpoch` is the service's own count: it is a hint for the seal, pinned
+ * nowhere, and the service checks it when the seal lands.
+ */
 export interface DeviceContext {
   readonly ownerEpoch: number;
-  /** Devices that may hold a wrap now: unrevoked, unexpired, certified. */
+  /** Devices that may hold a wrap now: certified, unexpired, and not revoked by a signed revocation. */
   readonly devices: readonly VerifiedReader[];
-  /** The verified recovery designation, or undefined when none is in force. */
-  readonly recovery: VerifiedRecovery | undefined;
+  /** The recovery designation in force, or undefined when none is, or it was removed. */
+  readonly recovery: VerifiedReader | undefined;
 }
 
 const P256_ECDH = { name: 'ECDH', namedCurve: 'P-256' } as const;
@@ -827,14 +835,29 @@ export async function fetchDeviceContext(
   });
 
   const devices = await verifyDeviceList(body['devices'], pin, Date.now());
-  const recovery = await verifyRecoveryField(body['recovery'], pin);
+  const designation = await verifyDesignationAnswer(body, pin);
   const ownerEpoch = expectEpoch(body['owner_epoch'], 'owner epoch');
-  await observeOwnerState(deps.serviceOrigin, {
-    ownerEpoch,
-    designatedAt: recovery?.designatedAt,
+  const floor = await observeOwnerState(deps.serviceOrigin, {
+    designation: designation?.mark ?? null,
     devices: devices.statements,
   });
-  return { ownerEpoch, devices: devices.readers, recovery };
+  return {
+    ownerEpoch,
+    devices: admittedDevices(devices, floor),
+    recovery: designation?.reader,
+  };
+}
+
+/** The live devices the floor admits: a device a verified revocation covers is no recipient. */
+export function admittedDevices(
+  list: VerifiedDeviceList,
+  floor: RosterFloor
+): VerifiedReader[] {
+  return list.live
+    .filter((device) =>
+      rosterAdmits(floor.devices?.[device.deviceId], device.at)
+    )
+    .map((device) => device.reader);
 }
 
 /**
@@ -887,53 +910,114 @@ export async function verifyRecovery(
       email: normalizeEmail(party.email),
       fingerprint: formatFingerprint(fingerprint),
     },
+    identityId: party.identityId,
     designatedAt: statement.at,
   };
 }
 
 /**
- * The recovery designation a service response carries, verified. The wire
- * carries one record or none. A response that carries several is not trusted
- * for the first one it lists: each is verified, and the one with the greatest
- * owner-signed `at` is used. Two different holders at the same `at` cannot be
- * ordered, so the response is refused.
+ * The recovery designation a recipients or device-context answer carries,
+ * verified against the pin. `recovery` is the holder in force. `recovery_statement`
+ * is the owner's newest signed designation, and it is a removal when all three
+ * party fields are null. The greatest owner-signed `at` decides. A designation
+ * statement must name the holder the answer carries, and a holder and a removal
+ * at the same time cannot be ordered, so the answer is refused. Returns null when
+ * the answer carries no signed designation at all.
  */
-export async function verifyRecoveryField(
-  field: unknown,
+export async function verifyDesignationAnswer(
+  answer: Record<string, unknown>,
   pin: DeviceOwner
-): Promise<VerifiedRecovery | undefined> {
-  if (field === null || field === undefined) return undefined;
-  const candidates: unknown[] = Array.isArray(field) ? field : [field];
-  let newest: VerifiedRecovery | undefined;
-  for (const candidate of candidates) {
-    const verified = await verifyRecovery(
-      expectRecord(candidate, 'recovery'),
-      pin
+): Promise<VerifiedDesignation | null> {
+  const unsigned = new PublishError(
+    'recovery_unsigned',
+    'the recovery designation is not signed by the pinned owner'
+  );
+  const holder =
+    answer['recovery'] === null || answer['recovery'] === undefined
+      ? undefined
+      : await verifyRecovery(expectRecord(answer['recovery'], 'recovery'), pin);
+  const signedField = answer['recovery_statement'];
+  let statement: StatementMap['recovery_designation'] | undefined;
+  if (signedField !== null && signedField !== undefined) {
+    const signed = signedBodyOf(signedField);
+    if (signed === undefined) throw unsigned;
+    statement = await verifySignedStatement(
+      'recovery_designation',
+      signed,
+      decodeBase64url(pin.sig_public_key)
     );
-    if (newest === undefined || verified.designatedAt > newest.designatedAt) {
-      newest = verified;
-    } else if (
-      verified.designatedAt === newest.designatedAt &&
-      verified.reader.keyId !== newest.reader.keyId
+    if (
+      statement === undefined ||
+      statement.owner_identity_id !== pin.identity_id
     ) {
-      throw new PublishError(
-        'recovery_ambiguous',
-        'two recovery designations carry the same time and name different holders, so neither is trusted'
-      );
+      throw unsigned;
     }
   }
-  return newest;
+  const removed =
+    statement !== undefined &&
+    statement.recovery_identity_id === null &&
+    statement.recovery_email === null &&
+    statement.fingerprint_typed === null;
+  if (
+    statement !== undefined &&
+    !removed &&
+    (holder === undefined ||
+      holder.identityId !== statement.recovery_identity_id)
+  ) {
+    throw new PublishError(
+      'recovery_ambiguous',
+      'the newest recovery designation names a holder this answer does not carry, so neither is trusted'
+    );
+  }
+  if (
+    statement !== undefined &&
+    holder !== undefined &&
+    statement.at === holder.designatedAt &&
+    removed
+  ) {
+    throw new PublishError(
+      'recovery_ambiguous',
+      'a recovery holder and a removal carry the same time, so neither is trusted'
+    );
+  }
+  if (
+    statement !== undefined &&
+    (holder === undefined || statement.at > holder.designatedAt)
+  ) {
+    return {
+      mark: { at: statement.at, removed },
+      reader: removed ? undefined : holder?.reader,
+    };
+  }
+  if (holder === undefined) return null;
+  return {
+    mark: { at: holder.designatedAt, removed: false },
+    reader: holder.reader,
+  };
+}
+
+/** The signed body a wire `{statement, identity_signature}` carries, or undefined when it is not one. */
+export function signedBodyOf(value: unknown): SignedStatementBody | undefined {
+  if (!isPlainObject(value)) return undefined;
+  const statement = value['statement'];
+  const signature = value['identity_signature'];
+  if (!isPlainObject(statement) || typeof signature !== 'string') {
+    return undefined;
+  }
+  return { statement, identity_signature: signature };
 }
 
 /**
  * Verify a service's device list against the pin.
  *
- * An active device must carry a certificate the pinned owner signed, or the
- * whole list is refused. A revoked device is not a recipient, so it is never
- * refused: when its certificate checks out, that certificate dates the
- * revocation for the seen-state check. A revoked device whose certificate does
- * not check out is skipped and recorded nowhere, because nothing unverified may
- * drive state. An expired device is not a recipient either and is skipped.
+ * A live device is unexpired, and its certificate is one the pinned owner
+ * signed. An active device whose certificate does not verify refuses the whole
+ * list. A revocation counts only when the owner signed it: a verified
+ * `device_revocation` becomes a roster mark, and the device is no recipient. A
+ * `revoked_at` flag without a verified revocation is ignored, so the device is
+ * live when its certificate checks out. A flagged device whose certificate or
+ * revocation does not verify is skipped and recorded nowhere, so one bad entry
+ * cannot stop a publish. An expired device is not a recipient either.
  */
 export async function verifyDeviceList(
   list: unknown,
@@ -947,60 +1031,86 @@ export async function verifyDeviceList(
     );
   }
   const ownerSigPublicKey = decodeBase64url(pin.sig_public_key);
-  const readers: VerifiedReader[] = [];
-  const statements: Record<string, SeenStatement> = {};
+  const live: VerifiedLiveDevice[] = [];
+  const statements: Record<string, RosterMark> = {};
   for (const item of list) {
     const device = expectRecord(item, 'device');
     const deviceId = expectString(device['device_id'], 'device id');
-    const kem = expectString(device['kem_public_key'], 'device KEM key');
-    const sig = expectString(device['sig_public_key'], 'device signing key');
-    const label = expectString(device['label'], 'device label');
-    const notAfter = Number(device['not_after']);
-    const certBody = expectRecord(device['cert'], 'device certificate');
-    const check: DeviceCertCheck = {
-      deviceId,
-      ownerIdentityId: pin.identity_id,
-      ownerSigPublicKey,
-      kemPublicKey: kem,
-      sigPublicKey: sig,
-      label,
-      notAfter,
-      cert: {
-        statement: expectRecord(
-          certBody['statement'],
-          'device certificate statement'
-        ),
-        identity_signature: expectString(
-          certBody['identity_signature'],
-          'device certificate signature'
-        ),
-      },
-    };
-    if (device['revoked_at'] !== null && device['revoked_at'] !== undefined) {
-      if (await checksOut(check)) {
-        statements[deviceId] = {
-          at: parseStatement('device_cert', check.cert.statement).at,
-          revoked: true,
-        };
+    const revocation = signedBodyOf(device['revocation']);
+    if (revocation !== undefined) {
+      const verified = await verifySignedStatement(
+        'device_revocation',
+        revocation,
+        ownerSigPublicKey
+      );
+      if (
+        verified !== undefined &&
+        verified.device_id === deviceId &&
+        verified.owner_identity_id === pin.identity_id
+      ) {
+        statements[deviceId] = { at: verified.at, revoked: true };
+        continue;
       }
-      continue;
     }
-    if (!(notAfter > now)) continue;
-    await verifyDeviceCert(check);
-    statements[deviceId] = {
-      at: parseStatement('device_cert', check.cert.statement).at,
-      revoked: false,
-    };
-    const publicKey = decodeBase64url(kem);
-    readers.push({
-      kind: 'device',
-      publicKey,
-      keyId: sha256Hex(publicKey),
-      label,
-      fingerprint: formatFingerprint(await deviceFingerprint(deviceId)),
+    const flagged =
+      device['revoked_at'] !== null && device['revoked_at'] !== undefined;
+    let check: DeviceCertCheck;
+    try {
+      check = deviceCertCheck(device, deviceId, pin);
+    } catch (error) {
+      if (flagged) continue;
+      throw error;
+    }
+    if (!(check.notAfter > now)) continue;
+    if (flagged) {
+      if (!(await checksOut(check))) continue;
+    } else {
+      await verifyDeviceCert(check);
+    }
+    const at = parseStatement('device_cert', check.cert.statement).at;
+    statements[deviceId] = { at, revoked: false };
+    const publicKey = decodeBase64url(check.kemPublicKey);
+    live.push({
+      deviceId,
+      at,
+      reader: {
+        kind: 'device',
+        publicKey,
+        keyId: sha256Hex(publicKey),
+        label: check.label,
+        fingerprint: formatFingerprint(await deviceFingerprint(deviceId)),
+      },
     });
   }
-  return { readers, statements };
+  return { live, statements };
+}
+
+/** The certificate check a listed device carries. Throws when a field is not the shape a device has. */
+function deviceCertCheck(
+  device: Record<string, unknown>,
+  deviceId: string,
+  pin: DeviceOwner
+): DeviceCertCheck {
+  const certBody = expectRecord(device['cert'], 'device certificate');
+  return {
+    deviceId,
+    ownerIdentityId: pin.identity_id,
+    ownerSigPublicKey: decodeBase64url(pin.sig_public_key),
+    kemPublicKey: expectString(device['kem_public_key'], 'device KEM key'),
+    sigPublicKey: expectString(device['sig_public_key'], 'device signing key'),
+    label: expectString(device['label'], 'device label'),
+    notAfter: Number(device['not_after']),
+    cert: {
+      statement: expectRecord(
+        certBody['statement'],
+        'device certificate statement'
+      ),
+      identity_signature: expectString(
+        certBody['identity_signature'],
+        'device certificate signature'
+      ),
+    },
+  };
 }
 
 type DeviceCertCheck = Parameters<typeof verifyDeviceCert>[0];
@@ -1035,91 +1145,30 @@ export function grantKey(relicId: string, granteeIdentityId: string): string {
   return `${relicId}/${granteeIdentityId}`;
 }
 
-function stale(what: string): PublishError {
+/** A floor refusal, shown as the publish error a caller reports. Nothing is wrapped to it. */
+function staleRefusal(error: RosterStaleError): PublishError {
   return new PublishError(
     'recipients_stale',
-    `the service answered with an older view of the owner than this machine has already accepted (${what}). Nothing was wrapped to it.`
+    `the service answered with an older view of the owner than this machine has already accepted (${error.what}). Nothing was wrapped to it.`
   );
 }
 
-function laterOf(
-  a: number | undefined,
-  b: number | undefined
-): number | undefined {
-  if (a === undefined) return b;
-  if (b === undefined) return a;
-  return Math.max(a, b);
-}
-
 /**
- * Advance the seen state for statements the service reported. A statement
- * older than the one seen is refused, and so is a revocation already seen
- * that the same statement now reports as active. A newer statement replaces
- * the seen one, and a statement the service no longer lists keeps its seen
- * value.
- */
-function advanceStatements(
-  seen: Readonly<Record<string, SeenStatement>> | undefined,
-  observed: Readonly<Record<string, SeenStatement>>,
-  what: string
-): Record<string, SeenStatement> {
-  const next: Record<string, SeenStatement> = { ...seen };
-  for (const [key, statement] of Object.entries(observed)) {
-    const prior = seen?.[key];
-    if (prior !== undefined) {
-      if (statement.at < prior.at) {
-        throw stale(`an older owner-signed ${what}`);
-      }
-      if (statement.at === prior.at && prior.revoked && !statement.revoked) {
-        throw stale(`a revoked ${what} is reported active again`);
-      }
-    }
-    next[key] = statement;
-  }
-  return next;
-}
-
-function advanceOwnerState(
-  seen: SeenOwnerState,
-  observed: OwnerObservation
-): SeenOwnerState {
-  if (
-    seen.owner_epoch !== undefined &&
-    observed.ownerEpoch < seen.owner_epoch
-  ) {
-    throw stale('an older owner epoch');
-  }
-  if (
-    seen.designated_at !== undefined &&
-    observed.designatedAt !== undefined &&
-    observed.designatedAt < seen.designated_at
-  ) {
-    throw stale('an older recovery designation');
-  }
-  return {
-    owner_epoch: laterOf(seen.owner_epoch, observed.ownerEpoch),
-    designated_at: laterOf(seen.designated_at, observed.designatedAt),
-    devices: advanceStatements(seen.devices, observed.devices, 'device'),
-    grants: advanceStatements(seen.grants, observed.grants ?? {}, 'grant'),
-  };
-}
-
-/**
- * Hold a verified service answer to what this machine has already accepted
- * for its pinned owner, then record the answer. Called after the answer
- * verifies and before any key is wrapped to it. A refused answer records
- * nothing.
+ * Hold a verified service answer to what this machine has already accepted for
+ * its pinned owner, record it, and return the floor the answer is admitted
+ * against. Called after the answer verifies and before any key is wrapped to
+ * it. A refused answer records nothing.
  *
- * Limit: a machine that has never seen a value (a first contact, or a fresh
- * key file) has nothing to hold the service to, so it cannot detect a
- * revocation the service hid from it. Revocation is enforced by the service.
- * This check stops a service from going back on what this machine has
- * already been shown.
+ * Limit (PS-05): a revocation this machine never received cannot be seen. On
+ * first contact, or with a fresh key file, the floor is empty, so a service that
+ * withholds both a revoked entry and its signed revocation from a client that
+ * never saw one is believed. Once a verified revocation or designation is
+ * accepted, the floor keeps it.
  */
 export function observeOwnerState(
   origin: string,
-  observed: OwnerObservation
-): Promise<void> {
+  observed: RosterObservation
+): Promise<RosterFloor> {
   const run = deviceWriteChain.then(async () => {
     const file = await readKeysFile();
     const entry = file.devices[origin];
@@ -1129,11 +1178,19 @@ export function observeOwnerState(
         `this machine has no certified device for ${origin}.`
       );
     }
-    await storeEntry(origin, {
-      ...entry,
-      owner_seen: advanceOwnerState(entry.owner_seen ?? {}, observed),
-    });
+    let floor: RosterFloor;
+    try {
+      floor = advanceRosterFloor(entry.owner_seen ?? {}, observed);
+    } catch (error) {
+      if (error instanceof RosterStaleError) throw staleRefusal(error);
+      throw error;
+    }
+    await storeEntry(origin, { ...entry, owner_seen: floor });
+    return floor;
   });
-  deviceWriteChain = run.catch(() => undefined);
+  deviceWriteChain = run.then(
+    () => undefined,
+    () => undefined
+  );
   return run;
 }

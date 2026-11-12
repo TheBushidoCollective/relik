@@ -224,10 +224,21 @@ interface BackfillBody {
  * whole function to the seam's type.
  */
 function keyStub(
-  open: (version: number) => Uint8Array
+  open: (version: number) => Uint8Array,
+  ownerIdentityId?: string
 ): PrivateKeyOps['fetchVersionKey'] {
-  return (async (_deps: ViewerDeps, _relicId: string, version: number) => ({
+  return (async (
+    _deps: ViewerDeps,
+    _relicId: string,
+    version: number,
+    identity: { readonly identityId: string }
+  ) => ({
     key: open(version),
+    keyJson: {
+      owner: {
+        identity: { identity_id: ownerIdentityId ?? identity.identityId },
+      },
+    },
   })) as unknown as PrivateKeyOps['fetchVersionKey'];
 }
 interface Recorded {
@@ -511,7 +522,7 @@ describe('a repair wraps only to a recovery holder the owner designated', () => 
     );
 
     expect(opened).toEqual([1]);
-    expect(result).toEqual({ stored: 1, skipped: 0 });
+    expect(result).toEqual({ stored: 1, skipped: 0, refused: [] });
     const [post] = posts;
     expect(post?.url).toBe(`${ORIGIN}/api/identity/backfill`);
     // The body this test's own service recorded: the shape backfill sends.
@@ -525,5 +536,28 @@ describe('a repair wraps only to a recovery holder the owner designated', () => 
         byte.toString(16).padStart(2, '0')
       ).join('')
     );
+  });
+
+  test('a relic whose version names another owner is refused, and nothing is wrapped for it (PS2-03)', async () => {
+    const owner = await personOf('sam@example.com');
+    const holder = await personOf('ops@example.com');
+    const designated = await recoveryOf(owner, holder);
+    const posts: Recorded[] = [];
+    const deps = depsWith(
+      {
+        fetchVersionKey: keyStub(() => new Uint8Array(16), 'not-this-identity'),
+      },
+      posts
+    );
+
+    const result = await backfillHolder(
+      deps,
+      await unlockedOf(owner),
+      designated,
+      [{ relic_id: RELIC_A, coverage_gaps: [1] }]
+    );
+
+    expect(result).toEqual({ stored: 0, skipped: 0, refused: [RELIC_A] });
+    expect(posts).toEqual([]);
   });
 });

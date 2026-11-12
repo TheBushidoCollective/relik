@@ -8,7 +8,7 @@ import {
   partyIdentity,
   verifyDeviceList,
   verifyRecovery,
-  verifyRecoveryField,
+  verifyDesignationAnswer,
 } from '../src/device.ts';
 import { verifyGrant } from '../src/private.ts';
 import {
@@ -109,13 +109,13 @@ describe('recipient verification before any wrap', () => {
   test('a device the pinned owner certified is accepted as a recipient', async () => {
     const owner = await makePerson('owner@example.com');
     const device = await makeDevice('relic-mcp');
-    const { readers } = await verifyDeviceList(
+    const { live } = await verifyDeviceList(
       [await deviceRecord(owner, device)],
       ownerPin(owner),
       Date.now()
     );
-    expect(readers.map((reader) => reader.kind)).toEqual(['device']);
-    expect(readers[0]?.label).toBe('relic-mcp');
+    expect(live.map((entry) => entry.reader.kind)).toEqual(['device']);
+    expect(live[0]?.reader.label).toBe('relic-mcp');
   });
 
   test('a revoked device is skipped as a recipient rather than refused', async () => {
@@ -127,7 +127,7 @@ describe('recipient verification before any wrap', () => {
       revoked_at: new Date().toISOString(),
     };
     expect(
-      (await verifyDeviceList([record], ownerPin(owner), Date.now())).readers
+      (await verifyDeviceList([record], ownerPin(owner), Date.now())).live
     ).toEqual([]);
   });
 
@@ -215,54 +215,115 @@ describe('recipient verification before any wrap', () => {
   });
 });
 
-describe('the recovery designations a response may carry', () => {
+async function removal(owner: Person, at: number) {
+  const statement = {
+    at,
+    fingerprint_typed: null,
+    owner_identity_id: owner.identityId,
+    recovery_email: null,
+    recovery_identity_id: null,
+  };
+  return {
+    statement,
+    identity_signature: await signStatement(
+      signer(owner.keys.sig.privateKey),
+      statementBytes('recovery_designation', statement)
+    ),
+  };
+}
+
+describe('the recovery designation an answer carries', () => {
   const EARLIER = Date.parse('2026-11-10T12:00:00.000Z');
   const LATER = EARLIER + DAY_MS;
 
-  test('the designation with the greatest owner-signed time is used, whatever its position', async () => {
+  test('a removal the owner signed later than the holder removes the holder', async () => {
     const owner = await makePerson('owner@example.com');
-    const older = await makePerson('older@example.com');
-    const newer = await makePerson('newer@example.com');
-    const verified = await verifyRecoveryField(
-      [
-        {
-          identity: partyJson(newer).identity,
-          designation: await designation(owner, newer, owner, LATER),
+    const holder = await makePerson('compliance@example.com');
+    const verified = await verifyDesignationAnswer(
+      {
+        recovery: {
+          identity: partyJson(holder).identity,
+          designation: await designation(owner, holder, owner, EARLIER),
         },
-        {
-          identity: partyJson(older).identity,
-          designation: await designation(owner, older, owner, EARLIER),
-        },
-      ],
+        recovery_statement: await removal(owner, LATER),
+      },
       ownerPin(owner)
     );
-    expect(verified?.reader.email).toBe(newer.email);
-    expect(verified?.designatedAt).toBe(LATER);
+    expect(verified).toEqual({
+      mark: { at: LATER, removed: true },
+      reader: undefined,
+    });
   });
 
-  test('a response with no designation carries none', async () => {
+  test('a holder designated later than a removal is the one in force', async () => {
     const owner = await makePerson('owner@example.com');
-    expect(await verifyRecoveryField(null, ownerPin(owner))).toBeUndefined();
+    const holder = await makePerson('compliance@example.com');
+    const verified = await verifyDesignationAnswer(
+      {
+        recovery: {
+          identity: partyJson(holder).identity,
+          designation: await designation(owner, holder, owner, LATER),
+        },
+        recovery_statement: await removal(owner, EARLIER),
+      },
+      ownerPin(owner)
+    );
+    expect(verified?.mark).toEqual({ at: LATER, removed: false });
+    expect(verified?.reader?.email).toBe(holder.email);
   });
 
-  test('two holders at the same time cannot be ordered, so the response is refused', async () => {
+  test('an answer with no signed designation carries none', async () => {
     const owner = await makePerson('owner@example.com');
-    const first = await makePerson('first@example.com');
-    const second = await makePerson('second@example.com');
+    expect(
+      await verifyDesignationAnswer(
+        { recovery: null, recovery_statement: null },
+        ownerPin(owner)
+      )
+    ).toBeNull();
+  });
+
+  test('a holder and a removal at the same time cannot be ordered, so the answer is refused', async () => {
+    const owner = await makePerson('owner@example.com');
+    const holder = await makePerson('compliance@example.com');
     await expect(
-      verifyRecoveryField(
-        [
-          {
-            identity: partyJson(first).identity,
-            designation: await designation(owner, first, owner, LATER),
+      verifyDesignationAnswer(
+        {
+          recovery: {
+            identity: partyJson(holder).identity,
+            designation: await designation(owner, holder, owner, LATER),
           },
-          {
-            identity: partyJson(second).identity,
-            designation: await designation(owner, second, owner, LATER),
-          },
-        ],
+          recovery_statement: await removal(owner, LATER),
+        },
         ownerPin(owner)
       )
     ).rejects.toMatchObject({ code: 'recovery_ambiguous' });
+  });
+
+  test('a newest designation that names a holder the answer does not carry is refused', async () => {
+    const owner = await makePerson('owner@example.com');
+    const holder = await makePerson('compliance@example.com');
+    await expect(
+      verifyDesignationAnswer(
+        {
+          recovery: null,
+          recovery_statement: await designation(owner, holder, owner, LATER),
+        },
+        ownerPin(owner)
+      )
+    ).rejects.toMatchObject({ code: 'recovery_ambiguous' });
+  });
+
+  test('a designation statement the pinned owner did not sign is refused as unsigned', async () => {
+    const owner = await makePerson('owner@example.com');
+    const attacker = await makePerson('attacker@example.com');
+    await expect(
+      verifyDesignationAnswer(
+        {
+          recovery: null,
+          recovery_statement: await removal(attacker, LATER),
+        },
+        ownerPin(owner)
+      )
+    ).rejects.toMatchObject({ code: 'recovery_unsigned' });
   });
 });

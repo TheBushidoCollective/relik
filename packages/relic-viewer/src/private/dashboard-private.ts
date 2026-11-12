@@ -321,7 +321,7 @@ async function relicSections(
           repairOutcome.className = 'dash-outcome is-ok';
           setChildren(
             repairOutcome,
-            `Repaired ${result.stored} wrap${result.stored === 1 ? '' : 's'} for ${holder.email}.`
+            `Repaired ${result.stored} wrap${result.stored === 1 ? '' : 's'} for ${holder.email}.${result.refused.length === 0 ? '' : ` Skipped ${result.refused.length} relic${result.refused.length === 1 ? '' : 's'} whose versions belong to another owner.`}`
           );
           again();
         })

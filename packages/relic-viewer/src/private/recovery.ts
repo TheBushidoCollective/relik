@@ -25,6 +25,7 @@ import {
 } from './fingerprint-input.ts';
 import type { UnlockedIdentity } from './keys.ts';
 import { privateKeysOf } from './ops.ts';
+import { observeRosterFloor } from './roster-floor.ts';
 import { RecipientMissingError } from './open.ts';
 import { verifiedPartyKeys, verifiedRecovery } from './rekey.ts';
 import { VerificationRefusedError } from './refusal.ts';
@@ -45,25 +46,44 @@ export interface CoverageGap {
   readonly coverage_gaps?: readonly number[];
 }
 
+/** The outcome of one backfill: the wraps stored, the wraps the service skipped, and the relics this identity does not own. */
+export interface BackfillResult {
+  readonly stored: number;
+  readonly skipped: number;
+  /** Relics whose versions name another owner. Nothing was wrapped for them. */
+  readonly refused: readonly string[];
+}
+
 /**
- * Wrap every version of each relic that this identity can open to the
- * recovery holder. The holder is checked against the owner's signed
- * designation first, and nothing is wrapped for a holder that does not verify.
- * The service's coverage gaps are hints: a version this identity cannot open is
- * skipped. Returns counts from the service.
+ * Wrap every version of each relic that this identity can open to the recovery
+ * holder. The holder is checked against the owner's signed designation first,
+ * and nothing is wrapped for a holder that does not verify, nor for a holder
+ * the browser's floor has already seen removed. The service's coverage gaps are
+ * hints: a version this identity cannot open is skipped, and a relic with a
+ * version that belongs to another owner is refused and reported.
  */
 export async function backfillHolder(
   deps: ViewerDeps,
   identity: UnlockedIdentity,
   holder: RecoveryJSON,
   gaps: readonly CoverageGap[]
-): Promise<{ readonly stored: number; readonly skipped: number }> {
-  const { kemPublicKey } = await verifiedRecovery(identity, holder);
+): Promise<BackfillResult> {
+  const { kemPublicKey, designatedAt } = await verifiedRecovery(
+    identity,
+    holder
+  );
+  observeRosterFloor(identity.identityId, {
+    designation: { at: designatedAt, removed: false },
+  });
   const wraps: BackfillWrapJSON[] = [];
+  const refused: string[] = [];
   for (const relic of gaps) {
-    for (const version of relic.coverage_gaps ?? []) {
-      const key = await keyIfOpenable(deps, identity, relic.relic_id, version);
-      if (key === undefined) continue;
+    const opened = await openableVersions(deps, identity, relic);
+    if (opened === undefined) {
+      refused.push(relic.relic_id);
+      continue;
+    }
+    for (const { version, key } of opened) {
       const wrap = await wrapVersionKey({
         recipientPublicKey: kemPublicKey,
         relicId: relic.relic_id,
@@ -91,24 +111,52 @@ export async function backfillHolder(
     stored += answer.stored;
     skipped += answer.skipped;
   }
-  return { stored, skipped };
+  return { stored, skipped, refused };
 }
 
-/** The version's key when this identity can open it, or undefined when it cannot. */
-async function keyIfOpenable(
+/**
+ * The versions of one relic this identity can open, with their keys, or
+ * undefined when a version this identity opens names another owner. The owner
+ * is read from the key's own owner statement, which this identity must be.
+ */
+async function openableVersions(
+  deps: ViewerDeps,
+  identity: UnlockedIdentity,
+  relic: CoverageGap
+): Promise<
+  { readonly version: number; readonly key: Uint8Array }[] | undefined
+> {
+  const opened: { version: number; key: Uint8Array }[] = [];
+  for (const version of relic.coverage_gaps ?? []) {
+    const fetched = await fetchIfOpenable(
+      deps,
+      identity,
+      relic.relic_id,
+      version
+    );
+    if (fetched === undefined) continue;
+    if (fetched.keyJson.owner.identity.identity_id !== identity.identityId) {
+      return undefined;
+    }
+    opened.push({ version, key: fetched.key });
+  }
+  return opened;
+}
+
+/** The version's key and its key statement when this identity can open it, or undefined when it cannot. */
+async function fetchIfOpenable(
   deps: ViewerDeps,
   identity: UnlockedIdentity,
   relicId: string,
   version: number
-): Promise<Uint8Array | undefined> {
+) {
   try {
-    const { key } = await privateKeysOf(deps).fetchVersionKey(
+    return await privateKeysOf(deps).fetchVersionKey(
       deps,
       relicId,
       version,
       identity
     );
-    return key;
   } catch (error) {
     if (error instanceof RecipientMissingError) return undefined;
     throw error;
@@ -130,7 +178,7 @@ export async function repairCoverage(
   deps: ViewerDeps,
   state: IdentityStateJSON,
   holder: RecoveryJSON
-): Promise<{ readonly stored: number; readonly skipped: number }> {
+): Promise<BackfillResult> {
   const identity = await privateKeysOf(deps).unlock(deps, state);
   return backfillHolder(deps, identity, holder, await coverageGaps(deps));
 }

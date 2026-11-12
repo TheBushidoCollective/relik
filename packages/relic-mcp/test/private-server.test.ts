@@ -28,7 +28,10 @@ import {
 } from '@relic/format/private';
 import { createApp, type RelicApp } from '@relic/server/src/app.ts';
 import { MemoryStorage } from '@relic/server/src/storage.ts';
-import { MemoryStore } from '@relic/server/src/store.ts';
+import {
+  MemoryStore,
+  type StoredAttestation,
+} from '@relic/server/src/store.ts';
 import {
   confirmDevice,
   enrollDevice,
@@ -433,37 +436,80 @@ describe('device requests carry the spec nonce (PS-08)', () => {
   });
 });
 
-describe('the client refuses an older view of the owner than it has seen (PS-05)', () => {
-  test('an owner epoch the service rolls back is refused before anything is wrapped', async () => {
+/** The owner-signed `device_revocation` the server stores on a revoked device, as its attestation. */
+async function revocationAttestation(
+  owner: Person,
+  deviceId: string
+): Promise<StoredAttestation> {
+  const statement = {
+    at: now,
+    device_id: deviceId,
+    owner_identity_id: owner.identityId,
+  };
+  const identitySignature = await signStatement(
+    signer(owner.keys.sig.privateKey),
+    statementBytes('device_revocation', statement)
+  );
+  return {
+    statements: [{ kind: 'device_revocation', statement, identitySignature }],
+  } as unknown as StoredAttestation;
+}
+
+describe('the client admits what the owner signed, never what the service asserts alone (PS-05, PS2-05)', () => {
+  test('an owner epoch the service rolls back does not refuse a republish, because the epoch is a hint the service checks', async () => {
     const { owner } = await seedOwnerAndDevice();
     await setEpoch(owner, 2);
     const first = await publishPrivate({ path: SOURCE_PATH }, depsFor());
     await setEpoch(owner, 1);
-    await expect(
-      republishPrivate(
-        { relic_id: first.relic_id, path: SOURCE_PATH },
-        depsFor(EDITED)
-      )
-    ).rejects.toMatchObject({ code: 'recipients_stale' });
-    // The republish route allocates the next version before the recipients are
-    // checked. Nothing is sealed under it, so the sealed version holds.
-    expect((await app.store.getRelic(first.relic_id))?.sealedVersion).toBe(1);
+    const next = await republishPrivate(
+      { relic_id: first.relic_id, path: SOURCE_PATH },
+      depsFor(EDITED)
+    );
+    expect(next.version).toBe(2);
+    expect((await app.store.getRelic(first.relic_id))?.sealedVersion).toBe(2);
   });
 
-  test('a device the service stops reporting as revoked is refused on the next publish', async () => {
+  test('a device revoked by an owner-signed revocation stays out of the republish', async () => {
     const { owner } = await seedOwnerAndDevice();
     const second = await makeDevice('second machine');
     await certifyDevice(owner, second);
     const first = await publishPrivate({ path: SOURCE_PATH }, depsFor());
+    const revocation = await revocationAttestation(owner, second.deviceId);
     await app.store.updateDevice(second.deviceId, (d) => ({
       ...d,
       revokedAt: now,
+      revocation,
     }));
     const revoked = await republishPrivate(
       { relic_id: first.relic_id, path: SOURCE_PATH },
       depsFor(EDITED)
     );
     expect(revoked.version).toBe(2);
+    expect(
+      revoked.recipients.some(
+        (r) => r.kind === 'device' && r.label === 'second machine'
+      )
+    ).toBe(false);
+  });
+
+  test('a service that stops flagging a signed-revoked device gets no wrap for it: the seal is refused', async () => {
+    const { owner } = await seedOwnerAndDevice();
+    const second = await makeDevice('second machine');
+    await certifyDevice(owner, second);
+    const first = await publishPrivate({ path: SOURCE_PATH }, depsFor());
+    const revocation = await revocationAttestation(owner, second.deviceId);
+    await app.store.updateDevice(second.deviceId, (d) => ({
+      ...d,
+      revokedAt: now,
+      revocation,
+    }));
+    await republishPrivate(
+      { relic_id: first.relic_id, path: SOURCE_PATH },
+      depsFor(EDITED)
+    );
+    // The flag is cleared and the signed revocation stays on the record. The
+    // server now expects a wrap for the device, and the client, holding the
+    // owner's revocation, sends none, so nothing is sealed for it.
     await app.store.updateDevice(second.deviceId, (d) => ({
       ...d,
       revokedAt: undefined,
@@ -473,7 +519,7 @@ describe('the client refuses an older view of the owner than it has seen (PS-05)
         { relic_id: first.relic_id, path: SOURCE_PATH },
         depsFor(SOURCE)
       )
-    ).rejects.toMatchObject({ code: 'recipients_stale' });
+    ).rejects.toMatchObject({ code: 'recipients_changed' });
     expect((await app.store.getRelic(first.relic_id))?.sealedVersion).toBe(2);
   });
 });
@@ -517,8 +563,8 @@ describe('recovery designations against the real service (PS-05, PS-10)', () => 
 
   test('a designation stays in force across a later device revocation', async () => {
     // Plan 4.12: a device revocation deletes that device's wraps and leaves
-    // the designation in force. A designation older than a revocation is
-    // therefore the normal state, and must still publish.
+    // the designation in force. The revocation is the owner's signed statement,
+    // as the service stores it, so the client and the server agree on the device.
     const { owner } = await seedOwnerAndDevice();
     const recovery = await makePerson('recovery@example.com');
     await storeIdentity(recovery);
@@ -526,9 +572,11 @@ describe('recovery designations against the real service (PS-05, PS-10)', () => 
     const second = await makeDevice('second machine');
     await certifyDevice(owner, second);
     const first = await publishPrivate({ path: SOURCE_PATH }, depsFor());
+    const revocation = await revocationAttestation(owner, second.deviceId);
     await app.store.updateDevice(second.deviceId, (d) => ({
       ...d,
       revokedAt: now,
+      revocation,
     }));
     const next = await republishPrivate(
       { relic_id: first.relic_id, path: SOURCE_PATH },

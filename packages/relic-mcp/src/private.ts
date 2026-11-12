@@ -33,15 +33,19 @@ import {
   fingerprintsEqual,
   keyCommitment,
   parseStatement,
+  type RosterMark,
+  rosterAdmits,
   statementBytes,
   type StatementMap,
   unwrapVersionKey,
+  verifySignedStatement,
   verifyStatement,
   wrapVersionKey,
   type WrapJSON,
   type SealJSON,
 } from '@relic/format/private';
 import {
+  admittedDevices,
   assertOwnerPin,
   type DeviceEntry,
   type DeviceOwner,
@@ -56,12 +60,12 @@ import {
   loadDeviceEntry,
   observeOwnerState,
   partyIdentity,
-  type SeenStatement,
   sha256Hex,
   signDeviceStatement,
+  signedBodyOf,
   verifyDeviceCert,
   verifyDeviceList,
-  verifyRecoveryField,
+  verifyDesignationAnswer,
   type VerifiedReader,
 } from './device.ts';
 import {
@@ -280,14 +284,23 @@ async function ownerDisplay(
   };
 }
 
-/** A grant the owner signed, verified: its grantee's reader, the grantee's identity, and the owner-signed `at`. */
+/**
+ * A grant the owner signed, verified: its grantee's reader, the grantee's
+ * identity, and its roster mark. The mark is the grant's own `at` while it is
+ * live, or the owner-signed revocation's `at` when a verified revocation covers it.
+ */
 export interface VerifiedGrant {
   readonly reader: VerifiedReader;
   readonly granteeIdentityId: string;
-  readonly at: number;
+  readonly mark: RosterMark;
 }
 
-/** Verify one grant the owner signed, and the grantee it names, before it can receive a wrap. */
+/**
+ * Verify one grant the owner signed, and the grantee it names, before it can
+ * receive a wrap. A revocation the owner signed for this grantee on this relic
+ * makes the mark revoked. A revocation that does not verify is ignored, and the
+ * grant is judged on its own owner-signed statement.
+ */
 export async function verifyGrant(
   grant: Record<string, unknown>,
   pin: DeviceOwner,
@@ -328,6 +341,24 @@ export async function verifyGrant(
   const fingerprint = await identityFingerprint(party.identityId, party.email);
   if (!fingerprintsEqual(statement.fingerprint_typed, fingerprint))
     throw forged;
+  const revocation = signedBodyOf(grant['revocation']);
+  const signedRevocation =
+    revocation === undefined
+      ? undefined
+      : await verifySignedStatement(
+          'revocation',
+          revocation,
+          decodeBase64url(pin.sig_public_key)
+        );
+  let mark: RosterMark = { at: statement.at, revoked: false };
+  if (
+    signedRevocation !== undefined &&
+    signedRevocation.owner_identity_id === pin.identity_id &&
+    signedRevocation.relic_id === relicId &&
+    signedRevocation.grantee_identity_id === party.identityId
+  ) {
+    mark = { at: signedRevocation.at, revoked: true };
+  }
   return {
     reader: {
       kind: 'grantee',
@@ -337,16 +368,17 @@ export async function verifyGrant(
       fingerprint: formatFingerprint(fingerprint),
     },
     granteeIdentityId: party.identityId,
-    at: statement.at,
+    mark,
   };
 }
 
 /**
  * The recipients of a relic that already exists, from the publish-token read,
- * verified in full. A revoked grant is not a recipient, but it is still
- * verified: its owner-signed time is what holds the service to a revocation
- * this machine has already seen. Nothing is wrapped to an answer that goes back
- * on what the machine has accepted.
+ * verified in full, then admitted against the floor this machine holds for the
+ * owner. A grant or device the owner revoked is no recipient. A revocation flag
+ * with no verified revocation is ignored, and a flagged grant whose own statement
+ * does not verify is skipped, so one bad entry cannot stop the read. Nothing is
+ * wrapped to an answer that goes back on what the machine has accepted.
  */
 async function fetchRecipients(
   deps: PublishDeps,
@@ -376,7 +408,7 @@ async function fetchRecipients(
   });
 
   const devices = await verifyDeviceList(body['devices'], pin, Date.now());
-  const recovery = await verifyRecoveryField(body['recovery'], pin);
+  const designation = await verifyDesignationAnswer(body, pin);
 
   const grantList = body['grants'];
   if (!Array.isArray(grantList)) {
@@ -385,28 +417,43 @@ async function fetchRecipients(
       'the grant list is missing'
     );
   }
-  const grants: VerifiedReader[] = [];
-  const grantStatements: Record<string, SeenStatement> = {};
+  const grantMarks: Record<string, RosterMark> = {};
+  const liveGrants: { key: string; reader: VerifiedReader; at: number }[] = [];
   for (const item of grantList) {
     const grant = expectRecord(item, 'grant');
-    const verified = await verifyGrant(grant, pin, relicId);
-    const revoked =
+    const flagged =
       grant['revoked_at'] !== null && grant['revoked_at'] !== undefined;
-    grantStatements[grantKey(relicId, verified.granteeIdentityId)] = {
-      at: verified.at,
-      revoked,
-    };
-    if (!revoked) grants.push(verified.reader);
+    let verified: VerifiedGrant;
+    try {
+      verified = await verifyGrant(grant, pin, relicId);
+    } catch (error) {
+      if (
+        flagged &&
+        error instanceof PublishError &&
+        error.code === 'recipient_forged_grant'
+      ) {
+        continue;
+      }
+      throw error;
+    }
+    const key = grantKey(relicId, verified.granteeIdentityId);
+    grantMarks[key] = verified.mark;
+    if (!verified.mark.revoked) {
+      liveGrants.push({
+        key,
+        reader: verified.reader,
+        at: verified.mark.at,
+      });
+    }
   }
 
-  const ownerEpoch = expectEpoch(body['owner_epoch'], 'owner epoch');
-  await observeOwnerState(deps.serviceOrigin, {
-    ownerEpoch,
-    designatedAt: recovery?.designatedAt,
+  const floor = await observeOwnerState(deps.serviceOrigin, {
+    designation: designation?.mark ?? null,
     devices: devices.statements,
-    grants: grantStatements,
+    grants: grantMarks,
   });
 
+  const ownerEpoch = expectEpoch(body['owner_epoch'], 'owner epoch');
   const owned = await ownerReader(pin);
   return {
     version: Number(body['current_version']),
@@ -414,9 +461,11 @@ async function fetchRecipients(
     ownerEpoch,
     readers: [
       owned,
-      ...devices.readers,
-      ...(recovery === undefined ? [] : [recovery.reader]),
-      ...grants,
+      ...admittedDevices(devices, floor),
+      ...(designation?.reader === undefined ? [] : [designation.reader]),
+      ...liveGrants
+        .filter((grant) => rosterAdmits(floor.grants?.[grant.key], grant.at))
+        .map((grant) => grant.reader),
     ],
   };
 }
@@ -650,7 +699,7 @@ export async function publishPrivate(
   const readers = [
     owner,
     ...first.devices,
-    ...(first.recovery === undefined ? [] : [first.recovery.reader]),
+    ...(first.recovery === undefined ? [] : [first.recovery]),
   ];
 
   let relicId = generateRelicId();
@@ -780,7 +829,7 @@ export async function publishPrivate(
         readers: [
           owner,
           ...next.devices,
-          ...(next.recovery === undefined ? [] : [next.recovery.reader]),
+          ...(next.recovery === undefined ? [] : [next.recovery]),
         ],
       };
     },
