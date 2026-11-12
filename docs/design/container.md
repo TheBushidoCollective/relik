@@ -75,11 +75,11 @@ The fragment value is not the content-encryption key. It is the input-keying mat
 
 ### 2.1 The decision: a 16-octet IKM
 
-**The fragment carries 16 octets of input-keying material drawn from the platform CSPRNG.**
+**A public relic's fragment carries 16 octets of input-keying material drawn from the platform CSPRNG: one key per relic.** A private relic has no fragment. Each of its versions has its own 16-octet key, drawn fresh from the same CSPRNG, carried only inside that version's wraps and never in a URL (`format.md` 3.10 and 3.17).
 
 **What a 32-octet IKM would buy is nothing an attacker has a reason to attack.** HKDF's output length here is fixed at 16 octets, so the CEK carries at most 128 bits of entropy regardless of how wide the input is. An attacker who wants the plaintext attacks the CEK at 2^128. Raising the IKM to 256 bits raises the cost of recovering the IKM and leaves the cost of recovering the CEK exactly where it was. A 32-octet IKM buys fragment entropy above the ceiling the coding imposes on the key it derives.
 
-Multi-target batching does not change that. The salt is 16 fresh random octets per relic and it is the HKDF salt, so CEKs across relics are independent by construction and no batch attack amortizes across the corpus.
+Multi-target batching does not change that. The salt is 16 fresh random octets per object and it is the HKDF salt, so CEKs across objects are independent by construction and no batch attack amortizes across the corpus. A private relic is one object per version, so each version's salt and key are independent of every other version's.
 
 **The implementation-cost argument for 16 octets exists and it is not what this decision rests on.** The recorded prior is that the reference implementation's `Keychain` rejects any key that is not 16 octets, `Invalid byteLength: must be 16 bytes` ([lib/keychain.js](https://github.com/webtorrent/wormhole-crypto/blob/master/lib/keychain.js)), so exceeding 16 means driving the lower-level module directly. Section 5 decides to drive the lower-level module anyway, for reasons that have nothing to do with key length, and `lib/ece.js` imposes no length constraint: it takes an already-imported HKDF `CryptoKey`, and WebCrypto's `importKey` accepts raw HKDF input-keying material at 16, 24, and 32 octets, verified directly on Node v26.5.0. **So the implementation cost of a 32-octet IKM is zero once section 5 is decided, and the argument above stands alone.** The cryptographic argument is the only one left standing, because the convenient one is withdrawn here rather than leaned on.
 
@@ -89,7 +89,7 @@ Multi-target batching does not change that. The salt is 16 fresh random octets p
 
 `format.md` 2.3 settles the encoding as unpadded base64url and 2.2 fixes the version marker at a two-character prefix. So:
 
-**The fragment is 24 characters: a two-character version marker followed immediately by 22 characters of key.**
+**A public relic's fragment is 24 characters: a two-character version marker followed immediately by 22 characters of key.** A private relic's URL has no fragment, so no marker is read for it (`format.md` 3.7).
 
 **The marker is the version number written as two base-64 digits over RFC 4648 section 5's alphabet, most significant digit first.** Version 1 is `AB`. One integer in two encodings and no lookup table, so `format.md` 3.7's disagreement check between the fragment marker and the envelope header's version field is an integer comparison. The marker uses the key's alphabet, so the whole fragment validates against one character class.
 
@@ -285,7 +285,7 @@ Three further notes an implementer needs before writing that harness.
 
 **That makes this a dominance argument and not a preference.** The two options cost the same: 25 characters in the path, the same reserved-word margin, the same URL length, the same generation code. At equal cost 125 delivers three more bits and a first character drawn uniformly from all 32 symbols, where 122 leaves the first character ranging over 4 of the 32 and a visible pattern at the head of every ID that a reader could mistake for a prefix scheme. Nothing is traded away, so nothing needs weighing. 125 makes the ID space equal to the string space.
 
-**The enumeration arithmetic, at 125 bits rather than at the floor.** The space is 2^125, roughly 4.25 times 10^37. Every guess costs one mint request against the app server, which is rate limited per IP. Give an attacker 10,000 addresses each sustaining 10 mints per second, far past what the limiter permits, and run it for ten years: 3.15 times 10^13 requests, for an expected 7.4 times 10^-25 hits. One expected hit takes 2^124 requests. A hit yields ciphertext and its length, because `format.md` 3.6 keeps the renderer class server-side and the key was never on the wire. **Enumeration is settled at 125 bits by roughly 24 orders of magnitude, and it is settled at the value decided here rather than at the floor the value sits above.** `design-operations-and-abuse` can record it as settled and the record is true rather than circular.
+**The enumeration arithmetic, at 125 bits rather than at the floor.** The space is 2^125, roughly 4.25 times 10^37. Every guess costs one mint request against the app server, which is rate limited per IP. Give an attacker 10,000 addresses each sustaining 10 mints per second, far past what the limiter permits, and run it for ten years: 3.15 times 10^13 requests, for an expected 7.4 times 10^-25 hits. One expected hit takes 2^124 requests. For a public relic, a hit yields ciphertext and its length, because `format.md` 3.6 keeps the renderer class server-side and the key was never on the wire. A private relic's mint is gated on an access check (`format.md` 1.2), so a hit on its ID yields no ciphertext to a caller without access. **Enumeration is settled at 125 bits by roughly 24 orders of magnitude, and it is settled at the value decided here rather than at the floor the value sits above.** `design-operations-and-abuse` can record it as settled and the record is true rather than circular.
 
 **Why not more.** 130 bits is 26 characters and moves an already-settled margin.
 
@@ -299,7 +299,7 @@ Three further notes an implementer needs before writing that harness.
 
 `format.md` says the format cannot change after content is encrypted. That is true of a given relic and misleading about the system.
 
-**The version marker sits in the fragment, so it is pre-fetch.** A v2 viewer reads the marker before minting a signed URL, so it refuses or routes a v1 relic without spending a mint, without consuming a per-object download cap, and without a byte of egress (`format.md` 2.2 and 3.7).
+**For a public relic, the version marker sits in the fragment, so it is pre-fetch.** A v2 viewer reads the marker before minting a signed URL, so it refuses or routes a v1 relic without spending a mint, without consuming a per-object download cap, and without a byte of egress (`format.md` 2.2 and 3.7). A private relic has no marker. The server declares its access mode before any mint, and a v2 viewer routes it by that declaration.
 
 **The real cost is that the viewer carries both decoders for as long as any v1 relic can still be alive.** The bound is the mandatory TTL plus the signed URL's own validity window, because a URL minted a second inside the TTL ceiling stays valid for its own lifetime. **The TTL ceiling is `design-storage-grant-and-cost`'s decision, not this document's**, and no number for it exists yet. So the bound is a shape here and not a date, and this document states the need rather than asserting a value.
 
