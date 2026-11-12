@@ -1310,6 +1310,14 @@ export function createApp(options: AppOptions = {}): RelicApp {
         objectCrc32c: object.crc32c,
         digest,
       });
+      // Decision 7: the ciphertext erases one day after the relic expires. The
+      // object exists once it is sealed, so this is the first point it can be set.
+      if (row.expiresAt !== undefined) {
+        await storage.setCustomTime(
+          objectKey(relicId, result.version),
+          row.expiresAt
+        );
+      }
       return Response.json({
         relic_id: relicId,
         version: result.version,
