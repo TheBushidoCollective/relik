@@ -217,3 +217,93 @@ describe('sampled audio gate boundaries', () => {
     ).toBe(true);
   });
 });
+
+describe('sampled audio startSample', () => {
+  test('the default start matches an explicit start of zero', () => {
+    const ref = reference();
+    const rendered = withSilence(ref, 2, 25);
+    const implicit = measureSignal(rendered, ref, RATE);
+    const explicit = measureSignal(rendered, ref, RATE, 0);
+    expect(explicit.lagSamples).toBe(implicit.lagSamples);
+    expect(explicit.longestGapSamples).toBe(implicit.longestGapSamples);
+    expect(explicit.gapStartSeconds).toBeCloseTo(
+      implicit.gapStartSeconds ?? -1,
+      6
+    );
+  });
+
+  test('a captured span that starts later aligns at lag 0', () => {
+    const ref = reference();
+    const start = 2 * RATE;
+    const evidence = measureSignal(
+      Float32Array.from(ref.subarray(start)),
+      ref,
+      RATE,
+      start
+    );
+    expect(evidence.lagSamples).toBe(0);
+    expect(gateSignal(evidence, 'shifted')).toEqual([]);
+  });
+
+  test('a gap is reported in absolute program seconds, not span seconds', () => {
+    const ref = reference();
+    const start = 2 * RATE;
+    const rendered = Float32Array.from(ref.subarray(start));
+    // 1 s into the captured span is 3 s into the program.
+    rendered.fill(0, RATE, RATE + Math.round((25 * RATE) / 1000));
+    const evidence = measureSignal(rendered, ref, RATE, start);
+    expect(evidence.lagSamples).toBe(0);
+    expect(evidence.longestGapSamples).toBeGreaterThanOrEqual(1200);
+    expect(evidence.gapStartSeconds ?? -1).toBeCloseTo(3, 2);
+  });
+
+  test('a rendered start late by 10 ms keeps a positive lag and passes', () => {
+    const ref = reference();
+    const start = 2 * RATE;
+    const evidence = measureSignal(
+      delayed(Float32Array.from(ref.subarray(start)), 480),
+      ref,
+      RATE,
+      start
+    );
+    expect(evidence.lagSamples).toBe(480);
+    expect(evidence.onsetMs).toBeCloseTo(10, 6);
+    expect(gateSignal(evidence, 'late10')).toEqual([]);
+  });
+
+  test('a rendered start late by 30 ms keeps a positive lag and fails onset', () => {
+    const ref = reference();
+    const start = 2 * RATE;
+    const evidence = measureSignal(
+      delayed(Float32Array.from(ref.subarray(start)), 1440),
+      ref,
+      RATE,
+      start
+    );
+    expect(evidence.lagSamples).toBe(1440);
+    expect(
+      gateSignal(evidence, 'late30').some((f) => f.includes('onset'))
+    ).toBe(true);
+  });
+
+  test('a negative start is refused', () => {
+    const ref = reference();
+    expect(() => measureSignal(Float32Array.from(ref), ref, RATE, -1)).toThrow(
+      'startSample must be a non-negative integer'
+    );
+  });
+
+  test('a start past the reference measures nothing and fails the minimum', () => {
+    const ref = reference();
+    const evidence = measureSignal(
+      Float32Array.from(ref),
+      ref,
+      RATE,
+      ref.length + 1
+    );
+    expect(evidence.testedMs).toBe(0);
+    expect(
+      gateSignal(evidence, 'past').some((f) => f.includes('only 0 ms'))
+    ).toBe(true);
+  });
+});

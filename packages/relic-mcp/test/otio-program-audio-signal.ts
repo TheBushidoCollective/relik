@@ -280,16 +280,30 @@ function findOffsetSteps(
 /**
  * Aligns one rendered channel to the reference, then measures silence over every tested sample
  * from the first delivered program sample on. The reference is cut to the captured span so nothing
- * is scored past what was recorded.
+ * is scored past what was recorded. `startSample` is the program sample at which the rendered
+ * channel's first sample was delivered (default 0). It moves the reference slice, the program
+ * boundaries, and the reported gap time to absolute program time. Lag keeps its sign: positive
+ * means the rendered audio is late against the reference.
  */
 export function measureSignal(
   rendered: Float32Array,
   reference: Float32Array,
-  rate: number
+  rate: number,
+  startSample: number = 0
 ): SignalEvidence {
   const onsetSamples = Math.round((AUDIO_ONSET_BUDGET_MS * rate) / 1000);
-  const span = Math.min(reference.length, rendered.length - 2 * onsetSamples);
-  const expected = reference.subarray(0, Math.max(0, span));
+  if (!Number.isInteger(startSample) || startSample < 0)
+    throw new Error(
+      `startSample must be a non-negative integer, got ${startSample}`
+    );
+  const span = Math.min(
+    reference.length - startSample,
+    rendered.length - 2 * onsetSamples
+  );
+  const expected = reference.subarray(
+    startSample,
+    startSample + Math.max(0, span)
+  );
   const alignment = alignAudio(rendered, expected, 2 * onsetSamples);
   const lag = alignment.lagSamples;
 
@@ -339,7 +353,7 @@ export function measureSignal(
     expected,
     rate,
     lag,
-    PROGRAM_AUDIO_BOUNDARIES
+    PROGRAM_AUDIO_BOUNDARIES.map((edge) => edge - startSample)
   );
   return {
     lagSamples: lag,
@@ -349,7 +363,8 @@ export function measureSignal(
     longestGapSamples: longest,
     longestGapMs: (longest * 1000) / rate,
     silentRuns,
-    gapStartSeconds: longestEnd < 0 ? null : (longestEnd - longest + 1) / rate,
+    gapStartSeconds:
+      longestEnd < 0 ? null : (startSample + longestEnd - longest + 1) / rate,
     offsetSteps: findOffsetSteps(rendered, expected, rate, lag, tested, block),
     windowFaults,
   };
