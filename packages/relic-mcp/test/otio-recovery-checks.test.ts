@@ -3,6 +3,7 @@ import {
   assertDescriptorBudgetRefusal,
   assertHeldReleaseBeforeSuccessor,
   assertShiftedBankRefusal,
+  naturalStarvation,
   recoveryFrontierOvershoot,
   siteBridgeCommitLeadAfterHold,
   siteBridgeFinalGuardAfterHold,
@@ -1248,4 +1249,119 @@ test('frontier-overshoot classifier refuses anything injected or any further rec
       OVER_RATE
     )
   ).not.toBeNull();
+});
+
+// Natural-starvation classifier. Modelled on CI runs 43279024045, 43290221910 and 43297935043.
+const starved = (...tail: BridgeEntry[]): BridgeEntry[] => [
+  bridgePcm({
+    event: 'gate-close',
+    reason: 'frontier',
+    contextStopFrame: 1000,
+  }),
+  bridgePcm({ event: 'recovery-request', boundaryFrame: 1000 }),
+  ...tail,
+];
+const underflow = () => bridgePcm({ event: 'cancel', reason: 'underflow' });
+const visualRefusal = (code = 'recovery-frame-unavailable'): BridgeEntry =>
+  bridgePcm({ event: 'error', stage: 'visual', code });
+
+test('natural-starvation classifier names each recovery refusal after a frontier close', () => {
+  for (const trace of [
+    // The recovery had no frame for a video source.
+    starved(
+      visualRefusal(),
+      underflow(),
+      bridgeError('committed recovery frame is unavailable')
+    ),
+    // The output clock was already past the gap, with and without the gap refusal event.
+    starved(underflow(), bridgeError(BRIDGE_HANDOFF)),
+    starved(
+      bridgePcm({ event: 'recovery-gap-infeasible' }),
+      underflow(),
+      bridgeError(BRIDGE_HANDOFF)
+    ),
+    // A burst before the final guard.
+    starved(bridgeError('recovery final guard exceeded'), underflow()),
+    starved(visualRefusal('recovery-phase-expired'), underflow()),
+  ])
+    expect(naturalStarvation(trace)).toContain('frontier closed at frame 1000');
+});
+
+test('natural-starvation classifier refuses anything else', () => {
+  // No frontier close first: the run did not starve, or the fault came before the close.
+  expect(
+    naturalStarvation([underflow(), bridgeError(BRIDGE_HANDOFF)])
+  ).toBeNull();
+  expect(
+    naturalStarvation([
+      bridgeError(BRIDGE_HANDOFF),
+      bridgePcm({ event: 'gate-close', reason: 'frontier' }),
+    ])
+  ).toBeNull();
+  expect(
+    naturalStarvation([
+      bridgePcm({ event: 'gate-close', reason: 'abort' }),
+      underflow(),
+      bridgeError(BRIDGE_HANDOFF),
+    ])
+  ).toBeNull();
+  // A cancel alone is no refusal, and any other fault code or cancel reason is a different failure.
+  expect(naturalStarvation(starved(underflow()))).toBeNull();
+  expect(naturalStarvation(starved())).toBeNull();
+  expect(
+    naturalStarvation(
+      starved(
+        underflow(),
+        bridgePcm({
+          event: 'error',
+          stage: 'provider',
+          code: 'PCM provider failed',
+        })
+      )
+    )
+  ).toBeNull();
+  expect(
+    naturalStarvation(
+      starved(
+        underflow(),
+        bridgePcm({
+          event: 'error',
+          stage: 'schedule',
+          code: 'transport stop rejected: invalid stop',
+        })
+      )
+    )
+  ).toBeNull();
+  expect(
+    naturalStarvation(
+      starved(
+        bridgePcm({ event: 'cancel', reason: 'seek' }),
+        bridgeError(BRIDGE_HANDOFF)
+      )
+    )
+  ).toBeNull();
+  // The wrong stage for a code from the other table.
+  expect(
+    naturalStarvation(starved(visualRefusal(BRIDGE_HANDOFF), underflow()))
+  ).toBeNull();
+  // Anything the proof injected is its own control, not natural.
+  for (const injected of [
+    bridgePcm({ event: 'recovery-fault', code: 'recovery-delayed-staging' }),
+    { kind: 'recovery-overrun-injected', value: {} },
+    bridgeConsumed(),
+  ])
+    expect(
+      naturalStarvation(
+        starved(injected, underflow(), bridgeError(BRIDGE_HANDOFF))
+      )
+    ).toBeNull();
+  // The constructor of a plain record is no refusal code.
+  expect(
+    naturalStarvation(
+      starved(
+        underflow(),
+        bridgePcm({ event: 'error', stage: 'schedule', code: 'constructor' })
+      )
+    )
+  ).toBeNull();
 });

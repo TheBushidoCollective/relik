@@ -923,3 +923,74 @@ export function recoveryFrontierOvershoot(
 
   return `frontier ${boundary} overshot by ${overshoot} frames at the first recovery check: ${contextFrame} + ${GAP_GUARD_FRAMES} > gap upper ${gapUpper} at ${rate} Hz`;
 }
+
+const STARVATION_SCHEDULE_REFUSALS: Record<string, true> = {
+  [HANDOFF_REFUSAL]: true,
+  [CAUSAL_REFUSAL]: true,
+  [CLOCK_REFUSAL]: true,
+  'committed recovery frame is unavailable': true,
+  'recovery final guard exceeded': true,
+  'recovery final clock or visual guard failed': true,
+  'video recovery readiness timed out': true,
+  'video recovery phase expired': true,
+  'PCM recovery deadline expired': true,
+};
+const STARVATION_VISUAL_REFUSALS: Record<string, true> = {
+  'recovery-frame-unavailable': true,
+  'recovery-phase-expired': true,
+};
+
+// A capture whose audio frontier closed and whose recovery then refused, with nothing injected.
+// This is the viewer's designed, truthful outcome when the host cannot keep the 20 ms gap, and on
+// a loaded shared runner it happens to a healthy build. The signature: a frontier close, then
+// only faults from the recovery family (the underflow cancel, and errors from the refusals the
+// recovery makes), at least one of them an error, and no fault, overrun or hold injected by the
+// proof. Jason approved the general rerun on 2026-11-12: such a stage reruns in a fresh browser
+// at most three times, keeps each trace, and a stage that starves on every attempt still fails.
+// Returns the evidence, or null for anything else.
+export function naturalStarvation(
+  events: readonly TraceEntry[]
+): string | null {
+  const faults: number[] = [];
+  events.forEach((entry, index) => {
+    if (isPcm(entry, 'error') || isPcm(entry, 'cancel')) faults.push(index);
+  });
+  if (faults.length === 0) return null;
+  let errors = 0;
+  const shape: string[] = [];
+  for (const index of faults) {
+    const value = entryValue(events[index]);
+    if (value['event'] === 'cancel') {
+      if (value['reason'] !== 'underflow') return null;
+      shape.push('cancel underflow');
+      continue;
+    }
+    const code = String(value['code']);
+    const allowed =
+      value['stage'] === 'schedule'
+        ? STARVATION_SCHEDULE_REFUSALS[code] === true
+        : value['stage'] === 'visual' &&
+          STARVATION_VISUAL_REFUSALS[code] === true;
+    if (!allowed) return null;
+    errors++;
+    shape.push(`${String(value['stage'])}: ${code}`);
+  }
+  if (errors === 0) return null;
+  for (const entry of events)
+    if (
+      isPcm(entry, 'recovery-fault') ||
+      entry.kind === 'recovery-overrun-injected' ||
+      entry.kind === 'clock-site-hold-consumed'
+    )
+      return null;
+  let close = -1;
+  for (let i = faults[0]! - 1; i >= 0 && close < 0; i--)
+    if (
+      isPcm(events[i], 'gate-close') &&
+      entryValue(events[i])['reason'] === 'frontier'
+    )
+      close = i;
+  if (close < 0) return null;
+  const boundary = safeInt(entryValue(events[close])['contextStopFrame']);
+  return `frontier closed${boundary === null ? '' : ` at frame ${boundary}`}, then ${shape.join(', ')}`;
+}

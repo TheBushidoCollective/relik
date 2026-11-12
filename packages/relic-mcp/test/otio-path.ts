@@ -106,6 +106,7 @@ import {
   assertDescriptorBudgetRefusal,
   assertHeldReleaseBeforeSuccessor,
   assertShiftedBankRefusal,
+  naturalStarvation,
   recoveryFrontierOvershoot,
   siteBridgeCommitLeadAfterHold,
   siteBridgeFinalGuardAfterHold,
@@ -129,8 +130,9 @@ if (
 
 // The scheduled-audio stages alone take about 295 s on the Linux runner (run 43275442218: the
 // path started at 18:06:54 and reached the moving-window stage at 18:11:49), before the moving
-// window, the calibration and the composition tail. 900 s leaves the 25 minute job room.
-const RUN_BUDGET_MS = 900_000;
+// window, the calibration and the composition tail, and a stage that starves reruns up to three
+// times (rerunNaturalStarvation). 1200 s leaves the 45 minute job room.
+const RUN_BUDGET_MS = 1_200_000;
 const currentStep = 'startup';
 const cdpInFlight = new Map<number, string>();
 let cdpCallId = 0;
@@ -253,7 +255,58 @@ const REQUIRED = [
 const passed = new Set<string>();
 function pass(stage: (typeof REQUIRED)[number]): void {
   passed.add(stage);
+  lastCapturedTrace = null;
   console.log(`STAGE ${stage}`);
+}
+
+// The newest proof trace a page evaluation returned since the last stage passed. A stage that
+// fails is judged against its own trace only (rerunNaturalStarvation), never an earlier stage's.
+let lastCapturedTrace: MovingTrace['trace'] | null = null;
+function recordCapturedTrace(value: unknown): void {
+  if (typeof value !== 'object' || value === null) return;
+  const trace = (value as { trace?: unknown }).trace;
+  if (
+    typeof trace === 'object' &&
+    trace !== null &&
+    Array.isArray((trace as { events?: unknown }).events)
+  )
+    lastCapturedTrace = trace as MovingTrace['trace'];
+}
+
+// Jason approved on 2026-11-12: a scheduled-audio stage that fails with the natural-starvation
+// signature (naturalStarvation) reruns in a fresh browser, at most three times. Each refused
+// attempt keeps its trace. Every other failure is rethrown unchanged, and a stage that starves
+// on every attempt fails with the evidence of each.
+const NATURAL_STARVATION_RERUNS = 3;
+async function rerunNaturalStarvation(
+  label: string,
+  run: () => Promise<void>
+): Promise<void> {
+  const evidence: string[] = [];
+  for (let attempt = 1; ; attempt++) {
+    lastCapturedTrace = null;
+    try {
+      await run();
+      return;
+    } catch (error) {
+      const refused = lastCapturedTrace as MovingTrace['trace'] | null;
+      const found = refused === null ? null : naturalStarvation(refused.events);
+      if (refused === null || found === null) throw error;
+      evidence.push(found);
+      await writeFile(
+        join(shotDir, `${label}-natural-starvation-attempt${attempt}.json`),
+        JSON.stringify({ label, attempt, evidence: found, trace: refused })
+      );
+      if (attempt > NATURAL_STARVATION_RERUNS)
+        throw new Error(
+          `${label}: ${attempt}/${attempt} attempts starved: ${evidence.join(' | ')}`,
+          { cause: error }
+        );
+      console.log(
+        `OTIO_NATURAL_STARVATION label=${label} attempt=${attempt} ${found}`
+      );
+    }
+  }
 }
 
 const fakeNow = Date.now();
@@ -2499,6 +2552,7 @@ async function openBrowser(
           `page evaluation failed: ${exception?.exception?.description ?? exception?.text ?? JSON.stringify(res)}`
         );
         const inner = res['result'] as { value?: T } | undefined;
+        recordCapturedTrace(inner?.value);
         return inner?.value as T;
       },
       async mediaSeekTargets(): Promise<number[]> {
@@ -10294,79 +10348,6 @@ function describeContinuityFaults(
     });
 }
 
-// A cold capture whose audio lead ran out on a loaded runner, and whose recovery then could not
-// continue. The exact signature: the gate closed at its frontier with no fault injected, and the
-// faults that follow are one of two sequences, in order. Either the recovery had no frame for a
-// video source (the visual refusal, the underflow cancel, the schedule refusal), or the output
-// clock was already past the 20 ms recovery gap (the underflow cancel, the schedule refusal).
-// Returns the evidence, or null for anything else.
-function coldFrontierStarvation(
-  events: MovingTrace['trace']['events'],
-  playMs: number
-): string | null {
-  const faults = events.filter((entry) => {
-    if (entry.kind !== 'scheduled-pcm') return false;
-    const value = entry.value as Record<string, unknown>;
-    return (
-      value['event'] === 'error' ||
-      (value['event'] === 'cancel' && value['reason'] === 'underflow')
-    );
-  });
-  const shape = faults
-    .map((entry) => {
-      const value = entry.value as Record<string, unknown>;
-      return `${String(value['event'])}:${String(value['stage'] ?? '')}:${String(value['code'] ?? value['reason'])}`;
-    })
-    .join('|');
-  if (
-    shape !==
-      'error:visual:recovery-frame-unavailable|cancel::underflow|error:schedule:committed recovery frame is unavailable' &&
-    shape !==
-      'cancel::underflow|error:schedule:recovery render handoff has no feasible frame'
-  )
-    return null;
-  if (
-    events.some(
-      (entry) =>
-        entry.kind === 'scheduled-pcm' &&
-        (entry.value as Record<string, unknown>)['event'] === 'recovery-fault'
-    )
-  )
-    return null;
-  const closes = events.filter(
-    (entry) =>
-      entry.kind === 'scheduled-pcm' &&
-      (entry.value as Record<string, unknown>)['event'] === 'gate-close' &&
-      (entry.value as Record<string, unknown>)['reason'] === 'frontier' &&
-      entry.timestamp < faults[0]!.timestamp
-  );
-  const close = closes.at(-1);
-  if (!close) return null;
-  const extend = events
-    .filter(
-      (entry) =>
-        entry.kind === 'transport-command' &&
-        (entry.value as Record<string, unknown> | null)?.['type'] ===
-          'extend' &&
-        entry.timestamp < close.timestamp
-    )
-    .at(-1);
-  const last = extend?.value as
-    | { throughFrame: number; expectedThroughFrame: number }
-    | undefined;
-  return `frontier closed at ${Math.round(close.timestamp - playMs)} ms after play, last extension at ${
-    extend ? Math.round(extend.timestamp - playMs) : 'none'
-  } ms${last ? ` (+${last.throughFrame - last.expectedThroughFrame} frames)` : ''}, refusal at ${Math.round(faults[0]!.timestamp - playMs)} ms`;
-}
-
-class ColdFrontierStarvation extends Error {
-  constructor(
-    readonly evidence: string,
-    readonly trace: MovingTrace['trace']
-  ) {
-    super(`cold playback ran out of audio lead: ${evidence}`);
-  }
-}
 function assertPcmSequence(
   start: number,
   end: number,
@@ -17286,9 +17267,6 @@ async function runColdStartProof(
       !trace.bankOverflow,
       'bank marker records overflowed; a promotion record may be missing'
     );
-    const frontierStarvation = coldFrontierStarvation(trace.events, playMs);
-    if (frontierStarvation !== null)
-      throw new ColdFrontierStarvation(frontierStarvation, trace);
     const continuityFaults = describeContinuityFaults(trace.events, playMs);
     assert.equal(
       continuityFaults.length,
@@ -17691,42 +17669,7 @@ async function runScheduledPcmProof(
   );
   const coldUrl = await publishColdBoundaryDocument(rate);
   // Linux focus-only publish is asserted once, at the top of the composition stages.
-  // A cold capture can lose its audio lead on a loaded runner: the frontier closes with no
-  // extension in flight, and the recovery has no frame to continue on (CI run 43279024045, 1347
-  // ms after play) or finds the output clock past the 20 ms gap (run 43290221910, 44.1 kHz, 1083
-  // ms after play, 374 frames past the boundary). Only those exact signatures
-  // (coldFrontierStarvation) are rerun, in a fresh
-  // browser, at most three times, the same shape Jason approved on 2026-11-12 for the 44.1 kHz
-  // frontier overshoot. He has not approved this signature; it is reported as a judgement call.
-  // Every other failure is rethrown unchanged and each rerun keeps the refused trace.
-  const COLD_FRONTIER_RERUNS = 3;
-  for (let attempt = 1; ; attempt++) {
-    try {
-      await runColdStartProof(coldUrl, sessionToken, rate);
-      break;
-    } catch (error) {
-      if (!(error instanceof ColdFrontierStarvation)) throw error;
-      await writeFile(
-        join(
-          shotDir,
-          `scheduled-pcm-cold-start-${rate}-frontier-starvation-attempt${attempt}.json`
-        ),
-        JSON.stringify({
-          attempt,
-          evidence: error.evidence,
-          trace: error.trace,
-        })
-      );
-      if (attempt > COLD_FRONTIER_RERUNS)
-        throw new Error(
-          `cold start ${rate}: ${attempt}/${attempt} attempts ran out of audio lead (${error.evidence})`,
-          { cause: error }
-        );
-      console.log(
-        `OTIO_COLD_FRONTIER_STARVATION rate=${rate} attempt=${attempt} ${error.evidence}`
-      );
-    }
-  }
+  await runColdStartProof(coldUrl, sessionToken, rate);
   const browser = await openBrowser(url, sessionToken, {
     label: `scheduled-pcm-${rate}`,
     recordProofTrace: true,
@@ -21851,11 +21794,21 @@ try {
     throw new DecoderOnlyComplete();
   }
   await runNativeAudioCompatibilityProof(sessionToken);
-  await runScheduledPcmProof(sessionToken);
+  await rerunNaturalStarvation('scheduled-pcm-48000', () =>
+    runScheduledPcmProof(sessionToken)
+  );
   if (clockProofMode !== 'long')
-    await runScheduledPcmProof(sessionToken, 44100);
-  if (clockProofMode === '') await runSixtyFpsColdProof(sessionToken, 48000);
-  if (clockProofMode === '') await runRestartDuringStart(sessionToken, 48000);
+    await rerunNaturalStarvation('scheduled-pcm-44100', () =>
+      runScheduledPcmProof(sessionToken, 44100)
+    );
+  if (clockProofMode === '')
+    await rerunNaturalStarvation('sixty-fps-cold', () =>
+      runSixtyFpsColdProof(sessionToken, 48000)
+    );
+  if (clockProofMode === '')
+    await rerunNaturalStarvation('restart-during-start', () =>
+      runRestartDuringStart(sessionToken, 48000)
+    );
   if (clockProofMode === 'long') {
     console.log('OTIO_CLOCK_LONG_OK');
     throw new DecoderOnlyComplete();
@@ -21864,7 +21817,9 @@ try {
     console.log('OTIO_CLOCK_FOCUSED_OK');
     throw new DecoderOnlyComplete();
   }
-  await calibratePostGainTap(sessionToken);
+  await rerunNaturalStarvation('post-gain-tap-calibration', () =>
+    calibratePostGainTap(sessionToken)
+  );
 
   // The qualification, revision and state stages below exercise the live player, which
   // only a legacy archive reaches: a new publish of this fixture carries a program the
