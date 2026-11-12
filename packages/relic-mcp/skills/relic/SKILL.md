@@ -158,6 +158,37 @@ Two things to know before promising an update:
 
 A relic's lifetime is set at its first publish and carries across versions
 unchanged.
+
+## Private relics
+
+`relic_publish` with `private: true` makes a relic whose link carries no key.
+Nothing is opened by holding the link. The owner grants each person access
+one at a time, and the owner confirms each grant with a passkey in the browser.
+
+- **Set up once per machine.** Call `relic_enroll_device`. It returns a device
+  fingerprint and an approval URL. The owner opens the URL, types the device
+  fingerprint, approves, and then types the owner fingerprint the page shows
+  into `relic_confirm_device`. Until that succeeds, private publishing is
+  refused and nothing is uploaded.
+- **Publishing and republishing need no passkey tap.** This machine signs with
+  its certified device key. It wraps each version's key only to the owner, the
+  owner's certified devices, the recovery recipient, and grantees the owner
+  signed. Anything else is refused before a key is wrapped.
+- **No title, no cover, always expiring.** A private relic has neither a title
+  nor a cover, and its lifetime is always set: 30 days by default, 365 at most.
+  Passing a title or cover is refused before anything is sent.
+- **The link is not a key.** Its URL has no fragment. Tell the person that the
+  owner has to grant them access, because the link alone opens nothing.
+- **Comments and decisions work on a private relic** through the publish token.
+  Each comment is read and written with the key of the version it names, which
+  this machine holds or unwraps from its own device wrap. A comment whose
+  version it cannot open reads as unreadable, never as a guess.
+- **`relic_share` drafts an invitation and registers nothing.** The invitation
+  carries the keyless link. Each person asks for access on the page, and the
+  owner grants it. The draft never says the link opens the file.
+- **`relic_list` and `relic_show` include private relics.** Show reports the
+  current version, the expiry, the owner and the readers who can open it now.
+
 ## Sending a relic to people
 
 Call `relic_share` with the relic id and up to 20 email addresses:
