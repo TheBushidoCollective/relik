@@ -18,20 +18,30 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { encryptedSize } from '@relic/format';
 import {
+  canonicalJson,
   decodeBase64url,
   identityFingerprint,
   kemKeyIdOf,
+  parseStatement,
+  signStatement,
+  statementBytes,
 } from '@relic/format/private';
 import { createApp, type RelicApp } from '@relic/server/src/app.ts';
 import { MemoryStorage } from '@relic/server/src/storage.ts';
 import { MemoryStore } from '@relic/server/src/store.ts';
-import { confirmDevice, enrollDevice, loadDeviceEntry } from '../src/device.ts';
+import {
+  confirmDevice,
+  enrollDevice,
+  loadDeviceEntry,
+  sha256Hex,
+} from '../src/device.ts';
 import {
   type FileReader,
   type PublishDeps,
   PublishError,
+  publish,
 } from '../src/publish.ts';
-import { publishPrivate, republishPrivate } from '../src/private.ts';
+import { bindOwner, publishPrivate, republishPrivate } from '../src/private.ts';
 import { loadPrivatePublishState } from '../src/state.ts';
 import {
   DAY_MS,
@@ -40,6 +50,7 @@ import {
   makePerson,
   type Person,
   pinDevice,
+  signer,
   type TestDevice,
 } from './private-fixtures.ts';
 
@@ -138,29 +149,25 @@ function depsFor(bytes: Uint8Array = SOURCE): PublishDeps {
   };
 }
 
-/**
- * Seed a verified owner identity and a device that owner certified, into the
- * real app's store, then pin that owner on this machine. Keys and the
- * certificate are real, so the server verifies them for real.
- */
-async function seedOwnerAndDevice(): Promise<{
-  owner: Person;
-  device: TestDevice;
-}> {
-  const owner = await makePerson('owner@example.com');
-  const device = await makeDevice('relic-mcp on the test machine');
-  const kemKeyIdHex = async (kemPublicKey: string): Promise<string> =>
-    Array.from(await kemKeyIdOf(decodeBase64url(kemPublicKey)), (b) =>
-      b.toString(16).padStart(2, '0')
-    ).join('');
-  const store = app.store;
-  await store.createIdentity({
-    identityId: owner.identityId,
-    email: owner.email,
-    address: owner.email,
-    kemPublicKey: owner.kem,
-    sigPublicKey: owner.sig,
-    kemKeyId: await kemKeyIdHex(owner.kem),
+/** The key id the server stores for a KEM public key: SHA-256 of it, as lowercase hex. */
+async function kemKeyIdHex(kemPublicKey: string): Promise<string> {
+  return Array.from(await kemKeyIdOf(decodeBase64url(kemPublicKey)), (b) =>
+    b.toString(16).padStart(2, '0')
+  ).join('');
+}
+
+/** A verified identity in the real app's store, with its real keys. */
+async function storeIdentity(
+  person: Person,
+  recipientsEpoch = 0
+): Promise<void> {
+  const created = await app.store.createIdentity({
+    identityId: person.identityId,
+    email: person.email,
+    address: person.email,
+    kemPublicKey: person.kem,
+    sigPublicKey: person.sig,
+    kemKeyId: await kemKeyIdHex(person.kem),
     createdAt: now,
     registration: {
       statements: [],
@@ -175,14 +182,15 @@ async function seedOwnerAndDevice(): Promise<{
     },
     credentials: [],
     accessLogRetentionDays: 2190,
-    recipientsEpoch: 0,
+    recipientsEpoch,
   });
-  const cert = await makeCert({
-    owner,
-    device,
-    notAfter: now + 365 * DAY_MS,
-  });
-  await store.putDevice({
+  expect(created).toBe('created');
+}
+
+/** A device the owner certified, stored the way the server stores a certified device. */
+async function certifyDevice(owner: Person, device: TestDevice): Promise<void> {
+  const cert = await makeCert({ owner, device, notAfter: now + 365 * DAY_MS });
+  await app.store.putDevice({
     deviceId: device.deviceId,
     ownerIdentityId: owner.identityId,
     kemPublicKey: device.kem,
@@ -210,6 +218,75 @@ async function seedOwnerAndDevice(): Promise<{
       verifiedAt: now,
     },
   });
+}
+
+/** The owner's recipients epoch, changed the way a service would change it. */
+async function setEpoch(owner: Person, epoch: number): Promise<void> {
+  await app.store.updateIdentity(owner.identityId, (r) => ({
+    ...r,
+    recipientsEpoch: epoch,
+  }));
+}
+
+/**
+ * Designate a recovery identity. The owner signs the designation with the
+ * sig key, and the store holds it as the server stores a designation.
+ */
+async function designateRecovery(
+  owner: Person,
+  recovery: Person,
+  at: number
+): Promise<void> {
+  const statement = {
+    at,
+    fingerprint_typed: await identityFingerprint(
+      recovery.identityId,
+      recovery.email
+    ),
+    owner_identity_id: owner.identityId,
+    recovery_email: recovery.email,
+    recovery_identity_id: recovery.identityId,
+  };
+  const identitySignature = await signStatement(
+    signer(owner.keys.sig.privateKey),
+    statementBytes('recovery_designation', statement)
+  );
+  await app.store.updateIdentity(owner.identityId, (r) => ({
+    ...r,
+    recovery: {
+      recoveryIdentityId: recovery.identityId,
+      recoveryEmail: recovery.email,
+      designatedAt: at,
+      attestation: {
+        statements: [
+          { kind: 'recovery_designation', statement, identitySignature },
+        ],
+        nonce: 'nonce',
+        credential: {} as never,
+        credentialId: 'cred',
+        credentialPublicKeyJwk: { kty: 'EC' },
+        credentialAlg: -7,
+        rpId: 'relic.example',
+        origin: SERVICE,
+        verifiedAt: at,
+      },
+    },
+  }));
+}
+
+/**
+ * Seed a verified owner identity and a device that owner certified, into the
+ * real app's store, then pin that owner on this machine. Keys and the
+ * certificate are real, so the server verifies them for real.
+ */
+async function seedOwnerAndDevice(): Promise<{
+  owner: Person;
+  device: TestDevice;
+}> {
+  const owner = await makePerson('owner@example.com');
+  const device = await makeDevice('relic-mcp on the test machine');
+  await storeIdentity(owner);
+  await certifyDevice(owner, device);
   await pinDevice(SERVICE, owner, device);
   return { owner, device };
 }
@@ -329,5 +406,153 @@ describe('the publish path refuses before any upload', () => {
       publishPrivate({ path: SOURCE_PATH }, capabilityless)
     ).rejects.toMatchObject({ code: 'private_unsupported' });
     expect(bare.store.getRelic).toBeDefined();
+  });
+});
+
+describe('device requests carry the spec nonce (PS-08)', () => {
+  test('the device_request nonce is 32 bytes, and the statement the server parses is valid', async () => {
+    const { device } = await seedOwnerAndDevice();
+    await publishPrivate({ path: SOURCE_PATH }, depsFor());
+    const auth = requestBodies
+      .map((body) => JSON.parse(body) as Record<string, unknown>)
+      .map((body) => body['device_auth'] as Record<string, unknown> | undefined)
+      .find((candidate) => candidate?.['device_id'] === device.deviceId);
+    expect(auth).toBeDefined();
+    const nonce = String(auth?.['nonce']);
+    expect(decodeBase64url(nonce).length).toBe(32);
+    expect(() =>
+      parseStatement('device_request', {
+        at: auth?.['at'],
+        body_sha256: sha256Hex(canonicalJson({})),
+        device_id: device.deviceId,
+        method: 'POST',
+        nonce,
+        path: `/api/devices/${device.deviceId}/context`,
+      })
+    ).not.toThrow();
+  });
+});
+
+describe('the client refuses an older view of the owner than it has seen (PS-05)', () => {
+  test('an owner epoch the service rolls back is refused before anything is wrapped', async () => {
+    const { owner } = await seedOwnerAndDevice();
+    await setEpoch(owner, 2);
+    const first = await publishPrivate({ path: SOURCE_PATH }, depsFor());
+    await setEpoch(owner, 1);
+    await expect(
+      republishPrivate(
+        { relic_id: first.relic_id, path: SOURCE_PATH },
+        depsFor(EDITED)
+      )
+    ).rejects.toMatchObject({ code: 'recipients_stale' });
+    // The republish route allocates the next version before the recipients are
+    // checked. Nothing is sealed under it, so the sealed version holds.
+    expect((await app.store.getRelic(first.relic_id))?.sealedVersion).toBe(1);
+  });
+
+  test('a device the service stops reporting as revoked is refused on the next publish', async () => {
+    const { owner } = await seedOwnerAndDevice();
+    const second = await makeDevice('second machine');
+    await certifyDevice(owner, second);
+    const first = await publishPrivate({ path: SOURCE_PATH }, depsFor());
+    await app.store.updateDevice(second.deviceId, (d) => ({
+      ...d,
+      revokedAt: now,
+    }));
+    const revoked = await republishPrivate(
+      { relic_id: first.relic_id, path: SOURCE_PATH },
+      depsFor(EDITED)
+    );
+    expect(revoked.version).toBe(2);
+    await app.store.updateDevice(second.deviceId, (d) => ({
+      ...d,
+      revokedAt: undefined,
+    }));
+    await expect(
+      republishPrivate(
+        { relic_id: first.relic_id, path: SOURCE_PATH },
+        depsFor(SOURCE)
+      )
+    ).rejects.toMatchObject({ code: 'recipients_stale' });
+    expect((await app.store.getRelic(first.relic_id))?.sealedVersion).toBe(2);
+  });
+});
+
+describe('recovery designations against the real service (PS-05, PS-10)', () => {
+  test('a tap-free private publish wraps to the designated recovery identity', async () => {
+    const { owner } = await seedOwnerAndDevice();
+    const recovery = await makePerson('recovery@example.com');
+    await storeIdentity(recovery);
+    await designateRecovery(owner, recovery, now - 1000);
+    const result = await publishPrivate({ path: SOURCE_PATH }, depsFor());
+    expect(
+      result.recipients.filter((r) => r.kind === 'recovery').map((r) => r.email)
+    ).toEqual(['recovery@example.com']);
+  });
+
+  test('a republish refuses a designation the service replays from before the newest one', async () => {
+    const { owner } = await seedOwnerAndDevice();
+    const older = await makePerson('older@example.com');
+    const newer = await makePerson('newer@example.com');
+    await storeIdentity(older);
+    await storeIdentity(newer);
+    await designateRecovery(owner, older, now - 2000);
+    const first = await publishPrivate({ path: SOURCE_PATH }, depsFor());
+    await designateRecovery(owner, newer, now - 1000);
+    await republishPrivate(
+      { relic_id: first.relic_id, path: SOURCE_PATH },
+      depsFor(EDITED)
+    );
+    await designateRecovery(owner, older, now - 2000);
+    await expect(
+      republishPrivate(
+        { relic_id: first.relic_id, path: SOURCE_PATH },
+        depsFor(SOURCE)
+      )
+    ).rejects.toMatchObject({ code: 'recipients_stale' });
+    expect((await app.store.getRelic(first.relic_id))?.version).toBe(2);
+  });
+
+  test('a designation stays in force across a later device revocation', async () => {
+    // Plan 4.12: a device revocation deletes that device's wraps and leaves
+    // the designation in force. A designation older than a revocation is
+    // therefore the normal state, and must still publish.
+    const { owner } = await seedOwnerAndDevice();
+    const recovery = await makePerson('recovery@example.com');
+    await storeIdentity(recovery);
+    await designateRecovery(owner, recovery, now - 1000);
+    const second = await makeDevice('second machine');
+    await certifyDevice(owner, second);
+    const first = await publishPrivate({ path: SOURCE_PATH }, depsFor());
+    await app.store.updateDevice(second.deviceId, (d) => ({
+      ...d,
+      revokedAt: now,
+    }));
+    const next = await republishPrivate(
+      { relic_id: first.relic_id, path: SOURCE_PATH },
+      depsFor(EDITED)
+    );
+    expect(next.recipients.some((r) => r.kind === 'recovery')).toBe(true);
+  });
+});
+
+describe('relic_bind_owner against the real service (plan 4.7)', () => {
+  // Skipped until the owner route's success path lands on feat/private-shares--fixsrv.
+  // On this branch POST /api/relics/{id}/owner still answers its old always-refuse
+  // behaviour, so these cannot pass. Un-skip them after that branch merges.
+  test.skip('a public relic this machine published binds its owner', async () => {
+    const { owner } = await seedOwnerAndDevice();
+    const published = await publish({ path: SOURCE_PATH }, depsFor());
+    const bound = await bindOwner({ relic_id: published.relic_id }, depsFor());
+    expect(bound.owner.email).toBe(owner.email);
+  });
+
+  test.skip('a second owner bind for the same relic answers owner_exists', async () => {
+    await seedOwnerAndDevice();
+    const published = await publish({ path: SOURCE_PATH }, depsFor());
+    await bindOwner({ relic_id: published.relic_id }, depsFor());
+    await expect(
+      bindOwner({ relic_id: published.relic_id }, depsFor())
+    ).rejects.toMatchObject({ code: 'owner_exists' });
   });
 });
