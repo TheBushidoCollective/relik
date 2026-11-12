@@ -33,6 +33,7 @@ export const PRF_SALT: Uint8Array = utf8('relic/identity-prf/v1');
 
 const NUL = Uint8Array.of(0x00);
 const WRAP_LABEL = utf8('relic/wrap/v1');
+const KEY_COMMIT_LABEL = utf8('relic/key-commit/v1');
 const KEK_LABEL = utf8('relic/identity-kek/v1');
 const BUNDLE_LABEL = utf8('relic/identity-bundle/v1');
 const ATTEST_LABEL = utf8('relic-attest/v1');
@@ -145,6 +146,8 @@ export interface SealStatement {
   readonly access_epoch: number;
   readonly at: number;
   readonly ciphertext_sha256: string;
+  /** `keyCommitment` of the version key this seal covers (section 4.1). */
+  readonly key_commitment: string;
   readonly owner_epoch: number;
   readonly recipient_key_ids: readonly string[];
   readonly relic_id: string;
@@ -495,7 +498,7 @@ export async function wrapVersionKey(p: {
   key: Uint8Array;
 }): Promise<{ recipientKeyId: string; enc: string; ct: string }> {
   requireLength(p.key, 16, 'version key');
-  const info = wrapInfo(p.relicId, p.version);
+  const info = relicVersionInfo(WRAP_LABEL, p.relicId, p.version);
   const kemKeyId = await kemKeyIdOf(p.recipientPublicKey);
   const sealed = await hpkeSeal({
     recipientPublicKey: p.recipientPublicKey,
@@ -525,6 +528,41 @@ export async function unwrapVersionKey(p: {
   return openWrap(p).catch(() => {
     throw new WrapOpenError();
   });
+}
+
+/**
+ * The commitment a seal signs over its version key (section 4.1): lowercase
+ * hex of HKDF-SHA256 over the 16-byte key, empty salt, info
+ * `relic/key-commit/v1 || 0x00 || relic_id || u32be(version)`, 32 bytes.
+ * HPKE base mode does not authenticate the key it opens, so every opener
+ * compares this value with the signed seal before it uses the key.
+ */
+export async function keyCommitment(p: {
+  relicId: string;
+  version: number;
+  key: Uint8Array;
+}): Promise<string> {
+  requireLength(p.key, 16, 'version key');
+  const material = await crypto.subtle.importKey(
+    'raw',
+    bufferSource(p.key),
+    'HKDF',
+    false,
+    ['deriveBits']
+  );
+  const bits = await crypto.subtle.deriveBits(
+    {
+      name: 'HKDF',
+      hash: 'SHA-256',
+      salt: new Uint8Array(0),
+      info: bufferSource(
+        relicVersionInfo(KEY_COMMIT_LABEL, p.relicId, p.version)
+      ),
+    },
+    material,
+    256
+  );
+  return bytesToHex(new Uint8Array(bits));
 }
 
 /** One identity's key material. Generated extractable so it can be bundled; decrypted keys are not. */
@@ -899,6 +937,7 @@ const SPECS: { readonly [K in StatementKind]: Readonly<Record<string, Rule>> } =
       access_epoch: integer(0),
       at: AT,
       ciphertext_sha256: HEX_ID,
+      key_commitment: HEX_ID,
       owner_epoch: integer(0),
       recipient_key_ids: SORTED_HEX_IDS,
       relic_id: RELIC_ID,
@@ -976,7 +1015,11 @@ function keyPairId(
   return sha256(utf8(label), NUL, kemPub, sigPub).then(bytesToHex);
 }
 
-function wrapInfo(relicId: string, version: number): Uint8Array {
+function relicVersionInfo(
+  label: Uint8Array,
+  relicId: string,
+  version: number
+): Uint8Array {
   if (!RELIC_ID_RE.test(relicId)) {
     throw new RelicFormatError(
       'relic id must be 26 characters of the alphabet'
@@ -987,7 +1030,7 @@ function wrapInfo(relicId: string, version: number): Uint8Array {
   }
   const versionBytes = new Uint8Array(4);
   new DataView(versionBytes.buffer).setUint32(0, version);
-  return concat(WRAP_LABEL, NUL, utf8(relicId), versionBytes);
+  return concat(label, NUL, utf8(relicId), versionBytes);
 }
 
 async function openWrap(p: {
@@ -1006,7 +1049,7 @@ async function openWrap(p: {
   const key = await hpkeOpen({
     recipient: p.recipient,
     enc,
-    info: wrapInfo(p.relicId, p.version),
+    info: relicVersionInfo(WRAP_LABEL, p.relicId, p.version),
     aad,
     ct,
   });

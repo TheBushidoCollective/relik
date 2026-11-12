@@ -22,6 +22,7 @@ import {
   InvalidFingerprintError,
   InvalidStatementError,
   kemKeyIdOf,
+  keyCommitment,
   PRF_SALT,
   parseStatement,
   parseTypedFingerprint,
@@ -69,6 +70,8 @@ const KAT = {
   kekForPrfRange:
     '51de0f05ab295c8b47ec5af2b30929bf13cdf6fd2740cf8e5e0413692a3c9a08',
   prfSalt: '72656c69632f6964656e746974792d7072662f7631',
+  sealKeyCommitment:
+    '284ac7e9ffbc8bf9a4e76124732407e45825b5da96d7fdab71f1ce032ce2e34f',
 } as const;
 
 /** SHA-256 of each statement's bytes, computed by the same Python run. */
@@ -92,7 +95,7 @@ const STATEMENT_SHA256: { readonly [K in StatementKind]: string } = {
     '23d0e2a9ab65385995b9522857897a261a00fb45929a33676793292bd1f1a3d3',
   recovery_designation:
     '094223160307e232f85edc9e9412f34348b98ca60bd35a030b9f1c07cda8a894',
-  seal: 'd339360e202cc96dc56106c14057c2810d21c2dbaede84f98d05b12b887ed6e8',
+  seal: '837a98023c753cf5702ea63dc633f7477111f4415bb213bca19ed6952522e3eb',
   device_enroll:
     'e66d593656ac8ef83f8a165312b37e8d673b39990f53dbbd0edc19168f0cb631',
   device_request:
@@ -186,6 +189,7 @@ const SAMPLES: { readonly [K in StatementKind]: StatementMap[K] } = {
     at: 1767225600011,
     ciphertext_sha256:
       '305531dcc50ebca31cf1d5b31e9fc76ed51f66b3b6dd5a030c6539ae6532f979',
+    key_commitment: KAT.sealKeyCommitment,
     owner_epoch: 4,
     recipient_key_ids: [
       KAT.kemKeyId,
@@ -1079,5 +1083,55 @@ describe('generated identities', () => {
     expect(keys.identityId).toBe(
       await identityIdOf(keys.kemPublicKey, keys.sigPublicKey)
     );
+  });
+});
+describe('keyCommitment', () => {
+  const KEY = new Uint8Array(
+    Buffer.from('00112233445566778899aabbccddeeff', 'hex')
+  );
+
+  test('matches the independently computed known answer', async () => {
+    expect(await keyCommitment({ relicId: RELIC, version: 5, key: KEY })).toBe(
+      KAT.sealKeyCommitment
+    );
+  });
+
+  test('binds the relic, the version and the key: each change gives another commitment', async () => {
+    const base = await keyCommitment({ relicId: RELIC, version: 5, key: KEY });
+    const otherRelic = await keyCommitment({
+      relicId: '0'.repeat(26),
+      version: 5,
+      key: KEY,
+    });
+    const otherVersion = await keyCommitment({
+      relicId: RELIC,
+      version: 6,
+      key: KEY,
+    });
+    const otherKey = await keyCommitment({
+      relicId: RELIC,
+      version: 5,
+      key: KEY.map((byte, index) => (index === 0 ? byte ^ 1 : byte)),
+    });
+    expect(base).toMatch(/^[0-9a-f]{64}$/);
+    expect(new Set([base, otherRelic, otherVersion, otherKey]).size).toBe(4);
+  });
+
+  test('refuses a version key that is not 16 bytes', async () => {
+    await expect(
+      keyCommitment({ relicId: RELIC, version: 5, key: new Uint8Array(15) })
+    ).rejects.toBeInstanceOf(RelicFormatError);
+  });
+
+  test('a seal without a commitment, or with a malformed one, is refused', () => {
+    const missing = sampleOf('seal');
+    delete missing['key_commitment'];
+    expect(refusal('seal', missing)).toBe('missing_key');
+    expect(() =>
+      parseStatement('seal', {
+        ...sampleOf('seal'),
+        key_commitment: 'AB'.repeat(32),
+      })
+    ).toThrow(InvalidStatementError);
   });
 });

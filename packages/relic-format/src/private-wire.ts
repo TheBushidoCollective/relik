@@ -109,6 +109,11 @@ export interface BackfillWrapJSON extends WrapJSON {
   readonly relic_id: string;
 }
 
+/**
+ * The signed seal of one version. Its `key_commitment` (section 4.1) commits to
+ * the version key the wraps carry: an opener verifies the unwrapped key against
+ * it, and refuses a key that does not match, before the key is used.
+ */
 export interface SealJSON {
   readonly statement: Record<string, unknown>;
   readonly signature: string;
