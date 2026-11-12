@@ -4,6 +4,7 @@ import {
   assertHeldReleaseBeforeSuccessor,
   assertShiftedBankRefusal,
   recoveryFrontierOvershoot,
+  siteBridgeCommitLeadAfterHold,
   siteBridgeGapInfeasibleAfterHold,
 } from './otio-recovery-checks.ts';
 
@@ -699,6 +700,201 @@ test('site-bridge classifier refuses a candidate refused after the hold', () => 
     })
   );
   expect(siteBridgeGapInfeasibleAfterHold(candidate, BRIDGE_RATE)).toBeNull();
+});
+
+// Commit-lead classifier. Modelled on CI run 43181201646: the hold is consumed with the context
+// on the boundary, lasts until the sink stamps again, the selection takes boundary + 960, and
+// one 512-frame burst leaves a lead of 448 at the commit.
+const COMMIT_REFUSED = 'recovery final clock or visual guard failed';
+const COMMIT_STAMP = { contextTime: 10.003, performanceTime: 1009.9 };
+const commitTrace = (
+  patch: {
+    selection?: Record<string, unknown>;
+    commit?: Record<string, unknown>;
+    commitFrame?: number;
+    commitInjected?: boolean;
+    heldFrame?: number;
+    reread?: BridgeEntry[];
+    fresh?: BridgeEntry;
+    code?: string;
+    extra?: BridgeEntry[];
+  } = {}
+): BridgeEntry[] => {
+  const commitFrame = patch.commitFrame ?? boundary + 512;
+  return [
+    bridgeClosure(),
+    bridgeMarker(),
+    bridgeConsumed(),
+    bridgeRead(patch.heldFrame ?? boundary, true, BRIDGE_HELD),
+    ...(patch.reread ?? [
+      bridgeMarker(),
+      bridgeRead(boundary, true, BRIDGE_HELD),
+    ]),
+    bridgeMarker(),
+    patch.fresh ?? bridgeRead(boundary, false, BRIDGE_NATIVE),
+    bridgeUse(),
+    bridgePcm({
+      event: 'recovery-selection',
+      boundaryFrame: boundary,
+      f0: BRIDGE_GAP_UPPER,
+      feasibleUpper: BRIDGE_GAP_UPPER,
+      guardFrames: 512,
+      contextFrame: boundary,
+      ...patch.selection,
+    }),
+    ...(patch.extra ?? []),
+    bridgePcm({ event: 'clock-site', site: 'commit', phase: 'read' }),
+    bridgeRead(
+      commitFrame,
+      patch.commitInjected ?? false,
+      COMMIT_STAMP,
+      COMMIT_STAMP
+    ),
+    bridgePcm({
+      event: 'clock-commit-detail',
+      reason: 'observation-or-lead',
+      stamp: COMMIT_STAMP,
+      observation: {
+        status: 'calibrated',
+        reason: 'accepted',
+        offsetMin: 1,
+        offsetMax: 1.1,
+      },
+      readEnd: 1010,
+      deadline: 1300,
+      contextAfter: frameTime(commitFrame),
+      contextFrame: BRIDGE_GAP_UPPER,
+      guardFrames: 512,
+      remainingLeadFrames: BRIDGE_GAP_UPPER - commitFrame,
+      ...patch.commit,
+    }),
+    bridgeError(patch.code ?? COMMIT_REFUSED),
+  ];
+};
+
+test('commit-lead classifier names a hold released by the next stamp and one burst', () => {
+  const evidence = siteBridgeCommitLeadAfterHold(commitTrace(), BRIDGE_RATE);
+  expect(evidence).toContain('one burst of 512 frames left a lead of 448');
+  expect(
+    siteBridgeGapInfeasibleAfterHold(commitTrace(), BRIDGE_RATE)
+  ).toBeNull();
+});
+
+test('commit-lead classifier refuses a late commit, a kept lead, or an earlier selection', () => {
+  // Two bursts: the viewer was late, not held.
+  expect(
+    siteBridgeCommitLeadAfterHold(
+      commitTrace({ commitFrame: boundary + 768 }),
+      BRIDGE_RATE
+    )
+  ).toBeNull();
+  // The lead still met the guard, so the lead was not what failed.
+  expect(
+    siteBridgeCommitLeadAfterHold(
+      commitTrace({ commitFrame: boundary + 384 }),
+      BRIDGE_RATE
+    )
+  ).toBeNull();
+  // The context did not move between the selection and the commit.
+  expect(
+    siteBridgeCommitLeadAfterHold(
+      commitTrace({
+        commitFrame: boundary,
+        commit: { remainingLeadFrames: 960 },
+      }),
+      BRIDGE_RATE
+    )
+  ).toBeNull();
+  for (const selection of [
+    { f0: BRIDGE_GAP_UPPER - 1 },
+    { feasibleUpper: BRIDGE_GAP_UPPER + 64 },
+    { boundaryFrame: boundary + 128 },
+    { guardFrames: 256 },
+    { contextFrame: boundary + 512 },
+  ])
+    expect(
+      siteBridgeCommitLeadAfterHold(commitTrace({ selection }), BRIDGE_RATE)
+    ).toBeNull();
+});
+
+test('commit-lead classifier refuses a hold that did not last until the next stamp', () => {
+  // A native bridge read before the fresh one: the viewer, not the hold, waited.
+  expect(
+    siteBridgeCommitLeadAfterHold(
+      commitTrace({
+        reread: [bridgeMarker(), bridgeRead(boundary, false, BRIDGE_NATIVE)],
+      }),
+      BRIDGE_RATE
+    )
+  ).toBeNull();
+  // The read that ended the hold carried no newer stamp.
+  expect(
+    siteBridgeCommitLeadAfterHold(
+      commitTrace({
+        fresh: bridgeRead(boundary, false, BRIDGE_ANCHOR, BRIDGE_ANCHOR),
+      }),
+      BRIDGE_RATE
+    )
+  ).toBeNull();
+  // The read that ended the hold was itself injected.
+  expect(
+    siteBridgeCommitLeadAfterHold(
+      commitTrace({ fresh: bridgeRead(boundary, true, BRIDGE_HELD) }),
+      BRIDGE_RATE
+    )
+  ).toBeNull();
+  // The hold was already infeasible when it was consumed.
+  expect(
+    siteBridgeCommitLeadAfterHold(
+      commitTrace({ heldFrame: boundary + 600 }),
+      BRIDGE_RATE
+    )
+  ).toBeNull();
+});
+
+test('commit-lead classifier refuses a commit that failed for another reason', () => {
+  for (const commit of [
+    { reason: 'mapping' },
+    { observation: { status: 'interrupted', reason: 'future' } },
+    { observation: { status: 'calibrated', reason: 'duplicate' } },
+    { readEnd: 1301 },
+    { contextFrame: BRIDGE_GAP_UPPER - 128 },
+    { remainingLeadFrames: 449 },
+    { stamp: null },
+  ])
+    expect(
+      siteBridgeCommitLeadAfterHold(commitTrace({ commit }), BRIDGE_RATE)
+    ).toBeNull();
+  expect(
+    siteBridgeCommitLeadAfterHold(
+      commitTrace({ commitInjected: true }),
+      BRIDGE_RATE
+    )
+  ).toBeNull();
+  expect(
+    siteBridgeCommitLeadAfterHold(
+      commitTrace({ code: BRIDGE_HANDOFF }),
+      BRIDGE_RATE
+    )
+  ).toBeNull();
+  for (const extra of [
+    bridgePcm({ event: 'recovery-candidate-failed' }),
+    bridgePcm({ event: 'recovery-fault', code: 'recovery-phase-mismatch' }),
+    bridgePcm({ event: 'recovery-clock-observation-rejected' }),
+    bridgePcm({ event: 'recovery-selection', boundaryFrame: boundary }),
+  ])
+    expect(
+      siteBridgeCommitLeadAfterHold(
+        commitTrace({ extra: [extra] }),
+        BRIDGE_RATE
+      )
+    ).toBeNull();
+  expect(
+    siteBridgeCommitLeadAfterHold(
+      [...commitTrace(), bridgeError(COMMIT_REFUSED)],
+      BRIDGE_RATE
+    )
+  ).toBeNull();
 });
 
 // Frontier-overshoot classifier. The boundary and the last read are the recorded 44.1 kHz refusal

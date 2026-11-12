@@ -106,6 +106,7 @@ import {
   assertHeldReleaseBeforeSuccessor,
   assertShiftedBankRefusal,
   recoveryFrontierOvershoot,
+  siteBridgeCommitLeadAfterHold,
   siteBridgeGapInfeasibleAfterHold,
 } from './otio-recovery-checks.ts';
 
@@ -21143,13 +21144,19 @@ async function runScheduledPcmProof(
     // raw-stamp substitution makes the consumed stamp the held read, which the audit fails as used-held-read.
     // The recovery control starves PCM so the gate closes at its prepared frontier, releases held pulls only
     // after the selection, and never uses the video-withholding fault: readiness refuses within the 20 ms gap
-    // before any poll could lift that fault. Only the exact gap-infeasible signature is rerun, in a fresh
-    // browser, at most three times. Every other outcome fails.
-    const captureSiteControl = async (control: {
-      label: string;
-      site: string;
-      recovery: boolean;
-    }) => {
+    // before any poll could lift that fault. The hold lasts until the sink stamps again, which on a
+    // 10 ms sink comes with a render burst, so the hold can spend the gap in two ways: the fresh read
+    // is already past it, or the burst lands between the selection and the commit. Only those two
+    // exact signatures are rerun, in a fresh browser that starves one PCM batch later, and the control
+    // gets three attempts in all. Every other outcome fails.
+    const captureSiteControl = async (
+      control: {
+        label: string;
+        site: string;
+        recovery: boolean;
+      },
+      starveMs: number
+    ) => {
       const isolated = await openBrowser(url, sessionToken, {
         label: control.label,
         recordProofTrace: true,
@@ -21172,7 +21179,7 @@ async function runScheduledPcmProof(
           const armed = globalThis.__otioProofTrace.setSiteClockHold({site: ${JSON.stringify(control.site)}, deltaUs: 86});
           const playEdge = globalThis.__otioProofTrace.playRequest();
           button.click();
-          await sleep(${control.recovery ? 600 : 500});
+          await sleep(${control.recovery ? starveMs : 500});
           if (recovery) {
             globalThis.__otioProofTrace.holdPcmResponses(true);
             globalThis.__otioProofTrace.releasePcmResponsesOn('recovery-selection');
@@ -21201,14 +21208,18 @@ async function runScheduledPcmProof(
     ] as const) {
       const attempts = control.recovery ? 3 : 1;
       for (let attempt = 1; attempt <= attempts; attempt++) {
-        const { provenance, fault } = await captureSiteControl(control);
+        const { provenance, fault } = await captureSiteControl(
+          control,
+          starveAfterMs(attempt)
+        );
         const events = fault.trace.events;
         assert.ok(
           !fault.trace.audioOverflow && !fault.trace.eventsOverflow,
           `${control.label} capture overflowed`
         );
         const evidence = control.recovery
-          ? siteBridgeGapInfeasibleAfterHold(events, rate)
+          ? (siteBridgeGapInfeasibleAfterHold(events, rate) ??
+            siteBridgeCommitLeadAfterHold(events, rate))
           : null;
         if (evidence !== null) {
           // The receipt keeps this attempt's audit. The verdict is the classified signature.

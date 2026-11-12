@@ -500,6 +500,175 @@ function safeInt(value: unknown): number | null {
     : null;
 }
 
+const COMMIT_REFUSAL = 'recovery final clock or visual guard failed';
+
+// The same one-shot recovery-bridge hold, refused one step later. The hold holds every read of
+// its performanceTime, so it ends only when the sink stamps again, and on a 10 ms sink that
+// stamp comes with the next render burst. The fresh read is still feasible and the selection
+// takes the last frame the 20 ms gap allows, but the burst lands before the commit read and
+// the lead falls under the guard (run 43181201646: lead 960 at selection, 448 at commit). The
+// hold is blamed only when it was feasible as consumed, every bridge read until the stamp
+// advanced was injected, the selection had no later frame to take, the commit clock was
+// accepted, the lead is the only failing clause, and the context moved by one burst at most
+// between the selection and the commit. Every clause must hold or the classifier returns null.
+export function siteBridgeCommitLeadAfterHold(
+  events: readonly TraceEntry[],
+  rate: number
+): string | null {
+  if (!Number.isFinite(rate) || rate <= 0) return null;
+
+  const errorAt: number[] = [];
+  events.forEach((entry, index) => {
+    if (isPcm(entry, 'error')) errorAt.push(index);
+  });
+  if (errorAt.length !== 1) return null;
+  const terminal = errorAt[0]!;
+  const failure = entryValue(events[terminal]);
+  if (failure['code'] !== COMMIT_REFUSAL || failure['stage'] !== 'schedule')
+    return null;
+
+  // The hold: consumed once, on a bridge read that names the anchor, as an injected re-read.
+  const consumptions: number[] = [];
+  events.forEach((entry, index) => {
+    if (
+      entry.kind === 'clock-site-hold-consumed' &&
+      entryValue(entry)['site'] === RECOVERY_BRIDGE_SITE
+    )
+      consumptions.push(index);
+  });
+  if (consumptions.length !== 1) return null;
+  const at = consumptions[0]!;
+  if (at >= terminal) return null;
+  const consumed = entryValue(events[at]);
+  const held = stampOf(consumed);
+  const anchor = stampOf(consumed['anchor']);
+  if (held === null || anchor === null) return null;
+  if (
+    !isBridgeMarker(events[at - 1], 'read') ||
+    !sameStamp(stampOf(entryValue(events[at - 1])['lastAccepted']), anchor)
+  )
+    return null;
+  const consumedRead = events[at + 1];
+  if (!isObservedRead(consumedRead)) return null;
+  const consumedValue = entryValue(consumedRead);
+  if (
+    consumedValue['injected'] !== true ||
+    consumedValue['site'] !== RECOVERY_BRIDGE_SITE ||
+    !sameStamp(stampOf(consumedValue['output']), held) ||
+    !sameStamp(stampOf(consumedValue['native']), anchor)
+  )
+    return null;
+
+  // The gap, from the last closure before the consumption. The held read was still feasible.
+  let closure = -1;
+  for (let i = at - 1; i >= 0 && closure < 0; i--)
+    if (isPcm(events[i], 'recovery-render-closed')) closure = i;
+  if (closure < 0) return null;
+  const boundary = safeInt(entryValue(events[closure])['boundaryFrame']);
+  if (boundary === null) return null;
+  const gapUpper = boundary + Math.floor(0.02 * rate);
+  const heldFrame = readFrame(consumedRead, rate);
+  if (heldFrame === null || heldFrame + GAP_GUARD_FRAMES > gapUpper)
+    return null;
+
+  // One selection, after the hold, at the last frame the gap allows.
+  const selections: number[] = [];
+  events.forEach((entry, index) => {
+    if (isPcm(entry, 'recovery-selection')) selections.push(index);
+  });
+  if (selections.length !== 1) return null;
+  const selectedAt = selections[0]!;
+  if (selectedAt <= at || selectedAt >= terminal) return null;
+  const selection = entryValue(events[selectedAt]);
+  const selectionFrame = safeInt(selection['contextFrame']);
+  if (
+    selection['boundaryFrame'] !== boundary ||
+    selection['f0'] !== gapUpper ||
+    selection['feasibleUpper'] !== gapUpper ||
+    selection['guardFrames'] !== GAP_GUARD_FRAMES ||
+    selectionFrame === null ||
+    selectionFrame + GAP_GUARD_FRAMES > gapUpper
+  )
+    return null;
+
+  // Every bridge read from the hold to the selection was injected, except the last. That one is
+  // native, carries a stamp past the anchor, and is the stamp the bridge used.
+  const bridgeReads: number[] = [];
+  for (let i = at + 1; i < selectedAt; i++)
+    if (isObservedRead(events[i]) && isBridgeMarker(events[i - 1], 'read'))
+      bridgeReads.push(i);
+  const freshAt = bridgeReads.pop();
+  if (freshAt === undefined) return null;
+  for (const index of bridgeReads)
+    if (entryValue(events[index])['injected'] !== true) return null;
+  const fresh = entryValue(events[freshAt]);
+  const freshStamp = stampOf(fresh['native']);
+  if (
+    fresh['injected'] !== false ||
+    freshStamp === null ||
+    freshStamp.performanceTime <= anchor.performanceTime
+  )
+    return null;
+  let used: Stamp | null = null;
+  for (let i = freshAt + 1; i < selectedAt; i++)
+    if (isBridgeMarker(events[i], 'use'))
+      used = stampOf(entryValue(events[i])['usedStamp']);
+  if (!sameStamp(used, freshStamp)) return null;
+
+  // One commit refusal, on an accepted native read inside its deadline, for the lead alone.
+  const commits: number[] = [];
+  events.forEach((entry, index) => {
+    if (isPcm(entry, 'clock-commit-detail')) commits.push(index);
+  });
+  if (commits.length !== 1) return null;
+  const commitAt = commits[0]!;
+  if (commitAt <= selectedAt || commitAt >= terminal) return null;
+  const commit = entryValue(events[commitAt]);
+  const observation = (commit['observation'] ?? {}) as Record<string, unknown>;
+  const commitFrame = ceilFrame(commit['contextAfter'], rate);
+  const readEnd = commit['readEnd'];
+  const deadline = commit['deadline'];
+  if (
+    commit['reason'] !== 'observation-or-lead' ||
+    observation['status'] !== 'calibrated' ||
+    observation['reason'] !== 'accepted' ||
+    typeof observation['offsetMin'] !== 'number' ||
+    typeof observation['offsetMax'] !== 'number' ||
+    stampOf(commit['stamp']) === null ||
+    typeof readEnd !== 'number' ||
+    typeof deadline !== 'number' ||
+    readEnd > deadline ||
+    commit['contextFrame'] !== gapUpper ||
+    commit['guardFrames'] !== GAP_GUARD_FRAMES ||
+    commitFrame === null ||
+    commit['remainingLeadFrames'] !== gapUpper - commitFrame ||
+    gapUpper - commitFrame >= GAP_GUARD_FRAMES
+  )
+    return null;
+  const commitRead = events[commitAt - 1];
+  if (
+    !isObservedRead(commitRead) ||
+    entryValue(commitRead)['injected'] !== false
+  )
+    return null;
+
+  // One burst at most between the selection and the commit. Two bursts move at least 768 frames.
+  const moved = commitFrame - selectionFrame;
+  if (moved <= 0 || moved > GAP_GUARD_FRAMES) return null;
+
+  // Nothing else was refused or injected after the hold.
+  for (let i = at + 1; i < terminal; i++)
+    if (
+      isPcm(events[i], 'recovery-candidate-failed') ||
+      isPcm(events[i], 'recovery-fault') ||
+      isPcm(events[i], 'recovery-clock-observation-rejected') ||
+      events[i]?.kind === 'recovery-overrun-injected'
+    )
+      return null;
+
+  return `${RECOVERY_BRIDGE_SITE} hold consumed at frame ${heldFrame}, released by the next stamp; selection at frame ${selectionFrame} took ${gapUpper} (boundary ${boundary}); one burst of ${moved} frames left a lead of ${gapUpper - commitFrame} under the guard at the commit`;
+}
+
 // A starved run closes at its frontier inside a render burst. A sink that renders 384 or 512
 // frames per callback can leave currentTime up to 384 frames past the frontier before the main
 // thread hears of the closure. When that overshoot plus the guard passes the 20 ms gap, the
