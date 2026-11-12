@@ -1077,11 +1077,13 @@ async function openFetchedKey(
     'seal',
     expectRecord(sealBody['statement'], 'seal statement')
   );
+  // The seal must cover this relic and version and be signed by the signer.
+  // It need not list this device: a grant made after the seal writes its
+  // wrap without re-sealing, so the wrap below is what names the recipient.
   const covered =
     statement.relic_id === relicId &&
     statement.version === version &&
-    statement.signer_id === signerId &&
-    statement.recipient_key_ids.includes(keyId);
+    statement.signer_id === signerId;
   const signed = await verifyStatement(
     verifier,
     statementBytes('seal', statement),
@@ -1096,6 +1098,13 @@ async function openFetchedKey(
   }
 
   const wrap = expectRecord(body['wrap'], 'wrap');
+  if (wrap['recipient_key_id'] !== keyId) {
+    throw new PublishError(
+      'wrap_unopenable',
+      `the wrapped key for version ${version} is not addressed to this device`,
+      { relic_id: relicId, version }
+    );
+  }
   try {
     return await unwrapVersionKey({
       recipient: session.signer.recipient,

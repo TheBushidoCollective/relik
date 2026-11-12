@@ -61,9 +61,9 @@ import {
   type UnlockedIdentity,
 } from './keys.ts';
 import { privateKeysOf } from './ops.ts';
+import { shellRoot } from '../shell-root.ts';
 
 export interface PrivateReaderMount {
-  readonly root: HTMLElement;
   readonly relicId: string;
   readonly usercontentOrigin: string;
   readonly deps: ViewerDeps;
@@ -341,7 +341,7 @@ class PrivateReader {
   }
 
   async start(): Promise<void> {
-    this.mount.root.replaceChildren(this.host);
+    shellRoot().replaceChildren(this.host);
     this.wire();
     await this.route();
   }
@@ -739,7 +739,7 @@ class PrivateReader {
       this.mount.usercontentOrigin,
       this.mount.deps
     );
-    this.mount.root.prepend(this.strip(pinnedOwnerFor(this.mount.relicId)));
+    shellRoot().prepend(this.strip(pinnedOwnerFor(this.mount.relicId)));
     void this.attachOwnerControls();
   }
 
@@ -788,7 +788,7 @@ class PrivateReader {
     this.panelHost?.remove();
     const host = document.createElement('div');
     host.id = 'access-panel-host';
-    this.mount.root.append(host);
+    shellRoot().append(host);
     this.panelHost = host;
     return host;
   }
@@ -809,7 +809,7 @@ class PrivateReader {
   /** The owner's Access control on the relic's bar, with the pending count. */
   private async attachOwnerControls(): Promise<void> {
     if (this.access?.role !== 'owner') return;
-    const bar = this.mount.root.querySelector<HTMLElement>('.bar');
+    const bar = shellRoot().querySelector<HTMLElement>('.bar');
     if (bar === null) return;
     this.attachPanelHost();
     const count = document.createElement('span');
@@ -976,15 +976,12 @@ export async function mountPrivateReader(
  * signed-in visitor gets the sections, with the device approval for
  * `?approve-device=` when the link carries one.
  */
-export async function mountPrivateDashboard(
-  root: HTMLElement,
-  deps: ViewerDeps
-): Promise<void> {
+export async function mountPrivateDashboard(deps: ViewerDeps): Promise<void> {
   const session = await readSession(deps);
   if (session.kind !== 'verified') return;
   const host = document.createElement('section');
   host.id = 'private-dashboard';
-  root.append(host);
+  shellRoot().append(host);
   const approve = new URL(deps.locationHref).searchParams.get('approve-device');
   renderPrivateDashboard(host, {
     deps,
