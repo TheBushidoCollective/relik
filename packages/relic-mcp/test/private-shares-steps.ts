@@ -116,14 +116,14 @@ const RELIC_NOTICE_SUBJECTS: readonly string[] = [
   'Activity on a relic',
 ];
 
-/** D1: renderDashboard detaches the shell root, so the private dashboard sections never show. */
-export const DEFECT_DASHBOARD_DETACHED = 'D1_dashboard_root_detached';
-/** D2: renderReady detaches the shell root, so the private strip and the owner's access control never show. */
-export const DEFECT_READY_DETACHED = 'D2_ready_view_root_detached';
-/** D3: a grant of a version sealed before the grant cannot be opened, because the seal does not list the grantee. */
+/** D1: the private identity section is missing from the dashboard after it renders. */
+export const DEFECT_DASHBOARD_DETACHED = 'D1_dashboard_identity_missing';
+/** D2: the private strip is missing from the ready view after unlock. */
+export const DEFECT_READY_DETACHED = 'D2_ready_strip_missing';
+/** D3: a reader granted after a version was sealed cannot open that version. */
 export const DEFECT_GRANT_UNOPENABLE =
   'D3_granted_reader_cannot_open_sealed_version';
-/** D4: after a revocation republishes, the owner's viewer cannot open the new version (an unclassified failure). */
+/** D4: after a revocation republishes, the owner cannot open the new version. */
 export const DEFECT_REPUBLISHED_UNOPENABLE =
   'D4_owner_cannot_open_republished_version';
 /* -------------------------------------------------------------------------- */
@@ -1103,7 +1103,7 @@ async function checkReadyStrip(
   if (!present) {
     env.defect(
       DEFECT_READY_DETACHED,
-      'the private strip and the owner access control never reach the page: renderReady calls document.body.replaceChildren (relic-viewer/src/main.ts:9301), which detaches #relic-root before mountReady prepends the strip to it (relic-viewer/src/private/reader.ts:712)'
+      'the private strip is missing from the ready view after unlock; the reader mounted it into a root the render had replaced'
     );
   }
 }
@@ -1200,24 +1200,27 @@ async function stepsOneToThree(
     env.owner
   );
   await goto(owner.browser, `${env.serviceOrigin}/dashboard`);
+  // The identity section is added after the session and identity state load,
+  // which is after the shell's "Dashboard" heading is already on screen. A
+  // single sample taken at the heading raced those loads, so this polls for
+  // the section and records the defect only if it never arrives.
   const dashboardShowsIdentity = await poll(
-    'the dashboard shell',
+    'the dashboard identity section',
     25000,
     async () => {
-      const ready = await owner.browser.evaluate<boolean>(
-        `document.body.innerText.includes('Dashboard')`
+      const shown = await owner.browser.evaluate<boolean>(
+        `document.querySelector('[data-fingerprint="identity"]') !== null`
       );
-      return ready ? true : undefined;
+      return shown ? true : undefined;
     }
-  ).then(async () =>
-    owner.browser.evaluate<boolean>(
-      `document.querySelector('[data-fingerprint="identity"]') !== null`
-    )
+  ).then(
+    () => true,
+    () => false
   );
   if (!dashboardShowsIdentity) {
     env.defect(
       DEFECT_DASHBOARD_DETACHED,
-      'the private-share sections never reach the page: renderDashboard calls document.body.replaceChildren(bar) (relic-viewer/src/main.ts:10081), which detaches #relic-root before mountPrivateDashboard appends to it (relic-viewer/src/private/reader.ts:957)'
+      'the private identity section did not appear on the dashboard within 25 seconds of the dashboard rendering'
     );
   }
   env.receipt(
@@ -1548,7 +1551,7 @@ async function stepSeven(
     (error: unknown) => {
       env.defect(
         DEFECT_GRANT_UNOPENABLE,
-        `a granted reader cannot open a version that was sealed before the grant: the grant wrap is stored (store: version 1 has a grant wrap for the reader key id), but the viewer requires the reader key id in the seal's recipient_key_ids (relic-viewer/src/private/open.ts:362-366), and the grant route writes the wrap without re-sealing (relic-server/src/private/relic.ts grantAccess). ${error instanceof Error ? error.message : String(error)}`
+        `a reader granted after the version was sealed cannot open it: the viewer refused the version. ${error instanceof Error ? error.message : String(error)}`
       );
       return false;
     }
@@ -1652,7 +1655,7 @@ async function stepEight(
     (error: unknown) => {
       env.defect(
         DEFECT_REPUBLISHED_UNOPENABLE,
-        `the owner cannot open the version the revocation republished (version ${version}): the viewer shows the generic failure (relic-viewer/src/private/reader.ts:897). The service answers the key route with a wrap and the seal names the owner, and the mint and the download agree on length. ${error instanceof Error ? error.message : String(error)}`
+        `the owner cannot open the version the revocation republished (version ${version}): the viewer could not open it. ${error instanceof Error ? error.message : String(error)}`
       );
       return false;
     }
