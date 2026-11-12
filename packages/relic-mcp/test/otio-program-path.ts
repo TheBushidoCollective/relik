@@ -50,6 +50,8 @@ import { compareSyntheticCanvases } from './otio-program-canvas-proof.ts';
 import { runPrimerProof } from './otio-program-primer-controls.ts';
 import { buildDeviceProbe } from './otio-program-device-state.ts';
 import { runAudioArm } from './otio-program-audio-arm.ts';
+import { captureProgramAudio } from './otio-program-audio-capture.ts';
+import { gateCapture } from './otio-program-audio-join.ts';
 import { discoverChrome } from '../src/cover/chrome.ts';
 import {
   alignAudio,
@@ -89,7 +91,6 @@ import {
   PROGRAM,
 } from './otio-program-reference.ts';
 import {
-  captureElementAudio,
   openViewer,
   type ViewerPage,
   VIEWER_CONTRACT,
@@ -887,36 +888,43 @@ try {
       );
       return value === 'program' ? value : undefined;
     });
-    const captured = await captureElementAudio(audioPage, 6.5);
-    assert.equal(
-      captured.rate,
-      PROGRAM.audioRate,
-      `capture context rate ${captured.rate}`
+    const record = await captureProgramAudio(audioPage, {
+      seconds: 6.5,
+      beforePlay: async (page: ViewerPage) => {
+        await page.evaluate(
+          `(async () => { await window.${VIEWER_CONTRACT.hook}.seek(0); })()`
+        );
+      },
+    });
+    const gate = gateCapture(record, {
+      reference: {
+        left: Float32Array.from(expectedAudio()),
+        right: Float32Array.from(expectedAudio()),
+      },
+      label: 'viewer-audio-captured',
+    });
+    assert.deepEqual(
+      gate.failures,
+      [],
+      'viewer-audio-captured capture failures'
     );
-    const expected = expectedAudio();
-    for (const [name, channel] of [
-      ['left', Float32Array.from(captured.left)],
-      ['right', Float32Array.from(captured.right)],
+    assert.ok(gate.evidence, 'viewer-audio-captured: no gated span');
+    for (const [name, evidence] of [
+      ['left', gate.evidence.left],
+      ['right', gate.evidence.right],
     ] as const) {
-      const alignment = alignAudio(channel, expected, 960);
-      measured[`captured_${name}_lag_samples`] = alignment.lagSamples;
-      measured[`captured_${name}_snr_db`] = Number(alignment.snrDb.toFixed(2));
+      measured[`captured_${name}_lag_samples`] = evidence.lagSamples;
+      measured[`captured_${name}_snr_db`] = Number(evidence.snrDb.toFixed(2));
       assert.ok(
-        Math.abs(alignment.lagSamples) <= 960,
-        `captured ${name} start offset ${alignment.lagSamples} samples > 20 ms`
+        Math.abs(evidence.lagSamples) <= 960,
+        `captured ${name} start offset ${evidence.lagSamples} samples > 20 ms`
       );
       assert.ok(
-        alignment.snrDb >= AUDIO_MIN_SNR_DB,
-        `captured ${name} SNR ${alignment.snrDb.toFixed(1)} dB`
+        evidence.snrDb >= AUDIO_MIN_SNR_DB,
+        `captured ${name} SNR ${evidence.snrDb.toFixed(1)} dB`
       );
       assert.deepEqual(
-        findAudioFaults(
-          channel,
-          expected,
-          PROGRAM.audioRate,
-          alignment.lagSamples,
-          [48000, 144000, 216000, 240000]
-        ),
+        evidence.windowFaults,
         [],
         `captured ${name} audio faults`
       );

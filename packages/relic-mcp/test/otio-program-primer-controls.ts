@@ -260,7 +260,7 @@ interface Frame {
   readonly presentedFrames: number | null;
 }
 
-interface PointerObservation {
+export interface PointerObservation {
   readonly pointerAt: number;
   /** The program's currentTime read inside the trusted pointerdown: the resting frame. */
   readonly restCurrentTime?: number | null;
@@ -504,7 +504,7 @@ function rotate<T>(items: readonly T[], round: number): T[] {
   return [...items.slice(shift), ...items.slice(0, shift)];
 }
 
-async function armPointer(
+export async function armPointer(
   page: ViewerPage,
   selector: string,
   mark: string,
@@ -513,7 +513,7 @@ async function armPointer(
   await page.evaluate(observerScript(selector, mark, durationMs));
 }
 
-async function pointerObservation(
+export async function pointerObservation(
   page: ViewerPage,
   mark: string
 ): Promise<PointerObservation> {

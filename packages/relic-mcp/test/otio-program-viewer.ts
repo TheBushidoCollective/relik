@@ -105,6 +105,7 @@ export interface ViewerPage {
     metrics: unknown;
     events: unknown[];
     truncated: boolean;
+    dataLossOccurred: boolean | null;
   }>;
   close(): Promise<void>;
 }
@@ -377,10 +378,16 @@ export async function openViewer(
         timeoutMs: 30000,
       });
       await cdp.send('Tracing.end');
-      await completion;
+      const done = await completion;
       tracing = false;
       const metrics = await cdp.send('Performance.getMetrics', {}, sessionId);
-      return { metrics, events: traceEvents, truncated: traceTruncated };
+      const dataLoss = done.params['dataLossOccurred'];
+      return {
+        metrics,
+        events: traceEvents,
+        truncated: traceTruncated,
+        dataLossOccurred: typeof dataLoss === 'boolean' ? dataLoss : null,
+      };
     },
     click: async (selector: string) => {
       const target = await evaluate<{
@@ -478,61 +485,4 @@ export async function openViewer(
     `viewer navigation failed: ${String(navigation['errorText'])}`
   );
   return page;
-}
-
-/**
- * Records the audio the native program element actually outputs while it plays from 0 s.
- * captureStream() taps the element's own output, so the samples include its decode, scheduling
- * and any gaps. Returns the channels and the context rate the capture ran at.
- */
-export async function captureElementAudio(
-  page: ViewerPage,
-  seconds: number
-): Promise<{ rate: number; left: number[]; right: number[] }> {
-  await page.evaluate(`(async () => {
-    const hook = window.${VIEWER_CONTRACT.hook};
-    const video = document.querySelector('video.otio-program-video');
-    const play = document.querySelector('button.otio-play');
-    if (!video || !play || play.disabled) throw new Error('program Play control unavailable');
-    if (typeof video.captureStream !== 'function') throw new Error('captureStream unavailable');
-    await hook.seek(0);
-    const ctx = new AudioContext({ sampleRate: 48000 });
-    const stream = video.captureStream();
-    if (!stream.getAudioTracks().length) throw new Error('program captureStream has no audio track');
-    const source = ctx.createMediaStreamSource(stream);
-    const processor = ctx.createScriptProcessor(4096, 2, 2);
-    const left = [];
-    const right = [];
-    processor.onaudioprocess = (event) => {
-      const l = event.inputBuffer.getChannelData(0);
-      const r = event.inputBuffer.numberOfChannels > 1
-        ? event.inputBuffer.getChannelData(1) : l;
-      for (let i = 0; i < l.length; i++) { left.push(l[i]); right.push(r[i]); }
-    };
-    source.connect(processor);
-    processor.connect(ctx.destination);
-    window.__programAudioProof = new Promise((resolve, reject) => {
-      play.addEventListener('pointerdown', (event) => {
-        if (!event.isTrusted) { reject(new Error('audio Play pointerdown was not trusted')); return; }
-        // Resume is requested synchronously inside trusted activation, not via
-        // an autoplay override or a programmatic click.
-        ctx.resume().then(() => {
-          setTimeout(async () => {
-            try {
-              await hook.pause();
-              processor.disconnect();
-              source.disconnect();
-              const rate = ctx.sampleRate;
-              await ctx.close();
-              resolve({ rate, left, right });
-            } catch (error) { reject(error); }
-          }, ${Math.round(seconds * 1000)});
-        }, reject);
-      }, { once: true });
-    });
-  })()`);
-  await page.click('button.otio-play');
-  return page.evaluate<{ rate: number; left: number[]; right: number[] }>(
-    'window.__programAudioProof'
-  );
 }

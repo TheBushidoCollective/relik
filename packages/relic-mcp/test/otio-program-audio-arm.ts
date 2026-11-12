@@ -1,21 +1,24 @@
 /**
- * Sampled audio arm for the primer proof: the actual samples the program element outputs, aligned
- * to the independent analytic reference, with silence and dropouts measured in milliseconds.
+ * Sampled audio arm for the primer proof: the program renderer's output as its own tee delivers
+ * it (MediaStreamTrackProcessor over the element's captureStream audio), joined to the same trial's
+ * Chrome trace and aligned to the independent analytic reference.
  *
  * Separation, which is the point of this arm:
  *   - Uninstrumented: the production viewer build, with no emit recorder. The emitted-graph
  *     instrumentation used by the video arms is not present here.
- *   - Separate from every video arm. The video arms never tap audio, so the capture cannot alter
- *     their presented-frame timing. This arm's tap is itself a changed condition, reported as such.
- *   - Recording starts at the trusted Play pointerdown, not at AudioContext creation, so the
- *     alignment measures the start the user hears.
+ *   - Separate from every video arm. The video arms never capture audio.
+ *   - Every trial runs with Chrome's --mute-audio. Nothing here reaches a speaker, so a pass proves
+ *     the program renderer's own output, not what a listener hears.
+ *   - Stamps are pairing keys only. They are never read as capture, playout or onset times.
  *
- * Callback telemetry is not read here. Only the captured samples count as audio.
+ * Each trial is gated by the join (every chunk pairs one program render, no gap in the pairing),
+ * the gated content against the reference, the trusted Play's marks, and the mutation controls
+ * (each mutation of a real capture must be rejected). The early-start control runs once per run
+ * and must produce program audio before the trusted Play.
  */
 
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import assert from 'node:assert/strict';
 import { PROOF_GLOBAL } from '../../relic-viewer/test/otio-program-emit-instrument.ts';
 import {
   type ViewerBuild,
@@ -23,20 +26,37 @@ import {
   readBuild,
 } from './otio-program-builds.ts';
 import { latin1 } from './otio-program-sham-check.ts';
-import { expectedAudio, PROGRAM } from './otio-program-reference.ts';
+import { expectedAudio } from './otio-program-reference.ts';
+import type { SignalEvidence } from './otio-program-audio-signal.ts';
 import {
-  gateSignal,
-  measureSignal,
-  type SignalEvidence,
-} from './otio-program-audio-signal.ts';
+  gateCapture,
+  mutationControlFailures,
+  PRE_GESTURE_FAILURE,
+} from './otio-program-audio-join.ts';
+import {
+  captureProgramAudio,
+  EARLY_START_LEAD_MS,
+} from './otio-program-audio-capture.ts';
+import {
+  markOrderFailures,
+  PLAY_MARK,
+  type TraceEvent,
+} from './otio-program-trace.ts';
 import type { ProofHarness } from './otio-program-harness.ts';
 import type { PrimerStage } from './otio-program-primer-controls.ts';
-import { openViewer, VIEWER_CONTRACT } from './otio-program-viewer.ts';
+import {
+  openViewer,
+  type ViewerPage,
+  VIEWER_CONTRACT,
+} from './otio-program-viewer.ts';
 
 export const AUDIO_ROUNDS = 3;
 /** Captured from the trusted Play. Ends before the reference's designed silence at 4.5 s. */
 export const AUDIO_CAPTURE_SECONDS = 4.5;
 const SETTLE_MS = 1500;
+const PREPARED_STAGE = 'viewer-audio-prepared-signal';
+const FIRST_CLICK_STAGE = 'viewer-audio-first-click-signal';
+const EARLY_START_ROUND = 0;
 
 export interface AudioArmInput {
   readonly harness: ProofHarness;
@@ -51,65 +71,47 @@ export interface AudioArmInput {
 
 type AudioArm = 'prepared' | 'first-click';
 
-interface CapturedAudio {
-  readonly rate: number;
-  readonly left: number[];
-  readonly right: number[];
+interface TrialOutcome {
+  /** Failures the trial's own checks report: served builds, primer state, and the gate. */
+  readonly failures: string[];
+  /** Early-start control strings only. They belong to the prepared stage. */
+  readonly controlFailures: string[];
 }
 
-/**
- * Installed on the program's Play button before the trusted click. Samples are kept only after the
- * trusted pointerdown. The AudioContext is created here but its samples are discarded until then.
- */
-function tapScript(): string {
-  return `(() => {
-  const hook = window.${VIEWER_CONTRACT.hook};
-  const video = document.querySelector('video.otio-program-video');
-  const play = document.querySelector('button.otio-play');
-  if (!video || !play) throw new Error('audio arm: program controls missing');
-  if (typeof video.captureStream !== 'function') throw new Error('captureStream unavailable');
-  const stream = video.captureStream();
-  if (!stream.getAudioTracks().length) throw new Error('program captureStream has no audio track');
-  const ctx = new AudioContext({ sampleRate: 48000 });
-  const source = ctx.createMediaStreamSource(stream);
-  const processor = ctx.createScriptProcessor(4096, 2, 2);
-  const left = [];
-  const right = [];
-  let recording = false;
-  processor.onaudioprocess = (event) => {
-    if (!recording) return;
-    const l = event.inputBuffer.getChannelData(0);
-    const r = event.inputBuffer.numberOfChannels > 1 ? event.inputBuffer.getChannelData(1) : l;
-    for (let i = 0; i < l.length; i++) { left.push(l[i]); right.push(r[i]); }
-  };
-  source.connect(processor);
-  processor.connect(ctx.destination);
-  window.__audioSignal = new Promise((resolve, reject) => {
-    play.addEventListener('pointerdown', (event) => {
-      if (!event.isTrusted) { reject(new Error('audio Play pointerdown was not trusted')); return; }
-      recording = true;
-      ctx.resume().catch(reject);
-      setTimeout(async () => {
-        try {
-          recording = false;
-          await hook.pause();
-          processor.disconnect();
-          source.disconnect();
-          const rate = ctx.sampleRate;
-          await ctx.close();
-          resolve({ rate, left, right });
-        } catch (error) { reject(error); }
-      }, ${AUDIO_CAPTURE_SECONDS * 1000});
-    }, { once: true });
-  });
-})()`;
+function sleep(ms: number): Promise<void> {
+  const { promise, resolve } = Promise.withResolvers<void>();
+  setTimeout(resolve, ms);
+  return promise;
+}
+
+/** The trace timestamp (microseconds) of the named mark, or null when the trace lacks it. */
+function markTsUs(events: readonly unknown[], name: string): number | null {
+  for (const event of events) {
+    if (typeof event !== 'object' || event === null) continue;
+    const record = event as { name?: unknown; ts?: unknown; cat?: unknown };
+    if (record.name === name && typeof record.ts === 'number') return record.ts;
+  }
+  return null;
+}
+
+function receiptPath(
+  scratch: string,
+  arm: AudioArm,
+  round: number,
+  earlyStart: boolean
+): string {
+  return join(
+    scratch,
+    `primer-audio-${arm}-${round}${earlyStart ? '-early-start' : ''}`
+  );
 }
 
 async function runAudioTrial(
   arm: AudioArm,
   round: number,
+  earlyStart: boolean,
   input: AudioArmInput
-): Promise<{ failures: string[]; evidence: Record<string, SignalEvidence> }> {
+): Promise<TrialOutcome> {
   await input.router.activate(input.uninstrumentedBuild);
   input.router.resetServed();
   try {
@@ -139,60 +141,125 @@ async function runAudioTrial(
         failures.push(
           `round ${round} ${arm}: served builds ${JSON.stringify(served)}, expected only ${input.uninstrumentedBuild.name}`
         );
-      if (arm === 'prepared') {
-        // A genuine earlier interaction, as in the prepared video arm, then the same tap.
-        await page.click('.otio-inspector-tab[data-tab="markers"]');
-        await new Promise((resolve) => setTimeout(resolve, SETTLE_MS));
-        const state = await page.evaluate<string | null>(
-          `document.querySelector('.otio-view')?.getAttribute('data-otio-audio-output') ?? null`
+
+      // The prepared arm has a genuine earlier interaction and a running primer before Play.
+      let primerState: string | null = null;
+      const record = await captureProgramAudio(page, {
+        seconds: AUDIO_CAPTURE_SECONDS,
+        beforePlay:
+          arm === 'prepared'
+            ? async (p: ViewerPage) => {
+                await p.click('.otio-inspector-tab[data-tab="markers"]');
+                await sleep(SETTLE_MS);
+                primerState = await p.evaluate<string | null>(
+                  `document.querySelector('.otio-view')?.getAttribute('data-otio-audio-output') ?? null`
+                );
+              }
+            : undefined,
+        beforeClick: earlyStart
+          ? async (p: ViewerPage) => {
+              // The program element starts without a gesture, so its audio reaches the tee before
+              // the trusted Play. The control is expected to fail. Only the prediction is checked.
+              await p.evaluate(
+                `(async () => { try { await document.querySelector('video.otio-program-video').play(); } catch (error) {} })()`
+              );
+              await sleep(EARLY_START_LEAD_MS);
+            }
+          : undefined,
+      });
+      if (arm === 'prepared' && primerState !== 'running')
+        failures.push(
+          `${arm} round ${round}: primer is ${primerState}, not running, before Play`
         );
-        if (state !== 'running')
-          failures.push(
-            `${arm} round ${round}: primer is ${state}, not running, before Play`
+
+      const reference = Float32Array.from(expectedAudio());
+      const options = {
+        reference: { left: reference, right: reference },
+        label: `${arm} round ${round}`,
+      };
+      const gate = gateCapture(record, options);
+      const markFailures = markOrderFailures(
+        // The trace's events are the TraceEvent records the proof's trace reads. The join types
+        // them as unknown so it does not depend on the trace module.
+        record.events as readonly TraceEvent[],
+        PLAY_MARK
+      );
+      const controls = mutationControlFailures(record, options);
+
+      // Early-start control: a program render must end before the trusted Play, and the gate must
+      // report it as pre-gesture audio. Render times are the join's tee times on the trace clock.
+      const controlFailures: string[] = [];
+      if (earlyStart) {
+        const playUs = markTsUs(record.events, PLAY_MARK);
+        const preGesture =
+          playUs === null
+            ? 0
+            : gate.join.pairs.filter((pair) => pair.teeUs < playUs).length;
+        if (preGesture === 0)
+          controlFailures.push(
+            'early-start control produced no program render before the trusted Play'
+          );
+        if (
+          !gate.failures.some((failure) =>
+            failure.startsWith(PRE_GESTURE_FAILURE)
+          )
+        )
+          controlFailures.push(
+            `early-start control did not fail as predicted: ${gate.failures.join(' | ') || 'none'}`
           );
       }
-      await page.evaluate(tapScript());
-      await page.click('button.otio-play');
-      const captured = await page.evaluate<CapturedAudio>(
-        'window.__audioSignal'
-      );
-      assert.equal(
-        captured.rate,
-        PROGRAM.audioRate,
-        'capture rate differs from the program'
-      );
-      const reference = Float32Array.from(expectedAudio());
-      const evidence: Record<string, SignalEvidence> = {};
-      for (const [label, samples] of [
-        ['left', captured.left],
-        ['right', captured.right],
-      ] as const) {
-        const measured = measureSignal(
-          Float32Array.from(samples),
-          reference,
-          captured.rate
-        );
-        evidence[label] = measured;
-        failures.push(
-          ...gateSignal(measured, `${arm} round ${round} ${label}`)
-        );
-      }
-      // Diagnostic only: the captured channels and their evidence, kept in scratch so a failing
-      // trial can be inspected. Nothing here changes what is gated.
-      const receipt = join(input.scratch, `primer-audio-${arm}-${round}`);
-      await writeFile(
-        `${receipt}-left.f32`,
-        new Uint8Array(Float32Array.from(captured.left).buffer)
-      );
-      await writeFile(
-        `${receipt}-right.f32`,
-        new Uint8Array(Float32Array.from(captured.right).buffer)
-      );
+
+      // Diagnostic only: the chunk metadata, pairs, telemetry and evidence, kept in scratch so a
+      // failing trial can be inspected. Nothing here changes what is gated.
+      const receipt = receiptPath(input.scratch, arm, round, earlyStart);
       await writeFile(
         `${receipt}.json`,
-        JSON.stringify({ arm, round, rate: captured.rate, failures, evidence })
+        JSON.stringify({
+          arm,
+          round,
+          earlyStart,
+          primerState,
+          failures: [...gate.failures, ...markFailures, ...controls],
+          controlFailures,
+          dataLossOccurred: record.dataLossOccurred,
+          truncated: record.truncated,
+          restCurrentTime: record.restCurrentTime,
+          observerFrames: record.observerFrames.length,
+          chunks: record.chunks.map((chunk) => ({
+            stampUs: chunk.stampUs,
+            frames: chunk.frames,
+            rate: chunk.rate,
+            deliveredMs: chunk.deliveredMs,
+          })),
+          pairs: gate.join.pairs,
+          telemetry: gate.join.telemetry,
+          evidence: gate.evidence,
+        })
       );
-      return { failures, evidence };
+
+      console.log(
+        `OTIO_PRIMER_AUDIO ${JSON.stringify({
+          arm,
+          round,
+          earlyStart,
+          failures:
+            gate.failures.length + markFailures.length + controls.length,
+          join: {
+            pass: gate.join.pass,
+            pairs: gate.join.pairs.length,
+            programId: gate.join.programId,
+          },
+          telemetry: gate.join.telemetry,
+          left: summarise(gate.evidence?.left),
+          right: summarise(gate.evidence?.right),
+        })}`
+      );
+
+      if (earlyStart) return { failures, controlFailures };
+      return {
+        failures: [...failures, ...gate.failures, ...markFailures, ...controls],
+        controlFailures: [],
+      };
     } finally {
       await page.close();
     }
@@ -220,21 +287,18 @@ export async function runAudioArm(
     prepared: [],
     'first-click': [],
   };
-  const evidence: Record<AudioArm, Array<Record<string, SignalEvidence>>> = {
-    prepared: [],
-    'first-click': [],
-  };
   for (let round = 0; round < AUDIO_ROUNDS; round++) {
     for (const arm of round % 2 === 0
       ? (['prepared', 'first-click'] as const)
       : (['first-click', 'prepared'] as const)) {
       try {
-        const outcome = await runAudioTrial(arm, round, input);
-        failures[arm].push(...outcome.failures);
-        evidence[arm].push(outcome.evidence);
-        console.log(
-          `OTIO_PRIMER_AUDIO ${JSON.stringify({ arm, round, failures: outcome.failures.length, left: summarise(outcome.evidence['left']), right: summarise(outcome.evidence['right']) })}`
+        const outcome = await runAudioTrial(
+          arm,
+          round,
+          arm === 'prepared' && round === EARLY_START_ROUND,
+          input
         );
+        failures[arm].push(...outcome.failures, ...outcome.controlFailures);
       } catch (error) {
         errors[arm].push(
           `round ${round}: ${error instanceof Error ? error.message : String(error)}`
@@ -242,11 +306,18 @@ export async function runAudioArm(
       }
     }
   }
-  return (['prepared', 'first-click'] as const).map((arm) => ({
-    stage: `viewer-audio-${arm}-signal`,
-    failures: [...errors[arm], ...failures[arm]],
-    trials: [],
-  }));
+  return [
+    {
+      stage: PREPARED_STAGE,
+      failures: [...errors.prepared, ...failures.prepared],
+      trials: [],
+    },
+    {
+      stage: FIRST_CLICK_STAGE,
+      failures: [...errors['first-click'], ...failures['first-click']],
+      trials: [],
+    },
+  ];
 }
 
 function summarise(evidence: SignalEvidence | undefined) {
