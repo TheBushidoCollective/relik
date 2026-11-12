@@ -13806,6 +13806,12 @@ async function assessMovingWindowControls(
       const deadline = performance.now() + 12000;
       while (root.dataset.playing !== 'true' && performance.now() < deadline) await sleep(10);
       if (root.dataset.playing !== 'true') throw new Error('playback did not start');
+      // Scheduled audio starts at its epoch, some tens of milliseconds after the play request
+      // that sets data-playing. This capture is of playback under way, so it waits for the
+      // composition to move. The startup lead has its own budget in the cold-start stages
+      // and is not a dropout.
+      while (!(Number(root.dataset.frame) >= 1) && performance.now() < deadline) await sleep(5);
+      if (!(Number(root.dataset.frame) >= 1)) throw new Error('playback did not advance');
       await sleep(40);
       globalThis.__otioProofTrace.setFault(${JSON.stringify(repetition === 4 ? 'skip-still' : 'none')});
       const start = await globalThis.__otioProofTrace.start();
