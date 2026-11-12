@@ -478,11 +478,16 @@ function sharedFrom(body: unknown): Shared | undefined {
  */
 export async function requestShare(
   relicId: string,
-  key: Uint8Array,
+  key: Uint8Array | undefined,
   emails: readonly string[],
   deps: ViewerDeps
 ): Promise<ShareOutcome> {
-  const body = await shareRequestBody(key, emails);
+  // A private relic's share carries no key: the owner's reader session is the
+  // whole of the authority, and the link sent is the keyless one.
+  const body =
+    key === undefined
+      ? { emails: [...emails] }
+      : await shareRequestBody(key, emails);
   let response: Response;
   try {
     let canonical = relicId;

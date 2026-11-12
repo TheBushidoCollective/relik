@@ -84,7 +84,7 @@ function parseRecord(value: unknown): DecisionRecord | undefined {
  */
 export async function listDecisions(
   relicId: string,
-  key: Uint8Array,
+  key: Uint8Array | undefined,
   version: number | '*',
   deps: ViewerDeps
 ): Promise<DecisionListOutcome> {
@@ -101,7 +101,9 @@ export async function listDecisions(
         headers: { 'content-type': 'application/json' },
         credentials: 'same-origin',
         body: JSON.stringify({
-          share_proof: await decisionShareProof(key),
+          ...(key === undefined
+            ? {}
+            : { share_proof: await decisionShareProof(key) }),
           version,
         }),
       }
@@ -149,7 +151,7 @@ export async function listDecisions(
 
 /** What the panel and the band need from a view's key, and nothing else. */
 export interface DecisionAccess {
-  readonly shareProof: () => Promise<string>;
+  readonly shareProof?: () => Promise<string>;
   /** Lists the records on the view's own version. */
   readonly listDecisions: () => Promise<DecisionListOutcome>;
 }
@@ -160,6 +162,12 @@ export function decisionAccess(
   relicId: string,
   deps: ViewerDeps
 ): DecisionAccess {
+  if (view.access === 'private') {
+    return {
+      listDecisions: () =>
+        listDecisions(relicId, undefined, view.version, deps),
+    };
+  }
   const key = viewKey(view);
   return {
     shareProof: () => decisionShareProof(key),
