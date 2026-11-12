@@ -93,9 +93,31 @@ describe('output clock admission', () => {
       c.observe({ ...sample(10), readBegin: 1070, readEnd: 1071 }).reason
     ).toBe('stale');
   });
+  test('a performance lead inside one callback period is evidence; past it, or any context lead, is future', () => {
+    // sample(50) is read at 1051. A stamp 9 ms ahead with the calibrated offset is accepted.
+    expect(
+      ready().observe({
+        ...sample(50),
+        contextTime: 0.06,
+        contextAfter: 0.07,
+        performanceTime: 1060,
+      }).reason
+    ).toBe('accepted');
+    expect(
+      ready().observe({
+        ...sample(50),
+        contextTime: 0.062,
+        contextAfter: 0.07,
+        performanceTime: 1062,
+      }).reason
+    ).toBe('future');
+    expect(ready().observe({ ...sample(50), contextTime: 0.0731 }).reason).toBe(
+      'future'
+    );
+  });
   test('rejects future and regressing pairs and terminates at the sample cap', () => {
     const c = ready();
-    expect(c.observe({ ...sample(50), performanceTime: 1060 }).reason).toBe(
+    expect(c.observe({ ...sample(50), performanceTime: 1062 }).reason).toBe(
       'future'
     );
     expect(c.observe(sample(10)).status).toBe('calibrating');
@@ -106,6 +128,7 @@ describe('output clock admission', () => {
       minWindowMs: 30,
       freshnessMs: 50,
       futureToleranceMs: 2,
+      performanceLeadToleranceMs: 10,
       maxOffsetSpreadMs: 10,
     });
     bounded.observe(sample(10));
@@ -150,6 +173,7 @@ describe('output clock admission', () => {
       minWindowMs: 30,
       freshnessMs: 50,
       futureToleranceMs: 2,
+      performanceLeadToleranceMs: 10,
       maxOffsetSpreadMs: 10,
     });
     for (const t of [10, 20, 30, 40]) c.observe(sample(t));

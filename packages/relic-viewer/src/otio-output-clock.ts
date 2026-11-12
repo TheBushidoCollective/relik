@@ -6,8 +6,16 @@ export const DEFAULT_CLOCK_POLICY = Object.freeze({
   minWindowMs: 30,
   freshnessMs: 50,
   futureToleranceMs: 2,
+  performanceLeadToleranceMs: 10,
   maxOffsetSpreadMs: 10,
 });
+
+// performanceLeadToleranceMs: how far a stamp's performanceTime may lead the read. On a sink that
+// delivers a callback every 10 ms (Chrome 156, Linux, muted output) 2.2% of 10,178 reads led the
+// read, by up to 2.1 ms, and one more run recorded 4.0 ms. The pair's offset stayed inside the
+// calibrated window each time. The bound is set to that sink's callback period. The offset spread
+// still judges the mapping. futureToleranceMs keeps bounding contextTime against currentTime,
+// where no lead was seen.
 
 // Chromium rounds performanceTime to a 100 us grid on a pseudo-random threshold
 // (time_clamper.cc:43-58). Its per-quantum promotion (audio_destination.cc:739-758)
@@ -21,6 +29,7 @@ export type ClockPolicy = {
   minWindowMs: number;
   freshnessMs: number;
   futureToleranceMs: number;
+  performanceLeadToleranceMs: number;
   maxOffsetSpreadMs: number;
 };
 export type ClockState =
@@ -94,6 +103,7 @@ export class OutputClock {
         policy.minWindowMs,
         policy.freshnessMs,
         policy.futureToleranceMs,
+        policy.performanceLeadToleranceMs,
         policy.maxOffsetSpreadMs,
       ].every((n) => Number.isFinite(n) && n >= 0)
     )
@@ -266,7 +276,7 @@ export class OutputClock {
     else if (contextTime! <= 0 || performanceTime! <= 0)
       reason = 'unusable-zero';
     else if (
-      performanceTime! > readEnd + this.policy.futureToleranceMs ||
+      performanceTime! > readEnd + this.policy.performanceLeadToleranceMs ||
       contextTime! > contextAfter + this.policy.futureToleranceMs / 1000
     )
       reason = 'future';

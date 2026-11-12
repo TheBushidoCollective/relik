@@ -14304,7 +14304,7 @@ async function assertVideoReservationInvalidation(
       Number(videoDrain.value.output.performanceTime) > 0 &&
       Number(videoDrain.value.output.performanceTime) <=
         Number(videoDrain.value.after) +
-          DEFAULT_CLOCK_POLICY.futureToleranceMs &&
+          DEFAULT_CLOCK_POLICY.performanceLeadToleranceMs &&
       Number(videoDrain.value.after) -
         Number(videoDrain.value.output.performanceTime) <=
         DEFAULT_CLOCK_POLICY.freshnessMs,
@@ -18347,7 +18347,7 @@ async function runScheduledPcmProof(
             Number(actualArm.value.contextAfter) &&
           outputPerformance <=
             Number(actualArm.value.after) +
-              DEFAULT_CLOCK_POLICY.futureToleranceMs &&
+              DEFAULT_CLOCK_POLICY.performanceLeadToleranceMs &&
           Number(actualArm.value.after) - outputPerformance <=
             DEFAULT_CLOCK_POLICY.freshnessMs &&
           outputContext <=
@@ -18423,7 +18423,8 @@ async function runScheduledPcmProof(
             contextTime >= lastContext &&
             performanceTime >= lastPerformance &&
             performanceTime <=
-              observed.timestamp + DEFAULT_CLOCK_POLICY.futureToleranceMs &&
+              observed.timestamp +
+                DEFAULT_CLOCK_POLICY.performanceLeadToleranceMs &&
             observed.timestamp - performanceTime <=
               DEFAULT_CLOCK_POLICY.freshnessMs,
           'output mapping was invalid or regressed inside the handoff bracket'
@@ -18755,7 +18756,7 @@ async function runScheduledPcmProof(
               DEFAULT_CLOCK_POLICY.futureToleranceMs / 1000 &&
           Number(drainRead.value.output.performanceTime) <=
             Number(drainRead.value.after) +
-              DEFAULT_CLOCK_POLICY.futureToleranceMs &&
+              DEFAULT_CLOCK_POLICY.performanceLeadToleranceMs &&
           Number(drainRead.value.after) -
             Number(drainRead.value.output.performanceTime) <=
             DEFAULT_CLOCK_POLICY.freshnessMs &&
