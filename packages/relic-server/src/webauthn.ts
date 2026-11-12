@@ -762,6 +762,21 @@ export async function verifyAssertion(
     4
   ).getUint32(0, false);
 
+  // Extension outputs (ED set) follow the counter as one CBOR map. The
+  // signature covers them, so the map must be a map that fills the rest of
+  // the authenticator data exactly. PRF rides here as `hmac-secret`; the
+  // verifier only checks the shape, and the server never reads the output.
+  if ((flags & 0x80) !== 0) {
+    const { value: extMap, offset: extOffset } = decodeCborItem(
+      authData,
+      37,
+      0
+    );
+    if (!(extMap instanceof Map) || extOffset !== authData.byteLength) {
+      throw new WebauthnError('malformed', 'auth_data');
+    }
+  }
+
   if (e.stored.signCount !== undefined) {
     checkCounter(e.stored.signCount, signCount);
   }
