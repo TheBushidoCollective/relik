@@ -139,6 +139,7 @@ export type ClientCode =
   | 'private_policy_violation'
   | 'private_ttl_out_of_range'
   | 'seal_signature_invalid'
+  | 'seal_key_mismatch'
   | 'wrap_unopenable'
   | 'version_conflict';
 export class PublishError extends Error {

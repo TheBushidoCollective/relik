@@ -31,6 +31,7 @@ import {
   formatFingerprint,
   identityFingerprint,
   fingerprintsEqual,
+  keyCommitment,
   parseStatement,
   statementBytes,
   type StatementMap,
@@ -466,7 +467,8 @@ async function wrapTo(
 
 /**
  * Seal one version: a device signature over its digest, the access and owner
- * epochs the wraps were taken at, and the exact recipient set.
+ * epochs the wraps were taken at, the exact recipient set, and the key
+ * commitment that binds the wraps to one key.
  */
 async function sealVersion(input: {
   readonly signer: DeviceSigner;
@@ -474,11 +476,17 @@ async function sealVersion(input: {
   readonly relicId: string;
   readonly snapshot: Snapshot;
   readonly ciphertextSha256: string;
+  readonly key: Uint8Array;
 }): Promise<SealJSON> {
   const statement: StatementMap['seal'] = {
     access_epoch: input.snapshot.accessEpoch,
     at: Date.now(),
     ciphertext_sha256: input.ciphertextSha256,
+    key_commitment: await keyCommitment({
+      relicId: input.relicId,
+      version: input.snapshot.version,
+      key: input.key,
+    }),
     owner_epoch: input.snapshot.ownerEpoch,
     recipient_key_ids: input.snapshot.readers
       .map((reader) => reader.keyId)
@@ -535,6 +543,7 @@ async function completeVersion(input: {
       relicId: input.relicId,
       snapshot,
       ciphertextSha256,
+      key: input.key,
     });
     try {
       return expectRecord(
@@ -983,8 +992,8 @@ export async function republishPrivate(
  * A key relic-mcp created is held locally. Any other version (a browser
  * rekey, for instance) is fetched with the publish token and this device's
  * key id, then unwrapped with the device's key. The seal that covers the
- * wrap is verified against the pinned owner or a certified device before
- * the key is used.
+ * wrap is verified against the pinned owner or a certified device. The
+ * unwrapped key must then match the seal's key commitment before it is used.
  */
 export async function privateVersionKey(
   deps: PublishDeps,
@@ -1105,8 +1114,9 @@ async function openFetchedKey(
       { relic_id: relicId, version }
     );
   }
+  let key: Uint8Array;
   try {
-    return await unwrapVersionKey({
+    key = await unwrapVersionKey({
       recipient: session.signer.recipient,
       relicId,
       version,
@@ -1120,6 +1130,17 @@ async function openFetchedKey(
       { relic_id: relicId, version }
     );
   }
+  // HPKE base mode opens a wrap of any key the service chose. Only the
+  // commitment the owner signed into the seal tells the right key apart.
+  const commitment = await keyCommitment({ relicId, version, key });
+  if (commitment !== statement.key_commitment) {
+    throw new PublishError(
+      'seal_key_mismatch',
+      `the key wrapped for version ${version} does not match the key its seal commits to`,
+      { relic_id: relicId, version }
+    );
+  }
+  return key;
 }
 
 /**
