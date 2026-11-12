@@ -355,6 +355,12 @@ The private-share routes in section 10, and the checks behind them, return the c
 | `cannot_delete_current_version` | 409 | Delete the whole relic to remove its current version |
 | `request_not_found` | 404 | No such access request |
 | `request_limit_reached` | 409 | This relic has too many pending requests |
+| `invalid_statement` with `statement_check: kem_key` | 400 | The KEM key is already held by another identity or device, so this statement cannot create or claim it |
+| `invalid_device` with `device_check: kem_key` | 400 | The KEM key is already held by another identity or device |
+| `invalid_device` with `device_check: replay` | 400 | A device request or owner-bind nonce was already spent |
+| `invalid_device` with `device_check: exists` | 400 | A device with this id is already certified |
+
+Request status is one of `pending`, `granted` or `declined`. Each refusal above reuses an existing code; the extension says which check failed, so no new problem code exists for them.
 
 The following members join the problem document's extensions (1.5):
 
@@ -725,28 +731,29 @@ Every new POST that relies on the session cookie requires `content-type: applica
 | `POST /api/identity` | session | `{attestation, encrypted_bundle, replace?: boolean}` | 201 `{identity: IdentityPublicJSON}` | 401, 401 `passkey_fresh_link_required` (replace), 409 `identity_exists`, 400 `invalid_identity`, 400 `invalid_statement`, 400 `invalid_passkey`, 403 `passkey_verification_failed`, 429 |
 | `POST /api/identity/credentials` | session | `{attestation, encrypted_bundle}` | 201 `{credential_id}` | as above, plus 409 `identity_required` |
 | `POST /api/identity/settings` | session | `{attestation}` | 200 `{access_log_retention_days}` | 400 `invalid_statement` (out of bounds) |
-| `POST /api/identity/recovery/lookup` | session | `{email}` | 200 `{party: PartyJSON \| null}` | 429 |
+| `POST /api/identity/recovery/lookup` | session with an identity (`identity_required` otherwise) | `{email}` | 200 `{party: PartyJSON \| null}`. A signed-in identity learns whether the address has an identity; this reveals that to any identity holder, so the lookup is rate-limited per viewer. | 409 `identity_required`, 429 |
 | `POST /api/identity/recovery` | session | `{attestation}` | 200 `{recovery: RecoveryJSON \| null}` | 409 `fingerprint_mismatch`, 400 `invalid_statement` |
 | `POST /api/identity/backfill` | session (owner identity) | `{wraps: BackfillWrapJSON[]}` (at most `privateBackfillMaxWraps`) | 200 `{stored, skipped}` | 400 `invalid_wrap` |
-| `GET /api/identity/relics` | session | `?coverage=1` optional | 200 `{owned:[{relic_id, access, current_version, sealed_version, expires_at, pending_requests, coverage_gaps?}], shared_with_me:[{relic_id, readable_versions, expires_at, owner: PartyJSON}]}` | 401 |
+| `GET /api/identity/relics` | session | `?coverage=1` optional | 200 `{owned:[{relic_id, access, current_version, sealed_version, expires_at, pending_requests, coverage_gaps?: number[]}], shared_with_me:[{relic_id, readable_versions, expires_at, owner: PartyJSON}]}`. `coverage_gaps` lists the versions a recovery designation or device change left without the current recipient set. | 401 |
 | `GET /api/identity/access-log` | session | `?relic_id=` optional | 200 `{events: AccessEventJSON[]}` (oldest first) | 401, 409 `identity_required` |
 | `POST /api/devices/enrollments` | none, IP limited | `{kem_public_key, sig_public_key, label, backend, proof:{statement, signature}}` (`device_enroll`) | 201 `{enrollment_id, approve_url, expires_at, device_id}` | 400 `invalid_device`, 429 |
-| `GET /api/devices/enrollments/{enrollmentId}` | id is the capability | | 200 `{status:'pending'\|'approved', device_id, label, expires_at, device?: DevicePublicJSON, owner?: PartyJSON}` | 404 `device_not_found`, 410 `device_enrollment_expired` |
+| `GET /api/devices/enrollments/{enrollmentId}` | id is the capability | | 200 `{status:'pending'\|'approved', device_id, label, kem_public_key, sig_public_key, expires_at, device?: DevicePublicJSON, owner?: PartyJSON}`. The two keys are returned while pending so the owner's approval page can show the device fingerprint. | 404 `device_not_found`, 410 `device_enrollment_expired` |
 | `POST /api/devices/enrollments/{enrollmentId}/approve` | session | `{attestation}` (`device_cert`) | 200 `{device}` | 409 `fingerprint_mismatch`, 409 `identity_required`, 410 |
 | `GET /api/devices` | session | | 200 `{devices: DevicePublicJSON[]}` | 401 |
 | `POST /api/devices/{deviceId}/revoke` | session | `{attestation}` | 200 `{device}` | 403 `owner_required`, 404 |
 | `POST /api/devices/{deviceId}/context` | `device_auth` | `{device_auth}` | 200 `{device, owner: PartyJSON, devices: DevicePublicJSON[], recovery: RecoveryJSON \| null, owner_epoch}` | 403 `device_revoked`, 404, 400 `invalid_device` |
 | `GET /api/relics/{id}/access` | session for private; none for public | | 200 `PrivateAccessJSON` or `PublicAccessJSON` | 401 (private), 404, 410 |
 | `POST /api/relics/{id}/requests` | session | `{attestation}` (`access_request`) | 201 `{status:'pending', requested_at}`; 200 if already pending or granted | 409 `identity_required`, 409 `request_limit_reached`, 429 |
+| `POST /api/relics/{id}/versions/{v}/upload-grant` | owner session | | 200 a new signed upload grant for version `v`, only for the current unsealed version (`uploadFor`) | 409 `version_conflict`, 403 `owner_required`, 401 `sign_in_required` |
 | `GET /api/relics/{id}/requests` | owner session | | 200 `{requests:[{requester: PartyJSON, requested_at, status, statement, identity_signature}]}` | 403 `owner_required` |
 | `POST /api/relics/{id}/requests/{identityId}/decline` | owner session | `{}` | 200 | 403, 404 `request_not_found` |
 | `POST /api/relics/{id}/grants` | owner session | `{attestation, wraps: WrapJSON[]}` | 201 `{grant: GrantJSON}` | 409 `fingerprint_mismatch`, 409 `grant_stale_version` (+`current_version`), 400 `invalid_wrap`, 403 |
 | `GET /api/relics/{id}/grants` | owner session | | 200 `{grants: GrantJSON[]}` | 403 |
 | `POST /api/relics/{id}/revocations` | owner session | `{attestation, renderer_class, declared_size_bytes, declared_ciphertext_bytes}` | 200 `{revoked_identity_id, republish:{version, upload_url, upload_method, upload_headers, upload_expires_at}, access_epoch, owner_epoch}` | 409 `version_conflict`, 404 (grant), 403 |
-| `POST /api/relics/{id}/recipients` | `{publish_token}` or owner session | | 200 `{access_epoch, owner_epoch, current_version, sealed_version, owner: PartyJSON, devices, grants: GrantJSON[] (active), recovery}` | 403 `invalid_publish_token` |
+| `POST /api/relics/{id}/recipients` | `{publish_token}` or owner session | | 200 `{access_epoch, owner_epoch, current_version, sealed_version, owner: PartyJSON, devices, grants: GrantJSON[] (active), recovery: RecoveryJSON \| null}` | 403 `invalid_publish_token` |
 | `POST /api/relics/{id}/versions/{v}/key` | session, or `{publish_token, recipient_key_id}` | | 200 `KeyJSON` (logs `wrap_fetch`) | 401, 403 `private_access_denied`, 409 `relic_not_yet_published` (unsealed), 410 `relic_expired` / `relic_removed` / `version_deleted` |
 | `POST /api/relics/{id}/delete` | owner session | `{attestation}` | 200 `{deleted_versions, relic_deleted}` | 409 `cannot_delete_current_version`, 403 |
-| `POST /api/relics/{id}/owner` | `{publish_token, device_auth}` with an `owner_bind` statement | | 200 `{owner: PartyJSON}` | 409 `owner_exists`, 403 `invalid_publish_token`, 403 `device_revoked` |
+| `POST /api/relics/{id}/owner` | `{publish_token, device_auth}` with an `owner_bind` statement | | 200 `{owner: PartyJSON}`. Public and private relics both take it; only the owner link is written, and access never changes. A nonce is spent once (`device_check` `replay`). | 409 `owner_exists`, 403 `invalid_publish_token`, 403 `device_revoked`, 400 `invalid_device` (`device_check` `replay`) |
 | `POST /api/relics/{id}/comments/list` | `{publish_token}` | | 200, same body as `GET .../comments` | 403 |
 
 Changed existing routes:
@@ -866,3 +873,13 @@ The plan does not settle the following. Each is recorded here so that no documen
 5. **Extension values.** The plan names the `identity_check`, `statement_check`, `seal_check` and `device_check` fields and the `access_epoch` and `owner_epoch` extensions, without their value sets or the codes that carry them.
 6. **`retainUntil`.** The plan does not state the formula for `retainUntil` (section 10.6).
 7. **Lifecycle deletion timing.** A lifecycle delete makes the object soft-deleted, so it stays restorable for the soft-delete retention (`storage.md` section 7.5). A change to the lifecycle configuration can take up to 24 hours to apply.
+
+### 10.9 Security residuals
+
+These are limits the build keeps by design or defers. Each is stated where it applies, and none is claimed as solved.
+
+- **PS-05, revocation visibility.** A client learns of a revocation from the roster the service serves. A client pins the highest roster it has seen and refuses to go backwards. A first-contact client cannot detect a revocation the service hides from it.
+- **PS-07, unsealed uploads.** An upload that is never sealed, or is overwritten through a still-valid signed URL, carries no `customTime`, so the lifecycle rule does not erase it. The rule keys on `customTime` only.
+- **Recovery lookup.** A signed-in identity learns whether an address has an identity. The lookup is rate-limited per viewer.
+- **Loopback exception.** A page served from localhost may request the `localhost` relying-party id at top level. This applies to development only.
+- **Same-user threat model.** Secure Enclave keys have no access control beyond the process that holds them. Version keys sit in a 0600 `publish-state.json`. A process running as the same user can read them.

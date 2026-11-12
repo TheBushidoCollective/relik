@@ -1101,6 +1101,19 @@ Authorized by Jason Waldrip on 2026-11-11. The build plan is `docs/plans/private
   - Rolling back after private relics exist degrades their gating. The previous server mints their ciphertext and lists their comment authors to anyone with the URL, with no key exposure. Roll forward where possible.
   - Real providers' PRF behavior, WebKit and Gecko WebCrypto, distribution of the Secure Enclave helper, and production GCS `customTime` behavior are unproven until the post-production gate in plan section 7 runs.
   - Deleted private ciphertext, wraps and metadata stay recoverable by the operator under the soft-delete retention. The service never holds a content key, so the retained ciphertext alone discloses no plaintext, but the bytes are not gone.
+  - PS-05, revocation visibility. A client learns of a revocation from the roster the service serves. A client pins the highest roster it has seen and refuses to go backwards. A first-contact client cannot detect a revocation the service hides from it, and that limit is by design, not fixed.
+  - PS-07, unsealed uploads. An upload that is never sealed, or is overwritten through a signed URL that is still valid, carries no `customTime`, so the lifecycle rule does not erase it. Deferred: the rule keys on `customTime` only.
+  - PS-11, deployment and threat-model limits. The loopback exception lets a page served from localhost request the `localhost` relying-party id at top level (development only). Secure Enclave keys have no access control beyond the process that holds them. Version keys sit in a 0600 `publish-state.json`, which is a same-user threat model. The recovery lookup reveals to a signed-in identity whether an address has an identity.
+- **Security review.** An independent review of the private-shares build reported the findings below, and the review's authors record them as fixed on the integration tip. The one-line labels are the review's, and this entry has not re-verified each finding against its code. None of this is a claim that the build is free of defects. Each identifier is kept so a reader can match it to the review record.
+  - PS-01: a recovery repair is verified before it takes effect.
+  - PS-02: the owner's own fingerprint is computed from an unlocked identity only.
+  - PS-03: a grant cannot be applied to a relic other than the one it names (cross-relic grant).
+  - PS-04: a KEM key is claimed by one holder at a time, across identities and devices, and the holder's role is checked.
+  - PS-06: republish follows the relic's policy, including the title and decisions rules.
+  - PS-08: a device request nonce is spent once.
+  - PS-09: no private-relic mint or refusal writes a raw IP to the mint log.
+  - PS-10: a recovery designation is interoperable between the viewer and the server.
+  - Device certificate `not_after` is checked in the viewer.
 
 ## 2026-11-11: Decisions are open only when the author asks
 
