@@ -130,7 +130,7 @@ function createMockFetch(): typeof globalThis.fetch {
 }
 
 describe('tools/list and tool definitions', () => {
-  test('tools/list returns 12 tools and only relic_read_decisions matches decision pattern', async () => {
+  test('tools/list returns 15 tools and only relic_read_decisions matches decision pattern', async () => {
     const res = await handleMessage(
       { jsonrpc: '2.0', id: 1, method: 'tools/list' },
       deps
@@ -138,7 +138,7 @@ describe('tools/list and tool definitions', () => {
     expect(res).toBeDefined();
     if (!res?.result) throw new Error('expected result');
     const tools = (res.result as { tools: Array<{ name: string }> }).tools;
-    expect(tools.length).toBe(12);
+    expect(tools.length).toBe(15);
 
     const matching = tools.filter((t) =>
       /decision|approv|reject|verdict/i.test(t.name)
