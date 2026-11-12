@@ -102,6 +102,55 @@ export interface DeviceEntry {
   readonly enrollment?: DeviceEnrollment | undefined;
   readonly cert?: DeviceCert | undefined;
   readonly owner?: DeviceOwner | undefined;
+  /** What the service has shown this machine about the pinned owner. Values only move forward. */
+  readonly owner_seen?: SeenOwnerState | undefined;
+}
+
+/** One owner-signed statement's time, and whether the service reported it revoked then. */
+export interface SeenStatement {
+  readonly at: number;
+  readonly revoked: boolean;
+}
+
+/**
+ * The newest owner-signed state this machine has accepted for its pinned
+ * owner. Each value only moves forward, so a service that replays an older
+ * roster to a machine that has seen a newer one is refused before any key is
+ * wrapped. It persists with the device entry, so the floor survives a restart.
+ */
+export interface SeenOwnerState {
+  /** The highest owner epoch accepted: the service's recipients counter. */
+  readonly owner_epoch?: number | undefined;
+  /** The `at` of the highest recovery designation accepted. */
+  readonly designated_at?: number | undefined;
+  /** Per device id: the newest certificate `at` seen, and whether it was revoked then. */
+  readonly devices?: Readonly<Record<string, SeenStatement>> | undefined;
+  /** Per grantKey: the newest grant `at` seen, and whether it was revoked then. */
+  readonly grants?: Readonly<Record<string, SeenStatement>> | undefined;
+}
+
+/** What one verified service answer says about the pinned owner. */
+export interface OwnerObservation {
+  readonly ownerEpoch: number;
+  /** The verified designation's `at`, or undefined when none is in force. */
+  readonly designatedAt?: number | undefined;
+  /** Every device the answer carries, keyed by device id. */
+  readonly devices: Readonly<Record<string, SeenStatement>>;
+  /** Grants the answer carries for one relic, keyed by grantKey. Absent for a device context. */
+  readonly grants?: Readonly<Record<string, SeenStatement>> | undefined;
+}
+
+/** A recovery designation the owner signed, verified. */
+export interface VerifiedRecovery {
+  readonly reader: VerifiedReader;
+  /** The owner-signed `at` of the designation. */
+  readonly designatedAt: number;
+}
+
+/** A device list the pin verified: the readers that may hold a wrap, and every device's statement. */
+export interface VerifiedDeviceList {
+  readonly readers: readonly VerifiedReader[];
+  readonly statements: Readonly<Record<string, SeenStatement>>;
 }
 
 interface DeviceKeysFile {
@@ -133,14 +182,25 @@ export interface DeviceContext {
   /** Devices that may hold a wrap now: unrevoked, unexpired, certified. */
   readonly devices: readonly VerifiedReader[];
   /** The verified recovery designation, or undefined when none is in force. */
-  readonly recovery: VerifiedReader | undefined;
+  readonly recovery: VerifiedRecovery | undefined;
 }
 
 const P256_ECDH = { name: 'ECDH', namedCurve: 'P-256' } as const;
 const P256_ECDSA = { name: 'ECDSA', namedCurve: 'P-256' } as const;
 const SIGN_HASH = { name: 'ECDSA', hash: 'SHA-256' } as const;
 
-/** Where the device key file lives: beside the publish state, overridable for tests. */
+/**
+ * Where the device key file lives: beside the publish state, overridable for
+ * tests.
+ *
+ * Threat model, same user: the file and the publish state are 0600, so other
+ * users cannot read them. A file-backend private key is a plaintext JWK in
+ * this file, and any process running as this user can read it. A Secure
+ * Enclave key carries no access control, so any same-user process that can
+ * run the helper can use it. relic-mcp defends against other users and
+ * against the service. It does not defend against code already running as
+ * the user. See the relic skill's threat model.
+ */
 export function deviceKeysPath(): string {
   const override = process.env['RELIC_DEVICE_KEYS'];
   if (override !== undefined && override.length > 0) return override;
@@ -377,9 +437,9 @@ export function sha256Hex(bytes: Uint8Array | string): string {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
-/** A fresh nonce: base64url of 16 random bytes. */
+/** A fresh statement nonce: the canonical base64url of 32 random bytes (plan 4.2). */
 export function freshNonce(): string {
-  return encodeBase64url(randomBytes(16));
+  return encodeBase64url(randomBytes(32));
 }
 
 /**
@@ -720,6 +780,8 @@ async function fetchEnrollment(
  *
  * The request is device-signed over a `device_request` statement that binds
  * the path and the body, so a replayed or redirected request does not verify.
+ * The answer is held to what this machine has already accepted, and recorded,
+ * before the caller can wrap anything to it.
  */
 export async function fetchDeviceContext(
   deps: PublishDeps,
@@ -765,16 +827,14 @@ export async function fetchDeviceContext(
   });
 
   const devices = await verifyDeviceList(body['devices'], pin, Date.now());
-
-  const recoveryRecord = body['recovery'];
-  return {
-    ownerEpoch: Number(body['owner_epoch']),
-    devices,
-    recovery:
-      recoveryRecord === null || recoveryRecord === undefined
-        ? undefined
-        : await verifyRecovery(expectRecord(recoveryRecord, 'recovery'), pin),
-  };
+  const recovery = await verifyRecoveryField(body['recovery'], pin);
+  const ownerEpoch = expectEpoch(body['owner_epoch'], 'owner epoch');
+  await observeOwnerState(deps.serviceOrigin, {
+    ownerEpoch,
+    designatedAt: recovery?.designatedAt,
+    devices: devices.statements,
+  });
+  return { ownerEpoch, devices: devices.readers, recovery };
 }
 
 /**
@@ -785,7 +845,7 @@ export async function fetchDeviceContext(
 export async function verifyRecovery(
   recovery: Record<string, unknown>,
   pin: DeviceOwner
-): Promise<VerifiedReader> {
+): Promise<VerifiedRecovery> {
   const unsigned = new PublishError(
     'recovery_unsigned',
     'the recovery designation is not signed by the pinned owner'
@@ -820,26 +880,66 @@ export async function verifyRecovery(
   if (!fingerprintsEqual(statement.fingerprint_typed, fingerprint))
     throw unsigned;
   return {
-    kind: 'recovery',
-    publicKey: party.kemBytes,
-    keyId: sha256Hex(party.kemBytes),
-    email: normalizeEmail(party.email),
-    fingerprint: formatFingerprint(fingerprint),
+    reader: {
+      kind: 'recovery',
+      publicKey: party.kemBytes,
+      keyId: sha256Hex(party.kemBytes),
+      email: normalizeEmail(party.email),
+      fingerprint: formatFingerprint(fingerprint),
+    },
+    designatedAt: statement.at,
   };
+}
+
+/**
+ * The recovery designation a service response carries, verified. The wire
+ * carries one record or none. A response that carries several is not trusted
+ * for the first one it lists: each is verified, and the one with the greatest
+ * owner-signed `at` is used. Two different holders at the same `at` cannot be
+ * ordered, so the response is refused.
+ */
+export async function verifyRecoveryField(
+  field: unknown,
+  pin: DeviceOwner
+): Promise<VerifiedRecovery | undefined> {
+  if (field === null || field === undefined) return undefined;
+  const candidates: unknown[] = Array.isArray(field) ? field : [field];
+  let newest: VerifiedRecovery | undefined;
+  for (const candidate of candidates) {
+    const verified = await verifyRecovery(
+      expectRecord(candidate, 'recovery'),
+      pin
+    );
+    if (newest === undefined || verified.designatedAt > newest.designatedAt) {
+      newest = verified;
+    } else if (
+      verified.designatedAt === newest.designatedAt &&
+      verified.reader.keyId !== newest.reader.keyId
+    ) {
+      throw new PublishError(
+        'recovery_ambiguous',
+        'two recovery designations carry the same time and name different holders, so neither is trusted'
+      );
+    }
+  }
+  return newest;
 }
 
 /**
  * Verify a service's device list against the pin.
  *
- * Revoked and expired devices are not recipients and are skipped. Every other
- * device must carry a certificate the pinned owner signed, or the whole list
- * is refused.
+ * An active device must carry a certificate the pinned owner signed, or the
+ * whole list is refused. A revoked device is not a recipient, so it is never
+ * refused: when its certificate checks out, that certificate dates the
+ * revocation for the seen-state check. A revoked device whose certificate does
+ * not check out is skipped and recorded nowhere, because nothing unverified may
+ * drive state. An expired device is not a recipient either and is skipped.
  */
 export async function verifyDeviceList(
   list: unknown,
   pin: DeviceOwner,
   now: number
-): Promise<VerifiedReader[]> {
+): Promise<VerifiedDeviceList> {
   if (!Array.isArray(list)) {
     throw new PublishError(
       'app_response_unusable',
@@ -847,20 +947,17 @@ export async function verifyDeviceList(
     );
   }
   const ownerSigPublicKey = decodeBase64url(pin.sig_public_key);
-  const devices: VerifiedReader[] = [];
+  const readers: VerifiedReader[] = [];
+  const statements: Record<string, SeenStatement> = {};
   for (const item of list) {
     const device = expectRecord(item, 'device');
-    if (device['revoked_at'] !== null && device['revoked_at'] !== undefined) {
-      continue;
-    }
-    const notAfter = Number(device['not_after']);
-    if (!(notAfter > now)) continue;
     const deviceId = expectString(device['device_id'], 'device id');
     const kem = expectString(device['kem_public_key'], 'device KEM key');
     const sig = expectString(device['sig_public_key'], 'device signing key');
     const label = expectString(device['label'], 'device label');
+    const notAfter = Number(device['not_after']);
     const certBody = expectRecord(device['cert'], 'device certificate');
-    await verifyDeviceCert({
+    const check: DeviceCertCheck = {
       deviceId,
       ownerIdentityId: pin.identity_id,
       ownerSigPublicKey,
@@ -878,9 +975,24 @@ export async function verifyDeviceList(
           'device certificate signature'
         ),
       },
-    });
+    };
+    if (device['revoked_at'] !== null && device['revoked_at'] !== undefined) {
+      if (await checksOut(check)) {
+        statements[deviceId] = {
+          at: parseStatement('device_cert', check.cert.statement).at,
+          revoked: true,
+        };
+      }
+      continue;
+    }
+    if (!(notAfter > now)) continue;
+    await verifyDeviceCert(check);
+    statements[deviceId] = {
+      at: parseStatement('device_cert', check.cert.statement).at,
+      revoked: false,
+    };
     const publicKey = decodeBase64url(kem);
-    devices.push({
+    readers.push({
       kind: 'device',
       publicKey,
       keyId: sha256Hex(publicKey),
@@ -888,5 +1000,140 @@ export async function verifyDeviceList(
       fingerprint: formatFingerprint(await deviceFingerprint(deviceId)),
     });
   }
-  return devices;
+  return { readers, statements };
+}
+
+type DeviceCertCheck = Parameters<typeof verifyDeviceCert>[0];
+
+/**
+ * Whether a device certificate checks out. Used only for a revoked device,
+ * whose certificate is evidence only when it verifies. A certificate that does
+ * not verify is no evidence, so the caller records nothing for that device.
+ */
+async function checksOut(check: DeviceCertCheck): Promise<boolean> {
+  try {
+    await verifyDeviceCert(check);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** A non-negative safe integer the service counts with, or a refusal. */
+export function expectEpoch(value: unknown, what: string): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+    throw new PublishError(
+      'app_response_unusable',
+      `the service answered with no usable ${what}`
+    );
+  }
+  return value;
+}
+
+/** The key a grant's seen state is stored under: one grantee on one relic. */
+export function grantKey(relicId: string, granteeIdentityId: string): string {
+  return `${relicId}/${granteeIdentityId}`;
+}
+
+function stale(what: string): PublishError {
+  return new PublishError(
+    'recipients_stale',
+    `the service answered with an older view of the owner than this machine has already accepted (${what}). Nothing was wrapped to it.`
+  );
+}
+
+function laterOf(
+  a: number | undefined,
+  b: number | undefined
+): number | undefined {
+  if (a === undefined) return b;
+  if (b === undefined) return a;
+  return Math.max(a, b);
+}
+
+/**
+ * Advance the seen state for statements the service reported. A statement
+ * older than the one seen is refused, and so is a revocation already seen
+ * that the same statement now reports as active. A newer statement replaces
+ * the seen one, and a statement the service no longer lists keeps its seen
+ * value.
+ */
+function advanceStatements(
+  seen: Readonly<Record<string, SeenStatement>> | undefined,
+  observed: Readonly<Record<string, SeenStatement>>,
+  what: string
+): Record<string, SeenStatement> {
+  const next: Record<string, SeenStatement> = { ...seen };
+  for (const [key, statement] of Object.entries(observed)) {
+    const prior = seen?.[key];
+    if (prior !== undefined) {
+      if (statement.at < prior.at) {
+        throw stale(`an older owner-signed ${what}`);
+      }
+      if (statement.at === prior.at && prior.revoked && !statement.revoked) {
+        throw stale(`a revoked ${what} is reported active again`);
+      }
+    }
+    next[key] = statement;
+  }
+  return next;
+}
+
+function advanceOwnerState(
+  seen: SeenOwnerState,
+  observed: OwnerObservation
+): SeenOwnerState {
+  if (
+    seen.owner_epoch !== undefined &&
+    observed.ownerEpoch < seen.owner_epoch
+  ) {
+    throw stale('an older owner epoch');
+  }
+  if (
+    seen.designated_at !== undefined &&
+    observed.designatedAt !== undefined &&
+    observed.designatedAt < seen.designated_at
+  ) {
+    throw stale('an older recovery designation');
+  }
+  return {
+    owner_epoch: laterOf(seen.owner_epoch, observed.ownerEpoch),
+    designated_at: laterOf(seen.designated_at, observed.designatedAt),
+    devices: advanceStatements(seen.devices, observed.devices, 'device'),
+    grants: advanceStatements(seen.grants, observed.grants ?? {}, 'grant'),
+  };
+}
+
+/**
+ * Hold a verified service answer to what this machine has already accepted
+ * for its pinned owner, then record the answer. Called after the answer
+ * verifies and before any key is wrapped to it. A refused answer records
+ * nothing.
+ *
+ * Limit: a machine that has never seen a value (a first contact, or a fresh
+ * key file) has nothing to hold the service to, so it cannot detect a
+ * revocation the service hid from it. Revocation is enforced by the service.
+ * This check stops a service from going back on what this machine has
+ * already been shown.
+ */
+export function observeOwnerState(
+  origin: string,
+  observed: OwnerObservation
+): Promise<void> {
+  const run = deviceWriteChain.then(async () => {
+    const file = await readKeysFile();
+    const entry = file.devices[origin];
+    if (entry === undefined) {
+      throw new PublishError(
+        'device_not_enrolled',
+        `this machine has no certified device for ${origin}.`
+      );
+    }
+    await storeEntry(origin, {
+      ...entry,
+      owner_seen: advanceOwnerState(entry.owner_seen ?? {}, observed),
+    });
+  });
+  deviceWriteChain = run.catch(() => undefined);
+  return run;
 }

@@ -13,6 +13,11 @@
  * The file holds secrets. It is created 0600 inside a 0700 directory under
  * the user's config directory, and nothing in this module ever puts the key
  * or the token into a message, a log line, or an error.
+ *
+ * Threat model, same user: the file is protected from other users and from
+ * the service, not from code running as this user. A version key is plaintext
+ * here, and any same-user process that can read the file has every key it
+ * holds. The 0600 mode does not change that. See the relic skill's threat model.
  */
 
 import { execFile } from 'node:child_process';
@@ -173,7 +178,8 @@ export interface PublishedSource {
  * at a scratch path and a user with an unusual setup can move it. The default
  * is the user's config directory rather than the repo or the cwd, because the
  * publisher's identity here is the machine and user who ran the publish, not
- * whatever directory the server happened to start in.
+ * whatever directory the server happened to start in. The file's contents
+ * are readable by any process running as this user; see the module header.
  */
 export function publishStatePath(): string {
   const override = process.env['RELIC_PUBLISH_STATE'];
