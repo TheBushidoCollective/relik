@@ -107,6 +107,7 @@ import {
   assertHeldReleaseBeforeSuccessor,
   assertShiftedBankRefusal,
   naturalStarvation,
+  starvationRefusalText,
   recoveryFrontierOvershoot,
   siteBridgeCommitLeadAfterHold,
   siteBridgeFinalGuardAfterHold,
@@ -273,10 +274,20 @@ function recordCapturedTrace(value: unknown): void {
     lastCapturedTrace = trace as MovingTrace['trace'];
 }
 
+// Playback that refused before a capture's trace began, so no trace holds the refusal. The reader's
+// diagnostics do (run 43300181067: "committed recovery frame is unavailable" 187 ms into the
+// calibration's pre-roll).
+class StarvedBeforeCapture extends Error {
+  constructor(readonly refusal: string) {
+    super(`playback stopped before the capture began: ${refusal}`);
+  }
+}
+
 // Jason approved on 2026-11-12: a scheduled-audio stage that fails with the natural-starvation
-// signature (naturalStarvation) reruns in a fresh browser, at most three times. Each refused
-// attempt keeps its trace. Every other failure is rethrown unchanged, and a stage that starves
-// on every attempt fails with the evidence of each.
+// signature (naturalStarvation, or a recovery refusal read before the trace began) reruns in a
+// fresh browser, at most three times. Each refused attempt keeps its trace. Every other failure
+// is rethrown unchanged, and a stage that starves on every attempt fails with the evidence of
+// each.
 const NATURAL_STARVATION_RERUNS = 3;
 async function rerunNaturalStarvation(
   label: string,
@@ -290,12 +301,22 @@ async function rerunNaturalStarvation(
       return;
     } catch (error) {
       const refused = lastCapturedTrace as MovingTrace['trace'] | null;
-      const found = refused === null ? null : naturalStarvation(refused.events);
-      if (refused === null || found === null) throw error;
+      const found =
+        error instanceof StarvedBeforeCapture
+          ? error.message
+          : refused === null
+            ? null
+            : naturalStarvation(refused.events);
+      if (found === null) throw error;
       evidence.push(found);
       await writeFile(
         join(shotDir, `${label}-natural-starvation-attempt${attempt}.json`),
-        JSON.stringify({ label, attempt, evidence: found, trace: refused })
+        JSON.stringify({
+          label,
+          attempt,
+          evidence: found,
+          trace: error instanceof StarvedBeforeCapture ? null : refused,
+        })
       );
       if (attempt > NATURAL_STARVATION_RERUNS)
         throw new Error(
@@ -15239,6 +15260,7 @@ async function calibratePostGainTap(
           sampleFrame: number;
         };
         mute: { value: number; sampleFrame: number };
+        refusedBeforeCapture?: string;
         restored: number;
         trace: {
           sampleRate: number;
@@ -15261,6 +15283,8 @@ async function calibratePostGainTap(
       while (root.dataset.playing !== 'true' && performance.now() < deadline) await sleep(25);
       if (root.dataset.playing !== 'true') throw new Error('playback did not start');
       await sleep(600);
+      const refused = Array.from(document.querySelectorAll('.otio-diagnostic')).map(node => node.textContent ?? '').join(' ');
+      if (refused.includes('Scheduled audio stopped:')) return {refusedBeforeCapture: refused};
       const start = await globalThis.__otioProofTrace.start();
       await sleep(600);
       const mute = globalThis.__otioProofTrace.mute();
@@ -15273,6 +15297,13 @@ async function calibratePostGainTap(
       return {start, mute, restored, trace};
     })()`);
       const cast = await stopCast();
+      if (capture.refusedBeforeCapture !== undefined) {
+        const code = starvationRefusalText(capture.refusedBeforeCapture);
+        if (code !== null) throw new StarvedBeforeCapture(code);
+        assert.fail(
+          `playback stopped before the post-gain capture began: ${capture.refusedBeforeCapture}`
+        );
+      }
       await writeFile(
         join(shotDir, 'post-gain-calibration.json'),
         JSON.stringify({ provenance, capture, cast })

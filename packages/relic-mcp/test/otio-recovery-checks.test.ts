@@ -5,6 +5,7 @@ import {
   assertShiftedBankRefusal,
   naturalStarvation,
   recoveryFrontierOvershoot,
+  starvationRefusalText,
   siteBridgeCommitLeadAfterHold,
   siteBridgeFinalGuardAfterHold,
   siteBridgeGapInfeasibleAfterHold,
@@ -1363,5 +1364,28 @@ test('natural-starvation classifier refuses anything else', () => {
         bridgePcm({ event: 'error', stage: 'schedule', code: 'constructor' })
       )
     )
+  ).toBeNull();
+});
+
+test('starvation refusal text names a recovery refusal and nothing else', () => {
+  expect(
+    starvationRefusalText(
+      'unsupported-browser · Scheduled audio stopped: committed recovery frame is unavailable unsupported-browser · Scheduled audio stopped: committed recovery frame is unavailable'
+    )
+  ).toBe('committed recovery frame is unavailable');
+  expect(
+    starvationRefusalText(`Scheduled audio stopped: ${BRIDGE_HANDOFF}`)
+  ).toBe(BRIDGE_HANDOFF);
+  expect(starvationRefusalText('')).toBeNull();
+  expect(
+    starvationRefusalText('Scheduled audio stopped: PCM provider failed')
+  ).toBeNull();
+  expect(
+    starvationRefusalText(
+      'Scheduled audio stopped: transport stop rejected: invalid stop'
+    )
+  ).toBeNull();
+  expect(
+    starvationRefusalText(`${BRIDGE_HANDOFF} without the stopped marker`)
   ).toBeNull();
 });

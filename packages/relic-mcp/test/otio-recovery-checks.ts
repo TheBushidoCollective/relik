@@ -994,3 +994,16 @@ export function naturalStarvation(
   const boundary = safeInt(entryValue(events[close])['contextStopFrame']);
   return `frontier closed${boundary === null ? '' : ` at frame ${boundary}`}, then ${shape.join(', ')}`;
 }
+
+// The refusal the reader sees when playback died before a capture began, so no trace holds it:
+// "Scheduled audio stopped: <code>" with a code the recovery family raises. Returns the code, or
+// null for any other text.
+export function starvationRefusalText(text: string): string | null {
+  const marker = 'Scheduled audio stopped: ';
+  const at = text.indexOf(marker);
+  if (at < 0) return null;
+  const rest = text.slice(at + marker.length);
+  for (const code of Object.keys(STARVATION_SCHEDULE_REFUSALS))
+    if (rest.startsWith(code)) return code;
+  return null;
+}
