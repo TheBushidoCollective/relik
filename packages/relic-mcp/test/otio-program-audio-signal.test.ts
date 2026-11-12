@@ -1,10 +1,14 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, setDefaultTimeout, test } from 'bun:test';
 import {
   AUDIO_GAP_BUDGET_MS,
   gateSignal,
   measureSignal,
   type SignalEvidence,
 } from './otio-program-audio-signal.ts';
+
+// Each measureSignal call aligns a 6 s capture by correlation and takes 2 to 6 s on a loaded
+// machine, so a test that measures twice exceeds Bun's 5 s default without anything being wrong.
+setDefaultTimeout(60_000);
 
 const RATE = 48000;
 const SECONDS = 6;
