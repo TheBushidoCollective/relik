@@ -246,6 +246,38 @@ function repeatPredecessor(record: CaptureRecord, k: number): CaptureRecord {
   };
 }
 
+/** Zeroes `length` samples from `from` in both channels of one chunk. */
+function zeroRun(
+  record: CaptureRecord,
+  index: number,
+  from: number,
+  length: number
+): CaptureRecord {
+  const chunks = record.chunks.map((chunk, k) => {
+    if (k !== index) return chunk;
+    const left = chunk.left.slice();
+    const right = chunk.right.slice();
+    left.fill(0, from, from + length);
+    right.fill(0, from, from + length);
+    return { ...chunk, left, right };
+  });
+  return { ...record, chunks };
+}
+
+/** Reference samples [from, from + length), zero outside the program. */
+function shifted(
+  source: Float32Array,
+  from: number,
+  length: number
+): Float32Array {
+  const out = new Float32Array(length);
+  for (let j = 0; j < length; j++) {
+    const index = from + j;
+    if (index >= 0 && index < source.length) out[j] = source[index] ?? 0;
+  }
+  return out;
+}
+
 const { record: CLEAN } = buildFixture();
 
 describe('joinCapture: one-to-one pairing in delivery order', () => {
@@ -594,6 +626,119 @@ describe('mutation controls', () => {
           failure.startsWith('clean capture does not pass')
         )
       ).toBe(true);
+    },
+    SLOW_MS
+  );
+});
+
+describe('per-chunk match: global lag, zero runs judged by the gap, non-finite PCM', () => {
+  test(
+    'NaN in a gated chunk is rejected before scoring',
+    () => {
+      const chunks = CLEAN.chunks.map((chunk, k) => {
+        if (k !== MID) return chunk;
+        const left = chunk.left.slice();
+        left[10] = Number.NaN;
+        return { ...chunk, left };
+      });
+      const record = { ...CLEAN, chunks };
+      expect(joinCapture(record).pass).toBe(false);
+      const gate = gateCapture(record, GATE);
+      expect(gate.evidence).toBeNull();
+      expect(
+        gate.failures.some((failure) => failure.includes('non-finite'))
+      ).toBe(true);
+    },
+    SLOW_MS
+  );
+
+  test(
+    'an infinite sample is rejected before scoring',
+    () => {
+      const chunks = CLEAN.chunks.map((chunk, k) => {
+        if (k !== MID) return chunk;
+        const right = chunk.right.slice();
+        right[500] = Number.POSITIVE_INFINITY;
+        return { ...chunk, right };
+      });
+      const gate = gateCapture({ ...CLEAN, chunks }, GATE);
+      expect(gate.evidence).toBeNull();
+      expect(
+        gate.failures.some((failure) => failure.includes('non-finite'))
+      ).toBe(true);
+    },
+    SLOW_MS
+  );
+
+  test(
+    'a finite perfect capture keeps an infinite SNR on both channels',
+    () => {
+      const gate = gateCapture(CLEAN, GATE);
+      expect(gate.evidence?.left.snrDb).toBe(Number.POSITIVE_INFINITY);
+      expect(gate.evidence?.right.snrDb).toBe(Number.POSITIVE_INFINITY);
+    },
+    SLOW_MS
+  );
+
+  test(
+    'a 10 ms onset passes at its measured global lag',
+    () => {
+      const chunks = CLEAN.chunks.map((chunk, k) => ({
+        ...chunk,
+        left: shifted(REFERENCE.left, k * FRAMES - 480, chunk.frames),
+        right: shifted(REFERENCE.right, k * FRAMES - 480, chunk.frames),
+      }));
+      const gate = gateCapture({ ...CLEAN, chunks }, GATE);
+      expect(gate.join.pass).toBe(true);
+      expect(gate.evidence?.left.lagSamples).toBe(480);
+      expect(gate.evidence?.right.lagSamples).toBe(480);
+      expect(gate.evidence?.left.onsetMs).toBeCloseTo(10, 6);
+      expect(gate.failures).toEqual([]);
+    },
+    SLOW_MS
+  );
+
+  test(
+    'a 10 ms dropout inside a chunk passes: the zero run is judged by the gap',
+    () => {
+      const gate = gateCapture(zeroRun(CLEAN, MID, 256, 480), GATE);
+      expect(gate.join.pass).toBe(true);
+      expect(gate.failures).toEqual([]);
+      expect(gate.evidence?.left.longestGapMs).toBeCloseTo(10, 0);
+    },
+    SLOW_MS
+  );
+
+  test(
+    'a zero run over 20 ms fails the gap budget',
+    () => {
+      const gate = gateCapture(zeroRun(CLEAN, MID, 0, 1000), GATE);
+      expect(
+        gate.failures.some((failure) => failure.includes('audio gap'))
+      ).toBe(true);
+    },
+    SLOW_MS
+  );
+
+  test(
+    'a 21.3 ms repeated chunk in one channel fails that channel at the global lag',
+    () => {
+      const previous = CLEAN.chunks[MID - 1];
+      if (previous === undefined)
+        throw new Error('fixture has no predecessor chunk');
+      const chunks = CLEAN.chunks.map((chunk, k) =>
+        k === MID ? { ...chunk, right: previous.right.slice() } : chunk
+      );
+      const gate = gateCapture({ ...CLEAN, chunks }, GATE);
+      expect(gate.join.pass).toBe(true);
+      expect(
+        gate.failures.some((failure) =>
+          failure.startsWith(`program right: gated chunk ${MID} does not match`)
+        )
+      ).toBe(true);
+      expect(
+        gate.failures.some((failure) => failure.startsWith('program left'))
+      ).toBe(false);
     },
     SLOW_MS
   );

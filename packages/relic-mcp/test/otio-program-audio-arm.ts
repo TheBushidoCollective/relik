@@ -14,6 +14,9 @@
  * Each normal trial is gated by the join, the trusted Play's marks, the reference coverage, and
  * the mutation controls (each mutation of a real capture must be rejected). One extra early-start
  * control runs after the normal trials and must produce program audio before the trusted Play.
+ *
+ * Every trial is judged on the sanitized record, and the receipt saves that same record, so the
+ * receipt replays to the same verdict (see otio-program-audio-capture.ts).
  */
 
 import { writeFile } from 'node:fs/promises';
@@ -28,22 +31,13 @@ import { latin1 } from './otio-program-sham-check.ts';
 import { expectedAudio } from './otio-program-reference.ts';
 import type { SignalEvidence } from './otio-program-audio-signal.ts';
 import {
-  gateCapture,
-  mutationControlFailures,
-  PRE_GESTURE_FAILURE,
-} from './otio-program-audio-join.ts';
-import {
   captureProgramAudio,
-  trialCoverageFailures,
   EARLY_START_LEAD_MS,
+  encodeF32LE,
   gatedChannel,
-  replayEvents,
+  trialVerdict,
+  writeAudioReceipt,
 } from './otio-program-audio-capture.ts';
-import {
-  markOrderFailures,
-  PLAY_MARK,
-  type TraceEvent,
-} from './otio-program-trace.ts';
 import type { ProofHarness } from './otio-program-harness.ts';
 import type { PrimerStage } from './otio-program-primer-controls.ts';
 import {
@@ -83,16 +77,6 @@ function sleep(ms: number): Promise<void> {
   const { promise, resolve } = Promise.withResolvers<void>();
   setTimeout(resolve, ms);
   return promise;
-}
-
-/** The trace timestamp (microseconds) of the named mark, or null when the trace lacks it. */
-function markTsUs(events: readonly unknown[], name: string): number | null {
-  for (const event of events) {
-    if (typeof event !== 'object' || event === null) continue;
-    const record = event as { name?: unknown; ts?: unknown };
-    if (record.name === name && typeof record.ts === 'number') return record.ts;
-  }
-  return null;
 }
 
 function receiptPath(
@@ -177,93 +161,46 @@ async function runAudioTrial(
 
       const reference = Float32Array.from(expectedAudio());
       const label = `${arm} round ${round}${earlyStart ? ' early-start' : ''}`;
-      const options = {
-        reference: { left: reference, right: reference },
+      const verdict = trialVerdict(record, {
         label,
-      };
-      const gate = gateCapture(record, options);
-      const coverage = trialCoverageFailures(record, gate.join, label);
-      const markFailures = markOrderFailures(
-        // The trace's events are the TraceEvent records the proof's trace reads. The join types
-        // them as unknown so it does not depend on the trace module.
-        record.events as readonly TraceEvent[],
-        PLAY_MARK
-      );
-      const controls = mutationControlFailures(record, options);
+        earlyStart,
+        reference: { left: reference, right: reference },
+      });
+      const allFailures = [...failures, ...verdict.failures];
 
-      // Early-start control: a program render must end before the trusted Play, and the gate must
-      // report it as pre-gesture audio. Render times are the join's tee times on the trace clock.
-      const controlFailures: string[] = [];
-      if (earlyStart) {
-        const playUs = markTsUs(record.events, PLAY_MARK);
-        const preGesture =
-          playUs === null
-            ? 0
-            : gate.join.pairs.filter((pair) => pair.teeUs < playUs).length;
-        if (preGesture === 0)
-          controlFailures.push(
-            'early-start control produced no program render before the trusted Play'
-          );
-        if (
-          !gate.failures.some((failure) =>
-            failure.startsWith(PRE_GESTURE_FAILURE)
-          )
-        )
-          controlFailures.push(
-            `early-start control did not fail as predicted: ${gate.failures.join(' | ') || 'none'}`
-          );
-      }
-
-      // Receipts: enough to replay the join and the gate offline. The measured samples, the
-      // sanitized render and mixer-input timings, the marks, and every outcome are kept in scratch.
+      // Receipts: the sanitized record the verdict read, every reader chunk's PCM (pre-gesture
+      // included), and the gated samples. Judging the saved record again reproduces the verdict.
       // Nothing here changes what is gated.
       const receipt = receiptPath(input.scratch, arm, round, earlyStart);
-      const allFailures = [
-        ...failures,
-        ...gate.failures,
-        ...coverage,
-        ...markFailures,
-        ...controls,
-      ];
-      await writeFile(
-        `${receipt}.json`,
-        JSON.stringify({
+      await writeAudioReceipt(
+        receipt,
+        {
           arm,
           round,
           earlyStart,
           label,
           primerState,
           failures: allFailures,
-          controlFailures,
-          dataLossOccurred: record.dataLossOccurred,
-          truncated: record.truncated,
-          restCurrentTime: record.restCurrentTime,
-          observerFrames: record.observerFrames,
+          controlFailures: verdict.controlFailures,
           referenceSamples: reference.length,
-          chunks: record.chunks.map((chunk) => ({
-            stampUs: chunk.stampUs,
-            frames: chunk.frames,
-            rate: chunk.rate,
-            deliveredMs: chunk.deliveredMs,
-          })),
-          replayEvents: replayEvents(record.events),
           join: {
-            pass: gate.join.pass,
-            programId: gate.join.programId,
-            pairs: gate.join.pairs,
-            failures: gate.join.failures,
-            telemetry: gate.join.telemetry,
+            pass: verdict.gate.join.pass,
+            programId: verdict.gate.join.programId,
+            pairs: verdict.gate.join.pairs,
+            failures: verdict.gate.join.failures,
+            telemetry: verdict.gate.join.telemetry,
           },
-          evidence: gate.evidence,
-        })
+          evidence: verdict.gate.evidence,
+        },
+        record
       );
       await writeFile(
         `${receipt}-measured-left.f32`,
-        new Uint8Array(gatedChannel(record, gate.join, 'left').buffer)
+        encodeF32LE(gatedChannel(record, verdict.gate.join, 'left'))
       );
       await writeFile(
         `${receipt}-measured-right.f32`,
-        new Uint8Array(gatedChannel(record, gate.join, 'right').buffer)
+        encodeF32LE(gatedChannel(record, verdict.gate.join, 'right'))
       );
 
       console.log(
@@ -273,17 +210,18 @@ async function runAudioTrial(
           earlyStart,
           failures: allFailures.length,
           join: {
-            pass: gate.join.pass,
-            pairs: gate.join.pairs.length,
-            programId: gate.join.programId,
+            pass: verdict.gate.join.pass,
+            pairs: verdict.gate.join.pairs.length,
+            programId: verdict.gate.join.programId,
           },
-          telemetry: gate.join.telemetry,
-          left: summarise(gate.evidence?.left),
-          right: summarise(gate.evidence?.right),
+          telemetry: verdict.gate.join.telemetry,
+          left: summarise(verdict.gate.evidence?.left),
+          right: summarise(verdict.gate.evidence?.right),
         })}`
       );
 
-      if (earlyStart) return { failures, controlFailures };
+      if (earlyStart)
+        return { failures, controlFailures: [...verdict.controlFailures] };
       return { failures: allFailures, controlFailures: [] };
     } finally {
       await page.close();

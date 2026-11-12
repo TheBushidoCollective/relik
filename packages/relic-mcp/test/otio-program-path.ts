@@ -53,6 +53,8 @@ import { runAudioArm } from './otio-program-audio-arm.ts';
 import {
   captureProgramAudio,
   fullCoverageFailures,
+  sanitizeRecord,
+  writeAudioReceipt,
 } from './otio-program-audio-capture.ts';
 import { gateCapture } from './otio-program-audio-join.ts';
 import { discoverChrome } from '../src/cover/chrome.ts';
@@ -891,14 +893,22 @@ try {
       );
       return value === 'program' ? value : undefined;
     });
-    const record = await captureProgramAudio(audioPage, {
-      seconds: 6.5,
-      beforePlay: async (page: ViewerPage) => {
-        await page.evaluate(
-          `(async () => { await window.${VIEWER_CONTRACT.hook}.seek(0); })()`
-        );
-      },
-    });
+    // The gate judges the record the receipt saves, so a reloaded receipt replays this verdict.
+    const record = sanitizeRecord(
+      await captureProgramAudio(audioPage, {
+        seconds: 6.5,
+        beforePlay: async (page: ViewerPage) => {
+          await page.evaluate(
+            `(async () => { await window.${VIEWER_CONTRACT.hook}.seek(0); })()`
+          );
+        },
+      })
+    );
+    await writeAudioReceipt(
+      join(harness.scratch, 'audio-viewer-captured'),
+      { stage: 'viewer-audio-captured' },
+      record
+    );
     const reference = Float32Array.from(expectedAudio());
     const gate = gateCapture(record, {
       reference: { left: reference, right: reference },

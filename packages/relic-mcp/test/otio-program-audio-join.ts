@@ -21,10 +21,7 @@ import {
   measureSignal,
   type SignalEvidence,
 } from './otio-program-audio-signal.ts';
-import {
-  AUDIO_MAX_LAG_SAMPLES,
-  AUDIO_MIN_SNR_DB,
-} from './otio-program-checks.ts';
+import { AUDIO_MIN_SNR_DB } from './otio-program-checks.ts';
 
 /** The captured program renders at 48 kHz. Chunk stamps and trace times share this clock. */
 export const JOIN_RATE = 48000;
@@ -237,6 +234,14 @@ function isAudible(chunk: CapturedChunk): boolean {
   const loud = (samples: Float32Array): boolean =>
     samples.some((sample) => Math.abs(sample) > AUDIO_SILENCE_AMPLITUDE);
   return loud(chunk.left) || loud(chunk.right);
+}
+
+/** True when every sample of both channels is a finite number. NaN and infinity are never scored. */
+function finitePcm(chunk: CapturedChunk): boolean {
+  return (
+    chunk.left.every((sample) => Number.isFinite(sample)) &&
+    chunk.right.every((sample) => Number.isFinite(sample))
+  );
 }
 
 /**
@@ -490,6 +495,11 @@ export function joinCapture(
       `${badSamples} chunk(s) whose sample arrays do not match their frame count`
     );
   }
+  const nonFinite = chunks.filter((chunk) => !finitePcm(chunk)).length;
+  if (nonFinite > 0)
+    failures.push(
+      `${nonFinite} chunk(s) hold non-finite PCM (NaN or infinity)`
+    );
   const badStamps = chunks.filter(
     (chunk) =>
       !Number.isFinite(chunk.stampUs) || !Number.isFinite(chunk.deliveredMs)
@@ -660,7 +670,7 @@ export function joinCapture(
     rest !== null &&
     Number.isFinite(rest) &&
     rest >= 0
-      ? Math.round(rest * JOIN_RATE)
+      ? Math.round(rest * rate)
       : null;
 
   return {
@@ -708,74 +718,71 @@ const CHUNK_MIN_CORRELATION = Math.sqrt(
 );
 
 /**
- * Normalised correlation of a rendered window with the reference at one start. Null when the window
- * lies outside the reference or the reference is silent there, which is not judged. Silent rendered
- * audio against loud reference correlates at zero.
- */
-function windowCorrelation(
-  rendered: Float32Array,
-  reference: Float32Array,
-  from: number
-): number | null {
-  const n = rendered.length;
-  if (from < 0 || from + n > reference.length) return null;
-  let cross = 0;
-  let renderedEnergy = 0;
-  let referenceEnergy = 0;
-  for (let k = 0; k < n; k++) {
-    const r = rendered[k] ?? 0;
-    const e = reference[from + k] ?? 0;
-    cross += r * e;
-    renderedEnergy += r * r;
-    referenceEnergy += e * e;
-  }
-  if (referenceEnergy / n < AUDIO_SILENCE_AMPLITUDE ** 2) return null;
-  if (renderedEnergy === 0) return 0;
-  return cross / Math.sqrt(renderedEnergy * referenceEnergy);
-}
-
-/**
- * Best correlation of one chunk over the lags the signal alignment allows. A chunk correct at lag 0
- * returns at once, so the search runs only for chunks that fail there.
+ * Correlation of one rendered chunk with the reference at the channel's global lag. Only judged
+ * samples count. A rendered sample at silence level is not judged here: a zero run is a gap, and the
+ * global gap budget judges it. A reference sample outside the program is not judged either. Null
+ * when nothing is judged, or when the reference is silent across the window, which the sampled
+ * checks cover. Zero when the judged rendered audio is absent from the reference altogether.
  */
 function chunkCorrelation(
   rendered: Float32Array,
   reference: Float32Array,
-  start: number
+  from: number
 ): number | null {
-  const atZero = windowCorrelation(rendered, reference, start);
-  if (atZero === null || atZero >= CHUNK_MIN_CORRELATION) return atZero;
-  let best = atZero;
-  for (let lag = -AUDIO_MAX_LAG_SAMPLES; lag <= AUDIO_MAX_LAG_SAMPLES; lag++) {
-    if (lag === 0) continue;
-    const candidate = windowCorrelation(rendered, reference, start + lag);
-    if (candidate !== null && candidate > best) best = candidate;
+  let inRange = 0;
+  let referenceEnergy = 0;
+  let judged = 0;
+  let cross = 0;
+  let renderedEnergy = 0;
+  let judgedReferenceEnergy = 0;
+  for (let k = 0; k < rendered.length; k++) {
+    const index = from + k;
+    if (index < 0 || index >= reference.length) continue;
+    inRange++;
+    const e = reference[index] ?? 0;
+    referenceEnergy += e * e;
+    const r = rendered[k] ?? 0;
+    if (Math.abs(r) <= AUDIO_SILENCE_AMPLITUDE) continue;
+    judged++;
+    cross += r * e;
+    renderedEnergy += r * r;
+    judgedReferenceEnergy += e * e;
   }
-  return best;
+  if (judged === 0 || referenceEnergy / inRange < AUDIO_SILENCE_AMPLITUDE ** 2)
+    return null;
+  if (judgedReferenceEnergy === 0) return 0;
+  return cross / Math.sqrt(renderedEnergy * judgedReferenceEnergy);
 }
 
 /**
- * Every gated chunk must match the program audio at its own program position. The overall SNR and the
- * offset walk can both pass a single repeated or zeroed chunk, since one chunk is about 21 ms of a 6 s
- * program, so each chunk is judged on its own.
+ * Every gated chunk must match the program audio at its own program position, at the channel's
+ * measured global lag. The rendered audio runs lag samples late, so rendered sample j of a chunk that
+ * starts at program sample p is compared with reference sample p + j - lag. The overall SNR and the
+ * offset walk can both pass one repeated chunk, since a chunk is about 21 ms of a 6 s program, so each
+ * chunk is judged on its own. Zero runs are not judged here: the global gap budget judges them.
  */
 function chunkMatchFailures(
   span: readonly CapturedChunk[],
   pick: (chunk: CapturedChunk) => Float32Array,
   reference: Float32Array,
   startSample: number,
+  lagSamples: number,
   label: string
 ): string[] {
   const failures: string[] = [];
-  let position = startSample;
+  let programStart = startSample;
   for (const [k, chunk] of span.entries()) {
-    const best = chunkCorrelation(pick(chunk), reference, position);
+    const best = chunkCorrelation(
+      pick(chunk),
+      reference,
+      programStart - lagSamples
+    );
     if (best !== null && best < CHUNK_MIN_CORRELATION) {
       failures.push(
-        `${label}: gated chunk ${k} does not match the program audio (best correlation ${best.toFixed(4)} < ${CHUNK_MIN_CORRELATION.toFixed(4)})`
+        `${label}: gated chunk ${k} does not match the program audio (correlation ${best.toFixed(4)} at lag ${lagSamples} < ${CHUNK_MIN_CORRELATION.toFixed(4)})`
       );
     }
-    position += chunk.frames;
+    programStart += chunk.frames;
   }
   return failures;
 }
@@ -784,6 +791,10 @@ function chunkMatchFailures(
  * Gates one joined capture over its gated span. The span starts at the resting currentTime, so the
  * reference slice is aligned to program time. Returns every failure: the join's own, the resting
  * time, the span, and every sampled-audio failure of each channel. An empty list passes.
+ *
+ * Non-finite PCM, in the capture or the reference, is rejected before anything is scored: NaN fails
+ * every comparison and an infinite sample can turn an error into a perfect match. An infinite SNR is
+ * kept only for a finite signal, where the error is exactly zero. A NaN SNR fails.
  */
 export function gateCapture(
   record: CaptureRecord,
@@ -791,6 +802,16 @@ export function gateCapture(
 ): GateResult {
   const join = joinCapture(record);
   const failures: string[] = [...join.failures];
+
+  const referenceFinite =
+    options.reference.left.every((sample) => Number.isFinite(sample)) &&
+    options.reference.right.every((sample) => Number.isFinite(sample));
+  if (!record.chunks.every(finitePcm) || !referenceFinite) {
+    failures.push(
+      `${options.label}: non-finite PCM (NaN or infinity) in the capture or the reference; nothing is scored`
+    );
+    return { failures, join, evidence: null };
+  }
 
   const rest = record.restCurrentTime;
   if (rest === null || !Number.isFinite(rest) || rest < 0) {
@@ -824,8 +845,13 @@ export function gateCapture(
     return { failures, join, evidence: null };
   }
 
+  // Program sample of the span's first sample. Every chunk after it sits at startSample plus the
+  // frames before it, so the per-chunk positions and the measured lag use the same origin.
   const startSample = join.startSample;
-  if (startSample === null) return { failures, join, evidence: null };
+  if (startSample === null) {
+    failures.push('no program sample for the gated span');
+    return { failures, join, evidence: null };
+  }
   const evidence = {
     left: measureSignal(
       concatChannel(span, (chunk) => chunk.left),
@@ -840,6 +866,9 @@ export function gateCapture(
       startSample
     ),
   };
+  if (Number.isNaN(evidence.left.snrDb) || Number.isNaN(evidence.right.snrDb)) {
+    failures.push(`${options.label}: SNR is not a number`);
+  }
   failures.push(
     ...gateSignal(evidence.left, `${options.label} left`),
     ...gateSignal(evidence.right, `${options.label} right`),
@@ -848,6 +877,7 @@ export function gateCapture(
       (chunk) => chunk.left,
       options.reference.left,
       startSample,
+      evidence.left.lagSamples,
       `${options.label} left`
     ),
     ...chunkMatchFailures(
@@ -855,6 +885,7 @@ export function gateCapture(
       (chunk) => chunk.right,
       options.reference.right,
       startSample,
+      evidence.right.lagSamples,
       `${options.label} right`
     )
   );
@@ -974,6 +1005,19 @@ function controlsFor(
           left: new Float32Array(chunk.frames),
           right: new Float32Array(chunk.frames),
         }));
+      },
+    },
+    {
+      // Pairing is unchanged, so only the non-finite check can reject it. NaN fails every comparison.
+      name: 'NaN sample in the middle chunk',
+      layer: 'join',
+      apply: (r) => {
+        if (middle === undefined) return null;
+        return editChunk(r, mid, (chunk) => {
+          const left = chunk.left.slice();
+          left[Math.floor(chunk.frames / 2)] = Number.NaN;
+          return { ...chunk, left };
+        });
       },
     },
     {
