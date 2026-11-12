@@ -214,6 +214,15 @@ const HAVE_CURRENT_DATA = 2;
 // Operational candidate; integrated startup qualification must measure this guard.
 const OTIO_PCM_EPOCH_GUARD_FRAMES = 512;
 const OTIO_PCM_TARGET_LEAD_SECONDS = 0.4;
+// How much earlier an incoming video boundary's decoder starts under scheduled audio. The audio
+// frontier can only extend over a cut once the incoming ring is running, and the gate closes when
+// the render clock reaches the frontier, which sits the output latency ahead of what is audible.
+// A boundary that became ready only a few milliseconds before that closure (CI run 43322551793:
+// ready 10 to 14 ms before every closure, four attempts out of four) leaves no time to extend,
+// and recovery then has to restart inside the 20 ms gap. The allowance is the frontier's
+// extension horizon (about 125 ms), its gate round trip and a tick, rounded up. The ring is sized
+// for the longer reach by requiredResidentSlots.
+const OTIO_PCM_BOUNDARY_FRONTIER_ALLOWANCE_SECONDS = 0.3;
 // Chromium can quantize an assigned midpoint twice: the loopback proof saw
 // 4.020833333333334 report 4.020832 on seeked. Two microseconds cover that
 // measured granularity without accepting a neighboring ordinary video frame.
@@ -1692,7 +1701,9 @@ export function createOtioPlayback(
         const measured = run ? measuredOutputLeadSeconds(run) : null;
         if (!run || measured === null) return;
         pcmLeadSeconds =
-          measured + run.outputClock.policy.maxOffsetSpreadMs / 1000;
+          measured +
+          run.outputClock.policy.maxOffsetSpreadMs / 1000 +
+          OTIO_PCM_BOUNDARY_FRONTIER_ALLOWANCE_SECONDS;
       }
       const candidate: BoundaryPreparation = {
         at: boundary.time,

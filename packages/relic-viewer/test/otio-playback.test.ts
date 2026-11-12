@@ -5334,6 +5334,7 @@ describe('otio playback controller', () => {
       const f0 = Number(arm!.f0);
       let firstTag = 1;
       let incomingTag = -1;
+      let incomingStartTick = -1;
       for (let tick = 1; tick <= 31; tick++) {
         const outputFrame = f0 + tick * 800;
         const now = 1000 + outputFrame / 48;
@@ -5344,7 +5345,13 @@ describe('otio playback controller', () => {
         }
         const incoming = fixture.videos[1];
         if (incoming && !incoming.paused && incoming.rvfcCallbacks.size) {
-          const tag = Math.max(1, Math.floor((tick - 30) / 2) + 1);
+          if (incomingStartTick < 0) incomingStartTick = tick;
+          // The incoming decoder starts one frontier allowance before the cut and then presents
+          // a frame every two ticks.
+          const tag = Math.max(
+            1,
+            Math.floor((tick - incomingStartTick) / 2) + 1
+          );
           if (tag > incomingTag) {
             incomingTag = tag;
             incoming.triggerRvfc(now, tag / 30);
@@ -5643,12 +5650,13 @@ describe('otio playback controller', () => {
           (c) => c.residentSlots
         )
       ).toEqual([5]);
-      // The incoming decoder starts one lead before its boundary, not at it.
+      // The incoming decoder starts one lead before its boundary, not at it. The lead is the
+      // output latency and offset spread plus the 300 ms the frontier needs to extend over the cut.
       const incomingPlayWall = (
         fixture.videos[1] as MockMedia & { playedAt?: number }
       ).playedAt;
-      expect(incomingPlayWall).toBeGreaterThanOrEqual(2488.67);
-      expect(incomingPlayWall).toBeLessThanOrEqual(2496.67);
+      expect(incomingPlayWall).toBeGreaterThanOrEqual(2188.67);
+      expect(incomingPlayWall).toBeLessThanOrEqual(2196.67);
       // The boundary was ready before the render reached it, with the latency and margin.
       const ready = proofRecords.find((r) => r.event === 'boundary-ready');
       expect(ready, 'boundary-ready record').toBeDefined();
