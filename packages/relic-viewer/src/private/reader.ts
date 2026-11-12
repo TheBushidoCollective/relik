@@ -12,6 +12,9 @@
 import { createContentSink } from '../content.ts';
 import { readSession, requestMagicLink } from '../comments.ts';
 import { keylessLink } from '../copy-link.ts';
+import { privateApi } from './fingerprint-input.ts';
+import { renderPrivateDashboard } from './dashboard-private.ts';
+import { openAccessPanel } from './owner-panel.ts';
 import { mountPasskeySignIn } from '../passkey-sign-in.ts';
 import {
   normalizeSignInCode,
@@ -31,6 +34,7 @@ import {
 import {
   formatFingerprint,
   type IdentityStateJSON,
+  type PrivateAccessJSON,
   identityFingerprint,
 } from '@relic/format/private';
 import { type AccessView, loadAccess, requestAccess } from './request.ts';
@@ -268,12 +272,13 @@ function required<T extends Element>(scope: ParentNode, selector: string): T {
 
 /** A fingerprint's display groups become spans of text, never markup. */
 function setFingerprint(target: Element, display: string): void {
+  const groups = display.split(' ').map((group) => {
+    const span = document.createElement('span');
+    span.textContent = group;
+    return span;
+  });
   target.replaceChildren(
-    ...display.split(' ').map((group) => {
-      const span = document.createElement('span');
-      span.textContent = group;
-      return span;
-    })
+    ...groups.flatMap((span, index) => (index === 0 ? [span] : [' ', span]))
   );
 }
 
@@ -314,6 +319,8 @@ class PrivateReader {
   private identity: UnlockedIdentity | undefined;
   private readonly keyPromises = new Map<number, Promise<Uint8Array>>();
   private pendingVersion = 0;
+  private panelHost: HTMLElement | undefined;
+  private requestCount: HTMLElement | undefined;
 
   constructor(private readonly mount: PrivateReaderMount) {
     this.host = document.createElement('section');
@@ -478,11 +485,13 @@ class PrivateReader {
       case 'owner':
       case 'grantee':
       case 'recovery':
-        this.stage('unlock').querySelector<HTMLElement>(
-          '[data-expiry]'
-        )!.textContent =
-          `${COPY_SIGNED_IN} ${this.email ?? ''} · expires ${expiryLabel(access.expiresAt)}`;
         this.show('unlock');
+        this.prepareOwner();
+        required<HTMLElement>(
+          this.stage('unlock'),
+          '[data-expiry]'
+        ).textContent =
+          `${COPY_SIGNED_IN} ${this.email ?? ''} · expires ${expiryLabel(access.expiresAt)}`;
         return;
     }
   }
@@ -701,6 +710,7 @@ class PrivateReader {
       this.mount.deps
     );
     this.mount.root.prepend(this.strip(pinnedOwnerFor(this.mount.relicId)));
+    void this.attachOwnerControls();
   }
 
   /** The strip above a private relic: who shared it, and the owner's fingerprint. */
@@ -741,6 +751,103 @@ class PrivateReader {
     }
     strip.append(who, fingerprint, note);
     return strip;
+  }
+
+  /** The owner's panel host, placed under the page root and replaced on each render. */
+  private attachPanelHost(): HTMLElement {
+    this.panelHost?.remove();
+    const host = document.createElement('div');
+    host.id = 'access-panel-host';
+    this.mount.root.append(host);
+    this.panelHost = host;
+    return host;
+  }
+
+  /**
+   * The owner's unlock stage keeps the panel host ready, and the request mail's
+   * `?access=requests` opens the access panel straight from there.
+   */
+  private prepareOwner(): void {
+    if (this.access?.role !== 'owner') return;
+    this.attachPanelHost();
+    const wanted = new URL(this.mount.deps.locationHref).searchParams.get(
+      'access'
+    );
+    if (wanted === 'requests') void this.openOwnerPanel();
+  }
+
+  /** The owner's Access control on the relic's bar, with the pending count. */
+  private async attachOwnerControls(): Promise<void> {
+    if (this.access?.role !== 'owner') return;
+    const bar = this.mount.root.querySelector<HTMLElement>('.bar');
+    if (bar === null) return;
+    this.attachPanelHost();
+    const count = document.createElement('span');
+    count.className = 'action-count';
+    count.id = 'request-count';
+    this.requestCount = count;
+    const button = document.createElement('button');
+    button.className = 'action';
+    button.setAttribute('data-action', 'open-access-panel');
+    button.setAttribute('aria-expanded', 'false');
+    button.setAttribute('aria-controls', 'access-panel');
+    const label = document.createElement('span');
+    label.textContent = 'Access';
+    button.append(label, count);
+    button.addEventListener('click', () => {
+      void this.openOwnerPanel();
+    });
+    bar.append(button);
+    await this.refreshRequestCount();
+  }
+
+  /** Sets the pending count the Access control shows, hidden when none wait. */
+  private async refreshRequestCount(): Promise<void> {
+    const count = this.requestCount;
+    if (count === undefined) return;
+    try {
+      const listed = await privateApi<{
+        readonly requests: readonly { readonly status: string }[];
+      }>(
+        this.mount.deps,
+        'GET',
+        `/api/relics/${encodeURIComponent(this.mount.relicId)}/requests`
+      );
+      const pending = listed.requests.filter(
+        (request) => request.status === 'pending'
+      ).length;
+      count.textContent = String(pending);
+      count.hidden = pending === 0;
+      count.setAttribute(
+        'aria-label',
+        `${pending} ${pending === 1 ? 'request' : 'requests'} waiting`
+      );
+    } catch {
+      count.hidden = true;
+    }
+  }
+
+  /** Opens the access panel, loaded fresh from the service. A failed load leaves the page as it was. */
+  private async openOwnerPanel(): Promise<void> {
+    const { deps, relicId } = this.mount;
+    try {
+      const access = await privateApi<PrivateAccessJSON>(
+        deps,
+        'GET',
+        `/api/relics/${encodeURIComponent(relicId)}/access`
+      );
+      if (this.panelHost === undefined) return;
+      openAccessPanel(this.panelHost, {
+        relicId,
+        access,
+        deps,
+        onChanged: () => {
+          void this.refreshRequestCount();
+        },
+      });
+    } catch {
+      return;
+    }
   }
 
   /** Maps a failed step onto the stage the reader can act on. */
@@ -831,4 +938,26 @@ export async function mountPrivateReader(
   mount: PrivateReaderMount
 ): Promise<void> {
   await new PrivateReader(mount).start();
+}
+
+/**
+ * Mounts the private-share sections under the dashboard. A visitor who is not
+ * signed in gets nothing here, and no key or identity request is made. A
+ * signed-in visitor gets the sections, with the device approval for
+ * `?approve-device=` when the link carries one.
+ */
+export async function mountPrivateDashboard(
+  root: HTMLElement,
+  deps: ViewerDeps
+): Promise<void> {
+  const session = await readSession(deps);
+  if (session.kind !== 'verified') return;
+  const host = document.createElement('section');
+  host.id = 'private-dashboard';
+  root.append(host);
+  const approve = new URL(deps.locationHref).searchParams.get('approve-device');
+  renderPrivateDashboard(host, {
+    deps,
+    ...(approve === null ? {} : { approveDeviceEnrollmentId: approve }),
+  });
 }
