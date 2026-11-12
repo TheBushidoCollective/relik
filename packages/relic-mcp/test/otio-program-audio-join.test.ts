@@ -24,10 +24,16 @@ const PLAY_US = 1_000_000;
 const FIRST_AFTER_PLAY_US = 8_800;
 const TID = 7;
 const MID = Math.floor(COUNT / 2);
+/** The gate and the mutation controls each run several full-length signal measurements. */
+const SLOW_MS = 60_000;
 
-/** The program's expected signal. Chunk i carries samples [i * 1024, (i + 1) * 1024). */
-const EXPECTED = expectedAudio(COUNT * FRAMES + RATE);
+/**
+ * The program's expected signal, indexed by program sample. It is longer than the capture so a
+ * nonzero resting currentTime still has reference samples under every chunk.
+ */
+const EXPECTED = expectedAudio(COUNT * FRAMES + 3 * RATE);
 const REFERENCE: AudioReference = { left: EXPECTED, right: EXPECTED };
+const GATE = { reference: REFERENCE, label: 'program' };
 
 /**
  * Delay frames alternate between 2000 and 3100. Each step into a 3100 frame moves the stamp back by
@@ -47,6 +53,10 @@ interface FixtureOptions {
   readonly playUs?: number;
   readonly withPrimer?: boolean;
   readonly rebuiltAtPlay?: boolean;
+  /** Resting currentTime at Play, in seconds. The first gated sample is reference sample rest * 48000. */
+  readonly restSeconds?: number;
+  /** Chunk 0 is silent. Silent pre-Play output does not advance program time. */
+  readonly silentFirst?: boolean;
 }
 
 interface Fixture {
@@ -57,12 +67,14 @@ interface Fixture {
 /**
  * A capture shaped like the probe: a priming render with zero playout delay, a gap to the next
  * render, then renders at the chunk cadence. Each chunk's stamp is set so its tee time lands in the
- * middle of its own render's call. Samples are the expected signal, so the gate can pass.
+ * middle of its own render's call. Samples are the expected signal from the resting sample, so the
+ * gate can pass.
  */
 function buildFixture(options: FixtureOptions = {}): Fixture {
   const gap = options.firstGapUs ?? 34_700;
   const delay = options.laterDelayMs ?? 56.4;
   const play = options.playUs ?? PLAY_US;
+  const restSamples = Math.round((options.restSeconds ?? 0) * RATE);
   const first = PLAY_US + FIRST_AFTER_PLAY_US;
   const renderTs: number[] = [];
   for (let i = 0; i < COUNT; i++) {
@@ -71,6 +83,8 @@ function buildFixture(options: FixtureOptions = {}): Fixture {
 
   const events: Record<string, unknown>[] = [];
   const chunks: CapturedChunk[] = [];
+  // Program time: silent pre-Play chunks do not advance it. The first audible chunk is at rest.
+  let programSample = restSamples;
   for (let i = 0; i < COUNT; i++) {
     const ts = renderTs[i] ?? first;
     const frames = framesFor(i);
@@ -126,13 +140,20 @@ function buildFixture(options: FixtureOptions = {}): Fixture {
       );
     }
     const tee = ts + 600;
+    const silent = options.silentFirst === true && i === 0;
+    const from = programSample;
+    if (!silent) programSample += FRAMES;
     chunks.push({
       stampUs: tee - Math.floor((frames * 1_000_000) / RATE),
       frames: FRAMES,
       rate: RATE,
       deliveredMs: (i * FRAMES * 1000) / RATE,
-      left: REFERENCE.left.subarray(i * FRAMES, (i + 1) * FRAMES),
-      right: REFERENCE.right.subarray(i * FRAMES, (i + 1) * FRAMES),
+      left: silent
+        ? new Float32Array(FRAMES)
+        : REFERENCE.left.subarray(from, from + FRAMES),
+      right: silent
+        ? new Float32Array(FRAMES)
+        : REFERENCE.right.subarray(from, from + FRAMES),
     });
   }
 
@@ -168,7 +189,7 @@ function buildFixture(options: FixtureOptions = {}): Fixture {
       events,
       truncated: false,
       dataLossOccurred: false,
-      restCurrentTime: 0,
+      restCurrentTime: options.restSeconds ?? 0,
       observerFrames,
     },
     renderTs,
@@ -187,6 +208,39 @@ function withTee(
     chunks: record.chunks.map((chunk, k) =>
       k === index
         ? { ...chunk, stampUs: teeUs - Math.floor((frames * 1_000_000) / RATE) }
+        : chunk
+    ),
+  };
+}
+
+/** Moves every trace event with this name to a new timestamp. */
+function moveMark(
+  events: readonly unknown[],
+  name: string,
+  ts: number
+): unknown[] {
+  return events.map((value) =>
+    typeof value === 'object' &&
+    value !== null &&
+    'name' in value &&
+    value.name === name
+      ? { ...value, ts }
+      : value
+  );
+}
+
+/** Copies the predecessor's PCM into chunk k, keeping its count, stamp and metadata. */
+function repeatPredecessor(record: CaptureRecord, k: number): CaptureRecord {
+  const previous = record.chunks[k - 1];
+  return {
+    ...record,
+    chunks: record.chunks.map((chunk, index) =>
+      index === k && previous !== undefined
+        ? {
+            ...chunk,
+            left: previous.left.slice(),
+            right: previous.right.slice(),
+          }
         : chunk
     ),
   };
@@ -228,8 +282,9 @@ describe('joinCapture: one-to-one pairing in delivery order', () => {
   test('a tee 2 us past its call fails the join', () => {
     const ts = buildFixture().renderTs[MID] ?? 0;
     const callEnd = ts + 800;
-    const join = joinCapture(withTee(CLEAN, MID, callEnd + 2, framesFor(MID)));
-    expect(join.pass).toBe(false);
+    expect(
+      joinCapture(withTee(CLEAN, MID, callEnd + 2, framesFor(MID))).pass
+    ).toBe(false);
   });
 
   test('a stamp shifted by 1 ms fails the join', () => {
@@ -269,11 +324,11 @@ describe('priming telemetry: recorded, never asserted as a range', () => {
         gapUs / 1000 - delayMs,
         6
       );
-      // First nonzero-delay render is render 1. Frames of render 0 precede it.
+      // The removed frames are the PCM frames of render 0's chunk, not its delay frames (2000).
       const expectedPlayout =
         (renderTs[1] ?? 0) / 1000 +
         delayMs -
-        (framesFor(0) * 1000) / RATE -
+        (FRAMES * 1000) / RATE -
         PLAY_US / 1000;
       expect(join.telemetry?.chromeEstimatedPlayoutFirstMs).toBeCloseTo(
         expectedPlayout,
@@ -284,12 +339,42 @@ describe('priming telemetry: recorded, never asserted as a range', () => {
 });
 
 describe('fail closed', () => {
-  test('a program render that ends before the play mark is pre-gesture audio', () => {
+  test('an audible program render that ends before the play mark is pre-gesture audio', () => {
     const { record } = buildFixture({ playUs: PLAY_US + 9_500 });
     const join = joinCapture(record);
     expect(join.pass).toBe(false);
     expect(
       join.failures.some((failure) => failure.startsWith(PRE_GESTURE_FAILURE))
+    ).toBe(true);
+  });
+
+  test(
+    'a silent render before Play with its chunk passes the join and the gate',
+    () => {
+      const { record } = buildFixture({
+        playUs: PLAY_US + 9_500,
+        silentFirst: true,
+      });
+      const join = joinCapture(record);
+      expect(join.failures).toEqual([]);
+      expect(join.pass).toBe(true);
+      expect(join.gatedChunks[0]).toBe(1);
+      expect(gateCapture(record, GATE).failures).toEqual([]);
+    },
+    SLOW_MS
+  );
+
+  test('a silent render before Play with no chunk still fails the join', () => {
+    const { record } = buildFixture({
+      playUs: PLAY_US + 9_500,
+      silentFirst: true,
+    });
+    const join = joinCapture({ ...record, chunks: record.chunks.slice(1) });
+    expect(join.pass).toBe(false);
+    expect(
+      join.failures.some((failure) =>
+        failure.includes('pre-gesture render(s) have no paired chunk')
+      )
     ).toBe(true);
   });
 
@@ -345,60 +430,171 @@ describe('fail closed', () => {
   });
 });
 
-describe('gateCapture: the join and the sampled audio together', () => {
-  test('the expected samples pass the gate on both channels', () => {
-    const gate = gateCapture(CLEAN, { reference: REFERENCE, label: 'program' });
-    expect(gate.failures).toEqual([]);
-    expect(gate.evidence).not.toBeNull();
-  });
+describe('gateCapture: resting currentTime aligns the span', () => {
+  test(
+    'the expected samples pass the gate on both channels at rest 0',
+    () => {
+      const gate = gateCapture(CLEAN, GATE);
+      expect(gate.failures).toEqual([]);
+      expect(gate.evidence).not.toBeNull();
+    },
+    SLOW_MS
+  );
 
-  test('two zeroed chunks fail the sampled gate while pairing still passes', () => {
-    const chunks = CLEAN.chunks.map((chunk, k) =>
-      k === 100 || k === 101
-        ? {
-            ...chunk,
-            left: new Float32Array(FRAMES),
-            right: new Float32Array(FRAMES),
-          }
-        : chunk
-    );
-    const gate = gateCapture(
-      { ...CLEAN, chunks },
-      { reference: REFERENCE, label: 'program' }
-    );
-    expect(gate.join.pass).toBe(true);
-    expect(gate.failures.length).toBeGreaterThan(0);
-  });
+  test(
+    'a nonzero resting currentTime with its matching samples passes',
+    () => {
+      const { record } = buildFixture({ restSeconds: 0.5 });
+      const gate = gateCapture(record, GATE);
+      expect(gate.join.pass).toBe(true);
+      expect(gate.failures).toEqual([]);
+    },
+    SLOW_MS
+  );
+
+  test(
+    'a resting currentTime of 2 s over chunks that begin at reference 0 fails',
+    () => {
+      const gate = gateCapture({ ...CLEAN, restCurrentTime: 2 }, GATE);
+      expect(gate.join.pass).toBe(true);
+      expect(gate.failures.length).toBeGreaterThan(0);
+      expect(gate.evidence).not.toBeNull();
+    },
+    SLOW_MS
+  );
+
+  test(
+    'a null resting currentTime fails and measures nothing',
+    () => {
+      const gate = gateCapture({ ...CLEAN, restCurrentTime: null }, GATE);
+      expect(
+        gate.failures.some((failure) => failure.includes('resting currentTime'))
+      ).toBe(true);
+      expect(gate.evidence).toBeNull();
+    },
+    SLOW_MS
+  );
+
+  test(
+    'a negative resting currentTime fails',
+    () => {
+      const gate = gateCapture({ ...CLEAN, restCurrentTime: -1 }, GATE);
+      expect(
+        gate.failures.some((failure) => failure.includes('resting currentTime'))
+      ).toBe(true);
+      expect(gate.evidence).toBeNull();
+    },
+    SLOW_MS
+  );
+
+  test(
+    'a non-finite resting currentTime fails',
+    () => {
+      const gate = gateCapture({ ...CLEAN, restCurrentTime: Number.NaN }, GATE);
+      expect(
+        gate.failures.some((failure) => failure.includes('resting currentTime'))
+      ).toBe(true);
+      expect(gate.evidence).toBeNull();
+    },
+    SLOW_MS
+  );
+});
+
+describe('gateCapture: the gated span runs from Play to the capture stop', () => {
+  test(
+    'capture stop moved to play plus 1 ms leaves no gated span and fails the gate',
+    () => {
+      const events = moveMark(
+        CLEAN.events,
+        AUDIO_CAPTURE_STOP_MARK,
+        PLAY_US + 1000
+      );
+      const gate = gateCapture({ ...CLEAN, events }, GATE);
+      expect(gate.join.pass).toBe(true);
+      expect(gate.join.gatedChunks).toEqual([]);
+      expect(
+        gate.failures.some((failure) => failure.includes('no gated span'))
+      ).toBe(true);
+      expect(gate.evidence).toBeNull();
+    },
+    SLOW_MS
+  );
+
+  test(
+    'two zeroed chunks fail the sampled gate while pairing still passes',
+    () => {
+      const chunks = CLEAN.chunks.map((chunk, k) =>
+        k === 100 || k === 101
+          ? {
+              ...chunk,
+              left: new Float32Array(FRAMES),
+              right: new Float32Array(FRAMES),
+            }
+          : chunk
+      );
+      const gate = gateCapture({ ...CLEAN, chunks }, GATE);
+      expect(gate.join.pass).toBe(true);
+      expect(gate.failures.length).toBeGreaterThan(0);
+    },
+    SLOW_MS
+  );
 
   test('a chunk whose samples do not match its frame count fails before measuring', () => {
     const chunks = CLEAN.chunks.map((chunk, k) =>
       k === 5 ? { ...chunk, left: chunk.left.slice(0, FRAMES - 1) } : chunk
     );
-    const gate = gateCapture(
-      { ...CLEAN, chunks },
-      { reference: REFERENCE, label: 'program' }
-    );
+    const gate = gateCapture({ ...CLEAN, chunks }, GATE);
     expect(gate.join.pass).toBe(false);
     expect(gate.evidence).toBeNull();
   });
+
+  test(
+    'a repeated predecessor chunk passes the join and fails the gate as not matching the program audio',
+    () => {
+      const record = repeatPredecessor(CLEAN, MID);
+      const gate = gateCapture(record, GATE);
+      expect(gate.join.pass).toBe(true);
+      expect(
+        gate.failures.some((failure) =>
+          failure.includes('does not match the program audio')
+        )
+      ).toBe(true);
+    },
+    SLOW_MS
+  );
 });
 
 describe('mutation controls', () => {
-  test('every control is rejected at its own layer on the clean capture', () => {
-    const { record } = buildFixture({ withPrimer: true });
-    expect(
-      mutationControlFailures(record, {
-        reference: REFERENCE,
-        label: 'program',
-      })
-    ).toEqual([]);
-  }, 30000);
+  test(
+    'every control is rejected at its own layer on the primer capture',
+    () => {
+      const { record } = buildFixture({ withPrimer: true });
+      expect(mutationControlFailures(record, GATE)).toEqual([]);
+    },
+    SLOW_MS
+  );
 
-  test('optional controls with no precondition are skipped, not failed', () => {
-    const failures = mutationControlFailures(CLEAN, {
-      reference: REFERENCE,
-      label: 'program',
-    });
-    expect(failures).toEqual([]);
-  });
+  test(
+    'optional controls with no precondition are skipped, not failed',
+    () => {
+      expect(mutationControlFailures(CLEAN, GATE)).toEqual([]);
+    },
+    SLOW_MS
+  );
+
+  test(
+    'a capture that fails the clean gate is reported, not passed',
+    () => {
+      const failures = mutationControlFailures(
+        { ...CLEAN, restCurrentTime: null },
+        GATE
+      );
+      expect(
+        failures.some((failure) =>
+          failure.startsWith('clean capture does not pass')
+        )
+      ).toBe(true);
+    },
+    SLOW_MS
+  );
 });

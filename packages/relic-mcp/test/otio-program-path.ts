@@ -50,7 +50,10 @@ import { compareSyntheticCanvases } from './otio-program-canvas-proof.ts';
 import { runPrimerProof } from './otio-program-primer-controls.ts';
 import { buildDeviceProbe } from './otio-program-device-state.ts';
 import { runAudioArm } from './otio-program-audio-arm.ts';
-import { captureProgramAudio } from './otio-program-audio-capture.ts';
+import {
+  captureProgramAudio,
+  fullCoverageFailures,
+} from './otio-program-audio-capture.ts';
 import { gateCapture } from './otio-program-audio-join.ts';
 import { discoverChrome } from '../src/cover/chrome.ts';
 import {
@@ -896,15 +899,21 @@ try {
         );
       },
     });
+    const reference = Float32Array.from(expectedAudio());
     const gate = gateCapture(record, {
-      reference: {
-        left: Float32Array.from(expectedAudio()),
-        right: Float32Array.from(expectedAudio()),
-      },
+      reference: { left: reference, right: reference },
       label: 'viewer-audio-captured',
     });
     assert.deepEqual(
-      gate.failures,
+      [
+        ...gate.failures,
+        ...fullCoverageFailures(
+          record,
+          gate.join,
+          reference.length,
+          'viewer-audio-captured'
+        ),
+      ],
       [],
       'viewer-audio-captured capture failures'
     );

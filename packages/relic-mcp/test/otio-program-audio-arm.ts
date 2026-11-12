@@ -11,10 +11,9 @@
  *     the program renderer's own output, not what a listener hears.
  *   - Stamps are pairing keys only. They are never read as capture, playout or onset times.
  *
- * Each trial is gated by the join (every chunk pairs one program render, no gap in the pairing),
- * the gated content against the reference, the trusted Play's marks, and the mutation controls
- * (each mutation of a real capture must be rejected). The early-start control runs once per run
- * and must produce program audio before the trusted Play.
+ * Each normal trial is gated by the join, the trusted Play's marks, the reference coverage, and
+ * the mutation controls (each mutation of a real capture must be rejected). One extra early-start
+ * control runs after the normal trials and must produce program audio before the trusted Play.
  */
 
 import { writeFile } from 'node:fs/promises';
@@ -35,7 +34,10 @@ import {
 } from './otio-program-audio-join.ts';
 import {
   captureProgramAudio,
+  trialCoverageFailures,
   EARLY_START_LEAD_MS,
+  gatedChannel,
+  replayEvents,
 } from './otio-program-audio-capture.ts';
 import {
   markOrderFailures,
@@ -56,7 +58,6 @@ export const AUDIO_CAPTURE_SECONDS = 4.5;
 const SETTLE_MS = 1500;
 const PREPARED_STAGE = 'viewer-audio-prepared-signal';
 const FIRST_CLICK_STAGE = 'viewer-audio-first-click-signal';
-const EARLY_START_ROUND = 0;
 
 export interface AudioArmInput {
   readonly harness: ProofHarness;
@@ -72,7 +73,7 @@ export interface AudioArmInput {
 type AudioArm = 'prepared' | 'first-click';
 
 interface TrialOutcome {
-  /** Failures the trial's own checks report: served builds, primer state, and the gate. */
+  /** Failures of the trial's own checks: served builds, primer state, the gate and the controls. */
   readonly failures: string[];
   /** Early-start control strings only. They belong to the prepared stage. */
   readonly controlFailures: string[];
@@ -88,7 +89,7 @@ function sleep(ms: number): Promise<void> {
 function markTsUs(events: readonly unknown[], name: string): number | null {
   for (const event of events) {
     if (typeof event !== 'object' || event === null) continue;
-    const record = event as { name?: unknown; ts?: unknown; cat?: unknown };
+    const record = event as { name?: unknown; ts?: unknown };
     if (record.name === name && typeof record.ts === 'number') return record.ts;
   }
   return null;
@@ -102,7 +103,9 @@ function receiptPath(
 ): string {
   return join(
     scratch,
-    `primer-audio-${arm}-${round}${earlyStart ? '-early-start' : ''}`
+    earlyStart
+      ? `primer-audio-${arm}-early-start`
+      : `primer-audio-${arm}-${round}`
   );
 }
 
@@ -173,11 +176,13 @@ async function runAudioTrial(
         );
 
       const reference = Float32Array.from(expectedAudio());
+      const label = `${arm} round ${round}${earlyStart ? ' early-start' : ''}`;
       const options = {
         reference: { left: reference, right: reference },
-        label: `${arm} round ${round}`,
+        label,
       };
       const gate = gateCapture(record, options);
+      const coverage = trialCoverageFailures(record, gate.join, label);
       const markFailures = markOrderFailures(
         // The trace's events are the TraceEvent records the proof's trace reads. The join types
         // them as unknown so it does not depend on the trace module.
@@ -209,32 +214,56 @@ async function runAudioTrial(
           );
       }
 
-      // Diagnostic only: the chunk metadata, pairs, telemetry and evidence, kept in scratch so a
-      // failing trial can be inspected. Nothing here changes what is gated.
+      // Receipts: enough to replay the join and the gate offline. The measured samples, the
+      // sanitized render and mixer-input timings, the marks, and every outcome are kept in scratch.
+      // Nothing here changes what is gated.
       const receipt = receiptPath(input.scratch, arm, round, earlyStart);
+      const allFailures = [
+        ...failures,
+        ...gate.failures,
+        ...coverage,
+        ...markFailures,
+        ...controls,
+      ];
       await writeFile(
         `${receipt}.json`,
         JSON.stringify({
           arm,
           round,
           earlyStart,
+          label,
           primerState,
-          failures: [...gate.failures, ...markFailures, ...controls],
+          failures: allFailures,
           controlFailures,
           dataLossOccurred: record.dataLossOccurred,
           truncated: record.truncated,
           restCurrentTime: record.restCurrentTime,
-          observerFrames: record.observerFrames.length,
+          observerFrames: record.observerFrames,
+          referenceSamples: reference.length,
           chunks: record.chunks.map((chunk) => ({
             stampUs: chunk.stampUs,
             frames: chunk.frames,
             rate: chunk.rate,
             deliveredMs: chunk.deliveredMs,
           })),
-          pairs: gate.join.pairs,
-          telemetry: gate.join.telemetry,
+          replayEvents: replayEvents(record.events),
+          join: {
+            pass: gate.join.pass,
+            programId: gate.join.programId,
+            pairs: gate.join.pairs,
+            failures: gate.join.failures,
+            telemetry: gate.join.telemetry,
+          },
           evidence: gate.evidence,
         })
+      );
+      await writeFile(
+        `${receipt}-measured-left.f32`,
+        new Uint8Array(gatedChannel(record, gate.join, 'left').buffer)
+      );
+      await writeFile(
+        `${receipt}-measured-right.f32`,
+        new Uint8Array(gatedChannel(record, gate.join, 'right').buffer)
       );
 
       console.log(
@@ -242,8 +271,7 @@ async function runAudioTrial(
           arm,
           round,
           earlyStart,
-          failures:
-            gate.failures.length + markFailures.length + controls.length,
+          failures: allFailures.length,
           join: {
             pass: gate.join.pass,
             pairs: gate.join.pairs.length,
@@ -256,10 +284,7 @@ async function runAudioTrial(
       );
 
       if (earlyStart) return { failures, controlFailures };
-      return {
-        failures: [...failures, ...gate.failures, ...markFailures, ...controls],
-        controlFailures: [],
-      };
+      return { failures: allFailures, controlFailures: [] };
     } finally {
       await page.close();
     }
@@ -268,7 +293,10 @@ async function runAudioTrial(
   }
 }
 
-/** Runs both sampled audio arms, interleaved over AUDIO_ROUNDS, and returns one stage per arm. */
+/**
+ * Runs both sampled audio arms over AUDIO_ROUNDS, interleaved, then one extra early-start control
+ * in the prepared flow. Returns one stage per arm.
+ */
 export async function runAudioArm(
   input: AudioArmInput
 ): Promise<PrimerStage[]> {
@@ -287,25 +315,33 @@ export async function runAudioArm(
     prepared: [],
     'first-click': [],
   };
-  for (let round = 0; round < AUDIO_ROUNDS; round++) {
-    for (const arm of round % 2 === 0
-      ? (['prepared', 'first-click'] as const)
-      : (['first-click', 'prepared'] as const)) {
-      try {
-        const outcome = await runAudioTrial(
-          arm,
-          round,
-          arm === 'prepared' && round === EARLY_START_ROUND,
-          input
-        );
+  const trial = (
+    arm: AudioArm,
+    round: number,
+    run: () => Promise<TrialOutcome>
+  ) =>
+    run().then(
+      (outcome) => {
         failures[arm].push(...outcome.failures, ...outcome.controlFailures);
-      } catch (error) {
+      },
+      (error: unknown) => {
         errors[arm].push(
           `round ${round}: ${error instanceof Error ? error.message : String(error)}`
         );
       }
+    );
+
+  for (let round = 0; round < AUDIO_ROUNDS; round++) {
+    for (const arm of round % 2 === 0
+      ? (['prepared', 'first-click'] as const)
+      : (['first-click', 'prepared'] as const)) {
+      await trial(arm, round, () => runAudioTrial(arm, round, false, input));
     }
   }
+  // The early-start control is an extra trial in the prepared flow. Its own gate outcome is not
+  // added to the stage. Only its control strings and its served-build and primer checks are.
+  await trial('prepared', -1, () => runAudioTrial('prepared', -1, true, input));
+
   return [
     {
       stage: PREPARED_STAGE,

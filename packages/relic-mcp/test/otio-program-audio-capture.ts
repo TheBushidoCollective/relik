@@ -25,13 +25,36 @@ import {
   AUDIO_READER_START_MARK,
   AUDIO_READER_STOP_MARK,
   type CaptureRecord,
+  JOIN_RATE,
+  type JoinResult,
 } from './otio-program-audio-join.ts';
+import { AUDIO_ONSET_BUDGET_MS } from './otio-program-audio-signal.ts';
 
+/** Quiet time with no new chunk before the reader is stopped. Trace drain, not a budget. */
 export const AUDIO_DRAIN_QUIET_MS = 250;
 /** The MediaStreamTrackProcessor maxBufferSize. Chunks are copied and closed as they arrive. */
 export const AUDIO_READER_BUFFER = 512;
 /** How long the early-start control waits after its element play() before the trusted click. */
 export const EARLY_START_LEAD_MS = 200;
+/** The window PATH.md judges after Play: the sampled audio of each ordinary trial must cover it. */
+export const AUDIO_TRIAL_WINDOW_SECONDS = 4;
+
+const PROGRAM_RENDER = 'AudioRendererImpl::Render';
+const MIXER_INPUT = 'AudioRendererMixerInput::ProvideInput';
+const REPLAY_MARKS: readonly string[] = [
+  TRACE_START_MARK,
+  PLAY_MARK,
+  AUDIO_READER_START_MARK,
+  AUDIO_CAPTURE_STOP_MARK,
+  AUDIO_READER_STOP_MARK,
+];
+/** Numeric trace arguments a replay needs. Everything else in a trace event is dropped. */
+const REPLAY_ARGS: readonly string[] = [
+  'id',
+  'delay (frames)',
+  'playout_delay (ms)',
+  'delay_timestamp (ms)',
+];
 
 export interface CaptureOptions {
   /** The window the Play observer watches, from the trusted Play. */
@@ -40,6 +63,15 @@ export interface CaptureOptions {
   readonly beforePlay?: ((page: ViewerPage) => Promise<void>) | undefined;
   /** Runs after beforePlay, immediately before the trusted click. */
   readonly beforeClick?: ((page: ViewerPage) => Promise<void>) | undefined;
+}
+
+/** One trace event, sanitized to what a replay of the join needs: timing and numeric arguments. */
+export interface ReplayEvent {
+  readonly name: string;
+  readonly ts: number;
+  readonly dur: number | null;
+  readonly tid: number | null;
+  readonly args: Readonly<Record<string, number>>;
 }
 
 interface WireChunk {
@@ -166,4 +198,120 @@ export async function captureProgramAudio(
     restCurrentTime: observation.restCurrentTime ?? null,
     observerFrames: observation.frames ?? [],
   };
+}
+
+/**
+ * The render, mixer-input and mark events a replay needs, sanitized: timing and the numeric
+ * arguments in REPLAY_ARGS only. Nothing from URLs, titles or other free-form arguments is kept.
+ */
+export function replayEvents(events: readonly unknown[]): ReplayEvent[] {
+  const out: ReplayEvent[] = [];
+  for (const event of events) {
+    if (typeof event !== 'object' || event === null) continue;
+    const raw = event as {
+      name?: unknown;
+      ts?: unknown;
+      dur?: unknown;
+      tid?: unknown;
+      args?: unknown;
+    };
+    if (typeof raw.name !== 'string' || typeof raw.ts !== 'number') continue;
+    const wanted =
+      raw.name === PROGRAM_RENDER ||
+      raw.name === MIXER_INPUT ||
+      REPLAY_MARKS.includes(raw.name);
+    if (!wanted) continue;
+    const args: Record<string, number> = {};
+    const rawArgs =
+      typeof raw.args === 'object' && raw.args !== null
+        ? (raw.args as Record<string, unknown>)
+        : {};
+    for (const key of REPLAY_ARGS) {
+      const value = rawArgs[key];
+      if (typeof value === 'number') args[key] = value;
+    }
+    out.push({
+      name: raw.name,
+      ts: raw.ts,
+      dur: typeof raw.dur === 'number' ? raw.dur : null,
+      tid: typeof raw.tid === 'number' ? raw.tid : null,
+      args,
+    });
+  }
+  return out;
+}
+
+/**
+ * Frames of the gated span and the reference sample it starts at. The span is the join's own
+ * join.gatedChunks, the single authority the gate scores, so coverage and the saved samples cannot
+ * drift from it. The start is the resting currentTime read at the trusted Play.
+ */
+function gatedFrames(
+  record: CaptureRecord,
+  join: JoinResult
+): { frames: number; startSample: number | null } {
+  const frames = join.gatedChunks.reduce(
+    (sum, index) => sum + (record.chunks[index]?.frames ?? 0),
+    0
+  );
+  const startSample = join.startSample;
+  return { frames, startSample };
+}
+
+/**
+ * Ordinary trials: the gated span must cover the window the proof judges after Play, the 4 s
+ * PATH.md names. Empty means it does.
+ */
+export function trialCoverageFailures(
+  record: CaptureRecord,
+  join: JoinResult,
+  label: string
+): string[] {
+  const { frames } = gatedFrames(record, join);
+  const required = AUDIO_TRIAL_WINDOW_SECONDS * JOIN_RATE;
+  if (frames >= required) return [];
+  return [
+    `${label}: gated span ${frames} frames, need ${required} for the ${AUDIO_TRIAL_WINDOW_SECONDS} s after Play`,
+  ];
+}
+
+/**
+ * Stage 15: the gated span must hold the whole reference from its resting start, plus the onset
+ * margin on each side, so the gate scores every reference sample. Empty means it does.
+ */
+export function fullCoverageFailures(
+  record: CaptureRecord,
+  join: JoinResult,
+  referenceLength: number,
+  label: string
+): string[] {
+  const { frames, startSample } = gatedFrames(record, join);
+  if (startSample === null)
+    return [
+      `${label}: no resting currentTime, so the reference offset is unknown`,
+    ];
+  const margin = Math.round((AUDIO_ONSET_BUDGET_MS * JOIN_RATE) / 1000) * 2;
+  const required = referenceLength - startSample + margin;
+  if (frames >= required) return [];
+  return [
+    `${label}: gated span ${frames} frames, need ${required} to cover the reference from sample ${startSample}`,
+  ];
+}
+
+/** The gated span's samples for one channel, in delivery order. This is what the gate scores. */
+export function gatedChannel(
+  record: CaptureRecord,
+  join: JoinResult,
+  channel: 'left' | 'right'
+): Float32Array {
+  const total = gatedFrames(record, join).frames;
+  const out = new Float32Array(total);
+  let offset = 0;
+  for (const index of join.gatedChunks) {
+    const chunk = record.chunks[index];
+    if (!chunk) continue;
+    out.set(chunk[channel], offset);
+    offset += chunk.frames;
+  }
+  return out;
 }

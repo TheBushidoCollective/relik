@@ -7,15 +7,24 @@
  * backwards in real captures, so ordering by stamp mispairs the content. Nothing here claims physical
  * output or a device sample. The gate measures the program renderer's tee.
  *
+ * The gate measures only the chunks whose tee time lies between the play mark and the capture stop,
+ * starting at the resting currentTime read at the trusted Play. Renders before Play may be
+ * silent; audible ones fail the join.
+ *
  * Telemetry (priming gap, playout estimate, pipeline rebuild, observer holds) goes into the receipt.
  * It never fails a join and no expected range is asserted against it.
  */
 import { PLAY_MARK } from './otio-program-trace.ts';
 import {
+  AUDIO_SILENCE_AMPLITUDE,
   gateSignal,
   measureSignal,
   type SignalEvidence,
 } from './otio-program-audio-signal.ts';
+import {
+  AUDIO_MAX_LAG_SAMPLES,
+  AUDIO_MIN_SNR_DB,
+} from './otio-program-checks.ts';
 
 /** The captured program renders at 48 kHz. Chunk stamps and trace times share this clock. */
 export const JOIN_RATE = 48000;
@@ -24,7 +33,7 @@ export const JOIN_TOLERANCE_US = 1;
 export const AUDIO_READER_START_MARK = 'relic-audio-reader-start';
 export const AUDIO_CAPTURE_STOP_MARK = 'relic-audio-capture-stop';
 export const AUDIO_READER_STOP_MARK = 'relic-audio-reader-stop';
-/** Prefix of the failure a program render before the play mark produces. The early-start control expects it. */
+/** Prefix of the failure an audible program render before the play mark produces. */
 export const PRE_GESTURE_FAILURE = 'pre-gesture audio';
 
 /** Window around the play mark that counts a renderer init as a rebuild at play. Telemetry only. */
@@ -66,13 +75,16 @@ export interface CaptureRecord {
   readonly truncated: boolean;
   /** tracingComplete.dataLossOccurred. Anything but false, including null, fails closed. */
   readonly dataLossOccurred: boolean | null;
-  /** The program's currentTime read at the trusted Play, before the page handler. */
+  /**
+   * The program's currentTime read at the trusted Play, in seconds. The gated span starts at program
+   * sample round(restCurrentTime * rate). Null fails the gate.
+   */
   readonly restCurrentTime: number | null;
   /** Frames observed after the trusted Play, for element-clock hold telemetry. */
   readonly observerFrames: readonly ObserverFrame[];
 }
 
-/** The expected program signal per channel. The capture starts at reference sample 0. */
+/** The expected program signal per channel, indexed by program sample. */
 export interface AudioReference {
   readonly left: Float32Array;
   readonly right: Float32Array;
@@ -96,6 +108,17 @@ export interface JoinResult {
   readonly failures: readonly string[];
   readonly programId: string | null;
   readonly pairs: readonly JoinPair[];
+  /**
+   * Chunk indices whose pair's tee time lies between the play mark and the capture stop, in delivery
+   * order. The gate measures exactly these.
+   */
+  readonly gatedChunks: readonly number[];
+  /**
+   * Program sample the gated span starts at: round(restCurrentTime * 48000), read at the trusted
+   * pointerdown. Null when there is no valid resting time or no contiguous gated span. The gate
+   * and the coverage rule both use this value.
+   */
+  readonly startSample: number | null;
   readonly sampleFrames: number;
   readonly telemetry: JoinTelemetry | null;
 }
@@ -129,6 +152,16 @@ interface Match {
   readonly render: ProgramRender;
 }
 
+interface CdpTraceEvent {
+  readonly name: string;
+  readonly cat?: string;
+  readonly ph: string;
+  readonly ts: number;
+  readonly dur?: number;
+  readonly tid?: number;
+  readonly args?: Readonly<Record<string, unknown>>;
+}
+
 function isTraceEvent(value: unknown): value is CdpTraceEvent {
   if (typeof value !== 'object' || value === null) return false;
   if (!('name' in value) || typeof value.name !== 'string') return false;
@@ -154,16 +187,6 @@ function isTraceEvent(value: unknown): value is CdpTraceEvent {
     return false;
   }
   return true;
-}
-
-interface CdpTraceEvent {
-  readonly name: string;
-  readonly cat?: string;
-  readonly ph: string;
-  readonly ts: number;
-  readonly dur?: number;
-  readonly tid?: number;
-  readonly args?: Readonly<Record<string, unknown>>;
 }
 
 function parseEvents(events: readonly unknown[]): {
@@ -207,6 +230,13 @@ function fits(
     render.piStart - JOIN_TOLERANCE_US <= tee &&
     tee <= render.piEnd + JOIN_TOLERANCE_US
   );
+}
+
+/** True when either channel holds a sample above the silence threshold. */
+function isAudible(chunk: CapturedChunk): boolean {
+  const loud = (samples: Float32Array): boolean =>
+    samples.some((sample) => Math.abs(sample) > AUDIO_SILENCE_AMPLITUDE);
+  return loud(chunk.left) || loud(chunk.right);
 }
 
 /**
@@ -325,7 +355,7 @@ function telemetryOf(
   record: CaptureRecord,
   renders: readonly ProgramRender[],
   pairs: readonly JoinPair[],
-  play: number | undefined,
+  play: number,
   rate: number
 ): JoinTelemetry {
   const paired: PairedRender[] = [];
@@ -336,10 +366,7 @@ function telemetryOf(
 
   // The priming render is the first paired render after the play mark. The gap runs from it to the
   // next paired render. The step is that gap minus the next render's reported delay. All telemetry.
-  const priming =
-    play === undefined
-      ? undefined
-      : paired.find(({ render }) => render.end >= play);
+  const priming = paired.find(({ render }) => render.end >= play);
   const primingIndex = priming === undefined ? -1 : paired.indexOf(priming);
   const next = primingIndex >= 0 ? paired[primingIndex + 1] : undefined;
   const firstRenderWasPriming =
@@ -354,36 +381,33 @@ function telemetryOf(
       ? primingGapMs - nextDelayMs
       : null;
 
-  // Chrome's playout estimate for the first paired render with a nonzero delay. Frames already
-  // delivered by earlier paired renders are removed, and the Play mark is the origin.
+  // Chrome's playout estimate for the first paired render with a nonzero delay. The frames removed
+  // are the PCM frames the earlier paired chunks delivered, not their delay frames. The Play mark is
+  // the origin.
   let framesBefore = 0;
   let playoutFirstMs: number | null = null;
-  if (play !== undefined) {
-    for (const { render } of paired) {
-      if (render.delayMs !== null && render.delayMs > 0) {
-        if (render.delayTimestampMs !== null) {
-          playoutFirstMs =
-            render.delayTimestampMs +
-            render.delayMs -
-            (framesBefore * 1000) / rate -
-            play / 1000;
-        }
-        break;
+  for (const { pair, render } of paired) {
+    if (render.delayMs !== null && render.delayMs > 0) {
+      if (render.delayTimestampMs !== null) {
+        playoutFirstMs =
+          render.delayTimestampMs +
+          render.delayMs -
+          (framesBefore * 1000) / rate -
+          play / 1000;
       }
-      framesBefore += render.frames;
+      break;
     }
+    framesBefore += record.chunks[pair.chunkIndex]?.frames ?? 0;
   }
 
   const lead = paired.map(({ pair, render }) => pair.teeUs - render.end);
   const tail = paired.map(({ pair, render }) => render.piEnd - pair.teeUs);
-  const rebuilt =
-    play !== undefined &&
-    record.events.some(
-      (value) =>
-        isTraceEvent(value) &&
-        value.name === INITIALIZE &&
-        Math.abs(value.ts - play) <= PIPELINE_REBUILD_WINDOW_US
-    );
+  const rebuilt = record.events.some(
+    (value) =>
+      isTraceEvent(value) &&
+      value.name === INITIALIZE &&
+      Math.abs(value.ts - play) <= PIPELINE_REBUILD_WINDOW_US
+  );
 
   return {
     renderCount: renders.length,
@@ -395,9 +419,7 @@ function telemetryOf(
     chromeEstimatedPlayoutFirstMs: playoutFirstMs,
     pipelineRebuiltAtPlay: rebuilt,
     firstRenderAfterPlayMs:
-      play === undefined || priming === undefined
-        ? null
-        : (priming.render.ts - play) / 1000,
+      priming === undefined ? null : (priming.render.ts - play) / 1000,
     stampBackwardSteps: countBackwardSteps(
       record.chunks.map((chunk) => chunk.stampUs)
     ),
@@ -416,6 +438,8 @@ function unresolved(failures: string[], sampleFrames: number): JoinResult {
     failures,
     programId: null,
     pairs: [],
+    gatedChunks: [],
+    startSample: null,
     sampleFrames,
     telemetry: null,
   };
@@ -428,7 +452,8 @@ function unresolved(failures: string[], sampleFrames: number): JoinResult {
  * program render in trace order, its tee time inside that render's call within JOIN_TOLERANCE_US.
  * Each chunk must fit exactly one program render and each render exactly one chunk. The counts must
  * be equal. Truncation, data loss, a missing mark, a wrong rate, a second renderer id that a chunk
- * fits, or a program render that ends before the play mark each fail the join.
+ * fits, or an audible program render that ends before the play mark each fail the join. A silent
+ * render before Play still needs its paired chunk.
  */
 export function joinCapture(
   record: CaptureRecord,
@@ -486,8 +511,15 @@ export function joinCapture(
   const start = marks.times.get(AUDIO_READER_START_MARK);
   const stop = marks.times.get(AUDIO_READER_STOP_MARK);
   const play = marks.times.get(PLAY_MARK);
-  if (start === undefined || stop === undefined)
+  const captureStop = marks.times.get(AUDIO_CAPTURE_STOP_MARK);
+  if (
+    start === undefined ||
+    stop === undefined ||
+    play === undefined ||
+    captureStop === undefined
+  ) {
     return unresolved(failures, sampleFrames);
+  }
 
   const { renders, outside } = extractRenders(parsed);
   const windowed = renders.filter(
@@ -529,14 +561,6 @@ export function joinCapture(
     failures.push(
       `${outsideProgram.length} program render(s) outside a mixer input call`
     );
-  }
-  if (play !== undefined) {
-    const early = programRenders.filter((render) => render.end < play).length;
-    if (early > 0) {
-      failures.push(
-        `${PRE_GESTURE_FAILURE}: ${early} program render(s) end before the play mark`
-      );
-    }
   }
   if (programRenders.length !== chunks.length) {
     failures.push(
@@ -588,19 +612,75 @@ export function joinCapture(
     );
   }
 
+  // Renders that end before Play may be silent. Each still needs its own paired chunk, and an
+  // audible one fails. The two checks are independent: a silent render with no chunk still fails.
+  const pairedRenders = new Set(
+    pairs.map((pair) => programRenders[pair.renderIndex])
+  );
+  const early = programRenders.filter((render) => render.end < play);
+  const unpairedEarly = early.filter(
+    (render) => !pairedRenders.has(render)
+  ).length;
+  if (unpairedEarly > 0) {
+    failures.push(
+      `${unpairedEarly} pre-gesture render(s) have no paired chunk`
+    );
+  }
+  const audibleEarly = pairs.filter((pair) => {
+    const render = programRenders[pair.renderIndex];
+    const chunk = chunks[pair.chunkIndex];
+    return (
+      render !== undefined &&
+      render.end < play &&
+      chunk !== undefined &&
+      isAudible(chunk)
+    );
+  }).length;
+  if (audibleEarly > 0) {
+    failures.push(
+      `${PRE_GESTURE_FAILURE}: ${audibleEarly} program render(s) end before the play mark with audible samples`
+    );
+  }
+
+  // The gated span: pairs whose tee time lies between the play mark and the capture stop, in
+  // delivery order. Tee time, not render end, so the span matches the capture's own coverage rule.
+  const gatedChunks = pairs
+    .filter((pair) => play <= pair.teeUs && pair.teeUs <= captureStop)
+    .map((pair) => pair.chunkIndex);
+  // Program sample the gated span starts at: round(restCurrentTime * rate), read at the trusted
+  // pointerdown. Silent pre-Play output does not advance program time, so no frames before the span
+  // are added. The gate and the coverage rule both read this one value.
+  const contiguous = gatedChunks.every(
+    (k, i) => i === 0 || k === (gatedChunks[i - 1] ?? NaN) + 1
+  );
+  const rest = record.restCurrentTime;
+  const startSample =
+    gatedChunks.length > 0 &&
+    contiguous &&
+    rest !== null &&
+    Number.isFinite(rest) &&
+    rest >= 0
+      ? Math.round(rest * JOIN_RATE)
+      : null;
+
   return {
     pass: failures.length === 0,
     failures,
     programId,
     pairs,
+    gatedChunks,
+    startSample,
     sampleFrames,
-    telemetry: telemetryOf(
-      { ...record, events: parsed },
-      programRenders,
-      pairs,
-      play,
-      rate
-    ),
+    telemetry: {
+      ...telemetryOf(
+        { ...record, events: parsed },
+        programRenders,
+        pairs,
+        play,
+        rate
+      ),
+      gatedChunkCount: gatedChunks.length,
+    },
   };
 }
 
@@ -619,9 +699,91 @@ function concatChannel(
 }
 
 /**
- * Gates one joined capture. Returns every failure: the join's own, then every sampled-audio failure
- * of each channel. Evidence is null only when the sample arrays are malformed. An empty failure list
- * passes.
+ * Correlation a gated chunk needs against the program audio. Under a gain-matched error model, SNR
+ * S = r^2 / (1 - r^2), so the floor is the r at which S equals AUDIO_MIN_SNR_DB.
+ */
+const CHUNK_SNR_LINEAR = 10 ** (AUDIO_MIN_SNR_DB / 10);
+const CHUNK_MIN_CORRELATION = Math.sqrt(
+  CHUNK_SNR_LINEAR / (1 + CHUNK_SNR_LINEAR)
+);
+
+/**
+ * Normalised correlation of a rendered window with the reference at one start. Null when the window
+ * lies outside the reference or the reference is silent there, which is not judged. Silent rendered
+ * audio against loud reference correlates at zero.
+ */
+function windowCorrelation(
+  rendered: Float32Array,
+  reference: Float32Array,
+  from: number
+): number | null {
+  const n = rendered.length;
+  if (from < 0 || from + n > reference.length) return null;
+  let cross = 0;
+  let renderedEnergy = 0;
+  let referenceEnergy = 0;
+  for (let k = 0; k < n; k++) {
+    const r = rendered[k] ?? 0;
+    const e = reference[from + k] ?? 0;
+    cross += r * e;
+    renderedEnergy += r * r;
+    referenceEnergy += e * e;
+  }
+  if (referenceEnergy / n < AUDIO_SILENCE_AMPLITUDE ** 2) return null;
+  if (renderedEnergy === 0) return 0;
+  return cross / Math.sqrt(renderedEnergy * referenceEnergy);
+}
+
+/**
+ * Best correlation of one chunk over the lags the signal alignment allows. A chunk correct at lag 0
+ * returns at once, so the search runs only for chunks that fail there.
+ */
+function chunkCorrelation(
+  rendered: Float32Array,
+  reference: Float32Array,
+  start: number
+): number | null {
+  const atZero = windowCorrelation(rendered, reference, start);
+  if (atZero === null || atZero >= CHUNK_MIN_CORRELATION) return atZero;
+  let best = atZero;
+  for (let lag = -AUDIO_MAX_LAG_SAMPLES; lag <= AUDIO_MAX_LAG_SAMPLES; lag++) {
+    if (lag === 0) continue;
+    const candidate = windowCorrelation(rendered, reference, start + lag);
+    if (candidate !== null && candidate > best) best = candidate;
+  }
+  return best;
+}
+
+/**
+ * Every gated chunk must match the program audio at its own program position. The overall SNR and the
+ * offset walk can both pass a single repeated or zeroed chunk, since one chunk is about 21 ms of a 6 s
+ * program, so each chunk is judged on its own.
+ */
+function chunkMatchFailures(
+  span: readonly CapturedChunk[],
+  pick: (chunk: CapturedChunk) => Float32Array,
+  reference: Float32Array,
+  startSample: number,
+  label: string
+): string[] {
+  const failures: string[] = [];
+  let position = startSample;
+  for (const [k, chunk] of span.entries()) {
+    const best = chunkCorrelation(pick(chunk), reference, position);
+    if (best !== null && best < CHUNK_MIN_CORRELATION) {
+      failures.push(
+        `${label}: gated chunk ${k} does not match the program audio (best correlation ${best.toFixed(4)} < ${CHUNK_MIN_CORRELATION.toFixed(4)})`
+      );
+    }
+    position += chunk.frames;
+  }
+  return failures;
+}
+
+/**
+ * Gates one joined capture over its gated span. The span starts at the resting currentTime, so the
+ * reference slice is aligned to program time. Returns every failure: the join's own, the resting
+ * time, the span, and every sampled-audio failure of each channel. An empty list passes.
  */
 export function gateCapture(
   record: CaptureRecord,
@@ -629,40 +791,89 @@ export function gateCapture(
 ): GateResult {
   const join = joinCapture(record);
   const failures: string[] = [...join.failures];
-  const intact =
-    record.chunks.length > 0 &&
-    record.chunks.every(
+
+  const rest = record.restCurrentTime;
+  if (rest === null || !Number.isFinite(rest) || rest < 0) {
+    failures.push(
+      `no valid resting currentTime at the trusted Play: ${String(rest)}`
+    );
+    return { failures, join, evidence: null };
+  }
+
+  const gated = join.gatedChunks;
+  if (gated.length === 0) {
+    failures.push(
+      'no gated span: no paired chunk has a tee time between the play mark and capture stop'
+    );
+    return { failures, join, evidence: null };
+  }
+  if (!gated.every((k, i) => i === 0 || k === (gated[i - 1] ?? NaN) + 1)) {
+    failures.push('gated chunks are not contiguous in delivery order');
+    return { failures, join, evidence: null };
+  }
+
+  const span = gated.flatMap((k) => record.chunks[k] ?? []);
+  if (
+    !span.every(
       (chunk) =>
         chunk.left.length === chunk.frames &&
         chunk.right.length === chunk.frames
-    );
-  if (!intact) return { failures, join, evidence: null };
+    )
+  ) {
+    failures.push('gated chunk sample arrays do not match their frame count');
+    return { failures, join, evidence: null };
+  }
 
-  const left = concatChannel(record.chunks, (chunk) => chunk.left);
-  const right = concatChannel(record.chunks, (chunk) => chunk.right);
+  const startSample = join.startSample;
+  if (startSample === null) return { failures, join, evidence: null };
   const evidence = {
-    left: measureSignal(left, options.reference.left, JOIN_RATE, 0),
-    right: measureSignal(right, options.reference.right, JOIN_RATE, 0),
+    left: measureSignal(
+      concatChannel(span, (chunk) => chunk.left),
+      options.reference.left,
+      JOIN_RATE,
+      startSample
+    ),
+    right: measureSignal(
+      concatChannel(span, (chunk) => chunk.right),
+      options.reference.right,
+      JOIN_RATE,
+      startSample
+    ),
   };
   failures.push(
     ...gateSignal(evidence.left, `${options.label} left`),
-    ...gateSignal(evidence.right, `${options.label} right`)
+    ...gateSignal(evidence.right, `${options.label} right`),
+    ...chunkMatchFailures(
+      span,
+      (chunk) => chunk.left,
+      options.reference.left,
+      startSample,
+      `${options.label} left`
+    ),
+    ...chunkMatchFailures(
+      span,
+      (chunk) => chunk.right,
+      options.reference.right,
+      startSample,
+      `${options.label} right`
+    )
   );
   return { failures, join, evidence };
 }
 
 /**
- * The layer that must reject a control's mutation:
- * join: the pairing fails. play: a program render ends before the play mark. samples: pairing
- * passes but the sampled-audio gate fails.
+ * The layer that must reject a control's mutation. join: the pairing fails. play: an audible render
+ * ends before the play mark. gate: pairing passes and the gate fails.
  */
-type RejectingLayer = 'join' | 'play' | 'samples';
+type RejectingLayer = 'join' | 'play' | 'gate';
 
 interface Control {
   readonly name: string;
   readonly layer: RejectingLayer;
   /** Optional controls apply only when the capture has their precondition, and are skipped otherwise. */
   readonly optional?: boolean;
+  /** For gate controls: some gate failure must match this, or the control is not rejected. */
+  readonly expect?: RegExp;
   /** The mutated record, or null when the capture has nothing to mutate. */
   readonly apply: (record: CaptureRecord) => CaptureRecord | null;
 }
@@ -680,6 +891,10 @@ function editChunk(
   };
 }
 
+function sameSamples(a: Float32Array, b: Float32Array): boolean {
+  return a.length === b.length && a.every((sample, k) => sample === b[k]);
+}
+
 function controlsFor(
   record: CaptureRecord,
   programId: string | null
@@ -692,6 +907,9 @@ function controlsFor(
   const primer = renders.find((render) => render.id !== programId);
   const mid = Math.floor(record.chunks.length / 2);
   const middle = record.chunks[mid];
+  const predecessor = record.chunks[mid - 1];
+  const after = record.chunks[mid + 1];
+  const playMark = parsed.find((event) => event.name === PLAY_MARK);
 
   return [
     {
@@ -709,19 +927,25 @@ function controlsFor(
           : { ...r, chunks: r.chunks.filter((_, k) => k !== mid) },
     },
     {
+      // Count, stamps and metadata stay intact. Only the PCM of chunk mid is replaced by its
+      // predecessor's. Pairing passes, so the gate must catch the repeated content itself.
       name: 'repeated chunk',
-      layer: 'join',
-      apply: (r) =>
-        middle === undefined
-          ? null
-          : {
-              ...r,
-              chunks: [
-                ...r.chunks.slice(0, mid + 1),
-                middle,
-                ...r.chunks.slice(mid + 1),
-              ],
-            },
+      layer: 'gate',
+      expect: /does not match the program audio/,
+      apply: (r) => {
+        if (middle === undefined || predecessor === undefined) return null;
+        if (
+          sameSamples(middle.left, predecessor.left) &&
+          sameSamples(middle.right, predecessor.right)
+        ) {
+          return null;
+        }
+        return editChunk(r, mid, (chunk) => ({
+          ...chunk,
+          left: predecessor.left.slice(),
+          right: predecessor.right.slice(),
+        }));
+      },
     },
     {
       name: 'shifted timestamp',
@@ -736,22 +960,26 @@ function controlsFor(
     },
     {
       name: 'zeroed chunk',
-      layer: 'samples',
-      apply: (r) =>
-        middle === undefined ||
-        (middle.left.every((sample) => sample === 0) &&
-          middle.right.every((sample) => sample === 0))
-          ? null
-          : editChunk(r, mid, (chunk) => ({
-              ...chunk,
-              left: new Float32Array(chunk.frames),
-              right: new Float32Array(chunk.frames),
-            })),
+      layer: 'gate',
+      apply: (r) => {
+        if (middle === undefined) return null;
+        if (
+          middle.left.every((sample) => sample === 0) &&
+          middle.right.every((sample) => sample === 0)
+        ) {
+          return null;
+        }
+        return editChunk(r, mid, (chunk) => ({
+          ...chunk,
+          left: new Float32Array(chunk.frames),
+          right: new Float32Array(chunk.frames),
+        }));
+      },
     },
     {
       name: 'chunks sorted by stamp',
-      optional: true,
       layer: 'join',
+      optional: true,
       apply: (r) => {
         const sorted = [...r.chunks].sort((a, b) => a.stampUs - b.stampUs);
         return sorted.every((chunk, k) => chunk === r.chunks[k])
@@ -763,7 +991,6 @@ function controlsFor(
       name: 'adjacent chunks swapped in delivery order',
       layer: 'join',
       apply: (r) => {
-        const after = r.chunks[mid + 1];
         if (middle === undefined || after === undefined) return null;
         return {
           ...r,
@@ -792,8 +1019,8 @@ function controlsFor(
     },
     {
       name: 'middle chunk moved into another renderer call',
-      optional: true,
       layer: 'join',
+      optional: true,
       apply: (r) => {
         if (primer === undefined) return null;
         const target = Math.floor((primer.piStart + primer.piEnd) / 2);
@@ -822,6 +1049,39 @@ function controlsFor(
       },
     },
     {
+      // Pairing is unchanged, so the join passes. The gated span between Play and the stop is empty.
+      name: 'capture stop moved to play plus 1 ms',
+      layer: 'gate',
+      expect: /gated span/,
+      apply: (r) => {
+        if (playMark === undefined) return null;
+        const stopTs = playMark.ts + 1000;
+        let moved = false;
+        const events = r.events.map((value) => {
+          if (isTraceEvent(value) && value.name === AUDIO_CAPTURE_STOP_MARK) {
+            moved = true;
+            return { ...value, ts: stopTs };
+          }
+          return value;
+        });
+        return moved ? { ...r, events } : null;
+      },
+    },
+    {
+      // The span is measured at the wrong program time, so the gate's alignment fails.
+      name: 'resting currentTime moved to 2 s',
+      layer: 'gate',
+      apply: (r) =>
+        r.restCurrentTime === 2 ? null : { ...r, restCurrentTime: 2 },
+    },
+    {
+      name: 'resting currentTime missing',
+      layer: 'gate',
+      expect: /resting currentTime/,
+      apply: (r) =>
+        r.restCurrentTime === null ? null : { ...r, restCurrentTime: null },
+    },
+    {
       name: 'trace data loss reported',
       layer: 'join',
       apply: (r) =>
@@ -846,9 +1106,14 @@ function rejected(
   mutated: CaptureRecord,
   options: GateOptions
 ): boolean {
-  if (control.layer === 'samples') {
+  if (control.layer === 'gate') {
     const gate = gateCapture(mutated, options);
-    return gate.join.pass && gate.failures.length > 0;
+    return (
+      gate.join.pass &&
+      gate.failures.some((failure) =>
+        control.expect ? control.expect.test(failure) : true
+      )
+    );
   }
   const join = joinCapture(mutated);
   if (control.layer === 'join') return !join.pass;
