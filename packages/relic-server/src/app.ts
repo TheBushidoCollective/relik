@@ -1,3 +1,6 @@
+import { PRIVATE_CARD } from './card.ts';
+import { privateActivityMail } from './mail.ts';
+import { readableVersions, standingOf } from './private/access.ts';
 /**
  * The app server.
  *
@@ -519,7 +522,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
       third === 'republish' &&
       request.method === 'POST'
     ) {
-      return republish(second, request, ip, now);
+      return republishRoute(second, request, ip, now);
     }
     if (
       first === 'relics' &&
@@ -545,7 +548,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
       fourth === undefined &&
       request.method === 'POST'
     ) {
-      return share(second, request, ip, now);
+      return guarded(() => share(second, request, ip, now));
     }
     if (
       first === 'relics' &&
@@ -564,8 +567,17 @@ export function createApp(options: AppOptions = {}): RelicApp {
     // here is ciphertext this server cannot open, so a gate would cost
     // reach without buying secrecy.
     if (first === 'relics' && second !== undefined && third === 'comments') {
+      if (fourth !== undefined) {
+        const refusal = await privateCommentRefusal(
+          second,
+          fourth,
+          request,
+          now
+        );
+        if (refusal !== undefined) return refusal;
+      }
       if (fourth === undefined && request.method === 'GET') {
-        return listComments(second);
+        return listComments(second, request, now);
       }
       if (fourth === undefined && request.method === 'POST') {
         return postComment(second, request, now);
@@ -604,21 +616,21 @@ export function createApp(options: AppOptions = {}): RelicApp {
     // - relics/{id}/decisions: POST record; POST .../options; POST .../list; any other method or path returns 405.
     if (first === 'relics' && second !== undefined && third === 'decisions') {
       if (fourth === undefined && request.method === 'POST') {
-        return postDecision(second, request, ip, now);
+        return guarded(() => postDecision(second, request, ip, now));
       }
       if (
         fourth === 'options' &&
         rest[4] === undefined &&
         request.method === 'POST'
       ) {
-        return postDecisionOptions(second, request, ip, now);
+        return guarded(() => postDecisionOptions(second, request, ip, now));
       }
       if (
         fourth === 'list' &&
         rest[4] === undefined &&
         request.method === 'POST'
       ) {
-        return listDecisions(second, request, ip, now);
+        return guarded(() => listDecisions(second, request, ip, now));
       }
       return new Response('Method not allowed', { status: 405 });
     }
@@ -1003,13 +1015,22 @@ export function createApp(options: AppOptions = {}): RelicApp {
             return completePrivate(relicId, request, now);
           return undefined as never;
         }
+        if (third === 'cover' && fourth === undefined && post) {
+          const row = await store.getRelic(relicId);
+          if (row?.access === 'private') {
+            return refuse('private_policy_violation', {
+              policy_check: 'cover',
+            });
+          }
+          return undefined as never;
+        }
         if (third === 'comments' && fourth === 'list' && post) {
           const body = await privateBody(request, 'invalid_comment');
           const row = await liveRelic(env, relicId);
           if (!(await publishTokenOk(row, body['publish_token']))) {
             return refuse('invalid_publish_token');
           }
-          return listComments(relicId);
+          return listComments(relicId, request, now, body['publish_token']);
         }
         const session = await sessionOf(request, now);
         if (third === 'requests' && fourth === undefined && post) {
@@ -1603,6 +1624,56 @@ export function createApp(options: AppOptions = {}): RelicApp {
             owner_epoch: privateOwner?.recipientsEpoch,
           }
         : {}),
+    });
+  }
+
+  /**
+   * A republish to a private relic (plan 4.7, 4.13): the publish token is
+   * required, a title or share verifier is refused, and the response names the
+   * access mode and both epochs. Public relics go straight to republish.
+   */
+  async function republishRoute(
+    rawId: string,
+    request: Request,
+    ip: string,
+    now: number
+  ): Promise<Response> {
+    const row = await store.getRelic(rawId);
+    if (row?.access !== 'private') return republish(rawId, request, ip, now);
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = (await request.clone().json()) as Record<string, unknown>;
+    } catch {
+      return refuse('invalid_publish_token');
+    }
+    const title = parsed['title'];
+    if (
+      (typeof title === 'string' && title.trim().length > 0) ||
+      (title !== undefined && title !== null && typeof title !== 'string')
+    ) {
+      return refuse('private_policy_violation', { policy_check: 'title' });
+    }
+    if (
+      parsed['share_verifier'] !== undefined &&
+      parsed['share_verifier'] !== null
+    ) {
+      return refuse('private_policy_violation', {
+        policy_check: 'share_verifier',
+      });
+    }
+    if (!(await publishTokenOk(row, parsed['publish_token']))) {
+      return refuse('invalid_publish_token');
+    }
+    const response = await republish(rawId, request, ip, now);
+    if (!response.ok) return response;
+    const owner = await ownerRecord(privateEnv(now), row);
+    const opened = (await store.getRelic(rawId)) ?? row;
+    const body = (await response.json()) as Record<string, unknown>;
+    return Response.json({
+      ...body,
+      access: 'private',
+      access_epoch: opened.accessEpoch ?? 0,
+      owner_epoch: owner.recipientsEpoch,
     });
   }
 
@@ -2540,7 +2611,10 @@ export function createApp(options: AppOptions = {}): RelicApp {
       const stopUrl = `${config.serviceOrigin}/api/relics/${relicId}/unsubscribe?addr=${addressHash}&token=${token}`;
 
       let mail: OutboundMail;
-      if (event.type === 'version') {
+      if (row.access === 'private') {
+        // A private relic's mail names no title and no commenter (plan 4.14).
+        mail = privateActivityMail({ relicUrl, stopUrl });
+      } else if (event.type === 'version') {
         mail = changeNoticeMail({
           title: row.title,
           version: event.version,
@@ -2875,10 +2949,16 @@ export function createApp(options: AppOptions = {}): RelicApp {
       'publish_token' in body && body['publish_token'] !== undefined;
     const hasShareProof =
       'share_proof' in body && body['share_proof'] !== undefined;
+    if (row.access === 'private' && hasShareProof) {
+      return refuse('private_policy_violation', {
+        relic_id: relicId,
+        policy_check: 'share_proof',
+      });
+    }
 
     if (
       (hasPublishToken && hasShareProof) ||
-      (!hasPublishToken && !hasShareProof)
+      (!hasPublishToken && !hasShareProof && row.access !== 'private')
     ) {
       return refuse('invalid_share', {
         relic_id: relicId,
@@ -2928,22 +3008,27 @@ export function createApp(options: AppOptions = {}): RelicApp {
         return refuse('invalid_session', { relic_id: relicId });
       }
 
-      const proofResult = await checkShareProof(row, body['share_proof']);
-      if (proofResult === 'unavailable') {
-        return refuse('share_unavailable', {
-          relic_id: relicId,
-          detail:
-            'This relic was published before sharing existed. Its publisher can republish it to turn sharing on.',
-        });
-      }
-      if (proofResult === 'malformed') {
-        return refuse('invalid_share', {
-          relic_id: relicId,
-          share_max_per_call: config.shareMaxPerCall,
-        });
-      }
-      if (proofResult === 'mismatch') {
-        return refuse('invalid_share_proof', { relic_id: relicId });
+      if (row.access === 'private') {
+        // Readers of a private relic prove access by a live wrap, not a fragment proof (plan 4.7).
+        await privateReach(row, request, now, undefined);
+      } else {
+        const proofResult = await checkShareProof(row, body['share_proof']);
+        if (proofResult === 'unavailable') {
+          return refuse('share_unavailable', {
+            relic_id: relicId,
+            detail:
+              'This relic was published before sharing existed. Its publisher can republish it to turn sharing on.',
+          });
+        }
+        if (proofResult === 'malformed') {
+          return refuse('invalid_share', {
+            relic_id: relicId,
+            share_max_per_call: config.shareMaxPerCall,
+          });
+        }
+        if (proofResult === 'mismatch') {
+          return refuse('invalid_share_proof', { relic_id: relicId });
+        }
       }
 
       const readerVerdict = limiter.check(
@@ -3430,6 +3515,76 @@ export function createApp(options: AppOptions = {}): RelicApp {
   // --- comments -----------------------------------------------------------
 
   /**
+   * The versions a caller may read on a private relic (plan 4.7). The publish
+   * token reads every version; otherwise a signed-in identity reads the
+   * versions a live wrap opens for it. Throws the refusal when neither holds.
+   */
+  async function privateReach(
+    row: RelicRow,
+    request: Request,
+    now: number,
+    publishToken: unknown
+  ): Promise<'all' | readonly number[]> {
+    if (
+      typeof publishToken === 'string' &&
+      (await publishTokenOk(row, publishToken))
+    ) {
+      return 'all';
+    }
+    const session = await sessionOf(request, now);
+    if (session === undefined) throw new ProblemError('sign_in_required');
+    const env = privateEnv(now);
+    const owner = await ownerRecord(env, row);
+    const me = await currentIdentity(env, session.email);
+    if (me === undefined) {
+      throw new ProblemError('private_access_denied', { relic_id: row.id });
+    }
+    const standing = await standingOf(env, row, owner, me);
+    if (
+      standing.role === 'none' ||
+      standing.role === 'requested' ||
+      standing.role === 'declined' ||
+      standing.role === 'revoked'
+    ) {
+      throw new ProblemError('private_access_denied', { relic_id: row.id });
+    }
+    return readableVersions(env, row, me.kemKeyId);
+  }
+
+  /**
+   * PATCH and DELETE on a private comment need the same access as reading the
+   * comment's version. The author check that follows stays as it was.
+   */
+  async function privateCommentRefusal(
+    rawId: string,
+    commentId: string,
+    request: Request,
+    now: number
+  ): Promise<Response | undefined> {
+    let relicId: string;
+    try {
+      relicId = parseRelicId(rawId);
+    } catch {
+      return undefined;
+    }
+    const row = await store.getRelic(relicId);
+    if (row === undefined || row.access !== 'private') return undefined;
+    const comment = await store.getComment(relicId, commentId);
+    if (comment === undefined || comment.version === undefined)
+      return undefined;
+    try {
+      const reach = await privateReach(row, request, now, undefined);
+      if (reach !== 'all' && !reach.includes(comment.version)) {
+        return refuse('private_access_denied', { relic_id: relicId });
+      }
+    } catch (error) {
+      if (error instanceof ProblemError)
+        return refuse(error.code, error.options);
+      throw error;
+    }
+    return undefined;
+  }
+  /**
    * The thread, oldest first, to anybody who asks.
    *
    * Unauthenticated on purpose. A reader holding the link already holds the
@@ -3438,7 +3593,12 @@ export function createApp(options: AppOptions = {}): RelicApp {
    * fetch bytes the server cannot read either way. What it would buy is
    * nothing; what it would cost is the no-accounts reading path.
    */
-  async function listComments(rawId: string): Promise<Response> {
+  async function listComments(
+    rawId: string,
+    request: Request,
+    now: number,
+    publishToken?: unknown
+  ): Promise<Response> {
     let relicId: string;
     try {
       relicId = parseRelicId(rawId);
@@ -3455,11 +3615,27 @@ export function createApp(options: AppOptions = {}): RelicApp {
         report_url: `${config.serviceOrigin}/abuse`,
       });
     }
-    if ((await store.getRelic(relicId)) === undefined) {
+    const listed = await store.getRelic(relicId);
+    if (listed === undefined) {
       return refuse('relic_not_found', { relic_id: relicId });
     }
 
-    const rows = await store.listComments(relicId);
+    let rows = await store.listComments(relicId);
+    if (listed.access === 'private') {
+      let reach: 'all' | readonly number[];
+      try {
+        reach = await privateReach(listed, request, now, publishToken);
+      } catch (error) {
+        if (error instanceof ProblemError)
+          return refuse(error.code, error.options);
+        throw error;
+      }
+      if (reach !== 'all') {
+        rows = rows.filter(
+          (row) => row.version !== undefined && reach.includes(row.version)
+        );
+      }
+    }
     return json(
       rows.map((row) => ({
         comment_id: row.id,
@@ -3537,6 +3713,22 @@ export function createApp(options: AppOptions = {}): RelicApp {
       return refuse('invalid_relic_version', { relic_id: relicId });
     } else {
       commentVersion = explicitVersion;
+    }
+    if (row.access === 'private') {
+      if (explicitVersion === undefined) {
+        return refuse('invalid_relic_version', { relic_id: relicId });
+      }
+      let reach: 'all' | readonly number[];
+      try {
+        reach = await privateReach(row, request, now, body['publish_token']);
+      } catch (error) {
+        if (error instanceof ProblemError)
+          return refuse(error.code, error.options);
+        throw error;
+      }
+      if (reach !== 'all' && !reach.includes(commentVersion)) {
+        return refuse('private_access_denied', { relic_id: relicId });
+      }
     }
 
     // The one thing this server can check about a comment. The plaintext
@@ -4494,15 +4686,20 @@ export function createApp(options: AppOptions = {}): RelicApp {
       throw new ProblemError('invalid_relic_version', { relic_id: relicId });
     }
 
-    const proofResult = await checkShareProof(row, body['share_proof']);
-    if (proofResult === 'unavailable') {
-      throw new ProblemError('decision_unavailable', { relic_id: relicId });
-    }
-    if (proofResult === 'malformed') {
-      throw new ProblemError('invalid_decision', { relic_id: relicId });
-    }
-    if (proofResult === 'mismatch') {
-      throw new ProblemError('invalid_share_proof', { relic_id: relicId });
+    if (row.access === 'private') {
+      // Readers of a private relic prove access by a live wrap, not a fragment proof (plan 4.7).
+      await privateReach(row, request, now, undefined);
+    } else {
+      const proofResult = await checkShareProof(row, body['share_proof']);
+      if (proofResult === 'unavailable') {
+        throw new ProblemError('decision_unavailable', { relic_id: relicId });
+      }
+      if (proofResult === 'malformed') {
+        throw new ProblemError('invalid_decision', { relic_id: relicId });
+      }
+      if (proofResult === 'mismatch') {
+        throw new ProblemError('invalid_share_proof', { relic_id: relicId });
+      }
     }
 
     return { relicId, row, body, email, version, verdict };
@@ -5967,6 +6164,7 @@ async function shell(
   // link fetchers off the open counter and the download cap.
   let storedTitle: string | undefined;
   let storedRendererClass: RendererClass | undefined;
+  let storedPrivate = false;
   let storedCover: RelicCover | undefined;
   let canonicalId: string | undefined;
 
@@ -5981,7 +6179,10 @@ async function shell(
         const tombstone = await store.getTombstone(canonicalId);
         if (tombstone === undefined) {
           const row = await store.getRelic(canonicalId);
-          if (row !== undefined) {
+          if (row !== undefined && row.access === 'private') {
+            // The regulated profile shows no title, cover or class (plan 4.13).
+            storedPrivate = true;
+          } else if (row !== undefined) {
             const isExpired =
               row.expiresAt !== undefined && now >= row.expiresAt;
             if (!isExpired) {
@@ -6029,7 +6230,7 @@ async function shell(
     storedCover !== undefined ? storedCover.type : 'image/png';
   const ogImageAlt =
     storedCover !== undefined ? COVER_ALT[storedCover.kind] : CARD_IMAGE_ALT;
-  const card = cardCopy(storedRendererClass);
+  const card = storedPrivate ? PRIVATE_CARD : cardCopy(storedRendererClass);
   const cardTitle = doc?.title ?? storedTitle ?? card.title;
   const cardDescription = doc?.description ?? card.description;
   const documentTitle =
@@ -6041,7 +6242,7 @@ async function shell(
           ? card.title
           : 'Relic';
 
-  const rootAttributes =
+  const baseRootAttributes =
     typeof target === 'string'
       ? canonicalId !== undefined
         ? `data-relic-id="${escapeHtml(canonicalId)}" data-usercontent-origin="${escapeHtml(
@@ -6057,6 +6258,9 @@ async function shell(
         : `data-view="dashboard" data-usercontent-origin="${escapeHtml(
             new URL(config.usercontentOrigin).origin
           )}"`;
+  const rootAttributes = storedPrivate
+    ? `${baseRootAttributes} data-relic-access="private"`
+    : baseRootAttributes;
 
   const body = `<!doctype html>
 <meta charset="utf-8">
