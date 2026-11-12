@@ -26,6 +26,7 @@ import {
   identityIdOf,
   type IdentityKeys,
   kemKeyIdOf,
+  keyCommitment,
   signStatement,
   statementBytes,
   wrapVersionKey,
@@ -215,6 +216,8 @@ interface WorldOptions {
   readonly tamperWrap?: boolean;
   readonly tamperSeal?: boolean;
   readonly tamperCiphertext?: boolean;
+  /** The wrap carries a key the service chose, not the one the owner sealed. */
+  readonly substituteKey?: boolean;
   readonly role?: string;
   /** The seal is signed by a device the owner certified, not by the owner. */
   readonly device?: {
@@ -318,6 +321,11 @@ async function sealedWorld(
     access_epoch: 0,
     at: NOW,
     ciphertext_sha256: digest,
+    key_commitment: await keyCommitment({
+      relicId,
+      version,
+      key,
+    }),
     owner_epoch: 0,
     recipient_key_ids: options.sealPredatesGrant ? [ownerKeyId] : [readerKeyId],
     relic_id: relicId,
@@ -343,6 +351,7 @@ async function sealedWorld(
       )
     : signed;
 
+  const wrappedKey = options.substituteKey ? randomBytes(KEY_BYTES) : key;
   const wrapRecipient = options.wrapToOtherKey
     ? (await generateIdentityKeys()).kemPublicKey
     : reader.kemPublicKey;
@@ -350,7 +359,7 @@ async function sealedWorld(
     recipientPublicKey: wrapRecipient,
     relicId,
     version,
-    key,
+    key: wrappedKey,
   });
   const wrapCt = options.tamperWrap
     ? encodeBase64url(
@@ -2042,5 +2051,40 @@ describe('the owner surfaces are mounted from the reader, lazily', () => {
     await mountPrivateDashboard(deps);
     expect(root.querySelector('[data-device-approval]')).toBeNull();
     expect(seen.map((entry) => entry.route)).not.toContain('GET /api/identity');
+  });
+});
+describe('a version key the seal does not commit to is refused before use', () => {
+  test('the key fetch and the content open both refuse a wrap of a substituted key', async () => {
+    const relicId = freshRelicId();
+    const world = await sealedWorld(relicId, { substituteKey: true });
+    const { deps } = readerDeps(world);
+    const identity = await unlock(deps, await loadIdentityState(deps));
+
+    await expect(fetchVersionKey(deps, relicId, 1, identity)).rejects.toThrow(
+      'key_commitment'
+    );
+    await expect(
+      fetchAndDecryptVersion(deps, relicId, 1, identity)
+    ).rejects.toBeInstanceOf(SealMismatchError);
+  });
+
+  test('a reader shows the mismatch copy and no relic when the service substitutes the key', async () => {
+    const relicId = freshRelicId();
+    const world = await sealedWorld(relicId, { substituteKey: true });
+    const { root, views } = await mountReader(readerDeps(world).deps, relicId);
+
+    press(root, '[data-action="private-unlock"]');
+    await until(() => stateOf(root) === 'seal-mismatch', 'seal-mismatch');
+    expect(views).toHaveLength(0);
+  });
+
+  test('the same seal opens with the key it commits to', async () => {
+    const relicId = freshRelicId();
+    const world = await sealedWorld(relicId);
+    const { deps } = readerDeps(world);
+    const identity = await unlock(deps, await loadIdentityState(deps));
+
+    const { key } = await fetchVersionKey(deps, relicId, 1, identity);
+    expect(Array.from(key)).toEqual(Array.from(world.key));
   });
 });

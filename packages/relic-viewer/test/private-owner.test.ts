@@ -20,6 +20,7 @@ import {
   identityIdOf,
   kemKeyIdOf,
   parseStatement,
+  keyCommitment,
   type PrivateAccessJSON,
   statementBytes,
   signStatement,
@@ -607,6 +608,9 @@ describe('rekey after revocation', () => {
     const opened = await openRelic(upload.bytes, key);
     expect(new TextDecoder().decode(opened.content)).toBe(
       '# intake\nthe content the owner keeps'
+    );
+    expect(body.seal.statement.key_commitment).toBe(
+      await keyCommitment({ relicId: RELIC_ID, version: 3, key })
     );
 
     for (const captured of service.captured) {
