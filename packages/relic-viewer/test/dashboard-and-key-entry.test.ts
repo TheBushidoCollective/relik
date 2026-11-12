@@ -65,15 +65,6 @@ async function waitUntil(
     await new Promise((r) => setTimeout(r, 5));
   }
 }
-
-/** The page's shell root, attached to the stand-in body the way the server's shell puts it there. */
-function attachShellRoot(body: ElementStub): ElementStub {
-  const shell = new ElementStub('div');
-  shell.setAttribute('id', 'relic-root');
-  body.appendChild(shell);
-  return shell;
-}
-
 class ElementStub {
   readonly tagName: string;
   className = '';
@@ -1136,7 +1127,6 @@ describe('Dashboard rendering (DOM)', () => {
       locationHref: 'https://relic.example/dashboard',
     };
 
-    attachShellRoot(rootBody);
     await renderDashboard(deps);
 
     const localSection = rootBody.querySelector('.local-relics-section');
@@ -1214,7 +1204,6 @@ describe('Dashboard rendering (DOM)', () => {
     };
 
     try {
-      attachShellRoot(rootBody);
       await renderDashboard(deps);
 
       const authSection = rootBody.querySelector(
@@ -1348,7 +1337,6 @@ describe('Dashboard rendering (DOM)', () => {
       locationHref: 'https://relic.example/dashboard',
     };
 
-    attachShellRoot(rootBody);
     await renderDashboard(deps);
 
     await waitUntil(() => rootBody.querySelector('.relic-openable') !== null);
@@ -1401,26 +1389,6 @@ describe('Dashboard rendering (DOM)', () => {
 
     await boot(root as unknown as HTMLElement, deps);
     expect(rootBody.querySelector('.stage-dashboard')).not.toBeNull();
-  });
-
-  test('renderDashboard renders into the shell root and leaves the root in the page', async () => {
-    const shell = attachShellRoot(rootBody);
-    const deps: ViewerDeps = {
-      serviceOrigin: 'https://relic.example',
-      fetch: (async () =>
-        new Response(JSON.stringify({ email: null }), {
-          status: 200,
-        })) as unknown as typeof globalThis.fetch,
-      keyVault: makeMockVault(),
-      takeFragment: () => '',
-      stripFragment: () => {},
-      locationHref: 'https://relic.example/dashboard',
-    };
-
-    await renderDashboard(deps);
-
-    expect(rootBody.querySelector('#relic-root')).toBe(shell);
-    expect(shell.querySelector('.stage-dashboard')).not.toBeNull();
   });
 
   test("boot renders a service document in the markdown player with none of a relic's chrome", async () => {
@@ -1522,7 +1490,6 @@ describe('Dashboard rendering (DOM)', () => {
       locationHref: 'https://relic.example/dashboard',
     };
 
-    attachShellRoot(rootBody);
     await renderDashboard(deps);
 
     // Export keys button

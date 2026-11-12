@@ -253,13 +253,8 @@ function dummyDeps(fetchFn?: typeof globalThis.fetch): ViewerDeps {
 }
 
 describe('version comparison affordance', () => {
-  let shellRootStub: ElementStub | undefined;
   beforeEach(() => {
     const body = new ElementStub('BODY');
-    const shell = new ElementStub('DIV');
-    shell.setAttribute('id', 'relic-root');
-    body.appendChild(shell);
-    shellRootStub = shell;
     (globalThis as { document?: unknown }).document = {
       body,
       documentElement: {
@@ -272,7 +267,6 @@ describe('version comparison affordance', () => {
       createElementNS: (_namespace: string, tag: string) =>
         new ElementStub(tag),
       addEventListener: () => {},
-      getElementById: (id: string) => (id === 'relic-root' ? shell : null),
     };
     (globalThis as { window?: unknown }).window = {
       innerWidth: 1024,
@@ -348,6 +342,29 @@ describe('version comparison affordance', () => {
     expect(withClass(docBody, 'compare-picker')).toHaveLength(0);
     expect(withClass(docBody, 'bar')).toHaveLength(1);
     expect(withClass(docBody, 'stage-code')).toHaveLength(1);
+  });
+
+  test('a public relic renders the taskbar and stage as the body children, as main does', () => {
+    const current = view('code', 3);
+    renderReady(
+      current,
+      'aaaaaaaaaaaaaaaaaaaaaaaaaa',
+      'https://relik-usercontent.example',
+      dummyDeps()
+    );
+
+    const docBody = getBody();
+    // Main's public render replaces the body's children with the taskbar and
+    // the relic row. CSS and measurements assume both sit directly in the body.
+    const children = docBody.children.map((child) => child.tagName);
+    expect(children).toEqual(['HEADER', 'DIV']);
+    expect(docBody.children[0]?.className).toBe('bar');
+    expect(withClass(docBody, 'stage-code')).toHaveLength(1);
+    expect(
+      docBody.children.some(
+        (child) => child.attributes.get('id') === 'relic-root'
+      )
+    ).toBe(false);
   });
 
   test('attaches the comment thread to the scrolling stage wrap, not inner stage', () => {
@@ -511,13 +528,11 @@ describe('version comparison affordance', () => {
 
   test('clicking compare versions in the taskbar enters compare mode and view current exits', () => {
     const current = view('code', 3);
-    const handed: HTMLElement[] = [];
     renderReady(
       current,
       'aaaaaaaaaaaaaaaaaaaaaaaaaa',
       'https://relik-usercontent.example',
-      dummyDeps(),
-      (page) => handed.push(page)
+      dummyDeps()
     );
 
     const docBody = getBody();
@@ -528,8 +543,6 @@ describe('version comparison affordance', () => {
     );
     if (compareBtn === undefined) throw new Error('no compare versions button');
     compareBtn.click();
-    expect(handed).toHaveLength(2);
-    expect<unknown>(handed[1]).toBe(shellRootStub);
 
     expect(withClass(docBody, 'stage-diff')).toHaveLength(1);
     expect(withClass(docBody, 'compare-picker')).toHaveLength(1);
@@ -539,8 +552,6 @@ describe('version comparison affordance', () => {
     );
     if (viewCurrentBtn === undefined) throw new Error('no view current button');
     viewCurrentBtn.click();
-    expect(handed).toHaveLength(3);
-    expect<unknown>(handed[2]).toBe(shellRootStub);
 
     expect(withClass(docBody, 'stage-diff')).toHaveLength(0);
     expect(withClass(docBody, 'stage-code')).toHaveLength(1);
@@ -562,7 +573,6 @@ describe('version comparison affordance', () => {
       mimetype: 'text/typescript',
     });
 
-    const handed: HTMLElement[] = [];
     renderReady(
       current,
       'aaaaaaaaaaaaaaaaaaaaaaaaaa',
@@ -582,8 +592,7 @@ describe('version comparison affordance', () => {
           });
         }
         return new Response(v2Bytes as unknown as BodyInit);
-      }) as typeof globalThis.fetch),
-      (page) => handed.push(page)
+      }) as typeof globalThis.fetch)
     );
 
     const docBody = getBody();
@@ -595,20 +604,15 @@ describe('version comparison affordance', () => {
     if (v2Option === undefined) throw new Error('no v2 option in taskbar');
 
     const { promise, resolve } = Promise.withResolvers<void>();
-    if (shellRootStub === undefined) throw new Error('no shell root');
-    const shell = shellRootStub;
-    const origReplace = shell.replaceChildren.bind(shell);
-    shell.replaceChildren = (...args) => {
+    const origReplace = docBody.replaceChildren.bind(docBody);
+    docBody.replaceChildren = (...args) => {
       origReplace(...args);
       resolve();
     };
 
     v2Option.click();
     await promise;
-    shell.replaceChildren = origReplace;
-    // The render hook saw the shell root after the version switch re-rendered it.
-    expect(handed).toHaveLength(2);
-    expect<unknown>(handed[1]).toBe(shellRootStub);
+    docBody.replaceChildren = origReplace;
     // Version 2 renders on its own
     expect(withClass(docBody, 'stage-diff')).toHaveLength(0);
     expect(withClass(docBody, 'compare-picker')).toHaveLength(0);

@@ -973,16 +973,11 @@ interface Mounted {
   readonly reRender: () => void;
 }
 
-/** A shell root in the stand-in page, as the server's shell puts it there. */
+/** The stand-in page body, cleared for one mount. The reader resolves document.body after each render. */
 function shellRootInPage(): El {
   if (pageBody === undefined) throw new Error('no stand-in page is installed');
-  // A page has one shell root. A second mount replaces the first, as a new
-  // page load would, so the reader finds the root this mount made.
-  for (const stale of pageBody.querySelectorAll('#relic-root')) stale.remove();
-  const root = new El('main');
-  root.id = 'relic-root';
-  pageBody.append(root);
-  return root;
+  pageBody.replaceChildren();
+  return pageBody;
 }
 
 /** Mounts the reader into a fresh root and waits for its first state. */
