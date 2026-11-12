@@ -148,7 +148,11 @@ export const otioProofTracePrelude = String.raw`(() => {
         if (!nativeFinite) siteHold = {site: site.site, kind: 'ctx', deltaUs: site.deltaUs, perfUs: null};
         else {
           applied = site;
-          hold = {contextTime: site.anchor.contextTime + site.deltaUs / 1e6, performanceTime: site.anchor.performanceTime};
+          // Chromium can move contextTime under one performanceTime on its own, so the viewer may
+          // already hold a later value for the anchor's performanceTime than anchor + deltaUs. A
+          // stamp below a value this clock has returned is a regression, which no held read is.
+          const returnedAtAnchor = latestReturned?.performanceTime === site.anchor.performanceTime ? latestReturned.contextTime : -Infinity;
+          hold = {contextTime: Math.max(site.anchor.contextTime + site.deltaUs / 1e6, returnedAtAnchor), performanceTime: site.anchor.performanceTime};
           realPairByPerf.set(hold.performanceTime, site.anchor.contextTime);
           clockHold = {kind: 'ctx', site: site.site, deltaUs: site.deltaUs, releasing: true};
           result = hold;
