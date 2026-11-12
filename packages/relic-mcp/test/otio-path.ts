@@ -6483,20 +6483,14 @@ async function waitForAuxiliaryReveal(
 async function runAuxiliaryCoincidentCommentRevealScenario(
   plan: Plan
 ): Promise<void> {
-  const published = await callMcp('relic_publish', {
-    path: fixtureDir,
-    force_new: true,
-    title: 'OTIO coincident comment reveal proof',
-    cover: false,
-  });
-  const relicId = String(published['relic_id']);
-  const shareUrl = String(published['url'] ?? published['link'] ?? '');
-  assert.ok(relicId, 'auxiliary publish returned no relic_id');
-  assert.ok(shareUrl.includes('#'), 'auxiliary publish returned no keyed link');
-  assert.ok(
-    shareUrl.startsWith(origin),
-    `auxiliary publish URL left loopback: ${shareUrl}`
+  // Coincident marks live in the live timeline, so this is a legacy archive
+  // too. Each legacy publish is a new relic.
+  const shareUrl = await publishLegacyDirectory(
+    fixtureDir,
+    'OTIO coincident comment reveal proof'
   );
+  const relicId = new URL(shareUrl).pathname.split('/').filter(Boolean).at(-1);
+  assert.ok(relicId, 'auxiliary publish returned no relic_id');
   const initialClock = loopbackNow;
   let completedUiPosts = 0;
   const auxiliaryToken = `otio-auxiliary-token-${Math.random().toString(16).slice(2)}`;
@@ -6516,6 +6510,7 @@ async function runAuxiliaryCoincidentCommentRevealScenario(
       'true',
       'auxiliary coincident-comment relic did not become ready'
     );
+    await assertLegacyProgramState(browser, 'auxiliary-coincident-comment');
     await browser.send('Emulation.setDeviceMetricsOverride', {
       width: 900,
       height: 900,
@@ -7733,7 +7728,7 @@ async function runFocusOnlyPublishCheck(
   sessionToken: string,
   directory: string
 ): Promise<void> {
-  const url = await publishDecoderDirectory('focus-only-publish', directory);
+  const url = await publishNewDirectory('focus-only-publish', directory);
   const browser = await openBrowser(url, sessionToken, {
     label: 'focus-only-publish',
     recordProofTrace: false,
@@ -7792,7 +7787,8 @@ async function runFocusOnlyPublishCheck(
   }
 }
 
-async function publishDecoderDirectory(
+// A real publish through the MCP, program build included.
+async function publishNewDirectory(
   name: string,
   directory: string
 ): Promise<string> {
@@ -7808,6 +7804,15 @@ async function publishDecoderDirectory(
     `${name} publish URL left loopback: ${shareUrl}`
   );
   return shareUrl;
+}
+
+// The decoder proofs time the live player's own decoders, which only a legacy
+// archive reaches, so their fixtures are published without a program.
+async function publishDecoderDirectory(
+  name: string,
+  directory: string
+): Promise<string> {
+  return publishLegacyDirectory(directory, `OTIO timing proof ${name}`);
 }
 
 async function publishDecoderDocument(
@@ -8532,6 +8537,7 @@ async function runDecoderTimingProof(sessionToken: string): Promise<void> {
       'true',
       'known packet-window fixture did not reach decoded ready state'
     );
+    await assertLegacyProgramState(knownBrowser, 'decoder-known');
     await knownBrowser.waitForWorkerHooks();
     const csp = knownBrowser.cspHeaders.find(
       (value) =>
@@ -9426,6 +9432,17 @@ async function focusItem(
   id: string,
   method: 'pointer' | 'Enter' | ' ' = 'pointer'
 ): Promise<void> {
+  // A focused view draws only the focused clip and what it contains. A target
+  // outside it is reached the way a reviewer reaches it: back to the
+  // composition first.
+  const outsideFocus = await browser.evaluate<boolean>(`(() => {
+    const root = document.querySelector('.otio-view');
+    const item = [...document.querySelectorAll('.otio-item')]
+      .find(node => node.dataset.itemId === ${JSON.stringify(id)});
+    return Boolean(root?.dataset.scopeNodeId) && item instanceof HTMLElement &&
+      item.getClientRects().length === 0;
+  })()`);
+  if (outsideFocus) await leaveFocus(browser);
   const target = await browser.evaluate<{
     x: number;
     y: number;
@@ -12169,7 +12186,23 @@ async function comparePostGainPcm(
   repeatedCeiling: number | null;
 }> {
   const trace = capture.trace;
-  assertPcmSequence(capture.start.sampleFrame, trace.sampleFrame, trace.audio);
+  // A scheduled capture carries the independent carrier, which authenticates
+  // coverage where the engine repeats a cached currentFrame label. A native
+  // capture has no carrier, so its raw labels are the only authority.
+  const carried = trace.witness !== null && trace.witness !== undefined;
+  if (carried)
+    assertPcmCoverage(
+      capture.start.sampleFrame,
+      trace.sampleFrame,
+      trace.audio,
+      trace.witness
+    );
+  else
+    assertPcmSequence(
+      capture.start.sampleFrame,
+      trace.sampleFrame,
+      trace.audio
+    );
   const rate = trace.sampleRate;
   assert.ok(Number.isFinite(rate) && rate > 0, 'invalid PCM sample rate');
   let reference = referenceCache.get(rate);
@@ -12206,7 +12239,7 @@ async function comparePostGainPcm(
     trace.audio.length > 0 && !trace.audioOverflow,
     'post-gain PCM unavailable'
   );
-  for (let i = 1; i < trace.audio.length; i++) {
+  for (let i = 1; !carried && i < trace.audio.length; i++) {
     const previous = trace.audio[i - 1]!;
     assert.ok(previous.channels[0], 'post-gain PCM channel missing');
     assert.equal(
@@ -15094,7 +15127,8 @@ async function calibratePostGainTap(
           audioOverflow: boolean;
           visualOverflow: boolean;
           eventsOverflow: boolean;
-          audio: Array<{ sampleFrame: number; channels: number[][] }>;
+          audio: MovingTrace['trace']['audio'];
+          witness: MovingTrace['trace']['witness'];
           visual: Array<{ timestamp: number; error?: string }>;
         };
       }>(`(async () => {
@@ -15162,28 +15196,27 @@ async function calibratePostGainTap(
         'canvas trace unavailable'
       );
       const chunks = capture.trace.audio;
-      assertPcmSequence(
+      // This stage plays scheduled audio at the fixture rate, where the engine
+      // repeats a cached currentFrame label now and then. As in the scheduled
+      // stages, the independent carrier and the callback sequence authenticate
+      // coverage and give every sample its frame. Raw labels stay diagnostic.
+      const witness = capture.trace.witness;
+      assertPcmCoverage(
         capture.start.sampleFrame,
         capture.trace.sampleFrame,
-        chunks
+        chunks,
+        witness
       );
+      assert.ok(witness, 'independent native carrier unavailable');
       assert.ok(chunks.length > 2, 'post-gain PCM tap produced no chunks');
-      for (let i = 1; i < chunks.length; i++) {
-        const previous = chunks[i - 1]!;
-        assert.equal(
-          chunks[i]!.sampleFrame,
-          previous.sampleFrame + previous.channels[0]!.length,
-          'post-gain PCM chunk missing'
-        );
-      }
       const rms = (from: number, to: number): number => {
         let sum = 0,
           count = 0;
         for (const chunk of chunks)
           for (const channel of chunk.channels)
             for (let i = 0; i < channel.length; i++) {
-              const frame = chunk.sampleFrame + i;
-              if (frame >= from && frame < to) {
+              const frame = carrierFrame(chunk, i, witness);
+              if (frame !== null && frame >= from && frame < to) {
                 sum += channel[i]! ** 2;
                 count++;
               }
@@ -15391,18 +15424,20 @@ async function calibratePostGainTap(
     } finally {
       await reopened.close();
     }
-    if (interactionOnly) {
+    if (interactionOnly)
       assert.equal(
         mails.length,
         0,
         `interaction comment unexpectedly invoked mailer: ${JSON.stringify(mails.map(({ to, mail }) => ({ to, subject: mail.subject })))}`
       );
-      await store.putOptOut({
-        relicId,
-        addressHash: await sha256Hex('reader@example.test'),
-        at: fakeNow,
-      });
-    }
+    // An addressed reply normally emails the reviewer. The reviewer has stopped
+    // email for this relic, in the full path as in the interaction-only run,
+    // so the republishes below send nothing.
+    await store.putOptOut({
+      relicId,
+      addressHash: await sha256Hex('reader@example.test'),
+      at: fakeNow,
+    });
     const sourceRange: TimeRange = {
       start_time: { value: 8, rate: 30 },
       duration: { value: 4, rate: 30 },
@@ -23298,6 +23333,13 @@ try {
     );
     for (const pointerCase of pointerCases) {
       console.log('POINTER_CASE', pointerCase.caseName);
+      // Opening a comment focuses its clip, and a focused view shows only that
+      // clip's marks. Each case starts from the whole composition, reached the
+      // way a reviewer returns to it.
+      const focused = await browser.evaluate<boolean>(
+        `Boolean(document.querySelector('.otio-view')?.dataset.scopeNodeId)`
+      );
+      if (focused) await leaveFocus(browser);
       await assertCommentMarkPointerClick(
         browser,
         pointerCase,
@@ -23324,6 +23366,29 @@ try {
       field.dispatchEvent(new Event('input', { bubbles: true }));
       window.__otioResizeField = field;
     })()`);
+    // The resizes below shrink the timeline to a row or two. A row left at the
+    // bottom of a tall timeline is clipped by any shorter one whatever the
+    // viewer does, so the reviewer's row starts at the top of the timeline and
+    // the viewer has to keep it there.
+    const rowAtTop = await browser.evaluate<{
+      rowTop: number;
+      viewportTop: number;
+    } | null>(`(async () => {
+      const scroll = document.querySelector('.otio-timeline-scroll');
+      const row = document.querySelector('.otio-selection')?.closest('.otio-track-row');
+      if (!(scroll instanceof HTMLElement) || !(row instanceof HTMLElement)) return null;
+      const viewportTop = () => scroll.getBoundingClientRect().top + scroll.clientTop;
+      scroll.scrollTop += row.getBoundingClientRect().top - viewportTop();
+      const { promise, resolve } = Promise.withResolvers();
+      requestAnimationFrame(() => requestAnimationFrame(resolve));
+      setTimeout(resolve, 100);
+      await promise;
+      return { rowTop: row.getBoundingClientRect().top, viewportTop: viewportTop() };
+    })()`);
+    assert.ok(
+      rowAtTop && Math.abs(rowAtTop.rowTop - rowAtTop.viewportTop) <= 1,
+      `the selected row could not be scrolled to the top of the timeline: ${JSON.stringify(rowAtTop)}`
+    );
     for (const [shotWidth, shotHeight] of [
       [320, 480],
       [390, 568],
@@ -24424,19 +24489,15 @@ try {
     codec_media: string;
   };
   assert.equal(statePlan.missing_file, plan.nested_image_file);
-  const statePublished = await callMcp('relic_publish', {
-    path: stateDir,
-    title: 'OTIO state proof',
-    cover: false,
-  });
-  const stateUrl = String(
-    statePublished['url'] ?? statePublished['link'] ?? ''
-  );
+  // Track hiding, the held predecessor and the black-probe policy are live-player
+  // behavior, so this fixture is published as a legacy archive too.
+  const stateUrl = await publishLegacyDirectory(stateDir, 'OTIO state proof');
   const stateBrowser = await openBrowser(stateUrl, sessionToken, {
     label: 'state-occlusion',
   });
   try {
     await waitReady(stateBrowser);
+    await assertLegacyProgramState(stateBrowser, 'state-occlusion');
     await setTracksHidden(stateBrowser, plan.nested_occluders, true);
     await seekTo(stateBrowser, plan.nested_frame);
     const held = await sampleCanvas(stateBrowser, width, height);

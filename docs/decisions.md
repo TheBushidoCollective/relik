@@ -1222,3 +1222,16 @@ Authorized by Jason Waldrip on 2026-11-11. The build plan is `docs/plans/private
 - The list, options, and record routes refuse with `409 decision_unavailable` unless `decisionsOpen` is `true`, ahead of the proof check. The viewer already read that refusal as "closed" and now draws no control for it.
 - The control is also not drawn while the list is loading or after a transient list failure, so a closed relic never flashes it. A reload recovers an open one.
 - Relics published before this change have no `decisionsOpen` and stay closed until their author republishes with `decisions: true`. Decisions already recorded on them are not deleted and are not shown. The share verifier no longer implies a decision surface.
+
+## 2026-11-12: The OpenTimelineIO path proves the live player on legacy archives
+
+- Decided with Jason: `packages/relic-mcp/test/otio-path.ts` publishes a legacy archive, one with no program, for every stage that exercises the live player. That covers qualification, comments, focus, the decoder proofs, the revision stages, the state fixture and the coincident-comment scenario. A new publish of those fixtures carries a program, which the viewer plays or refuses as a whole, so it never reaches the live player.
+- A new publish is still proven twice: by the focus-only publish check at the start of the path, and by `otio-program-path.ts`.
+- The legacy publish helper records the relic in the MCP's publish state the way `publish()` does. Comment readback and republish then run against it by `relic_id`. A republish through the MCP writes a version with a program, and the revision stages assert the comment projections across those versions.
+- The path had not run past its scheduled-audio stages on this branch. Run on a legacy archive, it found four defects in the branch, each fixed with the proof left as strict as it was:
+  - At 320x900 a blocked preview's "Preview base media" button sat below the fold of its status panel. The zoom tools had taken a heading row and the audio timing notice had grown the diagnostics list. The zoom tools moved into the selection row, and the phone diagnostics list is capped at 7rem.
+  - A comment mark hidden by its own concealment attribute stayed hidden for good. Opening a comment focuses its clip and hides the marks outside it, and those marks never came back. `concealMarks` now lifts that attribute from a self-subject mark before it measures.
+  - A resize moved the reader's row out of the timeline, because the grid's width is rewritten on every resize and that turns the browser's scroll anchoring off. The view now holds the row at the top of the timeline viewport itself.
+  - A RAM disk that failed to format or mount was left attached, because the cleanup required a volume name that diskutil reports only for a mounted volume.
+- Raw `currentFrame` labels repeat on a loaded runner. The post-gain calibration and the post-gain comparison now authenticate coverage with the independent carrier when a capture has one, as the scheduled stages already did. A native capture has no carrier and keeps the raw labels.
+- The path's focus stages go back to the composition before they focus a clip outside the focused one. A focused view draws only that clip, by design.
