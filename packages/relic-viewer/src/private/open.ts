@@ -18,7 +18,9 @@ import {
 import {
   type DevicePublicJSON,
   decodeBase64url,
+  deviceFingerprint,
   deviceIdOf,
+  fingerprintsEqual,
   type IdentityPublicJSON,
   identityIdOf,
   type KeyJSON,
@@ -272,11 +274,18 @@ function parseKey(value: unknown, relicId: string, version: number): KeyJSON {
   };
 }
 
-/** Confirms a device certificate was signed by the pinned owner's key. */
+/**
+ * Confirms a device certificate is the pinned owner's, names this device and
+ * this record, and was still in force when the seal was made. Mirrors relic-mcp's
+ * `verifyDeviceCert` and adds the expiry check against the seal's time. A
+ * revocation the service reports is honoured here, and no more: it is the
+ * service's word.
+ */
 async function verifyDeviceCert(
   device: DevicePublicJSON,
   ownerSigKey: Uint8Array,
-  ownerIdentityId: string
+  ownerIdentityId: string,
+  sealedAt: number
 ): Promise<void> {
   const statement = parseStatement('device_cert', device.cert.statement);
   const signed = await verifyStatement(
@@ -288,14 +297,29 @@ async function verifyDeviceCert(
   if (
     statement.device_id !== device.device_id ||
     statement.owner_identity_id !== ownerIdentityId ||
+    statement.kem_public_key !== device.kem_public_key ||
+    statement.sig_public_key !== device.sig_public_key ||
+    statement.label !== device.label ||
+    statement.not_after !== device.not_after ||
     device.revoked_at !== null
   ) {
     throw new SealMismatchError('device_cert_scope');
+  }
+  if (statement.not_after <= sealedAt) {
+    throw new SealMismatchError('device_cert_expired');
   }
   const kem = decodeBase64url(device.kem_public_key);
   const sig = decodeBase64url(device.sig_public_key);
   if ((await deviceIdOf(kem, sig)) !== device.device_id) {
     throw new SealMismatchError('device_keys');
+  }
+  if (
+    !fingerprintsEqual(
+      statement.device_fingerprint_typed,
+      await deviceFingerprint(device.device_id)
+    )
+  ) {
+    throw new SealMismatchError('device_cert_fingerprint');
   }
 }
 
@@ -334,16 +358,15 @@ export async function verifyVersionKey(
     });
   }
 
+  const seal = parseStatement('seal', keyJson.seal.statement);
   let signerKey = ownerSig;
   let signerId = ownerId;
   if (keyJson.signer.kind === 'device') {
     const device = keyJson.signer.device;
-    await verifyDeviceCert(device, ownerSig, ownerId);
+    await verifyDeviceCert(device, ownerSig, ownerId, seal.at);
     signerKey = decodeBase64url(device.sig_public_key);
     signerId = device.device_id;
   }
-
-  const seal = parseStatement('seal', keyJson.seal.statement);
   if (
     seal.relic_id !== relicId ||
     seal.version !== version ||

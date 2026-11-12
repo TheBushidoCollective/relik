@@ -13,6 +13,7 @@ import {
   parseTypedFingerprint,
 } from '@relic/format/private';
 import type { ViewerDeps } from '../viewer.ts';
+import { VerificationRefusedError } from './refusal.ts';
 
 export type Attrs = Readonly<
   Record<string, string | boolean | null | undefined | ((event: Event) => void)>
@@ -144,6 +145,7 @@ export async function privateApi<T>(
 
 /** The sentence a refusal shows, by problem code. Unknown codes get a generic line. */
 export function problemMessage(error: unknown): string {
+  if (error instanceof VerificationRefusedError) return error.message;
   if (error instanceof PrivateApiError) {
     switch (error.code) {
       case 'fingerprint_mismatch':

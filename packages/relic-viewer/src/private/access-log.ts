@@ -10,7 +10,7 @@
 
 import type { AccessEventJSON, IdentityStateJSON } from '@relic/format/private';
 import type { ViewerDeps } from '../viewer.ts';
-import { attest } from './keys.ts';
+import { privateKeysOf } from './ops.ts';
 import {
   h,
   privateApi,
@@ -222,7 +222,7 @@ async function saveRetention(
   const restore = waiting(save);
   const at = Date.now();
   try {
-    const tapped = await attest(ctx.deps, {
+    const tapped = await privateKeysOf(ctx.deps).attest(ctx.deps, {
       purpose: 'identity_settings',
       build: () => [
         {

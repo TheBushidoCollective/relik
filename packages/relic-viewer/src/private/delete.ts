@@ -7,7 +7,7 @@
 
 import type { PrivateAccessJSON } from '@relic/format/private';
 import type { ViewerDeps } from '../viewer.ts';
-import { attest } from './keys.ts';
+import { privateKeysOf } from './ops.ts';
 import {
   h,
   privateApi,
@@ -179,7 +179,7 @@ export function createDeleteDialog(ctx: DeleteContext): DeleteDialog {
     const restore = waiting(confirm);
     const at = Date.now();
     try {
-      const tapped = await attest(ctx.deps, {
+      const tapped = await privateKeysOf(ctx.deps).attest(ctx.deps, {
         purpose: 'delete',
         relicId: ctx.relicId,
         build: (identityId) => [

@@ -62,6 +62,7 @@ export type { VaultEntry };
 
 import type { CommentedRelic } from './relic-rows.ts';
 import type { CredentialsLike } from './passkey-common.ts';
+import type { PrivateKeyOps } from './private/ops.ts';
 
 export const LARGE_OPEN_CONFIRM_BYTES = 100 * 1024 * 1024;
 
@@ -255,6 +256,8 @@ export interface ViewerDeps {
   ) => Promise<boolean>;
   /** The WebAuthn seam. Defaults to `navigator.credentials` when absent. */
   readonly credentials?: CredentialsLike;
+  /** The private-share key operations. The real modules when absent. */
+  readonly privateKeys?: PrivateKeyOps;
 }
 
 /**

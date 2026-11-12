@@ -7,13 +7,13 @@
 import type { AccessRole } from '@relic/format/private';
 import type { ViewerDeps } from '../viewer.ts';
 import {
-  attest,
   nowMs,
   postJson,
   readField,
   requestFailure,
   type UnlockedIdentity,
 } from './keys.ts';
+import { privateKeysOf } from './ops.ts';
 
 /** Where the signed-in reader stands on one relic, from the service's view. */
 export interface AccessView {
@@ -88,7 +88,7 @@ export async function requestAccess(
   deps: ViewerDeps,
   relicId: string
 ): Promise<UnlockedIdentity> {
-  const { identity, bundle } = await attest(deps, {
+  const { identity, bundle } = await privateKeysOf(deps).attest(deps, {
     purpose: 'access_request',
     relicId,
     build: (identityId) => [

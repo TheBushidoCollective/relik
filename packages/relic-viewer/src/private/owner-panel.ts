@@ -33,8 +33,7 @@ import {
   typedFingerprint,
   waiting,
 } from './fingerprint-input.ts';
-import { attest } from './keys.ts';
-import { fetchVersionKey } from './open.ts';
+import { privateKeysOf } from './ops.ts';
 import {
   createRevokeDialog,
   type RevokeDialog,
@@ -454,7 +453,7 @@ export function openAccessPanel(
     try {
       const requesterKeys = await verifiedPartyKeys(requester);
       const at = Date.now();
-      const tapped = await attest(ctx.deps, {
+      const tapped = await privateKeysOf(ctx.deps).attest(ctx.deps, {
         purpose: 'grant',
         relicId: ctx.relicId,
         build: (identityId) => [
@@ -474,7 +473,7 @@ export function openAccessPanel(
       });
       const wraps: WrapJSON[] = [];
       for (const version of versions) {
-        const { key } = await fetchVersionKey(
+        const { key } = await privateKeysOf(ctx.deps).fetchVersionKey(
           ctx.deps,
           ctx.relicId,
           version,

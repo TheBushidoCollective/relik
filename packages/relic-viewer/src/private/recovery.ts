@@ -23,9 +23,11 @@ import {
   typedFingerprint,
   waiting,
 } from './fingerprint-input.ts';
-import { attest, type UnlockedIdentity, unlock } from './keys.ts';
-import { fetchVersionKey } from './open.ts';
-import { verifiedPartyKeys } from './rekey.ts';
+import type { UnlockedIdentity } from './keys.ts';
+import { privateKeysOf } from './ops.ts';
+import { RecipientMissingError } from './open.ts';
+import { verifiedPartyKeys, verifiedRecovery } from './rekey.ts';
+import { VerificationRefusedError } from './refusal.ts';
 
 /** Most wraps one backfill call may carry (config `privateBackfillMaxWraps`). */
 const BACKFILL_MAX_WRAPS = 2000;
@@ -43,25 +45,27 @@ export interface CoverageGap {
   readonly coverage_gaps?: readonly number[];
 }
 
-/** Wrap every missing version of each relic to the holder. Returns counts from the service. */
+/**
+ * Wrap every version of each relic that this identity can open to the
+ * recovery holder. The holder is checked against the owner's signed
+ * designation first, and nothing is wrapped for a holder that does not verify.
+ * The service's coverage gaps are hints: a version this identity cannot open is
+ * skipped. Returns counts from the service.
+ */
 export async function backfillHolder(
   deps: ViewerDeps,
   identity: UnlockedIdentity,
-  holder: PartyJSON,
+  holder: RecoveryJSON,
   gaps: readonly CoverageGap[]
 ): Promise<{ readonly stored: number; readonly skipped: number }> {
-  const keys = await verifiedPartyKeys(holder);
+  const { kemPublicKey } = await verifiedRecovery(identity, holder);
   const wraps: BackfillWrapJSON[] = [];
   for (const relic of gaps) {
     for (const version of relic.coverage_gaps ?? []) {
-      const { key } = await fetchVersionKey(
-        deps,
-        relic.relic_id,
-        version,
-        identity
-      );
+      const key = await keyIfOpenable(deps, identity, relic.relic_id, version);
+      if (key === undefined) continue;
       const wrap = await wrapVersionKey({
-        recipientPublicKey: keys.kemPublicKey,
+        recipientPublicKey: kemPublicKey,
         relicId: relic.relic_id,
         version,
         key,
@@ -90,6 +94,27 @@ export async function backfillHolder(
   return { stored, skipped };
 }
 
+/** The version's key when this identity can open it, or undefined when it cannot. */
+async function keyIfOpenable(
+  deps: ViewerDeps,
+  identity: UnlockedIdentity,
+  relicId: string,
+  version: number
+): Promise<Uint8Array | undefined> {
+  try {
+    const { key } = await privateKeysOf(deps).fetchVersionKey(
+      deps,
+      relicId,
+      version,
+      identity
+    );
+    return key;
+  } catch (error) {
+    if (error instanceof RecipientMissingError) return undefined;
+    throw error;
+  }
+}
+
 /** The owned relics that have coverage gaps for the current holder. */
 export async function coverageGaps(deps: ViewerDeps): Promise<CoverageGap[]> {
   const answer = await privateApi<{ owned: CoverageGap[] }>(
@@ -106,7 +131,7 @@ export async function repairCoverage(
   state: IdentityStateJSON,
   holder: RecoveryJSON
 ): Promise<{ readonly stored: number; readonly skipped: number }> {
-  const identity = await unlock(deps, state);
+  const identity = await privateKeysOf(deps).unlock(deps, state);
   return backfillHolder(deps, identity, holder, await coverageGaps(deps));
 }
 
@@ -312,7 +337,7 @@ export function recoverySection(ctx: RecoveryContext): HTMLElement {
     const restore = waiting(button);
     const at = Date.now();
     try {
-      const tapped = await attest(ctx.deps, {
+      const tapped = await privateKeysOf(ctx.deps).attest(ctx.deps, {
         purpose: 'recovery_designate',
         build: (identityId) => [
           {
@@ -332,10 +357,21 @@ export function recoverySection(ctx: RecoveryContext): HTMLElement {
       });
       let message = success;
       if (next) {
+        // Wrap to the designation the service now stores, checked as a repair checks it.
+        const state = await privateKeysOf(ctx.deps).loadIdentityState(ctx.deps);
+        const stored = state.identity?.recovery ?? null;
+        if (
+          stored === null ||
+          stored.identity.identity_id !== next.identity.identity_id
+        ) {
+          throw new VerificationRefusedError(
+            'the service did not store the recovery holder you designated. Nothing was wrapped for them.'
+          );
+        }
         const result = await backfillHolder(
           ctx.deps,
           tapped.identity,
-          next,
+          stored,
           await coverageGaps(ctx.deps)
         );
         message = `${success} Wrapped ${result.stored} existing version${result.stored === 1 ? '' : 's'} for them.`;
