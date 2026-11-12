@@ -402,6 +402,13 @@ export async function grantAccess(
       });
     }
     if (prior === undefined) {
+      // A fresh grantee has no earlier wraps. A seal that landed while this
+      // grant was in flight may have wrapped it, and a refused grant must not
+      // leave any of them behind.
+      await env.store.deleteWraps(row.id, {
+        recipientKeyId: grantee.kemKeyId,
+      });
+
       await env.store.deleteGrant(row.id, grantee.identityId);
     } else {
       await env.store.updateGrant(row.id, grantee.identityId, () => prior);

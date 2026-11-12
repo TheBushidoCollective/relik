@@ -5061,15 +5061,26 @@ export function createApp(options: AppOptions = {}): RelicApp {
       return refuse('invalid_decision', { relic_id: relicId });
     }
 
-    const proofResult = await checkShareProof(row, body['share_proof']);
-    if (proofResult === 'unavailable') {
-      return refuse('decision_unavailable', { relic_id: relicId });
-    }
-    if (proofResult === 'malformed') {
-      return refuse('invalid_decision', { relic_id: relicId });
-    }
-    if (proofResult === 'mismatch') {
-      return refuse('invalid_share_proof', { relic_id: relicId });
+    if (row.access === 'private') {
+      // A private list needs access or the publish token (plan 4.7). A fragment proof does not apply.
+      try {
+        await privateReach(row, request, now, body['publish_token']);
+      } catch (error) {
+        if (error instanceof ProblemError)
+          return refuse(error.code, error.options);
+        throw error;
+      }
+    } else {
+      const proofResult = await checkShareProof(row, body['share_proof']);
+      if (proofResult === 'unavailable') {
+        return refuse('decision_unavailable', { relic_id: relicId });
+      }
+      if (proofResult === 'malformed') {
+        return refuse('invalid_decision', { relic_id: relicId });
+      }
+      if (proofResult === 'mismatch') {
+        return refuse('invalid_share_proof', { relic_id: relicId });
+      }
     }
 
     const rawVersion = body['version'];
