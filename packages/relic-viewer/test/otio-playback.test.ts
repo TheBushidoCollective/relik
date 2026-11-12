@@ -4773,6 +4773,71 @@ describe('otio playback controller', () => {
     }
   });
 
+  test('a held extend ACK cannot move the receipt preparedThrough past its admission', async () => {
+    const tap = tapPcmProof();
+    const fixture = independentPcmFixture(false, false, undefined, {
+      proofBudget: true,
+    });
+    const proof = globalThis as typeof globalThis & {
+      __otioProofPcmSnapshot: () => { preparedThrough: number | null };
+    };
+    const preparedThrough = (): number => {
+      const value = proof.__otioProofPcmSnapshot().preparedThrough;
+      expect(value).not.toBeNull();
+      return Number(value);
+    };
+    try {
+      await fixture.start();
+      fixture.holdExtendResponses(true);
+      for (let i = 0; i < 30 && fixture.heldExtendCount === 0; i++) {
+        await fixture.advanceSmooth(
+          fixture.wall + 16,
+          fixture.renderFrame + 768,
+          fixture.outputFrame + 768
+        );
+        raf?.(fixture.wall);
+        await fixture.flush();
+      }
+      expect(fixture.heldExtendCount).toBe(1);
+      const held = fixture.commands.filter((c) => c.type === 'extend').at(-1);
+      expect(held).toBeDefined();
+      const heldThrough = Number(held?.throughFrame);
+      const upper = preparedThrough();
+      // Non-vacuity: the fill commits past `upper` while the extend ACK is still held.
+      let moved = upper;
+      for (let i = 0; i < 60 && moved <= upper; i++) {
+        await fixture.advance(
+          fixture.wall + 8,
+          fixture.renderFrame + 384,
+          fixture.outputFrame + 384
+        );
+        raf?.(fixture.wall);
+        await fixture.flush();
+        moved = preparedThrough();
+      }
+      expect(moved).toBeGreaterThan(upper);
+      expect(fixture.heldExtendCount).toBe(1);
+      fixture.holdExtendResponses(false);
+      await fixture.flush();
+      const receipt = tap.events.find(
+        (e) => e.event === 'frontier' && e.contextFrameThrough === heldThrough
+      );
+      expect(receipt).toBeDefined();
+      const admitted = Number(receipt!.preparedThrough);
+      const composition = receipt!.compositionThrough as { value: number };
+      expect(admitted).toBeLessThanOrEqual(upper);
+      expect(admitted).toBeLessThan(moved);
+      expect(receipt!.reserveFrames).toBe(4096);
+      expect(receipt!.decodedCap).toBe(admitted - 4096);
+      expect(composition.value).toBeLessThanOrEqual(admitted - 4096);
+      expect(admitted - composition.value).toBeGreaterThanOrEqual(4096);
+    } finally {
+      fixture.holdExtendResponses(false);
+      tap.restore();
+      fixture.restore();
+    }
+  });
+
   test('pause then play before drain restages exact samples at the earlier stop', async () => {
     const fixture = independentPcmFixture(false, false, undefined, {
       proofBudget: true,

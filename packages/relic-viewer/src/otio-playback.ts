@@ -4648,10 +4648,11 @@ export function createOtioPlayback(
     const scopeEndFrame = Math.floor(
       (scopeEnd().value * rate) / scopeEnd().rate
     );
-    const decodedCap =
-      run.preparedThrough === scopeEndFrame
-        ? scopeEndFrame
-        : run.preparedThrough - OTIO_PCM_HANDOFF_RESERVE_FRAMES;
+    // fillPcm may commit while the gate acknowledgment is pending.
+    const admittedPrepared = run.preparedThrough;
+    const reserveFrames =
+      admittedPrepared === scopeEndFrame ? 0 : OTIO_PCM_HANDOFF_RESERVE_FRAMES;
+    const decodedCap = admittedPrepared - reserveFrames;
     const limitFrame = Math.min(
       run.scheduledThrough,
       run.materializedThrough,
@@ -4786,12 +4787,9 @@ export function createOtioPlayback(
       compositionThrough: compositionStop,
       contextFrameThrough: next,
       gateFrame: next,
-      preparedThrough: run.preparedThrough,
+      preparedThrough: admittedPrepared,
       scopeEndFrame,
-      reserveFrames:
-        run.preparedThrough === scopeEndFrame
-          ? 0
-          : OTIO_PCM_HANDOFF_RESERVE_FRAMES,
+      reserveFrames,
       decodedCap,
       descriptorCoverageEnd:
         pcmCandidate?.run?.preparedThrough ?? compositionStop.value,
