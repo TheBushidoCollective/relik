@@ -1,0 +1,1652 @@
+<!doctype html>
+<html lang="en" data-theme="system">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; base-uri 'none'; form-action 'none'">
+<title>Relik · suggested edits on markdown and code · mock</title>
+<!--
+  A local, clickable interaction mock for docs/plans/suggested-edits/plan.md.
+  It is not the viewer. The band, the comments sidebar, the selection offer and the
+  attached popover reuse the viewer's class names and tokens
+  (packages/relic-viewer/src/styles.css) and the placement rules copied from
+  docs/plans/anchored-popover/mockup.html (placePopover, placeLeft, revealScrollTop,
+  chooseTargetBox). Mock chrome, outside the viewer, is marked with dashed rules.
+
+  Fixtures, all from this repository:
+  - Markdown: a short publishing guide built from README.md (Connecting the MCP
+    server, What is honest about the claim). One bold run, one link, one inline code
+    span, so a selection that crosses markup stores its source slice.
+  - Code: lines 51 to 79 of packages/relic-format/src/comments.ts, with their real
+    line numbers.
+  - The near limit replacement is README.md, What is honest about the claim,
+    trimmed to 2026 bytes.
+  - People: Priya, Marcus and Jason are readers. Dana is the publisher.
+
+  Art direction: none new. The accession band, the patina primary, square ruled panels,
+  Charter for comment text, monospace for coordinates and source, --diff-added and
+  --diff-removed for inserted and removed text are the viewer's own. Rejected: a
+  highlighter fill for pending marks (a quiet patina underline instead), an Accept
+  button anywhere in the browser (accepting is a publisher machine action), and any
+  colour or icon the viewer lacks.
+
+  The preview is computed, not drawn: every state below renders from the source text
+  and the suggestion list through one function, so the same inputs give the same
+  page for every reader. Everything stays in this page and its localStorage.
+-->
+<style>
+:root {
+  color-scheme: light;
+  --ground: #f1f2f0; --surface: #fbfbfa; --ink: #16191a; --ink-soft: #5a6163;
+  --rule: #d2d5d2; --rule-strong: #b3b8b4; --patina: #1f6b64; --patina-ink: #0f3b37;
+  --oxide: #8c4a2f; --diff-added: #dfeeea; --diff-added-strong: #a7d6ca;
+  --diff-removed: #f3e5df; --diff-removed-strong: #ddb6a6;
+  --serif: Charter, "Iowan Old Style", "Source Serif Pro", Palatino, "Palatino Linotype", Georgia, serif;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --bar-height: 3.25rem;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ground: #101314; --surface: #171b1c; --ink: #e6e9e7; --ink-soft: #969e9d;
+  --rule: #2a3032; --rule-strong: #3b4345; --patina: #4fb3a6; --patina-ink: #a7ded6;
+  --oxide: #c98058; --diff-added: #15332f; --diff-added-strong: #24564e;
+  --diff-removed: #34231d; --diff-removed-strong: #684331;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --ground: #101314; --surface: #171b1c; --ink: #e6e9e7; --ink-soft: #969e9d;
+    --rule: #2a3032; --rule-strong: #3b4345; --patina: #4fb3a6; --patina-ink: #a7ded6;
+    --oxide: #c98058; --diff-added: #15332f; --diff-added-strong: #24564e;
+    --diff-removed: #34231d; --diff-removed-strong: #684331;
+  }
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; padding: 0; height: 100%; }
+body {
+  display: flex; flex-direction: column; height: 100dvh;
+  background: var(--ground); color: var(--ink);
+  font-family: var(--sans); font-size: 16px; line-height: 1.55;
+  -webkit-text-size-adjust: 100%;
+}
+
+/* ---------- mock chrome: outside the viewer, marked with dashed rules ---------- */
+.mk-bar { flex: none; position: relative; z-index: 40; background: var(--surface); border-bottom: 1px dashed var(--rule-strong); font: 11px/1.3 var(--mono); color: var(--ink); }
+.mk-row { display: flex; align-items: center; gap: .35rem; height: 36px; padding: 0 .5rem; min-width: 0; }
+.mk-tag { flex: none; padding: .1rem .35rem; border: 1px dashed var(--rule-strong); color: var(--ink-soft); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
+.mk-btn { flex: none; display: inline-flex; align-items: center; justify-content: center; gap: .3rem; height: 24px; min-width: 24px; padding: 0 .5rem; border: 1px solid var(--rule-strong); border-radius: 0; background: var(--surface); color: var(--ink); font: 11px var(--mono); cursor: pointer; white-space: nowrap; }
+.mk-btn:hover { border-color: var(--patina); color: var(--patina-ink); }
+.mk-btn:focus-visible { outline: 2px solid var(--patina); outline-offset: 1px; }
+.mk-btn[aria-pressed="true"], .mk-btn[aria-current="true"] { border-color: var(--patina); background: var(--diff-added); color: var(--patina-ink); }
+.mk-btn svg { width: 12px; height: 12px; fill: currentColor; }
+.mk-prev svg { transform: rotate(90deg); }
+.mk-next svg { transform: rotate(-90deg); }
+.mk-step { padding: 0; }
+.mk-title { flex: 1 1 auto; min-width: 0; margin: 0 .2rem; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font: 12px/1.3 var(--sans); }
+.mk-title b { margin-right: .4rem; font: 600 11px var(--mono); color: var(--patina-ink); }
+.mk-group { flex: none; display: flex; }
+.mk-group .mk-btn + .mk-btn { margin-left: -1px; }
+.mk-chips { display: flex; align-items: center; gap: .25rem; height: 32px; padding: 0 .5rem; overflow-x: auto; overflow-y: hidden; border-top: 1px solid var(--rule); scrollbar-width: thin; }
+.mk-chips .mk-btn { height: 22px; padding: 0 .4rem; }
+.mk-chip-group { flex: none; margin: 0 .15rem 0 .55rem; color: var(--ink-soft); font-size: 10px; letter-spacing: .06em; text-transform: uppercase; }
+.mk-chip-group:first-child { margin-left: 0; }
+@media (max-width: 719px) { .mk-wide { display: none !important; } }
+.mk-floor { flex: 1 1 auto; min-height: 0; display: flex; justify-content: center; align-items: flex-start; overflow: hidden; }
+.mk-device { position: relative; container: viewer / inline-size; flex: none; width: 100%; height: 100%; overflow: hidden; background: var(--ground); }
+.mk-device[data-frame="1440"] { width: min(1440px, 100%); height: min(900px, 100%); }
+.mk-device[data-frame="390"] { width: min(390px, 100%); height: min(844px, 100%); }
+.mk-device[data-frame="320"] { width: min(320px, 100%); height: min(480px, 100%); }
+.mk-device.is-inset { box-shadow: 0 0 0 1px var(--rule-strong); }
+.mk-drawer { position: fixed; z-index: 60; left: 0; right: 0; top: var(--mk-drawer-top, 37px); max-height: calc(100dvh - var(--mk-drawer-top, 37px)); overflow-y: auto; padding: .6rem .75rem 1.25rem; background: var(--surface); border-bottom: 1px dashed var(--rule-strong); box-shadow: 0 12px 24px rgb(0 0 0 / 18%); font: 12px/1.4 var(--sans); }
+.mk-drawer-head { display: flex; align-items: center; justify-content: space-between; gap: .5rem; margin-bottom: .5rem; }
+.mk-drawer-head p { margin: 0; color: var(--ink-soft); font: 11px var(--mono); }
+.mk-controls { display: flex; flex-wrap: wrap; gap: .5rem 1rem; padding: .5rem 0 .75rem; border-bottom: 1px solid var(--rule); }
+.mk-controls .mk-label { display: block; margin-bottom: .25rem; color: var(--ink-soft); font: 10px var(--mono); letter-spacing: .06em; text-transform: uppercase; }
+.mk-section h3 { margin: .9rem 0 .35rem; color: var(--ink-soft); font: 600 10px var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+.mk-section ol { margin: 0; padding: 0; list-style: none; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 22rem), 1fr)); gap: .25rem; }
+.mk-state { display: flex; gap: .5rem; width: 100%; padding: .35rem .5rem; border: 1px solid var(--rule); border-radius: 0; background: var(--surface); color: var(--ink); font: 12px/1.35 var(--sans); text-align: left; cursor: pointer; }
+.mk-state b { flex: none; min-width: 2.2rem; font: 600 11px/1.5 var(--mono); color: var(--patina-ink); }
+.mk-state:hover { border-color: var(--patina); }
+.mk-state:focus-visible { outline: 2px solid var(--patina); outline-offset: 1px; }
+.mk-state[aria-current="true"] { border-color: var(--patina); background: var(--diff-added); }
+
+/* ---------- the viewer, from packages/relic-viewer/src/styles.css ---------- */
+.viewer { display: flex; flex-direction: column; height: 100%; background: var(--ground); color: var(--ink); font-family: var(--sans); font-size: 16px; line-height: 1.55; }
+.relic-row { position: relative; display: flex; flex: 1 1 auto; min-height: 0; }
+.stage-wrap { position: relative; flex: 1 1 auto; min-width: 0; min-height: 0; overflow: auto; }
+.icon { width: 14px; height: 14px; flex: none; fill: currentColor; }
+.bar { position: relative; z-index: 10; display: flex; align-items: stretch; flex: none; min-height: var(--bar-height); background: var(--surface); border-bottom: 1px solid var(--rule-strong); }
+.mark { display: flex; align-items: center; padding: 0 1rem; font-family: var(--mono); font-size: .78rem; font-weight: 600; letter-spacing: .01em; color: var(--ink); border-right: 1px solid var(--rule); white-space: nowrap; }
+.identity { display: flex; flex-direction: column; justify-content: center; gap: .1rem; padding: .4rem 1rem; min-width: 0; flex: 1; }
+.filename { flex: 0 0 auto; font-size: .9rem; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.accession { font-family: var(--mono); font-size: .66rem; letter-spacing: .14em; color: var(--ink-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; user-select: all; }
+.identity-meta { display: flex; align-items: center; gap: .6rem; min-width: 0; }
+.identity-meta .accession { min-width: 0; flex: 0 1 auto; }
+.version { position: relative; flex: none; }
+.version-label { display: inline-flex; align-items: center; gap: .3rem; margin: 0; padding: .05rem .35rem; border: 1px solid var(--rule-strong); background: var(--surface); color: var(--ink-soft); font-family: var(--mono); font-size: .66rem; letter-spacing: .06em; white-space: nowrap; }
+.version-trigger { cursor: pointer; font: inherit; font-family: var(--mono); font-size: .66rem; letter-spacing: .06em; border-radius: 0; }
+.version-trigger:hover { border-color: var(--patina); color: var(--patina-ink); }
+.version-trigger:focus-visible { outline: 2px solid var(--patina); outline-offset: 1px; }
+.version-trigger .icon { width: 10px; height: 10px; }
+.version-short { display: none; }
+.actions { display: flex; align-items: stretch; border-left: 1px solid var(--rule); }
+.action { display: inline-flex; align-items: center; gap: .45rem; padding: 0 .9rem; border: 0; border-right: 1px solid var(--rule); border-radius: 0; background: transparent; color: var(--ink); font: inherit; font-size: .82rem; text-decoration: none; cursor: pointer; white-space: nowrap; }
+.actions .action:last-child { border-right: 0; }
+.action:hover { background: var(--ground); color: var(--patina-ink); }
+.action:focus-visible { outline: 2px solid var(--patina); outline-offset: -2px; }
+.action[aria-pressed="true"] { color: var(--patina-ink); background: var(--diff-added); }
+.action-count { min-width: 1.1rem; padding: 0 .25rem; border: 1px solid var(--rule-strong); color: var(--ink-soft); font-family: var(--mono); font-size: .68rem; line-height: 1.4; text-align: center; }
+.action:hover .action-count { border-color: var(--patina); color: var(--patina-ink); }
+.decision-tally { display: inline-flex; align-items: stretch; border: 1px solid var(--rule-strong); font-family: var(--mono); font-size: .68rem; line-height: 1.4; }
+.decision-tally > span { display: inline-flex; align-items: center; gap: .15rem; padding: 0 .3rem; }
+.decision-tally > span + span { border-left: 1px solid var(--rule-strong); }
+.decision-tally .icon { width: 10px; height: 10px; }
+.decision-tally > span[data-zero="true"] { color: var(--ink-soft); }
+.decision-tally > span[data-zero="true"] .icon { fill: var(--rule-strong); }
+.stage { padding: 2rem 1.25rem 5rem; }
+.doc { position: relative; max-width: 46rem; margin: 0 auto; }
+.notice { display: flex; gap: .6rem; align-items: flex-start; max-width: 46rem; margin: 0 auto 1.5rem; padding: .7rem .9rem; border-left: 3px solid var(--oxide); background: var(--surface); color: var(--ink); font-size: .86rem; }
+.notice p { margin: 0; }
+.notice .icon { fill: var(--oxide); margin-top: .2rem; }
+.prose { font-family: var(--serif); font-size: 1.06rem; line-height: 1.7; }
+.prose h1, .prose h2, .prose h3 { font-family: var(--sans); line-height: 1.25; margin: 2rem 0 .6rem; letter-spacing: -.01em; }
+.prose h1 { font-size: 1.7rem; padding-bottom: .4rem; border-bottom: 1px solid var(--rule); margin-top: 0; }
+.prose h2 { font-size: 1.32rem; }
+.prose p { margin: 0 0 1.1rem; }
+.prose code { font-family: var(--mono); font-size: .86em; background: var(--surface); border: 1px solid var(--rule); padding: .05em .3em; }
+.prose a { color: var(--patina-ink); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+.tok-kw { color: var(--patina-ink); font-weight: 600; }
+.tok-str, .tok-num { color: var(--oxide); }
+.tok-com { color: var(--ink-soft); font-style: italic; }
+.relic-text-mark { background: color-mix(in srgb, var(--patina) 22%, transparent); border-bottom: 2px solid var(--patina); color: inherit; cursor: pointer; }
+.relic-text-mark.is-active { background: color-mix(in srgb, var(--patina) 42%, transparent); outline: 2px solid var(--patina); }
+.relic-text-mark:focus-visible { outline: 2px solid var(--patina); outline-offset: 2px; }
+.thread { display: none; flex: 0 0 auto; width: var(--thread-width, 22rem); max-width: 100%; margin: 0; padding: 0 1.25rem 1.5rem; overflow-y: auto; background: var(--surface); border-left: 1px solid var(--rule-strong); }
+.thread.is-open { display: block; }
+.thread-title { position: sticky; top: 0; z-index: 1; margin: 0 -1.25rem 1rem; background: var(--surface); border-bottom: 1px solid var(--rule); }
+.thread-toggle { display: flex; align-items: center; justify-content: space-between; width: 100%; min-height: 2.75rem; padding: .65rem 1.25rem; color: var(--ink); font-family: var(--sans); font-size: 1rem; font-weight: 600; text-align: left; background: transparent; border: 0; cursor: pointer; }
+.thread-toggle::after { width: .55rem; height: .55rem; content: ""; border-top: 1px solid currentColor; border-right: 1px solid currentColor; transform: rotate(45deg); }
+.thread-toggle:focus-visible { outline: 2px solid var(--patina); outline-offset: -4px; }
+.thread-note { margin: 0 0 .75rem; color: var(--ink-soft); font-size: .86rem; line-height: 1.55; }
+.thread-list { margin: 0 0 2rem; padding: 0; list-style: none; }
+.comment { padding: 1rem 0; border-top: 1px solid var(--rule); }
+.thread-list .comment { cursor: pointer; }
+.comment.is-active { background: color-mix(in srgb, var(--patina) 10%, transparent); }
+.comment-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: .5rem; margin-bottom: .4rem; }
+.comment-author { font-family: var(--mono); font-size: .74rem; color: var(--ink-soft); overflow-wrap: anywhere; }
+.comment-badge { padding: .05rem .4rem; border: 1px solid var(--patina); color: var(--patina-ink); font-family: var(--mono); font-size: .62rem; letter-spacing: .08em; text-transform: uppercase; }
+.comment-time { margin-left: auto; color: var(--ink-soft); font-family: var(--mono); font-size: .68rem; white-space: nowrap; }
+.comment-body { margin: 0; font-family: var(--serif); font-size: .94rem; line-height: 1.55; overflow-wrap: anywhere; }
+.comment-body p { margin: 0; }
+.comment-replies { margin: .75rem 0 0 .75rem; padding: 0 0 0 .75rem; border-left: 2px solid var(--rule); list-style: none; }
+.comment.comment-reply { padding: .5rem 0 0; border-top: 1px solid var(--rule); }
+.comment.comment-reply:first-child { border-top: 0; padding-top: 0; }
+.popover { position: absolute; z-index: 8; background: var(--surface); color: var(--ink); border: 1px solid var(--rule-strong); box-shadow: 0 6px 18px rgb(0 0 0 / 14%); font-family: var(--sans); font-size: 16px; line-height: 1.55; text-align: left; }
+.popover-offer { display: flex; align-items: stretch; }
+.popover-card { width: min(22rem, calc(100cqw - 2rem)); max-width: calc(100% - 1rem); padding: .55rem .7rem .5rem; }
+.popover-action { padding: .4rem .7rem; background: none; border: 0; border-radius: 0; color: var(--ink); font: inherit; font-size: .82rem; white-space: nowrap; cursor: pointer; }
+.popover-offer .popover-action + .popover-action { border-left: 1px solid var(--rule); }
+.popover-action:hover { background: color-mix(in srgb, var(--patina) 12%, transparent); }
+.popover-action:focus-visible { outline: 2px solid var(--patina); outline-offset: -2px; }
+.popover-action:disabled { color: var(--ink-soft); cursor: default; }
+.popover-offer .popover-action.is-primary { background: var(--patina); color: var(--surface); }
+.popover-offer .popover-action.is-primary:hover { background: var(--patina-ink); color: var(--surface); }
+.popover-tools { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; margin-top: .5rem; padding-top: .45rem; border-top: 1px solid var(--rule); }
+.popover-card .popover-action { padding: .2rem .55rem; border: 1px solid var(--rule-strong); font-size: .8rem; }
+.popover-card .popover-action.is-primary { background: var(--patina); border-color: var(--patina); color: var(--surface); }
+.popover-card .popover-action.is-primary:disabled { background: color-mix(in srgb, var(--patina) 55%, var(--surface)); border-color: transparent; }
+.popover-card .popover-action.is-quiet { border-color: transparent; color: var(--ink-soft); }
+.popover-thread { margin: 0; padding: 0; list-style: none; }
+.popover-thread .comment { padding: .25rem .1rem .5rem; border-top: 0; }
+.popover-thread .comment + .comment { border-top: 1px solid var(--rule); padding-top: .5rem; }
+.popover-field { display: block; width: 100%; min-height: 4.5rem; padding: .4rem; background: var(--ground); border: 1px solid var(--rule-strong); border-radius: 0; color: var(--ink); font: inherit; font-family: var(--serif); font-size: .9rem; resize: vertical; }
+.popover-field:focus-visible { outline: 2px solid var(--patina); outline-offset: 1px; }
+.popover-note { margin: .4rem 0 0; color: var(--oxide); font-size: .76rem; }
+.popover:focus { outline: none; }
+.popover:focus-visible { outline: 2px solid var(--patina); outline-offset: 2px; }
+
+/* ---------- new for suggested edits ---------- */
+/* The mode strip is the band's second row: one segmented control, and in Reading the
+   local preview switch. It holds nothing else, so it survives the narrowest frame. */
+.sg-strip { position: relative; z-index: 9; flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: .45rem 1rem; min-height: 2.6rem; padding: .35rem 1rem; background: var(--surface); border-bottom: 1px solid var(--rule); font-size: .8rem; }
+.sg-seg { display: inline-flex; flex: none; border: 1px solid var(--rule-strong); }
+.sg-seg button { padding: .26rem .75rem; border: 0; border-radius: 0; background: transparent; color: var(--ink); font: 600 .78rem/1.3 var(--sans); cursor: pointer; white-space: nowrap; }
+.sg-seg button + button { border-left: 1px solid var(--rule-strong); }
+.sg-seg button:hover { color: var(--patina-ink); background: var(--ground); }
+.sg-seg button[aria-pressed="true"] { background: var(--patina); color: var(--surface); }
+.sg-seg button:focus-visible { outline: 2px solid var(--patina); outline-offset: 1px; position: relative; z-index: 1; }
+.sg-switch { display: inline-flex; align-items: center; gap: .5rem; padding: .2rem .1rem; border: 0; background: transparent; color: var(--ink); font: .8rem/1.3 var(--sans); cursor: pointer; text-align: left; }
+.sg-switch:focus-visible { outline: 2px solid var(--patina); outline-offset: 2px; }
+.sg-switch-box { position: relative; flex: none; width: 1.9rem; height: 1rem; border: 1px solid var(--rule-strong); background: var(--ground); }
+.sg-switch-box::after { content: ""; position: absolute; top: 2px; left: 2px; width: calc(.5rem + 2px); height: calc(1rem - 6px); background: var(--ink-soft); }
+.sg-switch[aria-checked="true"] .sg-switch-box { border-color: var(--patina); background: var(--diff-added); }
+.sg-switch[aria-checked="true"] .sg-switch-box::after { left: auto; right: 2px; background: var(--patina); }
+.sg-strip-hint { color: var(--ink-soft); font-size: .78rem; }
+.sg-strip-meta { margin-left: auto; color: var(--ink-soft); font: .68rem var(--mono); letter-spacing: .04em; white-space: nowrap; }
+.sg-banner { border-left-color: var(--patina); }
+.sg-banner .icon { fill: var(--patina); }
+
+/* Pending marks: an underline in patina, never a fill. A fill reads as already decided. */
+.sg-mark { text-decoration-line: underline; text-decoration-color: var(--patina); text-decoration-thickness: 2px; text-underline-offset: .24em; text-decoration-skip-ink: none; cursor: pointer; }
+.sg-mark:hover, .sg-mark.is-active { text-decoration-thickness: 3px; color: var(--patina-ink); }
+.sg-mark.is-active { background: color-mix(in srgb, var(--patina) 9%, transparent); }
+.sg-mark:focus-visible, .sg-del:focus-visible, .sg-ins:focus-visible, .sg-row:focus-visible { outline: 2px solid var(--patina); outline-offset: 2px; }
+.sg-caret { position: relative; display: inline-block; width: .75rem; height: 1.1em; margin: 0 .05rem; padding: 0; vertical-align: -.2em; border: 0; border-radius: 0; background: none; cursor: pointer; }
+.sg-caret::before { content: ""; position: absolute; left: 50%; top: .05em; bottom: .3em; width: 2px; transform: translateX(-50%); background: var(--patina); }
+.sg-caret::after { content: ""; position: absolute; left: 50%; bottom: 0; width: .4rem; height: .4rem; border-left: 2px solid var(--patina); border-top: 2px solid var(--patina); transform: translate(-50%, 15%) rotate(45deg); }
+.sg-caret:hover, .sg-caret.is-active { background: color-mix(in srgb, var(--patina) 16%, transparent); }
+.sg-caret:focus-visible { outline: 2px solid var(--patina); outline-offset: 1px; }
+.sg-caret-mark { position: relative; display: inline-block; width: .75rem; height: 1.1em; vertical-align: -.2em; }
+.sg-caret-mark::before { content: ""; position: absolute; left: 50%; top: .05em; bottom: .3em; width: 2px; transform: translateX(-50%); background: var(--patina); }
+.sg-caret-mark::after { content: ""; position: absolute; left: 50%; bottom: 0; width: .4rem; height: .4rem; border-left: 2px solid var(--patina); border-top: 2px solid var(--patina); transform: translate(-50%, 15%) rotate(45deg); }
+.sg-del + .sg-ins { margin-left: .12em; }
+.sg-del { background: var(--diff-removed); color: inherit; text-decoration: line-through; text-decoration-thickness: 1px; }
+.sg-ins { background: var(--diff-added); color: inherit; text-decoration: none; }
+.doc .sg-del[data-unit], .doc .sg-ins[data-unit] { cursor: pointer; }
+.sg-del.is-active, .sg-ins.is-active { outline: 2px solid var(--patina); outline-offset: 1px; }
+.sg-margin { position: absolute; left: -1rem; z-index: 2; width: .4rem; min-height: 1rem; padding: 0; border: 0; border-radius: 0; background: var(--patina); cursor: pointer; }
+.sg-margin:hover, .sg-margin.is-active { outline: 2px solid var(--patina); outline-offset: 2px; }
+.sg-margin:focus-visible { outline: 2px solid var(--patina-ink); outline-offset: 2px; }
+
+/* The code relic: the viewer's gutter and body, one row per line so a suggestion can
+   replace whole lines in the preview. */
+.sg-code { margin: 0; overflow-x: auto; background: var(--surface); border: 1px solid var(--rule); font-family: var(--mono); font-size: .82rem; line-height: 1.6; }
+.sg-code-inner { display: grid; grid-template-columns: max-content minmax(max-content, 1fr); min-width: 100%; width: max-content; padding: .75rem 0; }
+.cl { display: contents; }
+.cl > .ln { padding: 0 .75rem; text-align: right; color: var(--ink-soft); background: var(--ground); border-right: 1px solid var(--rule); user-select: none; white-space: pre; }
+.cl > .lc { padding: 0 1rem 0 .4rem; white-space: pre; min-height: 1.6em; }
+.cl > .lc .sg-sign { display: inline-block; width: 1rem; color: var(--ink-soft); user-select: none; }
+.cl.is-del > .lc, .cl.is-del > .ln { background: var(--diff-removed); }
+.cl.is-add > .lc, .cl.is-add > .ln { background: var(--diff-added); }
+.cl.is-add > .lc .sg-sign, .cl.is-del > .lc .sg-sign { color: var(--ink); }
+.cl > .lc.sg-row { cursor: pointer; }
+.cl > .lc.sg-row.is-active { outline: 2px solid var(--patina); outline-offset: -2px; }
+
+/* The suggestion card. Same family as the comment cards: Charter body, mono author and
+   time, a ruled footer. The footer carries status text and never an Accept button. */
+.sg-card { display: flex; flex-direction: column; width: min(26rem, calc(100cqw - 1rem)); max-width: calc(100% - 1rem); padding: .6rem .75rem .5rem; overflow: hidden; }
+.sg-card.is-code { width: min(38rem, calc(100cqw - 1rem)); }
+.sg-card-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.sg-card .popover-tools { flex: none; background: var(--surface); }
+.sg-kind { display: block; margin: 0 0 .2rem; color: var(--patina-ink); font: .62rem/1.4 var(--mono); letter-spacing: .1em; text-transform: uppercase; }
+.sg-kind[data-kind="delete"] { color: var(--oxide); }
+.sg-diff { margin: 0; font-family: var(--serif); font-size: .92rem; line-height: 1.6; overflow-wrap: anywhere; }
+.sg-muted { color: var(--ink-soft); }
+.sg-note { margin: .45rem 0 0; padding-left: .6rem; border-left: 2px solid var(--rule); font-family: var(--serif); font-size: .9rem; line-height: 1.5; overflow-wrap: anywhere; }
+.sg-also { margin: .45rem 0 0; color: var(--ink-soft); font-size: .78rem; }
+.sg-flag { display: inline-block; margin: .45rem 0 0; padding: .05rem .4rem; border: 1px solid var(--rule-strong); color: var(--ink-soft); font: .64rem/1.5 var(--mono); letter-spacing: .06em; }
+.sg-status { display: flex; flex-wrap: wrap; align-items: center; gap: .35rem; margin: .55rem 0 0; padding-top: .4rem; border-top: 1px solid var(--rule); color: var(--ink-soft); font: .68rem/1.4 var(--mono); letter-spacing: .03em; }
+.sg-status .icon { width: 11px; height: 11px; }
+.sg-status[data-status="accepted"], .sg-status[data-status="seen"] { color: var(--patina-ink); }
+.sg-status[data-status="outdated"], .sg-status[data-status="nottaken"] { color: var(--oxide); }
+.sg-status-detail { margin: .2rem 0 0; color: var(--ink-soft); font: .86rem/1.5 var(--serif); overflow-wrap: anywhere; }
+.sg-choices { margin: 0; padding: 0; border: 0; min-width: 0; }
+.sg-choices legend { padding: 0; margin: 0 0 .35rem; font: 600 .84rem/1.35 var(--sans); }
+.sg-choice { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 0 .55rem; padding: .45rem .3rem; border-top: 1px solid var(--rule); cursor: pointer; }
+.sg-choice:has(input:checked) { background: color-mix(in srgb, var(--patina) 8%, transparent); }
+.sg-choice input { align-self: start; margin: .3rem 0 0; accent-color: var(--patina); }
+.sg-choice input:focus-visible { outline: 2px solid var(--patina); outline-offset: 2px; }
+.sg-choice .comment-head { margin-bottom: .15rem; }
+.sg-choice .sg-status { margin-top: .3rem; padding-top: 0; border-top: 0; }
+.sg-fine { margin: .4rem 0 0; color: var(--ink-soft); font-size: .76rem; line-height: 1.45; }
+.sg-block { margin: .3rem 0 0; border: 1px solid var(--rule); font: .74rem/1.55 var(--mono); }
+.sg-block-head { padding: .15rem .5rem; border-bottom: 1px solid var(--rule); color: var(--ink-soft); font-size: .62rem; letter-spacing: .08em; text-transform: uppercase; }
+.sg-block-row { display: grid; grid-template-columns: 2.3rem 1rem minmax(0, 1fr); }
+.sg-block-row .n { padding: 0 .35rem; text-align: right; color: var(--ink-soft); border-right: 1px solid var(--rule); user-select: none; }
+.sg-block-row .g { text-align: center; user-select: none; }
+.sg-block-row .t { padding-right: .35rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+.sg-block-row.is-del { background: var(--diff-removed); }
+.sg-block-row.is-add { background: var(--diff-added); }
+.sg-block-row.is-muted .t { color: var(--ink-soft); }
+.sg-composer-title { margin: 0 0 .45rem; font: 600 .86rem/1.3 var(--sans); }
+.sg-composer .sg-seg button { padding: .2rem .55rem; font-size: .74rem; }
+.sg-target { margin: .5rem 0 0; padding: .4rem .55rem; background: var(--ground); border-left: 3px solid var(--patina); font: .9rem/1.6 var(--serif); overflow-wrap: anywhere; }
+.sg-target.is-code { font: .76rem/1.55 var(--mono); white-space: pre-wrap; }
+.sg-source { margin: .3rem 0 0; color: var(--ink-soft); font: .7rem/1.5 var(--mono); overflow-wrap: anywhere; }
+.sg-field { display: block; margin-top: .55rem; }
+.sg-field > span { display: block; margin-bottom: .2rem; font: 600 .74rem/1.3 var(--sans); }
+.sg-composer .popover-field { min-height: 4rem; height: 4.5rem; resize: none; }
+.sg-composer .popover-field.is-code { font: .78rem/1.5 var(--mono); }
+.sg-input { display: block; width: 100%; padding: .3rem .4rem; background: var(--ground); border: 1px solid var(--rule-strong); border-radius: 0; color: var(--ink); font: .86rem var(--serif); }
+.sg-input:focus-visible { outline: 2px solid var(--patina); outline-offset: 1px; }
+.sg-hint { margin: .3rem 0 0; color: var(--ink-soft); font-size: .74rem; line-height: 1.4; }
+.sg-count { margin-right: auto; color: var(--ink-soft); font: .7rem var(--mono); }
+.sg-count.is-near { color: var(--oxide); }
+.sg-count.is-over { color: var(--oxide); font-weight: 700; }
+.sg-refusal { margin: 0; font-size: .86rem; line-height: 1.5; }
+.sg-legacy-note { margin: .25rem 0 0; color: var(--ink-soft); font-size: .78rem; }
+.sg-reply { margin-top: .4rem; }
+.sg-del-line, .sg-ins-line { text-decoration: none; background: none; }
+::highlight(sg-pending) { background-color: color-mix(in srgb, var(--patina) 20%, transparent); text-decoration: underline dashed var(--patina) 2px; }
+.sg-reply .popover-field { min-height: 2.6rem; height: 2.8rem; resize: none; }
+
+/* ---------- the viewer's breakpoints, against the device frame ---------- */
+@container viewer (max-width: 44rem) {
+  .thread.is-open { position: absolute; inset: 0; z-index: 20; width: 100%; min-width: 0; max-width: 100%; }
+}
+@container viewer (max-width: 34rem) {
+  .action span { display: none; }
+  .action span.action-count { display: inline-block; }
+  .action span.decision-tally { display: inline-flex; }
+  .action .decision-tally > span { display: inline-flex; gap: .1rem; padding: 0 .2rem; }
+  .action-decisions > .icon { display: none; }
+  .action-relics { display: none; }
+  .actions .action { padding: 0 .6rem; }
+  .mark { display: none; }
+  .version-long { display: none; }
+  .version-short { display: inline; }
+  .identity { padding: .4rem .7rem; }
+  .identity-meta { gap: .4rem; }
+  .thread { padding: 0 .9rem 4rem; }
+  .thread-title { margin: 0 -.9rem 1rem; }
+  .comment-time { margin-left: 0; }
+  .sg-strip { padding: .35rem .7rem; }
+  .sg-strip-meta { display: none; }
+  .stage { padding: 1.5rem 1.15rem 5rem; }
+}
+@container viewer (max-width: 24rem) {
+  .action-comments { display: none; }
+  .actions .action { padding: 0 .4rem; }
+  .sg-switch { font-size: .76rem; }
+}
+</style>
+</head>
+<body>
+<header class="mk-bar" id="mk-bar" aria-label="Mock controls, not part of the viewer">
+  <div class="mk-row">
+    <span class="mk-tag">Mock</span>
+    <button type="button" class="mk-btn" id="mk-open" aria-expanded="false" aria-controls="mk-drawer">States</button>
+    <button type="button" class="mk-btn mk-step mk-prev" id="mk-prev" aria-label="Previous state"></button>
+    <p class="mk-title" id="mk-title" aria-live="polite"></p>
+    <button type="button" class="mk-btn mk-step mk-next" id="mk-next" aria-label="Next state"></button>
+    <div class="mk-group mk-wide" role="group" aria-label="Width" data-control="frame"></div>
+    <div class="mk-group mk-wide" role="group" aria-label="Scheme" data-control="theme"></div>
+  </div>
+  <nav class="mk-chips mk-wide" id="mk-chips" aria-label="Every state"></nav>
+</header>
+<div class="mk-floor" id="mk-floor"><div class="mk-device" id="device" data-frame="fit"></div></div>
+<div class="mk-drawer" id="mk-drawer" hidden>
+  <div class="mk-drawer-head"><p>Every state, one press each. Nothing here is part of the viewer.</p><button type="button" class="mk-btn" id="mk-close">Close</button></div>
+  <div class="mk-controls">
+    <div><span class="mk-label">Width</span><div class="mk-group" role="group" aria-label="Width" data-control="frame"></div></div>
+    <div><span class="mk-label">Scheme</span><div class="mk-group" role="group" aria-label="Scheme" data-control="theme"></div></div>
+    <div><span class="mk-label">Stored state</span><button type="button" class="mk-btn" id="mk-reset">Reset</button></div>
+  </div>
+  <div id="mk-sections"></div>
+</div>
+<script>
+(() => {
+'use strict';
+
+/* ================================================================ constants */
+const GAP = 8, MARGIN = 8;
+const STORE = 'relik-suggested-edits-mock';
+const SVGNS = 'http://www.w3.org/2000/svg';
+const REPLACEMENT_LIMIT = 2048, ANCHOR_LIMIT = 512;
+const READER = 'Jason', PUBLISHER = 'Dana';
+const encoder = new TextEncoder();
+const bytes = (s) => encoder.encode(s).length;
+const fmt = (n) => n.toLocaleString('en-US');
+
+const ICON = {
+  copy: 'M5 2h7a1 1 0 0 1 1 1v8h-1V3H5V2zM3 4h7a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zm0 1v8h7V5H3z',
+  download: 'M7.5 1h1v7.3l2.6-2.6.7.7L8 10.2 4.2 6.4l.7-.7 2.6 2.6V1zM2 12h12v1H2v-1z',
+  source: 'M5.7 3.3 2 7l3.7 3.7.7-.7L3.4 7l3-3-.7-.7zm4.6 0-.7.7 3 3-3 3 .7.7L14 7l-3.7-3.7z',
+  flag: 'M3 1h1v14H3V1zm2 1h8l-2 3 2 3H5V2z',
+  chevron: 'M3.4 5.7 8 10.3l4.6-4.6-.7-.7L8 8.9 4.1 5l-.7.7z',
+  comment: 'M2 2h12v9H7.5L4 14v-3H2V2zm1 1v7h2v2.1L7.1 10H13V3H3z',
+  grid: 'M2 2h4.5v4.5H2V2zm7.5 0H14v4.5H9.5V2zM2 9.5h4.5V14H2V9.5zm7.5 0H14V14H9.5V9.5z',
+  stamp: 'M5.5 1h5v4L9 6.5V8h4.5v3h-11V8H7V6.5L5.5 5V1zM2 12.5h12V14H2v-1.5z',
+  approve: 'M6.2 11.6 2.6 8l1-1 2.6 2.6 6.2-6.2 1 1z',
+  reject: 'M4 3 8 7l4-4 1 1-4 4 4 4-1 1-4-4-4 4-1-1 4-4-4-4z',
+  share: 'M1.5 3h13v10h-13zm1.3 1L8 7.6 13.2 4zM2.5 5.2V12h11V5.2L8 9z',
+  check: 'M6.2 11.6 2.6 8l1-1 2.6 2.6 6.2-6.2 1 1z',
+  clock: 'M8 1.5a6.5 6.5 0 1 1 0 13 6.5 6.5 0 0 1 0-13zm0 1.2a5.3 5.3 0 1 0 0 10.6A5.3 5.3 0 0 0 8 2.7zM7.4 4h1.2v3.7l2.6 1.5-.6 1-3.2-1.8V4z',
+  eye: 'M8 3.5c3.2 0 5.6 2.3 6.5 4.5-.9 2.2-3.3 4.5-6.5 4.5S2.4 10.2 1.5 8C2.4 5.8 4.8 3.5 8 3.5zm0 1.2C5.6 4.7 3.7 6.3 2.8 8c.9 1.7 2.8 3.3 5.2 3.3s4.3-1.6 5.2-3.3C12.3 6.3 10.4 4.7 8 4.7zM8 6a2 2 0 1 1 0 4 2 2 0 0 1 0-4z',
+  minus: 'M3 7.4h10v1.2H3z',
+};
+
+const SPECS = {
+  markdown: { filename: 'publishing-guide.md', accession: 'n4x8qk2m7tz1vc9hw3rd6pb5fy', marker: 'Rendered as text, no author code' },
+  code: { filename: 'comments.ts', accession: 'c7w2tq9x4mk1hz8vn3rd6pb5ya', marker: 'Rendered as text, no author code' },
+};
+
+/* ================================================================ fixtures */
+const MD_SRC = "# Publishing a relic\n\nYour coding agent encrypts a file on your machine, uploads only ciphertext, and hands you a link. For a public relic, the service never receives the key.\n\n## Publish\n\nRelic exposes `relic_publish`, which takes a filesystem path and never inline content. The publish tool returns the full URL including the fragment, because handing you a usable link is the product. **The key therefore enters your model's context and your session transcript on every public publish.**\n\n## Republish\n\nRepublishing keeps the link and adds a version. Opening the link always serves the current version. The publish token is never an argument and never printed, because the client stored it beside the relic's key at first publish. The machine that published is the only machine that can republish: lose that state and nobody, the operator included, can authorize another version.\n\nEach new version emails a change notice to commenters and shared addresses. At most one email per person per relic per 10 minutes is sent, and one stop link stops every email about that relic.\n\n## Comments\n\nComment bodies are encrypted on the publishing machine under a key derived from that relic's key, so the service stores comment ciphertext it cannot read. There is no edit history, because the service holds one ciphertext per comment and an edit overwrites it. [The policy page](https://relik.link/policy) states the whole trade: the telemetry, the optional plaintext title, and what the operator learns.";
+const CODE_FIRST = 51;
+const CODE_SRC = "/** AES-GCM's standard nonce length, prepended to every comment. */\nexport const COMMENT_NONCE_BYTES = 12;\n\n/**\n * A body cap, enforced here rather than left to a caller.\n *\n * Enforced before encryption so the refusal names the limit, and enforced in\n * this package so it is one number rather than one per caller. Truncating\n * instead of refusing would change what a comment says, which is worse than\n * refusing to store it.\n */\nexport const COMMENT_BODY_LIMIT_BYTES = 4096;\n\n/** A display name is decoration, so it gets a decoration-sized cap. */\nexport const COMMENT_DISPLAY_NAME_LIMIT_BYTES = 64;\n\n/**\n * A comment id, and ids are minted by the service, so this is a sanity bound\n * rather than a format claim: a reply pointing at something id-shaped is the\n * most this package can check without learning the service's id scheme.\n */\nexport const COMMENT_ADDRESSES_LIMIT_BYTES = 64;\n\n/**\n * A rectangle in unit coordinates of whatever space the anchor carrying it\n * names. `x` and `y` are the top-left corner, `w` and `h` the extent, all in\n * 0 to 1. A zero-area rectangle is refused: a box nobody can see is a point\n * wearing a box's shape, and `pin` already exists for a point.\n */";
+const NEAR_LIMIT_TEXT = "The JavaScript that performs the decryption is served by the same party the zero-knowledge claim is made against, and that party could serve different JavaScript tomorrow. This is a statement about operator intent, not a property a recipient can verify. Anyone claiming otherwise for a service of this shape is overclaiming. For a public relic, the publish tool returns the full URL including the fragment, because handing you a usable link is the product. The key therefore enters your model's context and your session transcript on every public publish. Zero-knowledge holds against the Relic operator. It does not hold against your model provider or whoever stores your transcripts, and that is structural rather than a defect on a schedule. A private relic's publish output carries no key. Its device keys stay on this machine, in the Secure Enclave where it is available and in an owner-only file otherwise. The browser holds decrypted content in a browser-managed Blob. The browser may keep that plaintext in memory or temporary disk, and the operating system may swap memory to disk. Downloading writes plaintext to a file. Relic cannot guarantee that the plaintext never touches disk or is erased on close. Rendered content is not inert. A relic that renders as HTML or JSX runs its author's code in a sandboxed frame whose policy permits no remote source, so the code cannot make outbound HTTP, WebSocket, or worker requests, and a page that expects external images, fonts, or scripts renders without them. Because browsers do not enforce Content-Security-Policy over WebRTC ICE candidate gathering, the frame bootstrap installs a tested deny-list inside the frame's JavaScript realm: it neutralizes WebRTC constructors across the global prototype chain and blocks nested browsing context creation (iframe, frame, object, embed, portal) to prevent UDP STUN candidate gathering. This is defense in depth alongside the opaque sandbox, not an architectural impossibility. Future browser APIs or parser entry points could";
+
+function anchorAt(src, s, e) {
+  return { quote: src.slice(s, e), prefix: src.slice(Math.max(0, s - 32), s), suffix: src.slice(e, e + 32) };
+}
+function anchorOf(src, quote) {
+  const i = src.indexOf(quote);
+  if (i < 0) throw new Error(`fixture quote not found: ${quote}`);
+  return anchorAt(src, i, i + quote.length);
+}
+function sug(src, id, author, mins, quote, mode, text, more = {}) {
+  return { id, author, mins, ...anchorOf(src, quote), mode, text, note: more.note || '', status: more.status || 'pending', reason: more.reason || '', by: more.by || '' };
+}
+/* State 1: one single, one identical pair, one conflict group of three. */
+const md = (id, author, mins, quote, mode, text, more) => sug(MD_SRC, id, author, mins, quote, mode, text, more);
+const BASE = () => [
+  md('p1', 'Priya', 180, 'adds a version', 'replace', 'adds a version that readers open at the same link', { note: 'Readers keep asking whether the old link still works.' }),
+  md('j2', 'Jason', 120, '10 minutes', 'replace', 'ten minutes', { note: 'House style spells out numbers under a hundred.' }),
+  md('m2', 'Marcus', 65, '10 minutes', 'replace', 'ten minutes'),
+  md('m-g1', 'Marcus', 300, 'never an argument and never printed', 'replace', 'never passed as an argument and never printed'),
+  md('p-g2', 'Priya', 240, "The publish token is never an argument and never printed, because the client stored it beside the relic's key at first publish.", 'replace', 'The publish token stays on the machine that published it: it is never an argument and never printed.', { note: 'Lead with where the token lives.' }),
+  md('j-g3', 'Jason', 50, ", because the client stored it beside the relic's key at first publish", 'replace', '', { note: 'The next sentence already gives the reason.' }),
+];
+/* Posted in state 5, later outdated by a hand edit in version 4. */
+const POSTED = () => md('j5', 'Jason', 35, 'lose that state', 'replace', "lose that machine's state", { note: 'Reads as if the state could be anywhere.' });
+const EXTRA = () => [
+  md('m6', 'Marcus', 90, 'so the service stores comment ciphertext it cannot read', 'replace', 'so the service cannot read them'),
+  md('p7', 'Priya', 30, 'the optional plaintext title', 'replace', 'the optional plaintext title and cover image'),
+];
+const DELETE_ONE = () => md('p-del', 'Priya', 25, ', the operator included,', 'replace', '', { note: 'Nobody means nobody. The aside weakens it.' });
+const INSERTS = () => [
+  md('i-p1', 'Priya', 200, 'hands you a link.', 'after', ' Anyone holding the link can read the file.'),
+  md('i-m2', 'Marcus', 110, 'hands you a link.', 'after', ' Treat it like a password.', { note: 'Same advice the share email gives.' }),
+  md('i-j3', 'Jason', 70, ' For a public relic, the service never receives the key.', 'replace', " The service never receives a public relic's key."),
+  md('i-m4', 'Marcus', 40, 'receives', 'after', ' or stores'),
+];
+const cd = (id, author, mins, quote, mode, text, more) => sug(CODE_SRC, id, author, mins, quote, mode, text, more);
+const CODE_SUGS = () => [
+  cd('c-p1', 'Priya', 150, 'Enforced before encryption so the refusal names the limit, and enforced in\n * this package so it is one number rather than one per caller. Truncating\n * instead of refusing would change what a comment says, which is worse than\n * refusing to store it.', 'replace',
+    'Enforced before encryption, so the refusal names the limit, and enforced\n * here, so it is one number rather than one per caller. Refusing beats\n * truncating: a truncated comment says something its author did not.', { note: 'Same claim, one line shorter.' }),
+  cd('c-j2', 'Jason', 60, 'so it gets a decoration-sized cap.', 'replace', 'so it gets a small cap.'),
+  cd('c-m3', 'Marcus', 180, 'COMMENT_ADDRESSES_LIMIT_BYTES', 'replace', 'COMMENT_ID_LIMIT_BYTES', { note: 'The comment above says this bounds a comment id.' }),
+  cd('c-p4', 'Priya', 40, 'COMMENT_ADDRESSES_LIMIT_BYTES = 64', 'replace', 'COMMENT_REPLY_TO_LIMIT_BYTES = 64', { note: 'It bounds the id a reply points at.' }),
+];
+
+/* Version 4: Dana's agent applied her choices, and she rewrote one sentence by hand. */
+function v4State() {
+  const all = [...BASE(), POSTED(), ...EXTRA()];
+  const by = Object.fromEntries(all.map((s) => [s.id, s]));
+  const accepted = ['p1', 'j2', 'm2', 'p-g2'];
+  const ops = [];
+  for (const id of ['p1', 'j2', 'p-g2']) { const r = resolve(by[id], MD_SRC); ops.push(opFor({ s: r.s, e: r.e, mode: by[id].mode, text: by[id].text, created: -by[id].mins, uid: id })); }
+  let v4 = applyOps(MD_SRC, 0, MD_SRC.length, ops);
+  v4 = v4.replace('The machine that published is the only machine that can republish: lose that state and nobody, the operator included, can authorize another version.',
+    'The machine that published is the only machine that can republish. If its state is lost, nobody can authorize another version, the operator included.');
+  for (const id of accepted) by[id].status = 'accepted';
+  by['m-g1'].status = 'superseded'; by['m-g1'].by = 'Priya';
+  by['j-g3'].status = 'superseded'; by['j-g3'].by = 'Priya';
+  by.j5.status = 'outdated';
+  by.m6.status = 'nottaken'; by.m6.reason = 'Kept as written: it says what the service holds, not only what it cannot do.';
+  for (const s of all) s.mins += 20;
+  return { src: v4, sugs: all };
+}
+
+/* ================================================================ helpers */
+function h(tag, props, ...kids) {
+  const el = document.createElement(tag);
+  if (props) {
+    for (const [k, v] of Object.entries(props)) {
+      if (v === undefined || v === null || v === false) continue;
+      if (k === 'class') el.className = v;
+      else if (k === 'style') el.style.cssText = v;
+      else if (k.startsWith('on') && typeof v === 'function') el.addEventListener(k.slice(2), v);
+      else el.setAttribute(k, v === true ? '' : v);
+    }
+  }
+  for (const kid of kids.flat(Infinity)) {
+    if (kid === null || kid === undefined || kid === false) continue;
+    el.append(kid.nodeType ? kid : document.createTextNode(String(kid)));
+  }
+  return el;
+}
+function icon(name, cls) {
+  const s = document.createElementNS(SVGNS, 'svg');
+  s.setAttribute('viewBox', '0 0 16 16');
+  s.setAttribute('class', cls || 'icon');
+  s.setAttribute('aria-hidden', 'true');
+  s.setAttribute('focusable', 'false');
+  const p = document.createElementNS(SVGNS, 'path');
+  p.setAttribute('d', ICON[name]);
+  s.append(p);
+  return s;
+}
+const raf = () => new Promise((r) => requestAnimationFrame(() => r()));
+async function settle(n = 2) { for (let i = 0; i < n; i += 1) await raf(); }
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+function ago(mins) {
+  if (mins <= 0) return 'just now';
+  if (mins < 60) return `${mins} minutes ago`;
+  const hrs = Math.round(mins / 60);
+  return hrs === 1 ? '1 hour ago' : `${hrs} hours ago`;
+}
+function listNames(names) { return names.length < 2 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`; }
+const stripMd = (s) => s.replace(/\*\*/g, '').replace(/`/g, '').replace(/\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/\]\([^)]*\)/g, '').replace(/[[\]]/g, '');
+const squash = (s) => s.replace(/\s+/g, ' ').trim();
+
+/* ================================================================ parsing: every rendered character keeps its source offset */
+function parseMd(src) {
+  const blocks = [];
+  const parts = [];
+  let start = 0;
+  for (const m of src.matchAll(/\n{2,}/g)) { parts.push([start, m.index]); start = m.index + m[0].length; }
+  parts.push([start, src.length]);
+  for (const [s, e] of parts) {
+    if (e <= s) continue;
+    let tag = 'p', cs = s;
+    if (src.startsWith('## ', s)) { tag = 'h2'; cs = s + 3; } else if (src.startsWith('# ', s)) { tag = 'h1'; cs = s + 2; }
+    blocks.push({ tag, s, e, pieces: parseInline(src, cs, e) });
+  }
+  return blocks;
+}
+function parseInline(src, s, e) {
+  const pieces = [];
+  let i = s, run = s;
+  const flush = (to) => { if (to > run) pieces.push({ s: run, e: to }); };
+  while (i < e) {
+    if (src.startsWith('**', i)) {
+      const close = src.indexOf('**', i + 2);
+      if (close > 0 && close < e) { flush(i); pieces.push({ s: i + 2, e: close, os: i, ce: close + 2, wrap: { tag: 'strong' } }); i = close + 2; run = i; continue; }
+    }
+    if (src[i] === '`') {
+      const close = src.indexOf('`', i + 1);
+      if (close > 0 && close < e) { flush(i); pieces.push({ s: i + 1, e: close, os: i, ce: close + 1, wrap: { tag: 'code' } }); i = close + 1; run = i; continue; }
+    }
+    if (src[i] === '[') {
+      const mid = src.indexOf('](', i);
+      const close = mid > 0 ? src.indexOf(')', mid) : -1;
+      if (mid > 0 && close > 0 && close < e) { flush(i); pieces.push({ s: i + 1, e: mid, os: i, ce: close + 1, wrap: { tag: 'a', href: src.slice(mid + 2, close) } }); i = close + 1; run = i; continue; }
+    }
+    i += 1;
+  }
+  flush(e);
+  return pieces;
+}
+function parseCode(src, first) {
+  const blocks = [];
+  let s = 0;
+  src.split('\n').forEach((text, k) => {
+    const e = s + text.length;
+    blocks.push({ tag: 'line', ln: first + k, s, e, pieces: tokenizeLine(text, s) });
+    s = e + 1;
+  });
+  return blocks;
+}
+function tokenizeLine(text, base) {
+  if (!text.length) return [];
+  const t = text.trimStart();
+  if (t.startsWith('/**') || t.startsWith('*')) return [{ s: base, e: base + text.length, wrap: { cls: 'tok-com' } }];
+  const out = [];
+  let last = 0;
+  for (const m of text.matchAll(/\b(export|const|interface|readonly)\b|\b\d+\b/g)) {
+    if (m.index > last) out.push({ s: base + last, e: base + m.index });
+    out.push({ s: base + m.index, e: base + m.index + m[0].length, wrap: { cls: m[1] ? 'tok-kw' : 'tok-num' } });
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) out.push({ s: base + last, e: base + text.length });
+  return out;
+}
+
+/* ================================================================ anchors, stacking and the preview */
+/* An anchor is the exact quote plus a little context. Resolution picks the occurrence
+   whose context matches best; no occurrence means the suggestion is outdated. */
+function resolve(a, src) {
+  let best = null;
+  for (let from = 0; ;) {
+    const i = src.indexOf(a.quote, from);
+    if (i < 0) break;
+    from = i + 1;
+    const pre = src.slice(0, i), post = src.slice(i + a.quote.length);
+    let score = 0;
+    for (let k = 1; k <= a.prefix.length && pre.endsWith(a.prefix.slice(-k)); k += 1) score = k;
+    let tail = 0;
+    for (let k = 1; k <= a.suffix.length && post.startsWith(a.suffix.slice(0, k)); k += 1) tail = k;
+    if (!best || score + tail > best.score) best = { s: i, e: i + a.quote.length, score: score + tail };
+  }
+  return best;
+}
+/* Replace removes [s, e) and inserts at e. Insert after and Insert before keep the
+   anchor and insert at its end or start. */
+function opFor(en) {
+  const at = en.mode === 'before' ? en.s : en.e;
+  return { s: en.mode === 'replace' ? en.s : at, e: en.mode === 'replace' ? en.e : at, at, text: en.text, replace: en.mode === 'replace', created: en.created, uid: en.uid };
+}
+const insertOrder = (a, b) => a.at - b.at || (a.replace ? 0 : 1) - (b.replace ? 0 : 1) || a.created - b.created;
+function applyOps(src, s0, e0, ops) {
+  const ins = ops.filter((o) => o.text && o.at >= s0 && o.at <= e0).sort(insertOrder);
+  const dels = ops.filter((o) => o.e > o.s);
+  let out = '';
+  for (let p = s0; p <= e0; p += 1) {
+    for (const o of ins) if (o.at === p) out += o.text;
+    if (p < e0 && !dels.some((o) => o.s <= p && p < o.e)) out += src[p];
+  }
+  return out;
+}
+/* Overlap and nesting conflict. Touching ranges compose. An insertion conflicts only
+   when it sits strictly inside a replaced range; two insertions never conflict. */
+function conflicts(a, b) {
+  const ra = a.mode === 'replace', rb = b.mode === 'replace';
+  if (ra && rb) return a.s < b.e && b.s < a.e;
+  if (ra && !rb) return a.s < b.at && b.at < a.e;
+  if (!ra && rb) return b.s < a.at && a.at < b.e;
+  return false;
+}
+function buildUnits(sugs, src) {
+  const map = new Map();
+  for (const sg of sugs) {
+    if (sg.status !== 'pending' && sg.status !== 'seen') continue;
+    const r = resolve(sg, src);
+    if (!r) continue;
+    const key = `${r.s}:${r.e}:${sg.mode}:${sg.text}`;
+    let en = map.get(key);
+    if (!en) { en = { s: r.s, e: r.e, mode: sg.mode, text: sg.text, quote: sg.quote, prefix: sg.prefix, suffix: sg.suffix, sugs: [] }; en.at = sg.mode === 'before' ? r.s : r.e; map.set(key, en); }
+    en.sugs.push(sg);
+  }
+  const entries = [...map.values()];
+  for (const en of entries) { en.sugs.sort((a, b) => b.mins - a.mins); en.id = en.sugs[0].id; en.created = -en.sugs[0].mins; }
+  entries.sort((a, b) => a.created - b.created || (a.id < b.id ? -1 : 1));
+  const parent = entries.map((_, i) => i);
+  const find = (i) => (parent[i] === i ? i : (parent[i] = find(parent[i])));
+  for (let i = 0; i < entries.length; i += 1) for (let j = i + 1; j < entries.length; j += 1) if (conflicts(entries[i], entries[j])) parent[find(j)] = find(i);
+  const groups = new Map();
+  entries.forEach((en, i) => { const r = find(i); if (!groups.has(r)) groups.set(r, []); groups.get(r).push(en); });
+  const units = [...groups.values()].map((list) => {
+    const u = { id: list[0].id, entries: list, group: list.length > 1 };
+    u.s = Math.min(...list.map((en) => (en.mode === 'replace' ? en.s : en.at)));
+    u.e = Math.max(...list.map((en) => (en.mode === 'replace' ? en.e : en.at)));
+    for (const en of list) en.uid = u.id;
+    return u;
+  });
+  units.sort((a, b) => a.s - b.s || a.e - b.e);
+  const points = new Map();
+  for (const en of entries) if (en.mode !== 'replace') points.set(en.at, (points.get(en.at) || 0) + 1);
+  for (const en of entries) en.together = en.mode !== 'replace' ? points.get(en.at) : 0;
+  return units;
+}
+/* The deterministic preview: every single unit applies, and a conflict group applies
+   only its chosen member (the earliest unless this reader chose another). */
+function previewOps(units, choices) {
+  const ops = [];
+  for (const u of units) {
+    const list = u.group ? [u.entries.find((en) => en.id === (choices[u.id] || u.entries[0].id))] : u.entries;
+    for (const en of list) ops.push(opFor(en));
+  }
+  return ops;
+}
+/* Display only: the preview marks the changed words, not the whole quote, so a long
+   replacement that keeps most of its quote reads as the edit it is. The applied text
+   is identical either way. */
+const boundary = (str, i) => i === 0 || i === str.length || /[\s.,:;]/.test(str[i - 1]) || /[\s.,:;]/.test(str[i]);
+function trimOp(o, src) {
+  if (!o.replace || !o.text || o.e <= o.s) return o;
+  const a = src.slice(o.s, o.e), b = o.text;
+  let p = 0;
+  while (p < a.length && p < b.length && a[p] === b[p]) p += 1;
+  while (p > 0 && !(boundary(a, p) && boundary(b, p))) p -= 1;
+  let q = 0;
+  while (q < a.length - p && q < b.length - p && a[a.length - 1 - q] === b[b.length - 1 - q]) q += 1;
+  while (q > 0 && !(boundary(a, a.length - q) && boundary(b, b.length - q))) q -= 1;
+  return { ...o, s: o.s + p, e: o.e - q, at: o.e - q, text: b.slice(p, b.length - q) };
+}
+const chosenOf = (u, choices) => u.entries.find((en) => en.id === (choices[u.id] || u.entries[0].id));
+
+/* ================================================================ placement, copied from the anchored popover mock */
+const rectOf = (r) => ({ left: r.left, top: r.top, width: r.width, height: r.height });
+function union(rects) {
+  let l = Infinity, t = Infinity, r = -Infinity, b = -Infinity;
+  for (const x of rects) { l = Math.min(l, x.left); t = Math.min(t, x.top); r = Math.max(r, x.left + x.width); b = Math.max(b, x.top + x.height); }
+  return { left: l, top: t, width: r - l, height: b - t };
+}
+const nonEmpty = (r) => r && (r.width > 0 || r.height > 0);
+function placeLeft(anchor, width, host, margin = MARGIN) {
+  const centred = anchor.left + anchor.width / 2 - width / 2;
+  const leftLimit = host.scrollLeft + margin;
+  const rightLimit = host.scrollLeft + host.clientWidth - width - margin;
+  return Math.max(leftLimit, Math.min(centred, Math.max(leftLimit, rightLimit)));
+}
+function placePopover(anchor, size, host, gap = GAP, margin = MARGIN, prefer = 'above') {
+  const vt = host.scrollTop + margin;
+  const vb = host.scrollTop + host.clientHeight - margin;
+  const a0 = anchor.top, a1 = anchor.top + anchor.height;
+  const roomAbove = a0 - gap - vt, roomBelow = vb - (a1 + gap);
+  let side = prefer, height = size.height, maxHeight;
+  if (!(a1 <= vt || a0 >= vb)) {
+    const order = prefer === 'above' ? ['above', 'below'] : ['below', 'above'];
+    const room = (s) => (s === 'above' ? roomAbove : roomBelow);
+    const fits = order.find((s) => room(s) >= size.height);
+    if (fits) side = fits;
+    else {
+      side = roomAbove > roomBelow ? 'above' : roomBelow > roomAbove ? 'below' : prefer;
+      height = maxHeight = Math.max(0, room(side));
+    }
+  }
+  const top = side === 'above' ? a0 - gap - height : a1 + gap;
+  const placed = { left: placeLeft(anchor, size.width, host, margin), top, side };
+  if (maxHeight !== undefined) placed.maxHeight = maxHeight;
+  return placed;
+}
+function revealScrollTop(anchor, height, host, gap = GAP, margin = MARGIN, prefer = 'above') {
+  const vt = host.scrollTop + margin, vb = host.scrollTop + host.clientHeight - margin;
+  const a0 = anchor.top, a1 = anchor.top + anchor.height;
+  const inside = a0 >= vt && a1 <= vb;
+  if (inside && (a0 - gap - vt >= height || vb - (a1 + gap) >= height)) return host.scrollTop;
+  const limit = host.clientHeight - 2 * margin;
+  const above = { s0: a0 - gap - height, s1: a1 };
+  const below = { s0: a0, s1: a1 + gap + height };
+  const spans = (prefer === 'above' ? [above, below] : [below, above]).filter((s) => s.s1 - s.s0 <= limit);
+  const need = (s0, s1) => (s0 < vt ? s0 - margin : s1 > vb ? s1 - host.clientHeight + margin : host.scrollTop);
+  let next;
+  if (spans.length) {
+    let best;
+    for (const s of spans) { const n = need(s.s0, s.s1); const d = Math.abs(n - host.scrollTop); if (!best || d < best.d) best = { n, d }; }
+    next = best.n;
+  } else next = need(a0, a1);
+  return clamp(next, 0, Math.max(0, host.scrollHeight - host.clientHeight));
+}
+function chooseTargetBox(full, first, viewHeight) {
+  if (full.height <= viewHeight / 2) return full;
+  if (first && (first.width > 0 || first.height > 0)) return first;
+  return { left: full.left, top: full.top, width: full.width, height: 0 };
+}
+function toContent(r, host) {
+  const hr = host.getBoundingClientRect();
+  return { left: r.left - hr.left - host.clientLeft + host.scrollLeft, top: r.top - hr.top - host.clientTop + host.scrollTop, width: r.width, height: r.height };
+}
+
+/* ================================================================ the viewer */
+const KIND_LABEL = { replace: 'Replace', delete: 'Delete', after: 'Insert after', before: 'Insert before' };
+const kindOf = (en) => (en.mode === 'replace' && !en.text ? 'delete' : en.mode);
+
+class Viewer {
+  constructor(device, cfg) {
+    this.device = device;
+    this.cls = cfg.cls;
+    this.version = cfg.version || 3;
+    this.src = cfg.src;
+    this.legacy = !!cfg.legacy;
+    this.model = this.cls === 'code' ? parseCode(this.src, CODE_FIRST) : parseMd(this.src);
+    this.sugs = cfg.sugs.map((s) => ({ ...s }));
+    this.mode = 'reading';
+    this.preview = false;
+    this.choices = {};
+    this.sidebar = !!cfg.sidebar;
+    this.replies = {};
+    this.replyOpen = null;
+    this.panel = null;
+    this.panelKind = null;
+    this.active = null;
+    this.selection = null;
+    this.composer = null;
+    this.seq = 0;
+    this.build();
+  }
+
+  destroy() { this.closePanel(); window.removeEventListener('resize', this.onResize); }
+
+  build() {
+    this.root = h('div', { class: 'viewer' });
+    this.root.append(this.buildBar());
+    if (!this.legacy) { this.strip = h('div', { class: 'sg-strip', role: 'toolbar', 'aria-label': 'Suggested edits' }); this.root.append(this.strip); }
+    this.row = h('div', { class: 'relic-row' });
+    this.host = h('div', { class: 'stage-wrap', tabindex: '-1' });
+    this.stage = h('main', { class: `stage stage-${this.cls}` });
+    if (this.version === 4) this.stage.append(h('div', { class: 'notice sg-banner', role: 'status' }, icon('check'), h('p', null, 'Version 4. Suggestions from version 3 were applied.')));
+    this.doc = h('article', { class: this.cls === 'code' ? 'doc doc-code' : 'doc prose' });
+    this.stage.append(this.doc);
+    this.host.append(this.stage);
+    this.thread = h('aside', { class: 'thread', 'aria-label': 'Comments' });
+    this.row.append(this.host, this.thread);
+    this.root.append(this.row);
+    this.device.replaceChildren(this.root);
+    this.wire();
+    this.renderAll();
+  }
+
+  buildBar() {
+    const spec = SPECS[this.cls];
+    const bar = h('header', { class: 'bar' });
+    bar.append(h('div', { class: 'mark' }, 'relik.link'));
+    const v = this.version;
+    const versionControl = h('span', { class: 'version' }, h('button', { type: 'button', class: 'version-label version-trigger', 'aria-label': `Version ${v} of ${v}`, 'aria-haspopup': 'listbox', 'aria-expanded': 'false' },
+      h('span', { class: 'version-long' }, `Version ${v} of ${v}`), h('span', { class: 'version-short', 'aria-hidden': 'true' }, `v${v}/${v}`), icon('chevron')));
+    bar.append(h('div', { class: 'identity' }, h('div', { class: 'filename', title: spec.filename }, spec.filename), h('div', { class: 'identity-meta' }, h('div', { class: 'accession' }, spec.accession), versionControl)));
+    const actions = h('div', { class: 'actions' });
+    actions.append(h('a', { class: 'action marker', tabindex: '0', role: 'link', 'aria-label': spec.marker, title: `${spec.marker}. What Relic knows.` }, icon('source'), h('span', null, spec.marker)));
+    actions.append(h('a', { class: 'action action-relics', tabindex: '0', role: 'link', 'aria-label': 'Relics list' }, icon('grid'), h('span', null, 'Relics')));
+    this.countBadge = h('span', { class: 'action-count' }, '0');
+    this.commentsButton = h('button', { type: 'button', class: 'action action-comments', 'aria-pressed': 'false', onclick: () => this.setSidebar(!this.sidebar) }, icon('comment'), h('span', null, 'Comments'), this.countBadge);
+    actions.append(this.commentsButton);
+    /* The band's Decisions control, inert here. Decisions are a separate feature. */
+    const tally = h('span', { class: 'decision-tally', 'aria-hidden': 'true' },
+      h('span', { 'data-zero': 'true' }, icon('approve'), '0'), h('span', { 'data-zero': 'true' }, icon('reject'), '0'));
+    actions.append(h('button', { type: 'button', class: 'action action-decisions', 'aria-label': `Decisions on version ${v}: 0 approved, 0 rejected`, title: 'Decisions, not part of this mock' }, icon('stamp'), h('span', null, 'Decisions'), tally));
+    actions.append(h('button', { type: 'button', class: 'action' }, icon('copy'), h('span', null, 'Copy link')));
+    actions.append(h('button', { type: 'button', class: 'action' }, icon('share'), h('span', null, 'Share')));
+    actions.append(h('button', { type: 'button', class: 'action' }, icon('download'), h('span', null, 'Download')));
+    actions.append(h('a', { class: 'action', tabindex: '0', role: 'link' }, icon('flag'), h('span', null, 'Report')));
+    bar.append(actions);
+    return bar;
+  }
+
+  wire() {
+    const pick = () => setTimeout(() => this.handleSelection(), 0);
+    this.host.addEventListener('mouseup', (e) => { if (!this.panel || !this.panel.contains(e.target)) pick(); });
+    this.host.addEventListener('keyup', (e) => { if (e.shiftKey && !(this.panel && this.panel.contains(e.target))) pick(); });
+    this.host.addEventListener('mousedown', (e) => {
+      if (this.panel && !this.panel.contains(e.target) && this.panelKind !== 'composer') {
+        if (!e.target.closest('[data-unit]')) this.closePanel();
+      }
+    });
+    this.doc.addEventListener('click', (e) => {
+      const link = e.target.closest('a');
+      if (link) e.preventDefault();
+      const t = e.target.closest('[data-unit]');
+      if (!t || this.mode === 'suggesting' && !t.classList.contains('sg-margin')) return;
+      const sel = window.getSelection();
+      if (sel && !sel.isCollapsed && this.doc.contains(sel.anchorNode)) return;
+      this.openCard(t.dataset.unit, { reveal: false });
+    });
+    this.doc.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      const t = e.target.closest('[data-unit]');
+      if (!t) return;
+      e.preventDefault();
+      this.openCard(t.dataset.unit, { reveal: true, focus: true });
+    });
+    this.root.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && this.panel) { e.stopPropagation(); this.closePanel({ restore: true }); }
+    });
+    this.onResize = () => { this.positionMargins(); this.place(); };
+    window.addEventListener('resize', this.onResize);
+  }
+
+  /* ---------- state changes ---------- */
+  setMode(mode) {
+    if (this.legacy || mode === this.mode) return;
+    this.closePanel();
+    this.mode = mode;
+    if (mode === 'suggesting') this.preview = false;
+    window.getSelection()?.removeAllRanges();
+    this.renderAll();
+  }
+  setPreview(on) {
+    if (this.legacy) return;
+    this.preview = on;
+    const keep = this.panelKind === 'card' ? this.active : null;
+    this.closePanel();
+    this.renderAll();
+    if (keep) this.openCard(keep, { reveal: false });
+  }
+  setSidebar(open) {
+    this.sidebar = open;
+    this.renderThread();
+    this.place();
+  }
+  choose(uid, eid) {
+    this.choices[uid] = eid;
+    const keep = this.panelKind === 'card' ? this.active : null;
+    const focusId = document.activeElement && document.activeElement.name === `choice-card-${uid}` ? document.activeElement.value : null;
+    this.renderDoc();
+    this.renderThread();
+    if (keep) this.openCard(keep, { reveal: false });
+    if (focusId && this.panel) this.panel.querySelector(`input[value="${focusId}"]`)?.focus({ preventScroll: true });
+  }
+
+  renderAll() { this.renderStrip(); this.renderDoc(); this.renderThread(); }
+
+  renderStrip() {
+    if (!this.strip) return;
+    const live = this.sugs.filter((s) => s.status === 'pending' || s.status === 'seen').length;
+    const seg = h('div', { class: 'sg-seg', role: 'group', 'aria-label': 'Mode' },
+      h('button', { type: 'button', 'aria-pressed': String(this.mode === 'reading'), onclick: () => this.setMode('reading') }, 'Reading'),
+      h('button', { type: 'button', 'aria-pressed': String(this.mode === 'suggesting'), onclick: () => this.setMode('suggesting') }, 'Suggesting'));
+    const kids = [seg];
+    if (this.mode === 'reading') {
+      kids.push(h('button', { type: 'button', class: 'sg-switch', role: 'switch', 'aria-checked': String(this.preview), title: 'A preview in this tab only. Nothing is saved, and it is gone on reload.', onclick: () => this.setPreview(!this.preview) },
+        h('span', { class: 'sg-switch-box', 'aria-hidden': 'true' }), 'Show with suggestions applied'));
+    } else {
+      kids.push(h('span', { class: 'sg-strip-hint' }, `Select text in version ${this.version} to suggest an edit.`));
+    }
+    kids.push(h('span', { class: 'sg-strip-meta' }, this.preview ? 'Preview only. Nothing is saved.' : `${live} ${live === 1 ? 'suggestion' : 'suggestions'} pending`));
+    this.strip.replaceChildren(...kids);
+  }
+
+  /* ---------- the document ---------- */
+  renderDoc() {
+    const units = this.units = buildUnits(this.sugs, this.src);
+    this.unitById = Object.fromEntries(units.map((u) => [u.id, u]));
+    const ops = this.preview ? previewOps(units, this.choices).map((o) => trimOp(o, this.src)) : [];
+    const marks = [], carets = [];
+    if (!this.preview) {
+      for (const u of units) {
+        const reps = this.legacy ? u.entries : u.entries.filter((en) => en.mode === 'replace');
+        if (reps.length) marks.push({ s: Math.min(...reps.map((en) => en.s)), e: Math.max(...reps.map((en) => en.e)), uid: u.id });
+        if (!this.legacy) for (const en of u.entries) if (en.mode !== 'replace') carets.push({ at: en.at, uid: u.id, created: en.created, author: en.sugs[0].author });
+      }
+    }
+    const markClass = this.legacy ? 'relic-text-mark' : this.mode === 'suggesting' ? 'sg-anchor' : 'sg-mark';
+    const ctx = { ops, marks, carets, markClass, caretMode: this.mode === 'suggesting' ? 'anchor' : 'button' };
+    this.doc.replaceChildren();
+    if (this.cls === 'code') {
+      const box = h('pre', { class: 'sg-code', 'aria-label': `${SPECS.code.filename}, lines ${CODE_FIRST} to ${CODE_FIRST + this.model.length - 1}` });
+      const inner = h('div', { class: 'sg-code-inner' });
+      box.append(inner);
+      if (this.preview) this.renderCodePreview(inner, ops);
+      else for (const b of this.model) {
+        const lc = h('span', { class: 'lc' });
+        this.renderInline(lc, b, ctx);
+        inner.append(h('span', { class: 'cl' }, h('span', { class: 'ln' }, String(b.ln)), lc));
+      }
+      this.doc.append(box);
+    } else {
+      for (const b of this.model) {
+        const el = h(b.tag);
+        this.renderInline(el, b, ctx);
+        this.doc.append(el);
+      }
+    }
+    this.decorate();
+    this.renderStrip();
+    this.updateCount();
+  }
+
+  renderInline(container, block, ctx) {
+    const src = this.src;
+    const pieces = block.pieces;
+    if (!pieces.length) { container.append(h('span', { 'data-s': block.s }, '')); return; }
+    const items = [];
+    for (const o of ctx.ops) if (o.text) items.push({ at: o.at, kind: 'ins', o, replace: o.replace, created: o.created });
+    for (const c of ctx.carets) items.push({ at: c.at, kind: 'caret', c, replace: false, created: c.created });
+    const placed = [];
+    for (const it of items) {
+      if (it.at < block.s || it.at > block.e) continue;
+      let pi = pieces.findIndex((p) => p.s <= it.at && it.at < p.e);
+      if (pi >= 0) { placed.push({ ...it, pi, pos: it.at, end: false }); continue; }
+      for (let k = pieces.length - 1; k >= 0; k -= 1) if (pieces[k].e <= it.at) { pi = k; break; }
+      if (pi >= 0) placed.push({ ...it, pi, pos: pieces[pi].e, end: true });
+      else placed.push({ ...it, pi: 0, pos: pieces[0].s, end: false });
+    }
+    placed.sort(insertOrder);
+    const emit = (pi, pos, end) => {
+      for (const it of placed) {
+        if (it.pi !== pi || it.pos !== pos || it.end !== end) continue;
+        if (it.kind === 'ins') container.append(h('ins', { class: 'sg-ins', 'data-unit': it.o.uid }, it.o.text));
+        else if (ctx.caretMode === 'button') container.append(h('button', { type: 'button', class: 'sg-caret', 'data-unit': it.c.uid, 'aria-label': `Suggested insertion by ${it.c.author}` }));
+        else container.append(h('span', { class: 'sg-anchor', 'data-unit': it.c.uid }));
+      }
+    };
+    pieces.forEach((p, pi) => {
+      const cuts = new Set([p.s, p.e]);
+      for (const o of ctx.ops) for (const v of [o.s, o.e]) if (v > p.s && v < p.e) cuts.add(v);
+      for (const m of ctx.marks) for (const v of [m.s, m.e]) if (v > p.s && v < p.e) cuts.add(v);
+      for (const it of placed) if (it.pi === pi && it.pos > p.s && it.pos < p.e) cuts.add(it.pos);
+      const pts = [...cuts].sort((a, b) => a - b);
+      for (let k = 0; k < pts.length - 1; k += 1) {
+        const a = pts[k], b = pts[k + 1];
+        emit(pi, a, false);
+        let node = h('span', { 'data-s': a }, src.slice(a, b));
+        const mk = ctx.marks.find((m) => m.s <= a && b <= m.e);
+        if (mk) node = h('span', { class: ctx.markClass, 'data-unit': mk.uid }, node);
+        const del = ctx.ops.find((o) => o.e > o.s && o.s <= a && b <= o.e);
+        if (del) node = h('del', { class: 'sg-del', 'data-unit': del.uid }, node);
+        if (p.wrap) {
+          if (p.wrap.tag === 'a') node = h('a', { href: p.wrap.href }, node);
+          else if (p.wrap.tag) node = h(p.wrap.tag, null, node);
+          else node = h('span', { class: p.wrap.cls }, node);
+        }
+        container.append(node);
+      }
+      emit(pi, p.e, true);
+    });
+  }
+
+  /* Code preview: a suggestion replaces whole lines, shown as removed rows then added rows. */
+  renderCodePreview(inner, ops) {
+    const lines = this.model;
+    const lineOf = (pos) => lines.findIndex((b) => pos >= b.s && pos <= b.e);
+    const spans = [];
+    for (const o of ops) {
+      const l1 = lineOf(o.s), l2 = lineOf(o.e > o.s ? o.e - 1 : o.e);
+      const hit = spans.find((g) => !(l2 < g.l1 || l1 > g.l2));
+      if (hit) { hit.l1 = Math.min(hit.l1, l1); hit.l2 = Math.max(hit.l2, l2); hit.ops.push(o); } else spans.push({ l1, l2, ops: [o] });
+    }
+    for (let k = 0; k < lines.length; k += 1) {
+      const g = spans.find((x) => x.l1 === k);
+      if (!g) {
+        const lc = h('span', { class: 'lc' }, h('span', { class: 'sg-sign', 'aria-hidden': 'true' }, ' '));
+        this.renderInline(lc, lines[k], { ops: [], marks: [], carets: [] });
+        inner.append(h('span', { class: 'cl' }, h('span', { class: 'ln' }, String(lines[k].ln)), lc));
+        continue;
+      }
+      const uid = g.ops[0].uid;
+      for (let j = g.l1; j <= g.l2; j += 1) {
+        inner.append(h('span', { class: 'cl is-del' }, h('span', { class: 'ln' }, String(lines[j].ln)),
+          h('span', { class: 'lc sg-row', 'data-unit': uid }, h('span', { class: 'sg-sign', 'aria-hidden': 'true' }, '-'), h('del', { class: 'sg-del-line' }, this.src.slice(lines[j].s, lines[j].e)))));
+      }
+      const next = applyOps(this.src, lines[g.l1].s, lines[g.l2].e, g.ops).split('\n');
+      next.forEach((t, j) => {
+        inner.append(h('span', { class: 'cl is-add' }, h('span', { class: 'ln', 'aria-hidden': 'true' }, ''),
+          h('span', { class: 'lc sg-row', 'data-unit': uid }, h('span', { class: 'sg-sign', 'aria-hidden': 'true' }, '+'), h('ins', { class: 'sg-ins-line' }, t))));
+      });
+      k = g.l2;
+    }
+  }
+
+  /* Marks get one keyboard stop per suggestion, a label, and the active ring. */
+  decorate() {
+    const seen = new Set();
+    for (const el of this.doc.querySelectorAll('[data-unit]')) {
+      const uid = el.dataset.unit;
+      const u = this.unitById[uid];
+      if (!u) continue;
+      if (el.classList.contains('sg-anchor')) continue;
+      if (el.tagName !== 'BUTTON' && !seen.has(uid)) {
+        seen.add(uid);
+        el.setAttribute('tabindex', '0');
+        el.setAttribute('role', 'button');
+        el.setAttribute('aria-label', this.unitLabel(u));
+      } else if (el.tagName === 'BUTTON') seen.add(uid);
+    }
+    this.doc.querySelectorAll('.sg-margin').forEach((m) => m.remove());
+    if (this.mode === 'suggesting' && !this.legacy) {
+      for (const u of this.units) {
+        this.doc.append(h('button', { type: 'button', class: 'sg-margin', 'data-unit': u.id, 'aria-label': this.unitLabel(u), title: this.unitLabel(u) }));
+      }
+      this.positionMargins();
+    }
+    this.paintActive();
+  }
+  positionMargins() {
+    if (!this.doc) return;
+    const dr = this.doc.getBoundingClientRect();
+    for (const m of this.doc.querySelectorAll('.sg-margin')) {
+      const el = [...this.doc.querySelectorAll(`[data-unit="${m.dataset.unit}"]:not(.sg-margin)`)][0];
+      const rect = el ? [...el.getClientRects()].find((r) => r.height > 0) || el.getBoundingClientRect() : null;
+      if (!rect) continue;
+      const lh = parseFloat(getComputedStyle(this.doc).lineHeight) || 24;
+      m.style.top = `${rect.top - dr.top + Math.max(0, (rect.height - lh) / 2)}px`;
+      m.style.height = `${Math.min(lh, 28)}px`;
+    }
+  }
+  unitLabel(u) {
+    if (u.group) return `${this.groupLabel(u)}. Open to compare.`;
+    const en = u.entries[0];
+    return `${KIND_LABEL[kindOf(en)]} suggested by ${listNames(en.sugs.map((s) => s.author))}`;
+  }
+  groupLabel(u) {
+    if (this.cls === 'code') {
+      const ls = new Set();
+      for (const en of u.entries) {
+        const a = this.model.findIndex((b) => en.s >= b.s && en.s <= b.e), z = this.model.findIndex((b) => en.e >= b.s && en.e <= b.e);
+        for (let k = a; k <= z; k += 1) ls.add(this.model[k].ln);
+      }
+      const nums = [...ls].sort((a, b) => a - b);
+      const where = nums.length === 1 ? `line ${nums[0]}` : `lines ${nums[0]} to ${nums[nums.length - 1]}`;
+      return `${u.entries.length} suggestions on ${where}`;
+    }
+    return `${u.entries.length} suggestions on this sentence`;
+  }
+  paintActive() {
+    for (const el of this.doc.querySelectorAll('.is-active')) el.classList.remove('is-active');
+    if (!this.active) return;
+    for (const el of this.doc.querySelectorAll(`[data-unit="${this.active}"]`)) el.classList.add('is-active');
+    for (const li of this.thread.querySelectorAll('[data-card]')) li.classList.toggle('is-active', li.dataset.card === this.active);
+  }
+  updateCount() { if (this.countBadge) this.countBadge.textContent = String(this.sugs.length + Object.values(this.replies).reduce((n, r) => n + r.length, 0)); }
+
+  /* ---------- cards ---------- */
+  diffFor(en, { muted = false } = {}) {
+    const quote = this.cls === 'code' ? en.quote : stripMd(en.quote);
+    const kind = kindOf(en);
+    const text = en.text;
+    if (this.cls === 'code') return this.blockFor(en, { muted });
+    const p = h('p', { class: 'sg-diff' });
+    if (muted) { p.append(h('span', { class: 'sg-muted' }, quote)); if (text) p.append(' ', h('ins', { class: 'sg-ins' }, text.trim())); return p; }
+    if (kind === 'replace') {
+      /* Word level, as the preview marks it: the shared words stay plain context. */
+      const t = trimOp({ s: 0, e: quote.length, at: quote.length, text, replace: true }, quote);
+      if (t.s > 0) p.append(quote.slice(0, t.s));
+      if (t.e > t.s) p.append(h('del', { class: 'sg-del' }, quote.slice(t.s, t.e)));
+      if (t.text) p.append(h('ins', { class: 'sg-ins' }, t.text));
+      if (t.e < quote.length) p.append(quote.slice(t.e));
+    }
+    else if (kind === 'delete') p.append(h('del', { class: 'sg-del' }, quote));
+    else if (kind === 'after') p.append(quote, h('ins', { class: 'sg-ins' }, text));
+    else p.append(h('ins', { class: 'sg-ins' }, text), quote);
+    return p;
+  }
+  /* A GitHub style suggestion block: the touched lines out, the new lines in. */
+  blockFor(en, { muted = false } = {}) {
+    const src = CODE_SRC;
+    const lines = parseCode(src, CODE_FIRST);
+    const r = resolve(en, src) || { s: 0, e: 0 };
+    const o = opFor({ s: r.s, e: r.e, mode: en.mode, text: en.text, created: 0 });
+    const l1 = lines.findIndex((b) => o.s >= b.s && o.s <= b.e);
+    const l2 = lines.findIndex((b) => (o.e > o.s ? o.e - 1 : o.e) >= b.s && (o.e > o.s ? o.e - 1 : o.e) <= b.e);
+    const next = applyOps(src, lines[l1].s, lines[l2].e, [o]).split('\n');
+    const block = h('div', { class: 'sg-block', role: 'table', 'aria-label': 'Suggested change' }, h('div', { class: 'sg-block-head' }, 'Suggested change'));
+    for (let k = l1; k <= l2; k += 1) block.append(h('div', { class: `sg-block-row ${muted ? 'is-muted' : 'is-del'}`, role: 'row' }, h('span', { class: 'n' }, String(lines[k].ln)), h('span', { class: 'g', 'aria-hidden': 'true' }, '-'), h('span', { class: 't' }, src.slice(lines[k].s, lines[k].e))));
+    next.forEach((t, j) => block.append(h('div', { class: 'sg-block-row is-add', role: 'row' }, h('span', { class: 'n' }, String(lines[l1].ln + j)), h('span', { class: 'g', 'aria-hidden': 'true' }, '+'), h('span', { class: 't' }, t))));
+    return block;
+  }
+  statusFor(sg) {
+    const map = {
+      pending: ['Pending', 'clock'],
+      seen: ['Seen by the publisher, not applied yet', 'eye'],
+      accepted: ['Accepted in v4', 'check'],
+      superseded: [`Superseded by ${sg.by}'s suggestion`, 'minus'],
+      outdated: ['Outdated', 'flag'],
+      nottaken: ['Not taken', 'reject'],
+    };
+    const [text, ic] = map[sg.status];
+    const out = [h('p', { class: 'sg-status', 'data-status': sg.status }, icon(ic), text)];
+    if (sg.status === 'outdated') out.push(h('p', { class: 'sg-status-detail' }, 'The quoted text is not in v4.'));
+    if (sg.status === 'nottaken') out.push(h('p', { class: 'sg-status-detail' }, `${PUBLISHER}: ${sg.reason}`));
+    return out;
+  }
+  head(sg) {
+    return h('div', { class: 'comment-head' }, h('span', { class: 'comment-author' }, sg.author), sg.author === PUBLISHER ? h('span', { class: 'comment-badge' }, 'Publisher') : null, h('span', { class: 'comment-time' }, ago(sg.mins)));
+  }
+  entryBody(en, opts = {}) {
+    const lead = en.sugs[0];
+    const kind = kindOf(en);
+    const out = [];
+    if (!opts.noHead) out.push(this.head(lead));
+    out.push(h('span', { class: 'sg-kind', 'data-kind': kind }, KIND_LABEL[kind]));
+    out.push(this.diffFor(en, { muted: lead.status === 'outdated' }));
+    if (lead.note) out.push(h('p', { class: 'sg-note' }, lead.note));
+    if (en.sugs.length > 1) out.push(h('p', { class: 'sg-also' }, `Also suggested by ${listNames(en.sugs.slice(1).map((s) => s.author))}`));
+    if (en.together > 1) out.push(h('span', { class: 'sg-flag' }, `${en.together} insertions at this point`));
+    return out;
+  }
+  unitBody(u, where = 'card') {
+    if (!u.group) return [...this.entryBody(u.entries[0]), ...this.statusFor(u.entries[0].sugs[0])];
+    const chosen = chosenOf(u, this.choices);
+    const fs = h('fieldset', { class: 'sg-choices' }, h('legend', null, this.groupLabel(u)));
+    for (const en of u.entries) {
+      const input = h('input', { type: 'radio', name: `choice-${where}-${u.id}`, value: en.id, 'aria-label': `${en.sugs[0].author}, ${KIND_LABEL[kindOf(en)]}` });
+      input.checked = en.id === chosen.id;
+      input.addEventListener('change', () => this.choose(u.id, en.id));
+      fs.append(h('label', { class: 'sg-choice' }, input, h('div', null, ...this.entryBody(en), ...(en.sugs[0].status === 'pending' ? [] : this.statusFor(en.sugs[0])))));
+    }
+    fs.append(h('p', { class: 'sg-fine' }, `${this.preview ? 'Your preview shows the one you choose' : 'Your choice drives only your preview'}. The publisher's choice is what gets applied.`));
+    return [fs, ...this.statusFor({ status: 'pending' })];
+  }
+  repliesFor(uid) {
+    const list = this.replies[uid] || [];
+    const out = [];
+    if (list.length) out.push(h('ul', { class: 'comment-replies' }, list.map((r) => h('li', { class: 'comment comment-reply' }, this.head(r), h('div', { class: 'comment-body' }, h('p', null, r.text))))));
+    if (this.replyOpen === uid) {
+      const field = h('textarea', { class: 'popover-field', 'aria-label': 'Reply', placeholder: 'Reply to this suggestion' });
+      out.push(h('div', { class: 'sg-reply' }, field));
+      setTimeout(() => field.focus({ preventScroll: true }), 0);
+      this.replyField = field;
+    }
+    return out;
+  }
+  cardTools(uid) {
+    if (this.replyOpen === uid) {
+      return h('div', { class: 'popover-tools' },
+        h('button', { type: 'button', class: 'popover-action is-quiet', onclick: () => { this.replyOpen = null; this.refreshCard(); } }, 'Cancel'),
+        h('button', { type: 'button', class: 'popover-action is-primary', onclick: () => this.postReply(uid) }, 'Post reply'));
+    }
+    return h('div', { class: 'popover-tools' },
+      h('button', { type: 'button', class: 'popover-action', onclick: () => { this.replyOpen = uid; this.refreshCard(); } }, 'Reply'),
+      h('button', { type: 'button', class: 'popover-action is-quiet', onclick: () => this.closePanel({ restore: true }) }, 'Close'));
+  }
+  postReply(uid) {
+    const text = (this.replyField?.value || '').trim();
+    if (!text) return;
+    (this.replies[uid] ||= []).push({ author: READER, mins: 0, text });
+    this.replyOpen = null;
+    this.updateCount();
+    this.renderThread();
+    this.refreshCard();
+  }
+  legacyItems(u) {
+    const out = [];
+    for (const en of u.entries) for (const sg of en.sugs) {
+      const q = this.cls === 'code' ? sg.quote : stripMd(sg.quote);
+      const t = sg.text.trim();
+      const body = sg.mode === 'replace' ? (t ? `Suggested: replace '${q}' with '${t}'` : `Suggested: delete '${q}'`)
+        : `Suggested: insert '${t}' ${sg.mode === 'after' ? 'after' : 'before'} '${q}'`;
+      out.push(h('li', { class: 'comment' }, this.head(sg), h('div', { class: 'comment-body' }, h('p', null, body)), h('p', { class: 'sg-legacy-note' }, 'This page cannot show this suggestion as an edit.')));
+    }
+    return out;
+  }
+
+  openCard(uid, { reveal = true, focus = false } = {}) {
+    const u = this.unitById[uid];
+    if (!u) return;
+    this.closePanel();
+    this.active = uid;
+    this.paintActive();
+    let panel;
+    if (this.legacy) {
+      panel = h('div', { class: 'popover popover-card sg-card', role: 'dialog', 'aria-label': 'Comments on this text', tabindex: '-1' },
+        h('div', { class: 'sg-card-body' }, h('ul', { class: 'popover-thread' }, this.legacyItems(u))),
+        h('div', { class: 'popover-tools' }, h('button', { type: 'button', class: 'popover-action is-quiet', onclick: () => this.closePanel({ restore: true }) }, 'Close')));
+    } else {
+      panel = h('div', { class: `popover popover-card sg-card${this.cls === 'code' ? ' is-code' : ''}`, role: 'dialog', 'aria-label': this.unitLabel(u), tabindex: '-1' },
+        h('div', { class: 'sg-card-body' }, this.unitBody(u), this.repliesFor(uid)), this.cardTools(uid));
+    }
+    this.returnFocus = document.activeElement && this.root.contains(document.activeElement) ? document.activeElement : null;
+    this.openPanel(panel, 'card', () => this.unitBox(uid), reveal);
+    if (focus) panel.focus({ preventScroll: true });
+  }
+  refreshCard() {
+    if (this.panelKind !== 'card' || !this.active) return;
+    const uid = this.active;
+    const st = this.host.scrollTop;
+    this.openCard(uid, { reveal: false });
+    this.host.scrollTop = st;
+    this.place();
+  }
+  unitBox(uid) {
+    const els = [...this.doc.querySelectorAll(`[data-unit="${uid}"]`)].filter((el) => !el.classList.contains('sg-margin'));
+    const rects = [];
+    for (const el of els) for (const r of el.getClientRects()) if (nonEmpty(r)) rects.push(rectOf(r));
+    if (!rects.length) {
+      const m = this.doc.querySelector(`.sg-margin[data-unit="${uid}"]`);
+      if (!m) return null;
+      rects.push(rectOf(m.getBoundingClientRect()));
+    }
+    const full = union(rects);
+    return toContent(chooseTargetBox(full, rects[0], this.host.clientHeight), this.host);
+  }
+
+  /* ---------- the panel layer ---------- */
+  openPanel(panel, kind, anchor, reveal) {
+    this.host.append(panel);
+    this.panel = panel;
+    this.panelKind = kind;
+    this.anchor = anchor;
+    if (reveal) {
+      /* Documents take the panel above the target, so scroll to make that room when the
+         page can give it, and fall back to the shared reveal rule when it cannot. */
+      const box = anchor();
+      if (box) {
+        const ph = panel.offsetHeight, H = this.host.clientHeight, maxS = Math.max(0, this.host.scrollHeight - H);
+        const fits = (st) => box.top - GAP - ph >= st + MARGIN - 0.5 && box.top + box.height <= st + H - MARGIN;
+        const aboveTop = clamp(box.top - GAP - ph - MARGIN, 0, maxS);
+        if (!fits(this.host.scrollTop)) this.host.scrollTop = fits(aboveTop) ? aboveTop : revealScrollTop(box, Math.min(ph, H * 0.7), this.host);
+      }
+    }
+    this.place();
+  }
+  place() {
+    const p = this.panel;
+    if (!p) return;
+    p.style.maxHeight = '';
+    p.style.left = '0px';
+    p.style.top = '0px';
+    const box = this.anchor();
+    if (!box) return;
+    const placed = placePopover(box, { width: p.offsetWidth, height: p.offsetHeight }, this.host);
+    p.style.left = `${placed.left}px`;
+    p.style.top = `${placed.top}px`;
+    if (placed.maxHeight !== undefined) p.style.maxHeight = `${placed.maxHeight}px`;
+    p.dataset.side = placed.side;
+  }
+  closePanel({ restore = false } = {}) {
+    if (this.panel) this.panel.remove();
+    const wasCard = this.panelKind === 'card';
+    this.panel = null;
+    this.panelKind = null;
+    this.composer = null;
+    if (wasCard) { this.active = null; this.replyOpen = null; this.paintActive(); }
+    if (window.CSS && CSS.highlights) CSS.highlights.delete('sg-pending');
+    if (restore && this.returnFocus && this.returnFocus.isConnected) this.returnFocus.focus({ preventScroll: true });
+  }
+
+  /* ---------- the thread sidebar ---------- */
+  renderThread() {
+    this.thread.classList.toggle('is-open', this.sidebar);
+    this.commentsButton?.setAttribute('aria-pressed', String(this.sidebar));
+    if (!this.sidebar) { this.thread.replaceChildren(); return; }
+    const list = h('ul', { class: 'thread-list' });
+    if (this.legacy) {
+      for (const u of this.units || []) for (const li of this.legacyItems(u)) { li.dataset.card = u.id; li.addEventListener('click', () => this.openCard(u.id)); list.append(li); }
+    } else if (this.version === 4) {
+      const order = { pending: 0, seen: 1, nottaken: 2, outdated: 3, superseded: 4, accepted: 5 };
+      const groups = new Map();
+      for (const sg of this.sugs) {
+        const k = `${sg.quote}|${sg.mode}|${sg.text}|${sg.status}`;
+        if (!groups.has(k)) groups.set(k, { quote: sg.quote, prefix: sg.prefix, suffix: sg.suffix, mode: sg.mode, text: sg.text, sugs: [] });
+        groups.get(k).sugs.push(sg);
+      }
+      const ens = [...groups.values()].map((en) => { en.sugs.sort((a, b) => b.mins - a.mins); return en; })
+        .sort((a, b) => order[a.sugs[0].status] - order[b.sugs[0].status] || b.sugs[0].mins - a.sugs[0].mins);
+      for (const en of ens) {
+        const u = (this.units || []).find((x) => x.entries.some((e) => e.id === en.sugs[0].id));
+        const li = h('li', { class: 'comment', 'data-card': u ? u.id : en.sugs[0].id }, ...this.entryBody(en), ...this.statusFor(en.sugs[0]));
+        if (u) li.addEventListener('click', () => this.openCard(u.id));
+        list.append(li);
+      }
+    } else {
+      for (const u of this.units || []) {
+        const li = h('li', { class: 'comment', 'data-card': u.id }, ...this.unitBody(u, 'side'), ...(this.replies[u.id] ? [h('ul', { class: 'comment-replies' }, this.replies[u.id].map((r) => h('li', { class: 'comment comment-reply' }, this.head(r), h('div', { class: 'comment-body' }, h('p', null, r.text)))))] : []));
+        li.addEventListener('click', (e) => { if (!e.target.closest('input, label')) this.openCard(u.id); });
+        list.append(li);
+      }
+    }
+    const note = this.version === 4 ? h('p', { class: 'thread-note' }, 'Suggestions made on version 3, and what happened to each.') : null;
+    this.thread.replaceChildren(...[h('div', { class: 'thread-title' }, h('button', { type: 'button', class: 'thread-toggle', 'aria-expanded': 'true', onclick: () => this.setSidebar(false) }, 'Comments')), note, list].filter(Boolean));
+    this.paintActive();
+  }
+
+  /* ---------- selection, the offer and the composer ---------- */
+  pointToSrc(node, off) {
+    if (node.nodeType === 3) {
+      const sp = node.parentElement.closest('[data-s]');
+      if (sp) return +sp.dataset.s + off;
+    }
+    const spans = [...this.doc.querySelectorAll('[data-s]')];
+    const r = document.createRange();
+    r.setStart(node, off);
+    for (const sp of spans) {
+      const rr = document.createRange();
+      rr.selectNodeContents(sp);
+      if (r.compareBoundaryPoints(Range.START_TO_START, rr) <= 0) return +sp.dataset.s;
+    }
+    const last = spans[spans.length - 1];
+    return +last.dataset.s + last.textContent.length;
+  }
+  rangeBox(range) {
+    const rects = [...range.getClientRects()].filter(nonEmpty).map(rectOf);
+    const full = rects.length ? union(rects) : rectOf(range.getBoundingClientRect());
+    return toContent(chooseTargetBox(full, rects[0], this.host.clientHeight), this.host);
+  }
+  handleSelection() {
+    if (this.panelKind === 'composer') return;
+    const sel = window.getSelection();
+    if (!sel || !sel.rangeCount || sel.isCollapsed) { if (this.panelKind === 'offer' || this.panelKind === 'refusal') this.closePanel(); return; }
+    const range = sel.getRangeAt(0);
+    if (!this.doc.contains(range.commonAncestorContainer)) return;
+    const box = this.rangeBox(range);
+    if (this.preview && [...this.doc.querySelectorAll('.sg-ins')].some((el) => range.intersectsNode(el))) {
+      this.showNote('That text is a proposed insertion. Reply in its thread to change it.', box, 'Clear selection');
+      return;
+    }
+    let s = this.pointToSrc(range.startContainer, range.startOffset);
+    let e = this.pointToSrc(range.endContainer, range.endOffset);
+    if (e <= s) return;
+    /* A selection that starts or ends exactly on a styled run takes the run's markup
+       with it, so the stored source slice stays balanced. */
+    for (const b of this.model) for (const p of b.pieces) {
+      if (p.os === undefined) continue;
+      if (s === p.s && e >= p.e) s = p.os;
+      if (e === p.e && s <= p.os) e = p.ce;
+    }
+    this.selection = { s, e, rendered: sel.toString(), box, range: range.cloneRange() };
+    this.showOffer();
+  }
+  showOffer() {
+    this.closePanel();
+    const sel = this.selection;
+    const short = squash(sel.rendered);
+    const shortQuote = short.length > 42 ? `${short.slice(0, 42).trimEnd()}\u2026` : short;
+    const kids = [h('button', { type: 'button', class: 'popover-action popover-copy', onclick: () => this.closePanel() }, 'Copy text'),
+      h('button', { type: 'button', class: `popover-action popover-comment${this.mode === 'suggesting' ? '' : ' is-primary'}`, 'aria-label': `Comment on "${shortQuote}"`, title: 'Commenting is not part of this mock', onclick: () => this.closePanel() }, 'Comment')];
+    if (this.mode === 'suggesting' && !this.legacy) kids.push(h('button', { type: 'button', class: 'popover-action popover-suggest is-primary', 'aria-label': `Suggest an edit to "${shortQuote}"`, onclick: () => this.suggest() }, 'Suggest edit'));
+    kids.push(h('button', { type: 'button', class: 'popover-action popover-cancel is-quiet', 'aria-label': 'Dismiss and deselect', onclick: () => { window.getSelection()?.removeAllRanges(); this.closePanel(); } }, '\u00d7'));
+    const panel = h('div', { class: 'popover popover-offer', role: 'group', 'aria-label': 'Selection actions' }, ...kids);
+    this.openPanel(panel, 'offer', () => (sel.range && sel.range.startContainer.isConnected ? this.rangeBox(sel.range) : sel.box), false);
+  }
+  showNote(text, box, label) {
+    this.closePanel();
+    const panel = h('div', { class: 'popover popover-card sg-card', role: 'alertdialog', 'aria-label': text, tabindex: '-1' },
+      h('p', { class: 'sg-refusal' }, text),
+      h('div', { class: 'popover-tools' }, h('button', { type: 'button', class: 'popover-action', onclick: () => { window.getSelection()?.removeAllRanges(); this.closePanel(); } }, label)));
+    this.openPanel(panel, 'refusal', () => box, false);
+  }
+  suggest() {
+    const sel = this.selection;
+    if (!sel) return;
+    const source = this.src.slice(sel.s, sel.e);
+    if (bytes(source) > ANCHOR_LIMIT) { this.showNote('Select a shorter passage. Suggestions replace up to 512 bytes of text.', sel.box, 'Select again'); return; }
+    this.closePanel();
+    this.composer = { ...sel, source, mode: 'replace', text: '', note: '' };
+    if (window.CSS && CSS.highlights && window.Highlight) CSS.highlights.set('sg-pending', new Highlight(sel.range));
+    this.renderComposer(true);
+  }
+  renderComposer(first) {
+    const c = this.composer;
+    const isCode = this.cls === 'code';
+    const rendered = isCode ? c.source : stripMd(c.source);
+    const target = h('p', { class: `sg-target${isCode ? ' is-code' : ''}` });
+    if (c.mode === 'replace') target.append(h('del', { class: 'sg-del' }, rendered));
+    else if (c.mode === 'after') target.append(rendered, h('span', { class: 'sg-caret-mark', 'aria-label': 'New text goes here' }));
+    else target.append(h('span', { class: 'sg-caret-mark', 'aria-label': 'New text goes here' }), rendered);
+    const modes = h('div', { class: 'sg-seg', role: 'group', 'aria-label': 'Kind of edit' },
+      ...[['replace', 'Replace'], ['after', 'Insert after'], ['before', 'Insert before']].map(([m, label]) => h('button', { type: 'button', 'aria-pressed': String(c.mode === m), onclick: () => { c.text = this.field.value; c.note = this.noteField.value; c.mode = m; this.renderComposer(false); } }, label)));
+    const field = this.field = h('textarea', { class: `popover-field${isCode ? ' is-code' : ''}`, id: 'sg-replacement', spellcheck: 'false' });
+    field.value = c.text;
+    const noteField = this.noteField = h('input', { class: 'sg-input', id: 'sg-note', type: 'text', maxlength: '280' });
+    noteField.value = c.note;
+    const count = this.countEl = h('span', { class: 'sg-count', 'aria-live': 'polite' });
+    const post = this.postButton = h('button', { type: 'button', class: 'popover-action is-primary', onclick: () => this.post() }, 'Post');
+    field.addEventListener('input', () => { c.text = field.value; this.updateCounter(); });
+    noteField.addEventListener('input', () => { c.note = noteField.value; });
+    const sourceLine = squash(stripMd(c.source)) !== squash(c.source) ? h('p', { class: 'sg-source' }, `Source: ${c.source}`) : null;
+    const body = h('div', { class: 'sg-card-body' },
+      h('p', { class: 'sg-composer-title' }, 'Suggest an edit'),
+      target, sourceLine, h('div', { style: 'margin-top:.5rem' }, modes),
+      h('label', { class: 'sg-field', for: 'sg-replacement' }, h('span', null, c.mode === 'replace' ? 'Replacement' : 'Text to insert'), field),
+      c.mode === 'replace' ? h('p', { class: 'sg-hint' }, 'Leave it empty to suggest deleting the selection.') : null,
+      h('label', { class: 'sg-field', for: 'sg-note' }, h('span', null, 'Note (optional)'), noteField));
+    const panel = h('div', { class: `popover popover-card sg-card sg-composer${isCode ? ' is-code' : ''}`, role: 'dialog', 'aria-label': 'Suggest an edit' }, body,
+      h('div', { class: 'popover-tools' }, count, h('button', { type: 'button', class: 'popover-action is-quiet', onclick: () => { window.getSelection()?.removeAllRanges(); this.closePanel(); } }, 'Cancel'), post));
+    if (this.panel) this.panel.remove();
+    this.openPanel(panel, 'composer', () => (c.range && c.range.startContainer.isConnected ? this.rangeBox(c.range) : c.box), first);
+    this.updateCounter();
+    field.focus({ preventScroll: true });
+  }
+  updateCounter() {
+    const c = this.composer;
+    const n = bytes(c.text);
+    this.countEl.textContent = n > REPLACEMENT_LIMIT ? `${fmt(n)} / ${fmt(REPLACEMENT_LIMIT)} bytes, ${fmt(n - REPLACEMENT_LIMIT)} over` : `${fmt(n)} / ${fmt(REPLACEMENT_LIMIT)} bytes`;
+    this.countEl.className = `sg-count${n > REPLACEMENT_LIMIT ? ' is-over' : n >= REPLACEMENT_LIMIT * 0.9 ? ' is-near' : ''}`;
+    this.postButton.disabled = n > REPLACEMENT_LIMIT || (c.mode !== 'replace' && !c.text);
+  }
+  post() {
+    const c = this.composer;
+    if (!c || this.postButton.disabled) return;
+    this.seq += 1;
+    const sg = { id: `new-${this.seq}`, author: READER, mins: 0, ...anchorAt(this.src, c.s, c.e), mode: c.mode, text: c.text, note: c.note.trim(), status: 'pending', reason: '', by: '' };
+    this.sugs.push(sg);
+    this.closePanel();
+    window.getSelection()?.removeAllRanges();
+    this.renderAll();
+    const u = this.units.find((x) => x.entries.some((en) => en.sugs.includes(sg)));
+    if (u) this.openCard(u.id, { reveal: false });
+  }
+
+  /* ---------- script hooks for the state switcher ---------- */
+  selectSrc(s, e) {
+    const spans = [...this.doc.querySelectorAll('[data-s]')];
+    const at = (pos, end) => {
+      for (const sp of spans) {
+        const a = +sp.dataset.s, b = a + sp.textContent.length;
+        if (end ? pos > a && pos <= b : pos >= a && pos < b) return [sp.firstChild, pos - a];
+      }
+      /* A position on markup (a bracket, a pair of asterisks) maps to the nearest text. */
+      if (end) { const sp = spans.filter((x) => +x.dataset.s + x.textContent.length < pos).pop(); return [sp.firstChild, sp.textContent.length]; }
+      const sp = spans.find((x) => +x.dataset.s > pos);
+      return [sp.firstChild, 0];
+    };
+    const p0 = at(s, false), p1 = at(e, true);
+    const range = document.createRange();
+    range.setStart(p0[0], p0[1]);
+    range.setEnd(p1[0], p1[1]);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+    const box = this.rangeBox(range);
+    this.host.scrollTop = revealScrollTop(box, 260, this.host);
+    this.handleSelection();
+  }
+  selectQuote(quote) { const i = this.src.indexOf(quote); this.selectSrc(i, i + quote.length); }
+  selectBetween(a, b) { const i = this.src.indexOf(a), j = this.src.indexOf(b) + b.length; this.selectSrc(i, j); }
+  selectInIns(uid) {
+    const ins = this.doc.querySelector(`.sg-ins[data-unit="${uid}"]`);
+    const t = ins.firstChild;
+    const range = document.createRange();
+    range.setStart(t, Math.min(2, t.length));
+    range.setEnd(t, Math.min(14, t.length));
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+    this.host.scrollTop = revealScrollTop(this.rangeBox(range), 160, this.host);
+    this.handleSelection();
+  }
+  type(text) { this.field.value = text; this.composer.text = text; this.updateCounter(); }
+  writeNote(text) { this.noteField.value = text; this.composer.note = text; }
+  composerMode(m) { this.composer.text = this.field.value; this.composer.mode = m; this.renderComposer(false); }
+  open(sugId, opts) { const u = this.units.find((x) => x.entries.some((en) => en.sugs.some((s) => s.id === sugId))); if (u) this.openCard(u.id, { reveal: true, ...opts }); }
+  pick(sugId) { const u = this.units.find((x) => x.entries.some((en) => en.id === sugId)); if (u) this.choose(u.id, sugId); }
+}
+
+/* ================================================================ states */
+let viewer = null;
+const MD = (sugs, more = {}) => () => ({ cls: 'markdown', src: MD_SRC, sugs: sugs(), ...more });
+const S = (group, id, label, title, cfg, run, frame) => ({ group, id, label, title, cfg, run, frame });
+const STATES = [
+  S('Reading', 'r-1', '1', 'Reading: three pending suggestions shown as patina underlines (one single, one identical pair, one conflict group of three)', MD(BASE), async () => {}),
+  S('Reading', 'r-2', '2', 'A card open on the single suggestion, attached above its mark', MD(BASE), async (v) => { v.open('p1'); }),
+  S('Preview', 'p-3a', '3a', 'Show with suggestions applied: singles and the pair apply, the conflict group shows its chosen member', MD(BASE), async (v) => { v.setPreview(true); }),
+  S('Preview', 'p-3b', '3b', 'Preview: selecting inside proposed inserted text is refused', MD(BASE), async (v) => { v.setPreview(true); await settle(1); v.selectInIns('m-g1'); }),
+  S('Suggesting', 's-4a', '4a', 'Suggesting: a selection raises the offer with Suggest edit beside Copy text and Comment', MD(BASE), async (v) => { v.setMode('suggesting'); await settle(1); v.selectQuote('[The policy page](https://relik.link/policy) states the whole trade'); }),
+  S('Suggesting', 's-4b', '4b', 'The composer, empty: the selection crosses a link, so the source slice is shown under it', MD(BASE), async (v) => { v.setMode('suggesting'); await settle(1); v.selectQuote('[The policy page](https://relik.link/policy) states the whole trade'); v.suggest(); }),
+  S('Suggesting', 's-4c', '4c', 'The composer near the 2048 byte limit', MD(BASE), async (v) => { v.setMode('suggesting'); await settle(1); v.selectQuote("The key therefore enters your model's context and your session transcript on every public publish."); v.suggest(); v.type(NEAR_LIMIT_TEXT); }),
+  S('Suggesting', 's-4d', '4d', 'A selection over 512 bytes is refused', MD(BASE), async (v) => { v.setMode('suggesting'); await settle(1); v.selectBetween('Republishing keeps', 'about that relic.'); v.suggest(); }),
+  S('Suggesting', 's-4e', '4e', 'The composer in Insert after: the selection stays plain, a caret marks where the text goes', MD(BASE), async (v) => { v.setMode('suggesting'); await settle(1); v.selectQuote('Republishing keeps the link and adds a version.'); v.suggest(); v.composerMode('after'); v.type(' The link a reader already holds opens the new version.'); }),
+  S('Posted', 'po-5', '5', 'Posted: the new suggestion appears as a margin marker and its card, no reload', MD(BASE), async (v) => { v.setMode('suggesting'); await settle(1); v.selectQuote('lose that state'); v.suggest(); v.type("lose that machine's state"); v.writeNote('Reads as if the state could be anywhere.'); v.post(); }),
+  S('Conflict', 'c-6a', '6a', 'Conflict group card: three choices, the earliest (Marcus) chosen by default and shown in the preview', MD(BASE), async (v) => { v.setPreview(true); await settle(1); v.open('m-g1'); }),
+  S('Conflict', 'c-6b', '6b', "Choosing Priya's suggestion changes this reader's preview, and only theirs", MD(BASE), async (v) => { v.setPreview(true); await settle(1); v.open('m-g1'); v.pick('p-g2'); }),
+  S('After apply', 'a-7', '7', 'Version 4: Accepted, Superseded, Outdated, Not taken, and one still pending against v4', () => ({ cls: 'markdown', version: 4, sidebar: true, ...v4State() }), async () => {}),
+  S('Legacy', 'l-8', '8', 'An older viewer build: each suggestion reads as a plain comment on its quote', MD(BASE, { legacy: true, sidebar: true }), async (v) => { v.open('p1'); }),
+  S('Code', 'k-9a', '9a', 'Code relic, Reading: a multi line, a single line and a two way conflict on line 72', () => ({ cls: 'code', src: CODE_SRC, sugs: CODE_SUGS() }), async () => {}),
+  S('Code', 'k-9b', '9b', 'Code: the multi line suggestion as a suggestion block with removed and added lines', () => ({ cls: 'code', src: CODE_SRC, sugs: CODE_SUGS() }), async (v) => { v.open('c-p1'); }),
+  S('Code', 'k-9c', '9c', 'Code: the single line suggestion', () => ({ cls: 'code', src: CODE_SRC, sugs: CODE_SUGS() }), async (v) => { v.open('c-j2'); }),
+  S('Code', 'k-9d', '9d', 'Code: two suggestions on line 72 conflict, the earliest chosen', () => ({ cls: 'code', src: CODE_SRC, sugs: CODE_SUGS() }), async (v) => { v.open('c-m3'); }),
+  S('Code', 'k-9e', '9e', 'Code preview: changed lines shown as removed and added rows', () => ({ cls: 'code', src: CODE_SRC, sugs: CODE_SUGS() }), async (v) => { v.setPreview(true); }),
+  S('Narrow', 'n-10a', '10a', '390 by 844: the card on the single suggestion', MD(BASE), async (v) => { v.open('p1'); }, '390'),
+  S('Narrow', 'n-10b', '10b', '390 by 844: the composer', MD(BASE), async (v) => { v.setMode('suggesting'); await settle(1); v.selectQuote('the product. **The key therefore enters'); v.suggest(); v.type('the product. The key, and so read access to the file, enters'); }, '390'),
+  S('Narrow', 'n-10c', '10c', '320 by 480: the composer', MD(BASE), async (v) => { v.setMode('suggesting'); await settle(1); v.selectQuote('adds a version'); v.suggest(); }, '320'),
+  S('Narrow', 'n-10d', '10d', '320 by 480: the conflict card with the preview on', MD(BASE), async (v) => { v.setPreview(true); await settle(1); v.open('m-g1'); }, '320'),
+  S('Delete', 'd-11', '11', 'An empty replacement is a deletion: struck text, nothing inserted', MD(() => [...BASE(), DELETE_ONE()]), async (v) => { v.setPreview(true); await settle(1); v.open('p-del'); }),
+  S('Seen', 'e-12', '12', 'Seen by the publisher, not applied yet: still pending, still in the preview', MD(() => BASE().map((s) => (s.id === 'p1' ? { ...s, status: 'seen' } : s))), async (v) => { v.setPreview(true); await settle(1); v.open('p1'); }),
+  S('Insert', 'i-13a', '13a', 'Two insertions at one point, ordered by creation, beside a replace they touch', MD(INSERTS), async (v) => { v.open('i-p1'); }),
+  S('Insert', 'i-13b', '13b', 'Insertions in the preview: an insertion inside the replaced sentence is in conflict with it', MD(INSERTS), async (v) => { v.setPreview(true); await settle(1); v.open('i-j3'); }),
+];
+const STATE_BY_ID = Object.fromEntries(STATES.map((s) => [s.id, s]));
+
+/* ================================================================ mock chrome */
+const device = document.getElementById('device');
+const store = { state: 'r-1', frame: 'fit', theme: 'system' };
+try { Object.assign(store, JSON.parse(localStorage.getItem(STORE) || '{}')); } catch { /* storage refused: defaults */ }
+const save = () => { try { localStorage.setItem(STORE, JSON.stringify(store)); } catch { /* storage refused */ } };
+if (!STATE_BY_ID[store.state]) store.state = 'r-1';
+let running = 0;
+async function go(id) {
+  const state = STATE_BY_ID[id];
+  if (!state) return;
+  const ticket = running += 1;
+  store.state = id;
+  if (state.frame) store.frame = state.frame;
+  save();
+  document.documentElement.dataset.mockReady = '0';
+  device.dataset.frame = store.frame;
+  viewer?.destroy();
+  window.getSelection()?.removeAllRanges();
+  viewer = new Viewer(device, state.cfg());
+  window.mockViewer = viewer;
+  paintChrome();
+  applyFrame();
+  await settle(2);
+  if (ticket !== running) return;
+  try { await state.run(viewer); } catch (error) { document.documentElement.dataset.mockError = String(error && error.stack || error); throw error; }
+  await settle(3);
+  if (ticket !== running) return;
+  viewer.positionMargins();
+  viewer.place();
+  document.documentElement.dataset.mockState = id;
+  document.documentElement.dataset.mockReady = '1';
+}
+function paintChrome() {
+  const state = STATE_BY_ID[store.state];
+  const title = document.getElementById('mk-title');
+  title.replaceChildren(h('b', null, state.label), state.title);
+  title.title = `${state.label}: ${state.title}`;
+  for (const b of document.querySelectorAll('[data-state]')) b.setAttribute('aria-current', String(b.dataset.state === store.state));
+  for (const b of document.querySelectorAll('[data-frame-value]')) b.setAttribute('aria-pressed', String(b.dataset.frameValue === store.frame));
+  for (const b of document.querySelectorAll('[data-theme-value]')) b.setAttribute('aria-pressed', String(b.dataset.themeValue === store.theme));
+  const chip = document.querySelector(`#mk-chips [data-state="${store.state}"]`);
+  if (chip) { const nav = chip.parentElement; nav.scrollLeft = Math.max(0, chip.offsetLeft - nav.clientWidth / 2 + chip.offsetWidth / 2); }
+}
+function applyFrame() {
+  device.dataset.frame = store.frame;
+  requestAnimationFrame(() => {
+    const floor = document.getElementById('mk-floor');
+    device.classList.toggle('is-inset', device.offsetWidth < floor.clientWidth - 1 || device.offsetHeight < floor.clientHeight - 1);
+    viewer?.positionMargins();
+    viewer?.place();
+  });
+}
+function applyTheme() { document.documentElement.dataset.theme = store.theme; }
+function buildChrome() {
+  const frames = [['fit', 'Fit'], ['1440', '1440'], ['390', '390'], ['320', '320']];
+  const themes = [['system', 'System'], ['light', 'Light'], ['dark', 'Dark']];
+  for (const group of document.querySelectorAll('[data-control="frame"]')) group.replaceChildren(...frames.map(([value, label]) => h('button', { type: 'button', class: 'mk-btn', 'data-frame-value': value, 'aria-pressed': 'false', onclick: () => { store.frame = value; save(); applyFrame(); paintChrome(); } }, label)));
+  for (const group of document.querySelectorAll('[data-control="theme"]')) group.replaceChildren(...themes.map(([value, label]) => h('button', { type: 'button', class: 'mk-btn', 'data-theme-value': value, 'aria-pressed': 'false', onclick: () => { store.theme = value; save(); applyTheme(); paintChrome(); } }, label)));
+  const chips = document.getElementById('mk-chips');
+  const sections = document.getElementById('mk-sections');
+  const groups = [];
+  for (const s of STATES) { let g = groups.find((x) => x.name === s.group); if (!g) groups.push(g = { name: s.group, items: [] }); g.items.push(s); }
+  for (const g of groups) {
+    chips.append(h('span', { class: 'mk-chip-group' }, g.name));
+    for (const s of g.items) chips.append(h('button', { type: 'button', class: 'mk-btn', 'data-state': s.id, title: `${s.label}: ${s.title}`, onclick: () => go(s.id) }, s.label));
+    sections.append(h('section', { class: 'mk-section' }, h('h3', null, g.name), h('ol', null, g.items.map((s) => h('li', null, h('button', { type: 'button', class: 'mk-state', 'data-state': s.id, onclick: () => { closeDrawer(); go(s.id); } }, h('b', null, s.label), h('span', null, s.title)))))));
+  }
+  document.getElementById('mk-prev').append(icon('chevron'));
+  document.getElementById('mk-next').append(icon('chevron'));
+  const step = (d) => { const i = STATES.findIndex((s) => s.id === store.state); go(STATES[(i + d + STATES.length) % STATES.length].id); };
+  document.getElementById('mk-prev').addEventListener('click', () => step(-1));
+  document.getElementById('mk-next').addEventListener('click', () => step(1));
+  const drawer = document.getElementById('mk-drawer');
+  const opener = document.getElementById('mk-open');
+  const openDrawer = () => { drawer.style.setProperty('--mk-drawer-top', `${document.getElementById('mk-bar').getBoundingClientRect().bottom}px`); drawer.hidden = false; opener.setAttribute('aria-expanded', 'true'); };
+  function closeDrawer() { drawer.hidden = true; opener.setAttribute('aria-expanded', 'false'); }
+  opener.addEventListener('click', () => (drawer.hidden ? openDrawer() : closeDrawer()));
+  document.getElementById('mk-close').addEventListener('click', closeDrawer);
+  document.getElementById('mk-reset').addEventListener('click', () => { try { localStorage.removeItem(STORE); } catch { /* storage refused */ } Object.assign(store, { state: 'r-1', frame: 'fit', theme: 'system' }); applyTheme(); applyFrame(); closeDrawer(); go('r-1'); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !drawer.hidden) closeDrawer(); });
+  window.addEventListener('resize', () => applyFrame());
+}
+
+/* ================================================================ the proof probe */
+window.mockGo = go;
+window.mockStates = () => STATES.map((s) => ({ id: s.id, label: s.label, group: s.group, title: s.title, frame: s.frame || null }));
+window.mockProbe = () => {
+  const v = viewer;
+  const out = { state: store.state, ready: document.documentElement.dataset.mockReady === '1', error: document.documentElement.dataset.mockError || null, overflowX: document.documentElement.scrollWidth - document.documentElement.clientWidth };
+  if (!v) return out;
+  const dev = device.getBoundingClientRect();
+  out.panel = v.panel ? (() => { const r = v.panel.getBoundingClientRect(); return { kind: v.panelKind, left: r.left - dev.left, top: r.top - dev.top, right: r.right - dev.left, bottom: r.bottom - dev.top, width: r.width, height: r.height }; })() : null;
+  out.device = { width: dev.width, height: dev.height };
+  out.docText = v.doc.textContent;
+  out.hostOverflowX = v.host.scrollWidth - v.host.clientWidth;
+  out.rootOverflowX = v.root.scrollWidth - v.root.clientWidth;
+  out.stripOverflowX = v.strip ? v.strip.scrollWidth - v.strip.clientWidth : 0;
+  out.barOverflowX = v.root.querySelector('.bar').scrollWidth - v.root.querySelector('.bar').clientWidth;
+  return out;
+};
+
+buildChrome();
+applyTheme();
+applyFrame();
+go(store.state);
+})();
+</script>
+</body>
+</html>
