@@ -15,3 +15,4 @@ https://github.com/mdn/browser-compat-data
 https://github.com/publicsuffix/list/wiki/Guidelines
 https://trojansource.codes/
 https://www.w3.org/TR/appmanifest/
+https://www.w3.org/TR/webauthn-3/

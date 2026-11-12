@@ -10,3 +10,5 @@ https://github.com/greggman/unzipit
 https://security.snyk.io/research/zip-slip-vulnerability
 https://docs.cloud.google.com/storage/docs/metadata
 https://docs.cloud.google.com/storage/docs/authentication/canonical-requests
+https://www.rfc-editor.org/rfc/rfc9180.html
+https://w3c.github.io/webauthn/
