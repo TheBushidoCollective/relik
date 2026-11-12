@@ -24,6 +24,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { harnessEnv } from './harness-env.ts';
 import { normalizeEmail } from '@relic/format';
 import {
   attestationChallenge,
@@ -823,13 +824,11 @@ async function callMcpRaw(
 ): Promise<McpRaw> {
   const child = Bun.spawn([...env.mcpCommand], {
     cwd: env.scratchDir,
-    env: {
-      ...process.env,
-      RELIC_SERVICE_ORIGIN: env.serviceOrigin,
-      RELIC_PUBLISH_STATE: env.statePath,
-      RELIC_CHROME_PATH: 'none',
-      RELIC_CLIENT_NAME: 'relic-mcp/private-shares',
-    },
+    env: harnessEnv(env.scratchDir, env.statePath, {
+      serviceOrigin: env.serviceOrigin,
+      chromePath: 'none',
+      clientName: 'relic-mcp/private-shares',
+    }),
     stdin: 'pipe',
     stdout: 'pipe',
     stderr: 'pipe',
@@ -1115,6 +1114,8 @@ async function checkReadyStrip(
 export interface PrivateShareRun {
   readonly relicId: string;
   readonly relicUrl: string;
+  readonly ownerIdentityId: string;
+  readonly readerIdentityId: string;
 }
 
 /**
@@ -1171,7 +1172,12 @@ export async function runPrivateShares(
       version,
       first.ownerKeys
     );
-    return { relicId: first.relicId, relicUrl: first.relicUrl };
+    return {
+      relicId: first.relicId,
+      relicUrl: first.relicUrl,
+      ownerIdentityId: first.ownerKeys.identityId,
+      readerIdentityId: readerIdentity.identityId,
+    };
   } finally {
     for (const actor of [owner, reader, third, noPrf])
       await actor.browser.close().catch(() => {});
@@ -1182,7 +1188,9 @@ async function stepsOneToThree(
   env: PrivateShareEnv,
   owner: Actor,
   docPath: string
-): Promise<PrivateShareRun & { ownerKeys: OwnerKeys }> {
+): Promise<
+  Pick<PrivateShareRun, 'relicId' | 'relicUrl'> & { ownerKeys: OwnerKeys }
+> {
   // Step 1. Owner identity: sign in, a PRF passkey, one identity ceremony.
   const ownerCookie = await nodeSignIn(env, owner.email);
   await owner.browser.cdp.send(

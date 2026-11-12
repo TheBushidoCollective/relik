@@ -20,11 +20,13 @@
  * and RELIC_CHROME_PATH, and it refuses to run in CI.
  */
 
-import { mkdtemp, rm } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
+import { operatorFileClash } from './harness-env.ts';
 import {
   type CapturedMail,
   type Mailbox,
@@ -52,6 +54,8 @@ if (!operatorEmail || !operatorEmail.includes('@'))
 const chromePath = process.env['RELIC_CHROME_PATH'];
 if (!chromePath || chromePath === 'none')
   refuse('RELIC_CHROME_PATH must name an owned headless Chrome');
+const clash = operatorFileClash(process.env, existsSync);
+if (clash !== undefined) refuse(clash);
 
 const [localPart = '', domain = ''] = operatorEmail.split('@');
 const tag = `probe${Date.now().toString(36)}`;
@@ -146,8 +150,35 @@ const env: PrivateShareEnv = {
   },
 };
 
+/** Every device_id in the device key file: the devices this run left certified. */
+async function deviceIdsIn(path: string): Promise<string[]> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(await readFile(path, 'utf8'));
+  } catch {
+    return [];
+  }
+  const ids = new Set<string>();
+  const walk = (value: unknown): void => {
+    if (Array.isArray(value)) {
+      value.forEach(walk);
+    } else if (value !== null && typeof value === 'object') {
+      for (const [key, inner] of Object.entries(value)) {
+        if (key === 'device_id' && typeof inner === 'string') ids.add(inner);
+        else walk(inner);
+      }
+    }
+  };
+  walk(parsed);
+  return [...ids];
+}
+
 try {
-  await runPrivateShares(env);
+  const run = await runPrivateShares(env);
+  const devices = await deviceIdsIn(join(scratch, 'device-keys.json'));
+  console.log(
+    `PRIVATE_SHARES_LIVE_LEFT_BEHIND relic_id=${run.relicId} owner_identity_id=${run.ownerIdentityId} reader_identity_id=${run.readerIdentityId} device_ids=${devices.join(',') || 'none'} addresses=${[env.owner, env.reader, env.third, env.noPrf].join(',')}`
+  );
   console.log(`PRIVATE_SHARES_LIVE_DONE relic_origin=${origin} tag=${tag}`);
 } catch (error) {
   console.error(
