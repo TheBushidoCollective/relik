@@ -817,7 +817,7 @@ export const otioProofTracePrelude = String.raw`(() => {
     return {before, after, currentBefore, currentAfter,
       output: output ? {contextTime:output.contextTime, performanceTime:output.performanceTime} : null};
   }
-  const visual = {active: false, overflow: false, samples: []};
+  const visual = {active: false, readback: true, overflow: false, samples: []};
   let screenOnlyActive = false;
   let lightweightEvents = [];
   let lightweightOverflow = false;
@@ -844,6 +844,7 @@ export const otioProofTracePrelude = String.raw`(() => {
         const until = performance.now() + 200;
         while (performance.now() < until) {}
       }
+      if (!visual.readback) { requestAnimationFrame(tick); return; }
       if (visual.samples.length >= MAX_VISUAL_SAMPLES) visual.overflow = true;
       else {
         const canvas = document.querySelector('canvas.otio-canvas');
@@ -1066,7 +1067,7 @@ export const otioProofTracePrelude = String.raw`(() => {
       return {timestamp:performance.now(), frame:Number(document.querySelector('.otio-view')?.dataset.frame),
         samples:lightweightEvents, overflow:lightweightOverflow};
     },
-    async start() {
+    async start(options = {}) {
       pcmReleaseTrigger = null; pendingPcmRelease = null;
       nextAnchorControl = null;
       if (activeStaleCaptureId !== null) throw new Error('stale capture already active');
@@ -1076,7 +1077,7 @@ export const otioProofTracePrelude = String.raw`(() => {
       await graph.ready;
       graph.chunks = []; graph.samples = 0; graph.overflow = false;
       const sampleFrame = await command(graph, 'start');
-      visual.samples = []; visual.overflow = false; visual.active = true;
+      visual.samples = []; visual.overflow = false; visual.readback = options.canvasReadback !== false; visual.active = true;
       events.length = 0; eventsOverflow = false; bankRecords.length = 0; bankOverflow = false;
       realPairByPerf = new Map(); latestRealContext = null; latestReturned = null;
       if (!Number.isSafeInteger(++staleCaptureSerial)) throw new Error('stale capture id exhausted');
@@ -1161,7 +1162,7 @@ export const otioProofTracePrelude = String.raw`(() => {
       }
       activeStaleCaptureId = null;
       releaseClockHold(); siteHold = null;
-      visual.active = false;
+      visual.active = false; visual.readback = true;
       clearInterval(startupMonitor); startupMonitor = null;
       bufferingObserver?.disconnect();
       const timestamp = performance.now();

@@ -16073,8 +16073,8 @@ function assertSourceMatchControls(): void {
 // admission path with ring-cap-exhausted, start no playback, and commit no causal epoch.
 const OVERCAP_SIZE = 4096;
 
-async function publishOverCapDocument(): Promise<string> {
-  const directory = join(scratch, 'overcap-boundaries.otiod');
+async function publishOverCapDocument(rate: 44100 | 48000): Promise<string> {
+  const directory = join(scratch, `overcap-boundaries-${rate}.otiod`);
   const media = join(directory, 'media');
   await mkdir(media, { recursive: true });
   const content = await readFile(
@@ -16117,13 +16117,32 @@ async function publishOverCapDocument(): Promise<string> {
     { cwd: scratch, timeoutMs: 240000 }
   );
   assert.equal(encoded.exit, 0, 'over-cap fixture encode failed');
-  for (const name of [
-    'plate_1001.png',
-    'plate_1002.png',
-    'mx_bed.wav',
-    'secondary_b.mp4',
-  ])
+  for (const name of ['plate_1001.png', 'plate_1002.png', 'secondary_b.mp4'])
     await cp(join(fixtureDir, 'media', name), join(media, name));
+  if (rate === 48000) {
+    await cp(
+      join(fixtureDir, 'media', 'mx_bed.wav'),
+      join(media, 'mx_bed.wav')
+    );
+  } else {
+    const converted = await runChild(
+      [
+        'ffmpeg',
+        '-v',
+        'error',
+        '-y',
+        '-i',
+        join(fixtureDir, 'media', 'mx_bed.wav'),
+        '-ar',
+        '44100',
+        '-acodec',
+        'pcm_s16le',
+        join(media, 'mx_bed.wav'),
+      ],
+      { timeoutMs: 30000 }
+    );
+    assert.equal(converted.exit, 0, converted.stderr);
+  }
   return publishLegacyDirectory(directory, 'OTIO legacy over-cap');
 }
 
@@ -16131,7 +16150,7 @@ async function runOverCapRefusal(
   sessionToken: string,
   rate: 44100 | 48000
 ): Promise<void> {
-  const url = await publishOverCapDocument();
+  const url = await publishOverCapDocument(rate);
   const isolated = await openBrowser(url, sessionToken, {
     label: `overcap-refusal-${rate}`,
     defaultAutoplay: true,
@@ -16165,8 +16184,10 @@ async function runOverCapRefusal(
       { width: OVERCAP_SIZE, height: OVERCAP_SIZE },
       'over-cap canvas did not take the cap-sized dimensions'
     );
+    // Full 4096px readbacks compete with the startup deadline; this control
+    // verifies ring admission from viewer events rather than canvas pixels.
     await isolated.evaluate(
-      `(async () => globalThis.__otioProofTrace.start())()`
+      `(async () => globalThis.__otioProofTrace.start({canvasReadback:false}))()`
     );
     await isolated.evaluate(
       `(() => globalThis.__otioProofTrace.playRequest())()`
@@ -16192,6 +16213,11 @@ async function runOverCapRefusal(
     assert.ok(
       !result.trace.audioOverflow && !result.trace.eventsOverflow,
       'over-cap proof trace overflow'
+    );
+    assert.equal(
+      result.trace.visual.length,
+      0,
+      'over-cap capture read back the cap-sized canvas'
     );
     const refusals = legacyColdValues(result.trace).filter(
       (value) => value['event'] === 'ring-refused'
