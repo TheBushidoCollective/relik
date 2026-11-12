@@ -55,6 +55,7 @@ import {
   unsupportedVersionError,
 } from './protocol.ts';
 import {
+  isPrivateRelic,
   lookupPublishedSource,
   type PublishDeps,
   PublishError,
@@ -67,6 +68,10 @@ import {
   bindOwner,
   type PrivatePublishInput,
   type PrivatePublishResult,
+  listPrivateRelics,
+  showPrivateRelic,
+  type PrivateRelicRow,
+  type PrivateShowResult,
   publishPrivate,
   republishPrivate,
 } from './private.ts';
@@ -2673,12 +2678,18 @@ async function callList(
       },
       deps
     );
+    const privateRelics = await listPrivateRelics();
     return {
       jsonrpc: '2.0',
       id,
       result: {
-        content: [{ type: 'text', text: listTranscript(result) }],
-        structuredContent: result,
+        content: [
+          {
+            type: 'text',
+            text: listTranscript(result) + privateListText(privateRelics),
+          },
+        ],
+        structuredContent: { ...result, private_relics: privateRelics },
         isError: false,
       },
     };
@@ -2700,6 +2711,23 @@ async function callShow(
       ERROR_CODES.invalidParams,
       '`relic_id` is required and must be a string'
     );
+  }
+
+  if (await isPrivateRelic(relicId)) {
+    try {
+      const shown = await showPrivateRelic(deps, relicId);
+      return {
+        jsonrpc: '2.0',
+        id,
+        result: {
+          content: [{ type: 'text', text: privateShowText(shown) }],
+          structuredContent: shown,
+          isError: false,
+        },
+      };
+    } catch (error) {
+      return { jsonrpc: '2.0', id, result: toolError(error) };
+    }
   }
 
   const includeContent = args['include_content'];
@@ -2728,6 +2756,37 @@ async function callShow(
   } catch (error) {
     return { jsonrpc: '2.0', id, result: toolError(error) };
   }
+}
+
+/** The private rows a list appends. Each names the relic and never a key. */
+function privateListText(rows: readonly PrivateRelicRow[]): string {
+  if (rows.length === 0) return '';
+  const lines = rows.map(
+    (row) =>
+      `  ${row.filename ?? '[name not recorded]'} (${row.relic_id}, v${row.version}, ` +
+      `${row.expires_at === null ? 'no expiry recorded' : `expires ${row.expires_at}`}, private)`
+  );
+  return (
+    '\n\nPrivate relics (no key in the link; each reader needs a grant):\n' +
+    lines.join('\n')
+  );
+}
+
+/** The show text for a private relic: its version, expiry, owner and current readers. */
+function privateShowText(shown: PrivateShowResult): string {
+  const readers = shown.recipients
+    .map(
+      (r) =>
+        `  ${r.kind}${r.email === undefined ? '' : ` ${r.email}`}: ${r.fingerprint}`
+    )
+    .join('\n');
+  return (
+    `Relic ${shown.relic_id} is private, version ${shown.version}, ` +
+    `${shown.filename ?? 'name not recorded'}.\n` +
+    `Expires ${shown.expires_at ?? 'at the service default'}.\n` +
+    `Owner: ${shown.owner.email}, fingerprint ${shown.owner.fingerprint}\n` +
+    `Readers who can open the current version:\n${readers}`
+  );
 }
 
 /**

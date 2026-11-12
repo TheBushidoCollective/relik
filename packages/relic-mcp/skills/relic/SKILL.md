@@ -179,11 +179,15 @@ one at a time, and the owner confirms each grant with a passkey in the browser.
   Passing a title or cover is refused before anything is sent.
 - **The link is not a key.** Its URL has no fragment. Tell the person that the
   owner has to grant them access, because the link alone opens nothing.
-- **Not available on private relics yet:** `relic_read_comments`,
-  `relic_comment`, `relic_edit_comment`, `relic_resolve_comment`,
-  `relic_read_decisions` and `relic_share` refuse a private relic with
-  `private_relic_unsupported`. `relic_list` and `relic_show` do not list private
-  relics. Use the id returned at publish time.
+- **Comments and decisions work on a private relic** through the publish token.
+  Each comment is read and written with the key of the version it names, which
+  this machine holds or unwraps from its own device wrap. A comment whose
+  version it cannot open reads as unreadable, never as a guess.
+- **`relic_share` drafts an invitation and registers nothing.** The invitation
+  carries the keyless link. Each person asks for access on the page, and the
+  owner grants it. The draft never says the link opens the file.
+- **`relic_list` and `relic_show` include private relics.** Show reports the
+  current version, the expiry, the owner and the readers who can open it now.
 
 ## Sending a relic to people
 

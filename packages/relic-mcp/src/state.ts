@@ -359,6 +359,26 @@ export async function loadPrivatePublishState(
   );
 }
 
+/** Every private relic this machine holds, read from local state with no network. */
+export async function loadPrivateInventory(): Promise<
+  readonly { readonly relic_id: string; readonly state: PrivatePublishState }[]
+> {
+  const parsed = await readWholeFile(publishStatePath());
+  const bucket: unknown = parsed?.['private_relics'];
+  if (bucket === undefined) return [];
+  if (!isPlainObject(bucket)) {
+    throw new Error(
+      `publish state at ${publishStatePath()} holds malformed private relics.`
+    );
+  }
+  const rows: { relic_id: string; state: PrivatePublishState }[] = [];
+  for (const [relicId, entry] of Object.entries(bucket)) {
+    const state = validatePrivateStateEntry(entry, relicId);
+    if (state !== undefined) rows.push({ relic_id: relicId, state });
+  }
+  return rows;
+}
+
 function privateBucketEntry(
   parsed: StateFile | undefined,
   relicId: string

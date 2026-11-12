@@ -138,8 +138,7 @@ export type ClientCode =
   | 'private_ttl_out_of_range'
   | 'seal_signature_invalid'
   | 'wrap_unopenable'
-  | 'version_conflict'
-  | 'private_relic_unsupported';
+  | 'version_conflict';
 export class PublishError extends Error {
   override readonly name = 'PublishError';
   constructor(
@@ -354,22 +353,9 @@ export async function lookupPublishedSource(
   return lookupResolvedSource(deps.files.resolve(path), deps);
 }
 
-/**
- * Refuse a tool that does not handle private relics yet, saying so.
- *
- * Checked before the tool reads public state, so a private relic never gets
- * the "published from another machine" message, which is false for it.
- */
-export async function refusePrivateRelic(
-  relicId: string,
-  tool: string
-): Promise<void> {
-  if ((await loadPrivatePublishState(relicId)) === undefined) return;
-  throw new PublishError(
-    'private_relic_unsupported',
-    `${tool} does not handle private relics yet, and relic ${relicId} is private.`,
-    { relic_id: relicId }
-  );
+/** Whether this machine holds the relic as a private one, which the public paths must not read. */
+export async function isPrivateRelic(relicId: string): Promise<boolean> {
+  return (await loadPrivatePublishState(relicId)) !== undefined;
 }
 
 export async function publish(
@@ -874,6 +860,31 @@ export async function postJson(
   return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
     ? (parsed as Record<string, unknown>)
     : {};
+}
+
+/**
+ * POST a JSON body and return the service's answer as it came. Used for the
+ * legs whose answer is an array, such as a private relic's comment list.
+ */
+export async function postValue(
+  deps: PublishDeps,
+  url: string,
+  body: unknown
+): Promise<unknown> {
+  let response: Response;
+  try {
+    response = await deps.fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  } catch (error) {
+    throw new PublishError(
+      'service_unreachable',
+      `could not reach ${url}: ${(error as Error).message}`
+    );
+  }
+  return readJson(response);
 }
 
 /**

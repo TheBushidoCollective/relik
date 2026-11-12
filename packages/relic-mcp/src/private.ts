@@ -71,6 +71,7 @@ import {
   ServerRefusal,
 } from './publish.ts';
 import {
+  loadPrivateInventory,
   loadPrivatePublishState,
   loadPublishState,
   type PrivatePublishState,
@@ -387,6 +388,25 @@ async function fetchRecipients(
       ...grants,
     ],
   };
+}
+
+/**
+ * The relic's current version, read from the service with the publish token.
+ * It goes through the same verified recipients read as a republish.
+ */
+export async function currentPrivateVersion(
+  deps: PublishDeps,
+  relicId: string,
+  state: PrivatePublishState
+): Promise<number> {
+  const session = await deviceSession(deps);
+  const snapshot = await fetchRecipients(
+    deps,
+    relicId,
+    state.publish_token,
+    session.pin
+  );
+  return snapshot.version;
 }
 
 /** Wrap one version key to every reader, in the order given. */
@@ -1117,4 +1137,71 @@ export async function bindOwner(
     sig: owner.sig,
   });
   return { relic_id: input.relic_id, owner: await ownerDisplay(session.pin) };
+}
+
+/** One private relic as the list shows it. It carries no key and no token. */
+export interface PrivateRelicRow {
+  readonly relic_id: string;
+  readonly access: 'private';
+  readonly version: number;
+  readonly filename: string | null;
+  readonly published_at: string | null;
+  readonly expires_at: string | null;
+}
+
+/** The private relics this machine holds, read from local state with no network. */
+export async function listPrivateRelics(): Promise<PrivateRelicRow[]> {
+  const rows = await loadPrivateInventory();
+  return rows.map(({ relic_id, state }) => ({
+    relic_id,
+    access: 'private',
+    version: state.version,
+    filename: state.filename ?? null,
+    published_at: state.published_at ?? null,
+    expires_at: state.expires_at ?? null,
+  }));
+}
+
+/** One private relic as the show tool reports it: the current version and who can open it. */
+export interface PrivateShowResult {
+  readonly relic_id: string;
+  readonly access: 'private';
+  readonly version: number;
+  readonly filename: string | null;
+  readonly expires_at: string | null;
+  readonly owner: { readonly email: string; readonly fingerprint: string };
+  readonly recipients: readonly PrivateRecipientOutput[];
+}
+
+/**
+ * One private relic, with its current version read from the service and the
+ * readers the verified recipients read names. No key is returned.
+ */
+export async function showPrivateRelic(
+  deps: PublishDeps,
+  relicId: string
+): Promise<PrivateShowResult> {
+  const state = await loadPrivatePublishState(relicId);
+  if (state === undefined) {
+    throw new PublishError(
+      'no_local_publish_state',
+      `relic ${relicId} is not a private relic this machine holds.`
+    );
+  }
+  const session = await deviceSession(deps);
+  const snapshot = await fetchRecipients(
+    deps,
+    relicId,
+    state.publish_token,
+    session.pin
+  );
+  return {
+    relic_id: relicId,
+    access: 'private',
+    version: snapshot.version,
+    filename: state.filename ?? null,
+    expires_at: state.expires_at ?? null,
+    owner: await ownerDisplay(session.pin),
+    recipients: recipientOutput(snapshot.readers),
+  };
 }

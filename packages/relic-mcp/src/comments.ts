@@ -53,14 +53,20 @@ import {
   PublishError,
   patchJson,
   postJson,
-  refusePrivateRelic,
+  postValue,
 } from './publish.ts';
+import { currentPrivateVersion, privateVersionKey } from './private.ts';
 import {
   type ContentBlock,
   type ResolvedAnchor,
   resolveAnchors,
 } from './resolve-anchor.ts';
-import { loadPublishState, type PublishState } from './state.ts';
+import {
+  loadPrivatePublishState,
+  loadPublishState,
+  type PrivatePublishState,
+  type PublishState,
+} from './state.ts';
 
 export interface CommentAddressedBy {
   readonly comment_id: string;
@@ -325,7 +331,7 @@ export async function readComments(
   deps: PublishDeps,
   options?: ReadCommentsOptions
 ): Promise<ReadCommentsResult> {
-  const state = await localState(relicId);
+  const local = await localRelic(relicId);
 
   // The scope. Absent means the relic's current version, and current comes
   // from the service, the same source `relic_show` uses, never from local
@@ -352,17 +358,7 @@ export async function readComments(
   let currentVersion: number | null = null;
   let scope: number | 'all';
   if (rawScope === undefined) {
-    const minted = await mintRelic(relicId, deps);
-    if (minted.kind === 'failed') {
-      throw new PublishError(
-        'current_version_unavailable',
-        `the relic's current version could not be read from the service, so ` +
-          `the default scope cannot be resolved: ${minted.detail}. Pass an ` +
-          'explicit version, or "*" for every version, to read without it.',
-        { relic_id: relicId }
-      );
-    }
-    currentVersion = minted.currentVersion;
+    currentVersion = await resolveCurrentVersion(relicId, deps, local);
     scope = currentVersion;
   } else if (rawScope === '*') {
     scope = 'all';
@@ -373,10 +369,17 @@ export async function readComments(
   // No credential on this read. Anyone holding the link can already fetch the
   // ciphertext, and the bodies are ciphertext the service cannot open, so
   // authorizing it would gate nothing and cost the token an exposure.
-  const listed = await getJson(
-    deps,
-    `${deps.serviceOrigin}/api/relics/${relicId}/comments`
-  );
+  const listed =
+    local.access === 'private'
+      ? await postValue(
+          deps,
+          `${deps.serviceOrigin}/api/relics/${relicId}/comments/list`,
+          { publish_token: local.state.publish_token }
+        )
+      : await getJson(
+          deps,
+          `${deps.serviceOrigin}/api/relics/${relicId}/comments`
+        );
   if (!Array.isArray(listed)) {
     throw new PublishError(
       'app_response_unusable',
@@ -386,7 +389,7 @@ export async function readComments(
     );
   }
 
-  const commentKey = await deriveCommentKey(decodeKey(state.key));
+  const keyCache = new Map<number, CommentKey>();
   interface DecryptedCommentEntry {
     comment_id: string;
     author: string;
@@ -451,6 +454,13 @@ export async function readComments(
     }
 
     try {
+      const commentKey = await commentKeyFor(
+        deps,
+        relicId,
+        local,
+        version,
+        keyCache
+      );
       const plaintext = await decryptComment(commentKey, ciphertext);
       entries.push({
         comment_id: commentId,
@@ -618,7 +628,8 @@ export async function postComment(
   input: CommentInput,
   deps: PublishDeps
 ): Promise<CommentResult> {
-  const state = await localState(input.relic_id);
+  const local = await localRelic(input.relic_id);
+  const state = local.state;
 
   // The caps belong to the envelope, so they are enforced against its numbers
   // rather than a second copy of them, and enforced before encryption so the
@@ -681,7 +692,17 @@ export async function postComment(
 
   const anchor = validateAndNormalizeAnchor(input.anchor);
 
-  const commentKey = await deriveCommentKey(decodeKey(state.key));
+  const commentVersion =
+    local.access === 'private'
+      ? await currentPrivateVersion(deps, input.relic_id, local.state)
+      : undefined;
+  const commentKey = await commentKeyFor(
+    deps,
+    input.relic_id,
+    local,
+    commentVersion ?? null,
+    new Map()
+  );
   const ciphertext = await encryptComment(commentKey, {
     body: input.body,
     display_name: displayName,
@@ -700,7 +721,11 @@ export async function postComment(
     {
       publish_token: state.publish_token,
       ciphertext,
-      ...(anchor?.kind === 'otio' ? { version: anchor.relic_version } : {}),
+      ...(commentVersion !== undefined
+        ? { version: commentVersion }
+        : anchor?.kind === 'otio'
+          ? { version: anchor.relic_version }
+          : {}),
       ...(addresses == null ? {} : { addresses }),
     }
   );
@@ -772,7 +797,8 @@ export async function editComment(
   input: EditCommentInput,
   deps: PublishDeps
 ): Promise<CommentStateResult> {
-  const state = await localState(input.relic_id);
+  const local = await localRelic(input.relic_id);
+  const state = local.state;
   if (typeof input.comment_id !== 'string' || input.comment_id.length === 0) {
     throw new PublishError(
       'local_comment_not_found',
@@ -830,7 +856,13 @@ export async function editComment(
   // object passed on: the read stamps `unsupported_fields` when it met a
   // field it did not know, and that member is read-only. Only the body is
   // replaced; the anchor and addresses travel forward untouched.
-  const commentKey = await deriveCommentKey(decodeKey(state.key));
+  const commentKey = await commentKeyFor(
+    deps,
+    input.relic_id,
+    local,
+    existing.version,
+    new Map()
+  );
   const ciphertext = await encryptComment(commentKey, {
     body: input.body,
     display_name: existing.display_name,
@@ -876,7 +908,8 @@ export async function resolveComment(
   input: ResolveCommentInput,
   deps: PublishDeps
 ): Promise<CommentStateResult> {
-  const state = await localState(input.relic_id);
+  const local = await localRelic(input.relic_id);
+  const state = local.state;
   if (typeof input.comment_id !== 'string' || input.comment_id.length === 0) {
     throw new PublishError(
       'local_comment_not_found',
@@ -894,6 +927,86 @@ export async function resolveComment(
     }
   );
   return commentState(input.relic_id, input.comment_id, posted);
+}
+
+/** A relic this machine holds, public or private. Read it through `localRelic`. */
+export type LocalRelic =
+  | { readonly access: 'public'; readonly state: PublishState }
+  | { readonly access: 'private'; readonly state: PrivatePublishState };
+
+type CommentKey = CryptoKey;
+
+/**
+ * The machine boundary for a relic this machine holds, public or private.
+ *
+ * A public relic is read with the one key in its link. A private relic is read
+ * with its publish token and one comment key per version, which this machine
+ * takes from the version keys it created or unwraps from its device wrap.
+ */
+export async function localRelic(relicId: string): Promise<LocalRelic> {
+  let priv: PrivatePublishState | undefined;
+  try {
+    priv = await loadPrivatePublishState(relicId);
+  } catch (error) {
+    throw new PublishError('local_state_unreadable', (error as Error).message);
+  }
+  if (priv !== undefined) return { access: 'private', state: priv };
+  return { access: 'public', state: await localState(relicId) };
+}
+
+/**
+ * The comment cipher for one version. A public relic has one key for every
+ * version. A private relic has one per version, and a comment names its
+ * version, so a comment whose version this machine cannot open reads as
+ * unreadable rather than under a guessed key.
+ */
+async function commentKeyFor(
+  deps: PublishDeps,
+  relicId: string,
+  local: LocalRelic,
+  version: number | null,
+  cache: Map<number, CommentKey>
+): Promise<CommentKey> {
+  if (local.access === 'public') {
+    return deriveCommentKey(decodeKey(local.state.key));
+  }
+  if (version === null) {
+    throw new PublishError(
+      'local_comment_unreadable',
+      'this comment names no version, so its key cannot be chosen'
+    );
+  }
+  const cached = cache.get(version);
+  if (cached !== undefined) return cached;
+  const key = await deriveCommentKey(
+    await privateVersionKey(deps, relicId, local.state, version)
+  );
+  cache.set(version, key);
+  return key;
+}
+
+/** The relic's current version, read from the service the same way for either kind. */
+async function resolveCurrentVersion(
+  relicId: string,
+  deps: PublishDeps,
+  local: LocalRelic
+): Promise<number> {
+  const unavailable = (detail: string) =>
+    new PublishError(
+      'current_version_unavailable',
+      `the relic's current version could not be read from the service, so the default scope cannot be resolved: ${detail}. Pass an explicit version, or "*" for every version, to read without it.`,
+      { relic_id: relicId }
+    );
+  if (local.access === 'private') {
+    try {
+      return await currentPrivateVersion(deps, relicId, local.state);
+    } catch (error) {
+      throw unavailable((error as Error).message);
+    }
+  }
+  const minted = await mintRelic(relicId, deps);
+  if (minted.kind === 'failed') throw unavailable(minted.detail);
+  return minted.currentVersion;
 }
 
 /**
@@ -914,8 +1027,6 @@ export async function localState(relicId: string): Promise<PublishState> {
         'transcript for nothing.'
     );
   }
-
-  await refusePrivateRelic(relicId, 'Comments and decisions');
 
   try {
     const loaded = await loadPublishState(relicId);
