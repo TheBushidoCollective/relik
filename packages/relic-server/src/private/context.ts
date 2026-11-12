@@ -193,6 +193,7 @@ export function deviceJson(record: DeviceRecord): DevicePublicJSON {
       statement: cert.statement,
       identity_signature: cert.identitySignature,
     },
+    revocation: signedStatementJson(record.revocation),
   };
 }
 

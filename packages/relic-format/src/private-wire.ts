@@ -8,7 +8,7 @@
  */
 
 import type { AuthenticationResponseJSON } from './passkey.ts';
-import type { StatementKind } from './private.ts';
+import type { SignedStatementBody, StatementKind } from './private.ts';
 
 export type AttestPurpose =
   | 'identity_register'
@@ -82,6 +82,18 @@ export interface RecoveryJSON extends PartyJSON {
   };
 }
 
+/**
+ * The recovery fields of a recipients or device-context answer. `recovery` is the
+ * holder in force. `recovery_statement` is the owner's newest signed designation,
+ * which is a removal (all three party fields null) when the holder was removed.
+ * It sits beside `recovery` on the answer, not inside it, because it is returned
+ * even when there is no holder to name.
+ */
+export interface RecoveryAnswerJSON {
+  readonly recovery: RecoveryJSON | null;
+  readonly recovery_statement?: SignedStatementBody | null;
+}
+
 export interface DevicePublicJSON {
   readonly device_id: string;
   readonly owner_identity_id: string;
@@ -96,6 +108,8 @@ export interface DevicePublicJSON {
     readonly statement: Record<string, unknown>;
     readonly identity_signature: string;
   };
+  /** The owner's signed revocation of this device, or null. Absent on answers from a service that predates it. */
+  readonly revocation?: SignedStatementBody | null;
 }
 
 export interface WrapJSON {
@@ -125,6 +139,8 @@ export interface GrantJSON {
   readonly identity_signature: string;
   readonly granted_at: string;
   readonly revoked_at: string | null;
+  /** The owner's signed revocation of this grant, or null. Revoked grants stay in the roster with it. */
+  readonly revocation?: SignedStatementBody | null;
   readonly grantee: PartyJSON;
 }
 

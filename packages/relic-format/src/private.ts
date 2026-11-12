@@ -407,6 +407,162 @@ export async function verifyStatement(
   }
 }
 
+/** A signed statement as the wire carries it, without a kind: the statement and its identity signature. */
+export interface SignedStatementBody {
+  readonly statement: Record<string, unknown>;
+  readonly identity_signature: string;
+}
+
+/**
+ * Verify one owner-signed statement of the given kind. Returns the parsed
+ * statement only when it parses exactly and its signature verifies under
+ * `signerKey`. Anything else is undefined, and the caller decides whether that
+ * is a refusal or an entry to ignore. Pure: no network, no state.
+ */
+export async function verifySignedStatement<K extends StatementKind>(
+  kind: K,
+  signed: SignedStatementBody,
+  signerKey: Uint8Array
+): Promise<StatementMap[K] | undefined> {
+  let statement: StatementMap[K];
+  try {
+    statement = parseStatement(kind, signed.statement);
+  } catch {
+    return undefined;
+  }
+  const valid = await verifyStatement(
+    signerKey,
+    statementBytes(kind, statement),
+    signed.identity_signature
+  );
+  return valid ? statement : undefined;
+}
+
+/**
+ * A time a verified owner-signed statement fixes. `revoked: false` is the
+ * `at` of the newest live statement accepted. `revoked: true` is the `at` of a
+ * verified revocation: every statement at or before it stays revoked.
+ */
+export interface RosterMark {
+  readonly at: number;
+  readonly revoked: boolean;
+}
+
+/** The newest owner-signed recovery designation accepted. `removed` when it removed the holder. */
+export interface DesignationMark {
+  readonly at: number;
+  readonly removed: boolean;
+}
+
+/**
+ * What a client has accepted for one owner. It holds owner-signed facts only:
+ * the newest designation, and a mark per device and per grant. Nothing a
+ * service asserted on its own is ever recorded here.
+ */
+export interface RosterFloor {
+  readonly designation?: DesignationMark | undefined;
+  readonly devices?: Readonly<Record<string, RosterMark>> | undefined;
+  readonly grants?: Readonly<Record<string, RosterMark>> | undefined;
+}
+
+/**
+ * One verified answer about the owner. `designation` is undefined when the
+ * answer does not speak to designations, and null when it carries no signed
+ * designation at all.
+ */
+export interface RosterObservation {
+  readonly designation?: DesignationMark | null | undefined;
+  readonly devices?: Readonly<Record<string, RosterMark>> | undefined;
+  readonly grants?: Readonly<Record<string, RosterMark>> | undefined;
+}
+
+/** An answer that goes back on something the floor already accepted. */
+export class RosterStaleError extends RelicFormatError {
+  override readonly name = 'RosterStaleError';
+
+  constructor(readonly what: string) {
+    super(`the answer goes back on ${what} already accepted`);
+  }
+}
+
+/**
+ * Advance the floor by one verified answer. The floor only moves forward: an
+ * older designation, a designation that disappears after one was accepted, a
+ * live statement older than the accepted one, or an older revocation all throw
+ * `RosterStaleError` and change nothing. A verified revocation is permanent for
+ * the statements it covers. A live statement newer than a revocation is a new
+ * owner authorization and replaces it. A live statement at or before the
+ * revocation is still revoked, and the floor keeps the revocation.
+ */
+export function advanceRosterFloor(
+  floor: RosterFloor,
+  observed: RosterObservation
+): RosterFloor {
+  let designation = floor.designation;
+  if (observed.designation === null) {
+    if (designation !== undefined) {
+      throw new RosterStaleError('a recovery designation');
+    }
+  } else if (observed.designation !== undefined) {
+    const next = observed.designation;
+    if (designation !== undefined) {
+      if (next.at < designation.at) {
+        throw new RosterStaleError('a newer recovery designation');
+      }
+      if (next.at === designation.at && next.removed !== designation.removed) {
+        throw new RosterStaleError('a recovery designation at the same time');
+      }
+    }
+    designation = next;
+  }
+  return {
+    designation,
+    devices: advanceMarks(floor.devices, observed.devices, 'device'),
+    grants: advanceMarks(floor.grants, observed.grants, 'grant'),
+  };
+}
+
+function advanceMarks(
+  prior: Readonly<Record<string, RosterMark>> | undefined,
+  observed: Readonly<Record<string, RosterMark>> | undefined,
+  what: string
+): Record<string, RosterMark> {
+  const next: Record<string, RosterMark> = { ...prior };
+  for (const [key, mark] of Object.entries(observed ?? {})) {
+    const before = prior?.[key];
+    if (mark.revoked) {
+      if (before !== undefined && !before.revoked && mark.at < before.at) {
+        throw new RosterStaleError(`an older ${what} revocation`);
+      }
+      next[key] = {
+        at: before?.revoked === true ? Math.max(before.at, mark.at) : mark.at,
+        revoked: true,
+      };
+    } else if (before?.revoked === true) {
+      if (mark.at > before.at) next[key] = mark;
+    } else {
+      if (before !== undefined && mark.at < before.at) {
+        throw new RosterStaleError(`an older ${what} statement`);
+      }
+      next[key] = mark;
+    }
+  }
+  return next;
+}
+
+/**
+ * Whether an entry whose owner-signed statement is at `at` may receive a wrap,
+ * given the floor's mark for it. A revoked mark excludes every statement at or
+ * before its time. An absent mark admits nothing extra: the caller has already
+ * verified the entry itself.
+ */
+export function rosterAdmits(
+  mark: RosterMark | undefined,
+  at: number
+): boolean {
+  return mark === undefined || !mark.revoked || at > mark.at;
+}
+
 /** `identityId = hex(SHA-256("relic/identity/v1" || 0x00 || kemPub || sigPub))`. */
 export function identityIdOf(
   kemPub: Uint8Array,

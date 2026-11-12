@@ -1432,6 +1432,34 @@ describe('a seal that races a change to the recipient set (PS2-06)', () => {
     expect(await store.getWrap(RELIC_ID, 2, firstKem.keyId)).toBeUndefined();
   });
 
+  test('a revoked device carries its owner-signed revocation on the recipients answer', async () => {
+    const owner = await person('owner@example.com');
+    await registerIdentity(owner);
+    const sealed = await sealedPrivateRelic(owner);
+    const revoked = await send(
+      `/api/devices/${sealed.deviceId}/revoke`,
+      await deviceRevocation(owner, sealed.deviceId)
+    );
+    expect(revoked.status).toBe(200);
+    const answer = await send(
+      `/api/relics/${RELIC_ID}/recipients`,
+      post({ publish_token: sealed.publishToken })
+    );
+    expect(answer.status).toBe(200);
+    const devices = answer.body['devices'] as Record<string, unknown>[];
+    const entry = devices.find(
+      (device) => device['device_id'] === sealed.deviceId
+    );
+    expect(entry?.['revoked_at']).toEqual(expect.any(String));
+    const revocation = entry?.['revocation'] as {
+      statement: Record<string, unknown>;
+      identity_signature: string;
+    } | null;
+    expect(revocation?.statement['device_id']).toBe(sealed.deviceId);
+    expect(revocation?.statement['owner_identity_id']).toBe(owner.identityId);
+    expect(revocation?.identity_signature).toEqual(expect.any(String));
+  });
+
   test('the publish token refuses a wrap for a key that is no longer a current recipient', async () => {
     const owner = await person('owner@example.com');
     await registerIdentity(owner);
