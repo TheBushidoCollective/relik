@@ -2766,24 +2766,24 @@ async function seekTo(browser: ChromeSession, frame: number): Promise<void> {
   );
 }
 
-// Pauses playback from its own evaluate, after a capture's result has been returned. A capture
-// returns tens of megabytes of trace. Serialising it blocks the page for longer than the
-// transport closure watchdog, so a pause clicked just before that return is judged late and
-// the viewer reports "transport gate closure was not acknowledged". Returns the diagnostics
-// the reader sees once the pause has settled.
-async function pausePlayback(browser: ChromeSession): Promise<string> {
-  return browser.evaluate<string>(`(async () => {
-    const sleep = ms => { const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, ms); return promise; };
-    const root = document.querySelector('.otio-view');
-    const button = document.querySelector('button.otio-play');
-    if (!(root instanceof HTMLElement) || !(button instanceof HTMLButtonElement)) throw new Error('pause controls missing');
-    if (root.dataset.playing === 'true') button.click();
-    const deadline = performance.now() + 3000;
-    while ((root.dataset.playing === 'true' || root.dataset.buffering === 'true') && performance.now() < deadline) await sleep(20);
-    await sleep(250);
-    return Array.from(document.querySelectorAll('.otio-diagnostic')).map(node => node.textContent ?? '').join(' ');
-  })()`);
-}
+// Pauses a playing view and waits for the pause to settle, inside a capture's own evaluate and
+// before the capture returns its trace. A trace is tens of megabytes, and serialising it blocks
+// the page for longer than the transport closure watchdog and longer than the audio lead. A
+// pause clicked just before that return is judged late ("transport gate closure was not
+// acknowledged"), and playback left running through it starves its frontier ("recovery render
+// handoff has no feasible frame"). The capture has already read its trace when this runs.
+// Resolves to the diagnostics the reader sees once the pause has settled.
+const SETTLE_PAUSE_JS = `const settlePause = async () => {
+  const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+  const root = document.querySelector('.otio-view');
+  const button = document.querySelector('button.otio-play');
+  if (!(root instanceof HTMLElement) || !(button instanceof HTMLButtonElement)) throw new Error('pause controls missing');
+  if (root.dataset.playing === 'true') button.click();
+  const deadline = performance.now() + 3000;
+  while ((root.dataset.playing === 'true' || root.dataset.buffering === 'true') && performance.now() < deadline) await sleep(20);
+  await sleep(250);
+  return Array.from(document.querySelectorAll('.otio-diagnostic')).map(node => node.textContent ?? '').join(' ');
+};`;
 
 interface SampledCanvas extends Uint8Array {
   dataFrame?: number | null;
@@ -13187,7 +13187,9 @@ async function assessMovingWindowControls(
         scale:devicePixelRatio, timeOrigin:performance.timeOrigin};
     })()`);
     const stopCast = await browser.startScreencast();
-    const capture = await browser.evaluate<MovingTrace>(`(async () => {
+    const capture = await browser.evaluate<
+      MovingTrace & { paused: string }
+    >(`(async () => {
       const sleep = ms => { const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, ms); return promise; };
       const root = document.querySelector('.otio-view');
       const button = document.querySelector('button.otio-play');
@@ -13205,10 +13207,12 @@ async function assessMovingWindowControls(
       await sleep(500);
       const trace = await globalThis.__otioProofTrace.stop();
       globalThis.__otioProofTrace.setFault('none');
-      return {start, playEdge, warm, trace};
+      ${SETTLE_PAUSE_JS}
+      const paused = await settlePause();
+      return {start, playEdge, warm, trace, paused};
     })()`);
     const cast = await stopCast();
-    const paused = await pausePlayback(browser);
+    const paused = capture.paused;
     if (fault === 'none')
       assert.doesNotMatch(
         paused,
@@ -13898,7 +13902,9 @@ async function assessMovingWindowControls(
           scale:devicePixelRatio, timeOrigin:performance.timeOrigin};
       })()`);
       const stopCast = await browser.startScreencast();
-      const capture = await browser.evaluate<MovingTrace>(`(async () => {
+      const capture = await browser.evaluate<
+        MovingTrace & { paused: string }
+      >(`(async () => {
       const sleep = ms => { const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, ms); return promise; };
       const root = document.querySelector('.otio-view');
       const button = document.querySelector('button.otio-play');
@@ -13925,10 +13931,12 @@ async function assessMovingWindowControls(
       } else await sleep(5600);
       const trace = await globalThis.__otioProofTrace.stop();
       globalThis.__otioProofTrace.setFault('none');
-      return {start, trace};
+      ${SETTLE_PAUSE_JS}
+      const paused = await settlePause();
+      return {start, trace, paused};
     })()`);
       const cast = await stopCast();
-      const paused = await pausePlayback(browser);
+      const paused = capture.paused;
       assert.doesNotMatch(
         paused,
         /Scheduled audio stopped:/,
@@ -14215,9 +14223,10 @@ async function assertVideoReservationInvalidation(
     globalThis.__otioProofPcmFault = null;
     const playing = root.dataset.playing ?? '';
     const diagnostic = Array.from(document.querySelectorAll('.otio-diagnostic')).map(node => node.textContent ?? '').join(' ');
+    ${SETTLE_PAUSE_JS}
+    await settlePause();
     return {start, playEdge, trace, playing, diagnostic};
   })()`);
-  await pausePlayback(browser);
   await writeFile(
     join(shotDir, 'video-reservation-invalidated.json'),
     JSON.stringify({ provenance, capture })
@@ -14324,9 +14333,10 @@ async function assertVideoReservationInvalidation(
     globalThis.__otioProofHoldOldDrain = false;
     await sleep(700);
     const trace = await globalThis.__otioProofTrace.stop();
+    ${SETTLE_PAUSE_JS}
+    await settlePause();
     return {start, playEdge, trace, sawHeld, handoffBeforeRelease};
   })()`);
-  await pausePlayback(browser);
   await writeFile(
     join(shotDir, 'video-future-starvation.json'),
     JSON.stringify({ provenance, capture: future })
@@ -15260,10 +15270,11 @@ async function calibratePostGainTap(
       const restored = globalThis.__otioProofTrace.restore(mute.value);
       await sleep(600);
       const trace = await globalThis.__otioProofTrace.stop();
+      ${SETTLE_PAUSE_JS}
+      await settlePause();
       return {start, mute, restored, trace};
     })()`);
       const cast = await stopCast();
-      await pausePlayback(browser);
       await writeFile(
         join(shotDir, 'post-gain-calibration.json'),
         JSON.stringify({ provenance, capture, cast })
