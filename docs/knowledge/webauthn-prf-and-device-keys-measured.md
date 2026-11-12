@@ -54,4 +54,14 @@ The consequence is that the design keeps the device key in a file or the Secure 
 - Safari and Firefox WebCrypto for the identity operations.
 - Browser memory limits for rekeying a large private relic.
 
+## Same-user residuals (from the security reviews, not measured here)
+
+The two independent reviews of the private-shares build record these as code-level findings. This note has not measured them.
+
+- A Secure Enclave key carries no access control beyond the process that holds it. A process running as the same user can run the helper and use the key for ECDH with every device wrap. The earlier measurement shows the key survives a rebuilt binary, which is the reason a different binary can use it.
+- Version keys sit in plaintext in a 0600 `publish-state.json`. A process running as the same user can read them.
+- The harness environment is not isolated from an operator's `RELIC_DEVICE_KEYS` setting.
+
+The design accepts these as same-user threat-model residuals, and it does not claim the device keys are protected from a process running as the user.
+
 Related: [[browser-crypto-and-large-file-constraints]], [[rfc8188-container-facts-and-implementation-landscape]].

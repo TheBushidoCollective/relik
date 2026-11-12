@@ -726,10 +726,11 @@ A private relic's link is `https://<relic-domain>/{id}` with no fragment. Its ke
 5. **Open a version** (`ready`). The reader opens the highest sealed version they can read, never an unsealed one (plan section 3, decision 5). Before any content renders, the viewer verifies each of the following and refuses when one fails:
 - the wrap opens with the reader's KEM key;
 - the seal's signature chains to the owner identity, whether the signer is a device or an identity;
-- the recipient list contains the reader's `kemKeyId`;
+- the wrap is addressed to the reader's own `kemKeyId` and unwraps. The reader does not have to appear in the seal's `recipient_key_ids`, because HPKE binds the relic id, the version and the recipient, so a grant made after the version was sealed opens it;
 - the ciphertext SHA-256 equals the sealed digest;
 - the owner identity matches the one pinned for this relic in `localStorage['relic:private-owner:<id>']` at first open (plan section 3, decision 4).
-The pin is set at first open and never changes. A pin mismatch is a hard refusal in state `owner-changed`, with this copy: "The owner's key for this relic isn't the one you saw when you first opened it. Relic won't open it. Contact the person who shared it." It has no "accept new owner" control. A failed seal check (signature, digest or recipient list) refuses in `seal-mismatch`, with this copy: "This version doesn't match the owner's signature. Relic won't show it." The plan says each check refuses but does not say which state each failure uses beyond these two (open item). The record-0 key check of 6.4 describes public relics and does not apply here.
+- the unwrapped key matches the seal's `key_commitment` (`format.md` 3.18). A key that does not match is never used to decrypt, to open comments, or to re-wrap, because HPKE base mode does not authenticate the key it opens.
+The pin is set at first open and never changes. A pin mismatch is a hard refusal in state `owner-changed`, with this copy: "The owner's key for this relic isn't the one you saw when you first opened it. Relic won't open it. Contact the person who shared it." It has no "accept new owner" control. Each seal or wrap check that fails raises `SealMismatchError` and refuses in state `seal-mismatch`, with this copy: "This version doesn't match the owner's signature. Relic won't show it." Those checks are the seal signature, the device certificate, the owner keys, the wrap that does not open, the key commitment, and the ciphertext digest. A reader whose wrap is not addressed to their key is refused in `denied` (`RecipientMissingError`), since they have no key for the version. The record-0 key check of 6.4 describes public relics and does not apply here. Which state each failure uses is recorded in the code (`reader.ts`), not an open item.
 6. **Revoked and denied.** `revoked` and `denied` are named states of plan 4.15. The plan gives no copy for either, so none is quoted here.
 
 **Vault and key exclusion.** A private relic is never written to the local key vault, and the viewer never offers a key phrase or a key-bearing link for it (plan 4.13). The vault paths of 6.4 and 6.6 do not apply to a private relic. No private flow sends PRF output, key material or `clientExtensionResults` in any request body (plan 4.4, correction 19).
@@ -757,7 +758,7 @@ The pin is set at first open and never changes. A pin mismatch is a hard refusal
 **Open items.** Plan 4.15 and sections 2 to 10 leave each of these undecided here:
 - the mapping from the access declaration (`PrivateAccessJSON`) and the reader's local state to each `data-private-state` value;
 - the screen each `data-fingerprint` hook (`mine`, `owner`, `identity`, `owner-for-device`) holds;
-- the state a seal-check failure uses other than the owner pin. The plan names `seal-mismatch` for the signature copy only;
+- the state a seal-check failure uses is settled in the code (`reader.ts`, 6.12 reader path), so it is not an open item.
 - what a reader sees for an expired private relic once its live objects are removed. The plan names no copy for it;
 - copy for `revoked` and `denied`.
 
