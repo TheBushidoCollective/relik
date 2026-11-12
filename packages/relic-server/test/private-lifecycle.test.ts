@@ -15,13 +15,17 @@ import {
   wrapVersionKey,
   type IdentityKeys,
 } from '@relic/format/private';
-import { encryptedSize, type RequestOptionsJSON } from '@relic/format';
+import {
+  encryptedSize,
+  generateRelicId,
+  type RequestOptionsJSON,
+} from '@relic/format';
 import { createApp, type RelicApp } from '../src/app.ts';
 import { verifyStoredAttestation } from '../src/private/attest.ts';
 import { MemoryStorage } from '../src/storage.ts';
 import { MemoryStore } from '../src/store.ts';
 import { fakeAuthenticator } from './fake-authenticator.ts';
-import { DAY, NOW, RELIC_ID } from './private-fixtures.ts';
+import { attestation, DAY, NOW, RELIC_ID, relic } from './private-fixtures.ts';
 
 type FakeAuthenticator = Awaited<ReturnType<typeof fakeAuthenticator>>;
 
@@ -287,6 +291,7 @@ async function sealedPrivateRelic(owner: Person): Promise<{
   deviceId: string;
   versionKey: Uint8Array;
   digest: string;
+  publishToken: string;
 }> {
   const { keys: deviceKeys, deviceId } = await certifyDevice(owner);
   const content = randomBytes(64);
@@ -365,7 +370,13 @@ async function sealedPrivateRelic(owner: Person): Promise<{
     })
   );
   expect(sealed.status).toBe(200);
-  return { deviceKeys, deviceId, versionKey, digest };
+  return {
+    deviceKeys,
+    deviceId,
+    versionKey,
+    digest,
+    publishToken: granted.body['publish_token'] as string,
+  };
 }
 
 async function deviceKeyId(keys: IdentityKeys): Promise<string> {
@@ -678,5 +689,516 @@ describe('private gating: comments, shell, cover and republish', () => {
     expect(response.status).toBe(400);
     expect(response.body['code']).toBe('private_policy_violation');
     expect((await store.getRelic(RELIC_ID))!.version).toBe(1);
+  });
+});
+
+/** A device's signed context request. A fresh 32-byte nonce unless one is named. */
+async function contextRequest(
+  device: { keys: IdentityKeys; deviceId: string },
+  nonce: string = encodeBase64url(randomBytes(32))
+): Promise<{ status: number; body: Record<string, unknown> }> {
+  const path = `/api/devices/${device.deviceId}/context`;
+  const signature = await signStatement(
+    signer(device.keys),
+    statementBytes('device_request', {
+      at: now,
+      body_sha256: createHash('sha256').update('{}').digest('hex'),
+      device_id: device.deviceId,
+      method: 'POST',
+      nonce,
+      path,
+    } as never)
+  );
+  return send(
+    path,
+    post({
+      device_auth: { device_id: device.deviceId, nonce, at: now, signature },
+    })
+  );
+}
+
+/** An owner-bind request a device signs for one unowned relic. */
+async function ownerBind(
+  device: { keys: IdentityKeys; deviceId: string },
+  options: {
+    readonly relicId: string;
+    readonly token: string;
+    readonly ownerIdentityId: string;
+    readonly nonce?: string;
+  }
+): Promise<{ status: number; body: Record<string, unknown> }> {
+  const nonce = options.nonce ?? encodeBase64url(randomBytes(32));
+  const signature = await signStatement(
+    signer(device.keys),
+    statementBytes('owner_bind', {
+      at: now,
+      device_id: device.deviceId,
+      nonce,
+      owner_identity_id: options.ownerIdentityId,
+      relic_id: options.relicId,
+    } as never)
+  );
+  return send(
+    `/api/relics/${options.relicId}/owner`,
+    post({
+      publish_token: options.token,
+      device_auth: { device_id: device.deviceId, nonce, at: now, signature },
+    })
+  );
+}
+
+/** An unowned private relic whose publish token is `token`. */
+function unownedPrivateRelic(token: string, id: string = RELIC_ID) {
+  return relic({
+    id,
+    access: 'private',
+    expiresAt: NOW + 30 * DAY,
+    publishTokenHash: createHash('sha256').update(token).digest('hex'),
+  });
+}
+
+/** The owner's revocation of one reader, as the browser signs it. */
+async function revocationRequest(owner: Person, reader: Person) {
+  const attested = await attest(owner, 'revoke', RELIC_ID, [
+    {
+      kind: 'revocation',
+      statement: {
+        at: now,
+        grantee_identity_id: reader.identityId,
+        owner_identity_id: owner.identityId,
+        relic_id: RELIC_ID,
+      },
+    },
+    {
+      kind: 'republish',
+      statement: {
+        at: now,
+        owner_identity_id: owner.identityId,
+        previous_version: 1,
+        reason: 'rekey',
+        relic_id: RELIC_ID,
+      },
+    },
+  ]);
+  return post(
+    {
+      attestation: attested,
+      renderer_class: 'markdown',
+      declared_size_bytes: 64,
+      declared_ciphertext_bytes: encryptedSize(64),
+    },
+    owner.cookie
+  );
+}
+
+/** Makes the next wrap sweep throw, as a failed storage write would. Returns the restore. */
+function failNextSweep(): () => void {
+  const real = store.deleteWraps.bind(store);
+  store.deleteWraps = async () => {
+    throw new Error('store unavailable');
+  };
+  return () => {
+    store.deleteWraps = real;
+  };
+}
+
+describe('security review: server fixes', () => {
+  test('a wrap alone does not open a version: a stranger with a leftover wrap is refused the key and the mint', async () => {
+    const owner = await person('owner@example.com');
+    await registerIdentity(owner);
+    await sealedPrivateRelic(owner);
+    const stranger = await person('stranger@example.com');
+    await registerIdentity(stranger);
+    const strangerKeyId = (await store.getIdentity(
+      stranger.identityId as string
+    ))!.kemKeyId;
+    await store.putWrap({
+      relicId: RELIC_ID,
+      version: 1,
+      recipientKeyId: strangerKeyId,
+      enc: 'enc',
+      ct: 'ct',
+      createdAt: now,
+      source: 'backfill',
+    });
+
+    const key = await send(
+      `/api/relics/${RELIC_ID}/versions/1/key`,
+      post({}, stranger.cookie)
+    );
+    expect(key.status).toBe(403);
+    expect(key.body['code']).toBe('private_access_denied');
+    const minted = await send(
+      `/api/relics/${RELIC_ID}/mint`,
+      post({ version: 1 }, stranger.cookie)
+    );
+    expect(minted.status).toBe(403);
+    expect(minted.body['code']).toBe('private_access_denied');
+  });
+
+  test('a KEM public key another identity holds is refused at registration', async () => {
+    const owner = await person('owner@example.com');
+    await registerIdentity(owner);
+    const ownerKeys = owner.keys as IdentityKeys;
+    const stranger = await person('stranger@example.com');
+    const fresh = await generateIdentityKeys();
+    const keys: IdentityKeys = {
+      ...fresh,
+      kemPublicKey: ownerKeys.kemPublicKey,
+    };
+    stranger.keys = keys;
+    stranger.identityId = await identityIdOf(
+      keys.kemPublicKey,
+      keys.sigPublicKey
+    );
+    const statement = {
+      at: now,
+      email: stranger.email,
+      identity_id: stranger.identityId,
+      kem_public_key: encodeBase64url(keys.kemPublicKey),
+      replaces: null,
+      sig_public_key: encodeBase64url(keys.sigPublicKey),
+    };
+    const attested = await attest(stranger, 'identity_register', undefined, [
+      { kind: 'identity_register', statement, sign: false },
+    ]);
+    const response = await send(
+      '/api/identity',
+      post(
+        {
+          attestation: attested,
+          encrypted_bundle: encodeBase64url(randomBytes(64)),
+          replace: false,
+        },
+        stranger.cookie
+      )
+    );
+    expect(response.status).toBe(400);
+    expect(response.body['code']).toBe('invalid_statement');
+    expect(await store.getIdentityForAddress(stranger.email)).toBeUndefined();
+  });
+
+  test('a failed wrap sweep leaves the grant standing, so the owner can retry the revocation', async () => {
+    const owner = await person('owner@example.com');
+    await registerIdentity(owner);
+    const sealed = await sealedPrivateRelic(owner);
+    const reader = await person('reader@example.com');
+    await registerIdentity(reader);
+    const readerKem = (await store.getIdentity(reader.identityId as string))!
+      .kemPublicKey;
+    const granted = await send(
+      `/api/relics/${RELIC_ID}/grants`,
+      post(
+        {
+          attestation: await attest(owner, 'grant', RELIC_ID, [
+            {
+              kind: 'grant',
+              statement: {
+                at: now,
+                fingerprint_typed: await identityFingerprint(
+                  reader.identityId as string,
+                  reader.email
+                ),
+                grantee_email: reader.email,
+                grantee_identity_id: reader.identityId,
+                owner_identity_id: owner.identityId,
+                relic_id: RELIC_ID,
+                versions: [1],
+              },
+            },
+          ]),
+          wraps: [await wrap(decodeBase64url(readerKem), sealed.versionKey, 1)],
+        },
+        owner.cookie
+      )
+    );
+    expect(granted.status).toBe(201);
+
+    const restore = failNextSweep();
+    await expect(
+      app.fetch(
+        req(
+          `/api/relics/${RELIC_ID}/revocations`,
+          await revocationRequest(owner, reader)
+        )
+      )
+    ).rejects.toThrow('store unavailable');
+    restore();
+    expect(
+      (await store.getGrant(RELIC_ID, reader.identityId as string))?.revokedAt
+    ).toBeUndefined();
+
+    const retried = await send(
+      `/api/relics/${RELIC_ID}/revocations`,
+      await revocationRequest(owner, reader)
+    );
+    expect(retried.status).toBe(200);
+    expect(retried.body['revoked_identity_id']).toBe(reader.identityId);
+    const denied = await send(
+      `/api/relics/${RELIC_ID}/versions/1/key`,
+      post({}, reader.cookie)
+    );
+    expect(denied.status).toBe(403);
+  });
+
+  test('a failed wrap sweep leaves the device certified, so revoking it can be retried', async () => {
+    const owner = await person('owner@example.com');
+    await registerIdentity(owner);
+    const sealed = await sealedPrivateRelic(owner);
+    const device = sealed.deviceId;
+    const revocationFor = async () =>
+      post(
+        {
+          attestation: await attest(owner, 'device_revoke', undefined, [
+            {
+              kind: 'device_revocation',
+              statement: {
+                at: now,
+                device_id: device,
+                owner_identity_id: owner.identityId,
+              },
+            },
+          ]),
+        },
+        owner.cookie
+      );
+    const path = `/api/devices/${device}/revoke`;
+
+    const restore = failNextSweep();
+    await expect(app.fetch(req(path, await revocationFor()))).rejects.toThrow(
+      'store unavailable'
+    );
+    restore();
+    expect((await store.getDevice(device))?.revokedAt).toBeUndefined();
+
+    const retried = await send(path, await revocationFor());
+    expect(retried.status).toBe(200);
+    expect((await store.getDevice(device))?.revokedAt).toBeDefined();
+  });
+
+  test('a private republish refuses owner_email and a lifetime past the private maximum', async () => {
+    const owner = await person('owner@example.com');
+    await registerIdentity(owner);
+    const sealed = await sealedPrivateRelic(owner);
+    const path = `/api/relics/${RELIC_ID}/republish`;
+
+    const withOwner = await send(
+      path,
+      post({
+        publish_token: sealed.publishToken,
+        owner_email: 'someone@example.com',
+      })
+    );
+    expect(withOwner.status).toBe(400);
+    expect(withOwner.body['code']).toBe('private_policy_violation');
+
+    const longLived = await send(
+      path,
+      post({ publish_token: sealed.publishToken, ttl_days: 366 })
+    );
+    expect(longLived.status).toBe(400);
+    expect(longLived.body['code']).toBe('private_policy_violation');
+    expect((await store.getRelic(RELIC_ID))?.version).toBe(1);
+  });
+
+  test('a device request nonce works once, and a 16-byte nonce is refused', async () => {
+    const owner = await person('owner@example.com');
+    await registerIdentity(owner);
+    const device = await certifyDevice(owner);
+    const nonce = encodeBase64url(randomBytes(32));
+
+    expect((await contextRequest(device, nonce)).status).toBe(200);
+    const replayed = await contextRequest(device, nonce);
+    expect(replayed.status).toBe(400);
+    expect(replayed.body['code']).toBe('invalid_device');
+
+    const short = await contextRequest(
+      device,
+      encodeBase64url(randomBytes(16))
+    );
+    expect(short.status).toBe(400);
+    expect(short.body['code']).toBe('invalid_device');
+  });
+
+  test('a refused mint of a private relic writes no raw-IP mint log', async () => {
+    const owner = await person('owner@example.com');
+    await registerIdentity(owner);
+    await sealedPrivateRelic(owner);
+
+    const refused = await send(
+      `/api/relics/${RELIC_ID}/mint`,
+      post({ version: 99 })
+    );
+    expect(refused.body['code']).toBe('invalid_relic_version');
+    expect(await store.readMintLog()).toEqual([]);
+  });
+
+  test('the recipients and device context routes return the owner-signed recovery designation', async () => {
+    const owner = await person('owner@example.com');
+    await registerIdentity(owner);
+    const sealed = await sealedPrivateRelic(owner);
+    const recovery = await person('recovery@example.com');
+    await registerIdentity(recovery);
+    const designation = {
+      at: now,
+      fingerprint_typed: await identityFingerprint(
+        recovery.identityId as string,
+        recovery.email
+      ),
+      owner_identity_id: owner.identityId,
+      recovery_email: recovery.email,
+      recovery_identity_id: recovery.identityId,
+    };
+    await store.updateIdentity(owner.identityId as string, (current) => ({
+      ...current,
+      recovery: {
+        recoveryIdentityId: recovery.identityId as string,
+        recoveryEmail: recovery.email,
+        designatedAt: now,
+        attestation: {
+          ...attestation(),
+          statements: [
+            {
+              kind: 'recovery_designation',
+              statement: designation,
+              identitySignature: 'owner-signature',
+            },
+          ],
+        },
+      },
+    }));
+    const designated = {
+      designation: {
+        statement: designation,
+        identity_signature: 'owner-signature',
+      },
+    };
+
+    const recipients = await send(
+      `/api/relics/${RELIC_ID}/recipients`,
+      post({ publish_token: sealed.publishToken })
+    );
+    expect(recipients.status).toBe(200);
+    expect(recipients.body['recovery']).toMatchObject(designated);
+
+    const context = await contextRequest({
+      keys: sealed.deviceKeys,
+      deviceId: sealed.deviceId,
+    });
+    expect(context.status).toBe(200);
+    expect(context.body['recovery']).toMatchObject(designated);
+  });
+
+  test('the recovery lookup needs an identity of the caller', async () => {
+    const owner = await person('owner@example.com');
+    await registerIdentity(owner);
+    const stranger = await person('stranger@example.com');
+    const path = '/api/identity/recovery/lookup';
+
+    const refused = await send(
+      path,
+      post({ email: owner.email }, stranger.cookie)
+    );
+    expect(refused.status).toBe(409);
+    expect(refused.body['code']).toBe('identity_required');
+
+    const found = await send(path, post({ email: owner.email }, owner.cookie));
+    expect(found.status).toBe(200);
+    expect(found.body['party']).toMatchObject({ email: owner.email });
+  });
+
+  test('an owner bind gives an unowned private relic the device owner, once, and a nonce binds one relic only', async () => {
+    const owner = await person('owner@example.com');
+    await registerIdentity(owner);
+    const device = await certifyDevice(owner);
+    const token = encodeBase64url(randomBytes(32));
+    const ownerId = owner.identityId as string;
+    await store.putRelic(unownedPrivateRelic(token));
+    const nonce = encodeBase64url(randomBytes(32));
+
+    const bound = await ownerBind(device, {
+      relicId: RELIC_ID,
+      token,
+      ownerIdentityId: ownerId,
+      nonce,
+    });
+    expect(bound.status).toBe(200);
+    expect(bound.body['owner']).toMatchObject({ email: owner.email });
+    expect((await store.getRelic(RELIC_ID))?.ownerIdentityId).toBe(ownerId);
+    expect(
+      (await store.listOwnedRelics(ownerId)).map((o) => o.relicId)
+    ).toContain(RELIC_ID);
+
+    const again = await ownerBind(device, {
+      relicId: RELIC_ID,
+      token,
+      ownerIdentityId: ownerId,
+    });
+    expect(again.status).toBe(409);
+    expect(again.body['code']).toBe('owner_exists');
+
+    const otherRelic = generateRelicId();
+    await store.putRelic(unownedPrivateRelic(token, otherRelic));
+    const replayed = await ownerBind(device, {
+      relicId: otherRelic,
+      token,
+      ownerIdentityId: ownerId,
+      nonce,
+    });
+    expect(replayed.status).toBe(400);
+    expect(replayed.body['code']).toBe('invalid_device');
+    expect((await store.getRelic(otherRelic))?.ownerIdentityId).toBeUndefined();
+  });
+
+  test('an owner bind with the wrong publish token is refused', async () => {
+    const owner = await person('owner@example.com');
+    await registerIdentity(owner);
+    const device = await certifyDevice(owner);
+    await store.putRelic(unownedPrivateRelic(encodeBase64url(randomBytes(32))));
+
+    const refused = await ownerBind(device, {
+      relicId: RELIC_ID,
+      token: encodeBase64url(randomBytes(32)),
+      ownerIdentityId: owner.identityId as string,
+    });
+    expect(refused.status).toBe(403);
+    expect(refused.body['code']).toBe('invalid_publish_token');
+    expect((await store.getRelic(RELIC_ID))?.ownerIdentityId).toBeUndefined();
+  });
+
+  test('an owner bind from a revoked device is refused', async () => {
+    const owner = await person('owner@example.com');
+    await registerIdentity(owner);
+    const device = await certifyDevice(owner);
+    const token = encodeBase64url(randomBytes(32));
+    await store.putRelic(unownedPrivateRelic(token));
+    const revoked = await send(
+      `/api/devices/${device.deviceId}/revoke`,
+      post(
+        {
+          attestation: await attest(owner, 'device_revoke', undefined, [
+            {
+              kind: 'device_revocation',
+              statement: {
+                at: now,
+                device_id: device.deviceId,
+                owner_identity_id: owner.identityId,
+              },
+            },
+          ]),
+        },
+        owner.cookie
+      )
+    );
+    expect(revoked.status).toBe(200);
+
+    const refused = await ownerBind(device, {
+      relicId: RELIC_ID,
+      token,
+      ownerIdentityId: owner.identityId as string,
+    });
+    expect(refused.status).toBe(403);
+    expect(refused.body['code']).toBe('device_revoked');
+    expect((await store.getRelic(RELIC_ID))?.ownerIdentityId).toBeUndefined();
   });
 });

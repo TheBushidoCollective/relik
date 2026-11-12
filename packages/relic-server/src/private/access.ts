@@ -28,6 +28,12 @@ export type AccessRole =
   | 'declined'
   | 'none';
 
+/** The roles that may open a version. A wrap alone is never authority (plan 4.12). */
+const READABLE_ROLES: Partial<Record<AccessRole, true>> = {
+  owner: true,
+  grantee: true,
+  recovery: true,
+};
 export interface Standing {
   readonly role: AccessRole;
   readonly grant?: GrantRow;
@@ -151,7 +157,7 @@ export async function requireRead(
     });
   }
   const standing = await standingOf(env, row, owner, me);
-  if (me === undefined || standing.role === 'revoked') {
+  if (me === undefined || READABLE_ROLES[standing.role] !== true) {
     throw new ProblemError('private_access_denied', { relic_id: row.id });
   }
   const wrap = await env.store.getWrap(row.id, version, me.kemKeyId);

@@ -50,6 +50,27 @@ export function refusePrivatePolicy(body: Record<string, unknown>): void {
 }
 
 /**
+ * Refuses a lifetime the regulated profile does not allow (plan 4.9): a
+ * `ttl_days` that is not a whole number of days from 1 to the private
+ * maximum. An absent or null value is the default and passes.
+ */
+export function refusePrivateTtl(
+  body: Record<string, unknown>,
+  maxDays: number
+): void {
+  const ttl = body['ttl_days'];
+  if (ttl === undefined || ttl === null) return;
+  if (
+    typeof ttl !== 'number' ||
+    !Number.isSafeInteger(ttl) ||
+    ttl < 1 ||
+    ttl > maxDays
+  ) {
+    throw new ProblemError('private_policy_violation', { policy_check: 'ttl' });
+  }
+}
+
+/**
  * Checks a private grant's TTL and device authority, returning the owner and
  * the expiry. The device signs `private_publish`, which binds the challenge
  * nonce, the relic id and the lifetime, so a signed publish cannot be
