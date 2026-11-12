@@ -98,7 +98,7 @@ export interface DecisionPanelOptions {
   readonly deps: ViewerDeps;
   /** The band control, which gets focus back when the sheet closes. */
   readonly opener: HTMLElement;
-  readonly shareProof: () => Promise<string>;
+  readonly shareProof?: () => Promise<string>;
   /** Lists the records on `view.version`. */
   readonly listDecisions: () => Promise<DecisionListOutcome>;
   readonly readSession: () => Promise<SessionState>;
@@ -1349,7 +1349,9 @@ export function openDecisionPanel(
         const reply = await api(decisionsPath('/options'), {
           version: view.version,
           verdict,
-          share_proof: await options.shareProof(),
+          ...(options.shareProof === undefined
+            ? {}
+            : { share_proof: await options.shareProof() }),
         });
         if (!open) return;
         if (reply.ok) {
@@ -1705,7 +1707,9 @@ export function openDecisionPanel(
         const reply = await api(decisionsPath(''), {
           version: decisionOptions.version,
           verdict,
-          share_proof: await options.shareProof(),
+          ...(options.shareProof === undefined
+            ? {}
+            : { share_proof: await options.shareProof() }),
           // The digest of the bytes this page decrypted, never the service's
           // echo: the binding must not rest on the equality check above.
           version_digest: view.versionDigest,
