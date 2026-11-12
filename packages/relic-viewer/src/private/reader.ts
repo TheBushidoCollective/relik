@@ -44,8 +44,6 @@ import {
   setUpIdentity,
 } from './identity.ts';
 import {
-  fetchAndDecryptVersion,
-  fetchVersionKey,
   InvalidKeyResponseError,
   type OpenedVersion,
   OwnerChangedError,
@@ -57,13 +55,12 @@ import {
   VersionUnavailableError,
 } from './open.ts';
 import {
-  loadIdentityState,
   NoIdentityError,
   PrfUnavailableError,
   PrivateRequestError,
   type UnlockedIdentity,
-  unlock,
 } from './keys.ts';
+import { privateKeysOf } from './ops.ts';
 
 export interface PrivateReaderMount {
   readonly root: HTMLElement;
@@ -93,6 +90,7 @@ type ReaderStage =
   | 'replace-offer'
   | 'request'
   | 'requested'
+  | 'requested-locked'
   | 'declined'
   | 'unlock'
   | 'revoked'
@@ -188,6 +186,19 @@ const STAGES_HTML = `
     <p class="fingerprint" data-fingerprint="mine" aria-labelledby="fp-mine-caption"></p>
     <p class="fp-instruction">Read this fingerprint to the person who shared the link, on a phone or video call. Don't send it by email or chat: it only protects you if it travels a different way than this site.</p>
     <p class="card-note" data-request-note></p>
+  </div>
+</div>
+
+<div class="stage" data-for="requested-locked" hidden>
+  <div class="card">
+    <h1 class="card-title" tabindex="-1">Request sent</h1>
+    <p class="card-meta" data-signed-in></p>
+    <div class="card-body">
+      <p>Your fingerprint shows here once your passkey unlocks it in this browser. Read it to the person who shared the link, on a phone or video call.</p>
+    </div>
+    <div class="card-actions">
+      <button type="button" class="action primary" data-action="private-unlock-requested">Unlock with passkey</button>
+    </div>
   </div>
 </div>
 
@@ -370,6 +381,7 @@ class PrivateReader {
     action('private-replace-passkey', () => this.replacePasskey());
     action('private-request', () => this.request());
     action('private-unlock', () => this.unlockAndOpen());
+    action('private-unlock-requested', () => this.unlockRequested());
 
     required<HTMLButtonElement>(this.host, '#replace-not-now').addEventListener(
       'click',
@@ -446,7 +458,9 @@ class PrivateReader {
     }
     this.email = session.email;
     try {
-      this.identityState = await loadIdentityState(this.mount.deps);
+      this.identityState = await privateKeysOf(
+        this.mount.deps
+      ).loadIdentityState(this.mount.deps);
       if (this.identityState.identity === null) {
         this.show('setup');
         return;
@@ -461,13 +475,10 @@ class PrivateReader {
       this.failure(error);
       return;
     }
-    this.routeAccess(this.access, this.identityState.identity?.identity_id);
+    this.routeAccess(this.access);
   }
 
-  private routeAccess(
-    access: AccessView,
-    identityId: string | undefined
-  ): void {
+  private routeAccess(access: AccessView): void {
     switch (access.role) {
       case 'revoked':
         this.show('revoked');
@@ -476,8 +487,7 @@ class PrivateReader {
         this.show('declined');
         return;
       case 'requested':
-        if (identityId !== undefined) this.showRequested(identityId);
-        else this.show('request');
+        this.show('requested-locked');
         return;
       case 'none':
         this.show('request');
@@ -580,13 +590,34 @@ class PrivateReader {
     }
   }
 
+  /** The requested stage shows its fingerprint only once this page has unlocked the key. */
+  private async unlockRequested(): Promise<void> {
+    if (this.identityState === undefined) {
+      this.show('signin');
+      return;
+    }
+    try {
+      const identity = await privateKeysOf(this.mount.deps).unlock(
+        this.mount.deps,
+        this.identityState
+      );
+      this.identity = identity;
+      this.showRequested(identity.identityId);
+    } catch (error) {
+      this.failure(error);
+    }
+  }
+
   private async unlockAndOpen(): Promise<void> {
     if (this.identityState === undefined) {
       this.show('signin');
       return;
     }
     try {
-      const identity = await unlock(this.mount.deps, this.identityState);
+      const identity = await privateKeysOf(this.mount.deps).unlock(
+        this.mount.deps,
+        this.identityState
+      );
       this.identity = identity;
       await this.openSealed(identity);
     } catch (error) {
@@ -608,7 +639,7 @@ class PrivateReader {
       return;
     }
     this.pendingVersion = access.sealedVersion;
-    const opened = await fetchAndDecryptVersion(
+    const opened = await privateKeysOf(this.mount.deps).fetchAndDecryptVersion(
       this.mount.deps,
       this.mount.relicId,
       access.sealedVersion,
@@ -655,12 +686,9 @@ class PrivateReader {
   ): Promise<Uint8Array> {
     const cached = this.keyPromises.get(version);
     if (cached !== undefined) return cached;
-    const pending = fetchVersionKey(
-      this.mount.deps,
-      this.mount.relicId,
-      version,
-      identity
-    ).then((fetched) => fetched.key);
+    const pending = privateKeysOf(this.mount.deps)
+      .fetchVersionKey(this.mount.deps, this.mount.relicId, version, identity)
+      .then((fetched) => fetched.key);
     this.keyPromises.set(version, pending);
     pending.catch(() => this.keyPromises.delete(version));
     return pending;
@@ -671,7 +699,9 @@ class PrivateReader {
     identity: UnlockedIdentity
   ): Promise<HistoricalVersionState> {
     try {
-      const opened = await fetchAndDecryptVersion(
+      const opened = await privateKeysOf(
+        this.mount.deps
+      ).fetchAndDecryptVersion(
         this.mount.deps,
         this.mount.relicId,
         version,

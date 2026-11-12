@@ -26,7 +26,7 @@ import {
   waiting,
   fingerprintGroups,
 } from './fingerprint-input.ts';
-import { attest } from './keys.ts';
+import { privateKeysOf } from './ops.ts';
 
 /** A device certificate lasts a year (config `deviceCertMaxDays`). */
 const DEVICE_CERT_MS = 365 * 24 * 60 * 60 * 1000;
@@ -138,7 +138,7 @@ async function revokeDevice(
   const restore = waiting(button, 'Waiting');
   const at = Date.now();
   try {
-    const tapped = await attest(ctx.deps, {
+    const tapped = await privateKeysOf(ctx.deps).attest(ctx.deps, {
       purpose: 'device_revoke',
       build: (identityId) => [
         {
@@ -340,7 +340,7 @@ async function approveDevice(
   const restore = waiting(button);
   const at = Date.now();
   try {
-    const tapped = await attest(ctx.deps, {
+    const tapped = await privateKeysOf(ctx.deps).attest(ctx.deps, {
       purpose: 'device_approve',
       build: (identityId) => [
         {

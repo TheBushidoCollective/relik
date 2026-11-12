@@ -22,7 +22,7 @@ import {
   fingerprintGroups,
 } from './fingerprint-input.ts';
 import { bindPasskey } from './identity.ts';
-import { loadIdentityState, unlock } from './keys.ts';
+import { privateKeysOf } from './ops.ts';
 import { recoverySection, repairCoverage } from './recovery.ts';
 
 export interface PrivateDashboardContext {
@@ -72,7 +72,7 @@ async function render(
   ctx: PrivateDashboardContext
 ): Promise<void> {
   try {
-    const state = await loadIdentityState(ctx.deps);
+    const state = await privateKeysOf(ctx.deps).loadIdentityState(ctx.deps);
     const again = (): void => {
       void render(host, ctx);
     };
@@ -150,16 +150,19 @@ function identitySection(
     'data-fingerprint': 'identity',
     'aria-labelledby': 'fp-identity-caption',
   });
-  void identityFingerprint(identity.identity_id, identity.email).then(
-    (value) => {
-      setChildren(fingerprint, ...fingerprintGroups(formatFingerprint(value)));
-    }
-  );
   const outcome = h('p', {
     class: 'dash-outcome',
     id: 'bind-outcome',
     role: 'status',
     'aria-live': 'polite',
+  });
+  const reveal = h(
+    'button',
+    { type: 'button', class: 'btn', 'data-reveal-fingerprint': 'identity' },
+    'Unlock with passkey to show it'
+  );
+  reveal.addEventListener('click', () => {
+    void revealFingerprint(ctx.deps, state, reveal, fingerprint, outcome);
   });
   const passkeys = h(
     'ul',
@@ -215,6 +218,7 @@ function identitySection(
       { class: 'fp-caption', id: 'fp-identity-caption' },
       'Your fingerprint'
     ),
+    reveal,
     fingerprint,
     h(
       'p',
@@ -227,6 +231,34 @@ function identitySection(
   );
 }
 
+/**
+ * Unlocks the key in this page, then shows the fingerprint computed from that
+ * unlocked identity. The service's identity ID is never shown unverified.
+ */
+async function revealFingerprint(
+  deps: ViewerDeps,
+  state: IdentityStateJSON,
+  button: HTMLButtonElement,
+  fingerprint: HTMLElement,
+  outcome: HTMLElement
+): Promise<void> {
+  const restore = waiting(button, 'First tap');
+  try {
+    const identity = await privateKeysOf(deps).unlock(deps, state);
+    const value = await identityFingerprint(
+      identity.identityId,
+      identity.email
+    );
+    restore();
+    setChildren(fingerprint, ...fingerprintGroups(formatFingerprint(value)));
+    button.hidden = true;
+  } catch (error) {
+    restore();
+    outcome.className = 'dash-outcome is-bad';
+    setChildren(outcome, problemMessage(error));
+  }
+}
+
 async function bind(
   ctx: PrivateDashboardContext,
   state: IdentityStateJSON,
@@ -236,7 +268,7 @@ async function bind(
 ): Promise<void> {
   const restore = waiting(button, 'First tap');
   try {
-    const identity = await unlock(ctx.deps, state);
+    const identity = await privateKeysOf(ctx.deps).unlock(ctx.deps, state);
     restore();
     const bound = await bindPasskey(ctx.deps, identity);
     outcome.className = 'dash-outcome is-ok';

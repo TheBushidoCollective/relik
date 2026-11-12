@@ -15,6 +15,9 @@ import { encryptRelic } from '@relic/format';
 import {
   decodeBase64url,
   deriveKek,
+  deviceFingerprint,
+  deviceIdOf,
+  type DevicePublicJSON,
   encodeBase64url,
   encryptIdentityBundle,
   formatFingerprint,
@@ -206,6 +209,64 @@ interface WorldOptions {
   readonly tamperSeal?: boolean;
   readonly tamperCiphertext?: boolean;
   readonly role?: string;
+  /** The seal is signed by a device the owner certified, not by the owner. */
+  readonly device?: {
+    readonly notAfter: number;
+    readonly recordLabel?: string;
+  };
+}
+
+/** A device the owner certified, and the record the service serves for it. */
+async function deviceFor(
+  owner: IdentityKeys,
+  ownerId: string,
+  options: { readonly notAfter: number; readonly recordLabel?: string }
+): Promise<{
+  readonly keys: IdentityKeys;
+  readonly deviceId: string;
+  readonly json: DevicePublicJSON;
+}> {
+  const keys = await generateIdentityKeys();
+  const deviceId = await deviceIdOf(keys.kemPublicKey, keys.sigPublicKey);
+  const kem = encodeBase64url(keys.kemPublicKey);
+  const sig = encodeBase64url(keys.sigPublicKey);
+  const certStatement = {
+    at: NOW,
+    device_fingerprint_typed: await deviceFingerprint(deviceId),
+    device_id: deviceId,
+    kem_public_key: kem,
+    label: 'laptop',
+    not_after: options.notAfter,
+    owner_identity_id: ownerId,
+    sig_public_key: sig,
+  };
+  const certSignature = await signStatement(
+    async (message) =>
+      new Uint8Array(
+        await crypto.subtle.sign(
+          { name: 'ECDSA', hash: 'SHA-256' },
+          owner.sig.privateKey,
+          new Uint8Array(message)
+        )
+      ),
+    statementBytes('device_cert', certStatement)
+  );
+  return {
+    keys,
+    deviceId,
+    json: {
+      device_id: deviceId,
+      owner_identity_id: ownerId,
+      kem_public_key: kem,
+      sig_public_key: sig,
+      label: options.recordLabel ?? 'laptop',
+      backend: 'file',
+      not_after: options.notAfter,
+      certified_at: '2026-11-11T00:00:00Z',
+      revoked_at: null,
+      cert: { statement: certStatement, identity_signature: certSignature },
+    },
+  };
 }
 
 /**
@@ -240,6 +301,11 @@ async function sealedWorld(
     : ciphertext;
   const digest = await sha256Hex(ciphertext);
 
+  const device =
+    options.device === undefined
+      ? undefined
+      : await deviceFor(owner, ownerId, options.device);
+  const signer = device?.keys ?? owner;
   const sealStatement = {
     access_epoch: 0,
     at: NOW,
@@ -247,7 +313,7 @@ async function sealedWorld(
     owner_epoch: 0,
     recipient_key_ids: options.omitRecipient ? [ownerKeyId] : [readerKeyId],
     relic_id: relicId,
-    signer_id: ownerId,
+    signer_id: device?.deviceId ?? ownerId,
     version: 1,
   };
   const signed = await signStatement(
@@ -255,7 +321,7 @@ async function sealedWorld(
       new Uint8Array(
         await crypto.subtle.sign(
           { name: 'ECDSA', hash: 'SHA-256' },
-          owner.sig.privateKey,
+          signer.sig.privateKey,
           new Uint8Array(message)
         )
       ),
@@ -284,8 +350,15 @@ async function sealedWorld(
       enc: wrap.enc,
       ct: wrap.ct,
     },
-    seal: { statement: sealStatement, signature, signer_kind: 'identity' },
-    signer: { kind: 'identity' },
+    seal: {
+      statement: sealStatement,
+      signature,
+      signer_kind: device === undefined ? 'identity' : 'device',
+    },
+    signer:
+      device === undefined
+        ? { kind: 'identity' }
+        : { kind: 'device', device: device.json },
     owner: {
       email: 'sam@example.com',
       identity: {
@@ -1020,6 +1093,84 @@ describe('a version that does not verify is refused', () => {
   });
 });
 
+describe('a device signer is checked against its certificate', () => {
+  test('a certificate that expired before the seal was made is refused', async () => {
+    const world = await sealedWorld(freshRelicId(), {
+      device: { notAfter: NOW - 1 },
+    });
+    const { deps } = readerDeps(world);
+    const identity = await unlock(deps, await loadIdentityState(deps));
+
+    await expect(
+      fetchVersionKey(deps, world.relicId, 1, identity)
+    ).rejects.toBeInstanceOf(SealMismatchError);
+  });
+
+  test('a device record whose label differs from its certificate is refused', async () => {
+    const world = await sealedWorld(freshRelicId(), {
+      device: { notAfter: NOW + 86_400_000, recordLabel: 'phone' },
+    });
+    const { deps } = readerDeps(world);
+    const identity = await unlock(deps, await loadIdentityState(deps));
+
+    await expect(
+      fetchVersionKey(deps, world.relicId, 1, identity)
+    ).rejects.toBeInstanceOf(SealMismatchError);
+  });
+
+  test('a device certified past the seal time opens the version it sealed', async () => {
+    const world = await sealedWorld(freshRelicId(), {
+      device: { notAfter: NOW + 86_400_000 },
+    });
+    const { deps } = readerDeps(world);
+    const identity = await unlock(deps, await loadIdentityState(deps));
+
+    const fetched = await fetchVersionKey(deps, world.relicId, 1, identity);
+
+    expect(Array.from(fetched.key)).toEqual(Array.from(world.key));
+  });
+});
+
+describe('the dashboard shows the identity fingerprint only from an unlocked key', () => {
+  test('the identity card waits for one passkey tap, then shows the fingerprint of the unlocked key', async () => {
+    const relicId = freshRelicId();
+    const world = await sealedWorld(relicId);
+    const { fetch } = service(world.routes);
+    const deps = depsFor(
+      fetch,
+      authenticator(() =>
+        assertion(world.readerPasskey.rawId, world.readerPasskey.prf)
+      )
+    );
+    const root = new El('main');
+    await mountPrivateDashboard(root as unknown as HTMLElement, deps);
+    await until(
+      () =>
+        root.querySelector('#private-dashboard [data-private-dashboard]') !==
+        null,
+      'the private dashboard'
+    );
+
+    expect(
+      root.querySelector('[data-fingerprint="identity"]')?.textContent ?? ''
+    ).toBe('');
+    press(root, '[data-reveal-fingerprint="identity"]');
+    await until(
+      () =>
+        (root.querySelector('[data-fingerprint="identity"]')?.textContent ??
+          '') !== '',
+      'the fingerprint after one tap'
+    );
+    const shown = root.querySelector('[data-fingerprint="identity"]');
+    if (shown === null) throw new Error('no identity fingerprint');
+    expect(groupsOf(shown)).toEqual(
+      formatFingerprint(
+        await identityFingerprint(world.readerId, READER_EMAIL)
+      ).split(' ')
+    );
+  });
+});
+
 describe('setup refuses a passkey that cannot hold a key', () => {
   test('without PRF output, setup offers a replacement and sends no identity', async () => {
     const { fetch, seen } = service({
@@ -1293,7 +1444,12 @@ describe('the reader drives every state of plan 4.15', () => {
     const { deps } = readerDeps(world);
     const { root } = await mountReader(deps, relicId);
 
-    await until(() => stateOf(root) === 'requested', 'the pending request');
+    await until(
+      () => stateOf(root) === 'requested-locked',
+      'the locked pending request'
+    );
+    press(root, '[data-action="private-unlock-requested"]');
+    await until(() => stateOf(root) === 'requested', 'the fingerprint');
     const mine = stageOf(root, 'requested').querySelector(
       '[data-fingerprint="mine"]'
     );
@@ -1303,6 +1459,48 @@ describe('the reader drives every state of plan 4.15', () => {
         await identityFingerprint(world.readerId, READER_EMAIL)
       ).split(' ')
     );
+  });
+
+  test('requested on reload waits for one passkey tap before any fingerprint is shown', async () => {
+    const relicId = freshRelicId();
+    const world = await sealedWorld(relicId, { role: 'requested' });
+    const { root } = await mountReader(readerDeps(world).deps, relicId);
+
+    await until(
+      () => stateOf(root) === 'requested-locked',
+      'the locked pending request'
+    );
+    expect(
+      stageOf(root, 'requested').querySelector('[data-fingerprint="mine"]')
+        ?.textContent ?? ''
+    ).toBe('');
+  });
+
+  test('requested on reload never shows a fingerprint for an identity id the service substituted', async () => {
+    const relicId = freshRelicId();
+    const world = await sealedWorld(relicId, { role: 'requested' });
+    const attacker = await generateIdentityKeys();
+    const attackerId = await identityIdOf(
+      attacker.kemPublicKey,
+      attacker.sigPublicKey
+    );
+    const original = world.routes['GET /api/identity'];
+    if (original === undefined) throw new Error('no identity route');
+    world.routes['GET /api/identity'] = async (body) => {
+      const state = await (await original(body)).json();
+      state.identity.identity_id = attackerId;
+      return json(state);
+    };
+    const { root } = await mountReader(readerDeps(world).deps, relicId);
+
+    await until(
+      () => ['requested', 'requested-locked'].includes(stateOf(root) ?? ''),
+      'the pending request'
+    );
+    expect(
+      stageOf(root, 'requested').querySelector('[data-fingerprint="mine"]')
+        ?.textContent ?? ''
+    ).toBe('');
   });
 
   test('declined: the owner declined stays declined', async () => {

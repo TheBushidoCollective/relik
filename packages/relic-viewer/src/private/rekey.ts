@@ -11,7 +11,11 @@
 import {
   type DevicePublicJSON,
   decodeBase64url,
+  deviceFingerprint,
+  deviceIdOf,
+  fingerprintsEqual,
   type GrantJSON,
+  identityFingerprint,
   identityIdOf,
   kemKeyIdOf,
   parseStatement,
@@ -19,6 +23,8 @@ import {
   type PrivateAccessJSON,
   type RecoveryJSON,
   type SealJSON,
+  type StatementKind,
+  type StatementMap,
   signStatement,
   statementBytes,
   verifyStatement,
@@ -29,11 +35,13 @@ import {
   deriveRendererClass,
   encryptRelic,
   generateKey,
+  normalizeEmail,
   sha256Hex,
 } from '@relic/format';
 import type { ViewerDeps } from '../viewer.ts';
-import { attest, type UnlockedIdentity } from './keys.ts';
-import { fetchAndDecryptVersion } from './open.ts';
+import type { UnlockedIdentity } from './keys.ts';
+import { privateKeysOf } from './ops.ts';
+import { VerificationRefusedError } from './refusal.ts';
 import {
   h,
   icon,
@@ -74,7 +82,9 @@ export async function verifiedPartyKeys(party: PartyJSON): Promise<{
     (await identityIdOf(kemPublicKey, sigPublicKey)) !==
     party.identity.identity_id
   ) {
-    throw new Error('identity keys do not match their identity ID');
+    throw new VerificationRefusedError(
+      'an identity\u2019s keys do not match its identity ID. Nothing was sent.'
+    );
   }
   return { kemPublicKey, sigPublicKey };
 }
@@ -84,15 +94,76 @@ export interface Recipient {
   readonly role: 'owner' | 'device' | 'reader' | 'recovery';
 }
 
+/** Parses a statement, or refuses it with the given reason. */
+function parsedOrRefused<K extends StatementKind>(
+  kind: K,
+  value: unknown,
+  reason: string
+): StatementMap[K] {
+  try {
+    return parseStatement(kind, value);
+  } catch {
+    throw new VerificationRefusedError(reason);
+  }
+}
+
+/**
+ * The recovery holder, checked the way relic-mcp's `verifyRecovery` checks it.
+ * The designation must parse, be signed by this owner's signature key, name
+ * this owner, name the holder's identity and email, and carry the fingerprint
+ * of exactly that identity. The service's coverage hints are never used here.
+ * A holder with no designation cannot be checked, and is refused with the
+ * reason.
+ */
+export async function verifiedRecovery(
+  identity: UnlockedIdentity,
+  holder: RecoveryJSON
+): Promise<{ readonly kemPublicKey: Uint8Array }> {
+  if (holder.designation === undefined || holder.designation === null) {
+    throw new VerificationRefusedError(
+      'the recovery holder has no designation, so Relic cannot check it. Nothing was sent.'
+    );
+  }
+  const statement = parsedOrRefused(
+    'recovery_designation',
+    holder.designation.statement,
+    'the recovery holder\u2019s designation is malformed. Nothing was sent.'
+  );
+  const keys = await verifiedPartyKeys(holder);
+  if (
+    statement.owner_identity_id !== identity.identityId ||
+    statement.recovery_identity_id !== holder.identity.identity_id ||
+    statement.recovery_email === null ||
+    normalizeEmail(statement.recovery_email) !== normalizeEmail(holder.email) ||
+    statement.fingerprint_typed === null ||
+    !fingerprintsEqual(
+      statement.fingerprint_typed,
+      await identityFingerprint(holder.identity.identity_id, holder.email)
+    ) ||
+    !(await verifyStatement(
+      identity.sigPublicKey,
+      statementBytes('recovery_designation', statement),
+      holder.designation.identity_signature
+    ))
+  ) {
+    throw new VerificationRefusedError(
+      'the recovery holder\u2019s designation did not verify. Nothing was sent.'
+    );
+  }
+  return keys;
+}
+
 /**
  * The recipient set a republish wraps to (section 4.12): the owner, every
  * owner device that is not revoked and not expired, every active grant whose
  * grantee is not retired, and the recovery holder when designated. Each
  * device, grant and designation is checked against the owner identity's
- * signature. Anything that does not verify is refused, not skipped.
+ * signature and against the record it describes, and a grant must be for
+ * this relic. Anything that does not verify is refused, not skipped.
  */
 export async function verifiedRecipients(
   identity: UnlockedIdentity,
+  relicId: string,
   parts: {
     readonly devices: readonly DevicePublicJSON[];
     readonly grants: readonly GrantJSON[];
@@ -107,23 +178,36 @@ export async function verifiedRecipients(
 
   for (const device of parts.devices) {
     if (device.revoked_at !== null || device.not_after <= now) continue;
-    const cert = parseStatement('device_cert', device.cert.statement);
+    const cert = parsedOrRefused(
+      'device_cert',
+      device.cert.statement,
+      'a device certificate is malformed. Nothing was sent.'
+    );
+    const kemPublicKey = decodeBase64url(device.kem_public_key);
+    const sigPublicKey = decodeBase64url(device.sig_public_key);
     if (
       cert.owner_identity_id !== identity.identityId ||
       cert.device_id !== device.device_id ||
       cert.kem_public_key !== device.kem_public_key ||
+      cert.sig_public_key !== device.sig_public_key ||
+      cert.label !== device.label ||
+      cert.not_after !== device.not_after ||
+      (await deviceIdOf(kemPublicKey, sigPublicKey)) !== device.device_id ||
+      !fingerprintsEqual(
+        cert.device_fingerprint_typed,
+        await deviceFingerprint(device.device_id)
+      ) ||
       !(await verifyStatement(
         identity.sigPublicKey,
         statementBytes('device_cert', cert),
         device.cert.identity_signature
       ))
     ) {
-      throw new Error('a device certificate did not verify');
+      throw new VerificationRefusedError(
+        'a device certificate did not verify. Nothing was sent.'
+      );
     }
-    recipients.push({
-      kemPublicKey: decodeBase64url(device.kem_public_key),
-      role: 'device',
-    });
+    recipients.push({ kemPublicKey, role: 'device' });
   }
 
   for (const grant of parts.grants) {
@@ -132,40 +216,38 @@ export async function verifiedRecipients(
     if (grant.grantee.identity.identity_id === revokedIdentityId) {
       throw new Error('a revoked identity is still listed as a recipient');
     }
-    const statement = parseStatement('grant', grant.statement);
+    const statement = parsedOrRefused(
+      'grant',
+      grant.statement,
+      'a grant is malformed. Nothing was sent.'
+    );
+    const grantee = grant.grantee;
     if (
-      statement.grantee_identity_id !== grant.grantee.identity.identity_id ||
+      statement.relic_id !== relicId ||
+      statement.grantee_identity_id !== grantee.identity.identity_id ||
       statement.owner_identity_id !== identity.identityId ||
+      normalizeEmail(statement.grantee_email) !==
+        normalizeEmail(grantee.email) ||
+      !fingerprintsEqual(
+        statement.fingerprint_typed,
+        await identityFingerprint(grantee.identity.identity_id, grantee.email)
+      ) ||
       !(await verifyStatement(
         identity.sigPublicKey,
         statementBytes('grant', statement),
         grant.identity_signature
       ))
     ) {
-      throw new Error('a grant did not verify');
+      throw new VerificationRefusedError(
+        'a reader\u2019s grant did not verify for this relic. Nothing was sent.'
+      );
     }
-    const keys = await verifiedPartyKeys(grant.grantee);
+    const keys = await verifiedPartyKeys(grantee);
     recipients.push({ kemPublicKey: keys.kemPublicKey, role: 'reader' });
   }
 
   if (parts.recovery !== null) {
-    const designation = parseStatement(
-      'recovery_designation',
-      parts.recovery.designation.statement
-    );
-    if (
-      designation.recovery_identity_id !==
-        parts.recovery.identity.identity_id ||
-      designation.owner_identity_id !== identity.identityId ||
-      !(await verifyStatement(
-        identity.sigPublicKey,
-        statementBytes('recovery_designation', designation),
-        parts.recovery.designation.identity_signature
-      ))
-    ) {
-      throw new Error('the recovery designation did not verify');
-    }
-    const keys = await verifiedPartyKeys(parts.recovery);
+    const keys = await verifiedRecovery(identity, parts.recovery);
     recipients.push({ kemPublicKey: keys.kemPublicKey, role: 'recovery' });
   }
 
@@ -351,7 +433,7 @@ export function createRevokeDialog(ctx: RevokeContext): RevokeDialog {
     rendererClass: string;
   }> {
     paint('decrypting');
-    const opened = await fetchAndDecryptVersion(
+    const opened = await privateKeysOf(ctx.deps).fetchAndDecryptVersion(
       ctx.deps,
       ctx.relicId,
       previous,
@@ -449,6 +531,7 @@ export function createRevokeDialog(ctx: RevokeContext): RevokeDialog {
     }>(ctx.deps, 'POST', `/api/relics/${ctx.relicId}/recipients`);
     const recipients = await verifiedRecipients(
       identity,
+      ctx.relicId,
       body,
       target.identityId,
       Date.now()
@@ -611,7 +694,7 @@ export function createRevokeDialog(ctx: RevokeContext): RevokeDialog {
     rekeyActions.hidden = true;
     let tapped: { identity: UnlockedIdentity; bundle: unknown };
     try {
-      tapped = await attest(ctx.deps, {
+      tapped = await privateKeysOf(ctx.deps).attest(ctx.deps, {
         purpose: 'revoke',
         relicId: ctx.relicId,
         build: (identityId) => [

@@ -6,10 +6,14 @@
  * package's own verifiers and openers.
  */
 
-import { beforeAll, describe, expect, mock, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import type { UnlockedIdentity } from '../src/private/keys.ts';
+import type { PrivateKeyOps } from '../src/private/ops.ts';
+import { typedFingerprint } from '../src/private/fingerprint-input.ts';
+import { createRevokeDialog } from '../src/private/rekey.ts';
 import {
   encodeBase64url,
+  identityFingerprint,
   type GrantJSON,
   generateIdentityKeys,
   type IdentityKeys,
@@ -184,7 +188,14 @@ const stubDocument = {
   createTextNode: (text: string) => new StubText(text),
 };
 
-Object.assign(globalThis, { document: stubDocument });
+// The owner surfaces read `document` when a test runs. The stub is installed
+// for this file only, and removed after it, so no later file inherits it.
+beforeAll(() => {
+  Object.assign(globalThis, { document: stubDocument });
+});
+afterAll(() => {
+  Reflect.deleteProperty(globalThis, 'document');
+});
 
 /** The stub, as the element type the owner surfaces hand back to tests. */
 function stubOf(node: unknown): StubElement {
@@ -262,7 +273,20 @@ interface Attest {
 }
 const fixture: Attest = { identity: undefined, content: new Uint8Array() };
 
-mock.module('../src/private/open.ts', () => ({
+const stubKeys = {
+  attest: async () => ({
+    identity: fixture.identity,
+    bundle: { nonce: 'n', statements: [], credential: {} },
+  }),
+  loadIdentityState: async () => {
+    throw new Error('not used in the rekey test');
+  },
+  unlock: async () => {
+    throw new Error('not used in the rekey test');
+  },
+  fetchVersionKey: async () => {
+    throw new Error('not used in the rekey test');
+  },
   fetchAndDecryptVersion: async () => ({
     envelope: {
       version: 1,
@@ -278,30 +302,7 @@ mock.module('../src/private/open.ts', () => ({
     content: fixture.content,
     digest: '',
   }),
-  fetchVersionKey: async () => {
-    throw new Error('not used in the rekey test');
-  },
-}));
-
-mock.module('../src/private/keys.ts', () => ({
-  attest: async () => ({
-    identity: fixture.identity,
-    bundle: { nonce: 'n', statements: [], credential: {} },
-  }),
-  loadIdentityState: async () => {
-    throw new Error('not used in the rekey test');
-  },
-  unlock: async () => {
-    throw new Error('not used in the rekey test');
-  },
-}));
-
-// The modules below load after `mock.module` has replaced keys.ts, which a
-// static import (hoisted above the mock) would bypass.
-const { createRevokeDialog } = await import('../src/private/rekey.ts');
-const { typedFingerprint } = await import(
-  '../src/private/fingerprint-input.ts'
-);
+} as unknown as PrivateKeyOps;
 
 interface Captured {
   readonly method: string;
@@ -360,7 +361,11 @@ function fakeService(answers: {
   };
   return {
     captured,
-    deps: { serviceOrigin: 'https://relik.example', fetch } as never,
+    deps: {
+      serviceOrigin: 'https://relik.example',
+      fetch,
+      privateKeys: stubKeys,
+    } as never,
   };
 }
 
@@ -382,7 +387,7 @@ beforeAll(async () => {
   const keptSig = KEPT.sig;
   const statement = {
     at: Date.now(),
-    fingerprint_typed: FP_EXPECTED,
+    fingerprint_typed: await identityFingerprint(KEPT.id, 'ada@example.com'),
     grantee_email: 'ada@example.com',
     grantee_identity_id: KEPT.id,
     owner_identity_id: OWNER.id,
