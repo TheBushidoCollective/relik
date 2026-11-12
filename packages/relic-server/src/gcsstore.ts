@@ -38,6 +38,7 @@ import {
   type DeviceRecord,
   type GrantRow,
   type IdentityRecord,
+  type KemHolder,
   looksLikeEmail,
   type MintLogEntry,
   normalizeIdentityRecord,
@@ -411,6 +412,11 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
   /** `m/identity-address/{sha256Hex(normalizedEmail)}.json`. */
   async function addressObject(normalized: string): Promise<string> {
     return key('identity-address', `${await sha256Hex(normalized)}.json`);
+  }
+
+  /** `m/kem/{kemKeyId}.json`: the one identity or device holding a KEM public key. */
+  function kemObject(kemKeyId: string): string {
+    return key('kem', `${kemKeyId}.json`);
   }
 
   /**
@@ -1428,17 +1434,40 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
 
     async createIdentity(
       record: IdentityRecord
-    ): Promise<'created' | 'address_taken'> {
+    ): Promise<'created' | 'address_taken' | 'kem_taken'> {
       const stored = normalizeIdentityRecord(record);
       const identityName = key('identity', `${stored.identityId}.json`);
       if (!(await put(identityName, stored, '0'))) return 'address_taken';
 
-      // The identity is written before its address. A pointer with no
-      // identity behind it would block the address for good.
-      let claimed: boolean;
+      // The identity is written first, then the claims that make it visible:
+      // its KEM key, then its address. A pointer or a KEM claim with no
+      // identity behind it would block that key or address for good, so each
+      // refused or failed step removes what this call already wrote.
+      const pointerName = await addressObject(stored.email);
+      const kemName = kemObject(stored.kemKeyId);
+      let kemClaimed = false;
+      const undo = async (): Promise<void> => {
+        if (kemClaimed) await remove(kemName);
+        await remove(identityName);
+      };
       try {
-        claimed = await put(
-          await addressObject(stored.email),
+        if ((await get<AddressPointer>(pointerName)) !== undefined) {
+          await undo();
+          return 'address_taken';
+        }
+        if (
+          !(await put(
+            kemName,
+            { kind: 'identity', id: stored.identityId } satisfies KemHolder,
+            '0'
+          ))
+        ) {
+          await undo();
+          return 'kem_taken';
+        }
+        kemClaimed = true;
+        const claimed = await put(
+          pointerName,
           {
             identityId: stored.identityId,
             email: stored.email,
@@ -1446,20 +1475,22 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
           },
           '0'
         );
+        if (!claimed) {
+          await undo();
+          return 'address_taken';
+        }
       } catch (error) {
-        await remove(identityName);
+        await undo();
         throw error;
       }
-      if (claimed) return 'created';
-      await remove(identityName);
-      return 'address_taken';
+      return 'created';
     },
 
     async replaceIdentity(
       record: IdentityRecord,
       retiringIdentityId: string,
       at: number
-    ): Promise<'replaced' | 'conflict'> {
+    ): Promise<'replaced' | 'conflict' | 'kem_taken'> {
       const stored = normalizeIdentityRecord(record);
       const pointerName = await addressObject(stored.email);
       const pointer = await get<AddressPointer>(pointerName);
@@ -1481,11 +1512,28 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
       const newName = key('identity', `${stored.identityId}.json`);
       if (!(await put(newName, stored, '0'))) return 'conflict';
 
-      // Retire first, then repoint the address. Between the two writes the
-      // address resolves to nothing, which fails closed. A losing attempt
-      // undoes what it wrote, so the address is left where it was found.
-      const undo = async (retired: boolean): Promise<void> => {
-        if (retired) {
+      // The KEM claim is free, or the retiring identity holds it and carries
+      // it over to the new record. Anything else belongs to someone else.
+      const kemName = kemObject(stored.kemKeyId);
+      const kemHeld = await get<KemHolder>(kemName);
+      if (
+        kemHeld !== undefined &&
+        !(
+          kemHeld.value.kind === 'identity' &&
+          kemHeld.value.id === retiringIdentityId
+        )
+      ) {
+        await remove(newName);
+        return 'kem_taken';
+      }
+      const holder: KemHolder = { kind: 'identity', id: stored.identityId };
+
+      // Claim, then retire, then repoint the address. Between the retire and
+      // the repoint the address resolves to nothing, which fails closed. A
+      // losing or failed attempt restores every write it made.
+      const state = { kemMoved: false, retired: false };
+      const undo = async (): Promise<void> => {
+        if (state.retired) {
           const now = await get<IdentityRecord>(retiringName);
           if (
             now !== undefined &&
@@ -1497,18 +1545,43 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
             );
           }
         }
+        if (state.kemMoved) {
+          if (kemHeld === undefined) {
+            await remove(kemName);
+          } else {
+            const now = await get<KemHolder>(kemName);
+            if (
+              now !== undefined &&
+              now.value.id === stored.identityId &&
+              !(await put(kemName, kemHeld.value, now.generation))
+            ) {
+              throw new Error(
+                `gcs kem claim ${stored.kemKeyId} could not be restored after a failed replacement`
+              );
+            }
+          }
+        }
         await remove(newName);
       };
 
-      let retired = false;
       try {
-        retired = await put(
+        const claimed =
+          kemHeld === undefined
+            ? await put(kemName, holder, '0')
+            : await put(kemName, holder, kemHeld.generation);
+        if (!claimed) {
+          await remove(newName);
+          return 'kem_taken';
+        }
+        state.kemMoved = true;
+        state.retired = await put(
           retiringName,
           { ...retiring.value, retiredAt: at, replacedBy: stored.identityId },
           retiring.generation
         );
-        if (retired) {
-          const repointed = await put(
+        if (
+          state.retired &&
+          (await put(
             pointerName,
             {
               identityId: stored.identityId,
@@ -1516,14 +1589,15 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
               updatedAt: at,
             },
             pointer.generation
-          );
-          if (repointed) return 'replaced';
+          ))
+        ) {
+          return 'replaced';
         }
       } catch (error) {
-        await undo(retired);
+        await undo();
         throw error;
       }
-      await undo(retired);
+      await undo();
       return 'conflict';
     },
 
@@ -1569,14 +1643,30 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
     },
 
     /**
-     * The device goes first and its owner index second. If the index write
-     * fails, the device is removed again, so no device exists without the
-     * index that revocation sweeps read.
+     * The device goes first, then its KEM claim, then its owner index. A
+     * refused or failed step removes what came before it: no device exists
+     * without the index that revocation sweeps read, and no KEM claim outlives
+     * its device.
      */
-    async putDevice(record: DeviceRecord): Promise<boolean> {
+    async putDevice(
+      record: DeviceRecord
+    ): Promise<'created' | 'exists' | 'kem_taken'> {
       const deviceName = key('device', `${record.deviceId}.json`);
-      if (!(await put(deviceName, record, '0'))) return false;
+      if (!(await put(deviceName, record, '0'))) return 'exists';
+      const kemName = kemObject(record.kemKeyId);
+      let kemClaimed = false;
       try {
+        if (
+          !(await put(
+            kemName,
+            { kind: 'device', id: record.deviceId } satisfies KemHolder,
+            '0'
+          ))
+        ) {
+          await remove(deviceName);
+          return 'kem_taken';
+        }
+        kemClaimed = true;
         await put(
           key(
             'device-owner',
@@ -1586,10 +1676,28 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
           { deviceId: record.deviceId, at: record.certifiedAt }
         );
       } catch (error) {
+        if (kemClaimed) await remove(kemName);
         await remove(deviceName);
         throw error;
       }
-      return true;
+      return 'created';
+    },
+
+    /**
+     * Create-only, and expires by `customTime`, so the lifecycle rule for the
+     * `device-nonce/` prefix erases it once the nonce could no longer pass the
+     * freshness window.
+     */
+    async putDeviceNonce(
+      nonceHash: string,
+      expiresAt: number
+    ): Promise<boolean> {
+      return put(
+        key('device-nonce', `${nonceHash}.json`),
+        { expiresAt },
+        '0',
+        new Date(expiresAt).toISOString()
+      );
     },
 
     async getDevice(deviceId: string): Promise<DeviceRecord | undefined> {
