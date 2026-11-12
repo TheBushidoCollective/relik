@@ -17406,7 +17406,7 @@ async function runScheduledPcmProof(
       const playEdge = globalThis.__otioProofTrace.playRequest();
       button.click();
       await sleep(${clockProofMode === 'long' ? 100 : 600});
-      for (let i = 0; i < 70 && !globalThis.__otioProofTrace.clockTraceReady(); i++) await sleep(10);
+      await globalThis.__otioProofTrace.awaitClockTraceReady(8000);
       globalThis.__otioProofTrace.clockTrace('start');
       const staleBegin = performance.now();
       const staleQuota = ${STALE_PAIR_QUOTA}, staleCap = ${STALE_PAIR_CAP};
@@ -20025,6 +20025,7 @@ async function runScheduledPcmProof(
           const playEdge = globalThis.__otioProofTrace.playRequest();
           button.click();
           await sleep(600);
+          await globalThis.__otioProofTrace.awaitClockTraceReady(8000);
           globalThis.__otioProofTrace.clockTrace('start');
           await sleep(100);
           const injected = globalThis.__otioProofTrace.corruptClock(${JSON.stringify(kind)});
@@ -20132,6 +20133,7 @@ async function runScheduledPcmProof(
           const playEdge = globalThis.__otioProofTrace.playRequest();
           button.click();
           await sleep(300);
+          await globalThis.__otioProofTrace.awaitClockTraceReady(8000);
           globalThis.__otioProofTrace.clockTrace('start');
           await sleep(800);
           globalThis.__otioProofTrace.clockTrace('stop');
@@ -20397,6 +20399,7 @@ async function runScheduledPcmProof(
           const start = await globalThis.__otioProofTrace.start();
           const playEdge = globalThis.__otioProofTrace.playRequest();
           button.click(); await sleep(600);
+          await globalThis.__otioProofTrace.awaitClockTraceReady(8000);
           globalThis.__otioProofTrace.clockTrace('start');
           await sleep(400);
           globalThis.__otioProofTrace.clockTrace('stop');

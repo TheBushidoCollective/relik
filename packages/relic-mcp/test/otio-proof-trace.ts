@@ -931,6 +931,14 @@ export const otioProofTracePrelude = String.raw`(() => {
     clockTraceReady() {
       return graphs.length === 1 && proofGates.get(graphs[0].context)?.epoch != null;
     },
+    async awaitClockTraceReady(timeoutMs) {
+      const until = performance.now() + timeoutMs;
+      while (performance.now() < until) {
+        if (graphs.length === 1 && proofGates.get(graphs[0].context)?.epoch != null) return;
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      throw new Error('native gate anchor not certified within ' + timeoutMs + 'ms: ' + JSON.stringify(controllerGraphSnapshot()));
+    },
     clockTrace(action) {
       if (action !== 'start' && action !== 'stop') throw new Error('invalid clock trace action');
       if (graphs.length !== 1) throw new Error('controller audio graph ambiguous');
