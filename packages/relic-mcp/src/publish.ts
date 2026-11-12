@@ -41,12 +41,14 @@ import { keyToMnemonic } from '@relic/format/mnemonic';
 import { uploadCover } from './cover/upload.ts';
 import { bundleOtiod } from './otio-bundle.ts';
 import {
+  loadPrivatePublishState,
   loadPublishedSource,
   resolveSourceIdentity,
   type SourceIdentity,
   savePublishState,
 } from './state.ts';
 import type { ObjectUploader } from './upload.ts';
+import type { SecureEnclaveSeam } from './device.ts';
 
 /**
  * Codes for the legs the app server is not in.
@@ -116,7 +118,28 @@ export type ClientCode =
   | 'local_comment_unreadable'
   | 'app_response_unusable'
   | 'otio_bundle_invalid'
-  | 'version_digest_mismatch';
+  | 'version_digest_mismatch'
+  | 'device_not_enrolled'
+  | 'device_already_enrolled'
+  | 'device_already_confirmed'
+  | 'device_enrollment_pending'
+  | 'device_enrollment_expired'
+  | 'device_enrollment_invalid'
+  | 'device_owner_fingerprint_mismatch'
+  | 'device_key_unavailable'
+  | 'local_device_label_invalid'
+  | 'owner_pin_mismatch'
+  | 'recipient_key_mismatch'
+  | 'recipient_uncertified_device'
+  | 'recipient_forged_grant'
+  | 'recovery_unsigned'
+  | 'private_unsupported'
+  | 'private_policy_violation'
+  | 'private_ttl_out_of_range'
+  | 'seal_signature_invalid'
+  | 'wrap_unopenable'
+  | 'version_conflict'
+  | 'private_relic_unsupported';
 export class PublishError extends Error {
   override readonly name = 'PublishError';
   constructor(
@@ -248,6 +271,11 @@ export interface PublishDeps {
   /** Path to ffmpeg binary, or null to simulate ffmpeg being absent. */
   readonly ffmpegPath?: string | null;
   readonly renderCover: (source: CoverSource) => Promise<CoverOutcome>;
+  /**
+   * The platform's Secure Enclave helper, when this build has one. Absent or
+   * unavailable means device keys use the 0600 file backend.
+   */
+  readonly secureEnclave?: SecureEnclaveSeam | undefined;
 }
 
 export interface RepublishToolCall {
@@ -308,7 +336,7 @@ async function lookupResolvedSource(
         : {
             match: {
               relic_id: published.relic_id,
-              version: published.state.version,
+              version: published.version,
               source: published.source,
             },
           }),
@@ -324,6 +352,24 @@ export async function lookupPublishedSource(
   deps: PublishDeps
 ): Promise<PublishedSourceLookup> {
   return lookupResolvedSource(deps.files.resolve(path), deps);
+}
+
+/**
+ * Refuse a tool that does not handle private relics yet, saying so.
+ *
+ * Checked before the tool reads public state, so a private relic never gets
+ * the "published from another machine" message, which is false for it.
+ */
+export async function refusePrivateRelic(
+  relicId: string,
+  tool: string
+): Promise<void> {
+  if ((await loadPrivatePublishState(relicId)) === undefined) return;
+  throw new PublishError(
+    'private_relic_unsupported',
+    `${tool} does not handle private relics yet, and relic ${relicId} is private.`,
+    { relic_id: relicId }
+  );
 }
 
 export async function publish(

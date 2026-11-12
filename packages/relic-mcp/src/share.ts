@@ -21,6 +21,7 @@ import {
   type PublishDeps,
   PublishError,
   postJson,
+  refusePrivateRelic,
   ServerRefusal,
 } from './publish.ts';
 import { loadPublishState, type PublishState } from './state.ts';
@@ -62,6 +63,8 @@ export async function shareRelic(
   //    "can only be shared from the machine that published it".
   //    If the state file cannot be read, refuse with local_state_unreadable.
   let state: PublishState;
+  await refusePrivateRelic(input.relic_id, 'relic_share');
+
   try {
     const loaded = await loadPublishState(input.relic_id);
     if (loaded === undefined) {

@@ -53,6 +53,7 @@ import {
   PublishError,
   patchJson,
   postJson,
+  refusePrivateRelic,
 } from './publish.ts';
 import {
   type ContentBlock,
@@ -913,6 +914,8 @@ export async function localState(relicId: string): Promise<PublishState> {
         'transcript for nothing.'
     );
   }
+
+  await refusePrivateRelic(relicId, 'Comments and decisions');
 
   try {
     const loaded = await loadPublishState(relicId);
