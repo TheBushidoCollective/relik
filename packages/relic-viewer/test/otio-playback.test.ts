@@ -4527,9 +4527,10 @@ describe('otio playback controller', () => {
     }
   );
 
-  const recoveryPreReadFaults: ReadonlyArray<
-    'recovery-earlier-feasible' | null
-  > = [null, 'recovery-earlier-feasible'];
+  const recoveryPreReadFaults: Array<'recovery-earlier-feasible' | null> = [
+    null,
+    'recovery-earlier-feasible',
+  ];
   test.each(recoveryPreReadFaults)(
     'playback reads the closing stamp before the recovery request, recovery keeps the 960-frame bound, fault=%s',
     async (fault) => {
