@@ -210,6 +210,7 @@ activeHandler = async (request) => {
     };
     reads.push(receipt);
     let offset = 0;
+    const startedAt = performance.now();
     const stream = new ReadableStream<Uint8Array>({
       async pull(controller) {
         if (receipt.canceled || request.signal.aborted) return;
@@ -222,8 +223,14 @@ activeHandler = async (request) => {
         controller.enqueue(bytes.subarray(offset, end));
         receipt.sent += end - offset;
         offset = end;
-        // Give the viewer a chance to authenticate record zero and cancel.
-        if (offset <= 512 * 1024) await Bun.sleep(4);
+        // Give the viewer a chance to authenticate record zero and cancel. The stream is paced by
+        // the clock for its first 300 ms, which is at most about 1.2 MiB, and then runs free. The
+        // earlier byte cutoff at 512 KiB paced for as little as 128 ms, after which a loopback
+        // socket takes megabytes in milliseconds: one CI run had sent 3.6 MB by the time of the
+        // check (run 43250043960; its cancel time was not recorded). A viewer that never cancels
+        // is still caught, because the confirmation checks wait 500 ms and the free-running
+        // stream passes their 2 MiB bound long before that.
+        if (performance.now() - startedAt < 300) await Bun.sleep(4);
       },
       cancel() {
         receipt.canceled = true;

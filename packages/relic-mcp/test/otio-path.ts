@@ -15046,9 +15046,14 @@ async function calibratePostGainTap(
   }
   const relicId = new URL(url).pathname.split('/').filter(Boolean).at(-1);
   assert.ok(relicId, 'boundary fixture relic ID missing');
+  // The fixture is 48 kHz. A context at any other rate makes the viewer play natively with the
+  // reason "sample-rate conversion is required", and the dropout and agreement checks below are
+  // claims about scheduled audio only. Linux headless Chrome defaults to 44.1 kHz, so the rate is
+  // pinned as it is for every other scheduled stage, and the capture's rate is asserted.
   const browser = await openBrowser(url, sessionToken, {
     label: interactionOnly ? 'interaction-only' : 'post-gain-calibration',
     recordProofTrace: !interactionOnly,
+    ...(interactionOnly ? {} : { proofSampleRate: 48000 as const }),
   });
   try {
     await browser.send('Emulation.setDeviceMetricsOverride', {
@@ -15114,6 +15119,11 @@ async function calibratePostGainTap(
         capture.start.contextState,
         'running',
         'audio context not running'
+      );
+      assert.equal(
+        capture.start.sampleRate,
+        48000,
+        'post-gain calibration context is not at the fixture rate, so audio was not scheduled'
       );
       assert.equal(
         capture.trace.audioOverflow,
