@@ -61,15 +61,20 @@ resource "google_storage_bucket" "relics" {
     }
   }
 
-  # The owner's access log. Each event's `customTime` is one day before its
-  # retention ends, so the event is erased on the day it stops being retained.
+  # The owner's access log and the spent device-request nonces. An access
+  # event's `customTime` is one day before its retention ends, so it is erased
+  # on the day it stops being retained. A nonce's `customTime` is the end of
+  # its freshness window, so it is erased one day after it could last pass.
   lifecycle_rule {
     action {
       type = "Delete"
     }
     condition {
       days_since_custom_time = 1
-      matches_prefix         = ["${local.store_prefix}/access/"]
+      matches_prefix = [
+        "${local.store_prefix}/access/",
+        "${local.store_prefix}/device-nonce/",
+      ]
     }
   }
 
