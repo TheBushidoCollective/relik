@@ -607,6 +607,28 @@ export function gcsStorage(options: GcsOptions): ObjectStorage {
       }
     },
 
+    async setCustomTime(relicId: string, customTime: number): Promise<void> {
+      // The lifecycle rule erases an object one day after its customTime, so a
+      // private ciphertext carries its relic's expiry (decision 7). GCS accepts
+      // this only for an object that exists.
+      const url =
+        `https://${host}/storage/v1/b/${rfc3986(options.bucket)}` +
+        `/o/${rfc3986(objectFor(relicId))}`;
+      const response = await doFetch(url, {
+        method: 'PATCH',
+        headers: {
+          authorization: `Bearer ${await accessToken()}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          customTime: new Date(customTime).toISOString(),
+        }),
+      });
+      if (!response.ok) {
+        throw new Error(`customTime update failed with ${response.status}`);
+      }
+    },
+
     async digest(relicId: string): Promise<string | undefined> {
       const metadataUrl =
         `https://${host}/storage/v1/b/${rfc3986(options.bucket)}` +

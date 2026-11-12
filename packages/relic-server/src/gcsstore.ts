@@ -19,12 +19,14 @@
  * on the second request.
  */
 
-import type { RendererClass } from '@relic/format';
+import { normalizeEmail, type RendererClass } from '@relic/format';
 
 import { sha256Hex } from './gcs.ts';
 import { ProblemError } from './problems.ts';
 import {
   type AbuseReport,
+  type AccessEvent,
+  type AccessRequestRow,
   type AuthLinkRow,
   applyCommentPatch,
   type CommentedRelic,
@@ -32,20 +34,28 @@ import {
   type CommentRow,
   type DecisionRow,
   type DedupEntry,
+  type DeviceEnrollmentRow,
+  type DeviceRecord,
+  type GrantRow,
+  type IdentityRecord,
+  type KemHolder,
   looksLikeEmail,
   type MintLogEntry,
-  normalizeEmail,
+  normalizeIdentityRecord,
   type OptOutRow,
+  type OwnedRelicRow,
   type PasskeyRecord,
   type RelicCover,
   type RelicRow,
   type RelicStore,
+  type SealRow,
   type SessionRow,
   type ShareRow,
   type SignInCodeBudgetRow,
   type SignInCodeRow,
   type Tombstone,
   type WebauthnChallengeRow,
+  type WrapRow,
 } from './store.ts';
 
 export interface GcsStoreOptions {
@@ -101,6 +111,55 @@ function commentDoc(row: CommentRow): Record<string, unknown> {
   };
 }
 
+/** A day in milliseconds: the unit the lifecycle rule counts custom time in. */
+const DAY_MS = 86_400_000;
+
+/**
+ * The `customTime` a relic's private objects carry: its expiry. The bucket's
+ * lifecycle rule erases an object one day after its `customTime`, so a private
+ * relic's objects go one day after it expires. Undefined for a public relic,
+ * whose objects never carry one.
+ */
+function customTimeOf(
+  row: Pick<RelicRow, 'access' | 'expiresAt'>
+): string | undefined {
+  if (row.access !== 'private' || row.expiresAt === undefined) return undefined;
+  return new Date(row.expiresAt).toISOString();
+}
+
+/**
+ * A `multipart/related` upload body. The metadata part carries the object's
+ * name and `customTime`; the second part is the JSON payload. A media upload
+ * has nowhere to put object metadata, so a `customTime` needs this form.
+ */
+function multipartBody(
+  name: string,
+  customTime: string,
+  payload: string
+): { readonly contentType: string; readonly body: string } {
+  const boundary = `relic-${crypto.randomUUID()}`;
+  const body = [
+    `--${boundary}`,
+    'Content-Type: application/json; charset=UTF-8',
+    '',
+    JSON.stringify({ name, customTime }),
+    `--${boundary}`,
+    'Content-Type: application/json',
+    '',
+    payload,
+    `--${boundary}--`,
+    '',
+  ].join('\r\n');
+  return { contentType: `multipart/related; boundary=${boundary}`, body };
+}
+
+/** `m/identity-address/{sha256Hex(email)}.json`: the one identity holding an address. */
+interface AddressPointer {
+  readonly identityId: string;
+  readonly email: string;
+  readonly updatedAt: number;
+}
+
 export function gcsStore(options: GcsStoreOptions): RelicStore {
   const host = options.host ?? DEFAULT_HOST;
   const doFetch = options.fetch ?? globalThis.fetch;
@@ -150,14 +209,23 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
    * Write a document, optionally only if it is still at `generation`.
    *
    * `ifGenerationMatch=0` means "only if it does not exist", which is how a
-   * create is distinguished from an overwrite.
+   * create is distinguished from an overwrite. A `customTime` goes through a
+   * multipart upload. An overwrite without one clears it, so every write of a
+   * private object passes it again.
    */
   async function put(
     name: string,
     body: unknown,
-    generation?: string
+    generation?: string,
+    customTime?: string
   ): Promise<boolean> {
-    const params = new URLSearchParams({ uploadType: 'media', name });
+    const payload = JSON.stringify(body);
+    const params = new URLSearchParams({
+      uploadType: customTime === undefined ? 'media' : 'multipart',
+    });
+    if (customTime === undefined) {
+      params.set('name', name);
+    }
     if (generation !== undefined) {
       params.set('ifGenerationMatch', generation);
     }
@@ -166,10 +234,14 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
       `${host}/upload/storage/v1/b/${encodeURIComponent(options.bucket)}/o` +
       `?${params.toString()}`;
 
+    const request =
+      customTime === undefined
+        ? { contentType: 'application/json', body: payload }
+        : multipartBody(name, customTime, payload);
     const response = await authorized(url, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
+      headers: { 'content-type': request.contentType },
+      body: request.body,
     });
 
     // Somebody else wrote first. The caller decides whether to retry or to
@@ -329,13 +401,70 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
     return names;
   }
 
+  /** The `customTime` a relic-scoped object carries, read from the relic row. */
+  async function privateCustomTime(
+    relicId: string
+  ): Promise<string | undefined> {
+    const row = await get<RelicRow>(key('relic', `${relicId}.json`));
+    return row === undefined ? undefined : customTimeOf(row.value);
+  }
+
+  /** `m/identity-address/{sha256Hex(normalizedEmail)}.json`. */
+  async function addressObject(normalized: string): Promise<string> {
+    return key('identity-address', `${await sha256Hex(normalized)}.json`);
+  }
+
+  /** `m/kem/{kemKeyId}.json`: the one identity or device holding a KEM public key. */
+  function kemObject(kemKeyId: string): string {
+    return key('kem', `${kemKeyId}.json`);
+  }
+
+  /**
+   * Read-modify-write one document under its generation, retrying on loss the
+   * way `mutateRelic` does. `change` may throw to abort; nothing is written then.
+   */
+  async function mutateDoc<T>(
+    name: string,
+    change: (value: T) => T,
+    customTime: string | undefined,
+    what: string
+  ): Promise<T | undefined> {
+    for (let attempt = 0; attempt < casAttempts; attempt++) {
+      const current = await get<T>(name);
+      if (current === undefined) return undefined;
+      const next = change(current.value);
+      if (await put(name, next, current.generation, customTime)) return next;
+    }
+    throw new Error(
+      `gcs ${what} lost ${casAttempts} compare-and-swap races; ` +
+        'refusing to write from stale state'
+    );
+  }
+
+  /**
+   * The grant goes first. If removing its index entry then fails, the index
+   * names a grant that no longer exists and readers skip it. The reverse order
+   * would leave a live grant that no revocation sweep can find.
+   */
+  async function removeGrant(
+    relicId: string,
+    granteeIdentityId: string
+  ): Promise<void> {
+    await remove(key('grant', relicId, `${granteeIdentityId}.json`));
+    await remove(key('grant-by-grantee', granteeIdentityId, `${relicId}.json`));
+  }
   return {
     async getRelic(id: string): Promise<RelicRow | undefined> {
       return (await get<RelicRow>(key('relic', `${id}.json`)))?.value;
     },
 
     async putRelic(row: RelicRow): Promise<void> {
-      await put(key('relic', `${row.id}.json`), row);
+      await put(
+        key('relic', `${row.id}.json`),
+        row,
+        undefined,
+        customTimeOf(row)
+      );
     },
 
     async markPublished(
@@ -375,7 +504,7 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
           ...current.value,
           cover,
         };
-        if (await put(rowName, next, current.generation)) {
+        if (await put(rowName, next, current.generation, customTimeOf(next))) {
           stored = true;
           break;
         }
@@ -428,7 +557,7 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
           ...current.value,
           cover: undefined,
         };
-        if (await put(rowName, next, current.generation)) {
+        if (await put(rowName, next, current.generation, customTimeOf(next))) {
           break;
         }
       }
@@ -496,7 +625,7 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
         const next: RelicRow = {
           ...restRow,
         };
-        if (await put(rowName, next, current.generation)) {
+        if (await put(rowName, next, current.generation, customTimeOf(next))) {
           return next;
         }
       }
@@ -620,7 +749,13 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
     // compare-and-swap per comment, and two readers commenting at once would
     // make one of them lose their words rather than merely retry.
     async putComment(row: CommentRow): Promise<void> {
-      await put(key('comment', row.relicId, `${row.id}.json`), commentDoc(row));
+      const customTime = await privateCustomTime(row.relicId);
+      await put(
+        key('comment', row.relicId, `${row.id}.json`),
+        commentDoc(row),
+        undefined,
+        customTime
+      );
       if (row.author !== 'publisher' && looksLikeEmail(row.author)) {
         try {
           const normalized = row.author.trim().toLowerCase();
@@ -630,7 +765,7 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
             row.relicId,
             `${authorHash}.json`
           );
-          await put(commenterKey, { address: normalized }, '0');
+          await put(commenterKey, { address: normalized }, '0', customTime);
         } catch (error) {
           console.error('Failed to update commenter index in GCS', error);
         }
@@ -646,7 +781,12 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
           existing !== undefined
             ? Math.max(existing.value.lastCommentAt, row.createdAt)
             : row.createdAt;
-        await put(indexName, { relicId: row.relicId, lastCommentAt });
+        await put(
+          indexName,
+          { relicId: row.relicId, lastCommentAt },
+          undefined,
+          customTime
+        );
       } catch (error) {
         console.error('Failed to update author relic index in GCS', error);
       }
@@ -685,13 +825,20 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
       patch: CommentPatch
     ): Promise<CommentRow | undefined> {
       const name = key('comment', relicId, `${commentId}.json`);
+      const customTime = await privateCustomTime(relicId);
 
       for (let attempt = 0; attempt < casAttempts; attempt++) {
         const current = await get<CommentRow>(name);
         if (current === undefined) return undefined;
 
         const next = applyCommentPatch(toCommentRow(current.value), patch);
-        if (await put(name, commentDoc(next), current.generation)) return next;
+        const written = await put(
+          name,
+          commentDoc(next),
+          current.generation,
+          customTime
+        );
+        if (written) return next;
       }
 
       throw new Error(
@@ -722,6 +869,7 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
       const markerName = key('commenter', relicId, '_complete.json');
       const marker = await get(markerName);
       if (marker === undefined) {
+        const customTime = await privateCustomTime(relicId);
         const comments = await this.listComments(relicId);
         for (const comment of comments) {
           if (
@@ -736,14 +884,19 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
                 relicId,
                 `${authorHash}.json`
               );
-              await put(commenterKey, { address: normalized }, '0');
+              await put(commenterKey, { address: normalized }, '0', customTime);
             } catch (error) {
               console.error('Failed to backfill commenter in GCS', error);
             }
           }
         }
         try {
-          await put(markerName, { completedAt: Date.now() });
+          await put(
+            markerName,
+            { completedAt: Date.now() },
+            undefined,
+            customTime
+          );
         } catch (error) {
           console.error(
             'Failed to write commenter completion marker in GCS',
@@ -898,7 +1051,7 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
     async putShare(row: ShareRow): Promise<boolean> {
       const emailHash = await sha256Hex(row.email);
       const name = key('share', row.relicId, `${emailHash}.json`);
-      return put(name, row, '0');
+      return put(name, row, '0', await privateCustomTime(row.relicId));
     },
 
     async listShares(relicId: string): Promise<readonly ShareRow[]> {
@@ -953,7 +1106,7 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
           sharesCount: currentCount + count,
         };
 
-        if (await put(name, next, current.generation)) {
+        if (await put(name, next, current.generation, customTimeOf(next))) {
           return { allowed: true, currentCount: currentCount + count };
         }
       }
@@ -977,7 +1130,7 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
 
     async putOptOut(row: OptOutRow): Promise<void> {
       const name = key('optout', row.relicId, `${row.addressHash}.json`);
-      await put(name, row, '0');
+      await put(name, row, '0', await privateCustomTime(row.relicId));
     },
 
     async listOptOuts(relicId: string): Promise<readonly string[]> {
@@ -1054,7 +1207,7 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
             [vKey]: sha256,
           },
         };
-        if (await put(name, next, current.generation)) {
+        if (await put(name, next, current.generation, customTimeOf(next))) {
           return sha256;
         }
       }
@@ -1065,7 +1218,12 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
 
     async appendDecision(row: DecisionRow): Promise<void> {
       const name = key('decision', row.relicId, `${row.id}.json`);
-      const ok = await put(name, row, '0');
+      const ok = await put(
+        name,
+        row,
+        '0',
+        await privateCustomTime(row.relicId)
+      );
       if (!ok) {
         throw new Error(`decision ${row.id} already exists`);
       }
@@ -1235,6 +1393,659 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
       }
       return new Uint8Array(Buffer.from(readBack.value.key, 'base64url'));
     },
+    async updateRelic(
+      id: string,
+      change: (row: RelicRow) => RelicRow
+    ): Promise<RelicRow | undefined> {
+      return mutateRelic(id, change);
+    },
+
+    async deleteRelicRow(id: string): Promise<void> {
+      await remove(key('relic', `${id}.json`));
+    },
+
+    async getIdentity(identityId: string): Promise<IdentityRecord | undefined> {
+      const found = await get<IdentityRecord>(
+        key('identity', `${identityId}.json`)
+      );
+      return found?.value;
+    },
+
+    async getIdentityForAddress(
+      email: string
+    ): Promise<IdentityRecord | undefined> {
+      const normalized = normalizeEmail(email);
+      const pointer = await get<AddressPointer>(
+        await addressObject(normalized)
+      );
+      if (pointer === undefined) return undefined;
+      const record = await get<IdentityRecord>(
+        key('identity', `${pointer.value.identityId}.json`)
+      );
+      if (
+        record === undefined ||
+        record.value.email !== normalized ||
+        record.value.retiredAt !== undefined
+      ) {
+        return undefined;
+      }
+      return record.value;
+    },
+
+    async createIdentity(
+      record: IdentityRecord
+    ): Promise<'created' | 'address_taken' | 'kem_taken'> {
+      const stored = normalizeIdentityRecord(record);
+      const identityName = key('identity', `${stored.identityId}.json`);
+      if (!(await put(identityName, stored, '0'))) return 'address_taken';
+
+      // The identity is written first, then the claims that make it visible:
+      // its KEM key, then its address. A pointer or a KEM claim with no
+      // identity behind it would block that key or address for good, so each
+      // refused or failed step removes what this call already wrote.
+      const pointerName = await addressObject(stored.email);
+      const kemName = kemObject(stored.kemKeyId);
+      let kemClaimed = false;
+      const undo = async (): Promise<void> => {
+        if (kemClaimed) await remove(kemName);
+        await remove(identityName);
+      };
+      try {
+        if ((await get<AddressPointer>(pointerName)) !== undefined) {
+          await undo();
+          return 'address_taken';
+        }
+        if (
+          !(await put(
+            kemName,
+            { kind: 'identity', id: stored.identityId } satisfies KemHolder,
+            '0'
+          ))
+        ) {
+          await undo();
+          return 'kem_taken';
+        }
+        kemClaimed = true;
+        const claimed = await put(
+          pointerName,
+          {
+            identityId: stored.identityId,
+            email: stored.email,
+            updatedAt: stored.createdAt,
+          },
+          '0'
+        );
+        if (!claimed) {
+          await undo();
+          return 'address_taken';
+        }
+      } catch (error) {
+        await undo();
+        throw error;
+      }
+      return 'created';
+    },
+
+    async replaceIdentity(
+      record: IdentityRecord,
+      retiringIdentityId: string,
+      at: number
+    ): Promise<'replaced' | 'conflict' | 'kem_taken'> {
+      const stored = normalizeIdentityRecord(record);
+      const pointerName = await addressObject(stored.email);
+      const pointer = await get<AddressPointer>(pointerName);
+      if (
+        pointer === undefined ||
+        pointer.value.identityId !== retiringIdentityId
+      ) {
+        return 'conflict';
+      }
+      const retiringName = key('identity', `${retiringIdentityId}.json`);
+      const retiring = await get<IdentityRecord>(retiringName);
+      if (
+        retiring === undefined ||
+        retiring.value.retiredAt !== undefined ||
+        retiring.value.email !== stored.email
+      ) {
+        return 'conflict';
+      }
+      const newName = key('identity', `${stored.identityId}.json`);
+      if (!(await put(newName, stored, '0'))) return 'conflict';
+
+      // The KEM claim is free, or the retiring identity holds it and carries
+      // it over to the new record. Anything else belongs to someone else.
+      const kemName = kemObject(stored.kemKeyId);
+      const kemHeld = await get<KemHolder>(kemName);
+      if (
+        kemHeld !== undefined &&
+        !(
+          kemHeld.value.kind === 'identity' &&
+          kemHeld.value.id === retiringIdentityId
+        )
+      ) {
+        await remove(newName);
+        return 'kem_taken';
+      }
+      const holder: KemHolder = { kind: 'identity', id: stored.identityId };
+
+      // Claim, then retire, then repoint the address. Between the retire and
+      // the repoint the address resolves to nothing, which fails closed. A
+      // losing or failed attempt restores every write it made.
+      const state = { kemMoved: false, retired: false };
+      const undo = async (): Promise<void> => {
+        if (state.retired) {
+          const now = await get<IdentityRecord>(retiringName);
+          if (
+            now !== undefined &&
+            now.value.replacedBy === stored.identityId &&
+            !(await put(retiringName, retiring.value, now.generation))
+          ) {
+            throw new Error(
+              `gcs identity ${retiringIdentityId} could not be restored after a failed replacement`
+            );
+          }
+        }
+        if (state.kemMoved) {
+          if (kemHeld === undefined) {
+            await remove(kemName);
+          } else {
+            const now = await get<KemHolder>(kemName);
+            if (
+              now !== undefined &&
+              now.value.id === stored.identityId &&
+              !(await put(kemName, kemHeld.value, now.generation))
+            ) {
+              throw new Error(
+                `gcs kem claim ${stored.kemKeyId} could not be restored after a failed replacement`
+              );
+            }
+          }
+        }
+        await remove(newName);
+      };
+
+      try {
+        const claimed =
+          kemHeld === undefined
+            ? await put(kemName, holder, '0')
+            : await put(kemName, holder, kemHeld.generation);
+        if (!claimed) {
+          await remove(newName);
+          return 'kem_taken';
+        }
+        state.kemMoved = true;
+        state.retired = await put(
+          retiringName,
+          { ...retiring.value, retiredAt: at, replacedBy: stored.identityId },
+          retiring.generation
+        );
+        if (
+          state.retired &&
+          (await put(
+            pointerName,
+            {
+              identityId: stored.identityId,
+              email: stored.email,
+              updatedAt: at,
+            },
+            pointer.generation
+          ))
+        ) {
+          return 'replaced';
+        }
+      } catch (error) {
+        await undo();
+        throw error;
+      }
+      await undo();
+      return 'conflict';
+    },
+
+    async updateIdentity(
+      identityId: string,
+      change: (r: IdentityRecord) => IdentityRecord
+    ): Promise<IdentityRecord | undefined> {
+      return mutateDoc(
+        key('identity', `${identityId}.json`),
+        change,
+        undefined,
+        'identity'
+      );
+    },
+
+    async putDeviceEnrollment(row: DeviceEnrollmentRow): Promise<boolean> {
+      return put(
+        key('challenge', 'device-enrollment', `${row.enrollmentId}.json`),
+        row,
+        '0'
+      );
+    },
+
+    async getDeviceEnrollment(
+      enrollmentId: string
+    ): Promise<DeviceEnrollmentRow | undefined> {
+      const found = await get<DeviceEnrollmentRow>(
+        key('challenge', 'device-enrollment', `${enrollmentId}.json`)
+      );
+      return found?.value;
+    },
+
+    async updateDeviceEnrollment(
+      enrollmentId: string,
+      change: (r: DeviceEnrollmentRow) => DeviceEnrollmentRow
+    ): Promise<DeviceEnrollmentRow | undefined> {
+      return mutateDoc(
+        key('challenge', 'device-enrollment', `${enrollmentId}.json`),
+        change,
+        undefined,
+        'device enrollment'
+      );
+    },
+
+    /**
+     * The device goes first, then its KEM claim, then its owner index. A
+     * refused or failed step removes what came before it: no device exists
+     * without the index that revocation sweeps read, and no KEM claim outlives
+     * its device.
+     */
+    async putDevice(
+      record: DeviceRecord
+    ): Promise<'created' | 'exists' | 'kem_taken'> {
+      const deviceName = key('device', `${record.deviceId}.json`);
+      if (!(await put(deviceName, record, '0'))) return 'exists';
+      const kemName = kemObject(record.kemKeyId);
+      let kemClaimed = false;
+      try {
+        if (
+          !(await put(
+            kemName,
+            { kind: 'device', id: record.deviceId } satisfies KemHolder,
+            '0'
+          ))
+        ) {
+          await remove(deviceName);
+          return 'kem_taken';
+        }
+        kemClaimed = true;
+        await put(
+          key(
+            'device-owner',
+            record.ownerIdentityId,
+            `${record.deviceId}.json`
+          ),
+          { deviceId: record.deviceId, at: record.certifiedAt }
+        );
+      } catch (error) {
+        if (kemClaimed) await remove(kemName);
+        await remove(deviceName);
+        throw error;
+      }
+      return 'created';
+    },
+
+    /**
+     * Create-only, and expires by `customTime`, so the lifecycle rule for the
+     * `device-nonce/` prefix erases it once the nonce could no longer pass the
+     * freshness window.
+     */
+    async putDeviceNonce(
+      nonceHash: string,
+      expiresAt: number
+    ): Promise<boolean> {
+      return put(
+        key('device-nonce', `${nonceHash}.json`),
+        { expiresAt },
+        '0',
+        new Date(expiresAt).toISOString()
+      );
+    },
+
+    async getDevice(deviceId: string): Promise<DeviceRecord | undefined> {
+      return (await get<DeviceRecord>(key('device', `${deviceId}.json`)))
+        ?.value;
+    },
+
+    async updateDevice(
+      deviceId: string,
+      change: (r: DeviceRecord) => DeviceRecord
+    ): Promise<DeviceRecord | undefined> {
+      return mutateDoc(
+        key('device', `${deviceId}.json`),
+        change,
+        undefined,
+        'device'
+      );
+    },
+
+    async listDevicesForOwner(
+      ownerIdentityId: string
+    ): Promise<readonly DeviceRecord[]> {
+      const prefixUnder = `${key('device-owner', ownerIdentityId)}/`;
+      const names = await listObjectNames(prefixUnder);
+      const found = await mapConcurrent(names, 16, (name) =>
+        get<DeviceRecord>(
+          key(
+            'device',
+            `${name.slice(prefixUnder.length).replace(/\.json$/, '')}.json`
+          )
+        )
+      );
+      return found
+        .filter(
+          (d): d is Versioned<DeviceRecord> =>
+            d !== undefined && d.value.ownerIdentityId === ownerIdentityId
+        )
+        .map((d) => d.value)
+        .sort(
+          (a, b) =>
+            a.certifiedAt - b.certifiedAt || (a.deviceId < b.deviceId ? -1 : 1)
+        );
+    },
+
+    async putWrap(row: WrapRow): Promise<boolean> {
+      return put(
+        key(
+          'wrap',
+          row.relicId,
+          String(row.version),
+          `${row.recipientKeyId}.json`
+        ),
+        row,
+        '0',
+        await privateCustomTime(row.relicId)
+      );
+    },
+
+    async getWrap(
+      relicId: string,
+      version: number,
+      recipientKeyId: string
+    ): Promise<WrapRow | undefined> {
+      const found = await get<WrapRow>(
+        key('wrap', relicId, String(version), `${recipientKeyId}.json`)
+      );
+      return found?.value;
+    },
+
+    async listWraps(
+      relicId: string,
+      version?: number
+    ): Promise<readonly WrapRow[]> {
+      const under =
+        `${key('wrap', relicId)}/` +
+        (version === undefined ? '' : `${version}/`);
+      const rows = await list<WrapRow>(under);
+      return [...rows].sort(
+        (a, b) =>
+          a.version - b.version ||
+          (a.recipientKeyId < b.recipientKeyId ? -1 : 1)
+      );
+    },
+
+    /**
+     * Names are `wrap/{relic}/{version}/{recipient}.json`, so a recipient filter
+     * is a suffix match on the name and needs no read of any wrap.
+     */
+    async deleteWraps(
+      relicId: string,
+      filter: { readonly version?: number; readonly recipientKeyId?: string }
+    ): Promise<number> {
+      const under =
+        `${key('wrap', relicId)}/` +
+        (filter.version === undefined ? '' : `${filter.version}/`);
+      const names = await listObjectNames(under);
+      const doomed = names.filter(
+        (name) =>
+          filter.recipientKeyId === undefined ||
+          name.endsWith(`/${filter.recipientKeyId}.json`)
+      );
+      for (const name of doomed) {
+        await remove(name);
+      }
+      return doomed.length;
+    },
+
+    async putSeal(row: SealRow): Promise<boolean> {
+      return put(
+        key('seal', row.relicId, `${row.version}.json`),
+        row,
+        '0',
+        await privateCustomTime(row.relicId)
+      );
+    },
+
+    async getSeal(
+      relicId: string,
+      version: number
+    ): Promise<SealRow | undefined> {
+      const found = await get<SealRow>(key('seal', relicId, `${version}.json`));
+      return found?.value;
+    },
+
+    async deleteSeals(relicId: string, version?: number): Promise<number> {
+      const prefixUnder = `${key('seal', relicId)}/`;
+      const names = (await listObjectNames(prefixUnder)).filter(
+        (name) =>
+          version === undefined ||
+          name === key('seal', relicId, `${version}.json`)
+      );
+      for (const name of names) {
+        await remove(name);
+      }
+      return names.length;
+    },
+
+    /**
+     * The grant is created first and the grantee index second, both with the
+     * relic's `customTime`. A failed index write removes the grant again.
+     */
+    async putGrant(row: GrantRow): Promise<boolean> {
+      const grantName = key(
+        'grant',
+        row.relicId,
+        `${row.granteeIdentityId}.json`
+      );
+      const customTime = await privateCustomTime(row.relicId);
+      if (!(await put(grantName, row, '0', customTime))) return false;
+      try {
+        await put(
+          key('grant-by-grantee', row.granteeIdentityId, `${row.relicId}.json`),
+          { relicId: row.relicId, at: row.grantedAt },
+          undefined,
+          customTime
+        );
+      } catch (error) {
+        await remove(grantName);
+        throw error;
+      }
+      return true;
+    },
+
+    async getGrant(
+      relicId: string,
+      granteeIdentityId: string
+    ): Promise<GrantRow | undefined> {
+      const found = await get<GrantRow>(
+        key('grant', relicId, `${granteeIdentityId}.json`)
+      );
+      return found?.value;
+    },
+
+    async listGrants(relicId: string): Promise<readonly GrantRow[]> {
+      const rows = await list<GrantRow>(`${key('grant', relicId)}/`);
+      return [...rows].sort(
+        (a, b) =>
+          a.grantedAt - b.grantedAt ||
+          (a.granteeIdentityId < b.granteeIdentityId ? -1 : 1)
+      );
+    },
+
+    async updateGrant(
+      relicId: string,
+      granteeIdentityId: string,
+      change: (r: GrantRow) => GrantRow
+    ): Promise<GrantRow | undefined> {
+      return mutateDoc(
+        key('grant', relicId, `${granteeIdentityId}.json`),
+        change,
+        await privateCustomTime(relicId),
+        'grant'
+      );
+    },
+
+    async deleteGrant(
+      relicId: string,
+      granteeIdentityId: string
+    ): Promise<void> {
+      await removeGrant(relicId, granteeIdentityId);
+    },
+
+    async deleteGrantsForRelic(relicId: string): Promise<number> {
+      const prefixUnder = `${key('grant', relicId)}/`;
+      const names = await listObjectNames(prefixUnder);
+      for (const name of names) {
+        const granteeIdentityId = name
+          .slice(prefixUnder.length)
+          .replace(/\.json$/, '');
+        await removeGrant(relicId, granteeIdentityId);
+      }
+      return names.length;
+    },
+
+    async listGrantsForGrantee(
+      granteeIdentityId: string
+    ): Promise<readonly GrantRow[]> {
+      const prefixUnder = `${key('grant-by-grantee', granteeIdentityId)}/`;
+      const relicIds = (await listObjectNames(prefixUnder)).map((name) =>
+        name.slice(prefixUnder.length).replace(/\.json$/, '')
+      );
+      const found = await mapConcurrent(relicIds, 16, (relicId) =>
+        get<GrantRow>(key('grant', relicId, `${granteeIdentityId}.json`))
+      );
+      return found
+        .filter(
+          (g): g is Versioned<GrantRow> =>
+            g !== undefined && g.value.granteeIdentityId === granteeIdentityId
+        )
+        .map((g) => g.value)
+        .sort(
+          (a, b) =>
+            a.grantedAt - b.grantedAt || (a.relicId < b.relicId ? -1 : 1)
+        );
+    },
+
+    async putAccessRequest(row: AccessRequestRow): Promise<boolean> {
+      return put(
+        key('access-request', row.relicId, `${row.requesterIdentityId}.json`),
+        row,
+        '0',
+        await privateCustomTime(row.relicId)
+      );
+    },
+
+    async getAccessRequest(
+      relicId: string,
+      requesterIdentityId: string
+    ): Promise<AccessRequestRow | undefined> {
+      const found = await get<AccessRequestRow>(
+        key('access-request', relicId, `${requesterIdentityId}.json`)
+      );
+      return found?.value;
+    },
+
+    async listAccessRequests(
+      relicId: string
+    ): Promise<readonly AccessRequestRow[]> {
+      const rows = await list<AccessRequestRow>(
+        `${key('access-request', relicId)}/`
+      );
+      return [...rows].sort(
+        (a, b) =>
+          a.requestedAt - b.requestedAt ||
+          (a.requesterIdentityId < b.requesterIdentityId ? -1 : 1)
+      );
+    },
+
+    async updateAccessRequest(
+      relicId: string,
+      requesterIdentityId: string,
+      change: (r: AccessRequestRow) => AccessRequestRow
+    ): Promise<AccessRequestRow | undefined> {
+      return mutateDoc(
+        key('access-request', relicId, `${requesterIdentityId}.json`),
+        change,
+        await privateCustomTime(relicId),
+        'access request'
+      );
+    },
+
+    async deleteAccessRequestsForRelic(relicId: string): Promise<number> {
+      const names = await listObjectNames(`${key('access-request', relicId)}/`);
+      for (const name of names) {
+        await remove(name);
+      }
+      return names.length;
+    },
+
+    async putOwnedRelic(row: OwnedRelicRow): Promise<void> {
+      await put(
+        key('owner-relic', row.ownerIdentityId, `${row.relicId}.json`),
+        row,
+        undefined,
+        await privateCustomTime(row.relicId)
+      );
+    },
+
+    async listOwnedRelics(
+      ownerIdentityId: string
+    ): Promise<readonly OwnedRelicRow[]> {
+      const rows = await list<OwnedRelicRow>(
+        `${key('owner-relic', ownerIdentityId)}/`
+      );
+      return [...rows].sort(
+        (a, b) => a.at - b.at || (a.relicId < b.relicId ? -1 : 1)
+      );
+    },
+
+    async deleteOwnedRelic(
+      ownerIdentityId: string,
+      relicId: string
+    ): Promise<void> {
+      await remove(key('owner-relic', ownerIdentityId, `${relicId}.json`));
+    },
+
+    /**
+     * The access log is one object per event, named by its time so a listing
+     * sorts. Its `customTime` is one day before `retainUntil`, so the lifecycle
+     * rule erases the event on the day it stops being retained.
+     */
+    async appendAccessEvent(event: AccessEvent): Promise<void> {
+      const stamp = String(event.at).padStart(16, '0');
+      const suffix = crypto.randomUUID().slice(0, 8);
+      await put(
+        key('access', event.ownerIdentityId, `${stamp}-${suffix}.json`),
+        event,
+        undefined,
+        new Date(event.retainUntil - DAY_MS).toISOString()
+      );
+    },
+
+    async listAccessEvents(
+      ownerIdentityId: string,
+      now: number,
+      relicId?: string
+    ): Promise<readonly AccessEvent[]> {
+      const rows = await list<AccessEvent>(
+        `${key('access', ownerIdentityId)}/`
+      );
+      return rows
+        .filter(
+          (e) =>
+            e.retainUntil > now &&
+            (relicId === undefined || e.relicId === relicId)
+        )
+        .sort((a, b) => a.at - b.at || (a.eventId < b.eventId ? -1 : 1));
+    },
   };
 
   function dedupKey(id: string, ip: string): string {
@@ -1260,7 +2071,9 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
       if (current === undefined) return undefined;
 
       const next = change(current.value);
-      if (await put(name, next, current.generation)) return next;
+      if (await put(name, next, current.generation, customTimeOf(next))) {
+        return next;
+      }
     }
 
     throw new Error(

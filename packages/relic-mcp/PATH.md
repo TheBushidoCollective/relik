@@ -443,7 +443,7 @@ OTIO_PATH_OK
 
 The publisher and viewer paths are implemented on PR 155. Release requires the checks below, including current-revision playback proof. The `OTIO_PATH_OK` run above covers legacy composition playback, not program rendering.
 
-Publishing a timeline must produce an archive that `format.md` 3.17 requires. Each of the following must hold.
+Publishing a timeline must produce an archive that `format.md` 3.19 requires. Each of the following must hold.
 
 **Contents.** The archive contains `relic/program.json` and one MP4 per rendered timeline outside `content.otio`. The manifest is present on every archive published under this path.
 
@@ -764,3 +764,27 @@ Immediately after starting the browser, the memory calibration requires more tha
 Post-pressure gates compare process snapshots using `phys_footprint` on macOS or `RssAnon + VmSwap` on Linux: media must grow by less than 64 MiB before playback and 128 MiB after release, while OTIO and PDF must each grow by less than 128 MiB. PDF includes utility processes; the other gates cover renderers. New processes contribute their full footprint, and exited processes cannot subtract from growth. Receipts include the measurement name, RSS growth, and added and exited process IDs.
 
 These gates do not bound transient renderer peaks or browser-process storage. Success ends with `LARGE_RELIC_PATH_OK`. Output reports observed byte counts and memory samples, without share URLs or keys. Scratch files and the owned browser profile are removed. Firefox, WebKit, physical devices, version-cache eviction, and stress-rendering an exactly 100 MiB text document are outside this command.
+
+## Private shares
+
+Build the relic-mcp bundle first. The root `bun run build` does not produce `packages/relic-mcp/dist/relic-mcp.js`, which the path runs:
+
+```bash
+bun run --filter relic-mcp build:bundle
+```
+
+Then run the full loopback proof from the repository root with an explicit Chrome:
+
+```bash
+RELIC_CHROME_PATH="$(command -v google-chrome)" bun packages/relic-mcp/test/private-shares-path.ts
+```
+
+The command starts a service on loopback with `MemoryStore` and `MemoryStorage`, serving built viewer assets. It drives three PRF-capable headless browsers (owner, reader, and a third identity) and one authenticator without PRF, and it publishes tap-free through a fresh relic-mcp stdio process.
+
+It prints the eleven `PRIVATE_STEP_N_...` lines in order. Success ends with exit code 0 and:
+
+```text
+PRIVATE_SHARES_PATH_OK
+```
+
+A failed assertion exits non-zero after printing `PRIVATE_SHARES_PATH_FAILED` and the step it stopped at. A recorded product defect prints `PRIVATE_SHARES_PATH_BLOCKED` with the defect codes and exits non-zero.

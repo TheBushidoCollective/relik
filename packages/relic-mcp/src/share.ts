@@ -21,6 +21,7 @@ import {
   type PublishDeps,
   PublishError,
   postJson,
+  isPrivateRelic,
   ServerRefusal,
 } from './publish.ts';
 import { loadPublishState, type PublishState } from './state.ts';
@@ -35,12 +36,41 @@ export interface ShareResult {
   readonly registered: readonly string[];
   readonly added: number;
   readonly shared_count: number;
-  readonly share_limit: number;
+  readonly share_limit: number | null;
   readonly email: ShareEmail;
   readonly mailto_url: string;
 }
 
 export { composeShareEmail, shareMailtoUrl, type ShareEmail, type ShareSender };
+
+/**
+ * Share a private relic: a draft invitation carrying the keyless link and
+ * nothing else. Nothing is registered with the service, because a reader asks
+ * for access on the page and the owner grants it. The invitation never claims
+ * the link opens the file.
+ */
+function privateInvitation(input: ShareInput, deps: PublishDeps): ShareResult {
+  const email: ShareEmail = {
+    to: [...input.emails],
+    subject: 'A private file shared with you on Relic',
+    text: [
+      "I've shared a private file with you on Relic. Open the link below and sign in. The link alone opens nothing: ask for access on the page, and I will grant it.",
+      '',
+      `${deps.relicOrigin}/${input.relic_id}`,
+      '',
+      'Relic emails you about activity on the file. Those emails never name the file or who wrote on it, and they have a link to stop them.',
+    ].join('\n'),
+  };
+  return {
+    relic_id: input.relic_id,
+    registered: [],
+    added: 0,
+    shared_count: 0,
+    share_limit: null,
+    email,
+    mailto_url: shareMailtoUrl(email),
+  };
+}
 
 export async function shareRelic(
   input: ShareInput,
@@ -62,6 +92,10 @@ export async function shareRelic(
   //    "can only be shared from the machine that published it".
   //    If the state file cannot be read, refuse with local_state_unreadable.
   let state: PublishState;
+  if (await isPrivateRelic(input.relic_id)) {
+    return privateInvitation(input, deps);
+  }
+
   try {
     const loaded = await loadPublishState(input.relic_id);
     if (loaded === undefined) {

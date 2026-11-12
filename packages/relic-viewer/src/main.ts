@@ -268,6 +268,7 @@ import {
   type HistoricalVersionState,
   isAudioMedia,
   isKeyEntryRecoverable,
+  keyForView,
   load,
   type LoadProgress,
   type LoadResume,
@@ -1014,6 +1015,13 @@ export function buildBar(
   // The fragment was stripped from the address bar, so re-sharing has to come
   // from somewhere. This is that affordance, backed by the in-memory key.
   const copyBtn = button('Copy link', ICONS.copy, () => {
+    // A private link holds no key to show, so its copy is the keyless URL.
+    if (view.access === 'private') {
+      void copyText(view.shareUrl).then((copied) => {
+        toast(copied ? LINK_COPIED_NOTE : COPY_FAILED_NOTE);
+      });
+      return;
+    }
     toggleCopyLinkPanel(view.shareUrl, copyBtn);
   });
   if (copyBtn.dataset) {
@@ -3420,7 +3428,8 @@ export function renderComparison(
   deps: ViewerDeps,
   onClose: () => void,
   initialLeft?: number,
-  initialRight?: number
+  initialRight?: number,
+  afterRender?: (page: HTMLElement) => void
 ): void {
   const defaultPair = seedComparisonPair(
     current.version,
@@ -3614,6 +3623,7 @@ export function renderComparison(
     }),
     diffRow
   );
+  afterRender?.(document.body);
   scaffold.headline.focus();
   void updateSelected();
 }
@@ -6036,11 +6046,17 @@ export function buildThread(
     outcome
   );
 
-  // The one place the in-memory fragment is already carried on a ready view.
-  // Reading it back from here rather than adding a second copy to `ReadyView`
-  // keeps the number of places holding key material at one.
-  const fragment = new URL(view.shareUrl).hash;
+  // A public link holds one key for every version, and a private view resolves
+  // each version's key through that version's own wrap. The cipher is derived
+  // per version, so each comment opens under the key of the version it is on.
+  const keyFor = keyForView(view);
+  const cipherFor = async (version: number | null): Promise<CommentCipher> =>
+    commentCipher(
+      await deriveCommentKey(await keyFor(version ?? view.version))
+    );
 
+  // A private view's link carries no key, so its sign-in return carries none.
+  const fragment = view.access === 'private' ? '' : new URL(view.shareUrl).hash;
   let cipher: CommentCipher | undefined;
   let session: SessionState = { kind: 'unknown' };
   let host: HTMLElement | undefined;
@@ -8325,7 +8341,7 @@ export function buildThread(
     try {
       const generation = ++loadGeneration;
       status.replaceChildren(line('thread-note', THREAD_LOADING_NOTE));
-      const state = await loadThread(relicId, deps, opener);
+      const state = await loadThread(relicId, deps, opener, cipherFor);
       if (typeof document === 'undefined') return false;
       if (generation !== loadGeneration) return undefined;
       if (state.kind === 'refused') {
@@ -8699,14 +8715,13 @@ export function buildThread(
   const initialise = async (): Promise<void> => {
     try {
       status.replaceChildren(line('thread-note', THREAD_LOADING_NOTE));
-      let key: Uint8Array;
       try {
-        key = parseFragment(fragment).key;
+        cipher = await cipherFor(view.version);
       } catch {
-        // Unreachable from a ready view, which exists only because the fragment
-        // parsed. Caught rather than thrown because an error escaping here
-        // would be an error object holding the fragment, and section 1.8 rules
-        // that out.
+        // Unreachable from a ready view, which exists only because its key
+        // resolved. Caught rather than thrown because an error escaping here
+        // would be an error object holding the key, and section 1.8 rules that
+        // out.
         status.replaceChildren(
           threadRefusal(
             {
@@ -8722,7 +8737,6 @@ export function buildThread(
         );
         return;
       }
-      cipher = commentCipher(await deriveCommentKey(key));
       const generation = ++sessionGeneration;
       const [, discovered] = await Promise.all([refresh(), readSession(deps)]);
       if (typeof document === 'undefined') return;
@@ -9419,15 +9433,18 @@ export function openSharePanel(
         box.focus();
         return;
       }
-      let key: Uint8Array;
-      try {
-        key = parseFragment(fragment).key;
-      } catch {
-        // Unreachable from a ready view, which exists only because the
-        // fragment parsed. Caught so no error object holding it escapes.
-        ended = shareRefusal('no_share_key');
-        paint('title');
-        return;
+      // A private relic is shared on the owner's session alone, with no key.
+      let key: Uint8Array | undefined;
+      if (view.access !== 'private') {
+        try {
+          key = parseFragment(fragment).key;
+        } catch {
+          // Unreachable from a ready view, which exists only because the
+          // fragment parsed. Caught so no error object holding it escapes.
+          ended = shareRefusal('no_share_key');
+          paint('title');
+          return;
+        }
       }
       submit.disabled = true;
       box.readOnly = true;
@@ -9658,7 +9675,8 @@ export function renderReady(
   view: ReadyView,
   relicId: string,
   usercontentOrigin: string,
-  deps: ViewerDeps
+  deps: ViewerDeps,
+  afterRender?: (page: HTMLElement) => void
 ): void {
   const lifecycle = createLifecycle();
   /** The attached taskbar, so a count arriving can replace just that row. */
@@ -9710,7 +9728,8 @@ export function renderReady(
       .then(({ openDecisionPanel }) => {
         decisionPanelLoading = false;
         if (activeView !== shown) return;
-        const fragment = new URL(shown.shareUrl).hash;
+        const fragment =
+          shown.access === 'private' ? '' : new URL(shown.shareUrl).hash;
         decisionPanel = openDecisionPanel({
           view: shown,
           relicId,
@@ -9829,6 +9848,7 @@ export function renderReady(
       buildRelicRow(wrap, thread?.element, thread?.resizer, thread?.tab)
     );
     thread?.attach(wrap);
+    afterRender?.(document.body);
     trackRenderState(stage, wrap, viewToShow.route);
   };
 
@@ -9914,7 +9934,8 @@ export function renderReady(
       deps,
       () => showSingle(activeView),
       left,
-      right
+      right,
+      afterRender
     );
   };
 
@@ -11214,8 +11235,27 @@ export async function boot(
   const relicId = root?.dataset['relicId'] ?? '';
   const usercontentOrigin = root?.dataset['usercontentOrigin'] ?? '';
 
+  if (root?.dataset['relicAccess'] === 'private') {
+    // A dynamic import is the code-split point: the private reader is a lazy
+    // chunk so the shell never carries its copy or its key handling.
+    const { mountPrivateReader } = await import('./private/reader.ts');
+    await mountPrivateReader({
+      relicId,
+      usercontentOrigin,
+      deps,
+      renderReady,
+      renderDead,
+    });
+    return;
+  }
   if (viewMarker === 'dashboard') {
     await renderDashboard(deps);
+    // The private-share sections are a lazy chunk. A signed-out visitor never
+    // loads it, and the module makes no identity request for them.
+    if (root !== null) {
+      const { mountPrivateDashboard } = await import('./private/reader.ts');
+      await mountPrivateDashboard(deps);
+    }
     return;
   }
 

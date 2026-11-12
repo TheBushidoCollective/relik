@@ -77,7 +77,36 @@ export type ProblemCode =
   // tell anybody whether a code exists, expired, was spent, or was guessed
   // too often.
   | 'invalid_sign_in_code'
-  | 'sign_in_code_failed';
+  | 'sign_in_code_failed'
+  // Private shares (`docs/plans/private-shares` 4.8). Each code answers one
+  // refusal the routes in 4.7 name; none reveals whether a key, grant or
+  // address exists beyond what the caller was already told.
+  | 'private_access_denied'
+  | 'private_policy_violation'
+  | 'identity_required'
+  | 'identity_exists'
+  | 'invalid_identity'
+  | 'invalid_statement'
+  | 'private_rate_limited'
+  | 'owner_required'
+  | 'owner_exists'
+  | 'fingerprint_mismatch'
+  | 'grant_stale_version'
+  | 'recipients_changed'
+  | 'version_conflict'
+  | 'private_seal_required'
+  | 'invalid_seal'
+  | 'seal_digest_mismatch'
+  | 'invalid_wrap'
+  | 'device_not_found'
+  | 'device_revoked'
+  | 'invalid_device'
+  | 'device_enrollment_expired'
+  | 'version_deleted'
+  | 'cannot_delete_current_version'
+  | 'request_not_found'
+  | 'request_limit_reached'
+  | 'grant_not_found';
 
 const STATUS: Readonly<Record<ProblemCode, number>> = {
   relic_not_found: 404,
@@ -124,6 +153,32 @@ const STATUS: Readonly<Record<ProblemCode, number>> = {
   passkey_fresh_link_required: 401,
   invalid_sign_in_code: 400,
   sign_in_code_failed: 401,
+  private_access_denied: 403,
+  private_policy_violation: 400,
+  identity_required: 409,
+  identity_exists: 409,
+  invalid_identity: 400,
+  invalid_statement: 400,
+  private_rate_limited: 429,
+  owner_required: 403,
+  owner_exists: 409,
+  fingerprint_mismatch: 409,
+  grant_stale_version: 409,
+  recipients_changed: 409,
+  version_conflict: 409,
+  private_seal_required: 409,
+  invalid_seal: 400,
+  seal_digest_mismatch: 409,
+  invalid_wrap: 400,
+  device_not_found: 404,
+  device_revoked: 403,
+  invalid_device: 400,
+  device_enrollment_expired: 410,
+  version_deleted: 410,
+  cannot_delete_current_version: 409,
+  request_not_found: 404,
+  request_limit_reached: 409,
+  grant_not_found: 404,
 };
 
 /** `title` SHOULD NOT change from occurrence to occurrence, per RFC 9457. */
@@ -175,6 +230,33 @@ const TITLE: Readonly<Record<ProblemCode, string>> = {
     'Adding a first passkey needs a fresh sign-in from an email',
   invalid_sign_in_code: 'Invalid sign-in code payload',
   sign_in_code_failed: 'Sign-in code did not work',
+  private_access_denied: 'You do not have access to this relic',
+  private_policy_violation: 'Private relics do not allow that',
+  identity_required: 'Set up a private-share key first',
+  identity_exists: 'This address already has a private-share key',
+  invalid_identity: 'Invalid private-share key payload',
+  invalid_statement: 'Invalid signed statement',
+  private_rate_limited: 'Too many private-share requests',
+  owner_required: "Only the relic's owner can do that",
+  owner_exists: 'This relic already has an owner',
+  fingerprint_mismatch: 'The fingerprint does not match',
+  grant_stale_version: 'A newer version exists',
+  recipients_changed: 'Who can read this relic changed',
+  version_conflict: 'The relic changed while this was in progress',
+  private_seal_required: 'This version needs its seal',
+  invalid_seal: 'Invalid seal',
+  seal_digest_mismatch: 'The seal does not match the stored version',
+  invalid_wrap: 'Invalid wrapped key',
+  device_not_found: 'No such device',
+  device_revoked: 'This device was revoked',
+  invalid_device: 'Invalid device payload',
+  device_enrollment_expired: 'Device enrollment expired',
+  version_deleted: 'This version was deleted',
+  cannot_delete_current_version:
+    'Delete the whole relic to remove its current version',
+  request_not_found: 'No such access request',
+  grant_not_found: 'No such grant',
+  request_limit_reached: 'This relic has too many pending requests',
 };
 
 export interface ProblemExtensions {
@@ -195,6 +277,20 @@ export interface ProblemExtensions {
   readonly version?: number;
   readonly version_digest?: string;
   readonly passkey_check?: string;
+  readonly policy_check?:
+    | 'title'
+    | 'cover'
+    | 'ttl'
+    | 'owner_email'
+    | 'share_verifier'
+    | 'share_proof'
+    | 'version';
+  readonly identity_check?: string;
+  readonly statement_check?: string;
+  readonly seal_check?: string;
+  readonly device_check?: string;
+  readonly access_epoch?: number;
+  readonly owner_epoch?: number;
 }
 
 export interface ProblemOptions extends ProblemExtensions {

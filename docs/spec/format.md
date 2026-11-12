@@ -6,11 +6,13 @@ This document fixes the format. It owns the irreversible decisions in `specify`,
 
 ## 0. The URL
 
-The shape is locked: `https://<relic-domain>/{id}#{secret}`. The ID sits in the path, the secret sits in the fragment. This document doesn't reopen it. It records one consequence and one obligation.
+The shape is locked for public relics: `https://<relic-domain>/{id}#{secret}`. The ID sits in the path, the secret sits in the fragment. This document doesn't reopen it. It records one consequence and one obligation.
 
 **The consequence.** Delete-by-ID depends on the ID being in the path. An abuse reporter hands over a URL with the fragment already stripped, so an ID that lived in the fragment would arrive stripped too and the takedown primitive would have nothing to act on.
 
 **The obligation.** The ID appears in the viewing origin's own `Referer` on any outbound request, so that origin sends `Referrer-Policy: no-referrer`. That's `spec-viewer`'s to implement, named here because this section creates the exposure and restated in section 5 so it travels with the unit that owes it.
+
+**The private-relic URL.** A private relic's link is `https://<relic-domain>/{id}`, with no fragment. There is no key in the URL to leak, and nothing to strip from the address bar (2.5). The ID still sits in the path, so delete-by-ID and the consequence above still hold. The ID alone fetches nothing for a private relic: its mint is gated on an access check (1.2, 3.7). Each reader's copy of each version's key arrives in a wrap (3.17). The private-shares build plan (`docs/plans/private-shares/README.md`, cited here as "the plan") replaces the draft's version marker with these rules (plan correction 1 and section 4.7).
 
 ## 1. The relic ID
 
@@ -30,6 +32,8 @@ The trade is bits per character against transcription cost. base64url is 6 bits 
 
 Two locked statements point opposite ways and both are true. The preconditions: "This works precisely because the relic ID is not secret. Only the key is." The MCP spec, on handles for unauthenticated servers: one "is necessarily a bearer token, it should be generated with sufficient entropy (e.g., a UUIDv4) and given a bounded lifetime." They reconcile because the ID is a bearer token for fetching *ciphertext*, and ciphertext without the key is inert.
 
+That reconciliation holds for public relics. A private relic's ID is a locator, not a bearer token for fetching ciphertext: a private mint is refused unless the caller's identity holds a wrap for a sealed, undeleted version, or the caller presents the publish token (plan correction 11 and section 4.7). The entropy rule below still applies to a private relic's ID, but holding the ID no longer lets anyone read the relic.
+
 **The ID carries full bearer-token entropy. The rule fixed here is that it is unguessable, not merely unique.** The cost is URL length and nothing else.
 
 The alternative worth naming is a short ID with all security in the fragment. It costs enumeration: a stranger walking the ID space collects the operator-conceded metadata set (coarse class, approximate size, open timing) on relics nobody shared with them, and burns per-object download caps and egress doing it. That re-prices a locked decision without routing it, because the frame conceded a coarse content category to *the operator* rather than to the world, and making it world-readable by enumeration is drift dressed as a URL-length preference. Restoring unguessability by adding a separate fetch token to the fragment buys the same property for two secrets, two things that can be truncated, and a failure mode where one lost character yields a 404 the recipient can't tell apart from a decrypt error.
@@ -42,7 +46,7 @@ The alternative worth naming is a short ID with all security in the fragment. It
 
 **The publishing client generates the ID before it requests a grant.**
 
-That eliminates the worst failure in the system, a relic that exists, is fetchable, and has no owner who can name it. Owning the ID and the key before anything leaves the machine lets the client reconstruct the full URL from state it already holds, so an upload that succeeds while its confirmation is lost still yields a link the publisher can share and can hand to the operator for deletion.
+That eliminates the worst failure in the system, a relic that exists, is fetchable, and has no owner who can name it. Owning the ID and the key before anything leaves the machine lets the client reconstruct the full URL from state it already holds (for a public relic, the URL that carries its key in the fragment), so an upload that succeeds while its confirmation is lost still yields a link the publisher can share and can hand to the operator for deletion.
 
 If `shape` overrides this and puts generation on the server, **the ID must come back in the grant, never in a post-upload confirmation**, for the same reason. A grant response arrives before the bytes move. A confirmation arrives after, and it's the message that gets lost.
 
@@ -71,11 +75,11 @@ Two operating rules follow. The table is append-only, and **appending a word aft
 
 ### 2.1 Structured, minimally
 
-The fragment is **`#<version-marker><key>`**: a fixed-width version marker followed immediately by the encoded key, no separator.
+For a public relic, the fragment is **`#<version-marker><key>`**: a fixed-width version marker followed immediately by the encoded key, no separator.
 
-A bare key leaves no room for a version marker, so there's no migration path off the first framing choice. Content is encrypted once and never re-encrypted, so a framing choice with no migration path is permanent. A separator adds a character that can be mangled and buys nothing against a fixed-width marker.
+A bare key leaves no room for a version marker, so there's no migration path off the first framing choice. For a public relic, content is encrypted once and never re-encrypted, so a framing choice with no migration path is permanent. A private relic's revocation republish encrypts the same plaintext again under a fresh key (3.10), and both kinds share one container, so the framing choice is permanent for both. A separator adds a character that can be mangled and buys nothing against a fixed-width marker.
 
-The fragment carries **exactly two things, the marker and the key**. A third field takes a version bump.
+The fragment of a public relic carries **exactly two things, the marker and the key**. A third field takes a version bump. A private relic has no fragment, so there is nothing for a marker to sit in: its key delivery is versioned by its own labels inside the wrap and the statements (3.17). That is not a format version bump, and the envelope and the container are unchanged.
 
 ### 2.2 The version marker lives in the fragment
 
@@ -84,6 +88,8 @@ The fork is fragment versus the container's plaintext header, where RFC 8188 off
 **It goes in the fragment.** The viewer then knows the format before fetching anything, so an unknown version is refused without minting a signed URL, without consuming a per-object download cap, and without a byte of egress. The marker is visible only to people who already hold the key, so it adds nothing to the operator's metadata set, whereas `keyid` is plaintext and operator-visible by construction. The cost is two characters of URL and telling every channel the link crosses which Relic format version was used, which says nothing about the content.
 
 One version number governs the whole envelope, fragment and container together. There's no second, independent container version. It versions the *format*, which is a different axis from the relic's own version: republish-to-same-URL now exists and a relic's version counts its publishes (3.12), while this marker counts revisions of the container. A relic at version 7 and a relic at version 1 can both carry format version 1, and bumping the format version changes nothing about relic versioning.
+
+This is a public-relic rule. A private relic has no fragment, so no marker is read for it. The viewer learns that a relic is private from the server before any mint: `data-relic-access="private"` on the shell root, and `access` on `GET /api/relics/{id}/access` (plan 4.7 and 4.15). Private shares add no second container version. Their key delivery is versioned by labels (3.17), as plan correction 1 records.
 
 ### 2.3 Key encoding and the terminal-character rule
 
@@ -114,13 +120,15 @@ Cheapest insurance in the product: a sanitizer bypass, a stray same-origin scrip
 
 What it doesn't do: the URL with its fragment existed before the replace, so this retracts nothing that already read it. Browser history sync, an extension with host permissions reading `window.location.href` at load, and the application the link was clicked from all still saw it. This shrinks the window without closing it.
 
+For a private relic there is nothing to strip. Its URL has no fragment, and the viewer writes none. This section describes public relics only.
+
 ## 3. The ciphertext container
 
 ### 3.1 Two layers
 
 **Layer 1, the transport framing.** RFC 8188 `aes128gcm` is presumptive: a plaintext header of `salt (16) | rs (4) | idlen (1) | keyid (idlen)`, then records of `rs` octets, each with its own 16-octet authentication tag and a padding delimiter, the last record using value 2 and all others value 1 ([RFC 8188](https://www.rfc-editor.org/rfc/rfc8188.html)). Presumptive rather than fixed because the framing is `shape`'s (section 4), and the presumption because `frame.md`'s wedge-boundary section already establishes it as the off-the-shelf framing with working range decryption over GCS byte ranges ([wormhole-crypto](https://github.com/SocketDev/wormhole-crypto), [unzipit](https://github.com/greggman/unzipit)). That argument isn't re-run here. Any substitute inherits the same reversibility constraint.
 
-**Layer 2, the Relic envelope, entirely inside the encrypted stream.** Record 0 is the envelope header: the version (mirroring the fragment marker), an entry count, and per entry a filename, a declared mimetype, and an offset and length into the content stream. Content bytes follow. Nothing else is in there.
+**Layer 2, the Relic envelope, entirely inside the encrypted stream.** Record 0 is the envelope header: the version (mirroring the fragment marker on a public relic), an entry count, and per entry a filename, a declared mimetype, and an offset and length into the content stream. Content bytes follow. Nothing else is in there.
 
 Three rules on that structure:
 
@@ -162,7 +170,7 @@ Salt and record size are necessarily operator-visible, which is benign: the salt
 
 **`keyid` is unused. `idlen` MUST be 0, and a container with `idlen != 0` MUST be refused after the fetch.** The refusal point is forced, because the header sits in the object's first bytes and nothing can be checked until they arrive. Same shape and same cost as 3.7's second refusal: the mint and the egress are already spent, and the viewer stops before decrypting anything.
 
-It's a plaintext free-text field sitting next to ciphertext, and RFC 8188 says it "SHOULD be a UTF-8-encoded string," which is exactly the invitation somebody accepts when they need somewhere to put a filename. Every legitimate use is already placed: the version is in the fragment, and one key per relic means nothing needs identifying. The cost of the hard invariant is that using `keyid` later takes a version bump, which is the migration path 2.2 bought.
+It's a plaintext free-text field sitting next to ciphertext, and RFC 8188 says it "SHOULD be a UTF-8-encoded string," which is exactly the invitation somebody accepts when they need somewhere to put a filename. Every legitimate use is already placed: a public relic's version is in its fragment, a private relic's version is in its wrap labels (3.17), and each key is named by its relic and version, so nothing needs identifying. The cost of the hard invariant is that using `keyid` later takes a version bump, which is the migration path 2.2 bought.
 
 ### 3.5 The header is not authenticated
 
@@ -199,6 +207,8 @@ The residual: a publisher can declare a class that doesn't match their own conte
 
 Two distinct refusals, because the version appears twice. An unknown fragment marker is refused **before the fetch**, costing no mint and no egress. A container whose envelope version disagrees with the fragment marker is refused **after the fetch**. That pairing is deliberate: the outer copy enables early refusal, the inner copy sits inside the AEAD and is tamper-evident, and disagreement means a mangled fragment prefix or a substituted object.
 
+A private relic has no fragment marker, so neither refusal above is a marker check for it. The viewer refuses a private relic by the access mode the server declares (`data-relic-access="private"` on the shell root and `access: 'private'` on `GET /api/relics/{id}/access`), and a private mint is refused unless the caller's identity holds a wrap for a sealed, undeleted version (`POST /api/relics/{id}/mint`, plan 4.7 and 4.15). After the fetch, the envelope version check still applies: an envelope version other than 1, the version this format defines, is refused (plan correction 1).
+
 ### 3.8 Length leakage
 
 Ciphertext length reveals plaintext length to within a record. With the class alongside it, the operator learns "an image of roughly 2.4 MB." Padding to size buckets is the only mitigation, and it's paid in egress on every fetch by every recipient forever, against a precondition that already names egress as a kill-switch condition. What it prevents is a size estimate the operator gets a coarse version of regardless.
@@ -215,7 +225,9 @@ Ciphertext length reveals plaintext length to within a record. With the class al
 
 **Every relic gets a fresh key from the publishing machine's CSPRNG.** RFC 8188 §4.3 requires it structurally: the framing uses a fixed nonce progression, so "a new content-encryption key is needed for every application of the content coding."
 
-**The unit of freshness is the relic, not the version.** A republished version encrypts new plaintext under the same relic key, because the shared URL carries that key and a version that needed a new fragment would be a new relic. That is safe because the RFC's requirement is a fresh *content-encryption* key per application of the coding, not a fresh input key: every object draws a fresh random salt, HKDF derives a new content-encryption key from it, and the fixed nonce progression restarts per object against a key it has never been used with.
+**For a public relic, the unit of freshness is the relic, not the version.** A republished version encrypts new plaintext under the same relic key, because the shared URL carries that key and a version that needed a new fragment would be a new relic. That is safe because the RFC's requirement is a fresh *content-encryption* key per application of the coding, not a fresh input key: every object draws a fresh random salt, HKDF derives a new content-encryption key from it, and the fixed nonce progression restarts per object against a key it has never been used with.
+
+**For a private relic the unit is the version.** Each version has its own 16-octet content key, drawn fresh from the publishing machine's CSPRNG, and that version's object and wraps are written under it. A revocation republish opens the next version under a fresh key rather than reusing the old one (plan section 4.12), so only the remaining readers, who receive wraps for it, can open it. The per-object salt and the per-object nonce progression argue the same way as above. The key reaches each reader only inside a wrap (3.17), never in a URL.
 
 Two consequences, and the second is a boundary:
 
@@ -236,24 +248,28 @@ The failure that prevents is specific. Framing adds known overhead, so a plainte
 
 Republish-to-same-URL exists, so a relic id names a sequence of objects rather than one. The layout rule: **version 1's ciphertext stays at the existing path `{ciphertext_prefix}/{id}`, and versions 2 and up live at `{ciphertext_prefix}/{id}/v{n}`.**
 
-This is a layout rule rather than a migration because production already holds objects at the un-suffixed path and they must keep resolving. Re-pointing version 1 to a suffixed path would orphan every link already shared, which is the one failure this document exists to prevent: content is encrypted once under a key the URL carries forever, so the URL is the product and cannot be broken retroactively.
+This is a layout rule rather than a migration because production already holds objects at the un-suffixed path and they must keep resolving. Re-pointing version 1 to a suffixed path would orphan every link already shared, which is the one failure this document exists to prevent: for a public relic, content is encrypted once under a key the URL carries forever, so the URL is the product and cannot be broken retroactively. A private relic's link carries no key, but a mint still resolves its ID to these paths, so the rule holds for private relics too.
 
 Four consequences:
 
 - **Each version path gets its own existence refusal.** A grant or a republish targeting `{id}/v{n}` is refused if that path already holds an object, which is 1.4 applied per version. No path is ever overwritten, at any version, including by the relic's own publisher.
-- **Opening a relic serves the current version, and there is no way to request an older one.** The version number on the row picks the object, and no endpoint accepts a version selector. Serving history would multiply servable egress per id for nothing the recipient asked for.
+- **Opening a relic serves the current version of a public relic, and there is no way to request an older one.** The version number on the row picks the object, and no endpoint accepts a version selector. Serving history would multiply servable egress per id for nothing the recipient asked for. A private relic is different: a reader opens a sealed version their identity holds a wrap for. The owner chooses the versions a grant covers, so that can be an older version (3.17, plan 4.7).
 - **The per-object download cap counts opens per relic id across all versions**, so the egress ceiling per id keeps its meaning under republishing. What versions multiply is stored bytes, never servable mints.
 - **A delete removes every version's object**, v1 through current, and the tombstone refuses any future version (`spec-service-surface` section 4). Takedown is terminal across versions by construction: the refusal keys on the id, and no version number is an argument against it.
 
 The version counter is 1-based and counts publishes: the initial publish is version 1, each republish increments it. It lives on the server's relic row and never enters the URL, the fragment, or the container, so it adds nothing to what a recipient or the operator can read from a link, and it cannot collide with the format's own version marker (2.2), which counts container revisions on a different axis.
 
+For a private relic, each version also has a seal and a set of wraps, stored at `m/seal/{relicId}/{version}.json` and `m/wrap/{relicId}/{version}/{recipientKeyId}.json` (plan 4.11). The seal is a signed statement over the version's ciphertext digest and recipient list, and each wrap is one recipient's copy of that version's key (3.16, 3.17). Neither changes where the ciphertext sits: version 1 stays at `{ciphertext_prefix}/{id}` and version `n` at `{ciphertext_prefix}/{id}/v{n}`.
+
 ### 3.13 Comment encryption
 
-Comments are content, and a comment about content the operator cannot read, stored in the clear, hands the operator exactly what this document exists to deny. So a comment body is encrypted by whoever writes it, under a key only a holder of the relic's link can derive.
+Comments are content, and a comment about content the operator cannot read, stored in the clear, hands the operator exactly what this document exists to deny. So a comment body is encrypted by whoever writes it, under a key only a holder of the relic's key can derive. For a public relic that key is the fragment key, so only a holder of the link can derive it. For a private relic the key is per version, as described below.
 
-**The fragment does not change, and neither does the container.** 2.1 fixes the fragment at the marker and the key, and says a third field takes a version bump, so there is no room for a separate comment secret and none is invented. What there is room for is another HKDF label. **The comment key is `HKDF-SHA256(ikm = the 16 raw fragment key bytes, salt = zero-length, info = "relic/comments/v1", L = 16)`.**
+**For a public relic, the fragment does not change, and neither does the container.** 2.1 fixes the fragment at the marker and the key, and says a third field takes a version bump, so there is no room for a separate comment secret and none is invented. What there is room for is another HKDF label. **The comment key is `HKDF-SHA256(ikm = the 16 raw fragment key bytes, salt = zero-length, info = "relic/comments/v1", L = 16)`.**
 
-**This derivation needs no format version bump, and that has to be stated rather than left to a reader's inference, because a new key looks like a new format.** It is not one. 3.1's two layers are untouched: no header field is added, no record layout changes, no envelope field appears, and the fragment keeps exactly the two things 2.1 allows it. Every relic written before comments existed decodes byte for byte the same way after, and a viewer that never derives a comment key is not a viewer speaking an older format. The version marker in 2.2 counts container revisions, and nothing in this section is a container revision. What a comment key is instead is a second use of key material the URL already carries, which is precisely what RFC 8188 does when it expands the same input keying material under `Content-Encoding: aes128gcm\0` for the content key and `Content-Encoding: nonce\0` for the base nonce. A third distinct label yields a third key independent of both by construction rather than by assertion, and independence by construction is what makes this safe without a bump: the comment key cannot be used to reach the content key, and vice versa, whatever either one leaks.
+**This derivation needs no format version bump, and that has to be stated rather than left to a reader's inference, because a new key looks like a new format.** It is not one. 3.1's two layers are untouched: no header field is added, no record layout changes, no envelope field appears, and the fragment keeps exactly the two things 2.1 allows it. Every relic written before comments existed decodes byte for byte the same way after, and a viewer that never derives a comment key is not a viewer speaking an older format. The version marker in 2.2 counts container revisions, and nothing in this section is a container revision. What a comment key is instead, for a public relic, is a second use of key material the URL already carries, which is precisely what RFC 8188 does when it expands the same input keying material under `Content-Encoding: aes128gcm\0` for the content key and `Content-Encoding: nonce\0` for the base nonce. A third distinct label yields a third key independent of both by construction rather than by assertion, and independence by construction is what makes this safe without a bump: the comment key cannot be used to reach the content key, and vice versa, whatever either one leaks.
+
+**For a private relic the comment key comes from the version, not the link.** It is `HKDF-SHA256(ikm = that version's 16-byte content key, salt = zero-length, info = "relic/comments/v1", L = 16)`, derived per version (plan 4.1). A comment on version 3 can be read only by a reader who can unwrap version 3's key (3.17). The label, the envelope and the caps are unchanged, so this is not a format version bump.
 
 **The salt is zero-length, unlike the container's.** A comment is not a container and has no plaintext header to carry a salt in. RFC 5869 permits the omission, and what separates one comment from another is the per-comment nonce rather than a salt.
 
@@ -286,6 +302,8 @@ The path must resolve exactly to an `img` whose source digest matches. There is 
 **`display_name` is decoration and never identity.** The identity of a commenter is the verified address the service holds (`docs/frame.md`), and the name is untrusted display text living inside the ciphertext where the service cannot read it. It aliases the attribution and never replaces it.
 
 ### 3.14 Share proof
+
+**This section describes public relics.** A private relic's share and decision calls carry no `share_proof`: the server replaces that check with an access check (plan 4.7), and a private relic registers no `share_verifier`. The verifier and proof below do not apply to a private relic.
 
 A reader can enroll addresses in a relic's change notices from the web viewer, and only a holder of the key may do that. The service never sees the key, so it cannot check possession directly. What it can check is a value only a key holder can compute: the publisher's client registers the SHA-256 of a key-derived proof when it publishes or republishes, and a reader presents the proof itself when sharing. The service compares hashes and learns the proof, which decrypts nothing.
 
@@ -355,7 +373,93 @@ To bind an approval or rejection decision to exact content without requiring pla
 
 **Container invariant:** No format version bump is required. The digest is computed over the raw RFC 8188 container bytes as stored in Cloud Storage. It does not alter container headers, salt, or record structure. It enables cryptographic binding between the viewer's decrypted view and the server's stored version record: when a reader confirms an approval or rejection, the server verifies that the client's `version_digest` matches the recorded digest for that version, refusing with `409 decision_digest_mismatch` if they diverge.
 
-### 3.17 The OpenTimelineIO program
+**For a private relic, the seal signs the version digest.** The seal statement carries `ciphertext_sha256`: the same 64-character lowercase hex digest of the stored ciphertext bytes. The server checks it against its own digest of the stored object and refuses a mismatch (`seal_digest_mismatch`). The seal is signed by an owner device or by the owner identity (plan 4.3 and 4.12). The container invariant above is unchanged.
+
+### 3.17 Private key delivery
+
+A private relic's key never sits in its URL. Each version has its own 16-octet content key, and each reader receives that key inside a wrap made to the reader's public key. The service stores the wraps and the seals, and never a plaintext key. Everything in this section applies to private relics only. Public relics keep the fragment (2.1).
+
+**The wrap.** A wrap is one HPKE message in base mode, single-shot at sequence zero ([RFC 9180](https://www.rfc-editor.org/rfc/rfc9180.html)). The suite is KEM `0x0010` DHKEM(P-256, HKDF-SHA256), KDF `0x0001` HKDF-SHA256, and AEAD `0x0001` AES-128-GCM, with these inputs:
+
+- `info = UTF8("relic/wrap/v1") || 0x00 || UTF8(relicId) || u32be(version)`. The relic ID is 26 characters, and the version is an integer from 1 to 2^32 - 1.
+- `aad` is the recipient's `kemKeyId`: the 32 raw bytes of SHA-256 over the recipient's 65-byte SEC1 KEM public key.
+- `plaintext` is the 16-byte version key.
+- `enc` is the 65-byte SEC1 encapsulated key, and `ct` is 32 bytes: the 16-byte key and its 16-byte tag. Both are base64url on the wire.
+
+The wire record names its recipient by `recipient_key_id`, the lowercase hex of that `kemKeyId`. A wrap opens only for the relic, version and recipient it was made for. Any other combination fails with one error, and the caller learns nothing about which input was wrong. The code is `wrapVersionKey` and `unwrapVersionKey` in `packages/relic-format/src/private.ts`.
+
+**Who receives a wrap.** A version is wrapped to its required recipient set: the owner identity, each owner device that is not revoked and not expired, the recovery identity when one is designated, and each grantee whose grant is active (plan 4.12). The client that writes the wraps checks every recipient first. Grants, device certificates and the recovery designation must be signed by the pinned owner identity (plan corrections 5 and 22), and a recipient whose keys do not hash to its identity ID is refused before any wrap is made (plan 4.16). The service cannot add a recipient of its own.
+
+**The identity.** An identity is two P-256 key pairs: an ECDH key for HPKE and an ECDSA key for statements. Both are generated with WebCrypto `generateKey`, not derived from a passkey (plan correction 4). The private halves are kept in an **identity bundle**, encrypted under a key-encryption key (KEK) that comes from the passkey's PRF output:
+
+- The PRF is evaluated with `eval.first = UTF8("relic/identity-prf/v1")`. WebAuthn Level 3 defines the `prf` extension, and its salt is SHA-256 over `WebAuthn PRF`, a zero byte, and the `eval.first` input ([WebAuthn Level 3, section 10.1.4](https://w3c.github.io/webauthn/)).
+- `KEK = HKDF-SHA256(ikm = PRF output, 32 bytes; salt = raw credential ID bytes; info = UTF8("relic/identity-kek/v1"); 32 bytes)`, imported as a non-extractable AES-256-GCM key.
+- The bundle is base64url of `nonce(12) || ciphertext`, where the plaintext is `canonicalJson({"kem":{"d","x","y"},"sig":{"d","x","y"},"v":1})` and the AAD is `UTF8("relic/identity-bundle/v1") || 0x00 || identityId (32 raw bytes) || raw credential ID bytes`.
+
+Each bound passkey has its own bundle, and a bundle opens only under that passkey's PRF output and that credential's raw ID. Opening one rebuilds the keys as non-extractable and checks that the public halves hash to `identityId` (3.18). The PRF output never reaches the service, because the client's serializers omit extension results (plan correction 19).
+
+**Statements.** Each owner action and each identity change is a statement: canonical JSON under a kind label. `statementBytes(kind, statement)` is `UTF8("relic-statement/v1\n" || kind || "\n" || canonicalJson(statement))`. The signature is ECDSA P-256 over SHA-256, IEEE P1363 `r || s`, 64 bytes, base64url. Who signs a statement, and whether WebAuthn attests it, depends on its kind:
+
+| Kind | Signed by | Attested by WebAuthn |
+|---|---|---|
+| `identity_register`, `identity_bind`, `identity_settings` | the identity | yes |
+| `access_request` | the requester's identity | yes |
+| `grant`, `revocation`, `republish`, `delete`, `device_cert`, `device_revocation`, `recovery_designation` | the owner's identity | yes |
+| `seal` | an owner device or the owner's identity | no |
+| `device_enroll`, `device_request`, `owner_bind`, `private_publish` | a device | no |
+
+The field list for each kind is `StatementMap` in `private.ts`. Strict parsing refuses an extra field, a missing field, or a wrong type, and the known-answer fixtures freeze the bytes (3.18).
+
+**Attestation.** A WebAuthn-attested action is verified against a challenge the server issues. The server issues a random 32-byte nonce that expires, and the challenge is `attestationChallenge(nonce, statements)`: the SHA-256 of `UTF8("relic-attest/v1") || 0x00 || nonce || SHA-256(statementBytes_1) || ... || SHA-256(statementBytes_n)`, with the statements in request order and n at least 1. Its base64url is the WebAuthn challenge. The server refuses any statement whose `at` is more than 300 seconds from its clock. The service stores each owner action's full assertion with its statements, so a stored grant can be re-verified from the stored bytes alone (plan decision 3).
+
+**The seal.** A version's seal is a signed statement of `access_epoch`, `at`, `ciphertext_sha256`, `key_commitment`, `owner_epoch`, `recipient_key_ids`, `relic_id`, `signer_id` and `version`. `ciphertext_sha256` is the version digest of 3.16. `key_commitment` is the key commitment defined in 3.18. `recipient_key_ids` is the sorted list of the recipients' `kemKeyId` hex values that the sealer intended to wrap to, and `signer_id` is the signing device's or identity's ID. Before a reader decrypts a private version, the viewer checks that the wrap opens, that the seal's signature chains to the owner identity (directly or through an owner device certificate), that the unwrapped key matches `key_commitment`, that the ciphertext's SHA-256 equals the sealed digest, and that the owner identity matches the one pinned for this relic at first open (plan decision 4). The reader does not have to be in `recipient_key_ids`: a wrap addressed to the reader's own KEM key id that unwraps is enough, because HPKE binds the relic id, the version and the recipient. A grant made after a version was sealed can therefore open that version. A failed check is a refusal, not a decryption error.
+
+**The owner pin, and its limit.** The viewer pins the owner identity per relic at first open and refuses a different owner later, with no button to accept one. At first open the reader has only the service's report of the owner, so a forged owner is caught only if the reader compares the owner fingerprint out of band (plan correction 22). This is an accepted residual (plan section 8, item 7).
+
+**Grants and revocation.** A grant wraps exactly the versions it names. A revocation deletes the revoked identity's wraps for every version and republishes the current content as a new version under a fresh key, which only the remaining recipients receive (3.10, plan 4.12). A revoked reader keeps whatever they already opened.
+
+### 3.18 Parameter table
+
+The crypto parameters, the HPKE implementation rules, and the identifiers and fingerprints built on them. These are the private-share contract.
+
+| Use | Primitive | Parameters |
+|---|---|---|
+| Content | RFC 8188 `aes128gcm`, unchanged | 16-byte key: per relic (public), per version (private) |
+| Comment key | HKDF-SHA256, unchanged | ikm = that version's key (for a public relic, the fragment key), salt empty, info `relic/comments/v1`, 16 bytes |
+| Wrap | HPKE RFC 9180 base mode | KEM 0x0010 DHKEM(P-256, HKDF-SHA256), KDF 0x0001 HKDF-SHA256, AEAD 0x0001 AES-128-GCM; info = UTF8(`relic/wrap/v1`) ‖ 0x00 ‖ UTF8(relicId, 26 bytes) ‖ u32be(version); aad = recipient kemKeyId (32 raw bytes); pt = 16-byte version key; `enc` 65 bytes; `ct` 32 bytes |
+| PRF salt | WebAuthn PRF `eval.first` | UTF8(`relic/identity-prf/v1`); the browser hashes it with the `WebAuthn PRF` prefix |
+| Identity KEK | HKDF-SHA256 | ikm = PRF output (32 bytes), salt = raw credential id bytes, info = UTF8(`relic/identity-kek/v1`), 32 bytes, used as an AES-256-GCM key |
+| Key commitment | HKDF-SHA256 | ikm = the 16-byte version key, salt = empty, info = UTF8(`relic/key-commit/v1`) ‖ 0x00 ‖ UTF8(relicId, 26 bytes) ‖ u32be(version), 32 bytes, lowercase hex in the seal. HPKE base mode does not authenticate the key it opens, so an opener compares this value with the signed seal before it uses the key. |
+| Identity bundle | AES-256-GCM | 12-byte random nonce; aad = UTF8(`relic/identity-bundle/v1`) ‖ 0x00 ‖ identityId (32 raw bytes) ‖ raw credential id; pt = UTF8(canonicalJson(`{"kem":{"d","x","y"},"sig":{"d","x","y"},"v":1}`)); stored as base64url(nonce ‖ ciphertext) |
+| Statement signature | ECDSA P-256, SHA-256 | IEEE P1363 `r ‖ s`, 64 bytes, base64url; over `statementBytes` |
+| Attestation challenge | SHA-256 | UTF8(`relic-attest/v1`) ‖ 0x00 ‖ nonce (32 bytes) ‖ SHA-256(statementBytes₁) ‖ … ‖ SHA-256(statementBytesₙ), n ≥ 1, in request order; base64url is the WebAuthn challenge |
+
+HPKE implementation notes, normative:
+
+- `LabeledExtract(salt, label, ikm) = HMAC-SHA256(salt, "HPKE-v1" ‖ suite_id ‖ label ‖ ikm)`. WebCrypto refuses a zero-length HMAC key, so an empty salt is passed as 32 zero bytes. The result is identical, because HMAC zero-pads a short key.
+- `LabeledExpand(prk, label, info, L) = the first L bytes of HMAC-SHA256(prk, I2OSP(L, 2) ‖ "HPKE-v1" ‖ suite_id ‖ label ‖ info ‖ 0x01)`, for L ≤ 32.
+- `suite_id` is `"KEM" ‖ 0x0010` for the KEM and `"HPKE" ‖ 0x0010 ‖ 0x0001 ‖ 0x0001` for the HPKE context.
+- `DH` is WebCrypto ECDH `deriveBits(256)`, the x-coordinate. `enc` and public keys are SEC1 uncompressed (`exportKey('raw')`, 65 bytes, prefix 0x04). Importing a peer key with `importKey('raw')` validates the point.
+- Only single-shot Seal and Open at sequence 0 are implemented. Export, PSKs, the authenticated modes and sequence numbers past zero are not implemented, because a wrap never needs them.
+- Open takes the recipient as `{publicKey, dh(peer)}`, so a WebCrypto key or a Secure Enclave helper can supply the DH.
+- `packages/relic-format/test/hpke.test.ts` pins each step to RFC 9180 Appendix A.3.1 (base setup) and A.3.1.1 (sequence 0 encryption).
+
+Canonical JSON. `canonicalJson(value)` accepts strings, booleans, `null`, safe integers (`Number.isSafeInteger`, with `-0` written `0`), arrays and plain objects. Object keys are sorted in default JS string order, there is no whitespace, and strings and numbers are serialized with `JSON.stringify`. Anything else throws.
+
+Identifiers and fingerprints:
+
+- `kemKeyId = SHA-256(kemPub65)`, 32 raw bytes. `recipient_key_id` on the wire is its lowercase hex.
+- `identityId = hex(SHA-256(UTF8("relic/identity/v1") ‖ 0x00 ‖ kemPub65 ‖ sigPub65))`.
+- `deviceId = hex(SHA-256(UTF8("relic/device/v1") ‖ 0x00 ‖ kemPub65 ‖ sigPub65))`.
+- Identity fingerprint: the first 20 bytes of `SHA-256(UTF8("relic/fp/v1") ‖ 0x00 ‖ identityId (32 raw bytes) ‖ UTF8(normalizeEmail(email)))`. `normalizeEmail` trims the address and lowercases ASCII letters only (`packages/relic-format/src/email.ts`).
+- Device fingerprint: the first 20 bytes of `SHA-256(UTF8("relic/device-fp/v1") ‖ 0x00 ‖ deviceId (32 raw bytes))`.
+- Encoding: Crockford base32 over the relic ID alphabet `0123456789abcdefghjkmnpqrstvwxyz`, most significant bit first. 160 bits make exactly 32 characters, stored and compared lowercase. The display form is uppercase, in eight groups of four separated by single spaces.
+- Typed input: remove all whitespace and `-`, lowercase, fold `i` and `l` to `1` and `o` to `0`, require 32 characters of the alphabet, and compare with the locally computed value in constant time.
+- Every fingerprint a browser or relic-mcp shows is computed locally from public keys. No API returns a fingerprint field, so the owner types the requester's fingerprint and never receives one to compare against from the service.
+
+These definitions are frozen once any production private relic is sealed. Changing a label, field or encoding then needs a new versioned label and dual support. The known-answer fixtures in `private.test.ts` and the RFC 9180 vectors in `hpke.test.ts` guard them (plan section 7, item 10).
+
+### 3.19 The OpenTimelineIO program
 
 **Scope.** This section applies to a relic whose single entry is an OpenTimelineIO `.otioz` archive. The envelope, the fragment, the record layout, and the content identity of `content.otio` are unchanged. No format version bump is claimed on that basis, because whether an older reader tolerates the extra archive members is not established and is a launch check.
 
@@ -387,8 +491,11 @@ Six items, and only these six. Each names what `shape` picks and what becomes sp
 ## 5. What the sibling units inherit
 
 - **`spec-service-surface`:** the ID is unguessable (1.2), so an expired relic **may** be distinguished from one that never existed. Reserved paths (1.5) beat IDs at the router, the table is append-only, and appends compare normalized forms. The length-leak disclosure (3.8) belongs in the published statement. Two rules about redirects. **The first splits on where the redirect lands, not on whether the origin changes.** Leaving the service, an explicit, possibly empty, fragment in `Location` is **mandatory**: a fragment-less `Location` inherits the original request's fragment, and RFC 9110 §17.11 scopes its remedy to ensuring that "redirects to other sites include a (possibly empty) fragment component in order to block that inheritance" ([RFC 9110](https://www.rfc-editor.org/rfc/rfc9110.html)). The case that matters is the service origin redirecting to the usercontent origin, which would hand the key to the one origin the two-domain split exists to keep it from, along with any CDN or load-balancer redirect the application doesn't author that lands off the service domain, which is the one nobody audits. Staying inside the service, the fragment is **deliberately omitted** so inheritance carries the key through, and that gets said out loud because a blanket MUST reads as forbidding it. That half covers legacy or renamed paths, trailing-slash normalization, apex to `www`, and HTTP to HTTPS; the last two change origin without leaving Relic, and an empty fragment on any of them is a deleted key and a recipient on the "missing its key" screen. **The test is the destination's trust boundary, not its origin tuple.** The preferred form is that no inside-the-service redirect exists on the relic path at all, with HSTS preload on both registrable domains moving the scheme upgrade into the user agent. Second, because 1.1 issues no canonicalizing redirect, a relic is served on every accepted spelling of its ID. Cache keys, per-object download-cap accounting, and log correlation all normalize before keying, or they fragment across spellings and the cap stops being a cap.
-- **`spec-service-surface`, on versions:** the mint serves the current version against the layout in 3.12, the per-object cap counts across versions, delete removes every version, and the republish endpoint's refusals (missing or wrong token, tombstone outranking a valid token) are that document's 1.7.
-- **`spec-viewer`:** the fragment is stripped via `history.replaceState` (2.5), which obliges a copy-link affordance and a dead-page state after reload. The viewing origin sends `Referrer-Policy: no-referrer` (section 0). The class never routes (3.6), and the declared-versus-sniffed disagreement rule runs against the envelope header's declared mimetype and filename (3.6). Unknown versions refuse in both places (3.7), and `idlen != 0` refuses after the fetch (3.4). A decrypt failure doesn't mean "wrong key" (3.5).
+- **`spec-service-surface`, on versions:** for a public relic, the mint serves the current version against the layout in 3.12, the per-object cap counts across versions, delete removes every version, and the republish endpoint's refusals (missing or wrong token, tombstone outranking a valid token) are that document's 1.7. A private mint serves a sealed version the caller holds a wrap for (3.12, 3.17).
+- **`spec-viewer`:** for a public relic the fragment is stripped via `history.replaceState` (2.5), which obliges a copy-link affordance and a dead-page state after reload. The viewing origin sends `Referrer-Policy: no-referrer` (section 0). The class never routes (3.6), and the declared-versus-sniffed disagreement rule runs against the envelope header's declared mimetype and filename (3.6). Unknown versions refuse in both places for a public relic (3.7). A private relic refuses by its declared access and mint gating instead (3.7), and `idlen != 0` refuses after the fetch (3.4). A decrypt failure doesn't mean "wrong key" (3.5).
 - **`spec-publish-contract`:** the client generates the ID and the key independently before requesting a grant (1.3), the server validates and refuses on collision (1.4), and **nothing finer than the eleven-value class, the client name, the optional publisher-declared plaintext title, and the cover raster (rendered by default and declined with `cover: false`, or generic for `otio` and `model`) crosses to the server** (3.2). The class does cross, it is telemetry item 1 in the frame, and the metric's second clause is computed from it.
-- **`spec-publish-contract`, on republish:** the client re-encrypts under the persisted relic key with a fresh salt (3.10), the publish token crosses once in the first grant response while the server keeps only its hash, and the durable key-plus-token state that makes republish possible is that contract's to specify.
-- **Every unit, on comments (3.13):** the comment key is derived from the fragment's key bytes under `relic/comments/v1`, the envelope is `nonce(12) || AES-128-GCM` over two-field JSON in unpadded base64url, the caps are 4096 and 64 bytes of UTF-8 enforced by `@relic/format` before encryption, and unknown fields are refused. **The fragment and the container are unchanged, so nothing here is a format version bump.** What each sibling inherits from that: the service stores an opaque base64url string it cannot read and must not validate as anything but base64url; the viewer and the publishing client both derive the key from the fragment they already hold; and any surface listing comments reports a decrypt failure rather than dropping the row, because a shortened list reads as agreement.
+- **`spec-publish-contract`, on republish:** public relics keep the persisted relic key and take a fresh salt (3.10), and private relics take a fresh content key per version (3.10, 3.17). The publish token crosses once in the first grant response while the server keeps only its hash, and the durable key-plus-token state that makes republish possible is that contract's to specify.
+- **Every unit, on comments (3.13):** the comment key is derived from the relic's key bytes under `relic/comments/v1`: the fragment's for a public relic, and that version's content key for a private one. The envelope is `nonce(12) || AES-128-GCM` over two-field JSON in unpadded base64url, the caps are 4096 and 64 bytes of UTF-8 enforced by `@relic/format` before encryption, and unknown fields are refused. **The fragment and the container are unchanged, so nothing here is a format version bump.** What each sibling inherits from that: the service stores an opaque base64url string it cannot read and must not validate as anything but base64url; the viewer and the publishing client both derive the key from the key they already hold, which is the fragment for a public relic and the unwrapped version key for a private one; and any surface listing comments reports a decrypt failure rather than dropping the row, because a shortened list reads as agreement.
+- **`spec-service-surface`, on private relics:** the server stores wraps, seals, grants, requests and an access log, and never a key. A private mint, key fetch, comment and decision is gated on an access check, not on possession of the ID (1.2, 3.7, 3.13, 3.14). Revocation stops serving the revoked identity at once and deletes its wraps for every version (plan 4.12). Expiry of a private relic is read-time: the server stops serving at expiry. One day after expiry the bucket removes the live objects (plan decision 7, `docs/design/storage.md` section 7.2). Deleted copies stay restorable under the bucket's soft-delete retention, whose value the repository does not set. Private ciphertext is therefore removed from live storage, not immediately and permanently erased.
+- **`spec-viewer`, on private relics:** the viewer boots on the access mode the server declares, never mints a private relic without an access check, and runs the verification in 3.17 before it shows any version. It never writes a private relic's keys to the key vault and never offers a key-bearing link. It sends the service neither PRF output nor key bytes (plan 4.13, 4.15 and correction 19).
+- **`spec-publish-contract`, on private relics:** a private publish and a private republish each use a fresh content key per version (3.10). A private publish carries device authorization over a `private_publish` statement. A revocation republish is authorized by the owner's identity and not by the publish token (plan correction 12 and 4.16). A private relic sends no title and no cover (plan 4.7).
