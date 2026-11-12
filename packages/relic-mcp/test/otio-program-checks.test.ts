@@ -1,4 +1,12 @@
 import {
+  type Coldness,
+  externalRunningMs,
+  markOrderFailures,
+  PIPELINE_INIT_EVENT,
+  pipelineResumed,
+  PLAY_MARK,
+  RESUME_WINDOW_US,
+  UNMUTE_MARK,
   classifyColdness,
   creationCounts,
   DEVICE_CALLBACK_EVENT,
@@ -31,7 +39,14 @@ import {
   findAudioFaults,
   type RgbFrame,
 } from './otio-program-checks.ts';
-import { bareControlFailures } from './otio-program-primer-controls.ts';
+import {
+  bareControlFailures,
+  type BareEvidence,
+  coldStallComparator,
+  coldTrials,
+  inconclusiveFailures,
+  measureBare,
+} from './otio-program-primer-controls.ts';
 import { framePsnrDb, PROGRAM_MIN_PSNR_DB } from './otio-program-media.ts';
 import {
   EXPECTED_PLACEMENTS,
@@ -411,39 +426,34 @@ describe('primer trace: quiet window before the trusted event', () => {
 
 describe('primer trace: coldness and device-start evidence', () => {
   const quiet = { covered: true, offending: [] };
+  const cold = {
+    quiet,
+    osIdleAtTrusted: true,
+    startsAfterTrusted: 1,
+    resumed: false,
+  };
 
   test('a covered quiet window, an idle OS and a later device start is cold', () => {
-    expect(
-      classifyColdness({ quiet, osIdleAtTrusted: true, startsAfterTrusted: 1 })
-    ).toBe('cold');
+    expect(classifyColdness(cold)).toBe('cold');
   });
 
   test('no device start after the event is absent, never cold', () => {
-    expect(
-      classifyColdness({ quiet, osIdleAtTrusted: true, startsAfterTrusted: 0 })
-    ).toBe('absent');
+    expect(classifyColdness({ ...cold, startsAfterTrusted: 0 })).toBe('absent');
   });
 
   test('activity in the window or a running OS output is warm', () => {
     expect(
       classifyColdness({
+        ...cold,
         quiet: { covered: true, offending: ['CreateStream'] },
-        osIdleAtTrusted: true,
-        startsAfterTrusted: 1,
       })
     ).toBe('warm');
-    expect(
-      classifyColdness({ quiet, osIdleAtTrusted: false, startsAfterTrusted: 1 })
-    ).toBe('warm');
+    expect(classifyColdness({ ...cold, osIdleAtTrusted: false })).toBe('warm');
   });
 
   test('an uncovered window is unproven, whatever else it shows', () => {
     expect(
-      classifyColdness({
-        quiet: { covered: false, offending: [] },
-        osIdleAtTrusted: true,
-        startsAfterTrusted: 1,
-      })
+      classifyColdness({ ...cold, quiet: { covered: false, offending: [] } })
     ).toBe('unproven');
   });
 
@@ -453,6 +463,279 @@ describe('primer trace: coldness and device-start evidence', () => {
       traced(DEVICE_CALLBACK_EVENT, 251_000),
     ];
     expect(firstStart(events, 0)?.dMs).toBe(250);
+  });
+});
+
+describe('primer trace: a resumed start is labelled, never cold', () => {
+  const trusted = 2_000_000;
+  const started = {
+    quiet: { covered: true, offending: [] },
+    osIdleAtTrusted: true,
+    startsAfterTrusted: 1,
+    resumed: false,
+  };
+
+  test('a rebuilt pipeline after a suspended program is resumed', () => {
+    expect(classifyColdness({ ...started, resumed: true })).toBe('resumed');
+  });
+
+  test('resumed keeps the warm and absent labels that come before it', () => {
+    expect(
+      classifyColdness({ ...started, resumed: true, osIdleAtTrusted: false })
+    ).toBe('warm');
+    expect(
+      classifyColdness({ ...started, resumed: true, startsAfterTrusted: 0 })
+    ).toBe('absent');
+  });
+
+  test('a rebuild shortly after Play is resumed; a rebuild at load or after the window is not', () => {
+    expect(
+      pipelineResumed(
+        [traced(PIPELINE_INIT_EVENT, trusted + 250)],
+        trusted,
+        trusted + RESUME_WINDOW_US
+      )
+    ).toBe(true);
+    expect(
+      pipelineResumed(
+        [traced(PIPELINE_INIT_EVENT, 100)],
+        trusted,
+        trusted + RESUME_WINDOW_US
+      )
+    ).toBe(false);
+    expect(
+      pipelineResumed(
+        [traced(PIPELINE_INIT_EVENT, trusted + RESUME_WINDOW_US + 1)],
+        trusted,
+        trusted + RESUME_WINDOW_US
+      )
+    ).toBe(false);
+  });
+
+  test('a Play that rebuilds the pipeline after a suspend is classified resumed end to end', () => {
+    const events = [
+      mark(TRACE_START_MARK, 0),
+      mark(PREPARE_MARK, trusted - 1_500_000),
+      mark(PLAY_MARK, trusted),
+      traced(PIPELINE_INIT_EVENT, trusted + 250),
+      traced(DEVICE_START_EVENT, trusted + 2_100),
+    ];
+    expect(
+      classifyColdness({
+        quiet: quietWindow(events, trusted),
+        osIdleAtTrusted: true,
+        startsAfterTrusted: deviceStarts(events, trusted),
+        resumed: pipelineResumed(events, trusted, trusted + RESUME_WINDOW_US),
+      })
+    ).toBe('resumed');
+  });
+});
+
+describe('primer trace: strict mark order and the quiet window', () => {
+  const at = 2_000_000;
+
+  test('the late-trial leads seen on the proof run fail: 171, 150 and 93 µs before the mark', () => {
+    const failures = markOrderFailures(
+      [
+        mark(PREPARE_MARK, at),
+        traced('RendererImpl::SetPlaybackRate', at - 171),
+        traced('AudioOutputDevice::Play', at - 150),
+        traced(DEVICE_START_EVENT, at - 93),
+      ],
+      PREPARE_MARK
+    );
+    expect(failures).toHaveLength(3);
+    expect(failures[0]).toContain(
+      'page reacted before relic-prepare-pointerdown by 171 µs'
+    );
+  });
+
+  test('a reaction 8 µs before its mark fails', () => {
+    expect(
+      markOrderFailures(
+        [
+          mark(UNMUTE_MARK, at),
+          traced('RendererImpl::SetPlaybackRate', at - 8),
+        ],
+        UNMUTE_MARK
+      )
+    ).toHaveLength(1);
+  });
+
+  test('a reaction after its mark passes, and so does a preroll 2 s earlier', () => {
+    expect(
+      markOrderFailures(
+        [
+          mark(PLAY_MARK, at),
+          traced('RendererImpl::SetPlaybackRate', at + 100),
+        ],
+        PLAY_MARK
+      )
+    ).toEqual([]);
+    expect(
+      markOrderFailures(
+        [
+          mark(PLAY_MARK, at),
+          traced('RendererImpl::SetPlaybackRate', at - 2_000_000),
+        ],
+        PLAY_MARK
+      )
+    ).toEqual([]);
+  });
+
+  test('a reaction 6 ms before its mark is outside the 5 ms window and passes', () => {
+    expect(
+      markOrderFailures(
+        [mark(PLAY_MARK, at), traced('AudioOutputDevice::Play', at - 6_000)],
+        PLAY_MARK
+      )
+    ).toEqual([]);
+  });
+
+  test('an absent mark has no order to check', () => {
+    expect(
+      markOrderFailures(
+        [traced('AudioOutputDevice::Play', at - 8)],
+        UNMUTE_MARK
+      )
+    ).toEqual([]);
+  });
+
+  test('a device start before the mark is offending; the same start after it is not', () => {
+    const before = quietWindow(
+      [
+        mark(TRACE_START_MARK, 0),
+        traced(DEVICE_START_EVENT, at - 100),
+        mark(PREPARE_MARK, at),
+      ],
+      at
+    );
+    expect(before.offending).toEqual([DEVICE_START_EVENT]);
+    const after = quietWindow(
+      [
+        mark(TRACE_START_MARK, 0),
+        mark(PREPARE_MARK, at),
+        traced(DEVICE_START_EVENT, at + 100),
+      ],
+      at
+    );
+    expect(after).toEqual({ covered: true, offending: [] });
+  });
+});
+
+describe('primer trace: OS running after Chrome paused is telemetry', () => {
+  // Shaped like the sham trial that the late-trial receipts describe: Chrome paused at 10.259 s,
+  // the OS read the output running until 13.744 s, idle from 13.952 s, and the trusted event at 15.192 s.
+  const pause = 10_259_000;
+  const trusted = 15_192_000;
+  const events = [
+    traced('OutputController::Pause', pause),
+    mark(PREPARE_MARK, trusted),
+  ];
+  const reading = (traceTs: number, running: boolean) => ({ traceTs, running });
+
+  test('the span from Chrome pause to the last running reading is reported', () => {
+    const readings = [
+      reading(11_000_000, true),
+      reading(13_744_000, true),
+      reading(13_952_000, false),
+    ];
+    expect(externalRunningMs(events, readings, trusted)).toBe(3485);
+  });
+
+  test('a Chrome device event after the pause ends the reading that follows it', () => {
+    const withPlay = [...events, traced('AudioOutputDevice::Play', 12_000_000)];
+    const readings = [reading(11_000_000, true), reading(13_744_000, true)];
+    expect(externalRunningMs(withPlay, readings, trusted)).toBe(741);
+  });
+
+  test('no pause, no running reading, or a pause after the trusted event gives null', () => {
+    expect(
+      externalRunningMs(
+        [mark(PREPARE_MARK, trusted)],
+        [reading(11_000_000, true)],
+        trusted
+      )
+    ).toBeNull();
+    expect(
+      externalRunningMs(events, [reading(11_000_000, false)], trusted)
+    ).toBeNull();
+    expect(
+      externalRunningMs(
+        [traced('OutputController::Pause', trusted + 1)],
+        [reading(trusted - 1, true)],
+        trusted
+      )
+    ).toBeNull();
+  });
+});
+
+describe('primer cold pool: resumed trials never enter the stall comparator', () => {
+  const step = 1000 / PROGRAM.fps;
+
+  /** One 4 s window at 30 fps. A stalled window holds one frame for two intervals mid-window. */
+  function bareWindow(stalled: boolean): BareEvidence {
+    const pointerAt = 1_000;
+    const kept: { now: number; mediaTime: number; presentationTime: number }[] =
+      [];
+    let at = pointerAt + 20;
+    for (let i = 0; at < pointerAt + WINDOW_MS - 10; i++) {
+      kept.push({
+        now: at + 3,
+        mediaTime: i / PROGRAM.fps,
+        presentationTime: at,
+      });
+      at += i === 60 && stalled ? 2 * step : step;
+    }
+    return measureBare({
+      kept,
+      pointerAt,
+      ticksMs: null,
+      windowMs: WINDOW_MS,
+      fps: PROGRAM.fps,
+    });
+  }
+  const trial = (coldness: Coldness, stalled: boolean) => ({
+    round: 0,
+    arm: 'none',
+    coldness,
+    bare: bareWindow(stalled),
+  });
+
+  test('a stalled cold trial passes the comparator; a healthy one is named', () => {
+    expect(coldStallComparator([trial('cold', true)])).toEqual([]);
+    const failures = coldStallComparator([trial('cold', false)]);
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toContain('missed no program frame slot');
+  });
+
+  test('four stalled cold trials pass once a healthy resumed trial is excluded', () => {
+    const pool = [
+      trial('cold', true),
+      trial('cold', true),
+      trial('cold', true),
+      trial('cold', true),
+      trial('resumed', false),
+    ];
+    // The healthy resumed trial would fail the comparator if the pool counted it.
+    expect(coldStallComparator(pool)).toHaveLength(1);
+    expect(coldStallComparator(coldTrials(pool))).toEqual([]);
+    expect(inconclusiveFailures('bare none', pool)).toEqual([]);
+  });
+
+  test('two cold trials make the pool inconclusive, whatever resumed trials sit beside them', () => {
+    const pool = [
+      trial('cold', true),
+      trial('cold', true),
+      trial('resumed', true),
+      trial('resumed', true),
+    ];
+    expect(inconclusiveFailures('bare none', pool)).toEqual([
+      'bare none: 2 cold trial(s), need 3; inconclusive',
+    ]);
+    expect(
+      inconclusiveFailures('bare none', [...pool, trial('cold', true)])
+    ).toEqual([]);
   });
 });
 

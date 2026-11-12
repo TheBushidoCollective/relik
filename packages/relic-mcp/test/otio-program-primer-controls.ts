@@ -58,6 +58,11 @@ import {
   videoOnlyRemux,
 } from './otio-program-remux-controls.ts';
 import {
+  externalRunningMs,
+  markOrderFailures,
+  type OsReading,
+  pipelineResumed,
+  RESUME_WINDOW_US,
   type Coldness,
   classifyColdness,
   creationCounts,
@@ -105,6 +110,24 @@ import { checkShamBuilds } from './otio-program-sham-build.ts';
 export const PRIMER_ROUNDS = 5;
 /** Cold trials each control needs. Fewer makes that group inconclusive, which fails. */
 export const MIN_COLD_TRIALS = 3;
+
+/** Cold trials of a list. Only the 'cold' label is a cold start: resumed, warm, absent and unproven never count. */
+export function coldTrials<T extends Pick<PrimerTrial, 'coldness'>>(
+  list: readonly T[]
+): T[] {
+  return list.filter((trial) => trial.coldness === 'cold');
+}
+
+/** A group with fewer cold trials than MIN_COLD_TRIALS is inconclusive, and that fails. */
+export function inconclusiveFailures(
+  name: string,
+  list: readonly Pick<PrimerTrial, 'coldness'>[]
+): string[] {
+  const count = coldTrials(list).length;
+  return count < MIN_COLD_TRIALS
+    ? [`${name}: ${count} cold trial(s), need ${MIN_COLD_TRIALS}; inconclusive`]
+    : [];
+}
 /** Sequence F and L: two OS readings this far apart, both idle, before navigation. */
 const PRE_NAV_SPACING_MS = 250;
 /** Sequence L: the output must start within this long after metadata. */
@@ -173,6 +196,10 @@ export interface PrimerTrial {
   readonly sequence: Sequence;
   /** Sequence L's cold label. Sequence F never uses it. */
   readonly coldness: Coldness;
+  /** Telemetry: a Play rebuilt the program's pipeline, so the start was resumed. Never cold. */
+  readonly pipelineResumed: boolean;
+  /** Telemetry: how long the OS read the default output running after Chrome's last pause. Never gates. */
+  readonly externalRunningMs: number | null;
   /** Telemetry only: first device start to first device callback. Never gates. */
   readonly dMs: number | null;
   readonly startupMs: number | null;
@@ -256,11 +283,39 @@ interface ProgramState {
   readonly muted: boolean;
 }
 
+/** One default-output reading on the wall clock. Kept in the receipts, never gates by itself. */
+interface WallReading {
+  readonly wallMs: number;
+  readonly running: boolean;
+}
+
+/** The instant of the trace-start mark on the wall clock, and the load instant the idle limit counts from. */
+interface NavigationClock {
+  readonly loadedAt: number;
+  readonly traceStartWall: number;
+}
+
+/** A trial's OS readings on the trace clock, from the trace-start mark. Empty when that mark is absent. */
+function osReadingsOnTrace(
+  readings: readonly WallReading[],
+  events: readonly TraceEvent[],
+  traceStartWall: number
+): OsReading[] {
+  const traceStart = markTs(events, TRACE_START_MARK);
+  if (traceStart === null) return [];
+  return readings.map((r) => ({
+    traceTs: traceStart + (r.wallMs - traceStartWall) * 1000,
+    running: r.running,
+  }));
+}
+
 /** What the OS showed before the first trusted event. Sequence F only reads it, never waits. */
 interface Settled {
   /** Sequence L only: no running reading within 3 s, or no idle pair within 30 s of load. */
   readonly failures: string[];
   readonly hold: SettleHold | null;
+  /** Every default-output reading taken while waiting, on the wall clock. Sequence L only. */
+  readonly readings: readonly WallReading[];
   readonly state: DeviceState;
 }
 
@@ -372,8 +427,10 @@ ${blob}`;
 /**
  * Records every presented frame, its element clock and timing metadata, and buffering changes from
  * the first trusted pointerdown that matches selector. The resting currentTime is read inside that
- * same listener. durationMs 0 only writes the mark. The listener is capture-phase and is not
- * `once`, so a non-matching pointer event cannot consume it.
+ * same listener. durationMs 0 only writes the mark. The listener sits on window in the capture
+ * phase, so it runs before every page listener: the mark precedes the page's reaction to the same
+ * event, and markOrderFailures checks that order. It is not `once`, so a non-matching pointer event
+ * cannot consume it.
  */
 function observerScript(
   selector: string,
@@ -411,7 +468,7 @@ function observerScript(
   if (mutations) mutations.observe(view, { attributes: true, attributeFilter: ['data-buffering'] });
   const observed = Promise.withResolvers();
   window.__primerObs[mark] = observed.promise;
-  document.addEventListener('pointerdown', (event) => {
+  window.addEventListener('pointerdown', (event) => {
     if (pointerAt !== null) return;
     const target = event.target instanceof Element ? event.target.closest(selector) : null;
     if (!target) return;
@@ -537,9 +594,11 @@ function ownedBytes(source: Uint8Array): Uint8Array<ArrayBuffer> {
 async function beforeNavigation(
   page: ViewerPage,
   probe: DeviceProbe
-): Promise<number> {
+): Promise<NavigationClock> {
   await page.startPerformanceTrace(PRIMER_TRACE_CATEGORIES);
-  await page.evaluate(`performance.mark(${JSON.stringify(TRACE_START_MARK)})`);
+  const traceStartWall = await page.evaluate<number>(
+    `(() => { performance.mark(${JSON.stringify(TRACE_START_MARK)}); return Date.now(); })()`
+  );
   const first = await readDeviceState(probe);
   await sleep(PRE_NAV_SPACING_MS);
   const second = await readDeviceState(probe);
@@ -551,7 +610,7 @@ async function beforeNavigation(
     throw new Error(
       `external audio before navigation: default output changed from ${first.name} to ${second.name}`
     );
-  return Date.now();
+  return { loadedAt: Date.now(), traceStartWall };
 }
 
 /**
@@ -566,6 +625,7 @@ async function lateSettle(
   metadataAt: number
 ): Promise<Settled> {
   const failures: string[] = [];
+  const readings: WallReading[] = [];
   let device: number | null = null;
   let runningAt: number | null = null;
   let lastRunning: number | null = null;
@@ -575,6 +635,7 @@ async function lateSettle(
   for (;;) {
     const at = Date.now();
     const state = await readDeviceState(probe);
+    readings.push({ wallMs: at, running: state.running });
     if (device === null) device = state.deviceId;
     else if (state.deviceId !== device)
       throw new Error(
@@ -606,7 +667,9 @@ async function lateSettle(
     );
   else if (failures.length === 0)
     failures.push('default output never ran after metadata');
+  const finalAt = Date.now();
   const state = await readDeviceState(probe);
+  readings.push({ wallMs: finalAt, running: state.running });
   return {
     failures,
     hold: {
@@ -617,12 +680,18 @@ async function lateSettle(
       idleAfterLoadMs: idleFirst === null ? null : idleFirst - loadedAt,
     },
     state,
+    readings,
   };
 }
 
 /** Sequence F. No wait: the OS is read as telemetry and the trusted events follow metadata. */
 async function freshSettle(probe: DeviceProbe): Promise<Settled> {
-  return { failures: [], hold: null, state: await readDeviceState(probe) };
+  return {
+    failures: [],
+    hold: null,
+    state: await readDeviceState(probe),
+    readings: [],
+  };
 }
 
 /**
@@ -646,7 +715,12 @@ async function absentSettle(
     await sleep(SETTLE_POLL_MS);
   }
   await sleep(QUIET_SETTLE_MS);
-  return { failures, hold: null, state: await readDeviceState(probe) };
+  return {
+    failures,
+    hold: null,
+    state: await readDeviceState(probe),
+    readings: [],
+  };
 }
 
 /**
@@ -708,6 +782,8 @@ function expectedDeviceStarts(
 
 interface Analysis {
   readonly coldness: Coldness;
+  readonly pipelineResumed: boolean;
+  readonly externalRunningMs: number | null;
   readonly dMs: number | null;
   readonly restCurrentTime: number | null;
   readonly startupMs: number | null;
@@ -736,6 +812,10 @@ function analyse(
     firstClick: boolean;
     expectedDeviceStarts: number | null;
     osIdleAtTrusted: boolean;
+    /** 'play' for bare arms, whose Prepare builds its own primer. 'first' for viewer arms. */
+    resumeFrom: 'first' | 'play';
+    /** The OS readings of this trial on the trace clock, for externalRunningMs. */
+    osReadings: readonly OsReading[];
   }
 ): Analysis {
   const failures: string[] = [];
@@ -743,6 +823,8 @@ function analyse(
   const playTs = markTs(events, PLAY_MARK);
   const firstTs = prepareTs ?? playTs;
   if (firstTs === null) failures.push('trace has no trusted pointerdown mark');
+  for (const name of [PREPARE_MARK, PLAY_MARK, UNMUTE_MARK])
+    failures.push(...markOrderFailures(events, name));
 
   const quiet: QuietWindow =
     firstTs === null
@@ -750,11 +832,24 @@ function analyse(
       : quietWindow(events, firstTs);
   const startsAfterTrusted =
     firstTs === null ? 0 : deviceStarts(events, firstTs);
+  const resumeFromTs = options.resumeFrom === 'play' ? playTs : firstTs;
+  const resumed =
+    resumeFromTs !== null &&
+    pipelineResumed(
+      events,
+      resumeFromTs,
+      (playTs ?? resumeFromTs) + RESUME_WINDOW_US
+    );
   const coldness = classifyColdness({
     quiet,
     osIdleAtTrusted: options.osIdleAtTrusted,
     startsAfterTrusted,
+    resumed,
   });
+  const external =
+    firstTs === null
+      ? null
+      : externalRunningMs(events, options.osReadings, firstTs);
   const first = firstTs === null ? null : firstStart(events, firstTs);
 
   const restCurrentTime = obs.restCurrentTime ?? null;
@@ -811,6 +906,8 @@ function analyse(
 
   return {
     coldness,
+    pipelineResumed: resumed,
+    externalRunningMs: external,
     dMs: first?.dMs ?? null,
     restCurrentTime,
     startupMs,
@@ -1443,6 +1540,8 @@ function trialOf(
     round,
     sequence,
     coldness: analysis.coldness,
+    pipelineResumed: analysis.pipelineResumed,
+    externalRunningMs: analysis.externalRunningMs,
     dMs: analysis.dMs,
     startupMs: analysis.startupMs,
     maxGapMs: maxOf(gapsWithEdge),
@@ -1534,12 +1633,15 @@ async function runBareTrial(
   probe: DeviceProbe
 ): Promise<PrimerTrial> {
   let loadedAt = 0;
+  let traceStartWall = 0;
   const page = await openViewer({
     url: `${origin}/?arm=${arm}`,
     origin,
     sessionToken: 'primer-bare',
     beforeNavigate: async (target) => {
-      loadedAt = await beforeNavigation(target, probe);
+      const nav = await beforeNavigation(target, probe);
+      loadedAt = nav.loadedAt;
+      traceStartWall = nav.traceStartWall;
     },
   });
   try {
@@ -1572,6 +1674,8 @@ async function runBareTrial(
       firstClick: false,
       expectedDeviceStarts: primerArm ? 0 : null,
       osIdleAtTrusted: !settled.state.running,
+      resumeFrom: 'play',
+      osReadings: osReadingsOnTrace(settled.readings, events, traceStartWall),
     });
     const rest = obs.restCurrentTime ?? null;
     const evidence = measureBare({
@@ -1643,13 +1747,16 @@ async function runViewerTrial(
   const sessionToken = await input.harness.createSession();
   input.router.resetServed();
   let loadedAt = 0;
+  let traceStartWall = 0;
   const page = await openViewer({
     url: input.shareUrl,
     origin: input.harness.origin,
     sessionToken,
     instrumentEmits: true,
     beforeNavigate: async (target) => {
-      loadedAt = await beforeNavigation(target, input.deviceProbe);
+      const nav = await beforeNavigation(target, input.deviceProbe);
+      loadedAt = nav.loadedAt;
+      traceStartWall = nav.traceStartWall;
     },
   });
   try {
@@ -1762,6 +1869,8 @@ async function runViewerTrial(
       firstClick: arm === 'first-click',
       expectedDeviceStarts: expectedDeviceStarts(sequence, arm),
       osIdleAtTrusted: !settled.state.running,
+      resumeFrom: 'first',
+      osReadings: osReadingsOnTrace(settled.readings, events, traceStartWall),
     });
     if (late) extra.push(...quietFailures(analysis.quiet, settled.state));
     if (arm === 'sham' && late) extra.push(...shamTrialFailures(events));
@@ -1861,7 +1970,7 @@ async function runWrapTrial(
     sessionToken: 'primer-wrap',
     extraArgs,
     beforeNavigate: async (target) => {
-      loadedAt = await beforeNavigation(target, probe);
+      loadedAt = (await beforeNavigation(target, probe)).loadedAt;
     },
   });
   try {
@@ -2120,14 +2229,8 @@ export async function runPrimerProof(
   const freshViewer = (arm: ViewerArm) =>
     trials.get(group('fresh', 'viewer', arm)) ?? [];
   const failuresOf = (name: string) => failures.get(name) ?? [];
-  const cold = (list: readonly PrimerTrial[]) =>
-    list.filter((trial) => trial.coldness === 'cold');
-  const inconclusive = (name: string, list: readonly PrimerTrial[]) =>
-    cold(list).length < MIN_COLD_TRIALS
-      ? [
-          `${name}: ${cold(list).length} cold trial(s), need ${MIN_COLD_TRIALS}; inconclusive`,
-        ]
-      : [];
+  const cold = coldTrials;
+  const inconclusive = inconclusiveFailures;
   /**
    * A cold control must start the output after its Play. That is the mechanism the cold label
    * rests on. Frame gaps gate only through the cold stall comparator, which needs every cold trial

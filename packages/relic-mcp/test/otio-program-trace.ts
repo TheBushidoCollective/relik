@@ -13,6 +13,13 @@
  * device start is OutputController::Play. Stream creation is telemetry only: Chrome names one
  * creation in more than one event, so creation counts never gate.
  *
+ * Resumed is a start the classifier does not count as cold. Chrome idle-suspends a paused program,
+ * and a Play after that suspend rebuilds the program's pipeline (RendererImpl::Initialize) at the
+ * trusted event. That start shows no stall the cold control could test, so it is labelled resumed.
+ *
+ * Mark order: a page or device reaction that lands before its trusted mark makes the mark late, so
+ * the trace cannot attribute that reaction to the gesture. markOrderFailures fails such a trial.
+ *
  * The first new frame is the first presented frame whose media time is one program frame past
  * the frame shown at the trusted Play. A frame that repeats one already shown is not new, so a
  * freeze appears as a gap between kept frames and never as a late start.
@@ -45,6 +52,26 @@ export const QUIET_WINDOW_EVENTS: readonly string[] = [
   ...STREAM_CREATION_EVENTS,
   DEVICE_START_EVENT,
   DEVICE_CALLBACK_EVENT,
+];
+
+/** The program's pipeline is created again: a resumed start, which the cold classifier never counts as cold. */
+export const PIPELINE_INIT_EVENT = 'RendererImpl::Initialize';
+/** Page or device reactions that must not land just before their trusted mark. */
+export const MARK_ORDER_EVENTS: readonly string[] = [
+  'RendererImpl::SetPlaybackRate',
+  'AudioOutputDevice::Play',
+  DEVICE_START_EVENT,
+];
+/** A reaction this close before its mark is a reordering. Wider windows would flag legitimate preroll. */
+export const MARK_ORDER_WINDOW_US = 5_000;
+/** How far after the trusted event the pipeline rebuild of a resumed Play is looked for. */
+export const RESUME_WINDOW_US = 1_000_000;
+const OUTPUT_PAUSE_EVENT = 'OutputController::Pause';
+/** Chrome events that show its own device in use. They only bound the telemetry in externalRunningMs. */
+const CHROME_DEVICE_EVENTS: readonly string[] = [
+  ...QUIET_WINDOW_EVENTS,
+  'AudioOutputDevice::Play',
+  'OnMoreData',
 ];
 
 /** Bounds from the user's acceptance. None of these may be loosened to pass a trial. */
@@ -168,7 +195,7 @@ export function quietWindow(
   return { covered, offending: [...names] };
 }
 
-export type Coldness = 'cold' | 'warm' | 'absent' | 'unproven';
+export type Coldness = 'cold' | 'warm' | 'absent' | 'unproven' | 'resumed';
 
 export interface ColdnessInput {
   readonly quiet: QuietWindow;
@@ -176,17 +203,101 @@ export interface ColdnessInput {
   readonly osIdleAtTrusted: boolean;
   /** Device starts after the first trusted event. */
   readonly startsAfterTrusted: number;
+  /** The program's pipeline was rebuilt after the trusted event (see pipelineResumed). */
+  readonly resumed: boolean;
 }
 
 /**
  * What the first trusted event found. Only 'cold' is a cold start. Each other value says why the
- * trial is not cold, so a control can never count a warm or unmeasured start as cold.
+ * trial is not cold, so a control can never count a warm, resumed or unmeasured start as cold.
  */
 export function classifyColdness(input: ColdnessInput): Coldness {
   if (!input.quiet.covered) return 'unproven';
   if (input.quiet.offending.length > 0 || !input.osIdleAtTrusted) return 'warm';
   if (input.startsAfterTrusted === 0) return 'absent';
+  if (input.resumed) return 'resumed';
   return 'cold';
+}
+
+/**
+ * True when RendererImpl::Initialize falls in [fromTs, untilTs]. A resumed Play shows as this
+ * rebuild: the program's pipeline is created again at the trusted event, after Chrome suspended it.
+ * A rebuild before fromTs, such as at load, does not count.
+ */
+export function pipelineResumed(
+  events: readonly TraceEvent[],
+  fromTs: number,
+  untilTs: number
+): boolean {
+  return events.some(
+    (e) => e.name === PIPELINE_INIT_EVENT && e.ts >= fromTs && e.ts <= untilTs
+  );
+}
+
+/**
+ * Each reaction that lands in [mark - MARK_ORDER_WINDOW_US, mark) is a failure: the page or the
+ * device acted before the mark, so the mark is late and cannot attribute that reaction to the
+ * gesture. An absent mark returns nothing here; the gate that needs the mark reports its absence.
+ */
+export function markOrderFailures(
+  events: readonly TraceEvent[],
+  name: string
+): string[] {
+  const at = markTs(events, name);
+  if (at === null) return [];
+  const failures: string[] = [];
+  for (const event of events) {
+    if (!MARK_ORDER_EVENTS.includes(event.name)) continue;
+    if (event.ts < at - MARK_ORDER_WINDOW_US || event.ts >= at) continue;
+    failures.push(
+      `page reacted before ${name} by ${at - event.ts} µs (${event.name})`
+    );
+  }
+  return failures;
+}
+
+/** One default-output reading, placed on the trace clock. */
+export interface OsReading {
+  readonly traceTs: number;
+  readonly running: boolean;
+}
+
+/**
+ * Telemetry only. How long the OS read the default output running after Chrome's last
+ * OutputController::Pause, counting only readings taken before any Chrome device event that
+ * follows that pause. Null when Chrome paused nothing before untilTs, or no such reading showed the
+ * output running. A value names use of the device by something other than this Chrome. It is a
+ * receipt diagnostic and never gates.
+ */
+export function externalRunningMs(
+  events: readonly TraceEvent[],
+  readings: readonly OsReading[],
+  untilTs: number
+): number | null {
+  let pauseTs: number | null = null;
+  for (const e of events)
+    if (
+      e.name === OUTPUT_PAUSE_EVENT &&
+      e.ts < untilTs &&
+      (pauseTs === null || e.ts > pauseTs)
+    )
+      pauseTs = e.ts;
+  if (pauseTs === null) return null;
+  const pause: number = pauseTs;
+  let deviceTs = Number.POSITIVE_INFINITY;
+  for (const e of events)
+    if (CHROME_DEVICE_EVENTS.includes(e.name) && e.ts > pause && e.ts < untilTs)
+      deviceTs = Math.min(deviceTs, e.ts);
+  let last: number | null = null;
+  for (const r of readings)
+    if (
+      r.running &&
+      r.traceTs > pause &&
+      r.traceTs < untilTs &&
+      r.traceTs < deviceTs
+    )
+      last = last === null ? r.traceTs : Math.max(last, r.traceTs);
+  return last === null ? null : (last - pause) / 1000;
 }
 
 /** Telemetry only: callback spacing from the trace. Never gates and never proves audio. */
