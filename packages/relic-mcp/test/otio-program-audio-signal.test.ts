@@ -43,6 +43,28 @@ function delayed(source: Float32Array, samples: number): Float32Array {
   return out;
 }
 
+/**
+ * Builds a capture shaped like the recorded failures: leading silence, a run of program samples, a
+ * silent chunk the tap never delivered, then the program continuing from where it stopped.
+ * Positions are sample indices into the reference.
+ */
+function recorded(
+  source: Float32Array,
+  lead: number,
+  programStart: number,
+  programLength: number,
+  insertion: number
+): Float32Array {
+  const out = new Float32Array(source.length);
+  let next = programStart;
+  for (let i = lead; i < out.length && next < source.length; i++) {
+    const offset = i - lead;
+    if (offset >= programLength && offset < programLength + insertion) continue;
+    out[i] = source[next++] ?? 0;
+  }
+  return out;
+}
+
 describe('sampled audio signal gate', () => {
   test('an identical capture aligns at zero, with no silent run beyond a zero crossing', () => {
     const ref = reference();
@@ -93,6 +115,76 @@ describe('sampled audio signal gate', () => {
       gateSignal(evidence, 'delay30').some((f) => f.includes('onset'))
     ).toBe(true);
   });
+
+  test('leading silence before the program is onset, not a gap', () => {
+    const ref = reference();
+    const evidence = measureSignal(delayed(ref, 1408), ref, RATE);
+    expect(evidence.lagSamples).toBe(1408);
+    expect(evidence.longestGapSamples).toBeLessThanOrEqual(1);
+    const failures = gateSignal(evidence, 'lead');
+    expect(failures.some((f) => f.includes('onset'))).toBe(true);
+    expect(failures.some((f) => f.includes('audio gap'))).toBe(false);
+  });
+
+  test('the first-click capture (silence, 2048 program samples, a 1024-sample silent chunk, then program) fails as a gap', () => {
+    const ref = reference();
+    const evidence = measureSignal(
+      recorded(ref, 1024, 3872, 2048, 1024),
+      ref,
+      RATE
+    );
+    expect(evidence.lagSamples).toBe(-1824);
+    expect(evidence.longestGapSamples).toBeGreaterThanOrEqual(1024);
+    expect(evidence.longestGapSamples).toBeLessThanOrEqual(1026);
+    expect(evidence.longestGapMs).toBeGreaterThan(AUDIO_GAP_BUDGET_MS);
+    expect(
+      gateSignal(evidence, 'firstClick').some((f) => f.includes('audio gap'))
+    ).toBe(true);
+  });
+
+  test('the prepared capture (silence, 2048 program samples, a 1024-sample silent chunk, then program) fails as an inserted offset step and a gap', () => {
+    const ref = reference();
+    const evidence = measureSignal(
+      recorded(ref, 1408, 1760, 2048, 1024),
+      ref,
+      RATE
+    );
+    expect(evidence.lagSamples).toBe(672);
+    expect(evidence.offsetSteps).toHaveLength(1);
+    const [step] = evidence.offsetSteps;
+    expect(step?.stepMs).toBeCloseTo((1024 * 1000) / RATE, 2);
+    // The step sits at the exact reference sample where the old alignment stops and the new one
+    // starts: sample 3808, the first sample of program after the silent chunk. Its silence is the
+    // gap budget's to judge.
+    expect(step?.startSeconds).toBeCloseTo(3808 / RATE, 6);
+    expect(evidence.longestGapSamples).toBeGreaterThanOrEqual(1024);
+    expect(evidence.longestGapSamples).toBeLessThanOrEqual(1026);
+    const failures = gateSignal(evidence, 'prepared');
+    expect(
+      failures.some((f) => f.includes('offset step inserted 21.33 ms'))
+    ).toBe(true);
+    expect(failures.some((f) => f.includes('audio gap'))).toBe(true);
+  });
+
+  test('an inserted 21.3 ms chunk at 90 ms moves the rest of the program and fails as a step and a gap', () => {
+    const ref = reference();
+    const evidence = measureSignal(recorded(ref, 0, 0, 4320, 1024), ref, RATE);
+    expect(evidence.lagSamples).toBe(1024);
+    expect(
+      evidence.offsetSteps.some(
+        (s) => Math.abs(s.stepMs - (1024 * 1000) / RATE) < 0.01
+      )
+    ).toBe(true);
+    const stepAt = evidence.offsetSteps.find(
+      (s) => Math.abs(s.stepMs - (1024 * 1000) / RATE) < 0.01
+    );
+    // The chunk begins at reference sample 4320, the 90 ms mark, exactly.
+    expect(stepAt?.startSeconds).toBeCloseTo(4320 / RATE, 6);
+    expect(evidence.longestGapSamples).toBeGreaterThanOrEqual(1024);
+    const failures = gateSignal(evidence, 'insert90');
+    expect(failures.some((f) => f.includes('offset step inserted'))).toBe(true);
+    expect(failures.some((f) => f.includes('audio gap'))).toBe(true);
+  });
 });
 
 /** Hand-built evidence isolates the gate's boundary from alignment and measurement. */
@@ -107,6 +199,7 @@ function evidence(over: Partial<SignalEvidence>): SignalEvidence {
     silentRuns: 0,
     gapStartSeconds: null,
     windowFaults: [],
+    offsetSteps: [],
     ...over,
   };
 }
