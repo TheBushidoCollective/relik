@@ -5,7 +5,7 @@
  * a test CBOR encoder, and ASN.1 DER encoding.
  */
 
-import { createHash } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 import type {
   AuthenticationResponseJSON,
   CreationOptionsJSON,
@@ -62,6 +62,8 @@ export function encodeCbor(val: unknown): Uint8Array {
     }
     return Buffer.concat(chunks);
   }
+  if (val === true) return new Uint8Array([0xf5]);
+  if (val === false) return new Uint8Array([0xf4]);
   throw new Error(`unsupported CBOR type: ${typeof val}`);
 }
 
@@ -72,6 +74,8 @@ export interface FakeAuthenticatorInit {
   signCount?: number;
   credentialId?: string;
   userHandle?: string | null;
+  /** A PRF-capable provider. Only a credential created with `prf` requested answers PRF at assertion. */
+  hasPrf?: boolean;
 }
 
 export async function fakeAuthenticator(init?: FakeAuthenticatorInit): Promise<{
@@ -86,11 +90,19 @@ export async function fakeAuthenticator(init?: FakeAuthenticatorInit): Promise<{
   ): Promise<AuthenticationResponseJSON>;
   setSignCount(n: number): void;
   readonly credentialId: string;
+  readonly publicJwk: JsonWebKey;
 }> {
   const alg = init?.alg ?? -7;
   const userVerified = init?.userVerified ?? true;
   const userPresent = init?.userPresent ?? true;
   let currentSignCount = init?.signCount ?? 0;
+  // PRF (WebAuthn `prf`, CTAP `hmac-secret`). Measured in Chrome 157 and
+  // HeadlessChrome 149: a credential created without `prf` gives no PRF result,
+  // and one created with it gives a result that differs by salt.
+  const hasPrf = init?.hasPrf ?? false;
+  const prfSecret = new Uint8Array(32);
+  crypto.getRandomValues(prfSecret);
+  let prfCapable = false;
   const credentialId =
     init?.credentialId ??
     Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString(
@@ -134,7 +146,12 @@ export async function fakeAuthenticator(init?: FakeAuthenticatorInit): Promise<{
     );
 
     const rpIdHash = createHash('sha256').update(o.rp.id).digest();
-    const flags = (userPresent ? 0x01 : 0) | (userVerified ? 0x04 : 0) | 0x40; // AT bit set
+    prfCapable = hasPrf && o.extensions?.prf !== undefined;
+    const flags =
+      (userPresent ? 0x01 : 0) |
+      (userVerified ? 0x04 : 0) |
+      0x40 |
+      (prfCapable ? 0x80 : 0); // AT set; ED set when the hmac-secret map follows
     const signCountBuf = Buffer.alloc(4);
     signCountBuf.writeUInt32BE(currentSignCount, 0);
     const aaguid = Buffer.alloc(16, 0);
@@ -161,6 +178,10 @@ export async function fakeAuthenticator(init?: FakeAuthenticatorInit): Promise<{
     }
 
     const coseKeyBytes = encodeCbor(coseMap);
+    // The registration extension map: `hmac-secret` advertised when PRF was created.
+    const extensionBytes = prfCapable
+      ? encodeCbor(new Map<unknown, unknown>([['hmac-secret', true]]))
+      : new Uint8Array(0);
     const authData = Buffer.concat([
       rpIdHash,
       Buffer.from([flags]),
@@ -169,6 +190,7 @@ export async function fakeAuthenticator(init?: FakeAuthenticatorInit): Promise<{
       credIdLenBuf,
       credIdBytes,
       coseKeyBytes,
+      Buffer.from(extensionBytes),
     ]);
 
     const attMap = new Map<unknown, unknown>();
@@ -184,6 +206,7 @@ export async function fakeAuthenticator(init?: FakeAuthenticatorInit): Promise<{
       id: credentialId,
       rawId: credentialId,
       type: 'public-key',
+      clientExtensionResults: prfCapable ? { prf: { enabled: true } } : {},
       response: {
         clientDataJSON,
         attestationObject: attestationObjectB64,
@@ -208,13 +231,37 @@ export async function fakeAuthenticator(init?: FakeAuthenticatorInit): Promise<{
     const clientDataJSON = clientDataRaw.toString('base64url');
 
     const rpIdHash = createHash('sha256').update(o.rpId).digest();
-    const flags = (userPresent ? 0x01 : 0) | (userVerified ? 0x04 : 0); // AT is clear
+    let flags = (userPresent ? 0x01 : 0) | (userVerified ? 0x04 : 0);
     const signCountBuf = Buffer.alloc(4);
     signCountBuf.writeUInt32BE(currentSignCount, 0);
+    // The PRF output for this assertion: HMAC over the WebAuthn salt, returned
+    // in the authenticator data's extension map with ED set, as CTAP does.
+    let prfOutput: Uint8Array | undefined;
+    const prfFirst = o.extensions?.prf?.eval?.first;
+    if (prfCapable && prfFirst !== undefined) {
+      const salt = createHash('sha256')
+        .update(
+          Buffer.concat([
+            Buffer.from('WebAuthn PRF'),
+            Buffer.from([0]),
+            Buffer.from(prfFirst, 'base64url'),
+          ])
+        )
+        .digest();
+      prfOutput = new Uint8Array(
+        createHmac('sha256', prfSecret).update(salt).digest()
+      );
+      flags |= 0x80;
+    }
+    const extensionBytes =
+      prfOutput === undefined
+        ? new Uint8Array(0)
+        : encodeCbor(new Map<unknown, unknown>([['hmac-secret', prfOutput]]));
     const authData = Buffer.concat([
       rpIdHash,
       Buffer.from([flags]),
       signCountBuf,
+      extensionBytes,
     ]);
 
     const clientDataHash = createHash('sha256').update(clientDataRaw).digest();
@@ -253,11 +300,22 @@ export async function fakeAuthenticator(init?: FakeAuthenticatorInit): Promise<{
         signature: signatureB64,
         userHandle,
       },
+      clientExtensionResults:
+        prfOutput === undefined
+          ? {}
+          : {
+              prf: {
+                results: {
+                  first: Buffer.from(prfOutput).toString('base64url'),
+                },
+              },
+            },
     };
   };
 
   return {
     register,
+    publicJwk: await crypto.subtle.exportKey('jwk', keyPair.publicKey),
     assert,
     setSignCount(n: number) {
       currentSignCount = n;
