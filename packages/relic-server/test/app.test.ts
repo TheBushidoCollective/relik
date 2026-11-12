@@ -28,7 +28,7 @@ import { memoryAssets } from '../src/assets.ts';
 import { sha256Hex } from '../src/gcs.ts';
 import { MailRefusedError, type OutboundMail } from '../src/mail.ts';
 import { MemoryStorage } from '../src/storage.ts';
-import { MemoryStore } from '../src/store.ts';
+import { MemoryStore, type OperatorTombstone } from '../src/store.ts';
 
 const OPERATOR = new Map([['jason', 'operator-secret']]);
 
@@ -1886,7 +1886,7 @@ describe('republish and versions', () => {
     // The tombstone records the version that was being served, and the
     // blocklist covers the older payload too: one republish must not be
     // able to hide a payload from the abuse control.
-    const stone = await app.store.getTombstone(id);
+    const stone = (await app.store.getTombstone(id)) as OperatorTombstone;
     expect(stone?.ciphertextHash).toBe(v2Hash);
     expect(await app.store.isBlocklisted(stone?.ciphertextHash ?? '')).toBe(
       true
@@ -2428,7 +2428,7 @@ describe('delete by id', () => {
     );
     expect(response.status).toBe(200);
 
-    const stone = await app.store.getTombstone(id);
+    const stone = (await app.store.getTombstone(id)) as OperatorTombstone;
     expect(stone?.operator).toBe('jason');
     expect(stone?.reasonClass).toBe('abuse');
     expect(stone?.reportReference).toBe('REP-1');
@@ -2481,7 +2481,9 @@ describe('delete by id', () => {
         headers: { authorization: 'Bearer operator-secret' },
       })
     );
-    const abuseStone = await app.store.getTombstone(first.id);
+    const abuseStone = (await app.store.getTombstone(
+      first.id
+    )) as OperatorTombstone;
     expect(
       await app.store.isBlocklisted(abuseStone?.ciphertextHash ?? '')
     ).toBe(true);
@@ -2493,7 +2495,9 @@ describe('delete by id', () => {
         headers: { authorization: 'Bearer operator-secret' },
       })
     );
-    const legalStone = await app.store.getTombstone(second.id);
+    const legalStone = (await app.store.getTombstone(
+      second.id
+    )) as OperatorTombstone;
     expect(
       await app.store.isBlocklisted(legalStone?.ciphertextHash ?? '')
     ).toBe(false);
