@@ -61,6 +61,8 @@ import type { VaultEntry } from './vault.ts';
 export type { VaultEntry };
 
 import type { CommentedRelic } from './relic-rows.ts';
+import type { CredentialsLike } from './passkey-common.ts';
+import type { PrivateKeyOps } from './private/ops.ts';
 
 export const LARGE_OPEN_CONFIRM_BYTES = 100 * 1024 * 1024;
 
@@ -133,6 +135,19 @@ export interface ReadyView {
    * run a ceremony when the service holds a different file for the version.
    */
   readonly versionDigest: string;
+  /**
+   * Present only for a private relic. Its share URL is keyless, and every key
+   * use goes through `keyFor`, which fetches that version's wrap for this
+   * reader.
+   */
+  readonly access?: 'private';
+  /** Resolves the key for one retained version of a private relic. */
+  keyFor?(version: number): Promise<Uint8Array>;
+  /**
+   * Opens one retained version of a private relic, verified end to end. The
+   * historical loader calls it instead of reading the link's fragment.
+   */
+  openVersion?(version: number): Promise<HistoricalVersionState>;
 }
 
 /** Where content is allowed to render. Never derived from the server. */
@@ -239,6 +254,10 @@ export interface ViewerDeps {
     size: number,
     metadata?: { readonly filename: string; readonly mimetype: string }
   ) => Promise<boolean>;
+  /** The WebAuthn seam. Defaults to `navigator.credentials` when absent. */
+  readonly credentials?: CredentialsLike;
+  /** The private-share key operations. The real modules when absent. */
+  readonly privateKeys?: PrivateKeyOps;
 }
 
 /**
@@ -252,6 +271,21 @@ export function shareUrlFor(href: string, fragment: string): string {
   const url = new URL(href);
   url.hash = fragment.startsWith('#') ? fragment.slice(1) : fragment;
   return url.toString();
+}
+
+/**
+ * The key for one version of the relic a view shows.
+ *
+ * A public link carries one key for every version, so it resolves from the
+ * fragment. A private view resolves each version through that version's own
+ * wrap, so the key for a version is never reachable from the link.
+ */
+export function keyForView(
+  view: ReadyView
+): (version: number) => Promise<Uint8Array> {
+  const keyFor = view.keyFor;
+  if (keyFor !== undefined) return (version) => keyFor.call(view, version);
+  return async () => parseFragment(new URL(view.shareUrl).hash).key;
 }
 
 class DownloadFailure extends Error {
@@ -784,7 +818,7 @@ export async function load(
   }
 }
 
-async function mint(
+export async function mint(
   rawRelicId: string,
   deps: ViewerDeps,
   requestedVersion?: number
@@ -875,6 +909,20 @@ export async function loadHistoricalVersion(
       );
     }
     return { kind: 'ready', view: current };
+  }
+  if (current.openVersion !== undefined) {
+    const opened = await current.openVersion(requestedVersion);
+    if (
+      opened.kind === 'ready' &&
+      options?.maxBytes !== undefined &&
+      opened.view.content.size > options.maxBytes
+    ) {
+      return unavailable(
+        'version_too_large',
+        `Version ${requestedVersion} is too large for this operation.`
+      );
+    }
+    return opened;
   }
   let fragment: string;
   try {

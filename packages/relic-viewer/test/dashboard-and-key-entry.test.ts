@@ -65,7 +65,6 @@ async function waitUntil(
     await new Promise((r) => setTimeout(r, 5));
   }
 }
-
 class ElementStub {
   readonly tagName: string;
   className = '';

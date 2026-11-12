@@ -139,3 +139,34 @@ During either page pixel check, the PDF step fails if a worker range overlaps th
 
 These are post-pressure growth gates, not bounds on transient renderer peaks or browser-process storage. The proof creates and removes local scratch data and makes no production writes. Cross-engine, real-device and version-cache measurements are separate proofs.
 
+
+# Private shares
+
+A reader is let into a private relic by its owner, who types the reader's fingerprint before granting one passkey tap. The link carries no key, the owner's device publishes without a tap, a provider that cannot hold a key is refused, a revocation republishes under a fresh key the revoked reader cannot use, and deletion removes everything the service held for the relic.
+
+## Acceptance command
+
+After `bun run build` and `bun run --cwd packages/relic-mcp build`, from the repository root with an owned headless Chrome or chrome-headless-shell:
+
+```sh
+RELIC_CHROME_PATH=<owned headless shell> bun packages/relic-mcp/test/private-shares-path.ts
+```
+
+Success requires these lines in order, then `PRIVATE_SHARES_PATH_OK`, and exit code 0:
+`PRIVATE_STEP_1_OWNER_IDENTITY fingerprint=<32>`,
+`PRIVATE_STEP_2_DEVICE_PINNED wrong_owner_fingerprint=refused`,
+`PRIVATE_STEP_3_TAP_FREE_PUBLISH fragment=false key_in_output=false owner_sign_count_delta=0 owner_open=ok`,
+`PRIVATE_STEP_4_REQUESTED mail_names_relic=false mail_names_requester=false`,
+`PRIVATE_STEP_5_WRONG_FINGERPRINT ui=blocked api=409 requester_wraps=0`,
+`PRIVATE_STEP_6_SUBSTITUTED_KEY ui=blocked`,
+`PRIVATE_STEP_7_GRANTED reader_open=ok comment=ok agent_read=ok`,
+`PRIVATE_STEP_8_REVOKED version=<n> revoked_wraps=0 revoked_key_fetch=403 revoked_mint=403 owner_open=ok agent_read=ok`,
+`PRIVATE_STEP_9_NO_PRF provider=refused credential_without_prf=replace_offered identity_posts=0`,
+`PRIVATE_STEP_10_REGULATED title=400 cover=400 ttl_over_max=400 shell_title=absent notices_generic=true`,
+`PRIVATE_STEP_11_DELETED objects=0 wraps=0 seals=0 grants=0 comments=0 row=absent tombstone=owner log_events=<n>`.
+
+A run with any product defect prints `DEFECT <id>: <evidence>` on stderr for each one and ends with `PRIVATE_SHARES_PATH_BLOCKED defects=<ids>` and exit code 1. It never prints `PRIVATE_SHARES_PATH_OK` while a defect stands. The receipts print in both cases. All writes target the in-memory loopback service.
+
+Current state: the run prints every receipt and ends `PRIVATE_SHARES_PATH_OK` with exit code 0. The four defects an earlier run of this path found (the dashboard and ready-view roots detached by a render, a grantee unable to open a version sealed before the grant, and the owner unable to open a republished version) are fixed, and each has a regression test at the layer where it lived.
+
+The live probe, `private-shares-live-probe.ts`, is operator-run against production. It refuses unless `--i-am-the-operator`, `RELIC_ORIGIN`, `PROBE_OPERATOR_EMAIL` and `RELIC_CHROME_PATH` are given, and it refuses in CI. The manual rehearsal, `private-shares-manual.ts`, prints mail to the terminal for real Chrome and Safari passkeys and writes a receipt per provider. Neither is part of CI.

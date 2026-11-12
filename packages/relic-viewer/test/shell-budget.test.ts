@@ -328,4 +328,32 @@ describe('the app shell', () => {
     expect(requests).not.toContain('/assets/otio-video-timing-worker.js');
     expect(requests).not.toContain('/assets/mediabunny-license.txt');
   });
+
+  test('keeps the private reader out of the shell, in exactly one lazy chunk', async () => {
+    const built = Bun.spawnSync([process.execPath, 'build.ts'], {
+      cwd: pkgDir,
+    });
+    expect(built.exitCode).toBe(0);
+
+    // The private-share copy and the owner pin storage key. The shell must
+    // carry none of them, and exactly one lazy chunk must carry them: the
+    // reader that loads on a private relic.
+    const markers = [
+      'Read this fingerprint',
+      'private-share key',
+      'relic:owner-pins',
+    ];
+    const shell = await Bun.file(`${pkgDir}dist/viewer.js`).text();
+    expect(markers.filter((marker) => shell.includes(marker))).toEqual([]);
+
+    const chunks = [...new Bun.Glob('chunk-*.js').scanSync(`${pkgDir}dist`)];
+    const carriers: string[] = [];
+    for (const chunk of chunks) {
+      const content = await Bun.file(`${pkgDir}dist/${chunk}`).text();
+      if (markers.some((marker) => content.includes(marker))) {
+        carriers.push(chunk);
+      }
+    }
+    expect(carriers).toHaveLength(1);
+  });
 });

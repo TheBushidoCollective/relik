@@ -25,6 +25,8 @@ Each is a case where every component behaves correctly and an unspecified bounda
 
 `format.md` §3.6 settled that the container carries no renderer class. While the class now reaches the viewing origin's document `<head>` as Open Graph and Twitter Card metadata for link unfurls, it never routes the viewer, and the viewer has no class to route on and must not ask for one or read it from the document head.
 
+For a private relic the class is not shown in the shell. Its card is the generic private card (6.2), and nothing in the shell names a renderer class (plan 4.13).
+
 The reasoning gets stated here because an earlier version of the recorded knowledge got it backwards and somebody will re-derive it. The class is a publisher assertion. If the viewer routes on it, a publisher declares `image` on an HTML payload and wins inline rendering on the origin holding the fragment, and that content reads `location.hash`. Fragment theft in one step.
 
 What actually protects routing is `routeFor`'s inputs, which are the envelope header inside the AEAD plus a sniff of the decrypted bytes, resolving disagreement to the least privileged tier; the class is not a parameter of that function. A test on the built viewer bundles verifies that the viewer code never reads the card metadata from the DOM.
@@ -140,6 +142,8 @@ Four consequences:
 
 **PSL registration of the usercontent parent is required and routes to `shape`** (§7). Repeating the preconditions' honest limit without softening it: treat PSL as origin isolation with a possible listing-scope benefit, never as a guaranteed firewall. No documentation confirms Google won't list at a PSL-registered parent anyway, and the Immich outcome was broader than the mechanism required.
 
+**The usercontent origin may never sit under the RP ID.** A usercontent hostname equal to the service hostname, which is the WebAuthn Relying Party ID, or ending in `.` plus that hostname, is refused by `assertConfig` (plan 4.9, correction 20). The reason is the decryption path. A page on such an origin could request PRF output from a user's passkeys, and that output is the key-encryption key for a private identity (6.12). Any per-relic subdomain topology described above lives under the usercontent domain only, never under the service hostname.
+
 ## 3. Rendering each class
 
 ### 3.1 Markdown renders on the usercontent origin
@@ -246,6 +250,8 @@ So the boundary is split, which is what the pattern §2 cites actually describes
 
 **What crosses.** Parent to shim: the decrypted bytes, the routing type, and a render nonce. Never the key, never the fragment, and not the relic ID. The shim needs none of it. The per-relic subdomain label already gives the usercontent document a stable per-relic pseudonym, which is exactly why §2 makes that label a one-way function: the shim can correlate its own renders and can't derive the ID.
 
+**PRF is evaluated only on the service origin, in the parent document.** The render frame is an opaque origin where WebAuthn cannot run, and section 2 keeps the usercontent origin out of the Relic RP ID. Decryption happens in the parent, so PRF output and every key derived from it stay there. Nothing crossing this boundary carries PRF output, a key, or extension results. The serializers in `passkey-common` never include `clientExtensionResults`, and nothing calls `PublicKeyCredential.prototype.toJSON` (plan 4.4, correction 19).
+
 Shim to parent: a `ready` handshake, a rendered-or-failed ack that names blocked external resources, and optionally a requested height.
 
 **The handshake.** The shim posts a data-free `ready` to `parent`. The parent replies with the payload and an **exact** `targetOrigin`, computed per render from the derived label. The shim pins `event.origin` from that reply and ignores everything else. Because §2 makes the shim's expected parent origin a hardcodable constant, **the `ready` uses that exact origin too**, and `'*'` appears nowhere in the design. MDN is direct about why: "Always specify an exact target origin, not `*`, when you use `postMessage` to dispatch data to other windows. A malicious site can change the location of the window without your knowledge, and therefore it can intercept the data sent using `postMessage`," and on the receiving side, "always verify the sender's identity" using `origin` ([MDN](https://developer.mozilla.org/en-US/docs/Web/API/Window/postMessage)).
@@ -317,6 +323,8 @@ viewer behavior is separate from it.
 
 ### 6.1 Base load states and version-history substates
 
+This section's first four states describe a public relic, whose key is the fragment. A private relic's URL has no fragment, so item 1 never applies to it, and a private relic is never the missing-key state. Its base states come from the server's access declaration, which the private-state paragraph below names.
+
 1. **Missing or malformed fragment.** Split by navigation type, which is available from `PerformanceNavigationTiming` (Safari 15+, iOS 15.1+). On `reload` or a `back_forward` that re-executes, the page says the key was stripped from this URL after it opened and points back to the original link. On a fresh `navigate`, it says the link is missing its key. Both are actionable; a single generic message isn't. **When no navigation entry is available, the viewer shows the fresh-`navigate` copy.** The default is chosen, not arbitrary: telling a first-time visitor the key was stripped after their page opened describes a session they never had, while telling a reloading recipient the link is missing its key is less specific and still points at the right remedy. The fallback is the copy that's actionable either way.
 2. **Unknown container version.** Refused before minting, before consuming a download cap, and before any egress, because the version marker is in the fragment (`format.md` §2.2, §3.7). A second refusal happens after the fetch when the envelope version disagrees with the marker, or when `idlen != 0`.
 3. **The server refused to mint**, with the stated reason surfaced verbatim rather than flattened into "something went wrong."
@@ -337,6 +345,8 @@ Versions too large to compare can still be opened individually.
 
 **Version history does not change the trust boundary.** The viewer mints each selected ciphertext through the existing service path, decrypts both versions with the one fragment key, and computes the result client-side. No plaintext and no diff result reaches the service. **An earlier version of this paragraph said the frame receives neither historical source nor diff output, and that no comparison message type is added to its `postMessage` protocol. Both of those are reversed.** Each frame receives only its own version's payload. Two comparison message types exist, `relic:tree` and `relic:annotate`, and they are safe because of what they cannot carry: the tree is tags, an attribute allowlist, and normalised text, never markup, and the annotate channel carries no content. The diff runs client side, in the service-origin bundle.
 
+**For a private relic this paragraph changes in one place.** A private relic has no fragment and so no single fragment key. Each selected version is decrypted with that version's own content key, obtained through `keyFor(version)` (plan 4.15), and each version the reader opens is verified first, as 6.12 describes. The sentence above is the public-relic rule.
+
 **Transport integrity and authenticity are distinct.** CRC32C, when checked,
 can detect transport corruption but is not an authenticity proof. Each
 encrypted record has an AEAD tag, and a later tag or length failure must not
@@ -344,9 +354,13 @@ be presented as a wrong-key failure after record 0 has authenticated. The
 former tier-specific CRC ordering described a whole-buffer and a
 ServiceWorker download design that this change supersedes.
 
+**Private base states come from the access declaration.** A private relic's shell root carries `data-relic-access="private"`, and its host `#relic-private[data-private-state]` takes one of `signin`, `setup`, `setup-refused`, `replace-offer`, `request`, `requested`, `declined`, `unlock`, `ready`, `revoked`, `denied`, `owner-changed` or `seal-mismatch`. Section 6.12 says what the reader does in each state and quotes the copy the plan fixes. The plan does not map each state from the declaration, which 6.12 lists as an open item.
+
 ### 6.2 The unfurl card
 
 The fragment never reaches a server, so no unfurler can describe the content, and **a blank card on an unfamiliar domain is the visual shape of a phishing link.**
+
+**A private relic's card is the generic private card.** `GET /{id}` for a private relic serves `data-relic-access="private"` on the root, also when the relic has expired. Its card is generic: title `Relic`, description "A private relic. Sign in to open it.", no cover, no title, and no renderer-class copy (plan 4.7, 4.13). The per-relic tags above do not apply to it, and it carries the constant fallback image.
 
 `/{id}` serves deliberate Open Graph and Twitter Card metadata describing what Relic is and revealing what kind of thing the link holds, without pretending to describe the encrypted payload. Open Graph's required properties are `og:title`, `og:type`, `og:image`, and `og:url`, with `og:description` and `og:site_name` optional ([Open Graph](https://ogp.me/)).
 
@@ -418,6 +432,8 @@ Everything except the content renders immediately: the branded taskbar, the serv
 
 **The honesty constraint applies hardest here.** "Nobody can read this but you" is an overclaim on the one surface where it does the most damage. The decryption JavaScript is served by the same operator the claim is made against, so it's a claim about operator intent rather than a property a recipient can verify. The copy says what's true: the key stays in the link and this browser, and the recipient's browser never sends it to Relic's servers. For content that renders on the usercontent origin, the viewer carries a compact marker in the header chrome stating that the page runs the author's code, linked to `/policy` where the full isolation guarantees and limits are stated.
 
+**Private relics.** The key line above describes a public relic. A private relic's link carries no key, so that line does not apply to it. Everything else in this list still renders. The state shown in place of decrypted content comes from the access declaration (6.1, 6.12), and its copy never names a title, because a private relic has none (plan 4.13).
+
 ### 6.4 Progress, input, and errors
 
 **Progress identifies fetching, decryption, and rendering.** Fetching uses the
@@ -429,6 +445,8 @@ authenticated record progress. Fetch and decryption can overlap.
 **Every error screen is a relic page**, carrying the abuse-report and policy links. An error state is where a recipient most wants to report something, and it's the state most likely to be reached by somebody who was sent something they didn't want.
 
 **The copy-link affordance.** `format.md` §2.5 strips the fragment via `history.replaceState`, which is honored here, and both costs land on this document. The recipient can no longer re-share from the address bar, so **the viewer carries an explicit copy-link control, present from load, backed by the in-memory key** and reconstructing the full URL on demand. Pressing it opens a small panel under the taskbar instead of copying straight away. The panel shows the full link with Copy link, a Copy without the key that copies the link with its fragment removed, and the 12-word key phrase for the same key with its own Copy, so a reader can send the link without the key and say the phrase separately; the recipient types the phrase where the keyless link's page asks for the key. The phrase is computed in the browser when the panel opens, from the key already in memory, through a lazily loaded module that keeps the wordlist out of the shell. It exists only in the open panel: it is never written to storage, the address bar, a title, a toast, a log, or a request, and closing the panel removes it from the page. Escape and the close button return focus to Copy link. Below 34rem the control is icon-only and keeps its accessible name. The reloaded page is dead and says so per §6.1 rather than showing a decrypt error. Present stripping as shrinking the window rather than closing it: the URL with its fragment existed before the replace, so browser history sync, an extension with host permissions reading `window.location.href` at load, and the application the link was clicked from all still saw it.
+
+**For a private relic the copy-link control copies the keyless URL only.** The panel above does not apply to it: a private relic offers no Copy without the key, no key phrase and no key-bearing link (plan 4.13). Its keys are held by the reader's passkey, not by this tab (6.12).
 
 **Repeat opens reuse a still-valid signed URL rather than minting per page load**, keyed by relic ID, with validity judged against the expiry the mint response carries. A restored tab, a pull-to-refresh, and a back-forward navigation are each otherwise another mint and another counted open. A bfcache restore needs no handling, since the page resumes with its in-memory key intact.
 
@@ -465,7 +483,7 @@ Version moved into the taskbar, then Comments did, and the row had already overf
 
 ### 6.6 The comment thread
 
-`frame.md` reversed the no-identity non-goal and the reversal is what makes this section possible: accounts exist in exactly one form, a verified email address per commenter, and the address is the identity. It reversed nothing else at the time. (A separate `/dashboard` route was later added for key backup and listing opened and commented relics. On 2026-10-06 Jason Waldrip authorised rendering the browser's opened relics list on the homepage `/` as well, and on 2026-11-05 that list became a header link to `/dashboard`. Nothing in either reversal grants sharing groups, team features, or server-side access permissions.)
+`frame.md` reversed the no-identity non-goal and the reversal is what makes this section possible: accounts exist in exactly one form, a verified email address per commenter, and, for public relics, the address is the identity. It reversed nothing else at the time. (A separate `/dashboard` route was later added for key backup and listing opened and commented relics. On 2026-10-06 Jason Waldrip authorised rendering the browser's opened relics list on the homepage `/` as well, and on 2026-11-05 that list became a header link to `/dashboard`. Until 2026-11-11, nothing in either reversal granted sharing groups, team features, or server-side access permissions. On 2026-11-11 private shares changed that for private relics only: a passkey-bound identity holding a wrap for a version may read, comment on and decide that version (6.12). Public relics keep the address-only rule, and no sharing groups or team features were added.)
 
 **The thread is in the service-origin chrome and it is not negotiable which side it sits on.** The render frame is network denied, `default-src 'none'` with sandbox exactly `allow-scripts`, so it could not fetch a comment if it tried. The chrome around it can, and it is also the only side of the boundary holding the key the bodies are sealed under.
 
@@ -520,6 +538,8 @@ The frame receives locators and comment IDs, never bodies or keys. Placement ack
 **Comment bodies are ciphertext to the operator, under a key the fragment already carries.** A comment about content the operator cannot read, stored in the clear, hands the operator exactly what the architecture exists to deny. The comment key is HKDF-SHA256 over the same 16 fragment bytes under a distinct `info`, which is the mechanism `rfc8188.ts` already uses to get a content key and a nonce base out of one input. **The fragment does not change**, and that matters: `format.md` 2.1 says the fragment carries exactly two things and a third field takes a version bump. A third `info` string is not a third field.
 
 **Reading the thread needs no authorization and that is deliberate.** Anyone holding the link can already read the content, and the bodies are ciphertext the server cannot open, so a gate on the read would protect nothing and would turn an unauthenticated reader into somebody who cannot see that a thread exists.
+
+**Private comments are per version, and reading them needs access.** The key rule above is for public relics. For a private relic each comment is encrypted and decrypted under the comment key of its own version, not under a fragment key (plan correction 10). A private comment read requires a session with access and returns only comments on versions that session can read, so the reading rule above does not hold for private relics. A private comment write names a version and needs a wrap for it, or the publish token. A row that will not decrypt is shown as undecryptable, as state 4 above says, and is never dropped.
 
 **Ten states, and every one of them has copy.**
 
@@ -580,12 +600,17 @@ A reader holding the link and decryption key can share a relic from the viewer.
 
 **Gated by key proof and verified sign-in.** Sharing requires an authenticated session (reusing the comment session flow). The viewer derives the 32-byte share proof from the fragment key with `deriveShareProof` (`format.md` 3.14) and submits `{ share_proof, emails }` to `POST /api/relics/{id}/share` for up to 20 addresses.
 
+**For a private relic the share action is an access check, not key proof.** The reader needs a session with access to the relic (6.12), and the submission to `POST /api/relics/{id}/share` carries `emails` with no `share_proof` (plan 4.7).
+
 **The disclosure is at the point of sharing.** Before submitting addresses and when reviewing the composed email, the share panel states prominently:
 - Relic never sends this email.
-- The link in it carries the key.
+- For a public relic, the link in it carries the key. A private relic's link carries no key, and each reader it lets in holds their own key.
 - Relic stores these addresses in the clear to email them when someone comments or a new version is published, each with a stop link.
+- For a private relic, Relic's notices say only that there is activity on the relic. Private mail names no title, and no address other than the recipient's (plan 4.14).
 
 **Composed email handoff.** After the server accepts the addresses, the viewer displays the composed message produced by `composeShareEmail({ sender: 'reader', ... })` from `@relic/format`, offering "Open in your mail app" (`shareMailtoUrl`) and "Copy message". The reader sends the email from their own mail client, so the full URL containing the decryption key never touches the server.
+
+For a private relic the message is composed with `access: 'private'`, so it carries the keyless link only (plan 4.16).
 
 **Refusal presentation.** Every server refusal is rendered with actionable guidance:
 - `401 sign_in_required`: Prompts the reader to sign in (link or passkey) before sharing.
@@ -605,6 +630,8 @@ A reader holding the link and decryption key can record an approval or rejection
 **The taskbar control and tally.** The taskbar carries a dedicated Decisions button (`button.action-decisions[data-decision-open]`, icon mark `stamp`), displaying the current tally of approvals (`data-decision-approvals`) and rejections (`data-decision-rejections`) on renderable relics. Clicking it opens the decision panel (`dialog.decision-panel[data-decision-version]`).
 
 **Listing decisions on the current version.** Opening the panel lists all recorded decisions for the active version being viewed, fetched via `POST /api/relics/{id}/decisions/list` with `{ share_proof, version: activeView.version }`. Each row (`[data-decision-row][data-decision-author][data-verdict]`) shows the author's verified address, the verdict (Approved or Rejected), and the timestamp.
+
+For a private relic, the decision options, record and list carry no `share_proof`. The access check and the session's identity authorize them instead (plan 4.7). `decisions/list` also accepts the publish token from relic-mcp.
 
 **The ceremony flow:**
 1. *Sign-in check:* If the reader has no verified session cookie, the panel mounts the sign in (link or passkey) form (`[data-decision-signin]`).
@@ -635,12 +662,15 @@ Returning readers can sign in with a passkey without receiving an email. Readers
 
 **The page-wide ceremony abort rule.** Only one WebAuthn ceremony can be pending per page at any time. Any new ceremony (a button press, an email-first confirm, or a decision assertion) aborts the prior ceremony via an `AbortSignal` before starting. AbortError resulting from this internal replacement is swallowed silently. Options refresh before the challenge timeout (300 seconds), only while the page is visible. When authentication occurs (such as via a magic-link callback in another tab broadcasting `relic:auth`), pending ceremonies are aborted.
 
+Identity ceremonies for private relics (6.12) are WebAuthn ceremonies under this rule as well, so starting one aborts any pending ceremony on the page.
+
 **The usernameless button and modal gesture.** Beside the email field and send button, the interface renders a "Sign in with passkey" button (`button.action.passkey-button[data-passkey-sign-in]`). Clicking the button aborts the background conditional request and immediately calls `navigator.credentials.get()` synchronously inside the click handler using the pre-fetched options. On success, the assertion is posted to `POST /api/auth/passkeys/sign-in`, setting the session cookie and transitioning the interface to the signed-in state without an email.
 
 **The email-first fallback.** If a reader's passkey is non-discoverable, or if usernameless sign-in fails (`401 passkey_sign_in_failed`), the interface reveals the fallback option (`[data-passkey-fallback]`). The reader enters their email address and clicks "Use a passkey for this address". The client fetches options for that address via `POST /api/auth/passkeys/sign-in/options` with `{"email": "<address>"}`, which returns descriptors padded with HMAC decoys. The reader confirms with their passkey synchronously, and the assertion is posted to sign in.
 
 **The post-sign-in passkey offer.** When a reader completes a magic-link sign-in or types a sign-in code, the service sets a short-lived `relic_passkey_offer=1` cookie. When the viewer boots (or when the composer completes an in-place code sign-in), if the marker cookie is present, the session is verified, and local storage does not contain `relic:passkey-offer`, the viewer consumes and clears the marker cookie and mounts the offer card (`section.passkey-offer[data-passkey-offer]`). The offer mounts on boot and on in-place code sign-in completion; ordinary tab visibility re-checks do not mount it if the marker was already consumed or dismissed.
 - *First passkey (TOFU):* Prefetches create options from `POST /api/auth/passkeys/options`. Clicking "Add a passkey" invokes `navigator.credentials.create()`, posts the registration to `POST /api/auth/passkeys`, and stores `'created'` in `localStorage['relic:passkey-offer']`. If the options call answers `401 passkey_fresh_link_required`, the card moves to `data-state="link-required"` instead of closing: it hides `[data-passkey-offer-create]` and shows `[data-passkey-offer-link]` ("Send me a new link"), which asks the shell to email a new link to the same address (`link-sending`, then `link-sent` or `link-failed`). A `401` with any other code still closes the card.
+- *Every new passkey requests PRF at creation:* the creation options carry `extensions: {prf: {}}` (plan 4.7). The [WebAuthn Level 3](https://www.w3.org/TR/webauthn-3/) `prf` extension returns output only when a relying party asks for it, and a credential created without it returns no PRF output (plan appendix, measured in Chrome 157 and HeadlessChrome 149). A credential that gives no PRF output on an assertion is handled by the private setup flow in 6.12, not by this card. PRF results are never sent to the service.
 - *Device with existing passkeys elsewhere:* The options endpoint returns `mode: 'assert'`. The reader first confirms with their existing passkey, then adds a passkey on this device.
 - *Dismissal:* Clicking "Not now" stores `'dismissed'` in `localStorage['relic:passkey-offer']`, suppressing future offers in this browser.
 
@@ -680,6 +710,58 @@ The input deliberately omits `required`, `pattern`, or `maxlength` attributes so
 - *Passkey offer card:* when requesting a fresh sign-in to enroll a first passkey, the card renders the code entry in `link-sent` under `[data-passkey-offer-code]`. Upon verification, empties the container, transitions to `loading`, and fetches creation options.
 - *Decision panel:* renders the code entry in the `sent` step of passkey link creation. Upon verification, immediately invokes `enterPasskey(verdict)`.
 - *Dashboard:* displays the code entry under the sent notice. Upon verification, announces across tabs and reloads the page to show the verified session and passkey enrollment card.
+
+### 6.12 Private relics: reader, owner and dashboard
+
+A private relic's link is `https://<relic-domain>/{id}` with no fragment. Its key is not in the URL, so the viewer takes every key from the reader's own passkey and every state from the server. This section is the viewer's side of the private-shares build plan (`docs/plans/private-shares/README.md`, sections 4.4, 4.7, 4.13 and 4.15). The DOM hooks named here are exact.
+
+**Access declaration and states.** The shell root carries `data-relic-access="private"` for a private relic, also when the relic has expired. The viewer reads that declaration and `GET /api/relics/{id}/access` (`PrivateAccessJSON`, with `me.role`, `sealed_version`, `readable_versions` and `owner`). For a private relic it never reads the fragment, and it never shows the missing-key state of 6.1. The host is `#relic-private[data-private-state]`, whose values are `signin`, `setup`, `setup-refused`, `replace-offer`, `request`, `requested`, `declined`, `unlock`, `ready`, `revoked`, `denied`, `owner-changed` and `seal-mismatch`. Plan 4.15 names those states without mapping each one from the declaration, so that mapping is an open item below.
+
+**Reader path.**
+
+1. **Sign in.** A reader without a verified session signs in first, by passkey, link or code, as 6.10 and 6.11 describe. Passkey sign-in does not unlock the identity, which takes its own PRF tap.
+2. **Identity setup** (`[data-action="private-setup"]`, state `setup`). Setup asks for one assertion with `userVerification: 'required'` that returns a PRF result, and sends nothing unless that result comes back (plan 4.4). The requirement is the PRF result from an assertion. A creation response that reports `enabled: false` is an early refusal only, because `enabled` is advisory (plan section 2, correction 3). Setup tries PRF on the reader's existing credentials first. If none answers, it shows `replace-offer` with this copy: "This passkey was made before private shares existed and can't hold your key. Make a replacement passkey on this device?" The action `[data-action="private-replace-passkey"]` creates the replacement with `extensions: {prf: {}}` and an empty exclude list, then retries setup once. A second miss shows `setup-refused` with this copy: "Your passkey provider can't hold a private-share key. Private relics need a provider or security key that supports the WebAuthn PRF extension." Setup does not retry after that refusal. The `prf` extension is defined in [WebAuthn Level 3, section 10.1.4](https://www.w3.org/TR/webauthn-3/#prf-extension).
+3. **Request** (`request`, action `[data-action="private-request"]`). The reader sends a signed `access_request` (plan 4.3). The screen shows the reader's own fingerprint: 32 characters in display format, computed locally from public keys, since no API returns a fingerprint (plan 4.2). The copy beside it is: "Read this fingerprint to the person who shared the link, on a phone or video call. Don't send it by email or chat: it only protects you if it travels a different way than this site." The state is `requested` while the request is pending, and `declined` if the owner declined it. The requester's fingerprint is one of the four `data-fingerprint` hooks (`mine`, `owner`, `identity`, `owner-for-device`), which plan 4.15 says hold display-format text but does not bind to a screen (open item).
+4. **Unlock** (`unlock`, action `[data-action="private-unlock"]`). One tap: a local random challenge, `allowCredentials` set to the identity's bound credentials, and PRF evaluation. The viewer decrypts that credential's bundle, imports the JWKs as non-extractable keys, and checks that the imported public keys hash to the expected `identityId`.
+5. **Open a version** (`ready`). The reader opens the highest sealed version they can read, never an unsealed one (plan section 3, decision 5). Before any content renders, the viewer verifies each of the following and refuses when one fails:
+- the wrap opens with the reader's KEM key;
+- the seal's signature chains to the owner identity, whether the signer is a device or an identity;
+- the wrap is addressed to the reader's own `kemKeyId` and unwraps. The reader does not have to appear in the seal's `recipient_key_ids`, because HPKE binds the relic id, the version and the recipient, so a grant made after the version was sealed opens it;
+- the ciphertext SHA-256 equals the sealed digest;
+- the owner identity matches the one pinned for this relic in `localStorage['relic:private-owner:<id>']` at first open (plan section 3, decision 4).
+- the unwrapped key matches the seal's `key_commitment` (`format.md` 3.18). A key that does not match is never used to decrypt, to open comments, or to re-wrap, because HPKE base mode does not authenticate the key it opens.
+The pin is set at first open and never changes. A pin mismatch is a hard refusal in state `owner-changed`, with this copy: "The owner's key for this relic isn't the one you saw when you first opened it. Relic won't open it. Contact the person who shared it." It has no "accept new owner" control. Each seal or wrap check that fails raises `SealMismatchError` and refuses in state `seal-mismatch`, with this copy: "This version doesn't match the owner's signature. Relic won't show it." Those checks are the seal signature, the device certificate, the owner keys, the wrap that does not open, the key commitment, and the ciphertext digest. A reader whose wrap is not addressed to their key is refused in `denied` (`RecipientMissingError`), since they have no key for the version. The record-0 key check of 6.4 describes public relics and does not apply here. Which state each failure uses is recorded in the code (`reader.ts`), not an open item.
+6. **Revoked and denied.** `revoked` and `denied` are named states of plan 4.15. The plan gives no copy for either, so none is quoted here.
+
+**Vault and key exclusion.** A private relic is never written to the local key vault, and the viewer never offers a key phrase or a key-bearing link for it (plan 4.13). The vault paths of 6.4 and 6.6 do not apply to a private relic. No private flow sends PRF output, key material or `clientExtensionResults` in any request body (plan 4.4, correction 19).
+**Expiry.** A private relic always expires. The server stops serving it at expiry, and its mint refuses with the server's reason, as 6.1 item 3 describes. One day after expiry the bucket removes the live objects (`storage.md` section 7.2, plan decision 7). Deleted copies stay restorable by the operator under the soft-delete retention, so the reader-facing state does not describe removal from storage.
+
+**Owner panel.** The owner opens the access panel with `[data-action="open-access-panel"]` on a private relic they own. The hooks, from plan 4.15, are:
+- each pending request: `[data-request-identity="<identityId>"]`;
+- the typed fingerprint, `input[data-fingerprint-input]`, whose state is `[data-fingerprint-state="empty|mismatch|match"]`. The typed value is normalized as plan 4.2 says (whitespace and hyphens removed, lowercased, `i` and `l` folded to `1`, `o` folded to `0`, 32 characters required) and compared with the locally computed fingerprint in constant time;
+- the version picker, `input[data-grant-version="<n>"]`, on which the current version is locked on (plan S0 mock);
+- `[data-action="grant"]`, disabled unless the fingerprint state is `match`. The grant is one tap: the owner unlocks the owner identity with PRF and attests the grant, so the assertion commits to the grant record (plan section 2, correction 8). It wraps each selected version to the grantee's key;
+- `[data-action="decline"]` on a request;
+- for each active grant, `[data-grantee="<identityId>"]` and `[data-action="revoke"]`. Opening revoke shows this warning before anything is sent: "Revoke {email}? Relic stops serving them this relic now and deletes their keys for it. Anything they already opened may still be on their device. The current content is republished as version {n} under a new key that only the remaining readers can open." `[data-action="confirm-revoke"]` is the only control that sends it;
+- rekey progress, `[data-rekey-state="decrypting|encrypting|uploading|sealing|done|failed"]`. The browser decrypts each version with `fetchAndDecryptVersion`, encrypts once under a fresh key with the original filename and mimetype, PUTs to the signed URL, seals under the owner identity, and completes. Wraps go only to the remaining recipients, and the browser never holds the publish token (plan correction 12, S5);
+- `[data-action="delete-relic"]`, `input[data-delete-version="<n>"]` and `[data-action="confirm-delete"]`, for owner hard delete (plan 4.7).
+
+**Dashboard.** The dashboard is `[data-private-dashboard]`. The hooks, from plan 4.15, are:
+- device approval at `/dashboard?approve-device=<enrollmentId>` (plan section 3, decision 10): `[data-device-approval="<enrollmentId>"]`, `input[data-device-fingerprint-input]`, checked against the device's locally computed fingerprint, and `[data-action="approve-device"]`, which refuses a mismatch. After approval the owner fingerprint is shown at `[data-fingerprint="owner-for-device"]` for typing into relic-mcp's `relic_confirm_device` (plan correction 6);
+- devices: `[data-device="<deviceId>"]` and `[data-action="revoke-device"]`;
+- recovery: `input[data-recovery-email]` with `[data-action="recovery-lookup"]`, then `input[data-recovery-fingerprint-input]` with `[data-action="designate-recovery"]`. A designation is an identity-signed `recovery_designation`. Versions sealed before it are backfilled from the owner's browser through `/api/identity/backfill` (plan correction 17);
+- coverage: `[data-action="repair-coverage"]` reads `GET /api/identity/relics?coverage=1` and backfills the gaps it reports (plan 4.12);
+- the access log: `[data-access-log] [data-access-event="<kind>"]`, where `<kind>` is `request`, `grant`, `revoke`, `wrap_fetch` or `delete` (plan 4.6);
+- retention: `input[data-retention-days]` with `[data-action="save-retention"]`, signed as `identity_settings`. The default is 2190 days, the minimum 30 and the maximum 3650 (plan 4.9 and section 10);
+- the identity card with passkey binding, which takes two taps (plan 4.4), and the owned and shared relic lists from `GET /api/identity/relics`. Plan 4.15 names no hook for these, so the mock (S0) is their reference.
+
+**Open items.** Plan 4.15 and sections 2 to 10 leave each of these undecided here:
+- the mapping from the access declaration (`PrivateAccessJSON`) and the reader's local state to each `data-private-state` value;
+- the screen each `data-fingerprint` hook (`mine`, `owner`, `identity`, `owner-for-device`) holds;
+- the state a seal-check failure uses is settled in the code (`reader.ts`, 6.12 reader path), so it is not an open item.
+- what a reader sees for an expired private relic once its live objects are removed. The plan names no copy for it;
+- copy for `revoked` and `denied`.
+
 ## 7. Routed to `shape`
 
 Five items, and only these five.
@@ -703,3 +785,5 @@ Stated as needs. That sibling defines the mint response.
 3. **Object length in bytes**, for the refuse-before-allocating check (§5) and for a real total on the fetching phase (§6.4).
 4. **The object's CRC32C checksum**, which is what separates transport corruption from a wrong key (§6.1).
 5. **A machine-readable refusal reason on a refused mint**, distinguishing enough cases that state 3 shows a real reason rather than a generic failure. The set of reasons is that sibling's to define, not this one's. `format.md` §1.2 already permits distinguishing an expired relic from one that never existed, so at least that pair is available to it. Expiry is no longer universal: the expired-relic state is reachable only when the publisher set a lifetime, and a relic without one never produces it, so the refusal-reason surface covers both a stated lifetime and its absence.
+6. **The private access declaration.** The shell root carries `data-relic-access="private"`, also when the relic has expired. `GET /{id}` for a private relic serves the generic card, with no title, no cover and no renderer-class copy. `GET /api/relics/{id}/access` returns `PrivateAccessJSON` and answers 401 without a session for a private relic (plan 4.7). Sections 6.1, 6.2 and 6.12 need each of these.
+7. **Private mint and key routes.** Mint for a private relic requires a session whose identity holds a wrap for the version, or the publish token, and the version must be sealed and not deleted. `POST /api/relics/{id}/versions/{v}/key` returns the reader's wrap, seal, signer and owner for a readable version, and refuses `403 private_access_denied` otherwise. The owner panel and dashboard call the identity, request, grant, revocation, delete, device and access-log routes of plan 4.7. Sections 6.4, 6.6 and 6.12 need each of these.

@@ -44,6 +44,10 @@ export interface CreationOptionsJSON {
     readonly userVerification?: string;
   };
   readonly excludeCredentials?: readonly PasskeyDescriptorJSON[];
+  /** WebAuthn extensions to evaluate. Only PRF is used: `first` is its salt, base64url. */
+  readonly extensions?: {
+    readonly prf?: { readonly eval?: { readonly first: string } };
+  };
 }
 
 /**
@@ -56,6 +60,10 @@ export interface RequestOptionsJSON {
   readonly timeout?: number;
   readonly userVerification?: string;
   readonly allowCredentials?: readonly PasskeyDescriptorJSON[];
+  /** WebAuthn extensions to evaluate. Only PRF is used: `first` is its salt, base64url. */
+  readonly extensions?: {
+    readonly prf?: { readonly eval?: { readonly first: string } };
+  };
 }
 
 /**

@@ -9,166 +9,26 @@ import {
   type PasskeyCredential,
   type RelicRow,
 } from '../src/store.ts';
-
-/**
- * A fake GCS that models the one behaviour the store depends on for
- * correctness: every write bumps a generation, and a write carrying
- * `ifGenerationMatch` fails with 412 when it no longer matches.
- *
- * Testing `consumeMint` against a fake without generations would prove
- * nothing, because the race it exists to prevent is invisible without them.
- */
-export interface FakeGcs {
-  fetch: typeof globalThis.fetch;
-  readonly objects: Map<string, { body: string; generation: number }>;
-  contendOn(name: string, times: number): void;
-}
-
-export function fakeGcs(): FakeGcs {
-  const objects = new Map<string, { body: string; generation: number }>();
-  const media = new Map<string, Uint8Array>();
-  let nextGeneration = 1;
-  /**
-   * Names to advance one generation just before the next write to them, which
-   * is what a competing instance looks like from in here.
-   *
-   * Modelled by mutating the map directly rather than by driving a second
-   * store, because a second store issues writes of its own and those would
-   * re-enter this hook and recurse.
-   */
-  const bumps = new Map<string, number>();
-
-  const competingIncrement = (name: string): void => {
-    const remaining = bumps.get(name);
-    if (remaining === undefined || remaining === 0) return;
-    if (remaining > 0) bumps.set(name, remaining - 1);
-
-    const existing = objects.get(name);
-    if (existing === undefined) {
-      objects.set(name, {
-        body: JSON.stringify({}),
-        generation: nextGeneration++,
-      });
-      return;
-    }
-
-    const parsed = JSON.parse(existing.body) as Record<string, unknown>;
-    if ('mintsUsed' in parsed) {
-      parsed['mintsUsed'] = (Number(parsed['mintsUsed']) || 0) + 1;
-    }
-    if ('attempts' in parsed) {
-      parsed['attempts'] = (Number(parsed['attempts']) || 0) + 1;
-    }
-    objects.set(name, {
-      body: JSON.stringify(parsed),
-      generation: nextGeneration++,
-    });
-  };
-
-  const handler = async (
-    input: string | URL | Request,
-    init?: RequestInit
-  ): Promise<Response> => {
-    const url = new URL(typeof input === 'string' ? input : input.toString());
-    const method = init?.method ?? 'GET';
-
-    if (url.pathname.startsWith('/upload/')) {
-      const name = url.searchParams.get('name') ?? '';
-      const precondition = url.searchParams.get('ifGenerationMatch');
-
-      competingIncrement(name);
-
-      if (precondition !== null) {
-        const existing = objects.get(name);
-        const current = existing === undefined ? 0 : existing.generation;
-        if (String(current) !== precondition) {
-          return new Response('precondition failed', { status: 412 });
-        }
-      }
-
-      if (init?.body instanceof Uint8Array) {
-        media.set(name, init.body);
-        objects.set(name, {
-          body: '',
-          generation: nextGeneration++,
-        });
-      } else {
-        objects.set(name, {
-          body: String(init?.body ?? ''),
-          generation: nextGeneration++,
-        });
-      }
-      return new Response('{}', { status: 200 });
-    }
-
-    // List: /storage/v1/b/{bucket}/o?prefix=
-    const listMatch = /^\/storage\/v1\/b\/[^/]+\/o$/.exec(url.pathname);
-    if (listMatch !== null && method === 'GET') {
-      const prefix = url.searchParams.get('prefix') ?? '';
-      const items = [...objects.keys()]
-        .filter((name) => name.startsWith(prefix))
-        .map((name) => ({ name }));
-      return Response.json({ items });
-    }
-
-    // Single object: /storage/v1/b/{bucket}/o/{name}
-    const objectMatch = /^\/storage\/v1\/b\/[^/]+\/o\/(.+)$/.exec(url.pathname);
-    if (objectMatch?.[1] !== undefined) {
-      const name = decodeURIComponent(objectMatch[1]);
-
-      if (method === 'DELETE') {
-        const precondition = url.searchParams.get('ifGenerationMatch');
-        if (precondition !== null) {
-          const existing = objects.get(name);
-          const current = existing === undefined ? 0 : existing.generation;
-          if (String(current) !== precondition) {
-            return new Response('precondition failed', { status: 412 });
-          }
-        }
-        objects.delete(name);
-        media.delete(name);
-        return new Response('', { status: 204 });
-      }
-
-      if (media.has(name)) {
-        return new Response(media.get(name) as BodyInit, {
-          status: 200,
-          headers: { 'x-goog-generation': '1' },
-        });
-      }
-
-      const found = objects.get(name);
-      if (found === undefined) {
-        return new Response('not found', { status: 404 });
-      }
-      return new Response(found.body, {
-        status: 200,
-        headers: { 'x-goog-generation': String(found.generation) },
-      });
-    }
-
-    return new Response('unhandled', { status: 500 });
-  };
-
-  return {
-    fetch: handler as unknown as typeof globalThis.fetch,
-    objects,
-    /** `times: -1` means every write, for modelling permanent contention. */
-    contendOn(name: string, times: number) {
-      bumps.set(name, times);
-    },
-  };
-}
-
-export function storeOn(gcs: FakeGcs, casAttempts?: number) {
-  return gcsStore({
-    bucket: 'relics',
-    getAccessToken: async () => 'token',
-    host: 'https://gcs.test',
-    fetch: gcs.fetch,
-    ...(casAttempts === undefined ? {} : { casAttempts }),
-  });
-}
+import { fakeGcs, storeOn } from './fake-gcs.ts';
+import {
+  accessEvent,
+  accessRequest,
+  DAY,
+  GRANTEE_ID,
+  grant,
+  identity,
+  NOW,
+  OTHER_ID,
+  OWNER_EMAIL,
+  OWNER_ID,
+  ownedRelic,
+  privateRelic,
+  RECIPIENT_A,
+  RELIC_ID,
+  relic,
+  seal,
+  wrap,
+} from './private-fixtures.ts';
 
 function row(overrides: Partial<RelicRow> = {}): RelicRow {
   return {
@@ -360,7 +220,7 @@ describe('gcsStore', () => {
     });
 
     const stone = await store.getTombstone('gdk6rpv49hftg5216ev7dejesc');
-    expect(stone?.reasonClass).toBe('abuse');
+    expect(stone).toMatchObject({ reasonClass: 'abuse' });
   });
 
   // A challenge issued on one instance is redeemed on whichever instance the
@@ -1923,6 +1783,287 @@ describe('gcsStore', () => {
         );
         expect(res4).toBe(true);
       }
+    });
+  });
+});
+
+describe('gcsStore private-share objects', () => {
+  test("a private relic's objects carry its expiry as customTime, so the lifecycle rule can erase them", async () => {
+    const gcs = fakeGcs();
+    const store = storeOn(gcs);
+    await store.putRelic(privateRelic());
+    await store.putWrap(wrap(RECIPIENT_A, 1));
+    await store.putSeal(seal(1));
+    await store.putGrant(grant());
+    await store.putAccessRequest(accessRequest());
+    await store.putOwnedRelic(ownedRelic());
+
+    const expiry = new Date(NOW + 30 * DAY).toISOString();
+    for (const name of [
+      `m/relic/${RELIC_ID}.json`,
+      `m/wrap/${RELIC_ID}/1/${RECIPIENT_A}.json`,
+      `m/seal/${RELIC_ID}/1.json`,
+      `m/grant/${RELIC_ID}/${GRANTEE_ID}.json`,
+      `m/grant-by-grantee/${GRANTEE_ID}/${RELIC_ID}.json`,
+      `m/access-request/${RELIC_ID}/${GRANTEE_ID}.json`,
+      `m/owner-relic/${OWNER_ID}/${RELIC_ID}.json`,
+    ]) {
+      expect(gcs.objects.get(name)?.customTime, name).toBe(expiry);
+    }
+  });
+
+  test('comments and decisions on a private relic carry the expiry too', async () => {
+    const gcs = fakeGcs();
+    const store = storeOn(gcs);
+    await store.putRelic(privateRelic());
+    await store.putComment({
+      id: 'c1',
+      relicId: RELIC_ID,
+      author: 'publisher',
+      createdAt: NOW,
+      ciphertext: 'AAAA',
+    });
+    await store.appendDecision({
+      id: 'd1',
+      relicId: RELIC_ID,
+      version: 1,
+      verdict: 'approve',
+      author: 'publisher',
+      createdAt: NOW,
+      versionDigest: 'd'.repeat(64),
+      credentialId: 'credential',
+    });
+
+    const expiry = new Date(NOW + 30 * DAY).toISOString();
+    expect(gcs.objects.get(`m/comment/${RELIC_ID}/c1.json`)?.customTime).toBe(
+      expiry
+    );
+    expect(gcs.objects.get(`m/decision/${RELIC_ID}/d1.json`)?.customTime).toBe(
+      expiry
+    );
+  });
+
+  test('a public relic and its comments never carry a customTime', async () => {
+    const gcs = fakeGcs();
+    const store = storeOn(gcs);
+    await store.putRelic(relic());
+    await store.putComment({
+      id: 'c1',
+      relicId: RELIC_ID,
+      author: 'publisher',
+      createdAt: NOW,
+      ciphertext: 'AAAA',
+    });
+
+    expect(
+      gcs.objects.get(`m/relic/${RELIC_ID}.json`)?.customTime
+    ).toBeUndefined();
+    expect(
+      gcs.objects.get(`m/comment/${RELIC_ID}/c1.json`)?.customTime
+    ).toBeUndefined();
+    const relicUpload = gcs.requests.find(
+      (r) =>
+        new URL(r.url).searchParams.get('name') === `m/relic/${RELIC_ID}.json`
+    );
+    expect(relicUpload).toBeDefined();
+    expect(new URL(relicUpload?.url ?? '').searchParams.get('uploadType')).toBe(
+      'media'
+    );
+  });
+
+  test('a rewrite of a private relic row keeps its expiry customTime', async () => {
+    const gcs = fakeGcs();
+    const store = storeOn(gcs);
+    await store.putRelic(privateRelic());
+    await store.updateRelic(RELIC_ID, (row) => ({ ...row, accessEpoch: 1 }));
+
+    expect(gcs.objects.get(`m/relic/${RELIC_ID}.json`)?.customTime).toBe(
+      new Date(NOW + 30 * DAY).toISOString()
+    );
+  });
+
+  test('an access event is a multipart upload whose customTime is one day before retainUntil', async () => {
+    const gcs = fakeGcs();
+    const store = storeOn(gcs);
+    const retainUntil = NOW + 6 * 365 * DAY;
+    await store.appendAccessEvent(accessEvent({ at: NOW, retainUntil }));
+
+    const events = [...gcs.objects].filter(([name]) =>
+      name.startsWith(`m/access/${OWNER_ID}/`)
+    );
+    expect(events).toHaveLength(1);
+    const [name, object] = events[0] ?? [];
+    expect(name).toMatch(
+      new RegExp(
+        `^m/access/${OWNER_ID}/${String(NOW).padStart(16, '0')}-[0-9a-f]{8}\\.json$`
+      )
+    );
+    expect(object?.customTime).toBe(new Date(retainUntil - DAY).toISOString());
+  });
+
+  test('the multipart body carries name and customTime in its metadata part, with no name in the URL', async () => {
+    const gcs = fakeGcs();
+    const store = storeOn(gcs);
+    await store.putRelic(privateRelic());
+    await store.putWrap(wrap(RECIPIENT_A, 1));
+
+    const upload = gcs.requests
+      .filter(
+        (r) => new URL(r.url).searchParams.get('uploadType') === 'multipart'
+      )
+      .at(-1);
+    expect(upload).toBeDefined();
+    if (upload === undefined) return;
+    expect(new URL(upload.url).searchParams.has('name')).toBe(false);
+
+    const contentType =
+      new Headers(upload.init.headers).get('content-type') ?? '';
+    expect(contentType).toMatch(/^multipart\/related; boundary=relic-/);
+    const boundary = contentType.slice('multipart/related; boundary='.length);
+    const body = String(upload.init.body);
+    const sections = body.split(`--${boundary}`);
+    expect(sections[0]).toBe('');
+    expect(sections.at(-1)).toBe('--\r\n');
+
+    const [metadataHeaders, metadataJson] = (sections[1] ?? '').split(
+      '\r\n\r\n'
+    );
+    expect(metadataHeaders).toContain(
+      'Content-Type: application/json; charset=UTF-8'
+    );
+    expect(JSON.parse((metadataJson ?? '').replace(/\r\n$/, ''))).toEqual({
+      name: `m/wrap/${RELIC_ID}/1/${RECIPIENT_A}.json`,
+      customTime: new Date(NOW + 30 * DAY).toISOString(),
+    });
+  });
+
+  test('a grant and its grantee index exist together and go together', async () => {
+    const gcs = fakeGcs();
+    const store = storeOn(gcs);
+    await store.putRelic(privateRelic());
+    const indexName = `m/grant-by-grantee/${GRANTEE_ID}/${RELIC_ID}.json`;
+    const grantName = `m/grant/${RELIC_ID}/${GRANTEE_ID}.json`;
+
+    await store.putGrant(grant());
+    expect(gcs.objects.has(indexName)).toBe(true);
+    expect(gcs.objects.has(grantName)).toBe(true);
+
+    await store.deleteGrant(RELIC_ID, GRANTEE_ID);
+    expect(gcs.objects.has(indexName)).toBe(false);
+    expect(gcs.objects.has(grantName)).toBe(false);
+  });
+
+  test('a grant whose index write fails is removed again, so no grant is left unindexed', async () => {
+    const gcs = fakeGcs();
+    const failingIndex = ((
+      input: string | URL | Request,
+      init?: RequestInit
+    ) => {
+      if (
+        init?.method === 'POST' &&
+        String(init.body ?? '').includes('"name":"m/grant-by-grantee/')
+      ) {
+        return Promise.resolve(new Response('unavailable', { status: 503 }));
+      }
+      return gcs.fetch(input, init);
+    }) as unknown as typeof globalThis.fetch;
+    const store = gcsStore({
+      bucket: 'relics',
+      getAccessToken: async () => 'token',
+      host: 'https://gcs.test',
+      fetch: failingIndex,
+    });
+    await store.putRelic(privateRelic());
+
+    await expect(store.putGrant(grant())).rejects.toThrow(/503/);
+    expect(await store.getGrant(RELIC_ID, GRANTEE_ID)).toBeUndefined();
+    expect(gcs.objects.has(`m/grant/${RELIC_ID}/${GRANTEE_ID}.json`)).toBe(
+      false
+    );
+  });
+
+  test('updateRelic retries under contention and applies the change to the state it finally wrote over', async () => {
+    const gcs = fakeGcs();
+    const store = storeOn(gcs);
+    await store.putRelic(privateRelic());
+    gcs.contendOn(`m/relic/${RELIC_ID}.json`, 2);
+
+    let calls = 0;
+    const updated = await store.updateRelic(RELIC_ID, (row) => {
+      calls += 1;
+      return { ...row, accessEpoch: 1 };
+    });
+    expect(calls).toBe(3);
+    expect(updated?.accessEpoch).toBe(1);
+    expect((await store.getRelic(RELIC_ID))?.accessEpoch).toBe(1);
+  });
+
+  test('updateRelic gives up under endless contention rather than writing from stale state', async () => {
+    const gcs = fakeGcs();
+    const store = storeOn(gcs, 3);
+    await store.putRelic(privateRelic());
+    gcs.contendOn(`m/relic/${RELIC_ID}.json`, -1);
+
+    await expect(store.updateRelic(RELIC_ID, (row) => row)).rejects.toThrow(
+      /compare-and-swap/
+    );
+  });
+
+  test('a replacement that loses the address race restores the identity it retired', async () => {
+    const gcs = fakeGcs();
+    const store = storeOn(gcs);
+    await store.createIdentity(identity());
+    gcs.contendOn(`m/identity-address/${await sha256Hex(OWNER_EMAIL)}.json`, 1);
+
+    expect(
+      await store.replaceIdentity(
+        identity({ identityId: OTHER_ID }),
+        OWNER_ID,
+        NOW + 1
+      )
+    ).toBe('conflict');
+    expect((await store.getIdentity(OWNER_ID))?.retiredAt).toBeUndefined();
+    expect((await store.getIdentityForAddress(OWNER_EMAIL))?.identityId).toBe(
+      OWNER_ID
+    );
+    expect(await store.getIdentity(OTHER_ID)).toBeUndefined();
+    expect(gcs.objects.has(`m/identity/${OTHER_ID}.json`)).toBe(false);
+  });
+
+  test('a creation that loses the address race removes the identity it wrote', async () => {
+    const gcs = fakeGcs();
+    const store = storeOn(gcs);
+    gcs.contendOn(`m/identity-address/${await sha256Hex(OWNER_EMAIL)}.json`, 1);
+
+    expect(await store.createIdentity(identity())).toBe('address_taken');
+    expect(await store.getIdentity(OWNER_ID)).toBeUndefined();
+    expect(gcs.objects.has(`m/identity/${OWNER_ID}.json`)).toBe(false);
+  });
+
+  test('a legacy tombstone with no kind in the bucket reads as an operator tombstone', async () => {
+    const gcs = fakeGcs();
+    const store = storeOn(gcs);
+    gcs.objects.set(`m/tomb/${RELIC_ID}.json`, {
+      body: JSON.stringify({
+        id: RELIC_ID,
+        publishIp: '203.0.113.7',
+        publishedAt: NOW,
+        publishingClient: 'relic-mcp',
+        rendererClass: 'html',
+        ciphertextHash: 'a'.repeat(64),
+        deletedAt: NOW + 1,
+        operator: 'jason',
+        reasonClass: 'abuse',
+      }),
+      generation: 1,
+    });
+
+    const found = await store.getTombstone(RELIC_ID);
+    expect(found?.kind).toBeUndefined();
+    expect(found).toMatchObject({
+      id: RELIC_ID,
+      operator: 'jason',
+      reasonClass: 'abuse',
     });
   });
 });

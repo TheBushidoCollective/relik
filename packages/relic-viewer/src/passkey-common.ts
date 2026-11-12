@@ -68,6 +68,37 @@ export function descriptors(
   }));
 }
 
+/**
+ * The PRF extension as the wire carries it. Creation asks only that the
+ * authenticator supports PRF. Assertion evaluates a salt, which is base64url
+ * on the wire and bytes to WebAuthn. Nothing here reads a result back.
+ */
+function clientExtensions(
+  extensions: NonNullable<CreationOptionsJSON['extensions']>
+): AuthenticationExtensionsClientInputs {
+  const first = extensions.prf?.eval?.first;
+  if (first === undefined) {
+    return { prf: {} } as AuthenticationExtensionsClientInputs;
+  }
+  return {
+    prf: { eval: { first: base64urlDecode(first) } },
+  } as AuthenticationExtensionsClientInputs;
+}
+
+/** The extensions a server option carries, or undefined when there are none. */
+function parseExtensions(
+  value: unknown
+): NonNullable<CreationOptionsJSON['extensions']> | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  const prf: unknown = Reflect.get(value, 'prf');
+  if (typeof prf !== 'object' || prf === null) return undefined;
+  const evaluation: unknown = Reflect.get(prf, 'eval');
+  if (evaluation === undefined) return { prf: {} };
+  if (typeof evaluation !== 'object' || evaluation === null) return undefined;
+  const first: unknown = Reflect.get(evaluation, 'first');
+  return typeof first === 'string' ? { prf: { eval: { first } } } : undefined;
+}
+
 export function creationOptionsFromJSON(
   json: CreationOptionsJSON
 ): PublicKeyCredentialCreationOptions {
@@ -111,6 +142,9 @@ export function creationOptionsFromJSON(
                 }),
           },
         }),
+    ...(json.extensions === undefined
+      ? {}
+      : { extensions: clientExtensions(json.extensions) }),
   };
 }
 
@@ -128,6 +162,9 @@ export function requestOptionsFromJSON(
           userVerification:
             json.userVerification as UserVerificationRequirement,
         }),
+    ...(json.extensions === undefined
+      ? {}
+      : { extensions: clientExtensions(json.extensions) }),
   };
 }
 
@@ -293,6 +330,7 @@ export function parseRequestOptions(
   if (typeof o.challenge !== 'string' || typeof o.rpId !== 'string') {
     return undefined;
   }
+  const extensions = parseExtensions(o.extensions);
   try {
     const allow = parseDescriptors(o.allowCredentials);
     return {
@@ -303,6 +341,7 @@ export function parseRequestOptions(
         ? { userVerification: o.userVerification }
         : {}),
       ...(allow === undefined ? {} : { allowCredentials: allow }),
+      ...(extensions === undefined ? {} : { extensions }),
     };
   } catch {
     return undefined;
@@ -327,6 +366,7 @@ export function parseCreationOptions(
   ) {
     return undefined;
   }
+  const extensions = parseExtensions(o.extensions);
   try {
     const params = o.pubKeyCredParams.map((entry: unknown) => {
       const alg: unknown = Reflect.get(entry as object, 'alg');
@@ -362,6 +402,7 @@ export function parseCreationOptions(
           }
         : {}),
       ...(exclude === undefined ? {} : { excludeCredentials: exclude }),
+      ...(extensions === undefined ? {} : { extensions }),
     };
   } catch {
     return undefined;

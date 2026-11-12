@@ -13,10 +13,16 @@
  * The file holds secrets. It is created 0600 inside a 0700 directory under
  * the user's config directory, and nothing in this module ever puts the key
  * or the token into a message, a log line, or an error.
+ *
+ * Threat model, same user: the file is protected from other users and from
+ * the service, not from code running as this user. A version key is plaintext
+ * here, and any same-user process that can read the file has every key it
+ * holds. The 0600 mode does not change that. See the relic skill's threat model.
  */
 
 import { execFile } from 'node:child_process';
 import {
+  chmod,
   mkdir,
   readFile,
   realpath,
@@ -124,6 +130,34 @@ export interface PublishState {
   readonly cover_uploaded?: boolean | undefined;
 }
 
+/**
+ * What this machine remembers about one private relic.
+ *
+ * Private relics have no content key in a URL. This machine keeps one key
+ * per version it has a key for (the ones it created, plus any it fetched and
+ * unwrapped), the publish token, and the owner identity it pinned at
+ * enrollment. Like the public entry, it is a secret file and never echoed.
+ */
+export interface PrivatePublishState {
+  readonly access: 'private';
+  /** The service origin this entry was created against. */
+  readonly service_origin: string;
+  readonly publish_token: string;
+  /** The newest version this machine published. */
+  readonly version: number;
+  /** Version number to base64url 16-byte key, for the versions created here. */
+  readonly version_keys: Readonly<Record<string, string>>;
+  readonly owner_identity_id: string;
+  /** The device that published and seals versions for this relic. */
+  readonly device_id: string;
+  readonly source?: SourceIdentity | undefined;
+  readonly filename?: string | undefined;
+  readonly published_at?: string | undefined;
+  readonly updated_at?: string | undefined;
+  readonly content_sha256?: string | undefined;
+  readonly expires_at?: string | null | undefined;
+}
+
 interface StateFile {
   readonly relics: Record<string, PublishState>;
   readonly sources?: Record<string, string> | undefined;
@@ -132,7 +166,8 @@ interface StateFile {
 
 export interface PublishedSource {
   readonly relic_id: string;
-  readonly state: PublishState;
+  readonly access: 'public' | 'private';
+  readonly version: number;
   readonly source: SourceIdentity;
 }
 
@@ -143,7 +178,8 @@ export interface PublishedSource {
  * at a scratch path and a user with an unusual setup can move it. The default
  * is the user's config directory rather than the repo or the cwd, because the
  * publisher's identity here is the machine and user who ran the publish, not
- * whatever directory the server happened to start in.
+ * whatever directory the server happened to start in. The file's contents
+ * are readable by any process running as this user; see the module header.
  */
 export function publishStatePath(): string {
   const override = process.env['RELIC_PUBLISH_STATE'];
@@ -318,6 +354,78 @@ export async function loadPublishState(
   return validatePublishStateEntry(parsed?.relics?.[relicId], relicId);
 }
 
+/** Load one private relic's entry, or undefined when this machine never published it privately. */
+export async function loadPrivatePublishState(
+  relicId: string
+): Promise<PrivatePublishState | undefined> {
+  const parsed = await readWholeFile(publishStatePath());
+  return validatePrivateStateEntry(
+    privateBucketEntry(parsed, relicId),
+    relicId
+  );
+}
+
+/** Every private relic this machine holds, read from local state with no network. */
+export async function loadPrivateInventory(): Promise<
+  readonly { readonly relic_id: string; readonly state: PrivatePublishState }[]
+> {
+  const parsed = await readWholeFile(publishStatePath());
+  const bucket: unknown = parsed?.['private_relics'];
+  if (bucket === undefined) return [];
+  if (!isPlainObject(bucket)) {
+    throw new Error(
+      `publish state at ${publishStatePath()} holds malformed private relics.`
+    );
+  }
+  const rows: { relic_id: string; state: PrivatePublishState }[] = [];
+  for (const [relicId, entry] of Object.entries(bucket)) {
+    const state = validatePrivateStateEntry(entry, relicId);
+    if (state !== undefined) rows.push({ relic_id: relicId, state });
+  }
+  return rows;
+}
+
+function privateBucketEntry(
+  parsed: StateFile | undefined,
+  relicId: string
+): unknown {
+  const bucket: unknown = parsed?.['private_relics'];
+  return isPlainObject(bucket) ? bucket[relicId] : undefined;
+}
+
+function validatePrivateStateEntry(
+  entry: unknown,
+  relicId: string
+): PrivatePublishState | undefined {
+  if (entry === undefined) return undefined;
+  const malformed = () =>
+    new Error(
+      `publish state at ${publishStatePath()} holds a malformed private ` +
+        `entry for relic ${relicId}.`
+    );
+  if (!isPlainObject(entry)) throw malformed();
+  const versionKeys = entry['version_keys'];
+  if (
+    entry['access'] !== 'private' ||
+    typeof entry['service_origin'] !== 'string' ||
+    typeof entry['publish_token'] !== 'string' ||
+    typeof entry['owner_identity_id'] !== 'string' ||
+    typeof entry['device_id'] !== 'string' ||
+    typeof entry['version'] !== 'number' ||
+    !Number.isSafeInteger(entry['version']) ||
+    entry['version'] < 1 ||
+    !isPlainObject(versionKeys) ||
+    !Object.values(versionKeys).every((key) => typeof key === 'string') ||
+    (entry['source'] !== undefined && !isSourceIdentity(entry['source'])) ||
+    (entry['content_sha256'] !== undefined &&
+      (typeof entry['content_sha256'] !== 'string' ||
+        !/^[0-9a-f]{64}$/.test(entry['content_sha256'])))
+  ) {
+    throw malformed();
+  }
+  return entry as unknown as PrivatePublishState;
+}
+
 function isSourceIdentity(value: unknown): value is SourceIdentity {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
     return false;
@@ -373,24 +481,25 @@ function validatePublishStateEntry(
   return candidate as unknown as PublishState;
 }
 
-/** Resolve a source through the reverse index without exposing its secrets. */
+/**
+ * Resolve a source through the reverse index without exposing its secrets.
+ *
+ * The index covers public and private entries alike, so a source already
+ * published privately is refused the same way a public one is.
+ */
 export async function loadPublishedSource(
   source: SourceIdentity
 ): Promise<PublishedSource | undefined> {
   const parsed = await readWholeFile(publishStatePath());
   const sources = parsed?.sources;
   if (sources === undefined) return undefined;
-  if (
-    sources === null ||
-    typeof sources !== 'object' ||
-    Array.isArray(sources)
-  ) {
+  if (!isPlainObject(sources)) {
     throw new Error(
       `publish state at ${publishStatePath()} holds a malformed source index.`
     );
   }
 
-  const relicId = (sources as Record<string, unknown>)[source.identity];
+  const relicId = sources[source.identity];
   if (relicId === undefined) return undefined;
   if (typeof relicId !== 'string' || relicId.length === 0) {
     throw new Error(
@@ -398,14 +507,41 @@ export async function loadPublishedSource(
     );
   }
 
-  const state = validatePublishStateEntry(parsed?.relics?.[relicId], relicId);
-  if (state?.source?.identity !== source.identity) {
+  const published = validatePublishStateEntry(
+    parsed?.relics?.[relicId],
+    relicId
+  );
+  if (published !== undefined) {
+    if (published.source?.identity !== source.identity) {
+      throw new Error(
+        `publish state at ${publishStatePath()} holds a source match without ` +
+          'its relic entry.'
+      );
+    }
+    return {
+      relic_id: relicId,
+      access: 'public',
+      version: published.version,
+      source: published.source,
+    };
+  }
+
+  const priv = validatePrivateStateEntry(
+    privateBucketEntry(parsed, relicId),
+    relicId
+  );
+  if (priv?.source?.identity !== source.identity) {
     throw new Error(
       `publish state at ${publishStatePath()} holds a source match without ` +
         'its relic entry.'
     );
   }
-  return { relic_id: relicId, state, source: state.source };
+  return {
+    relic_id: relicId,
+    access: 'private',
+    version: priv.version,
+    source: priv.source,
+  };
 }
 
 /** One relic this machine published, as the inventory reads it. */
@@ -487,7 +623,7 @@ export async function loadPublishInventory(): Promise<{
 }
 
 /**
- * Record or update one relic's state, preserving every other entry.
+ * Record or update one public relic's state, preserving every other entry.
  *
  * Called only after the service has accepted the object, so the file never
  * promises a republish the service does not know about.
@@ -496,14 +632,48 @@ export async function savePublishState(
   relicId: string,
   state: PublishState
 ): Promise<void> {
-  const run = writeChain.then(() => writeEntry(relicId, state));
+  await queueWrite('relics', relicId, state);
+}
+
+/**
+ * Record or update one private relic's entry, preserving every other entry.
+ *
+ * Private entries live under their own top-level key. Older clients read
+ * only `relics`, so they neither see nor drop these, which is the reason the
+ * key is separate rather than a field on the public entry.
+ */
+export async function savePrivatePublishState(
+  relicId: string,
+  state: PrivatePublishState
+): Promise<void> {
+  await queueWrite('private_relics', relicId, state);
+}
+
+type StateBucket = 'relics' | 'private_relics';
+
+function queueWrite(
+  bucket: StateBucket,
+  relicId: string,
+  state: object
+): Promise<void> {
+  const run = writeChain.then(() => writeEntry(bucket, relicId, state));
   // A failed write must not poison the chain for later ones; it is observed
   // here and rethrown for the caller, who has not yet reported success.
   writeChain = run.catch(() => undefined);
-  await run;
+  return run;
 }
 
-async function writeEntry(relicId: string, state: PublishState): Promise<void> {
+export function isPlainObject(
+  value: unknown
+): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+async function writeEntry(
+  bucket: StateBucket,
+  relicId: string,
+  state: object
+): Promise<void> {
   const path = publishStatePath();
   const dir = dirname(path);
 
@@ -512,26 +682,15 @@ async function writeEntry(relicId: string, state: PublishState): Promise<void> {
   await mkdir(dir, { mode: 0o700, recursive: true });
 
   const existing = await readWholeFile(path);
-  const storedRelics = existing?.['relics'];
-  if (
-    storedRelics !== undefined &&
-    (storedRelics === null ||
-      typeof storedRelics !== 'object' ||
-      Array.isArray(storedRelics))
-  ) {
-    throw new Error(`publish state at ${path} holds malformed relic entries.`);
+  const storedBucket = existing?.[bucket];
+  if (storedBucket !== undefined && !isPlainObject(storedBucket)) {
+    throw new Error(`publish state at ${path} holds malformed ${bucket}.`);
   }
-  const oldEntry = (storedRelics as Record<string, unknown> | undefined)?.[
-    relicId
-  ];
-  const relics = {
-    ...(storedRelics as Record<string, unknown> | undefined),
+  const oldEntry = storedBucket?.[relicId];
+  const entries = {
+    ...storedBucket,
     [relicId]: {
-      ...(oldEntry !== null &&
-      typeof oldEntry === 'object' &&
-      !Array.isArray(oldEntry)
-        ? oldEntry
-        : {}),
+      ...(isPlainObject(oldEntry) ? oldEntry : {}),
       // Undefined members are dropped before the merge, never spread over the
       // stored entry. Every field added since the first release is optional,
       // so a caller that rebuilds a state object without one would otherwise
@@ -543,25 +702,19 @@ async function writeEntry(relicId: string, state: PublishState): Promise<void> {
     },
   };
 
+  const source = (state as { readonly source?: SourceIdentity }).source;
   const storedSources = existing?.['sources'];
-  if (
-    storedSources !== undefined &&
-    (storedSources === null ||
-      typeof storedSources !== 'object' ||
-      Array.isArray(storedSources))
-  ) {
+  if (storedSources !== undefined && !isPlainObject(storedSources)) {
     throw new Error(`publish state at ${path} holds a malformed source index.`);
   }
   const sources = {
-    ...(storedSources as Record<string, unknown> | undefined),
-    ...(state.source === undefined ? {} : { [state.source.identity]: relicId }),
+    ...storedSources,
+    ...(source === undefined ? {} : { [source.identity]: relicId }),
   };
   const next = {
     ...existing,
-    relics,
-    ...(storedSources === undefined && state.source === undefined
-      ? {}
-      : { sources }),
+    [bucket]: entries,
+    ...(storedSources === undefined && source === undefined ? {} : { sources }),
   };
 
   // Written to a sibling then renamed over, so a crash mid-write leaves the
@@ -571,6 +724,7 @@ async function writeEntry(relicId: string, state: PublishState): Promise<void> {
   await writeFile(temp, `${JSON.stringify(next, null, 2)}\n`, {
     mode: 0o600,
   });
+  await chmod(temp, 0o600);
   await rename(temp, path);
 }
 
@@ -581,7 +735,7 @@ async function writeEntry(relicId: string, state: PublishState): Promise<void> {
  * the service saying this relic has no lifetime, which is different from
  * this machine never having recorded one.
  */
-function defined(state: PublishState): Record<string, unknown> {
+function defined(state: object): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(state)) {
     if (value !== undefined) out[key] = value;

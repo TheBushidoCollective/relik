@@ -106,6 +106,16 @@ export function cardCopy(rendererClass: RendererClass | undefined): CardCopy {
   };
 }
 
+/**
+ * The card a private relic gets, whatever its class. The renderer class
+ * describes the content, and a private relic's content and title are not
+ * something this service may describe (plan 4.13).
+ */
+export const PRIVATE_CARD: CardCopy = {
+  title: 'Relic',
+  description: 'A private relic. Sign in to open it.',
+};
+
 export const COVER_ALT: Readonly<Record<CoverKind, string>> = {
   markdown: 'The opening of this Markdown document, as it renders.',
   code: 'The first lines of this code file, as they render.',

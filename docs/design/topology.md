@@ -170,6 +170,12 @@ together with the requirement two sentences later:
 
 That routed item is resolved here as not filed, on eligibility, at this scale, which leaves the first sentence stating a benefit the design cannot obtain at launch. **This routes back to `specify` as drift.** Both branches above are designed so whoever revisits it has the material, and the honest scope from 1.1 travels with it: the entry is unavailable at this scale, so the process-isolation rationale is recoverable if Relic reaches the scale the list's guidelines describe, rather than permanently void.
 
+### 1.8 The RP ID constraint on any sandbox topology
+
+The usercontent origin cannot sit under the WebAuthn Relying Party ID. `assertConfig` refuses a usercontent hostname equal to the service hostname, which is the RP ID, or ending in `.` plus the RP ID (plan 4.9, correction 20). The reason is the one `viewer.md` section 4 states from the other side: the render frame is opaque and WebAuthn cannot run there, but a usercontent origin under the RP ID could request PRF output from a user's passkeys, which would make that origin a decryption capability for private relics. The constraint applies to every sandbox topology, branch A and branch B alike. It depends on the hostname rather than the public suffix list, so the PSL findings in 1.1 to 1.7 do not affect it.
+
+Any per-relic subdomain topology (`viewer.md` section 2, not built) must live under the usercontent domain only, never under the service hostname. A fixed sandbox origin under branch B has the same requirement.
+
 ## 2. Which origin serves which response, and explicit downloads
 
 **The split is backwards from how it reads.** The shared URL is on the service origin. The sandbox origin appears only in an iframe `src` and never in anything a human pastes. So the domain hosting attacker-controlled markup is the one nobody links to, and it costs one DNS change to replace. The domain hosting nothing untrusted is the one in every shared link, every abuse report, and every Safe Browsing sample. **Losing the sandbox domain breaks rich-text rendering. Losing the service domain breaks every relic ever shared.**
