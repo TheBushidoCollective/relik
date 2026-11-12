@@ -956,6 +956,42 @@ test('frontier-overshoot classifier names the recorded 44.1 kHz refusal', () => 
   expect(evidence).toContain(`gap upper ${OVER_GAP_UPPER}`);
 });
 
+test('frontier-overshoot classifier accepts the closing burst read before its closure arrives', () => {
+  // CI run 43270214432: a tick read 1257856, 384 past the frontier, 1.5 ms before the main
+  // thread received the closure. The refusal saw the same frame, so one burst did it.
+  const early = overRead(OVER_BOUNDARY + 384);
+  expect(
+    recoveryFrontierOvershoot(
+      [overRead(OVER_BOUNDARY - 128), ...overTrace({ lastRead: early })],
+      OVER_RATE
+    )
+  ).toContain('overshot by 384 frames');
+  // With no read from before the frontier, the burst is not shown to be the closing one.
+  expect(
+    recoveryFrontierOvershoot(overTrace({ lastRead: early }), OVER_RATE)
+  ).toBeNull();
+  // An injected read is never passed over.
+  expect(
+    recoveryFrontierOvershoot(
+      [
+        overRead(OVER_BOUNDARY - 128),
+        ...overTrace({ lastRead: overRead(OVER_BOUNDARY + 384, true) }),
+      ],
+      OVER_RATE
+    )
+  ).toBeNull();
+  // A read past the frontier at another frame means more was rendered before the refusal.
+  expect(
+    recoveryFrontierOvershoot(
+      [
+        overRead(OVER_BOUNDARY - 128),
+        ...overTrace({ lastRead: overRead(OVER_BOUNDARY + 128) }),
+      ],
+      OVER_RATE
+    )
+  ).toBeNull();
+});
+
 test('frontier-overshoot classifier refuses a late or feasible recovery', () => {
   // A second burst always puts the overshoot at one guard or more: that is a late recovery.
   expect(

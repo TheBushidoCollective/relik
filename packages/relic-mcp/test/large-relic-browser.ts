@@ -271,7 +271,11 @@ export class ProofBrowser {
       child.stdio[4] as Readable
     );
     try {
-      await attestBrowserHeadless(cdp, launch);
+      // This browser starts straight after a 500 MB publish. In CI run
+      // 43270214432 it printed its first line 7 s after it was spawned and the
+      // default 10 s attestation deadline passed before it answered. The
+      // attestation itself is unchanged; only the wait for a slow start is.
+      await attestBrowserHeadless(cdp, launch, 60_000);
       await cdp.send('Browser.setDownloadBehavior', {
         behavior: 'allowAndName',
         downloadPath: downloads,

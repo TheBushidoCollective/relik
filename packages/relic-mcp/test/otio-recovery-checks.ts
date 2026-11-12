@@ -739,10 +739,21 @@ export function recoveryFrontierOvershoot(
   if (!renderClosed) return null;
 
   // The last read before the closure was native and had not passed the frontier, so the
-  // overshoot happened inside the burst that closed the run.
+  // overshoot happened inside the burst that closed the run. The closing burst can also be
+  // read before its closure reaches the main thread. Such a read is native and sits exactly
+  // on the refused frame, so nothing rendered between it and the refusal, and it is passed
+  // over to the read before it, which must meet the same condition.
   let lastRead = -1;
-  for (let i = closure - 1; i >= 0 && lastRead < 0; i--)
-    if (isObservedRead(events[i])) lastRead = i;
+  for (let i = closure - 1; i >= 0 && lastRead < 0; i--) {
+    if (!isObservedRead(events[i])) continue;
+    if (
+      overshoot > 0 &&
+      readFrame(events[i], rate) === contextFrame &&
+      entryValue(events[i])['injected'] === false
+    )
+      continue;
+    lastRead = i;
+  }
   if (lastRead < 0) return null;
   const before = readFrame(events[lastRead], rate);
   if (
