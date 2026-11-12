@@ -11,6 +11,7 @@ export * from './comments.ts';
 export * from './container.ts';
 export * from './crc32c.ts';
 export * from './decision.ts';
+export * from './email.ts';
 export * from './envelope.ts';
 export * from './errors.ts';
 export * from './fragment.ts';
