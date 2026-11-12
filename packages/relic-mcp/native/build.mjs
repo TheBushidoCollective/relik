@@ -23,6 +23,11 @@ const darwinReleaseToolchainPath = join(
   'darwin-release-toolchain.json'
 );
 const linuxToolchainPath = join(nativeDirectory, 'linux-toolchain.json');
+const secureEnclaveSource = join(nativeDirectory, 'secure-enclave', 'relic-se.swift');
+const secureEnclaveArtifactName = 'relic-se';
+const secureEnclaveBuildInfoName = 'relic-se-build-info.json';
+const secureEnclaveBuildMetadataSchemaVersion = 1;
+const secureEnclaveDependencyPrefixes = ['/System/Library/Frameworks/', '/usr/lib/'];
 const sourceFiles = [
   'native/build.mjs',
   'native/confinement-probe.c',
@@ -32,6 +37,7 @@ const sourceFiles = [
   'native/platform-darwin.c',
   'native/platform-linux.c',
   'native/platform.h',
+  'native/secure-enclave/relic-se.swift',
   'native/secure-open.c',
   '../../bun.lock',
 ];
@@ -442,6 +448,8 @@ function outputPaths(target, outputDirectory) {
     artifact: join(directory, artifactName),
     buildInfo: join(directory, 'build-info.json'),
     directory,
+    secureEnclave: join(directory, secureEnclaveArtifactName),
+    secureEnclaveBuildInfo: join(directory, secureEnclaveBuildInfoName),
   };
 }
 
@@ -574,6 +582,134 @@ function auditDarwin(target, path) {
   };
   validateAudit(target, audit);
   return audit;
+}
+
+function swiftCompilerPath(release) {
+  const compiler = run('xcrun', ['--sdk', 'macosx', '--find', 'swiftc']).trim();
+  if (compiler === '') fail('xcrun did not identify swiftc');
+  if (release && !isPathUnder(compiler, darwinReleaseToolchain.developerDir)) {
+    fail(
+      `release Darwin build requires a Swift compiler under ${darwinReleaseToolchain.developerDir}, found ${compiler}`
+    );
+  }
+  return compiler;
+}
+
+function validateSecureEnclaveAudit(target, audit) {
+  if (
+    !hasExactKeys(audit, [
+      'architecture',
+      'dependencies',
+      'macOSDeploymentTarget',
+      'rpaths',
+      'signature',
+    ]) ||
+    audit.architecture !== target.architecture ||
+    audit.macOSDeploymentTarget !== target.minimumMacOS ||
+    audit.signature !== 'adhoc-linker-signed' ||
+    !Array.isArray(audit.dependencies) ||
+    !audit.dependencies.includes('/usr/lib/libSystem.B.dylib') ||
+    !audit.dependencies.every((dependency) =>
+      secureEnclaveDependencyPrefixes.some((prefix) => dependency.startsWith(prefix))
+    ) ||
+    !Array.isArray(audit.rpaths) ||
+    !audit.rpaths.every((rpath) => rpath === '/usr/lib/swift')
+  ) {
+    fail(`${target.id} Secure Enclave helper audit does not match its Darwin policy`);
+  }
+}
+
+function auditSecureEnclaveHelper(target, path) {
+  const lipo = findAuditTool('RELIC_LIPO', ['lipo']);
+  const otool = findAuditTool('RELIC_OTOOL', ['otool']);
+  const architectures =
+    run(lipo, ['-archs', path]).match(/\b(?:arm64|x86_64)\b/g) ?? [];
+  const linked = run(otool, ['-L', path])
+    .split('\n')
+    .slice(1)
+    .map((line) => line.trim().split(' ')[0])
+    .filter((value) => value !== '');
+  const loadCommands = run(otool, ['-l', path]);
+  const versionMatch = /cmd LC_BUILD_VERSION[\s\S]*?minos ([0-9.]+)/.exec(
+    loadCommands
+  );
+  const rpaths = [
+    ...loadCommands.matchAll(/cmd LC_RPATH\n\s+cmdsize \d+\n\s+path (.+?) \(offset \d+\)/g),
+  ].map((match) => match[1]);
+  const signing = run('codesign', ['-d', '-vv', path]);
+  const flags = (/flags=0x[0-9a-f]+\(([^)]*)\)/.exec(signing)?.[1] ?? '').split(',');
+  const audit = {
+    architecture: architectures.length === 1 ? architectures[0] : '',
+    dependencies: linked,
+    macOSDeploymentTarget: versionMatch?.[1] ?? '',
+    rpaths,
+    signature:
+      /^Signature=adhoc$/m.test(signing) && flags.includes('linker-signed')
+        ? 'adhoc-linker-signed'
+        : '',
+  };
+  validateSecureEnclaveAudit(target, audit);
+  return audit;
+}
+
+function buildSecureEnclaveHelper(target, output, toolchain, release) {
+  const swiftc = swiftCompilerPath(release);
+  run(swiftc, [
+    '-O',
+    '-swift-version',
+    '5',
+    '-target',
+    `${target.architecture}-apple-macos${target.minimumMacOS}`,
+    '-sdk',
+    toolchain.sdkPath,
+    '-Xlinker',
+    '-adhoc_codesign',
+    secureEnclaveSource,
+    '-o',
+    output.secureEnclave,
+  ]);
+  return compilerIdentity(swiftc, run(swiftc, ['--version']));
+}
+
+async function checkSecureEnclaveHelper(target, metadataOnly, release) {
+  const output = outputPaths(target, undefined);
+  if (!existsSync(output.secureEnclave) || !existsSync(output.secureEnclaveBuildInfo)) {
+    fail(
+      `${target.id} is missing ${secureEnclaveArtifactName} or ${secureEnclaveBuildInfoName}`
+    );
+  }
+
+  let info;
+  try {
+    info = JSON.parse(await readFile(output.secureEnclaveBuildInfo, 'utf8'));
+  } catch (cause) {
+    fail(`${target.id} has unreadable ${secureEnclaveBuildInfoName}: ${String(cause)}`);
+  }
+
+  if (
+    info.schemaVersion !== secureEnclaveBuildMetadataSchemaVersion ||
+    info.target !== target.id ||
+    info.artifact !== secureEnclaveArtifactName ||
+    info.sourceSha256 !== (await sourceSha256()) ||
+    info.binarySha256 !== (await sha256(output.secureEnclave))
+  ) {
+    fail(`${target.id} ${secureEnclaveBuildInfoName} does not match its source or binary`);
+  }
+
+  validateBuildKind(target, info.buildKind, release);
+  validateCompilerMetadata(target, info.compiler);
+  validateToolchainMetadata(target, info.toolchain);
+  if (release) validateReleaseMetadata(target, info.compiler, info.toolchain);
+  validateSecureEnclaveAudit(target, info.audit);
+  if (!metadataOnly) {
+    const audit = auditSecureEnclaveHelper(target, output.secureEnclave);
+    if (JSON.stringify(info.audit) !== JSON.stringify(audit)) {
+      fail(`${target.id} ${secureEnclaveBuildInfoName} does not match the Secure Enclave audit`);
+    }
+  }
+  if (JSON.stringify(info.minimumPlatform) !== JSON.stringify({ macOS: target.minimumMacOS })) {
+    fail(`${target.id} ${secureEnclaveBuildInfoName} has the wrong platform floor`);
+  }
 }
 
 function auditArtifact(target, path) {
@@ -773,6 +909,30 @@ async function buildTarget(target, options) {
     toolchain: buildContext.toolchain,
   };
   await writeFile(output.buildInfo, `${JSON.stringify(info, null, 2)}\n`);
+  if (target.platform === 'darwin') {
+    const compiler = buildSecureEnclaveHelper(
+      target,
+      output,
+      buildContext.toolchain,
+      options.release
+    );
+    const helperInfo = {
+      artifact: secureEnclaveArtifactName,
+      audit: auditSecureEnclaveHelper(target, output.secureEnclave),
+      binarySha256: await sha256(output.secureEnclave),
+      buildKind: options.release ? 'release' : 'local',
+      compiler,
+      minimumPlatform: { macOS: target.minimumMacOS },
+      schemaVersion: secureEnclaveBuildMetadataSchemaVersion,
+      sourceSha256: await sourceSha256(),
+      target: target.id,
+      toolchain: buildContext.toolchain,
+    };
+    await writeFile(
+      output.secureEnclaveBuildInfo,
+      `${JSON.stringify(helperInfo, null, 2)}\n`
+    );
+  }
   console.log(`built ${target.id}: ${output.artifact}`);
 }
 
@@ -894,6 +1054,10 @@ async function checkTarget(target, metadataOnly, release) {
       : { glibc: target.minimumGlibc };
   if (JSON.stringify(info.minimumPlatform) !== JSON.stringify(minimumPlatform)) {
     fail(`${target.id} build-info.json has the wrong platform floor`);
+  }
+
+  if (target.platform === 'darwin') {
+    await checkSecureEnclaveHelper(target, metadataOnly, release);
   }
 
   console.log(
