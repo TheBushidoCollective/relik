@@ -2,7 +2,7 @@
 
 A reader who holds a relic link can propose a replacement for a span of text. Everyone else can see it, preview it applied, and stack their own. The publisher accepts through their agent, which applies the result to the source and republishes. The clickable mock is `mockup.html` beside this file. Every behaviour below is shown there.
 
-Base: origin/main at bb8cf8b3. Citations were read in that tree.
+Base: origin/main at 4167e704. Citations were read in that tree.
 
 ## 1. Goal and PATH sentence
 
