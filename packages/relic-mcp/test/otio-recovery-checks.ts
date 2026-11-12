@@ -515,6 +515,105 @@ export function siteBridgeCommitLeadAfterHold(
   events: readonly TraceEntry[],
   rate: number
 ): string | null {
+  const prefix = siteBridgeHoldPrefix(events, rate, COMMIT_REFUSAL);
+  if (prefix === null) return null;
+  const {
+    terminal,
+    at,
+    boundary,
+    gapUpper,
+    heldFrame,
+    selectedAt,
+    selectionFrame,
+  } = prefix;
+
+  // One commit refusal, on an accepted native read inside its deadline, for the lead alone.
+  const commits: number[] = [];
+  events.forEach((entry, index) => {
+    if (isPcm(entry, 'clock-commit-detail')) commits.push(index);
+  });
+  if (commits.length !== 1) return null;
+  const commitAt = commits[0]!;
+  if (commitAt <= selectedAt || commitAt >= terminal) return null;
+  const commit = entryValue(events[commitAt]);
+  const observation = (commit['observation'] ?? {}) as Record<string, unknown>;
+  const commitFrame = ceilFrame(commit['contextAfter'], rate);
+  const readEnd = commit['readEnd'];
+  const deadline = commit['deadline'];
+  if (
+    commit['reason'] !== 'observation-or-lead' ||
+    observation['status'] !== 'calibrated' ||
+    observation['reason'] !== 'accepted' ||
+    typeof observation['offsetMin'] !== 'number' ||
+    typeof observation['offsetMax'] !== 'number' ||
+    stampOf(commit['stamp']) === null ||
+    typeof readEnd !== 'number' ||
+    typeof deadline !== 'number' ||
+    readEnd > deadline ||
+    commit['contextFrame'] !== gapUpper ||
+    commit['guardFrames'] !== GAP_GUARD_FRAMES ||
+    commitFrame === null ||
+    commit['remainingLeadFrames'] !== gapUpper - commitFrame ||
+    gapUpper - commitFrame >= GAP_GUARD_FRAMES
+  )
+    return null;
+  const commitRead = events[commitAt - 1];
+  if (
+    !isObservedRead(commitRead) ||
+    entryValue(commitRead)['injected'] !== false
+  )
+    return null;
+
+  // One burst at most between the selection and the commit. Two bursts move at least 768 frames.
+  const moved = commitFrame - selectionFrame;
+  if (moved <= 0 || moved > GAP_GUARD_FRAMES) return null;
+
+  // Nothing else was refused or injected after the hold.
+  for (let i = at + 1; i < terminal; i++)
+    if (
+      isPcm(events[i], 'recovery-candidate-failed') ||
+      isPcm(events[i], 'recovery-fault') ||
+      isPcm(events[i], 'recovery-clock-observation-rejected') ||
+      events[i]?.kind === 'recovery-overrun-injected'
+    )
+      return null;
+
+  return `${RECOVERY_BRIDGE_SITE} hold consumed at frame ${heldFrame}, released by the next stamp; selection at frame ${selectionFrame} took ${gapUpper} (boundary ${boundary}); one burst of ${moved} frames left a lead of ${gapUpper - commitFrame} under the guard at the commit`;
+}
+
+// The native stamp under the injected read. The first classifier needs it to still be the anchor,
+// which is the sub-resolution re-read. The final guard one also takes a native stamp the sink has
+// already moved on from the anchor (run 43295017278: native 10.1 ms past it), because the next
+// bridge read, which the selection used, then carries that same later stamp.
+function consumedNativeIsAcceptable(
+  native: Stamp | null,
+  anchor: Stamp,
+  mayHaveAdvanced: boolean
+): boolean {
+  if (native === null) return false;
+  return mayHaveAdvanced
+    ? native.performanceTime >= anchor.performanceTime
+    : sameStamp(native, anchor);
+}
+
+// What the two hold classifiers below share: one terminal refusal with the given code, the
+// one-shot recovery-bridge hold consumed once as an injected re-read, still feasible as
+// consumed, one selection after it at the last frame the gap allows, and a bridge read that
+// ended the hold with the next native stamp, which the selection used.
+function siteBridgeHoldPrefix(
+  events: readonly TraceEntry[],
+  rate: number,
+  terminalCode: string,
+  nativeMayHaveAdvanced = false
+): {
+  terminal: number;
+  at: number;
+  boundary: number;
+  gapUpper: number;
+  heldFrame: number;
+  selectedAt: number;
+  selectionFrame: number;
+} | null {
   if (!Number.isFinite(rate) || rate <= 0) return null;
 
   const errorAt: number[] = [];
@@ -524,7 +623,7 @@ export function siteBridgeCommitLeadAfterHold(
   if (errorAt.length !== 1) return null;
   const terminal = errorAt[0]!;
   const failure = entryValue(events[terminal]);
-  if (failure['code'] !== COMMIT_REFUSAL || failure['stage'] !== 'schedule')
+  if (failure['code'] !== terminalCode || failure['stage'] !== 'schedule')
     return null;
 
   // The hold: consumed once, on a bridge read that names the anchor, as an injected re-read.
@@ -555,7 +654,11 @@ export function siteBridgeCommitLeadAfterHold(
     consumedValue['injected'] !== true ||
     consumedValue['site'] !== RECOVERY_BRIDGE_SITE ||
     !sameStamp(stampOf(consumedValue['output']), held) ||
-    !sameStamp(stampOf(consumedValue['native']), anchor)
+    !consumedNativeIsAcceptable(
+      stampOf(consumedValue['native']),
+      anchor,
+      nativeMayHaveAdvanced
+    )
   )
     return null;
 
@@ -615,46 +718,85 @@ export function siteBridgeCommitLeadAfterHold(
       used = stampOf(entryValue(events[i])['usedStamp']);
   if (!sameStamp(used, freshStamp)) return null;
 
-  // One commit refusal, on an accepted native read inside its deadline, for the lead alone.
+  return {
+    terminal,
+    at,
+    boundary,
+    gapUpper,
+    heldFrame,
+    selectedAt,
+    selectionFrame,
+  };
+}
+
+const FINAL_GUARD_REFUSAL = 'recovery final guard exceeded';
+
+// The same one-shot hold, refused one step later again. The commit read is accepted and keeps
+// its lead, and the render burst that the hold's release comes with lands after it, before the
+// final guard reads the context clock (run 43295017278: lead 704 at the commit, the context
+// past boundary + 448 at the guard). The hold is blamed only when every clause of the shared
+// prefix holds, exactly one commit was accepted and none refused, its lead kept the guard, the
+// context moved by at most one burst between the selection and the commit, and the first native
+// read after the refusal sits past the guard by no more than one burst from the commit.
+export function siteBridgeFinalGuardAfterHold(
+  events: readonly TraceEntry[],
+  rate: number
+): string | null {
+  const prefix = siteBridgeHoldPrefix(events, rate, FINAL_GUARD_REFUSAL, true);
+  if (prefix === null) return null;
+  const {
+    terminal,
+    at,
+    boundary,
+    gapUpper,
+    heldFrame,
+    selectedAt,
+    selectionFrame,
+  } = prefix;
+
   const commits: number[] = [];
+  let commitRefused = false;
   events.forEach((entry, index) => {
-    if (isPcm(entry, 'clock-commit-detail')) commits.push(index);
+    if (index <= selectedAt || index >= terminal) return;
+    if (isPcm(entry, 'clock-commit')) commits.push(index);
+    if (isPcm(entry, 'clock-commit-detail')) commitRefused = true;
   });
-  if (commits.length !== 1) return null;
-  const commitAt = commits[0]!;
-  if (commitAt <= selectedAt || commitAt >= terminal) return null;
-  const commit = entryValue(events[commitAt]);
-  const observation = (commit['observation'] ?? {}) as Record<string, unknown>;
+  if (commits.length !== 1 || commitRefused) return null;
+  const commit = entryValue(events[commits[0]!]);
   const commitFrame = ceilFrame(commit['contextAfter'], rate);
-  const readEnd = commit['readEnd'];
-  const deadline = commit['deadline'];
   if (
-    commit['reason'] !== 'observation-or-lead' ||
-    observation['status'] !== 'calibrated' ||
-    observation['reason'] !== 'accepted' ||
-    typeof observation['offsetMin'] !== 'number' ||
-    typeof observation['offsetMax'] !== 'number' ||
-    stampOf(commit['stamp']) === null ||
-    typeof readEnd !== 'number' ||
-    typeof deadline !== 'number' ||
-    readEnd > deadline ||
     commit['contextFrame'] !== gapUpper ||
     commit['guardFrames'] !== GAP_GUARD_FRAMES ||
     commitFrame === null ||
     commit['remainingLeadFrames'] !== gapUpper - commitFrame ||
-    gapUpper - commitFrame >= GAP_GUARD_FRAMES
+    gapUpper - commitFrame < GAP_GUARD_FRAMES
   )
     return null;
-  const commitRead = events[commitAt - 1];
-  if (
-    !isObservedRead(commitRead) ||
-    entryValue(commitRead)['injected'] !== false
-  )
-    return null;
+  const toCommit = commitFrame - selectionFrame;
+  if (toCommit < 0 || toCommit > GAP_GUARD_FRAMES) return null;
 
-  // One burst at most between the selection and the commit. Two bursts move at least 768 frames.
-  const moved = commitFrame - selectionFrame;
-  if (moved <= 0 || moved > GAP_GUARD_FRAMES) return null;
+  // The first context reading after the refusal, from a native read or from the startup monitor's
+  // bridge: the context is past the guard, by one burst at most.
+  let after: number | null = null;
+  for (let i = terminal + 1; i < events.length && after === null; i++) {
+    const entry = events[i];
+    if (isObservedRead(entry) && entryValue(entry)['injected'] === false)
+      after = readFrame(entry, rate);
+    else if (entry?.kind === 'audio-startup-monitor') {
+      const bridge = entryValue(entry)['bridge'];
+      if (typeof bridge === 'object' && bridge !== null)
+        after = ceilFrame(
+          (bridge as Record<string, unknown>)['currentAfter'],
+          rate
+        );
+    }
+  }
+  if (
+    after === null ||
+    after + GAP_GUARD_FRAMES <= gapUpper ||
+    after - commitFrame > GAP_GUARD_FRAMES
+  )
+    return null;
 
   // Nothing else was refused or injected after the hold.
   for (let i = at + 1; i < terminal; i++)
@@ -666,7 +808,7 @@ export function siteBridgeCommitLeadAfterHold(
     )
       return null;
 
-  return `${RECOVERY_BRIDGE_SITE} hold consumed at frame ${heldFrame}, released by the next stamp; selection at frame ${selectionFrame} took ${gapUpper} (boundary ${boundary}); one burst of ${moved} frames left a lead of ${gapUpper - commitFrame} under the guard at the commit`;
+  return `${RECOVERY_BRIDGE_SITE} hold consumed at frame ${heldFrame}, released by the next stamp; selection at frame ${selectionFrame} took ${gapUpper} (boundary ${boundary}); the commit at frame ${commitFrame} kept a lead of ${gapUpper - commitFrame}, and a burst of ${after - commitFrame} frames before the final guard left the context at ${after}, under the ${GAP_GUARD_FRAMES}-frame guard`;
 }
 
 // A starved run closes at its frontier inside a render burst. A sink that renders 384 or 512

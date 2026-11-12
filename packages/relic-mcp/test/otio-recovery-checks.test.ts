@@ -5,6 +5,7 @@ import {
   assertShiftedBankRefusal,
   recoveryFrontierOvershoot,
   siteBridgeCommitLeadAfterHold,
+  siteBridgeFinalGuardAfterHold,
   siteBridgeGapInfeasibleAfterHold,
 } from './otio-recovery-checks.ts';
 
@@ -892,6 +893,145 @@ test('commit-lead classifier refuses a commit that failed for another reason', (
   expect(
     siteBridgeCommitLeadAfterHold(
       [...commitTrace(), bridgeError(COMMIT_REFUSED)],
+      BRIDGE_RATE
+    )
+  ).toBeNull();
+});
+
+// Final-guard classifier. Modelled on CI run 43295017278: the hold is consumed on a read whose
+// native stamp the sink had already advanced, the selection takes boundary + 960, the commit
+// keeps a lead of 704 after one 256-frame burst, and a second burst lands before the final guard.
+const FINAL_GUARD = 'recovery final guard exceeded';
+const finalGuardTrace = (
+  patch: {
+    commitFrame?: number;
+    afterFrame?: number | null;
+    commit?: Record<string, unknown>;
+    extra?: BridgeEntry[];
+    consumedNative?: Record<string, number>;
+  } = {}
+): BridgeEntry[] => {
+  const commitFrame = patch.commitFrame ?? boundary + 256;
+  const afterFrame =
+    patch.afterFrame === undefined ? boundary + 512 : patch.afterFrame;
+  return [
+    bridgeClosure(),
+    bridgeMarker(),
+    bridgeConsumed(),
+    bridgeRead(
+      boundary,
+      true,
+      BRIDGE_HELD,
+      patch.consumedNative ?? BRIDGE_NATIVE
+    ),
+    bridgeMarker(),
+    bridgeRead(boundary, false, BRIDGE_NATIVE),
+    bridgeUse(),
+    bridgePcm({
+      event: 'recovery-selection',
+      boundaryFrame: boundary,
+      f0: BRIDGE_GAP_UPPER,
+      feasibleUpper: BRIDGE_GAP_UPPER,
+      guardFrames: 512,
+      contextFrame: boundary,
+    }),
+    ...(patch.extra ?? []),
+    bridgePcm({
+      event: 'clock-commit',
+      contextFrame: BRIDGE_GAP_UPPER,
+      guardFrames: 512,
+      contextAfter: frameTime(commitFrame),
+      remainingLeadFrames: BRIDGE_GAP_UPPER - commitFrame,
+      ...patch.commit,
+    }),
+    bridgeError(FINAL_GUARD),
+    ...(afterFrame === null
+      ? []
+      : [
+          {
+            kind: 'audio-startup-monitor',
+            value: { bridge: { currentAfter: frameTime(afterFrame) } },
+          },
+        ]),
+  ];
+};
+
+test('final-guard classifier names an accepted commit and the burst before the guard', () => {
+  const evidence = siteBridgeFinalGuardAfterHold(
+    finalGuardTrace(),
+    BRIDGE_RATE
+  );
+  expect(evidence).toContain('kept a lead of 704');
+  expect(evidence).toContain('a burst of 256 frames');
+  // The other two classifiers do not claim it, and it does not claim theirs.
+  expect(
+    siteBridgeCommitLeadAfterHold(finalGuardTrace(), BRIDGE_RATE)
+  ).toBeNull();
+  expect(
+    siteBridgeGapInfeasibleAfterHold(finalGuardTrace(), BRIDGE_RATE)
+  ).toBeNull();
+  expect(siteBridgeFinalGuardAfterHold(commitTrace(), BRIDGE_RATE)).toBeNull();
+});
+
+test('final-guard classifier refuses a late viewer, a kept guard, or a refused commit', () => {
+  // The context two bursts past the commit: the viewer was late, not held.
+  expect(
+    siteBridgeFinalGuardAfterHold(
+      finalGuardTrace({ afterFrame: boundary + 256 + 768 }),
+      BRIDGE_RATE
+    )
+  ).toBeNull();
+  // The context still met the guard when last read, so the guard was not what failed.
+  expect(
+    siteBridgeFinalGuardAfterHold(
+      finalGuardTrace({ afterFrame: boundary + 448 }),
+      BRIDGE_RATE
+    )
+  ).toBeNull();
+  // No reading of the context after the refusal.
+  expect(
+    siteBridgeFinalGuardAfterHold(
+      finalGuardTrace({ afterFrame: null }),
+      BRIDGE_RATE
+    )
+  ).toBeNull();
+  // The commit lost its lead: that is the commit classifier's signature.
+  expect(
+    siteBridgeFinalGuardAfterHold(
+      finalGuardTrace({
+        commitFrame: boundary + 768,
+        commit: { remainingLeadFrames: BRIDGE_GAP_UPPER - boundary - 768 },
+      }),
+      BRIDGE_RATE
+    )
+  ).toBeNull();
+  // A native stamp older than the anchor under the injected read is not a held re-read.
+  expect(
+    siteBridgeFinalGuardAfterHold(
+      finalGuardTrace({
+        consumedNative: { contextTime: 9.9, performanceTime: 990 },
+      }),
+      BRIDGE_RATE
+    )
+  ).toBeNull();
+  // Another refusal or an injected overrun after the hold.
+  for (const extra of [
+    bridgePcm({ event: 'recovery-fault' }),
+    bridgePcm({ event: 'recovery-candidate-failed' }),
+    { kind: 'recovery-overrun-injected' },
+  ])
+    expect(
+      siteBridgeFinalGuardAfterHold(
+        finalGuardTrace({ extra: [extra] }),
+        BRIDGE_RATE
+      )
+    ).toBeNull();
+  // A second commit, or a commit refusal.
+  expect(
+    siteBridgeFinalGuardAfterHold(
+      finalGuardTrace({
+        extra: [bridgePcm({ event: 'clock-commit-detail' })],
+      }),
       BRIDGE_RATE
     )
   ).toBeNull();

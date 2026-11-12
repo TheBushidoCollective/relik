@@ -108,6 +108,7 @@ import {
   assertShiftedBankRefusal,
   recoveryFrontierOvershoot,
   siteBridgeCommitLeadAfterHold,
+  siteBridgeFinalGuardAfterHold,
   siteBridgeGapInfeasibleAfterHold,
 } from './otio-recovery-checks.ts';
 
@@ -21596,7 +21597,8 @@ async function runScheduledPcmProof(
         );
         const evidence = control.recovery
           ? (siteBridgeGapInfeasibleAfterHold(events, rate) ??
-            siteBridgeCommitLeadAfterHold(events, rate))
+            siteBridgeCommitLeadAfterHold(events, rate) ??
+            siteBridgeFinalGuardAfterHold(events, rate))
           : null;
         if (evidence !== null) {
           // The receipt keeps this attempt's audit. The verdict is the classified signature.
