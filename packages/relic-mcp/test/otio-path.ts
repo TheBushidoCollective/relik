@@ -126,7 +126,10 @@ if (
 )
   throw new Error(`Unknown OTIO clock proof mode: ${clockProofMode}`);
 
-const RUN_BUDGET_MS = 600_000;
+// The scheduled-audio stages alone take about 295 s on the Linux runner (run 43275442218: the
+// path started at 18:06:54 and reached the moving-window stage at 18:11:49), before the moving
+// window, the calibration and the composition tail. 900 s leaves the 25 minute job room.
+const RUN_BUDGET_MS = 900_000;
 const currentStep = 'startup';
 const cdpInFlight = new Map<number, string>();
 let cdpCallId = 0;
