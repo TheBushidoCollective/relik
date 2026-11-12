@@ -109,9 +109,14 @@ import {
   publishTokenOk,
   requireRead,
 } from './private/access.ts';
-import { checkPrivatePublish, refusePrivatePolicy } from './private/publish.ts';
+import {
+  checkPrivatePublish,
+  refusePrivatePolicy,
+  refusePrivateTtl,
+} from './private/publish.ts';
 import {
   completeSeal,
+  bindOwner,
   deleteRelic,
   declineRequest,
   deliverKey,
@@ -1184,11 +1189,8 @@ export function createApp(options: AppOptions = {}): RelicApp {
           );
         }
         if (third === 'owner' && fourth === undefined && post) {
-          const row = await liveRelic(env, relicId);
-          if (row.ownerIdentityId !== undefined) return refuse('owner_exists');
-          return refuse('private_policy_violation', {
-            policy_check: 'owner_email',
-          });
+          const body = await privateBody(request, 'invalid_publish_token');
+          return Response.json(await bindOwner(env, { relicId, body }));
         }
         return undefined as never;
       }).then((response) => response ?? undefined);
@@ -1667,34 +1669,23 @@ export function createApp(options: AppOptions = {}): RelicApp {
     } catch {
       return refuse('invalid_publish_token');
     }
-    const title = parsed['title'];
-    if (
-      (typeof title === 'string' && title.trim().length > 0) ||
-      (title !== undefined && title !== null && typeof title !== 'string')
-    ) {
-      return refuse('private_policy_violation', { policy_check: 'title' });
-    }
-    if (
-      parsed['share_verifier'] !== undefined &&
-      parsed['share_verifier'] !== null
-    ) {
-      return refuse('private_policy_violation', {
-        policy_check: 'share_verifier',
+    return guarded(async () => {
+      refusePrivatePolicy(parsed);
+      refusePrivateTtl(parsed, config.privateMaxTtlDays);
+      if (!(await publishTokenOk(row, parsed['publish_token']))) {
+        return refuse('invalid_publish_token');
+      }
+      const response = await republish(rawId, request, ip, now);
+      if (!response.ok) return response;
+      const owner = await ownerRecord(privateEnv(now), row);
+      const opened = (await store.getRelic(rawId)) ?? row;
+      const body = (await response.json()) as Record<string, unknown>;
+      return Response.json({
+        ...body,
+        access: 'private',
+        access_epoch: opened.accessEpoch ?? 0,
+        owner_epoch: owner.recipientsEpoch,
       });
-    }
-    if (!(await publishTokenOk(row, parsed['publish_token']))) {
-      return refuse('invalid_publish_token');
-    }
-    const response = await republish(rawId, request, ip, now);
-    if (!response.ok) return response;
-    const owner = await ownerRecord(privateEnv(now), row);
-    const opened = (await store.getRelic(rawId)) ?? row;
-    const body = (await response.json()) as Record<string, unknown>;
-    return Response.json({
-      ...body,
-      access: 'private',
-      access_epoch: opened.accessEpoch ?? 0,
-      owner_epoch: owner.recipientsEpoch,
     });
   }
 
@@ -5922,12 +5913,29 @@ export function createApp(options: AppOptions = {}): RelicApp {
       capRemaining: config.downloadCap,
       occurrenceId,
     };
-    await store.appendMintLog(entry);
+    if (!(await namesPrivateRelic(relicId))) {
+      await store.appendMintLog(entry);
+    }
     return problemResponse(
       new ProblemError(code, options),
       config.serviceOrigin,
       occurrenceId
     );
+  }
+
+  /**
+   * Whether an id names a private relic, or one its owner removed. Neither
+   * keeps a raw-IP mint log, refusals included (plan 4.18 item 5).
+   */
+  async function namesPrivateRelic(rawId: string): Promise<boolean> {
+    let relicId: string;
+    try {
+      relicId = parseRelicId(rawId);
+    } catch {
+      return false;
+    }
+    if ((await store.getTombstone(relicId))?.kind === 'owner') return true;
+    return (await store.getRelic(relicId))?.access === 'private';
   }
   function coverNotFound(): Response {
     return new Response('Not found', {

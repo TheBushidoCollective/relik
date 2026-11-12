@@ -22,6 +22,9 @@ import {
   type DeviceAuthJSON,
   type DevicePublicJSON,
   type PartyJSON,
+  type RecoveryJSON,
+  type StatementKind,
+  type StatementMap,
 } from '@relic/format/private';
 import { ProblemError } from '../problems.ts';
 import type {
@@ -39,7 +42,7 @@ import {
   sha256Hex,
 } from './context.ts';
 import { verifyAttestation } from './attest.ts';
-import { identitySigner, currentIdentity } from './identity.ts';
+import { identitySigner, currentIdentity, recoveryJson } from './identity.ts';
 
 const BACKENDS = ['secure-enclave', 'file'] as const;
 const DAY = 86_400_000;
@@ -49,12 +52,12 @@ function invalidDevice(check: string): never {
 }
 
 /** A statement parsed under its kind, or the device refusal. */
-function parseDeviceStatement(
-  kind: Parameters<typeof parseStatement>[0],
+function parseDeviceStatement<K extends StatementKind>(
+  kind: K,
   value: unknown
-): Record<string, unknown> {
+): StatementMap[K] {
   try {
-    return parseStatement(kind, value) as unknown as Record<string, unknown>;
+    return parseStatement(kind, value);
   } catch (error) {
     if (error instanceof InvalidStatementError) invalidDevice(error.check);
     throw error;
@@ -248,8 +251,9 @@ export async function approveDevice(
     certifiedAt: env.now,
     cert: verified.attestation,
   };
-  if (!(await env.store.putDevice(record))) {
-    invalidDevice('exists');
+  const stored = await env.store.putDevice(record);
+  if (stored !== 'created') {
+    invalidDevice(stored === 'exists' ? 'exists' : 'kem_key');
   }
   await env.store.updateDeviceEnrollment(enrollment.enrollmentId, (r) => ({
     ...r,
@@ -306,6 +310,13 @@ export async function revokeDevice(
   ) {
     invalidDevice('statement');
   }
+  // Wraps go first. A failed sweep leaves the device certified, so the owner
+  // retries; the sweep is idempotent and runs again on a retry.
+  for (const owned of await env.store.listOwnedRelics(owner.identityId)) {
+    await env.store.deleteWraps(owned.relicId, {
+      recipientKeyId: device.kemKeyId,
+    });
+  }
   if (device.revokedAt !== undefined) return deviceJson(device);
 
   const revoked = await env.store.updateDevice(device.deviceId, (r) => ({
@@ -317,19 +328,68 @@ export async function revokeDevice(
     ...current,
     recipientsEpoch: current.recipientsEpoch + 1,
   }));
-  for (const owned of await env.store.listOwnedRelics(owner.identityId)) {
-    await env.store.deleteWraps(owned.relicId, {
-      recipientKeyId: device.kemKeyId,
-    });
-  }
   if (revoked === undefined) throw new ProblemError('device_not_found');
   return deviceJson(revoked);
 }
 
 /**
+ * A device's auth block names a device that must be current, unexpired and
+ * fresh. A revoked or expired device is refused before anything is verified.
+ */
+async function currentDevice(
+  env: PrivateEnv,
+  deviceId: string,
+  auth: unknown
+): Promise<{ device: DeviceRecord; auth: DeviceAuthJSON }> {
+  const device = await env.store.getDevice(deviceId);
+  if (device === undefined) throw new ProblemError('device_not_found');
+  const block = auth as DeviceAuthJSON | undefined;
+  if (
+    typeof block !== 'object' ||
+    block === null ||
+    block.device_id !== deviceId ||
+    typeof block.nonce !== 'string' ||
+    typeof block.at !== 'number' ||
+    typeof block.signature !== 'string'
+  ) {
+    invalidDevice('auth');
+  }
+  if (device.revokedAt !== undefined) throw new ProblemError('device_revoked');
+  if (device.notAfter <= env.now) {
+    throw new ProblemError('device_revoked', { device_check: 'expired' });
+  }
+  if (
+    Math.abs(env.now - block.at) >
+    env.config.passkeyChallengeTtlSeconds * 1000
+  ) {
+    invalidDevice('stale');
+  }
+  return { device, auth: block };
+}
+
+/**
+ * Spends a device-signed nonce so it works once. It is kept until the
+ * freshness window closes for it: after that the clock check refuses it, so
+ * the record is only needed until then.
+ */
+async function spendDeviceNonce(
+  env: PrivateEnv,
+  deviceId: string,
+  nonce: string,
+  at: number
+): Promise<void> {
+  const nonceHash = await sha256Hex(`device-nonce:${deviceId}:${nonce}`);
+  const until = at + env.config.passkeyChallengeTtlSeconds * 1000;
+  if (!(await env.store.putDeviceNonce(nonceHash, until))) {
+    invalidDevice('replay');
+  }
+}
+
+/**
  * Checks one device request: the device is current, the signature covers
- * this method, path and body, and the signature is fresh. The body hash is
- * over the canonical JSON of the body without `device_auth` (plan 4.3).
+ * this method, path and body, the signature is fresh, and its nonce has not
+ * been used. The body hash is over the canonical JSON of the body without
+ * `device_auth` (plan 4.3).
  */
 export async function verifyDeviceRequest(
   env: PrivateEnv,
@@ -341,44 +401,58 @@ export async function verifyDeviceRequest(
     readonly auth: unknown;
   }
 ): Promise<DeviceRecord> {
-  const device = await env.store.getDevice(input.deviceId);
-  if (device === undefined) throw new ProblemError('device_not_found');
-  const auth = input.auth as DeviceAuthJSON | undefined;
-  if (
-    typeof auth !== 'object' ||
-    auth === null ||
-    auth.device_id !== input.deviceId ||
-    typeof auth.nonce !== 'string' ||
-    typeof auth.at !== 'number' ||
-    typeof auth.signature !== 'string'
-  ) {
-    invalidDevice('auth');
-  }
-  if (device.revokedAt !== undefined) throw new ProblemError('device_revoked');
-  if (device.notAfter <= env.now) {
-    throw new ProblemError('device_revoked', { device_check: 'expired' });
-  }
-  if (
-    Math.abs(env.now - auth.at) >
-    env.config.passkeyChallengeTtlSeconds * 1000
-  ) {
-    invalidDevice('stale');
-  }
+  const { device, auth } = await currentDevice(env, input.deviceId, input.auth);
   const { device_auth: _ignored, ...withoutAuth } = input.body;
-  const statement = {
+  const statement = parseDeviceStatement('device_request', {
     at: auth.at,
     body_sha256: await sha256Hex(canonicalJson(withoutAuth)),
-    device_id: input.deviceId,
+    device_id: device.deviceId,
     method: input.method,
     nonce: auth.nonce,
     path: input.path,
-  };
+  });
   const valid = await verifyStatement(
     decodeBase64url(device.sigPublicKey),
     statementBytes('device_request', statement),
     auth.signature
   );
   if (!valid) invalidDevice('signature');
+  await spendDeviceNonce(env, device.deviceId, auth.nonce, auth.at);
+  return device;
+}
+
+/**
+ * The owner bind a device signs (plan 4.7): its own owner identity owns this
+ * relic. The device proves it is current, holds its key, and spends its
+ * nonce. The owner is the device's owner, never a value from the request.
+ */
+export async function verifyOwnerBind(
+  env: PrivateEnv,
+  input: { readonly relicId: string; readonly auth: unknown }
+): Promise<DeviceRecord> {
+  const block = input.auth as Partial<DeviceAuthJSON> | undefined;
+  if (
+    typeof block !== 'object' ||
+    block === null ||
+    typeof block.device_id !== 'string'
+  ) {
+    invalidDevice('auth');
+  }
+  const { device, auth } = await currentDevice(env, block.device_id, block);
+  const statement = parseDeviceStatement('owner_bind', {
+    at: auth.at,
+    device_id: device.deviceId,
+    nonce: auth.nonce,
+    owner_identity_id: device.ownerIdentityId,
+    relic_id: input.relicId,
+  });
+  const valid = await verifyStatement(
+    decodeBase64url(device.sigPublicKey),
+    statementBytes('owner_bind', statement),
+    auth.signature
+  );
+  if (!valid) invalidDevice('signature');
+  await spendDeviceNonce(env, device.deviceId, auth.nonce, auth.at);
   return device;
 }
 
@@ -395,7 +469,7 @@ export async function deviceContext(
   device: DevicePublicJSON;
   owner: PartyJSON;
   devices: DevicePublicJSON[];
-  recovery: PartyJSON | null;
+  recovery: RecoveryJSON | null;
   owner_epoch: number;
 }> {
   const device = await verifyDeviceRequest(env, {
@@ -407,17 +481,16 @@ export async function deviceContext(
   });
   const owner = await env.store.getIdentity(device.ownerIdentityId);
   if (owner === undefined) throw new ProblemError('device_not_found');
-  const recovery =
-    owner.recovery === undefined
-      ? null
-      : await env.store.getIdentity(owner.recovery.recoveryIdentityId);
   return {
     device: deviceJson(device),
     owner: partyJson(owner),
     devices: (await env.store.listDevicesForOwner(owner.identityId)).map(
       deviceJson
     ),
-    recovery: recovery ? partyJson(recovery) : null,
+    recovery:
+      owner.recovery === undefined
+        ? null
+        : await recoveryJson(env, owner.recovery),
     owner_epoch: owner.recipientsEpoch,
   };
 }

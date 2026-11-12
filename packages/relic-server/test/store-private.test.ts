@@ -126,6 +126,85 @@ for (const backend of backends) {
           (await store.getIdentityForAddress(OWNER_EMAIL))?.retiredAt
         ).toBeUndefined();
       });
+
+      test('a KEM key is held by one identity or device at a time, whichever claims it first', async () => {
+        const store = backend.make();
+        expect(await store.createIdentity(identity())).toBe('created');
+        expect(
+          await store.createIdentity(
+            identity({ identityId: OTHER_ID, email: 'other@example.com' })
+          )
+        ).toBe('kem_taken');
+        expect(await store.putDevice(device('device-own', OTHER_ID))).toBe(
+          'kem_taken'
+        );
+      });
+
+      test('a refused identity creates nothing, so its address and KEM key stay free', async () => {
+        const store = backend.make();
+        await store.createIdentity(identity());
+        expect(
+          await store.createIdentity(
+            identity({ identityId: OTHER_ID, email: 'other@example.com' })
+          )
+        ).toBe('kem_taken');
+        expect(
+          await store.getIdentityForAddress('other@example.com')
+        ).toBeUndefined();
+        expect(await store.getIdentity(OTHER_ID)).toBeUndefined();
+        expect(
+          await store.createIdentity(
+            identity({
+              identityId: OTHER_ID,
+              email: 'other@example.com',
+              kemKeyId: RECIPIENT_B,
+            })
+          )
+        ).toBe('created');
+      });
+
+      test('a replacement carries its KEM key to the new identity, and nobody else can take it', async () => {
+        const store = backend.make();
+        await store.createIdentity(identity());
+        expect(
+          await store.replaceIdentity(
+            identity({ identityId: OTHER_ID }),
+            OWNER_ID,
+            NOW + 1
+          )
+        ).toBe('replaced');
+        expect(
+          await store.createIdentity(
+            identity({
+              identityId: 'e'.repeat(64),
+              email: 'other@example.com',
+            })
+          )
+        ).toBe('kem_taken');
+      });
+
+      test('a replacement onto a KEM key another identity holds is refused and changes nothing', async () => {
+        const store = backend.make();
+        await store.createIdentity(identity());
+        await store.createIdentity(
+          identity({
+            identityId: OTHER_ID,
+            email: 'other@example.com',
+            kemKeyId: RECIPIENT_B,
+          })
+        );
+        expect(
+          await store.replaceIdentity(
+            identity({ identityId: 'e'.repeat(64), kemKeyId: RECIPIENT_B }),
+            OWNER_ID,
+            NOW + 1
+          )
+        ).toBe('kem_taken');
+        expect(
+          (await store.getIdentityForAddress(OWNER_EMAIL))?.identityId
+        ).toBe(OWNER_ID);
+        expect((await store.getIdentity(OWNER_ID))?.retiredAt).toBeUndefined();
+      });
     });
 
     describe('relic rows', () => {
@@ -305,9 +384,12 @@ for (const backend of backends) {
     describe('devices', () => {
       test('a device is create-only and listed only under its owner', async () => {
         const store = backend.make();
-        expect(await store.putDevice(device('device-own'))).toBe(true);
-        expect(await store.putDevice(device('device-own'))).toBe(false);
-        await store.putDevice(device('device-other', OTHER_ID));
+        expect(await store.putDevice(device('device-own'))).toBe('created');
+        expect(await store.putDevice(device('device-own'))).toBe('exists');
+        await store.putDevice({
+          ...device('device-other', OTHER_ID),
+          kemKeyId: RECIPIENT_B,
+        });
 
         expect(
           (await store.listDevicesForOwner(OWNER_ID)).map((d) => d.deviceId)
@@ -315,6 +397,13 @@ for (const backend of backends) {
         expect(
           (await store.listDevicesForOwner(OTHER_ID)).map((d) => d.deviceId)
         ).toEqual(['device-other']);
+      });
+
+      test('a device nonce is spent once, and each nonce is independent', async () => {
+        const store = backend.make();
+        expect(await store.putDeviceNonce('nonce-hash-1', NOW + 1)).toBe(true);
+        expect(await store.putDeviceNonce('nonce-hash-1', NOW + 1)).toBe(false);
+        expect(await store.putDeviceNonce('nonce-hash-2', NOW + 1)).toBe(true);
       });
 
       test('a revocation updates the device record its owner sees', async () => {

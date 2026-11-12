@@ -248,6 +248,11 @@ export interface DeviceRecord {
   readonly revokedAt?: number | undefined;
   readonly revocation?: StoredAttestation | undefined;
 }
+/** Who holds a KEM public key: at most one identity or device ever does. */
+export interface KemHolder {
+  readonly kind: 'identity' | 'device';
+  readonly id: string;
+}
 export interface WrapRow {
   readonly relicId: string;
   readonly version: number;
@@ -742,18 +747,26 @@ export interface RelicStore {
   getIdentity(identityId: string): Promise<IdentityRecord | undefined>;
   /** The current, non-retired identity holding this address. */
   getIdentityForAddress(email: string): Promise<IdentityRecord | undefined>;
-  /** `address_taken` when the address or the identity id is already stored. */
-  createIdentity(record: IdentityRecord): Promise<'created' | 'address_taken'>;
+  /**
+   * `address_taken` when the address or the identity id is already stored;
+   * `kem_taken` when another identity or device holds the KEM key. The KEM
+   * claim is written with the identity, so a refused create claims nothing.
+   */
+  createIdentity(
+    record: IdentityRecord
+  ): Promise<'created' | 'address_taken' | 'kem_taken'>;
   /**
    * Retire `retiringIdentityId` and make `record` the holder of its address.
    * `conflict` when the address no longer belongs to that identity, it is
-   * already retired, or a write race was lost. Nothing is left half-written.
+   * already retired, or a write race was lost. `kem_taken` when the KEM key
+   * is held by anything other than the retiring identity, which keeps its
+   * claim by transferring it to `record`. Nothing is left half-written.
    */
   replaceIdentity(
     record: IdentityRecord,
     retiringIdentityId: string,
     at: number
-  ): Promise<'replaced' | 'conflict'>;
+  ): Promise<'replaced' | 'conflict' | 'kem_taken'>;
   updateIdentity(
     identityId: string,
     change: (r: IdentityRecord) => IdentityRecord
@@ -767,8 +780,16 @@ export interface RelicStore {
     enrollmentId: string,
     change: (r: DeviceEnrollmentRow) => DeviceEnrollmentRow
   ): Promise<DeviceEnrollmentRow | undefined>;
-  /** Create-only. Also writes the owner index. */
-  putDevice(record: DeviceRecord): Promise<boolean>;
+  /**
+   * Create-only, and writes the owner index. `exists` when the device id is
+   * taken; `kem_taken` when another identity or device holds its KEM key.
+   */
+  putDevice(record: DeviceRecord): Promise<'created' | 'exists' | 'kem_taken'>;
+  /**
+   * Create-only. Records a device request or owner-bind nonce, keyed by the
+   * hash of device and nonce, until `expiresAt`. `false` means already used.
+   */
+  putDeviceNonce(nonceHash: string, expiresAt: number): Promise<boolean>;
   getDevice(deviceId: string): Promise<DeviceRecord | undefined>;
   updateDevice(
     deviceId: string,
@@ -865,6 +886,8 @@ export class MemoryStore implements RelicStore {
   private readonly signInCodeBudgets = new Map<string, SignInCodeBudgetRow>();
   private readonly identities = new Map<string, IdentityRecord>();
   private readonly identityAddresses = new Map<string, string>();
+  private readonly kemClaims = new Map<string, KemHolder>();
+  private readonly deviceNonces = new Map<string, number>();
   private readonly deviceEnrollments = new Map<string, DeviceEnrollmentRow>();
   private readonly devices = new Map<string, DeviceRecord>();
   private readonly wraps = new Map<string, WrapRow>();
@@ -1550,7 +1573,7 @@ export class MemoryStore implements RelicStore {
 
   async createIdentity(
     record: IdentityRecord
-  ): Promise<'created' | 'address_taken'> {
+  ): Promise<'created' | 'address_taken' | 'kem_taken'> {
     const stored = normalizeIdentityRecord(record);
     if (
       this.identityAddresses.has(stored.email) ||
@@ -1558,8 +1581,13 @@ export class MemoryStore implements RelicStore {
     ) {
       return 'address_taken';
     }
+    if (this.kemClaims.has(stored.kemKeyId)) return 'kem_taken';
     this.identities.set(stored.identityId, stored);
     this.identityAddresses.set(stored.email, stored.identityId);
+    this.kemClaims.set(stored.kemKeyId, {
+      kind: 'identity',
+      id: stored.identityId,
+    });
     return 'created';
   }
 
@@ -1567,7 +1595,7 @@ export class MemoryStore implements RelicStore {
     record: IdentityRecord,
     retiringIdentityId: string,
     at: number
-  ): Promise<'replaced' | 'conflict'> {
+  ): Promise<'replaced' | 'conflict' | 'kem_taken'> {
     const stored = normalizeIdentityRecord(record);
     const retiring = this.identities.get(retiringIdentityId);
     if (
@@ -1579,6 +1607,14 @@ export class MemoryStore implements RelicStore {
     ) {
       return 'conflict';
     }
+    // The retiring identity may carry its KEM claim over to the new record.
+    const claim = this.kemClaims.get(stored.kemKeyId);
+    if (
+      claim !== undefined &&
+      !(claim.kind === 'identity' && claim.id === retiringIdentityId)
+    ) {
+      return 'kem_taken';
+    }
     this.identities.set(retiringIdentityId, {
       ...retiring,
       retiredAt: at,
@@ -1586,6 +1622,10 @@ export class MemoryStore implements RelicStore {
     });
     this.identities.set(stored.identityId, stored);
     this.identityAddresses.set(stored.email, stored.identityId);
+    this.kemClaims.set(stored.kemKeyId, {
+      kind: 'identity',
+      id: stored.identityId,
+    });
     return 'replaced';
   }
 
@@ -1615,9 +1655,22 @@ export class MemoryStore implements RelicStore {
     return updateEntry(this.deviceEnrollments, enrollmentId, change);
   }
 
-  async putDevice(record: DeviceRecord): Promise<boolean> {
-    if (this.devices.has(record.deviceId)) return false;
+  async putDevice(
+    record: DeviceRecord
+  ): Promise<'created' | 'exists' | 'kem_taken'> {
+    if (this.devices.has(record.deviceId)) return 'exists';
+    if (this.kemClaims.has(record.kemKeyId)) return 'kem_taken';
     this.devices.set(record.deviceId, record);
+    this.kemClaims.set(record.kemKeyId, {
+      kind: 'device',
+      id: record.deviceId,
+    });
+    return 'created';
+  }
+
+  async putDeviceNonce(nonceHash: string, expiresAt: number): Promise<boolean> {
+    if (this.deviceNonces.has(nonceHash)) return false;
+    this.deviceNonces.set(nonceHash, expiresAt);
     return true;
   }
 

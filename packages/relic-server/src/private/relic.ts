@@ -22,6 +22,7 @@ import {
   InvalidStatementError,
   type GrantJSON,
   type KeyJSON,
+  type PartyJSON,
   type PrivateAccessJSON,
   type StatementMap,
 } from '@relic/format/private';
@@ -45,7 +46,12 @@ import {
   privateRow,
 } from './context.ts';
 import { verifyAttestation, type VerifiedAttestation } from './attest.ts';
-import { identitySigner, currentIdentity, parseWrapItem } from './identity.ts';
+import {
+  identitySigner,
+  currentIdentity,
+  parseWrapItem,
+  recoveryJson,
+} from './identity.ts';
 import {
   isDeleted,
   logAccess,
@@ -57,6 +63,7 @@ import {
   standingOf,
 } from './access.ts';
 import { ownerParty } from './context.ts';
+import { verifyOwnerBind } from './devices.ts';
 
 // ---------------------------------------------------------------- helpers
 
@@ -549,6 +556,20 @@ export async function revokeAccess(
   }
 
   const newVersion = row.version + 1;
+  const current = await env.store.getRelic(row.id);
+  if (
+    current === undefined ||
+    current.version !== row.version ||
+    current.sealedVersion !== row.version
+  ) {
+    throw new ProblemError('version_conflict');
+  }
+
+  // Wraps go first, then the grant is marked, then the version moves. A failed
+  // sweep leaves the grant standing, and the owner retries the whole revocation.
+  // A failed move puts the grant back. No wrap for a revoked grantee survives a
+  // revocation that reports success.
+  await env.store.deleteWraps(row.id, { recipientKeyId: grantee.kemKeyId });
   await env.store.updateGrant(row.id, granteeId, (g) => ({
     ...g,
     revokedAt: env.now,
@@ -576,10 +597,6 @@ export async function revokeAccess(
     await env.store.updateGrant(row.id, granteeId, () => grant);
     throw error;
   }
-
-  // Wraps go last: the grant is already revoked, so access is denied now
-  // whether or not the delete has run.
-  await env.store.deleteWraps(row.id, { recipientKeyId: grantee.kemKeyId });
   const updated = await env.store.getRelic(row.id);
   await logAccess(env, owner.identityId, row.id, 'revoke', {
     actorIdentityId: owner.identityId,
@@ -652,7 +669,7 @@ export async function recipientsState(
   const recovery =
     owner.recovery === undefined
       ? null
-      : await ownerParty(env.store, owner.recovery.recoveryIdentityId);
+      : await recoveryJson(env, owner.recovery);
   return {
     access_epoch: row.accessEpoch ?? 0,
     owner_epoch: owner.recipientsEpoch,
@@ -664,6 +681,56 @@ export async function recipientsState(
     recovery,
     recipient_key_ids: await recipientKeys(env, row, owner),
   };
+}
+
+/**
+ * Binds the owner of a private relic that has none (plan 4.7). A relic-mcp
+ * client signs an `owner_bind` with a certified device, and the owner is that
+ * device's owner identity. A relic that already has an owner is refused, so
+ * the binding happens once.
+ */
+export async function bindOwner(
+  env: PrivateEnv,
+  input: { readonly relicId: string; readonly body: Record<string, unknown> }
+): Promise<{ owner: PartyJSON }> {
+  const row = await liveRelic(env, input.relicId);
+  if (row.access !== 'private') {
+    throw new ProblemError('private_policy_violation', {
+      policy_check: 'version',
+      detail: 'This relic is not a private relic.',
+    });
+  }
+  if (!(await publishTokenOk(row, input.body['publish_token']))) {
+    throw new ProblemError('invalid_publish_token');
+  }
+  if (row.ownerIdentityId !== undefined) {
+    throw new ProblemError('owner_exists', { relic_id: row.id });
+  }
+  const device = await verifyOwnerBind(env, {
+    relicId: row.id,
+    auth: input.body['device_auth'],
+  });
+  const owner = await env.store.getIdentity(device.ownerIdentityId);
+  if (owner === undefined || owner.retiredAt !== undefined) {
+    throw new ProblemError('owner_required', { relic_id: row.id });
+  }
+  await env.store.updateRelic(row.id, (current) => {
+    if (current.ownerIdentityId !== undefined) {
+      throw new ProblemError('owner_exists', { relic_id: row.id });
+    }
+    return {
+      ...current,
+      access: 'private',
+      ownerIdentityId: owner.identityId,
+    };
+  });
+  await env.store.putOwnedRelic({
+    relicId: row.id,
+    ownerIdentityId: owner.identityId,
+    access: 'private',
+    at: env.now,
+  });
+  return { owner: partyJson(owner) };
 }
 
 // ---------------------------------------------------------------- keys

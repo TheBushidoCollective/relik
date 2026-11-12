@@ -954,7 +954,7 @@ describe('device enrollment and context', () => {
 
     const certified = await certifyDevice(owner);
     const context = async (path: string) => {
-      const nonce = encodeBase64url(randomBytes(16));
+      const nonce = encodeBase64url(randomBytes(32));
       const signature = await signStatement(
         signer(certified.keys),
         statementBytes('device_request', {

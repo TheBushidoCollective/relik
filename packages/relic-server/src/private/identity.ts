@@ -121,7 +121,7 @@ export async function identityState(
   };
 }
 
-async function recoveryJson(
+export async function recoveryJson(
   env: PrivateEnv,
   designation: RecoveryDesignation
 ): Promise<RecoveryJSON | null> {
@@ -222,6 +222,7 @@ export async function registerIdentity(
 
   if (existing === undefined) {
     const created = await env.store.createIdentity(record);
+    if (created === 'kem_taken') kemKeyTaken();
     if (created !== 'created') {
       throw new ProblemError('identity_exists');
     }
@@ -231,6 +232,7 @@ export async function registerIdentity(
       existing.identityId,
       env.now
     );
+    if (outcome === 'kem_taken') kemKeyTaken();
     if (outcome !== 'replaced') {
       throw new ProblemError('identity_exists');
     }
@@ -342,12 +344,19 @@ export async function setRetention(
   return days;
 }
 
-/** The party a fingerprint-checked lookup can reveal: an address and its key, never a fingerprint. */
+/**
+ * The party a lookup can reveal: an address and its key, never a fingerprint.
+ * Only a signed-in identity may look. A bare session could otherwise probe
+ * which addresses hold a private-share key.
+ */
 export async function lookupRecovery(
   env: PrivateEnv,
   email: string,
   viewer: string
 ): Promise<PartyJSON | null> {
+  if ((await currentIdentity(env, viewer)) === undefined) {
+    throw new ProblemError('identity_required');
+  }
   env.limit('identity-lookup', viewer, env.config.identityLookupRateLimit);
   const record = await currentIdentity(env, normalizeEmail(email));
   return record === undefined ? null : partyJson(record);
@@ -433,13 +442,9 @@ export async function designateRecovery(
     };
   }
 
-  await env.store.updateIdentity(owner.identityId, (current) => ({
-    ...current,
-    recovery: next,
-    recipientsEpoch: current.recipientsEpoch + 1,
-  }));
-
-  // The previous recovery key must lose its wraps the moment it is replaced.
+  // The previous recovery key must lose its wraps before the designation
+  // moves. If that sweep fails, the old designation stands and the owner
+  // retries, so no wrap for a replaced recovery key outlives the change.
   if (
     previous !== undefined &&
     previous.recoveryIdentityId !== next?.recoveryIdentityId
@@ -453,6 +458,12 @@ export async function designateRecovery(
       }
     }
   }
+
+  await env.store.updateIdentity(owner.identityId, (current) => ({
+    ...current,
+    recovery: next,
+    recipientsEpoch: current.recipientsEpoch + 1,
+  }));
   if (next === undefined) return null;
   return recoveryJson(env, next);
 }
@@ -569,6 +580,11 @@ export function wrapLengthsOk(enc: string, ct: string): boolean {
 
 async function kemKeyIdHex(kemPublic: Uint8Array): Promise<string> {
   return hexOf(await kemKeyIdOf(kemPublic));
+}
+
+/** A KEM public key already held by another identity or device (plan 4.2). */
+function kemKeyTaken(): never {
+  throw new ProblemError('invalid_statement', { statement_check: 'kem_key' });
 }
 
 /** Relics the identity owns, with what the dashboard needs to show. */
