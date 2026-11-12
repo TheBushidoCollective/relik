@@ -17363,6 +17363,13 @@ async function runScheduledPcmProof(
     // 2026-11-12, rerunning only that exact signature in a fresh browser, at most three times.
     // Every other failure is rethrown unchanged, and each rerun keeps the refused trace.
     const FRONTIER_OVERSHOOT_RERUNS = 3;
+    // The frontier is the epoch start plus the PCM prepared when the pulls are withheld, and a
+    // fresh browser tends to repeat both: one control refused four times out of four at frontier
+    // 39424 in CI run 43179069879. A rerun at the same instant is not another attempt. Each rerun
+    // withholds one PCM batch later (4096 frames, about 93 ms), which moves the frontier to
+    // another place in the sink's burst pattern.
+    const starveAfterMs = (attempt: number): number =>
+      600 + 100 * (attempt - 1);
     const recoveryCapture: { trace: MovingTrace['trace'] | null } = {
       trace: null,
     };
@@ -18167,7 +18174,8 @@ async function runScheduledPcmProof(
     if (clockProofMode === 'long') return;
     async function runRecoveryProof(
       session: ChromeSession,
-      sessionProvenance: unknown
+      sessionProvenance: unknown,
+      starveMs = 600
     ): Promise<void> {
       const recoveryWindowFrames = Math.floor(oracle.sample_rate * 0.02);
       assert.ok(recoveryWindowFrames > 0, 'invalid recovery sample rate');
@@ -18192,7 +18200,7 @@ async function runScheduledPcmProof(
       globalThis.__otioProofHoldOldDrain = true;
       const playEdge = globalThis.__otioProofTrace.playRequest();
       button.click();
-      await sleep(600);
+      await sleep(${starveMs});
       globalThis.__otioProofTrace.holdPcmResponses(true);
       const closeDeadline = performance.now() + 4000;
       while (!globalThis.__otioProofTrace.hasPcmEvent('recovery-render-closed') &&
@@ -18894,8 +18902,8 @@ async function runScheduledPcmProof(
         'recovery-delayed-staging',
         'descriptor-budget',
       ] as const)
-        await rerunFrontierOvershoot(`${fault}-${rate}`, () =>
-          runRecoveryFault(fault)
+        await rerunFrontierOvershoot(`${fault}-${rate}`, (attempt) =>
+          runRecoveryFault(fault, starveAfterMs(attempt))
         );
     }
     async function runRecoveryFault(
@@ -18905,7 +18913,8 @@ async function runScheduledPcmProof(
         | 'recovery-excess-work'
         | 'recovery-earlier-feasible'
         | 'recovery-delayed-staging'
-        | 'descriptor-budget'
+        | 'descriptor-budget',
+      starveMs: number
     ): Promise<void> {
       {
         const isolated = await openBrowser(url, sessionToken, {
@@ -18930,7 +18939,7 @@ async function runScheduledPcmProof(
             if(!(root instanceof HTMLElement)||!(button instanceof HTMLButtonElement)) throw new Error('recovery fault controls missing');
             const start=await globalThis.__otioProofTrace.start(),playEdge=globalThis.__otioProofTrace.playRequest();
             if (${JSON.stringify(fault)}==='descriptor-budget') globalThis.__otioProofPcmFault='descriptor-budget';
-            button.click(); await sleep(600);
+            button.click(); await sleep(${starveMs});
             if (${JSON.stringify(fault)}==='recovery-excess-work') globalThis.__otioProofTrace.injectRecoveryOverrun();
             else globalThis.__otioProofPcmFault=${JSON.stringify(fault)};
             globalThis.__otioProofTrace.holdPcmResponses(true);
@@ -19198,7 +19207,11 @@ async function runScheduledPcmProof(
       }
     }
     async function runHeldPullSequences(): Promise<void> {
-      const runHeld = async (label: string, releaseAfterClosure: boolean) => {
+      const runHeld = async (
+        label: string,
+        releaseAfterClosure: boolean,
+        starveMs: number
+      ) => {
         const isolated = await openBrowser(url, sessionToken, {
           label: `${label}-${rate}`,
           recordProofTrace: true,
@@ -19221,7 +19234,7 @@ async function runScheduledPcmProof(
             if(!(root instanceof HTMLElement)||!(button instanceof HTMLButtonElement)) throw new Error('held-pull controls missing');
             const proof=globalThis.__otioProofTrace;
             const start=await proof.start(),playEdge=proof.playRequest();
-            button.click(); await sleep(600);
+            button.click(); await sleep(${starveMs});
             proof.holdPcmResponses(true);
             ${releaseAfterClosure ? "proof.releasePcmResponsesOn('recovery-render-closed');" : ''}
             const until=performance.now()+4000;
@@ -19380,11 +19393,21 @@ async function runScheduledPcmProof(
       };
       await rerunFrontierOvershoot(
         `held-first-ready-then-no-reserve-${rate}`,
-        () => runHeld('held-first-ready-then-no-reserve', false)
+        (attempt) =>
+          runHeld(
+            'held-first-ready-then-no-reserve',
+            false,
+            starveAfterMs(attempt)
+          )
       );
       await rerunFrontierOvershoot(
         `held-released-before-successor-${rate}`,
-        () => runHeld('held-released-before-successor', true)
+        (attempt) =>
+          runHeld(
+            'held-released-before-successor',
+            true,
+            starveAfterMs(attempt)
+          )
       );
     }
     async function runAnchorControls(): Promise<void> {
@@ -19566,7 +19589,11 @@ async function runScheduledPcmProof(
           });
           try {
             await waitReady(fresh);
-            await runRecoveryProof(fresh, await proofProvenance(fresh));
+            await runRecoveryProof(
+              fresh,
+              await proofProvenance(fresh),
+              starveAfterMs(attempt)
+            );
           } finally {
             await fresh.close();
           }
