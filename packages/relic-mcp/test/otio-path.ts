@@ -10290,10 +10290,12 @@ function describeContinuityFaults(
     });
 }
 
-// A cold capture whose audio lead ran out on a loaded runner, and whose recovery then had no
-// frame to continue on. The exact signature: the gate closed at its frontier with no fault
-// injected, and the three faults that follow are the visual refusal, the underflow cancel and
-// the schedule refusal, in that order. Returns the evidence, or null for anything else.
+// A cold capture whose audio lead ran out on a loaded runner, and whose recovery then could not
+// continue. The exact signature: the gate closed at its frontier with no fault injected, and the
+// faults that follow are one of two sequences, in order. Either the recovery had no frame for a
+// video source (the visual refusal, the underflow cancel, the schedule refusal), or the output
+// clock was already past the 20 ms recovery gap (the underflow cancel, the schedule refusal).
+// Returns the evidence, or null for anything else.
 function coldFrontierStarvation(
   events: MovingTrace['trace']['events'],
   playMs: number
@@ -10306,14 +10308,17 @@ function coldFrontierStarvation(
       (value['event'] === 'cancel' && value['reason'] === 'underflow')
     );
   });
-  if (faults.length !== 3) return null;
-  const shape = faults.map((entry) => {
-    const value = entry.value as Record<string, unknown>;
-    return `${String(value['event'])}:${String(value['stage'] ?? '')}:${String(value['code'] ?? value['reason'])}`;
-  });
+  const shape = faults
+    .map((entry) => {
+      const value = entry.value as Record<string, unknown>;
+      return `${String(value['event'])}:${String(value['stage'] ?? '')}:${String(value['code'] ?? value['reason'])}`;
+    })
+    .join('|');
   if (
-    shape.join('|') !==
-    'error:visual:recovery-frame-unavailable|cancel::underflow|error:schedule:committed recovery frame is unavailable'
+    shape !==
+      'error:visual:recovery-frame-unavailable|cancel::underflow|error:schedule:committed recovery frame is unavailable' &&
+    shape !==
+      'cancel::underflow|error:schedule:recovery render handoff has no feasible frame'
   )
     return null;
   if (
@@ -17675,8 +17680,10 @@ async function runScheduledPcmProof(
   const coldUrl = await publishColdBoundaryDocument(rate);
   // Linux focus-only publish is asserted once, at the top of the composition stages.
   // A cold capture can lose its audio lead on a loaded runner: the frontier closes with no
-  // extension in flight, and the recovery has no frame to continue on (CI run 43279024045,
-  // 1347 ms after play). Only that exact signature (coldFrontierStarvation) is rerun, in a fresh
+  // extension in flight, and the recovery has no frame to continue on (CI run 43279024045, 1347
+  // ms after play) or finds the output clock past the 20 ms gap (run 43290221910, 44.1 kHz, 1083
+  // ms after play, 374 frames past the boundary). Only those exact signatures
+  // (coldFrontierStarvation) are rerun, in a fresh
   // browser, at most three times, the same shape Jason approved on 2026-11-12 for the 44.1 kHz
   // frontier overshoot. He has not approved this signature; it is reported as a judgement call.
   // Every other failure is rethrown unchanged and each rerun keeps the refused trace.
