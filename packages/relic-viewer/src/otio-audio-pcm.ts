@@ -602,6 +602,18 @@ class OtioPcmLedger {
   }
 }
 
+/**
+ * The requested stop frame was too close when the scheduler read the clock, and
+ * no source was touched. The output clock advances by a whole device callback
+ * at a time, so a frame chosen from an earlier read can expire before it is
+ * reserved.
+ */
+export class OtioPcmStopExpiredError extends Error {
+  constructor() {
+    super('PCM stop deadline missed');
+  }
+}
+
 export class OtioPcmScheduler {
   private readonly sources = new Set<PcmOwnedSource>();
   private readonly ledger = new OtioPcmLedger();
@@ -1000,13 +1012,14 @@ export class OtioPcmScheduler {
       return this.drain;
     }
     const rate = this.context.sampleRate;
-    if (
-      this.closed ||
-      !Number.isSafeInteger(frame) ||
-      frame <
-        Math.ceil(this.context.currentTime * rate) + OTIO_PCM_MIN_LEAD_FRAMES
-    )
+    if (this.closed || !Number.isSafeInteger(frame))
       throw new Error('PCM stop deadline missed');
+    // Nothing is reserved yet, so the caller may still reserve a later frame.
+    if (
+      frame <
+      Math.ceil(this.context.currentTime * rate) + OTIO_PCM_MIN_LEAD_FRAMES
+    )
+      throw new OtioPcmStopExpiredError();
     this.closed = true;
     try {
       for (const owned of this.sources) {

@@ -1,5 +1,9 @@
 import { describe, expect, test } from 'bun:test';
-import { OtioPcmBudget, OtioPcmScheduler } from '../src/otio-audio-pcm';
+import {
+  OtioPcmBudget,
+  OtioPcmScheduler,
+  OtioPcmStopExpiredError,
+} from '../src/otio-audio-pcm';
 
 class FakeNode {
   connections: FakeNode[] = [];
@@ -239,6 +243,37 @@ describe('bounded PCM graph', () => {
     expect(budget.usedNodes).toBe(1);
     scheduler.dispose();
     expect(budget.usedNodes).toBe(1);
+    context.sources[0]!.onended?.();
+    expect(budget.usedNodes).toBe(0);
+  });
+  test('an expired stop reserves nothing, so a later frame still stops the source', () => {
+    const context = new FakeContext(),
+      budget = new OtioPcmBudget();
+    const scheduler = new OtioPcmScheduler(
+      context as unknown as AudioContext,
+      new FakeNode() as unknown as AudioNode,
+      1,
+      budget
+    );
+    scheduler.schedule({
+      generation: 1,
+      firstContextFrame: 48200,
+      planes: [new Float32Array(480)],
+      gainFactors: [],
+    });
+    expect(() => scheduler.stopAtFrame(48127)).toThrow(OtioPcmStopExpiredError);
+    expect(context.sources[0]!.stoppedAt).toBeUndefined();
+    scheduler.stopAtFrame(48300);
+    expect(context.sources[0]!.stoppedAt).toBe(48300 / 48000);
+    // A closed scheduler is not an expiry: no later frame can be reserved.
+    let closedError: unknown;
+    try {
+      scheduler.stopAtFrame(48400);
+    } catch (error) {
+      closedError = error;
+    }
+    expect(closedError).toBeInstanceOf(Error);
+    expect(closedError).not.toBeInstanceOf(OtioPcmStopExpiredError);
     context.sources[0]!.onended?.();
     expect(budget.usedNodes).toBe(0);
   });

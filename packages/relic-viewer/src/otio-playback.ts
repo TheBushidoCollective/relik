@@ -38,6 +38,7 @@ import {
   OtioPcmBudget,
   OtioPcmProvider,
   OtioPcmScheduler,
+  OtioPcmStopExpiredError,
   OTIO_PCM_BOUNDARY_COPY_FRAMES as OTIO_PCM_HANDOFF_RESERVE_FRAMES,
   type OtioPcmGainFactor,
   type OtioPcmPrepared,
@@ -4496,7 +4497,11 @@ export function createOtioPlayback(
     }, 100);
   }
 
-  function armPcmStop(run: PcmRun, stopFrame: number, reason: string): void {
+  // A stop frame is read and reserved in separate steps, and the output clock
+  // moves a device callback at a time. Each attempt reads the clock afresh.
+  const PCM_STOP_RESERVE_ATTEMPTS = 3;
+
+  function armPcmStop(run: PcmRun, reason: string): void {
     if (run.stopped || run.stopping) return;
     run.stopping = true;
     watchPcmClosure(run);
@@ -4514,15 +4519,34 @@ export function createOtioPlayback(
         failScheduledAudio('transport has no committed frontier');
         return;
       }
-      const boundary = Math.min(stopFrame, frontier);
       // Reserve the source stop before the gate round trip consumes its lead.
-      try {
-        run.scheduler.stopAtFrame(boundary);
-      } catch (error) {
-        failScheduledAudio(
-          `PCM source stop failed: ${error instanceof Error ? error.message : String(error)}`
+      let boundary = frontier;
+      for (let attempt = 1; ; attempt++) {
+        boundary = Math.min(
+          frontier,
+          Math.max(
+            run.contextFrame ?? 0,
+            Math.ceil(run.context.currentTime * run.admission.rate) +
+              OTIO_PCM_MIN_LEAD_FRAMES * 2
+          )
         );
-        return;
+        try {
+          run.scheduler.stopAtFrame(boundary);
+          break;
+        } catch (error) {
+          if (
+            error instanceof OtioPcmStopExpiredError &&
+            boundary < frontier &&
+            attempt < PCM_STOP_RESERVE_ATTEMPTS
+          ) {
+            pcmProof('stop-expired', run.generation, { boundary, attempt });
+            continue;
+          }
+          failScheduledAudio(
+            `PCM source stop failed: ${error instanceof Error ? error.message : String(error)}`
+          );
+          return;
+        }
       }
       if (run.command) await run.command;
       if (pcmRun !== run || run.stopped) return;
@@ -6999,15 +7023,7 @@ export function createOtioPlayback(
       if (!outgoing.stopping) {
         pcmPlayIntent = isPlaying;
         isBuffering = true;
-        const stop = Math.min(
-          outgoing.frontierFrame,
-          Math.max(
-            outgoing.contextFrame ?? 0,
-            Math.ceil(outgoing.context.currentTime * outgoing.admission.rate) +
-              OTIO_PCM_MIN_LEAD_FRAMES * 2
-          )
-        );
-        armPcmStop(outgoing, stop, 'resync');
+        armPcmStop(outgoing, 'resync');
         notify();
       }
       return;
@@ -8405,23 +8421,14 @@ export function createOtioPlayback(
                 (error.message === 'PCM byte budget exceeded' ||
                   error.message === 'PCM graph node limit exceeded')
               ) {
-                const frontier = run.frontierFrame;
-                if (frontier === null) {
+                if (run.frontierFrame === null) {
                   failScheduledAudio(
                     'PCM resources exhausted before a committed frontier'
                   );
                   return;
                 }
-                const stop = Math.min(
-                  frontier,
-                  Math.max(
-                    run.contextFrame ?? 0,
-                    Math.ceil(run.context.currentTime * run.admission.rate) +
-                      OTIO_PCM_MIN_LEAD_FRAMES * 2
-                  )
-                );
                 pcmProof('starvation', run.generation, { code: error.message });
-                armPcmStop(run, stop, 'resource');
+                armPcmStop(run, 'resource');
                 return;
               }
               pcmProof('error', run.generation, {
@@ -8855,20 +8862,10 @@ export function createOtioPlayback(
         !pcmRun.stopped
       ) {
         const run = pcmRun;
-        const frontier = run.frontierFrame;
-        if (frontier === null) return;
-        const stop = Math.min(
-          frontier,
-          Math.max(
-            run.contextFrame ?? 0,
-            Math.ceil(run.context.currentTime * run.admission.rate) +
-              OTIO_PCM_MIN_LEAD_FRAMES * 2
-          )
-        );
         isPlaying = false;
         isStarting = false;
         isBuffering = true;
-        armPcmStop(run, stop, 'pause');
+        armPcmStop(run, 'pause');
         notify();
         return;
       }

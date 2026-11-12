@@ -4221,6 +4221,91 @@ describe('otio playback controller', () => {
     }
   });
 
+  test('a device callback between the stop read and its reservation moves the stop later', async () => {
+    const fixture = independentPcmFixture(false, false, undefined, {
+      autoEndSources: true,
+    });
+    const proof = globalThis as typeof globalThis & {
+      __otioProofPcm?: boolean;
+    };
+    const priorProof = proof.__otioProofPcm;
+    const originalLog = console.log;
+    const expired: Record<string, unknown>[] = [];
+    try {
+      await fixture.start();
+      await fixture.advanceSmooth(
+        fixture.wall + 40,
+        fixture.renderFrame + 1920,
+        fixture.outputFrame + 1920
+      );
+      const issuedAt = fixture.renderFrame;
+      const callback = 512;
+      // The read that picks the stop frame sees the clock before one 512-frame
+      // device callback. Every later read sees it after.
+      let reads = 0;
+      Object.defineProperty(fixture.audioContext, 'currentTime', {
+        configurable: true,
+        get: () => (reads++ === 0 ? issuedAt : issuedAt + callback) / 48000,
+      });
+      console.log = (...args: unknown[]) => {
+        const detail = args[1];
+        if (
+          args[0] === 'OTIO_PROOF_PCM' &&
+          detail &&
+          typeof detail === 'object' &&
+          'event' in detail &&
+          detail.event === 'stop-expired'
+        )
+          expired.push({ ...detail });
+      };
+      proof.__otioProofPcm = true;
+      let settled = false;
+      const prepared = fixture.playback
+        .prepareAudioContextChange()
+        .then(
+          () => null,
+          (error: unknown) => error
+        )
+        .finally(() => {
+          settled = true;
+        });
+      console.log = originalLog;
+      Reflect.deleteProperty(fixture.audioContext, 'currentTime');
+      await fixture.advance(
+        fixture.wall + callback / 48,
+        issuedAt + callback,
+        fixture.outputFrame + callback
+      );
+      expect(expired).toHaveLength(1);
+      expect(expired[0]).toMatchObject({
+        boundary: issuedAt + 256,
+        attempt: 1,
+      });
+      const stop = fixture.commands.find((command) => command.type === 'stop');
+      expect(Number(stop?.stopFrame)).toBe(issuedAt + callback + 256);
+      for (let i = 0; i < 50 && !settled; i++)
+        await fixture.advance(
+          fixture.wall + 8,
+          fixture.renderFrame + 384,
+          fixture.outputFrame + 384
+        );
+      expect(settled).toBe(true);
+      expect(await prepared, 'context change preparation').toBeNull();
+      const diagnostics = fixture.playback.getState().diagnostics;
+      expect(
+        diagnostics.some((item) =>
+          item.message.includes('Scheduled audio stopped')
+        ),
+        JSON.stringify(diagnostics)
+      ).toBe(false);
+    } finally {
+      console.log = originalLog;
+      if (priorProof === undefined) delete proof.__otioProofPcm;
+      else proof.__otioProofPcm = priorProof;
+      fixture.restore();
+    }
+  });
+
   test.each([true, false])(
     'seek accepts a closed gate whether closure arrived before abort: %s',
     async (deliverClosure) => {
