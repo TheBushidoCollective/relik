@@ -87,6 +87,11 @@ export class OutputClock {
   private evidence:
     | { time: number; offset: number; observation: ClockObservation }[]
     | null = null;
+  // Accepted samples before playback starts, oldest first. Calibration measures the spread over
+  // every sample since the first. Once calibrated, a read measures it over the same rolling
+  // minWindowMs window playback uses, so a stale sample cannot fail the start on its own: a
+  // stream's first stamp can sit one callback period from the rest, right at the bound.
+  private readonly startOffsets: { time: number; offset: number }[] = [];
   private max = -Infinity;
   constructor(
     readonly requestMs: number,
@@ -218,6 +223,8 @@ export class OutputClock {
     fork.advances = window.length - 1;
     fork.min = min;
     fork.max = max;
+    for (const entry of window)
+      fork.startOffsets.push({ time: entry.time, offset: entry.offset });
     fork.state = 'calibrating';
     return fork;
   }
@@ -343,6 +350,16 @@ export class OutputClock {
           reason = 'runtime-window-cap';
           this.invalidate(reason);
         }
+      } else if (priorState === 'calibrated' || priorState === 'armed') {
+        const window = this.startOffsets;
+        const cutoff = performanceTime! - this.policy.minWindowMs;
+        while (window.length > 1 && window[1]!.time < cutoff) window.shift();
+        min = offset;
+        max = offset;
+        for (const entry of window) {
+          min = Math.min(min, entry.offset);
+          max = Math.max(max, entry.offset);
+        }
       }
       if (reason === 'runtime-window-cap') {
         // Do not discard in-window evidence to make room for a new sample.
@@ -358,6 +375,7 @@ export class OutputClock {
           this.min = Infinity;
           this.max = -Infinity;
           this.evidence = null;
+          this.startOffsets.length = 0;
           this.state = 'calibrating';
         }
       } else {
@@ -384,6 +402,10 @@ export class OutputClock {
         this.last = o;
         this.heldContextTime = null;
         this.skippedFuture = null;
+        if (priorState !== 'playing') {
+          if (rereadInherited) this.startOffsets.pop();
+          this.startOffsets.push({ time: performanceTime!, offset });
+        }
         if (priorState === 'playing') {
           const entry = { time: performanceTime!, offset, observation: o };
           this.runtimeOffsets.push(entry);
@@ -452,6 +474,7 @@ export class OutputClock {
       this.min = Infinity;
       this.max = -Infinity;
       this.evidence = null;
+      this.startOffsets.length = 0;
       this.state = 'calibrating';
     }
     const result = this.result(reason);

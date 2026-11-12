@@ -39,6 +39,110 @@ describe('output clock admission', () => {
     c.start();
     expect(c.observe(sample(150, 1000)).status).toBe('interrupted');
   });
+  test('the recorded Linux start with a stale first stamp near the bound stays calibrated', () => {
+    // CI run 43235935771, recovery-delayed-staging-48000. The stream's first stamp sits 9.99 ms
+    // from the rest. The commit read is 10.002 ms from it, 80 ms later, and used to fail the start.
+    const c = new OutputClock(589.5);
+    const read = (
+      wall: number,
+      current: number,
+      contextTime: number,
+      performanceTime: number
+    ) =>
+      c.observe({
+        readBegin: wall,
+        readEnd: wall,
+        contextBefore: current,
+        contextAfter: current,
+        state: 'running',
+        contextTime,
+        performanceTime,
+      });
+    read(614.7000000000698, 0.032, 0.000481, 612.5999999999767);
+    read(618.9000000000233, 0.032, 0.000481, 612.5999999999767);
+    read(
+      627.4000000000233,
+      0.042666666666666665,
+      0.002334499999999998,
+      624.4000000000233
+    );
+    read(631.5, 0.042666666666666665, 0.002334499999999998, 624.4000000000233);
+    read(
+      635.5999999999767,
+      0.050666666666666665,
+      0.011604333333333331,
+      633.7000000000698
+    );
+    const calibrated = read(
+      645.0999999999767,
+      0.06133333333333333,
+      0.021692166666666665,
+      643.8000000000466
+    );
+    expect(calibrated.status).toBe('calibrated');
+    expect(calibrated.offsetMax! - calibrated.offsetMin!).toBeCloseTo(9.989, 3);
+    const selection = read(
+      688.8000000000466,
+      0.10133333333333333,
+      0.0612155,
+      683.3000000000466
+    );
+    expect(selection).toMatchObject({
+      status: 'calibrated',
+      reason: 'accepted',
+    });
+    expect(selection.offsetMax! - selection.offsetMin!).toBeLessThan(0.1);
+    const commit = c.observe({
+      readBegin: 692.0999999999767,
+      readEnd: 692.7000000000698,
+      contextBefore: 0.10133333333333333,
+      contextAfter: 0.104,
+      state: 'running',
+      contextTime: 0.07037933333333332,
+      performanceTime: 692.5,
+    });
+    expect(commit).toMatchObject({ status: 'calibrated', reason: 'accepted' });
+    expect(commit.offsetMax! - commit.offsetMin!).toBeLessThan(0.1);
+  });
+  test('calibration still measures the spread over every sample since the first', () => {
+    const c = new OutputClock(1000);
+    c.observe(sample(10, 990.1));
+    for (const t of [20, 30]) c.observe(sample(t));
+    const calibrated = c.observe(sample(40));
+    expect(calibrated.status).toBe('calibrated');
+    expect(calibrated.offsetMax! - calibrated.offsetMin!).toBeCloseTo(9.9, 6);
+    const d = new OutputClock(1000);
+    expect(d.observe(sample(20, 989.5)).reason).toBe('accepted');
+    expect(d.observe(sample(30)).reason).toBe('discontinuity');
+    expect(d.state).toBe('calibrating');
+  });
+  test('before start, a step over the bound inside the rolling window still resets or fails', () => {
+    const c = ready();
+    expect(c.observe(sample(50, 1010.5))).toMatchObject({
+      status: 'calibrating',
+      reason: 'discontinuity',
+    });
+    const armed = ready();
+    armed.arm();
+    expect(armed.observe(sample(50, 1010.5))).toMatchObject({
+      status: 'failed',
+      reason: 'discontinuity',
+    });
+  });
+  test('before start, the rolling window permits gradual drift as it does during playback', () => {
+    const c = ready();
+    for (const [t, offset] of [
+      [64, 1004],
+      [88, 1008],
+      [112, 1012],
+    ] as const)
+      expect(c.observe(sample(t, offset))).toMatchObject({
+        status: 'calibrated',
+        reason: 'accepted',
+      });
+    // The same total change as one step is a discontinuity.
+    expect(ready().observe(sample(64, 1012)).reason).toBe('discontinuity');
+  });
   test('rejects the recorded running-59 timestamp pair', () => {
     const c = new OutputClock(2670);
     c.observe({
