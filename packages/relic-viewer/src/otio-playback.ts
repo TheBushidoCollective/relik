@@ -4500,6 +4500,16 @@ export function createOtioPlayback(
   // A stop frame is read and reserved in separate steps, and the output clock
   // moves a device callback at a time. Each attempt reads the clock afresh.
   const PCM_STOP_RESERVE_ATTEMPTS = 3;
+  // The gate checks a stop against its own clock when the message is processed, a sink buffer
+  // and a message round trip after the main thread read the context clock. On a 10 ms sink that
+  // is more than the two quanta the first stop is given: CI run 43287170337 asked for 35456
+  // while the gate's clock was near 35630, and the gate answered "invalid stop". A refused stop
+  // is asked again, further out, from a fresh read, for a pause or a resource stop, which have no
+  // exact frame of their own. A resync stop is a track change that must land on its frame, so a
+  // refusal there stays a refusal. The source stop stays where it was reserved: it ends the source
+  // no later than the gate closes, so the frames between the two are silent.
+  const PCM_GATE_STOP_ATTEMPTS = 3;
+  const PCM_GATE_STOP_RETRY_MARGIN_FRAMES = 1024;
 
   function armPcmStop(run: PcmRun, reason: string): void {
     if (run.stopped || run.stopping) return;
@@ -4550,7 +4560,28 @@ export function createOtioPlayback(
       }
       if (run.command) await run.command;
       if (pcmRun !== run || run.stopped) return;
-      const ack = await run.gate.stop(run.generation, boundary);
+      let ack = await run.gate.stop(run.generation, boundary);
+      for (
+        let attempt = 1;
+        !ack.accepted &&
+        ack.reason === 'invalid stop' &&
+        (reason === 'pause' || reason === 'resource') &&
+        boundary < frontier &&
+        attempt < PCM_GATE_STOP_ATTEMPTS;
+        attempt++
+      ) {
+        if (pcmRun !== run || run.stopped) return;
+        const later = Math.min(
+          frontier,
+          Math.ceil(run.context.currentTime * run.admission.rate) +
+            OTIO_PCM_MIN_LEAD_FRAMES * 2 +
+            PCM_GATE_STOP_RETRY_MARGIN_FRAMES
+        );
+        if (later <= boundary) break;
+        pcmProof('stop-late', run.generation, { boundary, later, attempt });
+        boundary = later;
+        ack = await run.gate.stop(run.generation, boundary);
+      }
       if (pcmRun !== run || run.stopped) return;
       if (!ack.accepted || ack.throughFrame !== boundary) {
         failScheduledAudio(

@@ -4341,6 +4341,55 @@ describe('otio playback controller', () => {
     }
   });
 
+  test('a stop the gate refuses as already past is asked again further out', async () => {
+    const fixture = independentPcmFixture(false, false, undefined, {
+      autoEndSources: true,
+    });
+    try {
+      await fixture.start();
+      await fixture.advanceSmooth(
+        fixture.wall + 40,
+        fixture.renderFrame + 1920,
+        fixture.outputFrame + 1920
+      );
+      const issuedAt = fixture.renderFrame;
+      fixture.playback.pause();
+      // A 512-frame device callback renders before the gate processes the stop. The stop was
+      // read two quanta ahead of the clock, so the gate's clock is already past it.
+      await fixture.advance(
+        fixture.wall + 512 / 48,
+        issuedAt + 512,
+        fixture.outputFrame + 512,
+        false
+      );
+      await fixture.deliverCallbacks();
+      for (let i = 0; i < 50 && fixture.playback.getState().playing; i++)
+        await fixture.advance(
+          fixture.wall + 8,
+          fixture.renderFrame + 384,
+          fixture.outputFrame + 384
+        );
+      const stops = fixture.commands.filter(
+        (command) => command.type === 'stop'
+      );
+      expect(stops.length).toBeGreaterThanOrEqual(2);
+      expect(Number(stops[0]!.stopFrame)).toBeLessThan(issuedAt + 512);
+      expect(Number(stops[1]!.stopFrame)).toBeGreaterThan(
+        Number(stops[0]!.stopFrame)
+      );
+      const diagnostics = fixture.playback.getState().diagnostics;
+      expect(
+        diagnostics.some((item) =>
+          item.message.includes('Scheduled audio stopped')
+        ),
+        JSON.stringify(diagnostics)
+      ).toBe(false);
+      expect(fixture.playback.getState().playing).toBe(false);
+    } finally {
+      fixture.restore();
+    }
+  });
+
   test.each([true, false])(
     'seek accepts a closed gate whether closure arrived before abort: %s',
     async (deliverClosure) => {
