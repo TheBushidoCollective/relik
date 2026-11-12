@@ -13945,11 +13945,19 @@ async function assessMovingWindowControls(
     })()`);
       const cast = await stopCast();
       const paused = capture.paused;
-      assert.doesNotMatch(
-        paused,
-        /Scheduled audio stopped:/,
-        `pause after sustained capture ${repetition} failed`
-      );
+      if (/Scheduled audio stopped:/.test(paused)) {
+        const faults = describeContinuityFaults(
+          capture.trace.events,
+          capture.start.timestamp
+        );
+        await writeFile(
+          join(shotDir, `boundary-sustained-${repetition}-refused.json`),
+          JSON.stringify({ provenance, paused, faults, capture })
+        );
+        assert.fail(
+          `sustained capture ${repetition} ended with a scheduler refusal: ${paused}; faults inside the capture: ${faults.join(' | ') || 'none'}`
+        );
+      }
       const elapsedMs = capture.trace.timestamp - capture.start.timestamp;
       const progress =
         (capture.trace.frame - capture.start.frame) / ((elapsedMs * 30) / 1000);
