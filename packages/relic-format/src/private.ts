@@ -177,6 +177,7 @@ export interface OwnerBindStatement {
 
 export interface PrivatePublishStatement {
   readonly at: number;
+  /** The service challenge from `POST /api/challenge`, an opaque token (1 to 64 of `[A-Za-z0-9_-]`). */
   readonly challenge_nonce: string;
   readonly device_id: string;
   readonly relic_id: string;
@@ -725,6 +726,11 @@ const LABEL: Rule = (value) => {
 };
 
 const NONCE: Rule = base64urlBytes(32, 32);
+/** The service challenge is opaque: the server issues it as hex today, and the format does not depend on that. */
+const SERVICE_TOKEN: Rule = (value) => {
+  if (typeof value !== 'string') return 'type';
+  return /^[A-Za-z0-9_-]{1,64}$/.test(value) ? undefined : 'format';
+};
 const PUBLIC_KEY: Rule = base64urlBytes(65, 65, 0x04);
 const CREDENTIAL_ID: Rule = base64urlBytes(1, 1023);
 
@@ -921,7 +927,7 @@ const SPECS: { readonly [K in StatementKind]: Readonly<Record<string, Rule>> } =
     },
     private_publish: {
       at: AT,
-      challenge_nonce: NONCE,
+      challenge_nonce: SERVICE_TOKEN,
       device_id: HEX_ID,
       relic_id: RELIC_ID,
       ttl_days: nullable(integer(1)),
