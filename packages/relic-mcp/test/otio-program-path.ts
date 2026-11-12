@@ -21,7 +21,7 @@
  *      and sham controls must start the device after Play. Their frame gaps are recorded, not gated,
  *      and the viewer's time mapping, focus, comment and audio stages still run after them.
  *
- * Prints OTIO_PROGRAM_PATH_OK only after all twenty-nine stages pass. Nothing is skipped or softened.
+ * Prints OTIO_PROGRAM_PATH_OK only after all required stages pass. Nothing is skipped or softened.
  *
  * Platform: the publisher renders only with its isolated profile directory (RAM disk on macOS,
  * tmpfs on Linux, as its docs define). Without it every timeline is unsupported-browser and the
@@ -940,7 +940,43 @@ try {
       `OTIO proof failed: ${deferredFailures.length} independent failure(s)`
     );
   }
-  assert.equal(passed.length, 29, `expected 29 stages, ran ${passed.length}`);
+  assert.deepEqual(
+    passed,
+    [
+      'fixture-built',
+      'published',
+      'decrypted',
+      'manifest-independent',
+      'format-validator-agrees',
+      'rendered-media-independent',
+      'audio-onset-measured',
+      'global-start-matches-positive',
+      'primer-wrap-single-start',
+      'primer-bare-negative-controls',
+      'primer-bare-cold-stall-comparator',
+      'primer-bare-none-cold-start',
+      'primer-bare-sham-cold-start',
+      'primer-bare-real-shares-stream',
+      'primer-bare-blob-shares-stream',
+      'primer-bare-report-controls',
+      'viewer-primer-prepared',
+      'viewer-primer-sham-cold-start',
+      'viewer-first-click',
+      'viewer-unmute',
+      'fresh-viewer-prepared',
+      'fresh-viewer-first-click',
+      'fresh-viewer-unmute',
+      'fresh-reported',
+      'viewer-audio-prepared-signal',
+      'viewer-audio-first-click-signal',
+      'viewer-time-mapping',
+      'viewer-focus-track',
+      'comments-round-trip',
+      'comment-reveal-ui',
+      'viewer-audio-captured',
+    ],
+    'program proof did not pass every required stage'
+  );
   console.log('OTIO_PROGRAM_PATH_OK');
 } finally {
   await rm(instrumentedViewerDir, { recursive: true, force: true });
