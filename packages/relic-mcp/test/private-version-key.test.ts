@@ -12,6 +12,7 @@ import { join } from 'node:path';
 import {
   decodeBase64url,
   encodeBase64url,
+  keyCommitment,
   signStatement,
   statementBytes,
   wrapVersionKey,
@@ -58,6 +59,8 @@ interface KeyResponseOptions {
   readonly recipientKeyId: string;
   /** Whether the last byte of the wrap's ciphertext is altered. */
   readonly tamper?: boolean;
+  /** Whether the wrap carries a key the service chose, not the one the seal commits to. */
+  readonly substituteKey?: boolean;
 }
 
 /** The key response the service answers for one version, sealed by the owner. */
@@ -70,6 +73,11 @@ async function keyResponse(
     access_epoch: 0,
     at: Date.UTC(2026, 10, 11),
     ciphertext_sha256: sha256Hex(new Uint8Array([1, 2, 3])),
+    key_commitment: await keyCommitment({
+      relicId: RELIC_ID,
+      version: VERSION,
+      key,
+    }),
     owner_epoch: 0,
     recipient_key_ids: [...options.sealRecipients].sort(),
     relic_id: RELIC_ID,
@@ -91,7 +99,9 @@ async function keyResponse(
     recipientPublicKey: options.wrapTo.keys.kemPublicKey,
     relicId: RELIC_ID,
     version: VERSION,
-    key,
+    key: options.substituteKey
+      ? crypto.getRandomValues(new Uint8Array(16))
+      : key,
   });
   const ct = options.tamper
     ? encodeBase64url(
@@ -220,5 +230,29 @@ describe('privateVersionKey reads a version this device did not publish', () => 
         VERSION
       )
     ).rejects.toMatchObject({ code: 'wrap_unopenable' });
+  });
+});
+describe('privateVersionKey refuses a key the seal does not commit to', () => {
+  test('a wrap of a substituted key opens, but the key is refused before it is used', async () => {
+    const owner = await makePerson('owner@example.com');
+    const device = await makeDevice('relic-mcp on the test machine');
+    await pinDevice(ORIGIN, owner, device);
+    const key = crypto.getRandomValues(new Uint8Array(16));
+    const service = new FakeService({ owner, device });
+    const body = await keyResponse(owner, key, {
+      sealRecipients: [sha256Hex(device.keys.kemPublicKey)],
+      wrapTo: device,
+      recipientKeyId: sha256Hex(device.keys.kemPublicKey),
+      substituteKey: true,
+    });
+
+    await expect(
+      privateVersionKey(
+        depsAnswering(service, body),
+        RELIC_ID,
+        stateFor(owner, device),
+        VERSION
+      )
+    ).rejects.toMatchObject({ code: 'seal_key_mismatch' });
   });
 });

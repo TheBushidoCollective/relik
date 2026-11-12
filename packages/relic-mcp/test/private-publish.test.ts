@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { decodeKey } from '@relic/format';
+import { keyCommitment } from '@relic/format/private';
 import { publishPrivate } from '../src/private.ts';
 import { loadPrivatePublishState } from '../src/state.ts';
 import {
@@ -93,6 +95,27 @@ describe('private publish', () => {
     const wraps = completion?.['wraps'] as unknown[] | undefined;
     expect(seal?.signer_kind).toBe('device');
     expect(wraps).toHaveLength(2);
+  });
+
+  test('the seal commits to the key this machine holds', async () => {
+    const { service, fixture } = await confirmedMachine();
+    const result = await publishPrivate({ path: SOURCE_PATH }, fixture.deps);
+
+    const state = await loadPrivatePublishState(result.relic_id);
+    const held = state?.version_keys['1'];
+    if (held === undefined) {
+      throw new Error('this machine holds no key for version 1');
+    }
+    const seal = service.completions[0]?.['seal'] as
+      | { statement: Record<string, unknown> }
+      | undefined;
+    expect(seal?.statement['key_commitment']).toBe(
+      await keyCommitment({
+        relicId: result.relic_id,
+        version: 1,
+        key: decodeKey(held),
+      })
+    );
   });
 
   test('refuses a title before any network call', async () => {

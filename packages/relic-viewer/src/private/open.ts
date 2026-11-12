@@ -25,6 +25,7 @@ import {
   type IdentityPublicJSON,
   identityIdOf,
   type KeyJSON,
+  keyCommitment,
   parseStatement,
   type PartyJSON,
   type SealJSON,
@@ -403,6 +404,13 @@ export async function verifyVersionKey(
   } catch (error) {
     if (error instanceof WrapOpenError) throw new SealMismatchError('wrap');
     throw error;
+  }
+
+  // The seal commits to the key the owner sealed. HPKE base mode opens a wrap
+  // of any key the service chose, so only this comparison refuses one.
+  const commitment = await keyCommitment({ relicId, version, key });
+  if (commitment !== seal.key_commitment) {
+    throw new SealMismatchError('key_commitment');
   }
 
   if (pinned === undefined) {
