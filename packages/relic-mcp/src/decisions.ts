@@ -18,7 +18,7 @@ import {
   isDecisionVerdict,
   isVersionDigest,
 } from '@relic/format';
-import { localState } from './comments.ts';
+import { localRelic } from './comments.ts';
 import {
   type PublishDeps,
   PublishError,
@@ -56,12 +56,18 @@ export async function readDecisions(
   deps: PublishDeps,
   options?: ReadDecisionsOptions
 ): Promise<DecisionList> {
-  const state = await localState(relicId);
-  const shareProof = encodeKey(await deriveShareProof(decodeKey(state.key)));
-
-  const body: Record<string, unknown> = {
-    share_proof: shareProof,
-  };
+  const local = await localRelic(relicId);
+  // A public relic authorizes the list with the share proof its key derives.
+  // A private relic authorizes it with the publish token, which is what the
+  // service accepts for a private relic's decision list.
+  const body: Record<string, unknown> =
+    local.access === 'private'
+      ? { publish_token: local.state.publish_token }
+      : {
+          share_proof: encodeKey(
+            await deriveShareProof(decodeKey(local.state.key))
+          ),
+        };
   if (options?.version !== undefined) {
     body['version'] = options.version;
   }
