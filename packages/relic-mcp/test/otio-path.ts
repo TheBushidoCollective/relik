@@ -16425,11 +16425,19 @@ async function driveFreshLegacyClick(
   return { playEdge, trace: outcome.trace };
 }
 
-// 60 fps high-latency cold start. The document is the boundary fixture rescaled to 60 fps
-// and its video is the fixture's fr30 source re-timed by ffmpeg. The independent oracle
-// decodes the shipped fr60 file and mx_bed.wav with ffmpeg; expected frame indexes are
-// seconds multiplied by 60. The ring comes from the viewer's own records, and the audible
-// wall time must lie inside the solved phase interval (absolute performance.now() ms).
+// 60 fps cold start. The document is the boundary fixture rescaled to 60 fps and its video is
+// the fixture's fr30 source re-timed by ffmpeg. The independent oracle decodes the shipped fr60
+// file and mx_bed.wav with ffmpeg; expected frame indexes are seconds multiplied by 60.
+//
+// The viewer schedules audio only when every video frame lasts at least one display refresh. WebM
+// stores whole milliseconds, so fr60 has 16 ms frames, and until the viewer has measured the
+// display it assumes 60 Hz (16.7 ms). It therefore refuses scheduled audio for this document and
+// plays it natively. Jason decided on 2026-11-12 to keep that behaviour and to have this stage
+// assert what the viewer did. A native run must carry that exact refusal, with the shortest frame
+// checked against ffprobe, and must still play audibly and show the expected frame. A scheduled
+// run keeps every scheduled check: the ring comes from the viewer's own records, and the audible
+// wall time must lie inside the solved phase interval (absolute performance.now() ms). Scheduled
+// audio at 60 fps is unproven while every run takes the native branch, and the log line says which.
 async function runSixtyFpsColdProof(
   sessionToken: string,
   rate: 48000
@@ -16468,6 +16476,93 @@ async function runSixtyFpsColdProof(
       !trace.audioOverflow && !trace.eventsOverflow,
       '60 fps proof trace overflow'
     );
+    const scheduledEvents = trace.events
+      .filter((entry) => entry.kind === 'scheduled-pcm')
+      .map((entry) => entry.value as Record<string, unknown>);
+    const backend = scheduledEvents
+      .filter((value) => value['event'] === 'backend')
+      .at(-1);
+    assert.ok(backend, '60 fps run selected no audio backend');
+    const frameBytes = 64 * 36 * 4;
+    const presentedExpectedFrame = (): boolean =>
+      trace.visual.some(
+        (sample) =>
+          !sample.error &&
+          sample.pixels16 !== undefined &&
+          sample.pixels16.length === frameBytes &&
+          matchesExpectedVideoFrame(
+            Uint8Array.from(sample.pixels16),
+            oracle.references,
+            oracle.expectedIndex
+          )
+      );
+    if (backend['backend'] === 'native') {
+      assert.equal(
+        backend['reason'],
+        'video timing cannot be certified',
+        '60 fps native playback was not the video timing refusal'
+      );
+      const refusal = scheduledEvents.find(
+        (value) => value['event'] === 'video-timing-uncertified'
+      );
+      assert.ok(refusal, '60 fps timing refusal carries no evidence');
+      const packetStarts = await layerPacketStarts(
+        join(scratch, 'sixty-fps-boundaries.otiod', 'media', 'fr60.webm')
+      );
+      let shortestFrame = Number.POSITIVE_INFINITY;
+      for (let i = 1; i < packetStarts.length; i++)
+        shortestFrame = Math.min(
+          shortestFrame,
+          packetStarts[i]! - packetStarts[i - 1]!
+        );
+      const minWindow = refusal['minWindowSeconds'];
+      const vsync = refusal['vsyncSeconds'];
+      assert.ok(
+        refusal['timingKind'] === 'windows' &&
+          refusal['videoRate'] === 1 &&
+          typeof minWindow === 'number' &&
+          Math.abs(minWindow - shortestFrame) < 1e-6,
+        `60 fps refusal's shortest frame ${String(minWindow)} s is not ffprobe's ${shortestFrame} s`
+      );
+      assert.ok(
+        typeof vsync === 'number' && vsync > 0 && minWindow < vsync,
+        `60 fps refusal's shortest frame ${minWindow} s is not under its refresh interval ${String(vsync)} s`
+      );
+      assert.ok(
+        !scheduledEvents.some(
+          (value) => value['event'] === 'error' || value['event'] === 'epoch'
+        ),
+        '60 fps native playback raised a scheduled error or committed an epoch'
+      );
+      assert.ok(
+        !legacyColdValues(trace).some(
+          (value) =>
+            value['event'] === 'ring-refused' ||
+            value['event'] === 'epoch-unplaceable'
+        ),
+        '60 fps native playback recorded a ring refusal'
+      );
+      assert.ok(
+        trace.events.some(
+          (entry) => entry.kind === 'play' && entry.mediaType === 'AUDIO'
+        ),
+        '60 fps native playback did not play an audio element'
+      );
+      const output = trace.audio.flatMap((chunk) => chunk.channels[0] ?? []);
+      assert.ok(
+        output.length > 0 && output.some((value) => Math.abs(value) > 0.001),
+        '60 fps native playback output was silent'
+      );
+      assert.ok(
+        presentedExpectedFrame(),
+        `60 fps native presentation never showed the expected authored frame ${oracle.expectedIndex}`
+      );
+      console.log(
+        `OTIO_SIXTY_FPS backend=native reason="video timing cannot be certified" shortestFrameSeconds=${minWindow} refreshSeconds=${vsync} scheduled=unproven`
+      );
+      pass('legacy-sixty-fps-cold-start');
+      return;
+    }
     const solvers = assertLegacyRingEvidence(trace, true);
     const epoch = trace.events
       .filter((entry) => entry.kind === 'scheduled-pcm')
@@ -16513,22 +16608,11 @@ async function runSixtyFpsColdProof(
         mapped.wallMs - mapped.boundMs <= phase.phaseUpperMs,
       `60 fps audible wall ${mapped.wallMs}ms (±${mapped.boundMs}ms) lies outside the phase interval [${phase.phaseLowerMs}, ${phase.phaseUpperMs}]ms`
     );
-    const frameBytes = 64 * 36 * 4;
-    const presented = trace.visual.some(
-      (sample) =>
-        !sample.error &&
-        sample.pixels16 !== undefined &&
-        sample.pixels16.length === frameBytes &&
-        matchesExpectedVideoFrame(
-          Uint8Array.from(sample.pixels16),
-          oracle.references,
-          oracle.expectedIndex
-        )
-    );
     assert.ok(
-      presented,
+      presentedExpectedFrame(),
       `60 fps presentation never showed the expected authored frame ${oracle.expectedIndex}`
     );
+    console.log('OTIO_SIXTY_FPS backend=pcm');
     pass('legacy-sixty-fps-cold-start');
   } finally {
     await browser.close();

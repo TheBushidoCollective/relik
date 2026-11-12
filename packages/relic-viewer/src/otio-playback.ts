@@ -2788,16 +2788,24 @@ export function createOtioPlayback(
         const key = `${path}\u0000${videoRate}`;
         if (checkedVideo.has(key)) continue;
         const timing = await sharedVideoTiming(path, mime);
+        const vsyncSeconds = vsyncTracker.medianSeconds;
         if (
           !timing ||
           timing.kind !== 'windows' ||
-          !checkNativeTimingEligibility(
-            timing,
+          !checkNativeTimingEligibility(timing, videoRate, vsyncSeconds)
+        ) {
+          // Proof evidence for the refusal: the shortest frame against the refresh interval used.
+          pcmProof('video-timing-uncertified', pcmGeneration, {
+            timingKind: timing?.kind ?? null,
+            minWindowSeconds:
+              timing?.kind === 'windows'
+                ? minWindowDuration(timing, videoRate)
+                : null,
+            vsyncSeconds,
             videoRate,
-            vsyncTracker.medianSeconds
-          )
-        )
+          });
           return { kind: 'native', reason: 'video timing cannot be certified' };
+        }
         checkedVideo.add(key);
       }
     }
