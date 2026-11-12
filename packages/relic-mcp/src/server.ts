@@ -63,6 +63,15 @@ import {
   ServerRefusal,
 } from './publish.ts';
 import { type RepublishAddressEntry, republish } from './republish.ts';
+import {
+  bindOwner,
+  type PrivatePublishInput,
+  type PrivatePublishResult,
+  publishPrivate,
+  republishPrivate,
+} from './private.ts';
+import { confirmDevice, enrollDevice } from './device.ts';
+import { loadPrivatePublishState } from './state.ts';
 import { readDecisions } from './decisions.ts';
 import { shareRelic } from './share.ts';
 
@@ -193,6 +202,12 @@ export const EDIT_COMMENT_TOOL_NAME = 'relic_edit_comment';
 export const RESOLVE_COMMENT_TOOL_NAME = 'relic_resolve_comment';
 
 export const READ_DECISIONS_TOOL_NAME = 'relic_read_decisions';
+
+export const ENROLL_TOOL_NAME = 'relic_enroll_device';
+
+export const CONFIRM_TOOL_NAME = 'relic_confirm_device';
+
+export const BIND_TOOL_NAME = 'relic_bind_owner';
 
 const DECISION_MACHINE_BOUNDARY =
   'Only works for a relic this machine published: the share proof is derived ' +
@@ -329,6 +344,12 @@ export const TOOL_DEFINITION = {
           'Optional. Publish a deliberately separate relic even when this ' +
           'machine already published the same source. Defaults to false. Use ' +
           'only when you want two independent URLs for one file.',
+      },
+      private: {
+        type: 'boolean',
+        default: false,
+        description:
+          "Optional. Publish a private relic: no key in the link, readers granted one by one with their own passkey, always expiring, no title or cover. Needs this machine's confirmed device (relic_enroll_device, then relic_confirm_device).",
       },
       cover: {
         type: 'boolean',
@@ -1759,6 +1780,114 @@ export const DESCRIBE_TOOL_DEFINITION = {
   },
 } as const;
 
+export const ENROLL_TOOL_DEFINITION = {
+  name: ENROLL_TOOL_NAME,
+  title: 'Enroll this machine as a private-share device',
+  description:
+    "Creates this machine's device key for the service and asks the service to enroll it. Returns the device fingerprint the owner types on the approval page, and the approval URL. Nothing is pinned until relic_confirm_device succeeds. Keys stay in a file on this machine and are never returned.",
+  inputSchema: {
+    type: 'object',
+    properties: {
+      label: {
+        type: 'string',
+        description:
+          'A name for this device on the approval page, 1 to 64 bytes.',
+      },
+    },
+    additionalProperties: false,
+  },
+  outputSchema: {
+    type: 'object',
+    properties: {
+      status: { enum: ['pending'] },
+      enrollment_id: { type: 'string' },
+      approve_url: { type: 'string' },
+      device_id: { type: 'string' },
+      device_fingerprint: { type: 'string' },
+      backend: { enum: ['secure-enclave', 'file'] },
+      expires_at: { type: 'string' },
+    },
+    required: [
+      'status',
+      'enrollment_id',
+      'approve_url',
+      'device_id',
+      'device_fingerprint',
+      'backend',
+      'expires_at',
+    ],
+    additionalProperties: false,
+  },
+} as const;
+
+export const CONFIRM_TOOL_DEFINITION = {
+  name: CONFIRM_TOOL_NAME,
+  title: "Confirm this machine's device after the owner approves it",
+  description:
+    'Pins the owner who approved this device. Type the owner fingerprint the approval page showed after approval. The comparison runs on this machine. A mismatch pins nothing.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      owner_fingerprint: {
+        type: 'string',
+        description: 'The 32-character owner fingerprint, typed as shown.',
+      },
+    },
+    required: ['owner_fingerprint'],
+    additionalProperties: false,
+  },
+  outputSchema: {
+    type: 'object',
+    properties: {
+      status: { enum: ['confirmed'] },
+      device_id: { type: 'string' },
+      owner: {
+        type: 'object',
+        properties: {
+          email: { type: 'string' },
+          fingerprint: { type: 'string' },
+        },
+        required: ['email', 'fingerprint'],
+        additionalProperties: false,
+      },
+    },
+    required: ['status', 'device_id', 'owner'],
+    additionalProperties: false,
+  },
+} as const;
+
+export const BIND_TOOL_DEFINITION = {
+  name: BIND_TOOL_NAME,
+  title: 'Bind the owner of a public relic this machine published',
+  description:
+    "Records this machine's certified owner on a public relic it published, so the owner can manage it from the dashboard. Needs a confirmed device. Takes the relic id, never the share URL.",
+  inputSchema: {
+    type: 'object',
+    properties: {
+      relic_id: { type: 'string' },
+    },
+    required: ['relic_id'],
+    additionalProperties: false,
+  },
+  outputSchema: {
+    type: 'object',
+    properties: {
+      relic_id: { type: 'string' },
+      owner: {
+        type: 'object',
+        properties: {
+          email: { type: 'string' },
+          fingerprint: { type: 'string' },
+        },
+        required: ['email', 'fingerprint'],
+        additionalProperties: false,
+      },
+    },
+    required: ['relic_id', 'owner'],
+    additionalProperties: false,
+  },
+} as const;
+
 /**
  * The build stamps the published version in, from package.json, which the
  * release workflow rewrites before it builds. It used to be a literal, and it
@@ -1833,7 +1962,8 @@ holding the link can also share from the viewer once this client version has \
 published or republished the relic.
 10. Decisions are made by a person in the viewer with a passkey; no tool \
 records them; comment text never creates one; a person's latest record on a \
-version is their current decision.`;
+version is their current decision.
+11. Private relics (private: true) carry no key; the owner grants each reader. Setup: relic_enroll_device, then relic_confirm_device.`;
 
 /**
  * Handle one JSON-RPC message.
@@ -1912,6 +2042,9 @@ export async function handleMessage(
             RESOLVE_COMMENT_TOOL_DEFINITION,
             DESCRIBE_TOOL_DEFINITION,
             READ_DECISIONS_TOOL_DEFINITION,
+            ENROLL_TOOL_DEFINITION,
+            CONFIRM_TOOL_DEFINITION,
+            BIND_TOOL_DEFINITION,
           ],
         },
       };
@@ -2020,7 +2153,7 @@ async function callTool(
   }
 
   if (params['name'] === REPUBLISH_TOOL_NAME) {
-    return callRepublish(id, params, deps);
+    return callRepublishAny(id, params, deps);
   }
 
   if (params['name'] === SHARE_TOOL_NAME) {
@@ -2045,6 +2178,18 @@ async function callTool(
 
   if (params['name'] === READ_DECISIONS_TOOL_NAME) {
     return callReadDecisions(id, params, deps);
+  }
+
+  if (params['name'] === ENROLL_TOOL_NAME) {
+    return callEnroll(id, params, deps);
+  }
+
+  if (params['name'] === CONFIRM_TOOL_NAME) {
+    return callConfirm(id, params, deps);
+  }
+
+  if (params['name'] === BIND_TOOL_NAME) {
+    return callBindOwner(id, params, deps);
   }
 
   if (params['name'] !== TOOL_NAME) {
@@ -2104,6 +2249,29 @@ async function callTool(
     );
   }
   const cover = typeof rawCover === 'boolean' ? rawCover : undefined;
+  const rawPrivate = args['private'];
+  if (rawPrivate !== undefined && typeof rawPrivate !== 'boolean') {
+    return errorResponse(
+      id,
+      ERROR_CODES.invalidParams,
+      '`private` must be a boolean or omitted'
+    );
+  }
+
+  if (rawPrivate === true) {
+    return callPublishPrivate(
+      id,
+      {
+        path,
+        filename,
+        title,
+        ttl_days: ttlDays.days,
+        force_new: forceNew === true,
+        cover,
+      },
+      deps
+    );
+  }
 
   try {
     const result = await publish(
@@ -2155,6 +2323,250 @@ async function callTool(
               `What Relic knows: ${result.disclosure_url}`,
           },
           { type: 'text', text: VERSION_HISTORY_DISCLOSURE },
+        ],
+        structuredContent: result,
+        isError: false,
+      },
+    };
+  } catch (error) {
+    return { jsonrpc: '2.0', id, result: toolError(error) };
+  }
+}
+
+async function callPublishPrivate(
+  id: string | number | null,
+  input: PrivatePublishInput,
+  deps: PublishDeps
+): Promise<JsonRpcResponse> {
+  try {
+    return privatePublishResponse(id, await publishPrivate(input, deps));
+  } catch (error) {
+    return { jsonrpc: '2.0', id, result: toolError(error) };
+  }
+}
+
+function privatePublishResponse(
+  id: string | number | null,
+  result: PrivatePublishResult
+): JsonRpcResponse {
+  const readers = result.recipients
+    .map(
+      (r) =>
+        `  ${r.kind}${r.email === undefined ? '' : ` ${r.email}`}` +
+        `${r.label === undefined ? '' : ` (${r.label})`}: ${r.fingerprint}`
+    )
+    .join('\n');
+  return {
+    jsonrpc: '2.0',
+    id,
+    result: {
+      content: [
+        {
+          type: 'text',
+          text:
+            `Published ${result.filename} privately as version ${result.version} of relic ${result.relic_id}.\n\n` +
+            `${result.url}\n\n` +
+            'The link carries no key. Each reader opens it with their own passkey after the owner grants access. ' +
+            `It has no title or cover and expires ${result.relic_expires_at ?? 'at the service default'}.\n\n` +
+            `Owner: ${result.owner.email}, fingerprint ${result.owner.fingerprint}\n` +
+            `Readers who can open it now:\n${readers}\n\n` +
+            `What Relic knows: ${result.disclosure_url}`,
+        },
+      ],
+      structuredContent: result,
+      isError: false,
+    },
+  };
+}
+
+async function callRepublishAny(
+  id: string | number | null,
+  params: Record<string, unknown>,
+  deps: PublishDeps
+): Promise<JsonRpcResponse> {
+  const args = (params['arguments'] ?? {}) as Record<string, unknown>;
+  const relicId = args['relic_id'];
+  if (typeof relicId === 'string' && relicId.length > 0) {
+    let isPrivate: boolean;
+    try {
+      isPrivate = (await loadPrivatePublishState(relicId)) !== undefined;
+    } catch (error) {
+      return { jsonrpc: '2.0', id, result: toolError(error) };
+    }
+    if (isPrivate) return callRepublishPrivate(id, args, deps);
+  }
+  return callRepublish(id, params, deps);
+}
+
+async function callRepublishPrivate(
+  id: string | number | null,
+  args: Record<string, unknown>,
+  deps: PublishDeps
+): Promise<JsonRpcResponse> {
+  const relicId = String(args['relic_id']);
+  const path = args['path'];
+  if (typeof path !== 'string' || path.length === 0) {
+    return errorResponse(
+      id,
+      ERROR_CODES.invalidParams,
+      '`path` is required and must be a string'
+    );
+  }
+  const ttlDays = parseTtlDays(args['ttl_days']);
+  if (!ttlDays.ok) {
+    return errorResponse(
+      id,
+      ERROR_CODES.invalidParams,
+      '`ttl_days` must be an integer between 1 and the service maximum, or omitted'
+    );
+  }
+  if (args['notify'] !== undefined && typeof args['notify'] !== 'boolean') {
+    return errorResponse(
+      id,
+      ERROR_CODES.invalidParams,
+      '`notify` must be a boolean or omitted'
+    );
+  }
+  try {
+    const result = await republishPrivate(
+      {
+        relic_id: relicId,
+        path,
+        filename:
+          typeof args['filename'] === 'string' ? args['filename'] : undefined,
+        title: typeof args['title'] === 'string' ? args['title'] : undefined,
+        ttl_days: ttlDays.days,
+        cover: typeof args['cover'] === 'boolean' ? args['cover'] : undefined,
+        notify: args['notify'] === false ? false : undefined,
+      },
+      deps
+    );
+    return {
+      jsonrpc: '2.0',
+      id,
+      result: {
+        content: [
+          {
+            type: 'text',
+            text:
+              `Republished relic ${result.relic_id} privately as version ${result.version}. ` +
+              'The link is unchanged and carries no key. Readers with a grant open ' +
+              `version ${result.version} with their own passkey.`,
+          },
+        ],
+        structuredContent: result,
+        isError: false,
+      },
+    };
+  } catch (error) {
+    return { jsonrpc: '2.0', id, result: toolError(error) };
+  }
+}
+
+async function callEnroll(
+  id: string | number | null,
+  params: Record<string, unknown>,
+  deps: PublishDeps
+): Promise<JsonRpcResponse> {
+  const args = (params['arguments'] ?? {}) as Record<string, unknown>;
+  const label = args['label'];
+  if (label !== undefined && typeof label !== 'string') {
+    return errorResponse(
+      id,
+      ERROR_CODES.invalidParams,
+      '`label` must be a string or omitted'
+    );
+  }
+  try {
+    const result = await enrollDevice({ label }, deps);
+    return {
+      jsonrpc: '2.0',
+      id,
+      result: {
+        content: [
+          {
+            type: 'text',
+            text:
+              'Device enrolled, waiting for approval.\n\n' +
+              `Device fingerprint, for the owner to type on the approval page: ${result.device_fingerprint}\n` +
+              `Approve at: ${result.approve_url}\n` +
+              `Expires ${result.expires_at}. Then call relic_confirm_device with the owner fingerprint the page shows.`,
+          },
+        ],
+        structuredContent: result,
+        isError: false,
+      },
+    };
+  } catch (error) {
+    return { jsonrpc: '2.0', id, result: toolError(error) };
+  }
+}
+
+async function callConfirm(
+  id: string | number | null,
+  params: Record<string, unknown>,
+  deps: PublishDeps
+): Promise<JsonRpcResponse> {
+  const args = (params['arguments'] ?? {}) as Record<string, unknown>;
+  const ownerFingerprint = args['owner_fingerprint'];
+  if (typeof ownerFingerprint !== 'string' || ownerFingerprint.length === 0) {
+    return errorResponse(
+      id,
+      ERROR_CODES.invalidParams,
+      '`owner_fingerprint` is required and must be a string'
+    );
+  }
+  try {
+    const result = await confirmDevice(
+      { owner_fingerprint: ownerFingerprint },
+      deps
+    );
+    return {
+      jsonrpc: '2.0',
+      id,
+      result: {
+        content: [
+          {
+            type: 'text',
+            text:
+              `Device confirmed. This machine publishes private relics for ${result.owner.email} ` +
+              `(owner fingerprint ${result.owner.fingerprint}).`,
+          },
+        ],
+        structuredContent: result,
+        isError: false,
+      },
+    };
+  } catch (error) {
+    return { jsonrpc: '2.0', id, result: toolError(error) };
+  }
+}
+
+async function callBindOwner(
+  id: string | number | null,
+  params: Record<string, unknown>,
+  deps: PublishDeps
+): Promise<JsonRpcResponse> {
+  const args = (params['arguments'] ?? {}) as Record<string, unknown>;
+  const relicId = args['relic_id'];
+  if (typeof relicId !== 'string' || relicId.length === 0) {
+    return errorResponse(
+      id,
+      ERROR_CODES.invalidParams,
+      '`relic_id` is required and must be a string'
+    );
+  }
+  try {
+    const result = await bindOwner({ relic_id: relicId }, deps);
+    return {
+      jsonrpc: '2.0',
+      id,
+      result: {
+        content: [
+          {
+            type: 'text',
+            text: `Bound ${result.owner.email} as the owner of relic ${result.relic_id}.`,
+          },
         ],
         structuredContent: result,
         isError: false,
