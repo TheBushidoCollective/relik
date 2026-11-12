@@ -556,8 +556,16 @@ export const otioProofTracePrelude = String.raw`(() => {
             if (message?.type === 'arm' && proofGate.control === 'late-arm') {
               proofGate.control = null;
               recordEvent('clock-late-arm-injected', null, message);
-              const delay = Math.max(0, ((message.f0 + 256) / context.sampleRate - context.currentTime) * 1000);
-              setTimeout(() => { recordEvent('clock-late-arm-submitted', null, {sequence:message.sequence, contextTime:context.currentTime}); send(message); }, delay);
+              // currentTime advances one render burst at a time, so a timer computed from it can fire
+              // before the frame is reached and the arm is then not late. Wait for the frame itself.
+              const lateFrame = message.f0 + 256;
+              const delay = Math.max(0, (lateFrame / context.sampleRate - context.currentTime) * 1000);
+              const submitLateArm = () => {
+                if (context.currentTime * context.sampleRate < lateFrame) { setTimeout(submitLateArm, 1); return; }
+                recordEvent('clock-late-arm-submitted', null, {sequence:message.sequence, contextTime:context.currentTime});
+                send(message);
+              };
+              setTimeout(submitLateArm, delay);
               return;
             }
             if (message?.type === 'install-bank' && proofGate.control && proofGate.control !== 'late-arm' && proofGate.control !== 'delay-ack') {
@@ -567,8 +575,14 @@ export const otioProofTracePrelude = String.raw`(() => {
               recordEvent('clock-bank-control-injected', null, {kind, descriptor:bank, requestId:message.requestId});
               if (kind === 'withhold') return;
               if (kind === 'late-install') {
-                const delay = Math.max(0, ((bank.startFrame - 256) / context.sampleRate - context.currentTime) * 1000);
-                setTimeout(() => { recordEvent('clock-bank-late-submitted', null, {requestId:message.requestId, contextTime:context.currentTime}); send(message); }, delay);
+                const lateFrame = bank.startFrame - 256;
+                const delay = Math.max(0, (lateFrame / context.sampleRate - context.currentTime) * 1000);
+                const submitLateBank = () => {
+                  if (context.currentTime * context.sampleRate < lateFrame) { setTimeout(submitLateBank, 1); return; }
+                  recordEvent('clock-bank-late-submitted', null, {requestId:message.requestId, contextTime:context.currentTime});
+                  send(message);
+                };
+                setTimeout(submitLateBank, delay);
                 return;
               }
               if (kind === 'stale-serial') {
