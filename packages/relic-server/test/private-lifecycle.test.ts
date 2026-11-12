@@ -1202,3 +1202,107 @@ describe('security review: server fixes', () => {
     expect((await store.getRelic(RELIC_ID))?.ownerIdentityId).toBeUndefined();
   });
 });
+
+/** An unowned public relic whose publish token is `token`. */
+function unownedPublicRelic(token: string, id: string = RELIC_ID) {
+  return relic({
+    id,
+    publishTokenHash: createHash('sha256').update(token).digest('hex'),
+  });
+}
+
+describe('owner bind on a public relic', () => {
+  test('binds an unowned public relic to the device owner, indexes it as public, and leaves its access alone', async () => {
+    const owner = await person('owner@example.com');
+    await registerIdentity(owner);
+    const device = await certifyDevice(owner);
+    const token = encodeBase64url(randomBytes(32));
+    const ownerId = owner.identityId as string;
+    await store.putRelic(unownedPublicRelic(token));
+
+    const bound = await ownerBind(device, {
+      relicId: RELIC_ID,
+      token,
+      ownerIdentityId: ownerId,
+    });
+    expect(bound.status).toBe(200);
+    expect(bound.body['owner']).toMatchObject({ email: owner.email });
+    const row = await store.getRelic(RELIC_ID);
+    expect(row?.ownerIdentityId).toBe(ownerId);
+    expect(row?.access).toBeUndefined();
+    expect(await store.listOwnedRelics(ownerId)).toEqual([
+      {
+        relicId: RELIC_ID,
+        ownerIdentityId: ownerId,
+        access: 'public',
+        at: now,
+      },
+    ]);
+
+    const dashboard = await send('/api/identity/relics', {
+      method: 'GET',
+      cookie: owner.cookie,
+    });
+    expect(dashboard.body['owned']).toEqual([
+      expect.objectContaining({ relic_id: RELIC_ID, access: 'public' }),
+    ]);
+  });
+
+  test('a bound public relic serves, refuses and accepts exactly as an unbound one, and no response names the owner', async () => {
+    const owner = await person('owner@example.com');
+    await registerIdentity(owner);
+    const device = await certifyDevice(owner);
+    const ownerId = owner.identityId as string;
+    const unboundToken = encodeBase64url(randomBytes(32));
+    const boundToken = encodeBase64url(randomBytes(32));
+    const unbound = RELIC_ID;
+    const bound = generateRelicId();
+    await store.putRelic(unownedPublicRelic(unboundToken, unbound));
+    await store.putRelic(unownedPublicRelic(boundToken, bound));
+    const first = await ownerBind(device, {
+      relicId: bound,
+      token: boundToken,
+      ownerIdentityId: ownerId,
+    });
+    expect(first.status).toBe(200);
+    const again = await ownerBind(device, {
+      relicId: bound,
+      token: boundToken,
+      ownerIdentityId: ownerId,
+    });
+    expect(again.status).toBe(409);
+    expect(again.body['code']).toBe('owner_exists');
+
+    // The same requests against each relic. Status, error code and the shape of
+    // the body must match, and no body may name the owner.
+    const runs = (id: string, token: string) => [
+      () => send(`/api/relics/${id}/mint`, post({ version: 1 })),
+      () => send(`/api/relics/${id}/access`, { method: 'GET' }),
+      () => send(`/api/relics/${id}/comments`, { method: 'GET' }),
+      () =>
+        send(
+          `/api/relics/${id}/republish`,
+          post({
+            publish_token: token,
+            renderer_class: 'markdown',
+            publishing_client: 'relic-test/1',
+            declared_size_bytes: 1,
+          })
+        ),
+    ];
+    const outcome = (r: { status: number; body: Record<string, unknown> }) => ({
+      status: r.status,
+      code: r.body['code'],
+      keys: Object.keys(r.body).sort(),
+    });
+    const plain: { status: number; body: Record<string, unknown> }[] = [];
+    for (const run of runs(unbound, unboundToken)) plain.push(await run());
+    const linked: { status: number; body: Record<string, unknown> }[] = [];
+    for (const run of runs(bound, boundToken)) linked.push(await run());
+
+    expect(linked.map(outcome)).toEqual(plain.map(outcome));
+    for (const response of linked) {
+      expect(JSON.stringify(response.body)).not.toContain(owner.email);
+    }
+  });
+});

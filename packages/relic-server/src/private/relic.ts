@@ -684,9 +684,11 @@ export async function recipientsState(
 }
 
 /**
- * Binds the owner of a private relic that has none (plan 4.7). A relic-mcp
- * client signs an `owner_bind` with a certified device, and the owner is that
- * device's owner identity. A relic that already has an owner is refused, so
+ * Binds an owner to a relic that has none (plan 4.7). A relic-mcp client signs
+ * an `owner_bind` with a certified device, and the owner is that device's owner
+ * identity. Public and private relics both take it. Only the owner link is
+ * written: the relic's access never changes, and every access check keys on
+ * `access`, not on the owner. A relic that already has an owner is refused, so
  * the binding happens once.
  */
 export async function bindOwner(
@@ -694,12 +696,6 @@ export async function bindOwner(
   input: { readonly relicId: string; readonly body: Record<string, unknown> }
 ): Promise<{ owner: PartyJSON }> {
   const row = await liveRelic(env, input.relicId);
-  if (row.access !== 'private') {
-    throw new ProblemError('private_policy_violation', {
-      policy_check: 'version',
-      detail: 'This relic is not a private relic.',
-    });
-  }
   if (!(await publishTokenOk(row, input.body['publish_token']))) {
     throw new ProblemError('invalid_publish_token');
   }
@@ -718,16 +714,12 @@ export async function bindOwner(
     if (current.ownerIdentityId !== undefined) {
       throw new ProblemError('owner_exists', { relic_id: row.id });
     }
-    return {
-      ...current,
-      access: 'private',
-      ownerIdentityId: owner.identityId,
-    };
+    return { ...current, ownerIdentityId: owner.identityId };
   });
   await env.store.putOwnedRelic({
     relicId: row.id,
     ownerIdentityId: owner.identityId,
-    access: 'private',
+    access: row.access === 'private' ? 'private' : 'public',
     at: env.now,
   });
   return { owner: partyJson(owner) };

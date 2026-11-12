@@ -499,7 +499,11 @@ export async function backfillWraps(
     if (wrap.relicId === undefined || !owned.has(wrap.relicId))
       throw new ProblemError('invalid_wrap');
     const row = await env.store.getRelic(wrap.relicId);
-    if (row === undefined || row.ownerIdentityId !== owner.identityId) {
+    if (
+      row === undefined ||
+      row.access !== 'private' ||
+      row.ownerIdentityId !== owner.identityId
+    ) {
       throw new ProblemError('invalid_wrap');
     }
     if (isDeleted(row, wrap.version)) throw new ProblemError('invalid_wrap');
@@ -602,7 +606,7 @@ export async function ownedAndShared(
     ).length;
     const item: Record<string, unknown> = {
       relic_id: row.id,
-      access: 'private',
+      access: row.access === 'private' ? 'private' : 'public',
       current_version: row.version,
       sealed_version: row.sealedVersion ?? null,
       expires_at: row.expiresAt === undefined ? null : iso(row.expiresAt),
