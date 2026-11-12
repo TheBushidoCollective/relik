@@ -510,7 +510,9 @@ describe('recovery designations against the real service (PS-05, PS-10)', () => 
         depsFor(SOURCE)
       )
     ).rejects.toMatchObject({ code: 'recipients_stale' });
-    expect((await app.store.getRelic(first.relic_id))?.version).toBe(2);
+    // The republish opens version 3 on the service before the client reads the
+    // roster, so version 3 exists unsealed. Nothing newer than 2 was sealed.
+    expect((await app.store.getRelic(first.relic_id))?.sealedVersion).toBe(2);
   });
 
   test('a designation stays in force across a later device revocation', async () => {
@@ -537,17 +539,14 @@ describe('recovery designations against the real service (PS-05, PS-10)', () => 
 });
 
 describe('relic_bind_owner against the real service (plan 4.7)', () => {
-  // Skipped until the owner route's success path lands on feat/private-shares--fixsrv.
-  // On this branch POST /api/relics/{id}/owner still answers its old always-refuse
-  // behaviour, so these cannot pass. Un-skip them after that branch merges.
-  test.skip('a public relic this machine published binds its owner', async () => {
+  test('a public relic this machine published binds its owner', async () => {
     const { owner } = await seedOwnerAndDevice();
     const published = await publish({ path: SOURCE_PATH }, depsFor());
     const bound = await bindOwner({ relic_id: published.relic_id }, depsFor());
     expect(bound.owner.email).toBe(owner.email);
   });
 
-  test.skip('a second owner bind for the same relic answers owner_exists', async () => {
+  test('a second owner bind for the same relic answers owner_exists', async () => {
     await seedOwnerAndDevice();
     const published = await publish({ path: SOURCE_PATH }, depsFor());
     await bindOwner({ relic_id: published.relic_id }, depsFor());
