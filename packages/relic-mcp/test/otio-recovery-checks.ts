@@ -355,6 +355,16 @@ export function siteBridgeGapInfeasibleAfterHold(
 ): string | null {
   if (!Number.isFinite(rate) || rate <= 0) return null;
 
+  // The trace must hold exactly one scheduled-pcm error, and it is the terminal refusal.
+  // Any other error, before or after the hold, means this is not the measured signature.
+  const errorAt: number[] = [];
+  events.forEach((entry, index) => {
+    if (isPcm(entry, 'error')) errorAt.push(index);
+  });
+  if (errorAt.length !== 1) return null;
+  const terminal = errorAt[0]!;
+  const code = entryValue(events[terminal])['code'];
+
   const consumptions: number[] = [];
   events.forEach((entry, index) => {
     if (
@@ -365,24 +375,27 @@ export function siteBridgeGapInfeasibleAfterHold(
   });
   if (consumptions.length !== 1) return null;
   const at = consumptions[0]!;
+  if (at >= terminal) return null;
   const consumed = entryValue(events[at]);
   const held = stampOf(consumed);
   const anchor = stampOf(consumed['anchor']);
   if (held === null || anchor === null) return null;
 
-  // (a) ordering: the marker names the anchor, and the held read follows it at once.
+  // (a) ordering: the marker names the anchor, and the held read follows it at once. That read
+  // is injected, reports the held stamp, and its native pair is the anchor itself (a re-read).
   if (
     !isBridgeMarker(events[at - 1], 'read') ||
     !sameStamp(stampOf(entryValue(events[at - 1])['lastAccepted']), anchor)
   )
     return null;
   const consumedRead = events[at + 1];
-  if (!isObservedRead(consumedRead)) return null;
+  if (!isObservedRead(consumedRead) || at + 1 >= terminal) return null;
   const consumedValue = entryValue(consumedRead);
   if (
     consumedValue['injected'] !== true ||
     consumedValue['site'] !== RECOVERY_BRIDGE_SITE ||
-    !sameStamp(stampOf(consumedValue['output']), held)
+    !sameStamp(stampOf(consumedValue['output']), held) ||
+    !sameStamp(stampOf(consumedValue['native']), anchor)
   )
     return null;
 
@@ -401,8 +414,9 @@ export function siteBridgeGapInfeasibleAfterHold(
   if (heldFrame === null || heldFrame + GAP_GUARD_FRAMES > gapUpper)
     return null;
 
-  // (d) every feasible bridge read after the consumption was injected, so only the hold is blamed.
-  for (let i = at + 1; i < events.length; i++) {
+  // (d) every feasible bridge read between the hold and the refusal was injected, so only the
+  // hold, never a product delay, is blamed.
+  for (let i = at + 1; i < terminal; i++) {
     if (!isObservedRead(events[i]) || !isBridgeMarker(events[i - 1], 'read'))
       continue;
     const frame = readFrame(events[i], rate);
@@ -414,18 +428,19 @@ export function siteBridgeGapInfeasibleAfterHold(
       return null;
   }
 
-  // A recovery that reached a successor would have selected one.
+  // Any selection, or any candidate refused after the hold, means recovery did not fail inside its gap.
   if (events.some((entry) => isPcm(entry, 'recovery-selection'))) return null;
+  if (
+    events.some(
+      (entry, index) => index > at && isPcm(entry, 'recovery-candidate-failed')
+    )
+  )
+    return null;
 
-  // The terminal refusal is the last scheduled-pcm error of the trace.
-  let terminal: TraceEntry | undefined;
-  for (const entry of events) if (isPcm(entry, 'error')) terminal = entry;
-  if (terminal === undefined) return null;
-  const code = entryValue(terminal)['code'];
-
-  // (e1) a native use whose preceding bridge read was not injected and is past the gap.
+  // (e1) a native use between the hold and the refusal, whose preceding bridge read was not
+  // injected, carries a fresh native stamp (performanceTime past the anchor), and sits past the gap.
   let nativeRead = false;
-  for (let u = at + 1; u < events.length; u++) {
+  for (let u = at + 1; u < terminal; u++) {
     if (!isBridgeMarker(events[u], 'use')) continue;
     let marker = -1;
     for (let r = u - 1; r > at; r--)
@@ -433,19 +448,29 @@ export function siteBridgeGapInfeasibleAfterHold(
         marker = r;
         break;
       }
-    if (marker < 0 || !isObservedRead(events[marker + 1])) continue;
+    if (marker < 0 || marker + 1 >= u || !isObservedRead(events[marker + 1]))
+      continue;
+    const read = entryValue(events[marker + 1]);
+    const native = stampOf(read['native']);
     const frame = readFrame(events[marker + 1], rate);
     if (
-      entryValue(events[marker + 1])['injected'] === false &&
+      read['injected'] === false &&
+      native !== null &&
+      native.performanceTime > anchor.performanceTime &&
       frame !== null &&
       frame + GAP_GUARD_FRAMES > gapUpper
     )
       nativeRead = true;
   }
 
-  // (e2) a fresh clock observation after the hold, feasible to use but past the gap.
+  // (e2) a fresh clock observation rejected between the hold and the refusal, feasible to use
+  // but past the gap.
   const rejected = events.some((entry, index) => {
-    if (index <= at || !isPcm(entry, 'recovery-clock-observation-rejected'))
+    if (
+      index <= at ||
+      index >= terminal ||
+      !isPcm(entry, 'recovery-clock-observation-rejected')
+    )
       return false;
     const value = entryValue(entry);
     const observation = value['observation'];

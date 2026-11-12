@@ -14598,8 +14598,23 @@ async function assertVideoReservationInvalidation(
 
 // Publishes the authored playback-boundaries document (fr30.webm video and mx_bed.wav
 // audio) for the cold-start scenario, using the same media copies as the boundary proof.
-async function publishColdBoundaryDocument(): Promise<string> {
-  const directory = join(scratch, 'cold-playback-boundaries.otiod');
+// The 44.1 kHz document carries a loopback-only PCM16 mx_bed converted from the 48 kHz source.
+// Scheduled admission refuses a WAV whose rate differs from the context's and falls back to
+// native compatibility, which never reads the output clock, so the 44.1 kHz cold run needs a
+// WAV at the context rate to exercise the scheduled path.
+function coldBoundaryDirectory(rate: 44100 | 48000): string {
+  return join(
+    scratch,
+    rate === 48000
+      ? 'cold-playback-boundaries.otiod'
+      : 'cold-playback-boundaries-44100.otiod'
+  );
+}
+
+async function publishColdBoundaryDocument(
+  rate: 44100 | 48000 = 48000
+): Promise<string> {
+  const directory = coldBoundaryDirectory(rate);
   const media = join(directory, 'media');
   await mkdir(media, { recursive: true });
   await cp(
@@ -14612,14 +14627,38 @@ async function publishColdBoundaryDocument(): Promise<string> {
     join(directory, 'content.otio')
   );
   await cp(join(decoderMediaDir, 'fr30.webm'), join(media, 'fr30.webm'));
-  for (const name of [
-    'plate_1001.png',
-    'plate_1002.png',
-    'mx_bed.wav',
-    'secondary_b.mp4',
-  ])
+  for (const name of ['plate_1001.png', 'plate_1002.png', 'secondary_b.mp4'])
     await cp(join(fixtureDir, 'media', name), join(media, name));
-  return publishLegacyDirectory(directory, 'OTIO legacy cold boundaries');
+  if (rate === 48000) {
+    await cp(
+      join(fixtureDir, 'media', 'mx_bed.wav'),
+      join(media, 'mx_bed.wav')
+    );
+  } else {
+    const converted = await runChild(
+      [
+        'ffmpeg',
+        '-v',
+        'error',
+        '-y',
+        '-i',
+        join(fixtureDir, 'media', 'mx_bed.wav'),
+        '-ar',
+        '44100',
+        '-acodec',
+        'pcm_s16le',
+        join(media, 'mx_bed.wav'),
+      ],
+      { timeoutMs: 30000 }
+    );
+    assert.equal(converted.exit, 0, converted.stderr);
+  }
+  return publishLegacyDirectory(
+    directory,
+    rate === 48000
+      ? 'OTIO legacy cold boundaries'
+      : 'OTIO legacy cold boundaries 44100'
+  );
 }
 
 // Independent references for the cold document, decoded by ffmpeg and never taken from
@@ -14630,11 +14669,13 @@ const AUTHORED_PCM_FRAMES = 4096;
 async function buildColdVideoOracle(
   rate: number,
   fps = 30,
-  mediaPath = join(decoderMediaDir, 'fr30.webm')
+  mediaPath = join(decoderMediaDir, 'fr30.webm'),
+  audioPath = join(fixtureDir, 'media', 'mx_bed.wav')
 ): Promise<{
   references: Uint8Array[];
   expectedIndex: number;
   audio: Float32Array;
+  audioSha256: string;
 }> {
   const frameCount = (36 * fps) / 30;
   const video = await runChild(
@@ -14708,7 +14749,7 @@ async function buildColdVideoOracle(
       '-v',
       'error',
       '-i',
-      join(fixtureDir, 'media', 'mx_bed.wav'),
+      audioPath,
       '-t',
       String(AUTHORED_PCM_FRAMES / rate),
       '-f',
@@ -14726,6 +14767,9 @@ async function buildColdVideoOracle(
     0,
     `reference audio decode failed: ${audioDecode.stderr}`
   );
+  const audioSha256 = createHash('sha256')
+    .update(audioDecode.stdout)
+    .digest('hex');
   const bytes = Uint8Array.from(audioDecode.stdout);
   const audio = new Float32Array(bytes.buffer.slice(0, bytes.byteLength));
   assert.ok(
@@ -14741,7 +14785,7 @@ async function buildColdVideoOracle(
       audio[2 * k + 1],
       'mx_bed reference is not mono; the unity-per-channel oracle does not apply'
     );
-  return { references, expectedIndex, audio };
+  return { references, expectedIndex, audio, audioSha256 };
 }
 
 // The 60 fps document is the boundary fixture with every 30 fps RationalTime rescaled to
@@ -16688,7 +16732,12 @@ async function runColdStartProof(
   assertOverlayMaskControls();
   assertPhaseBandControls();
   assertAuthoredPcmControls();
-  const videoOracle = await buildColdVideoOracle(rate);
+  const videoOracle = await buildColdVideoOracle(
+    rate,
+    30,
+    join(decoderMediaDir, 'fr30.webm'),
+    join(coldBoundaryDirectory(rate), 'media', 'mx_bed.wav')
+  );
   await assertScreencastDecodeControls(videoOracle.references);
   assert.ok(
     referenceIsAudible(videoOracle.audio, AUTHORED_PCM_FRAMES),
@@ -16783,13 +16832,19 @@ async function runColdStartProof(
       const rect = control.getBoundingClientRect();
       return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
     })()`);
-    const start = await isolated.evaluate<{ contextState: string }>(
-      `(async () => globalThis.__otioProofTrace.start())()`
-    );
+    const start = await isolated.evaluate<{
+      contextState: string;
+      sampleRate: number;
+    }>(`(async () => globalThis.__otioProofTrace.start())()`);
     assert.equal(
       start.contextState,
       'suspended',
       'cold-start context was not fresh and suspended before the click'
+    );
+    assert.equal(
+      start.sampleRate,
+      rate,
+      'cold-start context rate differs from the fixture rate'
     );
     await awaitPreplayVisualBaseline(isolated);
     const playEdge = await isolated.evaluate<{ timestamp: number }>(
@@ -16815,6 +16870,7 @@ async function runColdStartProof(
         playEdge,
         outcome,
         clockAudit: auditClockEvidence(outcome.trace),
+        fixtureHash: videoOracle.audioSha256,
       })
     );
     const playMs = playEdge.timestamp;
@@ -17229,7 +17285,7 @@ async function runScheduledPcmProof(
     directory,
     `OTIO legacy scheduled-pcm ${rate}`
   );
-  const coldUrl = await publishColdBoundaryDocument();
+  const coldUrl = await publishColdBoundaryDocument(rate);
   // Linux focus-only publish is asserted once, at the top of the composition stages.
   await runColdStartProof(coldUrl, sessionToken, rate);
   const browser = await openBrowser(url, sessionToken, {
@@ -20963,6 +21019,10 @@ async function runScheduledPcmProof(
       for (let attempt = 1; attempt <= attempts; attempt++) {
         const { provenance, fault } = await captureSiteControl(control);
         const events = fault.trace.events;
+        assert.ok(
+          !fault.trace.audioOverflow && !fault.trace.eventsOverflow,
+          `${control.label} capture overflowed`
+        );
         const evidence = control.recovery
           ? siteBridgeGapInfeasibleAfterHold(events, rate)
           : null;
@@ -20973,9 +21033,7 @@ async function runScheduledPcmProof(
             { provenance, capture: fault },
             control.label,
             fault.trace
-          ).catch((error: unknown) => {
-            if (!(error instanceof assert.AssertionError)) throw error;
-          });
+          );
           if (attempt < attempts) {
             console.log(
               `OTIO_SITE_RECOVERY_GAP_INFEASIBLE attempt=${attempt} ${evidence}`

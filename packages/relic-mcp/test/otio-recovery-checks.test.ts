@@ -368,7 +368,10 @@ const bridgeConsumed = (): BridgeEntry => ({
 const bridgeRead = (
   frame: number,
   injected: boolean,
-  output: Record<string, number>
+  output: Record<string, number>,
+  native: Record<string, number> | null = injected
+    ? BRIDGE_ANCHOR
+    : BRIDGE_NATIVE
 ): BridgeEntry => ({
   kind: 'audio-output-timestamp-observed',
   value: {
@@ -376,6 +379,7 @@ const bridgeRead = (
     site: injected ? 'recovery-bridge' : null,
     currentAfter: frameTime(frame),
     output,
+    native,
   },
 });
 const bridgeUse = (): BridgeEntry =>
@@ -603,4 +607,95 @@ test('site-bridge classifier refuses a rejection that is infeasible, feasible, o
 
 test('site-bridge classifier rejects a non-positive rate', () => {
   expect(siteBridgeGapInfeasibleAfterHold(bridgeSignature(), 0)).toBeNull();
+});
+
+test('site-bridge classifier requires the consumed native pair to be the anchor itself', () => {
+  const contextDrift = bridgeSignature();
+  contextDrift[3] = bridgeRead(boundary + 256, true, BRIDGE_HELD, {
+    contextTime: 10.5,
+    performanceTime: 1000,
+  });
+  expect(
+    siteBridgeGapInfeasibleAfterHold(contextDrift, BRIDGE_RATE)
+  ).toBeNull();
+  const performanceDrift = bridgeSignature();
+  performanceDrift[3] = bridgeRead(boundary + 256, true, BRIDGE_HELD, {
+    contextTime: 10,
+    performanceTime: 1000.5,
+  });
+  expect(
+    siteBridgeGapInfeasibleAfterHold(performanceDrift, BRIDGE_RATE)
+  ).toBeNull();
+  const missingNative = bridgeSignature();
+  missingNative[3] = bridgeRead(boundary + 256, true, BRIDGE_HELD, null);
+  expect(
+    siteBridgeGapInfeasibleAfterHold(missingNative, BRIDGE_RATE)
+  ).toBeNull();
+});
+
+test('site-bridge classifier requires a fresh, present native read for the handoff refusal', () => {
+  const stale = bridgeSignature();
+  stale[5] = bridgeRead(boundary + 512, false, BRIDGE_NATIVE, BRIDGE_ANCHOR);
+  expect(siteBridgeGapInfeasibleAfterHold(stale, BRIDGE_RATE)).toBeNull();
+  const earlier = bridgeSignature();
+  earlier[5] = bridgeRead(boundary + 512, false, BRIDGE_NATIVE, {
+    contextTime: 10.002,
+    performanceTime: 999,
+  });
+  expect(siteBridgeGapInfeasibleAfterHold(earlier, BRIDGE_RATE)).toBeNull();
+  const missing = bridgeSignature();
+  missing[5] = bridgeRead(boundary + 512, false, BRIDGE_NATIVE, null);
+  expect(siteBridgeGapInfeasibleAfterHold(missing, BRIDGE_RATE)).toBeNull();
+});
+
+test('site-bridge classifier refuses any scheduled-pcm error other than the single terminal refusal', () => {
+  const intervening = bridgeSignature();
+  intervening.splice(4, 0, bridgeError('underflow'));
+  expect(siteBridgeGapInfeasibleAfterHold(intervening, BRIDGE_RATE)).toBeNull();
+  const earlier = [bridgeError('earlier'), ...bridgeSignature()];
+  expect(siteBridgeGapInfeasibleAfterHold(earlier, BRIDGE_RATE)).toBeNull();
+});
+
+test('site-bridge classifier requires the refusal evidence to precede the terminal error', () => {
+  const useAfterError = bridgeSignature();
+  const [terminalError] = useAfterError.splice(7, 1);
+  useAfterError.splice(6, 0, terminalError!);
+  expect(
+    siteBridgeGapInfeasibleAfterHold(useAfterError, BRIDGE_RATE)
+  ).toBeNull();
+  const rejection = bridgeRejection('sub-resolution');
+  const reordered = [
+    rejection[0]!,
+    rejection[1]!,
+    rejection[2]!,
+    rejection[3]!,
+    rejection[5]!,
+    rejection[4]!,
+  ];
+  expect(siteBridgeGapInfeasibleAfterHold(reordered, BRIDGE_RATE)).toBeNull();
+});
+
+test('site-bridge classifier ignores a native use that precedes the hold', () => {
+  const early: BridgeEntry[] = [
+    bridgeClosure(),
+    bridgeRead(boundary + 512, false, BRIDGE_NATIVE),
+    bridgeUse(),
+    ...bridgeSignature().slice(1, 4),
+    bridgeError(BRIDGE_HANDOFF),
+  ];
+  expect(siteBridgeGapInfeasibleAfterHold(early, BRIDGE_RATE)).toBeNull();
+});
+
+test('site-bridge classifier refuses a candidate refused after the hold', () => {
+  const candidate = bridgeSignature();
+  candidate.splice(
+    5,
+    0,
+    bridgePcm({
+      event: 'recovery-candidate-failed',
+      code: 'descriptor-budget-exhausted',
+      boundaryFrame: boundary,
+    })
+  );
+  expect(siteBridgeGapInfeasibleAfterHold(candidate, BRIDGE_RATE)).toBeNull();
 });
