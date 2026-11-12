@@ -10690,6 +10690,12 @@ export async function boot(
   }
   if (viewMarker === 'dashboard') {
     await renderDashboard(deps);
+    // The private-share sections are a lazy chunk. A signed-out visitor never
+    // loads it, and the module makes no identity request for them.
+    if (root !== null) {
+      const { mountPrivateDashboard } = await import('./private/reader.ts');
+      await mountPrivateDashboard(root, deps);
+    }
     return;
   }
 

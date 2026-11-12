@@ -1,14 +1,15 @@
 /**
- * The reader's protocol, against real WebCrypto and a service stand-in that
+ * The private reader, against real WebCrypto and a service stand-in that
  * serves real seals, wraps and identity bundles.
  *
  * The transport and the authenticator are fakes; everything either side checks
- * is the real code. The fake authenticator answers each assertion with a PRF
- * output the test chose, and the fake service records every request body so
- * the test can prove no key material went out in one.
+ * is the real code. The DOM is a small stand-in that parses the reader's own
+ * template and answers the selectors the reader uses. Every state in plan 4.15
+ * is driven through its real controls, and the fake service records every
+ * request body so the tests can prove no key material went out in one.
  */
 
-import { describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 
 import { encryptRelic } from '@relic/format';
 import {
@@ -16,7 +17,9 @@ import {
   deriveKek,
   encodeBase64url,
   encryptIdentityBundle,
+  formatFingerprint,
   generateIdentityKeys,
+  identityFingerprint,
   identityIdOf,
   type IdentityKeys,
   kemKeyIdOf,
@@ -32,15 +35,21 @@ import {
   RecipientMissingError,
   SealMismatchError,
 } from '../src/private/open.ts';
+import {
+  mountPrivateDashboard,
+  mountPrivateReader,
+} from '../src/private/reader.ts';
 import { loadIdentityState, unlock } from '../src/private/keys.ts';
 import { requestAccess } from '../src/private/request.ts';
 import type { CredentialsLike } from '../src/passkey-common.ts';
-import type { ViewerDeps } from '../src/viewer.ts';
+import type { DeadView, ReadyView, ViewerDeps } from '../src/viewer.ts';
 
 const ORIGIN = 'https://relik.test';
 const FILES = 'https://files.test';
+const USERCONTENT = 'https://usercontent.test';
 const NOW = Date.UTC(2026, 10, 11);
 const KEY_BYTES = 16;
+const READER_EMAIL = 'ada@example.com';
 
 /** A route handler: the request body in, the response out. */
 type Handler = (body: unknown) => Response | Promise<Response>;
@@ -76,10 +85,19 @@ function hex(bytes: Uint8Array): string {
 }
 
 async function sha256Hex(bytes: Uint8Array): Promise<string> {
-  return hex(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)));
+  return hex(
+    new Uint8Array(await crypto.subtle.digest('SHA-256', new Uint8Array(bytes)))
+  );
 }
 
-/** The credential the fake authenticator returns for one ceremony. */
+/** Relic ids are 26 characters from the id alphabet; digits serve. */
+let relicCounter = 100;
+function freshRelicId(): string {
+  relicCounter += 1;
+  return String(relicCounter).padStart(26, '0');
+}
+
+/** The credential the fake authenticator returns for one assertion. */
 function assertion(rawId: Uint8Array, prf: Uint8Array | undefined): Credential {
   return {
     id: encodeBase64url(rawId),
@@ -96,13 +114,29 @@ function assertion(rawId: Uint8Array, prf: Uint8Array | undefined): Credential {
   } as unknown as Credential;
 }
 
-/** The stand-in authenticator: every assertion answers with `credential()`. */
-function authenticator(credential: () => Credential): CredentialsLike {
+/** A registration the fake authenticator makes for the replacement passkey. */
+function registration(): Credential {
+  const rawId = randomBytes(32);
+  return {
+    id: encodeBase64url(rawId),
+    rawId: buffer(rawId),
+    type: 'public-key',
+    response: {
+      clientDataJSON: buffer(bytesOf('{"type":"webauthn.create"}')),
+      attestationObject: buffer(bytesOf('attestation')),
+      getTransports: () => ['internal'],
+    },
+  } as unknown as Credential;
+}
+
+/** The stand-in authenticator: assertions answer with `credential()`. */
+function authenticator(
+  credential: () => Credential,
+  create: () => Credential = registration
+): CredentialsLike {
   return {
     get: async () => credential(),
-    create: async () => {
-      throw new Error('no creation in this test');
-    },
+    create: async () => create(),
   };
 }
 
@@ -126,18 +160,23 @@ function service(routes: Record<string, Handler>): {
     if (handler === undefined) return new Response('no route', { status: 404 });
     return handler(text === '' ? undefined : JSON.parse(text));
   };
-  return { fetch, seen };
+  return { fetch: Object.assign(fetch, { preconnect: () => {} }), seen };
 }
 
 function depsFor(
   fetch: typeof globalThis.fetch,
-  credentials: CredentialsLike
+  credentials: CredentialsLike,
+  keyVault: ViewerDeps['keyVault'] = {
+    remember() {},
+    recall: () => undefined,
+    forget() {},
+  }
 ): ViewerDeps {
   return {
     serviceOrigin: ORIGIN,
     fetch,
     locationHref: `${ORIGIN}/r`,
-    keyVault: { remember() {}, recall: () => undefined, forget() {} },
+    keyVault,
     now: () => NOW,
     credentials,
   };
@@ -152,6 +191,10 @@ interface Sealed {
   readonly relicId: string;
   readonly plaintext: Uint8Array;
   readonly key: Uint8Array;
+  readonly owner: IdentityKeys;
+  readonly ownerId: string;
+  readonly reader: IdentityKeys;
+  readonly readerId: string;
   readonly readerPasskey: ReaderPasskey;
   readonly routes: Record<string, Handler>;
   readonly digest: string;
@@ -162,6 +205,7 @@ interface WorldOptions {
   readonly omitRecipient?: boolean;
   readonly tamperSeal?: boolean;
   readonly tamperCiphertext?: boolean;
+  readonly role?: string;
 }
 
 /**
@@ -212,7 +256,7 @@ async function sealedWorld(
         await crypto.subtle.sign(
           { name: 'ECDSA', hash: 'SHA-256' },
           owner.sig.privateKey,
-          message
+          new Uint8Array(message)
         )
       ),
     statementBytes('seal', sealStatement)
@@ -263,7 +307,7 @@ async function sealedWorld(
   const identityState = {
     identity: {
       identity_id: readerId,
-      email: 'ada@example.com',
+      email: READER_EMAIL,
       kem_public_key: encodeBase64url(reader.kemPublicKey),
       sig_public_key: encodeBase64url(reader.sigPublicKey),
       created_at: '2026-11-02T00:00:00Z',
@@ -285,8 +329,14 @@ async function sealedWorld(
   };
 
   const routes: Record<string, Handler> = {
+    'GET /api/auth/session': () => json({ email: READER_EMAIL }),
+    'GET /api/identity/relics?coverage=1': () =>
+      json({ owned: [], shared_with_me: [] }),
+    'GET /api/devices': () => json({ devices: [] }),
     'GET /api/identity': () => json(identityState),
     'POST /api/attest/nonce': () => json(nonceResponse(readerPasskey.rawId)),
+    [`GET /api/relics/${relicId}/access`]: () =>
+      json(accessBody(relicId, options.role ?? 'grantee', ownerDigest(owner))),
     [`POST /api/relics/${relicId}/requests`]: () =>
       json({ status: 'pending', requested_at: '2026-11-11T00:00:00Z' }, 201),
     [`POST /api/relics/${relicId}/versions/1/key`]: () => json(keyResponse),
@@ -301,9 +351,44 @@ async function sealedWorld(
         version: 1,
         current_version: 1,
       }),
-    [`GET ${FILES}/ct/${relicId}`]: () => new Response(served),
+    [`GET ${FILES}/ct/${relicId}`]: () => new Response(new Uint8Array(served)),
   };
-  return { relicId, plaintext, key, readerPasskey, routes, digest };
+  return {
+    relicId,
+    plaintext,
+    key,
+    owner,
+    ownerId,
+    reader,
+    readerId,
+    readerPasskey,
+    routes,
+    digest,
+  };
+}
+
+/** A short fingerprint of the owner's keys, for the access body's owner party. */
+function ownerDigest(owner: IdentityKeys): string {
+  return encodeBase64url(owner.kemPublicKey.slice(0, 8));
+}
+
+/** The access the service reports for the reader. */
+function accessBody(relicId: string, role: string, _owner: string) {
+  return {
+    access: 'private',
+    relic_id: relicId,
+    current_version: 1,
+    sealed_version: 1,
+    expires_at: '2026-12-11T12:00:00Z',
+    owner: { email: 'sam@example.com', identity: null },
+    recovery: null,
+    me: {
+      role,
+      identity: null,
+      readable_versions: role === 'grantee' || role === 'owner' ? [1] : [],
+      deleted_versions: [],
+    },
+  };
 }
 
 /** The nonce the service issues, naming the passkey the reader asserts with. */
@@ -320,13 +405,31 @@ function nonceResponse(rawId: Uint8Array) {
   };
 }
 
+/** Creation options for the replacement passkey, as the service issues them. */
+function creationOptions() {
+  return {
+    public_key: {
+      challenge: encodeBase64url(randomBytes(32)),
+      rp: { id: 'relik.test', name: 'Relic' },
+      user: {
+        id: encodeBase64url(randomBytes(16)),
+        name: READER_EMAIL,
+        displayName: READER_EMAIL,
+      },
+      pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
+      excludeCredentials: [],
+      extensions: { prf: {} },
+    },
+  };
+}
+
 /** Deps for the reader of one sealed world, answering with that reader's passkey. */
-function readerDeps(world: Sealed) {
+function readerDeps(world: Sealed, keyVault?: ViewerDeps['keyVault']) {
   const { fetch, seen } = service(world.routes);
   const credentials = authenticator(() =>
     assertion(world.readerPasskey.rawId, world.readerPasskey.prf)
   );
-  return { deps: depsFor(fetch, credentials), seen };
+  return { deps: depsFor(fetch, credentials, keyVault), seen };
 }
 
 /** Every key and every string value a body carries, for the secrecy checks. */
@@ -345,9 +448,466 @@ function fieldsOf(
   }
 }
 
+/* ---------- a stand-in DOM, for the reader's template and controls ---------- */
+
+const VOID_TAGS: Record<string, true> = {
+  input: true,
+  br: true,
+  img: true,
+  hr: true,
+  meta: true,
+  link: true,
+};
+
+class TextNode {
+  parentNode: El | null = null;
+  constructor(readonly data: string) {}
+  get textContent(): string {
+    return this.data;
+  }
+}
+
+class FakeEvent {
+  defaultPrevented = false;
+  constructor(
+    readonly type: string,
+    readonly target: El
+  ) {}
+  preventDefault(): void {
+    this.defaultPrevented = true;
+  }
+}
+
+type Content = El | TextNode | string;
+
+function toNode(content: Content): El | TextNode {
+  return typeof content === 'string' ? new TextNode(content) : content;
+}
+
+function detach(node: El | TextNode): void {
+  const parent = node.parentNode;
+  if (parent === null) return;
+  parent.childNodes.splice(parent.childNodes.indexOf(node), 1);
+  node.parentNode = null;
+}
+
+interface Compound {
+  readonly tag?: string;
+  readonly id?: string;
+  readonly classes: readonly string[];
+  readonly attrs: readonly { readonly name: string; readonly value?: string }[];
+}
+
+interface Step {
+  readonly combinator: ' ' | '>';
+  readonly compound: Compound;
+}
+
+function parseCompound(text: string): Compound {
+  const tag = /^[a-zA-Z][\w-]*/.exec(text)?.[0];
+  const rest = tag === undefined ? text : text.slice(tag.length);
+  let id: string | undefined;
+  const classes: string[] = [];
+  const attrs: { name: string; value?: string }[] = [];
+  for (const match of rest.matchAll(
+    /#([\w-]+)|\.([\w-]+)|\[([\w-]+)(?:="([^"]*)")?\]/g
+  )) {
+    if (match[1] !== undefined) id = match[1];
+    else if (match[2] !== undefined) classes.push(match[2]);
+    else if (match[3] !== undefined) {
+      attrs.push(
+        match[4] === undefined
+          ? { name: match[3] }
+          : { name: match[3], value: match[4] }
+      );
+    }
+  }
+  return {
+    ...(tag === undefined ? {} : { tag: tag.toLowerCase() }),
+    ...(id === undefined ? {} : { id }),
+    classes,
+    attrs,
+  };
+}
+
+/** Compound selectors joined by descendant or child combinators, with `:scope`. */
+function parseSelector(selector: string): Step[] {
+  let text = selector.trim();
+  if (text.startsWith(':scope')) text = text.slice(':scope'.length).trim();
+  const steps: Step[] = [];
+  let combinator: ' ' | '>' = ' ';
+  for (const token of text.split(/\s+/).filter(Boolean)) {
+    if (token === '>') {
+      combinator = '>';
+      continue;
+    }
+    steps.push({ combinator, compound: parseCompound(token) });
+    combinator = ' ';
+  }
+  return steps;
+}
+
+function matchesCompound(element: El, compound: Compound): boolean {
+  if (
+    compound.tag !== undefined &&
+    element.tagName.toLowerCase() !== compound.tag
+  ) {
+    return false;
+  }
+  if (compound.id !== undefined && element.id !== compound.id) return false;
+  const classes = element.className.split(/\s+/).filter(Boolean);
+  if (!compound.classes.every((name) => classes.includes(name))) return false;
+  return compound.attrs.every(
+    (attr) =>
+      element.attrs.has(attr.name) &&
+      (attr.value === undefined || element.attrs.get(attr.name) === attr.value)
+  );
+}
+
+function isWithin(element: El, root: El): boolean {
+  for (let node = element.parentNode; node !== null; node = node.parentNode) {
+    if (node === root) return true;
+  }
+  return false;
+}
+
+function matchesAt(
+  element: El,
+  steps: readonly Step[],
+  index: number,
+  root: El
+): boolean {
+  const step = steps[index];
+  if (step === undefined || !matchesCompound(element, step.compound)) {
+    return false;
+  }
+  if (index === 0) {
+    return step.combinator === '>'
+      ? element.parentNode === root
+      : isWithin(element, root);
+  }
+  if (step.combinator === '>') {
+    return (
+      element.parentNode !== null &&
+      matchesAt(element.parentNode, steps, index - 1, root)
+    );
+  }
+  for (let node = element.parentNode; node !== null; node = node.parentNode) {
+    if (matchesAt(node, steps, index - 1, root)) return true;
+  }
+  return false;
+}
+
+class El {
+  readonly tagName: string;
+  readonly attrs = new Map<string, string>();
+  readonly childNodes: (El | TextNode)[] = [];
+  parentNode: El | null = null;
+  value = '';
+  private readonly listeners = new Map<
+    string,
+    ((event: FakeEvent) => void)[]
+  >();
+
+  constructor(tag: string) {
+    this.tagName = tag.toUpperCase();
+  }
+
+  get id(): string {
+    return this.attrs.get('id') ?? '';
+  }
+  set id(value: string) {
+    this.attrs.set('id', value);
+  }
+  get className(): string {
+    return this.attrs.get('class') ?? '';
+  }
+  set className(value: string) {
+    this.attrs.set('class', value);
+  }
+  get hidden(): boolean {
+    return this.attrs.has('hidden');
+  }
+  set hidden(value: boolean) {
+    if (value) this.attrs.set('hidden', '');
+    else this.attrs.delete('hidden');
+  }
+  get disabled(): boolean {
+    return this.attrs.has('disabled');
+  }
+  set disabled(value: boolean) {
+    if (value) this.attrs.set('disabled', '');
+    else this.attrs.delete('disabled');
+  }
+  get dataset(): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const [name, value] of this.attrs) {
+      if (!name.startsWith('data-')) continue;
+      out[
+        name
+          .slice('data-'.length)
+          .replace(/-([a-z])/g, (_, letter: string) => letter.toUpperCase())
+      ] = value;
+    }
+    return out;
+  }
+  get children(): El[] {
+    return this.childNodes.filter((node): node is El => node instanceof El);
+  }
+  get textContent(): string {
+    return this.childNodes.map((node) => node.textContent).join('');
+  }
+  set textContent(value: string) {
+    this.replaceChildren(value);
+  }
+  get innerHTML(): string {
+    return '';
+  }
+  set innerHTML(html: string) {
+    this.replaceChildren();
+    parseInto(this, html);
+  }
+
+  setAttribute(name: string, value: string): void {
+    this.attrs.set(name, value);
+  }
+  getAttribute(name: string): string | null {
+    return this.attrs.get(name) ?? null;
+  }
+  removeAttribute(name: string): void {
+    this.attrs.delete(name);
+  }
+  append(...nodes: Content[]): void {
+    for (const node of nodes.map(toNode)) {
+      detach(node);
+      node.parentNode = this;
+      this.childNodes.push(node);
+    }
+  }
+  prepend(...nodes: Content[]): void {
+    const created = nodes.map(toNode);
+    for (const node of created) {
+      detach(node);
+      node.parentNode = this;
+    }
+    this.childNodes.unshift(...created);
+  }
+  replaceChildren(...nodes: Content[]): void {
+    for (const child of this.childNodes) child.parentNode = null;
+    this.childNodes.length = 0;
+    this.append(...nodes);
+  }
+  remove(): void {
+    detach(this);
+  }
+  focus(): void {}
+  hasAttribute(name: string): boolean {
+    return this.attrs.has(name);
+  }
+  /** The class list, backed by the class attribute. */
+  get classList(): {
+    add(...names: string[]): void;
+    remove(...names: string[]): void;
+    toggle(name: string, force?: boolean): boolean;
+    contains(name: string): boolean;
+  } {
+    const names = (): string[] => this.className.split(/\s+/).filter(Boolean);
+    const write = (list: string[]): void => {
+      this.className = list.join(' ');
+    };
+    return {
+      add: (...add) => write([...new Set([...names(), ...add])]),
+      remove: (...remove) =>
+        write(names().filter((name) => !remove.includes(name))),
+      toggle: (name, force) => {
+        const present = names().includes(name);
+        const want = force ?? !present;
+        write(
+          want
+            ? [...new Set([...names(), name])]
+            : names().filter((existing) => existing !== name)
+        );
+        return want;
+      },
+      contains: (name) => names().includes(name),
+    };
+  }
+  /** A dialog's open state, as the attribute the browser reflects. */
+  showModal(): void {
+    this.attrs.set('open', '');
+  }
+  close(): void {
+    this.attrs.delete('open');
+  }
+  removeEventListener(): void {}
+
+  addEventListener(type: string, listener: (event: FakeEvent) => void): void {
+    const list = this.listeners.get(type) ?? [];
+    list.push(listener);
+    this.listeners.set(type, list);
+  }
+  /** Fires an event at this element, as a user action would. */
+  dispatch(type: string): void {
+    const event = new FakeEvent(type, this);
+    for (const listener of this.listeners.get(type) ?? []) listener(event);
+  }
+
+  querySelectorAll(selector: string): El[] {
+    const steps = parseSelector(selector);
+    const last = steps.length - 1;
+    const found: El[] = [];
+    const visit = (node: El): void => {
+      for (const child of node.children) {
+        if (matchesAt(child, steps, last, this)) found.push(child);
+        visit(child);
+      }
+    };
+    visit(this);
+    return found;
+  }
+  querySelector(selector: string): El | null {
+    return this.querySelectorAll(selector)[0] ?? null;
+  }
+}
+
+/** Parses the reader's markup: elements, attributes and text, nothing more. */
+function parseInto(root: El, html: string): void {
+  const open: El[] = [root];
+  for (const token of html.split(/(<[^>]+>)/)) {
+    if (token === '') continue;
+    const top = open[open.length - 1];
+    if (top === undefined) break;
+    if (token.startsWith('</')) {
+      const name = token.slice(2, -1).trim().toLowerCase();
+      for (let index = open.length - 1; index > 0; index -= 1) {
+        const candidate = open[index];
+        if (candidate?.tagName.toLowerCase() === name) {
+          open.length = index;
+          break;
+        }
+      }
+      continue;
+    }
+    if (token.startsWith('<')) {
+      const match = /^<([a-zA-Z][\w-]*)([^>]*?)(\/?)>$/.exec(token);
+      if (match === null) throw new Error(`unparsed tag ${token}`);
+      const name = match[1] ?? '';
+      const element = new El(name);
+      for (const attr of (match[2] ?? '').matchAll(
+        /([^\s=/]+)(?:="([^"]*)")?/g
+      )) {
+        element.attrs.set(attr[1] ?? '', attr[2] ?? '');
+      }
+      top.append(element);
+      if (match[3] !== '/' && VOID_TAGS[name.toLowerCase()] === undefined) {
+        open.push(element);
+      }
+      continue;
+    }
+    top.append(token);
+  }
+}
+
+/** Installs the stand-in document for one test, and returns its body. */
+function installDocument(): El {
+  const body = new El('body');
+  Object.defineProperty(globalThis, 'document', {
+    configurable: true,
+    value: {
+      createElement: (tag: string) => new El(tag),
+      createElementNS: (_namespace: string, tag: string) => new El(tag),
+      createTextNode: (text: string) => new TextNode(text),
+      body,
+    },
+  });
+  return body;
+}
+
+// Async WebCrypto completes off the event loop and emits no event the reader
+// could be awaited on, so a yield to the loop is the only signal available.
+// This is the one real-time wait in these tests, named as the exception.
+async function until(condition: () => boolean, label: string): Promise<void> {
+  for (let attempt = 0; attempt < 400; attempt += 1) {
+    if (condition()) return;
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+  throw new Error(`timed out waiting for ${label}`);
+}
+
+interface Mounted {
+  readonly root: El;
+  readonly views: ReadyView[];
+  readonly dead: DeadView[];
+}
+
+/** Mounts the reader into a fresh root and waits for its first state. */
+async function mountReader(
+  deps: ViewerDeps,
+  relicId: string
+): Promise<Mounted> {
+  const root = new El('main');
+  const views: ReadyView[] = [];
+  const dead: DeadView[] = [];
+  await mountPrivateReader({
+    root: root as unknown as HTMLElement,
+    relicId,
+    usercontentOrigin: USERCONTENT,
+    deps,
+    renderReady: (view) => {
+      views.push(view);
+      const bar = new El('header');
+      bar.className = 'bar';
+      root.append(bar);
+    },
+    renderDead: (view) => {
+      dead.push(view);
+    },
+  });
+  return { root, views, dead };
+}
+
+/** The stage the reader is showing, from its own state attribute. */
+function stateOf(root: El): string | undefined {
+  return root.querySelector('#relic-private')?.attrs.get('data-private-state');
+}
+
+function stageOf(root: El, name: string): El {
+  const stage = root.querySelector(`#relic-private [data-for="${name}"]`);
+  if (stage === null) throw new Error(`no stage ${name}`);
+  return stage;
+}
+
+function visibleStages(root: El): string[] {
+  return (root.querySelectorAll('#relic-private > [data-for]') ?? [])
+    .filter((stage) => !stage.hidden)
+    .map((stage) => stage.dataset['for'] ?? '');
+}
+
+function press(root: El, selector: string): void {
+  const control = root.querySelector(selector);
+  if (control === null) throw new Error(`no control ${selector}`);
+  control.dispatch('click');
+}
+
+/** Reads a fingerprint's groups, one per span, as the reader laid them out. */
+function groupsOf(element: El): string[] {
+  return element.children.map((span) => span.textContent);
+}
+
+let storageWrites: string[] = [];
+
+beforeEach(() => {
+  installDocument();
+  storageWrites = [];
+});
+
+afterEach(() => {
+  Reflect.deleteProperty(globalThis, 'document');
+});
+
 describe('the private reader opens a sealed version', () => {
   test('unlocks with one passkey tap and decrypts the exact content', async () => {
-    const world = await sealedWorld('00000000000000000000000001');
+    const world = await sealedWorld(freshRelicId());
     const { deps } = readerDeps(world);
 
     const identity = await unlock(deps, await loadIdentityState(deps));
@@ -363,7 +923,7 @@ describe('the private reader opens a sealed version', () => {
   });
 
   test('the key fetched for the reader is the one that sealed the version', async () => {
-    const world = await sealedWorld('00000000000000000000000002');
+    const world = await sealedWorld(freshRelicId());
     const { deps } = readerDeps(world);
     const identity = await unlock(deps, await loadIdentityState(deps));
 
@@ -375,7 +935,7 @@ describe('the private reader opens a sealed version', () => {
 
 describe('every request in the private flows is free of key material', () => {
   test('no body carries prf results, extension results or a key encoding', async () => {
-    const world = await sealedWorld('00000000000000000000000003');
+    const world = await sealedWorld(freshRelicId());
     const { deps, seen } = readerDeps(world);
 
     const identity = await unlock(deps, await loadIdentityState(deps));
@@ -406,9 +966,7 @@ describe('every request in the private flows is free of key material', () => {
 
 describe('a version that does not verify is refused', () => {
   test('a tampered seal signature refuses before any content is decrypted', async () => {
-    const world = await sealedWorld('00000000000000000000000004', {
-      tamperSeal: true,
-    });
+    const world = await sealedWorld(freshRelicId(), { tamperSeal: true });
     const { deps } = readerDeps(world);
     const identity = await unlock(deps, await loadIdentityState(deps));
 
@@ -418,9 +976,7 @@ describe('a version that does not verify is refused', () => {
   });
 
   test('a ciphertext whose digest differs from the seal is refused', async () => {
-    const world = await sealedWorld('00000000000000000000000005', {
-      tamperCiphertext: true,
-    });
+    const world = await sealedWorld(freshRelicId(), { tamperCiphertext: true });
     const { deps } = readerDeps(world);
     const identity = await unlock(deps, await loadIdentityState(deps));
 
@@ -430,9 +986,7 @@ describe('a version that does not verify is refused', () => {
   });
 
   test('a seal that does not name this reader is refused as a missing recipient', async () => {
-    const world = await sealedWorld('00000000000000000000000006', {
-      omitRecipient: true,
-    });
+    const world = await sealedWorld(freshRelicId(), { omitRecipient: true });
     const { deps } = readerDeps(world);
     const identity = await unlock(deps, await loadIdentityState(deps));
 
@@ -442,7 +996,7 @@ describe('a version that does not verify is refused', () => {
   });
 
   test('an owner whose key differs from the pinned one is refused', async () => {
-    const relicId = '00000000000000000000000007';
+    const relicId = freshRelicId();
     const first = await sealedWorld(relicId);
     const firstReader = readerDeps(first);
     const identity = await unlock(
@@ -476,7 +1030,7 @@ describe('setup refuses a passkey that cannot hold a key', () => {
       authenticator(() => assertion(randomBytes(32), undefined))
     );
 
-    const outcome = await setUpIdentity(deps, 'ada@example.com');
+    const outcome = await setUpIdentity(deps, READER_EMAIL);
 
     expect(outcome.kind).toBe('replace-offer');
     expect(seen.map((entry) => entry.route)).not.toContain(
@@ -505,14 +1059,631 @@ describe('setup refuses a passkey that cannot hold a key', () => {
       { name: 'ECDSA', hash: 'SHA-256' },
       await crypto.subtle.importKey(
         'raw',
-        outcome.identity.sigPublicKey,
+        new Uint8Array(outcome.identity.sigPublicKey),
         { name: 'ECDSA', namedCurve: 'P-256' },
         false,
         ['verify']
       ),
-      await outcome.identity.sign(message),
-      message
+      new Uint8Array(await outcome.identity.sign(message)),
+      new Uint8Array(message)
     );
     expect(verified).toBe(true);
+  });
+});
+
+describe('the reader drives every state of plan 4.15', () => {
+  test('signin: an anonymous visitor sees the sign-in stage and nothing else', async () => {
+    const relicId = freshRelicId();
+    const world = await sealedWorld(relicId);
+    const { fetch } = service({
+      ...world.routes,
+      'GET /api/auth/session': () => json({ email: null }),
+    });
+    const { root } = await mountReader(
+      depsFor(
+        fetch,
+        authenticator(() => assertion(randomBytes(32), undefined))
+      ),
+      relicId
+    );
+
+    expect(stateOf(root)).toBe('signin');
+    expect(visibleStages(root)).toEqual(['signin']);
+    expect(stageOf(root, 'signin').querySelector('h1')?.textContent).toBe(
+      'This relic is private'
+    );
+  });
+
+  test('signin to setup: asking for a code reveals the entry, and the code signs the reader in', async () => {
+    const relicId = freshRelicId();
+    const world = await sealedWorld(relicId);
+    let signedIn = false;
+    const requests: string[] = [];
+    const { fetch } = service({
+      ...world.routes,
+      'GET /api/auth/session': () =>
+        json({ email: signedIn ? READER_EMAIL : null }),
+      'GET /api/identity': () => json({ identity: null, passkeys: [] }),
+      'POST /api/auth/request': (body) => {
+        requests.push(JSON.stringify(body));
+        return new Response(null, { status: 202 });
+      },
+      'POST /api/auth/code': () => {
+        signedIn = true;
+        return json({ email: READER_EMAIL });
+      },
+    });
+    const { root } = await mountReader(
+      depsFor(
+        fetch,
+        authenticator(() => assertion(randomBytes(32), undefined))
+      ),
+      relicId
+    );
+
+    const codeForm = root.querySelector('#signin-code-form');
+    expect(codeForm?.hidden).toBe(true);
+    const emailInput = root.querySelector('#signin-email');
+    if (emailInput === null) throw new Error('no email input');
+    emailInput.value = READER_EMAIL;
+    root.querySelector('#signin-email-form')?.dispatch('submit');
+    await until(() => codeForm?.hidden === false, 'the code form');
+    expect(requests).toEqual([
+      JSON.stringify({ email: READER_EMAIL, relic_id: relicId }),
+    ]);
+
+    const codeInput = root.querySelector('#signin-code');
+    if (codeInput === null) throw new Error('no code input');
+    codeInput.value = '402817';
+    root.querySelector('#signin-code-form')?.dispatch('submit');
+    await until(() => stateOf(root) === 'setup', 'setup after sign-in');
+    expect(
+      stageOf(root, 'setup').querySelector('.card-meta')?.textContent
+    ).toBe(`Signed in as ${READER_EMAIL}`);
+  });
+
+  test('setup: a verified session with no identity lands on the setup stage', async () => {
+    const relicId = freshRelicId();
+    const world = await sealedWorld(relicId);
+    const { fetch } = service({
+      ...world.routes,
+      'GET /api/identity': () => json({ identity: null, passkeys: [] }),
+    });
+    const { root } = await mountReader(
+      depsFor(
+        fetch,
+        authenticator(() => assertion(randomBytes(32), undefined))
+      ),
+      relicId
+    );
+
+    expect(stateOf(root)).toBe('setup');
+    expect(
+      stageOf(root, 'setup').querySelectorAll('.card-body p')[1]?.textContent
+    ).toBe('Setting it up takes one tap.');
+  });
+
+  test('setup to replace-offer: a passkey without PRF offers a replacement, with the load-bearing copy', async () => {
+    const relicId = freshRelicId();
+    const { fetch } = service({
+      'GET /api/auth/session': () => json({ email: READER_EMAIL }),
+      'GET /api/identity': () => json({ identity: null, passkeys: [] }),
+      'POST /api/attest/nonce': () => json(nonceResponse(randomBytes(32))),
+    });
+    const { root } = await mountReader(
+      depsFor(
+        fetch,
+        authenticator(() => assertion(randomBytes(32), undefined))
+      ),
+      relicId
+    );
+
+    press(root, '[data-action="private-setup"]');
+    await until(() => stateOf(root) === 'replace-offer', 'the replace offer');
+    expect(
+      stageOf(root, 'replace-offer').querySelector('.load-bearing')?.textContent
+    ).toBe(
+      "This passkey was made before private shares existed and can't hold your key. Make a replacement passkey on this device?"
+    );
+  });
+
+  test('replace-offer to setup-refused: a replacement that still cannot hold a key is refused and registers nothing', async () => {
+    const relicId = freshRelicId();
+    const seen: string[] = [];
+    const { fetch } = service({
+      'GET /api/auth/session': () => json({ email: READER_EMAIL }),
+      'GET /api/identity': () => json({ identity: null, passkeys: [] }),
+      'POST /api/attest/nonce': () => json(nonceResponse(randomBytes(32))),
+      'POST /api/auth/passkeys/options': () => json(creationOptions()),
+      'POST /api/auth/passkeys': () => {
+        seen.push('passkeys');
+        return json({ credential_id: 'created' }, 201);
+      },
+      'POST /api/identity': () => {
+        seen.push('identity');
+        return json({ identity: {} }, 201);
+      },
+    });
+    const { root } = await mountReader(
+      depsFor(
+        fetch,
+        authenticator(() => assertion(randomBytes(32), undefined))
+      ),
+      relicId
+    );
+
+    press(root, '[data-action="private-setup"]');
+    await until(() => stateOf(root) === 'replace-offer', 'the replace offer');
+    press(root, '[data-action="private-replace-passkey"]');
+    await until(() => stateOf(root) === 'setup-refused', 'the refusal');
+
+    expect(
+      stageOf(root, 'setup-refused').querySelector('.load-bearing')?.textContent
+    ).toBe(
+      "Your passkey provider can't hold a private-share key. Private relics need a provider or security key that supports the WebAuthn PRF extension."
+    );
+    expect(seen).toEqual(['passkeys']);
+  });
+
+  test('replace-offer, not now: declining the replacement shows the refusal without registering', async () => {
+    const relicId = freshRelicId();
+    const { fetch } = service({
+      'GET /api/auth/session': () => json({ email: READER_EMAIL }),
+      'GET /api/identity': () => json({ identity: null, passkeys: [] }),
+      'POST /api/attest/nonce': () => json(nonceResponse(randomBytes(32))),
+    });
+    const { root } = await mountReader(
+      depsFor(
+        fetch,
+        authenticator(() => assertion(randomBytes(32), undefined))
+      ),
+      relicId
+    );
+
+    press(root, '[data-action="private-setup"]');
+    await until(() => stateOf(root) === 'replace-offer', 'the replace offer');
+    press(root, '#replace-not-now');
+    expect(stateOf(root)).toBe('setup-refused');
+  });
+
+  test('request: a signed-in reader with no request yet is offered the request', async () => {
+    const relicId = freshRelicId();
+    const world = await sealedWorld(relicId, { role: 'none' });
+    const { deps } = readerDeps(world);
+    const { root } = await mountReader(deps, relicId);
+
+    expect(stateOf(root)).toBe('request');
+    expect(stageOf(root, 'request').querySelector('h1')?.textContent).toBe(
+      'Ask the owner for access'
+    );
+  });
+
+  test('request to requested: the request shows the locally computed 32-character fingerprint', async () => {
+    const relicId = freshRelicId();
+    const world = await sealedWorld(relicId, { role: 'none' });
+    const { deps, seen } = readerDeps(world);
+    const { root } = await mountReader(deps, relicId);
+
+    press(root, '[data-action="private-request"]');
+    await until(() => stateOf(root) === 'requested', 'the requested state');
+
+    const expected = formatFingerprint(
+      await identityFingerprint(world.readerId, READER_EMAIL)
+    );
+    const mine = stageOf(root, 'requested').querySelector(
+      '[data-fingerprint="mine"]'
+    );
+    if (mine === null) throw new Error('no fingerprint');
+    expect(groupsOf(mine)).toEqual(expected.split(' '));
+    expect(groupsOf(mine).join('')).toHaveLength(32);
+    expect(
+      stageOf(root, 'requested').querySelector('[data-request-note]')
+        ?.textContent
+    ).toBe(
+      `When the owner lets you in, Relic emails ${READER_EMAIL}. Open that link and confirm with your passkey.`
+    );
+    expect(seen.map((entry) => entry.route)).toContain(
+      `POST /api/relics/${relicId}/requests`
+    );
+  });
+
+  test('requested: a reader whose request is already pending sees the same fingerprint', async () => {
+    const relicId = freshRelicId();
+    const world = await sealedWorld(relicId, { role: 'requested' });
+    const { deps } = readerDeps(world);
+    const { root } = await mountReader(deps, relicId);
+
+    await until(() => stateOf(root) === 'requested', 'the pending request');
+    const mine = stageOf(root, 'requested').querySelector(
+      '[data-fingerprint="mine"]'
+    );
+    if (mine === null) throw new Error('no fingerprint');
+    expect(groupsOf(mine)).toEqual(
+      formatFingerprint(
+        await identityFingerprint(world.readerId, READER_EMAIL)
+      ).split(' ')
+    );
+  });
+
+  test('declined: the owner declined stays declined', async () => {
+    const relicId = freshRelicId();
+    const world = await sealedWorld(relicId, { role: 'declined' });
+    const { root } = await mountReader(readerDeps(world).deps, relicId);
+
+    expect(stateOf(root)).toBe('declined');
+    expect(stageOf(root, 'declined').querySelector('h1')?.textContent).toBe(
+      'The owner declined your request'
+    );
+  });
+
+  test('revoked: a removed reader is told the access was removed', async () => {
+    const relicId = freshRelicId();
+    const world = await sealedWorld(relicId, { role: 'revoked' });
+    const { root } = await mountReader(readerDeps(world).deps, relicId);
+
+    expect(stateOf(root)).toBe('revoked');
+    expect(stageOf(root, 'revoked').querySelector('h1')?.textContent).toBe(
+      'Your access was removed'
+    );
+  });
+
+  test('unlock to ready: unlocking opens the sealed version, mounts the relic, and pins the strip', async () => {
+    const relicId = freshRelicId();
+    const world = await sealedWorld(relicId);
+    const { deps } = readerDeps(world);
+    const { root, views } = await mountReader(deps, relicId);
+
+    expect(stateOf(root)).toBe('unlock');
+    expect(
+      stageOf(root, 'unlock').querySelector('[data-expiry]')?.textContent
+    ).toBe(`Signed in as ${READER_EMAIL} · expires 11 Dec 2026`);
+
+    press(root, '[data-action="private-unlock"]');
+    await until(() => views.length === 1, 'the ready view');
+
+    const view = views[0];
+    if (view === undefined) throw new Error('no view');
+    expect(view.access).toBe('private');
+    expect(view.filename).toBe('intake.md');
+    expect(view.versionDigest).toBe(world.digest);
+    expect(view.shareUrl.includes('#')).toBe(false);
+    expect(root.querySelector('#relic-private')).toBeNull();
+    expect(root.children[0]?.className).toBe('private-strip');
+    expect(root.querySelector('#strip-who')?.textContent).toBe(
+      'Private. Shared by sam@example.com. Expires 11 Dec 2026.'
+    );
+    expect(Array.from((await view.keyFor?.(1)) ?? [])).toEqual(
+      Array.from(world.key)
+    );
+  });
+
+  test('unlock to denied: a seal that does not name the reader is refused, and the switch returns to sign-in', async () => {
+    const relicId = freshRelicId();
+    const world = await sealedWorld(relicId, { omitRecipient: true });
+    const { root, views } = await mountReader(readerDeps(world).deps, relicId);
+
+    press(root, '[data-action="private-unlock"]');
+    await until(() => stateOf(root) === 'denied', 'the denied state');
+    expect(views).toHaveLength(0);
+    expect(stageOf(root, 'denied').querySelector('h1')?.textContent).toBe(
+      "You don't have access to this relic"
+    );
+
+    press(root, '#denied-switch');
+    expect(stateOf(root)).toBe('signin');
+  });
+
+  test('unlock to seal-mismatch: a tampered seal shows the mismatch copy and no relic', async () => {
+    const relicId = freshRelicId();
+    const world = await sealedWorld(relicId, { tamperSeal: true });
+    const { root, views } = await mountReader(readerDeps(world).deps, relicId);
+
+    press(root, '[data-action="private-unlock"]');
+    await until(() => stateOf(root) === 'seal-mismatch', 'seal-mismatch');
+    expect(views).toHaveLength(0);
+    expect(
+      stageOf(root, 'seal-mismatch').querySelector('[data-version-meta]')
+        ?.textContent
+    ).toBe(`Version 1 · Signed in as ${READER_EMAIL}`);
+    expect(
+      stageOf(root, 'seal-mismatch').querySelector('.load-bearing')?.textContent
+    ).toBe(
+      "This version doesn't match the owner's signature. Relic won't show it."
+    );
+  });
+
+  test('unlock to owner-changed: a different owner key for a pinned relic shows both fingerprints', async () => {
+    const relicId = freshRelicId();
+    const first = await sealedWorld(relicId);
+    const opened = await mountReader(readerDeps(first).deps, relicId);
+    press(opened.root, '[data-action="private-unlock"]');
+    await until(() => opened.views.length === 1, 'the first open');
+
+    const replaced = await sealedWorld(relicId);
+    const { root, views } = await mountReader(
+      readerDeps(replaced).deps,
+      relicId
+    );
+    press(root, '[data-action="private-unlock"]');
+    await until(() => stateOf(root) === 'owner-changed', 'owner-changed');
+    expect(views).toHaveLength(0);
+
+    const stage = stageOf(root, 'owner-changed');
+    const firstSeen = stage.querySelector('[data-fingerprint="first-seen"]');
+    const reported = stage.querySelector('[data-fingerprint="reported"]');
+    if (firstSeen === null || reported === null)
+      throw new Error('no fingerprints');
+    expect(groupsOf(firstSeen)).toEqual(
+      formatFingerprint(
+        await identityFingerprint(first.ownerId, 'sam@example.com')
+      ).split(' ')
+    );
+    expect(groupsOf(reported)).toEqual(
+      formatFingerprint(
+        await identityFingerprint(replaced.ownerId, 'sam@example.com')
+      ).split(' ')
+    );
+    expect(stage.querySelector('.load-bearing')?.textContent).toBe(
+      "The owner's key for this relic isn't the one you saw when you first opened it. Relic won't open it. Contact the person who shared it."
+    );
+  });
+});
+
+describe('private keys never enter the vault or storage', () => {
+  test('an open writes no vault entry, and nothing written to storage carries a key or the bundle', async () => {
+    const relicId = freshRelicId();
+    const world = await sealedWorld(relicId);
+    const remembered: unknown[] = [];
+    const written: string[] = [];
+    const keyVault = {
+      remember: (...args: unknown[]) => {
+        remembered.push(args);
+      },
+      recall: () => undefined,
+      forget() {},
+    };
+    const { fetch } = service(world.routes);
+    const deps = depsFor(
+      fetch,
+      authenticator(() =>
+        assertion(world.readerPasskey.rawId, world.readerPasskey.prf)
+      ),
+      keyVault
+    );
+    const storage = {
+      getItem: () => null,
+      setItem: (key: string, value: string) => {
+        written.push(key, value);
+      },
+      removeItem: () => {},
+      clear: () => {},
+      key: () => null,
+      length: 0,
+    };
+    Object.defineProperty(globalThis, 'localStorage', {
+      configurable: true,
+      value: storage,
+    });
+    try {
+      const { root, views } = await mountReader(deps, relicId);
+      press(root, '[data-action="private-unlock"]');
+      await until(() => views.length === 1, 'the ready view');
+      const view = views[0];
+      if (view === undefined) throw new Error('no view');
+      await view.keyFor?.(1);
+    } finally {
+      Reflect.deleteProperty(globalThis, 'localStorage');
+    }
+
+    expect(remembered).toEqual([]);
+    const bundleSecret = await crypto.subtle.exportKey(
+      'jwk',
+      world.reader.sig.privateKey
+    );
+    const secrets = [
+      encodeBase64url(world.key),
+      hex(world.key),
+      encodeBase64url(world.readerPasskey.prf),
+      hex(world.readerPasskey.prf),
+      bundleSecret.d ?? '',
+    ].filter((secret) => secret.length > 0);
+    for (const text of written) {
+      for (const secret of secrets) {
+        expect(text.includes(secret)).toBe(false);
+      }
+    }
+    storageWrites = written;
+    expect(storageWrites.length).toBeGreaterThan(0);
+  });
+});
+
+/** Requests the service lists for the relic, for the owner's Access count. */
+function requestsBody(statuses: readonly string[]) {
+  return {
+    requests: statuses.map((status, index) => ({
+      requester: { email: `reader${index}@example.com`, identity: null },
+      requested_at: '2026-11-11T00:00:00Z',
+      status,
+      statement: {},
+      identity_signature: 'sig',
+    })),
+  };
+}
+
+describe('the owner surfaces are mounted from the reader, lazily', () => {
+  test('an owner sees the Access control with the pending count, and it opens the panel', async () => {
+    const relicId = freshRelicId();
+    const world = await sealedWorld(relicId, { role: 'owner' });
+    const routes = {
+      ...world.routes,
+      [`GET /api/relics/${relicId}/requests`]: () =>
+        json(requestsBody(['pending', 'pending', 'granted'])),
+    };
+    const { fetch } = service(routes);
+    const deps = depsFor(
+      fetch,
+      authenticator(() =>
+        assertion(world.readerPasskey.rawId, world.readerPasskey.prf)
+      )
+    );
+    const { root, views } = await mountReader(deps, relicId);
+
+    press(root, '[data-action="private-unlock"]');
+    await until(() => views.length === 1, 'the ready view');
+    await until(
+      () => root.querySelector('[data-action="open-access-panel"]') !== null,
+      'the Access control'
+    );
+    const access = root.querySelector('[data-action="open-access-panel"]');
+    expect(access?.attrs.get('aria-controls')).toBe('access-panel');
+    await until(
+      () => root.querySelector('#request-count')?.textContent === '2',
+      'the pending count'
+    );
+
+    press(root, '[data-action="open-access-panel"]');
+    await until(
+      () => root.querySelector('#access-panel') !== null,
+      'the access panel'
+    );
+    expect(root.querySelector('#access-panel')?.attrs.get('role')).toBe(
+      'dialog'
+    );
+  });
+
+  test('a reader who is not the owner gets no Access control and no panel', async () => {
+    const relicId = freshRelicId();
+    const world = await sealedWorld(relicId, { role: 'grantee' });
+    const { root, views } = await mountReader(readerDeps(world).deps, relicId);
+
+    press(root, '[data-action="private-unlock"]');
+    await until(() => views.length === 1, 'the ready view');
+    expect(root.querySelector('[data-action="open-access-panel"]')).toBeNull();
+    expect(root.querySelector('#access-panel')).toBeNull();
+  });
+
+  test('the request mail link opens the owner panel straight from the unlock stage', async () => {
+    const relicId = freshRelicId();
+    const world = await sealedWorld(relicId, { role: 'owner' });
+    const { fetch } = service(world.routes);
+    const deps = {
+      ...depsFor(
+        fetch,
+        authenticator(() =>
+          assertion(world.readerPasskey.rawId, world.readerPasskey.prf)
+        )
+      ),
+      locationHref: `${ORIGIN}/r/${relicId}?access=requests`,
+    };
+    const { root, views } = await mountReader(deps, relicId);
+
+    expect(stateOf(root)).toBe('unlock');
+    await until(
+      () => root.querySelector('#access-panel') !== null,
+      'the access panel from the mail link'
+    );
+    expect(views).toHaveLength(0);
+  });
+
+  test('a signed-in visitor gets the private dashboard sections', async () => {
+    const relicId = freshRelicId();
+    const world = await sealedWorld(relicId);
+    const { fetch, seen } = service(world.routes);
+    const deps = depsFor(
+      fetch,
+      authenticator(() =>
+        assertion(world.readerPasskey.rawId, world.readerPasskey.prf)
+      )
+    );
+    const root = new El('main');
+
+    await mountPrivateDashboard(root as unknown as HTMLElement, deps);
+
+    await until(
+      () =>
+        root.querySelector('#private-dashboard [data-private-dashboard]') !==
+        null,
+      'the private dashboard'
+    );
+    expect(seen.map((entry) => entry.route)).toContain('GET /api/identity');
+  });
+
+  test('a signed-out visitor gets no private dashboard and no identity request', async () => {
+    const relicId = freshRelicId();
+    const world = await sealedWorld(relicId);
+    const routes = {
+      ...world.routes,
+      'GET /api/auth/session': () => json({ email: null }),
+    };
+    const { fetch, seen } = service(routes);
+    const root = new El('main');
+
+    await mountPrivateDashboard(
+      root as unknown as HTMLElement,
+      depsFor(
+        fetch,
+        authenticator(() => assertion(randomBytes(32), undefined))
+      )
+    );
+
+    expect(root.querySelector('#private-dashboard')).toBeNull();
+    expect(seen.map((entry) => entry.route)).not.toContain('GET /api/identity');
+  });
+
+  test('the approval link opens the device approval section for the signed-in owner', async () => {
+    const relicId = freshRelicId();
+    const world = await sealedWorld(relicId);
+    const enrollmentId = '01hh0m7x6ytcxbk2ckvd9p9w5a';
+    const routes = {
+      ...world.routes,
+      [`GET /api/devices/enrollments/${enrollmentId}`]: () =>
+        json({
+          status: 'pending',
+          device_id: 'd'.repeat(64),
+          label: 'Ada laptop',
+          expires_at: '2026-11-11T01:00:00Z',
+        }),
+      'GET /api/devices': () => json({ devices: [] }),
+    };
+    const { fetch } = service(routes);
+    const deps = {
+      ...depsFor(
+        fetch,
+        authenticator(() =>
+          assertion(world.readerPasskey.rawId, world.readerPasskey.prf)
+        )
+      ),
+      locationHref: `${ORIGIN}/dashboard?approve-device=${enrollmentId}`,
+    };
+    const root = new El('main');
+
+    await mountPrivateDashboard(root as unknown as HTMLElement, deps);
+    await until(
+      () =>
+        root.querySelector(`[data-device-approval="${enrollmentId}"]`) !== null,
+      'the device approval section'
+    );
+  });
+
+  test('the approval link does nothing for a signed-out visitor', async () => {
+    const relicId = freshRelicId();
+    const world = await sealedWorld(relicId);
+    const routes = {
+      ...world.routes,
+      'GET /api/auth/session': () => json({ email: null }),
+    };
+    const { fetch, seen } = service(routes);
+    const deps = {
+      ...depsFor(
+        fetch,
+        authenticator(() => assertion(randomBytes(32), undefined))
+      ),
+      locationHref: `${ORIGIN}/dashboard?approve-device=01hh0m7x6ytcxbk2ckvd9p9w5a`,
+    };
+    const root = new El('main');
+
+    await mountPrivateDashboard(root as unknown as HTMLElement, deps);
+    expect(root.querySelector('[data-device-approval]')).toBeNull();
+    expect(seen.map((entry) => entry.route)).not.toContain('GET /api/identity');
   });
 });
