@@ -180,6 +180,7 @@ export const otioProofTracePrelude = String.raw`(() => {
   const heldPcmResponses = [];
   const releasedPcmResponses = new WeakSet();
   let pcmReleaseTrigger = null;
+  let futureVideoLiftTrigger = null;
   let pendingPcmRelease = null;
   const pcmReleaseChannel = new MessageChannel();
   const takeHeldPcm = () => { holdPcmResponses = false; return heldPcmResponses.splice(0); };
@@ -316,6 +317,14 @@ export const otioProofTracePrelude = String.raw`(() => {
     if (args[0] === 'OTIO_PROOF_PCM') {
       if (args[1]?.event === 'backend') lastPcmBackend = args[1];
       recordEvent('scheduled-pcm', null, args[1]);
+      if (futureVideoLiftTrigger !== null && args[1]?.event === futureVideoLiftTrigger) {
+        const last = events[events.length - 1];
+        const liftedFault = globalThis.__otioProofPcmFault ?? null;
+        const liftedTrigger = futureVideoLiftTrigger;
+        futureVideoLiftTrigger = null;
+        if (liftedFault === 'withhold-future-video') globalThis.__otioProofPcmFault = null;
+        recordEvent('pcm-fault-lift', null, {fault:liftedFault, trigger:liftedTrigger, triggerIndex:last?.value === args[1] ? events.length - 1 : null});
+      }
       if (pcmReleaseTrigger !== null && args[1]?.event === pcmReleaseTrigger) {
         const last = events[events.length - 1];
         pendingPcmRelease = {name:pcmReleaseTrigger, index:last?.value === args[1] ? events.length - 1 : null};
@@ -1015,6 +1024,12 @@ export const otioProofTracePrelude = String.raw`(() => {
       if (typeof name !== 'string' || name === '') throw new Error('pcm release trigger must be a non-empty event name');
       pcmReleaseTrigger = name;
     },
+    withholdFutureVideoUntil(name) {
+      if (typeof name !== 'string' || name === '') throw new Error('future video lift trigger must be a non-empty event name');
+      if (globalThis.__otioProofPcmFault != null || futureVideoLiftTrigger !== null || pcmReleaseTrigger !== null) throw new Error('future video fault already armed');
+      futureVideoLiftTrigger = name;
+      globalThis.__otioProofPcmFault = 'withhold-future-video';
+    },
     setFault(value) {
       if (!['none', 'freeze', 'stall', 'skip-still'].includes(value)) throw new Error('unknown proof fault');
       fault = value; lastStall = performance.now();
@@ -1155,7 +1170,7 @@ export const otioProofTracePrelude = String.raw`(() => {
       const sampleFrame = await command(graph, 'stop');
       nextRecoveryMarker=false;
       nextAnchorControl = null;
-      pcmReleaseTrigger = null; pendingPcmRelease = null;
+      pcmReleaseTrigger = null; pendingPcmRelease = null; futureVideoLiftTrigger = null;
       recoveryOverrunRequested=false; recoveryClosureSeen=false; recoverySelection=null;
       if (currentGate?.marker) {
         const marker=currentGate.marker; currentGate.marker=null;

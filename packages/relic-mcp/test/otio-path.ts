@@ -105,6 +105,7 @@ import {
   assertDescriptorBudgetRefusal,
   assertHeldReleaseBeforeSuccessor,
   assertShiftedBankRefusal,
+  siteBridgeGapInfeasibleAfterHold,
 } from './otio-recovery-checks.ts';
 
 const clientMode = process.env['RELIC_OTIO_PATH_CLIENT'] ?? 'source';
@@ -14105,7 +14106,6 @@ async function assertVideoReservationInvalidation(
   await seekTo(browser, 0);
   const future = await browser.evaluate<
     MovingTrace & {
-      sawBuffering: boolean;
       sawHeld: boolean;
       handoffBeforeRelease: boolean;
     }
@@ -14120,10 +14120,9 @@ async function assertVideoReservationInvalidation(
     const playEdge = globalThis.__otioProofTrace.playRequest();
     button.click();
     await sleep(500);
-    globalThis.__otioProofPcmFault = 'withhold-future-video';
-    const deadline = performance.now() + 4000;
-    while (root.dataset.buffering !== 'true' && performance.now() < deadline) await sleep(20);
-    const sawBuffering = root.dataset.buffering === 'true';
+    globalThis.__otioProofTrace.withholdFutureVideoUntil('recovery-render-closed');
+    const liftDeadline = performance.now() + 4000;
+    while (!globalThis.__otioProofTrace.hasTraceEvent('pcm-fault-lift') && performance.now() < liftDeadline) await sleep(10);
     globalThis.__otioProofPcmFault = null;
     const handoffDeadline=performance.now()+500;
     while ((!globalThis.__otioProofTrace.hasPcmEvent('recovery-handoff') ||
@@ -14135,16 +14134,39 @@ async function assertVideoReservationInvalidation(
     await sleep(700);
     const trace = await globalThis.__otioProofTrace.stop();
     if (root.dataset.playing === 'true') button.click();
-    return {start, playEdge, trace, sawBuffering, sawHeld, handoffBeforeRelease};
+    return {start, playEdge, trace, sawHeld, handoffBeforeRelease};
   })()`);
   await writeFile(
     join(shotDir, 'video-future-starvation.json'),
     JSON.stringify({ provenance, capture: future })
   );
-  assert.ok(
-    future.sawBuffering,
-    'withholding future video did not reach buffering'
+  const faultLifts = future.trace.events.flatMap((entry, index) =>
+    entry.kind === 'pcm-fault-lift' ? [index] : []
   );
+  const firstClosureAt = future.trace.events.findIndex(
+    (entry) =>
+      entry.kind === 'scheduled-pcm' &&
+      (entry.value as { event?: string } | null)?.event ===
+        'recovery-render-closed'
+  );
+  assert.ok(
+    faultLifts.length === 1 &&
+      firstClosureAt >= 0 &&
+      (
+        future.trace.events[faultLifts[0]!]!.value as {
+          triggerIndex?: number | null;
+        } | null
+      )?.triggerIndex === firstClosureAt,
+    'withheld future video was not lifted at the first recovery-render-closed'
+  );
+  const sawBuffering = future.trace.events.some(
+    (entry) =>
+      entry.kind === 'buffering-change' &&
+      entry.value !== null &&
+      typeof entry.value === 'object' &&
+      (entry.value as { current?: unknown }).current === 'true'
+  );
+  assert.ok(sawBuffering, 'withholding future video did not reach buffering');
   const futureEvents = future.trace.events
     .filter((entry) => entry.kind === 'scheduled-pcm')
     .map((entry) => entry.value as Record<string, unknown>);
@@ -20880,15 +20902,15 @@ async function runScheduledPcmProof(
     // The hold is that site clock's lastAccepted +86 us at its performanceTime, and it is held through
     // that performanceTime. The site's consumed stamp must equal lastAccepted and must be native. A
     // raw-stamp substitution makes the consumed stamp the held read, which the audit fails as used-held-read.
-    for (const control of [
-      { label: 'site-select-epoch', site: 'select-epoch', recovery: false },
-      { label: 'site-commit', site: 'commit', recovery: false },
-      {
-        label: 'site-recovery-bridge',
-        site: 'recovery-bridge',
-        recovery: true,
-      },
-    ] as const) {
+    // The recovery control starves PCM so the gate closes at its prepared frontier, releases held pulls only
+    // after the selection, and never uses the video-withholding fault: readiness refuses within the 20 ms gap
+    // before any poll could lift that fault. Only the exact gap-infeasible signature is rerun, in a fresh
+    // browser, at most three times. Every other outcome fails.
+    const captureSiteControl = async (control: {
+      label: string;
+      site: string;
+      recovery: boolean;
+    }) => {
       const isolated = await openBrowser(url, sessionToken, {
         label: control.label,
         recordProofTrace: true,
@@ -20908,19 +20930,14 @@ async function runScheduledPcmProof(
           const recovery = ${JSON.stringify(control.recovery)};
           const start = await globalThis.__otioProofTrace.start();
           const armed = globalThis.__otioProofTrace.setSiteClockHold({site: ${JSON.stringify(control.site)}, deltaUs: 86});
-          if (recovery) {
-            globalThis.__otioProofTrace.enableRecoveryMarker();
-            globalThis.__otioProofHoldOldDrain = true;
-          }
           const playEdge = globalThis.__otioProofTrace.playRequest();
           button.click();
-          await sleep(500);
+          await sleep(${control.recovery ? 600 : 500});
           if (recovery) {
-            globalThis.__otioProofPcmFault = 'withhold-future-video';
+            globalThis.__otioProofTrace.holdPcmResponses(true);
+            globalThis.__otioProofTrace.releasePcmResponsesOn('recovery-selection');
             const deadline = performance.now() + 4000;
-            while (root.dataset.buffering !== 'true' && performance.now() < deadline) await sleep(20);
-            globalThis.__otioProofPcmFault = null;
-            globalThis.__otioProofHoldOldDrain = false;
+            while (!globalThis.__otioProofTrace.hasTraceEvent('pcm-hold-release') && !globalThis.__otioProofTrace.hasPcmEvent('error') && performance.now() < deadline) await sleep(10);
           }
           await sleep(${control.recovery ? 1200 : 1500});
           const trace = await globalThis.__otioProofTrace.stop();
@@ -20928,25 +20945,115 @@ async function runScheduledPcmProof(
           if (root.dataset.playing === 'true') button.click();
           return {start, armed, playEdge, trace, playing};
         })()`);
+        return { provenance, fault };
+      } finally {
+        await isolated.close();
+      }
+    };
+    for (const control of [
+      { label: 'site-select-epoch', site: 'select-epoch', recovery: false },
+      { label: 'site-commit', site: 'commit', recovery: false },
+      {
+        label: 'site-recovery-bridge',
+        site: 'recovery-bridge',
+        recovery: true,
+      },
+    ] as const) {
+      const attempts = control.recovery ? 3 : 1;
+      for (let attempt = 1; attempt <= attempts; attempt++) {
+        const { provenance, fault } = await captureSiteControl(control);
+        const events = fault.trace.events;
+        const evidence = control.recovery
+          ? siteBridgeGapInfeasibleAfterHold(events, rate)
+          : null;
+        if (evidence !== null) {
+          // The receipt keeps this attempt's audit. The verdict is the classified signature.
+          await writeClockShot(
+            join(shotDir, `scheduled-${control.label}-attempt${attempt}.json`),
+            { provenance, capture: fault },
+            control.label,
+            fault.trace
+          ).catch((error: unknown) => {
+            if (!(error instanceof assert.AssertionError)) throw error;
+          });
+          if (attempt < attempts) {
+            console.log(
+              `OTIO_SITE_RECOVERY_GAP_INFEASIBLE attempt=${attempt} ${evidence}`
+            );
+            continue;
+          }
+          throw new Error(
+            `${control.label}: ${attempts}/${attempts} attempts hit the 20 ms gap after the hold (${evidence})`
+          );
+        }
         await writeClockShot(
           join(shotDir, `scheduled-${control.label}.json`),
           { provenance, capture: fault },
           control.label,
           fault.trace
         );
-        const consumed = fault.trace.events.filter(
-          (entry) =>
-            entry.kind === 'clock-site-hold-consumed' &&
-            (entry.value as { site?: string } | null)?.site === control.site
+        assert.ok(
+          !fault.trace.audioOverflow && !fault.trace.eventsOverflow,
+          `${control.label} capture overflowed`
+        );
+        assert.equal(
+          fault.playing,
+          'true',
+          `${control.label}: playback stopped under the one-shot hold at ${control.site}`
         );
         assert.ok(
-          consumed.length >= 1,
+          !events.some(
+            (entry) =>
+              entry.kind === 'scheduled-pcm' &&
+              (entry.value as { event?: string } | null)?.event === 'error'
+          ),
+          `${control.label}: scheduled PCM raised an error`
+        );
+        const consumedAt = events.flatMap((entry, index) =>
+          entry.kind === 'clock-site-hold-consumed' &&
+          (entry.value as { site?: string } | null)?.site === control.site
+            ? [index]
+            : []
+        );
+        assert.ok(
+          consumedAt.length >= 1,
           `${control.label}: the one-shot hold never reached a ${control.site} read`
         );
-        const consumedValue = consumed[0]!.value as Record<string, unknown>;
+        assert.ok(
+          consumedAt.length === 1,
+          `${control.label}: the one-shot hold was consumed ${consumedAt.length} times`
+        );
+        const at = consumedAt[0]!;
+        const consumedValue = events[at]!.value as Record<string, unknown>;
         const held = clockStamp(consumedValue);
         const anchor = clockStamp(consumedValue['anchor']);
-        const pcm = fault.trace.events
+        const marker = (events[at - 1]?.value ?? null) as Record<
+          string,
+          unknown
+        > | null;
+        const observed = (events[at + 1]?.value ?? null) as Record<
+          string,
+          unknown
+        > | null;
+        const markerLast = clockStamp(marker?.['lastAccepted']);
+        const observedOutput = clockStamp(observed?.['output']);
+        assert.ok(
+          events[at - 1]?.kind === 'scheduled-pcm' &&
+            marker?.['event'] === 'clock-site' &&
+            marker?.['site'] === control.site &&
+            marker?.['phase'] === 'read' &&
+            markerLast !== null &&
+            anchor !== null &&
+            sameClockStamp(markerLast, anchor) &&
+            events[at + 1]?.kind === 'audio-output-timestamp-observed' &&
+            observed?.['injected'] === true &&
+            observed?.['site'] === control.site &&
+            held !== null &&
+            observedOutput !== null &&
+            sameClockStamp(observedOutput, held),
+          `${control.label}: the hold did not land on the ${control.site} read that named its anchor`
+        );
+        const pcm = events
           .filter((entry) => entry.kind === 'scheduled-pcm')
           .map((entry) => entry.value as Record<string, unknown>);
         assert.ok(
@@ -20975,24 +21082,74 @@ async function runScheduledPcmProof(
           `${control.label}: ${control.site} never reported the stamp it consumed`
         );
         if (control.recovery) {
-          assert.ok(
-            fault.trace.events.some(
-              (entry) =>
-                entry.kind === 'scheduled-pcm' &&
-                (entry.value as { event?: string } | null)?.event ===
-                  'recovery-selection'
-            ),
-            `${control.label}: recovery never selected a successor`
+          const payload = (index: number): Record<string, unknown> =>
+            (events[index]?.value ?? {}) as Record<string, unknown>;
+          const pcmAt = (index: number, name: string): boolean =>
+            events[index]?.kind === 'scheduled-pcm' &&
+            payload(index)['event'] === name;
+          const bridgeAt = (index: number, phase: string): boolean =>
+            pcmAt(index, 'clock-site') &&
+            payload(index)['site'] === 'recovery-bridge' &&
+            payload(index)['phase'] === phase;
+          const closureAt = events.findIndex((_, index) =>
+            pcmAt(index, 'recovery-render-closed')
           );
-        } else {
-          assert.equal(
-            fault.playing,
-            'true',
-            `${control.label}: playback stopped under a sub-resolution hold at ${control.site}`
+          assert.ok(
+            closureAt >= 0 &&
+              payload(closureAt)['descriptorReady'] === true &&
+              events.findIndex(
+                (_, index) => index > closureAt && bridgeAt(index, 'read')
+              ) ===
+                at - 1,
+            `${control.label}: the PCM-hold closure was not ready before its bridge read`
+          );
+          const useAt = events.findIndex(
+            (_, index) => index > at && bridgeAt(index, 'use')
+          );
+          const boundaryFrame = payload(closureAt)['boundaryFrame'];
+          const selectionAt = events.findIndex(
+            (_, index) =>
+              index > useAt &&
+              pcmAt(index, 'recovery-selection') &&
+              payload(index)['boundaryFrame'] === boundaryFrame
+          );
+          const selectedFrame = payload(selectionAt)['f0'];
+          const gapFrames = Math.floor(0.02 * rate);
+          assert.ok(
+            useAt >= 0 &&
+              selectionAt > useAt &&
+              typeof boundaryFrame === 'number' &&
+              typeof selectedFrame === 'number' &&
+              selectedFrame >= boundaryFrame &&
+              selectedFrame <= boundaryFrame + gapFrames,
+            `${control.label}: recovery never selected a successor within the 20 ms gap after the held bridge read`
+          );
+          assert.ok(
+            !events.some(
+              (_, index) =>
+                index > closureAt &&
+                index < selectionAt &&
+                (pcmAt(index, 'recovery-clock-observation-rejected') ||
+                  pcmAt(index, 'error'))
+            ),
+            `${control.label}: recovery refused its bridge before selecting a successor`
+          );
+          const releaseAt = events.flatMap((entry, index) =>
+            entry.kind === 'pcm-hold-release' ? [index] : []
+          );
+          const release =
+            releaseAt.length === 1 ? payload(releaseAt[0]!) : null;
+          const released = release === null ? 0 : Number(release['released']);
+          assert.ok(
+            release !== null &&
+              release['trigger'] === 'recovery-selection' &&
+              release['triggerIndex'] === selectionAt &&
+              released >= 1 &&
+              releaseAt[0]! > selectionAt,
+            `${control.label}: held PCM was not released at its recovery selection`
           );
         }
-      } finally {
-        await isolated.close();
+        break;
       }
     }
     pass('scheduled-pcm-schedule-clock-failures');

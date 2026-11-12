@@ -3,6 +3,7 @@ import {
   assertDescriptorBudgetRefusal,
   assertHeldReleaseBeforeSuccessor,
   assertShiftedBankRefusal,
+  siteBridgeGapInfeasibleAfterHold,
 } from './otio-recovery-checks.ts';
 
 const boundary = 41473;
@@ -320,4 +321,286 @@ test('held release check rejects a predecessor that was not starved', () => {
   expect(() =>
     assertHeldReleaseBeforeSuccessor(trace({ prepared: 45056 }))
   ).toThrow('moved between');
+});
+
+// Site-bridge gap-infeasible classifier. frameTime(f) classifies to frame f under ceil(seconds * rate).
+const BRIDGE_RATE = 48000;
+const BRIDGE_GAP_UPPER = boundary + 960; // floor(0.02 * 48000) = 960
+const BRIDGE_HANDOFF = 'recovery render handoff has no feasible frame';
+const BRIDGE_CAUSAL = 'video recovery phase has no causal audio epoch';
+const BRIDGE_COMMITTED = 'committed recovery frame is unavailable';
+const BRIDGE_CLOCK = 'fresh recovery output clock unavailable';
+const BRIDGE_ANCHOR = { contextTime: 10, performanceTime: 1000 };
+const BRIDGE_HELD = { contextTime: 10.001, performanceTime: 1000 };
+const BRIDGE_NATIVE = { contextTime: 10.002, performanceTime: 1009.33 };
+type BridgeEntry = { kind: string; value?: Record<string, unknown> };
+const frameTime = (frame: number) => (frame - 0.5) / BRIDGE_RATE;
+const bridgePcm = (value: Record<string, unknown>): BridgeEntry => ({
+  kind: 'scheduled-pcm',
+  value,
+});
+const bridgeClosure = (closed: number = boundary): BridgeEntry =>
+  bridgePcm({
+    event: 'recovery-render-closed',
+    boundaryFrame: closed,
+    descriptorReady: true,
+  });
+const bridgeMarker = (
+  last: Record<string, number> = BRIDGE_ANCHOR
+): BridgeEntry =>
+  bridgePcm({
+    event: 'clock-site',
+    site: 'recovery-bridge',
+    phase: 'read',
+    lastAccepted: last,
+  });
+const bridgeConsumed = (): BridgeEntry => ({
+  kind: 'clock-site-hold-consumed',
+  value: {
+    site: 'recovery-bridge',
+    kind: 'ctx',
+    deltaUs: 86,
+    contextTime: BRIDGE_HELD.contextTime,
+    performanceTime: BRIDGE_HELD.performanceTime,
+    anchor: BRIDGE_ANCHOR,
+  },
+});
+const bridgeRead = (
+  frame: number,
+  injected: boolean,
+  output: Record<string, number>
+): BridgeEntry => ({
+  kind: 'audio-output-timestamp-observed',
+  value: {
+    injected,
+    site: injected ? 'recovery-bridge' : null,
+    currentAfter: frameTime(frame),
+    output,
+  },
+});
+const bridgeUse = (): BridgeEntry =>
+  bridgePcm({
+    event: 'clock-site',
+    site: 'recovery-bridge',
+    phase: 'use',
+    usedStamp: BRIDGE_NATIVE,
+  });
+const bridgeError = (code: string): BridgeEntry =>
+  bridgePcm({ event: 'error', stage: 'schedule', code });
+// The re-read signature: consumed at B+256, the native successor edge at B+512.
+const bridgeSignature = (
+  consumed = boundary + 256,
+  next = boundary + 512,
+  code = BRIDGE_HANDOFF
+): BridgeEntry[] => [
+  bridgeClosure(),
+  bridgeMarker(),
+  bridgeConsumed(),
+  bridgeRead(consumed, true, BRIDGE_HELD),
+  bridgeMarker(),
+  bridgeRead(next, false, BRIDGE_NATIVE),
+  bridgeUse(),
+  bridgeError(code),
+];
+const bridgeRejection = (
+  reason: string,
+  frame = boundary + 512,
+  code = BRIDGE_CLOCK
+): BridgeEntry[] => [
+  bridgeClosure(),
+  bridgeMarker(),
+  bridgeConsumed(),
+  bridgeRead(boundary + 256, true, BRIDGE_HELD),
+  bridgePcm({
+    event: 'recovery-clock-observation-rejected',
+    contextAfter: frameTime(frame),
+    gapUpper: BRIDGE_GAP_UPPER,
+    observation: { reason },
+  }),
+  bridgeError(code),
+];
+
+test('site-bridge classifier names the exact re-read signature and its refusal', () => {
+  const evidence = siteBridgeGapInfeasibleAfterHold(
+    bridgeSignature(),
+    BRIDGE_RATE
+  );
+  expect(evidence ?? '').toContain(
+    `refused by "${BRIDGE_HANDOFF}" via a native read`
+  );
+});
+
+test('site-bridge classifier accepts the causal-epoch refusal and each feasible-clock rejection', () => {
+  expect(
+    siteBridgeGapInfeasibleAfterHold(
+      bridgeSignature(undefined, undefined, BRIDGE_CAUSAL),
+      BRIDGE_RATE
+    )
+  ).not.toBeNull();
+  for (const reason of ['accepted', 'duplicate', 'sub-resolution']) {
+    expect(
+      siteBridgeGapInfeasibleAfterHold(bridgeRejection(reason), BRIDGE_RATE) ??
+        ''
+    ).toContain('via a rejected fresh clock');
+  }
+});
+
+test('site-bridge classifier edges on the gap are exact', () => {
+  // The held read on the last feasible frame is inside the gap; one frame later it is not.
+  expect(
+    siteBridgeGapInfeasibleAfterHold(
+      bridgeSignature(BRIDGE_GAP_UPPER - 512),
+      BRIDGE_RATE
+    )
+  ).not.toBeNull();
+  expect(
+    siteBridgeGapInfeasibleAfterHold(
+      bridgeSignature(BRIDGE_GAP_UPPER - 511),
+      BRIDGE_RATE
+    )
+  ).toBeNull();
+  // A native read on the edge is feasible and so must be injected; one frame later it is the infeasible use.
+  expect(
+    siteBridgeGapInfeasibleAfterHold(
+      bridgeSignature(undefined, BRIDGE_GAP_UPPER - 512),
+      BRIDGE_RATE
+    )
+  ).toBeNull();
+  expect(
+    siteBridgeGapInfeasibleAfterHold(
+      bridgeSignature(undefined, BRIDGE_GAP_UPPER - 511),
+      BRIDGE_RATE
+    )
+  ).not.toBeNull();
+});
+
+test('site-bridge classifier refuses a feasible native read before the infeasible one', () => {
+  const edited = bridgeSignature();
+  edited.splice(
+    4,
+    0,
+    bridgeMarker(),
+    bridgeRead(boundary + 300, false, BRIDGE_NATIVE)
+  );
+  expect(siteBridgeGapInfeasibleAfterHold(edited, BRIDGE_RATE)).toBeNull();
+});
+
+test('site-bridge classifier refuses a hold that was already infeasible at consumption', () => {
+  expect(
+    siteBridgeGapInfeasibleAfterHold(
+      bridgeSignature(boundary + 600),
+      BRIDGE_RATE
+    )
+  ).toBeNull();
+});
+
+test('site-bridge classifier refuses any selection, a committed-frame refusal, or a later error', () => {
+  const selected = bridgeSignature();
+  selected.splice(
+    6,
+    0,
+    bridgePcm({
+      event: 'recovery-selection',
+      boundaryFrame: boundary,
+      f0: boundary,
+    })
+  );
+  expect(siteBridgeGapInfeasibleAfterHold(selected, BRIDGE_RATE)).toBeNull();
+  expect(
+    siteBridgeGapInfeasibleAfterHold(
+      bridgeSignature(undefined, undefined, BRIDGE_COMMITTED),
+      BRIDGE_RATE
+    )
+  ).toBeNull();
+  expect(
+    siteBridgeGapInfeasibleAfterHold(
+      [...bridgeSignature(), bridgeError(BRIDGE_COMMITTED)],
+      BRIDGE_RATE
+    )
+  ).toBeNull();
+});
+
+test('site-bridge classifier needs one consumption, a marker naming its anchor, and an injected read', () => {
+  expect(
+    siteBridgeGapInfeasibleAfterHold(
+      bridgeSignature().filter(
+        (entry) => entry.kind !== 'clock-site-hold-consumed'
+      ),
+      BRIDGE_RATE
+    )
+  ).toBeNull();
+  expect(
+    siteBridgeGapInfeasibleAfterHold(
+      [...bridgeSignature(), bridgeConsumed()],
+      BRIDGE_RATE
+    )
+  ).toBeNull();
+  const wrongAnchor = bridgeSignature();
+  wrongAnchor[1] = bridgeMarker({ contextTime: 9, performanceTime: 999 });
+  expect(siteBridgeGapInfeasibleAfterHold(wrongAnchor, BRIDGE_RATE)).toBeNull();
+  const notInjected = bridgeSignature();
+  notInjected[3] = bridgeRead(boundary + 256, false, BRIDGE_HELD);
+  expect(siteBridgeGapInfeasibleAfterHold(notInjected, BRIDGE_RATE)).toBeNull();
+  const wrongOutput = bridgeSignature();
+  wrongOutput[3] = bridgeRead(boundary + 256, true, BRIDGE_NATIVE);
+  expect(siteBridgeGapInfeasibleAfterHold(wrongOutput, BRIDGE_RATE)).toBeNull();
+});
+
+test('site-bridge classifier measures the gap from the last closure before the hold', () => {
+  expect(
+    siteBridgeGapInfeasibleAfterHold(
+      [bridgeClosure(boundary - 5000), ...bridgeSignature()],
+      BRIDGE_RATE
+    )
+  ).not.toBeNull();
+  const staleLast = bridgeSignature();
+  staleLast.splice(1, 0, bridgeClosure(boundary - 5000));
+  expect(siteBridgeGapInfeasibleAfterHold(staleLast, BRIDGE_RATE)).toBeNull();
+  expect(
+    siteBridgeGapInfeasibleAfterHold(bridgeSignature().slice(1), BRIDGE_RATE)
+  ).toBeNull();
+});
+
+test('site-bridge classifier requires a native use for the handoff refusal', () => {
+  const noUse = bridgeSignature().filter(
+    (entry) =>
+      !(entry.kind === 'scheduled-pcm' && entry.value?.['phase'] === 'use')
+  );
+  expect(siteBridgeGapInfeasibleAfterHold(noUse, BRIDGE_RATE)).toBeNull();
+  expect(
+    siteBridgeGapInfeasibleAfterHold(
+      bridgeRejection('sub-resolution', BRIDGE_GAP_UPPER - 512, BRIDGE_HANDOFF),
+      BRIDGE_RATE
+    )
+  ).toBeNull();
+});
+
+test('site-bridge classifier refuses a rejection that is infeasible, feasible, or before the hold', () => {
+  expect(
+    siteBridgeGapInfeasibleAfterHold(bridgeRejection('regression'), BRIDGE_RATE)
+  ).toBeNull();
+  expect(
+    siteBridgeGapInfeasibleAfterHold(
+      bridgeRejection('sub-resolution', BRIDGE_GAP_UPPER - 512),
+      BRIDGE_RATE
+    )
+  ).toBeNull();
+  const before: BridgeEntry[] = [
+    bridgeClosure(),
+    bridgePcm({
+      event: 'recovery-clock-observation-rejected',
+      contextAfter: frameTime(boundary + 512),
+      gapUpper: BRIDGE_GAP_UPPER,
+      observation: { reason: 'sub-resolution' },
+    }),
+    bridgeMarker(),
+    bridgeConsumed(),
+    bridgeRead(boundary + 256, true, BRIDGE_HELD),
+    bridgeError(BRIDGE_CLOCK),
+  ];
+  expect(siteBridgeGapInfeasibleAfterHold(before, BRIDGE_RATE)).toBeNull();
+});
+
+test('site-bridge classifier rejects a non-positive rate', () => {
+  expect(siteBridgeGapInfeasibleAfterHold(bridgeSignature(), 0)).toBeNull();
 });
