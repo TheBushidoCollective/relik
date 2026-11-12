@@ -74,7 +74,7 @@ Each item says what the draft claims, what is actually true, and what this plan 
 1. **Crypto and wire definitions live in `@relic/format/private`**, a subpath export not re-exported from the package index, so the viewer loads it only in lazy chunks. Rejected: exporting from the index, which risks the eager shell.
 2. **One identity per normalized address**, with per-passkey encrypted copies. Rejected: one identity per passkey (several fingerprints per person, self-grants).
 3. **Every owner action stores its full WebAuthn assertion plus an identity signature** (`StoredAttestation`), not only grants. Uniform audit, one verifier.
-4. **The viewer verifies every private version before rendering**: wrap opens, seal signature chains to the owner identity, recipient list contains the reader, ciphertext SHA-256 equals the sealed digest, and the owner identity matches the one pinned for this relic in `localStorage['relic:private-owner:<id>']` at first open. A mismatch is a hard refusal with no "accept new owner" button, because a relic's owner never changes.
+4. **The viewer verifies every private version before rendering**: wrap opens for the reader's own KEM key id (the reader need not be in the seal's recipient list, since HPKE binds relic, version and recipient), seal signature chains to the owner identity, the unwrapped key matches the seal's `key_commitment`, ciphertext SHA-256 equals the sealed digest, and the owner identity matches the one pinned for this relic in `localStorage['relic:private-owner:<id>']` at first open. A mismatch is a hard refusal with no "accept new owner" button, because a relic's owner never changes.
 5. **Readers always open an explicit sealed version**, the highest one they can read, so an allocated-but-unsealed version never blocks them.
 6. **Recipient completeness is enforced at seal time** with a per-relic `accessEpoch` and a per-owner `recipientsEpoch` (section 4.12).
 7. **Access log retention uses GCS `customTime`** with a lifecycle rule, per object. Rejected: lazy pruning (no real deletion) and a new scheduler (new infra).
@@ -92,6 +92,7 @@ Each item says what the draft claims, what is actually true, and what this plan 
 | Comment key | HKDF-SHA256, unchanged | ikm = that version's key, salt empty, info `relic/comments/v1`, 16 bytes |
 | Wrap | HPKE RFC 9180 base mode | KEM 0x0010 DHKEM(P-256, HKDF-SHA256), KDF 0x0001 HKDF-SHA256, AEAD 0x0001 AES-128-GCM; info = UTF8(`relic/wrap/v1`) ‖ 0x00 ‖ UTF8(relicId, 26 bytes) ‖ u32be(version); aad = recipient kemKeyId (32 raw bytes); pt = 16-byte version key; `enc` 65 bytes; `ct` 32 bytes |
 | PRF salt | WebAuthn PRF `eval.first` | UTF8(`relic/identity-prf/v1`) (the browser hashes it with the `WebAuthn PRF` prefix) |
+| Key commitment | HKDF-SHA256 | ikm = the 16-byte version key, salt empty, info = UTF8(`relic/key-commit/v1`) ‖ 0x00 ‖ UTF8(relicId, 26 bytes) ‖ u32be(version), 32 bytes, lowercase hex. Carried in the seal as `key_commitment`. HPKE base mode is unauthenticated, so every opener refuses a key whose commitment does not match the signed seal before using it. |
 | Identity KEK | HKDF-SHA256 | ikm = PRF output (32 bytes), salt = raw credential id bytes, info = UTF8(`relic/identity-kek/v1`), 32 bytes, used as an AES-256-GCM key |
 | Identity bundle | AES-256-GCM | 12-byte random nonce; aad = UTF8(`relic/identity-bundle/v1`) ‖ 0x00 ‖ identityId (32 raw bytes) ‖ raw credential id; pt = UTF8(canonicalJson(`{"kem":{"d","x","y"},"sig":{"d","x","y"},"v":1}`)); stored as base64url(nonce ‖ ciphertext) |
 | Statement signature | ECDSA P-256, SHA-256 | IEEE P1363 `r ‖ s`, 64 bytes, base64url; over `statementBytes` (4.3) |
@@ -141,7 +142,7 @@ Every statement has every listed field (null where allowed). `at` is epoch milli
 | `device_cert` | `at, device_fingerprint_typed, device_id, kem_public_key, label, not_after, owner_identity_id, sig_public_key` | identity (owner) | yes |
 | `device_revocation` | `at, device_id, owner_identity_id` | identity (owner) | yes |
 | `recovery_designation` | `at, fingerprint_typed (or null), owner_identity_id, recovery_email (or null), recovery_identity_id (or null)` | identity (owner) | yes; all three null removes the designation |
-| `seal` | `access_epoch, at, ciphertext_sha256, owner_epoch, recipient_key_ids (sorted hex), relic_id, signer_id, version` | device (relic-mcp) or identity (browser rekey) | no |
+| `seal` | `access_epoch, at, ciphertext_sha256, key_commitment (lowercase hex, 4.1), owner_epoch, recipient_key_ids (sorted hex), relic_id, signer_id, version` | device (relic-mcp) or identity (browser rekey) | no |
 | `device_enroll` | `at, device_id, label` | device | no |
 | `device_request` | `at, body_sha256, device_id, method, nonce, path` | device | no |
 | `owner_bind` | `at, device_id, nonce, owner_identity_id, relic_id` | device | no |
@@ -461,14 +462,14 @@ Required recipient set R for a relic at seal time: the owner identity's `kemKeyI
 1. Parse the seal statement; `relic_id` matches; `version === row.version`; `version > (row.sealedVersion ?? 0)`.
 2. Signer: `identity` must be the owner identity; `device` must be an owner device, not revoked, `notAfter >= at`. Verify the signature.
 3. `ciphertext_sha256` equals the server's digest of the stored object, else `seal_digest_mismatch`.
-4. The wraps' recipient set equals R and equals `recipient_key_ids`, and `owner_epoch` equals the owner identity's `recipientsEpoch`; else `recipients_changed` with both epochs.
+4. The wraps' recipient set equals R and equals `recipient_key_ids`, and `owner_epoch` equals the owner identity's `recipientsEpoch`; else `recipients_changed` with both epochs. The seal carries `key_commitment` (the key commitment of 4.1), which the server stores and cannot check, because it never holds a key.
 5. Delete any wraps already stored for this unsealed version, write the new wraps and the seal (create-only).
 6. `updateRelic`: require `accessEpoch === statement.access_epoch`, `version === row.version`; set `sealedVersion`. On failure delete what step 5 wrote and refuse `recipients_changed` or `version_conflict`.
 7. Then today's `markPublished`, digest record and change notice.
 
 Grant: verify attestation and owner; grantee identity current; `fingerprint_typed` equals the grantee's fingerprint (else `fingerprint_mismatch`); every version sealed and not deleted; wraps exactly cover `versions` × grantee key. Write wraps, write or replace the grant, then `updateRelic` requiring `row.sealedVersion` to be in `versions` and incrementing `accessEpoch`; on failure delete what was written and refuse `grant_stale_version` with `current_version`. Mark the request granted, mail the grantee, log `grant`.
 
-Revocation: verify one attestation carrying `revocation` and `republish`; `previous_version === row.sealedVersion === row.version`, else `version_conflict`. Record the revocation on the grant, `deleteWraps(relicId, {recipientKeyId})`, and in one `updateRelic` increment `accessEpoch` and open the next version exactly as `beginVersion` does (notice pending). Sign the upload, log `revoke`, return the upload grant and epochs. The browser then uploads and completes with an identity-signed seal.
+Revocation: verify one attestation carrying `revocation` and `republish`; `previous_version === row.sealedVersion === row.version`, else `version_conflict`. The order is fixed. First sweep the revoked key's wraps (`deleteWraps(relicId, {recipientKeyId})`), except where another role the same key holds still keeps the key current (a recovery holder, PS2-07). Then mark the grant revoked. Then, in one `updateRelic`, increment `accessEpoch` and open the next version exactly as `beginVersion` does (notice pending). A failed sweep leaves the grant standing, and the owner retries the whole revocation. A failed version move puts the grant back. Sign the upload, log `revoke`, return the upload grant and epochs. The browser then uploads and completes with an identity-signed seal.
 
 Device approve and revoke, and recovery changes, increment the owner's `recipientsEpoch`. Device revoke and recovery replacement delete that key's wraps across `listOwnedRelics`. A version sealed in the window between a designation and its backfill can miss the new recipient; `GET /api/identity/relics?coverage=1` reports such gaps and the dashboard repairs them through `/api/identity/backfill`.
 
@@ -726,7 +727,7 @@ Settled by Jason in the batched ask. Decision 7 is IN scope: S2 adds the lifecyc
 4. Identity replacement after losing every passkey, under the first-passkey freshness rule, with an email and old grants stopping (recommended yes).
 5. Run the virtual-authenticator live probe against relik.link after deploy (writes a private relic and identities for `+tag` addresses on his own production, ends with a hard delete). Recommended yes.
 6. Publish relic-mcp to npm through CI after merge. Recommended yes.
-7. Erase expired private relics from storage at their TTL (ciphertext and metadata get `customTime` and a lifecycle rule; today expiry only stops serving). Not in this plan; recommended as one more S2 and S3 change if he says yes.
+7. Erase expired private relics from storage at their TTL (ciphertext and metadata get `customTime` and a lifecycle rule; today expiry only stops serving). Accepted 2026-11-11 and built: the merged bucket rules (`deploy/terraform/modules/relic/resource.google_storage_bucket.relics.tf`) remove a private relic's live objects one day after expiry, and the server writes `customTime`. Deleted copies stay soft-deleted for the bucket's soft-delete retention, so removal is from live storage and not immediate permanent erasure. The retention value is a deployment setting (`soft_delete_retention_days`).
 
 ## 11. Docs amendment checklist (S9)
 
