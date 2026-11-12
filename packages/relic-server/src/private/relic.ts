@@ -850,6 +850,8 @@ export async function completeSeal(
     throw new ProblemError('private_seal_required');
   }
   const sealBody = input.seal as Record<string, unknown>;
+  // The key commitment is stored with the seal but not checked here: this
+  // service never holds a version key. Every opener checks it before use.
   const statement = parseSeal(sealBody['statement']);
   if (typeof sealBody['signature'] !== 'string') {
     throw new ProblemError('invalid_seal', { seal_check: 'signature' });

@@ -12,6 +12,7 @@ import {
   kemKeyIdOf,
   signStatement,
   statementBytes,
+  keyCommitment,
   wrapVersionKey,
   type IdentityKeys,
 } from '@relic/format/private';
@@ -344,6 +345,11 @@ async function sealedPrivateRelic(
     access_epoch: 0,
     at: now,
     ciphertext_sha256: digest,
+    key_commitment: await keyCommitment({
+      relicId: RELIC_ID,
+      version: 1,
+      key: versionKey,
+    }),
     owner_epoch: ownerRecord!.recipientsEpoch,
     recipient_key_ids: recipients,
     relic_id: RELIC_ID,
@@ -454,6 +460,11 @@ async function sealVersionTwo(
     access_epoch: row!.accessEpoch ?? 0,
     at: now,
     ciphertext_sha256: digest,
+    key_commitment: await keyCommitment({
+      relicId: RELIC_ID,
+      version: 2,
+      key,
+    }),
     owner_epoch: ownerRecord!.recipientsEpoch,
     recipient_key_ids: recipients,
     relic_id: RELIC_ID,
