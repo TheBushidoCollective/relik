@@ -6525,3 +6525,371 @@ mark[data-concealed] {
     color: var(--patina-ink);
   }
 }
+
+/* ---------- private shares (S5) ---------- */
+
+.card.is-refusal { border-top-color: var(--oxide); }
+.card.is-quiet { border-top-color: var(--rule-strong); }
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.55rem 1rem;
+  border: 1px solid var(--rule-strong);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.82rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btn:hover { border-color: var(--patina); color: var(--patina-ink); background: var(--ground); }
+.btn.is-small { padding: 0.35rem 0.75rem; font-size: 0.78rem; }
+.btn.is-danger:hover { border-color: var(--oxide); color: var(--oxide); background: var(--diff-removed); }
+.action.danger { background: var(--oxide); color: var(--surface); border: 0; padding: 0.55rem 1rem; }
+.action.danger:hover { background: color-mix(in srgb, var(--oxide) 78%, var(--ink)); color: var(--surface); }
+.signin { display: grid; gap: 1rem; }
+.signin-or {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  color: var(--ink-soft);
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.signin-or::before, .signin-or::after { content: ""; flex: 1; border-top: 1px solid var(--rule); }
+.signin-row { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: flex-end; }
+.signin-row .compose-field { flex: 1 1 12rem; }
+.card, .dashboard-section, .found-party, .fp-field, .approval-steps > li { container-type: inline-size; }
+.fingerprint {
+  display: grid;
+  grid-template-columns: repeat(4, max-content);
+  gap: 0.25rem 0.85em;
+  margin: 0;
+  padding: 0.85rem 1rem;
+  background: var(--ground);
+  border: 1px solid var(--rule-strong);
+  border-left: 3px solid var(--patina);
+  font-family: var(--mono);
+  font-size: 1.12rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--ink);
+  user-select: all;
+  font-variant-numeric: tabular-nums;
+}
+.fingerprint.is-small { font-size: 0.86rem; padding: 0.55rem 0.75rem; gap: 0.15rem 0.75em; }
+.fingerprint.is-foreign { border-left-color: var(--oxide); }
+@container (min-width: 36rem) {
+  .fingerprint, .fp-echo { grid-template-columns: repeat(8, max-content); }
+}
+
+.fp-caption {
+  margin: 0 0 0.35rem;
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.fp-instruction {
+  margin: 0.85rem 0 0;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--oxide);
+  font-size: 0.92rem;
+}
+
+/*
+ * ---------- the typed fingerprint ----------
+ *
+ * The field the owner types what they heard into. Its state is an attribute,
+ * not a colour alone: empty says what to do, a partial entry counts, a wrong
+ * full entry says so in words beside an oxide rule, and only a match turns
+ * the field patina and frees the button under it.
+ */
+.fp-field { display: grid; gap: 0.35rem; }
+.fp-input {
+  width: 100%;
+  padding: 0.55rem 0.65rem;
+  background: var(--ground);
+  border: 1px solid var(--rule-strong);
+  border-left-width: 3px;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 0.95rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+/* What Relic will compare, folded and grouped like the plate the other person
+   is reading from. The field scrolls once a full fingerprint is in it; this
+   does not, so the owner can check all 32 characters against what they heard. */
+.fp-echo {
+  display: grid;
+  grid-template-columns: repeat(4, max-content);
+  gap: 0.15rem 0.75em;
+  min-height: 1.6rem;
+  margin: 0;
+  padding: 0.25rem 0.5rem;
+  border: 1px dashed var(--rule-strong);
+  font-family: var(--mono);
+  font-size: 0.86rem;
+  letter-spacing: 0.08em;
+  color: var(--ink);
+}
+.fp-echo .is-short { color: var(--ink-soft); }
+[data-fingerprint-state="match"] .fp-echo { border-style: solid; border-color: var(--patina); }
+[data-fingerprint-state="mismatch"][data-complete] .fp-echo { border-style: solid; border-color: var(--oxide); }
+.fp-input::placeholder { color: var(--ink-soft); letter-spacing: 0.08em; text-transform: none; font-family: var(--sans); font-size: 0.86rem; }
+.fp-input:focus-visible { outline: 2px solid var(--patina); outline-offset: 1px; }
+.fp-status { margin: 0; min-height: 1.3em; font-size: 0.8rem; color: var(--ink-soft); display: flex; gap: 0.35rem; align-items: flex-start; }
+.fp-status .icon { margin-top: 0.2rem; }
+[data-fingerprint-state="mismatch"] .fp-input { border-left-color: var(--oxide); }
+[data-fingerprint-state="mismatch"][data-complete] .fp-status { color: var(--oxide); }
+[data-fingerprint-state="match"] .fp-input { border-color: var(--patina); }
+[data-fingerprint-state="match"] .fp-status { color: var(--patina); font-weight: 500; }
+
+/* ---------- the ready reader: strip and reading surface ---------- */
+
+.private-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1.25rem;
+  padding: 0.6rem 1.25rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--rule);
+  font-size: 0.82rem;
+  color: var(--ink-soft);
+}
+.private-strip strong { color: var(--ink); font-weight: 500; }
+.strip-fp { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem 0.6rem; }
+.strip-fp .fingerprint { padding: 0.25rem 0.5rem; font-size: 0.78rem; border-left-width: 2px; }
+@media (min-width: 40rem) { .strip-fp .fingerprint { grid-template-columns: repeat(8, max-content); } }
+@media (max-width: 40rem) { .strip-fp .fingerprint { font-size: 0.86rem; } }
+.strip-note { flex-basis: 100%; margin: 0; font-size: 0.78rem; }
+
+@media (max-width: 34rem) {
+  .private-strip { padding: 0.6rem 0.75rem; }
+}
+/*
+ * ---------- the access panel ----------
+ *
+ * The decision panel's sheet: fixed under the band at the right edge, a
+ * double rule on top, square, scrolling on its own. It is non-modal so the
+ * relic stays readable beside it on a wide screen; on a phone it is the
+ * screen.
+ */
+.access-panel {
+  position: fixed;
+  top: var(--panel-top, var(--bar-height));
+  right: 0;
+  z-index: 8;
+  /* 100% of the viewport box, not 100vw: vw counts a classic scrollbar, so a
+     phone-width panel started 15px off the left edge where one is drawn. */
+  width: min(28rem, 100%);
+  max-height: calc(100dvh - var(--panel-top, var(--bar-height)));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--surface);
+  border: 1px solid var(--rule-strong);
+  border-top: 3px double var(--ink);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 18%);
+}
+
+.panel-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  min-height: 2.75rem;
+  padding: 0 0.4rem 0 1.25rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--rule);
+}
+.panel-title { display: flex; align-items: baseline; gap: 0.6rem; min-width: 0; margin: 0; font-size: 1rem; font-weight: 600; }
+.panel-title .accession { font-weight: 400; }
+.panel-close {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 2.25rem; height: 2.25rem; padding: 0; border: 0;
+  background: none; color: var(--ink-soft); cursor: pointer;
+}
+.panel-close:hover { color: var(--patina-ink); background: var(--ground); }
+.panel-close:focus-visible { outline: 2px solid var(--patina); outline-offset: -2px; }
+
+.panel-body { display: grid; gap: 1.5rem; padding: 1.1rem 1.25rem 1.5rem; }
+.panel-lead { margin: 0; font-size: 0.86rem; color: var(--ink-soft); }
+.panel-section { display: grid; gap: 0.6rem; }
+.panel-section > h3 {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 0.6rem;
+  margin: 0; padding-bottom: 0.35rem; border-bottom: 1px solid var(--rule);
+  font-size: 0.78rem; font-family: var(--mono); font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-soft);
+}
+.panel-empty { margin: 0; font-size: 0.86rem; color: var(--ink-soft); }
+.panel-notice {
+  margin: 0; padding: 0.6rem 0.75rem; font-size: 0.86rem;
+  background: var(--ground); border-left: 3px solid var(--patina);
+}
+.panel-notice.is-oxide { border-left-color: var(--oxide); }
+.panel-foot { margin: 0; padding-top: 0.85rem; border-top: 1px solid var(--rule); font-size: 0.82rem; color: var(--ink-soft); }
+
+/* On a wide screen the relic moves over rather than sitting under the sheet. */
+@media (min-width: 64rem) {
+  :root[data-panel-open] .ready-stage { padding-right: calc(28rem + 1.25rem); }
+  :root[data-panel-open] .private-strip { padding-right: calc(28rem + 1.25rem); }
+}
+
+/* A request is a ticket: who asked, then the three things to do in order. */
+.request {
+  display: grid;
+  gap: 0.9rem;
+  padding: 0.9rem 1rem 1rem;
+  background: var(--ground);
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--patina);
+}
+.request-who { display: grid; gap: 0.1rem; }
+.request-who strong { font-weight: 600; word-break: break-word; }
+.request-when { font-family: var(--mono); font-size: 0.72rem; color: var(--ink-soft); }
+.request-steps { display: grid; gap: 0.9rem; margin: 0; padding: 0; list-style: none; counter-reset: step; }
+.request-steps > li { display: grid; grid-template-columns: 1.4rem minmax(0, 1fr); gap: 0 0.5rem; counter-increment: step; }
+.request-steps > li::before {
+  content: counter(step);
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 1.4rem; height: 1.4rem; border: 1px solid var(--rule-strong);
+  font-family: var(--mono); font-size: 0.7rem; color: var(--ink-soft); background: var(--surface);
+}
+.request-steps > li > * { grid-column: 2; }
+.step-text { margin: 0 0 0.45rem; font-size: 0.86rem; }
+
+fieldset.versions { margin: 0; padding: 0; border: 0; min-width: 0; }
+fieldset.versions legend { padding: 0; margin: 0 0 0.45rem; font-size: 0.86rem; }
+.version-picks { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.pick {
+  display: inline-flex; align-items: center; gap: 0.4rem;
+  padding: 0.3rem 0.6rem; border: 1px solid var(--rule-strong); background: var(--surface);
+  font-family: var(--mono); font-size: 0.76rem; cursor: pointer;
+}
+.pick:has(input:checked) { border-color: var(--patina); color: var(--patina-ink); }
+.pick:has(input:disabled) { cursor: default; }
+.pick:has(input:focus-visible) { outline: 2px solid var(--patina); outline-offset: 1px; }
+.pick input { margin: 0; accent-color: var(--patina); width: 0.9rem; height: 0.9rem; }
+.pick .lock-note { font-family: var(--sans); font-size: 0.7rem; color: var(--ink-soft); }
+.pick-note { margin: 0.4rem 0 0; font-size: 0.76rem; color: var(--ink-soft); }
+
+.row-list { display: grid; margin: 0; padding: 0; list-style: none; border-top: 1px solid var(--rule); }
+.row-list > li {
+  display: flex; justify-content: space-between; align-items: center; gap: 0.75rem 1rem;
+  padding: 0.7rem 0.25rem; border-bottom: 1px solid var(--rule);
+}
+.row-main { display: grid; gap: 0.1rem; min-width: 0; }
+.row-main strong { font-weight: 500; font-size: 0.92rem; word-break: break-word; }
+.row-meta { font-size: 0.78rem; color: var(--ink-soft); word-break: break-word; }
+.row-meta.is-mono, .is-mono { font-family: var(--mono); }
+.row-kind {
+  font-family: var(--mono); font-size: 0.62rem; letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--ink-soft); border: 1px solid var(--rule-strong); padding: 0 0.3rem; white-space: nowrap;
+}
+
+/* ---------- dialogs: revoke and delete ---------- */
+
+dialog.sheet {
+  width: min(32rem, calc(100vw - 1.5rem));
+  max-height: calc(100dvh - 2rem);
+  padding: 0;
+  overflow-y: auto;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--rule-strong);
+  border-top: 3px solid var(--oxide);
+  box-shadow: 0 10px 30px rgb(0 0 0 / 28%);
+}
+dialog.sheet::backdrop { background: rgb(16 19 20 / 45%); }
+.sheet-body { display: grid; gap: 0.9rem; padding: 1.4rem 1.5rem 1.5rem; }
+.sheet-body h2 { margin: 0; font-size: 1.1rem; font-weight: 600; }
+.sheet-body p { margin: 0; }
+.sheet-warning { padding: 0.75rem 0.9rem; background: var(--ground); border-left: 3px solid var(--oxide); font-size: 0.95rem; }
+.sheet-fine { font-size: 0.8rem; color: var(--ink-soft); }
+.sheet-actions { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-top: 0.25rem; }
+.sheet-actions .btn, .sheet-actions .action { padding: 0.55rem 1rem; }
+
+/*
+ * The rekey ledger. Four steps that run in this browser, each on its own
+ * line, ticked when done. The running step's line is hatched like the
+ * viewer's loading meter while it has no fraction to show.
+ */
+.rekey { display: grid; gap: 0.6rem; }
+.rekey-steps { margin: 0; padding: 0; list-style: none; border-top: 1px solid var(--rule); }
+.rekey-steps li {
+  display: grid; grid-template-columns: 1.1rem minmax(0, 1fr); gap: 0.5rem; align-items: center;
+  padding: 0.45rem 0.25rem; border-bottom: 1px solid var(--rule);
+  font-family: var(--mono); font-size: 0.78rem; color: var(--ink-soft);
+}
+.rekey-steps li .tick { width: 0.9rem; height: 0.9rem; border: 1px solid var(--rule-strong); display: inline-flex; align-items: center; justify-content: center; }
+.rekey-steps li .tick .icon { width: 10px; height: 10px; visibility: hidden; }
+.rekey-steps li[data-step-state="done"] { color: var(--ink); }
+.rekey-steps li[data-step-state="done"] .tick { border-color: var(--patina); color: var(--patina); }
+.rekey-steps li[data-step-state="done"] .tick .icon { visibility: visible; }
+.rekey-steps li[data-step-state="active"] { color: var(--ink); font-weight: 600;
+  background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--patina) 14%, transparent) 0 1px, transparent 1px 6px); }
+.rekey-steps li[data-step-state="active"] .tick { border-color: var(--patina); }
+.rekey-steps li[data-step-state="failed"] { color: var(--oxide); }
+.rekey-steps li[data-step-state="failed"] .tick { border-color: var(--oxide); color: var(--oxide); }
+.rekey-steps li[data-step-state="failed"] .tick .icon { visibility: visible; }
+.rekey-outcome { margin: 0; padding: 0.6rem 0.75rem; font-size: 0.88rem; background: var(--ground); border-left: 3px solid var(--patina); }
+.rekey[data-rekey-state="failed"] .rekey-outcome { border-left-color: var(--oxide); }
+
+fieldset.delete-choice { display: grid; gap: 0.5rem; margin: 0; padding: 0; border: 0; min-width: 0; }
+fieldset.delete-choice legend { margin-bottom: 0.4rem; padding: 0; font-weight: 600; font-size: 0.9rem; }
+.radio { display: flex; gap: 0.5rem; align-items: flex-start; font-size: 0.9rem; cursor: pointer; }
+.radio input { margin: 0.3rem 0 0; accent-color: var(--oxide); }
+.radio:has(input:focus-visible) { outline: 2px solid var(--patina); outline-offset: 2px; }
+.delete-versions { padding-left: 1.5rem; }
+.delete-versions .pick:has(input:checked) { border-color: var(--oxide); color: var(--oxide); }
+.delete-versions .pick input { accent-color: var(--oxide); }
+
+.dashboard-section.is-attention { border-top-color: var(--oxide); }
+.dash-sub { margin: 1.5rem 0 0.6rem; font-size: 0.78rem; font-family: var(--mono); font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-soft); }
+.dash-grid { display: grid; gap: 1rem; }
+.dash-outcome { margin: 0.75rem 0 0; font-size: 0.86rem; color: var(--ink-soft); min-height: 1.3em; }
+.dash-outcome.is-ok { color: var(--patina); }
+.dash-outcome.is-bad { color: var(--oxide); }
+.inline-form { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: flex-end; }
+.inline-form .compose-field { flex: 1 1 14rem; }
+.inline-form .retention-field { flex: 0 1 11rem; }
+.found-party { display: grid; gap: 0.75rem; margin-top: 1rem; padding: 0.9rem 1rem 1rem; background: var(--ground); border: 1px solid var(--rule); border-left: 3px solid var(--patina); }
+.found-party p { margin: 0; font-size: 0.86rem; }
+.approval-steps { display: grid; gap: 1.1rem; margin: 0; padding: 0; list-style: none; }
+.approval-steps > li { display: grid; gap: 0.5rem; }
+.approval-steps > li[aria-disabled="true"] { opacity: 0.55; }
+.facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 0.25rem 1rem; margin: 0 0 1rem; font-size: 0.86rem; }
+.facts dt { color: var(--ink-soft); font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.06em; padding-top: 0.15rem; }
+.facts dd { margin: 0; word-break: break-word; }
+.gap-banner { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.6rem 1rem; padding: 0.7rem 0.9rem; margin-bottom: 1rem; background: var(--ground); border-left: 3px solid var(--oxide); font-size: 0.86rem; }
+.gap-banner.is-done { border-left-color: var(--patina); }
+
+/* The access log is a ledger: time, what happened, to what, by whom. */
+.log { margin: 0; padding: 0; list-style: none; border-top: 1px solid var(--rule); }
+.log li {
+  display: grid;
+  grid-template-columns: 9.5rem 8rem minmax(0, 1fr);
+  gap: 0.15rem 1rem;
+  padding: 0.55rem 0.25rem;
+  border-bottom: 1px solid var(--rule);
+  font-size: 0.82rem;
+}
+.log time { font-family: var(--mono); font-size: 0.72rem; color: var(--ink-soft); padding-top: 0.1rem; }
+.log .what { font-weight: 600; }
+.log [data-access-event="revoke"] .what,
+.log [data-access-event="delete"] .what { color: var(--oxide); }
+.log .about { min-width: 0; word-break: break-word; color: var(--ink-soft); }
+.log .about b { color: var(--ink); font-weight: 500; }
+@media (max-width: 40rem) {
+  .log li { grid-template-columns: minmax(0, 1fr); }
+}
