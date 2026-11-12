@@ -61,7 +61,6 @@ import {
   type UnlockedIdentity,
 } from './keys.ts';
 import { privateKeysOf } from './ops.ts';
-import { shellRoot } from '../shell-root.ts';
 
 export interface PrivateReaderMount {
   readonly relicId: string;
@@ -342,7 +341,7 @@ class PrivateReader {
   }
 
   async start(): Promise<void> {
-    shellRoot().replaceChildren(this.host);
+    document.body.replaceChildren(this.host);
     this.wire();
     await this.route();
   }
@@ -804,7 +803,7 @@ class PrivateReader {
     this.panelHost?.remove();
     const host = document.createElement('div');
     host.id = 'access-panel-host';
-    shellRoot().append(host);
+    document.body.append(host);
     this.panelHost = host;
     return host;
   }
@@ -997,7 +996,7 @@ export async function mountPrivateDashboard(deps: ViewerDeps): Promise<void> {
   if (session.kind !== 'verified') return;
   const host = document.createElement('section');
   host.id = 'private-dashboard';
-  shellRoot().append(host);
+  document.body.append(host);
   const approve = new URL(deps.locationHref).searchParams.get('approve-device');
   renderPrivateDashboard(host, {
     deps,

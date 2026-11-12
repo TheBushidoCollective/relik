@@ -106,7 +106,6 @@ import {
   createVersionStore,
   type VersionStore,
 } from './version-store.ts';
-import { shellRoot } from './shell-root.ts';
 
 // The adapter table is installed once, from the one module that knows the
 // complete built-in set. See `anchor-adapters.ts` for why registration is not
@@ -3538,8 +3537,7 @@ export function renderComparison(
     changesSidebar.tab
   );
 
-  const page = shellRoot();
-  page.replaceChildren(
+  document.body.replaceChildren(
     buildBar(current, relicId, {
       onCompare: () => {
         request++;
@@ -3555,7 +3553,7 @@ export function renderComparison(
     }),
     diffRow
   );
-  afterRender?.(page);
+  afterRender?.(document.body);
   scaffold.headline.focus();
   void updateSelected();
 }
@@ -9305,13 +9303,12 @@ export function renderReady(
     const wrap = buildStageWrap(viewToShow, usercontentOrigin);
     const stage = (wrap.firstElementChild as HTMLElement) ?? wrap;
     disposeOtioViews(document.body);
-    const page = shellRoot();
-    page.replaceChildren(
+    document.body.replaceChildren(
       bar,
       buildRelicRow(wrap, thread?.element, thread?.resizer, thread?.tab)
     );
     thread?.attach(wrap);
-    afterRender?.(page);
+    afterRender?.(document.body);
     trackRenderState(stage, wrap, viewToShow.route);
   };
 
@@ -9342,8 +9339,8 @@ export function renderReady(
         bar.after(versionPill);
       } else if (bar?.parentElement?.insertBefore) {
         bar.parentElement.insertBefore(versionPill, bar.nextSibling);
-      } else {
-        shellRoot().appendChild(versionPill);
+      } else if (document.body?.appendChild) {
+        document.body.appendChild(versionPill);
       }
     } else if (versionPill) {
       const label =
@@ -9482,16 +9479,10 @@ export function adoptOrMountPlate(relicId: string): PlateHandles {
 
     actions.append(policy, abuse);
     bar.append(mark, identity, actions);
-  }
-  // The server's shell renders a static load bar and plate before the root.
-  // The viewer adopts them into its root, so the render that replaces the
-  // root's content replaces them too and no second bar is left in the page.
-  const host = shellRoot();
-  if (bar.parentElement !== host) {
-    if (host.prepend) {
-      host.prepend(bar);
-    } else {
-      host.appendChild(bar);
+    if (document.body?.prepend) {
+      document.body.prepend(bar);
+    } else if (document.body?.appendChild) {
+      document.body.appendChild(bar);
     }
   }
 
@@ -9536,11 +9527,10 @@ export function adoptOrMountPlate(relicId: string): PlateHandles {
       bar.after(plate);
     } else if (bar.parentElement) {
       bar.parentElement.insertBefore(plate, bar.nextSibling);
-    } else {
-      shellRoot().appendChild(plate);
+    } else if (document.body?.appendChild) {
+      document.body.appendChild(plate);
     }
   }
-  if (plate && plate.parentElement !== host) host.appendChild(plate);
 
   const phaseEl = plate?.querySelector
     ? (plate.querySelector('.load-phase') as HTMLElement | null)
@@ -9699,8 +9689,8 @@ export function trackRenderState(
       bar.after(statusPill);
     } else if (bar?.parentElement?.insertBefore) {
       bar.parentElement.insertBefore(statusPill, bar.nextSibling);
-    } else {
-      shellRoot().appendChild(statusPill);
+    } else if (document.body?.appendChild) {
+      document.body.appendChild(statusPill);
     }
   }
 
@@ -9877,11 +9867,10 @@ export function renderDead(
     mark.className = 'mark';
     mark.textContent = WORDMARK;
     bar.appendChild(mark);
-    const host = shellRoot();
-    if (host.prepend) {
-      host.prepend(bar);
-    } else {
-      host.appendChild(bar);
+    if (document.body?.prepend) {
+      document.body.prepend(bar);
+    } else if (document.body?.appendChild) {
+      document.body.appendChild(bar);
     }
   }
 
@@ -10052,7 +10041,7 @@ export function renderDead(
   card.appendChild(code);
 
   main.appendChild(card);
-  shellRoot().appendChild(main);
+  document.body.appendChild(main);
 }
 
 /** A small cover for a dashboard row, built only from local/plain metadata. */
@@ -10096,7 +10085,7 @@ export async function renderDashboard(deps: ViewerDeps): Promise<void> {
   identity.append(title, meta);
   bar.appendChild(identity);
 
-  shellRoot().replaceChildren(bar);
+  document.body.replaceChildren(bar);
 
   const main = document.createElement('main');
   main.className = 'stage stage-dashboard';
@@ -10590,7 +10579,7 @@ export async function renderDashboard(deps: ViewerDeps): Promise<void> {
   }
 
   main.appendChild(container);
-  shellRoot().appendChild(main);
+  document.body.appendChild(main);
 }
 
 /**
@@ -10635,7 +10624,7 @@ export async function renderDocument(
 
   const main = document.createElement('main');
   main.className = 'stage stage-markdown';
-  shellRoot().replaceChildren(bar, main);
+  document.body.replaceChildren(bar, main);
 
   if (!SERVICE_DOCUMENTS.includes(path)) {
     main.appendChild(notice('This document does not exist.'));

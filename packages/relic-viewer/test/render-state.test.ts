@@ -889,19 +889,11 @@ describe('Spec B: V3 Render State, Version Progress, and Comparison Bytes', () =
       }) as typeof globalThis.fetch,
     };
 
-    const shell = new ElementStub('div');
-    shell.setAttribute('id', 'relic-root');
-    rootBody.appendChild(shell);
-
     renderReady(viewV1, 'r1', 'https://usercontent.example', deps);
 
     // Initial stage is rendered
     const initialStage = rootBody.querySelector('main.stage');
     expect(initialStage).not.toBeNull();
-    // The shell root stays in the page after the render, so the ready view
-    // lives in the element a later mount looks up.
-    expect(rootBody.querySelector('#relic-root')).toBe(shell);
-    expect(shell.querySelector('main.stage')).toBe(initialStage);
 
     const versionTrigger = rootBody.querySelector(
       '.version-trigger'
