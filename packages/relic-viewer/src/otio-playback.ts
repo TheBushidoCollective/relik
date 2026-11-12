@@ -1578,13 +1578,19 @@ export function createOtioPlayback(
     };
   }
 
-  function cancelPreparedBoundary(): void {
+  // keepReserved: a ring that a live reservation still covers stays in place. The recovery
+  // handoff passes it, because the handoff's own visual hold reserves tags past the boundary on
+  // rings the prepared boundary opened, and releasing one invalidates that reservation, which
+  // ends playback with "certified video reservation was invalidated" (CI run 43302866638: the
+  // incoming ring was paused 0.4 ms before that error). The ring then belongs to the new run.
+  function cancelPreparedBoundary(keepReserved = false): void {
     const candidate = preparedBoundary;
     if (!candidate) return;
     preparedBoundary = null;
     candidate.abort.abort();
     for (const [key, ring] of candidate.rings) {
       if (nativeRings.get(key) !== ring) continue;
+      if (keepReserved && ring.hasReservations()) continue;
       ring.videoElement.pause();
       decodedAt.delete(ring.videoElement);
       ring.release();
@@ -5918,7 +5924,8 @@ export function createOtioPlayback(
         clockEpoch: run.gate.clockEpoch,
         oldDrainObserved: oldRun.drainObserved,
       });
-      if (candidate && preparedBoundary === candidate) cancelPreparedBoundary();
+      if (candidate && preparedBoundary === candidate)
+        cancelPreparedBoundary(true);
       if (oldRun.drainObserved) releasePcmResources(oldRun);
       void transfer.then(
         () => {

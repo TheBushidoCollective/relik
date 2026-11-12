@@ -1176,6 +1176,11 @@ export class NativeDecoderRing {
     return resident;
   }
 
+  /** True while a reservation on this ring is live: reserved, not yet released or invalidated. */
+  hasReservations(): boolean {
+    return this.invalidationListeners.size > 0;
+  }
+
   reserveTags(
     tags: readonly number[],
     epoch: number,

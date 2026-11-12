@@ -185,6 +185,25 @@ describe('native video snapshot reservations', () => {
       expect(budget.allocatedPixels).toBe(300);
     }));
 
+  test('reports a live reservation until it is released or invalidated', () =>
+    fixture(({ ring, video }) => {
+      expect(ring.allocate(10, 10)).toBe(true);
+      for (let tag = 0; tag < 3; tag++) capture(ring, video, tag);
+      expect(ring.hasReservations()).toBe(false);
+      const first = ring.reserveTags([0, 1], 0)!;
+      const second = ring.reserveTags([2], 0)!;
+      expect(ring.hasReservations()).toBe(true);
+      first.release();
+      expect(ring.hasReservations()).toBe(true);
+      second.release();
+      expect(ring.hasReservations()).toBe(false);
+      const third = ring.reserveTags([0], 0)!;
+      expect(ring.hasReservations()).toBe(true);
+      ring.resetEpoch(1);
+      expect(third.isValid()).toBe(false);
+      expect(ring.hasReservations()).toBe(false);
+    }));
+
   test('shared pins and callbacks retain backpressure until every owner releases', () =>
     fixture(({ ring, video, callbacks }) => {
       ring.allocate(10, 10);
