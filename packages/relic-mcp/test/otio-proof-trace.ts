@@ -138,6 +138,10 @@ export const otioProofTracePrelude = String.raw`(() => {
       let result = native === null ? {contextTime: NaN, performanceTime: NaN} : native;
       let hold = null;
       let applied = null;
+      // Record the first native pair of each performanceTime on every read, held or not. Chromium can
+      // move contextTime under one performanceTime, so a pair first seen at a re-read would put the
+      // hold deltaUs past a later native pair instead of past the pair the viewer accepted.
+      if (nativeFinite && !realPairByPerf.has(native.performanceTime)) realPairByPerf.set(native.performanceTime, native.contextTime);
       if (clockHold?.once) {
         const site = clockHold;
         clockHold = null;
@@ -156,7 +160,6 @@ export const otioProofTracePrelude = String.raw`(() => {
         if (continuousCtx && nativeFinite && !reread && clockHold.releasing) clockHold = null;
         applied = nativeFinite && !(continuousCtx && !reread) ? clockHold : null;
         if (applied) {
-          if (!realPairByPerf.has(native.performanceTime)) realPairByPerf.set(native.performanceTime, native.contextTime);
           if (applied.kind === 'ctx') {
             hold = {contextTime: Math.max(realPairByPerf.get(native.performanceTime) + applied.deltaUs / 1e6, latestRealContext ?? -Infinity), performanceTime: native.performanceTime};
           } else {
