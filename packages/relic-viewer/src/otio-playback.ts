@@ -4210,6 +4210,17 @@ export function createOtioPlayback(
         readEnd: observation.readEnd,
         lastAccepted: prior,
       });
+    if (result.reason === 'future-skipped')
+      pcmProof('clock-future-skip', generation, {
+        skips: clock.futureSkips,
+        leadMs: observation.performanceTime! - observation.readEnd,
+        contextLeadMs:
+          1000 * (observation.contextTime! - observation.contextAfter),
+        contextTime: observation.contextTime,
+        performanceTime: observation.performanceTime,
+        readEnd: observation.readEnd,
+        lastAccepted: prior,
+      });
     return result;
   }
 
@@ -5530,7 +5541,8 @@ export function createOtioPlayback(
           observation.status === 'interrupted' ||
           (observation.reason !== 'duplicate' &&
             observation.reason !== 'accepted' &&
-            observation.reason !== 'sub-resolution') ||
+            observation.reason !== 'sub-resolution' &&
+            observation.reason !== 'future-skipped') ||
           readEnd > deadline ||
           Math.ceil(contextAfter * admission.rate) +
             OTIO_PCM_EPOCH_GUARD_FRAMES >

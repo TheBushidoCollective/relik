@@ -93,13 +93,83 @@ describe('output clock admission', () => {
       c.observe({ ...sample(10), readBegin: 1070, readEnd: 1071 }).reason
     ).toBe('stale');
   });
-  test('rejects future and regressing pairs and terminates at the sample cap', () => {
+  test('one future stamp is skipped: no evidence, the last accepted pair stands, playback continues', () => {
     const c = ready();
-    expect(c.observe({ ...sample(50), performanceTime: 1060 }).reason).toBe(
+    c.arm();
+    c.start();
+    const accepted = c.lastAccepted;
+    const future = { ...sample(50), performanceTime: 1055 };
+    const skipped = c.observe(future);
+    expect(skipped).toMatchObject({
+      status: 'playing',
+      reason: 'future-skipped',
+    });
+    expect(c.futureSkips).toBe(1);
+    expect(c.lastAccepted).toEqual(accepted);
+    expect(c.lastRejection).toBeNull();
+    expect(evidencePair(c, skipped, 0.05, 1055)).toEqual(accepted);
+    // The same stamp read again while it still leads is the same single skip.
+    expect(
+      c.observe({ ...future, readBegin: 1051, readEnd: 1052 }).reason
+    ).toBe('future-skipped');
+    expect(c.futureSkips).toBe(1);
+    // A good stamp clears it, and a later future stamp is a new single skip.
+    expect(c.observe(sample(60))).toMatchObject({
+      status: 'playing',
+      reason: 'accepted',
+    });
+    expect(c.observe({ ...sample(70), performanceTime: 1075 })).toMatchObject({
+      status: 'playing',
+      reason: 'future-skipped',
+    });
+    expect(c.futureSkips).toBe(2);
+  });
+  test('a context stamp ahead of currentTime is skipped once the same way', () => {
+    const c = ready();
+    c.arm();
+    expect(c.observe({ ...sample(50), contextTime: 0.0731 })).toMatchObject({
+      status: 'armed',
+      reason: 'future-skipped',
+    });
+    expect(c.observe(sample(50)).status).toBe('armed');
+  });
+  test('a second future stamp before a good one interrupts playback', () => {
+    const c = ready();
+    c.arm();
+    c.start();
+    expect(c.observe({ ...sample(50), performanceTime: 1055 }).reason).toBe(
+      'future-skipped'
+    );
+    expect(c.observe({ ...sample(52), performanceTime: 1057 })).toMatchObject({
+      status: 'interrupted',
+      reason: 'future',
+    });
+    expect(c.futureSkips).toBe(1);
+    expect(c.lastRejection?.result.reason).toBe('future');
+  });
+  test('a future stamp that outlasts freshness with no good stamp interrupts playback', () => {
+    const c = ready();
+    c.arm();
+    c.start();
+    const future = { ...sample(41), performanceTime: 1100 };
+    expect(c.observe(future).status).toBe('playing');
+    expect(
+      c.observe({ ...future, readBegin: 1091, readEnd: 1092 })
+    ).toMatchObject({ status: 'interrupted', reason: 'stagnant' });
+  });
+  test('a skipped future stamp does not reset calibration; a second one does', () => {
+    const c = ready();
+    expect(c.observe({ ...sample(50), performanceTime: 1060 })).toMatchObject({
+      status: 'calibrated',
+      reason: 'future-skipped',
+    });
+    expect(c.observe({ ...sample(51), performanceTime: 1062 }).reason).toBe(
       'future'
     );
     expect(c.observe(sample(10)).status).toBe('calibrating');
     expect(c.observe(sample(9)).reason).toBe('regression');
+  });
+  test('terminates at the sample cap', () => {
     const bounded = new OutputClock(1000, {
       maxSamples: 2,
       minAdvances: 3,

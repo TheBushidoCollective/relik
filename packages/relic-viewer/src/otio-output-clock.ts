@@ -60,6 +60,15 @@ export class OutputClock {
   private first: ClockObservation | null = null;
   private last: ClockObservation | null = null;
   private heldContextTime: number | null = null;
+  // One stamp from the future is a bad sample, not a broken clock: it adds no evidence and the last
+  // accepted pair stands. This is that stamp until an accepted read clears it. A second, different
+  // future stamp before then is 'future', and a wait past freshnessMs is 'stagnant'.
+  private skippedFuture: {
+    contextTime: number;
+    performanceTime: number;
+  } | null = null;
+  /** Distinct future stamps skipped so far. */
+  futureSkips = 0;
   private advances = 0;
   private min = Infinity;
   private readonly runtimeOffsets: {
@@ -268,9 +277,22 @@ export class OutputClock {
     else if (
       performanceTime! > readEnd + this.policy.futureToleranceMs ||
       contextTime! > contextAfter + this.policy.futureToleranceMs / 1000
-    )
-      reason = 'future';
-    else if (readEnd - performanceTime! > this.policy.freshnessMs)
+    ) {
+      const skipped = this.skippedFuture;
+      if (skipped === null) {
+        this.skippedFuture = {
+          contextTime: contextTime!,
+          performanceTime: performanceTime!,
+        };
+        this.futureSkips++;
+        reason = 'future-skipped';
+      } else if (
+        skipped.contextTime === contextTime &&
+        skipped.performanceTime === performanceTime
+      )
+        reason = 'future-skipped';
+      else reason = 'future';
+    } else if (readEnd - performanceTime! > this.policy.freshnessMs)
       reason = 'stale';
     else if (
       last &&
@@ -361,6 +383,7 @@ export class OutputClock {
         }
         this.last = o;
         this.heldContextTime = null;
+        this.skippedFuture = null;
         if (priorState === 'playing') {
           const entry = { time: performanceTime!, offset, observation: o };
           this.runtimeOffsets.push(entry);
@@ -384,17 +407,20 @@ export class OutputClock {
         }
       }
     }
+    const held =
+      reason === 'duplicate' ||
+      reason === 'sub-resolution' ||
+      reason === 'future-skipped';
     if (
       !terminal &&
       reason !== 'accepted' &&
-      reason !== 'duplicate' &&
-      reason !== 'sub-resolution' &&
+      !held &&
       reason !== 'discontinuity' &&
       priorState === 'playing'
     )
       this.invalidate(reason);
     if (
-      (reason === 'duplicate' || reason === 'sub-resolution') &&
+      held &&
       this.last &&
       readEnd - this.last.performanceTime! > this.policy.freshnessMs
     ) {
@@ -402,20 +428,19 @@ export class OutputClock {
       if (priorState === 'playing' || priorState === 'armed')
         this.invalidate(reason);
     }
+    const stillHeld = held && reason !== 'stagnant';
     if (
       reason !== 'accepted' &&
-      reason !== 'duplicate' &&
+      !stillHeld &&
       reason !== 'discontinuity' &&
-      reason !== 'sub-resolution' &&
       priorState === 'armed'
     )
       this.invalidate(reason);
     if (
       !terminal &&
       reason !== 'accepted' &&
-      reason !== 'duplicate' &&
+      !stillHeld &&
       reason !== 'discontinuity' &&
-      reason !== 'sub-resolution' &&
       priorState !== 'playing' &&
       priorState !== 'armed' &&
       this.state !== 'failed'
@@ -432,12 +457,7 @@ export class OutputClock {
     const result = this.result(reason);
     const record = { observation: o, result };
     if (priorState !== 'playing' && !terminal) this.observations.push(record);
-    if (
-      reason !== 'accepted' &&
-      reason !== 'duplicate' &&
-      reason !== 'sub-resolution'
-    )
-      this.lastRejection = record;
+    if (reason !== 'accepted' && !stillHeld) this.lastRejection = record;
     this.onObservation?.(record);
     return result;
   }
@@ -446,8 +466,8 @@ export class OutputClock {
 /**
  * The pair a read may map time with. A held read adds no evidence, so it
  * resolves to the clock's last accepted pair. Every other read keeps its own
- * stamp. Null only for a held read with no accepted pair, which the hold rule
- * never produces.
+ * stamp. Null only for a held read with no accepted pair: a skipped future
+ * stamp before the first accepted read.
  */
 export function evidencePair(
   clock: OutputClock,
@@ -455,7 +475,7 @@ export function evidencePair(
   contextTime: number,
   performanceTime: number
 ): { contextTime: number; performanceTime: number } | null {
-  if (result.reason !== 'sub-resolution')
+  if (result.reason !== 'sub-resolution' && result.reason !== 'future-skipped')
     return { contextTime, performanceTime };
   return clock.lastAccepted;
 }

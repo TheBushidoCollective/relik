@@ -9833,6 +9833,8 @@ interface ClockEvidence {
   clockErrors: number;
   siteUses: number;
   siteHoldsConsumed: number;
+  futureSkipReads: number;
+  futureSkips: number;
   violations: string[];
 }
 function clockStamp(value: unknown): ClockStamp | null {
@@ -9933,7 +9935,9 @@ function auditClockEvidence(
     holdsMatched = 0,
     epochBridges = 0,
     clockErrors = 0,
-    siteUses = 0;
+    siteUses = 0,
+    futureSkipReads = 0;
+  const skippedStamps: ClockStamp[] = [];
   pcmEvents.forEach((value, index) => {
     if (value['event'] === 'clock-hold') {
       clockHolds++;
@@ -10004,6 +10008,33 @@ function auditClockEvidence(
         }
       }
     }
+    if (value['event'] === 'clock-future-skip') {
+      // One future stamp is skipped, never used: it must be a recorded read, it must really lead
+      // the read past the policy bound, and the pair that stands must be a native accepted pair.
+      futureSkipReads++;
+      const label = `clock-future-skip#${index}`;
+      const skipped = clockStamp(value);
+      if (!skipped) violations.push(`${label}:stamp-malformed`);
+      else {
+        if (!skippedStamps.some((stamp) => sameClockStamp(stamp, skipped)))
+          skippedStamps.push(skipped);
+        if (!observed.some((stamp) => sameClockStamp(stamp, skipped)))
+          violations.push(`${label}:stamp-unobserved`);
+      }
+      const leadMs = Number(value['leadMs']);
+      const contextLeadMs = Number(value['contextLeadMs']);
+      if (
+        !(leadMs > DEFAULT_CLOCK_POLICY.futureToleranceMs) &&
+        !(contextLeadMs > DEFAULT_CLOCK_POLICY.futureToleranceMs)
+      )
+        violations.push(`${label}:not-future`);
+      if (value['lastAccepted'] !== null) {
+        const last = clockStamp(value['lastAccepted']);
+        if (!last) violations.push(`${label}:last-accepted-malformed`);
+        else if (!native.some((stamp) => sameClockStamp(stamp, last)))
+          violations.push(`${label}:last-accepted-unobserved`);
+      }
+    }
     if (value['event'] === 'clock-site' && value['phase'] === 'use') {
       siteUses++;
       const label = `site-${String(value['site'])}#${index}`;
@@ -10045,6 +10076,8 @@ function auditClockEvidence(
     siteHoldsConsumed: (trace?.events ?? []).filter(
       (entry) => entry.kind === 'clock-site-hold-consumed'
     ).length,
+    futureSkipReads,
+    futureSkips: skippedStamps.length,
     violations,
   };
 }

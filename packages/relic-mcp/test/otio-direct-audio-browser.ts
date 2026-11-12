@@ -577,9 +577,16 @@ async function runIdealCold() {
         performanceTime: injectedPerformance,
       });
       // Mapping, tick and spread use the last accepted pair. A held read adds no
-      // evidence; the raw stamp stays in rawBridgeSamples only.
-      const held = outcome.reason === 'sub-resolution';
+      // evidence; the raw stamp stays in rawBridgeSamples only. A skipped future
+      // stamp before the first accepted pair has nothing to map with and is not a sample.
       const accepted = validator.lastAccepted;
+      if (outcome.reason === 'future-skipped' && accepted === null) {
+        diagnostic.state = validator.state;
+        return clock;
+      }
+      const held =
+        outcome.reason === 'sub-resolution' ||
+        outcome.reason === 'future-skipped';
       if (held && accepted === null)
         throw new Error('held read without accepted pair');
       const evidence: AudioTimestamp = held ? accepted! : clock;
