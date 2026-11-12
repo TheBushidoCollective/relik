@@ -253,8 +253,13 @@ function dummyDeps(fetchFn?: typeof globalThis.fetch): ViewerDeps {
 }
 
 describe('version comparison affordance', () => {
+  let shellRootStub: ElementStub | undefined;
   beforeEach(() => {
     const body = new ElementStub('BODY');
+    const shell = new ElementStub('DIV');
+    shell.setAttribute('id', 'relic-root');
+    body.appendChild(shell);
+    shellRootStub = shell;
     (globalThis as { document?: unknown }).document = {
       body,
       documentElement: {
@@ -267,6 +272,7 @@ describe('version comparison affordance', () => {
       createElementNS: (_namespace: string, tag: string) =>
         new ElementStub(tag),
       addEventListener: () => {},
+      getElementById: (id: string) => (id === 'relic-root' ? shell : null),
     };
     (globalThis as { window?: unknown }).window = {
       innerWidth: 1024,
@@ -581,15 +587,17 @@ describe('version comparison affordance', () => {
     if (v2Option === undefined) throw new Error('no v2 option in taskbar');
 
     const { promise, resolve } = Promise.withResolvers<void>();
-    const origReplace = docBody.replaceChildren.bind(docBody);
-    docBody.replaceChildren = (...args) => {
+    if (shellRootStub === undefined) throw new Error('no shell root');
+    const shell = shellRootStub;
+    const origReplace = shell.replaceChildren.bind(shell);
+    shell.replaceChildren = (...args) => {
       origReplace(...args);
       resolve();
     };
 
     v2Option.click();
     await promise;
-    docBody.replaceChildren = origReplace;
+    shell.replaceChildren = origReplace;
     // Version 2 renders on its own
     expect(withClass(docBody, 'stage-diff')).toHaveLength(0);
     expect(withClass(docBody, 'compare-picker')).toHaveLength(0);

@@ -4,14 +4,15 @@
  * Nothing is decrypted until every link in the chain checks out: the owner's
  * public keys hash to the owner's identity id, the owner is the one this
  * browser pinned, the signer is the owner or one of the owner's certified
- * devices, the seal is signed by that signer, this reader is in the seal's
- * recipient set, the wrap opens under this reader's key, and the ciphertext's
- * digest is the one the seal signed. A failure at any step refuses the version
- * with a named error, and the content of a refused version is never shown.
+ * devices, the seal is signed by that signer, the wrap is addressed to this
+ * reader's key and opens under it, and the ciphertext's digest is the one the
+ * seal signed. A failure at any step refuses the version with a named error,
+ * and the content of a refused version is never shown.
  */
 
 import {
   type Envelope,
+  FORMAT_VERSION,
   PLAINTEXT_CAP_BYTES,
   streamRelicContent,
 } from '@relic/format';
@@ -54,7 +55,7 @@ export class OwnerChangedError extends Error {
   }
 }
 
-/** The seal does not name this reader, so no wrap was sent for them. */
+/** No wrap in the key response is addressed to this reader's key. */
 export class RecipientMissingError extends Error {}
 
 /** The service sent a response that is not a key response at all. */
@@ -381,11 +382,12 @@ export async function verifyVersionKey(
   );
   if (!sealed) throw new SealMismatchError('seal_signature');
 
+  // The wrap is HPKE-sealed to this reader's key and bound to the relic, the
+  // version and the recipient, so unwrapping it proves that the holder of the
+  // version key addressed it. The seal is not consulted for membership: a
+  // grant made after a version was sealed writes its wrap without re-sealing.
   const myKeyId = hex(identity.kemKeyId);
-  if (
-    !seal.recipient_key_ids.includes(myKeyId) ||
-    keyJson.wrap.recipient_key_id !== myKeyId
-  ) {
+  if (keyJson.wrap.recipient_key_id !== myKeyId) {
     throw new RecipientMissingError('recipient');
   }
 
@@ -487,7 +489,7 @@ export async function fetchAndDecryptVersion(
     verified.key,
     {
       objectLength: ciphertext.length,
-      fragmentVersion: version,
+      fragmentVersion: FORMAT_VERSION,
       maxContentBytes: PLAINTEXT_CAP_BYTES,
       onContent: (chunk) => {
         chunks.push(chunk);

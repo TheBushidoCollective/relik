@@ -205,7 +205,14 @@ interface Sealed {
 
 interface WorldOptions {
   readonly owner?: IdentityKeys;
-  readonly omitRecipient?: boolean;
+  /** The seal predates the grant: it lists the owner, and the wrap is still the reader's. */
+  readonly sealPredatesGrant?: boolean;
+  /** The version the seal and wrap are for. Defaults to 1. */
+  readonly version?: number;
+  /** The wrap is addressed to a key other than the reader's. */
+  readonly wrapToOtherKey?: boolean;
+  /** The wrap's ciphertext is altered, so it does not open. */
+  readonly tamperWrap?: boolean;
   readonly tamperSeal?: boolean;
   readonly tamperCiphertext?: boolean;
   readonly role?: string;
@@ -278,6 +285,7 @@ async function sealedWorld(
   relicId: string,
   options: WorldOptions = {}
 ): Promise<Sealed> {
+  const version = options.version ?? 1;
   const owner = options.owner ?? (await generateIdentityKeys());
   const ownerId = await identityIdOf(owner.kemPublicKey, owner.sigPublicKey);
   const reader = await generateIdentityKeys();
@@ -311,10 +319,10 @@ async function sealedWorld(
     at: NOW,
     ciphertext_sha256: digest,
     owner_epoch: 0,
-    recipient_key_ids: options.omitRecipient ? [ownerKeyId] : [readerKeyId],
+    recipient_key_ids: options.sealPredatesGrant ? [ownerKeyId] : [readerKeyId],
     relic_id: relicId,
     signer_id: device?.deviceId ?? ownerId,
-    version: 1,
+    version,
   };
   const signed = await signStatement(
     async (message) =>
@@ -335,20 +343,30 @@ async function sealedWorld(
       )
     : signed;
 
+  const wrapRecipient = options.wrapToOtherKey
+    ? (await generateIdentityKeys()).kemPublicKey
+    : reader.kemPublicKey;
   const wrap = await wrapVersionKey({
-    recipientPublicKey: reader.kemPublicKey,
+    recipientPublicKey: wrapRecipient,
     relicId,
-    version: 1,
+    version,
     key,
   });
+  const wrapCt = options.tamperWrap
+    ? encodeBase64url(
+        decodeBase64url(wrap.ct).map((byte, index) =>
+          index === 0 ? byte ^ 0xff : byte
+        )
+      )
+    : wrap.ct;
   const keyResponse = {
     relic_id: relicId,
-    version: 1,
+    version,
     wrap: {
       recipient_key_id: wrap.recipientKeyId,
-      version: 1,
+      version,
       enc: wrap.enc,
-      ct: wrap.ct,
+      ct: wrapCt,
     },
     seal: {
       statement: sealStatement,
@@ -409,10 +427,18 @@ async function sealedWorld(
     'GET /api/identity': () => json(identityState),
     'POST /api/attest/nonce': () => json(nonceResponse(readerPasskey.rawId)),
     [`GET /api/relics/${relicId}/access`]: () =>
-      json(accessBody(relicId, options.role ?? 'grantee', ownerDigest(owner))),
+      json(
+        accessBody(
+          relicId,
+          options.role ?? 'grantee',
+          ownerDigest(owner),
+          version
+        )
+      ),
     [`POST /api/relics/${relicId}/requests`]: () =>
       json({ status: 'pending', requested_at: '2026-11-11T00:00:00Z' }, 201),
-    [`POST /api/relics/${relicId}/versions/1/key`]: () => json(keyResponse),
+    [`POST /api/relics/${relicId}/versions/${version}/key`]: () =>
+      json(keyResponse),
     [`POST /api/relics/${relicId}/mint`]: () =>
       json({
         url: `${FILES}/ct/${relicId}`,
@@ -421,8 +447,8 @@ async function sealedWorld(
         object_length: ciphertext.length,
         object_crc32c: 'AAAAAA==',
         mints_remaining: 9,
-        version: 1,
-        current_version: 1,
+        version,
+        current_version: version,
       }),
     [`GET ${FILES}/ct/${relicId}`]: () => new Response(new Uint8Array(served)),
   };
@@ -446,19 +472,25 @@ function ownerDigest(owner: IdentityKeys): string {
 }
 
 /** The access the service reports for the reader. */
-function accessBody(relicId: string, role: string, _owner: string) {
+function accessBody(
+  relicId: string,
+  role: string,
+  _owner: string,
+  version: number
+) {
   return {
     access: 'private',
     relic_id: relicId,
-    current_version: 1,
-    sealed_version: 1,
+    current_version: version,
+    sealed_version: version,
     expires_at: '2026-12-11T12:00:00Z',
     owner: { email: 'sam@example.com', identity: null },
     recovery: null,
     me: {
       role,
       identity: null,
-      readable_versions: role === 'grantee' || role === 'owner' ? [1] : [],
+      readable_versions:
+        role === 'grantee' || role === 'owner' ? [version] : [],
       deleted_versions: [],
     },
   };
@@ -881,9 +913,13 @@ function parseInto(root: El, html: string): void {
   }
 }
 
+/** The stand-in page's body, held so a test can attach the shell root to it. */
+let pageBody: El | undefined;
+
 /** Installs the stand-in document for one test, and returns its body. */
 function installDocument(): El {
   const body = new El('body');
+  pageBody = body;
   Object.defineProperty(globalThis, 'document', {
     configurable: true,
     value: {
@@ -891,6 +927,7 @@ function installDocument(): El {
       createElementNS: (_namespace: string, tag: string) => new El(tag),
       createTextNode: (text: string) => new TextNode(text),
       body,
+      getElementById: (id: string) => body.querySelector(`#${id}`),
     },
   });
   return body;
@@ -913,16 +950,27 @@ interface Mounted {
   readonly dead: DeadView[];
 }
 
+/** A shell root in the stand-in page, as the server's shell puts it there. */
+function shellRootInPage(): El {
+  if (pageBody === undefined) throw new Error('no stand-in page is installed');
+  // A page has one shell root. A second mount replaces the first, as a new
+  // page load would, so the reader finds the root this mount made.
+  for (const stale of pageBody.querySelectorAll('#relic-root')) stale.remove();
+  const root = new El('main');
+  root.id = 'relic-root';
+  pageBody.append(root);
+  return root;
+}
+
 /** Mounts the reader into a fresh root and waits for its first state. */
 async function mountReader(
   deps: ViewerDeps,
   relicId: string
 ): Promise<Mounted> {
-  const root = new El('main');
+  const root = shellRootInPage();
   const views: ReadyView[] = [];
   const dead: DeadView[] = [];
   await mountPrivateReader({
-    root: root as unknown as HTMLElement,
     relicId,
     usercontentOrigin: USERCONTENT,
     deps,
@@ -1058,14 +1106,46 @@ describe('a version that does not verify is refused', () => {
     ).rejects.toBeInstanceOf(SealMismatchError);
   });
 
-  test('a seal that does not name this reader is refused as a missing recipient', async () => {
-    const world = await sealedWorld(freshRelicId(), { omitRecipient: true });
+  test('a grantee added after the version was sealed opens it: the seal lists only the owner', async () => {
+    const relicId = freshRelicId();
+    const world = await sealedWorld(relicId, { sealPredatesGrant: true });
+    const { deps } = readerDeps(world);
+    const identity = await unlock(deps, await loadIdentityState(deps));
+
+    const { key } = await fetchVersionKey(deps, relicId, 1, identity);
+    expect(key).toEqual(world.key);
+  });
+
+  test('a wrap addressed to another key is refused as a missing recipient', async () => {
+    const relicId = freshRelicId();
+    const world = await sealedWorld(relicId, { wrapToOtherKey: true });
     const { deps } = readerDeps(world);
     const identity = await unlock(deps, await loadIdentityState(deps));
 
     await expect(
-      fetchVersionKey(deps, world.relicId, 1, identity)
+      fetchVersionKey(deps, relicId, 1, identity)
     ).rejects.toBeInstanceOf(RecipientMissingError);
+  });
+
+  test('a wrap addressed to this reader that does not open is refused as a seal mismatch', async () => {
+    const relicId = freshRelicId();
+    const world = await sealedWorld(relicId, { tamperWrap: true });
+    const { deps } = readerDeps(world);
+    const identity = await unlock(deps, await loadIdentityState(deps));
+
+    await expect(
+      fetchVersionKey(deps, relicId, 1, identity)
+    ).rejects.toBeInstanceOf(SealMismatchError);
+  });
+
+  test('a version sealed after a republish opens: its envelope carries the format version', async () => {
+    const relicId = freshRelicId();
+    const world = await sealedWorld(relicId, { version: 2 });
+    const { deps } = readerDeps(world);
+    const identity = await unlock(deps, await loadIdentityState(deps));
+
+    const opened = await fetchAndDecryptVersion(deps, relicId, 2, identity);
+    expect(opened.content).toEqual(world.plaintext);
   });
 
   test('an owner whose key differs from the pinned one is refused', async () => {
@@ -1142,8 +1222,8 @@ describe('the dashboard shows the identity fingerprint only from an unlocked key
         assertion(world.readerPasskey.rawId, world.readerPasskey.prf)
       )
     );
-    const root = new El('main');
-    await mountPrivateDashboard(root as unknown as HTMLElement, deps);
+    const root = shellRootInPage();
+    await mountPrivateDashboard(deps);
     await until(
       () =>
         root.querySelector('#private-dashboard [data-private-dashboard]') !==
@@ -1555,9 +1635,9 @@ describe('the reader drives every state of plan 4.15', () => {
     );
   });
 
-  test('unlock to denied: a seal that does not name the reader is refused, and the switch returns to sign-in', async () => {
+  test('unlock to denied: a wrap addressed to another key is refused, and the switch returns to sign-in', async () => {
     const relicId = freshRelicId();
-    const world = await sealedWorld(relicId, { omitRecipient: true });
+    const world = await sealedWorld(relicId, { wrapToOtherKey: true });
     const { root, views } = await mountReader(readerDeps(world).deps, relicId);
 
     press(root, '[data-action="private-unlock"]');
@@ -1793,9 +1873,9 @@ describe('the owner surfaces are mounted from the reader, lazily', () => {
         assertion(world.readerPasskey.rawId, world.readerPasskey.prf)
       )
     );
-    const root = new El('main');
+    const root = shellRootInPage();
 
-    await mountPrivateDashboard(root as unknown as HTMLElement, deps);
+    await mountPrivateDashboard(deps);
 
     await until(
       () =>
@@ -1814,10 +1894,9 @@ describe('the owner surfaces are mounted from the reader, lazily', () => {
       'GET /api/auth/session': () => json({ email: null }),
     };
     const { fetch, seen } = service(routes);
-    const root = new El('main');
+    const root = shellRootInPage();
 
     await mountPrivateDashboard(
-      root as unknown as HTMLElement,
       depsFor(
         fetch,
         authenticator(() => assertion(randomBytes(32), undefined))
@@ -1853,9 +1932,9 @@ describe('the owner surfaces are mounted from the reader, lazily', () => {
       ),
       locationHref: `${ORIGIN}/dashboard?approve-device=${enrollmentId}`,
     };
-    const root = new El('main');
+    const root = shellRootInPage();
 
-    await mountPrivateDashboard(root as unknown as HTMLElement, deps);
+    await mountPrivateDashboard(deps);
     await until(
       () =>
         root.querySelector(`[data-device-approval="${enrollmentId}"]`) !== null,
@@ -1878,9 +1957,9 @@ describe('the owner surfaces are mounted from the reader, lazily', () => {
       ),
       locationHref: `${ORIGIN}/dashboard?approve-device=01hh0m7x6ytcxbk2ckvd9p9w5a`,
     };
-    const root = new El('main');
+    const root = shellRootInPage();
 
-    await mountPrivateDashboard(root as unknown as HTMLElement, deps);
+    await mountPrivateDashboard(deps);
     expect(root.querySelector('[data-device-approval]')).toBeNull();
     expect(seen.map((entry) => entry.route)).not.toContain('GET /api/identity');
   });
