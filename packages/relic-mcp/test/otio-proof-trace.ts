@@ -937,7 +937,10 @@ export const otioProofTracePrelude = String.raw`(() => {
         if (graphs.length === 1 && proofGates.get(graphs[0].context)?.epoch != null) return;
         await new Promise(resolve => setTimeout(resolve, 10));
       }
-      throw new Error('native gate anchor not certified within ' + timeoutMs + 'ms: ' + JSON.stringify(controllerGraphSnapshot()));
+      const why = events.filter(entry => entry.kind === 'scheduled-pcm' || entry.kind === 'transport-message' || entry.kind === 'pause').slice(-12)
+        .map(entry => entry.kind + ':' + (entry.value?.event ?? entry.value?.type ?? '') + ':' + (entry.value?.stage ?? '') + ':' + (entry.value?.code ?? entry.value?.reason ?? '')).join(' | ');
+      const diagnostic = Array.from(document.querySelectorAll('.otio-diagnostic')).map(node => node.textContent ?? '').join(' ').slice(0, 300);
+      throw new Error('native gate anchor not certified within ' + timeoutMs + 'ms: ' + JSON.stringify(controllerGraphSnapshot()) + ' events=[' + why + '] diagnostic=' + diagnostic);
     },
     clockTrace(action) {
       if (action !== 'start' && action !== 'stop') throw new Error('invalid clock trace action');
