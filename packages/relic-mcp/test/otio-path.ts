@@ -20011,6 +20011,7 @@ async function runScheduledPcmProof(
       const isolated = await openBrowser(url, sessionToken, {
         label: `scheduled-clock-${kind}`,
         recordProofTrace: true,
+        proofSampleRate: 48000,
       });
       try {
         await waitReady(isolated);
@@ -20121,6 +20122,7 @@ async function runScheduledPcmProof(
       const isolated = await openBrowser(url, sessionToken, {
         label: `scheduled-bank-${kind}`,
         recordProofTrace: true,
+        proofSampleRate: 48000,
       });
       try {
         await waitReady(isolated);
@@ -20903,6 +20905,7 @@ async function runScheduledPcmProof(
       const isolated = await openBrowser(url, sessionToken, {
         label: control.label,
         recordProofTrace: true,
+        proofSampleRate: 48000,
       });
       try {
         await waitReady(isolated);
@@ -20999,6 +21002,7 @@ async function runScheduledPcmProof(
       const isolated = await openBrowser(url, sessionToken, {
         label: control.label,
         recordProofTrace: true,
+        proofSampleRate: 48000,
       });
       try {
         await waitReady(isolated);
