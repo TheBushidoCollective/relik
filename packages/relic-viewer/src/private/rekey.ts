@@ -32,11 +32,8 @@ import {
   sha256Hex,
 } from '@relic/format';
 import type { ViewerDeps } from '../viewer.ts';
-import {
-  attest,
-  fetchAndDecryptVersion,
-  type UnlockedIdentity,
-} from './keys.ts';
+import { attest, type UnlockedIdentity } from './keys.ts';
+import { fetchAndDecryptVersion } from './open.ts';
 import {
   h,
   icon,
@@ -195,6 +192,14 @@ export async function recipientKeyIds(
 
 class UploadExpiredError extends Error {
   override readonly name = 'UploadExpiredError';
+}
+
+/** A signed upload for the open version, as the service returns it. */
+interface UploadGrantJSON {
+  readonly upload_url: string;
+  readonly upload_method: string;
+  readonly upload_headers: Record<string, string>;
+  readonly upload_expires_at: string;
 }
 
 interface RekeyState {
@@ -512,17 +517,40 @@ export function createRevokeDialog(ctx: RevokeContext): RevokeDialog {
     await finish();
   }
 
+  /** The signed URL lapsed before use: ask the service for a fresh grant for the same open version. Never re-revokes. */
+  async function reissueUpload(): Promise<void> {
+    const version = previous + 1;
+    try {
+      const grant = await privateApi<UploadGrantJSON>(
+        ctx.deps,
+        'POST',
+        `/api/relics/${ctx.relicId}/versions/${version}/upload-grant`
+      );
+      state.upload = {
+        url: grant.upload_url,
+        method: grant.upload_method,
+        headers: grant.upload_headers,
+        expiresAt: Date.parse(grant.upload_expires_at),
+        version,
+      };
+    } catch (error) {
+      fail(
+        'uploading',
+        `Relic has already stopped serving ${who()} and deleted their keys. Version ${version} isn\u2019t sealed yet, so readers still open version ${previous}. ${problemMessage(error)}`,
+        reissueUpload
+      );
+      return;
+    }
+    await uploadAndFinish();
+  }
+
   /** Upload, then seal. A failed upload retries the upload, not the revocation. */
   async function uploadAndFinish(): Promise<void> {
     try {
       await upload();
     } catch (error) {
       if (error instanceof UploadExpiredError) {
-        fail(
-          'uploading',
-          `Relic has already stopped serving ${who()} and deleted their keys. The upload link expired before it could be used, so version ${previous + 1} is not sealed yet. Republish from relic-mcp to finish it.`,
-          undefined
-        );
+        await reissueUpload();
         return;
       }
       fail(

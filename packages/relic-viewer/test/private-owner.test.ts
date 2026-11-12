@@ -262,11 +262,7 @@ interface Attest {
 }
 const fixture: Attest = { identity: undefined, content: new Uint8Array() };
 
-mock.module('../src/private/keys.ts', () => ({
-  attest: async () => ({
-    identity: fixture.identity,
-    bundle: { nonce: 'n', statements: [], credential: {} },
-  }),
+mock.module('../src/private/open.ts', () => ({
   fetchAndDecryptVersion: async () => ({
     envelope: {
       version: 1,
@@ -285,6 +281,13 @@ mock.module('../src/private/keys.ts', () => ({
   fetchVersionKey: async () => {
     throw new Error('not used in the rekey test');
   },
+}));
+
+mock.module('../src/private/keys.ts', () => ({
+  attest: async () => ({
+    identity: fixture.identity,
+    bundle: { nonce: 'n', statements: [], credential: {} },
+  }),
   loadIdentityState: async () => {
     throw new Error('not used in the rekey test');
   },
@@ -308,7 +311,10 @@ interface Captured {
 }
 
 /** A fake service: records every request and answers the republish routes. */
-function fakeService(answers: { recipients: unknown }) {
+function fakeService(answers: {
+  recipients: unknown;
+  expiredFirstGrant?: boolean;
+}) {
   const captured: Captured[] = [];
   const fetch = async (
     input: string | URL,
@@ -332,13 +338,23 @@ function fakeService(answers: { recipients: unknown }) {
           upload_url: 'https://upload.example/object',
           upload_method: 'PUT',
           upload_headers: { 'content-type': 'application/octet-stream' },
-          upload_expires_at: new Date(Date.now() + 600_000).toISOString(),
+          upload_expires_at: new Date(
+            Date.now() + (answers.expiredFirstGrant ? -1000 : 600_000)
+          ).toISOString(),
         },
         access_epoch: 4,
         owner_epoch: 2,
       });
     }
     if (url.endsWith('/recipients')) return Response.json(answers.recipients);
+    if (url.endsWith('/upload-grant')) {
+      return Response.json({
+        upload_url: 'https://upload.example/object',
+        upload_method: 'PUT',
+        upload_headers: { 'content-type': 'application/octet-stream' },
+        upload_expires_at: new Date(Date.now() + 600_000).toISOString(),
+      });
+    }
     if (url.endsWith('/complete')) return Response.json({});
     return new Response('unexpected', { status: 500 });
   };
@@ -641,5 +657,56 @@ describe('device approval', () => {
     input.dispatch('input');
     expect(approve.disabled).toBe(true);
     expect(requests.some((line) => line.includes('/approve'))).toBe(false);
+  });
+});
+
+describe('rekey with an expired upload grant', () => {
+  test('re-issues the grant for the open version and never revokes again', async () => {
+    fixture.identity = OWNER_UNLOCKED;
+    fixture.content = new TextEncoder().encode(
+      'content behind an expired grant'
+    );
+    const service = fakeService({
+      recipients: {
+        access_epoch: 4,
+        owner_epoch: 2,
+        devices: [],
+        grants: [grantA],
+        recovery: null,
+      },
+      expiredFirstGrant: true,
+    });
+    const dialog = createRevokeDialog({
+      relicId: RELIC_ID,
+      deps: service.deps,
+      onSettled: () => {},
+    });
+    dialog.open(
+      { identityId: REVOKED.id, email: 'ben@example.org' },
+      accessAt(2)
+    );
+
+    stubOf(dialog.element)
+      .querySelector('[data-action="confirm-revoke"]')
+      ?.dispatch('click');
+    const rekey = stubOf(dialog.element).querySelector('#rekey');
+    if (!rekey) throw new Error('no rekey panel');
+    await waitUntil(() =>
+      ['done', 'failed'].includes(rekey.getAttribute('data-rekey-state') ?? '')
+    );
+
+    expect(
+      stubOf(dialog.element).querySelector('#rekey-outcome')?.textContent
+    ).toContain('Done.');
+    const requests = service.captured.map(
+      (c) => `${c.method} ${c.url.replace('https://relik.example', '')}`
+    );
+    expect(
+      requests.filter((line) => line.includes('/revocations'))
+    ).toHaveLength(1);
+    expect(
+      requests.filter((line) => line.includes('/upload-grant'))
+    ).toHaveLength(1);
+    expect(service.captured.filter((c) => c.method === 'PUT')).toHaveLength(1);
   });
 });

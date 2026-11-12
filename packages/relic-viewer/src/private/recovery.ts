@@ -23,12 +23,8 @@ import {
   typedFingerprint,
   waiting,
 } from './fingerprint-input.ts';
-import {
-  attest,
-  fetchVersionKey,
-  type UnlockedIdentity,
-  unlock,
-} from './keys.ts';
+import { attest, type UnlockedIdentity, unlock } from './keys.ts';
+import { fetchVersionKey } from './open.ts';
 import { verifiedPartyKeys } from './rekey.ts';
 
 /** Most wraps one backfill call may carry (config `privateBackfillMaxWraps`). */

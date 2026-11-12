@@ -33,7 +33,8 @@ import {
   typedFingerprint,
   waiting,
 } from './fingerprint-input.ts';
-import { attest, fetchVersionKey } from './keys.ts';
+import { attest } from './keys.ts';
+import { fetchVersionKey } from './open.ts';
 import {
   createRevokeDialog,
   type RevokeDialog,
