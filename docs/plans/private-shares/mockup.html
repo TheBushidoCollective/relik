@@ -1478,7 +1478,7 @@ If this wasn't you, someone can read mail sent to this address. Secure your mail
       requests: [{ ...ADA, at: '11 Nov 2026, 14:02 UTC' }],
       grants: [{ ...BEN, versions: [1, 2, 3], at: '4 Nov 2026' }],
       notice: null,
-      sim: { setup: 'ok', unlock: 'ok', rekey: 'ok' },
+      sim: { setup: 'ok', unlock: 'ok', rekey: 'ok', grant: 'ok' },
       deletedVersions: [],
     };
   }
@@ -1744,11 +1744,27 @@ If this wasn't you, someone can read mail sent to this address. Secure your mail
     $('#rekey-actions').hidden = !finished;
     $('#rekey-retry').hidden = state !== 'failed';
   }
-  async function runRekey() {
+  // A run decrypts and encrypts once, then uploads under a signed upload grant
+  // and seals. The revocation itself is already recorded and stays recorded,
+  // so a retry resumes the upload or the seal and never re-adds the revoked
+  // reader to the grant list (plan 1.4). An expired upload grant is re-issued
+  // for the same version before the upload resumes.
+  async function runRekey(resumeFrom = 'decrypting') {
     const n = M.version + 1;
     const g = revoking;
-    M.grants = M.grants.filter((x) => x.id !== g.id);
-    for (const s of STEPS) {
+    if (resumeFrom === 'decrypting') {
+      M.grants = M.grants.filter((x) => x.id !== g.id);
+      // no per-run context: the revocation is already recorded in state
+    }
+    const from = STEPS.indexOf(resumeFrom);
+    for (const s of STEPS.slice(from < 0 ? 0 : from)) {
+      if (s === 'uploading' && M.sim.grant === 'expired') {
+        paintRekey('uploading', n);
+        M.notice = { text: `The upload grant for version ${n} expired. Asking for a new one, then resuming the upload.` };
+        go('/owner/rekey/uploading');
+        await sleep(650);
+        M.sim.grant = 'ok';
+      }
       paintRekey(s, n); go(`/owner/rekey/${s}`);
       await sleep(650);
       if (s === 'uploading' && M.sim.rekey === 'fail') { paintRekey('failed', n); go('/owner/rekey/failed'); $('#rekey-retry').focus(); return; }
@@ -1767,7 +1783,11 @@ If this wasn't you, someone can read mail sent to this address. Secure your mail
   });
   $('#revoke-cancel').addEventListener('click', () => { revokeDialog.close(); go('/owner/panel'); });
   $('#rekey-close').addEventListener('click', () => { revokeDialog.close(); renderPanel(); go('/owner/panel'); });
-  $('#rekey-retry').addEventListener('click', () => { M.sim.rekey = 'ok'; M.grants.push(revoking); runRekey(); });
+  $('#rekey-retry').addEventListener('click', () => {
+    M.sim.rekey = 'ok';
+    const failedAt = document.getElementById('rekey')?.getAttribute('data-rekey-state');
+    runRekey(failedAt === 'failed' ? 'uploading' : 'decrypting');
+  });
   revokeDialog.addEventListener('cancel', (e) => { if (!rekey.hidden && $('#rekey-actions').hidden) e.preventDefault(); });
 
   // ---------- owner: delete ----------
