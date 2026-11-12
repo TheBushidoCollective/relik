@@ -207,9 +207,12 @@ describe('the app shell', () => {
     }
     expect(carriers).toHaveLength(1);
 
-    // Routing reaches that one chunk through a dynamic import.
-    const shell = eager.get('viewer.js') ?? '';
-    expect(shell.includes(`import("./${carriers[0]}")`)).toBe(true);
+    // Routing may live in any eagerly imported shell chunk after code splitting.
+    expect(
+      [...eager.values()].some((text) =>
+        text.includes(`import("./${carriers[0]}")`)
+      )
+    ).toBe(true);
   });
 
   test('loads dashboard search on demand, not in viewer.js', async () => {
