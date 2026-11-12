@@ -181,3 +181,42 @@ describe('assertConfig: the usercontent origin under the RP ID', () => {
     ).toThrow(/retention/);
   });
 });
+
+describe('assertConfig: loopback pairs and parent domains', () => {
+  test('a loopback service and usercontent on different ports are accepted', () => {
+    expect(() =>
+      assertConfig({
+        ...DEFAULT_CONFIG,
+        serviceOrigin: 'http://localhost:3000',
+        usercontentOrigin: 'http://localhost:3001',
+      })
+    ).not.toThrow();
+    expect(() =>
+      assertConfig({
+        ...DEFAULT_CONFIG,
+        serviceOrigin: 'http://127.0.0.1:3000',
+        usercontentOrigin: 'http://127.0.0.1:3001',
+      })
+    ).not.toThrow();
+  });
+
+  test('a subdomain of a non-loopback RP ID is refused', () => {
+    expect(() =>
+      assertConfig({
+        ...DEFAULT_CONFIG,
+        serviceOrigin: 'https://example.com',
+        usercontentOrigin: 'https://a.example.com',
+      })
+    ).toThrow(/RP ID/);
+  });
+
+  test('a sibling registrable domain of a non-loopback RP ID is accepted', () => {
+    expect(() =>
+      assertConfig({
+        ...DEFAULT_CONFIG,
+        serviceOrigin: 'https://example.com',
+        usercontentOrigin: 'https://example-usercontent.net',
+      })
+    ).not.toThrow();
+  });
+});
