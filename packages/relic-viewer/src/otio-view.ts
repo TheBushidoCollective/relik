@@ -673,7 +673,8 @@ export async function mountOtioView(
     tools.append(control);
   }
   tools.append(trackSelect);
-  heading.append(name, timelineSelect, tools);
+  // The zoom tools sit in the selection row so a narrow viewport does not
+  // spend a heading row on them: the preview above gets that height.
   const zoomTools = element('div', 'otio-zoom-tools');
   zoomTools.setAttribute('aria-label', 'Timeline zoom');
   const zoomOut = button('-', 'otio-zoom-out', () => zoomTimeline(1 / 1.5));
@@ -684,7 +685,8 @@ export async function mountOtioView(
   const zoomReadout = element('output', 'otio-zoom-readout');
   zoomReadout.setAttribute('aria-label', 'Timeline scale');
   zoomTools.append(zoomOut, zoomIn, zoomFit, zoomReadout);
-  heading.append(zoomTools);
+  tools.append(zoomTools);
+  heading.append(name, timelineSelect, tools);
   const scroll = element('div', 'otio-timeline-scroll');
   scroll.tabIndex = 0;
   scroll.setAttribute('aria-label', 'Timeline tracks');
@@ -989,6 +991,42 @@ export async function mountOtioView(
     });
   }
 
+  // The reader's vertical place is the row at the top of the timeline
+  // viewport, not a scroll offset: rows above it change height when the stage
+  // crosses a breakpoint or comment lanes repack. This view also rewrites the
+  // grid's own width on every resize, which turns the browser's scroll
+  // anchoring off for that layout, so the row is held here.
+  let timelineRowAnchor: { row: HTMLElement; offset: number } | undefined;
+  function timelineViewportTop(): number {
+    return scroll.getBoundingClientRect().top + scroll.clientTop;
+  }
+  function rememberTimelineRow(): void {
+    timelineRowAnchor = undefined;
+    if (scroll.scrollTop <= 0) return;
+    const top = timelineViewportTop();
+    for (const row of trackRows.querySelectorAll<HTMLElement>(
+      '.otio-track-row'
+    )) {
+      if (row.hidden) continue;
+      const box = row.getBoundingClientRect();
+      if (box.height <= 0 || box.bottom <= top) continue;
+      timelineRowAnchor = { row, offset: box.top - top };
+      return;
+    }
+  }
+  function holdTimelineRow(): void {
+    const anchor = timelineRowAnchor;
+    if (!anchor || disposed || !anchor.row.isConnected || anchor.row.hidden)
+      return;
+    const moved =
+      anchor.row.getBoundingClientRect().top -
+      timelineViewportTop() -
+      anchor.offset;
+    if (Math.abs(moved) < 1) return;
+    scroll.scrollTop = Math.max(0, scroll.scrollTop + moved);
+    rememberTimelineRow();
+  }
+
   function cancelPendingTimelineNavigation(): void {
     pendingTimelineScroll = undefined;
     pendingCommentReveal = undefined;
@@ -1019,6 +1057,7 @@ export async function mountOtioView(
     const pending = pendingTimelineScroll;
     if (!pending || pending.key !== viewportKey || disposed) return;
     scroll.scrollTop = pending.top;
+    rememberTimelineRow();
     // The shell explicitly completes projection-backed mark batches. Before
     // completion a clamp may be temporary; after it, an unreachable top settles.
     if (
@@ -1178,7 +1217,10 @@ export async function mountOtioView(
     paintTimelineGeometry();
     scroll.scrollLeft = saved?.left ?? 0;
     if (pendingTimelineScroll) applyPendingTimelineScroll();
-    else scroll.scrollTop = 0;
+    else {
+      scroll.scrollTop = 0;
+      rememberTimelineRow();
+    }
     scroll.dispatchEvent(new Event('scroll', { bubbles: true }));
   }
 
@@ -1262,6 +1304,7 @@ export async function mountOtioView(
   });
   scroll.addEventListener('scroll', () => {
     rememberTimelineViewport();
+    rememberTimelineRow();
     paintRuler();
   });
   scroll.addEventListener(
@@ -1785,6 +1828,7 @@ export async function mountOtioView(
           : 0;
     scroll.scrollLeft = Math.max(0, scroll.scrollLeft + horizontal);
     scroll.scrollTop = Math.max(0, scroll.scrollTop + vertical);
+    rememberTimelineRow();
   }
 
   function alignSelection(focus: boolean): void {
@@ -1948,6 +1992,9 @@ export async function mountOtioView(
         geometryChanged = true;
       }
     }
+    // Lane heights above the reader's row just changed. Put the row back
+    // before anything reads or restores a scroll position.
+    holdTimelineRow();
     const previousTop = scroll.scrollTop;
     applyPendingTimelineScroll(true);
     const revealed = revealPendingComment();
@@ -3448,6 +3495,8 @@ export async function mountOtioView(
   cleanup.push(() => window.removeEventListener('pagehide', pagehide));
   if (typeof ResizeObserver !== 'undefined') {
     const observer = new ResizeObserver(() => {
+      // Whatever resized has already moved the rows in this layout.
+      holdTimelineRow();
       refreshSplit();
       refreshTimelineViewport();
       queueCommentRepack();

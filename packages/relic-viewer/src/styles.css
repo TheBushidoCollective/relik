@@ -4930,7 +4930,7 @@ canvas.relic-page {
 .otio-mode { border: 1px solid var(--rule-strong); border-radius: 0; padding: .3rem .5rem; background: var(--surface); color: var(--ink); font: .65rem var(--sans); cursor: pointer; }
 .otio-mode[aria-pressed="true"] { border-color: var(--patina); background: var(--diff-added); color: var(--patina-ink); }
 .otio-track-select, .otio-timeline-select { max-width: 190px; min-width: 0; border: 1px solid var(--rule-strong); background: var(--surface); color: var(--ink); padding: .28rem; padding-inline-end: 1.5rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: .62rem var(--sans); }
-.otio-zoom-tools { display: flex; align-items: center; gap: .25rem; margin-left: auto; }
+.otio-zoom-tools { display: flex; align-items: center; gap: .25rem; margin-left: auto; padding-left: .4rem; }
 .otio-zoom-tools button { min-width: 30px; border: 1px solid var(--rule-strong); border-radius: 0; padding: .3rem .45rem; background: var(--surface); color: var(--ink); font: .65rem var(--sans); cursor: pointer; }
 .otio-zoom-tools button[aria-pressed="true"] { border-color: var(--patina); color: var(--patina-ink); background: var(--diff-added); }
 .otio-zoom-tools button:disabled { cursor: default; opacity: .5; }
@@ -5057,10 +5057,15 @@ canvas.relic-page {
   .otio-focus-context { gap: .25rem .5rem; }
   .otio-focus-title { flex-basis: 8rem; font-size: .63rem; }
   .otio-timeline-heading { padding: .65rem .5rem; }
-  .otio-zoom-tools { flex: 1 0 auto; justify-content: flex-end; }
-  .otio-zoom-tools button { min-width: 36px; min-height: 32px; }
-  .otio-zoom-readout { max-width: 12ch; overflow: hidden; text-overflow: ellipsis; font-size: .55rem; }
+  /* Three buttons always fit beside the track select at 320px. The scale
+     readout takes what is left and ellipsizes. */
+  .otio-zoom-tools { flex: 4 1 7.5rem; min-width: 0; justify-content: flex-end; padding-left: 0; }
+  .otio-zoom-tools button { flex: none; min-width: 36px; min-height: 32px; }
+  .otio-zoom-readout { flex: 0 1 auto; min-width: 0; max-width: 12ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .55rem; }
   .otio-track-select { flex: 1 1 7rem; width: 7rem; max-width: 160px; }
+  /* The list scrolls, so on a tall phone it yields height to the preview,
+     which has to show its own message and its action without scrolling. */
+  .otio-diagnostics { max-height: min(20%, 7rem); }
   .otio-view.is-element-focused .otio-selection-label { display: none; }
   .otio-preview-scope { font-size: .5rem; }
   .otio-preview-status { padding: 0 .5rem; overscroll-behavior: contain; }
