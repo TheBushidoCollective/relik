@@ -1491,10 +1491,8 @@ describe('passkey options carry PRF in, and results never out', () => {
     if (parsed === undefined) throw new Error('request options refused');
 
     const options = requestOptionsFromJSON(parsed);
-    const eval_ = Reflect.get(
-      Reflect.get(options.extensions ?? {}, 'prf'),
-      'eval'
-    );
+    const prf: unknown = Reflect.get(options.extensions ?? {}, 'prf');
+    const eval_ = Reflect.get(prf ?? {}, 'eval');
     const first: unknown = Reflect.get(eval_, 'first');
     expect(first).toBeInstanceOf(ArrayBuffer);
     expect(Array.from(new Uint8Array(first as ArrayBuffer))).toEqual(

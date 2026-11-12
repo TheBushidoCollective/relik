@@ -268,12 +268,13 @@ function required<T extends Element>(scope: ParentNode, selector: string): T {
 
 /** A fingerprint's display groups become spans of text, never markup. */
 function setFingerprint(target: Element, display: string): void {
+  const groups = display.split(' ').map((group) => {
+    const span = document.createElement('span');
+    span.textContent = group;
+    return span;
+  });
   target.replaceChildren(
-    ...display.split(' ').map((group) => {
-      const span = document.createElement('span');
-      span.textContent = group;
-      return span;
-    })
+    ...groups.flatMap((span, index) => (index === 0 ? [span] : [' ', span]))
   );
 }
 
@@ -478,11 +479,12 @@ class PrivateReader {
       case 'owner':
       case 'grantee':
       case 'recovery':
-        this.stage('unlock').querySelector<HTMLElement>(
-          '[data-expiry]'
-        )!.textContent =
-          `${COPY_SIGNED_IN} ${this.email ?? ''} · expires ${expiryLabel(access.expiresAt)}`;
         this.show('unlock');
+        required<HTMLElement>(
+          this.stage('unlock'),
+          '[data-expiry]'
+        ).textContent =
+          `${COPY_SIGNED_IN} ${this.email ?? ''} · expires ${expiryLabel(access.expiresAt)}`;
         return;
     }
   }
