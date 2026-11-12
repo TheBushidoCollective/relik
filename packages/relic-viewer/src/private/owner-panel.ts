@@ -11,10 +11,13 @@
 
 import {
   type AccessRequestStatement,
+  decodeBase64url,
   identityFingerprint,
+  type IdentityStateJSON,
   parseStatement,
   type PartyJSON,
   type PrivateAccessJSON,
+  rosterAdmits,
   statementBytes,
   verifyStatement,
   type GrantJSON,
@@ -34,11 +37,14 @@ import {
   waiting,
 } from './fingerprint-input.ts';
 import { privateKeysOf } from './ops.ts';
+import { VerificationRefusedError } from './refusal.ts';
 import {
   createRevokeDialog,
   type RevokeDialog,
+  rosterGrants,
   verifiedPartyKeys,
 } from './rekey.ts';
+import { observeRosterFloor } from './roster-floor.ts';
 
 export interface OwnerPanelContext {
   readonly relicId: string;
@@ -60,11 +66,43 @@ interface PanelData {
   readonly access: PrivateAccessJSON;
   readonly requests: readonly PendingRequest[];
   readonly grants: readonly GrantJSON[];
+  /** The grantee identities this browser's floor admits: a grant the owner revoked is not one. */
+  readonly admitted: ReadonlySet<string>;
   readonly devices: readonly {
     readonly label: string;
     readonly revoked_at: string | null;
   }[];
   readonly recovery: PartyJSON | null;
+}
+
+/**
+ * The grantee identities the owner's floor admits for a relic. Each grant is
+ * judged by the owner's own signed revocation, and the floor records what was
+ * verified, so a grant the service lists live after a verified revocation is not
+ * admitted. A panel with no identity on this browser admits nobody.
+ */
+async function admittedGrantees(
+  identity: IdentityStateJSON['identity'],
+  relicId: string,
+  grants: readonly GrantJSON[]
+): Promise<ReadonlySet<string>> {
+  if (identity === null) return new Set();
+  const roster = await rosterGrants(
+    {
+      identityId: identity.identity_id,
+      sigPublicKey: decodeBase64url(identity.sig_public_key),
+    },
+    relicId,
+    grants
+  );
+  const floor = observeRosterFloor(identity.identity_id, {
+    grants: roster.marks,
+  });
+  return new Set(
+    roster.live
+      .filter((grant) => rosterAdmits(floor.grants?.[grant.key], grant.at))
+      .map((grant) => grant.granteeIdentityId)
+  );
 }
 
 /** The versions a grant can list: sealed, not deleted, up to the highest sealed version. */
@@ -244,12 +282,18 @@ export function openAccessPanel(
       recovery: PartyJSON | null;
     }>(ctx.deps, 'POST', `/api/relics/${ctx.relicId}/recipients`);
     latest = access;
+    const state = await privateKeysOf(ctx.deps).loadIdentityState(ctx.deps);
     return {
       access,
       requests: requests.requests.filter(
         (request) => request.status === 'pending'
       ),
       grants: recipients.grants,
+      admitted: await admittedGrantees(
+        state.identity,
+        ctx.relicId,
+        recipients.grants
+      ),
       devices: recipients.devices,
       recovery: recipients.recovery,
     };
@@ -473,17 +517,25 @@ export function openAccessPanel(
       });
       const wraps: WrapJSON[] = [];
       for (const version of versions) {
-        const { key } = await privateKeysOf(ctx.deps).fetchVersionKey(
+        const fetched = await privateKeysOf(ctx.deps).fetchVersionKey(
           ctx.deps,
           ctx.relicId,
           version,
           tapped.identity
         );
+        if (
+          fetched.keyJson.owner.identity.identity_id !==
+          tapped.identity.identityId
+        ) {
+          throw new VerificationRefusedError(
+            'a version of this relic belongs to another owner, so nothing was granted. Nothing was sent.'
+          );
+        }
         const wrap = await wrapVersionKey({
           recipientPublicKey: requesterKeys.kemPublicKey,
           relicId: ctx.relicId,
           version,
-          key,
+          key: fetched.key,
         });
         wraps.push({
           recipient_key_id: wrap.recipientKeyId,
@@ -508,7 +560,9 @@ export function openAccessPanel(
   }
 
   function renderReaders(data: PanelData): void {
-    const readers = data.grants.filter((grant) => grant.revoked_at === null);
+    const readers = data.grants.filter((grant) =>
+      data.admitted.has(grant.grantee.identity.identity_id)
+    );
     if (readers.length === 0) {
       setChildren(
         grantList,
@@ -630,9 +684,7 @@ export function openAccessPanel(
   async function refresh(message: string, keepNotice = false): Promise<void> {
     try {
       const data = await load();
-      const count = data.grants.filter(
-        (grant) => grant.revoked_at === null
-      ).length;
+      const count = data.admitted.size;
       const readers =
         count === 0
           ? 'only you, your devices and your recovery key holder'

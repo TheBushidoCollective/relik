@@ -26,7 +26,7 @@ async function sign(
         await crypto.subtle.sign(
           { name: 'ECDSA', hash: 'SHA-256' },
           keys.sig.privateKey,
-          bytes
+          new Uint8Array(bytes)
         )
       ),
     statementBytes(kind, statement as never)

@@ -9,6 +9,7 @@
  */
 
 import {
+  type DesignationMark,
   type DevicePublicJSON,
   decodeBase64url,
   deviceFingerprint,
@@ -23,11 +24,15 @@ import {
   type PartyJSON,
   type PrivateAccessJSON,
   type RecoveryJSON,
+  rosterAdmits,
+  type RosterMark,
   type SealJSON,
+  type SignedStatementBody,
   type StatementKind,
   type StatementMap,
   signStatement,
   statementBytes,
+  verifySignedStatement,
   verifyStatement,
   type WrapJSON,
   wrapVersionKey,
@@ -43,6 +48,7 @@ import type { ViewerDeps } from '../viewer.ts';
 import type { UnlockedIdentity } from './keys.ts';
 import { privateKeysOf } from './ops.ts';
 import { VerificationRefusedError } from './refusal.ts';
+import { observeRosterFloor } from './roster-floor.ts';
 import {
   h,
   icon,
@@ -109,17 +115,22 @@ function parsedOrRefused<K extends StatementKind>(
 }
 
 /**
- * The recovery holder, checked the way relic-mcp's `verifyRecovery` checks it.
- * The designation must parse, be signed by this owner's signature key, name
- * this owner, name the holder's identity and email, and carry the fingerprint
- * of exactly that identity. The service's coverage hints are never used here.
- * A holder with no designation cannot be checked, and is refused with the
- * reason.
+ * The recovery holder, checked the way relic-mcp's `verifyDesignationAnswer`
+ * checks it. The designation must parse, be signed by this owner's signature
+ * key, name this owner, name the holder's identity and email, and carry the
+ * fingerprint of exactly that identity. The service's coverage hints are never
+ * used here. A holder with no designation cannot be checked, and is refused with
+ * the reason. Returns the holder's keys, its identity, and the owner-signed time
+ * of its designation.
  */
 export async function verifiedRecovery(
-  identity: UnlockedIdentity,
+  identity: RosterOwner,
   holder: RecoveryJSON
-): Promise<{ readonly kemPublicKey: Uint8Array }> {
+): Promise<{
+  readonly kemPublicKey: Uint8Array;
+  readonly identityId: string;
+  readonly designatedAt: number;
+}> {
   if (holder.designation === undefined || holder.designation === null) {
     throw new VerificationRefusedError(
       'the recovery holder has no designation, so Relic cannot check it. Nothing was sent.'
@@ -151,16 +162,291 @@ export async function verifiedRecovery(
       'the recovery holder\u2019s designation did not verify. Nothing was sent.'
     );
   }
-  return keys;
+  return {
+    kemPublicKey: keys.kemPublicKey,
+    identityId: holder.identity.identity_id,
+    designatedAt: statement.at,
+  };
+}
+
+/** The owner keys a roster check needs: the identity ID, and the signature key that signs its statements. */
+export interface RosterOwner {
+  readonly identityId: string;
+  readonly sigPublicKey: Uint8Array;
+}
+
+/** The newest owner-signed designation of the recovery holder, and the holder in force (none when removed). */
+interface VerifiedDesignation {
+  readonly mark: DesignationMark;
+  readonly kemPublicKey?: Uint8Array;
+}
+
+/**
+ * The recovery designation a recipients answer carries, verified. `holder` is
+ * the holder in force, and `signed` is the owner's newest signed designation,
+ * which is a removal when all three party fields are null. The greatest
+ * owner-signed time decides. A designation statement must name the holder the
+ * answer carries, and a holder and a removal at the same time cannot be ordered,
+ * so the answer is refused. Returns null when the answer carries no signed
+ * designation at all.
+ */
+async function verifiedDesignation(
+  owner: RosterOwner,
+  holder: RecoveryJSON | null,
+  signed: SignedStatementBody | null
+): Promise<VerifiedDesignation | null> {
+  const verifiedHolder =
+    holder === null ? undefined : await verifiedRecovery(owner, holder);
+  let statement: StatementMap['recovery_designation'] | undefined;
+  if (signed !== null) {
+    statement = await verifySignedStatement(
+      'recovery_designation',
+      signed,
+      owner.sigPublicKey
+    );
+    if (
+      statement === undefined ||
+      statement.owner_identity_id !== owner.identityId
+    ) {
+      throw new VerificationRefusedError(
+        'the recovery designation did not verify. Nothing was sent.'
+      );
+    }
+  }
+  const removed =
+    statement !== undefined &&
+    statement.recovery_identity_id === null &&
+    statement.recovery_email === null &&
+    statement.fingerprint_typed === null;
+  if (
+    statement !== undefined &&
+    !removed &&
+    (verifiedHolder === undefined ||
+      verifiedHolder.identityId !== statement.recovery_identity_id)
+  ) {
+    throw new VerificationRefusedError(
+      'the newest recovery designation names a holder this answer does not carry. Nothing was sent.'
+    );
+  }
+  if (
+    statement !== undefined &&
+    verifiedHolder !== undefined &&
+    statement.at === verifiedHolder.designatedAt &&
+    removed
+  ) {
+    throw new VerificationRefusedError(
+      'a recovery holder and a removal carry the same time, so neither is trusted. Nothing was sent.'
+    );
+  }
+  if (
+    statement !== undefined &&
+    (verifiedHolder === undefined || statement.at > verifiedHolder.designatedAt)
+  ) {
+    if (removed || verifiedHolder === undefined) {
+      return { mark: { at: statement.at, removed } };
+    }
+    return {
+      mark: { at: statement.at, removed: false },
+      kemPublicKey: verifiedHolder.kemPublicKey,
+    };
+  }
+  if (verifiedHolder === undefined) return null;
+  return {
+    mark: { at: verifiedHolder.designatedAt, removed: false },
+    kemPublicKey: verifiedHolder.kemPublicKey,
+  };
+}
+
+/** A device's revocation the owner signed for this device, verified: its time, or undefined. */
+async function signedDeviceRevocationAt(
+  owner: RosterOwner,
+  device: DevicePublicJSON
+): Promise<number | undefined> {
+  if (device.revocation === undefined || device.revocation === null) {
+    return undefined;
+  }
+  const statement = await verifySignedStatement(
+    'device_revocation',
+    device.revocation,
+    owner.sigPublicKey
+  );
+  if (
+    statement === undefined ||
+    statement.device_id !== device.device_id ||
+    statement.owner_identity_id !== owner.identityId
+  ) {
+    return undefined;
+  }
+  return statement.at;
+}
+
+/** A device's certificate, checked against this owner and the device it names. Refused when any part does not verify. */
+async function verifiedDeviceCert(
+  owner: RosterOwner,
+  device: DevicePublicJSON
+): Promise<{ readonly at: number; readonly kemPublicKey: Uint8Array }> {
+  const cert = parsedOrRefused(
+    'device_cert',
+    device.cert.statement,
+    'a device certificate is malformed. Nothing was sent.'
+  );
+  const kemPublicKey = decodeBase64url(device.kem_public_key);
+  const sigPublicKey = decodeBase64url(device.sig_public_key);
+  if (
+    cert.owner_identity_id !== owner.identityId ||
+    cert.device_id !== device.device_id ||
+    cert.kem_public_key !== device.kem_public_key ||
+    cert.sig_public_key !== device.sig_public_key ||
+    cert.label !== device.label ||
+    cert.not_after !== device.not_after ||
+    (await deviceIdOf(kemPublicKey, sigPublicKey)) !== device.device_id ||
+    !fingerprintsEqual(
+      cert.device_fingerprint_typed,
+      await deviceFingerprint(device.device_id)
+    ) ||
+    !(await verifyStatement(
+      owner.sigPublicKey,
+      statementBytes('device_cert', cert),
+      device.cert.identity_signature
+    ))
+  ) {
+    throw new VerificationRefusedError(
+      'a device certificate did not verify. Nothing was sent.'
+    );
+  }
+  return { at: cert.at, kemPublicKey };
+}
+
+/** A grant's revocation the owner signed for this grantee on this relic, verified: its time, or undefined. */
+async function signedGrantRevocationAt(
+  owner: RosterOwner,
+  relicId: string,
+  grant: GrantJSON
+): Promise<number | undefined> {
+  if (grant.revocation === undefined || grant.revocation === null) {
+    return undefined;
+  }
+  const statement = await verifySignedStatement(
+    'revocation',
+    grant.revocation,
+    owner.sigPublicKey
+  );
+  if (
+    statement === undefined ||
+    statement.relic_id !== relicId ||
+    statement.owner_identity_id !== owner.identityId ||
+    statement.grantee_identity_id !== grant.grantee.identity.identity_id
+  ) {
+    return undefined;
+  }
+  return statement.at;
+}
+
+/** A live grant's statement, checked against this owner, this relic and the grantee it names. Refused when any part does not verify. */
+async function verifiedLiveGrant(
+  owner: RosterOwner,
+  relicId: string,
+  grant: GrantJSON
+): Promise<{ readonly at: number; readonly kemPublicKey: Uint8Array }> {
+  const statement = parsedOrRefused(
+    'grant',
+    grant.statement,
+    'a grant is malformed. Nothing was sent.'
+  );
+  const grantee = grant.grantee;
+  if (
+    statement.relic_id !== relicId ||
+    statement.grantee_identity_id !== grantee.identity.identity_id ||
+    statement.owner_identity_id !== owner.identityId ||
+    normalizeEmail(statement.grantee_email) !== normalizeEmail(grantee.email) ||
+    !fingerprintsEqual(
+      statement.fingerprint_typed,
+      await identityFingerprint(grantee.identity.identity_id, grantee.email)
+    ) ||
+    !(await verifyStatement(
+      owner.sigPublicKey,
+      statementBytes('grant', statement),
+      grant.identity_signature
+    ))
+  ) {
+    throw new VerificationRefusedError(
+      'a reader\u2019s grant did not verify for this relic. Nothing was sent.'
+    );
+  }
+  const keys = await verifiedPartyKeys(grantee);
+  return { at: statement.at, kemPublicKey: keys.kemPublicKey };
+}
+
+/** The marks and the live readers of a relic's grants. A retired grantee is no recipient. */
+export interface RosterGrants {
+  /** Per `relic/grantee` key: a verified revocation, or the live statement's time. */
+  readonly marks: Readonly<Record<string, RosterMark>>;
+  readonly live: readonly {
+    readonly key: string;
+    readonly at: number;
+    readonly granteeIdentityId: string;
+    readonly kemPublicKey: Uint8Array;
+  }[];
+}
+
+/**
+ * Verify a relic's grants against the owner. A grant the owner revoked is
+ * judged by the owner's signed revocation, never by the service's flag. A flag
+ * with no verified revocation is ignored, and a flagged grant whose own
+ * statement does not verify is skipped. Any other grant that does not verify is
+ * refused.
+ */
+export async function rosterGrants(
+  owner: RosterOwner,
+  relicId: string,
+  grants: readonly GrantJSON[],
+  revokedIdentityId?: string
+): Promise<RosterGrants> {
+  const marks: Record<string, RosterMark> = {};
+  const live: {
+    key: string;
+    at: number;
+    granteeIdentityId: string;
+    kemPublicKey: Uint8Array;
+  }[] = [];
+  for (const grant of grants) {
+    if (grant.grantee.identity.retired_at !== null) continue;
+    const granteeIdentityId = grant.grantee.identity.identity_id;
+    const key = `${relicId}/${granteeIdentityId}`;
+    const revokedAt = await signedGrantRevocationAt(owner, relicId, grant);
+    if (revokedAt !== undefined) {
+      marks[key] = { at: revokedAt, revoked: true };
+      continue;
+    }
+    if (granteeIdentityId === revokedIdentityId) {
+      throw new Error('a revoked identity is still listed as a recipient');
+    }
+    const flagged = grant.revoked_at !== null;
+    try {
+      const verified = await verifiedLiveGrant(owner, relicId, grant);
+      marks[key] = { at: verified.at, revoked: false };
+      live.push({
+        key,
+        at: verified.at,
+        granteeIdentityId,
+        kemPublicKey: verified.kemPublicKey,
+      });
+    } catch (error) {
+      if (!flagged) throw error;
+    }
+  }
+  return { marks, live };
 }
 
 /**
  * The recipient set a republish wraps to (section 4.12): the owner, every
- * owner device that is not revoked and not expired, every active grant whose
- * grantee is not retired, and the recovery holder when designated. Each
- * device, grant and designation is checked against the owner identity's
- * signature and against the record it describes, and a grant must be for
- * this relic. Anything that does not verify is refused, not skipped.
+ * owner device that is not revoked by a signed revocation and not expired, every
+ * active grant whose grantee is not retired, and the recovery holder in force.
+ * Each device, grant and designation is checked against the owner identity's
+ * signature and against the record it describes, and a grant must be for this
+ * relic. The browser keeps a floor for the owner (see `roster-floor.ts`): an
+ * answer that goes back on it is refused, and a recipient the floor has revoked
+ * is not wrapped to.
  */
 export async function verifiedRecipients(
   identity: UnlockedIdentity,
@@ -169,89 +455,71 @@ export async function verifiedRecipients(
     readonly devices: readonly DevicePublicJSON[];
     readonly grants: readonly GrantJSON[];
     readonly recovery: RecoveryJSON | null;
+    readonly recovery_statement?: SignedStatementBody | null;
   },
   revokedIdentityId: string,
   now: number
 ): Promise<readonly Recipient[]> {
+  const devices: {
+    marks: Record<string, RosterMark>;
+    live: { deviceId: string; at: number; recipient: Recipient }[];
+  } = { marks: {}, live: [] };
+  for (const device of parts.devices) {
+    const revokedAt = await signedDeviceRevocationAt(identity, device);
+    if (revokedAt !== undefined) {
+      devices.marks[device.device_id] = { at: revokedAt, revoked: true };
+      continue;
+    }
+    if (device.not_after <= now) continue;
+    const flagged = device.revoked_at !== null;
+    try {
+      const verified = await verifiedDeviceCert(identity, device);
+      devices.marks[device.device_id] = { at: verified.at, revoked: false };
+      devices.live.push({
+        deviceId: device.device_id,
+        at: verified.at,
+        recipient: { kemPublicKey: verified.kemPublicKey, role: 'device' },
+      });
+    } catch (error) {
+      if (!flagged) throw error;
+    }
+  }
+  const grants = await rosterGrants(
+    identity,
+    relicId,
+    parts.grants,
+    revokedIdentityId
+  );
+  const designation = await verifiedDesignation(
+    identity,
+    parts.recovery,
+    parts.recovery_statement ?? null
+  );
+  const floor = observeRosterFloor(identity.identityId, {
+    designation: designation?.mark ?? null,
+    devices: devices.marks,
+    grants: grants.marks,
+  });
+
   const recipients: Recipient[] = [
     { kemPublicKey: identity.kemPublicKey, role: 'owner' },
   ];
-
-  for (const device of parts.devices) {
-    if (device.revoked_at !== null || device.not_after <= now) continue;
-    const cert = parsedOrRefused(
-      'device_cert',
-      device.cert.statement,
-      'a device certificate is malformed. Nothing was sent.'
-    );
-    const kemPublicKey = decodeBase64url(device.kem_public_key);
-    const sigPublicKey = decodeBase64url(device.sig_public_key);
-    if (
-      cert.owner_identity_id !== identity.identityId ||
-      cert.device_id !== device.device_id ||
-      cert.kem_public_key !== device.kem_public_key ||
-      cert.sig_public_key !== device.sig_public_key ||
-      cert.label !== device.label ||
-      cert.not_after !== device.not_after ||
-      (await deviceIdOf(kemPublicKey, sigPublicKey)) !== device.device_id ||
-      !fingerprintsEqual(
-        cert.device_fingerprint_typed,
-        await deviceFingerprint(device.device_id)
-      ) ||
-      !(await verifyStatement(
-        identity.sigPublicKey,
-        statementBytes('device_cert', cert),
-        device.cert.identity_signature
-      ))
-    ) {
-      throw new VerificationRefusedError(
-        'a device certificate did not verify. Nothing was sent.'
-      );
+  for (const device of devices.live) {
+    if (rosterAdmits(floor.devices?.[device.deviceId], device.at)) {
+      recipients.push(device.recipient);
     }
-    recipients.push({ kemPublicKey, role: 'device' });
   }
-
-  for (const grant of parts.grants) {
-    if (grant.revoked_at !== null || grant.grantee.identity.retired_at !== null)
-      continue;
-    if (grant.grantee.identity.identity_id === revokedIdentityId) {
-      throw new Error('a revoked identity is still listed as a recipient');
+  for (const grant of grants.live) {
+    if (rosterAdmits(floor.grants?.[grant.key], grant.at)) {
+      recipients.push({ kemPublicKey: grant.kemPublicKey, role: 'reader' });
     }
-    const statement = parsedOrRefused(
-      'grant',
-      grant.statement,
-      'a grant is malformed. Nothing was sent.'
-    );
-    const grantee = grant.grantee;
-    if (
-      statement.relic_id !== relicId ||
-      statement.grantee_identity_id !== grantee.identity.identity_id ||
-      statement.owner_identity_id !== identity.identityId ||
-      normalizeEmail(statement.grantee_email) !==
-        normalizeEmail(grantee.email) ||
-      !fingerprintsEqual(
-        statement.fingerprint_typed,
-        await identityFingerprint(grantee.identity.identity_id, grantee.email)
-      ) ||
-      !(await verifyStatement(
-        identity.sigPublicKey,
-        statementBytes('grant', statement),
-        grant.identity_signature
-      ))
-    ) {
-      throw new VerificationRefusedError(
-        'a reader\u2019s grant did not verify for this relic. Nothing was sent.'
-      );
-    }
-    const keys = await verifiedPartyKeys(grantee);
-    recipients.push({ kemPublicKey: keys.kemPublicKey, role: 'reader' });
   }
-
-  if (parts.recovery !== null) {
-    const keys = await verifiedRecovery(identity, parts.recovery);
-    recipients.push({ kemPublicKey: keys.kemPublicKey, role: 'recovery' });
+  if (designation?.kemPublicKey !== undefined) {
+    recipients.push({
+      kemPublicKey: designation.kemPublicKey,
+      role: 'recovery',
+    });
   }
-
   return recipients;
 }
 
@@ -529,6 +797,7 @@ export function createRevokeDialog(ctx: RevokeContext): RevokeDialog {
       devices: DevicePublicJSON[];
       grants: GrantJSON[];
       recovery: RecoveryJSON | null;
+      recovery_statement?: SignedStatementBody | null;
     }>(ctx.deps, 'POST', `/api/relics/${ctx.relicId}/recipients`);
     const recipients = await verifiedRecipients(
       identity,
