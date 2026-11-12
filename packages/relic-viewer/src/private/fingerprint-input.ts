@@ -122,7 +122,8 @@ export async function privateApi<T>(
   body?: unknown,
   signal?: AbortSignal
 ): Promise<T> {
-  const init: RequestInit = { method, signal, credentials: 'same-origin' };
+  const init: RequestInit = { method, credentials: 'same-origin' };
+  if (signal) init.signal = signal;
   if (body !== undefined) {
     init.headers = { 'content-type': 'application/json' };
     init.body = JSON.stringify(body);

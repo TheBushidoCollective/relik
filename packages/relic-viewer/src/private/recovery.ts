@@ -11,7 +11,6 @@ import {
   type IdentityStateJSON,
   type PartyJSON,
   type RecoveryJSON,
-  type UnlockedIdentity,
   wrapVersionKey,
 } from '@relic/format/private';
 import type { ViewerDeps } from '../viewer.ts';
@@ -24,7 +23,12 @@ import {
   typedFingerprint,
   waiting,
 } from './fingerprint-input.ts';
-import { attest, fetchVersionKey, unlock } from './keys.ts';
+import {
+  attest,
+  fetchVersionKey,
+  type UnlockedIdentity,
+  unlock,
+} from './keys.ts';
 import { verifiedPartyKeys } from './rekey.ts';
 
 /** Most wraps one backfill call may carry (config `privateBackfillMaxWraps`). */

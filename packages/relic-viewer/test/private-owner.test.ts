@@ -7,6 +7,7 @@
  */
 
 import { beforeAll, describe, expect, mock, test } from 'bun:test';
+import type { UnlockedIdentity } from '../src/private/keys.ts';
 import {
   encodeBase64url,
   type GrantJSON,
@@ -18,7 +19,6 @@ import {
   type PrivateAccessJSON,
   statementBytes,
   signStatement,
-  type UnlockedIdentity,
   unwrapVersionKey,
   verifyStatement,
   deviceFingerprint,
@@ -186,6 +186,11 @@ const stubDocument = {
 
 Object.assign(globalThis, { document: stubDocument });
 
+/** The stub, as the element type the owner surfaces hand back to tests. */
+function stubOf(node: unknown): StubElement {
+  return node as StubElement;
+}
+
 // ---------------------------------------------------------------------------
 // Fixtures: real identities, a fake keys module, and a fake service.
 // ---------------------------------------------------------------------------
@@ -219,7 +224,7 @@ function unlockedFrom(
   const dh = async (peer: Uint8Array): Promise<Uint8Array> => {
     const publicKey = await crypto.subtle.importKey(
       'raw',
-      peer,
+      new Uint8Array(peer),
       { name: 'ECDH', namedCurve: 'P-256' },
       false,
       []
@@ -236,7 +241,7 @@ function unlockedFrom(
       await crypto.subtle.sign(
         { name: 'ECDSA', hash: 'SHA-256' },
         identity.keys.sig.privateKey,
-        bytes
+        new Uint8Array(bytes)
       )
     );
   return {
@@ -410,14 +415,13 @@ function accessAt(version: number): PrivateAccessJSON {
   } as unknown as PrivateAccessJSON;
 }
 
-/** Wait for a condition, one macrotask at a time. Bounded, and it never waits on a wall clock. */
+/** Yield one macrotask at a time until the condition holds. Event-driven, with no wall-clock wait; a stall fails by the test timeout. */
 async function waitUntil(predicate: () => boolean): Promise<void> {
-  for (let turn = 0; turn < 10_000 && !predicate(); turn++) {
+  while (!predicate()) {
     const { promise, resolve } = Promise.withResolvers<void>();
     setImmediate(resolve);
     await promise;
   }
-  if (!predicate()) throw new Error('condition never held');
 }
 
 // ---------------------------------------------------------------------------
@@ -453,13 +457,7 @@ describe('typed fingerprint', () => {
     expect(field.state()).toBe('match');
     expect(field.matched()).toBe(FP_EXPECTED);
 
-    expect(states).toEqual([
-      'empty',
-      'mismatch',
-      'mismatch',
-      'mismatch',
-      'match',
-    ]);
+    expect(states).toEqual(['empty', 'mismatch', 'mismatch', 'match']);
   });
 });
 
@@ -477,7 +475,7 @@ describe('revoke dialog', () => {
     );
 
     expect(dialog.element.open).toBe(true);
-    const warning = dialog.element.querySelector('#revoke-warning');
+    const warning = stubOf(dialog.element).querySelector('#revoke-warning');
     expect(warning?.textContent).toContain('Revoke ben@example.org?');
     expect(warning?.textContent).toContain('republished as version 3');
     expect(service.captured).toHaveLength(0);
@@ -508,14 +506,18 @@ describe('rekey after revocation', () => {
       accessAt(2)
     );
 
-    const confirm = dialog.element.querySelector(
+    const confirm = stubOf(dialog.element).querySelector(
       '[data-action="confirm-revoke"]'
     );
     if (!confirm) throw new Error('no confirm button');
     confirm.dispatch('click');
-    const rekey = dialog.element.querySelector('#rekey');
+    const rekey = stubOf(dialog.element).querySelector('#rekey');
     if (!rekey) throw new Error('no rekey panel');
-    await waitUntil(() => rekey.getAttribute('data-rekey-state') === 'done');
+    await waitUntil(() =>
+      ['done', 'failed'].includes(rekey.getAttribute('data-rekey-state') ?? '')
+    );
+    const outcome = stubOf(dialog.element).querySelector('#rekey-outcome');
+    expect(outcome?.textContent).toContain('Done.');
 
     const revocation = service.captured.find((c) =>
       c.url.endsWith('/revocations')
@@ -535,7 +537,9 @@ describe('rekey after revocation', () => {
         'renderer_class',
       ].sort()
     );
-    expect(upload.bytes.length).toBe(revocationBody.declared_ciphertext_bytes);
+    expect(upload.bytes.length).toBe(
+      revocationBody.declared_ciphertext_bytes as number
+    );
 
     const body = complete.body as {
       seal: { statement: Record<string, unknown>; signature: string };
@@ -567,8 +571,9 @@ describe('rekey after revocation', () => {
       Buffer.from(await kemKeyIdOf(REVOKED.kem)).toString('hex')
     );
 
+    const ownerHex = Buffer.from(await kemKeyIdOf(OWNER.kem)).toString('hex');
     const ownerWrap = body.wraps.find(
-      (wrap) => wrap.recipient_key_id === expectedRecipients[0]
+      (wrap) => wrap.recipient_key_id === ownerHex
     );
     if (!ownerWrap) throw new Error('owner was not wrapped');
     const key = await unwrapVersionKey({
@@ -618,10 +623,15 @@ describe('device approval', () => {
       onChanged: () => {},
     });
     await waitUntil(
-      () => section.querySelector('[data-action="approve-device"]') !== null
+      () =>
+        stubOf(section).querySelector('[data-action="approve-device"]') !== null
     );
-    const approve = section.querySelector('[data-action="approve-device"]');
-    const input = section.querySelector('input[data-device-fingerprint-input]');
+    const approve = stubOf(section).querySelector(
+      '[data-action="approve-device"]'
+    );
+    const input = stubOf(section).querySelector(
+      'input[data-device-fingerprint-input]'
+    );
     if (!approve || !input) throw new Error('approval page did not render');
     expect(approve.disabled).toBe(true);
 

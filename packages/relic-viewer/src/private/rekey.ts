@@ -21,7 +21,6 @@ import {
   type SealJSON,
   signStatement,
   statementBytes,
-  type UnlockedIdentity,
   verifyStatement,
   type WrapJSON,
   wrapVersionKey,
@@ -33,7 +32,11 @@ import {
   sha256Hex,
 } from '@relic/format';
 import type { ViewerDeps } from '../viewer.ts';
-import { attest, fetchAndDecryptVersion } from './keys.ts';
+import {
+  attest,
+  fetchAndDecryptVersion,
+  type UnlockedIdentity,
+} from './keys.ts';
 import {
   h,
   icon,
@@ -417,7 +420,7 @@ export function createRevokeDialog(ctx: RevokeContext): RevokeDialog {
     const response = await ctx.deps.fetch(signed.url, {
       method: signed.method,
       headers: signed.headers,
-      body: container,
+      body: container as Uint8Array<ArrayBuffer>,
     });
     if (!response.ok) throw new Error(`upload returned ${response.status}`);
   }
