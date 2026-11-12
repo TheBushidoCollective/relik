@@ -442,6 +442,27 @@ function presentClockMs(): number {
   return typeof performance !== 'undefined' ? performance.now() : Date.now();
 }
 
+// Waits at least ms without a timer. A timer set from a nested timer task is clamped to 4 ms or
+// more, and a 1 ms timer there measured 4.2 to 5.1 ms. The recovery budget after its guard is
+// about 9 ms, so a clamped retry spends half of it. Message tasks are not clamped.
+function unclampedDelay(ms: number): Promise<void> {
+  if (typeof MessageChannel === 'undefined')
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  const until = presentClockMs() + ms;
+  const channel = new MessageChannel();
+  return new Promise((resolve) => {
+    channel.port1.onmessage = () => {
+      if (presentClockMs() < until) {
+        channel.port2.postMessage(null);
+        return;
+      }
+      channel.port1.close();
+      resolve();
+    };
+    channel.port2.postMessage(null);
+  });
+}
+
 // Resolves at the next presented frame or after pollMs, whichever comes first.
 // The loser is cancelled so no callback outlives the wait.
 function nextPresentation(
@@ -5527,9 +5548,7 @@ export function createOtioPlayback(
           });
           throw new Error('fresh recovery output clock unavailable');
         }
-        const wait = Promise.withResolvers<void>();
-        setTimeout(wait.resolve, 1);
-        await wait.promise;
+        await unclampedDelay(1);
       }
       if (!inherited || !bridge)
         throw new Error('fresh recovery output clock unavailable');
