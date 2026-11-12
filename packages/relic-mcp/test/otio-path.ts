@@ -16484,17 +16484,33 @@ async function runSixtyFpsColdProof(
       .at(-1);
     assert.ok(backend, '60 fps run selected no audio backend');
     const frameBytes = 64 * 36 * 4;
+    // ffmpeg's fps=60 shows every fr30 picture twice, so decoded frames 2k and 2k+1 are the same
+    // picture and no frame can be closer to one than to the other. The premise is checked on the
+    // decoded references, and frames are then matched against the distinct pictures.
+    assert.ok(
+      oracle.references.length % 2 === 0 &&
+        oracle.references.every(
+          (reference, index) =>
+            index % 2 === 0 ||
+            Buffer.compare(reference, oracle.references[index - 1]!) === 0
+        ),
+      '60 fps references are not doubled fr30 pictures; the picture oracle does not apply'
+    );
+    const pictures = oracle.references.filter((_, index) => index % 2 === 0);
+    const expectedPicture = Math.floor(oracle.expectedIndex / 2);
+    const usable = trace.visual.filter(
+      (sample) =>
+        !sample.error &&
+        sample.pixels16 !== undefined &&
+        sample.pixels16.length === frameBytes
+    );
     const presentedExpectedFrame = (): boolean =>
-      trace.visual.some(
-        (sample) =>
-          !sample.error &&
-          sample.pixels16 !== undefined &&
-          sample.pixels16.length === frameBytes &&
-          matchesExpectedVideoFrame(
-            Uint8Array.from(sample.pixels16),
-            oracle.references,
-            oracle.expectedIndex
-          )
+      usable.some((sample) =>
+        matchesExpectedVideoFrame(
+          Uint8Array.from(sample.pixels16!),
+          pictures,
+          expectedPicture
+        )
       );
     if (backend['backend'] === 'native') {
       assert.equal(
@@ -16553,9 +16569,53 @@ async function runSixtyFpsColdProof(
         output.length > 0 && output.some((value) => Math.abs(value) > 0.001),
         '60 fps native playback output was silent'
       );
+      // The paused view shows the authored picture. After the click the pictures only move
+      // forward, start inside the 350 ms budget, and are never ahead of the timeline (one fr30
+      // picture per 1/30 s plus one of rounding). Unclassified frames are skipped, not assumed.
+      // The top clip, upper-video-a, spans the first second of the composition (30 frames at
+      // 30 fps in the fixture) and a later clip reuses the same media from an earlier picture,
+      // so only the first second after the click is judged. Wall time never leads composition time.
+      const TOP_CLIP_MS = 1000;
+      const classified = usable.flatMap((sample) => {
+        const picture = classifyVideoFrame(
+          Uint8Array.from(sample.pixels16!),
+          pictures
+        );
+        return picture === null
+          ? []
+          : [{ elapsedMs: sample.timestamp - playEdge.timestamp, picture }];
+      });
+      assert.equal(
+        classified.filter((entry) => entry.elapsedMs <= 0).at(-1)?.picture,
+        expectedPicture,
+        `60 fps paused view did not show the expected authored frame ${oracle.expectedIndex}`
+      );
+      const played = classified.filter(
+        (entry) => entry.elapsedMs > 0 && entry.elapsedMs <= TOP_CLIP_MS
+      );
+      for (let i = 0; i < played.length; i++) {
+        const entry = played[i]!;
+        assert.ok(
+          entry.picture >= (played[i - 1]?.picture ?? expectedPicture),
+          `60 fps native presentation moved backwards to picture ${entry.picture} at ${entry.elapsedMs} ms`
+        );
+        assert.ok(
+          entry.picture - expectedPicture <=
+            Math.floor((entry.elapsedMs * 30) / 1000) + 1,
+          `60 fps native presentation showed picture ${entry.picture} ahead of the timeline at ${entry.elapsedMs} ms`
+        );
+      }
+      const firstMoved = played.find(
+        (entry) => entry.picture > expectedPicture
+      );
       assert.ok(
-        presentedExpectedFrame(),
-        `60 fps native presentation never showed the expected authored frame ${oracle.expectedIndex}`
+        firstMoved && firstMoved.elapsedMs <= 350,
+        `60 fps native presentation first moved at ${String(firstMoved?.elapsedMs)} ms, past the 350 ms start budget`
+      );
+      const distinctPlayed = new Set(played.map((entry) => entry.picture));
+      assert.ok(
+        distinctPlayed.size >= 10,
+        `60 fps native presentation showed only ${distinctPlayed.size} source pictures`
       );
       console.log(
         `OTIO_SIXTY_FPS backend=native reason="video timing cannot be certified" shortestFrameSeconds=${minWindow} refreshSeconds=${vsync} scheduled=unproven`
