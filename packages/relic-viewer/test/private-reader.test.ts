@@ -35,7 +35,10 @@ import {
   RecipientMissingError,
   SealMismatchError,
 } from '../src/private/open.ts';
-import { mountPrivateReader } from '../src/private/reader.ts';
+import {
+  mountPrivateDashboard,
+  mountPrivateReader,
+} from '../src/private/reader.ts';
 import { loadIdentityState, unlock } from '../src/private/keys.ts';
 import { requestAccess } from '../src/private/request.ts';
 import type { CredentialsLike } from '../src/passkey-common.ts';
@@ -327,6 +330,9 @@ async function sealedWorld(
 
   const routes: Record<string, Handler> = {
     'GET /api/auth/session': () => json({ email: READER_EMAIL }),
+    'GET /api/identity/relics?coverage=1': () =>
+      json({ owned: [], shared_with_me: [] }),
+    'GET /api/devices': () => json({ devices: [] }),
     'GET /api/identity': () => json(identityState),
     'POST /api/attest/nonce': () => json(nonceResponse(readerPasskey.rawId)),
     [`GET /api/relics/${relicId}/access`]: () =>
@@ -695,6 +701,45 @@ class El {
     detach(this);
   }
   focus(): void {}
+  hasAttribute(name: string): boolean {
+    return this.attrs.has(name);
+  }
+  /** The class list, backed by the class attribute. */
+  get classList(): {
+    add(...names: string[]): void;
+    remove(...names: string[]): void;
+    toggle(name: string, force?: boolean): boolean;
+    contains(name: string): boolean;
+  } {
+    const names = (): string[] => this.className.split(/\s+/).filter(Boolean);
+    const write = (list: string[]): void => {
+      this.className = list.join(' ');
+    };
+    return {
+      add: (...add) => write([...new Set([...names(), ...add])]),
+      remove: (...remove) =>
+        write(names().filter((name) => !remove.includes(name))),
+      toggle: (name, force) => {
+        const present = names().includes(name);
+        const want = force ?? !present;
+        write(
+          want
+            ? [...new Set([...names(), name])]
+            : names().filter((existing) => existing !== name)
+        );
+        return want;
+      },
+      contains: (name) => names().includes(name),
+    };
+  }
+  /** A dialog's open state, as the attribute the browser reflects. */
+  showModal(): void {
+    this.attrs.set('open', '');
+  }
+  close(): void {
+    this.attrs.delete('open');
+  }
+  removeEventListener(): void {}
 
   addEventListener(type: string, listener: (event: FakeEvent) => void): void {
     const list = this.listeners.get(type) ?? [];
@@ -768,7 +813,12 @@ function installDocument(): El {
   const body = new El('body');
   Object.defineProperty(globalThis, 'document', {
     configurable: true,
-    value: { createElement: (tag: string) => new El(tag), body },
+    value: {
+      createElement: (tag: string) => new El(tag),
+      createElementNS: (_namespace: string, tag: string) => new El(tag),
+      createTextNode: (text: string) => new TextNode(text),
+      body,
+    },
   });
   return body;
 }
@@ -805,6 +855,9 @@ async function mountReader(
     deps,
     renderReady: (view) => {
       views.push(view);
+      const bar = new El('header');
+      bar.className = 'bar';
+      root.append(bar);
     },
     renderDead: (view) => {
       dead.push(view);
@@ -1441,5 +1494,196 @@ describe('private keys never enter the vault or storage', () => {
     }
     storageWrites = written;
     expect(storageWrites.length).toBeGreaterThan(0);
+  });
+});
+
+/** Requests the service lists for the relic, for the owner's Access count. */
+function requestsBody(statuses: readonly string[]) {
+  return {
+    requests: statuses.map((status, index) => ({
+      requester: { email: `reader${index}@example.com`, identity: null },
+      requested_at: '2026-11-11T00:00:00Z',
+      status,
+      statement: {},
+      identity_signature: 'sig',
+    })),
+  };
+}
+
+describe('the owner surfaces are mounted from the reader, lazily', () => {
+  test('an owner sees the Access control with the pending count, and it opens the panel', async () => {
+    const relicId = freshRelicId();
+    const world = await sealedWorld(relicId, { role: 'owner' });
+    const routes = {
+      ...world.routes,
+      [`GET /api/relics/${relicId}/requests`]: () =>
+        json(requestsBody(['pending', 'pending', 'granted'])),
+    };
+    const { fetch } = service(routes);
+    const deps = depsFor(
+      fetch,
+      authenticator(() =>
+        assertion(world.readerPasskey.rawId, world.readerPasskey.prf)
+      )
+    );
+    const { root, views } = await mountReader(deps, relicId);
+
+    press(root, '[data-action="private-unlock"]');
+    await until(() => views.length === 1, 'the ready view');
+    await until(
+      () => root.querySelector('[data-action="open-access-panel"]') !== null,
+      'the Access control'
+    );
+    const access = root.querySelector('[data-action="open-access-panel"]');
+    expect(access?.attrs.get('aria-controls')).toBe('access-panel');
+    await until(
+      () => root.querySelector('#request-count')?.textContent === '2',
+      'the pending count'
+    );
+
+    press(root, '[data-action="open-access-panel"]');
+    await until(
+      () => root.querySelector('#access-panel') !== null,
+      'the access panel'
+    );
+    expect(root.querySelector('#access-panel')?.attrs.get('role')).toBe(
+      'dialog'
+    );
+  });
+
+  test('a reader who is not the owner gets no Access control and no panel', async () => {
+    const relicId = freshRelicId();
+    const world = await sealedWorld(relicId, { role: 'grantee' });
+    const { root, views } = await mountReader(readerDeps(world).deps, relicId);
+
+    press(root, '[data-action="private-unlock"]');
+    await until(() => views.length === 1, 'the ready view');
+    expect(root.querySelector('[data-action="open-access-panel"]')).toBeNull();
+    expect(root.querySelector('#access-panel')).toBeNull();
+  });
+
+  test('the request mail link opens the owner panel straight from the unlock stage', async () => {
+    const relicId = freshRelicId();
+    const world = await sealedWorld(relicId, { role: 'owner' });
+    const { fetch } = service(world.routes);
+    const deps = {
+      ...depsFor(
+        fetch,
+        authenticator(() =>
+          assertion(world.readerPasskey.rawId, world.readerPasskey.prf)
+        )
+      ),
+      locationHref: `${ORIGIN}/r/${relicId}?access=requests`,
+    };
+    const { root, views } = await mountReader(deps, relicId);
+
+    expect(stateOf(root)).toBe('unlock');
+    await until(
+      () => root.querySelector('#access-panel') !== null,
+      'the access panel from the mail link'
+    );
+    expect(views).toHaveLength(0);
+  });
+
+  test('a signed-in visitor gets the private dashboard sections', async () => {
+    const relicId = freshRelicId();
+    const world = await sealedWorld(relicId);
+    const { fetch, seen } = service(world.routes);
+    const deps = depsFor(
+      fetch,
+      authenticator(() =>
+        assertion(world.readerPasskey.rawId, world.readerPasskey.prf)
+      )
+    );
+    const root = new El('main');
+
+    await mountPrivateDashboard(root as unknown as HTMLElement, deps);
+
+    await until(
+      () =>
+        root.querySelector('#private-dashboard [data-private-dashboard]') !==
+        null,
+      'the private dashboard'
+    );
+    expect(seen.map((entry) => entry.route)).toContain('GET /api/identity');
+  });
+
+  test('a signed-out visitor gets no private dashboard and no identity request', async () => {
+    const relicId = freshRelicId();
+    const world = await sealedWorld(relicId);
+    const routes = {
+      ...world.routes,
+      'GET /api/auth/session': () => json({ email: null }),
+    };
+    const { fetch, seen } = service(routes);
+    const root = new El('main');
+
+    await mountPrivateDashboard(
+      root as unknown as HTMLElement,
+      depsFor(
+        fetch,
+        authenticator(() => assertion(randomBytes(32), undefined))
+      )
+    );
+
+    expect(root.querySelector('#private-dashboard')).toBeNull();
+    expect(seen.map((entry) => entry.route)).not.toContain('GET /api/identity');
+  });
+
+  test('the approval link opens the device approval section for the signed-in owner', async () => {
+    const relicId = freshRelicId();
+    const world = await sealedWorld(relicId);
+    const enrollmentId = '01hh0m7x6ytcxbk2ckvd9p9w5a';
+    const routes = {
+      ...world.routes,
+      [`GET /api/devices/enrollments/${enrollmentId}`]: () =>
+        json({
+          status: 'pending',
+          device_id: 'd'.repeat(64),
+          label: 'Ada laptop',
+          expires_at: '2026-11-11T01:00:00Z',
+        }),
+      'GET /api/devices': () => json({ devices: [] }),
+    };
+    const { fetch } = service(routes);
+    const deps = {
+      ...depsFor(
+        fetch,
+        authenticator(() =>
+          assertion(world.readerPasskey.rawId, world.readerPasskey.prf)
+        )
+      ),
+      locationHref: `${ORIGIN}/dashboard?approve-device=${enrollmentId}`,
+    };
+    const root = new El('main');
+
+    await mountPrivateDashboard(root as unknown as HTMLElement, deps);
+    await until(
+      () =>
+        root.querySelector(`[data-device-approval="${enrollmentId}"]`) !== null,
+      'the device approval section'
+    );
+  });
+
+  test('the approval link does nothing for a signed-out visitor', async () => {
+    const relicId = freshRelicId();
+    const world = await sealedWorld(relicId);
+    const routes = {
+      ...world.routes,
+      'GET /api/auth/session': () => json({ email: null }),
+    };
+    const { fetch, seen } = service(routes);
+    const deps = {
+      ...depsFor(
+        fetch,
+        authenticator(() => assertion(randomBytes(32), undefined))
+      ),
+      locationHref: `${ORIGIN}/dashboard?approve-device=01hh0m7x6ytcxbk2ckvd9p9w5a`,
+    };
+    const root = new El('main');
+
+    await mountPrivateDashboard(root as unknown as HTMLElement, deps);
+    expect(root.querySelector('[data-device-approval]')).toBeNull();
+    expect(seen.map((entry) => entry.route)).not.toContain('GET /api/identity');
   });
 });
