@@ -158,7 +158,8 @@ export async function callMcp(
  */
 export async function launchProofBrowser(
   chromeExecutable: string,
-  serviceOrigin: string
+  serviceOrigin: string,
+  authenticator?: { hasPrf?: boolean }
 ): Promise<RunningProofBrowser> {
   const profile = await mkdtemp(join(tmpdir(), 'relic-decision-chrome-'));
   const shared = chromeArgs(chromeExecutable, profile);
@@ -253,6 +254,9 @@ export async function launchProofBrowser(
         hasUserVerification: true,
         isUserVerified: true,
         automaticPresenceSimulation: true,
+        ...(authenticator?.hasPrf === undefined
+          ? {}
+          : { hasPrf: authenticator.hasPrf }),
       },
     },
     sessionId
