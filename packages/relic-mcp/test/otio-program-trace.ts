@@ -19,6 +19,8 @@
  *
  * Mark order: a page or device reaction that lands before its trusted mark makes the mark late, so
  * the trace cannot attribute that reaction to the gesture. markOrderFailures fails such a trial.
+ * The one exception is pausedSeekCompletion: Chrome re-applying a zero rate as its pipeline
+ * finishes a start, seek or resume is not a reaction. Every other rate change and device Play counts.
  *
  * The first new frame is the first presented frame whose media time is one program frame past
  * the frame shown at the trusted Play. A frame that repeats one already shown is not new, so a
@@ -29,6 +31,10 @@ export interface TraceEvent {
   readonly name: string;
   readonly cat: string;
   readonly ts: number;
+  /** Present on real traces. A synthetic event without them never gets the paused-start exemption. */
+  readonly pid?: number;
+  readonly tid?: number;
+  readonly args?: Readonly<Record<string, unknown>>;
 }
 
 export const PREPARE_MARK = 'relic-prepare-pointerdown';
@@ -56,9 +62,15 @@ export const QUIET_WINDOW_EVENTS: readonly string[] = [
 
 /** The program's pipeline is created again: a resumed start, which the cold classifier never counts as cold. */
 export const PIPELINE_INIT_EVENT = 'RendererImpl::Initialize';
-/** Page or device reactions that must not land just before their trusted mark. */
+/**
+ * Page or device reactions that must not land just before their trusted mark. A zero rate is the
+ * one exception, and only pausedSeekCompletion admits it.
+ */
+const RATE_EVENT = 'RendererImpl::SetPlaybackRate';
+/** The renderer event CompleteSeek calls before it re-applies the playback rate. */
+const SEEK_COMPLETION_EVENT = 'RendererImpl::StartPlayingFrom';
 export const MARK_ORDER_EVENTS: readonly string[] = [
-  'RendererImpl::SetPlaybackRate',
+  RATE_EVENT,
   'AudioOutputDevice::Play',
   DEVICE_START_EVENT,
 ];
@@ -235,9 +247,41 @@ export function pipelineResumed(
 }
 
 /**
+ * CompleteSeek (pipeline_impl.cc) finishes a start, seek or resume by calling StartPlayingFrom and
+ * then SetPlaybackRate with the playback rate, both on one renderer thread. A paused program
+ * therefore shows a zero rate directly after its StartPlayingFrom. Only that shape is exempt: a
+ * zero rate whose pid and tid match, with StartPlayingFrom the one latest renderer event before it
+ * on that thread. A non-zero rate, a missing rate, pid or tid, any other preceding renderer event,
+ * or two different renderer events tied for latest all fail.
+ */
+function pausedSeekCompletion(
+  events: readonly TraceEvent[],
+  event: TraceEvent
+): boolean {
+  if (event.name !== RATE_EVENT || event.args?.['rate'] !== 0) return false;
+  if (event.pid === undefined || event.tid === undefined) return false;
+  let latest: TraceEvent | null = null;
+  let tied = false;
+  for (const other of events) {
+    if (!other.name.startsWith('RendererImpl::')) continue;
+    if (other.pid !== event.pid || other.tid !== event.tid) continue;
+    if (other.ts >= event.ts) continue;
+    if (latest === null || other.ts > latest.ts) {
+      latest = other;
+      tied = false;
+    } else if (other.ts === latest.ts && other.name !== latest.name) {
+      tied = true;
+    }
+  }
+  return latest?.name === SEEK_COMPLETION_EVENT && !tied;
+}
+
+/**
  * Each reaction that lands in [mark - MARK_ORDER_WINDOW_US, mark) is a failure: the page or the
  * device acted before the mark, so the mark is late and cannot attribute that reaction to the
  * gesture. An absent mark returns nothing here; the gate that needs the mark reports its absence.
+ * The one exception is pausedSeekCompletion, a zero rate that Chrome applies as its pipeline
+ * finishes a start, seek or resume. Every other reaction still fails.
  */
 export function markOrderFailures(
   events: readonly TraceEvent[],
@@ -249,6 +293,7 @@ export function markOrderFailures(
   for (const event of events) {
     if (!MARK_ORDER_EVENTS.includes(event.name)) continue;
     if (event.ts < at - MARK_ORDER_WINDOW_US || event.ts >= at) continue;
+    if (pausedSeekCompletion(events, event)) continue;
     failures.push(
       `page reacted before ${name} by ${at - event.ts} µs (${event.name})`
     );

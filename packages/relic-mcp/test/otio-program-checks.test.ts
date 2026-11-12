@@ -621,6 +621,135 @@ describe('primer trace: strict mark order and the quiet window', () => {
     );
     expect(after).toEqual({ covered: true, offending: [] });
   });
+
+  // The bg264 shape: Chrome's CompleteSeek on the renderer media thread puts the paused rate back
+  // 2.5 ms before the Prepare mark. Renderer init and the start come first; the main thread's
+  // OnPipelineSeeked follows. Thread ids are the trace's own (media 55954609, main 55953981).
+  const MEDIA = 55954609;
+  const MAIN = 55953981;
+  const onThread = (
+    event: TraceEvent,
+    tid: number,
+    args?: Readonly<Record<string, unknown>>,
+    pid = 10324
+  ): TraceEvent => ({
+    ...event,
+    pid,
+    tid,
+    ...(args === undefined ? {} : { args }),
+  });
+  const pipelineStart = {
+    init: onThread(traced('RendererImpl::Initialize', at - 2_565), MEDIA),
+    start: onThread(
+      traced('RendererImpl::StartPlayingFrom', at - 2_558),
+      MEDIA,
+      { time_us: 0 }
+    ),
+    rate: onThread(traced('RendererImpl::SetPlaybackRate', at - 2_536), MEDIA, {
+      rate: 0,
+    }),
+    seeked: onThread(traced('OnPipelineSeeked', at - 2_510), MAIN, {
+      id: 0,
+      target: 0,
+    }),
+  };
+  const traceWith = (
+    over: Partial<typeof pipelineStart>,
+    ...extra: TraceEvent[]
+  ): TraceEvent[] => [
+    mark(PREPARE_MARK, at),
+    ...Object.values({ ...pipelineStart, ...over }),
+    ...extra,
+  ];
+
+  test('the bg264 paused start is not a reaction: zero rate right after its StartPlayingFrom', () => {
+    expect(markOrderFailures(traceWith({}), PREPARE_MARK)).toEqual([]);
+  });
+
+  test('a play applied at start (rate 1) still fails', () => {
+    const failures = markOrderFailures(
+      traceWith({
+        rate: onThread(
+          traced('RendererImpl::SetPlaybackRate', at - 2_536),
+          MEDIA,
+          { rate: 1 }
+        ),
+      }),
+      PREPARE_MARK
+    );
+    expect(failures).toEqual([
+      'page reacted before relic-prepare-pointerdown by 2536 µs (RendererImpl::SetPlaybackRate)',
+    ]);
+  });
+
+  test('a page pause between StartPlayingFrom and the zero rate is not the paused start', () => {
+    const failures = markOrderFailures(
+      traceWith(
+        {},
+        onThread(traced('RendererImpl::StartPlayback', at - 2_540), MEDIA)
+      ),
+      PREPARE_MARK
+    );
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toContain('by 2536 µs (RendererImpl::SetPlaybackRate)');
+  });
+
+  test('StartPlayingFrom on another thread or process does not complete this rate change', () => {
+    const otherTid = traceWith({
+      start: onThread(
+        traced('RendererImpl::StartPlayingFrom', at - 2_558),
+        MAIN,
+        { time_us: 0 }
+      ),
+    });
+    expect(markOrderFailures(otherTid, PREPARE_MARK)).toHaveLength(1);
+    const otherPid = traceWith({
+      start: onThread(
+        traced('RendererImpl::StartPlayingFrom', at - 2_558),
+        MEDIA,
+        { time_us: 0 },
+        99
+      ),
+    });
+    expect(markOrderFailures(otherPid, PREPARE_MARK)).toHaveLength(1);
+  });
+
+  test('missing args, pid or tid on the zero rate fails closed', () => {
+    const noArgs = traceWith({
+      rate: onThread(
+        traced('RendererImpl::SetPlaybackRate', at - 2_536),
+        MEDIA
+      ),
+    });
+    expect(markOrderFailures(noArgs, PREPARE_MARK)).toHaveLength(1);
+    const noIds = traceWith({
+      rate: {
+        ...traced('RendererImpl::SetPlaybackRate', at - 2_536),
+        args: { rate: 0 },
+      },
+    });
+    expect(markOrderFailures(noIds, PREPARE_MARK)).toHaveLength(1);
+  });
+
+  test('two different renderer events tied for latest before the zero rate fail closed', () => {
+    const tied = traceWith(
+      {},
+      onThread(traced('RendererImpl::StartPlayback', at - 2_558), MEDIA)
+    );
+    expect(markOrderFailures(tied, PREPARE_MARK)).toHaveLength(1);
+  });
+
+  test('device starts after the paused start still fail; the exemption covers only the rate', () => {
+    const failures = markOrderFailures(
+      traceWith(
+        {},
+        traced('AudioOutputDevice::Play', at - 150),
+        traced(DEVICE_START_EVENT, at - 93)
+      ),
+      PREPARE_MARK
+    );
+    expect(failures).toHaveLength(2);
+  });
 });
 
 describe('primer trace: OS running after Chrome paused is telemetry', () => {
