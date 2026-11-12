@@ -489,6 +489,46 @@ describe('parseStatement', () => {
     ).toBe('format');
   });
 
+  test('private_publish accepts the service challenge as an opaque token', () => {
+    // The service issues 32 hex characters from POST /api/challenge.
+    const hexChallenge = 'e511d0b9fe27c13a5c37f442ba4b5ddd';
+    expect(() =>
+      parseStatement('private_publish', {
+        ...sampleOf('private_publish'),
+        challenge_nonce: hexChallenge,
+      })
+    ).not.toThrow();
+    // The base64url form of 32 bytes, as the other nonces use.
+    expect(() =>
+      parseStatement('private_publish', {
+        ...sampleOf('private_publish'),
+        challenge_nonce: NONCE_B64,
+      })
+    ).not.toThrow();
+  });
+
+  test('private_publish refuses an empty, over-long, padded, or non-alphabet challenge', () => {
+    const challenge = (value: string) =>
+      refusal('private_publish', {
+        ...sampleOf('private_publish'),
+        challenge_nonce: value,
+      });
+    expect(challenge('')).toBe('format');
+    expect(challenge('a'.repeat(65))).toBe('format');
+    expect(challenge(`${'a'.repeat(62)}==`)).toBe('format');
+    expect(challenge('ab+cd')).toBe('format');
+    expect(challenge(7 as unknown as string)).toBe('type');
+  });
+
+  test('the other nonce fields still require exactly 32 bytes', () => {
+    expect(
+      refusal('device_request', {
+        ...sampleOf('device_request'),
+        nonce: 'e511d0b9fe27c13a5c37f442ba4b5ddd',
+      })
+    ).toBe('format');
+  });
+
   test('a hex identifier must be 64 lowercase characters', () => {
     expect(
       refusal('identity_bind', {
