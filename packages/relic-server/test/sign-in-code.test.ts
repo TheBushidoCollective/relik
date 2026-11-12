@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, test } from 'bun:test';
 import { createApp, type Mailer, type RelicApp } from '../src/app.ts';
 import { sha256Hex } from '../src/gcs.ts';
 import { gcsStore } from '../src/gcsstore.ts';
-import { normalizeEmail } from '../src/store.ts';
+import { normalizeEmail } from '@relic/format';
 
 interface FakeGcs {
   readonly fetch: typeof globalThis.fetch;

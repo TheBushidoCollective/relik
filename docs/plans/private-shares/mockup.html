@@ -1,0 +1,2201 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Private relic · Relic · private shares mock</title>
+<!--
+  A clickable mock of private shares (docs/plans/private-shares/README.md,
+  section 4.15). It stands in for the viewer while the shape is agreed. The
+  tokens, the accession band, the card, the dashboard section and the side
+  panel are copied from packages/relic-viewer/src/styles.css, so what is being
+  judged here is the private-share interaction and its words, not a palette.
+
+  Nothing here talks to a service and nothing here is a key. Every address,
+  fingerprint and id is a literal in this file. The DOM hooks are exactly the
+  ones in plan section 4.15, so the proof can be written against this file.
+-->
+<style>
+:root {
+  color-scheme: light dark;
+
+  --ground: #f1f2f0;
+  --surface: #fbfbfa;
+  --ink: #16191a;
+  --ink-soft: #5a6163;
+  --rule: #d2d5d2;
+  --rule-strong: #b3b8b4;
+  --patina: #1f6b64;
+  --patina-ink: #0f3b37;
+  --oxide: #8c4a2f;
+  --diff-added: #dfeeea;
+  --diff-removed: #f3e5df;
+
+  --serif: Charter, "Iowan Old Style", "Source Serif Pro", Palatino,
+    "Palatino Linotype", Georgia, serif;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo,
+    Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  --bar-height: 3.25rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground: #101314;
+    --surface: #171b1c;
+    --ink: #e6e9e7;
+    --ink-soft: #969e9d;
+    --rule: #2a3032;
+    --rule-strong: #3b4345;
+    --patina: #4fb3a6;
+    --patina-ink: #a7ded6;
+    --oxide: #c98058;
+    --diff-added: #15332f;
+    --diff-removed: #34231d;
+  }
+}
+
+/* Mock only: the theme buttons force a scheme without touching the OS. */
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ground: #101314;
+  --surface: #171b1c;
+  --ink: #e6e9e7;
+  --ink-soft: #969e9d;
+  --rule: #2a3032;
+  --rule-strong: #3b4345;
+  --patina: #4fb3a6;
+  --patina-ink: #a7ded6;
+  --oxide: #c98058;
+  --diff-added: #15332f;
+  --diff-removed: #34231d;
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+
+html, body { margin: 0; padding: 0; min-height: 100%; }
+
+body {
+  display: flex;
+  flex-direction: column;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 16px;
+  line-height: 1.55;
+  -webkit-text-size-adjust: 100%;
+  overflow-x: hidden;
+}
+
+a { color: var(--patina); }
+a:hover { color: var(--patina-ink); }
+a:focus-visible,
+button:focus-visible,
+summary:focus-visible,
+input:focus-visible,
+[tabindex="-1"]:focus-visible {
+  outline: 2px solid var(--patina);
+  outline-offset: 2px;
+}
+h1[tabindex="-1"]:focus, h2[tabindex="-1"]:focus { outline: none; }
+
+.icon {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: square;
+}
+
+/* ---------- the accession band, as the viewer sets it ---------- */
+
+.bar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: stretch;
+  flex: none;
+  min-height: var(--bar-height);
+  background: var(--surface);
+  border-bottom: 1px solid var(--rule-strong);
+}
+
+.mark {
+  display: flex;
+  align-items: center;
+  padding: 0 1rem;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--ink);
+  border-right: 1px solid var(--rule);
+  white-space: nowrap;
+}
+
+.identity {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.1rem;
+  padding: 0.4rem 1rem;
+  min-width: 0;
+  flex: 1;
+}
+
+.filename {
+  flex: 0 0 auto;
+  font-size: 0.9rem;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.filename.is-generic { color: var(--ink-soft); font-weight: 400; }
+
+.identity-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-width: 0;
+}
+
+.accession {
+  min-width: 0;
+  flex: 0 1 auto;
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.14em;
+  color: var(--ink-soft);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.version-label {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  padding: 0.05rem 0.35rem;
+  border: 1px solid var(--rule-strong);
+  background: var(--surface);
+  color: var(--ink-soft);
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+
+/*
+ * The Private tag. A version label's shape in patina: it is a fact about the
+ * object, catalogued on the same line as its number, not a button. The server
+ * declares it before anything is decrypted, so it is there from the first
+ * frame, on every private state.
+ */
+.private-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex: none;
+  padding: 0.05rem 0.4rem 0.05rem 0.3rem;
+  border: 1px solid var(--patina);
+  color: var(--patina);
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.private-tag .icon { width: 10px; height: 10px; }
+
+.actions {
+  display: flex;
+  align-items: stretch;
+  border-left: 1px solid var(--rule);
+}
+
+.action {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0 0.9rem;
+  border: 0;
+  border-right: 1px solid var(--rule);
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.82rem;
+  text-decoration: none;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.actions .action:last-child { border-right: 0; }
+.action:hover { background: var(--ground); color: var(--patina-ink); }
+.action:focus-visible { outline: 2px solid var(--patina); outline-offset: -2px; }
+
+.action.primary {
+  background: var(--patina);
+  color: var(--surface);
+  border: 0;
+  padding: 0.55rem 1rem;
+}
+.action.primary:hover { background: var(--patina-ink); color: var(--surface); }
+.action.primary:focus-visible { outline-offset: 2px; }
+
+.action:disabled,
+.action:disabled:hover {
+  color: var(--ink-soft);
+  background: var(--ground);
+  box-shadow: inset 0 0 0 1px var(--rule-strong);
+  cursor: default;
+}
+
+.action.danger { background: var(--oxide); color: var(--surface); border: 0; padding: 0.55rem 1rem; }
+.action.danger:hover { background: color-mix(in srgb, var(--oxide) 78%, var(--ink)); color: var(--surface); }
+
+.action-count {
+  min-width: 1.1rem;
+  padding: 0 0.25rem;
+  border: 1px solid var(--patina);
+  color: var(--patina);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  line-height: 1.4;
+  text-align: center;
+}
+
+.action[aria-expanded="true"] { background: var(--ground); box-shadow: inset 0 -2px 0 var(--ink); }
+
+@media (max-width: 34rem) {
+  .mark { display: none; }
+  .identity { padding: 0.4rem 0.75rem; }
+  .action { padding: 0 0.7rem; }
+}
+
+/* ---------- stage, card, buttons on a card ---------- */
+
+.view { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+
+.stage {
+  flex: 1 1 auto;
+  padding: 0 1.25rem 7rem;
+}
+
+.card {
+  max-width: 34rem;
+  margin: 3rem auto;
+  padding: 1.75rem;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-top: 3px solid var(--patina);
+}
+
+.card.is-refusal { border-top-color: var(--oxide); }
+.card.is-quiet { border-top-color: var(--rule-strong); }
+
+.card-title {
+  font-family: var(--sans);
+  font-size: 1.15rem;
+  font-weight: 600;
+  margin: 0 0 0.35rem;
+  word-break: break-word;
+}
+
+.card-meta {
+  font-family: var(--mono);
+  font-size: 0.76rem;
+  color: var(--ink-soft);
+  margin: 0 0 1.25rem;
+  word-break: break-word;
+}
+
+.card p { margin: 0 0 0.85rem; }
+.card-body { font-size: 0.95rem; }
+
+.card-note {
+  margin: 1.25rem 0 0;
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--rule);
+  font-size: 0.86rem;
+  color: var(--ink-soft);
+}
+
+.card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 1.25rem;
+}
+
+.card-actions .action,
+.btn {
+  padding: 0.55rem 1rem;
+  border: 1px solid var(--rule-strong);
+}
+.card-actions .action.primary,
+.card-actions .action.danger { border: 0; }
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.82rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btn:hover { border-color: var(--patina); color: var(--patina-ink); background: var(--ground); }
+.btn.is-small { padding: 0.35rem 0.75rem; font-size: 0.78rem; }
+.btn.is-danger:hover { border-color: var(--oxide); color: var(--oxide); background: var(--diff-removed); }
+
+.link-button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--patina);
+  font: inherit;
+  font-size: 0.86rem;
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+  cursor: pointer;
+}
+
+/* The words a refusal is bound to, set as the card's lead and nothing else. */
+.load-bearing { font-size: 0.98rem; color: var(--ink); }
+
+/* While a passkey prompt is up the button rests and says why. */
+.action[data-waiting]::after {
+  content: "";
+  position: absolute;
+  inset: auto -1px -1px -1px;
+  height: 2px;
+  background: linear-gradient(90deg, transparent 0 30%, var(--surface) 30% 70%, transparent 70% 100%);
+  background-size: 250% 100%;
+  animation: running 1.4s linear infinite;
+}
+.action { position: relative; }
+@keyframes running { from { background-position: 100% 0; } to { background-position: -150% 0; } }
+@media (prefers-reduced-motion: reduce) { .action[data-waiting]::after { animation: none; } }
+
+/* ---------- sign in, as the viewer's comment sign-in sets it ---------- */
+
+.compose-field { display: grid; gap: 0.3rem; min-width: 0; }
+.compose-field > span,
+.field-label {
+  font-family: var(--sans);
+  font-size: 0.76rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.compose-input {
+  width: 100%;
+  min-width: 0;
+  padding: 0.5rem 0.6rem;
+  background: var(--ground);
+  border: 1px solid var(--rule-strong);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.9rem;
+}
+.compose-input:focus-visible { outline: 2px solid var(--patina); outline-offset: 1px; }
+
+.signin { display: grid; gap: 1rem; }
+.signin-or {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  color: var(--ink-soft);
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.signin-or::before, .signin-or::after { content: ""; flex: 1; border-top: 1px solid var(--rule); }
+.signin-row { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: flex-end; }
+.signin-row .compose-field { flex: 1 1 12rem; }
+.passkey-button {
+  padding: 0.55rem 1rem !important;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--rule-strong) !important;
+}
+.passkey-button .icon { color: var(--patina); }
+.code-input { font-family: var(--mono); font-size: 1.1rem; letter-spacing: 0.3em; max-width: 12rem; }
+
+details.disclosure { margin-top: 1.25rem; font-size: 0.86rem; color: var(--ink-soft); }
+details.disclosure summary { cursor: pointer; color: var(--patina); }
+details.disclosure blockquote {
+  margin: 0.75rem 0 0;
+  padding: 0.75rem 0.9rem;
+  border-left: 3px solid var(--rule-strong);
+  background: var(--ground);
+  color: var(--ink);
+  line-height: 1.55;
+}
+
+/*
+ * ---------- the fingerprint plate ----------
+ *
+ * Thirty-two characters that one person reads aloud and another types. Set
+ * like the accession number it is: monospace, wide tracking, in eight groups
+ * of four. Where its own box is narrower than 36rem it breaks after the
+ * fourth group rather than wherever the line runs out, so "row one, row two"
+ * is something both people can say. The break follows the box, not the
+ * window: a card is narrow on every screen.
+ * The text between the groups is a real space, so the element's text is the
+ * display format exactly.
+ */
+.card, .dashboard-section, .found-party, .fp-field, .approval-steps > li { container-type: inline-size; }
+.fingerprint {
+  display: grid;
+  grid-template-columns: repeat(4, max-content);
+  gap: 0.25rem 0.85em;
+  margin: 0;
+  padding: 0.85rem 1rem;
+  background: var(--ground);
+  border: 1px solid var(--rule-strong);
+  border-left: 3px solid var(--patina);
+  font-family: var(--mono);
+  font-size: 1.12rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--ink);
+  user-select: all;
+  font-variant-numeric: tabular-nums;
+}
+.fingerprint.is-small { font-size: 0.86rem; padding: 0.55rem 0.75rem; gap: 0.15rem 0.75em; }
+.fingerprint.is-foreign { border-left-color: var(--oxide); }
+@container (min-width: 36rem) {
+  .fingerprint, .fp-echo { grid-template-columns: repeat(8, max-content); }
+}
+
+.fp-caption {
+  margin: 0 0 0.35rem;
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.fp-instruction {
+  margin: 0.85rem 0 0;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--oxide);
+  font-size: 0.92rem;
+}
+
+/*
+ * ---------- the typed fingerprint ----------
+ *
+ * The field the owner types what they heard into. Its state is an attribute,
+ * not a colour alone: empty says what to do, a partial entry counts, a wrong
+ * full entry says so in words beside an oxide rule, and only a match turns
+ * the field patina and frees the button under it.
+ */
+.fp-field { display: grid; gap: 0.35rem; }
+.fp-input {
+  width: 100%;
+  padding: 0.55rem 0.65rem;
+  background: var(--ground);
+  border: 1px solid var(--rule-strong);
+  border-left-width: 3px;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 0.95rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+/* What Relic will compare, folded and grouped like the plate the other person
+   is reading from. The field scrolls once a full fingerprint is in it; this
+   does not, so the owner can check all 32 characters against what they heard. */
+.fp-echo {
+  display: grid;
+  grid-template-columns: repeat(4, max-content);
+  gap: 0.15rem 0.75em;
+  min-height: 1.6rem;
+  margin: 0;
+  padding: 0.25rem 0.5rem;
+  border: 1px dashed var(--rule-strong);
+  font-family: var(--mono);
+  font-size: 0.86rem;
+  letter-spacing: 0.08em;
+  color: var(--ink);
+}
+.fp-echo .is-short { color: var(--ink-soft); }
+[data-fingerprint-state="match"] .fp-echo { border-style: solid; border-color: var(--patina); }
+[data-fingerprint-state="mismatch"][data-complete] .fp-echo { border-style: solid; border-color: var(--oxide); }
+.fp-input::placeholder { color: var(--ink-soft); letter-spacing: 0.08em; text-transform: none; font-family: var(--sans); font-size: 0.86rem; }
+.fp-input:focus-visible { outline: 2px solid var(--patina); outline-offset: 1px; }
+.fp-status { margin: 0; min-height: 1.3em; font-size: 0.8rem; color: var(--ink-soft); display: flex; gap: 0.35rem; align-items: flex-start; }
+.fp-status .icon { margin-top: 0.2rem; }
+[data-fingerprint-state="mismatch"] .fp-input { border-left-color: var(--oxide); }
+[data-fingerprint-state="mismatch"][data-complete] .fp-status { color: var(--oxide); }
+[data-fingerprint-state="match"] .fp-input { border-color: var(--patina); }
+[data-fingerprint-state="match"] .fp-status { color: var(--patina); font-weight: 500; }
+
+/* ---------- the ready reader: strip and reading surface ---------- */
+
+.private-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1.25rem;
+  padding: 0.6rem 1.25rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--rule);
+  font-size: 0.82rem;
+  color: var(--ink-soft);
+}
+.private-strip strong { color: var(--ink); font-weight: 500; }
+.strip-fp { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem 0.6rem; }
+.strip-fp .fingerprint { padding: 0.25rem 0.5rem; font-size: 0.78rem; border-left-width: 2px; }
+@media (min-width: 40rem) { .strip-fp .fingerprint { grid-template-columns: repeat(8, max-content); } }
+@media (max-width: 40rem) { .strip-fp .fingerprint { font-size: 0.86rem; } }
+.strip-note { flex-basis: 100%; margin: 0; font-size: 0.78rem; }
+
+.ready-stage { padding: 0 1.25rem 7rem; }
+.doc {
+  max-width: 42rem;
+  margin: 2.5rem auto 0;
+  padding: 2.25rem 2.5rem 2.5rem;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  font-family: var(--serif);
+  font-size: 1.05rem;
+  line-height: 1.65;
+}
+.doc h1 { font-size: 1.6rem; line-height: 1.25; margin: 0 0 1rem; }
+.doc h2 { font-size: 1.12rem; margin: 1.75rem 0 0.5rem; }
+.doc p, .doc ul { margin: 0 0 1rem; }
+@media (max-width: 34rem) {
+  .doc { margin-top: 1rem; padding: 1.25rem 1.1rem; font-size: 1rem; }
+  .ready-stage, .stage { padding-left: 0.75rem; padding-right: 0.75rem; }
+  .card { margin: 1.5rem auto; padding: 1.25rem; }
+  .private-strip { padding: 0.6rem 0.75rem; }
+}
+
+/*
+ * ---------- the access panel ----------
+ *
+ * The decision panel's sheet: fixed under the band at the right edge, a
+ * double rule on top, square, scrolling on its own. It is non-modal so the
+ * relic stays readable beside it on a wide screen; on a phone it is the
+ * screen.
+ */
+.access-panel {
+  position: fixed;
+  top: var(--panel-top, var(--bar-height));
+  right: 0;
+  z-index: 8;
+  /* 100% of the viewport box, not 100vw: vw counts a classic scrollbar, so a
+     phone-width panel started 15px off the left edge where one is drawn. */
+  width: min(28rem, 100%);
+  max-height: calc(100dvh - var(--panel-top, var(--bar-height)));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--surface);
+  border: 1px solid var(--rule-strong);
+  border-top: 3px double var(--ink);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 18%);
+}
+
+.panel-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  min-height: 2.75rem;
+  padding: 0 0.4rem 0 1.25rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--rule);
+}
+.panel-title { display: flex; align-items: baseline; gap: 0.6rem; min-width: 0; margin: 0; font-size: 1rem; font-weight: 600; }
+.panel-title .accession { font-weight: 400; }
+.panel-close {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 2.25rem; height: 2.25rem; padding: 0; border: 0;
+  background: none; color: var(--ink-soft); cursor: pointer;
+}
+.panel-close:hover { color: var(--patina-ink); background: var(--ground); }
+.panel-close:focus-visible { outline: 2px solid var(--patina); outline-offset: -2px; }
+
+.panel-body { display: grid; gap: 1.5rem; padding: 1.1rem 1.25rem 1.5rem; }
+.panel-lead { margin: 0; font-size: 0.86rem; color: var(--ink-soft); }
+.panel-section { display: grid; gap: 0.6rem; }
+.panel-section > h3 {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 0.6rem;
+  margin: 0; padding-bottom: 0.35rem; border-bottom: 1px solid var(--rule);
+  font-size: 0.78rem; font-family: var(--mono); font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-soft);
+}
+.panel-empty { margin: 0; font-size: 0.86rem; color: var(--ink-soft); }
+.panel-notice {
+  margin: 0; padding: 0.6rem 0.75rem; font-size: 0.86rem;
+  background: var(--ground); border-left: 3px solid var(--patina);
+}
+.panel-notice.is-oxide { border-left-color: var(--oxide); }
+.panel-foot { margin: 0; padding-top: 0.85rem; border-top: 1px solid var(--rule); font-size: 0.82rem; color: var(--ink-soft); }
+
+/* On a wide screen the relic moves over rather than sitting under the sheet. */
+@media (min-width: 64rem) {
+  :root[data-panel-open] .ready-stage { padding-right: calc(28rem + 1.25rem); }
+  :root[data-panel-open] .private-strip { padding-right: calc(28rem + 1.25rem); }
+}
+
+/* A request is a ticket: who asked, then the three things to do in order. */
+.request {
+  display: grid;
+  gap: 0.9rem;
+  padding: 0.9rem 1rem 1rem;
+  background: var(--ground);
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--patina);
+}
+.request-who { display: grid; gap: 0.1rem; }
+.request-who strong { font-weight: 600; word-break: break-word; }
+.request-when { font-family: var(--mono); font-size: 0.72rem; color: var(--ink-soft); }
+.request-steps { display: grid; gap: 0.9rem; margin: 0; padding: 0; list-style: none; counter-reset: step; }
+.request-steps > li { display: grid; grid-template-columns: 1.4rem minmax(0, 1fr); gap: 0 0.5rem; counter-increment: step; }
+.request-steps > li::before {
+  content: counter(step);
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 1.4rem; height: 1.4rem; border: 1px solid var(--rule-strong);
+  font-family: var(--mono); font-size: 0.7rem; color: var(--ink-soft); background: var(--surface);
+}
+.request-steps > li > * { grid-column: 2; }
+.step-text { margin: 0 0 0.45rem; font-size: 0.86rem; }
+
+fieldset.versions { margin: 0; padding: 0; border: 0; min-width: 0; }
+fieldset.versions legend { padding: 0; margin: 0 0 0.45rem; font-size: 0.86rem; }
+.version-picks { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.pick {
+  display: inline-flex; align-items: center; gap: 0.4rem;
+  padding: 0.3rem 0.6rem; border: 1px solid var(--rule-strong); background: var(--surface);
+  font-family: var(--mono); font-size: 0.76rem; cursor: pointer;
+}
+.pick:has(input:checked) { border-color: var(--patina); color: var(--patina-ink); }
+.pick:has(input:disabled) { cursor: default; }
+.pick:has(input:focus-visible) { outline: 2px solid var(--patina); outline-offset: 1px; }
+.pick input { margin: 0; accent-color: var(--patina); width: 0.9rem; height: 0.9rem; }
+.pick .lock-note { font-family: var(--sans); font-size: 0.7rem; color: var(--ink-soft); }
+.pick-note { margin: 0.4rem 0 0; font-size: 0.76rem; color: var(--ink-soft); }
+
+.row-list { display: grid; margin: 0; padding: 0; list-style: none; border-top: 1px solid var(--rule); }
+.row-list > li {
+  display: flex; justify-content: space-between; align-items: center; gap: 0.75rem 1rem;
+  padding: 0.7rem 0.25rem; border-bottom: 1px solid var(--rule);
+}
+.row-main { display: grid; gap: 0.1rem; min-width: 0; }
+.row-main strong { font-weight: 500; font-size: 0.92rem; word-break: break-word; }
+.row-meta { font-size: 0.78rem; color: var(--ink-soft); word-break: break-word; }
+.row-meta.is-mono, .is-mono { font-family: var(--mono); }
+.row-kind {
+  font-family: var(--mono); font-size: 0.62rem; letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--ink-soft); border: 1px solid var(--rule-strong); padding: 0 0.3rem; white-space: nowrap;
+}
+
+/* ---------- dialogs: revoke and delete ---------- */
+
+dialog.sheet {
+  width: min(32rem, calc(100vw - 1.5rem));
+  max-height: calc(100dvh - 2rem);
+  padding: 0;
+  overflow-y: auto;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--rule-strong);
+  border-top: 3px solid var(--oxide);
+  box-shadow: 0 10px 30px rgb(0 0 0 / 28%);
+}
+dialog.sheet::backdrop { background: rgb(16 19 20 / 45%); }
+.sheet-body { display: grid; gap: 0.9rem; padding: 1.4rem 1.5rem 1.5rem; }
+.sheet-body h2 { margin: 0; font-size: 1.1rem; font-weight: 600; }
+.sheet-body p { margin: 0; }
+.sheet-warning { padding: 0.75rem 0.9rem; background: var(--ground); border-left: 3px solid var(--oxide); font-size: 0.95rem; }
+.sheet-fine { font-size: 0.8rem; color: var(--ink-soft); }
+.sheet-actions { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-top: 0.25rem; }
+.sheet-actions .btn, .sheet-actions .action { padding: 0.55rem 1rem; }
+
+/*
+ * The rekey ledger. Four steps that run in this browser, each on its own
+ * line, ticked when done. The running step's line is hatched like the
+ * viewer's loading meter while it has no fraction to show.
+ */
+.rekey { display: grid; gap: 0.6rem; }
+.rekey-steps { margin: 0; padding: 0; list-style: none; border-top: 1px solid var(--rule); }
+.rekey-steps li {
+  display: grid; grid-template-columns: 1.1rem minmax(0, 1fr); gap: 0.5rem; align-items: center;
+  padding: 0.45rem 0.25rem; border-bottom: 1px solid var(--rule);
+  font-family: var(--mono); font-size: 0.78rem; color: var(--ink-soft);
+}
+.rekey-steps li .tick { width: 0.9rem; height: 0.9rem; border: 1px solid var(--rule-strong); display: inline-flex; align-items: center; justify-content: center; }
+.rekey-steps li .tick .icon { width: 10px; height: 10px; visibility: hidden; }
+.rekey-steps li[data-step-state="done"] { color: var(--ink); }
+.rekey-steps li[data-step-state="done"] .tick { border-color: var(--patina); color: var(--patina); }
+.rekey-steps li[data-step-state="done"] .tick .icon { visibility: visible; }
+.rekey-steps li[data-step-state="active"] { color: var(--ink); font-weight: 600;
+  background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--patina) 14%, transparent) 0 1px, transparent 1px 6px); }
+.rekey-steps li[data-step-state="active"] .tick { border-color: var(--patina); }
+.rekey-steps li[data-step-state="failed"] { color: var(--oxide); }
+.rekey-steps li[data-step-state="failed"] .tick { border-color: var(--oxide); color: var(--oxide); }
+.rekey-steps li[data-step-state="failed"] .tick .icon { visibility: visible; }
+.rekey-outcome { margin: 0; padding: 0.6rem 0.75rem; font-size: 0.88rem; background: var(--ground); border-left: 3px solid var(--patina); }
+.rekey[data-rekey-state="failed"] .rekey-outcome { border-left-color: var(--oxide); }
+
+fieldset.delete-choice { display: grid; gap: 0.5rem; margin: 0; padding: 0; border: 0; min-width: 0; }
+fieldset.delete-choice legend { margin-bottom: 0.4rem; padding: 0; font-weight: 600; font-size: 0.9rem; }
+.radio { display: flex; gap: 0.5rem; align-items: flex-start; font-size: 0.9rem; cursor: pointer; }
+.radio input { margin: 0.3rem 0 0; accent-color: var(--oxide); }
+.radio:has(input:focus-visible) { outline: 2px solid var(--patina); outline-offset: 2px; }
+.delete-versions { padding-left: 1.5rem; }
+.delete-versions .pick:has(input:checked) { border-color: var(--oxide); color: var(--oxide); }
+.delete-versions .pick input { accent-color: var(--oxide); }
+
+/* ---------- dashboard, as the viewer sets it ---------- */
+
+.stage-dashboard { display: flex; justify-content: center; padding: 2.5rem 1.5rem 7rem; }
+.dashboard-container { max-width: 48rem; width: 100%; min-width: 0; }
+.dashboard-title {
+  font-size: 1.5rem; font-weight: 600; letter-spacing: -0.01em;
+  margin: 0 0 1.5rem; padding-bottom: 0.5rem; border-bottom: 1px solid var(--rule-strong);
+}
+.dashboard-section {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-top: 3px solid var(--patina);
+  padding: 1.5rem;
+  margin-bottom: 2rem;
+  min-width: 0;
+}
+.dashboard-section.is-attention { border-top-color: var(--oxide); }
+.dashboard-section-title { font-size: 1.15rem; font-weight: 600; margin: 0 0 0.35rem; }
+.dashboard-section-note { margin: 0 0 1.25rem; font-size: 0.86rem; color: var(--ink-soft); line-height: 1.5; }
+.dashboard-session-info { margin: 0 0 1.25rem; font-size: 0.86rem; color: var(--patina); font-weight: 500; }
+.dash-sub { margin: 1.5rem 0 0.6rem; font-size: 0.78rem; font-family: var(--mono); font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-soft); }
+.dash-grid { display: grid; gap: 1rem; }
+.dash-outcome { margin: 0.75rem 0 0; font-size: 0.86rem; color: var(--ink-soft); min-height: 1.3em; }
+.dash-outcome.is-ok { color: var(--patina); }
+.dash-outcome.is-bad { color: var(--oxide); }
+.inline-form { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: flex-end; }
+.inline-form .compose-field { flex: 1 1 14rem; }
+.inline-form .retention-field { flex: 0 1 11rem; }
+.found-party { display: grid; gap: 0.75rem; margin-top: 1rem; padding: 0.9rem 1rem 1rem; background: var(--ground); border: 1px solid var(--rule); border-left: 3px solid var(--patina); }
+.found-party p { margin: 0; font-size: 0.86rem; }
+.approval-steps { display: grid; gap: 1.1rem; margin: 0; padding: 0; list-style: none; }
+.approval-steps > li { display: grid; gap: 0.5rem; }
+.approval-steps > li[aria-disabled="true"] { opacity: 0.55; }
+.facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 0.25rem 1rem; margin: 0 0 1rem; font-size: 0.86rem; }
+.facts dt { color: var(--ink-soft); font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.06em; padding-top: 0.15rem; }
+.facts dd { margin: 0; word-break: break-word; }
+.gap-banner { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.6rem 1rem; padding: 0.7rem 0.9rem; margin-bottom: 1rem; background: var(--ground); border-left: 3px solid var(--oxide); font-size: 0.86rem; }
+.gap-banner.is-done { border-left-color: var(--patina); }
+
+/* The access log is a ledger: time, what happened, to what, by whom. */
+.log { margin: 0; padding: 0; list-style: none; border-top: 1px solid var(--rule); }
+.log li {
+  display: grid;
+  grid-template-columns: 9.5rem 8rem minmax(0, 1fr);
+  gap: 0.15rem 1rem;
+  padding: 0.55rem 0.25rem;
+  border-bottom: 1px solid var(--rule);
+  font-size: 0.82rem;
+}
+.log time { font-family: var(--mono); font-size: 0.72rem; color: var(--ink-soft); padding-top: 0.1rem; }
+.log .what { font-weight: 600; }
+.log [data-access-event="revoke"] .what,
+.log [data-access-event="delete"] .what { color: var(--oxide); }
+.log .about { min-width: 0; word-break: break-word; color: var(--ink-soft); }
+.log .about b { color: var(--ink); font-weight: 500; }
+@media (max-width: 40rem) {
+  .log li { grid-template-columns: minmax(0, 1fr); }
+  .stage-dashboard { padding: 1.5rem 0.75rem 7rem; }
+  .dashboard-section { padding: 1.1rem; }
+  .row-list > li { flex-wrap: wrap; }
+}
+
+/* ---------- mail, mock only ---------- */
+.mail { max-width: 40rem; margin: 2rem auto 0; display: grid; gap: 1.5rem; }
+.mail-intro { margin: 0; font-size: 0.86rem; color: var(--ink-soft); }
+.message { background: var(--surface); border: 1px solid var(--rule); }
+.message-head { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 0.15rem 0.85rem; padding: 0.8rem 1rem; border-bottom: 1px solid var(--rule); font-size: 0.82rem; }
+.message-head dt { color: var(--ink-soft); font-family: var(--mono); font-size: 0.72rem; padding-top: 0.1rem; }
+.message-head dd { margin: 0; word-break: break-word; }
+.message-head .subject { font-weight: 600; }
+.message-body { margin: 0; padding: 1rem; white-space: pre-wrap; word-break: break-word; font-family: var(--sans); font-size: 0.9rem; line-height: 1.6; }
+
+/* ---------- mock controls, not part of the viewer ---------- */
+.mock-states {
+  position: fixed;
+  left: 0.75rem;
+  bottom: 0.75rem;
+  z-index: 50;
+  width: min(25rem, calc(100vw - 1.5rem));
+  max-height: min(70vh, 34rem);
+  overflow-y: auto;
+  padding: 0.6rem 0.75rem 0.75rem;
+  background: var(--surface);
+  border: 1px dashed var(--rule-strong);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 18%);
+  font-size: 0.74rem;
+}
+.mock-states h2 { display: flex; justify-content: space-between; align-items: center; margin: 0 0 0.2rem; font-family: var(--mono); font-size: 0.66rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-soft); }
+.mock-states p { margin: 0 0 0.4rem; color: var(--ink-soft); }
+.mock-states .group { margin: 0.5rem 0 0.25rem; font-weight: 600; }
+.mock-states ul { display: flex; flex-wrap: wrap; gap: 0.3rem; margin: 0; padding: 0; list-style: none; }
+.mock-states button {
+  padding: 0.2rem 0.45rem; color: var(--ink); font: inherit; font-size: 0.72rem;
+  background: var(--ground); border: 1px solid var(--rule-strong); cursor: pointer;
+}
+.mock-states button:hover { border-color: var(--patina); }
+.mock-states button[aria-pressed="true"] { color: var(--surface); background: var(--patina); border-color: var(--patina); }
+.mock-states.is-collapsed { width: auto; }
+.mock-states.is-collapsed > :not(h2) { display: none; }
+:root[data-mock-controls="hidden"] .mock-states { display: none; }
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <symbol id="i-lock" viewBox="0 0 16 16"><rect x="3" y="7" width="10" height="7"/><path d="M5 7V5a3 3 0 0 1 6 0v2"/></symbol>
+  <symbol id="i-key" viewBox="0 0 16 16"><circle cx="5" cy="8" r="3"/><path d="M8 8h7M12 8v3M14 8v2"/></symbol>
+  <symbol id="i-check" viewBox="0 0 16 16"><path d="M2.5 8.5l3.5 3.5 7.5-8"/></symbol>
+  <symbol id="i-cross" viewBox="0 0 16 16"><path d="M3.5 3.5l9 9M12.5 3.5l-9 9"/></symbol>
+  <symbol id="i-people" viewBox="0 0 16 16"><circle cx="6" cy="5" r="2.5"/><path d="M1.5 14c0-2.8 2-4.5 4.5-4.5s4.5 1.7 4.5 4.5"/><path d="M10.5 3a2.5 2.5 0 0 1 0 5M12 9.6c1.6.5 2.5 2 2.5 4.4"/></symbol>
+  <symbol id="i-warn" viewBox="0 0 16 16"><path d="M8 2l6.5 12h-13z"/><path d="M8 6.5v3.5M8 11.5v1"/></symbol>
+</svg>
+
+<!-- ================= the relic page, /{id} ================= -->
+<div class="view" id="view-relic">
+  <header class="bar" id="relic-band">
+    <div class="mark">relik.link</div>
+    <div class="identity">
+      <div class="filename is-generic" id="band-filename">Private relic</div>
+      <div class="identity-meta">
+        <div class="accession" title="p4x8m2kq7tz9hb3ca1w6nd5rv0">p4x8m2kq7tz9hb3ca1w6nd5rv0</div>
+        <span class="version-label" id="band-version" hidden>v3</span>
+        <span class="private-tag"><svg class="icon" aria-hidden="true"><use href="#i-lock"/></svg>Private</span>
+      </div>
+    </div>
+    <div class="actions" id="band-actions" hidden>
+      <button type="button" class="action" data-action="open-access-panel" aria-expanded="false" aria-controls="access-panel">
+        <svg class="icon" aria-hidden="true"><use href="#i-people"/></svg><span>Access</span><span class="action-count" id="request-count" aria-label="1 request waiting">1</span>
+      </button>
+    </div>
+  </header>
+
+  <section id="relic-private" data-private-state="signin" aria-label="Private relic">
+
+    <!-- signin -->
+    <div class="stage" data-for="signin">
+      <div class="card">
+        <h1 class="card-title" tabindex="-1">This relic is private</h1>
+        <p class="card-meta">Its link carries no key.</p>
+        <div class="card-body">
+          <p>Only people the owner lets in can open it. Sign in with the email address the owner knows you by.</p>
+        </div>
+        <div class="signin" id="signin-form">
+          <div>
+            <button type="button" class="action passkey-button" id="signin-passkey"><svg class="icon" aria-hidden="true"><use href="#i-key"/></svg>Sign in with a passkey</button>
+          </div>
+          <div class="signin-or">or</div>
+          <form class="signin-row" id="signin-email-form">
+            <label class="compose-field"><span>Email address</span><input class="compose-input" type="email" id="signin-email" autocomplete="email" value="ada@example.com" required></label>
+            <button type="submit" class="action primary">Email me a code</button>
+          </form>
+          <form class="signin-row" id="signin-code-form" hidden>
+            <label class="compose-field"><span>Code from the email</span><input class="compose-input code-input" inputmode="numeric" autocomplete="one-time-code" id="signin-code" maxlength="6" value="402817"></label>
+            <button type="submit" class="action primary">Sign in</button>
+          </form>
+        </div>
+        <details class="disclosure">
+          <summary>What Relic records about private relics</summary>
+          <blockquote><strong>Private relics.</strong> A private relic's link carries no key. Each reader who is let in has their own copy of each version's key, encrypted to a key only their passkey can unlock; the service stores those encrypted copies and never the keys. To let someone in, the service records who asked and who granted, the email addresses involved, the public keys, and a signed record of each grant and revocation. It keeps an access log of requests, grants, revocations, key fetches and deletions for the owner, for the retention the owner sets. It also stores each person's private-share key encrypted under a secret held by their passkey. Private relics carry no title or cover, always expire, and their notification emails say only that there is activity on a relic. The JavaScript that decrypts them comes from this service, the same as for every relic.</blockquote>
+        </details>
+      </div>
+    </div>
+
+    <!-- setup -->
+    <div class="stage" data-for="setup" hidden>
+      <div class="card">
+        <h1 class="card-title" tabindex="-1">Set up your private-share key</h1>
+        <p class="card-meta">Signed in as ada@example.com</p>
+        <div class="card-body">
+          <p>Private relics are encrypted to each reader's own key. Yours is made in this browser and stored encrypted under a secret only your passkey can produce, so Relic never sees it.</p>
+          <p>Setting it up takes one tap.</p>
+        </div>
+        <div class="card-actions">
+          <button type="button" class="action primary" data-action="private-setup">Set up with passkey</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- setup-refused -->
+    <div class="stage" data-for="setup-refused" hidden>
+      <div class="card is-refusal">
+        <h1 class="card-title" tabindex="-1">This passkey can't hold a key</h1>
+        <p class="card-meta">Signed in as ada@example.com</p>
+        <p class="load-bearing">Your passkey provider can't hold a private-share key. Private relics need a provider or security key that supports the WebAuthn PRF extension.</p>
+        <p class="card-note">Nothing was registered. Public relics still open as before.</p>
+      </div>
+    </div>
+
+    <!-- replace-offer -->
+    <div class="stage" data-for="replace-offer" hidden>
+      <div class="card is-quiet">
+        <h1 class="card-title" tabindex="-1">Make a replacement passkey</h1>
+        <p class="card-meta">Signed in as ada@example.com</p>
+        <p class="load-bearing">This passkey was made before private shares existed and can't hold your key. Make a replacement passkey on this device?</p>
+        <div class="card-actions">
+          <button type="button" class="action primary" data-action="private-replace-passkey">Make a replacement passkey</button>
+          <button type="button" class="btn" id="replace-not-now">Not now</button>
+        </div>
+        <p class="card-note">Your passkey provider asks before it saves the new one. Nothing is registered with Relic until it can hold your key.</p>
+      </div>
+    </div>
+
+    <!-- request -->
+    <div class="stage" data-for="request" hidden>
+      <div class="card">
+        <h1 class="card-title" tabindex="-1">Ask the owner for access</h1>
+        <p class="card-meta">Signed in as ada@example.com</p>
+        <div class="card-body">
+          <p>Relic will email the owner a link to review your request. The email doesn't name you or this relic.</p>
+          <p>The owner will ask you for your fingerprint before they let you in. You'll see it on the next screen.</p>
+        </div>
+        <div class="card-actions">
+          <button type="button" class="action primary" data-action="private-request">Ask for access</button>
+        </div>
+        <p class="card-note">Asking signs the request with your passkey: one tap.</p>
+      </div>
+    </div>
+
+    <!-- requested -->
+    <div class="stage" data-for="requested" hidden>
+      <div class="card">
+        <h1 class="card-title" tabindex="-1">Request sent</h1>
+        <p class="card-meta">Signed in as ada@example.com</p>
+        <p class="fp-caption" id="fp-mine-caption">Your fingerprint</p>
+        <p class="fingerprint" data-fingerprint="mine" aria-labelledby="fp-mine-caption"><span>7K2M</span> <span>9QXA</span> <span>H3TB</span> <span>0P4D</span> <span>VW8C</span> <span>R1NE</span> <span>ZF6G</span> <span>Y5SJ</span></p>
+        <p class="fp-instruction">Read this fingerprint to the person who shared the link, on a phone or video call. Don't send it by email or chat: it only protects you if it travels a different way than this site.</p>
+        <p class="card-note">When the owner lets you in, Relic emails ada@example.com. Open that link and confirm with your passkey.</p>
+      </div>
+    </div>
+
+    <!-- declined -->
+    <div class="stage" data-for="declined" hidden>
+      <div class="card is-refusal">
+        <h1 class="card-title" tabindex="-1">The owner declined your request</h1>
+        <p class="card-meta">Signed in as ada@example.com</p>
+        <p>Relic won't open this relic for you. If you think that's a mistake, contact the person who shared it.</p>
+      </div>
+    </div>
+
+    <!-- unlock -->
+    <div class="stage" data-for="unlock" hidden>
+      <div class="card">
+        <h1 class="card-title" tabindex="-1">You have access</h1>
+        <p class="card-meta">Signed in as ada@example.com · expires 11 Dec 2026</p>
+        <p>Your passkey unlocks your key in this browser. The relic is decrypted here; the key never leaves.</p>
+        <div class="card-actions">
+          <button type="button" class="action primary" data-action="private-unlock">Unlock with passkey</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ready -->
+    <div data-for="ready" hidden>
+      <div class="private-strip" id="ready-strip">
+        <span id="strip-who"><strong>Private.</strong> Shared by sam@example.com. Expires 11 Dec 2026.</span>
+        <span class="strip-fp">
+          <span id="fp-owner-caption">Owner fingerprint</span>
+          <span class="fingerprint is-small" data-fingerprint="owner" aria-labelledby="fp-owner-caption"><span>4FQD</span> <span>2MNB</span> <span>8XR7</span> <span>KC0T</span> <span>W9HZ</span> <span>3GPA</span> <span>YE6V</span> <span>S1JM</span></span>
+        </span>
+        <p class="strip-note" id="strip-note">First seen in this browser on 11 Nov 2026. Ask the owner to read theirs to you; it should match.</p>
+      </div>
+      <main class="ready-stage">
+        <article class="doc" id="doc">
+          <h1 tabindex="-1">Intake form changes for January</h1>
+          <p>The front desk asked for three changes to the intake packet. This note records what changes and when, so the clinical leads can sign off before the print run.</p>
+          <h2>What changes</h2>
+          <ul>
+            <li>Insurance details move to the first page, ahead of history.</li>
+            <li>The medication list gets eight rows instead of five.</li>
+            <li>The consent page names the practice, not the parent company.</li>
+          </ul>
+          <h2>When</h2>
+          <p>New packets go out from the first Monday in January. Old packets already handed out stay valid until the end of the month.</p>
+          <p id="doc-version-note">This is version 3.</p>
+        </article>
+      </main>
+    </div>
+
+    <!-- revoked -->
+    <div class="stage" data-for="revoked" hidden>
+      <div class="card is-refusal">
+        <h1 class="card-title" tabindex="-1">Your access was removed</h1>
+        <p class="card-meta">Signed in as ada@example.com</p>
+        <p>The owner removed your access to this relic. Relic no longer serves it to you, and the keys it held for you are deleted.</p>
+      </div>
+    </div>
+
+    <!-- denied -->
+    <div class="stage" data-for="denied" hidden>
+      <div class="card is-refusal">
+        <h1 class="card-title" tabindex="-1">You don't have access to this relic</h1>
+        <p class="card-meta">Signed in as ada@example.com</p>
+        <p>Relic won't serve this relic to this address. If the owner shared it with a different one, sign in with that address instead.</p>
+        <div class="card-actions">
+          <button type="button" class="btn" id="denied-switch">Sign in with another address</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- owner-changed -->
+    <div class="stage" data-for="owner-changed" hidden>
+      <div class="card is-refusal">
+        <h1 class="card-title" tabindex="-1">Relic won't open this relic</h1>
+        <p class="card-meta">Signed in as ada@example.com</p>
+        <p class="load-bearing">The owner's key for this relic isn't the one you saw when you first opened it. Relic won't open it. Contact the person who shared it.</p>
+        <div class="dash-grid">
+          <div>
+            <p class="fp-caption">First seen, 11 Nov 2026</p>
+            <p class="fingerprint is-small"><span>4FQD</span> <span>2MNB</span> <span>8XR7</span> <span>KC0T</span> <span>W9HZ</span> <span>3GPA</span> <span>YE6V</span> <span>S1JM</span></p>
+          </div>
+          <div>
+            <p class="fp-caption">Reported now</p>
+            <p class="fingerprint is-small is-foreign"><span>N8TC</span> <span>5RVW</span> <span>2KQM</span> <span>E7XH</span> <span>0DFB</span> <span>9YGS</span> <span>J3PA</span> <span>6MZ1</span></p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- seal-mismatch -->
+    <div class="stage" data-for="seal-mismatch" hidden>
+      <div class="card is-refusal">
+        <h1 class="card-title" tabindex="-1">Relic won't show this version</h1>
+        <p class="card-meta">Version 3 · signed in as ada@example.com</p>
+        <p class="load-bearing">This version doesn't match the owner's signature. Relic won't show it.</p>
+        <p class="card-note">Nothing from it was displayed. Tell the person who shared it, so they can check what was published.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- the owner's access panel -->
+  <aside class="access-panel" id="access-panel" role="dialog" aria-labelledby="panel-title" hidden>
+    <div class="panel-head">
+      <h2 class="panel-title" id="panel-title" tabindex="-1">Access <span class="accession">p4x8m2kq7tz9hb3ca1w6nd5rv0</span></h2>
+      <button type="button" class="panel-close" id="panel-close" aria-label="Close access"><svg class="icon" aria-hidden="true"><use href="#i-cross"/></svg></button>
+    </div>
+    <div class="panel-body">
+      <p class="panel-lead" id="panel-lead"></p>
+      <p class="panel-notice" id="panel-notice" role="status" hidden></p>
+
+      <section class="panel-section" aria-labelledby="requests-title">
+        <h3 id="requests-title">Requests <span id="requests-count"></span></h3>
+        <div id="requests" class="dash-grid"></div>
+      </section>
+
+      <section class="panel-section" aria-labelledby="readers-title">
+        <h3 id="readers-title">Readers</h3>
+        <ul class="row-list" id="grants"></ul>
+      </section>
+
+      <section class="panel-section" aria-labelledby="also-title">
+        <h3 id="also-title">Also able to read</h3>
+        <ul class="row-list">
+          <li><span class="row-main"><strong>You</strong><span class="row-meta">sam@example.com, every version</span></span><span class="row-kind">Owner</span></li>
+          <li><span class="row-main"><strong>relic-mcp on sam-mbp</strong><span class="row-meta">Your device, every version</span></span><span class="row-kind">Device</span></li>
+          <li><span class="row-main"><strong>records@example.com</strong><span class="row-meta">Recovery key holder, every version</span></span><span class="row-kind">Recovery</span></li>
+        </ul>
+      </section>
+
+      <section class="panel-section" aria-labelledby="delete-title">
+        <h3 id="delete-title">Delete</h3>
+        <p class="panel-empty">Remove chosen versions or the whole relic, with every reader's keys for them. It can't be undone.</p>
+        <div><button type="button" class="btn is-danger" data-action="delete-relic">Delete versions or the relic</button></div>
+      </section>
+
+      <p class="panel-foot">Devices, recovery and the access log are on your <a href="#/dashboard" id="to-dashboard">dashboard</a>.</p>
+    </div>
+  </aside>
+
+  <dialog class="sheet" id="revoke-dialog" aria-labelledby="revoke-title">
+    <div class="sheet-body">
+      <h2 id="revoke-title" tabindex="-1">Revoke access</h2>
+      <p class="sheet-warning" id="revoke-warning"></p>
+      <p class="sheet-fine" id="revoke-fine"></p>
+      <div class="rekey" data-rekey-state="decrypting" id="rekey" hidden>
+        <ol class="rekey-steps" aria-label="Republishing">
+          <li data-step="decrypting"><span class="tick"><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg></span><span class="step-label"></span></li>
+          <li data-step="encrypting"><span class="tick"><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg></span><span class="step-label"></span></li>
+          <li data-step="uploading"><span class="tick"><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg></span><span class="step-label"></span></li>
+          <li data-step="sealing"><span class="tick"><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg></span><span class="step-label"></span></li>
+        </ol>
+        <p class="rekey-outcome" id="rekey-outcome" role="status" aria-live="polite"></p>
+      </div>
+      <div class="sheet-actions" id="revoke-actions">
+        <button type="button" class="action danger" data-action="confirm-revoke">Revoke and republish</button>
+        <button type="button" class="btn" id="revoke-cancel">Cancel</button>
+      </div>
+      <div class="sheet-actions" id="rekey-actions" hidden>
+        <button type="button" class="action primary" id="rekey-retry" hidden>Try again</button>
+        <button type="button" class="btn" id="rekey-close">Close</button>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog class="sheet" id="delete-dialog" aria-labelledby="delete-dialog-title">
+    <form class="sheet-body" id="delete-form" method="dialog">
+      <h2 id="delete-dialog-title" tabindex="-1">Delete</h2>
+      <fieldset class="delete-choice">
+        <legend>What to delete</legend>
+        <label class="radio"><input type="radio" name="delete-scope" value="versions" checked><span>Chosen versions</span></label>
+        <div class="version-picks delete-versions" id="delete-versions" role="group" aria-label="Versions to delete"></div>
+        <label class="radio"><input type="radio" name="delete-scope" value="all"><span>The whole relic, every version</span></label>
+      </fieldset>
+      <p class="sheet-warning" id="delete-warning">Deleting removes the encrypted content and every key, seal and comment for what you choose. Deleting the whole relic also removes its grants and requests. It can't be undone.</p>
+      <p class="sheet-fine">The access log keeps a record of the deletion for as long as your retention setting says. One passkey tap.</p>
+      <p class="dash-outcome" id="delete-outcome" role="status" aria-live="polite"></p>
+      <div class="sheet-actions">
+        <button type="button" class="action danger" data-action="confirm-delete" disabled>Delete with passkey</button>
+        <button type="button" class="btn" id="delete-cancel">Cancel</button>
+      </div>
+    </form>
+  </dialog>
+</div>
+
+<!-- ================= the dashboard, /dashboard ================= -->
+<div class="view" id="view-dashboard" hidden>
+  <header class="bar">
+    <div class="mark">relik.link</div>
+    <div class="identity">
+      <div class="filename">Dashboard</div>
+      <div class="identity-meta"><div class="accession">CATALOGUE</div></div>
+    </div>
+  </header>
+  <main class="stage-dashboard">
+    <div class="dashboard-container">
+      <h1 class="dashboard-title" tabindex="-1" id="dashboard-title">Relic Dashboard</h1>
+      <div data-private-dashboard>
+
+        <!-- device approval, /dashboard?approve-device={enrollmentId} -->
+        <section class="dashboard-section is-attention" id="device-approval" data-device-approval="d7k3m9qx2c5vt8hn4bw6pr1e0j" aria-labelledby="approval-title" hidden>
+          <h2 class="dashboard-section-title" id="approval-title" tabindex="-1">Approve a device</h2>
+          <p class="dashboard-section-note">An agent asked to publish private relics as you. Once approved it can publish without a passkey tap and read every private relic you own.</p>
+          <dl class="facts">
+            <dt>DEVICE</dt><dd>relic-mcp on sam-mbp</dd>
+            <dt>KEY HELD IN</dt><dd>Secure Enclave</dd>
+            <dt>REQUEST EXPIRES</dt><dd class="is-mono">11 Nov 2026, 14:32 UTC</dd>
+          </dl>
+          <ol class="approval-steps">
+            <li id="approval-step-1">
+              <div class="fp-field" data-fingerprint-state="empty" id="device-fp-field">
+                <label class="field-label" for="device-fp">Device fingerprint relic-mcp showed you</label>
+                <input class="fp-input" id="device-fp" data-device-fingerprint-input autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Type it from relic-mcp's output on your own machine" aria-describedby="device-fp-status">
+                <p class="fp-status" id="device-fp-status" aria-live="polite"></p>
+              </div>
+              <div class="card-actions">
+                <button type="button" class="action primary" data-action="approve-device" disabled>Approve with passkey</button>
+              </div>
+            </li>
+            <li id="approval-step-2" aria-disabled="true">
+              <p class="fp-caption" id="fp-device-owner-caption">Now give relic-mcp your fingerprint</p>
+              <p class="fingerprint" data-fingerprint="owner-for-device" aria-labelledby="fp-device-owner-caption"><span>4FQD</span> <span>2MNB</span> <span>8XR7</span> <span>KC0T</span> <span>W9HZ</span> <span>3GPA</span> <span>YE6V</span> <span>S1JM</span></p>
+              <p class="dashboard-section-note" id="approval-step-2-note">Type it into relic_confirm_device. relic-mcp compares it with the owner Relic reports and won't publish until they match.</p>
+            </li>
+          </ol>
+        </section>
+
+        <section class="dashboard-section" aria-labelledby="identity-title">
+          <h2 class="dashboard-section-title" id="identity-title">Private-share key</h2>
+          <p class="dashboard-session-info">Signed in as sam@example.com</p>
+          <p class="fp-caption" id="fp-identity-caption">Your fingerprint</p>
+          <p class="fingerprint" data-fingerprint="identity" aria-labelledby="fp-identity-caption"><span>4FQD</span> <span>2MNB</span> <span>8XR7</span> <span>KC0T</span> <span>W9HZ</span> <span>3GPA</span> <span>YE6V</span> <span>S1JM</span></p>
+          <p class="dashboard-section-note" style="margin-top:0.75rem">People you share with and agents you approve compare this with what their screen shows. Read it to them; don't send it by email or chat.</p>
+          <h3 class="dash-sub">Passkeys</h3>
+          <ul class="row-list" id="passkeys"></ul>
+          <p class="dash-outcome" id="bind-outcome" role="status" aria-live="polite"></p>
+        </section>
+
+        <section class="dashboard-section" aria-labelledby="devices-title">
+          <h2 class="dashboard-section-title" id="devices-title">Devices</h2>
+          <p class="dashboard-section-note">Agents such as relic-mcp that publish private relics for you without a passkey tap. Each one can read every private relic you own. Revoking one deletes its keys.</p>
+          <ul class="row-list" id="devices"></ul>
+          <p class="dash-outcome" id="device-outcome" role="status" aria-live="polite"></p>
+        </section>
+
+        <section class="dashboard-section" aria-labelledby="recovery-title">
+          <h2 class="dashboard-section-title" id="recovery-title">Recovery</h2>
+          <p class="dashboard-section-note">A recovery key holder can read every private relic you own, so losing your passkeys doesn't lose them. Use a person you trust, or your own security key kept somewhere safe. Every reader can see who it is.</p>
+          <div id="recovery-current"></div>
+          <form class="inline-form" id="recovery-lookup-form">
+            <label class="compose-field"><span id="recovery-email-label">Change to</span><input class="compose-input" type="email" data-recovery-email value="compliance@example.com" autocomplete="off"></label>
+            <button type="submit" class="btn" data-action="recovery-lookup">Look up</button>
+          </form>
+          <p class="dash-outcome" id="recovery-lookup-outcome" role="status" aria-live="polite"></p>
+          <div class="found-party" id="recovery-found" hidden>
+            <p><strong id="recovery-found-email">compliance@example.com</strong> has a private-share key. Ask them to read you their fingerprint on a phone or video call, then type it.</p>
+            <div class="fp-field" data-fingerprint-state="empty" id="recovery-fp-field">
+              <label class="field-label" for="recovery-fp">Fingerprint they read to you</label>
+              <input class="fp-input" id="recovery-fp" data-recovery-fingerprint-input autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="32 characters" aria-describedby="recovery-fp-status">
+              <p class="fp-status" id="recovery-fp-status" aria-live="polite"></p>
+            </div>
+            <div><button type="button" class="action primary" data-action="designate-recovery" disabled>Designate with passkey</button></div>
+          </div>
+          <p class="dash-outcome" id="recovery-outcome" role="status" aria-live="polite"></p>
+        </section>
+
+        <section class="dashboard-section" aria-labelledby="owned-title">
+          <h2 class="dashboard-section-title" id="owned-title">Private relics you own</h2>
+          <p class="dashboard-section-note">Private relics have no title, so they're listed by catalog number. Open one to see what it is.</p>
+          <div class="gap-banner" id="coverage-gap">
+            <span id="coverage-text">2 versions of 1 relic can't be read by records@example.com yet.</span>
+            <button type="button" class="btn is-small" data-action="repair-coverage">Repair</button>
+          </div>
+          <ul class="row-list" id="owned"></ul>
+        </section>
+
+        <section class="dashboard-section" aria-labelledby="shared-title">
+          <h2 class="dashboard-section-title" id="shared-title">Private relics shared with you</h2>
+          <ul class="row-list" id="shared"></ul>
+        </section>
+
+        <section class="dashboard-section" aria-labelledby="log-title">
+          <h2 class="dashboard-section-title" id="log-title">Access log</h2>
+          <p class="dashboard-section-note">Requests, grants, revocations, key fetches and deletions on your private relics. Kept after a relic is deleted, for the retention below.</p>
+          <ol class="log" data-access-log id="access-log"></ol>
+          <h3 class="dash-sub">Retention</h3>
+          <form class="inline-form" id="retention-form" novalidate>
+            <label class="compose-field retention-field"><span>Keep entries for (days)</span><input class="compose-input is-mono" type="number" inputmode="numeric" min="30" max="3650" step="1" value="2190" data-retention-days aria-describedby="retention-help"></label>
+            <button type="submit" class="btn" data-action="save-retention">Save with passkey</button>
+          </form>
+          <p class="dashboard-section-note" id="retention-help" style="margin:0.6rem 0 0">Between 30 days and 10 years. 2190 days is 6 years. A change applies to entries written from then on.</p>
+          <p class="dash-outcome" id="retention-outcome" role="status" aria-live="polite"></p>
+        </section>
+
+        <details class="disclosure">
+          <summary>What Relic records about private relics</summary>
+          <blockquote><strong>Private relics.</strong> A private relic's link carries no key. Each reader who is let in has their own copy of each version's key, encrypted to a key only their passkey can unlock; the service stores those encrypted copies and never the keys. To let someone in, the service records who asked and who granted, the email addresses involved, the public keys, and a signed record of each grant and revocation. It keeps an access log of requests, grants, revocations, key fetches and deletions for the owner, for the retention the owner sets. It also stores each person's private-share key encrypted under a secret held by their passkey. Private relics carry no title or cover, always expire, and their notification emails say only that there is activity on a relic. The JavaScript that decrypts them comes from this service, the same as for every relic.</blockquote>
+        </details>
+      </div>
+    </div>
+  </main>
+</div>
+
+<!-- ================= mail, mock only ================= -->
+<div class="view" id="view-mail" hidden>
+  <header class="bar">
+    <div class="mark">relik.link</div>
+    <div class="identity">
+      <div class="filename">Mail Relic sends</div>
+      <div class="identity-meta"><div class="accession">MOCK ONLY</div></div>
+    </div>
+  </header>
+  <main class="stage">
+    <div class="mail">
+      <p class="mail-intro">What arrives in each inbox, word for word. The links in them lead back into this mock.</p>
+      <article class="message" aria-label="Access request email">
+        <dl class="message-head"><dt>TO</dt><dd>sam@example.com</dd><dt>SUBJECT</dt><dd class="subject">Someone asked for access to a relic</dd></dl>
+        <p class="message-body">Someone asked for access to a relic you own on Relic.
+
+Review the request: <a href="#/owner/panel">https://relik.link/p4x8m2kq7tz9hb3ca1w6nd5rv0?access=requests</a>
+
+Before you grant access, ask them to read you their fingerprint on a phone or video call. Don't accept it by email or chat.</p>
+      </article>
+      <article class="message" aria-label="Access granted email">
+        <dl class="message-head"><dt>TO</dt><dd>ada@example.com</dd><dt>SUBJECT</dt><dd class="subject">You have access to a relic</dd></dl>
+        <p class="message-body">You can now open a relic on Relic.
+
+Open it: <a href="#/reader/unlock">https://relik.link/p4x8m2kq7tz9hb3ca1w6nd5rv0</a>
+
+You'll confirm with your passkey.</p>
+      </article>
+      <article class="message" aria-label="Activity email">
+        <dl class="message-head"><dt>TO</dt><dd>ada@example.com</dd><dt>SUBJECT</dt><dd class="subject">Activity on a relic</dd></dl>
+        <p class="message-body">There's new activity on a relic you follow on Relic.
+
+<a href="#/reader/unlock">https://relik.link/p4x8m2kq7tz9hb3ca1w6nd5rv0</a>
+
+Stop these emails: <a href="#/mail">https://relik.link/notices/stop</a></p>
+      </article>
+      <article class="message" aria-label="Key replaced email">
+        <dl class="message-head"><dt>TO</dt><dd>ada@example.com</dd><dt>SUBJECT</dt><dd class="subject">Your Relic private-share key was replaced</dd></dl>
+        <p class="message-body">A new private-share key was set up for ada@example.com on Relic at 11 Nov 2026, 15:40 UTC.
+
+Relics shared with your old key can't be opened with the new one until each owner shares them again.
+
+If this wasn't you, someone can read mail sent to this address. Secure your mailbox.</p>
+      </article>
+    </div>
+  </main>
+</div>
+
+<aside class="mock-states" id="mock-states" aria-label="Mock controls">
+  <h2>Mock controls <button type="button" id="mock-collapse" aria-expanded="true">Hide</button></h2>
+  <p>Not part of the viewer. Every state is also reachable through the page's own buttons; these jump straight to one.</p>
+  <div class="group">Theme</div>
+  <ul data-group="theme"></ul>
+  <div class="group">Reader</div>
+  <ul data-group="reader"></ul>
+  <div class="group">Passkey answers on the next tap</div>
+  <ul data-group="sim"></ul>
+  <div class="group">What the other person does</div>
+  <ul data-group="other"></ul>
+  <div class="group">Owner</div>
+  <ul data-group="owner"></ul>
+  <div class="group">Dashboard and mail</div>
+  <ul data-group="dash"></ul>
+</aside>
+
+<script>
+(() => {
+  'use strict';
+
+  // ---------- facts every view draws from (literals; nothing here is a key) ----------
+  const RELIC = 'p4x8m2kq7tz9hb3ca1w6nd5rv0';
+  const OWNER = { email: 'sam@example.com', fp: '4fqd2mnb8xr7kc0tw9hz3gpaye6vs1jm' };
+  const ADA = { email: 'ada@example.com', id: '9f4c2e8a17b35d60e2c94a7f1083bd5c6e2a91f47d08c3b5a6e1f9d24c7b80a3', fp: '7k2m9qxah3tb0p4dvw8cr1nezf6gy5sj' };
+  const BEN = { email: 'ben@example.com', id: '2b7e91d04c6a3f85e0d29b4c7a1f63e8d5b20c9a4f71e36d8c05b2a9f4e17d60' };
+  const RECOVERY = { email: 'records@example.com' };
+  const NEW_RECOVERY = { email: 'compliance@example.com', fp: 'b7me0wks5tzqhn2xr8cfy3da9gjpv4k6' };
+  const DEVICE = { id: 'c1e8a5f27d940b6e3a8c5d1f7e29b04a6d3c8e5f1a7b2d940e6c3a8f5d1b7e29', label: 'relic-mcp on sam-mbp', fp: 'q2vh6tncm8ra1zekx4bwp7gsd0jyf3k9' };
+  const DEVICE_OLD = { id: '7a3d0e9c5b18f4a2e6d9c3b70f5a1e8d4c2b6a9f0e3d7c1b5a8e2f6d0c4b9a37', label: 'relic-mcp on build-runner', fp: 'm6xr3tq8kc1nzb5wh0ep9vfa2g7jd4yk' };
+
+  // Crockford base32 as section 4.2 has it: strip spaces and hyphens, lower
+  // case, fold i and l to 1 and o to 0, then exactly 32 alphabet characters.
+  function normalize(typed) {
+    const s = typed.replace(/[\s-]/g, '').toLowerCase().replace(/[il]/g, '1').replace(/o/g, '0');
+    return /^[0-9a-hjkmnp-tv-z]{32}$/.test(s) ? s : undefined;
+  }
+  function display(fp) { return fp.toUpperCase().match(/.{4}/g).join(' '); }
+
+  const $ = (sel, root = document) => root.querySelector(sel);
+  const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
+  const el = (tag, attrs = {}, ...kids) => {
+    const node = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs)) {
+      if (v === false || v === undefined || v === null) continue;
+      if (k === 'class') node.className = v;
+      else if (k === 'text') node.textContent = v;
+      else if (k.startsWith('on')) node.addEventListener(k.slice(2), v);
+      else node.setAttribute(k, v === true ? '' : v);
+    }
+    for (const kid of kids) if (kid !== null && kid !== undefined) node.append(kid);
+    return node;
+  };
+  const svg = (id) => {
+    const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    s.setAttribute('class', 'icon');
+    s.setAttribute('aria-hidden', 'true');
+    const u = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+    u.setAttribute('href', `#i-${id}`);
+    s.append(u);
+    return s;
+  };
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const range = (vs) => {
+    if (vs.length === 1) return `version ${vs[0]}`;
+    if (vs.length === 2) return `versions ${vs[0]} and ${vs[1]}`;
+    const contiguous = vs.every((v, i) => i === 0 || v === vs[i - 1] + 1);
+    return contiguous ? `versions ${vs[0]} to ${vs[vs.length - 1]}` : `versions ${vs.slice(0, -1).join(', ')} and ${vs[vs.length - 1]}`;
+  };
+  const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+  function audience(readers) {
+    const parts = ['you', 'your device', 'your recovery key holder'];
+    if (readers > 0) parts.push(readers === 1 ? '1 reader' : `${readers} readers`);
+    return `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+  }
+
+  // ---------- the typed fingerprint component ----------
+  function fingerprintField(field, expected, who, onChange) {
+    const input = $('input', field);
+    const status = $('.fp-status', field);
+    const echo = el('p', { class: 'fp-echo', 'aria-hidden': 'true' });
+    input.after(echo);
+    function update() {
+      const raw = input.value;
+      const cleaned = raw.replace(/[\s-]/g, '');
+      const norm = normalize(raw);
+      let state;
+      field.removeAttribute('data-complete');
+      status.replaceChildren();
+      const folded = cleaned.toUpperCase().replace(/[IL]/g, '1').replace(/O/g, '0');
+      const groups = folded.match(/.{1,4}/g) || [];
+      echo.replaceChildren(...groups.flatMap((g, i) => [i ? ' ' : '', el('span', { class: g.length < 4 ? 'is-short' : null, text: g })]).filter((x) => x !== ''));
+      echo.hidden = cleaned.length === 0;
+      if (cleaned.length === 0) {
+        state = 'empty';
+        status.textContent = '32 characters. Spaces and dashes don\u2019t matter.';
+      } else if (norm === expected) {
+        state = 'match';
+        status.append(svg('check'), el('span', { text: `Matches the fingerprint for ${who}.` }));
+      } else {
+        state = 'mismatch';
+        const bad = /[^0-9a-z]/i.test(cleaned) || /u/i.test(cleaned);
+        if (cleaned.length >= 32 || bad) {
+          field.setAttribute('data-complete', '');
+          status.append(svg('warn'), el('span', {
+            text: bad
+              ? 'That has a character fingerprints don\u2019t use. Check what you heard.'
+              : `This isn\u2019t the fingerprint Relic computed for ${who}. Don\u2019t go on: check you\u2019re talking to the right person and have them read it again.`,
+          }));
+        } else {
+          status.textContent = `${cleaned.length} of 32 characters.`;
+        }
+      }
+      field.setAttribute('data-fingerprint-state', state);
+      onChange(state);
+    }
+    input.addEventListener('input', update);
+    update();
+    return { set(value) { input.value = value; update(); }, input };
+  }
+
+  // ---------- model ----------
+  let M;
+  function freshModel() {
+    return {
+      persona: 'reader',
+      version: 3,
+      requests: [{ ...ADA, at: '11 Nov 2026, 14:02 UTC' }],
+      grants: [{ ...BEN, versions: [1, 2, 3], at: '4 Nov 2026' }],
+      notice: null,
+      sim: { setup: 'ok', unlock: 'ok', rekey: 'ok' },
+      deletedVersions: [],
+    };
+  }
+
+  // ---------- views ----------
+  function showView(name) {
+    for (const v of ['relic', 'dashboard', 'mail']) $(`#view-${v}`).hidden = v !== name;
+    document.title = name === 'dashboard' ? 'Dashboard · Relic · private shares mock'
+      : name === 'mail' ? 'Mail · Relic · private shares mock'
+      : (M.persona === 'owner' || readerState() === 'ready') ? 'intake-changes.md · Relic · private shares mock'
+      : 'Private relic · Relic · private shares mock';
+  }
+
+  const host = $('#relic-private');
+  function readerState() { return host.getAttribute('data-private-state'); }
+  function setReaderState(state, { focus = true } = {}) {
+    host.setAttribute('data-private-state', state);
+    for (const card of $$(':scope > [data-for]', host)) card.hidden = card.dataset.for !== state;
+    const ready = state === 'ready';
+    const band = $('#band-filename');
+    band.textContent = ready ? 'intake-changes.md' : 'Private relic';
+    band.classList.toggle('is-generic', !ready);
+    $('#band-version').hidden = !ready;
+    $('#band-version').textContent = `v${M.version}`;
+    $('#band-actions').hidden = !(ready && M.persona === 'owner');
+    if (!ready || M.persona !== 'owner') closePanel({ restoreFocus: false });
+    renderStrip();
+    showView('relic');
+    if (focus) {
+      const h = $(`[data-for="${state}"] [tabindex="-1"]`, host);
+      if (h) h.focus({ preventScroll: true });
+    }
+  }
+
+  function renderStrip() {
+    $('#doc-version-note').textContent = `This is version ${M.version}.`;
+    const who = $('#strip-who');
+    who.replaceChildren();
+    if (M.persona === 'owner') {
+      const n = M.grants.length;
+      who.append(el('strong', { text: 'Private.' }), ` You own it. ${n === 1 ? '1 reader' : `${n} readers`}. Expires 11 Dec 2026.`);
+      $('#strip-note').textContent = 'This is your fingerprint. Readers compare it with what you read to them.';
+    } else {
+      who.append(el('strong', { text: 'Private.' }), ' Shared by sam@example.com. Expires 11 Dec 2026.');
+      $('#strip-note').textContent = 'First seen in this browser on 11 Nov 2026. Ask the owner to read theirs to you; it should match.';
+    }
+  }
+
+  // ---------- reader flow, through the real controls ----------
+  function waiting(button, label = 'Waiting for your passkey') {
+    const original = [...button.childNodes];
+    button.disabled = true;
+    button.setAttribute('data-waiting', '');
+    button.textContent = label;
+    return () => { button.disabled = false; button.removeAttribute('data-waiting'); button.replaceChildren(...original); };
+  }
+  function go(route) { history.replaceState(null, '', `#${route}`); syncPressed(); }
+
+  $('#signin-passkey').addEventListener('click', async (e) => {
+    const done = waiting(e.currentTarget);
+    await sleep(600); done();
+    setReaderState('setup'); go('/reader/setup');
+  });
+  $('#signin-email-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    $('#signin-code-form').hidden = false;
+    $('#signin-code').focus();
+  });
+  $('#signin-code-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    setReaderState('setup'); go('/reader/setup');
+  });
+
+  $('[data-action="private-setup"]').addEventListener('click', async (e) => {
+    const done = waiting(e.currentTarget);
+    await sleep(700); done();
+    const outcome = M.sim.setup;
+    if (outcome === 'ok') { setReaderState('request'); go('/reader/request'); }
+    else if (outcome === 'replace') { setReaderState('replace-offer'); go('/reader/replace-offer'); }
+    else { setReaderState('setup-refused'); go('/reader/setup-refused'); }
+  });
+  $('[data-action="private-replace-passkey"]').addEventListener('click', async (e) => {
+    const done = waiting(e.currentTarget, 'Making the passkey');
+    await sleep(800); done();
+    // One retry of the identity ceremony; a second miss is a hard refusal.
+    const outcome = M.sim.setup === 'replace' ? 'ok' : M.sim.setup;
+    if (outcome === 'ok') { setReaderState('request'); go('/reader/request'); }
+    else { setReaderState('setup-refused'); go('/reader/setup-refused'); }
+  });
+  $('#replace-not-now').addEventListener('click', () => { setReaderState('setup'); go('/reader/setup'); });
+  $('[data-action="private-request"]').addEventListener('click', async (e) => {
+    const done = waiting(e.currentTarget);
+    await sleep(700); done();
+    setReaderState('requested'); go('/reader/requested');
+  });
+  $('[data-action="private-unlock"]').addEventListener('click', async (e) => {
+    const button = e.currentTarget;
+    const done = waiting(button);
+    await sleep(500);
+    button.textContent = 'Checking the owner\u2019s signature';
+    await sleep(500); done();
+    const outcome = M.sim.unlock;
+    setReaderState(outcome); go(`/reader/${outcome}`);
+  });
+  $('#denied-switch').addEventListener('click', () => { setReaderState('signin'); go('/reader/signin'); $('#signin-email').focus(); });
+
+  // ---------- owner: access panel ----------
+  const panel = $('#access-panel');
+  const openBtn = $('[data-action="open-access-panel"]');
+  function panelTop() {
+    const band = $('#relic-band').getBoundingClientRect();
+    panel.style.setProperty('--panel-top', `${Math.max(0, band.bottom)}px`);
+  }
+  function openPanel() {
+    renderPanel();
+    panelTop();
+    panel.hidden = false;
+    document.documentElement.dataset.panelOpen = '';
+    openBtn.setAttribute('aria-expanded', 'true');
+    $('#panel-title').focus({ preventScroll: true });
+  }
+  function closePanel({ restoreFocus = true } = {}) {
+    if (panel.hidden) return;
+    panel.hidden = true;
+    delete document.documentElement.dataset.panelOpen;
+    openBtn.setAttribute('aria-expanded', 'false');
+    if (restoreFocus) openBtn.focus();
+  }
+  openBtn.addEventListener('click', () => {
+    if (panel.hidden) { openPanel(); go('/owner/panel'); } else { closePanel(); go('/owner/ready'); }
+  });
+  $('#panel-close').addEventListener('click', () => { closePanel(); go('/owner/ready'); });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !panel.hidden && !$('dialog[open]')) { closePanel(); go('/owner/ready'); }
+  });
+  window.addEventListener('resize', () => { if (!panel.hidden) panelTop(); });
+
+  function renderPanel() {
+    const nReaders = M.grants.length;
+    $('#panel-lead').textContent = `Version ${M.version} can be read by ${audience(nReaders)}.`;
+    const notice = $('#panel-notice');
+    notice.hidden = !M.notice;
+    notice.textContent = M.notice ? M.notice.text : '';
+    notice.classList.toggle('is-oxide', !!(M.notice && M.notice.oxide));
+
+    const count = M.requests.length;
+    $('#requests-count').textContent = count ? String(count) : '';
+    $('#request-count').textContent = String(count);
+    $('#request-count').hidden = count === 0;
+    $('#request-count').setAttribute('aria-label', count === 1 ? '1 request waiting' : `${count} requests waiting`);
+
+    const reqHost = $('#requests');
+    reqHost.replaceChildren();
+    if (!count) reqHost.append(el('p', { class: 'panel-empty', text: 'No one is waiting.' }));
+    for (const r of M.requests) reqHost.append(requestTicket(r));
+
+    renderDeleteVersions();
+
+    const grantHost = $('#grants');
+    grantHost.replaceChildren();
+    if (!M.grants.length) grantHost.append(el('li', {}, el('span', { class: 'panel-empty', text: 'Only you, your device and your recovery key holder.' })));
+    for (const g of M.grants) {
+      grantHost.append(el('li', { 'data-grantee': g.id },
+        el('span', { class: 'row-main' },
+          el('strong', { text: g.email }),
+          el('span', { class: 'row-meta', text: `${cap(range(g.versions))} and every later version. Granted ${g.at}.` })),
+        el('button', { type: 'button', class: 'btn is-small is-danger', 'data-action': 'revoke', 'aria-label': `Revoke ${g.email}`, onclick: () => openRevoke(g) }, 'Revoke')));
+    }
+  }
+
+  function requestTicket(r) {
+    const fieldId = `fp-${r.id.slice(0, 8)}`;
+    const versions = [];
+    for (let v = 1; v <= M.version; v++) if (!M.deletedVersions.includes(v)) versions.push(v);
+    const picks = el('div', { class: 'version-picks' });
+    for (const v of versions) {
+      const current = v === M.version;
+      picks.append(el('label', { class: 'pick' },
+        el('input', { type: 'checkbox', 'data-grant-version': String(v), checked: true, disabled: current, 'aria-describedby': current ? `${fieldId}-lock` : undefined }),
+        `v${v}`,
+        current ? el('span', { class: 'lock-note', id: `${fieldId}-lock`, text: 'current, always included' }) : null));
+    }
+    const grantBtn = el('button', { type: 'button', class: 'action primary', 'data-action': 'grant', disabled: true, 'aria-describedby': `${fieldId}-status` }, 'Grant with passkey');
+    const declineBtn = el('button', { type: 'button', class: 'btn', 'data-action': 'decline' }, 'Decline');
+    const field = el('div', { class: 'fp-field', 'data-fingerprint-state': 'empty' },
+      el('label', { class: 'field-label', for: fieldId, text: `Fingerprint ${r.email} read to you` }),
+      el('input', { class: 'fp-input', id: fieldId, 'data-fingerprint-input': true, autocomplete: 'off', autocapitalize: 'characters', spellcheck: 'false', placeholder: 'Type what you heard', 'aria-describedby': `${fieldId}-status` }),
+      el('p', { class: 'fp-status', id: `${fieldId}-status`, 'aria-live': 'polite' }));
+    const ticket = el('article', { class: 'request', 'data-request-identity': r.id, 'aria-label': `Request from ${r.email}` },
+      el('div', { class: 'request-who' }, el('strong', { text: r.email }), el('span', { class: 'request-when', text: `asked ${r.at}` })),
+      el('ol', { class: 'request-steps' },
+        el('li', {}, el('p', { class: 'step-text', text: `Call ${r.email} on the phone or a video call and ask them to read you their fingerprint. Don\u2019t accept it by email or chat.` }), field),
+        el('li', {}, el('fieldset', { class: 'versions' }, el('legend', { text: 'Versions they can read' }), picks,
+          el('p', { class: 'pick-note', text: 'Later versions are always included.' }))),
+        el('li', {}, el('div', { class: 'card-actions', style: 'margin:0' }, grantBtn, declineBtn))));
+    const comp = fingerprintField(field, r.fp, r.email, (state) => { grantBtn.disabled = state !== 'match'; });
+    ticket._fp = comp;
+
+    grantBtn.addEventListener('click', async () => {
+      if (normalize(comp.input.value) !== r.fp) return;
+      const chosen = $$('input[data-grant-version]', ticket).filter((i) => i.checked).map((i) => Number(i.dataset.grantVersion));
+      const done = waiting(grantBtn);
+      await sleep(800); done();
+      M.requests = M.requests.filter((x) => x.id !== r.id);
+      M.grants.push({ email: r.email, id: r.id, versions: chosen, at: '11 Nov 2026' });
+      M.notice = { text: `${r.email} can open ${range(chosen)} and every later version. Relic emailed them.` };
+      renderPanel(); renderStrip(); go('/owner/granted');
+    });
+    declineBtn.addEventListener('click', () => {
+      M.requests = M.requests.filter((x) => x.id !== r.id);
+      M.notice = { text: `Declined ${r.email}. They see that when they next open the link; Relic doesn\u2019t email them.`, oxide: true };
+      renderPanel(); go('/owner/declined');
+    });
+    return ticket;
+  }
+
+  // ---------- owner: revoke and rekey ----------
+  const revokeDialog = $('#revoke-dialog');
+  const rekey = $('#rekey');
+  let revoking = null;
+  const STEPS = ['decrypting', 'encrypting', 'uploading', 'sealing'];
+  function stepLabels(n) {
+    return {
+      decrypting: `Decrypting version ${n - 1} in this browser`,
+      encrypting: 'Encrypting it under a new key',
+      uploading: `Uploading version ${n}`,
+      sealing: `Signing and sealing version ${n}`,
+    };
+  }
+  function openRevoke(g) {
+    revoking = g;
+    const n = M.version + 1;
+    $('#revoke-warning').textContent = `Revoke ${g.email}? Relic stops serving them this relic now and deletes their keys for it. Anything they already opened may still be on their device. The current content is republished as version ${n} under a new key that only the remaining readers can open.`;
+    $('#revoke-fine').textContent = `One passkey tap. This browser decrypts version ${M.version}, encrypts it again and uploads it; keep this tab open until it finishes.`;
+    rekey.hidden = true;
+    $('#revoke-actions').hidden = false;
+    $('#rekey-actions').hidden = true;
+    const labels = stepLabels(n);
+    for (const li of $$('li', rekey)) { li.querySelector('.step-label').textContent = labels[li.dataset.step]; li.removeAttribute('data-step-state'); }
+    if (!revokeDialog.open) revokeDialog.showModal();
+    $('#revoke-title').focus();
+    go('/owner/revoke');
+  }
+  function paintRekey(state, n) {
+    rekey.hidden = false;
+    rekey.setAttribute('data-rekey-state', state);
+    const at = STEPS.indexOf(state);
+    for (const li of $$('li', rekey)) {
+      const i = STEPS.indexOf(li.dataset.step);
+      let s = 'pending';
+      if (state === 'done' || i < at) s = 'done';
+      else if (i === at) s = 'active';
+      if (state === 'failed') s = i < 2 ? 'done' : i === 2 ? 'failed' : 'pending';
+      li.setAttribute('data-step-state', s);
+    }
+    const out = $('#rekey-outcome');
+    const email = revoking ? revoking.email : BEN.email;
+    if (state === 'done') out.textContent = `Done. ${email} can no longer open this relic. Version ${n} is sealed and readable by ${audience(M.grants.length)}.`;
+    else if (state === 'failed') out.textContent = `Republishing stopped while uploading. Relic has already stopped serving ${email} and deleted their keys. Version ${n} isn\u2019t sealed yet, so readers still open version ${n - 1}.`;
+    else out.textContent = `Revoked ${email}. Republishing as version ${n}.`;
+    const finished = state === 'done' || state === 'failed';
+    $('#revoke-actions').hidden = true;
+    $('#rekey-actions').hidden = !finished;
+    $('#rekey-retry').hidden = state !== 'failed';
+  }
+  async function runRekey() {
+    const n = M.version + 1;
+    const g = revoking;
+    M.grants = M.grants.filter((x) => x.id !== g.id);
+    for (const s of STEPS) {
+      paintRekey(s, n); go(`/owner/rekey/${s}`);
+      await sleep(650);
+      if (s === 'uploading' && M.sim.rekey === 'fail') { paintRekey('failed', n); go('/owner/rekey/failed'); $('#rekey-retry').focus(); return; }
+    }
+    M.version = n;
+    paintRekey('done', n); go('/owner/rekey/done');
+    M.notice = { text: `Revoked ${g.email}. This relic is now version ${n}.` };
+    renderPanel(); renderStrip();
+    $('#band-version').textContent = `v${M.version}`;
+    $('#rekey-close').focus();
+  }
+  $('[data-action="confirm-revoke"]').addEventListener('click', async (e) => {
+    const done = waiting(e.currentTarget);
+    await sleep(600); done();
+    runRekey();
+  });
+  $('#revoke-cancel').addEventListener('click', () => { revokeDialog.close(); go('/owner/panel'); });
+  $('#rekey-close').addEventListener('click', () => { revokeDialog.close(); renderPanel(); go('/owner/panel'); });
+  $('#rekey-retry').addEventListener('click', () => { M.sim.rekey = 'ok'; M.grants.push(revoking); runRekey(); });
+  revokeDialog.addEventListener('cancel', (e) => { if (!rekey.hidden && $('#rekey-actions').hidden) e.preventDefault(); });
+
+  // ---------- owner: delete ----------
+  const deleteDialog = $('#delete-dialog');
+  const confirmDelete = $('[data-action="confirm-delete"]');
+  function renderDeleteVersions() {
+    const box = $('#delete-versions');
+    box.replaceChildren();
+    const whole = $('input[name="delete-scope"][value="all"]').checked;
+    for (let v = 1; v <= M.version; v++) {
+      if (M.deletedVersions.includes(v)) continue;
+      const current = v === M.version;
+      box.append(el('label', { class: 'pick' },
+        el('input', { type: 'checkbox', 'data-delete-version': String(v), checked: whole, disabled: whole || current, 'aria-describedby': current ? 'delete-current-note' : undefined, onchange: syncDelete }),
+        `v${v}`,
+        current ? el('span', { class: 'lock-note', id: 'delete-current-note', text: 'current, goes only with the whole relic' }) : null));
+    }
+    syncDelete();
+  }
+  function syncDelete() {
+    const whole = $('input[name="delete-scope"][value="all"]').checked;
+    const chosen = $$('input[data-delete-version]').filter((i) => i.checked && !i.disabled).length;
+    confirmDelete.disabled = !(whole || chosen > 0);
+  }
+  for (const r of $$('input[name="delete-scope"]')) r.addEventListener('change', renderDeleteVersions);
+  $('[data-action="delete-relic"]').addEventListener('click', () => {
+    $('input[name="delete-scope"][value="versions"]').checked = true;
+    $('#delete-outcome').textContent = '';
+    renderDeleteVersions();
+    deleteDialog.showModal();
+    $('#delete-dialog-title').focus();
+    go('/owner/delete');
+  });
+  $('#delete-cancel').addEventListener('click', () => { deleteDialog.close(); go('/owner/panel'); });
+  confirmDelete.addEventListener('click', async () => {
+    const whole = $('input[name="delete-scope"][value="all"]').checked;
+    const chosen = $$('input[data-delete-version]').filter((i) => i.checked && !i.disabled).map((i) => Number(i.dataset.deleteVersion));
+    const done = waiting(confirmDelete);
+    await sleep(700); done();
+    if (whole) {
+      $('#delete-outcome').textContent = 'Deleted. The relic, its keys, seals, grants, requests and comments are gone. Its link now says it was removed.';
+      $('#delete-outcome').className = 'dash-outcome is-ok';
+      confirmDelete.disabled = true;
+    } else {
+      M.deletedVersions.push(...chosen);
+      $('#delete-outcome').textContent = `Deleted ${range(chosen)}.`;
+      $('#delete-outcome').className = 'dash-outcome is-ok';
+      renderDeleteVersions();
+      M.notice = { text: `Deleted ${range(chosen)}. Readers can no longer fetch it.` };
+      renderPanel();
+    }
+  });
+
+
+  // ---------- dashboard ----------
+  let passkeys, devices, recovery, coverageRepaired;
+  function renderDashboard() {
+    const pk = $('#passkeys');
+    pk.replaceChildren();
+    for (const p of passkeys) {
+      pk.append(el('li', {},
+        el('span', { class: 'row-main' },
+          el('strong', { text: `Passkey ending ${p.tail}` }),
+          el('span', { class: 'row-meta', text: p.bound ? `Holds your key. Bound ${p.at}.` : 'Signs you in, but doesn\u2019t hold your key yet.' })),
+        p.bound ? el('span', { class: 'row-kind', text: 'Bound' })
+          : el('button', { type: 'button', class: 'btn is-small', 'aria-label': `Bind passkey ending ${p.tail}`, onclick: (e) => bindPasskey(p, e.currentTarget) }, 'Bind')));
+    }
+
+    const dv = $('#devices');
+    dv.replaceChildren();
+    for (const d of devices) {
+      dv.append(el('li', { 'data-device': d.id },
+        el('span', { class: 'row-main' },
+          el('strong', { text: d.label }),
+          el('span', { class: 'row-meta', text: d.revoked ? `Revoked ${d.revoked}.` : `${d.backend}. Certified ${d.at}, until ${d.until}.` }),
+          el('span', { class: 'row-meta is-mono', text: display(d.fp) })),
+        d.revoked ? el('span', { class: 'row-kind', text: 'Revoked' })
+          : el('button', { type: 'button', class: 'btn is-small is-danger', 'data-action': 'revoke-device', 'aria-label': `Revoke ${d.label}`, onclick: (e) => revokeDevice(d, e.currentTarget) }, 'Revoke')));
+    }
+
+    $('#recovery-email-label').textContent = recovery ? 'Change to' : 'Recovery address';
+    const rc = $('#recovery-current');
+    rc.replaceChildren(el('ul', { class: 'row-list', style: 'margin-bottom:1rem' }, el('li', {},
+      el('span', { class: 'row-main' },
+        el('strong', { text: recovery ? recovery.email : 'No recovery key holder' }),
+        el('span', { class: 'row-meta', text: recovery ? `Designated ${recovery.at}. Can read every private relic you own.` : 'If you lose every passkey, no one can open your private relics.' })),
+      recovery ? el('button', { type: 'button', class: 'btn is-small is-danger', 'aria-label': `Remove ${recovery.email} as recovery key holder`, onclick: (e) => removeRecovery(e.currentTarget) }, 'Remove') : null)));
+
+    const owned = $('#owned');
+    owned.replaceChildren(
+      ownedRow('p4x8m2kq7tz9hb3ca1w6nd5rv0', `v${M.version} \u00b7 ${M.grants.length === 1 ? '1 reader' : `${M.grants.length} readers`} \u00b7 ${M.requests.length} waiting \u00b7 expires 11 Dec 2026`, '#/owner/ready'),
+      ownedRow('h2wq9e7c4n8tz1kb5xm3pf6ra0', `v2 \u00b7 3 readers \u00b7 expires 2 Jan 2027${coverageRepaired ? '' : ' \u00b7 2 versions missing your recovery key holder'}`, '#/owner/ready'),
+      ownedRow('t6nb1r8xk3qz5mw9hc2ep7fa4d', 'v1 \u00b7 no readers \u00b7 expires 20 Nov 2026', '#/owner/ready'));
+    $('#coverage-gap').classList.toggle('is-done', !!coverageRepaired);
+
+    $('#shared').replaceChildren(
+      ownedRow('k5zr2m8wc1qx7nb3ht9ea4pv6f', 'From mara@example.org \u00b7 versions 1 to 4 \u00b7 expires 30 Nov 2026', '#/reader/unlock'),
+      ownedRow('w3ae8q1kn6vx4cm9tz2hb7rp5d', 'From sam.lee@example.net \u00b7 version 2 \u00b7 expires 9 Feb 2027', '#/reader/unlock'));
+
+    const log = $('#access-log');
+    const events = [
+      ['request', '11 Nov 2026 14:02', 'Access requested', ['by ', b('ada@example.com'), ' on ', mono('p4x8m2kq')]],
+      ['grant', '11 Nov 2026 14:09', 'Access granted', [b('ada@example.com'), ', versions 1 to 3 of ', mono('p4x8m2kq'), ', by you']],
+      ['wrap_fetch', '11 Nov 2026 14:11', 'Key fetched', [b('ada@example.com'), ', version 3 of ', mono('p4x8m2kq')]],
+      ['wrap_fetch', '10 Nov 2026 09:40', 'Key fetched', [b('relic-mcp on sam-mbp'), ', version 2 of ', mono('h2wq9e7c')]],
+      ['revoke', '9 Nov 2026 16:22', 'Access revoked', [b('ben@example.org'), ' from ', mono('h2wq9e7c'), ', by you']],
+      ['delete', '8 Nov 2026 11:05', 'Deleted', ['version 1 of ', mono('t6nb1r8x'), ', by you']],
+    ];
+    log.replaceChildren(...events.map(([kind, t, what, about]) => el('li', { 'data-access-event': kind },
+      el('time', { text: `${t} UTC` }), el('span', { class: 'what', text: what }), el('span', { class: 'about' }, ...about))));
+  }
+  function b(t) { return el('b', { text: t }); }
+  function mono(t) { return el('span', { class: 'is-mono', text: t }); }
+  function ownedRow(id, meta, href) {
+    return el('li', {},
+      el('span', { class: 'row-main' },
+        el('a', { class: 'is-mono', href, text: id, style: 'font-size:0.82rem;word-break:break-all' }),
+        el('span', { class: 'row-meta', text: meta })));
+  }
+
+  async function bindPasskey(p, btn) {
+    const out = $('#bind-outcome');
+    out.className = 'dash-outcome';
+    out.textContent = 'Tap a passkey that already holds your key.';
+    const done = waiting(btn, 'First tap');
+    await sleep(800);
+    out.textContent = `Now tap the passkey ending ${p.tail}.`;
+    btn.textContent = 'Second tap';
+    await sleep(800); done();
+    p.bound = true; p.at = '11 Nov 2026';
+    renderDashboard();
+    out.className = 'dash-outcome is-ok';
+    out.textContent = `The passkey ending ${p.tail} now holds your key.`;
+  }
+  async function revokeDevice(d, btn) {
+    const done = waiting(btn, 'Waiting');
+    await sleep(700); done();
+    d.revoked = '11 Nov 2026';
+    renderDashboard();
+    const out = $('#device-outcome');
+    out.className = 'dash-outcome is-ok';
+    out.textContent = `Revoked ${d.label}. Its keys are deleted, and new versions aren\u2019t wrapped to it.`;
+  }
+
+  // device approval
+  const approveBtn = $('[data-action="approve-device"]');
+  const deviceFp = fingerprintField($('#device-fp-field'), DEVICE.fp, 'relic-mcp on sam-mbp', (s) => { approveBtn.disabled = s !== 'match'; });
+  function setApprovalStep(step) {
+    $('#approval-step-1').setAttribute('aria-disabled', step === 1 ? 'false' : 'true');
+    $('#approval-step-2').setAttribute('aria-disabled', step === 2 ? 'false' : 'true');
+    $('#approval-step-2').hidden = step !== 2;
+    deviceFp.input.disabled = step !== 1;
+    approveBtn.hidden = step !== 1;
+  }
+  approveBtn.addEventListener('click', async () => {
+    const done = waiting(approveBtn);
+    await sleep(700); done();
+    if (!devices.some((d) => d.id === DEVICE.id)) devices.unshift({ ...DEVICE, backend: 'Secure Enclave', at: '11 Nov 2026', until: '11 Nov 2027' });
+    renderDashboard();
+    setApprovalStep(2);
+    $('#approval-step-2 .fingerprint').focus?.();
+    go('/dashboard/approved');
+  });
+
+  // recovery
+  const designateBtn = $('[data-action="designate-recovery"]');
+  const recoveryFp = fingerprintField($('#recovery-fp-field'), NEW_RECOVERY.fp, NEW_RECOVERY.email, (s) => { designateBtn.disabled = s !== 'match'; });
+  $('#recovery-lookup-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const email = $('[data-recovery-email]').value.trim().toLowerCase();
+    const out = $('#recovery-lookup-outcome');
+    $('#recovery-found').hidden = true;
+    out.className = 'dash-outcome';
+    out.textContent = 'Looking up';
+    await sleep(400);
+    if (email === RECOVERY.email) {
+      out.className = 'dash-outcome';
+      out.textContent = `${email} is already your recovery key holder.`;
+    } else if (email === NEW_RECOVERY.email) {
+      out.textContent = '';
+      $('#recovery-found-email').textContent = email;
+      $('#recovery-found').hidden = false;
+      recoveryFp.input.focus();
+      go('/dashboard/recovery');
+    } else {
+      out.className = 'dash-outcome is-bad';
+      out.textContent = `${email || 'That address'} has no private-share key. They need to open a private relic and set one up first.`;
+    }
+  });
+  designateBtn.addEventListener('click', async () => {
+    const done = waiting(designateBtn);
+    await sleep(700);
+    designateBtn.textContent = 'Wrapping your relics for them';
+    await sleep(900); done();
+    recovery = { email: NEW_RECOVERY.email, at: '11 Nov 2026' };
+    $('#recovery-found').hidden = true;
+    renderDashboard();
+    designatedOutcome();
+    go('/dashboard/designated');
+  });
+
+  function coverageSettled() {
+    coverageRepaired = true;
+    $('#coverage-gap').hidden = true;
+    renderDashboard();
+  }
+  function designatedOutcome() {
+    coverageSettled();
+    const out = $('#recovery-outcome');
+    out.className = 'dash-outcome is-ok';
+    out.textContent = `${NEW_RECOVERY.email} can now read all 3 private relics you own. ${RECOVERY.email} can't, and its keys for them are deleted.`;
+  }
+  async function removeRecovery(btn) {
+    const done = waiting(btn, 'Waiting');
+    await sleep(700); done();
+    const was = recovery.email;
+    recovery = null;
+    coverageSettled();
+    const out = $('#recovery-outcome');
+    out.className = 'dash-outcome is-ok';
+    out.textContent = `Removed. ${was} can't read your private relics any more, and its keys for them are deleted.`;
+  }
+
+  $('[data-action="repair-coverage"]').addEventListener('click', async (e) => {
+    const button = e.currentTarget;
+    const done = waiting(button, 'Repairing');
+    await sleep(900); done();
+    coverageRepaired = true;
+    $('#coverage-text').textContent = 'Repaired: 2 keys added for records@example.com. Every version can be read by everyone it should be.';
+    button.hidden = true;
+    renderDashboard();
+    go('/dashboard/repaired');
+  });
+
+  $('#retention-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const input = $('[data-retention-days]');
+    const out = $('#retention-outcome');
+    const days = Number(input.value);
+    if (!Number.isInteger(days) || days < 30 || days > 3650) {
+      out.className = 'dash-outcome is-bad';
+      out.textContent = 'Choose a whole number of days between 30 and 3650.';
+      input.focus();
+      return;
+    }
+    const btn = $('[data-action="save-retention"]');
+    const done = waiting(btn);
+    await sleep(700); done();
+    out.className = 'dash-outcome is-ok';
+    out.textContent = `Saved. New entries are kept for ${days} days.`;
+  });
+
+  function resetDashboard() {
+    passkeys = [
+      { tail: '4f9a', bound: true, at: '2 Nov 2026' },
+      { tail: 'c01e', bound: false },
+    ];
+    devices = [{ ...DEVICE_OLD, backend: 'File on disk', at: '5 Oct 2026', until: '5 Oct 2027' }];
+    recovery = { email: RECOVERY.email, at: '9 Nov 2026' };
+    coverageRepaired = false;
+    $('#coverage-text').textContent = '2 versions of 1 relic can\u2019t be read by records@example.com yet.';
+    $('[data-action="repair-coverage"]').hidden = false;
+    $('#coverage-gap').hidden = false;
+    for (const id of ['#bind-outcome', '#device-outcome', '#recovery-outcome', '#recovery-lookup-outcome', '#retention-outcome']) { $(id).textContent = ''; $(id).className = 'dash-outcome'; }
+    $('#recovery-found').hidden = true;
+    recoveryFp.set('');
+    deviceFp.set('');
+    $('[data-retention-days]').value = '2190';
+    setApprovalStep(1);
+    renderDashboard();
+  }
+
+  // ---------- routes ----------
+  const READER_STATES = ['signin', 'setup', 'setup-refused', 'replace-offer', 'request', 'requested', 'declined', 'unlock', 'ready', 'revoked', 'denied', 'owner-changed', 'seal-mismatch'];
+  const OWNER_ROUTES = {
+    '/owner/ready': 'Ready, as owner',
+    '/owner/panel': 'Access panel',
+    '/owner/panel/mismatch': 'Wrong fingerprint',
+    '/owner/panel/match': 'Fingerprint matches',
+    '/owner/granted': 'Granted',
+    '/owner/declined': 'Declined',
+    '/owner/revoke': 'Revoke dialog',
+    '/owner/rekey/decrypting': 'Rekey: decrypting',
+    '/owner/rekey/encrypting': 'encrypting',
+    '/owner/rekey/uploading': 'uploading',
+    '/owner/rekey/sealing': 'sealing',
+    '/owner/rekey/done': 'done',
+    '/owner/rekey/failed': 'failed',
+    '/owner/delete': 'Delete dialog',
+  };
+  const DASH_ROUTES = {
+    '/dashboard': 'Dashboard',
+    '/dashboard/approve': 'Device approval',
+    '/dashboard/approve/match': 'Device fingerprint matches',
+    '/dashboard/approved': 'Device approved',
+    '/dashboard/recovery': 'Recovery found',
+    '/dashboard/recovery/match': 'Recovery fingerprint matches',
+    '/dashboard/designated': 'Recovery designated',
+    '/dashboard/repaired': 'Coverage repaired',
+    '/mail': 'Mail',
+  };
+
+  function closeDialogs() { for (const d of $$('dialog[open]')) d.close(); }
+
+  function route(path) {
+    closeDialogs();
+    M = freshModel();
+    resetDashboard();
+    $('#signin-code-form').hidden = true;
+    const sim = currentSim();
+    Object.assign(M.sim, sim);
+
+    if (path.startsWith('/reader/')) {
+      const s = path.slice('/reader/'.length);
+      M.persona = 'reader';
+      setReaderState(READER_STATES.includes(s) ? s : 'signin', { focus: false });
+      return;
+    }
+    if (path.startsWith('/owner/')) {
+      M.persona = 'owner';
+      setReaderState('ready', { focus: false });
+      if (path === '/owner/ready') return;
+      if (path === '/owner/granted') {
+        M.requests = [];
+        M.grants.push({ ...ADA, versions: [1, 2, 3], at: '11 Nov 2026' });
+        M.notice = { text: 'ada@example.com can open versions 1 to 3 and every later version. Relic emailed them.' };
+      }
+      if (path === '/owner/declined') {
+        M.requests = [];
+        M.notice = { text: 'Declined ada@example.com. They see that when they next open the link; Relic doesn\u2019t email them.', oxide: true };
+      }
+      openPanel();
+      if (path === '/owner/panel/mismatch') $('[data-request-identity]')._fp.set('7K2M 9QXA H3TB 0P4D VW8C R1NE ZF6G Y5SK');
+      if (path === '/owner/panel/match') $('[data-request-identity]')._fp.set('7k2m-9qxa-h3tb-0p4d-vw8c-rlne-zf6g-y5sj');
+      if (path === '/owner/revoke' || path.startsWith('/owner/rekey/')) {
+        openRevoke(M.grants[0]);
+        if (path.startsWith('/owner/rekey/')) {
+          const s = path.slice('/owner/rekey/'.length);
+          if (s === 'done') { M.grants = []; M.version = 4; renderPanel(); renderStrip(); $('#band-version').textContent = 'v4'; }
+          else { M.grants = []; renderPanel(); }
+          paintRekey(s, s === 'done' ? M.version : M.version + 1);
+        }
+      }
+      if (path === '/owner/delete') $('[data-action="delete-relic"]').click();
+      return;
+    }
+    if (path.startsWith('/dashboard')) {
+      M.persona = 'owner';
+      showView('dashboard');
+      const approving = path.startsWith('/dashboard/approve');
+      $('#device-approval').hidden = !approving;
+      if (path === '/dashboard/approve/match') deviceFp.set('Q2VH 6TNC M8RA 1ZEK X4BW P7GS D0JY F3K9');
+      if (path === '/dashboard/approved') {
+        $('#device-approval').hidden = false;
+        deviceFp.set('Q2VH 6TNC M8RA 1ZEK X4BW P7GS D0JY F3K9');
+        devices.unshift({ ...DEVICE, backend: 'Secure Enclave', at: '11 Nov 2026', until: '11 Nov 2027' });
+        setApprovalStep(2);
+        renderDashboard();
+      }
+      if (path === '/dashboard/recovery' || path === '/dashboard/recovery/match') {
+        $('#recovery-found').hidden = false;
+        if (path.endsWith('/match')) recoveryFp.set('b7me 0wks 5tzq hn2x r8cf y3da 9gjp v4k6');
+      }
+      if (path === '/dashboard/designated') {
+        recovery = { email: NEW_RECOVERY.email, at: '11 Nov 2026' };
+        renderDashboard();
+        designatedOutcome();
+      }
+      if (path === '/dashboard/repaired') {
+        coverageRepaired = true;
+        $('#coverage-text').textContent = 'Repaired: 2 keys added for records@example.com. Every version can be read by everyone it should be.';
+        $('[data-action="repair-coverage"]').hidden = true;
+        renderDashboard();
+      }
+      return;
+    }
+    if (path === '/mail') { showView('mail'); return; }
+    route('/reader/signin');
+  }
+
+  // ---------- mock controls ----------
+  const controls = $('#mock-states');
+  const pressedButtons = [];
+  function addButton(group, label, onClick, isPressed) {
+    const b = el('button', { type: 'button', 'aria-pressed': 'false' }, label);
+    b.addEventListener('click', onClick);
+    b._isPressed = isPressed;
+    $(`ul[data-group="${group}"]`, controls).append(el('li', {}, b));
+    pressedButtons.push(b);
+  }
+  function syncPressed() {
+    for (const b of pressedButtons) b.setAttribute('aria-pressed', String(!!b._isPressed()));
+  }
+  const currentPath = () => (location.hash.slice(1) || '/reader/signin');
+  let simState = { setup: 'ok', unlock: 'ready', rekey: 'ok' };
+  function currentSim() { return { setup: simState.setup, unlock: simState.unlock, rekey: simState.rekey }; }
+
+  for (const [label, value] of [['Auto', null], ['Light', 'light'], ['Dark', 'dark']]) {
+    addButton('theme', label, () => {
+      if (value) document.documentElement.dataset.theme = value; else delete document.documentElement.dataset.theme;
+      syncPressed();
+    }, () => (document.documentElement.dataset.theme || null) === value);
+  }
+  for (const s of READER_STATES) addButton('reader', s, () => { location.hash = `/reader/${s}`; }, () => currentPath() === `/reader/${s}`);
+  for (const [label, key, value] of [
+    ['Setup: PRF works', 'setup', 'ok'], ['Setup: old passkey', 'setup', 'replace'], ['Setup: no PRF', 'setup', 'refuse'],
+    ['Unlock: opens', 'unlock', 'ready'], ['Unlock: owner changed', 'unlock', 'owner-changed'], ['Unlock: seal mismatch', 'unlock', 'seal-mismatch'],
+    ['Rekey: completes', 'rekey', 'ok'], ['Rekey: upload fails', 'rekey', 'fail'],
+  ]) {
+    addButton('sim', label, () => { simState[key] = value; M.sim[key] = value; syncPressed(); }, () => simState[key] === value);
+  }
+  addButton('other', 'Owner grants', () => { location.hash = '/reader/unlock'; }, () => false);
+  addButton('other', 'Owner declines', () => { location.hash = '/reader/declined'; }, () => false);
+  addButton('other', 'Owner revokes', () => { location.hash = '/reader/revoked'; }, () => false);
+  for (const [p, label] of Object.entries(OWNER_ROUTES)) addButton('owner', label, () => { location.hash = p; }, () => currentPath() === p);
+  for (const [p, label] of Object.entries(DASH_ROUTES)) addButton('dash', label, () => { location.hash = p; }, () => currentPath() === p);
+
+  $('#mock-collapse').addEventListener('click', (e) => {
+    const collapsed = controls.classList.toggle('is-collapsed');
+    e.currentTarget.textContent = collapsed ? 'Show' : 'Hide';
+    e.currentTarget.setAttribute('aria-expanded', String(!collapsed));
+  });
+  if (window.matchMedia('(max-width: 40rem)').matches) $('#mock-collapse').click();
+
+  window.addEventListener('hashchange', () => { route(currentPath()); syncPressed(); });
+  route(currentPath());
+  syncPressed();
+})();
+</script>
+</body>
+</html>

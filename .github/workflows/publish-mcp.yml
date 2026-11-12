@@ -185,6 +185,8 @@ jobs:
             --release
           test -f "$OUT/secure_open.node"
           test -f "$OUT/build-info.json"
+          test -f "$OUT/relic-se"
+          test -f "$OUT/relic-se-build-info.json"
 
       - name: Run Xcode 16.4 Darwin semantic probe
         if: matrix.platform == 'darwin'
@@ -295,6 +297,12 @@ jobs:
             mkdir -p "$DEST"
             cp "$RUNNER_TEMP/native/$TARGET/secure_open.node" "$DEST/"
             cp "$RUNNER_TEMP/native/$TARGET/build-info.json" "$DEST/"
+            case "$TARGET" in
+              darwin-*)
+                cp "$RUNNER_TEMP/native/$TARGET/relic-se" "$DEST/"
+                cp "$RUNNER_TEMP/native/$TARGET/relic-se-build-info.json" "$DEST/"
+                ;;
+            esac
           done
           # This portable check proves the tarball carries all audited files.
           # Per-target jobs above and packed-target probes below perform the
@@ -307,7 +315,11 @@ jobs:
           MANIFEST="$RUNNER_TEMP/native-prebuilds.sha256"
           : > "$MANIFEST"
           for TARGET in darwin-arm64 darwin-x64 linux-arm64-gnu linux-x64-gnu; do
-            for FILE in secure_open.node build-info.json; do
+            FILES="secure_open.node build-info.json"
+            case "$TARGET" in
+              darwin-*) FILES="$FILES relic-se relic-se-build-info.json" ;;
+            esac
+            for FILE in $FILES; do
               PATHNAME="packages/relic-mcp/prebuilds/$TARGET/$FILE"
               test -f "$PATHNAME"
               sha256sum "$PATHNAME" >> "$MANIFEST"
@@ -434,6 +446,7 @@ jobs:
             node_modules/relic-mcp/dist/native-secure-open.js \
             node_modules/relic-mcp/dist/native-secure-open.d.ts \
             node_modules/relic-mcp/native/secure-open.c \
+            node_modules/relic-mcp/native/secure-enclave/relic-se.swift \
             node_modules/relic-mcp/native/build.mjs \
             node_modules/relic-mcp/scripts/prove-packed-native.mjs \
             node_modules/relic-mcp/.claude-plugin/plugin.json \
@@ -446,6 +459,12 @@ jobs:
           for TARGET in darwin-arm64 darwin-x64 linux-arm64-gnu linux-x64-gnu; do
             test -f "node_modules/relic-mcp/prebuilds/$TARGET/secure_open.node"
             test -f "node_modules/relic-mcp/prebuilds/$TARGET/build-info.json"
+            case "$TARGET" in
+              darwin-*)
+                test -f "node_modules/relic-mcp/prebuilds/$TARGET/relic-se"
+                test -f "node_modules/relic-mcp/prebuilds/$TARGET/relic-se-build-info.json"
+                ;;
+            esac
           done
           node -e '
             const fs = require("node:fs");
