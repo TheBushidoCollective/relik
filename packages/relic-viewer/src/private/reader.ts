@@ -71,7 +71,8 @@ export interface PrivateReaderMount {
     view: ReadyView,
     relicId: string,
     usercontentOrigin: string,
-    deps: ViewerDeps
+    deps: ViewerDeps,
+    afterRender: (page: HTMLElement) => void
   ) => void;
   readonly renderDead: (
     dead: DeadView,
@@ -737,13 +738,28 @@ class PrivateReader {
       view,
       this.mount.relicId,
       this.mount.usercontentOrigin,
-      this.mount.deps
+      this.mount.deps,
+      (page) => this.decorateReady(page)
     );
-    shellRoot().prepend(this.strip(pinnedOwnerFor(this.mount.relicId)));
-    void this.attachOwnerControls();
   }
 
-  /** The strip above a private relic: who shared it, and the owner's fingerprint. */
+  /**
+   * The private chrome of a ready view: the strip under the taskbar, and for
+   * the owner the Access control on it. The viewer calls this after every
+   * render of the view, so a version switch or a comparison keeps both.
+   */
+  private decorateReady(page: HTMLElement): void {
+    const bar = page.querySelector<HTMLElement>('.bar');
+    const strip = this.strip(pinnedOwnerFor(this.mount.relicId));
+    if (bar === null) {
+      page.prepend(strip);
+    } else {
+      bar.after(strip);
+    }
+    void this.attachOwnerControls(page);
+  }
+
+  /** The strip under the taskbar: who shared it, and the owner's fingerprint. */
   private strip(pinned: PinnedOwner | undefined): HTMLElement {
     const strip = document.createElement('div');
     strip.className = 'private-strip';
@@ -806,10 +822,10 @@ class PrivateReader {
     if (wanted === 'requests') void this.openOwnerPanel();
   }
 
-  /** The owner's Access control on the relic's bar, with the pending count. */
-  private async attachOwnerControls(): Promise<void> {
+  /** The owner's Access control on the relic's taskbar, with the pending count. */
+  private async attachOwnerControls(page: HTMLElement): Promise<void> {
     if (this.access?.role !== 'owner') return;
-    const bar = shellRoot().querySelector<HTMLElement>('.bar');
+    const bar = page.querySelector<HTMLElement>('.bar');
     if (bar === null) return;
     this.attachPanelHost();
     const count = document.createElement('span');

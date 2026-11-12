@@ -805,6 +805,18 @@ class El {
   remove(): void {
     detach(this);
   }
+
+  after(...nodes: Content[]): void {
+    const parent = this.parentNode;
+    if (parent === null) return;
+    const created = nodes.map(toNode);
+    const index = parent.childNodes.indexOf(this);
+    for (const node of created) {
+      detach(node);
+      node.parentNode = parent;
+    }
+    parent.childNodes.splice(index + 1, 0, ...created);
+  }
   focus(): void {}
   hasAttribute(name: string): boolean {
     return this.attrs.has(name);
@@ -948,6 +960,8 @@ interface Mounted {
   readonly root: El;
   readonly views: ReadyView[];
   readonly dead: DeadView[];
+  /** A render of the same view, as a version switch or a comparison makes. */
+  readonly reRender: () => void;
 }
 
 /** A shell root in the stand-in page, as the server's shell puts it there. */
@@ -970,21 +984,29 @@ async function mountReader(
   const root = shellRootInPage();
   const views: ReadyView[] = [];
   const dead: DeadView[] = [];
+  let afterRender: ((page: HTMLElement) => void) | undefined;
+  // The stand-in renderer does what the viewer does: it replaces the shell
+  // root's content with a taskbar, then hands the root to the reader's hook.
+  const paint = (): void => {
+    const bar = new El('header');
+    bar.className = 'bar';
+    root.replaceChildren(bar);
+    afterRender?.(root as unknown as HTMLElement);
+  };
   await mountPrivateReader({
     relicId,
     usercontentOrigin: USERCONTENT,
     deps,
-    renderReady: (view) => {
+    renderReady: (view, _relicId, _origin, _deps, hook) => {
       views.push(view);
-      const bar = new El('header');
-      bar.className = 'bar';
-      root.append(bar);
+      afterRender = hook;
+      paint();
     },
     renderDead: (view) => {
       dead.push(view);
     },
   });
-  return { root, views, dead };
+  return { root, views, dead, reRender: paint };
 }
 
 /** The stage the reader is showing, from its own state attribute. */
@@ -1626,7 +1648,9 @@ describe('the reader drives every state of plan 4.15', () => {
     expect(view.versionDigest).toBe(world.digest);
     expect(view.shareUrl.includes('#')).toBe(false);
     expect(root.querySelector('#relic-private')).toBeNull();
-    expect(root.children[0]?.className).toBe('private-strip');
+    // The mock places the strip under the taskbar, so the bar comes first.
+    expect(root.children[0]?.className).toBe('bar');
+    expect(root.children[1]?.className).toBe('private-strip');
     expect(root.querySelector('#strip-who')?.textContent).toBe(
       'Private. Shared by sam@example.com. Expires 11 Dec 2026.'
     );
@@ -1827,6 +1851,62 @@ describe('the owner surfaces are mounted from the reader, lazily', () => {
     expect(root.querySelector('#access-panel')?.attrs.get('role')).toBe(
       'dialog'
     );
+  });
+
+  test('a version switch keeps the strip and the owner Access control, and the control still opens the panel', async () => {
+    const relicId = freshRelicId();
+    const world = await sealedWorld(relicId, { role: 'owner' });
+    const routes = {
+      ...world.routes,
+      [`GET /api/relics/${relicId}/requests`]: () =>
+        json(requestsBody(['pending', 'pending', 'granted'])),
+    };
+    const { fetch } = service(routes);
+    const deps = depsFor(
+      fetch,
+      authenticator(() =>
+        assertion(world.readerPasskey.rawId, world.readerPasskey.prf)
+      )
+    );
+    const { root, views, reRender } = await mountReader(deps, relicId);
+
+    press(root, '[data-action="private-unlock"]');
+    await until(() => views.length === 1, 'the ready view');
+    await until(
+      () => root.querySelector('[data-action="open-access-panel"]') !== null,
+      'the Access control'
+    );
+
+    reRender();
+
+    expect(root.querySelector('#ready-strip')).not.toBeNull();
+    await until(
+      () => root.querySelector('#request-count')?.textContent === '2',
+      'the pending count after the switch'
+    );
+    press(root, '[data-action="open-access-panel"]');
+    await until(
+      () => root.querySelector('#access-panel') !== null,
+      'the access panel after the switch'
+    );
+  });
+
+  test('a reader keeps the private strip through a version switch', async () => {
+    const relicId = freshRelicId();
+    const world = await sealedWorld(relicId);
+    const { root, views, reRender } = await mountReader(
+      readerDeps(world).deps,
+      relicId
+    );
+
+    press(root, '[data-action="private-unlock"]');
+    await until(() => views.length === 1, 'the ready view');
+    expect(root.querySelector('#ready-strip')).not.toBeNull();
+
+    reRender();
+
+    expect(root.querySelector('#ready-strip')).not.toBeNull();
+    expect(root.querySelector('#access-panel')).toBeNull();
   });
 
   test('a reader who is not the owner gets no Access control and no panel', async () => {

@@ -3366,7 +3366,8 @@ export function renderComparison(
   deps: ViewerDeps,
   onClose: () => void,
   initialLeft?: number,
-  initialRight?: number
+  initialRight?: number,
+  afterRender?: (page: HTMLElement) => void
 ): void {
   const defaultPair = seedComparisonPair(
     current.version,
@@ -3537,7 +3538,8 @@ export function renderComparison(
     changesSidebar.tab
   );
 
-  shellRoot().replaceChildren(
+  const page = shellRoot();
+  page.replaceChildren(
     buildBar(current, relicId, {
       onCompare: () => {
         request++;
@@ -3553,6 +3555,7 @@ export function renderComparison(
     }),
     diffRow
   );
+  afterRender?.(page);
   scaffold.headline.focus();
   void updateSelected();
 }
@@ -9136,7 +9139,8 @@ export function renderReady(
   view: ReadyView,
   relicId: string,
   usercontentOrigin: string,
-  deps: ViewerDeps
+  deps: ViewerDeps,
+  afterRender?: (page: HTMLElement) => void
 ): void {
   /** The attached taskbar, so a count arriving can replace just that row. */
   let bar: HTMLElement | undefined;
@@ -9301,11 +9305,13 @@ export function renderReady(
     const wrap = buildStageWrap(viewToShow, usercontentOrigin);
     const stage = (wrap.firstElementChild as HTMLElement) ?? wrap;
     disposeOtioViews(document.body);
-    shellRoot().replaceChildren(
+    const page = shellRoot();
+    page.replaceChildren(
       bar,
       buildRelicRow(wrap, thread?.element, thread?.resizer, thread?.tab)
     );
     thread?.attach(wrap);
+    afterRender?.(page);
     trackRenderState(stage, wrap, viewToShow.route);
   };
 
@@ -9393,7 +9399,8 @@ export function renderReady(
       deps,
       () => showSingle(activeView),
       left,
-      right
+      right,
+      afterRender
     );
   };
 
