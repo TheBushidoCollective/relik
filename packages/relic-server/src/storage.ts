@@ -64,6 +64,12 @@ export interface ObjectStorage {
   ): Promise<{ url: string; expiresAt: number }>;
   stat(relicId: string): Promise<ObjectStat | undefined>;
   delete(relicId: string): Promise<void>;
+  /**
+   * Sets the object's customTime, the date the lifecycle rule counts from
+   * (decision 7: a private ciphertext erases one day after its relic expires).
+   * Fails when the object does not exist yet, as the bucket does.
+   */
+  setCustomTime(relicId: string, customTime: number): Promise<void>;
   /** Streaming sha256 hex of the object at that key; undefined iff absent; throws on other errors. */
   digest(relicId: string): Promise<string | undefined>;
 }
@@ -76,6 +82,7 @@ export class MemoryStorage implements ObjectStorage {
   >();
   private readonly uploads = new Map<string, { maxBytes: number }>();
 
+  private readonly customTimes = new Map<string, number>();
   constructor(private readonly origin = 'https://storage.invalid') {}
 
   async signUpload(
@@ -115,6 +122,18 @@ export class MemoryStorage implements ObjectStorage {
 
   async read(relicId: string): Promise<Uint8Array | undefined> {
     return this.objects.get(relicId)?.bytes;
+  }
+
+  async setCustomTime(relicId: string, customTime: number): Promise<void> {
+    if (!this.objects.has(relicId)) {
+      throw new Error(`no object to set a customTime on: ${relicId}`);
+    }
+    this.customTimes.set(relicId, customTime);
+  }
+
+  /** The customTime an object carries, as the lifecycle rule will read it. */
+  customTimeOf(relicId: string): number | undefined {
+    return this.customTimes.get(relicId);
   }
 
   async delete(relicId: string): Promise<void> {

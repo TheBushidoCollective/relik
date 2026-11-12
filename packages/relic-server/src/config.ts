@@ -457,7 +457,15 @@ export function assertConfig(config: RelicConfig): void {
   // the reader's passkeys, which is a decryption capability (plan 2.20).
   const rpId = new URL(config.serviceOrigin).hostname;
   const usercontentHost = new URL(config.usercontentOrigin).hostname;
-  if (usercontentHost === rpId || usercontentHost.endsWith(`.${rpId}`)) {
+  // Loopback pairs (localhost, 127.0.0.1, ::1) are how every local setup runs:
+  // the service and usercontent differ only by port. Their frames have an
+  // opaque origin, so WebAuthn cannot run in them. Anything else is refused.
+  const loopback = new Set(['localhost', '127.0.0.1', '[::1]']);
+  const bothLoopback = loopback.has(rpId) && loopback.has(usercontentHost);
+  if (
+    !bothLoopback &&
+    (usercontentHost === rpId || usercontentHost.endsWith(`.${rpId}`))
+  ) {
     throw new Error(
       'the usercontent hostname must not equal the RP ID or sit beneath it'
     );
