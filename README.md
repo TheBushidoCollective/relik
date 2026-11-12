@@ -1,16 +1,18 @@
 # Relic
 
-Zero-knowledge publishing for agent output. Your coding agent encrypts a file
-on your machine, uploads only ciphertext, and hands you a link. The service
-never receives the key.
+Zero-knowledge publishing for agent output. Your coding agent encrypts a file on your machine, uploads only ciphertext, and hands you a link. For a public relic, the service never receives the key. Private relics are covered below.
+
+A public relic's link carries its key in the fragment:
 
 ```
 https://relik.link/{id}#{secret}
 ```
 
-The fragment is never sent to a server, so the operator holds ciphertext and
-nothing that opens it. A recipient's browser fetches the ciphertext, decrypts
-it locally, and renders it by type.
+For a public relic, the fragment is never sent to a server, so the operator holds ciphertext and nothing that opens it. A recipient's browser fetches the ciphertext, decrypts it locally, and renders it by type.
+
+## Private relics
+
+A private relic's link has no fragment: `https://relik.link/{id}`. Each version's content key is wrapped separately to each reader's identity, and each wrap opens only with that reader's passkey. The owner grants access per relic after typing the requester's fingerprint, which the requester reads aloud from their own device. Revoking a reader stops the service serving them at once, and the current content is republished under a fresh key. Private relics carry no title or cover, always expire, send only generic notification mail, and keep an access log. Their trade is stated plainly: the service holds requesters' and grantees' email addresses, their public keys, signed grant and revocation records, and the access log, so the operator learns who was let in and when. The operator still cannot read the content. Expired private relics are removed from live storage one day after expiry, but deleted copies stay restorable by the operator under the bucket's soft-delete retention, so this is not immediate permanent erasure. Private mode needs a passkey whose provider supports the WebAuthn PRF extension. The disclosure in [`docs/spec/service.md`](docs/spec/service.md) section 5 has the full statement.
 
 ## What is honest about the claim
 
@@ -20,12 +22,7 @@ JavaScript tomorrow. This is a statement about operator intent, not a property
 a recipient can verify. Anyone claiming otherwise for a service of this shape
 is overclaiming.
 
-The publish tool returns the full URL including the fragment, because handing
-you a usable link is the product. **The key therefore enters your model's
-context and your session transcript on every publish.** Zero-knowledge holds
-against the Relic operator. It does not hold against your model provider or
-whoever stores your transcripts, and that is structural rather than a defect
-on a schedule.
+For a public relic, the publish tool returns the full URL including the fragment, because handing you a usable link is the product. **The key therefore enters your model's context and your session transcript on every public publish.** Zero-knowledge holds against the Relic operator. It does not hold against your model provider or whoever stores your transcripts, and that is structural rather than a defect on a schedule. A private relic's publish output carries no key. Its device keys stay on this machine, in the Secure Enclave where it is available and in an owner-only file otherwise.
 
 The browser holds decrypted content in a browser-managed Blob. The browser
 may keep that plaintext in memory or temporary disk, and the operating system
@@ -94,10 +91,10 @@ telemetry on that statement being readable before anybody publishes.
 
 | Package | What it is |
 |---|---|
-| `@relic/format` | The wire format. RFC 8188 `aes128gcm` framing around an envelope that lives inside the encrypted stream. Imported by both ends so the encryptor and the decryptor cannot drift apart. |
-| `@relic/server` | The app server. Grants, mints, the abuse surface, delete-by-id, and the published disclosure. Never handles relic bytes on either leg. |
-| `relic-mcp` | The local MCP server, published to npm. Holds the key, encrypts in process, returns no script, and persists the key and publish token that republish needs. |
-| `@relic/viewer` | The PWA. Decrypts in the browser and renders by type under a taskbar. |
+| `@relic/format` | The wire format. RFC 8188 `aes128gcm` framing around an envelope that lives inside the encrypted stream. Imported by both ends so the encryptor and the decryptor cannot drift apart. The private-share statements and key wraps live in its `private` subpath. |
+| `@relic/server` | The app server. Grants, mints, the abuse surface, delete-by-id, private-share access checks and the access log, and the published disclosure. Never handles relic bytes on either leg. |
+| `relic-mcp` | The local MCP server, published to npm. Holds the key, encrypts in process, returns no script, and persists the key and publish token that republish needs. For private relics it also keeps a device key on this machine. |
+| `@relic/viewer` | The PWA. Decrypts in the browser and renders by type under a taskbar. Private relics open after a passkey check. |
 
 ## Running it
 

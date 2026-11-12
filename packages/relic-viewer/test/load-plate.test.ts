@@ -129,6 +129,7 @@ class ElementStub {
   }
 
   appendChild(child: ElementStub): ElementStub {
+    child.remove();
     child.parentElement = this;
     this.children.push(child);
     return child;
@@ -143,6 +144,7 @@ class ElementStub {
         textNode.parentElement = this;
         toAdd.push(textNode);
       } else {
+        k.remove();
         k.parentElement = this;
         toAdd.push(k);
       }
@@ -158,6 +160,7 @@ class ElementStub {
         textNode.parentElement = this;
         this.children.push(textNode);
       } else {
+        k.remove();
         k.parentElement = this;
         this.children.push(k);
       }
@@ -187,6 +190,7 @@ class ElementStub {
     newChild: ElementStub,
     refChild: ElementStub | null
   ): ElementStub {
+    newChild.remove();
     newChild.parentElement = this;
     if (!refChild) {
       this.children.push(newChild);

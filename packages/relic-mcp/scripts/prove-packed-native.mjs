@@ -294,6 +294,7 @@ async function assertPackagedNativeFiles(packageRoot) {
     join(packageRoot, 'native', 'platform-darwin.c'),
     join(packageRoot, 'native', 'platform-linux.c'),
     join(packageRoot, 'native', 'platform.h'),
+    join(packageRoot, 'native', 'secure-enclave', 'relic-se.swift'),
     join(packageRoot, 'native', 'secure-open.c'),
     join(packageRoot, 'native', 'secure-open.d.ts'),
     join(packageRoot, 'scripts', 'prove-packed-native.mjs'),
@@ -334,6 +335,20 @@ async function assertPackagedNativeFiles(packageRoot) {
     ) {
       throw new Error(`${target} build-info.json has the wrong native identity`);
     }
+    if (target.startsWith('darwin-')) {
+      await access(join(targetDirectory, 'relic-se'));
+      const helperMetadata = recordAt(
+        JSON.parse(await readFile(join(targetDirectory, 'relic-se-build-info.json'), 'utf8')),
+        `${target} relic-se-build-info.json`
+      );
+      if (
+        helperMetadata.target !== target ||
+        helperMetadata.artifact !== 'relic-se' ||
+        JSON.stringify(helperMetadata.minimumPlatform) !== JSON.stringify(expectedFloor)
+      ) {
+        throw new Error(`${target} relic-se-build-info.json has the wrong identity`);
+      }
+    }
   }
 
   const target = packagedTarget();
@@ -343,6 +358,22 @@ async function assertPackagedNativeFiles(packageRoot) {
   };
 }
 
+async function probeSecureEnclaveHelper(packageRoot) {
+  const target = packagedTarget();
+  if (!target.startsWith('darwin-')) return;
+  // GitHub macOS runners are VMs without a Secure Enclave. The probe therefore
+  // asserts only the shape of the answer, never its value.
+  const helper = join(packageRoot, 'prebuilds', target, 'relic-se');
+  const { stdout } = await run(helper, [], { input: '{"op":"available"}' });
+  const response = recordAt(JSON.parse(stdout), 'relic-se available response');
+  if (
+    Object.keys(response).join(',') !== 'available' ||
+    typeof response.available !== 'boolean'
+  ) {
+    throw new Error('relic-se available response is not {"available": boolean}');
+  }
+}
+
 function run(command, args, options = {}) {
   return new Promise((resolveRun, rejectRun) => {
     const child = spawn(command, args, {
@@ -350,6 +381,7 @@ function run(command, args, options = {}) {
       env: nodeOnlyEnvironment({ ...options.env, PWD: options.cwd ?? process.cwd() }),
       stdio: ['pipe', 'pipe', 'pipe'],
     });
+    child.stdin.end(options.input ?? '');
     const stdout = [];
     const stderr = [];
     child.stdout.on('data', (chunk) => stdout.push(chunk));
@@ -867,6 +899,7 @@ async function main() {
     const packageRoot = join(install, 'node_modules', 'relic-mcp');
     await assertPackagedLaunchContract(packageRoot);
     const { nativeBinary, nativeLoader } = await assertPackagedNativeFiles(packageRoot);
+    await probeSecureEnclaveHelper(packageRoot);
     await run(
       process.execPath,
       [join(packageRoot, 'scripts', 'prove-packed-native.mjs'), copiedTarball],

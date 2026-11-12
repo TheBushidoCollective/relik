@@ -344,6 +344,29 @@ describe('version comparison affordance', () => {
     expect(withClass(docBody, 'stage-code')).toHaveLength(1);
   });
 
+  test('a public relic renders the taskbar and stage as the body children, as main does', () => {
+    const current = view('code', 3);
+    renderReady(
+      current,
+      'aaaaaaaaaaaaaaaaaaaaaaaaaa',
+      'https://relik-usercontent.example',
+      dummyDeps()
+    );
+
+    const docBody = getBody();
+    // Main's public render replaces the body's children with the taskbar and
+    // the relic row. CSS and measurements assume both sit directly in the body.
+    const children = docBody.children.map((child) => child.tagName);
+    expect(children).toEqual(['HEADER', 'DIV']);
+    expect(docBody.children[0]?.className).toBe('bar');
+    expect(withClass(docBody, 'stage-code')).toHaveLength(1);
+    expect(
+      docBody.children.some(
+        (child) => child.attributes.get('id') === 'relic-root'
+      )
+    ).toBe(false);
+  });
+
   test('attaches the comment thread to the scrolling stage wrap, not inner stage', () => {
     const current = view('code', 3);
     renderReady(

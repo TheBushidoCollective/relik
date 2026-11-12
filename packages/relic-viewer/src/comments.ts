@@ -663,7 +663,9 @@ export async function openEntry(
 export async function loadThread(
   relicId: string,
   deps: ViewerDeps,
-  cipher: CommentCipher
+  cipher: CommentCipher,
+  cipherFor: (version: number | null) => Promise<CommentCipher> = async () =>
+    cipher
 ): Promise<ThreadState> {
   let response: Response;
   try {
@@ -696,7 +698,10 @@ export async function loadThread(
       continue;
     }
     try {
-      entries.push(await openEntry(record, cipher));
+      const recordCipher = await cipherFor(
+        typeof record.version === 'number' ? record.version : null
+      );
+      entries.push(await openEntry(record, recordCipher));
     } catch {
       // One sealed row that throws while opening must not hide the others.
       // A malformed anchor used to throw TypeError here and abort the load.

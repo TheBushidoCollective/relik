@@ -929,6 +929,9 @@ describe('the MCP surface', () => {
       'relic_resolve_comment',
       'relic_describe_client',
       'relic_read_decisions',
+      'relic_enroll_device',
+      'relic_confirm_device',
+      'relic_bind_owner',
     ]);
     for (const tool of tools) {
       expect(tool.name.startsWith('relic')).toBe(true);
@@ -1006,6 +1009,7 @@ describe('the MCP surface', () => {
       'title',
       'ttl_days',
       'force_new',
+      'private',
       'cover',
       'decisions',
     ]);

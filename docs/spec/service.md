@@ -35,6 +35,8 @@ Case 7 uses `413`, and the honest comparison is against `422`. `413` is defined 
 **`413` still wins, and not because client libraries route it.** They don't: 1.5 fixes publishing clients on `code`, so the status is never what a client branches on. The status is what everything *without* the problem document reads. A load balancer access log, a proxy, an uptime check, and an operator glancing at a dashboard all see a bare number, and `413` says "too big" to every one of them where `422` says only "something was wrong." Being wrong on the letter costs a spec objection; `422` costs legibility in every status-only surface, and 1.2 already names those as the place a distinction is hardest to keep. `422` would also be the natural status for case 12's malformed metadata, and handing one status to two structurally unrelated refusals reintroduces the exact conflation 1.2 pays a real price to accept once.
 
 **The app server never emits `401` or `403` on any public endpoint, with recorded exceptions: `403 invalid_publish_token` on republish (1.7), cover upload (1.10), and publisher share (1.11); the reader share endpoint's `401 sign_in_required` and `403 invalid_share_proof` (1.11); the comment-write endpoints' `401 invalid_session` and `403 comment_forbidden` (1.9); the decision endpoints' `401 sign_in_required`, `403 decision_requires_reader`, and `403 invalid_share_proof` (1.14); the passkey enrollment endpoints' `401 sign_in_required`, `401 passkey_fresh_link_required`, and `403 passkey_verification_failed` (1.15); the passkey sign-in endpoint's `401 passkey_sign_in_failed` (1.15); and the typed sign-in code endpoint's `401 sign_in_code_failed` (1.16).** Claude Code "marks a remote server as needing authentication when the server responds with `401 Unauthorized` or `403 Forbidden`" ([Claude Code MCP docs](https://code.claude.com/docs/en/mcp)), which would push publishers at an authorization server that doesn't exist. `docs/preconditions.md` locks this for rate limiting; this document widens it to the whole public surface, because a rule scoped to one condition gets violated by the next author who adds a different one. The exceptions are safe because the app server is not an MCP transport and never becomes one: the publishing client is a local stdio binary, and what it relays to the model is the problem document, never a bare status, so the Claude Code behavior never sees these statuses on a connection it reads. A wrong bearer credential is also the textbook meaning of `403`, and dressing it up to protect a rule about a different surface would misreport the one failure a republishing publisher, an authorized reader, or a commenter can genuinely hit. The exceptions stop at those endpoints and are not a license for the next endpoint to return `403` for load shedding. The operator delete and admin surface (section 4) sits under the already-reserved `api` prefix (`format.md` 1.5), so it needs no append to that table and no comparison against issued IDs. It's never reached by any client in the product, and it returns `401` and `403` normally.
+**Private-share exceptions.** Section 10 adds to the recorded exceptions above. Its routes answer `401` with `sign_in_required` or `passkey_fresh_link_required`, and `403` with `owner_required`, `private_access_denied` or `device_revoked`. Each is a refusal of an identified caller, a reader or owner holding a private-share identity, which is the case the exception exists for. The exceptions stop at those routes.
+
 **1.10 The cover upload and serving endpoints.**
 Cover upload: `POST /api/relics/{id}/cover`. Authorized by the bearer `publish_token` in the request body. Request body is JSON: `{ publish_token, version, kind, type, data }`. Refusals: `503 service_paused` if the kill switch is engaged; `429 publish_rate_limited` if rate limited; `400 invalid_relic_id` if the relic id fails validation; `410 relic_removed` if tombstoned; `404 relic_not_found` if no row exists; `400 invalid_cover` if the body exceeds 720,000 bytes, JSON parsing fails, base64 decoding fails, or `validateCoverRaster` fails (dimensions not 1200x630, size over 524,288 bytes, invalid format, non-standard chunks, or trailing data); `403 invalid_publish_token` if the token hash fails constant-time comparison; `409 stale_version` if the version does not equal `row.version`. Stores the raster at `m/cover/{id}/{sha256}`.
 Cover serving: `GET|HEAD /{id}/cover/{sha256}.{png|jpg}`. Content-addressed by the SHA-256 of the validated raster bytes. If the relic is tombstoned, expired, unknown, `row.cover` is missing, `cover.version` does not match `row.version`, the hash or extension does not match, or store reading fails, returns `404` with `cache-control: no-store`. On success, returns `200` with headers: `content-type: <cover.type>`, `content-length: <n>`, `cache-control: public, max-age=86400`, `x-content-type-options: nosniff`, `referrer-policy: no-referrer`, `x-robots-tag: noindex`. The cover route never mints download URLs, increments no open counters, and does not consume the download cap.
@@ -55,6 +57,8 @@ A relic whose per-object download cap is spent is a genuine collision: it isn't 
 
 **The split is three way, not two.** `404 relic_not_found` is an ID the server never issued. `410 relic_expired` is one that lived and ran out, which only a relic whose publisher set a lifetime can ever be; one published without a lifetime never expires and never returns it. Case 6's `410 relic_never_published` sits between them: issued, granted, never filled. That middle state isn't a choice made here. It exists because `format.md` 1.4 refuses to overwrite, which is what makes a spent-but-empty ID permanent rather than pending, and a pending one would not deserve a terminal status at all (1.6).
 
+**Private relics.** A private relic always has a lifetime (section 3), so it can answer `410 relic_expired` as a public relic with a lifetime does. The sentence above about relics without a lifetime describes public relics only. Once the bucket has erased an expired private relic's objects (section 3.1), its row is gone too, and it answers `404 relic_not_found`. That is accepted for private relics, because their IDs are unguessable (section 1.2).
+
 Against a short ID this would be an enumeration oracle, letting a stranger walk the space and harvest a map of live IDs plus the operator-conceded metadata. That design was rejected in `format.md` and this document doesn't reopen it. What distinguishing buys is the support stream the frame named when it ruled out burn-after-reading: "the link is dead" becomes an answerable question instead of a mystery. The honest limit is that the server never sees the fragment, so it can't tell a real recipient from a scanner, and the informative `410` is served to both. That costs nothing, because the scanner already had the URL.
 
 ### 1.4 Takedown disclosure
@@ -64,6 +68,8 @@ Against a short ID this would be an enumeration oracle, letting a stranger walk 
 Disclosing the fact is non-optional: a publisher removed in error has no reason to appeal a relic they believe simply expired, so concealing removal deletes the appeal path. Telling an abuser their campaign was caught costs nothing, because they learn it by clicking their own link within seconds.
 
 Withholding the reason is the sharper half. A system that normally names the reason cannot go quiet on one takedown without the silence itself being the disclosure, which is exactly the position a legal order can put the operator in. A uniform code is the only shape that stays safe under an order forbidding confirmation. It also keeps the operator from narrating process to the world. The publisher who wants the reason gets it from a human at `/abuse`, where the operator can answer or decline case by case.
+
+**Owner deletion is not a takedown.** An owner's hard delete (section 4) writes an id-only tombstone of the form `{kind: 'owner', id, deletedAt}`. It records no reason, no publishing IP and no ciphertext hash. Whether a reader of an owner-deleted ID gets `410 relic_removed` or another code is not fixed by the plan, and section 10 lists it as an open item.
 
 ### 1.5 The machine-readable shape
 
@@ -151,6 +157,8 @@ Comment creation, edits, and resolution changes have no comment-write rate limit
 
 **A write is attributed, not authorized.** Two paths, because an agent has no mailbox and the feature is worth little if the publishing side cannot answer back. A valid `publish_token` stores the author as the literal `publisher`. A valid session cookie stores the verified email address. Either missing or wrong is `401 invalid_session` rather than `403`, except on delete of somebody else's comment, which is `403 comment_forbidden`: the caller is identified and is forbidden, which is the textbook split. Anybody holding the link plus any real mailbox can comment. A verified address is not an access control, and `frame.md`'s identity entry states that outright so nobody reads it as one.
 
+**Private relics.** The unauthenticated list and the attribution rule above are for public relics. On a private relic, the list requires a session with access and returns only comments on readable versions. A write is authorized as well as attributed: it needs a version the caller can read, or the publish token. Edit and delete also check access. Section 10 has the rules.
+
 **The patch carries two fields with different owners.** `ciphertext` replaces the sealed body and is authorized the same way delete is: the comment's author, by the strict split already stated (a verified session whose address equals the stored author, or the relic's publish token when the author is the literal `publisher`). `resolved` sets or clears the resolution and is authorized for the comment's author or the publish token, because a publisher settling feedback on their own relic is the point the state exists for. A mismatched body ciphertext is refused as `invalid_comment`, a mismatched author as `403`, and a body with neither field present as `400 nothing_to_change` rather than a silent no-op.
 
 **`POST /api/auth/request` always answers `202`.** A different answer for a known and an unknown address would turn the endpoint into an address oracle. Mail is sent only when the address looks like one; garbage is swallowed. The endpoint always sets an HttpOnly, Secure, SameSite=Strict cookie binding a typed code to this browser (`relic_sign_in_request`, Path=/api/auth/code), for valid addresses, garbage, a missing email, no mailer, and a provider refusal alike (a 429 sets no cookie). The plaintext address reaches the mailer, which is not avoidable: mail cannot be sent to a hash. `frame.md` names this as one of identity's prices.
@@ -193,6 +201,8 @@ Success response: status `200` with JSON:
 Problem details extension fields: `share_limit`, `shared_count`, and `share_max_per_call`.
 
 Storage: `ShareRow` records `{ relicId, address, addedAt, sharedBy }` where `sharedBy` is `'publisher' | 'reader'`. The sharer's address is not stored on the row; attribution of who shared is not kept beyond the in-memory rate limiter. A re-share of an existing address keeps the first row. No endpoint ever returns the share list or the opt-out list.
+
+**Private relics.** For a private relic the reader path takes a session with access to the relic, and no `share_proof`. Section 10 has the rules.
 
 ### 1.12 The unsubscribe link
 
@@ -262,9 +272,13 @@ Decisions exist. The endpoints are `POST /api/relics/{id}/decisions/options`, `P
 
 **The list endpoint.** `POST /api/relics/{id}/decisions/list` takes `{ share_proof, version?: number | "*" }`. It is unauthenticated (no session cookie required), not gated by the kill switch, allowed on expired relics, and never touches `mintsUsed`.
 
+**Private relics.** The key-proof rule above is for public relics. On a private relic, the access check replaces `share_proof` on the options, record and list routes. The list also accepts the publish token. The options and record routes still refuse a publish token, so a decision on a private version is always a reader's. Section 10 has the rules.
+
 ### 1.15 The passkey refusals
 
 Passkey registration, authentication, and sign-in exist for decision confirmation and returning-reader sign-in without email. The endpoints are `POST /api/auth/passkeys/options`, `POST /api/auth/passkeys`, `POST /api/auth/passkeys/sign-in/options`, and `POST /api/auth/passkeys/sign-in`. Section 9 owns the surface; this subsection owns the codes.
+
+Identity setup for private shares uses these endpoints with the `prf` extension and the replacement flag, as section 9.3 and section 10 describe.
 
 | Case | Status | `code` |
 |---|---|---|
@@ -310,9 +324,56 @@ A sign-in email carries a six-digit code alongside the single-use link. A reader
 8. Conditional link consumption: atomically consumes the linked magic link via `consumeAuthLink(row.linkTokenHash)` and deletes the code row. If the link was already consumed or expired, returns `401 sign_in_code_failed`.
 9. Success: returns `200` with `{"email": link.email}`, sets the reader session cookie (`via: 'code'`), sets the passkey offer marker cookie (`relic_passkey_offer=1`), and clears the `relic_sign_in_request` cookie.
 
+### 1.17 The private-share refusals
+
+The private-share routes in section 10, and the checks behind them, return the codes below. Each title is the problem title the server sends, and it does not change between occurrences (1.5). These codes sit outside the twelve cases in 1.1. Their status and title come from the plan's problem-code table, and each route's refusals are listed with the route in section 10.
+
+| Code | Status | Title |
+|---|---|---|
+| `private_access_denied` | 403 | You do not have access to this relic |
+| `private_policy_violation` | 400 | Private relics do not allow that |
+| `identity_required` | 409 | Set up a private-share key first |
+| `identity_exists` | 409 | This address already has a private-share key |
+| `invalid_identity` | 400 | Invalid private-share key payload |
+| `invalid_statement` | 400 | Invalid signed statement |
+| `private_rate_limited` | 429 | Too many private-share requests |
+| `owner_required` | 403 | Only the relic's owner can do that |
+| `owner_exists` | 409 | This relic already has an owner |
+| `fingerprint_mismatch` | 409 | The fingerprint does not match |
+| `grant_stale_version` | 409 | A newer version exists |
+| `recipients_changed` | 409 | Who can read this relic changed |
+| `version_conflict` | 409 | The relic changed while this was in progress |
+| `private_seal_required` | 409 | This version needs its seal |
+| `invalid_seal` | 400 | Invalid seal |
+| `seal_digest_mismatch` | 409 | The seal does not match the stored version |
+| `invalid_wrap` | 400 | Invalid wrapped key |
+| `device_not_found` | 404 | No such device |
+| `device_revoked` | 403 | This device was revoked |
+| `invalid_device` | 400 | Invalid device payload |
+| `device_enrollment_expired` | 410 | Device enrollment expired |
+| `version_deleted` | 410 | This version was deleted |
+| `cannot_delete_current_version` | 409 | Delete the whole relic to remove its current version |
+| `request_not_found` | 404 | No such access request |
+| `request_limit_reached` | 409 | This relic has too many pending requests |
+| `invalid_statement` with `statement_check: kem_key` | 400 | The KEM key is already held by another identity or device, so this statement cannot create or claim it |
+| `invalid_device` with `device_check: kem_key` | 400 | The KEM key is already held by another identity or device |
+| `invalid_device` with `device_check: replay` | 400 | A device request or owner-bind nonce was already spent |
+| `invalid_device` with `device_check: exists` | 400 | A device with this id is already certified |
+
+Request status is one of `pending`, `granted` or `declined`. Each refusal above reuses an existing code; the extension says which check failed, so no new problem code exists for them.
+
+The following members join the problem document's extensions (1.5):
+
+- **`policy_check`** on `private_policy_violation`: one of `title`, `cover`, `ttl`, `owner_email`, `share_verifier`, `share_proof`, or `version`.
+- **`identity_check`**, **`statement_check`**, **`seal_check`** and **`device_check`** name the check that failed on the identity, statement, seal and device refusals. The plan names these fields without fixing their values; section 10 lists that as an open item.
+- **`access_epoch`** and **`owner_epoch`** carry the epoch values a refusal concerns. The plan names the fields without listing the codes that carry them; section 10 lists that as an open item.
+- **`current_version`** on `grant_stale_version`, which the grant refuses with (section 10).
+
 ## 2. Mint placement, the mint response, and counting
 
 **The mint is never a side effect of serving `/{id}`.** That path returns a static shell with no mint, no counter increment, and no cap consumption. The mint is a distinct request the shell makes.
+
+**Private relics.** Mint is gated for a private relic. The request must carry a session whose identity holds a wrap for the requested version, or the publish token. The version must be sealed and not deleted (section 10). Public mint is unchanged.
 
 This single rule keeps non-executing fetchers off both the open counter and the download cap, and it costs nothing. Slack's fetcher is `Slackbot-LinkExpanding 1.0` and Slack states plainly, "We do not currently honor robots.txt files" ([Slack](https://api.slack.com/robots)). On Safe Links the evidence is weaker and gets labeled as such. A practitioner debugging broken magic links reported "a preceding HTTP HEAD request with a User-Agent of `Go-http-client/1.1`, which we believe to be the safelinks service" ([FusionAuth #629](https://github.com/FusionAuth/fusionauth-issues/issues/629)), which [Authelia #2994](https://github.com/authelia/authelia/issues/2994) later relays when the same breakage turned up there. That's a belief stated as a belief, about behavior the Safe Links documentation cited in 2.3 never describes, so the rule above rests on Slack alone and takes the Safe Links report as corroboration rather than a load. None of those fetchers runs the shell's script. The honest limit: a scanner that detonates with a real browser does run it, and the rule doesn't stop that one.
 
@@ -359,7 +420,9 @@ So a cap in single digits, low enough to bound an abuser meaningfully, breaks or
 
 ## 3. Expiry and time
 
-**Expiry is the publisher's to set, and by default there is none.** A relic is kept until deleted. A publisher may set a lifetime in the grant request (`ttl_days`, an integer 1 to 3650); anything else refuses with `invalid_publish_metadata` (1.1 case 12). A relic with no lifetime never expires: the mint path performs no expiry refusal, and `relic_expires_at` is `null` everywhere. This reverses the original rule that a TTL was mandatory and operator-set, and the cost is counted in the preconditions: no storage-side reaping exists, an expired relic's bytes outlive its refusal until explicitly deleted, and the ceiling rests on the download cap and the kill switch rather than on expiry.
+**Expiry is the publisher's to set, and for a public relic by default there is none.** A public relic is kept until deleted. A publisher may set a lifetime for a public relic in the grant request (`ttl_days`, an integer 1 to 3650); anything else refuses with `invalid_publish_metadata` (1.1 case 12). A public relic with no lifetime never expires: the mint path performs no expiry refusal, and `relic_expires_at` is `null` for it. This reverses the original rule that a TTL was mandatory and operator-set, and the cost is counted in the preconditions: no storage-side reaping exists, an expired public relic's bytes outlive its refusal until explicitly deleted, and the ceiling rests on the download cap and the kill switch rather than on expiry.
+
+**Private relics always expire.** The default lifetime is `privateDefaultTtlDays`, 30 days, applied when a private grant omits `ttl_days`. The maximum is `privateMaxTtlDays`, 365 days. A private grant above the maximum refuses with `400 private_policy_violation` and `policy_check: 'ttl'`. Read-time expiry is unchanged, and an expired private relic stops serving at its expiry, as a public relic with a lifetime does.
 
 **A download that begins before expiry completes after it.** The app server isn't in the data path and structurally cannot stop an in-flight transfer. This and the two rules below apply only on a relic with a publisher-set lifetime.
 
@@ -367,15 +430,19 @@ So a cap in single digits, low enough to bound an abuser meaningfully, breaks or
 
 **The publishing client's clock is never trusted.** Every timestamp feeding a publisher-set lifetime, the telemetry window, and the retention window is the app server's own, NTP-disciplined. The honest limit is that a skewed server mis-enforces a lifetime silently, and the app can't raise an alarm about its own clock.
 
-### 3.1 No lifecycle rule, and therefore no gap
+### 3.1 Lifecycle, expiry, and erasure
 
 The bucket's storage-side Delete rule is gone. A bucket lifecycle rule acts by age across everything it matches, so it cannot express a per-relic lifetime, and keeping it would have deleted ciphertext for relics the publisher asked to keep. Expiry is enforced only by the application, at mint, exact to the second, and there is no longer a window where the application refuses while storage is still deciding.
 
+For a private relic, decision 7 adds object rules keyed to `customTime` (`storage.md` section 7.2). The rules remove the live objects one day after the relic's expiry, so the application still refuses at mint, exact to the second, and the bucket removes the bytes later. The bucket's soft-delete retention still holds deleted copies (section 3.2).
+
 Three consequences, stated so nobody "fixes" them by restoring a rule or by serving from an expired object's continued existence:
 
-1. An expired relic's bytes stay in the bucket as live, billable storage until something explicitly deletes them. The refusal stops serving; it reclaims nothing. Soft-deleted objects then "incur storage charges until the soft-deleted objects are permanently deleted after the retention duration is over" ([GCS](https://docs.cloud.google.com/storage/docs/soft-delete)).
+1. For a public relic with a lifetime, expired bytes stay in the bucket as live, billable storage until something explicitly deletes them. The refusal stops serving; it reclaims nothing. Soft-deleted objects then "incur storage charges until the soft-deleted objects are permanently deleted after the retention duration is over" ([GCS](https://docs.cloud.google.com/storage/docs/soft-delete)).
 2. **The ciphertext-hash scan covers expired-but-undeleted objects.** They are indistinguishable from live objects in a bucket listing, and an expired relic is exactly the one an abuse report arrives about after the fact, so expiry is never a reason to skip one.
 3. Any published byte-lifetime number counts the lifetime, the indefinite stay until deletion, and the soft-delete window after it. For a relic with no lifetime there is no number to publish, only "kept until deleted."
+
+**Private relics.** At expiry the refusal stops serving. The bucket then removes the live objects one day after expiry (`storage.md` section 7.2), which is the erasure in decision 7. Deleted copies are held as soft-deleted bytes for the soft-delete retention (section 3.2), so the operator can still restore the ciphertext during that window. This is a known limit, not immediate permanent erasure.
 
 ### 3.2 Deleted doesn't mean erased
 
@@ -387,11 +454,13 @@ Three consequences, stated so nobody "fixes" them by restoring a rule or by serv
 
 ## 4. Delete-by-ID and the abuse surface
 
-**The delete endpoint carries an operator credential, and that needs saying out loud.** It lives under the reserved `api` prefix (`format.md` 1.5), with the bulk form and every other operator-facing route, so the whole authenticated surface sits on a path that can never collide with an issued ID. It's the only authenticated surface in a product whose identity non-goal admits exactly one exception, a verified address for a commenter, and grants an operator nothing. The non-goal bounds the product surface, not the operator's tooling. Read the other way it produces a shared token in an environment variable and no audit trail, built under exactly the time pressure the preconditions describe: Google requires you "promptly review and address any alerts, and remove content where appropriate" ([Google](https://docs.cloud.google.com/docs/security/respond-to-abuse-misuse)), and "if you do not respond to the warning in a timely manner your project may be suspended" ([Google Cloud](https://support.google.com/cloud/answer/7002354)). The credential is per-operator, never shared, and every call writes an audit record naming the operator, the relic ID, the reason class, the timestamp, and the report reference.
+**The delete endpoint carries an operator credential, and that needs saying out loud.** It lives under the reserved `api` prefix (`format.md` 1.5), with the bulk form and every other operator-facing route, so the whole authenticated surface sits on a path that can never collide with an issued ID. It's the only operator-authenticated surface in the product. Reader and owner identities authorize access to private relics only (section 10), and they grant an operator nothing. The non-goal bounds the product surface, not the operator's tooling. Read the other way it produces a shared token in an environment variable and no audit trail, built under exactly the time pressure the preconditions describe: Google requires you "promptly review and address any alerts, and remove content where appropriate" ([Google](https://docs.cloud.google.com/docs/security/respond-to-abuse-misuse)), and "if you do not respond to the warning in a timely manner your project may be suspended" ([Google Cloud](https://support.google.com/cloud/answer/7002354)). The credential is per-operator, never shared, and every call writes an audit record naming the operator, the relic ID, the reason class, the timestamp, and the report reference.
 
-**Delete means delete every version's object and tombstone the row. The row is never removed.** The preconditions require the object to stop serving *and* upload IP plus timestamp to survive for law enforcement, and deleting both destroys the record the abuse process depends on. With versions, "the object" is each stored byte range the id names, v1 through current (`format.md` 3.12): a delete that left an old version live would leave the abuser's payload servable, and a delete that only tombstoned without removing the bytes would leave them mintable the moment anyone relented. The tombstone is also what makes any `410` possible: without it, every removed relic degrades to `404` and section 1 collapses. And it is what makes the takedown terminal rather than declarative: a tombstoned id refuses every future version with `relic_removed`, whatever publish token is presented (1.7), which is the load-bearing half of delete-by-ID now that republish exists. It retains the normalized relic ID, upload IP, publish timestamp, publishing client name, renderer class, ciphertext hash, delete timestamp, operator identity, private reason class, and report reference, and it lives for the published retention window. The ciphertext hash is a single field filled with the newest version that has bytes; every version's object is hashed and blocklisted during the delete itself, on the rule the next paragraph states, because a republished relic can carry a different payload per version and the tombstone's single field would otherwise lose the ones already caught.
+**Operator delete means delete every version's object and tombstone the row. The row is never removed by an operator delete.** The preconditions require the object to stop serving *and* upload IP plus timestamp to survive for law enforcement, and deleting both destroys the record the abuse process depends on. With versions, "the object" is each stored byte range the id names, v1 through current (`format.md` 3.12): a delete that left an old version live would leave the abuser's payload servable, and a delete that only tombstoned without removing the bytes would leave them mintable the moment anyone relented. The tombstone is also what makes any `410` possible: without it, every removed relic degrades to `404` and section 1 collapses. And it is what makes the takedown terminal rather than declarative: a tombstoned id refuses every future version with `relic_removed`, whatever publish token is presented (1.7), which is the load-bearing half of delete-by-ID now that republish exists. It retains the normalized relic ID, upload IP, publish timestamp, publishing client name, renderer class, ciphertext hash, delete timestamp, operator identity, private reason class, and report reference, and it lives for the published retention window. The ciphertext hash is a single field filled with the newest version that has bytes; every version's object is hashed and blocklisted during the delete itself, on the rule the next paragraph states, because a republished relic can carry a different payload per version and the tombstone's single field would otherwise lose the ones already caught.
 
 **Delete takes the thread, shared addresses, stop records, decisions, and the commenter index with the relic.** Comments discuss content the operator was just obliged to remove, and a readable discussion of a removed payload is the same disclosure by a longer route. Deleting a relic removes comments, shared addresses, opt-out stop records, decisions (`deleteDecisionsForRelic`), the per-relic commenter index and backfill completion marker, and the `author_relic` index entry, so that a deleted relic's record of who commented, decided, or was shared with does not outlive it. The response names `comments_deleted`, `shares_deleted`, `opt_outs_deleted`, and `decisions_deleted` so a silent cascade is not the kind of deletion nobody can audit later. There is no per-comment operator delete; section 1.9 records why.
+
+**Private documents go with an operator delete.** The operator delete also removes the private-share documents of the relic: its wraps, seals, grants, access requests and owner-index entries (plan 4.7). The idempotent re-delete described above resumes these sweeps too.
 
 **Hash before delete.** A delete that captures no hash permanently loses the ability to blocklist that payload, and it's by then the payload you most want blocklisted. If the scanner already stored a hash, the delete path reads it. If the report beat the scan, the delete path reads the object once, computes the hash, then deletes. **A delete with no hash is refused.** The CRC32C Cloud Storage records is 32 bits and unfit for this, per the preconditions, so this is a real hash over the bytes, and reading them is the operator handling inert ciphertext through the control plane rather than entering the serving data path.
 
@@ -399,6 +468,10 @@ Three consequences, stated so nobody "fixes" them by restoring a rule or by serv
 
 **Delete is idempotent.** A second delete on a tombstoned ID succeeds and returns the existing tombstone. It never returns `404`. On the delete endpoint, `404` means one thing only: no such relic ID was ever issued. Under a project-level suspension clock, "already handled" and "wrong ID" have to be distinguishable at a glance. Deleting an already-tombstoned ID idempotently resumes every sweep (ciphertext, covers, comments, author index, shares, opt-outs, decisions) to completion and returns the counts of removed items.
 **Bulk delete by publishing IP and time window** ships with the single-ID form. Real notices are about campaigns, and without it the operator hand-loops an endpoint never designed for it. The operator credential is exempt from the public per-IP limiters, since those would otherwise throttle the operator's own takedown tooling, and that exemption is precisely why the credential is per-operator and audited.
+
+**Owner hard delete.** `POST /api/relics/{id}/delete` is the owner's own removal and is separate from the operator delete above. It takes an owner session and the body `{attestation}`, where the signed statement is `delete` with `versions` set to `all` or to an ascending list of unique version numbers. `all` removes the whole relic: the row, every private document (wraps, seals, grants, access requests and owner-index entries), the relic's comments and decisions, and every version's object. It then writes an id-only `OwnerTombstone` of the form `{kind: 'owner', id, deletedAt}`, with no publishing IP, no ciphertext hash and no reason. It is not an abuse takedown, and the plan adds no blocklist step to it. A list that includes the current version is refused with `cannot_delete_current_version`. The plan does not state the full effect of a list beyond its response field `relic_deleted`, which section 10 lists as an open item. The success response is `{deleted_versions, relic_deleted}`. The owner's access log is kept for its retention (section 10.6).
+
+Live objects are removed at once when the owner deletes. The deleted ciphertext, wrap records and metadata stay soft-deleted under the bucket's soft-delete retention (section 3.2 and `storage.md` section 7.1), so the operator can restore them during that window. The removal is not immediate permanent erasure.
 
 ### 4.1 The abuse form
 
@@ -419,14 +492,16 @@ Required fields: the relic ID (accepting a full URL and stripping the origin and
 
 It lives at a stable URL, is linked from every relic page beside `/abuse`, and its URL is surfaced by the publish tool before a first publish (`spec-publish-contract` owns how). Required contents:
 
+Items 1 to 10 describe public relics, whose key is in the URL fragment. The paragraph after item 10 is the statement for private relics and governs them.
+
 1. **The telemetry trade.** The coarse renderer class, named as its eleven values (`markdown`, `code`, `html`, `jsx`, `image`, `pdf`, `model`, `media`, `archive`, `binary`, `otio`); the publishing client name; IP-correlated open activity; the optional publisher-declared plaintext title (defaulting to the source filename) stored on the relic row and served in link unfurls and the viewer document `<title>`. The class was already in the telemetry enumerations collected for the operator. What changed is its audience: it is now public metadata, served on link unfurl cards (`og:description`, `twitter:description`, and the fallback `<title>`) to anyone who fetches the link, rather than known to the operator alone. Stated as what it moves the operator and the recipient from and to: from knowing nothing to knowing what kind of thing was published, its public title when declared, and roughly how often it was fetched. Metadata, never content. The statement must note that removal (tombstone) and expiry stop serving both the title and the class, reverting the unfurl card to the constant fallback card (`A relic` with description `An encrypted file. It opens in your browser, and only someone holding the whole link, including the part after the #, can open it.`). It must also note that declining a title does not hide the class: the title is declinable, but the class is derived from the bytes and is not declinable.
 2. **The transcript disclosure.** The publish tool must return the full URL including the fragment, because relaying a usable link is the product, so **the key enters the model's context and the session transcript on every publish**. Zero-knowledge holds against the Relic operator. It does not hold against the model provider or the transcript store, and this is structurally unfixable rather than a defect to schedule.
 3. **The served-JavaScript caveat**, as the frame already locks it: the decrypting code is served by the party the claim is made against, so it's a statement about operator intent rather than a property a recipient can verify.
 4. **The correct form of the fragment claim.** "The key never reaches a server" is wrong unqualified. The honest form is **"your browser never sends the key to Relic's servers."**
 5. **Retention, per sink, with its own window each.** Application records, edge and load balancer logs, GCS access logs where enabled, the intake mailbox or ticket queue, and soft-deleted object bytes. Listed separately rather than as one number, because a single figure is the claim that goes false first. It states that deleted does not mean erased, per 3.2, and that a relic's ciphertext is kept until deleted, because nothing reaps it by age.
 6. **The network capability of rendered content, and its removal.** Content that renders on the usercontent origin, HTML and JSX, still executes in the recipient's browser, but the frame is served a policy permitting no remote source of any kind, so it cannot fetch, cannot load an external image or font, cannot open a WebSocket or an EventSource, and cannot beacon. The disclosure states this as an enforced property with its cost attached, because the cost is what a publisher actually meets: a page expecting a CDN stylesheet, a CDN script, a remote font, or a remote image renders without them, and a publisher who needs those must inline them. It also states the limit of the claim, since the isolation is about network and cross-origin reach and not about safety: the code still runs locally, can consume CPU, and can render whatever its author wrote. Popups are removed by the sandbox attribute rather than by the policy, because a popup opens a top-level context the frame's policy does not govern. The origin boundary continues to keep such content away from the decryption key, which never leaves the link and the recipient's browser. The viewer page carries a compact marker linked to this statement (`spec-viewer`), rather than reproducing the statement before the content renders.
-7. **Version history. Anyone holding a relic's link can fetch every version it has ever held, so republishing does not withdraw earlier content.** The same fragment key decrypts every version in the recipient's browser. Republishing is not a redaction mechanism.
-8. **Comments, sharing, and notifications. Anyone holding a relic's link can list the thread. Every comment body is ciphertext derived from the fragment key (`format.md` 3.13), so the operator cannot read it.** A comment is attributed to a verified email address or to the publisher. Asking for a sign-in email delivers the plaintext address to the mailer, which is not avoidable and is one of identity's prices. A verified address is not an access control: anybody with the link plus any real mailbox can comment. When someone comments or a new version is published, Relic emails everyone following the relic: every verified commenter, every shared address, and the owner address, minus the author of the comment and anyone with a stop record. A publisher comment emails everyone except the owner address. Comment notification emails name the commenter (their verified address or 'The publisher'), disclosing the commenter's address to everyone on the list, including third-party shared addresses that never interacted with the service. Outbound notifications name the relic's plaintext title and who commented, but never quote the ciphertext comment body, never include the fragment key, and link to the keyless relic URL. Outbound notifications and change notices share rate limits: at most one email per recipient per relic per 10 minutes, and all-relics outbound volume is capped by a global fuse (`config.changeNoticeRateLimit`). Every notification email carries an unauthenticated stop link and RFC 8058 one-click unsubscribe headers stopping all emails about that relic for that address. Shared addresses are stored in the clear, opt-outs are stored as SHA-256 hashes, and the unsubscribe key is stored permanently. Failure logs record address hashes and redact recipient addresses. `/policy` renders this item.
+7. **Version history. For a public relic, anyone holding the link can fetch every version it has ever held, and the same fragment key decrypts every version in the recipient's browser, so republishing does not withdraw earlier content and is not a redaction mechanism.** For a private relic, each version has its own key, a reader opens only the versions that were granted to them, and revocation stops serving them at once. A reader keeps anything already opened.
+8. **Comments, sharing, and notifications. For a public relic, anyone holding the link can list the thread. Every comment body is ciphertext derived from the fragment key (`format.md` 3.13), so the operator cannot read it.** For a private relic, the thread is listed only to a session with access to that version, and each comment is ciphertext under its version's comment key (`format.md` 3.13). A comment is attributed to a verified email address or to the publisher. Asking for a sign-in email delivers the plaintext address to the mailer, which is not avoidable and is one of identity's prices. For a public relic, a verified address is not an access control: anybody with the link plus any real mailbox can comment. When someone comments or a new version is published, Relic emails everyone following the relic: every verified commenter, every shared address, and the owner address, minus the author of the comment and anyone with a stop record. A publisher comment emails everyone except the owner address. Comment notification emails name the commenter (their verified address or 'The publisher'), disclosing the commenter's address to everyone on the list, including third-party shared addresses that never interacted with the service. For a public relic, outbound notifications name the relic's plaintext title and who commented, but never quote the ciphertext comment body, never include the fragment key, and link to the keyless relic URL. For a private relic, notifications are generic (section 8) and name neither the title nor the commenter. Outbound notifications and change notices share rate limits: at most one email per recipient per relic per 10 minutes, and all-relics outbound volume is capped by a global fuse (`config.changeNoticeRateLimit`). Every notification email carries an unauthenticated stop link and RFC 8058 one-click unsubscribe headers stopping all emails about that relic for that address. Shared addresses are stored in the clear, opt-outs are stored as SHA-256 hashes, and the unsubscribe key is stored permanently. Failure logs record address hashes and redact recipient addresses. `/policy` renders this item.
 9. **The per-relic cover image trade.** At publish time, the client renders a 1200x630 image of the first screen on the publisher's machine and uploads it via `POST /api/relics/{id}/cover`. This image is stored server-side in the clear and served to anyone fetching the link without the key, including chat platforms, link unfurl crawlers, and their caches. `cover: false` declines. Republishing with `cover: false` clears the stored cover. Takedown deletes it. When no cover is uploaded, or when the relic is expired or tombstoned, the fallback card `/assets/card.v1.png` is served. For OpenTimelineIO timeline relics (`otio`), unencrypted first-screen media rendering is skipped by default, and link unfurls use a generic card carrying the publisher-declared title and format label to prevent referenced media frames and track metadata from leaking into unencrypted preview cards.
 10. **The failed-open signal.** The viewer checks the key against the first record before downloading the rest and cancels the download when it fails (`viewer.md` §6.4), so the storage provider and anyone watching the connection can see an open that stopped after its first block, which usually means a wrong key. The statement says so in one sentence. The key is never sent and cannot be derived from the stop. For classes that render, the operator could already infer a failed open, because the comment-thread request follows only a successful decrypt. For archive and binary relics the signal is new.
 
@@ -435,11 +510,17 @@ It lives at a stable URL, is linked from every relic page beside `/abuse`, and i
 > **Decisions.** When a signed-in reader approves or rejects a version in the viewer, the service stores that decision in the clear: the verdict, the reader's verified email address, the version number, the SHA-256 of that version's ciphertext, the id of the passkey that confirmed it, and the time. Anyone holding the relic's link can read its decisions. Decisions are never edited or deleted, except that removing a relic removes its decisions with it.
 > **Passkeys.** A passkey is registered to a reader's verified address. It confirms decisions, and it can sign that reader in instead of a link. The service keeps one record per address, filed under a hash of the address: the address itself, the random user handle its passkeys carry, and for each passkey its public key, credential id, signature counter, and when it was created and last used. A second entry, filed under a hash of the user handle, points to that record, so a passkey can sign you in without your typing the address. The first passkey registered for an address is trusted on first use, and only a session that a sign-in email started in the previous 15 minutes, by its link or its code, can begin adding it; adding another requires confirming with an existing one. Whenever a passkey is added, the service emails that address to say so, with the time and how many passkeys the address has. That email has no stop link, because it is about the address rather than a relic. Signing in with a passkey sends no email, updates that passkey's counter and last-used time, and starts the same session a link does, except that the session records a passkey started it. If you type your address to use a passkey, the service answers the same way whether or not that address has one. The service never receives a private key.
 > **Version digests.** To bind a decision to exact content, the service reads each version's ciphertext once and stores its SHA-256. It reads ciphertext only and holds no key.
-**One more, assigned by `format.md` 3.8: the length leak.** Ciphertext length reveals plaintext length to within a record, so alongside the class, title, and cover image the operator learns something like "an image of roughly 2.4 MB". For an OpenTimelineIO archive, the length is that of the whole archive, which can include a rendered program added under `format.md` 3.17. The operator sees one number and cannot tell whether it includes a rendered program. A relic with no program has the length it had before. The published statement must say that an OpenTimelineIO relic's length can include a rendered program. Whether the container pads to buckets is `shape`'s, and the disclosure appears under either branch.
+**One more, assigned by `format.md` 3.8: the length leak.** Ciphertext length reveals plaintext length to within a record, so alongside the class, title, and cover image the operator learns something like "an image of roughly 2.4 MB". For an OpenTimelineIO archive, the length is that of the whole archive, which can include a rendered program added under `format.md` 3.19. The operator sees one number and cannot tell whether it includes a rendered program. A relic with no program has the length it had before. The published statement must say that an OpenTimelineIO relic's length can include a rendered program. Whether the container pads to buckets is `shape`'s, and the disclosure appears under either branch.
+
+The statement for private relics is the paragraph below, verbatim. `disclosureStatement()`, served by `GET /policy`, carries the same paragraph (plan 4.7 and 4.14).
+
+> **Private relics.** A private relic's link carries no key. Each reader who is let in has their own copy of each version's key, encrypted to a key only their passkey can unlock; the service stores those encrypted copies and never the keys. To let someone in, the service records who asked and who granted, the email addresses involved, the public keys, and a signed record of each grant and revocation. It keeps an access log of requests, grants, revocations, key fetches and deletions for the owner, for the retention the owner sets. It also stores each person's private-share key encrypted under a secret held by their passkey. Private relics carry no title or cover, always expire, and their notification emails say only that there is activity on a relic. The JavaScript that decrypts them comes from this service, the same as for every relic.
 
 ## 6. When the key reaches a third party without Relic doing anything wrong
 
 `spec-viewer` owns redirects the viewer issues. This section owns the cases where the key leaves via somebody else, which the fragment guarantee never covered, because it's a statement about what a browser puts in a request and not about what a human pastes.
+
+Private relic URLs carry no fragment, so the redirect rule below concerns public relics. A private link has no fragment, which means there is no key in it for a redirect to carry or lose.
 
 **The redirect rule, assigned here by `format.md` 5. The test is the destination's trust boundary, not its origin tuple:** the service origin and its host and scheme variants are all Relic, the usercontent origin is not, and that's the line the fragment must not cross. **Leaving the service, an explicit, possibly empty, fragment in `Location` is mandatory**, which is how [RFC 9110 §17.11](https://www.rfc-editor.org/rfc/rfc9110.html) scopes its own remedy, to ensuring that "redirects to other sites include a (possibly empty) fragment component in order to block that inheritance". That half covers the service origin redirecting to the usercontent origin, plus any CDN or load-balancer redirect the application doesn't author that lands off the service domain. **Staying anywhere inside the service, including its host and scheme variants, the fragment is deliberately omitted so inheritance carries the key through**, which covers legacy or renamed paths, trailing-slash normalization, apex to `www`, and HTTP to HTTPS. An empty fragment on any of those is a deleted key and a recipient on the "link is missing its key" screen holding a link that was never broken. `format.md` 5 and `viewer.md` 1.7 develop both halves; this document states the rule because section 6's third-party cases run on the same inheritance mechanism.
 
@@ -469,11 +550,17 @@ Seven items, and only these seven.
 6. **The published SLA in hours**, against the inputs in 4.1.
 7. **The mint dedup interval.** Whether a refused mint counts as an open, and whether a repeated one does, are rules and they're fixed in 2.2: refused never counts and never consumes cap; a repeat inside the interval isn't a distinct open and does consume cap. The interval's value is `shape`'s, and it interacts with the frame's 120-second window.
 
+Items 3 and 5 describe public relics. A private relic always expires (section 3), by default after 30 days and never beyond 365 days, and its access log has its own retention (section 10.6).
+
+**Private-share response fields.** For a private relic, `POST /api/grant` returns the public grant fields with `access: 'private'`, `access_epoch: 0` and `owner_epoch`. Its `relic_expires_at` is set, because a private relic always expires. `POST /api/challenge` returns `private_shares: {default_ttl_days, max_ttl_days}`, the capability signal for relic-mcp (plan 4.7). No private route returns key material, and no route accepts PRF output (section 9.3).
+
 ## 8. Comments and the one identity
 
-**A comment is ciphertext the server stores and cannot open.** The envelope, the key derivation, and the plaintext caps live in `format.md` 3.13. This document owns the HTTP surface, the attribution, and the one identity the product has.
+**A comment is ciphertext the server stores and cannot open.** The envelope, the key derivation, and the plaintext caps live in `format.md` 3.13. This document owns the HTTP surface, the attribution, and the verified-address identity that commenters use. Private relics add a second, separate identity: the private-share identity of section 10, whose private keys the service never holds.
 
 **Read: `GET /api/relics/{id}/comments`.** Unauthenticated, oldest first, a JSON array of rows, never an object wrapping them. Each row carries `comment_id`, `author`, `created_at`, `ciphertext`, and the version of the relic it was made on. The ciphertext is the exact string `@relic/format` produced; the server never rewrites it. A missing relic is `404 relic_not_found`. A tombstoned relic is `410 relic_removed`. A client that receives a non-array treats the thread as unusable rather than empty, because wrapping the rows would otherwise read as a quiet day.
+
+**Comments on a private relic.** The read and write rules above are for public relics. On a private relic, `GET` requires a session with access and returns only comments on readable versions. `POST` requires a `version` and a wrap for it, or the publish token. `PATCH` and `DELETE` apply the same access check as well as the author rules above (section 10.1).
 
 **Write: `POST /api/relics/{id}/comments`.** The body is JSON with `ciphertext` and, for the publisher path, `publish_token`. The session path carries the `relic_session` cookie instead. The response is `201` with `comment_id`, `author`, and `created_at`. Kill switch, per-IP comment limiter, tombstone, and relic existence all refuse before the body is stored. The stored author is the literal `publisher` or the verified email, never a display name: display names live inside the ciphertext (`format.md` 3.13) and this server cannot read them.
 
@@ -492,9 +579,9 @@ Only the selected row is removed, including its ciphertext and edit and resoluti
 3. *Code sign-in: `POST /api/auth/request` then `POST /api/auth/code`.* The sign-in email carries a six-digit code alongside the link. The reader types the code into the page that asked, without navigating away, so the decryption key stays in tab memory. The browser submits `{"code": "123456"}` with the HttpOnly `relic_sign_in_request` cookie that was set on the 202 request. The server verifies the cookie, charges one attempt against the address's daily budget in the store before comparing, checks the code against a nonce-keyed HMAC, spends the mailed link, clears the request cookie, and answers `200` with `{"email": "<address>"}`. It sets the same `relic_session` cookie and the same `relic_passkey_offer=1` marker cookie as the link callback. The session row records `via: 'code'` and its `createdAt`, allowing it to add the address's first passkey within `passkeyFreshLinkSeconds` (1.15). Verifying the code spends the link, following the link spends the code, and every failure gives `401 sign_in_code_failed` (1.16).
 **First paint: `GET /api/auth/session`.** `200` with `{email}` when the cookie is live, `{email: null}` when it is not. Never `401`. Every anonymous load would otherwise hit a status the public surface is not allowed to emit except on a write, and a missing session is the ordinary state of a reader, not a failure.
 
-**The cookie is the session.** It is never the comment key. The key stays in the fragment. A session that outlives the cookie's Max-Age is dead even if the row is still in the store, because expiry is checked at the point of use.
+**The cookie is the session.** It is never the comment key. On a public relic the key stays in the fragment of the link. A private relic's key is never in any URL (section 10). A session that outlives the cookie's Max-Age is dead even if the row is still in the store, because expiry is checked at the point of use.
 
-**Identity is reachability, not permission.** A commenter is somebody whose mailbox accepted a link or code. That is the whole of what "verified" means here, and it is also the whole of what it buys: a thread other link-holders can read, attributed to an address an agent can act on. It does not buy an account, a profile, a permission, or a way to un-publish.
+**Identity is reachability, not permission, on a public relic.** A commenter is somebody whose mailbox accepted a link or code. That is the whole of what "verified" means here, and on a public relic it is also the whole of what it buys: a thread other link-holders can read, attributed to an address an agent can act on. It does not buy an account, a profile, a permission, or a way to un-publish. A private-share identity is different. Once an owner grants it access to a version, it can read that version, and that grant is a permission (section 10).
 
 **What an edit and a resolution disclose.** A comment now carries an `edited_at` stamp, so the operator learns that a comment's body was replaced and when, though still never a word of what it says or said. There is no edit history: the service holds one ciphertext per comment, so an edit overwrites, and what is on offer is the fact that it happened, not the earlier text. The resolution is deliberately not encrypted, because it decides whether a republish is blocked, which is an answer the service gives before any key exists on its side, so there is nothing on its side to seal it with. The operator therefore learns that a comment was settled and by which address, and still cannot read a word of it.
 
@@ -505,6 +592,8 @@ Only the selected row is removed, including its ciphertext and edit and resoluti
 **Sharing and reader authority.** `POST /api/relics/{id}/share` allows registering email addresses that were never verified with the service. The service never sends a share email: the email is composed on the sharer's machine (in the client or the web viewer) and sent from the sharer's own mailbox so the decryption key never touches the service. The share endpoint accepts two authorities, and exactly one must be present: publisher authority (`{ publish_token, emails }`) authenticated against `publishTokenHash` (refusing with `403 invalid_publish_token` on failure), or reader authority (`{ share_proof, emails }` plus a valid `relic_session` cookie). For reader sharing, a missing or invalid session cookie returns `401 sign_in_required`; an older relic lacking `row.shareVerifier` returns `409 share_unavailable` with detail "This relic was published before sharing existed. Its publisher can republish it to turn sharing on."; a proof that is not unpadded base64url of 32 bytes returns `400 invalid_share`; a proof whose SHA-256 hash fails `timingSafeEqual` with `row.shareVerifier` returns `403 invalid_share_proof`; and per-sharer rate limiting via ``limiter.check(`share-reader ${relicId} ${sessionEmail}`, config.readerShareRateLimit, now)`` with `readerShareRateLimit: {limit: 10, windowSeconds: 3600}` returns `429 share_rate_limited` with `retry_after_seconds`. Shares are capped by `config.shareMaxPerCall` (20), `config.shareMaxPerRelic` (50), `shareRateLimit: {limit: 30, windowSeconds: 3600}` (`429 share_rate_limited`), and download cap exhaustion (`410 download_cap_exhausted`).
 
 **What is stored.** Shared addresses are stored in the clear (`ShareRow: { relicId, address, addedAt, sharedBy }`), recording whether the share was registered by `'publisher'` or `'reader'`. The sharer's address is deliberately not stored on the row: attribution of who shared is not kept beyond the in-memory rate limiter. Opt-out stop records are stored as SHA-256 hashes (`OptOutRow: { relicId, addressHash, at }`). An HMAC unsubscribe key (`store.unsubscribeKey()`) is generated once and stored permanently in the store so stop links remain verifiable forever. All share records and opt-out records are retained until the relic is deleted: relic expiry halts outbound notices but leaves stored records intact. Commenters are indexed per relic (`listCommenters`), written create-only by `putComment` for verified email authors and backfilled lazily once per relic from existing comments, swept by operator delete, and removed when an author deletes their only comments on the relic. At publish and republish, `share_verifier` (a 64-character lowercase hex string) may be registered; republish overwrites it when present and leaves it unchanged when absent, and it is never returned by any endpoint.
+
+**Private-relic mail.** A private relic sends four templates, and none of them names the relic's title or a requester. Comment, reply and change notices on a private relic all send `privateActivityMail`, which says only that there is activity on a relic, with the same List-Unsubscribe headers as the notices above. Its subject is "Activity on a relic". A request for access sends `accessRequestedMail` to the owner, with subject "Someone asked for access to a relic", linking to `{serviceOrigin}/{id}?access=requests`. A grant sends `accessGrantedMail` to the grantee, with subject "You have access to a relic", linking to `{serviceOrigin}/{id}`. A replaced private-share key sends `identityReplacedMail` to the address whose key changed, with subject "Your Relic private-share key was replaced". It names only that address and the time of the replacement.
 
 ## 9. Decisions and passkeys
 
@@ -519,6 +608,7 @@ Only the selected row is removed, including its ciphertext and edit and resoluti
 - **Append-only:** decisions are never edited or deleted. Each author's latest decision on a version is their current one.
 - **Per-version:** decisions do not carry over across republishes. A new version starts with zero decisions; prior versions retain their decisions.
 - **Deletion:** operator relic delete sweeps decisions (`deleteDecisionsForRelic`), returning `decisions_deleted`.
+- **Owner hard delete:** a whole-relic owner delete removes the relic's decisions as well (section 4), so no decision outlives its relic.
 
 ### 9.2 The HTTP routes
 
@@ -577,6 +667,8 @@ Routing is declared in `apiRoute` (`app.ts`):
    - Any failure after challenge consumption returns `401 passkey_sign_in_failed` with no problem extension.
    - On success: mints a reader session for `record.address ?? record.email`, sets `relic_session` cookie (HttpOnly, Secure, SameSite=Lax), and returns `200` with `{"email": "<session address>"}`.
 
+**Private relics.** For a private relic, the options, record and list routes replace `share_proof` with the access check in section 10. The list route also accepts the publish token. The list is unauthenticated only for public relics, and the key-proof rules in this section are for public relics.
+
 ### 9.3 WebAuthn verification
 
 - **RP ID:** `new URL(config.serviceOrigin).hostname`. Origin: `new URL(config.serviceOrigin).origin`.
@@ -587,6 +679,9 @@ Routing is declared in `apiRoute` (`app.ts`):
 - **COSE algorithms:** ES256 (-7) and RS256 (-257) only.
 - **RS256 key bounds:** Leading zeros are stripped from the modulus `n`. The stripped modulus must satisfy 256 <= |n| <= 512 bytes (2048 to 4096 bits). The exponent `e` must equal 65537 (0x010001). Any violation is rejected as `invalid_passkey` with `passkey_check: 'key'`.
 - **Signatures and counters:** verified over `authData || sha256(clientDataJSON)` using WebCrypto. Authenticator signature counters are checked strictly on assertion and in store compare-and-swap callbacks: if either the stored or incoming counter is non-zero, an incoming counter less than or equal to the stored counter is rejected with `passkey_verification_failed` and `passkey_check: 'counter'`.
+- **PRF at creation:** every new passkey requests the `prf` extension when it is created. `POST /api/auth/passkeys/options` returns `extensions: {prf: {}}` in its creation options. With an existing-credential assertion and `for_private_shares: true`, the same route returns create options with an empty `excludeCredentials`, so a replacement passkey can be made for a credential that gives no PRF output.
+- **Client results:** the service never receives PRF output. The serializers omit client extension results, and no route accepts a PRF output or a `clientExtensionResults` object (plan 4.4).
+- **StoredAttestation:** every owner action (decision 3 in the plan) stores its full WebAuthn assertion, the identity signature over each statement in it, the nonce, the credential's public key, the RP ID and origin, and the verification time. The identity registration, each credential bind, the recovery designation, grants, revocations, device certifications and revocations, and access requests all use this record (plan 4.10).
 ### 9.4 Storage and GCS layout
 
 - Prefix `m`:
@@ -594,7 +689,13 @@ Routing is declared in `apiRoute` (`app.ts`):
   - Passkeys: `m/passkey/{sha256Hex(normalizedEmail)}.json`. Created with generation `'0'`; updated via generation CAS. Records include `address` (exact address from the registering session), `email` (normalized), `userHandle`, and credential list.
   - Passkey user handle index: `m/passkey-handle/{sha256Hex(userHandle)}.json` mapping user handle to `{ emailHash, createdAt }`, written best-effort on create and update.
   - Passkey decoy secret: `m/secret/passkey-decoy-key.json` holds a 32-byte secret generated once for HMAC padding in email-first sign-in options.
-  - WebAuthn challenges: `m/challenge/webauthn/{sha256Hex(challenge)}.json`, consumed atomically via get-then-delete with `ifGenerationMatch`. Cleaned up by 1-day bucket lifecycle rule. Purpose includes `'register' | 'enroll' | 'decide' | 'sign_in'`.
+  - WebAuthn challenges: `m/challenge/webauthn/{sha256Hex(challenge)}.json`, consumed atomically via get-then-delete with `ifGenerationMatch`. Cleaned up by 1-day bucket lifecycle rule. Purpose includes `'register' | 'enroll' | 'decide' | 'sign_in' | 'attest'`.
+  - Identity: `m/identity/{identityId}.json`, the identity record: its registration attestation, one encrypted bundle per bound credential, any recovery designation, and the access-log retention setting.
+  - Identity address: `m/identity-address/{sha256Hex(normalizedEmail)}.json`, which points at the current identity for an address. Create-only, with a compare-and-swap on replace.
+  - Device: `m/device/{deviceId}.json`, the device record, including its certification and any revocation.
+  - Device owner: `m/device-owner/{ownerIdentityId}/{deviceId}.json`, an index from an owner to each of its devices.
+  - Device enrollment challenge: `m/challenge/device-enrollment/{enrollmentId}.json`. It sits under the existing transient prefix with a one-day lifecycle, and the app refuses an enrollment after its `expiresAt`.
+  - The private-relic objects (wraps, seals, grants, access requests, the owner-relic index and the access log) are listed in `docs/design/storage.md` section 5.5.
 - Streaming object digest in GCS pins the signed GET to the stat generation with `x-goog-if-generation-match`. The server counts bytes hashed and records the SHA-256 only when the hashed byte count matches the stat length and response content-length. Digest computation is single-flighted per (id, version) within the process.
 - GCS decision listing caps fan-out object fetch concurrency at 16 while preserving deterministic ordering (createdAt ascending, then id).
 ### 9.5 Upload completion response
@@ -613,4 +714,179 @@ Response status `200` with JSON:
 ```
 `version` returns `row.version`, and `version_digest` returns the lowercase hex SHA-256 of the stored ciphertext object (`null` only if hashing failed, which is logged). The digest is computed only when this call just set `publishedAt` or no digest is recorded yet. Repeated calls reuse the recorded digest.
 
+**Private relics.** For a private relic, `POST /api/relics/{id}/complete` takes `{seal, wraps, publish_token?}` and checks the seal as section 10.3 describes. The response's `relic_expires_at` is set.
+
 Decision and passkey routes read JSON request bodies via a streaming reader capped at 65,536 bytes, decoded with fatal UTF-8 decoding. Exceeding 65,536 bytes or providing invalid UTF-8 aborts the stream and returns the route's malformed code (`invalid_decision` or `invalid_passkey`). Decision recording re-checks the tombstone immediately before and after writing a decision; if a tombstone appears, the just-written row is deleted and `410 relic_removed` is returned.
+
+## 10. Private relics
+
+A private relic's link carries no key. Its URL is `https://<relic-domain>/{id}` with no fragment. Each version has its own content key, wrapped to each reader's identity, so an identity that holds a wrap decides what it can open, and the link alone does not. The server stores wraps, seals, grants, requests, owner indexes and an access log. It never stores a key, and no route, error, log line or test snapshot carries one. A public relic is unchanged by this section.
+
+### 10.1 Routes
+
+Every new POST that relies on the session cookie requires `content-type: application/json`. Without it the route refuses with 400 and its malformed code. "Owner session" means a session whose current identity is the relic's `ownerIdentityId`. The table lists every new route.
+
+| Method and path | Auth | Body | Success | Refusals |
+|---|---|---|---|---|
+| `POST /api/attest/nonce` | session | `{purpose, relic_id?, credential_id?}` | 200 `{nonce, expires_at, public_key:{rpId, timeout, userVerification:'required', allowCredentials}}` | 401 `sign_in_required`, 409 `passkey_required`, 409 `identity_required`, 403 `owner_required`, 400 `invalid_statement`, 429 `private_rate_limited` |
+| `GET /api/identity` | session | | 200 `IdentityStateJSON` | 401 |
+| `POST /api/identity` | session | `{attestation, encrypted_bundle, replace?: boolean}` | 201 `{identity: IdentityPublicJSON}` | 401, 401 `passkey_fresh_link_required` (replace), 409 `identity_exists`, 400 `invalid_identity`, 400 `invalid_statement`, 400 `invalid_passkey`, 403 `passkey_verification_failed`, 429 |
+| `POST /api/identity/credentials` | session | `{attestation, encrypted_bundle}` | 201 `{credential_id}` | as above, plus 409 `identity_required` |
+| `POST /api/identity/settings` | session | `{attestation}` | 200 `{access_log_retention_days}` | 400 `invalid_statement` (out of bounds) |
+| `POST /api/identity/recovery/lookup` | session with an identity (`identity_required` otherwise) | `{email}` | 200 `{party: PartyJSON \| null}`. A signed-in identity learns whether the address has an identity; this reveals that to any identity holder, so the lookup is rate-limited per viewer. | 409 `identity_required`, 429 |
+| `POST /api/identity/recovery` | session | `{attestation}` | 200 `{recovery: RecoveryJSON \| null}` | 409 `fingerprint_mismatch`, 400 `invalid_statement` |
+| `POST /api/identity/backfill` | session (owner identity) | `{wraps: BackfillWrapJSON[]}` (at most `privateBackfillMaxWraps`) | 200 `{stored, skipped}` | 400 `invalid_wrap` |
+| `GET /api/identity/relics` | session | `?coverage=1` optional | 200 `{owned:[{relic_id, access, current_version, sealed_version, expires_at, pending_requests, coverage_gaps?: number[]}], shared_with_me:[{relic_id, readable_versions, expires_at, owner: PartyJSON}]}`. `coverage_gaps` lists the versions a recovery designation or device change left without the current recipient set. | 401 |
+| `GET /api/identity/access-log` | session | `?relic_id=` optional | 200 `{events: AccessEventJSON[]}` (oldest first) | 401, 409 `identity_required` |
+| `POST /api/devices/enrollments` | none, IP limited | `{kem_public_key, sig_public_key, label, backend, proof:{statement, signature}}` (`device_enroll`) | 201 `{enrollment_id, approve_url, expires_at, device_id}` | 400 `invalid_device`, 429 |
+| `GET /api/devices/enrollments/{enrollmentId}` | id is the capability | | 200 `{status:'pending'\|'approved', device_id, label, kem_public_key, sig_public_key, expires_at, device?: DevicePublicJSON, owner?: PartyJSON}`. The two keys are returned while pending so the owner's approval page can show the device fingerprint. | 404 `device_not_found`, 410 `device_enrollment_expired` |
+| `POST /api/devices/enrollments/{enrollmentId}/approve` | session | `{attestation}` (`device_cert`) | 200 `{device}` | 409 `fingerprint_mismatch`, 409 `identity_required`, 410 |
+| `GET /api/devices` | session | | 200 `{devices: DevicePublicJSON[]}` | 401 |
+| `POST /api/devices/{deviceId}/revoke` | session | `{attestation}` | 200 `{device}` | 403 `owner_required`, 404 |
+| `POST /api/devices/{deviceId}/context` | `device_auth` | `{device_auth}` | 200 `{device, owner: PartyJSON, devices: DevicePublicJSON[], recovery: RecoveryJSON \| null, owner_epoch}` | 403 `device_revoked`, 404, 400 `invalid_device` |
+| `GET /api/relics/{id}/access` | session for private; none for public | | 200 `PrivateAccessJSON` or `PublicAccessJSON` | 401 (private), 404, 410 |
+| `POST /api/relics/{id}/requests` | session | `{attestation}` (`access_request`) | 201 `{status:'pending', requested_at}`; 200 if already pending or granted | 409 `identity_required`, 409 `request_limit_reached`, 429 |
+| `POST /api/relics/{id}/versions/{v}/upload-grant` | owner session | | 200 a new signed upload grant for version `v`, only for the current unsealed version (`uploadFor`) | 409 `version_conflict`, 403 `owner_required`, 401 `sign_in_required` |
+| `GET /api/relics/{id}/requests` | owner session | | 200 `{requests:[{requester: PartyJSON, requested_at, status, statement, identity_signature}]}` | 403 `owner_required` |
+| `POST /api/relics/{id}/requests/{identityId}/decline` | owner session | `{}` | 200 | 403, 404 `request_not_found` |
+| `POST /api/relics/{id}/grants` | owner session | `{attestation, wraps: WrapJSON[]}` | 201 `{grant: GrantJSON}` | 409 `fingerprint_mismatch`, 409 `grant_stale_version` (+`current_version`), 400 `invalid_wrap`, 403 |
+| `GET /api/relics/{id}/grants` | owner session | | 200 `{grants: GrantJSON[]}` | 403 |
+| `POST /api/relics/{id}/revocations` | owner session | `{attestation, renderer_class, declared_size_bytes, declared_ciphertext_bytes}` | 200 `{revoked_identity_id, republish:{version, upload_url, upload_method, upload_headers, upload_expires_at}, access_epoch, owner_epoch}` | 409 `version_conflict`, 404 (grant), 403 |
+| `POST /api/relics/{id}/recipients` | `{publish_token}` or owner session | | 200 `{access_epoch, owner_epoch, current_version, sealed_version, owner: PartyJSON, devices, grants: GrantJSON[] (active), recovery: RecoveryJSON \| null}` | 403 `invalid_publish_token` |
+| `POST /api/relics/{id}/versions/{v}/key` | session, or `{publish_token, recipient_key_id}` | | 200 `KeyJSON` (logs `wrap_fetch`) | 401, 403 `private_access_denied`, 409 `relic_not_yet_published` (unsealed), 410 `relic_expired` / `relic_removed` / `version_deleted` |
+| `POST /api/relics/{id}/delete` | owner session | `{attestation}` | 200 `{deleted_versions, relic_deleted}` | 409 `cannot_delete_current_version`, 403 |
+| `POST /api/relics/{id}/owner` | `{publish_token, device_auth}` with an `owner_bind` statement | | 200 `{owner: PartyJSON}`. Public and private relics both take it; only the owner link is written, and access never changes. A nonce is spent once (`device_check` `replay`). | 409 `owner_exists`, 403 `invalid_publish_token`, 403 `device_revoked`, 400 `invalid_device` (`device_check` `replay`) |
+| `POST /api/relics/{id}/comments/list` | `{publish_token}` | | 200, same body as `GET .../comments` | 403 |
+
+Changed existing routes:
+
+- `POST /api/challenge`: response adds `private_shares: {default_ttl_days, max_ttl_days}` (capability signal for relic-mcp).
+- `POST /api/grant`: accepts `access: 'private'` with `device_auth` signing a `private_publish` statement whose `challenge_nonce` equals the body's; refuses `title`, `owner_email`, `share_verifier` (`private_policy_violation`); applies `privateDefaultTtlDays` when `ttl_days` is absent and refuses above `privateMaxTtlDays`; sets `ownerEmail` from the owner identity; writes the owned-relic index. Response adds `access: 'private'`, `access_epoch: 0`, `owner_epoch`.
+- `POST /api/relics/{id}/republish`: private relics require the publish token and refuse a non-empty title or a share verifier; response adds `access`, `access_epoch`, `owner_epoch`.
+- `POST /api/relics/{id}/complete`: private relics require `{seal: SealJSON, wraps: WrapJSON[], publish_token?}` and seal per 10.3 (`private_seal_required`, `invalid_seal`, `seal_digest_mismatch`, `recipients_changed`, `version_conflict`).
+- `POST /api/relics/{id}/mint`: private relics require a session whose identity holds a wrap for the version, or the publish token; the version must be sealed and not deleted.
+- `POST /api/relics/{id}/cover`: private relics refuse (`private_policy_violation`, `cover`).
+- `GET /api/relics/{id}/comments`: private relics require a session with access and return only comments on readable versions. `POST` requires `version` and a wrap for it (or the publish token). `PATCH`/`DELETE` add the same access check.
+- Decisions (`options`, record, `list`): private relics replace `share_proof` with the access check; `list` also accepts the publish token.
+- `POST /api/relics/{id}/share`: private relics accept the reader path with a session that has access, without `share_proof`.
+- `GET /{id}`: private rows get `data-relic-access="private"` on the root (also when expired), the generic private card, no title, no cover, no renderer-class copy.
+- `POST /api/auth/passkeys/options`: every creation response includes `extensions: {prf: {}}`; with an existing-credential assertion and `for_private_shares: true`, the create response has `excludeCredentials: []`.
+- `DELETE /api/relics/{id}` (operator): also removes wraps, seals, grants, requests and index entries; reads the tombstone union.
+- `GET /policy`: `disclosureStatement()` gains the private-relic paragraph (section 5).
+
+### 10.2 The regulated profile
+
+Every private relic is regulated. The server enforces these, and the shell and the card follow from them:
+
+- A private grant or republish with a non-empty `title`, `owner_email` or `share_verifier` refuses with `400 private_policy_violation`, and `policy_check` names that field.
+- A private grant with no `ttl_days` takes `privateDefaultTtlDays` (30). A `ttl_days` above `privateMaxTtlDays` (365) refuses with `private_policy_violation` and `policy_check: 'ttl'`.
+- A cover upload for a private relic refuses with `private_policy_violation` and `policy_check: 'cover'`.
+- A private route that receives `share_proof` refuses with `private_policy_violation` and `policy_check: 'share_proof'`.
+- A private comment write must name a `version`.
+- `GET /{id}` for a private relic shows the generic card, titled `Relic` with the description `A private relic. Sign in to open it.`, and no cover, title or renderer-class copy.
+- Every private notification uses the templates in section 8.
+
+### 10.3 Epochs and the seal
+
+Two counters order every change to who can read a relic:
+
+- `accessEpoch` is per relic. A grant increments it, and so does a revocation, which also opens the next version.
+- `recipientsEpoch` is per owner identity. Device approval, device revocation and recovery changes increment it.
+
+The seal and grant checks compare these counters, so a seal or grant made against an outdated set of readers is refused, not stored.
+
+The required recipient set R for a relic at seal time is:
+
+- the owner identity's `kemKeyId`;
+- every owner device with no `revokedAt` and a `notAfter` later than now;
+- the recovery identity's key, when a recovery identity is designated and not retired;
+- every grant without `revokedAt` whose grantee identity is not retired.
+
+`POST /api/relics/{id}/complete` for a private version runs these checks in order:
+
+1. The seal statement parses, its `relic_id` matches, its `version` equals `row.version`, and it is later than the last sealed version.
+2. The signer is the owner identity. When the signer is a device, that device is an owner device that is not revoked and whose `notAfter` is at least the statement's `at`. The signature verifies.
+3. `ciphertext_sha256` equals the server's digest of the stored object, else `seal_digest_mismatch`.
+4. The wraps cover exactly R, the `recipient_key_ids` match R, and the statement's `owner_epoch` equals the owner identity's `recipientsEpoch`. Otherwise the request refuses with `recipients_changed` and both epochs.
+5. Wraps already stored for this unsealed version are deleted, then the new wraps and the seal are written create-only.
+6. In one `updateRelic`, the store requires `accessEpoch` to equal the statement's `access_epoch` and `version` to equal `row.version`, and sets `sealedVersion`. On failure, what step 5 wrote is deleted and the request refuses with `recipients_changed` or `version_conflict`.
+7. The version is marked published as for a public relic, its digest is recorded, and the change notice is sent.
+
+Device revocation and recovery replacement delete that key's wraps across every relic the owner holds. A version sealed between a designation and its backfill can miss the new recipient. `GET /api/identity/relics?coverage=1` reports such gaps, and the owner's dashboard repairs them through `POST /api/identity/backfill`, which accepts at most `privateBackfillMaxWraps` wraps per request.
+
+### 10.4 Grants and revocation
+
+**Grant** (`POST /api/relics/{id}/grants`). The server verifies the attestation and the owner, and that the grantee identity is current. The typed fingerprint must equal the grantee's fingerprint, else `fingerprint_mismatch`. Every version in the grant must be sealed and not deleted. The wraps must cover exactly those versions for the grantee's key. The server then writes the wraps and the grant, and runs an `updateRelic` that requires `sealedVersion` to be among the granted versions and increments `accessEpoch`. If that fails, it deletes what it wrote and refuses with `grant_stale_version` and `current_version`. Last, it marks the request granted, mails the grantee `accessGrantedMail`, and logs a `grant` event.
+
+**Revocation** (`POST /api/relics/{id}/revocations`). One attestation carries both a `revocation` statement and a `republish` statement. `previous_version` must equal both `row.sealedVersion` and `row.version`, else `version_conflict`. The server records the revocation on the grant and deletes the grantee's wraps for every version. In one `updateRelic` it increments `accessEpoch` and opens the next version the way a republish does, with its notice pending. It signs the upload, logs a `revoke` event, and returns the upload grant with both epochs. The browser then uploads the rekeyed content and completes it with a seal signed by the owner's identity.
+
+Revocation stops serving the revoked identity at once: its wraps are deleted, so it cannot fetch a key for any version. A reader keeps whatever it already opened, and the warning the owner sees before the rekey says so.
+
+### 10.5 Identity replacement
+
+An address that has lost every passkey can replace its identity with `POST /api/identity` and `replace: true`. The replacement uses the first-passkey freshness rule: the session must have been started by a sign-in email, by link or by code, within `passkeyFreshLinkSeconds`, else `401 passkey_fresh_link_required`. The address is emailed `identityReplacedMail`. The old identity is retired (`retiredAt` and `replacedBy` are set), and grants to it stop working until each owner grants access again. Losing every passkey forfeits the owner actions on that identity's private relics. A recovery identity, if one is designated, can still read them.
+
+### 10.6 Access log
+
+Each owner has an access log of these events: `request`, `grant`, `revoke`, `wrap_fetch` (a key fetch) and `delete`. Each event carries the owner, the relic, the time, the kind, the version where there is one, the acting identity or device, and the subject identity where there is one. The owner reads it through `GET /api/identity/access-log`, oldest first, optionally filtered by `relic_id`.
+
+Retention is set per owner. `POST /api/identity/settings` sets `access_log_retention_days` to a value from `accessLogRetentionMinDays` (30) to `accessLogRetentionMaxDays` (3650). The default, `accessLogRetentionDefaultDays`, is 2190 days, which is six years. That default follows the six-year period in [45 CFR 164.316(b)(2)(i)](https://www.law.cornell.edu/cfr/text/45/164.316) for the documentation that section covers. It is a default, not a claim that Relic is subject to that section.
+
+Each event is written with a `retainUntil`, set from the owner's setting when the event is written. The object's GCS `customTime` is set to `retainUntil` minus one day, and a lifecycle rule deletes the object once the condition is met (`storage.md` section 7.5). `listAccessEvents` excludes any event whose `retainUntil` has passed. The formula for `retainUntil` is open (section 10.8).
+
+`listAccessEvents` reads one object per event. That is adequate for v1. At the longest retention, 3650 days (`accessLogRetentionMaxDays`), an owner's log can grow large, and each read costs one object read per event. This is a known scaling limit, and the contract has no index for it.
+
+### 10.7 Limits and configuration
+
+| Setting | Value | Applies to |
+|---|---|---|
+| `privateDefaultTtlDays` | 30 | A private grant with no `ttl_days`. |
+| `privateMaxTtlDays` | 365 | The largest `ttl_days` a private grant may set. |
+| `accessLogRetentionDefaultDays` | 2190 | An owner's access-log retention until it sets one. |
+| `accessLogRetentionMinDays` | 30 | The shortest retention an owner may set. |
+| `accessLogRetentionMaxDays` | 3650 | The longest retention an owner may set. |
+| `deviceCertMaxDays` | 365 | Device certificates. |
+| `deviceEnrollmentTtlSeconds` | 900 | A device enrollment, until it expires. |
+| `privatePendingRequestsMax` | 50 | Pending access requests on one relic. |
+| `privateBackfillMaxWraps` | 2000 | Wraps in one `POST /api/identity/backfill`. |
+
+Rate limits, each over a window of 3600 seconds:
+
+- `privateRateLimit`: 60 per IP, for the private routes.
+- `deviceEnrollmentRateLimit`: 10 per IP, for device enrollment.
+- `identityLookupRateLimit`: 30 per session address, for identity lookups.
+
+A refusal is `429` with `retry_after_seconds` (1.5). The private routes use `private_rate_limited` (1.17).
+
+`assertConfig` refuses a configuration that breaks these rules:
+
+- `privateDefaultTtlDays` is no greater than `privateMaxTtlDays`, which is no greater than `maxTtlDays`.
+- `accessLogRetentionMinDays` is no greater than `accessLogRetentionDefaultDays`, which is no greater than `accessLogRetentionMaxDays`.
+- **The usercontent origin may not sit under the RP ID.** `assertConfig` refuses a usercontent hostname that equals the service hostname, which is the WebAuthn RP ID, or that ends with `.` followed by the RP ID. Content renders on the usercontent origin, where WebAuthn cannot run, and decryption runs in the parent. A usercontent origin under the RP ID could request PRF output for a user's passkeys, which would make it a decryption capability. Any per-relic subdomain topology must sit under the usercontent domain.
+
+### 10.8 Open items
+
+The plan does not settle the following. Each is recorded here so that no document states it as settled.
+
+1. **Erasure at expiry is built, and its window is a deployment value.** Decision 7 is accepted. The bucket rules in `storage.md` section 7.2 remove private live objects one day after expiry. Deleted copies stay recoverable under the soft-delete retention (section 3.1 and `storage.md` section 7.1), whose value the repository does not set. The application's `customTime` writes are not verified on this document's base.
+2. **Reader status for an owner-deleted ID.** The plan does not say which status a reader gets for an ID removed by its owner. The owner tombstone is id-only and records no reason.
+3. **Partial owner delete.** The plan names the response field `relic_deleted` and the refusal `cannot_delete_current_version`, but not the full effect of deleting a list of versions.
+4. **Refusal codes for a private mint and a private comment write.** The plan states the rules, a session with a wrap or the publish token for mint and a `version` for a comment write, but names no refusal code for either.
+5. **Extension values.** The plan names the `identity_check`, `statement_check`, `seal_check` and `device_check` fields and the `access_epoch` and `owner_epoch` extensions, without their value sets or the codes that carry them.
+6. **`retainUntil`.** The plan does not state the formula for `retainUntil` (section 10.6).
+7. **Lifecycle deletion timing.** A lifecycle delete makes the object soft-deleted, so it stays restorable for the soft-delete retention (`storage.md` section 7.5). A change to the lifecycle configuration can take up to 24 hours to apply.
+
+### 10.9 Security residuals
+
+These are limits the build keeps by design or defers. Each is stated where it applies, and none is claimed as solved.
+
+- **Key commitment (the server stores it, and cannot check it).** Every seal carries `key_commitment`, the hex HKDF-SHA256 of the version key under `relic/key-commit/v1`, bound to the relic id and version (`format.md` 3.16). The server stores the commitment inside the signed seal and cannot compare it with a key, because the server never holds a key. A client that opens a version refuses a key whose commitment does not match, before it uses the key. This stops a service from substituting a key a reader would accept.
+- **Reader membership.** A reader or device does not have to appear in `seal.recipient_key_ids` to open a version. It is enough that its wrap is addressed to its own KEM key id and unwraps. HPKE binds the relic id, the version and the recipient, so a grant made after a version was sealed can open it. The seal's recipient set still decides what the owner's browser and relic-mcp wrap at seal time.
+- **Roster freshness, PS-05.** Revocation and removal are owner-signed facts. `/api/relics/{id}/recipients` and `/api/devices/{id}/context` return revoked grants and devices with their owner-signed revocation statements, and `recovery_statement`, the owner's latest signed designation, which is a removal when all three party fields are null. A client honours a verified revocation permanently, pins the highest owner-signed designation `at`, and ignores unsigned `revoked` and epoch flags. A flagged-invalid entry is skipped, not fatal. A client cannot see a revocation it never received. On first contact, or where the service withholds both the revoked entry and its signed statement from a client that has never seen it, that revocation stays unknown to that client. This is by design. The service's answer is trusted only for what it is owner-signed to say.
+- **PS-07 and PS2-09, uploads that are not erased.** An upload that is never sealed, or is overwritten through a signed upload URL that still works after the seal (no `x-goog-if-generation-match`), carries no `customTime`, so the lifecycle rule does not erase it. The owner-session-only upload-grant reissue can overwrite an open version until it is sealed, so someone holding a stolen owner session can deny service to an open version. Both are open.
+- **PS2-08, key squatting.** KEM keys are first-come claims. Registration and device enrollment do not prove possession of the KEM private key. A discoverable key can be squatted, which is a denial of service. A pending device enrollment's KEM key is visible to anyone who holds the enrollment id.
+- **PS2-10, owner bind by a leaked token.** A leaked publish token lets its holder bind a passkey identity as owner of a public relic that has no owner. That is the same power the token already gives: republish and delete.
+- **Recovery lookup.** A signed-in identity learns whether an address has an identity, and receives its public keys. The lookup is rate-limited per viewer.
+- **Loopback exception.** A page served from localhost may request the `localhost` relying-party id at top level. This applies to development only.
+- **Same-user threat model.** Secure Enclave keys have no access control beyond the process that holds them. Version keys sit in a 0600 `publish-state.json`. A process running as the same user can read them. The harness environment is not isolated from an operator's `RELIC_DEVICE_KEYS` setting (PS2-11).
+- **Revocation sweep ordering.** A revocation sweeps wraps before it sets the revoked mark. The ordering is inert in practice: a key fetch refuses a revoked standing, and the publish path refuses keys that are not current.

@@ -8,16 +8,18 @@
  * A filename or a declared mimetype appearing in this file is drift.
  */
 
-import type { DecisionVerdict, RendererClass } from '@relic/format';
+import {
+  type AuthenticationResponseJSON,
+  type DecisionVerdict,
+  normalizeEmail,
+  type RendererClass,
+} from '@relic/format';
+import type { AttestPurpose, StatementKind } from '@relic/format/private';
 import type { CoverKind, CoverType } from '@relic/format/cover';
 import { sha256Hex } from './gcs.ts';
 import { ProblemError } from './problems.ts';
 
 export type { DecisionVerdict };
-
-export function normalizeEmail(value: string): string {
-  return value.trim().replace(/[A-Z]/g, (ch) => ch.toLowerCase());
-}
 
 export function looksLikeEmail(value: string): boolean {
   return value.length <= 320 && /^[^\s@]+@[^\s@.]+\.[^\s@]+$/.test(value);
@@ -102,6 +104,15 @@ export interface RelicRow {
    */
   sharesCount?: number | undefined;
   versionDigests?: Readonly<Record<string, string>> | undefined;
+  /** Private relics only: the access mode the server declares. Absent on public relics. */
+  readonly access?: 'private' | undefined;
+  readonly ownerIdentityId?: string | undefined;
+  /** Bumped by every grant and revocation. A seal or grant that read an older value loses. */
+  readonly accessEpoch?: number | undefined;
+  /** The highest version whose seal the server accepted. */
+  readonly sealedVersion?: number | undefined;
+  /** Versions the owner deleted. The row keeps the number so it is never reused. */
+  readonly deletedVersions?: readonly number[] | undefined;
 }
 
 export interface DecisionRow {
@@ -139,13 +150,17 @@ export interface WebauthnChallengeRow {
    * The normalized address; absent only on a usernameless `sign_in` challenge.
    */
   readonly email?: string;
-  readonly purpose: 'register' | 'enroll' | 'decide' | 'sign_in';
+  readonly purpose: 'register' | 'enroll' | 'decide' | 'sign_in' | 'attest';
   readonly expiresAt: number;
   readonly userHandle?: string;
   readonly assertedBy?: string;
   readonly relicId?: string;
   readonly version?: number;
   readonly verdict?: DecisionVerdict;
+  /** Set when `purpose` is `attest`: the statement family the challenge answers. */
+  readonly attestPurpose?: AttestPurpose;
+  readonly credentialId?: string;
+  readonly enrollmentId?: string;
 }
 
 export interface ShareRow {
@@ -163,7 +178,154 @@ export interface OptOutRow {
   readonly at: number;
 }
 
-export interface Tombstone {
+/** The attestation a stored record was verified from. It re-verifies offline from the store alone. */
+export interface StoredAttestation {
+  readonly statements: readonly {
+    readonly kind: StatementKind;
+    readonly statement: Record<string, unknown>;
+    readonly identitySignature: string;
+  }[];
+  readonly nonce: string;
+  readonly credential: AuthenticationResponseJSON;
+  readonly credentialId: string;
+  readonly credentialPublicKeyJwk: JsonWebKey;
+  readonly credentialAlg: -7 | -257;
+  readonly rpId: string;
+  readonly origin: string;
+  readonly verifiedAt: number;
+}
+export interface IdentityCredentialBinding {
+  readonly credentialId: string;
+  readonly encryptedBundle: string;
+  readonly boundAt: number;
+  readonly attestation: StoredAttestation;
+}
+export interface RecoveryDesignation {
+  readonly recoveryIdentityId: string;
+  readonly recoveryEmail: string;
+  readonly designatedAt: number;
+  readonly attestation: StoredAttestation;
+}
+/** Stored with its email normalized (see `normalizeIdentityRecord`). */
+export interface IdentityRecord {
+  readonly identityId: string;
+  readonly email: string;
+  readonly address: string;
+  readonly kemPublicKey: string;
+  readonly sigPublicKey: string;
+  readonly kemKeyId: string;
+  readonly createdAt: number;
+  readonly retiredAt?: number | undefined;
+  readonly replacedBy?: string | undefined;
+  readonly registration: StoredAttestation;
+  readonly credentials: readonly IdentityCredentialBinding[];
+  readonly recovery?: RecoveryDesignation | undefined;
+  /**
+   * The owner's latest signed recovery_designation, a removal included (the
+   * roster's `recovery_statement`). Absent on an identity that never designated.
+   */
+  readonly recoveryStatement?: StoredAttestation | undefined;
+  /**
+   * KEM key ids of recovery holders the owner has replaced or removed whose
+   * wraps are not yet swept (PS2-06). Cleared only after the sweep succeeds, so
+   * a failed sweep is finished by the next designation.
+   */
+  readonly pendingRecoverySweep?: readonly string[] | undefined;
+  readonly accessLogRetentionDays: number;
+  readonly recipientsEpoch: number;
+}
+export interface DeviceEnrollmentRow {
+  readonly enrollmentId: string;
+  readonly deviceId: string;
+  readonly kemPublicKey: string;
+  readonly sigPublicKey: string;
+  readonly label: string;
+  readonly backend: 'secure-enclave' | 'file';
+  readonly createdAt: number;
+  readonly expiresAt: number;
+  readonly status: 'pending' | 'approved';
+}
+export interface DeviceRecord {
+  readonly deviceId: string;
+  readonly ownerIdentityId: string;
+  readonly kemPublicKey: string;
+  readonly sigPublicKey: string;
+  readonly kemKeyId: string;
+  readonly label: string;
+  readonly backend: 'secure-enclave' | 'file';
+  readonly notAfter: number;
+  readonly certifiedAt: number;
+  readonly cert: StoredAttestation;
+  readonly revokedAt?: number | undefined;
+  readonly revocation?: StoredAttestation | undefined;
+}
+/** Who holds a KEM public key: at most one identity or device ever does. */
+export interface KemHolder {
+  readonly kind: 'identity' | 'device';
+  readonly id: string;
+}
+export interface WrapRow {
+  readonly relicId: string;
+  readonly version: number;
+  readonly recipientKeyId: string;
+  readonly enc: string;
+  readonly ct: string;
+  readonly createdAt: number;
+  readonly source: 'seal' | 'grant' | 'backfill';
+}
+export interface SealRow {
+  readonly relicId: string;
+  readonly version: number;
+  readonly statement: Record<string, unknown>;
+  readonly signature: string;
+  readonly signerKind: 'device' | 'identity';
+  readonly signerId: string;
+  readonly sealedAt: number;
+}
+export interface GrantRow {
+  readonly relicId: string;
+  readonly granteeIdentityId: string;
+  readonly ownerIdentityId: string;
+  readonly versions: readonly number[];
+  readonly grantedAt: number;
+  readonly attestation: StoredAttestation;
+  readonly revokedAt?: number | undefined;
+  readonly revocation?: StoredAttestation | undefined;
+}
+export interface AccessRequestRow {
+  readonly relicId: string;
+  readonly requesterIdentityId: string;
+  readonly requestedAt: number;
+  readonly status: 'pending' | 'granted' | 'declined';
+  readonly decidedAt?: number | undefined;
+  readonly attestation: StoredAttestation;
+}
+export interface OwnedRelicRow {
+  readonly relicId: string;
+  readonly ownerIdentityId: string;
+  readonly access: 'public' | 'private';
+  readonly at: number;
+}
+/** One line of the owner's access log. Erased at `retainUntil` by the bucket's lifecycle rule. */
+export interface AccessEvent {
+  readonly eventId: string;
+  readonly ownerIdentityId: string;
+  readonly relicId: string;
+  readonly at: number;
+  readonly kind: 'request' | 'grant' | 'revoke' | 'wrap_fetch' | 'delete';
+  readonly version?: number | undefined;
+  readonly actorIdentityId?: string | undefined;
+  readonly actorDeviceId?: string | undefined;
+  readonly actorEmail?: string | undefined;
+  readonly subjectIdentityId?: string | undefined;
+  readonly retainUntil: number;
+}
+/**
+ * A relic removed by the operator. Rows written before owner deletion existed
+ * carry no `kind` and read as this shape.
+ */
+export interface OperatorTombstone {
+  readonly kind?: 'operator' | undefined;
   readonly id: string;
   readonly publishIp: string;
   readonly publishedAt: number | undefined;
@@ -174,6 +336,38 @@ export interface Tombstone {
   readonly operator: string;
   readonly reasonClass: ReasonClass;
   readonly reportReference: string | undefined;
+}
+/** A relic its owner deleted: the id and the time, nothing else. */
+export interface OwnerTombstone {
+  readonly kind: 'owner';
+  readonly id: string;
+  readonly deletedAt: number;
+}
+export type Tombstone = OperatorTombstone | OwnerTombstone;
+
+/** The record as stored: email normalized, so the address lookup can compare it exactly. */
+export function normalizeIdentityRecord(
+  record: IdentityRecord
+): IdentityRecord {
+  return { ...record, email: normalizeEmail(record.email) };
+}
+
+/** Joins key parts into one map key. The separator cannot occur in a hex or base64url part. */
+function compositeKey(...parts: readonly string[]): string {
+  return parts.join('\u0000');
+}
+
+/** Updates one entry of a map in place of a store document, returning the new value. */
+function updateEntry<T>(
+  map: Map<string, T>,
+  key: string,
+  change: (value: T) => T
+): T | undefined {
+  const current = map.get(key);
+  if (current === undefined) return undefined;
+  const next = change(current);
+  map.set(key, next);
+  return next;
 }
 
 /**
@@ -551,6 +745,126 @@ export interface RelicStore {
     userHandle: string
   ): Promise<PasskeyRecord | undefined>;
   passkeyDecoyKey(): Promise<Uint8Array>;
+  /**
+   * Compare-and-swap on one relic row. `change` may throw a ProblemError to
+   * abort: the row is left as it was and the error propagates.
+   */
+  updateRelic(
+    id: string,
+    change: (row: RelicRow) => RelicRow
+  ): Promise<RelicRow | undefined>;
+  deleteRelicRow(id: string): Promise<void>;
+
+  getIdentity(identityId: string): Promise<IdentityRecord | undefined>;
+  /** The current, non-retired identity holding this address. */
+  getIdentityForAddress(email: string): Promise<IdentityRecord | undefined>;
+  /**
+   * `address_taken` when the address or the identity id is already stored;
+   * `kem_taken` when another identity or device holds the KEM key. The KEM
+   * claim is written with the identity, so a refused create claims nothing.
+   */
+  createIdentity(
+    record: IdentityRecord
+  ): Promise<'created' | 'address_taken' | 'kem_taken'>;
+  /**
+   * Retire `retiringIdentityId` and make `record` the holder of its address.
+   * `conflict` when the address no longer belongs to that identity, it is
+   * already retired, or a write race was lost. `kem_taken` when the KEM key
+   * is held by anything other than the retiring identity, which keeps its
+   * claim by transferring it to `record`. Nothing is left half-written.
+   */
+  replaceIdentity(
+    record: IdentityRecord,
+    retiringIdentityId: string,
+    at: number
+  ): Promise<'replaced' | 'conflict' | 'kem_taken'>;
+  updateIdentity(
+    identityId: string,
+    change: (r: IdentityRecord) => IdentityRecord
+  ): Promise<IdentityRecord | undefined>;
+  /** Create-only. */
+  putDeviceEnrollment(row: DeviceEnrollmentRow): Promise<boolean>;
+  getDeviceEnrollment(
+    enrollmentId: string
+  ): Promise<DeviceEnrollmentRow | undefined>;
+  updateDeviceEnrollment(
+    enrollmentId: string,
+    change: (r: DeviceEnrollmentRow) => DeviceEnrollmentRow
+  ): Promise<DeviceEnrollmentRow | undefined>;
+  /**
+   * Create-only, and writes the owner index. `exists` when the device id is
+   * taken; `kem_taken` when another identity or device holds its KEM key.
+   */
+  putDevice(record: DeviceRecord): Promise<'created' | 'exists' | 'kem_taken'>;
+  /**
+   * Create-only. Records a device request or owner-bind nonce, keyed by the
+   * hash of device and nonce, until `expiresAt`. `false` means already used.
+   */
+  putDeviceNonce(nonceHash: string, expiresAt: number): Promise<boolean>;
+  getDevice(deviceId: string): Promise<DeviceRecord | undefined>;
+  updateDevice(
+    deviceId: string,
+    change: (r: DeviceRecord) => DeviceRecord
+  ): Promise<DeviceRecord | undefined>;
+  listDevicesForOwner(
+    ownerIdentityId: string
+  ): Promise<readonly DeviceRecord[]>;
+  /** Create-only. */
+  putWrap(row: WrapRow): Promise<boolean>;
+  getWrap(
+    relicId: string,
+    version: number,
+    recipientKeyId: string
+  ): Promise<WrapRow | undefined>;
+  listWraps(relicId: string, version?: number): Promise<readonly WrapRow[]>;
+  /** Deletes every wrap matching the filter, across versions when no version is given. */
+  deleteWraps(
+    relicId: string,
+    filter: { readonly version?: number; readonly recipientKeyId?: string }
+  ): Promise<number>;
+  /** Create-only. */
+  putSeal(row: SealRow): Promise<boolean>;
+  getSeal(relicId: string, version: number): Promise<SealRow | undefined>;
+  deleteSeals(relicId: string, version?: number): Promise<number>;
+  /** Create-only. Also writes the grantee index. */
+  putGrant(row: GrantRow): Promise<boolean>;
+  getGrant(
+    relicId: string,
+    granteeIdentityId: string
+  ): Promise<GrantRow | undefined>;
+  listGrants(relicId: string): Promise<readonly GrantRow[]>;
+  updateGrant(
+    relicId: string,
+    granteeIdentityId: string,
+    change: (r: GrantRow) => GrantRow
+  ): Promise<GrantRow | undefined>;
+  /** Removes the grant, then its grantee index entry. */
+  deleteGrant(relicId: string, granteeIdentityId: string): Promise<void>;
+  deleteGrantsForRelic(relicId: string): Promise<number>;
+  listGrantsForGrantee(granteeIdentityId: string): Promise<readonly GrantRow[]>;
+  /** Create-only. */
+  putAccessRequest(row: AccessRequestRow): Promise<boolean>;
+  getAccessRequest(
+    relicId: string,
+    requesterIdentityId: string
+  ): Promise<AccessRequestRow | undefined>;
+  listAccessRequests(relicId: string): Promise<readonly AccessRequestRow[]>;
+  updateAccessRequest(
+    relicId: string,
+    requesterIdentityId: string,
+    change: (r: AccessRequestRow) => AccessRequestRow
+  ): Promise<AccessRequestRow | undefined>;
+  deleteAccessRequestsForRelic(relicId: string): Promise<number>;
+  putOwnedRelic(row: OwnedRelicRow): Promise<void>;
+  listOwnedRelics(ownerIdentityId: string): Promise<readonly OwnedRelicRow[]>;
+  deleteOwnedRelic(ownerIdentityId: string, relicId: string): Promise<void>;
+  appendAccessEvent(event: AccessEvent): Promise<void>;
+  /** Events whose `retainUntil` is still in the future, oldest first. */
+  listAccessEvents(
+    ownerIdentityId: string,
+    now: number,
+    relicId?: string
+  ): Promise<readonly AccessEvent[]>;
 }
 
 export class MemoryStore implements RelicStore {
@@ -581,6 +895,18 @@ export class MemoryStore implements RelicStore {
   private passkeyDecoySecret: Uint8Array | undefined;
   private readonly signInCodes = new Map<string, SignInCodeRow>();
   private readonly signInCodeBudgets = new Map<string, SignInCodeBudgetRow>();
+  private readonly identities = new Map<string, IdentityRecord>();
+  private readonly identityAddresses = new Map<string, string>();
+  private readonly kemClaims = new Map<string, KemHolder>();
+  private readonly deviceNonces = new Map<string, number>();
+  private readonly deviceEnrollments = new Map<string, DeviceEnrollmentRow>();
+  private readonly devices = new Map<string, DeviceRecord>();
+  private readonly wraps = new Map<string, WrapRow>();
+  private readonly seals = new Map<string, SealRow>();
+  private readonly grants = new Map<string, GrantRow>();
+  private readonly accessRequests = new Map<string, AccessRequestRow>();
+  private readonly ownedRelics = new Map<string, OwnedRelicRow>();
+  private readonly accessEvents: AccessEvent[] = [];
   async getRelic(id: string): Promise<RelicRow | undefined> {
     return this.relics.get(id);
   }
@@ -1218,5 +1544,396 @@ export class MemoryStore implements RelicStore {
     if (row === undefined) return undefined;
     this.webauthnChallenges.delete(challengeHash);
     return row;
+  }
+
+  async updateRelic(
+    id: string,
+    change: (row: RelicRow) => RelicRow
+  ): Promise<RelicRow | undefined> {
+    const row = this.relics.get(id);
+    if (row === undefined) return undefined;
+    const next = change(row);
+    this.relics.set(id, next);
+    return next;
+  }
+
+  async deleteRelicRow(id: string): Promise<void> {
+    this.relics.delete(id);
+  }
+
+  async getIdentity(identityId: string): Promise<IdentityRecord | undefined> {
+    return this.identities.get(identityId);
+  }
+
+  async getIdentityForAddress(
+    email: string
+  ): Promise<IdentityRecord | undefined> {
+    const normalized = normalizeEmail(email);
+    const identityId = this.identityAddresses.get(normalized);
+    if (identityId === undefined) return undefined;
+    const record = this.identities.get(identityId);
+    if (
+      record === undefined ||
+      record.email !== normalized ||
+      record.retiredAt !== undefined
+    ) {
+      return undefined;
+    }
+    return record;
+  }
+
+  async createIdentity(
+    record: IdentityRecord
+  ): Promise<'created' | 'address_taken' | 'kem_taken'> {
+    const stored = normalizeIdentityRecord(record);
+    if (
+      this.identityAddresses.has(stored.email) ||
+      this.identities.has(stored.identityId)
+    ) {
+      return 'address_taken';
+    }
+    if (this.kemClaims.has(stored.kemKeyId)) return 'kem_taken';
+    this.identities.set(stored.identityId, stored);
+    this.identityAddresses.set(stored.email, stored.identityId);
+    this.kemClaims.set(stored.kemKeyId, {
+      kind: 'identity',
+      id: stored.identityId,
+    });
+    return 'created';
+  }
+
+  async replaceIdentity(
+    record: IdentityRecord,
+    retiringIdentityId: string,
+    at: number
+  ): Promise<'replaced' | 'conflict' | 'kem_taken'> {
+    const stored = normalizeIdentityRecord(record);
+    const retiring = this.identities.get(retiringIdentityId);
+    if (
+      this.identityAddresses.get(stored.email) !== retiringIdentityId ||
+      retiring === undefined ||
+      retiring.retiredAt !== undefined ||
+      retiring.email !== stored.email ||
+      this.identities.has(stored.identityId)
+    ) {
+      return 'conflict';
+    }
+    // The retiring identity may carry its KEM claim over to the new record.
+    const claim = this.kemClaims.get(stored.kemKeyId);
+    if (
+      claim !== undefined &&
+      !(claim.kind === 'identity' && claim.id === retiringIdentityId)
+    ) {
+      return 'kem_taken';
+    }
+    this.identities.set(retiringIdentityId, {
+      ...retiring,
+      retiredAt: at,
+      replacedBy: stored.identityId,
+    });
+    this.identities.set(stored.identityId, stored);
+    this.identityAddresses.set(stored.email, stored.identityId);
+    this.kemClaims.set(stored.kemKeyId, {
+      kind: 'identity',
+      id: stored.identityId,
+    });
+    return 'replaced';
+  }
+
+  async updateIdentity(
+    identityId: string,
+    change: (r: IdentityRecord) => IdentityRecord
+  ): Promise<IdentityRecord | undefined> {
+    return updateEntry(this.identities, identityId, change);
+  }
+
+  async putDeviceEnrollment(row: DeviceEnrollmentRow): Promise<boolean> {
+    if (this.deviceEnrollments.has(row.enrollmentId)) return false;
+    this.deviceEnrollments.set(row.enrollmentId, row);
+    return true;
+  }
+
+  async getDeviceEnrollment(
+    enrollmentId: string
+  ): Promise<DeviceEnrollmentRow | undefined> {
+    return this.deviceEnrollments.get(enrollmentId);
+  }
+
+  async updateDeviceEnrollment(
+    enrollmentId: string,
+    change: (r: DeviceEnrollmentRow) => DeviceEnrollmentRow
+  ): Promise<DeviceEnrollmentRow | undefined> {
+    return updateEntry(this.deviceEnrollments, enrollmentId, change);
+  }
+
+  async putDevice(
+    record: DeviceRecord
+  ): Promise<'created' | 'exists' | 'kem_taken'> {
+    if (this.devices.has(record.deviceId)) return 'exists';
+    if (this.kemClaims.has(record.kemKeyId)) return 'kem_taken';
+    this.devices.set(record.deviceId, record);
+    this.kemClaims.set(record.kemKeyId, {
+      kind: 'device',
+      id: record.deviceId,
+    });
+    return 'created';
+  }
+
+  async putDeviceNonce(nonceHash: string, expiresAt: number): Promise<boolean> {
+    if (this.deviceNonces.has(nonceHash)) return false;
+    this.deviceNonces.set(nonceHash, expiresAt);
+    return true;
+  }
+
+  async getDevice(deviceId: string): Promise<DeviceRecord | undefined> {
+    return this.devices.get(deviceId);
+  }
+
+  async updateDevice(
+    deviceId: string,
+    change: (r: DeviceRecord) => DeviceRecord
+  ): Promise<DeviceRecord | undefined> {
+    return updateEntry(this.devices, deviceId, change);
+  }
+
+  async listDevicesForOwner(
+    ownerIdentityId: string
+  ): Promise<readonly DeviceRecord[]> {
+    return [...this.devices.values()]
+      .filter((d) => d.ownerIdentityId === ownerIdentityId)
+      .sort(
+        (a, b) =>
+          a.certifiedAt - b.certifiedAt || (a.deviceId < b.deviceId ? -1 : 1)
+      );
+  }
+
+  async putWrap(row: WrapRow): Promise<boolean> {
+    const k = compositeKey(
+      row.relicId,
+      String(row.version),
+      row.recipientKeyId
+    );
+    if (this.wraps.has(k)) return false;
+    this.wraps.set(k, row);
+    return true;
+  }
+
+  async getWrap(
+    relicId: string,
+    version: number,
+    recipientKeyId: string
+  ): Promise<WrapRow | undefined> {
+    return this.wraps.get(
+      compositeKey(relicId, String(version), recipientKeyId)
+    );
+  }
+
+  async listWraps(
+    relicId: string,
+    version?: number
+  ): Promise<readonly WrapRow[]> {
+    return [...this.wraps.values()]
+      .filter(
+        (w) =>
+          w.relicId === relicId &&
+          (version === undefined || w.version === version)
+      )
+      .sort(
+        (a, b) =>
+          a.version - b.version ||
+          (a.recipientKeyId < b.recipientKeyId ? -1 : 1)
+      );
+  }
+
+  async deleteWraps(
+    relicId: string,
+    filter: { readonly version?: number; readonly recipientKeyId?: string }
+  ): Promise<number> {
+    let removed = 0;
+    for (const [k, w] of this.wraps) {
+      if (w.relicId !== relicId) continue;
+      if (filter.version !== undefined && w.version !== filter.version)
+        continue;
+      if (
+        filter.recipientKeyId !== undefined &&
+        w.recipientKeyId !== filter.recipientKeyId
+      ) {
+        continue;
+      }
+      this.wraps.delete(k);
+      removed += 1;
+    }
+    return removed;
+  }
+
+  async putSeal(row: SealRow): Promise<boolean> {
+    const k = compositeKey(row.relicId, String(row.version));
+    if (this.seals.has(k)) return false;
+    this.seals.set(k, row);
+    return true;
+  }
+
+  async getSeal(
+    relicId: string,
+    version: number
+  ): Promise<SealRow | undefined> {
+    return this.seals.get(compositeKey(relicId, String(version)));
+  }
+
+  async deleteSeals(relicId: string, version?: number): Promise<number> {
+    let removed = 0;
+    for (const [k, s] of this.seals) {
+      if (s.relicId !== relicId) continue;
+      if (version !== undefined && s.version !== version) continue;
+      this.seals.delete(k);
+      removed += 1;
+    }
+    return removed;
+  }
+
+  async putGrant(row: GrantRow): Promise<boolean> {
+    const k = compositeKey(row.relicId, row.granteeIdentityId);
+    if (this.grants.has(k)) return false;
+    this.grants.set(k, row);
+    return true;
+  }
+
+  async getGrant(
+    relicId: string,
+    granteeIdentityId: string
+  ): Promise<GrantRow | undefined> {
+    return this.grants.get(compositeKey(relicId, granteeIdentityId));
+  }
+
+  async listGrants(relicId: string): Promise<readonly GrantRow[]> {
+    return [...this.grants.values()]
+      .filter((g) => g.relicId === relicId)
+      .sort(
+        (a, b) =>
+          a.grantedAt - b.grantedAt ||
+          (a.granteeIdentityId < b.granteeIdentityId ? -1 : 1)
+      );
+  }
+
+  async updateGrant(
+    relicId: string,
+    granteeIdentityId: string,
+    change: (r: GrantRow) => GrantRow
+  ): Promise<GrantRow | undefined> {
+    return updateEntry(
+      this.grants,
+      compositeKey(relicId, granteeIdentityId),
+      change
+    );
+  }
+
+  async deleteGrant(relicId: string, granteeIdentityId: string): Promise<void> {
+    this.grants.delete(compositeKey(relicId, granteeIdentityId));
+  }
+
+  async deleteGrantsForRelic(relicId: string): Promise<number> {
+    let removed = 0;
+    for (const [k, g] of this.grants) {
+      if (g.relicId !== relicId) continue;
+      this.grants.delete(k);
+      removed += 1;
+    }
+    return removed;
+  }
+
+  async listGrantsForGrantee(
+    granteeIdentityId: string
+  ): Promise<readonly GrantRow[]> {
+    return [...this.grants.values()]
+      .filter((g) => g.granteeIdentityId === granteeIdentityId)
+      .sort(
+        (a, b) => a.grantedAt - b.grantedAt || (a.relicId < b.relicId ? -1 : 1)
+      );
+  }
+
+  async putAccessRequest(row: AccessRequestRow): Promise<boolean> {
+    const k = compositeKey(row.relicId, row.requesterIdentityId);
+    if (this.accessRequests.has(k)) return false;
+    this.accessRequests.set(k, row);
+    return true;
+  }
+
+  async getAccessRequest(
+    relicId: string,
+    requesterIdentityId: string
+  ): Promise<AccessRequestRow | undefined> {
+    return this.accessRequests.get(compositeKey(relicId, requesterIdentityId));
+  }
+
+  async listAccessRequests(
+    relicId: string
+  ): Promise<readonly AccessRequestRow[]> {
+    return [...this.accessRequests.values()]
+      .filter((r) => r.relicId === relicId)
+      .sort(
+        (a, b) =>
+          a.requestedAt - b.requestedAt ||
+          (a.requesterIdentityId < b.requesterIdentityId ? -1 : 1)
+      );
+  }
+
+  async updateAccessRequest(
+    relicId: string,
+    requesterIdentityId: string,
+    change: (r: AccessRequestRow) => AccessRequestRow
+  ): Promise<AccessRequestRow | undefined> {
+    return updateEntry(
+      this.accessRequests,
+      compositeKey(relicId, requesterIdentityId),
+      change
+    );
+  }
+
+  async deleteAccessRequestsForRelic(relicId: string): Promise<number> {
+    let removed = 0;
+    for (const [k, r] of this.accessRequests) {
+      if (r.relicId !== relicId) continue;
+      this.accessRequests.delete(k);
+      removed += 1;
+    }
+    return removed;
+  }
+
+  async putOwnedRelic(row: OwnedRelicRow): Promise<void> {
+    this.ownedRelics.set(compositeKey(row.ownerIdentityId, row.relicId), row);
+  }
+
+  async listOwnedRelics(
+    ownerIdentityId: string
+  ): Promise<readonly OwnedRelicRow[]> {
+    return [...this.ownedRelics.values()]
+      .filter((r) => r.ownerIdentityId === ownerIdentityId)
+      .sort((a, b) => a.at - b.at || (a.relicId < b.relicId ? -1 : 1));
+  }
+
+  async deleteOwnedRelic(
+    ownerIdentityId: string,
+    relicId: string
+  ): Promise<void> {
+    this.ownedRelics.delete(compositeKey(ownerIdentityId, relicId));
+  }
+
+  async appendAccessEvent(event: AccessEvent): Promise<void> {
+    this.accessEvents.push(event);
+  }
+
+  async listAccessEvents(
+    ownerIdentityId: string,
+    now: number,
+    relicId?: string
+  ): Promise<readonly AccessEvent[]> {
+    return this.accessEvents
+      .filter(
+        (e) =>
+          e.ownerIdentityId === ownerIdentityId &&
+          e.retainUntil > now &&
+          (relicId === undefined || e.relicId === relicId)
+      )
+      .sort((a, b) => a.at - b.at || (a.eventId < b.eventId ? -1 : 1));
   }
 }

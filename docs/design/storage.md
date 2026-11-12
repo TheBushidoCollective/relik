@@ -246,7 +246,7 @@ This materially changes what section 2.3's leaves cost. **Leaf 3 and leaf 4 sacr
 
 ### 5.3 Object metadata at upload
 
-**No custom object metadata is set at upload. The grant signs no `x-goog-meta-*` header, and none is required.**
+**No custom object metadata is set on relic ciphertext or cover objects at upload. The grant signs no `x-goog-meta-*` header, and none is required.**
 
 Nothing needs it. The renderer class, the optional publisher-declared plaintext title, the publishing client name and version, the publishing IP, and the timestamp all live on the relic row the app server writes at grant time, which is where `frame.md` puts the telemetry and where `service.md` 1.2 and §4 read it from. (Note: the plaintext title is stored in the clear, joined on 2026-10-13 by per-relic cover image rasters stored at `m/cover/{id}/{sha256}` in the storage bucket, per `docs/decisions.md`.) `object_length` and `object_crc32c` for the mint response come from the object's non-editable metadata rather than from anything a client sets. `format.md` 3.2 bars anything content-descriptive, which removes the only fields anyone would be tempted to add. A field with no consumer should not exist.
 
@@ -260,9 +260,32 @@ Nothing needs it. The renderer class, the optional publisher-declared plaintext 
 
 Per-relic cover image rasters (1200x630 pixels, up to 512 KB, PNG or JPEG) are stored in Google Cloud Storage at the content-addressed prefix `m/cover/{id}/{sha256}`. They are written by the app server upon receiving a validated `POST /api/relics/{id}/cover` request from the publishing client, using credentials held by the app server.
 
+Private relics refuse covers. `POST /api/relics/{id}/cover` answers `400 private_policy_violation`, with `policy_check` set to `cover`, for a private relic, so no cover object is written for one (`service.md` section 10.2).
+
 - **Content-addressing:** The object path includes the lowercase hex SHA-256 of the validated raster bytes. This allows content-addressed caching: a new version with a changed cover gets a new URL, cache-busting unfurlers automatically.
 - **Content-type:** Set to `image/png` or `image/jpeg` matching the raster format.
 - **Lifecycle and deletion:** Cover objects have no bucket lifecycle rule. When a new version is published or republishing with `cover: false` occurs, `deleteCovers(relicId)` deletes all existing cover objects under `m/cover/{id}/` and clears `row.cover`. When a relic is tombstoned, `operatorDelete` deletes all cover objects. Deleted cover objects sit in Cloud Storage soft delete per the bucket's 7-day retention policy, exactly like ciphertext objects.
+
+### 5.5 Private-share objects
+
+A private relic adds the objects below. Each is a JSON document at the path shown. The plan names the record type for each object, not a MIME type, so the record type is the contract here. Enrollment identifiers are 26 Crockford characters from 16 random bytes. Identity and device paths are also listed in `service.md` section 9.4.
+
+| Object | Content |
+|---|---|
+| `m/identity/{identityId}.json` | `IdentityRecord` |
+| `m/identity-address/{sha256Hex(normalizedEmail)}.json` | `{identityId, email, updatedAt}`; create-only, compare-and-swap on replace |
+| `m/device/{deviceId}.json` | `DeviceRecord` |
+| `m/device-owner/{ownerIdentityId}/{deviceId}.json` | `{deviceId, at}` |
+| `m/challenge/device-enrollment/{enrollmentId}.json` | `DeviceEnrollmentRow`, under the existing transient prefix with a one-day lifecycle; the app refuses after `expiresAt` |
+| `m/wrap/{relicId}/{version}/{recipientKeyId}.json` | `WrapRow` |
+| `m/seal/{relicId}/{version}.json` | `SealRow` |
+| `m/grant/{relicId}/{granteeIdentityId}.json` | `GrantRow` |
+| `m/grant-by-grantee/{granteeIdentityId}/{relicId}.json` | `{relicId, at}` |
+| `m/access-request/{relicId}/{requesterIdentityId}.json` | `AccessRequestRow` |
+| `m/owner-relic/{ownerIdentityId}/{relicId}.json` | `OwnedRelicRow` |
+| `m/access/{ownerIdentityId}/{at}-{8 hex}.json` | `AccessEvent`, with `at` as 16 zero-padded digits, written with `uploadType=multipart` metadata that sets `customTime` (section 7.5) |
+
+Within the contract, a `customTime` is set on access-log objects (section 7.5) and, for a private relic, on every object written for that relic, so the bucket erases it one day after the relic's expiry (section 7.2). Plan decision 7 is accepted and its rules are in `deploy/terraform/modules/relic/resource.google_storage_bucket.relics.tf`. The application writes the `customTime` values, and that write path belongs to the server slice and is not verified on this document's base.
 
 ## 6. The GCP project topology
 
@@ -288,37 +311,41 @@ The default is the setting you get by not deciding: "Soft delete is enabled by d
 
 **What deletion actually means, to three different readers.** *To a recipient:* immediate and total. "Soft-deleted objects cannot be read or modified", so serving stops at the delete call and the viewer shows the removed state. *To an abuse reporter:* the same, and that is the half that answers the notice, so nothing here weakens the takedown story. *To a legal-preservation request:* deletion is not erasure for seven days, and the operator must not claim otherwise. Soft delete is also not a preservation instrument, because its maximum is 90 days and a preservation obligation can run a year; ciphertext held under such an obligation is held deliberately and outside this policy. Soft-deleted objects also "incur storage charges until the soft-deleted objects are permanently deleted after the retention duration is over", so the tail is a line item and not only a disclosure.
 
-### 7.2 The TTL ceiling and its lifecycle regime
+**Owner delete and private ciphertext.** The owner's hard delete (`service.md` section 4) removes each version's ciphertext object, as the operator delete does, so the same soft-delete policy applies. Relic never promises erasure, and that holds for private ciphertext as it does for public ciphertext.
 
-**The TTL ceiling is 72 hours, 259,200 seconds.**
+**Soft delete keeps deleted bytes.** Live objects are removed at once when they are deleted, whether by an owner's hard delete, an operator delete, or a lifecycle rule (section 7.2). Cloud Storage holds a deleted object as soft-deleted for the bucket's soft-delete retention, and the lifecycle documentation states that objects deleted by Object Lifecycle Management become soft-deleted. During that window the operator can restore the ciphertext, the wrap records and the metadata. The service never holds a content key, so retained ciphertext alone discloses no plaintext, but the bytes are not gone. The retention is set per deployment through `soft_delete_retention_days` (`deploy/terraform/variables.tf`). The repository does not set its value, and the value in effect is not verified here. This is a known limit, and the lever is the bucket's soft-delete retention, which this document does not change. Relic does not promise immediate permanent erasure.
 
-`docs/preconditions.md` makes this the single highest-leverage control, bounding how long any abuse can circulate, and `frame.md` locks expiry configuration out as a non-goal, so this is an abuse control rather than a product convenience.
+### 7.2 Lifecycle rules, by object class
 
-**The Friday-to-Monday justification this number usually gets is conditional, and it is stated with its conditions.** The case that works is a Friday 5:00 PM publish read Monday morning: 72 hours reaches Monday 5:00 PM, so a Monday-morning reader has hours in hand. Three ordinary cases do not work. A Monday public holiday makes it Friday to Tuesday, 96 hours or more. A Friday-morning publish read Monday afternoon is about 76 hours. And it fails outright across timezones: a Friday 5:00 PM AEST publish is 07:00 UTC Friday, and a US recipient opening it Monday 9:00 AM PDT is at 16:00 UTC Monday, 81 hours later. `service.md` §3 makes the app server's clock authoritative and never the publisher's, so a local Friday afternoon is not a fixed point to begin with. **72 hours is kept anyway, and the honest claim is that it covers the common case and leaves the rest to a republish**, which the locked republish non-goal makes a new relic and a new URL rather than an extension. The recipient's remedy is to ask the publisher, and that is a real remedy for a colleague and a poor one for a broadcast, which is the direction this product wants the asymmetry to run.
+Public relics carry no `customTime`, and no bucket lifecycle rule matches a public object. A public relic's objects stay until they are deleted. The 72-hour TTL ceiling and the age-3 rule that an earlier draft of this section described are not implemented. The frame reversed the mandatory TTL for public relics (`docs/frame.md`, non-goals), and the bucket rules express neither one.
 
-**The abuse-side argument is weaker than it reads, and it is stated at its real strength.** `docs/preconditions.md` says malware campaigns need links that live for days, and 72 hours is three days, so this ceiling sits at the low end of the days band rather than outside it. It is a real reduction in circulation time and not a disqualifier for the abuse case. Holding it any other way overstates what the highest-leverage control actually buys.
+Private relics (plan decision 7, accepted 2026-11-11) are removed from live storage one day after their expiry. The application sets `customTime` to the relic's expiry on every object it writes for that relic, and the rule `days_since_custom_time = 1` deletes each one. The covered prefixes are the ciphertext prefix `r/` and the metadata prefixes `m/relic/`, `m/wrap/`, `m/seal/`, `m/grant/`, `m/grant-by-grantee/`, `m/access-request/`, `m/owner-relic/`, `m/comment/`, `m/author_relic/`, `m/commenter/`, `m/decision/`, `m/share/` and `m/optout/`. Removal applies to live objects only. Deleted copies are held under the soft-delete retention in section 7.1, so the operator can restore them during that window.
 
-**Which regime it lands in: the expressible one.** `service.md` 7.3 notes that anything under a day is inexpressible in lifecycle and is enforced only at the application layer. Seventy-two hours is a whole number of days, so it expresses as an Object Lifecycle Management rule with an age condition of 3 and does not fall into the application-only regime. Both halves still run, and they are not equivalent: the app server's refusal to mint past the ceiling is exact to the second and is the abuse-bounding control, while the lifecycle rule is storage hygiene and lags, because "Changes to a bucket's lifecycle configuration can take up to 24 hours to go into effect" and "Object Lifecycle Management might still perform actions based on the old configuration during this time" ([lifecycle](https://cloud.google.com/storage/docs/lifecycle)). Nothing is served in that gap, per `service.md` 3.1.
+Transient records under `m/challenge/` and `m/dedup/` have an age-1 rule, and the application refuses them on age before that rule runs.
 
-**This number is what bounds `design-container-and-crypto`'s v2 migration cost, and the bound is tighter than the shape that document was handed.** `docs/design/container.md` section 8 states the bound on carrying two decoders as the mandatory TTL plus the signed URL's validity window, and records that no number for the TTL existed yet. **The additive term is already discharged.** `service.md` §3 clamps signed URL validity to `min(url_validity, relic_expiry)` at mint, which section 4.2 above restates and sizes, so no signed URL can outlive relic expiry and there is no overhang to add. Tighter still: section 4.2's 300-second minimum viable validity means the last mint a relic can serve happens at TTL minus 300 seconds, and the URL it returns dies exactly at the ceiling rather than past it.
+### 7.3 Retention windows
 
-**So the bound is 259,200 seconds flat, and a v1 decoder can be retired 72 hours after the last v1 writer stops publishing.** The only residual is a transfer already in flight at that instant, which section 3.3 flags and routes to `build` and which is bounded by one object's transfer time rather than by a policy window. Reporting 72 hours and 15 minutes would be a real error in the consumer's direction, since `container.md` asked this document for the number and would have received the discharged reasoning along with it. The reasoning that produces the extra 900 seconds lives in `docs/preconditions.md` section 3 and routes as drift in section 8; it is named there, not acted on here.
-
-### 7.3 The retention window
-
-**The retention window is 90 days, set against the 72-hour TTL.**
-
-`service.md` 7.5 names the failure a short window causes: a retention window shorter than the TTL silently stops the metric's publishing-IP filter firing on older relics, because the filter compares an open's requesting IP against the relic's publishing IP and the relic row has to still exist. At 90 days against 72 hours the window exceeds the TTL by a factor of 30, so the filter cannot silently stop, and it also exceeds the seven-day soft-delete tail, so the tombstone always outlives the bytes it describes. That ordering is the one that matters: `service.md` §4 makes the tombstone what any `410` rests on, so a record aging out before the object does would degrade a removed relic to `404`.
-
-Ninety days also gives roughly thirteen weekly buckets, which is what `frame.md`'s trust condition needs to be evaluated rather than asserted, since that condition is stated in relics per week and distinct publishing IPs. And it bounds how long the tombstone and the mint log's `code` survive, which `service.md` 1.2's cap-exhaustion mitigation depends on entirely, since `code` is the only place cap exhaustion, expiry, and the three flavors of deletion stay distinguishable.
-
-**The cost, named because nothing else names it.** After 90 days the relic row and the tombstone age out, so `service.md` 1.3's three-way split collapses and a relic that was removed or that expired returns `relic_not_found`. That is correct at 90 days and it should be stated in the disclosure statement rather than discovered by a publisher.
+The 90-day retention window in an earlier draft of this section is not implemented by the bucket. No rule in the Terraform keeps or removes relic rows or tombstones by age. Public relic rows and tombstones have no bucket rule. Private relic rows follow section 7.2. Any retention window for application records is application state, and it is not verified on this document's base.
 
 ### 7.4 The published byte lifetime
 
-The published number is not the TTL, and it is not one number per `service.md` §5 item 5, which requires retention stated per sink. For object bytes the arithmetic is: **72 hours of TTL, plus lifecycle execution lag at day granularity and up to 24 further hours after any configuration change, plus the seven-day soft-delete retention.** That is up to roughly twelve days from publish to permanent deletion, against a 72-hour figure a publisher would otherwise infer. Application records, edge logs, GCS access logs where enabled, and the intake mailbox each carry their own window and are listed separately, per `service.md` §5.
+A public relic's bytes have no published lifetime: they are kept until deleted. For a private relic, the live copy is removed one day after expiry, and a deleted copy can persist as soft-deleted bytes for the soft-delete retention, so the bytes can outlive the rule's date. Relic publishes no single byte-lifetime number for either class. A legal-preservation obligation would need its own hold, and this bucket configures none. The disclosure has to say that a preservation obligation suspends the published lifetime.
 
-**One obligation the arithmetic has to count.** A legal-preservation obligation can require retaining ciphertext the operator cannot read for a year or longer, which exceeds every window above and exceeds soft delete's own maximum. Such holds are outside the lifecycle regime by construction, and the disclosure statement has to say that a preservation obligation suspends the published lifetime rather than implying the lifetime is unconditional.
+### 7.5 Lifecycle rule for access-log objects
+
+The bucket has one rule for the owner's access log: action `Delete`, condition `days_since_custom_time = 1`, prefix `m/access/`. Each access-log object is written with `customTime` set to its `retainUntil` minus one day, so the condition is met on and after `retainUntil`. The Cloud Storage lifecycle page defines `daysSinceCustomTime` as met on and after the given number of days after the Custom-Time, and never met for an object without one ([lifecycle](https://docs.cloud.google.com/storage/docs/lifecycle)). The metadata page defines Custom-Time as a user-set date and time ([metadata](https://docs.cloud.google.com/storage/docs/metadata)).
+
+Three facts bound the rule:
+
+1. The rule removes the live event on `retainUntil`. The deleted event is then held as soft-deleted under the soft-delete retention (section 7.1), so its bytes can remain restorable by the operator after `retainUntil`. The access-log API excludes events whose `retainUntil` has passed, whatever the bytes are.
+2. A change to a bucket's lifecycle configuration can take up to 24 hours to take effect ([lifecycle](https://docs.cloud.google.com/storage/docs/lifecycle)).
+3. Custom-Time cannot be removed after it is set, and it cannot be decreased on an object ([metadata](https://docs.cloud.google.com/storage/docs/metadata)). Each event's retention is set when the event is written, so a later change to an owner's retention setting applies to events written after the change.
+
+The bucket has no other lifecycle rule for private relics. Relic ciphertext, cover objects, wraps and seals are covered only by the rule in section 7.2.
+
+### 7.6 Browser access (CORS)
+
+The bucket allows browser requests from the service origin, and plan correction 25 records that it allowed only `GET` and `HEAD`. A private relic is rekeyed in the browser after a revocation: the browser decrypts the current content, encrypts it under a fresh key, and uploads it directly to a signed URL, which is a `PUT`. The plan adds `PUT` to the allowed CORS methods and no other method (`service.md` sections 10.3 and 10.4).
 
 ## 8. Drift routed, not fixed
 

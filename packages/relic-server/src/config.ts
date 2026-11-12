@@ -138,6 +138,24 @@ export interface RelicConfig {
   readonly passkeyFreshLinkSeconds: number;
   /** Engaged when egress spend crosses the ceiling. Refuses every mint. */
   readonly killSwitchEngaged: boolean;
+  /** Private shares (4.9): the default and largest lifetime a private relic may take, in days. */
+  readonly privateDefaultTtlDays: number;
+  readonly privateMaxTtlDays: number;
+  /** Access-log retention the owner may set, in days; the default applies until they set one. */
+  readonly accessLogRetentionDefaultDays: number;
+  readonly accessLogRetentionMinDays: number;
+  readonly accessLogRetentionMaxDays: number;
+  /** Longest a device certificate may run, in days. */
+  readonly deviceCertMaxDays: number;
+  /** How long a device enrollment may wait for its owner's approval. */
+  readonly deviceEnrollmentTtlSeconds: number;
+  /** Pending access requests one relic may hold at once. */
+  readonly privatePendingRequestsMax: number;
+  /** Wraps one backfill call may carry. */
+  readonly privateBackfillMaxWraps: number;
+  readonly privateRateLimit: RateLimitConfig;
+  readonly deviceEnrollmentRateLimit: RateLimitConfig;
+  readonly identityLookupRateLimit: RateLimitConfig;
   /**
    * Number of trusted proxy hops from the right in X-Forwarded-For.
    *
@@ -245,6 +263,18 @@ export const DEFAULT_CONFIG: RelicConfig = {
   passkeyOfferMarkerSeconds: 600,
   passkeyFreshLinkSeconds: 900,
   killSwitchEngaged: false,
+  privateDefaultTtlDays: 30,
+  privateMaxTtlDays: 365,
+  accessLogRetentionDefaultDays: 2190,
+  accessLogRetentionMinDays: 30,
+  accessLogRetentionMaxDays: 3650,
+  deviceCertMaxDays: 365,
+  deviceEnrollmentTtlSeconds: 900,
+  privatePendingRequestsMax: 50,
+  privateBackfillMaxWraps: 2000,
+  privateRateLimit: { limit: 60, windowSeconds: 3600 },
+  deviceEnrollmentRateLimit: { limit: 10, windowSeconds: 3600 },
+  identityLookupRateLimit: { limit: 30, windowSeconds: 3600 },
   trustedProxyHops: 2,
   limiterMaxEntries: 100_000,
   limiterSweepInterval: 100,
@@ -421,5 +451,64 @@ export function assertConfig(config: RelicConfig): void {
     config.passkeyNoticeTimeoutMs <= 0
   ) {
     throw new Error('passkeyNoticeTimeoutMs must be a positive integer');
+  }
+  // Private shares (`docs/plans/private-shares` 4.9). The usercontent origin
+  // must not sit under the RP ID: a frame there could ask for PRF output for
+  // the reader's passkeys, which is a decryption capability (plan 2.20).
+  const rpId = new URL(config.serviceOrigin).hostname;
+  const usercontentHost = new URL(config.usercontentOrigin).hostname;
+  // Loopback pairs (localhost, 127.0.0.1, ::1) are how every local setup runs:
+  // the service and usercontent differ only by port. Their frames have an
+  // opaque origin, so WebAuthn cannot run in them. Anything else is refused.
+  const loopback = new Set(['localhost', '127.0.0.1', '[::1]']);
+  const bothLoopback = loopback.has(rpId) && loopback.has(usercontentHost);
+  if (
+    !bothLoopback &&
+    (usercontentHost === rpId || usercontentHost.endsWith(`.${rpId}`))
+  ) {
+    throw new Error(
+      'the usercontent hostname must not equal the RP ID or sit beneath it'
+    );
+  }
+  if (
+    !Number.isInteger(config.privateMaxTtlDays) ||
+    config.privateMaxTtlDays < 1 ||
+    config.privateMaxTtlDays > config.maxTtlDays
+  ) {
+    throw new Error(
+      'privateMaxTtlDays must be an integer from 1 to maxTtlDays'
+    );
+  }
+  if (
+    !Number.isInteger(config.privateDefaultTtlDays) ||
+    config.privateDefaultTtlDays < 1 ||
+    config.privateDefaultTtlDays > config.privateMaxTtlDays
+  ) {
+    throw new Error(
+      'privateDefaultTtlDays must be an integer from 1 to privateMaxTtlDays'
+    );
+  }
+  if (
+    !Number.isInteger(config.accessLogRetentionMinDays) ||
+    !Number.isInteger(config.accessLogRetentionDefaultDays) ||
+    !Number.isInteger(config.accessLogRetentionMaxDays) ||
+    config.accessLogRetentionMinDays > config.accessLogRetentionDefaultDays ||
+    config.accessLogRetentionDefaultDays > config.accessLogRetentionMaxDays
+  ) {
+    throw new Error(
+      'access log retention must satisfy min <= default <= max, in whole days'
+    );
+  }
+  if (
+    !Number.isInteger(config.deviceCertMaxDays) ||
+    config.deviceCertMaxDays < 1 ||
+    !Number.isInteger(config.deviceEnrollmentTtlSeconds) ||
+    config.deviceEnrollmentTtlSeconds < 1 ||
+    !Number.isInteger(config.privatePendingRequestsMax) ||
+    config.privatePendingRequestsMax < 1 ||
+    !Number.isInteger(config.privateBackfillMaxWraps) ||
+    config.privateBackfillMaxWraps < 1
+  ) {
+    throw new Error('private share limits must be positive integers');
   }
 }

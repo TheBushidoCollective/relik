@@ -100,7 +100,10 @@ created `0600` inside a `0700` directory, and redirectable with
   Copying the state file to another machine moves the ability with it.
 - **The file holds the key and the token.** They are never printed, logged,
   or returned by any tool result. The service stores only a SHA-256 of the
-  token, so it cannot reconstruct either one.
+  token, so it cannot reconstruct either one. On this machine the version keys
+  are plaintext in the file. Other users cannot read it (`0600`), but any
+  process running as this user can, so the file is protected only from other
+  users and from the service.
 - **Losing the file changes nothing for existing links**; it only ends that
   machine's ability to update those relics.
 - **A takedown is permanent.** A removed relic answers `relic_removed`

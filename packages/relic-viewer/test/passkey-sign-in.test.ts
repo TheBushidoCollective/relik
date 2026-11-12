@@ -1,7 +1,15 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { CreationOptionsJSON, RequestOptionsJSON } from '@relic/format';
 import { takePasskeyOfferMarker } from '../src/comments.ts';
-import type { CredentialsLike } from '../src/passkey-common.ts';
+import {
+  authenticationResponseToJSON,
+  base64urlEncode,
+  type CredentialsLike,
+  creationOptionsFromJSON,
+  parseCreationOptions,
+  parseRequestOptions,
+  requestOptionsFromJSON,
+} from '../src/passkey-common.ts';
 import {
   mountPasskeyOffer,
   mountPasskeySignIn,
@@ -1438,5 +1446,65 @@ describe('passkey sign-in (spec §5 S2 requirements)', () => {
     expect(createBtn.hidden).toBe(false);
     expect(createBtn.disabled).toBe(false);
     expect(codeEl.children.length).toBe(0);
+  });
+});
+
+describe('passkey options carry PRF in, and results never out', () => {
+  function fakeCredential(): Credential {
+    return {
+      id: 'AAAA',
+      rawId: new Uint8Array([0, 1, 2]).buffer,
+      type: 'public-key',
+      response: {
+        clientDataJSON: new Uint8Array([1]).buffer,
+        authenticatorData: new Uint8Array([2]).buffer,
+        signature: new Uint8Array([3]).buffer,
+        userHandle: null,
+      },
+      getClientExtensionResults: () => ({
+        prf: { results: { first: new Uint8Array([9, 9]).buffer } },
+      }),
+    } as unknown as Credential;
+  }
+
+  test('a creation option asking for PRF reaches WebAuthn with the extension', () => {
+    const parsed = parseCreationOptions({
+      challenge: 'AAAA',
+      rp: { id: 'relik.test', name: 'Relic' },
+      user: { id: 'AAAA', name: 'ada', displayName: 'ada' },
+      pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
+      extensions: { prf: {} },
+    });
+    if (parsed === undefined) throw new Error('creation options refused');
+
+    expect(parsed.extensions).toEqual({ prf: {} });
+    expect(creationOptionsFromJSON(parsed).extensions).toEqual({ prf: {} });
+  });
+
+  test('the PRF salt travels as base64url and reaches WebAuthn as bytes', () => {
+    const salt = new TextEncoder().encode('relic/identity-prf/v1');
+    const parsed = parseRequestOptions({
+      challenge: 'AAAA',
+      rpId: 'relik.test',
+      extensions: { prf: { eval: { first: base64urlEncode(salt) } } },
+    });
+    if (parsed === undefined) throw new Error('request options refused');
+
+    const options = requestOptionsFromJSON(parsed);
+    const prf: unknown = Reflect.get(options.extensions ?? {}, 'prf');
+    const eval_ = Reflect.get(prf ?? {}, 'eval');
+    const first: unknown = Reflect.get(eval_, 'first');
+    expect(first).toBeInstanceOf(ArrayBuffer);
+    expect(Array.from(new Uint8Array(first as ArrayBuffer))).toEqual(
+      Array.from(salt)
+    );
+  });
+
+  test('a serialized assertion carries no extension results', () => {
+    const body = JSON.stringify(authenticationResponseToJSON(fakeCredential()));
+
+    expect(body).not.toContain('clientExtensionResults');
+    expect(body).not.toContain('"prf"');
+    expect(body).not.toContain(base64urlEncode(new Uint8Array([9, 9])));
   });
 });

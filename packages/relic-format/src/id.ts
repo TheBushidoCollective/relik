@@ -143,25 +143,18 @@ export function isValidRelicId(candidate: string): boolean {
 }
 
 /**
- * Encode 16 bytes as 26 Crockford characters.
+ * Encode bytes as Crockford base32 in the relic ID alphabet.
  *
- * The bit stream is read most-significant-first. 16 bytes is 128 bits and 26
- * characters hold 130, so the final character carries the last 3 bits padded
- * with 2 zeros on the right.
+ * The bit stream is read most-significant-first. Each character carries five
+ * bits, and a final partial group is padded with zero bits on the right. So 16
+ * bytes give 26 characters and 20 bytes give exactly 32.
  */
-export function encodeRelicId(entropy: Uint8Array): string {
-  if (entropy.length !== ID_ENTROPY_BYTES) {
-    throw new InvalidRelicIdError(
-      'length',
-      `relic id entropy must be ${ID_ENTROPY_BYTES} bytes`
-    );
-  }
-
+export function encodeCrockford(bytes: Uint8Array): string {
   let out = '';
   let accumulator = 0;
   let bitsHeld = 0;
 
-  for (const byte of entropy) {
+  for (const byte of bytes) {
     accumulator = (accumulator << 8) | byte;
     bitsHeld += 8;
     while (bitsHeld >= 5) {
@@ -177,6 +170,22 @@ export function encodeRelicId(entropy: Uint8Array): string {
   }
 
   return out;
+}
+
+/**
+ * Encode 16 bytes as 26 Crockford characters.
+ *
+ * 16 bytes is 128 bits and 26 characters hold 130, so the final character
+ * carries the last 3 bits padded with 2 zeros on the right.
+ */
+export function encodeRelicId(entropy: Uint8Array): string {
+  if (entropy.length !== ID_ENTROPY_BYTES) {
+    throw new InvalidRelicIdError(
+      'length',
+      `relic id entropy must be ${ID_ENTROPY_BYTES} bytes`
+    );
+  }
+  return encodeCrockford(entropy);
 }
 
 /**

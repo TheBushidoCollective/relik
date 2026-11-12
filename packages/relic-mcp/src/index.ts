@@ -23,6 +23,7 @@ import { createHttpHandler } from './http.ts';
 import { runInstall, USAGE } from './installer.ts';
 import { requiredOrigin, resolveOrigin } from './origin.ts';
 import type { PublishDeps } from './publish.ts';
+import { secureEnclaveHelper } from './secure-enclave.ts';
 import { serveStdio } from './server.ts';
 import {
   PROGRAM_DEADLINE_MS,
@@ -95,6 +96,9 @@ const deps: PublishDeps = {
   // remembers to edit, and a wrong version in a log is worse than none.
   // Whatever installs this can set the variable to something more specific.
   clientName: process.env['RELIC_CLIENT_NAME'] ?? 'relic-mcp',
+  // The platform's Secure Enclave helper, or undefined where no prebuild
+  // ships. The device key store uses it only when it reports available.
+  secureEnclave: secureEnclaveHelper(),
   // Renders the cover in the publisher's own Chrome, Chromium or Edge, with
   // networking closed. RELIC_CHROME_PATH names the browser, or turns covers
   // off with `none`; unset means the per-platform discovery in chrome.ts.
