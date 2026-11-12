@@ -941,7 +941,7 @@ describe('security review: server fixes', () => {
     expect(denied.status).toBe(403);
   });
 
-  test('a failed wrap sweep leaves the device certified, so revoking it can be retried', async () => {
+  test('a failed wrap sweep leaves the device revoked and fenced, and the retry sweeps its wraps', async () => {
     const owner = await person('owner@example.com');
     await registerIdentity(owner);
     const sealed = await sealedPrivateRelic(owner);
@@ -969,7 +969,7 @@ describe('security review: server fixes', () => {
       'store unavailable'
     );
     restore();
-    expect((await store.getDevice(device))?.revokedAt).toBeUndefined();
+    expect((await store.getDevice(device))?.revokedAt).toBeDefined();
 
     const retried = await send(path, await revocationFor());
     expect(retried.status).toBe(200);

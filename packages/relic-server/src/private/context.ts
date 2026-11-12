@@ -26,6 +26,7 @@ import type {
   IdentityRecord,
   RelicRow,
   RelicStore,
+  StoredAttestation,
 } from '../store.ts';
 import type { ObjectStorage } from '../storage.ts';
 
@@ -145,6 +146,24 @@ export function identityPublicJson(record: IdentityRecord): IdentityPublicJSON {
 
 export function partyJson(record: IdentityRecord): PartyJSON {
   return { email: record.email, identity: identityPublicJson(record) };
+}
+
+/** One signed statement as the wire carries it: the statement and its identity signature. */
+export interface SignedStatementJSON {
+  readonly statement: Record<string, unknown>;
+  readonly identity_signature: string;
+}
+
+/** The first statement of a stored attestation, or null when there is none. */
+export function signedStatementJson(
+  attestation: StoredAttestation | undefined
+): SignedStatementJSON | null {
+  const first = attestation?.statements[0];
+  if (first === undefined) return null;
+  return {
+    statement: first.statement,
+    identity_signature: first.identitySignature,
+  };
 }
 
 export async function ownerParty(

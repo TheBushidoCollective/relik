@@ -42,8 +42,10 @@ import {
   iso,
   partyJson,
   type PrivateEnv,
+  type SignedStatementJSON,
   liveRelic,
   privateRow,
+  signedStatementJson,
 } from './context.ts';
 import { verifyAttestation, type VerifiedAttestation } from './attest.ts';
 import {
@@ -51,6 +53,7 @@ import {
   currentIdentity,
   parseWrapItem,
   recoveryJson,
+  recoveryStatementJson,
 } from './identity.ts';
 import {
   isDeleted,
@@ -94,13 +97,19 @@ function parseSeal(value: unknown): StatementMap['seal'] {
   }
 }
 
-function grantJson(grant: GrantRow, grantee: IdentityRecord): GrantJSON {
+/** A grant as the wire carries it: the owner-signed grant, and its owner-signed revocation once revoked. */
+export interface GrantWireJSON extends GrantJSON {
+  readonly revocation: SignedStatementJSON | null;
+}
+
+function grantJson(grant: GrantRow, grantee: IdentityRecord): GrantWireJSON {
   return {
     statement: grant.attestation.statements[0]?.statement ?? {},
     identity_signature:
       grant.attestation.statements[0]?.identitySignature ?? '',
     granted_at: iso(grant.grantedAt),
     revoked_at: grant.revokedAt === undefined ? null : iso(grant.revokedAt),
+    revocation: signedStatementJson(grant.revocation),
     grantee: partyJson(grantee),
   };
 }
@@ -411,10 +420,17 @@ export async function grantAccess(
     if (prior === undefined) {
       // A fresh grantee has no earlier wraps. A seal that landed while this
       // grant was in flight may have wrapped it, and a refused grant must not
-      // leave any of them behind.
-      await env.store.deleteWraps(row.id, {
-        recipientKeyId: grantee.kemKeyId,
-      });
+      // leave any of them behind. A key another role keeps current keeps them.
+      const keptElsewhere = (
+        await recipientKeys(env, row, owner, {
+          exceptGrantee: grantee.identityId,
+        })
+      ).includes(grantee.kemKeyId);
+      if (!keptElsewhere) {
+        await env.store.deleteWraps(row.id, {
+          recipientKeyId: grantee.kemKeyId,
+        });
+      }
 
       await env.store.deleteGrant(row.id, grantee.identityId);
     } else {
@@ -477,9 +493,9 @@ export async function listGrants(
   env: PrivateEnv,
   email: string,
   relicId: string
-): Promise<GrantJSON[]> {
+): Promise<GrantWireJSON[]> {
   await ownedPrivate(env, email, relicId);
-  const out: GrantJSON[] = [];
+  const out: GrantWireJSON[] = [];
   for (const grant of await env.store.listGrants(relicId)) {
     const grantee = await env.store.getIdentity(grant.granteeIdentityId);
     if (grantee !== undefined) out.push(grantJson(grant, grantee));
@@ -567,9 +583,14 @@ export async function revokeAccess(
 
   // Wraps go first, then the grant is marked, then the version moves. A failed
   // sweep leaves the grant standing, and the owner retries the whole revocation.
-  // A failed move puts the grant back. No wrap for a revoked grantee survives a
-  // revocation that reports success.
-  await env.store.deleteWraps(row.id, { recipientKeyId: grantee.kemKeyId });
+  // A failed move puts the grant back. A key another role still keeps current
+  // (a recovery holder, say) keeps its wraps (PS2-07).
+  const keptElsewhere = (
+    await recipientKeys(env, row, owner, { exceptGrantee: granteeId })
+  ).includes(grantee.kemKeyId);
+  if (!keptElsewhere) {
+    await env.store.deleteWraps(row.id, { recipientKeyId: grantee.kemKeyId });
+  }
   await env.store.updateGrant(row.id, granteeId, (g) => ({
     ...g,
     revokedAt: env.now,
@@ -660,9 +681,10 @@ export async function recipientsState(
     }
   }
   const devices = await env.store.listDevicesForOwner(owner.identityId);
-  const grants: GrantJSON[] = [];
+  // Revoked grants stay in the roster, each with its owner-signed revocation, so
+  // a client never has to read a revocation from an absence.
+  const grants: GrantWireJSON[] = [];
   for (const grant of await env.store.listGrants(row.id)) {
-    if (grant.revokedAt !== undefined) continue;
     const grantee = await env.store.getIdentity(grant.granteeIdentityId);
     if (grantee !== undefined) grants.push(grantJson(grant, grantee));
   }
@@ -679,6 +701,7 @@ export async function recipientsState(
     devices: devices.map(deviceJson),
     grants,
     recovery,
+    recovery_statement: recoveryStatementJson(owner),
     recipient_key_ids: await recipientKeys(env, row, owner),
   };
 }
@@ -762,6 +785,13 @@ export async function deliverKey(
       throw new ProblemError('invalid_publish_token');
     }
     if (typeof caller.recipientKeyId !== 'string') {
+      throw new ProblemError('private_access_denied', { relic_id: row.id });
+    }
+    // Only a current recipient's wrap is handed out. A wrap a racing seal left
+    // for a key since removed (a revoked device, a replaced holder) is refused.
+    if (
+      !(await recipientKeys(env, row, owner)).includes(caller.recipientKeyId)
+    ) {
       throw new ProblemError('private_access_denied', { relic_id: row.id });
     }
     if (isDeleted(row, version))

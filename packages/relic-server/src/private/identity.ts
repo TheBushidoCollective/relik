@@ -33,9 +33,16 @@ import {
   iso,
   type PrivateEnv,
   partyJson,
+  signedStatementJson,
+  type SignedStatementJSON,
 } from './context.ts';
 import { verifyAttestation, type VerifiedAttestation } from './attest.ts';
-import { readableVersions, recipientKeys, isDeleted } from './access.ts';
+import {
+  readableVersions,
+  recipientKeys,
+  isDeleted,
+  sweepWrapsFor,
+} from './access.ts';
 
 /** A bundle is one base64url string: nonce, ciphertext and tag. */
 const MAX_BUNDLE_CHARS = 4096;
@@ -138,6 +145,19 @@ export async function recoveryJson(
       identity_signature: statement.identitySignature,
     },
   };
+}
+
+/**
+ * The owner's latest signed designation, a removal included: the roster's
+ * `recovery_statement`. An owner designated before the latest designation was
+ * stored falls back to the designation it still holds.
+ */
+export function recoveryStatementJson(
+  owner: IdentityRecord
+): SignedStatementJSON | null {
+  return signedStatementJson(
+    owner.recoveryStatement ?? owner.recovery?.attestation
+  );
 }
 
 /** Creates the address's identity from one registration attestation. */
@@ -442,28 +462,42 @@ export async function designateRecovery(
     };
   }
 
-  // The previous recovery key must lose its wraps before the designation
-  // moves. If that sweep fails, the old designation stands and the owner
-  // retries, so no wrap for a replaced recovery key outlives the change.
-  if (
+  // The move comes first: the designation and the owner's epoch change in one
+  // write, so a seal that re-reads the epoch after it undoes itself. The
+  // replaced holder's key is queued before the move, and the sweep clears it.
+  // A failed sweep leaves the key queued, and the owner's next designation
+  // finishes it.
+  const replaced =
     previous !== undefined &&
     previous.recoveryIdentityId !== next?.recoveryIdentityId
-  ) {
-    const old = await env.store.getIdentity(previous.recoveryIdentityId);
-    if (old !== undefined) {
-      for (const owned of await env.store.listOwnedRelics(owner.identityId)) {
-        await env.store.deleteWraps(owned.relicId, {
-          recipientKeyId: old.kemKeyId,
-        });
-      }
-    }
-  }
-
+      ? await env.store.getIdentity(previous.recoveryIdentityId)
+      : undefined;
   await env.store.updateIdentity(owner.identityId, (current) => ({
     ...current,
     recovery: next,
+    recoveryStatement: verified.attestation,
     recipientsEpoch: current.recipientsEpoch + 1,
+    pendingRecoverySweep:
+      replaced === undefined
+        ? current.pendingRecoverySweep
+        : [
+            ...new Set([
+              ...(current.pendingRecoverySweep ?? []),
+              replaced.kemKeyId,
+            ]),
+          ],
   }));
+  const fresh = (await env.store.getIdentity(owner.identityId)) ?? owner;
+  const pending = fresh.pendingRecoverySweep ?? [];
+  if (pending.length > 0) {
+    await sweepWrapsFor(env, fresh, pending);
+    await env.store.updateIdentity(owner.identityId, (current) => ({
+      ...current,
+      pendingRecoverySweep: (current.pendingRecoverySweep ?? []).filter(
+        (keyId) => !pending.includes(keyId)
+      ),
+    }));
+  }
   if (next === undefined) return null;
   return recoveryJson(env, next);
 }

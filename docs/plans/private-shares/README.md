@@ -258,7 +258,7 @@ New routes:
 | `POST /api/devices/enrollments/{enrollmentId}/approve` | session | `{attestation}` (`device_cert`) | 200 `{device}` | 409 `fingerprint_mismatch`, 409 `identity_required`, 410 |
 | `GET /api/devices` | session | | 200 `{devices: DevicePublicJSON[]}` | 401 |
 | `POST /api/devices/{deviceId}/revoke` | session | `{attestation}` | 200 `{device}` | 403 `owner_required`, 404 |
-| `POST /api/devices/{deviceId}/context` | `device_auth` | `{device_auth}` | 200 `{device, owner: PartyJSON, devices: DevicePublicJSON[], recovery: RecoveryJSON \| null, owner_epoch}` | 403 `device_revoked`, 404, 400 `invalid_device` |
+| `POST /api/devices/{deviceId}/context` | `device_auth` | `{device_auth}` | 200 `{device, owner: PartyJSON, devices: DevicePublicJSON[], recovery: RecoveryJSON \| null, recovery_statement: {statement, identity_signature} \| null, owner_epoch}` (`recovery_statement` is the owner's latest signed designation, a removal included, so a removal is a signed fact and not a null) | 403 `device_revoked`, 404, 400 `invalid_device` |
 | `GET /api/relics/{id}/access` | session for private; none for public | | 200 `PrivateAccessJSON` or `PublicAccessJSON` | 401 (private), 404, 410 |
 | `POST /api/relics/{id}/requests` | session | `{attestation}` (`access_request`) | 201 `{status:'pending', requested_at}`; 200 if already pending or granted | 409 `identity_required`, 409 `request_limit_reached`, 429 |
 | `GET /api/relics/{id}/requests` | owner session | | 200 `{requests:[{requester: PartyJSON, requested_at, status, statement, identity_signature}]}` | 403 `owner_required` |
@@ -266,7 +266,7 @@ New routes:
 | `POST /api/relics/{id}/grants` | owner session | `{attestation, wraps: WrapJSON[]}` | 201 `{grant: GrantJSON}` | 409 `fingerprint_mismatch`, 409 `grant_stale_version` (+`current_version`), 400 `invalid_wrap`, 403 |
 | `GET /api/relics/{id}/grants` | owner session | | 200 `{grants: GrantJSON[]}` | 403 |
 | `POST /api/relics/{id}/revocations` | owner session | `{attestation, renderer_class, declared_size_bytes, declared_ciphertext_bytes}` | 200 `{revoked_identity_id, republish:{version, upload_url, upload_method, upload_headers, upload_expires_at}, access_epoch, owner_epoch}` | 409 `version_conflict`, 404 grant, 403 |
-| `POST /api/relics/{id}/recipients` | `{publish_token}` or owner session | | 200 `{access_epoch, owner_epoch, current_version, sealed_version, owner: PartyJSON, devices, grants: GrantJSON[] (active), recovery}` | 403 `invalid_publish_token` |
+| `POST /api/relics/{id}/recipients` | `{publish_token}` or owner session | | 200 `{access_epoch, owner_epoch, current_version, sealed_version, owner: PartyJSON, devices, grants: GrantWireJSON[] (revoked grants included, each with `revoked_at` and `revocation: {statement, identity_signature} \| null`), recovery, recovery_statement: {statement, identity_signature} \| null}` | 403 `invalid_publish_token` |
 | `POST /api/relics/{id}/versions/{v}/key` | session, or `{publish_token, recipient_key_id}` | | 200 `KeyJSON` (logs `wrap_fetch`) | 401, 403 `private_access_denied`, 409 `relic_not_yet_published` (unsealed), 410 `relic_expired` / `relic_removed` / `version_deleted` |
 | `POST /api/relics/{id}/delete` | owner session | `{attestation}` | 200 `{deleted_versions, relic_deleted}` | 409 `cannot_delete_current_version`, 403 |
 | `POST /api/relics/{id}/owner` | `{publish_token, device_auth}` with an `owner_bind` statement | | 200 `{owner: PartyJSON}` | 409 `owner_exists`, 403 `invalid_publish_token`, 403 `device_revoked` |

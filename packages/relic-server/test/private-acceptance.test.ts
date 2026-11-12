@@ -440,6 +440,25 @@ async function sealVersionTwo(
   bytes: Uint8Array,
   extra: readonly { kemPublicKey: Uint8Array; keyId: string }[]
 ): Promise<{ status: number; body: Record<string, unknown>; key: Uint8Array }> {
+  const built = await buildSealVersionTwo(owner, device, bytes, extra);
+  const result = await send(
+    `/api/relics/${RELIC_ID}/complete`,
+    post(built.body)
+  );
+  return { status: result.status, body: result.body, key: built.key };
+}
+
+/**
+ * The version-two seal request as the device (or the owner's identity) would
+ * send it at this moment.
+ */
+async function buildSealVersionTwo(
+  owner: Person,
+  device: { keys: IdentityKeys; deviceId: string },
+  bytes: Uint8Array,
+  extra: readonly { kemPublicKey: Uint8Array; keyId: string }[],
+  signedBy: 'device' | 'owner' = 'device'
+): Promise<{ body: Record<string, unknown>; key: Uint8Array }> {
   const key = randomBytes(16);
   const ownerRecord = await store.getIdentity(owner.identityId as string);
   const row = await store.getRelic(RELIC_ID);
@@ -457,7 +476,7 @@ async function sealVersionTwo(
     owner_epoch: ownerRecord!.recipientsEpoch,
     recipient_key_ids: recipients,
     relic_id: RELIC_ID,
-    signer_id: device.deviceId,
+    signer_id: signedBy === 'owner' ? owner.identityId : device.deviceId,
     version: 2,
   };
   const wraps = [
@@ -465,21 +484,22 @@ async function sealVersionTwo(
     await wrap(device.keys.kemPublicKey, key, 2),
     ...(await Promise.all(extra.map((e) => wrap(e.kemPublicKey, key, 2)))),
   ];
-  const result = await send(
-    `/api/relics/${RELIC_ID}/complete`,
-    post({
+  return {
+    body: {
       seal: {
         statement,
         signature: await signStatement(
-          signer(device.keys),
+          signer(
+            signedBy === 'owner' ? (owner.keys as IdentityKeys) : device.keys
+          ),
           statementBytes('seal', statement as never)
         ),
-        signer_kind: 'device',
+        signer_kind: signedBy === 'owner' ? 'identity' : 'device',
       },
       wraps,
-    })
-  );
-  return { status: result.status, body: result.body, key };
+    },
+    key,
+  };
 }
 
 async function deviceKeyId_(keys: IdentityKeys): Promise<string> {
@@ -1150,5 +1170,449 @@ describe('notifications for a private relic', () => {
       expect(mail.text).not.toContain('Secret');
       expect(mail.headers?.['List-Unsubscribe']).toBeDefined();
     }
+  });
+});
+
+/** Makes the next wrap sweep for `keyId` run `inside` after it deletes. Returns the restore. */
+function sweepHook(keyId: string, inside: () => Promise<void>): () => void {
+  const real = store.deleteWraps.bind(store);
+  let fired = false;
+  store.deleteWraps = async (relicId, filter) => {
+    const removed = await real(relicId, filter);
+    if (!fired && filter.recipientKeyId === keyId) {
+      fired = true;
+      await inside();
+    }
+    return removed;
+  };
+  return () => {
+    store.deleteWraps = real;
+  };
+}
+
+/** Makes every wrap sweep throw, as a failed storage write would. Returns the restore. */
+function failWrapSweeps(): () => void {
+  const real = store.deleteWraps.bind(store);
+  store.deleteWraps = async () => {
+    throw new Error('store unavailable');
+  };
+  return () => {
+    store.deleteWraps = real;
+  };
+}
+
+/** The owner's device revocation, as the browser signs it. */
+async function deviceRevocation(owner: Person, deviceId: string) {
+  return post(
+    {
+      attestation: await attest(owner, 'device_revoke', undefined, [
+        {
+          kind: 'device_revocation',
+          statement: {
+            at: now,
+            device_id: deviceId,
+            owner_identity_id: owner.identityId,
+          },
+        },
+      ]),
+    },
+    owner.cookie
+  );
+}
+
+/** The owner's designation of `holder`, or the removal when `holder` is undefined. */
+async function designationRequest(owner: Person, holder: Person | undefined) {
+  const statement =
+    holder === undefined
+      ? {
+          at: now,
+          fingerprint_typed: null,
+          owner_identity_id: owner.identityId,
+          recovery_email: null,
+          recovery_identity_id: null,
+        }
+      : {
+          at: now,
+          fingerprint_typed: await identityFingerprint(
+            holder.identityId as string,
+            holder.email
+          ),
+          owner_identity_id: owner.identityId,
+          recovery_email: holder.email,
+          recovery_identity_id: holder.identityId,
+        };
+  return post(
+    {
+      attestation: await attest(owner, 'recovery_designate', undefined, [
+        { kind: 'recovery_designation', statement },
+      ]),
+    },
+    owner.cookie
+  );
+}
+
+async function designate(owner: Person, holder: Person | undefined) {
+  return send(
+    '/api/identity/recovery',
+    await designationRequest(owner, holder)
+  );
+}
+
+/** The statement and signature a request body carried for its first statement. */
+function sentStatement(init: RequestInit): {
+  statement: Record<string, unknown>;
+  identity_signature: string;
+} {
+  const body = JSON.parse(init.body as string) as {
+    attestation: {
+      statements: {
+        statement: Record<string, unknown>;
+        identity_signature: string;
+      }[];
+    };
+  };
+  const first = body.attestation.statements[0]!;
+  return {
+    statement: first.statement,
+    identity_signature: first.identity_signature,
+  };
+}
+
+async function holderKem(who: Person) {
+  const record = (await store.getIdentity(who.identityId as string))!;
+  return {
+    keyId: record.kemKeyId,
+    kemPublicKey: decodeBase64url(record.kemPublicKey),
+  };
+}
+
+/** A grant revocation of one reader, as the browser signs it. */
+async function revokeGrant(owner: Person, reader: Person) {
+  const attested = await attest(owner, 'revoke', RELIC_ID, [
+    {
+      kind: 'revocation',
+      statement: {
+        at: now,
+        grantee_identity_id: reader.identityId,
+        owner_identity_id: owner.identityId,
+        relic_id: RELIC_ID,
+      },
+    },
+    {
+      kind: 'republish',
+      statement: {
+        at: now,
+        owner_identity_id: owner.identityId,
+        previous_version: 1,
+        reason: 'rekey',
+        relic_id: RELIC_ID,
+      },
+    },
+  ]);
+  const response = await send(
+    `/api/relics/${RELIC_ID}/revocations`,
+    post(
+      {
+        attestation: attested,
+        renderer_class: 'markdown',
+        declared_size_bytes: 64,
+        declared_ciphertext_bytes: encryptedSize(64),
+      },
+      owner.cookie
+    )
+  );
+  return { ...response, attested };
+}
+
+async function recipientsOf(owner: Person) {
+  return send(`/api/relics/${RELIC_ID}/recipients`, post({}, owner.cookie));
+}
+
+async function deviceContext(device: { keys: IdentityKeys; deviceId: string }) {
+  const path = `/api/devices/${device.deviceId}/context`;
+  const nonce = encodeBase64url(randomBytes(32));
+  const signature = await signStatement(
+    signer(device.keys),
+    statementBytes('device_request', {
+      at: now,
+      body_sha256: EMPTY_SHA,
+      device_id: device.deviceId,
+      method: 'POST',
+      nonce,
+      path,
+    } as never)
+  );
+  return send(
+    path,
+    post({
+      device_auth: { device_id: device.deviceId, nonce, at: now, signature },
+    })
+  );
+}
+
+describe('a seal that races a change to the recipient set (PS2-06)', () => {
+  test('a seal built before a device revocation and sent inside its sweep is refused, and leaves no wrap for the device', async () => {
+    const owner = await person('owner@example.com');
+    await registerIdentity(owner);
+    const sealed = await sealedPrivateRelic(owner);
+    const device = { keys: sealed.deviceKeys, deviceId: sealed.deviceId };
+    const deviceKey = await deviceKeyId_(device.keys);
+    const bytes = await openVersionTwo();
+    // Owner-signed, so the refusal comes from the epoch fence and not from the
+    // revoked device being refused as a signer.
+    const inFlight = await buildSealVersionTwo(
+      owner,
+      device,
+      bytes,
+      [],
+      'owner'
+    );
+
+    const outcomes: { status: number; body: Record<string, unknown> }[] = [];
+    const restore = sweepHook(deviceKey, async () => {
+      const result = await send(
+        `/api/relics/${RELIC_ID}/complete`,
+        post(inFlight.body)
+      );
+      outcomes.push({ status: result.status, body: result.body });
+    });
+    const revoked = await send(
+      `/api/devices/${device.deviceId}/revoke`,
+      await deviceRevocation(owner, device.deviceId)
+    );
+    restore();
+
+    expect(revoked.status).toBe(200);
+    expect(outcomes[0]?.status).toBe(409);
+    expect(outcomes[0]?.body['code']).toBe('recipients_changed');
+    expect(await store.getWrap(RELIC_ID, 2, deviceKey)).toBeUndefined();
+  });
+
+  test('a seal built before a recovery change and sent inside the old holder’s sweep is refused, and leaves no wrap for that holder', async () => {
+    const owner = await person('owner@example.com');
+    await registerIdentity(owner);
+    const sealed = await sealedPrivateRelic(owner);
+    const device = { keys: sealed.deviceKeys, deviceId: sealed.deviceId };
+    const first = await person('first@example.com');
+    await registerIdentity(first);
+    expect((await designate(owner, first)).status).toBe(200);
+    const second = await person('second@example.com');
+    await registerIdentity(second);
+    const bytes = await openVersionTwo();
+    const firstKem = await holderKem(first);
+    const inFlight = await buildSealVersionTwo(owner, device, bytes, [
+      { kemPublicKey: firstKem.kemPublicKey, keyId: firstKem.keyId },
+    ]);
+
+    const outcomes: { status: number; body: Record<string, unknown> }[] = [];
+    const restore = sweepHook(firstKem.keyId, async () => {
+      const result = await send(
+        `/api/relics/${RELIC_ID}/complete`,
+        post(inFlight.body)
+      );
+      outcomes.push({ status: result.status, body: result.body });
+    });
+    const moved = await designate(owner, second);
+    restore();
+
+    expect(moved.status).toBe(200);
+    expect(outcomes[0]?.status).toBe(409);
+    expect(outcomes[0]?.body['code']).toBe('recipients_changed');
+    expect(await store.getWrap(RELIC_ID, 2, firstKem.keyId)).toBeUndefined();
+  });
+
+  test('the publish token refuses a wrap for a key that is no longer a current recipient', async () => {
+    const owner = await person('owner@example.com');
+    await registerIdentity(owner);
+    const sealed = await sealedPrivateRelic(owner);
+    const deviceKey = await deviceKeyId_(sealed.deviceKeys);
+    const ownerKey = (await store.getIdentity(owner.identityId as string))!
+      .kemKeyId;
+    const revoked = await send(
+      `/api/devices/${sealed.deviceId}/revoke`,
+      await deviceRevocation(owner, sealed.deviceId)
+    );
+    expect(revoked.status).toBe(200);
+    // A wrap a racing seal left behind after the sweep.
+    await store.putWrap({
+      relicId: RELIC_ID,
+      version: 1,
+      recipientKeyId: deviceKey,
+      enc: 'enc',
+      ct: 'ct',
+      createdAt: now,
+      source: 'seal',
+    });
+
+    const refused = await send(
+      `/api/relics/${RELIC_ID}/versions/1/key`,
+      post({ publish_token: sealed.publishToken, recipient_key_id: deviceKey })
+    );
+    expect(refused.status).toBe(403);
+    expect(refused.body['code']).toBe('private_access_denied');
+    const current = await send(
+      `/api/relics/${RELIC_ID}/versions/1/key`,
+      post({ publish_token: sealed.publishToken, recipient_key_id: ownerKey })
+    );
+    expect(current.status).toBe(200);
+  });
+});
+
+describe('a wrap sweep keeps keys still current in another role (PS2-07)', () => {
+  test('a recovery holder who is also a live grantee keeps the grantee wrap when the designation moves on', async () => {
+    const owner = await person('owner@example.com');
+    await registerIdentity(owner);
+    const sealed = await sealedPrivateRelic(owner);
+    const holder = await person('holder@example.com');
+    await registerIdentity(holder);
+    expect((await designate(owner, holder)).status).toBe(200);
+    expect((await grantTo(owner, holder, [1], sealed.versionKey)).status).toBe(
+      201
+    );
+    const next = await person('next@example.com');
+    await registerIdentity(next);
+    expect((await designate(owner, next)).status).toBe(200);
+
+    const holderKey = (await holderKem(holder)).keyId;
+    expect(await store.getWrap(RELIC_ID, 1, holderKey)).toBeDefined();
+    const key = await send(
+      `/api/relics/${RELIC_ID}/versions/1/key`,
+      post({}, holder.cookie)
+    );
+    expect(key.status).toBe(200);
+  });
+
+  test('a grantee who is also the recovery holder keeps the recovery wrap when the grant is revoked', async () => {
+    const owner = await person('owner@example.com');
+    await registerIdentity(owner);
+    const sealed = await sealedPrivateRelic(owner);
+    const holder = await person('holder@example.com');
+    await registerIdentity(holder);
+    expect((await designate(owner, holder)).status).toBe(200);
+    expect((await grantTo(owner, holder, [1], sealed.versionKey)).status).toBe(
+      201
+    );
+
+    expect((await revokeGrant(owner, holder)).status).toBe(200);
+    const holderKey = (await holderKem(holder)).keyId;
+    expect(await store.getWrap(RELIC_ID, 1, holderKey)).toBeDefined();
+    const key = await send(
+      `/api/relics/${RELIC_ID}/versions/1/key`,
+      post({}, holder.cookie)
+    );
+    expect(key.status).toBe(200);
+  });
+});
+
+describe('a designation whose sweep failed (PS2-06)', () => {
+  test('the next designation still sweeps the replaced holder that the failed one left pending', async () => {
+    const owner = await person('owner@example.com');
+    await registerIdentity(owner);
+    const sealed = await sealedPrivateRelic(owner);
+    const first = await person('first@example.com');
+    await registerIdentity(first);
+    expect((await designate(owner, first)).status).toBe(200);
+    const firstKem = await holderKem(first);
+    const repair = await wrap(firstKem.kemPublicKey, sealed.versionKey, 1);
+    const backfilled = await send(
+      '/api/identity/backfill',
+      post({ wraps: [{ relic_id: RELIC_ID, ...repair }] }, owner.cookie)
+    );
+    expect(backfilled.status).toBe(200);
+    const second = await person('second@example.com');
+    await registerIdentity(second);
+
+    const restore = failWrapSweeps();
+    await expect(
+      app.fetch(
+        req('/api/identity/recovery', await designationRequest(owner, second))
+      )
+    ).rejects.toThrow('store unavailable');
+    restore();
+    expect(await store.getWrap(RELIC_ID, 1, firstKem.keyId)).toBeDefined();
+
+    expect((await designate(owner, second)).status).toBe(200);
+    expect(await store.getWrap(RELIC_ID, 1, firstKem.keyId)).toBeUndefined();
+  });
+});
+
+describe('the roster statements (plan 4.7)', () => {
+  test('recipients lists a revoked grant with the owner-signed revocation it was signed with', async () => {
+    const owner = await person('owner@example.com');
+    await registerIdentity(owner);
+    const sealed = await sealedPrivateRelic(owner);
+    const reader = await person('reader@example.com');
+    await registerIdentity(reader);
+    expect((await grantTo(owner, reader, [1], sealed.versionKey)).status).toBe(
+      201
+    );
+    const revoked = await revokeGrant(owner, reader);
+    expect(revoked.status).toBe(200);
+
+    const roster = await recipientsOf(owner);
+    expect(roster.status).toBe(200);
+    const grants = roster.body['grants'] as {
+      grantee: { email: string };
+      revoked_at: string | null;
+      revocation: {
+        statement: Record<string, unknown>;
+        identity_signature: string;
+      } | null;
+    }[];
+    const entry = grants.find((g) => g.grantee.email === reader.email);
+    expect(entry).toBeDefined();
+    expect(entry?.revoked_at).toEqual(expect.any(String));
+    const signed = (
+      revoked.attested['statements'] as {
+        kind: string;
+        statement: Record<string, unknown>;
+        identity_signature: string;
+      }[]
+    )[0]!;
+    expect(entry?.revocation).toEqual({
+      statement: signed.statement,
+      identity_signature: signed.identity_signature,
+    });
+  });
+
+  test('recipients and device context carry the latest signed designation, a removal included, and the owner epoch', async () => {
+    const owner = await person('owner@example.com');
+    await registerIdentity(owner);
+    const sealed = await sealedPrivateRelic(owner);
+    const device = { keys: sealed.deviceKeys, deviceId: sealed.deviceId };
+    const holder = await person('holder@example.com');
+    await registerIdentity(holder);
+    const epoch = async () =>
+      (await store.getIdentity(owner.identityId as string))!.recipientsEpoch;
+
+    const designation = await designationRequest(owner, holder);
+    expect((await send('/api/identity/recovery', designation)).status).toBe(
+      200
+    );
+    const designed = sentStatement(designation);
+    let roster = await recipientsOf(owner);
+    expect(roster.body['recovery_statement']).toEqual(designed);
+    expect(roster.body['owner_epoch']).toBe(await epoch());
+    let context = await deviceContext(device);
+    expect(context.status).toBe(200);
+    expect(context.body['recovery_statement']).toEqual(designed);
+    expect(context.body['owner_epoch']).toBe(await epoch());
+
+    const removal = await designationRequest(owner, undefined);
+    expect((await send('/api/identity/recovery', removal)).status).toBe(200);
+    const removed = sentStatement(removal);
+    expect(removed.statement).toMatchObject({
+      fingerprint_typed: null,
+      recovery_email: null,
+      recovery_identity_id: null,
+    });
+    roster = await recipientsOf(owner);
+    expect(roster.body['recovery']).toBeNull();
+    expect(roster.body['recovery_statement']).toEqual(removed);
+    expect(roster.body['owner_epoch']).toBe(await epoch());
+    context = await deviceContext(device);
+    expect(context.body['recovery']).toBeNull();
+    expect(context.body['recovery_statement']).toEqual(removed);
+    expect(context.body['owner_epoch']).toBe(await epoch());
   });
 });

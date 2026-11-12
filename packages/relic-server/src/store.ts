@@ -220,6 +220,17 @@ export interface IdentityRecord {
   readonly registration: StoredAttestation;
   readonly credentials: readonly IdentityCredentialBinding[];
   readonly recovery?: RecoveryDesignation | undefined;
+  /**
+   * The owner's latest signed recovery_designation, a removal included (the
+   * roster's `recovery_statement`). Absent on an identity that never designated.
+   */
+  readonly recoveryStatement?: StoredAttestation | undefined;
+  /**
+   * KEM key ids of recovery holders the owner has replaced or removed whose
+   * wraps are not yet swept (PS2-06). Cleared only after the sweep succeeds, so
+   * a failed sweep is finished by the next designation.
+   */
+  readonly pendingRecoverySweep?: readonly string[] | undefined;
   readonly accessLogRetentionDays: number;
   readonly recipientsEpoch: number;
 }

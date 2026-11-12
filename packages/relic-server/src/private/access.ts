@@ -60,11 +60,14 @@ export async function ownerRecord(
  * key, every owner device that is not revoked and not expired, the recovery
  * identity when designated and current, and every grantee whose grant is
  * not revoked and whose identity is current. Sorted, lowercase hex, unique.
+ * `exceptGrantee` leaves one grant out, to ask what a revocation of it would
+ * still leave current.
  */
 export async function recipientKeys(
   env: PrivateEnv,
   row: RelicRow,
-  owner: IdentityRecord
+  owner: IdentityRecord,
+  options: { readonly exceptGrantee?: string } = {}
 ): Promise<string[]> {
   const keys = new Set<string>([owner.kemKeyId]);
   const devices = await env.store.listDevicesForOwner(owner.identityId);
@@ -83,12 +86,36 @@ export async function recipientKeys(
   }
   for (const grant of await env.store.listGrants(row.id)) {
     if (grant.revokedAt !== undefined) continue;
+    if (grant.granteeIdentityId === options.exceptGrantee) continue;
     const grantee = await env.store.getIdentity(grant.granteeIdentityId);
     if (grantee !== undefined && grantee.retiredAt === undefined) {
       keys.add(grantee.kemKeyId);
     }
   }
   return [...keys].sort();
+}
+
+/**
+ * Removes the wraps one KEM key holds on each relic the owner owns, except on
+ * a relic where that key is still a current recipient in another role (PS2-07).
+ * Runs after the change that removed the key, so the epoch fence is already up.
+ * Idempotent: a retry sweeps again and finds nothing new to remove.
+ */
+export async function sweepWrapsFor(
+  env: PrivateEnv,
+  owner: IdentityRecord,
+  keyIds: readonly string[]
+): Promise<void> {
+  for (const owned of await env.store.listOwnedRelics(owner.identityId)) {
+    const row = await env.store.getRelic(owned.relicId);
+    const current = new Set(
+      row === undefined ? [] : await recipientKeys(env, row, owner)
+    );
+    for (const keyId of keyIds) {
+      if (current.has(keyId)) continue;
+      await env.store.deleteWraps(owned.relicId, { recipientKeyId: keyId });
+    }
+  }
 }
 
 /** What the identity is to this relic, in precedence order. */

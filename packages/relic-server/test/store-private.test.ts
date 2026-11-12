@@ -555,5 +555,49 @@ for (const backend of backends) {
         expect(await store.listWraps(RELIC_ID)).toEqual([]);
       });
     });
+
+    describe('roster state', () => {
+      test('the latest signed designation, the pending recovery sweep and a grant’s revocation round-trip', async () => {
+        const store = backend.make();
+        await store.createIdentity(identity());
+        const designation = {
+          ...attestation(),
+          statements: [
+            {
+              kind: 'recovery_designation' as const,
+              statement: { at: NOW, recovery_identity_id: null },
+              identitySignature: 'owner-signature',
+            },
+          ],
+        };
+        await store.updateIdentity(OWNER_ID, (current) => ({
+          ...current,
+          recoveryStatement: designation,
+          pendingRecoverySweep: [RECIPIENT_B],
+        }));
+        const stored = await store.getIdentity(OWNER_ID);
+        expect(stored?.recoveryStatement).toEqual(designation);
+        expect(stored?.pendingRecoverySweep).toEqual([RECIPIENT_B]);
+
+        await store.putGrant(grant());
+        const revocation = {
+          ...attestation(),
+          statements: [
+            {
+              kind: 'revocation' as const,
+              statement: { at: NOW, grantee_identity_id: GRANTEE_ID },
+              identitySignature: 'revocation-signature',
+            },
+          ],
+        };
+        await store.updateGrant(RELIC_ID, GRANTEE_ID, (g) => ({
+          ...g,
+          revokedAt: NOW,
+          revocation,
+        }));
+        const revoked = await store.getGrant(RELIC_ID, GRANTEE_ID);
+        expect(revoked?.revocation).toEqual(revocation);
+      });
+    });
   });
 }
