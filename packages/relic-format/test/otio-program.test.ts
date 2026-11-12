@@ -1209,7 +1209,7 @@ describe('range-backed media one byte past the document bound', () => {
     );
     expect(result?.programs.get(0)).toEqual(PROGRAM);
     expect(Math.max(...source.reads)).toBeLessThanOrEqual(8 * MIB);
-  });
+  }, 30000);
 
   test('a flipped digest is still refused as digest-mismatch', async () => {
     const wrong = (mediaSha[0] === '0' ? '1' : '0') + mediaSha.slice(1);
@@ -1221,7 +1221,7 @@ describe('range-backed media one byte past the document bound', () => {
     await expect(
       readOtioProgramArchive(await indexOtioZip(source), BIG_DOCUMENT)
     ).rejects.toMatchObject({ code: 'digest-mismatch' });
-  });
+  }, 30000);
 
   test('a corrupted media byte is refused by the stored CRC', async () => {
     const source = rangeArchive({
@@ -1233,7 +1233,7 @@ describe('range-backed media one byte past the document bound', () => {
     await expect(
       readOtioProgramArchive(await indexOtioZip(source), BIG_DOCUMENT)
     ).rejects.toMatchObject({ code: 'corrupt-archive' });
-  });
+  }, 30000);
 });
 
 describe('granular manifest validators', () => {

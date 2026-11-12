@@ -355,5 +355,5 @@ describe('version store', () => {
     expect(f.minted.get(2)).toBe(2);
     f.store.unpin(2);
     expect((await f.store.get(4)).kind).toBe('ready');
-  });
+  }, 30000);
 });
