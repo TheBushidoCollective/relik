@@ -38,11 +38,18 @@ import {
   iso,
   newEnrollmentId,
   type PrivateEnv,
+  type SignedStatementJSON,
   partyJson,
   sha256Hex,
 } from './context.ts';
 import { verifyAttestation } from './attest.ts';
-import { identitySigner, currentIdentity, recoveryJson } from './identity.ts';
+import {
+  identitySigner,
+  currentIdentity,
+  recoveryJson,
+  recoveryStatementJson,
+} from './identity.ts';
+import { sweepWrapsFor } from './access.ts';
 
 const BACKENDS = ['secure-enclave', 'file'] as const;
 const DAY = 86_400_000;
@@ -310,26 +317,26 @@ export async function revokeDevice(
   ) {
     invalidDevice('statement');
   }
-  // Wraps go first. A failed sweep leaves the device certified, so the owner
-  // retries; the sweep is idempotent and runs again on a retry.
-  for (const owned of await env.store.listOwnedRelics(owner.identityId)) {
-    await env.store.deleteWraps(owned.relicId, {
-      recipientKeyId: device.kemKeyId,
-    });
+  // The fence goes up before any wrap is swept: the device is marked revoked,
+  // then the owner's epoch moves. A seal that re-reads the epoch after the move
+  // undoes itself, and a wrap that survives the move is swept below. Every call
+  // moves the epoch, so a retry after a failed step still fences.
+  if (device.revokedAt === undefined) {
+    const marked = await env.store.updateDevice(device.deviceId, (r) => ({
+      ...r,
+      revokedAt: env.now,
+      revocation: verified.attestation,
+    }));
+    if (marked === undefined) throw new ProblemError('device_not_found');
   }
-  if (device.revokedAt !== undefined) return deviceJson(device);
-
-  const revoked = await env.store.updateDevice(device.deviceId, (r) => ({
-    ...r,
-    revokedAt: env.now,
-    revocation: verified.attestation,
-  }));
   await env.store.updateIdentity(owner.identityId, (current) => ({
     ...current,
     recipientsEpoch: current.recipientsEpoch + 1,
   }));
-  if (revoked === undefined) throw new ProblemError('device_not_found');
-  return deviceJson(revoked);
+  // A failed sweep leaves the device revoked; the owner's retry sweeps again.
+  const fresh = (await env.store.getIdentity(owner.identityId)) ?? owner;
+  await sweepWrapsFor(env, fresh, [device.kemKeyId]);
+  return deviceJson((await env.store.getDevice(device.deviceId)) ?? device);
 }
 
 /**
@@ -470,6 +477,7 @@ export async function deviceContext(
   owner: PartyJSON;
   devices: DevicePublicJSON[];
   recovery: RecoveryJSON | null;
+  recovery_statement: SignedStatementJSON | null;
   owner_epoch: number;
 }> {
   const device = await verifyDeviceRequest(env, {
@@ -491,6 +499,7 @@ export async function deviceContext(
       owner.recovery === undefined
         ? null
         : await recoveryJson(env, owner.recovery),
+    recovery_statement: recoveryStatementJson(owner),
     owner_epoch: owner.recipientsEpoch,
   };
 }

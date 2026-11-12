@@ -27,6 +27,7 @@ import { type ChildProcess, spawn } from 'node:child_process';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { harnessEnv } from './harness-env.ts';
 import { Readable, Writable } from 'node:stream';
 import {
   decodeKey,
@@ -96,13 +97,11 @@ export async function callMcp(
 ): Promise<Record<string, unknown>> {
   const child = Bun.spawn([...cmd], {
     cwd: scratchDir,
-    env: {
-      ...process.env,
-      RELIC_SERVICE_ORIGIN: serviceOrigin,
-      RELIC_PUBLISH_STATE: statePath,
-      RELIC_CHROME_PATH: chromePath,
-      RELIC_CLIENT_NAME: 'relic-mcp/decision-proof',
-    },
+    env: harnessEnv(scratchDir, statePath, {
+      serviceOrigin,
+      chromePath,
+      clientName: 'relic-mcp/decision-proof',
+    }),
     stdin: 'pipe',
     stdout: 'pipe',
     stderr: 'pipe',
