@@ -13819,77 +13819,50 @@ async function assessMovingWindowControls(
       extractFrame(join(decoderMediaDir, 'fr30.webm'), frame, 64, 36);
     const readSecondary = (frame: number) =>
       extractFrame(join(fixtureDir, 'media', 'secondary_b.mp4'), frame, 64, 36);
+    const videoFrameNumbers = [36, 37, 60, 61, 6, 7, 21, 22];
     const videoFrames = new Map<number, Uint8Array>();
-    const secondaryFrames = new Map<number, Uint8Array>();
-    const transitions = [30, 60, 150];
-    // The independently decoded sources a dissolve at composition time `time` is made of.
-    const referenceIndices = (frame: number, time: number) => {
-      const secondary = Math.floor(
-        ((time - (frame === 60 ? 24 : frame - 6)) * 24) / 30
-      );
-      const video =
-        frame === 60
-          ? [
-              windowForSeconds(windows, time / 30, 'dissolve lower outgoing')
-                .frame,
-              windowForSeconds(
-                windows,
-                (time - 54) / 30,
-                'dissolve lower incoming'
-              ).frame,
-            ]
-          : [
-              windowForSeconds(
-                windows,
-                (time - (frame === 30 ? -6 : 129)) / 30,
-                'dissolve upper outgoing'
-              ).frame,
-            ];
-      return { secondary, video };
-    };
-    // Times [frame, frame + 1) are the canvas samples; the compositor frames are associated to the
-    // nearest canvas sample, good to one frame, so the neighbours two frames either side are
-    // decoded as well.
-    const wantedVideo = new Set<number>([36, 37, 60, 61, 6, 7, 21, 22]);
-    const wantedSecondary = new Set<number>([4, 5, 28, 29]);
-    for (const frame of transitions)
-      for (let time = frame - 2; time <= frame + 2; time++) {
-        const wanted = referenceIndices(frame, time);
-        wantedSecondary.add(wanted.secondary);
-        for (const index of wanted.video) wantedVideo.add(index);
-      }
-    await Promise.all([
-      ...[...wantedVideo].map(async (frame) => {
+    await Promise.all(
+      videoFrameNumbers.map(async (frame) => {
         videoFrames.set(frame, await readVideo(frame));
-      }),
-      ...[...wantedSecondary].map(async (frame) => {
-        secondaryFrames.set(frame, await readSecondary(frame));
-      }),
+      })
+    );
+    const [b30, b31, upper60, upper61] = await Promise.all([
+      readSecondary(4),
+      readSecondary(5),
+      readSecondary(28),
+      readSecondary(29),
     ]);
+    const transitions = [30, 60, 150];
     function transitionComparison(
       frame: number,
       time: number,
       pixels: Uint8Array
     ) {
       const u = (time - (frame - 3)) / 6;
-      const wanted = referenceIndices(frame, time);
-      const incoming = secondaryFrames.get(wanted.secondary);
-      assert.ok(
-        incoming,
-        `missing independently decoded secondary frame ${wanted.secondary} at ${time}`
+      const secondaryIndex = Math.floor(
+        ((time - (frame === 60 ? 24 : frame - 6)) * 24) / 30
       );
+      const incoming = secondaryIndex === 4 ? b30 : b31;
       let expected: Uint8Array;
       let hardCuts: Uint8Array[];
       if (frame === 60) {
-        const lowerAIndex = wanted.video[0]!;
-        const lowerBIndex = wanted.video[1]!;
+        const lowerAIndex = windowForSeconds(
+          windows,
+          time / 30,
+          'dissolve lower outgoing'
+        ).frame;
+        const lowerBIndex = windowForSeconds(
+          windows,
+          (time - 54) / 30,
+          'dissolve lower incoming'
+        ).frame;
         const lowerA = videoFrames.get(lowerAIndex);
         const lowerB = videoFrames.get(lowerBIndex);
         assert.ok(
           lowerA && lowerB,
           `missing independently decoded dissolve frames ${lowerAIndex}/${lowerBIndex}`
         );
-        const upper = incoming;
+        const upper = secondaryIndex === 28 ? upper60 : upper61;
         const lower = blend(lowerA, lowerB, 1 - u, u);
         expected = blend(lower, upper, u, 1 - u);
         hardCuts = [
@@ -13899,7 +13872,11 @@ async function assessMovingWindowControls(
           blend(lowerB, upper, u, 1 - u),
         ];
       } else {
-        const index = wanted.video[0]!;
+        const index = windowForSeconds(
+          windows,
+          (time - (frame === 30 ? -6 : 129)) / 30,
+          'dissolve upper outgoing'
+        ).frame;
         const outgoing = videoFrames.get(index);
         assert.ok(
           outgoing,
@@ -14047,42 +14024,14 @@ async function assessMovingWindowControls(
         }
         return error < 12 ? best : null;
       };
-      // Pixel equality between a compositor frame and a canvas sample is recorded, not asserted.
-      // On the Linux runner the sampler sees about one draw in two, so a compositor frame can show
-      // a stripe position the sampler never recorded (run 1f645879: 148 of 319 frames match no
-      // sample within a 400 ms lag and a 2 px registration tolerance). What the stage asserts is
-      // against independent ground truth: each compositor frame is associated to a composition
-      // frame by the nearest canvas sample in time, and compared with the decoded reference.
-      const inWindow = screen.filter((sample) => {
+      const unmatchedScreenFrames = screen.filter((sample) => {
         const timestamp = sample.timestamp - geometry.timeOrigin;
         return (
           timestamp >= capture.start.timestamp + 50 &&
-          timestamp <= capture.trace.timestamp
+          timestamp <= capture.trace.timestamp &&
+          !matchPresentedCanvas(timestamp, sample.pixels)
         );
-      });
-      const unmatchedScreenFrames = inWindow.filter(
-        (sample) =>
-          !matchPresentedCanvas(
-            sample.timestamp - geometry.timeOrigin,
-            sample.pixels
-          )
-      ).length;
-      const nearestCanvas = (timestamp: number) => {
-        let best: (typeof capture.trace.visual)[number] | null = null;
-        for (const sample of capture.trace.visual) {
-          if (sample.pixels16?.length !== frameBytes) continue;
-          const skew = Math.abs(sample.timestamp - timestamp);
-          if (
-            skew <= 50 &&
-            (!best || skew < Math.abs(best.timestamp - timestamp))
-          )
-            best = sample;
-        }
-        return best;
-      };
-      const screenWithoutCanvas = inWindow.filter(
-        (sample) => !nearestCanvas(sample.timestamp - geometry.timeOrigin)
-      ).length;
+      }).length;
       const screenStills = [
         { from: 75, to: 90, reference: stillA, other: stillB },
         { from: 90, to: 105, reference: stillB, other: stillA },
@@ -14090,14 +14039,12 @@ async function assessMovingWindowControls(
       ].map(({ from, to, reference, other }) => {
         const errors: Array<{ expected: number; other: number; skew: number }> =
           [];
-        for (const frame of inWindow) {
+        for (const frame of screen) {
           const timestamp = frame.timestamp - geometry.timeOrigin;
-          const closest = nearestCanvas(timestamp);
+          const closest = matchPresentedCanvas(timestamp, frame.pixels);
           if (!closest) continue;
           const composition = Number(closest.frame);
-          // The association is good to one frame at 30 fps, so only the interior of the interval,
-          // two frames clear of each edge, can be attributed to it.
-          if (composition >= from + 2 && composition < to - 2)
+          if (composition >= from && composition < to)
             errors.push({
               expected: rmse(frame.pixels, reference),
               other: rmse(frame.pixels, other),
@@ -14121,24 +14068,17 @@ async function assessMovingWindowControls(
               Uint8Array.from(sample.pixels16!)
             )
           );
-        const compositor = inWindow.flatMap((sample) => {
+        const compositor = screen.flatMap((sample) => {
           const timestamp = sample.timestamp - geometry.timeOrigin;
-          const closest = nearestCanvas(timestamp);
-          if (!closest) return [];
-          const at = Number(closest.frame);
-          if (at < frame - 1 || at >= frame + 2) return [];
-          // Good to one frame: the compositor frame must be the dissolve at the associated
-          // frame or its neighbour, and it must beat each hard-cut control there.
-          const candidates = [
-            Math.floor(at) - 1,
-            Math.floor(at),
-            Math.floor(at) + 1,
-          ]
-            .filter((time) => Math.abs(time - frame) <= 2)
-            .map((time) => transitionComparison(frame, time, sample.pixels));
-          if (candidates.length === 0) return [];
+          const closest = matchPresentedCanvas(timestamp, sample.pixels);
+          if (
+            !closest ||
+            Number(closest.frame) < frame ||
+            Number(closest.frame) >= frame + 1
+          )
+            return [];
           return [
-            candidates.reduce((a, b) => (b.expected < a.expected ? b : a)),
+            transitionComparison(frame, Number(closest.frame), sample.pixels),
           ];
         });
         return { frame, canvas, compositor };
@@ -14163,8 +14103,6 @@ async function assessMovingWindowControls(
           screenStills,
           transitionChecks,
           unmatchedScreenFrames,
-          screenWithoutCanvas,
-          screenFramesInWindow: inWindow.length,
           audio,
         })
       );
@@ -14192,9 +14130,10 @@ async function assessMovingWindowControls(
           !cast.overflow,
         'boundary trace overflow'
       );
-      assert.ok(
-        inWindow.length >= 100 && screenWithoutCanvas <= inWindow.length * 0.05,
-        `screencast frames without a canvas sample in time: ${screenWithoutCanvas} of ${inWindow.length}`
+      assert.equal(
+        unmatchedScreenFrames,
+        0,
+        'screencast frames lack a matching recent canvas presentation'
       );
       assert.ok(
         progress >= 0.95 && progress <= 1.05,
