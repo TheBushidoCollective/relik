@@ -940,6 +940,42 @@ const STARVATION_VISUAL_REFUSALS: Record<string, true> = {
   'recovery-phase-expired': true,
 };
 
+// The refusal a play request gets when the earliest epoch the audio output can start at is past the
+// video phase band: the runner delayed the start, and the viewer declines to play out of phase. CI
+// run 43376038918: earliestWall 52393.703 against upperWall 52393.5, five of five ring slots.
+const STARTUP_REFUSAL =
+  'no causal audio epoch: the earliest guarded epoch is past the video phase band';
+
+// A capture whose play request was refused before any audio epoch existed: no frontier ever closed,
+// the only faults are the underflow cancel and that one refusal, and the proof injected nothing.
+function startupStarvation(
+  events: readonly TraceEntry[],
+  faults: readonly number[]
+): string | null {
+  let errors = 0;
+  for (const index of faults) {
+    const value = entryValue(events[index]);
+    if (value['event'] === 'cancel') {
+      if (value['reason'] !== 'underflow') return null;
+      continue;
+    }
+    if (value['stage'] !== 'schedule' || value['code'] !== STARTUP_REFUSAL)
+      return null;
+    errors++;
+  }
+  if (errors === 0) return null;
+  for (const entry of events)
+    if (
+      isPcm(entry, 'recovery-fault') ||
+      isPcm(entry, 'epoch') ||
+      isPcm(entry, 'gate-close') ||
+      entry.kind === 'recovery-overrun-injected' ||
+      entry.kind === 'clock-site-hold-consumed'
+    )
+      return null;
+  return `startup refused before any audio epoch: ${STARTUP_REFUSAL}`;
+}
+
 // A capture whose audio frontier closed and whose recovery then refused, with nothing injected.
 // This is the viewer's designed, truthful outcome when the host cannot keep the 20 ms gap, and on
 // a loaded shared runner it happens to a healthy build. The signature: a frontier close, then
@@ -956,6 +992,8 @@ export function naturalStarvation(
     if (isPcm(entry, 'error') || isPcm(entry, 'cancel')) faults.push(index);
   });
   if (faults.length === 0) return null;
+  const startup = startupStarvation(events, faults);
+  if (startup !== null) return startup;
   let errors = 0;
   const shape: string[] = [];
   for (const index of faults) {
@@ -1003,6 +1041,7 @@ export function starvationRefusalText(text: string): string | null {
   const at = text.indexOf(marker);
   if (at < 0) return null;
   const rest = text.slice(at + marker.length);
+  if (rest.startsWith(STARTUP_REFUSAL)) return STARTUP_REFUSAL;
   for (const code of Object.keys(STARVATION_SCHEDULE_REFUSALS))
     if (rest.startsWith(code)) return code;
   return null;

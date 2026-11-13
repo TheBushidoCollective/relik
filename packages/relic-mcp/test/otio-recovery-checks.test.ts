@@ -1367,6 +1367,54 @@ test('natural-starvation classifier refuses anything else', () => {
   ).toBeNull();
 });
 
+// CI run 43376038918: the play request was refused 91 ms in, 0.2 ms past the video phase band.
+const STARTUP_BAND_REFUSAL =
+  'no causal audio epoch: the earliest guarded epoch is past the video phase band';
+
+test('natural-starvation classifier names a startup refusal before any audio epoch', () => {
+  expect(
+    naturalStarvation([
+      bridgePcm({ event: 'backend', backend: 'pcm' }),
+      underflow(),
+      bridgeError(STARTUP_BAND_REFUSAL),
+    ])
+  ).toContain('startup refused before any audio epoch');
+});
+
+test('natural-starvation classifier refuses a startup refusal that is anything else', () => {
+  // Playback that had an epoch, or a closed frontier, is not a start that never happened.
+  for (const earlier of [
+    bridgePcm({ event: 'epoch', generation: 3 }),
+    bridgePcm({ event: 'gate-close', reason: 'frontier' }),
+    bridgePcm({ event: 'recovery-fault', code: 'recovery-delayed-staging' }),
+    { kind: 'recovery-overrun-injected', value: {} },
+    bridgeConsumed(),
+  ] as BridgeEntry[])
+    expect(
+      naturalStarvation([
+        earlier,
+        underflow(),
+        bridgeError(STARTUP_BAND_REFUSAL),
+      ])
+    ).toBeNull();
+  // Another cancel reason, another code, or the refusal with no cancel at all.
+  expect(
+    naturalStarvation([
+      bridgePcm({ event: 'cancel', reason: 'seek' }),
+      bridgeError(STARTUP_BAND_REFUSAL),
+    ])
+  ).toBeNull();
+  expect(
+    naturalStarvation([underflow(), bridgeError('PCM provider failed')])
+  ).toBeNull();
+  expect(naturalStarvation([underflow()])).toBeNull();
+  // The refusal text the reader shows names it too, and only when the marker is there.
+  expect(
+    starvationRefusalText(`Scheduled audio stopped: ${STARTUP_BAND_REFUSAL}`)
+  ).toBe(STARTUP_BAND_REFUSAL);
+  expect(starvationRefusalText(STARTUP_BAND_REFUSAL)).toBeNull();
+});
+
 test('starvation refusal text names a recovery refusal and nothing else', () => {
   expect(
     starvationRefusalText(
