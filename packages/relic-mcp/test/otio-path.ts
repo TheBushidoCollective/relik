@@ -13199,7 +13199,7 @@ async function assessMovingWindowControls(
     })()`);
     const stopCast = await browser.startScreencast();
     const capture = await browser.evaluate<
-      MovingTrace & { paused: string }
+      MovingTrace & { paused: string; warmFailed?: string }
     >(`(async () => {
       const sleep = ms => { const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, ms); return promise; };
       const root = document.querySelector('.otio-view');
@@ -13213,7 +13213,18 @@ async function assessMovingWindowControls(
       const until = performance.now() + 12000;
       while (root.dataset.playing !== 'true' && performance.now() < until) await sleep(10);
       if (root.dataset.playing !== 'true') throw new Error('playback did not start');
-      const warm = await globalThis.__otioProofTrace.waitForPresentedChanges(3, 5000);
+      let warm = null, warmFailed;
+      try { warm = await globalThis.__otioProofTrace.waitForPresentedChanges(3, 5000); }
+      catch (error) { warmFailed = String(error?.message ?? error); }
+      if (warmFailed !== undefined) {
+        // Playback never presented three frames. The trace says why (a starved frontier, a refusal),
+        // so it is returned rather than lost in the thrown page error.
+        const trace = await globalThis.__otioProofTrace.stop();
+        globalThis.__otioProofTrace.setFault('none');
+        ${SETTLE_PAUSE_JS}
+        const paused = await settlePause();
+        return {start, playEdge, warm: null, warmFailed, trace, paused};
+      }
       globalThis.__otioProofTrace.setFault(${JSON.stringify(fault)});
       await sleep(500);
       const trace = await globalThis.__otioProofTrace.stop();
@@ -13224,6 +13235,10 @@ async function assessMovingWindowControls(
     })()`);
     const cast = await stopCast();
     const paused = capture.paused;
+    if (capture.warmFailed !== undefined)
+      assert.fail(
+        `${name}: ${capture.warmFailed}; scheduler faults: ${describeContinuityFaults(capture.trace.events, capture.start.timestamp).join(' | ') || 'none'}; reader sees: ${paused}`
+      );
     if (fault === 'none')
       assert.doesNotMatch(
         paused,
