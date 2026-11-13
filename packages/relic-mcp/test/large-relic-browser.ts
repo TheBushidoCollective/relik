@@ -17,6 +17,40 @@ import {
 const execFileAsync = promisify(execFile);
 const MIB = 1024 * 1024;
 
+// The viewer catches ContentStoreError and keeps its cause out of the dead card.
+// Preserve the original Blob result or exception; report only failures in this proof.
+const BLOB_FAILURE_PRELUDE = String.raw`(() => {
+  const report = (op, size, name, message) => console.warn('LARGE_BLOB_FAILURE ' + JSON.stringify({
+    op, size, name, message: String(message).slice(0, 300), t: Math.round(performance.now()),
+  }));
+  const { slice, arrayBuffer } = Blob.prototype;
+  Blob.prototype.slice = function (...args) {
+    try { return slice.apply(this, args); }
+    catch (error) {
+      report('slice', this.size, error?.name, error?.message ?? error);
+      throw error;
+    }
+  };
+  Blob.prototype.arrayBuffer = function () {
+    const size = this.size;
+    try {
+      return arrayBuffer.call(this).then(
+        (buffer) => {
+          if (buffer.byteLength !== size) report('arrayBuffer', size, 'ShortRead', buffer.byteLength + '/' + size);
+          return buffer;
+        },
+        (error) => {
+          report('arrayBuffer', size, error?.name, error?.message ?? error);
+          throw error;
+        },
+      );
+    } catch (error) {
+      report('arrayBuffer', size, error?.name, error?.message ?? error);
+      throw error;
+    }
+  };
+})()`;
+
 // RUSAGE_INFO_V4 has a 16-byte UUID followed by 35 uint64 fields.
 const RUSAGE_INFO_V4 = 4;
 const RUSAGE_INFO_V4_SIZE = 296;
@@ -315,6 +349,11 @@ export class ProofBrowser {
       { cacheDisabled: true },
       sessionId
     );
+    await this.cdp.send(
+      'Page.addScriptToEvaluateOnNewDocument',
+      { source: BLOB_FAILURE_PRELUDE },
+      sessionId
+    );
     if (prelude) {
       await this.cdp.send(
         'Page.addScriptToEvaluateOnNewDocument',
@@ -400,8 +439,12 @@ export class ProofBrowser {
       page,
       'navigator.storage.estimate().then((estimate) => JSON.stringify(estimate))'
     ).catch(() => 'unavailable');
+    const blobHistograms = await this.cdp
+      .send('Browser.getHistograms', { query: 'Storage.Blob' })
+      .then((response) => JSON.stringify(response['histograms']))
+      .catch(() => 'unavailable');
     throw new Error(
-      `timed out waiting for ${label}; last=${JSON.stringify(value)}; page=${text}; storage=${storage}; page complaints=${JSON.stringify(this.complaints)}; browser stderr tail=${JSON.stringify(this.stderr.tail)}`
+      `timed out waiting for ${label}; last=${JSON.stringify(value)}; page=${text}; storage=${storage}; page complaints=${JSON.stringify(this.complaints)}; blob histograms=${blobHistograms}; browser stderr tail=${JSON.stringify(this.stderr.tail)}`
     );
   }
 
