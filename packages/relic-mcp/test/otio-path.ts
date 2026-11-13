@@ -336,11 +336,12 @@ class InterruptedOutsideTrace extends Error {
   }
 }
 
-// Jason, 2026-11-13: a scheduled-audio stage in which the viewer itself reports an interruption,
-// with nothing injected by the proof (viewerInterruption, or what the reader was shown before the
-// trace began), reruns in a fresh browser at most three times. Each interrupted attempt keeps its
-// trace. Every other failure is rethrown unchanged, and a stage interrupted on every attempt
-// fails with the evidence of each.
+// Jason, 2026-11-13: a stage in which the viewer itself reports an interruption, with nothing
+// injected by the proof (viewerInterruption, or what the reader was shown before the trace
+// began), reruns at most three times. The scheduled-audio stages rerun in a fresh browser. The
+// native-playback stage reruns in its own page when the viewer left native playback for its
+// seek cadence. Each interrupted attempt keeps its evidence. Every other failure is rethrown
+// unchanged, and a stage interrupted on every attempt fails with the evidence of each.
 const VIEWER_INTERRUPTION_RERUNS = 3;
 async function rerunViewerInterruption(
   label: string,
@@ -22261,10 +22262,17 @@ try {
     }
     pass('pixels-offset');
 
-    await seekTo(browser, 0);
-    await clearMediaSeekTargets(browser);
+    // The viewer leaves native playback for its seek cadence when a native start fails twice
+    // (fallbackToSeekCadence in otio-playback.ts), and on a shared runner it sometimes does:
+    // run 43450210844 sought both videos once per frame from frame 4 on, with the clock still
+    // advancing. Nothing is injected here, so that is the viewer's own interruption and the
+    // stage reruns under the same rule as the scheduled-audio stages. A seek to frame 0 clears
+    // the viewer's fallback, so the rerun starts natively again in the same page.
+    await rerunViewerInterruption('native-playback', async () => {
+      await seekTo(browser, 0);
+      await clearMediaSeekTargets(browser);
 
-    await browser.evaluate<void>(`(() => {
+      await browser.evaluate<void>(`(() => {
       globalThis.__otioObservedFrames = [];
       const root = document.querySelector('section.otio-view');
       if (root?.dataset?.frame != null) {
@@ -22282,17 +22290,17 @@ try {
       globalThis.__otioFrameObserver = observer;
     })()`);
 
-    // A label capture reads the first painted label at or past each target, so
-    // a sample can land up to one label step past it. Linux CI measured the
-    // largest step at 3.6 frames over 12 runs of this stage. The last target
-    // stays at or below 44.999 minus twice that step, so a sample cannot cross
-    // the frame-44 ceiling (the overlay ends at frame 48) on an ordinary step.
-    await installLabelCapture(browser, width, height, {
-      kind: 'targets',
-      targets: [3, 8, 13, 18, 22, 27, 32, 37],
-    });
+      // A label capture reads the first painted label at or past each target, so
+      // a sample can land up to one label step past it. Linux CI measured the
+      // largest step at 3.6 frames over 12 runs of this stage. The last target
+      // stays at or below 44.999 minus twice that step, so a sample cannot cross
+      // the frame-44 ceiling (the overlay ends at frame 48) on an ordinary step.
+      await installLabelCapture(browser, width, height, {
+        kind: 'targets',
+        targets: [3, 8, 13, 18, 22, 27, 32, 37],
+      });
 
-    const playbackStarted = await browser.evaluate<boolean>(`(() => {
+      const playbackStarted = await browser.evaluate<boolean>(`(() => {
       const { promise, resolve } = Promise.withResolvers();
       const btn = document.querySelector('button.otio-play');
       const root = document.querySelector('section.otio-view');
@@ -22308,20 +22316,20 @@ try {
       check();
       return promise;
     })()`);
-    assert.ok(playbackStarted, 'steady playback did not enter playing state');
+      assert.ok(playbackStarted, 'steady playback did not enter playing state');
 
-    // Samples are captured in-page via MutationObserver when the clock first
-    // reaches each target frame, all at or before frame 44. The Picture-in-Picture
-    // layer ends at frame 48, where the drawn set changes and the exact resync
-    // paints before the clock label updates.
-    await waitLabelCaptures(browser, {
-      count: 8,
-      ceiling: 45,
-      timeoutMs: 30_000,
-      label: 'playback',
-    });
+      // Samples are captured in-page via MutationObserver when the clock first
+      // reaches each target frame, all at or before frame 44. The Picture-in-Picture
+      // layer ends at frame 48, where the drawn set changes and the exact resync
+      // paints before the clock label updates.
+      await waitLabelCaptures(browser, {
+        count: 8,
+        ceiling: 45,
+        timeoutMs: 30_000,
+        label: 'playback',
+      });
 
-    await browser.evaluate<void>(`(() => {
+      await browser.evaluate<void>(`(() => {
       const root = document.querySelector('section.otio-view');
       const btn = document.querySelector('button.otio-play');
       if (root?.dataset.playing === 'true' && btn instanceof HTMLButtonElement) {
@@ -22332,11 +22340,15 @@ try {
       }
     })()`);
 
-    const playbackSamples = await collectLabelCaptures(browser, width, height);
-    const observedPlaybackFrames = await browser.evaluate<number[]>(`(() => {
+      const playbackSamples = await collectLabelCaptures(
+        browser,
+        width,
+        height
+      );
+      const observedPlaybackFrames = await browser.evaluate<number[]>(`(() => {
       return (globalThis.__otioObservedFrames || []).slice();
     })()`);
-    const seekTargets = await browser.evaluate<number[]>(`(() => {
+      const seekTargets = await browser.evaluate<number[]>(`(() => {
       return (
         globalThis.__relicOtioVideoSeekTargets ??
         globalThis.__relicOtioMediaSeekTargets ??
@@ -22344,80 +22356,81 @@ try {
       ).slice();
     })()`);
 
-    const minObserved =
-      observedPlaybackFrames.length > 0
-        ? Math.min(...observedPlaybackFrames)
-        : (playbackSamples[0]?.dataFrame ?? 0);
-    const maxObserved =
-      observedPlaybackFrames.length > 0
-        ? Math.max(...observedPlaybackFrames)
-        : (playbackSamples[playbackSamples.length - 1]?.dataFrame ?? 72);
-    const elapsedMediaFrames = Math.max(
-      24,
-      Math.round(maxObserved - minObserved)
-    );
+      const minObserved =
+        observedPlaybackFrames.length > 0
+          ? Math.min(...observedPlaybackFrames)
+          : (playbackSamples[0]?.dataFrame ?? 0);
+      const maxObserved =
+        observedPlaybackFrames.length > 0
+          ? Math.max(...observedPlaybackFrames)
+          : (playbackSamples[playbackSamples.length - 1]?.dataFrame ?? 72);
+      const elapsedMediaFrames = Math.max(
+        24,
+        Math.round(maxObserved - minObserved)
+      );
 
-    const distinctFloors = new Set(
-      observedPlaybackFrames.map((f) => Math.floor(f))
-    );
-    const floorProgressRatio = distinctFloors.size / elapsedMediaFrames;
-    assert.ok(
-      floorProgressRatio >= 0.6,
-      `distinct floor(data-frame) progress ${distinctFloors.size}/${elapsedMediaFrames} (${(floorProgressRatio * 100).toFixed(1)}%) below 60% floor (frozen hold)`
-    );
-
-    const seekRatio = seekTargets.length / elapsedMediaFrames;
-    assert.ok(
-      seekRatio <= 0.1,
-      `steady playback seek ratio ${(seekRatio * 100).toFixed(1)}% exceeded 10% ceiling (${seekTargets.length} seeks / ${elapsedMediaFrames} elapsed frames: ${seekTargets.slice(0, 10).join(', ')}...)`
-    );
-
-    for (const [idx, item] of playbackSamples.entries()) {
-      const timelineFrame = Math.floor(item.dataFrame + 1e-4);
+      const distinctFloors = new Set(
+        observedPlaybackFrames.map((f) => Math.floor(f))
+      );
+      const floorProgressRatio = distinctFloors.size / elapsedMediaFrames;
       assert.ok(
-        timelineFrame <= 44,
-        `playback sample ${idx + 1}/8 timeline frame ${timelineFrame} exceeded frame 44, the Picture-in-Picture layer ends at frame 48`
-      );
-      const expectedFileFrame =
-        plan.primary_clip_frames?.[String(timelineFrame)] ??
-        plan.primary_file_frame + (timelineFrame - plan.primary_frame);
-
-      const expectedRow = await frameRowCenter(
-        join(mediaDir, plan.primary_media),
-        expectedFileFrame
-      );
-      const wrongRow = await frameRowCenter(
-        join(mediaDir, plan.primary_media),
-        expectedFileFrame + 2
+        floorProgressRatio >= 0.6,
+        `distinct floor(data-frame) progress ${distinctFloors.size}/${elapsedMediaFrames} (${(floorProgressRatio * 100).toFixed(1)}%) below 60% floor (frozen hold)`
       );
 
-      const toExpectedPx =
-        Math.abs(item.center - expectedRow.center) * expectedRow.width;
-      const toWrongPx =
-        Math.abs(item.center - wrongRow.center) * wrongRow.width;
+      const seekRatio = seekTargets.length / elapsedMediaFrames;
+      if (seekRatio > 0.1)
+        throw new InterruptedOutsideTrace(
+          `viewer left native playback and sought during steady playback: seek ratio ${(seekRatio * 100).toFixed(1)}% exceeded 10% ceiling (${seekTargets.length} seeks / ${elapsedMediaFrames} elapsed frames: ${seekTargets.slice(0, 10).join(', ')}...)`
+        );
 
-      assert.ok(
-        toExpectedPx <= 3,
-        `playback sample ${idx + 1}/8 canvas bar is ${toExpectedPx.toFixed(2)} px from official file frame ${expectedFileFrame} at timeline frame ${timelineFrame}`
-      );
-      assert.ok(
-        toWrongPx >= 12,
-        `playback sample ${idx + 1}/8 canvas bar is ${toWrongPx.toFixed(2)} px from wrong file frame ${expectedFileFrame + 2} at timeline frame ${timelineFrame}`
-      );
+      for (const [idx, item] of playbackSamples.entries()) {
+        const timelineFrame = Math.floor(item.dataFrame + 1e-4);
+        assert.ok(
+          timelineFrame <= 44,
+          `playback sample ${idx + 1}/8 timeline frame ${timelineFrame} exceeded frame 44, the Picture-in-Picture layer ends at frame 48`
+        );
+        const expectedFileFrame =
+          plan.primary_clip_frames?.[String(timelineFrame)] ??
+          plan.primary_file_frame + (timelineFrame - plan.primary_frame);
 
-      const expectedFrame = await extractFrame(
-        join(mediaDir, plan.primary_media),
-        expectedFileFrame,
-        width,
-        height
-      );
-      const expectedBar = barColumn(expectedFrame, width, height);
-      const actualBar = barColumn(item.sample, width, height);
-      assert.ok(
-        Math.abs(actualBar - expectedBar) <= 1,
-        `playback sample ${idx + 1}/8 bar column ${actualBar} does not match official expected column ${expectedBar} at timeline frame ${timelineFrame}`
-      );
-    }
+        const expectedRow = await frameRowCenter(
+          join(mediaDir, plan.primary_media),
+          expectedFileFrame
+        );
+        const wrongRow = await frameRowCenter(
+          join(mediaDir, plan.primary_media),
+          expectedFileFrame + 2
+        );
+
+        const toExpectedPx =
+          Math.abs(item.center - expectedRow.center) * expectedRow.width;
+        const toWrongPx =
+          Math.abs(item.center - wrongRow.center) * wrongRow.width;
+
+        assert.ok(
+          toExpectedPx <= 3,
+          `playback sample ${idx + 1}/8 canvas bar is ${toExpectedPx.toFixed(2)} px from official file frame ${expectedFileFrame} at timeline frame ${timelineFrame}`
+        );
+        assert.ok(
+          toWrongPx >= 12,
+          `playback sample ${idx + 1}/8 canvas bar is ${toWrongPx.toFixed(2)} px from wrong file frame ${expectedFileFrame + 2} at timeline frame ${timelineFrame}`
+        );
+
+        const expectedFrame = await extractFrame(
+          join(mediaDir, plan.primary_media),
+          expectedFileFrame,
+          width,
+          height
+        );
+        const expectedBar = barColumn(expectedFrame, width, height);
+        const actualBar = barColumn(item.sample, width, height);
+        assert.ok(
+          Math.abs(actualBar - expectedBar) <= 1,
+          `playback sample ${idx + 1}/8 bar column ${actualBar} does not match official expected column ${expectedBar} at timeline frame ${timelineFrame}`
+        );
+      }
+    });
     pass('native-playback');
     // Parity oracle: determine shared-window intervals across parity layers.
     assert.equal(
