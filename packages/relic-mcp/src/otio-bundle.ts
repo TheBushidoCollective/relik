@@ -10,6 +10,7 @@
 import { deflateRawSync, inflateRawSync } from 'node:zlib';
 import {
   crc32,
+  type InflaterFn,
   indexOtioZip,
   MAX_INFLATED_ZIP_BYTES,
   OTIO_DOCUMENT_MAX_BYTES,
@@ -86,6 +87,17 @@ function inflateRawBounded(compressed: Uint8Array, budget: number): Uint8Array {
   }
   return inflated;
 }
+
+/**
+ * The format reader's inflater on node:zlib. The reader's default is a `deflate-raw`
+ * DecompressionStream, which Node 18 does not have, so a publisher that indexes an archive
+ * without this refuses every bundle there as unreadable.
+ */
+export const inflateZipEntry: InflaterFn = (
+  compressed,
+  _uncompressedSize,
+  maxBytes
+) => inflateRawBounded(compressed, maxBytes);
 
 function recordAt(value: unknown, where: string): Record<string, unknown> {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
@@ -925,8 +937,7 @@ export async function bundleOtiod(
       await indexOtioZip(archive, {
         maxExpandedBytes: limit,
         maxInflatedBytes: MAX_INFLATED_ZIP_BYTES,
-        inflater: async (compressed, _uncompressedSize, maxBytes) =>
-          inflateRawBounded(compressed, maxBytes),
+        inflater: inflateZipEntry,
       });
     } catch (error) {
       throw new PublishError(

@@ -228,6 +228,26 @@ describe('the output is parts that reference the source and the renderer output'
     expect([...verified!.programs.values()][0]).toEqual(MP4);
   });
 
+  test('a bundle is indexed without the runtime DecompressionStream, as on Node 18', async () => {
+    // Node 18.20.8 throws on `new DecompressionStream('deflate-raw')`. The packed client
+    // refused every bundle there as archive-unreadable (publish-mcp dry run 43456043140).
+    const original = globalThis.DecompressionStream;
+    class NoDeflateRaw {
+      constructor(format: string) {
+        throw new TypeError(`Unsupported compression format: ${format}`);
+      }
+    }
+    globalThis.DecompressionStream =
+      NoDeflateRaw as unknown as typeof DecompressionStream;
+    try {
+      const result = await publish(SMALL);
+      expect(result.report.status).toBe('rendered');
+      expect(result.parts.some((p) => p === MP4)).toBe(true);
+    } finally {
+      globalThis.DecompressionStream = original;
+    }
+  });
+
   test('a raw .otio and a non-OTIO source come back unchanged', async () => {
     const archive = buildZipArchive(SMALL);
     const raw = await buildProgramArchive({
