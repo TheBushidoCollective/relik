@@ -277,6 +277,41 @@ describe('bounded PCM graph', () => {
     context.sources[0]!.onended?.();
     expect(budget.usedNodes).toBe(0);
   });
+  test('a device callback while the sources are being stopped does not refuse the admitted stop', () => {
+    const context = new FakeContext(),
+      budget = new OtioPcmBudget();
+    const scheduler = new OtioPcmScheduler(
+      context as unknown as AudioContext,
+      new FakeNode() as unknown as AudioNode,
+      1,
+      budget
+    );
+    const req = {
+      generation: 1,
+      firstContextFrame: 48200,
+      planes: [new Float32Array(480)],
+      gainFactors: [],
+    };
+    scheduler.schedule(req);
+    scheduler.schedule(req);
+    // Stopping the first source waits on the render thread while one 512-frame device
+    // callback runs, so the clock is past the reserved frame's lead before the second stop.
+    const first = context.sources[0]!;
+    first.stop = (time?: number) => {
+      first.stoppedAt = time;
+      context.currentTime += 512 / 48000;
+    };
+    const drain = scheduler.stopAtFrame(48300);
+    expect(drain.frame).toBe(48300);
+    expect(context.sources[0]!.stoppedAt).toBe(48300 / 48000);
+    expect(context.sources[1]!.stoppedAt).toBe(48300 / 48000);
+    // The reservation stands: the same frame returns the same drain, another frame conflicts.
+    expect(scheduler.stopAtFrame(48300)).toBe(drain);
+    expect(() => scheduler.stopAtFrame(48900)).toThrow('Conflicting');
+    context.sources[0]!.onended?.();
+    context.sources[1]!.onended?.();
+    expect(budget.usedNodes).toBe(0);
+  });
   test('confirmed context closure releases canceled sources without ended, exactly once', () => {
     const context = new FakeContext();
     const budget = new OtioPcmBudget();

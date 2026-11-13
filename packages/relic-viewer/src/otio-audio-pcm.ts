@@ -1020,6 +1020,12 @@ export class OtioPcmScheduler {
       Math.ceil(this.context.currentTime * rate) + OTIO_PCM_MIN_LEAD_FRAMES
     )
       throw new OtioPcmStopExpiredError();
+    // That one read decides the reservation. The clock moves a device callback at a time, and
+    // stopping a source can wait on the render thread, so a second read inside this loop could
+    // land after a callback the first did not see and refuse a stop it had admitted: a pause on
+    // a healthy run then reported "PCM stop deadline missed" (CI run 43380236705). A source
+    // whose stop arrives after the clock passed the frame ends at the next render quantum, and
+    // the transport gate keeps every frame after its boundary silent.
     this.closed = true;
     try {
       for (const owned of this.sources) {
@@ -1027,11 +1033,6 @@ export class OtioPcmScheduler {
           this.release(owned);
           continue;
         }
-        if (
-          frame <
-          Math.ceil(this.context.currentTime * rate) + OTIO_PCM_MIN_LEAD_FRAMES
-        )
-          throw new Error('PCM stop deadline missed');
         if (frame < owned.naturalEnd) owned.source.stop(frame / rate);
       }
     } catch (error) {
