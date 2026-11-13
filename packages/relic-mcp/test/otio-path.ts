@@ -13156,7 +13156,9 @@ async function assessMovingWindowControls(
     'fixture mapping changed; update the reference span'
   );
   const sourceOffset = Math.round(sourceOffsetSeconds * 30);
-  const references = Array.from({ length: 30 }, (_, i) =>
+  // Every decoded frame is a candidate: the focused clip starts at source frame 0 and the
+  // capture runs through the stop path's fixed stale-control wait, so it can pass frame 30.
+  const references = Array.from({ length: 36 - sourceOffset }, (_, i) =>
     decoded.stdout.subarray(
       (i + sourceOffset) * frameBytes,
       (i + sourceOffset + 1) * frameBytes
@@ -13247,7 +13249,9 @@ async function assessMovingWindowControls(
         return {start, playEdge, warm: null, warmFailed, trace, paused};
       }
       globalThis.__otioProofTrace.setFault(${JSON.stringify(fault)});
-      await sleep(500);
+      // Without scheduled audio, stop() waits out a fixed 500 ms stale-control timeout while
+      // playback keeps running, so the focused window sleeps less to stay inside the 36 media frames.
+      await sleep(${focused ? 250 : 500});
       const trace = await globalThis.__otioProofTrace.stop();
       globalThis.__otioProofTrace.setFault('none');
       ${SETTLE_PAUSE_JS}
