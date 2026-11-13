@@ -439,6 +439,34 @@ Success ends with:
 OTIO_PATH_OK
 ```
 
+### The two slices CI runs
+
+`RELIC_OTIO_PATH_SCOPE` runs one slice of the path, and each slice accounts for exactly its own stages. Neither slice prints `OTIO_PATH_OK`.
+
+```bash
+RELIC_OTIO_PATH_SCOPE=without-scheduled-audio \
+RELIC_OTIO_PATH_CLIENT=source \
+RELIC_OTIO_CHROME_PATH="$(command -v google-chrome)" \
+env -u DISPLAY -u WAYLAND_DISPLAY \
+  bun packages/relic-mcp/test/otio-path.ts
+```
+
+ends with `OTIO_PATH_WITHOUT_SCHEDULED_AUDIO_OK`. It is every stage except the legacy scheduled-audio ones. `verify.yml` runs it, and `verify.yml` gates a merge and a deploy.
+
+```bash
+RELIC_OTIO_PATH_SCOPE=scheduled-audio \
+RELIC_OTIO_PATH_CLIENT=source \
+RELIC_OTIO_CHROME_PATH="$(command -v google-chrome)" \
+env -u DISPLAY -u WAYLAND_DISPLAY \
+  bun packages/relic-mcp/test/otio-path.ts
+```
+
+ends with `OTIO_SCHEDULED_AUDIO_OK`. It is the legacy scheduled-audio stages: native compatibility, scheduled PCM at 48 kHz and 44.1 kHz, the 60 fps cold start, the restart during start, and the boundary fixture's audio captures. `otio-scheduled-audio.yml` runs it on every pull request and on the pushes that deploy, as a separate run that uploads its receipts (`otio-scheduled-audio-linux`) and that nothing depends on.
+
+Jason decided this split on 2026-11-13 (`docs/decisions.md`). Those stages hold a legacy archive's scheduled playback to millisecond budgets, and a shared runner interrupts that playback within a minute of almost every attempt: 8 of 8 parallel lanes failed, from different timing causes, in diagnostic run 43383354503. A red `otio-scheduled-audio` run says the stages did not pass on that runner. Read its receipts before rerunning it, and do not treat it as evidence of a regression until they show a failure that is not the runner interrupting playback.
+
+Three rules apply inside that slice. A stage in which the viewer itself reports an interruption, with nothing injected by the proof, reruns in a fresh browser up to three times and keeps each trace; a stage interrupted on every attempt fails. The 50 ms p95 presentation budget is compared in display refreshes, so a frame held three refreshes (50.0 ms at 60 Hz) meets it and four refreshes (66.7 ms) exceed it; the 100 ms maximum is raw milliseconds. Scheduled 60 fps playback is not proven: the viewer falls back to native audio there, and the stage asserts that.
+
 ## Rendered OpenTimelineIO program
 
 The publisher and viewer paths are implemented on PR 155. Release requires the checks below, including current-revision playback proof. The `OTIO_PATH_OK` run above covers legacy composition playback, not program rendering.
