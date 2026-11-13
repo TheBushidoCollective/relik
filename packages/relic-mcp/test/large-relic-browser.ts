@@ -20,16 +20,22 @@ const MIB = 1024 * 1024;
 // The viewer catches ContentStoreError and keeps its cause out of the dead card.
 // Preserve the original Blob result or exception; report only failures in this proof.
 const BLOB_FAILURE_PRELUDE = String.raw`(() => {
+  const parents = new WeakMap();
   const report = (op, blob, name, message) => {
     // Keep a failed Blob's native status alive until the proof can read blob-internals.
     globalThis.__largeProofFailedBlob = blob;
+    globalThis.__largeProofFailedParentBlob = parents.get(blob) ?? blob;
     console.warn('LARGE_BLOB_FAILURE ' + JSON.stringify({
       op, size: blob.size, name, message: String(message).slice(0, 300), t: Math.round(performance.now()),
     }));
   };
   const { slice, arrayBuffer } = Blob.prototype;
   Blob.prototype.slice = function (...args) {
-    try { return slice.apply(this, args); }
+    try {
+      const result = slice.apply(this, args);
+      parents.set(result, this);
+      return result;
+    }
     catch (error) {
       report('slice', this, error?.name, error?.message ?? error);
       throw error;
@@ -473,6 +479,30 @@ export class ProofBrowser {
       } finally {
         if (internalsPage) await this.closePage(internalsPage);
       }
+      // Diagnostic only: the original proof still fails. A streamed Blob initializes
+      // Chromium's real quota; its constructor path can retain the 500 MiB default.
+      const quotaProbe = await this.evaluate(
+        page,
+        `(async () => {
+        const parent = globalThis.__largeProofFailedParentBlob;
+        if (!(parent instanceof Blob) || parent.size <= 1) return { parent: 'unavailable' };
+        const readLast = async () => {
+          try {
+            const bytes = new Uint8Array(await parent.slice(parent.size - 1).arrayBuffer());
+            return { ok: true, bytes: [...bytes] };
+          } catch (error) { return { ok: false, name: error.name, message: error.message }; }
+        };
+        const before = await readLast();
+        const stream = new ReadableStream({ start(controller) {
+          controller.enqueue(new Uint8Array([0]));
+          controller.close();
+        }});
+        const initialized = await new Response(stream).blob();
+        const after = await readLast();
+        return { parentSize: parent.size, before, initializedSize: initialized.size, after };
+      })()`
+      ).catch((error) => ({ probeError: String(error) }));
+      console.log('LARGE_BLOB_QUOTA_PROBE', JSON.stringify(quotaProbe));
     }
     throw new Error(
       `${storageRefused ? 'storage refused while' : 'timed out'} waiting for ${label}; last=${JSON.stringify(value)}; page=${text}; storage=${storage}; page complaints=${JSON.stringify(this.complaints)}; blob histograms=${blobHistograms}; blob internals=${blobInternals}; browser stderr tail=${JSON.stringify(this.stderr.tail)}`
