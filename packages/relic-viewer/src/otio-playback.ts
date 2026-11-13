@@ -1011,8 +1011,11 @@ export function createOtioPlayback(
     HTMLMediaElement,
     { readonly target: number; readonly window: number }
   >();
-  // Decoders a recovery is playing. It pauses them itself.
-  const recovering = new Set<HTMLMediaElement>();
+  // Decoders a recovery is playing, each with the render it works for and how to stop it.
+  const recovering = new Map<
+    HTMLMediaElement,
+    { readonly gen: number; stop(): void }
+  >();
   const images = new ImageFrameCache(OTIO_RETAINED_IMAGE_PIXELS);
   const imageElements = new Map<string, LoadedImage>();
   const surfacePool: HTMLCanvasElement[] = [];
@@ -6393,7 +6396,12 @@ export function createOtioPlayback(
     cancelStartupSampling?.();
     audioReconcileRevision++;
     for (const video of videos.values()) {
-      if (!recovering.has(video.element)) video.element.pause();
+      // A recovery pauses its own decoder. One working for the current render carries on,
+      // because pausing a timeline that is already paused leaves that render in flight.
+      // One whose render was superseded stops here, before anything else uses the decoder.
+      const recovery = recovering.get(video.element);
+      if (recovery === undefined) video.element.pause();
+      else if (stale(recovery.gen)) recovery.stop();
     }
     for (const audio of audios.values()) {
       audio.element.pause();
@@ -6522,12 +6530,13 @@ export function createOtioPlayback(
       signal.removeEventListener('abort', onAbort);
       if (handle !== null) rvfcMedia.cancelVideoFrameCallback?.(handle);
       handle = null;
-      recovering.delete(media);
+      if (recovering.get(media) === recovery) recovering.delete(media);
       media.pause();
       applyRate(media, rate);
       resolve(frame);
     };
     const onAbort = (): void => finish(null);
+    const recovery = { gen, stop: onAbort };
     const onFrame = (): void => {
       handle = null;
       if (settled) return;
@@ -6553,7 +6562,7 @@ export function createOtioPlayback(
       handle = rvfcMedia.requestVideoFrameCallback?.(onFrame) ?? null;
     };
     signal.addEventListener('abort', onAbort, { once: true });
-    recovering.add(media);
+    recovering.set(media, recovery);
     handle = rvfcMedia.requestVideoFrameCallback(onFrame);
     timer = setTimeout(
       () => finish(null),
