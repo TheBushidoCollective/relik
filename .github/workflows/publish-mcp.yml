@@ -300,6 +300,10 @@ jobs:
             case "$TARGET" in
               darwin-*)
                 cp "$RUNNER_TEMP/native/$TARGET/relic-se" "$DEST/"
+                # An artifact download drops file modes, and the client runs
+                # this helper directly. Without the bit, the installed client
+                # fails with spawn EACCES (dry run 43456043140).
+                chmod 755 "$DEST/relic-se"
                 cp "$RUNNER_TEMP/native/$TARGET/relic-se-build-info.json" "$DEST/"
                 ;;
             esac
@@ -462,6 +466,7 @@ jobs:
             case "$TARGET" in
               darwin-*)
                 test -f "node_modules/relic-mcp/prebuilds/$TARGET/relic-se"
+                test -x "node_modules/relic-mcp/prebuilds/$TARGET/relic-se" || { echo "relic-se for $TARGET is not executable in the installed tarball"; exit 1; }
                 test -f "node_modules/relic-mcp/prebuilds/$TARGET/relic-se-build-info.json"
                 ;;
             esac

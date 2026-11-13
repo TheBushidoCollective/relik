@@ -56,6 +56,7 @@ import {
   type ZipSource,
 } from '@relic/format';
 import {
+  inflateZipEntry,
   writeZipCentralRecord,
   writeZipEnd,
   writeZipLocalHeader,
@@ -977,6 +978,7 @@ export async function buildProgramArchive(
   try {
     index = await indexOtioZip(input.archive, {
       maxExpandedBytes: MAX_EXPANDED_ZIP_BYTES,
+      inflater: inflateZipEntry,
     });
   } catch {
     refuse('archive-unreadable', BUILD_MESSAGES.archiveUnreadable);
@@ -1279,6 +1281,7 @@ export async function buildProgramArchive(
     // 16: verify through the reader, exactly as a reader would.
     const written = await indexOtioZip(partsSource(parts, length), {
       maxExpandedBytes: MAX_EXPANDED_ZIP_BYTES,
+      inflater: inflateZipEntry,
     });
     const verified = await readOtioProgramArchive(written, {
       document_sha256: index.contentSha256,
