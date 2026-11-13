@@ -13957,6 +13957,7 @@ async function assessMovingWindowControls(
         MovingTrace & {
           paused: string;
           live: { x: number; y: number; width: number; height: number };
+          refusedBeforeCapture?: string;
         }
       >(`(async () => {
       const sleep = ms => { const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, ms); return promise; };
@@ -13972,7 +13973,12 @@ async function assessMovingWindowControls(
       // composition to move. The startup lead has its own budget in the cold-start stages
       // and is not a dropout.
       while (!(Number(root.dataset.frame) >= 1) && performance.now() < deadline) await sleep(5);
-      if (!(Number(root.dataset.frame) >= 1)) throw new Error('playback did not advance');
+      if (!(Number(root.dataset.frame) >= 1)) {
+        // Playback never moved before the trace began, so no trace holds why. The reader's
+        // diagnostics do (a scheduler refusal), and the page state says the rest.
+        const diagnostics = Array.from(document.querySelectorAll('.otio-diagnostic')).map(node => node.textContent ?? '').join(' ');
+        return {refusedBeforeCapture: diagnostics || ('playing=' + root.dataset.playing + ' frame=' + root.dataset.frame)};
+      }
       await sleep(40);
       // The canvas box is measured once playback is under way. Starting play removes a leftover
       // scheduler diagnostic, which gives the stage back its row: run 5099c87d measured the box
@@ -14002,6 +14008,13 @@ async function assessMovingWindowControls(
       return {start, trace, paused, live};
     })()`);
       const cast = await stopCast();
+      if (capture.refusedBeforeCapture !== undefined) {
+        const code = starvationRefusalText(capture.refusedBeforeCapture);
+        if (code !== null) throw new StarvedBeforeCapture(code);
+        assert.fail(
+          `sustained capture ${repetition}: playback did not advance: ${capture.refusedBeforeCapture}`
+        );
+      }
       const paused = capture.paused;
       if (/Scheduled audio stopped:/.test(paused)) {
         const faults = describeContinuityFaults(
