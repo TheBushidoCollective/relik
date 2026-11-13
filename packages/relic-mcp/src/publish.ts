@@ -18,7 +18,7 @@ import {
   deriveRendererClass,
   deriveShareProof,
   encodeKey,
-  encryptRelic,
+  encryptRelicParts,
   generateKey,
   generateRelicId,
   indexOtioZip,
@@ -40,6 +40,10 @@ import type {
 import { keyToMnemonic } from '@relic/format/mnemonic';
 import { uploadCover } from './cover/upload.ts';
 import { bundleOtiod } from './otio-bundle.ts';
+import type { ProgramPolicy } from './program/policy.ts';
+import type { ProgramRenderer } from './program/render.ts';
+import type { ProgramReport } from './program/report.ts';
+import { buildProgramArchive } from './program/build.ts';
 import {
   loadPrivatePublishState,
   loadPublishedSource,
@@ -119,6 +123,7 @@ export type ClientCode =
   | 'app_response_unusable'
   | 'otio_bundle_invalid'
   | 'version_digest_mismatch'
+  | 'program_refused'
   | 'device_not_enrolled'
   | 'device_already_enrolled'
   | 'device_already_confirmed'
@@ -174,8 +179,8 @@ export interface SourceFile {
 export interface ConfinedBundleFile {
   /** Size returned by fstat on the held native descriptor. */
   readonly size: number;
-  /** Reads from that descriptor only, refusing more than maxBytes. */
-  readBounded(maxBytes: number): Promise<Uint8Array>;
+  /** Fills target from the held descriptor. target.length must equal size; a file that changed while held is refused. */
+  readInto(target: Uint8Array): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -263,6 +268,8 @@ export interface PublishResult {
   readonly disclosure_url: string;
   readonly key_phrase: string;
   readonly cover: CoverReport;
+  /** The program: rendered per timeline, or focus-only with the reasons. */
+  readonly program?: ProgramReport;
 }
 
 export interface PublishDeps {
@@ -279,6 +286,13 @@ export interface PublishDeps {
   /** Path to ffmpeg binary, or null to simulate ffmpeg being absent. */
   readonly ffmpegPath?: string | null;
   readonly renderCover: (source: CoverSource) => Promise<CoverOutcome>;
+  /**
+   * Local program rendering in the publisher's own Chrome. Absent is reported
+   * as status not_run, never skipped silently.
+   */
+  readonly renderProgram?: ProgramRenderer | undefined;
+  /** Lowers the program cap, and turns on proof-only knobs. Never raises a cap. */
+  readonly programPolicy?: ProgramPolicy | undefined;
   /**
    * The platform's Secure Enclave helper, when this build has one. Absent or
    * unavailable means device keys use the 0600 file backend.
@@ -362,6 +376,25 @@ export async function lookupPublishedSource(
   return lookupResolvedSource(deps.files.resolve(path), deps);
 }
 
+/**
+ * The server's program size limit from a challenge. Anything other than a
+ * positive safe integer is refused before any grant or render, so no byte is
+ * planned against a value the server did not state.
+ */
+export function challengeSizeLimit(
+  challenge: Readonly<Record<string, unknown>>
+): number {
+  const value = challenge['size_limit_bytes'];
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0) {
+    throw new PublishError(
+      'app_response_unusable',
+      'The Relic service returned a challenge with no usable size limit.',
+      { leg: 'challenge' }
+    );
+  }
+  return value;
+}
+
 /** Whether this machine holds the relic as a private one, which the public paths must not read. */
 export async function isPrivateRelic(relicId: string): Promise<boolean> {
   return (await loadPrivatePublishState(relicId)) !== undefined;
@@ -407,7 +440,7 @@ export async function publish(
     `${deps.serviceOrigin}/api/challenge`,
     {}
   );
-  const sizeLimit = Number(challenge['size_limit_bytes']);
+  const sizeLimit = challengeSizeLimit(challenge);
   const sizeBasis = String(challenge['size_basis']);
 
   if (source.bytes.length > sizeLimit) {
@@ -469,6 +502,30 @@ export async function publish(
     }
   }
 
+  // The program goes into the archive before encryption, so the grant pins the
+  // exact bytes that get encrypted. Whatever cannot be delivered is focus-only,
+  // and the result says why; nothing here is skipped silently.
+  const programBuild = await buildProgramArchive({
+    archive: source.bytes,
+    sourceName: source.basename,
+    sizeLimit,
+    policy: deps.programPolicy ?? { forceEncoderAbsent: false },
+    renderer: deps.renderProgram,
+    clientName: deps.clientName,
+  });
+  if (programBuild.length > sizeLimit) {
+    throw new PublishError(
+      'local_size_precheck_failed',
+      `${source.basename} with its program is ${programBuild.length} bytes, over the ` +
+        `${sizeLimit}-byte cap`,
+      {
+        size_limit_bytes: sizeLimit,
+        declared_size_bytes: programBuild.length,
+        size_basis: sizeBasis,
+      }
+    );
+  }
+
   const retries = deps.maxCollisionRetries ?? 3;
   let lastCollision: ServerRefusal | undefined;
 
@@ -483,8 +540,8 @@ export async function publish(
     // Encrypt before requesting the grant, so the grant can pin the object's
     // exact byte length. A fresh salt is drawn per attempt, so this has to sit
     // inside the retry loop alongside the id and the key.
-    const container = await encryptRelic({
-      content: source.bytes,
+    const container = await encryptRelicParts({
+      parts: programBuild.parts,
       filename,
       mimetype: guessMimetype(filename, rendererClass),
       key,
@@ -498,7 +555,7 @@ export async function publish(
         relic_id: relicId,
         renderer_class: rendererClass,
         publishing_client: deps.clientName,
-        declared_size_bytes: source.bytes.length,
+        declared_size_bytes: programBuild.length,
         declared_ciphertext_bytes: container.length,
         title: normalizedTitle,
         // Omitted rather than sent as anything, so an unset lifetime is the
@@ -662,6 +719,9 @@ export async function publish(
       disclosure_url: String(grant['disclosure_url']),
       key_phrase: keyToMnemonic(key).join(' '),
       cover: coverReport,
+      ...(programBuild.report.status === 'not_applicable'
+        ? {}
+        : { program: programBuild.report }),
     };
   }
 

@@ -802,6 +802,33 @@ function commentUrl(
   return `${commentsUrl(origin, relicId)}/${encodeURIComponent(commentId)}`;
 }
 
+export type DeleteResult =
+  | { readonly kind: 'deleted' }
+  | { readonly kind: 'refused'; readonly refusal: Refusal };
+
+/** Delete only the selected row using the reader's existing session. */
+export async function deleteComment(
+  relicId: string,
+  commentId: string,
+  deps: ViewerDeps
+): Promise<DeleteResult> {
+  let response: Response;
+  try {
+    response = await deps.fetch(
+      commentUrl(deps.serviceOrigin, relicId, commentId),
+      {
+        method: 'DELETE',
+      }
+    );
+  } catch {
+    return { kind: 'refused', refusal: commentRefusal('network') };
+  }
+  if (response.status !== 204) {
+    return { kind: 'refused', refusal: await refusalFrom(response) };
+  }
+  return { kind: 'deleted' };
+}
+
 export type EditResult =
   | { readonly kind: 'edited' }
   | { readonly kind: 'refused'; readonly refusal: Refusal };
@@ -905,6 +932,21 @@ export function canEditComment(
   if (entry.kind !== 'open') return false;
   if (session.kind !== 'verified') return false;
   return entry.author === session.email;
+}
+
+/** The service permits a verified reader to delete only their own row. */
+export function canDeleteComment(
+  entry: CommentEntry,
+  session: SessionState
+): boolean {
+  return (
+    session.kind === 'verified' &&
+    typeof entry.id === 'string' &&
+    entry.id.length > 0 &&
+    typeof entry.author === 'string' &&
+    entry.author.length > 0 &&
+    entry.author === session.email
+  );
 }
 
 /**
@@ -1316,16 +1358,9 @@ export const THREAD_CYCLE_RECOVERY =
   'This remark points at another remark that points back, so each one is ' +
   'shown once instead of hidden in the loop.';
 
-/**
- * Said on a remark whose parent is in the thread but not shown.
- *
- * A reply whose own target is missing stays omitted, so a version filter
- * does not paint it as a new top-level comment. A reply to that omitted row
- * would otherwise vanish with it. This note is why that reply is still here.
- */
+/** Said when an unavailable parent leaves a reply without its original context. */
 export const THREAD_ORPHAN_RECOVERY =
-  'This remark answers one that is not shown in this thread, so it is ' +
-  'shown on its own instead of dropped.';
+  'The parent comment is unavailable. This reply is shown separately.';
 
 export interface ThreadRecovery {
   readonly kind: 'cycle' | 'orphan';
@@ -1388,17 +1423,19 @@ function recovery(kind: 'cycle' | 'orphan', addresses: string): ThreadRecovery {
 }
 
 /**
- * Structures flat comments into top-level comments and nested replies.
- *
- * The sealed pointer is the only parent. A reply whose target is missing or
- * filtered out of this set stays omitted, so it does not appear as a new
- * root on a version that does not hold its parent. A loop, or a reply to a
- * row that omission hid, is shown once with recovery context instead of
- * being dropped or walked forever.
+ * Group using only decrypted parent pointers. A parent absent from the full
+ * thread leaves a recoverable orphan; one merely filtered from this view does
+ * not make its direct reply a new root.
  */
-export function threadEntries(entries: readonly CommentEntry[]): CommentNode[] {
+export function threadEntries(
+  visibleEntries: readonly CommentEntry[],
+  allEntries: readonly CommentEntry[]
+): CommentNode[] {
+  const allIds = new Set(
+    allEntries.flatMap((entry) => (entry.id === null ? [] : [entry.id]))
+  );
   const nodesById = new Map<string, MutableCommentNode>();
-  for (const entry of entries) {
+  for (const entry of visibleEntries) {
     if (entry.id !== null) {
       nodesById.set(entry.id, { entry, replies: [] });
     }
@@ -1414,7 +1451,7 @@ export function threadEntries(entries: readonly CommentEntry[]): CommentNode[] {
 
   const roots: CommentNode[] = [];
   const placed = new Set<string>();
-  for (const entry of entries) {
+  for (const entry of visibleEntries) {
     if (entry.id === null) {
       roots.push({ entry, replies: [] });
       continue;
@@ -1432,13 +1469,26 @@ export function threadEntries(entries: readonly CommentEntry[]): CommentNode[] {
       roots.push(node);
       continue;
     }
-    if (parent === null) continue;
+    if (parent === null) {
+      const target = sealedTarget(entry);
+      if (target !== null && !allIds.has(target)) {
+        node.recovery = recovery('orphan', target);
+        roots.push(node);
+      }
+      continue;
+    }
     if (parent === undefined) {
       roots.push(node);
       continue;
     }
     const parentNode = nodesById.get(parent);
-    const parentOmitted = parentOf.get(parent) === null && !cycles.has(parent);
+    const parentTarget =
+      parentNode === undefined ? null : sealedTarget(parentNode.entry);
+    const parentOmitted =
+      parentOf.get(parent) === null &&
+      parentTarget !== null &&
+      allIds.has(parentTarget) &&
+      !cycles.has(parent);
     if (parentNode === undefined || parentOmitted) {
       node.recovery = recovery('orphan', parent);
       roots.push(node);

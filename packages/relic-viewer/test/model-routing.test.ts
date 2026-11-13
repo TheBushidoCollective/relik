@@ -9,27 +9,38 @@ const stl = bytes(
 );
 
 describe('model routing', () => {
-  test('renders recognized models and legacy generic declarations', () => {
-    expect(routeFor('mesh.obj', 'text/plain', obj).route).toBe('model');
-    expect(routeFor('mesh.stl', 'application/octet-stream', stl).route).toBe(
-      'model'
-    );
-    expect(routeFor('mesh', 'application/octet-stream', obj).route).toBe(
-      'model'
-    );
+  test('renders recognized models and legacy generic declarations', async () => {
+    expect((await routeFor('mesh.obj', 'text/plain', obj)).route).toBe('model');
+    expect(
+      (await routeFor('mesh.stl', 'application/octet-stream', stl)).route
+    ).toBe('model');
+    expect(
+      (await routeFor('mesh', 'application/octet-stream', obj)).route
+    ).toBe('model');
     expect(deriveRendererClass(obj, 'mesh')).toBe('model');
     expect(modelFormatFromFilename('obj')).toBeUndefined();
   });
-  test('downloads conflicting names, MIME and markup instead of rendering them', () => {
-    expect(routeFor('mesh.stl', 'model/stl', obj).route).toBe('download');
-    expect(routeFor('mesh.obj', 'model/stl', obj).route).toBe('download');
-    expect(routeFor('mesh.obj', 'image/png', obj).route).toBe('download');
-    expect(routeFor('mesh.png', 'application/octet-stream', obj).route).toBe(
+  test('downloads conflicting names, MIME and markup instead of rendering them', async () => {
+    expect((await routeFor('mesh.stl', 'model/stl', obj)).route).toBe(
+      'download'
+    );
+    expect((await routeFor('mesh.obj', 'model/stl', obj)).route).toBe(
+      'download'
+    );
+    expect((await routeFor('mesh.obj', 'image/png', obj)).route).toBe(
       'download'
     );
     expect(
-      routeFor('mesh.obj', 'model/obj', bytes('<script>alert(1)</script>'))
-        .route
+      (await routeFor('mesh.png', 'application/octet-stream', obj)).route
+    ).toBe('download');
+    expect(
+      (
+        await routeFor(
+          'mesh.obj',
+          'model/obj',
+          bytes('<script>alert(1)</script>')
+        )
+      ).route
     ).toBe('download');
   });
 });

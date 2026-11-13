@@ -376,13 +376,17 @@ describe('large file opening', () => {
         new TextEncoder().encode('<p>not an image</p>'),
       ],
     ] as const) {
-      const expected = routeFor(filename, mimetype, bytes);
+      const expected = await routeFor(filename, mimetype, bytes);
       const actual = await routeContent(
         filename,
         mimetype,
         contentFromBytes(bytes)
       );
-      expect({ route: actual.route, notice: actual.notice }).toEqual(expected);
+      expect({ route: actual.route, notice: actual.notice }).toEqual({
+        route: expected.route,
+        notice: expected.notice,
+      });
+      expect(actual.componentModule).toEqual(expected.componentModule);
     }
   });
 

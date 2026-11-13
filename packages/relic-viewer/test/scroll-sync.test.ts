@@ -14,7 +14,11 @@ import {
   isFrameScrollMessage,
   isSetScrollMessage,
 } from '../src/frame-scroll.ts';
-import { renderCodeComparison, renderRenderedComparison } from '../src/main.ts';
+import {
+  renderCodeComparison,
+  renderRenderedComparison,
+  renderSandboxedJsx,
+} from '../src/main.ts';
 import {
   applyDocumentScrollFraction,
   applyDocumentScrollPosition,
@@ -184,6 +188,7 @@ class ElementStub implements Scroller {
   };
   readonly listeners: Record<string, ((event?: unknown) => void)[]> = {};
   readonly postedMessages: unknown[] = [];
+  title = '';
   contentWindow?: { postMessage: (msg: unknown) => void };
 
   constructor(tag: string) {
@@ -272,6 +277,15 @@ function withDocument<T>(run: (flushFrames: () => void) => T): T {
   const prevDoc = (globalThis as Record<string, unknown>).document;
   const prevRaf = (globalThis as Record<string, unknown>).requestAnimationFrame;
   const prevWin = (globalThis as Record<string, unknown>).window;
+  const prevCustomEvent = (globalThis as Record<string, unknown>).CustomEvent;
+  (globalThis as Record<string, unknown>).CustomEvent = class {
+    readonly type: string;
+    readonly detail: unknown;
+    constructor(type: string, options?: { detail?: unknown }) {
+      this.type = type;
+      this.detail = options?.detail;
+    }
+  };
   const body = new ElementStub('BODY');
   let rafQueue: (() => void)[] = [];
   const flushFrames = (): void => {
@@ -309,6 +323,9 @@ function withDocument<T>(run: (flushFrames: () => void) => T): T {
     (globalThis as Record<string, unknown>).document = prevDoc;
     (globalThis as Record<string, unknown>).window = prevWin;
     (globalThis as Record<string, unknown>).requestAnimationFrame = prevRaf;
+    if (prevCustomEvent === undefined)
+      delete (globalThis as Record<string, unknown>).CustomEvent;
+    else (globalThis as Record<string, unknown>).CustomEvent = prevCustomEvent;
   }
 }
 
@@ -1413,6 +1430,69 @@ describe('scroller inventory across rendering modes', () => {
       expect(lastSentToAfter).toEqual({
         type: 'relic:set-scroll',
         fraction: 0.65,
+      });
+    });
+  });
+
+  test('a jsx frame posts the module routing compiled, even when the published bytes are prose', () => {
+    // Render never recompiles: the frame receives the text routing checked, so
+    // the bytes in this view are prose on purpose.
+    withDocument(() => {
+      const view: ReadyView = {
+        ...testView('sandboxed-jsx', 1, encoder.encode('just some prose here')),
+        componentModule: 'export default function App() { return null; }',
+      };
+      const wrapper = renderSandboxedJsx(
+        view,
+        'https://usercontent.example'
+      ) as unknown as ElementStub;
+      const frame = descendants(wrapper).find((el) => el.tagName === 'IFRAME');
+      if (!frame) throw new Error('the jsx route built no frame');
+      frame.dispatchEvent({ type: 'load' });
+      expect(frame.postedMessages).toContainEqual({
+        type: 'relic:render-jsx',
+        code: view.componentModule,
+      });
+    });
+  });
+
+  test('a jsx comparison posts each version its own compiled module', () => {
+    withDocument(() => {
+      const comparison = renderRenderedComparison(
+        {
+          ...testView('sandboxed-jsx', 2, encoder.encode('<p>v2</p>')),
+          filename: 'two.jsx',
+          componentModule: 'MODULE_TWO',
+        },
+        {
+          ...testView('sandboxed-jsx', 1, encoder.encode('<p>v1</p>')),
+          filename: 'one.jsx',
+          componentModule: 'MODULE_ONE',
+        },
+        'rendered',
+        'https://usercontent.example'
+      ) as unknown as ElementStub;
+      const splitBtn = descendants(comparison).find(
+        (el) => el.tagName === 'BUTTON' && el.dataset['layout'] === 'split'
+      );
+      splitBtn?.click();
+      const frames = descendants(comparison).filter(
+        (el) => el.tagName === 'IFRAME'
+      );
+      expect(frames).toHaveLength(2);
+      for (const frame of frames) frame.dispatchEvent({ type: 'load' });
+
+      // A frame's title is its version's filename, so each frame is matched to
+      // the module it should have been posted.
+      const postedTo = (title: string) =>
+        frames.find((frame) => frame.title === title)?.postedMessages;
+      expect(postedTo('two.jsx')).toContainEqual({
+        type: 'relic:render-jsx',
+        code: 'MODULE_TWO',
+      });
+      expect(postedTo('one.jsx')).toContainEqual({
+        type: 'relic:render-jsx',
+        code: 'MODULE_ONE',
       });
     });
   });

@@ -183,19 +183,38 @@ export interface Page {
 export class ProofBrowser {
   private readonly downloads = new Map<string, string>();
   private readonly stopEvents: () => void;
+  // What the page said, kept for a timeout's report: errors and warnings.
+  private readonly complaints: string[] = [];
 
   private constructor(
     readonly child: ChildProcess,
     readonly cdp: CdpConnection,
-    readonly downloadDirectory: string
+    readonly downloadDirectory: string,
+    // The end of the browser's own stderr, collected since it was spawned.
+    private readonly stderr: { tail: string }
   ) {
     this.stopEvents = cdp.onEvent((event) => {
+      if (event.method === 'Runtime.exceptionThrown') {
+        this.complain(JSON.stringify(event.params['exceptionDetails']));
+        return;
+      }
+      if (event.method === 'Runtime.consoleAPICalled') {
+        const type = event.params['type'];
+        if (type === 'error' || type === 'warning')
+          this.complain(`${type}: ${JSON.stringify(event.params['args'])}`);
+        return;
+      }
       if (event.method !== 'Browser.downloadProgress') return;
       const guid = event.params['guid'];
       const state = event.params['state'];
       if (typeof guid === 'string' && typeof state === 'string')
         this.downloads.set(guid, state);
     });
+  }
+
+  private complain(text: string): void {
+    this.complaints.push(text.slice(0, 1000));
+    if (this.complaints.length > 20) this.complaints.shift();
   }
 
   static async start(
@@ -241,23 +260,33 @@ export class ProofBrowser {
     const child = spawn(binary, launch.args, {
       stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'],
     });
-    // Keep stderr drained so the owned browser cannot block on a full pipe.
-    child.stderr?.resume();
+    // Drained from the start so the owned browser cannot block on a full pipe,
+    // and kept so a startup or storage failure can say what the browser printed.
+    const stderr = { tail: '' };
+    child.stderr?.on('data', (chunk: Buffer) => {
+      stderr.tail = (stderr.tail + chunk.toString('utf8')).slice(-4096);
+    });
     const cdp = connectPipe(
       child.stdio[3] as Writable,
       child.stdio[4] as Readable
     );
     try {
-      await attestBrowserHeadless(cdp, launch);
+      // This browser starts straight after a 500 MB publish. In CI run
+      // 43270214432 it printed its first line 7 s after it was spawned and the
+      // default 10 s attestation deadline passed before it answered. The
+      // attestation itself is unchanged; only the wait for a slow start is.
+      await attestBrowserHeadless(cdp, launch, 60_000);
       await cdp.send('Browser.setDownloadBehavior', {
         behavior: 'allowAndName',
         downloadPath: downloads,
         eventsEnabled: true,
       });
-      return new ProofBrowser(child, cdp, downloads);
+      return new ProofBrowser(child, cdp, downloads, stderr);
     } catch (error) {
       cdp.dispose();
       child.kill('SIGKILL');
+      if (error instanceof Error)
+        error.message = `${error.message}; browser stderr tail=${JSON.stringify(stderr.tail)}`;
       throw error;
     }
   }
@@ -365,8 +394,14 @@ export class ProofBrowser {
       page,
       'document.body?.innerText?.slice(0, 4000) ?? ""'
     ).catch(() => 'page unavailable');
+    // A page that could not hold the file names no cause. The storage the
+    // browser reports, what the page logged and what the browser printed do.
+    const storage = await this.evaluate<string>(
+      page,
+      'navigator.storage.estimate().then((estimate) => JSON.stringify(estimate))'
+    ).catch(() => 'unavailable');
     throw new Error(
-      `timed out waiting for ${label}; last=${JSON.stringify(value)}; page=${text}`
+      `timed out waiting for ${label}; last=${JSON.stringify(value)}; page=${text}; storage=${storage}; page complaints=${JSON.stringify(this.complaints)}; browser stderr tail=${JSON.stringify(this.stderr.tail)}`
     );
   }
 

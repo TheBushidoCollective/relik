@@ -15,7 +15,7 @@ export function otioTargetLabel(anchor: OtioAnchorV1): string {
       : `${start}, duration ${rationalLabel(anchor.range.duration)}`;
   const timeline = anchor.snapshot?.timeline ?? anchor.timeline_id ?? '';
   const item = anchor.snapshot?.item ?? anchor.item_id;
-  return `v${anchor.relic_version} · ${timeline} · ${scope}${item ? ` · ${item}` : ''} · ${span}`;
+  return `v${anchor.relic_version} · ${timeline} · ${scope}${item ? ` · ${item}` : ''} · Composition ${span}`;
 }
 
 export const otioAdapter: AnchorAdapter<'otio'> = {

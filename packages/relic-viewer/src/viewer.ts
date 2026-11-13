@@ -56,7 +56,8 @@ import {
   type ContentSink,
   type RelicContent,
 } from './content.ts';
-import { isComponentSource } from './jsx.ts';
+import type * as JsxModule from './jsx.ts';
+import { markJsxCompilerLoaded } from './stale-shell.ts';
 import type { VaultEntry } from './vault.ts';
 export type { VaultEntry };
 
@@ -105,6 +106,7 @@ export type ViewerState =
       dead: DeadView;
       cachedPrefix?: CachedPrefix | undefined;
       cachedCiphertext?: CachedPrefix | undefined;
+      jsxCompilerUnavailable?: true | undefined;
       resume?: LoadResume | undefined;
     };
 
@@ -135,6 +137,12 @@ export interface ReadyView {
    * run a ceremony when the service holds a different file for the version.
    */
   readonly versionDigest: string;
+  /**
+   * The transpiled component for the `sandboxed-jsx` route, compiled once by
+   * routing. Undefined when the component does not compile, and always
+   * undefined on every other route.
+   */
+  readonly componentModule?: string | undefined;
   /**
    * Present only for a private relic. Its share URL is keyless, and every key
    * use goes through `keyFor`, which fetches that version's wrap for this
@@ -197,6 +205,7 @@ export type HistoricalVersionState =
       readonly kind: 'unavailable';
       readonly code: string;
       readonly detail: string;
+      readonly jsxCompilerUnavailable?: true | undefined;
     };
 
 /**
@@ -633,17 +642,21 @@ export async function load(
         'empty_envelope'
       );
     }
+
+    // The decrypt just proved this key. Saving it before routing means a
+    // compiler that fails to load cannot cost the reader the key, so a reload
+    // recalls it. The label has no renderer yet, and the vault keeps any it holds.
+    deps.keyVault.remember(relicId, fragment, keyExpiry(mintResponse), {
+      title: entry.filename,
+    });
+
     const content = await state.sink.finish();
     const route = await routeContent(entry.filename, entry.mimetype, content);
 
-    deps.keyVault.remember(
-      relicId,
-      fragment,
-      mintResponse.relic_expires_at === null
-        ? Number.POSITIVE_INFINITY
-        : Date.parse(mintResponse.relic_expires_at),
-      { title: entry.filename, renderer: route.route }
-    );
+    deps.keyVault.remember(relicId, fragment, keyExpiry(mintResponse), {
+      title: entry.filename,
+      renderer: route.route,
+    });
 
     return {
       kind: 'ready',
@@ -654,6 +667,7 @@ export async function load(
         document: route.document,
         route: route.route,
         downgradeNotice: route.notice,
+        componentModule: route.componentModule,
         shareUrl,
         version: mintResponse.version,
         currentVersion: mintResponse.current_version,
@@ -724,6 +738,19 @@ export async function load(
         undefined,
         { fragment, mint: mintResponse }
       );
+    }
+    if (error instanceof JsxCompilerUnavailableError) {
+      return {
+        ...dead(
+          'This relic could not be opened',
+          'Something went wrong reaching the service.',
+          'retry',
+          'service_unreachable',
+          undefined,
+          { fragment, mint: mintResponse }
+        ),
+        jsxCompilerUnavailable: true,
+      };
     }
     if (error instanceof TransferIncompleteError) {
       return {
@@ -883,7 +910,7 @@ export async function loadHistoricalVersion(
   const unavailable = (
     code: string,
     detail: string
-  ): HistoricalVersionState => ({
+  ): Extract<HistoricalVersionState, { kind: 'unavailable' }> => ({
     kind: 'unavailable',
     code,
     detail: `${detail} Version ${current.version} remains open.`,
@@ -988,12 +1015,15 @@ export async function loadHistoricalVersion(
             result.dead.code === 'content_damaged'
           ? 'version_decrypt_failed'
           : result.dead.code;
-  return unavailable(
+  const failure = unavailable(
     code,
     code === 'version_decrypt_failed'
       ? `Version ${requestedVersion} could not be decrypted.`
       : result.dead.detail
   );
+  return result.jsxCompilerUnavailable === true
+    ? { ...failure, jsxCompilerUnavailable: true }
+    : failure;
 }
 
 /** Maps the server's codes onto what a recipient should actually be told. */
@@ -1075,9 +1105,73 @@ export function deadFromProblem(code: string): DeadView {
   }
 }
 
+/** The JSX compiler, typed without being loaded. Erased at build. */
+type JsxCompiler = typeof JsxModule;
+
+/**
+ * The compiler chunk could not be fetched or evaluated. Routing reports it as
+ * a service failure. The bytes are not known to be damaged, and a route chosen
+ * without the compiler would be a guess.
+ */
+class JsxCompilerUnavailableError extends Error {
+  constructor(cause: unknown) {
+    super('The JSX compiler could not be loaded.', { cause });
+    this.name = 'JsxCompilerUnavailableError';
+  }
+}
+
+let jsxCompiler: JsxCompiler | undefined;
+
+/**
+ * Loads the JSX compiler on first use, never at startup.
+ *
+ * It is not a static import, because Sucrase is about 43% of this shell and
+ * the shell has a byte ceiling (shell-budget.test.ts). Only routing calls it.
+ * It compiles a component once, while deciding the route, and the frame
+ * receives that text, so rendering never needs the compiler.
+ */
+async function loadJsxCompiler(): Promise<JsxCompiler> {
+  if (jsxCompiler !== undefined) return jsxCompiler;
+  let compiler: JsxCompiler;
+  try {
+    compiler = await import('./jsx.ts');
+  } catch (cause) {
+    throw new JsxCompilerUnavailableError(cause);
+  }
+  // A compiler that loads proves this shell is current, so the one-reload
+  // guard can arm again for the next deploy.
+  jsxCompiler = compiler;
+  markJsxCompilerLoaded();
+  return compiler;
+}
+
+/**
+ * Transpiled component text, or undefined when it does not compile. Only the
+ * `sandboxed-jsx` route asks.
+ */
+async function compileComponent(
+  content: Uint8Array,
+  filename: string
+): Promise<string | undefined> {
+  const { transpileJsx } = await loadJsxCompiler();
+  try {
+    return transpileJsx(
+      new TextDecoder('utf-8', { fatal: false }).decode(content),
+      filename
+    );
+  } catch {
+    return undefined;
+  }
+}
+
 export interface RouteDecision {
   readonly route: RenderRoute;
   readonly notice: string | undefined;
+  /**
+   * The transpiled component, set only on the `sandboxed-jsx` route and only
+   * when it compiles. Routing compiles once, so render posts this text as is.
+   */
+  readonly componentModule?: string | undefined;
 }
 
 /** Content-derived facts only, never server-supplied renderer metadata. */
@@ -1085,6 +1179,8 @@ export interface RouteSample {
   readonly sniffed: RendererClass;
   readonly model: 'stl' | 'obj' | undefined;
   readonly component: boolean;
+  /** The transpiled component, when the caller has already compiled it. */
+  readonly componentModule?: string | undefined;
 }
 
 export interface ContentRouteDecision extends RouteDecision {
@@ -1135,6 +1231,7 @@ export async function routeContent(
 
   let documentBytes: Uint8Array | undefined;
   let component = false;
+  let componentModule: string | undefined;
   if (
     classFromMimetype(mimetype, filename) === 'jsx' &&
     sniffed === 'code' &&
@@ -1142,13 +1239,22 @@ export async function routeContent(
   ) {
     documentBytes = await content.readWhole(DOCUMENT_RENDER_LIMIT_BYTES);
     if (documentBytes) {
+      const { isComponentSource } = await loadJsxCompiler();
       component = isComponentSource(
         new TextDecoder('utf-8', { fatal: false }).decode(documentBytes),
         filename
       );
+      if (component) {
+        componentModule = await compileComponent(documentBytes, filename);
+      }
     }
   }
-  let decision = routeFor(filename, mimetype, { sniffed, model, component });
+  let decision = await routeFor(filename, mimetype, {
+    sniffed,
+    model,
+    component,
+    componentModule,
+  });
   if (
     !zip &&
     decision.route === 'otio' &&
@@ -1195,11 +1301,11 @@ export async function routeContent(
  * fragment theft in one step. The guard test in card-metadata-guard.test.ts
  * enforces that the built bundles never read the card metadata.
  */
-export function routeFor(
+export async function routeFor(
   filename: string,
   declaredMimetype: string,
   content: Uint8Array | RouteSample
-): RouteDecision {
+): Promise<RouteDecision> {
   const declared = classFromMimetype(declaredMimetype, filename);
   // The sample was derived from authenticated plaintext, not metadata.
   let sniffed =
@@ -1258,7 +1364,7 @@ export function routeFor(
   if (declared === 'jsx' && sniffed === 'code') {
     const component =
       content instanceof Uint8Array
-        ? isComponentSource(
+        ? (await loadJsxCompiler()).isComponentSource(
             new TextDecoder('utf-8', { fatal: false }).decode(content),
             filename
           )
@@ -1270,7 +1376,18 @@ export function routeFor(
   // carry identical privilege, and the sniffer cannot tell them apart, so
   // comparing classes would downgrade every Markdown relic ever published.
   if (privilegeTier(declared) === privilegeTier(sniffed)) {
-    return { route: routeForClass(declared), notice: undefined };
+    // Routing is the one place a component compiles, so the frame receives
+    // exactly the text that was checked here and never recompiles it.
+    const route = routeForClass(declared);
+    if (route !== 'sandboxed-jsx') return { route, notice: undefined };
+    return {
+      route,
+      notice: undefined,
+      componentModule:
+        content instanceof Uint8Array
+          ? await compileComponent(content, filename)
+          : content.componentModule,
+    };
   }
 
   const resolved = leastPrivileged(declared, sniffed);
@@ -1372,6 +1489,13 @@ export const DAMAGED_TITLE = 'The stored file is damaged';
 export const DAMAGED_DETAIL =
   'The start of the file decrypted with this link, so the link is fine. A later part did not, which means the stored file was changed or damaged.';
 
+/** When the vault should forget a key: the relic's own expiry, or never. */
+function keyExpiry(mint: MintResponse): number {
+  return mint.relic_expires_at === null
+    ? Number.POSITIVE_INFINITY
+    : Date.parse(mint.relic_expires_at);
+}
+
 function dead(
   headline: string,
   detail: string,
@@ -1379,7 +1503,7 @@ function dead(
   code = 'error',
   cachedPrefix?: CachedPrefix,
   resume?: LoadResume
-): ViewerState {
+): Extract<ViewerState, { kind: 'dead' }> {
   return {
     kind: 'dead',
     dead: { headline, detail, action, code },
@@ -1513,7 +1637,11 @@ export type KeyEntryAttemptResult =
       readonly message: string;
       readonly cachedPrefix?: CachedPrefix | undefined;
     }
-  | { readonly kind: 'dead'; readonly dead: DeadView };
+  | {
+      readonly kind: 'dead';
+      readonly dead: DeadView;
+      readonly jsxCompilerUnavailable?: true | undefined;
+    };
 
 /**
  * Attempts to open a relic using manually entered key material.
@@ -1556,7 +1684,13 @@ export async function openRelicWithKey(
       cachedPrefix: state.cachedPrefix ?? cachedPrefix,
     };
   }
-  return { kind: 'dead', dead: state.dead };
+  return {
+    kind: 'dead',
+    dead: state.dead,
+    ...(state.jsxCompilerUnavailable === true
+      ? { jsxCompilerUnavailable: true as const }
+      : {}),
+  };
 }
 
 export async function loadCommentedRelics(

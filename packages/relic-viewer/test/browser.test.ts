@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { transpileJsx } from '../src/jsx.ts';
 import { contentFromBytes } from '../src/content.ts';
 import {
   buildBar,
@@ -378,7 +379,8 @@ describe('the usercontent frame the render routes build', () => {
 
   const view = (
     route: 'sandboxed-html' | 'sandboxed-jsx',
-    source: string
+    source: string,
+    componentModule?: string
   ): ReadyView => ({
     filename: route === 'sandboxed-jsx' ? 'Widget.tsx' : 'page.html',
     declaredMimetype: 'text/html',
@@ -390,6 +392,7 @@ describe('the usercontent frame the render routes build', () => {
     version: 1,
     currentVersion: 1,
     versionDigest: '0'.repeat(64),
+    componentModule,
   });
 
   const sandboxAttributeOf = (wrapper: HTMLElement): string => {
@@ -413,14 +416,27 @@ describe('the usercontent frame the render routes build', () => {
   });
 
   test('the jsx route allows scripts and nothing else', () => {
+    const source = 'export default function App() {\n  return <p>hi</p>;\n}';
     const wrapper = renderSandboxedJsx(
-      view(
-        'sandboxed-jsx',
-        'export default function App() {\n  return <p>hi</p>;\n}'
-      ),
+      view('sandboxed-jsx', source, transpileJsx(source, 'Widget.tsx')),
       USERCONTENT_ORIGIN
     );
     expect(sandboxAttributeOf(wrapper)).toBe('allow-scripts');
+  });
+
+  test('a jsx view with no compiled module shows source and mounts no frame', () => {
+    // Routing could not compile it, so the frame has nothing to run. The view
+    // says so and shows the published source instead.
+    const wrapper = renderSandboxedJsx(
+      view('sandboxed-jsx', 'just some prose here'),
+      USERCONTENT_ORIGIN
+    );
+    expect(created.some((element) => element.tagName === 'IFRAME')).toBe(false);
+    const noticeElement = (wrapper as unknown as ElementStub).children[0];
+    expect(noticeElement?.className).toBe('notice');
+    expect(noticeElement?.children.at(-1)?.textContent).toContain(
+      'It is shown as source.'
+    );
   });
 
   test('opens only validated frame links without opener or referrer', () => {

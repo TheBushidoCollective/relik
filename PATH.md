@@ -69,7 +69,32 @@ mise exec -- bun run --cwd packages/relic-mcp build
 mise exec -- bun packages/relic-mcp/test/otio-path.ts
 ```
 
+The additional clock-specific modes use the same loopback fixture and owned headless browser. They do not replace the full path:
+
+```sh
+RELIC_OTIO_CLOCK_PROOF=focused mise exec -- bun packages/relic-mcp/test/otio-path.ts
+RELIC_OTIO_CLOCK_PROOF=long mise exec -- bun packages/relic-mcp/test/otio-path.ts
+```
+
+The focused mode reports `OTIO_CLOCK_FOCUSED_OK` only after its scheduled playback and injected clock controls pass. The long mode reports `OTIO_CLOCK_LONG_OK` only after one retained context crosses frame `2 ** 24` during source-correct playback. Neither marker is a substitute for `OTIO_PATH_OK`.
+
+The full and focused paths qualify the scheduled source at both 48 kHz and 44.1 kHz. The latter is a loopback-only PCM16 fixture converted from the checked 48 kHz source, independently decoded and hashed before comparison; the browser's actual context rate is checked against the fixture. The long path is a separate frame-boundary check.
+
 Success requires `OTIO_PATH_OK`, decoded playback observations, encrypted comment persistence, agent readback after a revision, and viewport geometry receipts and screenshots for the bottom-anchored timeline in light and dark. The proof also covers short viewports, mobile inspector states, blocked previews, exact marker reveal and the attached composer. Set `RELIC_OTIO_SHOTS_DIR` to retain the artifacts. Unsupported codecs, effects, schemas, and ambiguous revision mappings must be explicit. All proof writes target local in-memory services.
+
+The playback gate collects browser-local canvas samples, decoded CDP screencast frames, and PCM from a proof-only AudioWorklet connected downstream of the controller's master gain. It checks each moving-window repetition against independently decoded source frames, and retains freeze, stall, wrong-source, stale-frame, skipped-still, and master-gain mute controls. The boundary composition exercises repeated cuts, stills, gaps, dissolves, and continuous audio. The focused-comment proof reads the encrypted anchor through a fresh MCP process and checks composition and source coordinates after a nonzero-origin selection. A failed calibration or unavailable worklet blocks `OTIO_PATH_OK`; it is not a performance pass.
+
+The cold initial presentation limit is 350 ms from the play request through the first observed change, charged conservatively for the left-censored initial frame. Thereafter, cold and warm presentation retain the 50 ms p95 and 100 ms maximum interval limits. The separate source-aware audio dropout limit remains 20 ms, and the source-prefix and audio epoch controls remain required.
+
+Scheduled PCM qualification must observe the selected backend and compare the post-gain output against independently decoded source samples at the reported context-frame epoch, without fitting an offset. It must cover stereo, cuts and dissolves, a run longer than the 500 ms queue horizon, cancellation and starvation, and native compatibility for unsupported scopes. A diagnostic event alone is not playback proof.
+
+The scheduled path must distinguish recoverable withholding of future media from loss of pixels already committed to output. A recoverable stop requires a render-thread gate closure and a new epoch at the exact committed sample; a lost committed frame or invalid output clock must report an interruption without inventing a resume position. Scope replacement remains paused. Record the actual gate boundary, error stage, captured stereo PCM and independently derived pixel evidence, including failing or missing observations. The future-video withholding proof must produce a recovery receipt; the existence of a fault hook alone proves nothing.
+
+The two-frame A/V check compares browser-estimated output timing with observed presentation. Its mapping allowance reflects the sampled bridge spread, read duration and render quantum; it is not a bound on physical speaker or display timing. The timestamp-bias negative control demonstrates that a common-mode error can remain invisible to that check. Physical synchronization requires a separate instrumented measurement.
+
+The native-clock replacement is not qualified by a passing standalone clock experiment. Release evidence must include the actual player, a separately scheduled source-position witness, captured stereo, the frozen-origin anchor certificate and at least two bank promotions. It must retain raw callback labels and demonstrate an actual repeated cached label while the independently observed source continues without an omitted or repeated sample. Missing evidence fails qualification. Injected held, late, corrupt and missing clock evidence and corrupted capture must reach the real admission path and be rejected.
+
+The browser cannot establish physical speaker or display timing from its output timestamps. A render-frame clock also cannot detect a wall-clock interruption before the browser reports the interruption or resume. Pre-notification suppression of old-generation audio therefore requires a native render-side epoch or latch; this loopback proof does not claim it.
 
 The complete source path passed locally at `5a4bd6d` with Node 24.15.0, Bun 1.4.3, and the owned Chromium headless shell 1228. It exercised the original archive/playback/encrypted-feedback/revision stages, both exact-identity sidebar reveals after 40 coincident UI comments, and the zero-mail assertion, ending `OTIO_PATH_OK`. The matched old renderer failed the exact marker-center reveal assertion after the same 40 UI posts. Release qualification, CI, deployment, and the published npm client remain separate gates.
 
@@ -130,6 +155,7 @@ RELIC_PROOF_CHROME_PATH=/absolute/path/to/headless-chromium bun packages/relic-m
 ```
 
 The command publishes a 500 MiB file through MCP stdio to a loopback service, checks the cap boundary, exercises the confirmation and preview, and hashes the downloaded file against the source. It also checks large OTIO, PDF, text, image and model paths. Success ends with `LARGE_RELIC_PATH_OK`; failures exit nonzero. The browser has a private profile and must attest headless mode.
+The large OTIO archive is focus-only; the proof focuses and plays a clip.
 
 Node, Bun, ffmpeg with `libvpx-vp9`, an explicit headless Chromium executable, and sufficient temporary disk space are required. The proof supports Linux and macOS. The MCP peak RSS receipt uses sampled Linux process high-water marks or sampled macOS RSS.
 

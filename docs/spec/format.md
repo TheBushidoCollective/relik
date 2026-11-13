@@ -459,6 +459,24 @@ Identifiers and fingerprints:
 
 These definitions are frozen once any production private relic is sealed. Changing a label, field or encoding then needs a new versioned label and dual support. The known-answer fixtures in `private.test.ts` and the RFC 9180 vectors in `hpke.test.ts` guard them (plan section 7, item 10).
 
+### 3.19 The OpenTimelineIO program
+
+**Scope.** This section applies to a relic whose single entry is an OpenTimelineIO `.otioz` archive. The envelope, the fragment, the record layout, and the content identity of `content.otio` are unchanged. No format version bump is claimed on that basis, because whether an older reader tolerates the extra archive members is not established and is a launch check.
+
+**Members.** A program archive holds `content.otio`, which is never modified, the members the 2026-10-20 decision already packages, `relic/program.json` (DEFLATE, schema `relic.otio.program/1`), and one `relic/program/timeline-<i>.mp4` per rendered timeline (STORED). Those are the only entries under `relic/program`. Every timeline record has `status` `rendered` or `unavailable`. Every archive published under this section contains `relic/program.json`, including one whose timelines are all unavailable.
+
+**Identity.** `document_sha256`, `relic_version`, and comment anchors are computed over `content.otio` alone. The program is a derived rendering and changes no anchor's meaning.
+
+**Three states a viewer must tell apart.** `readOtioProgramArchive` in `otio-program.ts` decides which applies. *Legacy:* it returns no program, because the archive has no `relic/program.json` and no other `relic/program` entry. The archive plays under the rules in force when it was published, and absence is not an error. *Available:* it returns a verified program. The manifest parses against `relic.otio.program/1`, its `document_sha256` matches `content.otio`, every MP4 matches its recorded sha256 and bytes, timing agrees with the timeline, and the browser supports the codec. *Unavailable or invalid:* the reader throws an `OtioProgramError`, which covers any `relic/program` entry without a manifest, a manifest that is not a DEFLATE file, an unexpected program entry, and any digest, size, or path failure. Alternatively, a timeline is `unavailable` with reason codes. Either way the viewer shows focus-only with the code or codes. A throw is never treated as legacy.
+
+**Reason codes.** An unavailable timeline carries one or more reasons, each with a message and optionally `node_id` and `time`. The reason codes are exactly `OTIO_PROGRAM_REASON_CODES` in `packages/relic-format/src/otio-program.ts`: `unsupported-effect`, `unsupported-schema`, `unsupported-codec`, `unsupported-transition`, `missing-media`, `unsupported-browser`, `invalid-timing`, `encoder-unavailable`, `render-failed`, and `size-cap-exceeded`. A missing local Chrome has no code of its own and is `unsupported-browser`. A browser without H.264/AAC encoding is `encoder-unavailable`. Reader errors are not manifest reasons. They are the `OtioProgramErrorCode` union in the same file: `malformed-manifest`, `unsafe-path`, `archive-mismatch`, `digest-mismatch`, and `size-cap-exceeded`. The reader throws these, and no partial result is returned.
+
+**Size.** The whole plaintext archive stays within the 500 MiB cap in section 3.11. The program bound is aggregate: the manifest and every rendered program together stay at or under 100 MiB, not per timeline. A publisher plans against the reader's limits: the archive size, the expanded and DEFLATE totals, the manifest's 16 MiB cap, the central directory's 16 MiB cap, and an entry count below the 0xFFFF sentinel. A document with more than 256 timelines is refused. The current renderer uses one 1280x720 output; the proposed resolution ladder is not implemented. A timeline that cannot fit is unavailable with reason `size-cap-exceeded`. The reader also throws `size-cap-exceeded` for an oversized manifest or program entry, using the limits in `otio-program.ts`.
+
+**Never approximate, and never composite.** A timeline is rendered exactly or not at all. No partial, lower-fidelity, or substituted program is stored. A timeline with no valid program is focus-only: the viewer does not composite it from original media, and it offers focus on tracks and clips only.
+
+**Privacy.** The manifest and MP4s sit inside the ciphertext. No program field enters object metadata, the grant request, or the relic row (section 3.2). The length leak in `service.md` section 5 covers the larger total, and no new field reaches the server. Rendered program output is plaintext and is held in memory only, within the program bound. It is never written to disk. This constraint is shared with `publish.md` 4.8, which is unchanged.
+
 ## 4. Routed to `shape`
 
 Six items, and only these six. Each names what `shape` picks and what becomes specifiable once it does. Constraints established above are cited here rather than restated.

@@ -16,6 +16,13 @@
  * stage is a failure. Expected frames come from the official reader of the
  * stored archive, not from a copied literal.
  *
+ * RELIC_OTIO_PATH_SCOPE runs one slice of the path, and each slice accounts for
+ * exactly its own stages. Unset runs every stage. `scheduled-audio` runs the
+ * legacy scheduled-audio stages alone and ends with OTIO_SCHEDULED_AUDIO_OK.
+ * `without-scheduled-audio` runs every other stage and ends with
+ * OTIO_PATH_WITHOUT_SCHEDULED_AUDIO_OK. CI runs the two slices as separate jobs
+ * (see pathScope below); neither line is OTIO_PATH_OK.
+ *
  * Prerequisites:
  *   mise exec -- bun install --frozen-lockfile
  *   mise exec -- bun run --cwd packages/relic-mcp build
@@ -30,12 +37,21 @@
  */
 
 import assert from 'node:assert/strict';
+import {
+  associateGateSequence,
+  assertAssociatedSamples,
+  type GateQuantum,
+  type TapQuantum,
+  staleStopDecision,
+} from './otio-proof-clock.ts';
+import { createHash } from 'node:crypto';
 import { type ChildProcess, spawn } from 'node:child_process';
 import {
   cp,
   mkdir,
   mkdtemp,
   readFile,
+  readdir,
   realpath,
   rm,
   writeFile,
@@ -48,19 +64,40 @@ import { deflateSync } from 'node:zlib';
 import {
   compareRationalTimes,
   decodeKey,
+  encodeKey,
+  deriveRendererClass,
+  deriveShareProof,
+  encryptRelic,
   evaluateOtioAt,
+  generateKey,
+  generateRelicId,
   indexOtioZip,
+  OTIO_PROGRAM_MANIFEST_ENTRY,
   openRelic,
   readOtioDocument,
+  relicUrl,
+  shareVerifierFor,
+  versionDigest,
 } from '@relic/format';
 import { createApp } from '@relic/server/src/app.ts';
 import { diskAssets } from '@relic/server/src/assets.ts';
 import type { OutboundMail } from '@relic/server/src/mail.ts';
 import { MemoryStorage } from '@relic/server/src/storage.ts';
 import { MemoryStore } from '@relic/server/src/store.ts';
+import { DEFAULT_CLOCK_POLICY } from '../../relic-viewer/src/otio-output-clock';
 import { type CdpConnection, connectPipe } from '../src/cover/cdp.ts';
 import { chromeArgs, discoverChrome } from '../src/cover/chrome.ts';
-import { loadPublishState } from '../src/state.ts';
+import { nodeUploader } from '../src/upload.ts';
+import { loadPublishState, savePublishState } from '../src/state.ts';
+import { nodeFiles } from '../src/files.ts';
+import {
+  guessMimetype,
+  postJson,
+  type PublishDeps,
+  putContainer,
+  readSource,
+  reportComplete,
+} from '../src/publish.ts';
 import {
   attestBrowserHeadless,
   type BrowserHeadlessLaunch,
@@ -68,12 +105,55 @@ import {
   createBrowserHeadlessLaunch,
 } from './browser-headless.ts';
 import { isOpaqueBlack } from './otio-path-pixels.ts';
+import {
+  otioProofTracePrelude,
+  otioProofWorkletSource,
+} from './otio-proof-trace.ts';
+import {
+  assertDescriptorBudgetRefusal,
+  assertHeldReleaseBeforeSuccessor,
+  assertShiftedBankRefusal,
+  viewerInterruption,
+  viewerInterruptionText,
+  recoveryFrontierOvershoot,
+  siteBridgeCommitLeadAfterHold,
+  siteBridgeFinalGuardAfterHold,
+  siteBridgeGapInfeasibleAfterHold,
+} from './otio-recovery-checks.ts';
 
 const clientMode = process.env['RELIC_OTIO_PATH_CLIENT'] ?? 'source';
 const isNpxMode = clientMode.startsWith('npx:');
 const OTIO_PIN = 'opentimelineio==0.18.1';
+// Natural stale-pair capture stops once this many cached-duplicate pairs exist.
+// The gate's hard cap (proofStaleMaxPairs) is unchanged; overflow still fails closed.
+const STALE_PAIR_QUOTA = 2;
+const STALE_PAIR_CAP = 16;
+const clockProofMode = process.env['RELIC_OTIO_CLOCK_PROOF'] ?? '';
+if (
+  clockProofMode !== '' &&
+  clockProofMode !== 'focused' &&
+  clockProofMode !== 'long'
+)
+  throw new Error(`Unknown OTIO clock proof mode: ${clockProofMode}`);
 
-const RUN_BUDGET_MS = 600_000;
+// The scheduled-audio stages play a legacy archive through the sample-scheduled audio path and
+// hold it to millisecond budgets. A shared CI runner interrupts that playback within a minute
+// of almost every attempt (diagnostic run 43383354503: 8 of 8 lanes failed, from different
+// timing causes). Jason decided on 2026-11-13 that they run in their own CI job, on every pull
+// request and deploy, which uploads its evidence and does not block. Every other stage blocks.
+const pathScope = process.env['RELIC_OTIO_PATH_SCOPE'] ?? '';
+if (
+  pathScope !== '' &&
+  pathScope !== 'scheduled-audio' &&
+  pathScope !== 'without-scheduled-audio'
+)
+  throw new Error(`Unknown OTIO path scope: ${pathScope}`);
+
+// The scheduled-audio stages alone take about 295 s on the Linux runner (run 43275442218: the
+// path started at 18:06:54 and reached the moving-window stage at 18:11:49), before the moving
+// window, the calibration and the composition tail, and a stage the viewer interrupts reruns up
+// to three times (rerunViewerInterruption). 1200 s leaves the 45 minute job room.
+const RUN_BUDGET_MS = 1_200_000;
 const currentStep = 'startup';
 const cdpInFlight = new Map<number, string>();
 let cdpCallId = 0;
@@ -169,12 +249,149 @@ const REQUIRED = [
   'focus-reveal',
   'focus-viewports',
   'resize-viewer',
+  'post-gain-tap-calibration',
+  'focused-nonzero-comment',
+  'scheduled-pcm-playback',
+  'scheduled-pcm-cold-start',
+  'scheduled-pcm-starvation-cancel',
+  'scheduled-pcm-starvation-recovery',
+  'scheduled-pcm-schedule-clock-failures',
+  'scheduled-pcm-bootstrap-restore',
+  'scheduled-video-future-recovery',
+  'scheduled-pcm-native-compatibility',
+  'scheduled-video-reservation-invalidation',
+  'scheduled-pcm-seek-scope-cancel',
+  'scheduled-pcm-terminal-failure',
+  'scheduled-pcm-mute-solo',
+  // Default-mode stage: runs in the full run and is accounted at the end of it.
+  'legacy-sixty-fps-cold-start',
+  // Default-mode stage: a trusted restart during a held cold start, accounted at the end.
+  'scheduled-pcm-restart-during-start',
+  // Three-slot mode stage: runs in the proof-only three-slot build, which exits through
+  // DecoderOnlyComplete right after this pass. Its success is that pass plus the
+  // OTIO_THREE_SLOT_OK marker. It is never accounted by the default-mode check below.
+  'legacy-three-slot-forced-refusal',
 ] as const;
+
+// The stages of the scheduled-audio slice (see pathScope). Typed against REQUIRED, so a
+// stage renamed there cannot stay behind here.
+const SCHEDULED_AUDIO_STAGES: Partial<Record<(typeof REQUIRED)[number], true>> =
+  {
+    'post-gain-tap-calibration': true,
+    'scheduled-pcm-playback': true,
+    'scheduled-pcm-cold-start': true,
+    'scheduled-pcm-starvation-cancel': true,
+    'scheduled-pcm-starvation-recovery': true,
+    'scheduled-pcm-schedule-clock-failures': true,
+    'scheduled-pcm-bootstrap-restore': true,
+    'scheduled-video-future-recovery': true,
+    'scheduled-pcm-native-compatibility': true,
+    'scheduled-video-reservation-invalidation': true,
+    'scheduled-pcm-seek-scope-cancel': true,
+    'scheduled-pcm-terminal-failure': true,
+    'scheduled-pcm-mute-solo': true,
+    'legacy-sixty-fps-cold-start': true,
+    'scheduled-pcm-restart-during-start': true,
+  };
+
+// The stages this run must pass: its slice of REQUIRED. The three-slot stage is accounted
+// only by the proof-only three-slot run.
+function stagesNotPassed(): string[] {
+  return REQUIRED.filter((stage) => {
+    if (stage === 'legacy-three-slot-forced-refusal') return false;
+    const scheduledAudio = SCHEDULED_AUDIO_STAGES[stage] === true;
+    if (pathScope === 'scheduled-audio' && !scheduledAudio) return false;
+    if (pathScope === 'without-scheduled-audio' && scheduledAudio) return false;
+    return !passed.has(stage);
+  });
+}
 
 const passed = new Set<string>();
 function pass(stage: (typeof REQUIRED)[number]): void {
   passed.add(stage);
+  lastCapturedTrace = null;
   console.log(`STAGE ${stage}`);
+}
+
+// The newest proof trace a page evaluation returned since the last stage passed. A stage that
+// fails is judged against its own trace only (rerunViewerInterruption), never an earlier stage's.
+let lastCapturedTrace: MovingTrace['trace'] | null = null;
+function recordCapturedTrace(value: unknown): void {
+  if (typeof value !== 'object' || value === null) return;
+  const trace = (value as { trace?: unknown }).trace;
+  if (
+    typeof trace === 'object' &&
+    trace !== null &&
+    Array.isArray((trace as { events?: unknown }).events)
+  )
+    lastCapturedTrace = trace as MovingTrace['trace'];
+}
+
+// An interruption the viewer reported where no trace holds it: before a capture's trace began,
+// or just as it began. What the reader is shown does (run 43300181067: "committed recovery
+// frame is unavailable" 187 ms into the calibration's pre-roll).
+class InterruptedOutsideTrace extends Error {
+  constructor(readonly evidence: string) {
+    super(`the viewer reported an interruption no trace holds: ${evidence}`);
+  }
+}
+
+// Jason, 2026-11-13: a stage in which the viewer itself reports an interruption, with nothing
+// injected by the proof (viewerInterruption, or what the reader was shown before the trace
+// began), reruns at most three times. The scheduled-audio stages rerun in a fresh browser. The
+// native-playback stage reruns in its own page when the viewer left native playback for its
+// seek cadence. Each interrupted attempt keeps its evidence. Every other failure is rethrown
+// unchanged, and a stage interrupted on every attempt fails with the evidence of each.
+const VIEWER_INTERRUPTION_RERUNS = 3;
+async function rerunViewerInterruption(
+  label: string,
+  run: () => Promise<void>
+): Promise<void> {
+  const evidence: string[] = [];
+  for (let attempt = 1; ; attempt++) {
+    lastCapturedTrace = null;
+    try {
+      await run();
+      return;
+    } catch (error) {
+      const judged = lastCapturedTrace as MovingTrace['trace'] | null;
+      const found =
+        error instanceof InterruptedOutsideTrace
+          ? error.evidence
+          : judged === null
+            ? null
+            : viewerInterruption(judged.events);
+      if (found === null) {
+        // Not an interruption: the failure stands, and the trace it was judged on is kept so
+        // a reader of the receipt sees what the stage saw.
+        if (judged !== null)
+          await writeFile(
+            join(shotDir, `${label}-failed-trace.json`),
+            JSON.stringify({ label, attempt, trace: judged })
+          ).catch(() => undefined);
+        throw error;
+      }
+      evidence.push(found);
+      await writeFile(
+        join(shotDir, `${label}-viewer-interruption-attempt${attempt}.json`),
+        JSON.stringify({
+          label,
+          attempt,
+          evidence: found,
+          failure: error instanceof Error ? error.message : String(error),
+          trace: error instanceof InterruptedOutsideTrace ? null : judged,
+        })
+      );
+      if (attempt > VIEWER_INTERRUPTION_RERUNS)
+        throw new Error(
+          `${label}: the viewer reported an interruption on ${attempt} of ${attempt} attempts: ${evidence.join(' | ')}`,
+          { cause: error }
+        );
+      console.log(
+        `OTIO_VIEWER_INTERRUPTION label=${label} attempt=${attempt} ${found}`
+      );
+    }
+  }
 }
 
 const fakeNow = Date.now();
@@ -246,6 +463,7 @@ async function persistMcpLoopbackReceipts(
   return { requestHash, receipts };
 }
 
+let proofWorkletRequests = 0;
 let handler: ((request: Request) => Promise<Response>) | undefined;
 const service = Bun.serve({
   port: 0,
@@ -280,6 +498,19 @@ handler = async (request: Request): Promise<Response> => {
     `non-loopback request reached the proof server: ${url.hostname}`
   );
   recordMcpLoopbackReceipt(request.method, url.pathname, 'entry', null);
+  if (
+    url.pathname === '/__proof/otio-audio-worklet.js' &&
+    request.method === 'GET'
+  ) {
+    proofWorkletRequests++;
+    console.log('OTIO_PROOF_WORKLET_REQUEST');
+    return new Response(otioProofWorkletSource, {
+      headers: {
+        'content-type': 'application/javascript; charset=utf-8',
+        'cache-control': 'no-store',
+      },
+    });
+  }
 
   if (
     url.pathname.startsWith('/__storage/upload/') &&
@@ -1224,6 +1455,22 @@ def mutate(op, src, dest, extra):
             shutil.rmtree(dest)
         shutil.copytree(src, dest)
     timeline = load_dir(dest)
+    if op in ("boundary-insert", "boundary-trim", "boundary-ambiguous"):
+        track = next(item for item in timeline.tracks if relic_id(item) == "boundary-lower")
+        clip = next(item for item in track if relic_id(item) == "moving-b")
+        if op == "boundary-insert":
+            gap = otio.schema.Gap(name="Insert", source_range=otio.opentime.TimeRange(
+                otio.opentime.RationalTime(0, 30), otio.opentime.RationalTime(30, 30)))
+            track.insert(0, gap)
+        elif op == "boundary-trim":
+            clip.source_range = otio.opentime.TimeRange(
+                otio.opentime.RationalTime(6, 30), otio.opentime.RationalTime(4, 30))
+        else:
+            copy = otio.adapters.read_from_string(otio.adapters.write_to_string(clip))
+            track.insert(list(track).index(clip) + 1, copy)
+        write_dir(timeline, dest)
+        print(json.dumps(project(dest, "moving-b", json.loads(extra))))
+        return
     if op == "insert":
         track = next(item for item in timeline.tracks if relic_id(item) == "track-v1-main")
         gap = otio.schema.Gap(name="Insert", source_range=otio.opentime.TimeRange(
@@ -1672,11 +1919,17 @@ interface ChromeSession {
   screenshot(label: string): Promise<void>;
   mediaSeekTargets(): Promise<number[]>;
   waitForWorkerHooks(): Promise<void>;
+  startScreencast(): Promise<
+    () => Promise<{ frames: Array<Record<string, unknown>>; overflow: boolean }>
+  >;
   close(): Promise<void>;
   blocked: string[];
   continuedNonLoopback: string[];
   cspHeaders: string[];
   workerUrls: string[];
+  readonly browserVersion: Record<string, unknown>;
+  readonly executablePath: string;
+  readonly launchFlags: readonly string[];
   label: string | null;
   getContextEvents?(): Promise<
     Array<{ type: string; timestamp: number; target: string | null }>
@@ -1684,11 +1937,18 @@ interface ChromeSession {
 }
 interface OpenBrowserOptions {
   readonly label?: string;
+  // Cold-start proofs need Chrome's default autoplay policy so a fresh AudioContext is
+  // suspended until a real user gesture; the general harness relaxes it.
+  readonly defaultAutoplay?: boolean;
   readonly recordMediaSeekTargets?: boolean;
   readonly blockWebCodecs?: boolean;
   readonly blockRequestVideoFrameCallback?: boolean;
   readonly rvfcBusyWaitMs?: number;
   readonly recordDecoderPresentation?: boolean;
+  readonly recordProofTrace?: boolean;
+  readonly proofSampleRate?: 44100 | 48000;
+  readonly proofBorrowed?: 'lease' | 'no-lease';
+  readonly proofSerialExhaustion?: boolean;
 }
 
 function loopbackUrl(value: string): boolean {
@@ -1916,6 +2176,10 @@ const decoderPresentationPrelude = String.raw`(() => {
         );
 })();`;
 
+// Proof-traced warm browsers get real activation only after the graph is ready.
+// Explicit defaultAutoplay browsers are cold/first-gesture proofs and are never pre-activated.
+const warmProofActivation = new WeakSet<ChromeSession>();
+
 async function openBrowser(
   url: string,
   sessionToken: string,
@@ -1958,7 +2222,9 @@ async function openBrowser(
               ? '--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1'
               : arg
         ),
-        '--autoplay-policy=no-user-gesture-required',
+        ...(options.defaultAutoplay || options.recordProofTrace
+          ? []
+          : ['--autoplay-policy=no-user-gesture-required']),
       ],
       profile
     );
@@ -2040,6 +2306,7 @@ async function openBrowser(
     let stopWorkerAttach: (() => void) | undefined;
     const documentUrl = url.split('#')[0] ?? url;
     await attestBrowserHeadless(cdp, launch);
+    const browserVersion = await cdp.send('Browser.getVersion');
     const created = (await cdp.send('Target.createTarget', {
       url: 'about:blank',
     })) as { targetId: string };
@@ -2177,6 +2444,9 @@ async function openBrowser(
       rvfcLateTrap,
       contextEventLogPrelude,
       options.recordDecoderPresentation ? decoderPresentationPrelude : '',
+      options.recordProofTrace
+        ? `globalThis.__otioProofClockMode=${JSON.stringify(clockProofMode)}; globalThis.__otioProofSampleRate=${JSON.stringify(options.proofSampleRate ?? null)}; globalThis.__otioProofBorrowedMode=${JSON.stringify(options.proofBorrowed ?? null)}; globalThis.__otioProofClockSerialExhaustion=${options.proofSerialExhaustion === true};\n${otioProofTracePrelude}`
+        : '',
       options.blockWebCodecs ? webCodecsTrap : '',
     ]
       .filter(Boolean)
@@ -2278,12 +2548,19 @@ async function openBrowser(
       new URL(url).origin,
       'browser did not land on the service origin'
     );
-    return {
+    const browser: ChromeSession = {
       blocked,
       continuedNonLoopback,
       cspHeaders,
       workerUrls,
       label,
+      browserVersion,
+      executablePath: found.path,
+      launchFlags: launch.args.map((arg) =>
+        arg.startsWith('--user-data-dir=')
+          ? '--user-data-dir=<owned-profile>'
+          : arg
+      ),
       async getContextEvents(): Promise<
         Array<{ type: string; timestamp: number; target: string | null }>
       > {
@@ -2305,6 +2582,41 @@ async function openBrowser(
           target: string | null;
         }>;
       },
+      async startScreencast() {
+        const frames: Array<Record<string, unknown>> = [];
+        let overflow = false;
+        const unsubscribe = cdp.onEvent((event) => {
+          if (
+            event.sessionId !== sessionId ||
+            event.method !== 'Page.screencastFrame'
+          )
+            return;
+          if (frames.length < 900) frames.push(event.params);
+          else overflow = true;
+          void cdp
+            .send(
+              'Page.screencastFrameAck',
+              { sessionId: event.params['sessionId'] },
+              sessionId
+            )
+            .catch(() => {});
+        });
+        try {
+          await cdp.send(
+            'Page.startScreencast',
+            { format: 'jpeg', quality: 90, everyNthFrame: 1 },
+            sessionId
+          );
+        } catch (error) {
+          unsubscribe();
+          throw error;
+        }
+        return async () => {
+          await cdp.send('Page.stopScreencast', {}, sessionId);
+          unsubscribe();
+          return { frames, overflow };
+        };
+      },
       send: (method, params) => cdp.send(method, params, sessionId),
       async evaluate<T>(expression: string): Promise<T> {
         const res = await cdp.send(
@@ -2322,9 +2634,10 @@ async function openBrowser(
           | undefined;
         assert.ok(
           !exception,
-          `page evaluation failed: ${exception?.text ?? exception?.exception?.description ?? JSON.stringify(res)}`
+          `page evaluation failed: ${exception?.exception?.description ?? exception?.text ?? JSON.stringify(res)}`
         );
         const inner = res['result'] as { value?: T } | undefined;
+        recordCapturedTrace(inner?.value);
         return inner?.value as T;
       },
       async mediaSeekTargets(): Promise<number[]> {
@@ -2426,6 +2739,9 @@ async function openBrowser(
         await rm(profile, { recursive: true, force: true });
       },
     };
+    if (options.recordProofTrace && !options.defaultAutoplay)
+      warmProofActivation.add(browser);
+    return browser;
   } catch (error) {
     await flushStderr();
     await cleanupOwnedBrowserStartup({
@@ -2458,32 +2774,159 @@ async function waitReady(browser: ChromeSession): Promise<string> {
     ready === 'true' || ready === 'diagnostic' || ready === 'structural',
     `OTIO view never settled: ${ready}`
   );
+  if (warmProofActivation.has(browser)) {
+    const before = await browser.evaluate<{
+      state: string;
+      witness: boolean;
+      anchor: number | null;
+      contextTime: number;
+    }>(`(async () => globalThis.__otioProofTrace.preactivationState())()`);
+    assert.ok(
+      before.state === 'suspended' &&
+        before.witness &&
+        Number.isSafeInteger(before.anchor),
+      `warm proof cannot activate before a suspended graph and witness exist: ${JSON.stringify(before)}`
+    );
+    const target = await browser.evaluate<{
+      x: number;
+      y: number;
+      tag: string;
+    }>(`(() => {
+      for (let y = 4; y < Math.min(innerHeight, 200); y += 8)
+        for (let x = 4; x < Math.min(innerWidth, 400); x += 8) {
+          const e = document.elementFromPoint(x,y);
+          if (e && !e.closest('a,button,input,select,textarea,[role=button],[contenteditable],canvas,video,audio'))
+            return {x,y,tag:e.tagName};
+        }
+      throw new Error('no non-interactive activation target');
+    })()`);
+    await clickWithRealPointer(browser, target.x, target.y);
+    const activated = await browser.evaluate<boolean>(
+      'navigator.userActivation.hasBeenActive'
+    );
+    assert.ok(
+      activated,
+      `trusted warm activation did not reach the page: ${JSON.stringify(target)}`
+    );
+    warmProofActivation.delete(browser);
+  }
   return ready;
 }
+
+let coldSeekReceiptNumber = 0;
 
 async function seekTo(browser: ChromeSession, frame: number): Promise<void> {
   const landed = await browser.evaluate<boolean>(`(() => {
     const { promise, resolve } = Promise.withResolvers();
     const seek = document.querySelector('input.otio-seek');
-    if (!seek) { resolve(false); return promise; }
-    seek.value = '${frame}';
+    const root = document.querySelector('.otio-view');
+    if (!(seek instanceof HTMLInputElement) || !(root instanceof HTMLElement)) { resolve(false); return promise; }
+    const origin = Number(root.dataset.domainOrigin);
+    if (!Number.isFinite(origin)) { resolve(false); return promise; }
+    const ids = new WeakMap(), sources = new Map();
+    let nextId = 0, overflow = false;
+    const events = [];
+    const snapshot = (node) => {
+      if (!ids.has(node)) ids.set(node, nextId++);
+      const source = node.currentSrc || node.src || '';
+      if (source && !sources.has(source)) sources.set(source, sources.size);
+      return {id:ids.get(node), sourceId:source ? sources.get(source) : null,
+        bundlePath:node.dataset.bundlePath ?? null, tag:node.tagName,
+        readyState:node.readyState, networkState:node.networkState,
+        seeking:node.seeking, currentTime:node.currentTime, paused:node.paused,
+        error:node.error?.code ?? null};
+    };
+    const nodes = () => [...document.querySelectorAll('.otio-video-decoders video,.otio-audio-graph audio')].map(snapshot);
+    const before = nodes();
+    const descriptor = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'currentTime');
+    if (!descriptor?.get || !descriptor.set || !descriptor.configurable) {
+      resolve(false); return promise;
+    }
+    Object.defineProperty(HTMLMediaElement.prototype, 'currentTime', {
+      ...descriptor,
+      set(value) {
+        const prior = descriptor.get.call(this);
+        descriptor.set.call(this, value);
+        if (events.length >= 10000) overflow = true;
+        else events.push({type:'assigned-currentTime', timestamp:performance.now(),
+          target:Number(value), prior, media:snapshot(this)});
+      },
+    });
+    const onEvent = (event) => {
+      if (!(event.target instanceof HTMLMediaElement)) return;
+      if (events.length >= 10000) {overflow = true; return;}
+      events.push({type:event.type, timestamp:performance.now(), media:snapshot(event.target)});
+    };
+    const eventTypes = ['loadstart','loadedmetadata','loadeddata','canplay','seeking','seeked','waiting','playing','pause','error','abort','emptied'];
+    for (const type of eventTypes) document.addEventListener(type, onEvent, true);
+    const finish = (landed) => {
+      Object.defineProperty(HTMLMediaElement.prototype, 'currentTime', descriptor);
+      for (const type of eventTypes) document.removeEventListener(type, onEvent, true);
+      globalThis.__otioSeekEvidence = {before, after:nodes(), events, overflow, landed};
+      resolve(landed);
+    };
+    seek.value = String(${frame} - origin);
     seek.dispatchEvent(new Event('input', { bubbles: true }));
     const start = Date.now();
     const tick = () => {
       const root = document.querySelector('.otio-view');
-      if (root && root.dataset.buffering === 'false' && Number(root.dataset.frame) === ${frame}) resolve(true);
-      else if (Date.now() - start > 12000) resolve(false);
+      if (root && root.dataset.buffering === 'false' && Number(root.dataset.frame) === ${frame}) finish(true);
+      else if (Date.now() - start > 12000) finish(false);
       else setTimeout(tick, 50);
     };
     tick();
     return promise;
   })()`);
+  if (landed && browser.label === 'post-gain-calibration') {
+    const evidence = await browser.evaluate<unknown>(
+      'globalThis.__otioSeekEvidence ?? null'
+    );
+    await writeFile(
+      join(shotDir, `seek-success-${++coldSeekReceiptNumber}.json`),
+      JSON.stringify({ frame, evidence })
+    );
+  }
+  if (!landed) {
+    const state = await browser.evaluate<Record<string, unknown>>(`(() => {
+      const root = document.querySelector('.otio-view');
+      const seek = document.querySelector('input.otio-seek');
+      return {dataset: root ? {...root.dataset} : null,
+        seek: seek instanceof HTMLInputElement ? {value:seek.value, min:seek.min, max:seek.max} : null,
+        status: document.querySelector('.otio-preview-status')?.textContent ?? null,
+        seekEvidence: globalThis.__otioSeekEvidence ?? null};
+    })()`);
+    await writeFile(
+      join(shotDir, 'seek-failure.json'),
+      JSON.stringify({ frame, state })
+    );
+    await browser.screenshot('seek-failed');
+    console.error('OTIO_SEEK_FAILURE', JSON.stringify({ frame, state }));
+  }
   assert.equal(
     landed,
     true,
     `seek to frame ${frame} did not settle on a decoded frame`
   );
 }
+
+// Pauses a playing view and waits for the pause to settle, inside a capture's own evaluate and
+// before the capture returns its trace. A trace is tens of megabytes, and serialising it blocks
+// the page for longer than the transport closure watchdog and longer than the audio lead. A
+// pause clicked just before that return is judged late ("transport gate closure was not
+// acknowledged"), and playback left running through it starves its frontier ("recovery render
+// handoff has no feasible frame"). The capture has already read its trace when this runs.
+// Resolves to the diagnostics the reader sees once the pause has settled.
+const SETTLE_PAUSE_JS = `const settlePause = async () => {
+  const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+  const root = document.querySelector('.otio-view');
+  const button = document.querySelector('button.otio-play');
+  if (!(root instanceof HTMLElement) || !(button instanceof HTMLButtonElement)) throw new Error('pause controls missing');
+  if (root.dataset.playing === 'true') button.click();
+  const deadline = performance.now() + 3000;
+  while ((root.dataset.playing === 'true' || root.dataset.buffering === 'true') && performance.now() < deadline) await sleep(20);
+  await sleep(250);
+  return Array.from(document.querySelectorAll('.otio-diagnostic')).map(node => node.textContent ?? '').join(' ');
+};`;
 
 interface SampledCanvas extends Uint8Array {
   dataFrame?: number | null;
@@ -6202,20 +6645,14 @@ async function waitForAuxiliaryReveal(
 async function runAuxiliaryCoincidentCommentRevealScenario(
   plan: Plan
 ): Promise<void> {
-  const published = await callMcp('relic_publish', {
-    path: fixtureDir,
-    force_new: true,
-    title: 'OTIO coincident comment reveal proof',
-    cover: false,
-  });
-  const relicId = String(published['relic_id']);
-  const shareUrl = String(published['url'] ?? published['link'] ?? '');
-  assert.ok(relicId, 'auxiliary publish returned no relic_id');
-  assert.ok(shareUrl.includes('#'), 'auxiliary publish returned no keyed link');
-  assert.ok(
-    shareUrl.startsWith(origin),
-    `auxiliary publish URL left loopback: ${shareUrl}`
+  // Coincident marks live in the live timeline, so this is a legacy archive
+  // too. Each legacy publish is a new relic.
+  const shareUrl = await publishLegacyDirectory(
+    fixtureDir,
+    'OTIO coincident comment reveal proof'
   );
+  const relicId = new URL(shareUrl).pathname.split('/').filter(Boolean).at(-1);
+  assert.ok(relicId, 'auxiliary publish returned no relic_id');
   const initialClock = loopbackNow;
   let completedUiPosts = 0;
   const auxiliaryToken = `otio-auxiliary-token-${Math.random().toString(16).slice(2)}`;
@@ -6235,6 +6672,7 @@ async function runAuxiliaryCoincidentCommentRevealScenario(
       'true',
       'auxiliary coincident-comment relic did not become ready'
     );
+    await assertLegacyProgramState(browser, 'auxiliary-coincident-comment');
     await browser.send('Emulation.setDeviceMetricsOverride', {
       width: 900,
       height: 900,
@@ -7291,7 +7729,228 @@ function decoderDocument(
   )}\n`;
 }
 
-async function publishDecoderDirectory(
+// Publishes a manifest-free legacy archive through the app's public challenge, grant,
+// upload and complete endpoints. It repeats publish()'s legs without the program build,
+// so this proof can produce the pre-program layout the viewer resolves as legacy. The
+// absence of any program entry is checked on the bytes before anything is encrypted.
+// The relic is then recorded in the MCP's publish state exactly as publish() records
+// one, so the MCP can read its comments and republish it by relic_id.
+async function publishLegacyDirectory(
+  directory: string,
+  title: string
+): Promise<string> {
+  const deps: PublishDeps = {
+    serviceOrigin: origin,
+    relicOrigin: origin,
+    files: nodeFiles,
+    fetch: globalThis.fetch,
+    upload: nodeUploader,
+    clientName: 'relic-mcp/legacy-proof',
+    renderCover: async () => ({
+      status: 'skipped',
+      reason: 'browser_disabled',
+      detail: 'legacy proof fixture',
+    }),
+  };
+  const source = await readSource(directory, nodeFiles);
+  const index = await indexOtioZip(source.bytes);
+  for (const info of index.entries.values()) {
+    assert.ok(
+      info.name !== OTIO_PROGRAM_MANIFEST_ENTRY &&
+        (info.isDirectory || !info.name.startsWith('relic/program')),
+      `legacy fixture carries program entry ${info.name}; it is not a legacy archive`
+    );
+  }
+  const challenge = await postJson(deps, `${origin}/api/challenge`, {});
+  const sizeLimit = Number(challenge['size_limit_bytes']);
+  assert.ok(
+    source.bytes.length <= sizeLimit,
+    'legacy fixture exceeds the app size cap'
+  );
+  const filename = source.basename;
+  const rendererClass = deriveRendererClass(source.bytes, filename);
+  const relicId = generateRelicId();
+  const key = generateKey();
+  const container = await encryptRelic({
+    content: source.bytes,
+    filename,
+    mimetype: guessMimetype(filename, rendererClass),
+    key,
+  });
+  const grant = await postJson(deps, `${origin}/api/grant`, {
+    challenge_nonce: challenge['challenge_nonce'],
+    relic_id: relicId,
+    renderer_class: rendererClass,
+    publishing_client: deps.clientName,
+    declared_size_bytes: source.bytes.length,
+    declared_ciphertext_bytes: container.length,
+    title,
+    share_verifier: await shareVerifierFor(await deriveShareProof(key)),
+  });
+  const publishToken = grant['publish_token'];
+  assert.ok(
+    typeof publishToken === 'string' && publishToken.length > 0,
+    'legacy grant carried no publish token'
+  );
+  await putContainer(deps, relicId, String(grant['upload_url']), container);
+  const complete = await reportComplete(deps, relicId);
+  const serverDigest = complete?.['version_digest'];
+  const localDigest = await versionDigest(container);
+  assert.ok(
+    typeof serverDigest !== 'string' || serverDigest === localDigest,
+    'legacy archive version digest disagrees with the server'
+  );
+  const url = relicUrl(origin, relicId, key);
+  assert.ok(
+    url.startsWith(origin) && url.includes('#'),
+    'legacy publish left loopback or lost its key'
+  );
+  process.env['RELIC_PUBLISH_STATE'] = statePath;
+  await savePublishState(relicId, {
+    key: encodeKey(key),
+    publish_token: publishToken,
+    version: 1,
+    filename,
+    published_at: new Date().toISOString(),
+  });
+  return url;
+}
+
+// Reads what the viewer resolved for this composition: the program state, its first
+// reason, and the ready flag. Read only after waitReady has settled.
+async function readProgramState(browser: ChromeSession): Promise<{
+  state: string | null;
+  reason: string | null;
+  ready: string | null;
+}> {
+  return browser.evaluate<{
+    state: string | null;
+    reason: string | null;
+    ready: string | null;
+  }>(`(() => {
+    const view = document.querySelector('.otio-view');
+    return {
+      state: view?.dataset.otioProgramState ?? null,
+      reason: view?.dataset.otioProgramReason ?? null,
+      ready: view?.dataset.ready ?? null,
+    };
+  })()`);
+}
+
+// The legacy fixture must reach the viewer as the legacy program state, so the original
+// live-player and controller path is what the proof exercises.
+async function assertLegacyProgramState(
+  browser: ChromeSession,
+  label: string
+): Promise<void> {
+  const observed = await readProgramState(browser);
+  assert.equal(
+    observed.state,
+    'legacy',
+    `${label} legacy fixture resolved to program state ${observed.state} (reason ${observed.reason})`
+  );
+}
+
+// Media kinds of a document's external references. A timeline with a Video-kinded track
+// can still carry only audio media: scheduled-audio's Video track holds clips that all
+// point at a 48 kHz stereo WAV, while the timeline runs at 30 edit units per second. No
+// video source means no certified video cadence, so the publisher's program is invalid
+// timing. The focus-only check decides the macOS expectation from these media kinds, never
+// from the observed state.
+const AUDIO_MEDIA = /\.(wav|mp3|flac|ogg|oga|opus|m4a|aac)$/i;
+function mediaTargets(node: unknown, out: string[] = []): string[] {
+  if (Array.isArray(node)) {
+    for (const item of node) mediaTargets(item, out);
+    return out;
+  }
+  if (node === null || typeof node !== 'object') return out;
+  const record = node as Record<string, unknown>;
+  if (
+    record['OTIO_SCHEMA'] === 'ExternalReference.1' &&
+    typeof record['target_url'] === 'string'
+  )
+    out.push(record['target_url']);
+  for (const value of Object.values(record)) mediaTargets(value, out);
+  return out;
+}
+// True only when every referenced media is audio-only. A document with no media, or any
+// non-audio media, is not audio-only, so the program expectation applies to it.
+function isAudioOnlyDocument(document: unknown): boolean {
+  const targets = mediaTargets(document);
+  return (
+    targets.length > 0 && targets.every((target) => AUDIO_MEDIA.test(target))
+  );
+}
+
+// The real new-publish output, checked separately from the legacy fixture. On Linux the
+// publisher cannot render a program, so the view must show the timeline unavailable with
+// its reason. On macOS the publisher renders one, so the program must be playable. Both
+// branches assert; neither skips.
+async function runFocusOnlyPublishCheck(
+  sessionToken: string,
+  directory: string
+): Promise<void> {
+  const url = await publishNewDirectory('focus-only-publish', directory);
+  const browser = await openBrowser(url, sessionToken, {
+    label: 'focus-only-publish',
+    recordProofTrace: false,
+  });
+  try {
+    await waitReady(browser);
+    const observed = await readProgramState(browser);
+    if (process.platform === 'linux') {
+      assert.equal(
+        observed.state,
+        'unavailable',
+        `Linux publish was not focus-only: program state ${observed.state}`
+      );
+      assert.equal(
+        observed.reason,
+        'unsupported-browser',
+        `Linux focus-only reason was ${observed.reason}`
+      );
+      assert.equal(
+        observed.ready,
+        'diagnostic',
+        'Linux focus-only view did not render its diagnostic'
+      );
+    } else {
+      const document = JSON.parse(
+        await readFile(join(directory, 'content.otio'), 'utf8')
+      ) as unknown;
+      if (!isAudioOnlyDocument(document)) {
+        assert.equal(
+          observed.state,
+          'program',
+          `macOS publish of a video timeline did not render a playable program: ${observed.state} (${observed.reason})`
+        );
+      } else {
+        // Characterized fixture: every referenced media is audio (48 kHz stereo WAV) on a
+        // 30 edit-unit timeline. No video source means no certified video cadence, so the
+        // publisher's truthful result is exactly unavailable with reason invalid-timing.
+        // Any other state or reason fails. A document with video media still requires program.
+        assert.equal(
+          observed.state,
+          'unavailable',
+          `audio-only macOS publish resolved to ${observed.state} (${observed.reason}), not unavailable`
+        );
+        assert.equal(
+          observed.reason,
+          'invalid-timing',
+          `audio-only macOS publish reason was ${observed.reason}, not invalid-timing`
+        );
+        console.log(
+          'OTIO_FOCUS_AUDIO_ONLY_FALLBACK state=unavailable reason=invalid-timing'
+        );
+      }
+    }
+  } finally {
+    await browser.close();
+  }
+}
+
+// A real publish through the MCP, program build included.
+async function publishNewDirectory(
   name: string,
   directory: string
 ): Promise<string> {
@@ -7307,6 +7966,15 @@ async function publishDecoderDirectory(
     `${name} publish URL left loopback: ${shareUrl}`
   );
   return shareUrl;
+}
+
+// The decoder proofs time the live player's own decoders, which only a legacy
+// archive reaches, so their fixtures are published without a program.
+async function publishDecoderDirectory(
+  name: string,
+  directory: string
+): Promise<string> {
+  return publishLegacyDirectory(directory, `OTIO timing proof ${name}`);
 }
 
 async function publishDecoderDocument(
@@ -7971,6 +8639,53 @@ async function assertExactMediaTarget(
   );
 }
 
+async function assertQuantizedMovingOracle(): Promise<void> {
+  const windows = await packetWindows('fr30.webm', false);
+  const decoded = await decodeFixtureFrames('fr30.webm');
+  const cases = [
+    { seconds: 2 / 30, frame: 1 },
+    { seconds: (3.995 + 6) / 30, frame: 10 },
+    { seconds: 0.333 - 0.000003, frame: 9 },
+    { seconds: 0.333, frame: 10 },
+    { seconds: 0.333 + 0.000003, frame: 10 },
+  ];
+  for (const witness of cases) {
+    const expected = windowForSeconds(
+      windows,
+      witness.seconds,
+      'quantized witness'
+    );
+    assert.equal(
+      expected.frame,
+      witness.frame,
+      `wrong packet for ${witness.seconds}`
+    );
+    const adjacent = witness.frame - 1;
+    assert.ok(adjacent >= 0);
+    const good = scorePacketCanvas({
+      label: 'quantized witness',
+      canvas: decoded[witness.frame]!,
+      decoded,
+      expectedFrame: expected.frame,
+      neighborFrame: adjacent,
+    });
+    const stale = scorePacketCanvas({
+      label: 'quantized stale control',
+      canvas: decoded[adjacent]!,
+      decoded,
+      expectedFrame: expected.frame,
+      neighborFrame: adjacent,
+    });
+    assert.equal(
+      good.failure,
+      undefined,
+      `correct packet rejected at ${witness.seconds}: ${good.failure}`
+    );
+    assert.ok(stale.failure, `adjacent packet accepted at ${witness.seconds}`);
+  }
+  console.log(`OTIO_QUANTIZED_ORACLE_OK witnesses=${cases.length}`);
+}
+
 async function runDecoderTimingProof(sessionToken: string): Promise<void> {
   const knownUrl = await publishDecoderDirectory('known', decoderFixtureDir);
   const knownBrowser = await openBrowser(knownUrl, sessionToken, {
@@ -7984,6 +8699,7 @@ async function runDecoderTimingProof(sessionToken: string): Promise<void> {
       'true',
       'known packet-window fixture did not reach decoded ready state'
     );
+    await assertLegacyProgramState(knownBrowser, 'decoder-known');
     await knownBrowser.waitForWorkerHooks();
     const csp = knownBrowser.cspHeaders.find(
       (value) =>
@@ -8370,6 +9086,7 @@ async function runDecoderTimingProof(sessionToken: string): Promise<void> {
 
 class LayoutOnlyComplete extends Error {}
 class DecoderOnlyComplete extends Error {}
+class InteractionOnlyComplete extends Error {}
 async function probeMobileInspector(
   browser: ChromeSession
 ): Promise<Record<string, unknown> & { failures: string[] }> {
@@ -8877,6 +9594,17 @@ async function focusItem(
   id: string,
   method: 'pointer' | 'Enter' | ' ' = 'pointer'
 ): Promise<void> {
+  // A focused view draws only the focused clip and what it contains. A target
+  // outside it is reached the way a reviewer reaches it: back to the
+  // composition first.
+  const outsideFocus = await browser.evaluate<boolean>(`(() => {
+    const root = document.querySelector('.otio-view');
+    const item = [...document.querySelectorAll('.otio-item')]
+      .find(node => node.dataset.itemId === ${JSON.stringify(id)});
+    return Boolean(root?.dataset.scopeNodeId) && item instanceof HTMLElement &&
+      item.getClientRects().length === 0;
+  })()`);
+  if (outsideFocus) await leaveFocus(browser);
   const target = await browser.evaluate<{
     x: number;
     y: number;
@@ -8989,6 +9717,176 @@ async function leaveFocus(browser: ChromeSession): Promise<void> {
   assert.ok(cleared, 'back to composition did not clear focus');
 }
 
+async function assertFocusedWheelZoom(
+  browser: ChromeSession,
+  measure = false
+): Promise<Record<string, unknown> | null> {
+  const before = await browser.evaluate<{
+    x: number;
+    y: number;
+    fraction: number;
+    scale: number;
+    trackId: string;
+    frame: string;
+    rect: {
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      scale: number;
+    };
+  } | null>(`(() => {
+    const scroller = document.querySelector('.otio-timeline-scroll');
+    const root = document.querySelector('.otio-view');
+    if (!(scroller instanceof HTMLElement) || !(root instanceof HTMLElement)) return null;
+    const rail = [...root.querySelectorAll('.otio-track-rail')].find(node => {
+      if (!(node instanceof HTMLElement)) return false;
+      const r = node.getBoundingClientRect(), s = scroller.getBoundingClientRect();
+      return r.width > 0 && r.height > 0 && r.right > s.left && r.left < s.right &&
+        r.bottom > s.top && r.top < s.bottom;
+    });
+    if (!(rail instanceof HTMLElement)) return null;
+    const r = rail.getBoundingClientRect(), s = scroller.getBoundingClientRect();
+    const left = Math.max(r.left, s.left), right = Math.min(r.right, s.right);
+    if (right <= left || r.width <= 0) return null;
+    const x = left + (right - left) * .5, y = r.top + r.height * .5;
+    return {x, y, trackId:rail.dataset.trackId ?? '', fraction: (x - r.left) / r.width,
+      scale: Number(scroller.dataset.pixelsPerFrame), frame: root.dataset.frame ?? '',
+      rect:{x:left, y:Math.max(0,r.top,s.top), width:right-left,
+        height:Math.min(innerHeight,r.bottom,s.bottom)-Math.max(0,r.top,s.top), scale:devicePixelRatio}};
+  })()`);
+  assert.ok(
+    before && Number.isFinite(before.scale) && before.scale > 0,
+    'wheel zoom geometry unavailable'
+  );
+  const stopCast = measure ? await browser.startScreencast() : null;
+  if (measure) {
+    await browser.evaluate(`(() => {
+      const scroller=document.querySelector('.otio-timeline-scroll');
+      if (!(scroller instanceof HTMLElement)) throw new Error('wheel monitor has no scroller');
+      const trace={wheel:null, raf:[], active:true, origin:performance.timeOrigin};
+      globalThis.__otioWheelMeasurement=trace;
+      scroller.addEventListener('wheel', event => {
+        trace.wheel={timeStamp:event.timeStamp, received:performance.now(), trusted:event.isTrusted,
+          deltaX:event.deltaX, deltaY:event.deltaY};
+      }, {capture:true,once:true,passive:true});
+      const tick=now => { if (!trace.active) return;
+        trace.raf.push({now,scale:Number(scroller.dataset.pixelsPerFrame)}); requestAnimationFrame(tick); };
+      requestAnimationFrame(tick);
+    })()`);
+    await Bun.sleep(100);
+  }
+  await browser.send('Input.dispatchMouseEvent', {
+    type: 'mouseWheel',
+    x: before.x,
+    y: before.y,
+    deltaX: 0,
+    deltaY: -250,
+  });
+  const after = await browser.evaluate<{
+    fraction: number;
+    scale: number;
+    frame: string;
+    mode: string;
+  } | null>(`(async () => {
+    const {promise, resolve} = Promise.withResolvers();
+    requestAnimationFrame(() => requestAnimationFrame(resolve)); await promise;
+    const rail = [...document.querySelectorAll('.otio-track-rail')]
+      .find(node => node.dataset.trackId === ${JSON.stringify(before.trackId)});
+    const scroller = document.querySelector('.otio-timeline-scroll');
+    const root = document.querySelector('.otio-view');
+    if (!(rail instanceof HTMLElement) || !(scroller instanceof HTMLElement) ||
+        !(root instanceof HTMLElement)) return null;
+    const r = rail.getBoundingClientRect();
+    return {fraction: (${before.x} - r.left) / r.width,
+      scale: Number(scroller.dataset.pixelsPerFrame), frame: root.dataset.frame ?? '',
+      mode: scroller.dataset.zoomMode ?? ''};
+  })()`);
+  assert.ok(after, 'wheel zoom lost timeline');
+  assert.equal(after.mode, 'manual', 'wheel did not select manual zoom');
+  assert.ok(
+    after.scale > before.scale,
+    'wheel did not increase timeline scale'
+  );
+  assert.ok(
+    Math.abs(after.fraction - before.fraction) < 0.01,
+    'wheel zoom moved time under pointer'
+  );
+  assert.equal(after.frame, before.frame, 'wheel zoom sought playback');
+  if (!measure || !stopCast) return null;
+  await Bun.sleep(250);
+  const observation = await browser.evaluate<{
+    wheel: {
+      timeStamp: number;
+      received: number;
+      trusted: boolean;
+      deltaX: number;
+      deltaY: number;
+    } | null;
+    raf: Array<{ now: number; scale: number }>;
+    origin: number;
+  }>(
+    `(() => {const trace=globalThis.__otioWheelMeasurement; trace.active=false; return trace;})()`
+  );
+  const cast = await stopCast();
+  assert.ok(
+    observation.wheel?.trusted,
+    'wheel monitor did not capture the trusted input event'
+  );
+  const eventTime = observation.origin + observation.wheel.timeStamp;
+  const frames = await decodeScreencastFrames(cast, before.rect);
+  const baseline = frames.filter((frame) => frame.timestamp < eventTime).at(-1);
+  const final = frames.at(-1);
+  assert.ok(
+    baseline && final && final.timestamp > eventTime,
+    'wheel screencast lacks a before/after pair'
+  );
+  const distance = (a: Uint8Array, b: Uint8Array) => {
+    let sum = 0;
+    for (let i = 0; i < a.length; i += 4)
+      sum +=
+        Math.abs(a[i]! - b[i]!) +
+        Math.abs(a[i + 1]! - b[i + 1]!) +
+        Math.abs(a[i + 2]! - b[i + 2]!);
+    return sum / ((a.length / 4) * 3 * 255);
+  };
+  const difference = distance(baseline.pixels, final.pixels);
+  const presented =
+    difference > 0.005
+      ? frames.find(
+          (frame) =>
+            frame.timestamp >= eventTime &&
+            distance(frame.pixels, final.pixels) <
+              distance(frame.pixels, baseline.pixels)
+        )
+      : undefined;
+  const postRaf = observation.raf.filter(
+    (sample) => observation.origin + sample.now >= eventTime
+  );
+  const changedRaf = postRaf.find((sample) => sample.scale !== before.scale);
+  const rafGaps = postRaf
+    .slice(1)
+    .map((sample, i) => sample.now - postRaf[i]!.now);
+  return {
+    before,
+    after,
+    observation,
+    rawScreencast: cast,
+    baselinePixelDifference: difference,
+    firstChangedRailFrameTimestamp: presented?.timestamp ?? null,
+    inputToChangedRailFrameMs: presented
+      ? presented.timestamp - eventTime
+      : null,
+    inputToChangedLayoutRafMs: changedRaf
+      ? observation.origin + changedRaf.now - eventTime
+      : null,
+    rafGaps,
+    maxRafGapMs: rafGaps.length ? Math.max(...rafGaps) : null,
+    limit:
+      'Browser screencast and RAF observations; not physical display latency.',
+  };
+}
+
 async function assertFocusedPlaybackBound(
   browser: ChromeSession,
   start: number,
@@ -9027,30 +9925,12180 @@ async function assertFocusedPlaybackBound(
   );
 }
 
+interface AudioClockBridge {
+  before: number;
+  after: number;
+  currentBefore: number;
+  currentAfter: number;
+  output: { contextTime: number; performanceTime: number } | null;
+}
+
+interface MovingTrace {
+  start: {
+    timestamp: number;
+    frame: number;
+    sampleFrame: number;
+    bridge: AudioClockBridge;
+  };
+  playEdge?: { timestamp: number; frame: number; bridge: AudioClockBridge };
+  warm?: {
+    timestamp: number;
+    frame: number;
+    sampleCount: number;
+    changes: number;
+  };
+  trace: {
+    timestamp: number;
+    frame: number;
+    sampleFrame: number;
+    contextState: string;
+    staleCaptureId: number | null;
+    bridge: AudioClockBridge;
+    audioOverflow: boolean;
+    visualOverflow: boolean;
+    eventsOverflow: boolean;
+    bank: Array<{ timestamp: number; value: Record<string, unknown> }>;
+    bankOverflow: boolean;
+    events: Array<{
+      kind: string;
+      timestamp: number;
+      value?: unknown;
+      mediaType?: string | null;
+    }>;
+    visual: Array<{
+      timestamp: number;
+      frame: string | null;
+      pixels16?: number[];
+      error?: string;
+    }>;
+    audio: Array<{
+      sampleFrame: number;
+      channels: number[][];
+      witness?: number[][];
+      marker?: number[];
+      sequence?: number;
+      quantumFrames?: number[];
+      quantumLengths?: number[];
+      quantumOrdinals?: number[];
+      quantumOffsets?: number[];
+    }>;
+    witness?: {
+      anchor: number;
+      laterAnchor: number | null;
+      frozenAnchor: number;
+      length: number;
+      gateInitialFrame: number;
+      clockEpoch: number;
+    } | null;
+    sampleRate: number;
+  };
+}
+
+// Clock evidence. The audit reads only what the proof wrapper recorded from the native output
+// clock, so a viewer bridge, hold or clock error is checked against reads Chromium returned.
+// Injected reads (I5) are counted and are never native evidence. A pair whose two reads straddle
+// a clock epoch spans two clock sessions, so it is counted, not classified. A shot with no native
+// clock reads must name why; an unnamed absence is a violation.
+const CLOCK_PAIR_EPS_US = 1e-3;
+const CLOCK_HOLD_LIMIT_US = 200;
+interface ClockStamp {
+  contextTime: number;
+  performanceTime: number;
+}
+interface ClockEvidence {
+  nativeReads: number;
+  injectedReads: number;
+  epochs: number;
+  pairs: number;
+  crossEpochPairs: number;
+  identical: number;
+  contextOnly: number;
+  performanceOnly: number;
+  bothAdvance: number;
+  regressions: number;
+  maxContextOnlyUs: number;
+  maxPerformanceOnlyUs: number;
+  maxContextAdvanceUs: number;
+  clockHolds: number;
+  holdsMatched: number;
+  epochBridges: number;
+  clockErrors: number;
+  siteUses: number;
+  siteHoldsConsumed: number;
+  futureSkipReads: number;
+  futureSkips: number;
+  violations: string[];
+}
+function clockStamp(value: unknown): ClockStamp | null {
+  if (!value || typeof value !== 'object') return null;
+  const record = value as Record<string, unknown>;
+  const contextTime = record['contextTime'];
+  const performanceTime = record['performanceTime'];
+  if (typeof contextTime !== 'number' || typeof performanceTime !== 'number')
+    return null;
+  if (!Number.isFinite(contextTime) || !Number.isFinite(performanceTime))
+    return null;
+  return { contextTime, performanceTime };
+}
+function sameClockStamp(a: ClockStamp, b: ClockStamp): boolean {
+  return (
+    a.contextTime === b.contextTime && a.performanceTime === b.performanceTime
+  );
+}
+function auditClockEvidence(
+  trace: Pick<MovingTrace['trace'], 'events'> | null
+): ClockEvidence {
+  const violations: string[] = [];
+  const native: Array<ClockStamp & { timestamp: number }> = [];
+  const observed: ClockStamp[] = [];
+  const pcmEvents: Array<Record<string, unknown>> = [];
+  const epochTimes: number[] = [];
+  let injectedReads = 0;
+  for (const entry of trace?.events ?? []) {
+    if (
+      entry.kind === 'audio-output-timestamp-observed' &&
+      entry.value &&
+      typeof entry.value === 'object'
+    ) {
+      const value = entry.value as Record<string, unknown>;
+      const injected = value['injected'] === true;
+      if (injected) injectedReads++;
+      const output = clockStamp(value['output']);
+      if (!output) continue;
+      observed.push(output);
+      if (!injected) native.push({ ...output, timestamp: entry.timestamp });
+    } else if (
+      entry.kind === 'scheduled-pcm' &&
+      entry.value &&
+      typeof entry.value === 'object'
+    ) {
+      const value = entry.value as Record<string, unknown>;
+      pcmEvents.push(value);
+      if (value['event'] === 'epoch') epochTimes.push(entry.timestamp);
+    }
+  }
+  if (native.length === 0) violations.push('no-native-clock-reads');
+  let identical = 0,
+    contextOnly = 0,
+    performanceOnly = 0,
+    bothAdvance = 0,
+    regressions = 0,
+    crossEpochPairs = 0;
+  let maxContextOnlyUs = 0,
+    maxPerformanceOnlyUs = 0,
+    maxContextAdvanceUs = 0;
+  for (let i = 1; i < native.length; i++) {
+    const a = native[i - 1]!,
+      b = native[i]!;
+    if (epochTimes.some((time) => time > a.timestamp && time <= b.timestamp)) {
+      crossEpochPairs++;
+      continue;
+    }
+    const dContextUs = (b.contextTime - a.contextTime) * 1e6;
+    const dPerformanceUs = (b.performanceTime - a.performanceTime) * 1e3;
+    if (
+      dContextUs < -CLOCK_PAIR_EPS_US ||
+      dPerformanceUs < -CLOCK_PAIR_EPS_US
+    ) {
+      regressions++;
+      continue;
+    }
+    maxContextAdvanceUs = Math.max(maxContextAdvanceUs, dContextUs);
+    const contextMoved = dContextUs > CLOCK_PAIR_EPS_US;
+    const performanceMoved = dPerformanceUs > CLOCK_PAIR_EPS_US;
+    if (!contextMoved && !performanceMoved) identical++;
+    else if (!performanceMoved) {
+      contextOnly++;
+      maxContextOnlyUs = Math.max(maxContextOnlyUs, dContextUs);
+      if (dContextUs >= CLOCK_HOLD_LIMIT_US)
+        violations.push(
+          `context-only-advance-${Math.round(dContextUs)}us@pair-${i}`
+        );
+    } else if (!contextMoved) {
+      performanceOnly++;
+      maxPerformanceOnlyUs = Math.max(maxPerformanceOnlyUs, dPerformanceUs);
+      if (b.contextTime > 0)
+        violations.push(
+          `performance-only-advance-${Math.round(dPerformanceUs)}us-with-context@pair-${i}`
+        );
+    } else bothAdvance++;
+  }
+  let clockHolds = 0,
+    holdsMatched = 0,
+    epochBridges = 0,
+    clockErrors = 0,
+    siteUses = 0,
+    futureSkipReads = 0;
+  const skippedStamps: ClockStamp[] = [];
+  pcmEvents.forEach((value, index) => {
+    if (value['event'] === 'clock-hold') {
+      clockHolds++;
+      const label = `clock-hold#${index}`;
+      const held = clockStamp(value);
+      const last = clockStamp(value['lastAccepted']);
+      const deltaUs = value['deltaUs'];
+      if (
+        typeof deltaUs !== 'number' ||
+        !Number.isFinite(deltaUs) ||
+        deltaUs < 0 ||
+        deltaUs >= CLOCK_HOLD_LIMIT_US
+      )
+        violations.push(`${label}:delta-out-of-band`);
+      if (!held) violations.push(`${label}:held-read-missing`);
+      if (!last) violations.push(`${label}:last-accepted-missing`);
+      else if (!native.some((stamp) => sameClockStamp(stamp, last)))
+        violations.push(`${label}:last-accepted-unobserved`);
+      if (held) {
+        if (observed.some((stamp) => sameClockStamp(stamp, held)))
+          holdsMatched++;
+        else violations.push(`${label}:held-read-unobserved`);
+      }
+      if (held && last) {
+        const heldDeltaUs = (held.contextTime - last.contextTime) * 1e6;
+        if (held.performanceTime !== last.performanceTime)
+          violations.push(`${label}:performance-moved`);
+        if (heldDeltaUs < 0 || heldDeltaUs >= CLOCK_HOLD_LIMIT_US)
+          violations.push(`${label}:context-out-of-band`);
+        // deltaUs is rounded to whole microseconds by the viewer, so half a microsecond is the bound.
+        if (
+          typeof deltaUs === 'number' &&
+          Math.abs(heldDeltaUs - deltaUs) > 0.5
+        )
+          violations.push(`${label}:delta-mismatch`);
+      }
+    }
+    if (value['event'] === 'epoch' && 'bridge' in value) {
+      const label = `epoch#${index}`;
+      const bridge = clockStamp(value['bridge']);
+      if (!bridge) violations.push(`${label}:bridge-malformed`);
+      else {
+        epochBridges++;
+        if (!native.some((stamp) => sameClockStamp(stamp, bridge))) {
+          violations.push(
+            observed.some((stamp) => sameClockStamp(stamp, bridge))
+              ? `${label}:bridge-is-injected-read`
+              : `${label}:bridge-unobserved`
+          );
+        }
+      }
+    }
+    if (value['event'] === 'error') {
+      const code = String(value['code'] ?? '');
+      if (
+        value['stage'] === 'clock' ||
+        code.startsWith('audio output clock interrupted')
+      ) {
+        clockErrors++;
+        const label = `clock-error#${index}:${code}`;
+        if (!('lastAccepted' in value))
+          violations.push(`${label}:evidence-missing`);
+        else if (value['lastAccepted'] !== null) {
+          const last = clockStamp(value['lastAccepted']);
+          if (!last) violations.push(`${label}:last-accepted-malformed`);
+          else if (!native.some((stamp) => sameClockStamp(stamp, last)))
+            violations.push(`${label}:last-accepted-unobserved`);
+        }
+      }
+    }
+    if (value['event'] === 'clock-future-skip') {
+      // One future stamp is skipped, never used: it must be a recorded read, it must really lead
+      // the read past the policy bound, and the pair that stands must be a native accepted pair.
+      futureSkipReads++;
+      const label = `clock-future-skip#${index}`;
+      const skipped = clockStamp(value);
+      if (!skipped) violations.push(`${label}:stamp-malformed`);
+      else {
+        if (!skippedStamps.some((stamp) => sameClockStamp(stamp, skipped)))
+          skippedStamps.push(skipped);
+        if (!observed.some((stamp) => sameClockStamp(stamp, skipped)))
+          violations.push(`${label}:stamp-unobserved`);
+      }
+      const leadMs = Number(value['leadMs']);
+      const contextLeadMs = Number(value['contextLeadMs']);
+      if (
+        !(leadMs > DEFAULT_CLOCK_POLICY.futureToleranceMs) &&
+        !(contextLeadMs > DEFAULT_CLOCK_POLICY.futureToleranceMs)
+      )
+        violations.push(`${label}:not-future`);
+      if (value['lastAccepted'] !== null) {
+        const last = clockStamp(value['lastAccepted']);
+        if (!last) violations.push(`${label}:last-accepted-malformed`);
+        else if (!native.some((stamp) => sameClockStamp(stamp, last)))
+          violations.push(`${label}:last-accepted-unobserved`);
+      }
+    }
+    if (value['event'] === 'clock-site' && value['phase'] === 'use') {
+      siteUses++;
+      const label = `site-${String(value['site'])}#${index}`;
+      const used = clockStamp(value['usedStamp']);
+      const last = clockStamp(value['lastAccepted']);
+      if (!used) violations.push(`${label}:used-stamp-malformed`);
+      else {
+        if (!native.some((stamp) => sameClockStamp(stamp, used)))
+          violations.push(
+            observed.some((stamp) => sameClockStamp(stamp, used))
+              ? `${label}:used-held-read`
+              : `${label}:used-unobserved`
+          );
+        if (!last) violations.push(`${label}:last-accepted-missing`);
+        else if (!sameClockStamp(used, last))
+          violations.push(`${label}:used-not-last-accepted`);
+      }
+    }
+  });
+  return {
+    nativeReads: native.length,
+    injectedReads,
+    epochs: epochTimes.length,
+    pairs: Math.max(0, native.length - 1),
+    crossEpochPairs,
+    identical,
+    contextOnly,
+    performanceOnly,
+    bothAdvance,
+    regressions,
+    maxContextOnlyUs,
+    maxPerformanceOnlyUs,
+    maxContextAdvanceUs,
+    clockHolds,
+    holdsMatched,
+    epochBridges,
+    clockErrors,
+    siteUses,
+    siteHoldsConsumed: (trace?.events ?? []).filter(
+      (entry) => entry.kind === 'clock-site-hold-consumed'
+    ).length,
+    futureSkipReads,
+    futureSkips: skippedStamps.length,
+    violations,
+  };
+}
+function assertClockAudit(audit: ClockEvidence, label: string): void {
+  assert.deepEqual(
+    audit.violations,
+    [],
+    `${label} clock evidence failed audit: ${audit.violations.join(', ')}`
+  );
+}
+interface ClockShot extends ClockEvidence {
+  label: string;
+  noDataReason: string | null;
+}
+// Every scheduled-pcm shot carries its clock audit. A shot with no native clock reads must name
+// the reason; a declared reason is recorded and withdraws only the zero-read violation.
+function clockShot(
+  label: string,
+  trace: Pick<MovingTrace['trace'], 'events'> | null,
+  declaredNoData: string | null = null
+): ClockShot {
+  const audit = auditClockEvidence(trace);
+  const noDataReason =
+    audit.nativeReads === 0
+      ? (declaredNoData ?? 'no native output-clock reads; no reason declared')
+      : null;
+  const violations =
+    declaredNoData === null || audit.nativeReads > 0
+      ? audit.violations
+      : audit.violations.filter(
+          (violation) => violation !== 'no-native-clock-reads'
+        );
+  return { ...audit, violations, label, noDataReason };
+}
+async function writeClockShot(
+  path: string,
+  body: Record<string, unknown>,
+  label: string,
+  trace: Pick<MovingTrace['trace'], 'events'> | null,
+  declaredNoData: string | null = null
+): Promise<ClockShot> {
+  const clockAudit = clockShot(label, trace, declaredNoData);
+  await writeFile(path, JSON.stringify({ ...body, clockAudit }));
+  assertClockAudit(clockAudit, label);
+  return clockAudit;
+}
+const BORROWED_NO_LEASE_REASON =
+  'the borrowed audio context has no exclusive clock bootstrap lease';
+const BORROWED_NO_LEASE_NO_CLOCK =
+  'native compatibility for a borrowed context without a clock lease: the viewer never reads its output clock';
+function noLeaseClockViolations(
+  events: MovingTrace['trace']['events']
+): string[] {
+  const violations: string[] = [];
+  const pcm = events.filter((entry) => entry.kind === 'scheduled-pcm');
+  if (pcm.length === 0) violations.push('no-backend-selection');
+  pcm.forEach((entry, index) => {
+    const value = (entry.value ?? {}) as Record<string, unknown>;
+    if (
+      value['event'] !== 'backend' ||
+      value['backend'] !== 'native' ||
+      value['reason'] !== BORROWED_NO_LEASE_REASON
+    )
+      violations.push(
+        `scheduled-pcm#${index}:${String(value['event'])}:${String(value['backend'])}:${String(value['reason'])}`
+      );
+  });
+  const reads = events.filter(
+    (entry) => entry.kind === 'audio-output-timestamp-observed'
+  ).length;
+  if (reads > 0) violations.push(`output-clock-reads-${reads}`);
+  return violations;
+}
+function assertNoLeaseClockControls(): void {
+  type Event = MovingTrace['trace']['events'][number];
+  const backend = (kind: string, reason: string): Event => ({
+    kind: 'scheduled-pcm',
+    timestamp: 1,
+    value: { event: 'backend', backend: kind, reason },
+  });
+  const read = (injected: boolean, time: number): Event => ({
+    kind: 'audio-output-timestamp-observed',
+    timestamp: 2,
+    value: { injected, output: { contextTime: time, performanceTime: time } },
+  });
+  const selected = backend('native', BORROWED_NO_LEASE_REASON);
+  assert.deepEqual(noLeaseClockViolations([selected]), []);
+  const shot = clockShot(
+    'no-lease-control',
+    { events: [selected] },
+    BORROWED_NO_LEASE_NO_CLOCK
+  );
+  assert.deepEqual(shot.violations, []);
+  assert.equal(shot.noDataReason, BORROWED_NO_LEASE_NO_CLOCK);
+  const rejected: Array<[string, Event[]]> = [
+    ['native read', [selected, read(false, 1)]],
+    ['injected read', [selected, read(true, 1)]],
+    ['non-finite read', [selected, read(false, Number.NaN)]],
+    ['missing selection', []],
+    [
+      'other native reason',
+      [backend('native', 'audio format is not supported by scheduled PCM')],
+    ],
+    ['scheduled backend', [backend('pcm', BORROWED_NO_LEASE_REASON)]],
+    [
+      'clock session',
+      [
+        selected,
+        {
+          kind: 'scheduled-pcm',
+          timestamp: 3,
+          value: { event: 'epoch', f0: 0 },
+        },
+      ],
+    ],
+  ];
+  for (const [label, events] of rejected)
+    assert.ok(
+      noLeaseClockViolations(events).length > 0,
+      `no-lease clock premise accepted ${label}`
+    );
+  assert.deepEqual(
+    clockShot(
+      'no-lease-nan-control',
+      { events: [selected, read(false, Number.NaN)] },
+      BORROWED_NO_LEASE_NO_CLOCK
+    ).violations,
+    []
+  );
+  assert.deepEqual(clockShot('lease-control', { events: [] }).violations, [
+    'no-native-clock-reads',
+  ]);
+}
+// Every continuity fault in the capture window, each with its code. The first fault alone hides
+// the cause: a clock interrupt is followed by its underflow cancel, so every fault is named.
+function describeContinuityFaults(
+  events: MovingTrace['trace']['events'],
+  playMs: number
+): string[] {
+  return events
+    .filter((entry) => {
+      if (entry.kind !== 'scheduled-pcm') return false;
+      const value = entry.value as Record<string, unknown>;
+      return (
+        value['event'] === 'error' ||
+        (value['event'] === 'cancel' && value['reason'] === 'underflow')
+      );
+    })
+    .map((entry) => {
+      const value = entry.value as Record<string, unknown>;
+      const parts = [String(value['event'])];
+      if (value['stage'] !== undefined)
+        parts.push(`stage=${String(value['stage'])}`);
+      parts.push(`code=${String(value['code'] ?? value['reason'])}`);
+      parts.push(`at ${Math.round(entry.timestamp - playMs)} ms after play`);
+      if ('lastAccepted' in value)
+        parts.push(`lastAccepted=${JSON.stringify(value['lastAccepted'])}`);
+      if ('lastRejection' in value)
+        parts.push(`lastRejection=${JSON.stringify(value['lastRejection'])}`);
+      return parts.join(' ');
+    });
+}
+
+function assertPcmSequence(
+  start: number,
+  end: number,
+  chunks: Array<{
+    sampleFrame: number;
+    channels: number[][];
+    quantumFrames?: number[];
+    quantumLengths?: number[];
+    quantumOrdinals?: number[];
+    quantumOffsets?: number[];
+    sequence?: number;
+  }>,
+  rawFrameAuthority = true
+): void {
+  assert.ok(
+    chunks.length > 0 && end > start,
+    'post-gain PCM capture has no coverage'
+  );
+  if (rawFrameAuthority)
+    assert.equal(
+      chunks[0]!.sampleFrame,
+      start,
+      'post-gain PCM is missing its leading samples'
+    );
+  let ordinal = 0;
+  let offset = 0;
+  for (const [chunkIndex, chunk] of chunks.entries()) {
+    assert.ok(
+      chunk.quantumFrames &&
+        chunk.quantumLengths &&
+        chunk.quantumOrdinals &&
+        chunk.quantumOffsets,
+      'missing quantum provenance'
+    );
+    assert.equal(chunk.sequence, chunkIndex, 'PCM chunk sequence gap');
+    assert.equal(chunk.channels.length, 2, 'PCM capture is not stereo');
+    assert.equal(
+      chunk.channels[0]!.length,
+      chunk.channels[1]!.length,
+      'PCM channel length mismatch'
+    );
+    for (const channel of chunk.channels)
+      assert.ok(channel.every(Number.isFinite), 'non-finite captured PCM');
+    assert.equal(
+      chunk.quantumFrames.length,
+      chunk.quantumLengths.length,
+      'quantum provenance length mismatch'
+    );
+    assert.equal(
+      chunk.quantumOrdinals.length,
+      chunk.quantumLengths.length,
+      'quantum ordinal length mismatch'
+    );
+    assert.equal(
+      chunk.quantumOffsets.length,
+      chunk.quantumLengths.length,
+      'quantum offset length mismatch'
+    );
+    let frame = chunk.sampleFrame;
+    for (let i = 0; i < chunk.quantumFrames.length; i++) {
+      assert.ok(
+        Number.isSafeInteger(chunk.quantumFrames[i]),
+        'invalid raw callback label'
+      );
+      if (rawFrameAuthority)
+        assert.equal(
+          chunk.quantumFrames[i],
+          frame,
+          'post-gain PCM has a missing or overlapping quantum'
+        );
+      const count: number = chunk.quantumLengths[i]!;
+      assert.equal(
+        chunk.quantumOrdinals[i],
+        ordinal++,
+        'missing or reordered PCM callback'
+      );
+      assert.equal(
+        chunk.quantumOffsets[i],
+        offset,
+        'PCM callback offset mismatch'
+      );
+      offset += count;
+      assert.ok(
+        Number.isSafeInteger(count) && count > 0,
+        'invalid PCM quantum length'
+      );
+      frame += count;
+    }
+    assert.equal(
+      frame,
+      chunk.sampleFrame + chunk.channels[0]!.length,
+      'quantum provenance does not cover its PCM chunk'
+    );
+  }
+  if (rawFrameAuthority)
+    for (let i = 1; i < chunks.length; i++) {
+      const prior = chunks[i - 1]!;
+      assert.ok(prior.channels[0], 'post-gain PCM channel missing');
+      assert.equal(
+        chunks[i]!.sampleFrame,
+        prior.sampleFrame + prior.channels[0].length,
+        'post-gain PCM has a missing or overlapping chunk'
+      );
+    }
+  const last = chunks[chunks.length - 1]!;
+  assert.ok(last.channels[0], 'post-gain PCM final channel missing');
+  if (rawFrameAuthority)
+    assert.equal(
+      last.sampleFrame + last.channels[0].length,
+      end,
+      'post-gain PCM is missing its trailing samples'
+    );
+}
+
+// The carrier encodes absolute source position, independent of gate decisions.
+function carrierFrame(
+  chunk: MovingTrace['trace']['audio'][number],
+  i: number,
+  witness: { anchor: number; laterAnchor: number | null; length: number }
+): number | null {
+  const highRaw = chunk.witness?.[0]?.[i],
+    lowRaw = chunk.witness?.[1]?.[i];
+  if (
+    typeof highRaw !== 'number' ||
+    typeof lowRaw !== 'number' ||
+    !Number.isFinite(highRaw) ||
+    !Number.isFinite(lowRaw)
+  )
+    return null;
+  // Float32 carrier lanes can differ from an integer by float residue (for example
+  // a 16-bit boundary reads 5.8e-11 for 0). The runtime decoder accepts |x-round|
+  // <= 0.125; a corrupted integer is still off by at least one and is rejected.
+  const high = Math.round(highRaw),
+    low = Math.round(lowRaw);
+  if (Math.abs(highRaw - high) > 0.125 || Math.abs(lowRaw - low) > 0.125)
+    return null;
+  if (high < 1 || low < 0 || low >= 65536) return null;
+  const frame = (high - 1) * 65536 + low;
+  if (!Number.isSafeInteger(frame)) return null;
+  const inInitial =
+    frame >= witness.anchor && frame < witness.anchor + witness.length;
+  const inLater =
+    witness.laterAnchor !== null &&
+    frame >= witness.laterAnchor &&
+    frame < witness.laterAnchor + witness.length;
+  if (!inInitial && !inLater) return null;
+  return frame;
+}
+// Required quantum metadata. A chunk without quantumFrames, quantumLengths or quantumOffsets is
+// a capture that cannot prove identity or clock continuity, so it fails here rather than being
+// skipped.
+function requireQuantumArrays(
+  chunk: MovingTrace['trace']['audio'][number],
+  label: string
+): { frames: number[]; lengths: number[]; offsets: number[] } {
+  const frames = chunk.quantumFrames;
+  const lengths = chunk.quantumLengths;
+  const offsets = chunk.quantumOffsets;
+  assert.ok(
+    Array.isArray(frames) && Array.isArray(lengths) && Array.isArray(offsets),
+    `${label}: chunk seq ${chunk.sequence} lacks quantum metadata; identity and clock unproven`
+  );
+  assert.equal(
+    frames.length,
+    lengths.length,
+    `${label}: chunk seq ${chunk.sequence} quantum frame and length counts differ`
+  );
+  assert.equal(
+    offsets.length,
+    lengths.length,
+    `${label}: chunk seq ${chunk.sequence} quantum offset and length counts differ`
+  );
+  return { frames, lengths, offsets };
+}
+
+// Carrier identity, checked on every epoch. The processor's own sample counter (quantumOffsets
+// plus position in the quantum) advances by exactly the quantum length on every process call.
+// The carrier must advance with that counter: carrier minus counter is one constant over every
+// decodable sample, anchored at the first decodable sample. The engine's reported currentFrame is
+// not used here; raw labels are separately reported by reportEngineFrameClock. Samples without a
+// decodable carrier are not counted as evidence.
+function assertCarrierIdentity(
+  trace: Pick<MovingTrace['trace'], 'audio' | 'witness'>,
+  label: string
+): number {
+  let anchor: number | null = null;
+  let decoded = 0;
+  const mismatches: string[] = [];
+  for (const chunk of trace.audio) {
+    const quanta = requireQuantumArrays(chunk, label);
+    let cursor = 0;
+    for (let k = 0; k < quanta.lengths.length; k++) {
+      const length = quanta.lengths[k]!;
+      const base = quanta.offsets[k]!;
+      for (let j = 0; j < length; j++) {
+        const index = cursor + j;
+        if (index >= (chunk.channels[0]?.length ?? 0)) break;
+        const carrier = carrierFrame(chunk, index, trace.witness!);
+        if (carrier === null) continue;
+        const counter = base + j;
+        decoded++;
+        if (anchor === null) anchor = carrier - counter;
+        else if (carrier - counter !== anchor && mismatches.length < 8)
+          mismatches.push(
+            `seq ${chunk.sequence} sample ${index} carrier ${carrier} counter ${counter} offset ${carrier - counter} (anchor ${anchor})`
+          );
+      }
+      cursor += length;
+    }
+  }
+  assert.ok(
+    decoded > 0,
+    `${label}: no decodable carrier samples; identity unproven`
+  );
+  assert.equal(
+    mismatches.length,
+    0,
+    `${label}: carrier does not advance with the processor sample counter (${mismatches.join('; ')}; decoded ${decoded})`
+  );
+  return decoded;
+}
+
+// Raw cached currentFrame conformance is reported separately from playback proof.
+// Labels are unchanged and are inspected across chunk boundaries.
+function reportEngineFrameClock(
+  trace: MovingTrace['trace'],
+  label: string
+): void {
+  let previous: { frame: number; length: number } | undefined;
+  const defects: Array<Record<string, unknown>> = [];
+  for (const chunk of trace.audio) {
+    const q = requireQuantumArrays(chunk, label);
+    let cursor = 0;
+    for (let k = 0; k < q.frames.length; k++) {
+      const frame = q.frames[k]!,
+        length = q.lengths[k]!;
+      if (previous && frame !== previous.frame + previous.length) {
+        const carrier = trace.witness
+          ? carrierFrame(chunk, cursor, trace.witness)
+          : null;
+        defects.push({
+          sequence: chunk.sequence,
+          ordinal: chunk.quantumOrdinals?.[k],
+          offset: q.offsets[k],
+          label: frame,
+          expected: previous.frame + previous.length,
+          carrier,
+        });
+      }
+      previous = { frame, length };
+      cursor += length;
+    }
+  }
+  console.log(
+    'OTIO_RAW_CLOCK_CONFORMANCE',
+    JSON.stringify({ label, conformant: defects.length === 0, defects })
+  );
+}
+
+function assertIndependentCarrier(
+  trace: Pick<MovingTrace['trace'], 'audio' | 'witness'>,
+  first: number,
+  end: number
+): void {
+  const witness = trace.witness;
+  assert.ok(
+    witness &&
+      Number.isSafeInteger(witness.anchor) &&
+      Number.isSafeInteger(witness.length) &&
+      witness.length > 0,
+    'independent frozen-origin carrier unavailable'
+  );
+  // Proof carrier W may be earlier than the first verified sample but never later:
+  // a W after F0 leaves the first samples without independent identity, so fail closed.
+  assert.ok(
+    witness.anchor <= first,
+    `proof carrier origin ${witness.anchor} starts after the verified sample ${first}`
+  );
+  let seen = 0;
+  let previous: number | null = null;
+  // Where the carrier sits against the window, for the failure message: a coverage gap is told
+  // apart by whether the nulls lie before the first carrier sample, after the last, or inside.
+  let samples = 0;
+  let nullsBefore = 0;
+  let nullsAfter = 0;
+  let firstCarrier: number | null = null;
+  let lastCarrier: number | null = null;
+  for (const chunk of trace.audio) {
+    assert.ok(chunk.witness?.length === 2, 'carrier channels missing');
+    assert.equal(
+      chunk.witness[0]!.length,
+      chunk.channels[0]!.length,
+      'carrier length mismatch'
+    );
+    assert.equal(
+      chunk.witness[1]!.length,
+      chunk.channels[0]!.length,
+      'carrier length mismatch'
+    );
+    for (let i = 0; i < chunk.channels[0]!.length; i++) {
+      const frame = carrierFrame(chunk, i, witness);
+      if (frame === null) {
+        if (previous === null) nullsBefore++;
+        else nullsAfter++;
+        assert.equal(
+          previous,
+          null,
+          'independent carrier disappeared or was corrupt'
+        );
+        continue;
+      }
+      if (previous !== null)
+        assert.equal(
+          frame,
+          previous + 1,
+          'independent carrier skipped or repeated a sample'
+        );
+      previous = frame;
+      lastCarrier = frame;
+      firstCarrier ??= frame;
+      if (frame >= first && frame < end) seen++;
+    }
+    samples += chunk.channels[0]!.length;
+  }
+  assert.equal(
+    seen,
+    end - first,
+    `independent carrier does not cover scheduled PCM (window ${first}..${end}, ${samples} captured samples in ${trace.audio.length} chunks, carrier ${firstCarrier}..${lastCarrier}, ${nullsBefore} samples without carrier before its first, ${nullsAfter} after)`
+  );
+}
+
+// Carrier decode controls. The sub-LSB tolerance must accept float residue at a
+// real frame boundary, reject a lane perturbed by 0.125 or more, and let a
+// one-frame skip or repeat fail the independent carrier integrity check.
+function assertCarrierDecodeControls(): void {
+  const witness = {
+    anchor: 458000,
+    laterAnchor: null,
+    frozenAnchor: 458000,
+    length: 2000,
+    gateInitialFrame: 458000,
+    clockEpoch: 1,
+  };
+  const laneTrace = (highs: number[], lows: number[]) => ({
+    witness,
+    audio: [
+      {
+        sampleFrame: 0,
+        channels: [
+          new Array<number>(highs.length).fill(0),
+          new Array<number>(highs.length).fill(0),
+        ],
+        witness: [highs, lows],
+      },
+    ],
+  });
+  const decodeAt = (highs: number[], lows: number[], index: number) => {
+    const trace = laneTrace(highs, lows);
+    return carrierFrame(trace.audio[0]!, index, witness);
+  };
+  // Exact recorded boundary: high 8 with float residue 5.82e-11 is frame 458752.
+  assert.equal(
+    decodeAt([8], [5.820766091346741e-11], 0),
+    458752,
+    'carrier boundary residue did not decode to the exact frame'
+  );
+  // A lane perturbed just beyond 0.125 must be rejected, not rounded into a frame.
+  assert.equal(
+    decodeAt([7], [65535.126], 0),
+    null,
+    'perturbed low lane was accepted'
+  );
+  assert.equal(
+    decodeAt([7.126], [65535], 0),
+    null,
+    'perturbed high lane was accepted'
+  );
+  // A consecutive run across the boundary passes the integrity check.
+  assert.doesNotThrow(() =>
+    assertIndependentCarrier(
+      laneTrace([7, 7, 8], [65534, 65535, 5.820766091346741e-11]),
+      458750,
+      458753
+    )
+  );
+  // A one-frame skip and a one-frame repeat must each fail contiguity.
+  assert.throws(
+    () =>
+      assertIndependentCarrier(
+        laneTrace([7, 7, 8], [65534, 65535, 1]),
+        458750,
+        458753
+      ),
+    /skipped or repeated/,
+    'a one-frame carrier skip passed'
+  );
+  assert.throws(
+    () =>
+      assertIndependentCarrier(
+        laneTrace([7, 7, 7], [65534, 65535, 65535]),
+        458750,
+        458753
+      ),
+    /skipped or repeated/,
+    'a one-frame carrier repeat passed'
+  );
+}
+
+// Raw currentFrame labels are retained for diagnostics only. Coverage is
+// authenticated by every independently encoded carrier sample and by the
+// callback sequence and cumulative offsets, including across chunk boundaries.
+//
+// The window's own start is one of those raw labels: the tap answers 'start' with
+// currentFrame, and the engine can report it one render quantum behind the quantum it
+// captures next, the same cached label the callbacks repeat. The carrier says where the
+// capture really begins. Diagnostic lane 43383354503/calibration-6 was told 30208 and its
+// first captured sample carried 30336, and verify run 43370405974 failed the same way
+// (270208 of 270336). Only that exact shape moves the start: the very first captured sample
+// carries a frame exactly one quantum after the label. Anything else keeps the label, so
+// leading samples without a carrier or a wider gap still fail.
+const RENDER_QUANTUM_FRAMES = 128;
+function assertPcmCoverage(
+  start: number,
+  end: number,
+  chunks: MovingTrace['trace']['audio'],
+  witness: MovingTrace['trace']['witness']
+): void {
+  assert.ok(witness, 'independent native carrier unavailable');
+  assertPcmSequence(start, end, chunks, false);
+  const firstChunk = chunks[0];
+  const firstCarried =
+    firstChunk?.witness?.length === 2 && firstChunk.channels[0]?.length
+      ? carrierFrame(firstChunk, 0, witness)
+      : null;
+  const first =
+    firstCarried !== null && firstCarried - start === RENDER_QUANTUM_FRAMES
+      ? firstCarried
+      : start;
+  assertIndependentCarrier({ audio: chunks, witness }, first, end);
+}
+
+function assertPcmSilence(
+  trace: MovingTrace['trace'],
+  start: number,
+  end: number,
+  label: string
+): void {
+  const witness = trace.witness;
+  assertPcmCoverage(start, end, trace.audio, witness);
+  assert.ok(witness, 'independent native carrier unavailable');
+  let observed = 0;
+  for (const chunk of trace.audio)
+    for (let i = 0; i < chunk.channels[0]!.length; i++) {
+      const frame = carrierFrame(chunk, i, witness);
+      if (frame === null || frame < start || frame >= end) continue;
+      assert.ok(
+        Math.abs(chunk.channels[0]![i]!) < 0.001 &&
+          Math.abs(chunk.channels[1]![i]!) < 0.001,
+        label
+      );
+      observed++;
+    }
+  assert.equal(observed, end - start, `${label}: incomplete observation`);
+}
+
+function lastCarrierEnd(trace: MovingTrace['trace']): number {
+  const witness = trace.witness;
+  assert.ok(witness, 'independent native carrier unavailable');
+  for (let c = trace.audio.length - 1; c >= 0; c--) {
+    const chunk = trace.audio[c]!;
+    for (let i = chunk.channels[0]!.length - 1; i >= 0; i--) {
+      const frame = carrierFrame(chunk, i, witness);
+      if (frame !== null) return frame + 1;
+    }
+  }
+  throw new Error('independent native carrier absent from capture');
+}
+
+// Legacy ring evidence, measured from the viewer's own cold-controller records
+// (OTIO_PROOF_COLD, trace kind 'cold-controller'). 'solver' samples carry the
+// resident slot count and the phase interval in wall ms. 'clock-selection' carries
+// the 512-frame guard and the causal epoch. 'ring-refused' is an explicit refusal:
+// any refusal in a normal legacy run fails here and never passes silently. Nothing
+// is computed from the proof's own formula.
+// Recorded shapes, measured from the viewer's own trace (not assumed):
+//   cold-controller 'solver': { event, wall, samples: [{ dL, iL0Plus1Start, sourceT0Seconds,
+//     rL, wMinSeconds, residentSlots }], intervalLower, intervalUpper, phaseLowerMs,
+//     phaseUpperMs, chosenAnchor, spreadAcceptable }
+//   scheduled-pcm 'clock-selection': { event, guardFrames, contextFrame, epochWall, ... }
+//   cold-controller 'ring-refused': { event, code, decoder, slots, requiredSlots, capPixels, usedPixels }
+// residentSlots is per sample, never on the solver record itself.
+interface LegacyRingSample {
+  residentSlots: number;
+}
+interface LegacyRingSolver {
+  event: 'solver';
+  samples: LegacyRingSample[];
+  phaseLowerMs: number;
+  phaseUpperMs: number;
+}
+const LEGACY_RING_GUARD_FRAMES = 512;
+
+function legacyColdValues(
+  trace: MovingTrace['trace']
+): Array<Record<string, unknown>> {
+  return trace.events
+    .filter((entry) => entry.kind === 'cold-controller')
+    .map((entry) => entry.value as Record<string, unknown>);
+}
+
+function legacyScheduledValues(
+  trace: MovingTrace['trace']
+): Array<Record<string, unknown>> {
+  return trace.events
+    .filter((entry) => entry.kind === 'scheduled-pcm')
+    .map((entry) => entry.value as Record<string, unknown>);
+}
+
+// `requireSolver` is set only on the cold start path, the only path that emits 'solver'
+// records. Phase bounds are absolute performance-timeline ms, the same origin as
+// performance.now(), so callers compare them with absolute wall times.
+function assertLegacyRingEvidence(
+  trace: MovingTrace['trace'],
+  requireSolver: boolean
+): LegacyRingSolver[] {
+  const cold = legacyColdValues(trace);
+  const refused = cold.filter((value) => value['event'] === 'ring-refused');
+  assert.equal(
+    refused.length,
+    0,
+    `legacy ring refused playback: ${JSON.stringify(refused[0])}`
+  );
+  // An unplaced epoch is not a ring refusal, but a normal legacy run must place one, so it
+  // fails here with its reason rather than passing or being misread as a ring shortage.
+  const unplaceable = cold.filter(
+    (value) => value['event'] === 'epoch-unplaceable'
+  );
+  assert.equal(
+    unplaceable.length,
+    0,
+    `legacy epoch unplaceable: ${JSON.stringify(unplaceable[0])}`
+  );
+  const solvers = cold.filter(
+    (value) => value['event'] === 'solver'
+  ) as unknown as LegacyRingSolver[];
+  if (requireSolver)
+    assert.ok(
+      solvers.length > 0,
+      'legacy cold run recorded no ring solver state'
+    );
+  for (const solver of solvers) {
+    assert.ok(
+      Array.isArray(solver.samples) && solver.samples.length > 0,
+      'legacy phase solve carries no samples'
+    );
+    for (const sample of solver.samples)
+      assert.ok(
+        Number.isSafeInteger(sample.residentSlots) && sample.residentSlots >= 2,
+        'legacy phase solve sample has fewer than two resident slots'
+      );
+    assert.ok(
+      Number.isFinite(solver.phaseLowerMs) &&
+        Number.isFinite(solver.phaseUpperMs) &&
+        solver.phaseLowerMs <= solver.phaseUpperMs,
+      'legacy phase interval is empty or non-finite'
+    );
+  }
+  const scheduled = legacyScheduledValues(trace);
+  const selections = scheduled.filter(
+    (value) => value['event'] === 'clock-selection'
+  );
+  assert.ok(selections.length > 0, 'legacy run recorded no clock selection');
+  const epochs = scheduled
+    .filter((value) => value['event'] === 'epoch')
+    .map((value) => Number(value['f0']));
+  for (const selection of selections)
+    assert.equal(
+      selection['guardFrames'],
+      LEGACY_RING_GUARD_FRAMES,
+      'legacy clock selection does not use the 512-frame guard'
+    );
+  // A committed selection names the epoch frame it chose, which the scheduler must have
+  // committed. A refused selection has no frame and is not evidence of playback.
+  const committed = selections.filter(
+    (value) => typeof value['contextFrame'] === 'number'
+  );
+  assert.ok(committed.length > 0, 'legacy run committed no clock selection');
+  for (const selection of committed)
+    assert.ok(
+      epochs.includes(Number(selection['contextFrame'])),
+      'legacy clock selection frame was never committed by the scheduler'
+    );
+  return solvers;
+}
+
+function assertAnchorEvidence(
+  trace: MovingTrace['trace']
+): Record<string, unknown> {
+  const witness = trace.witness;
+  assert.ok(
+    witness &&
+      Number.isSafeInteger(witness.frozenAnchor) &&
+      Number.isSafeInteger(witness.gateInitialFrame) &&
+      witness.frozenAnchor % 128 === 0,
+    'independent proof carrier origin or production anchor missing'
+  );
+  const layout = trace.events.find((event) => event.kind === 'transport-layout')
+    ?.value as Record<string, unknown> | undefined;
+  const productionCarrier = trace.events.find(
+    (event) => event.kind === 'production-anchor-carrier-connected'
+  )?.value as Record<string, unknown> | undefined;
+  assert.ok(
+    layout?.['inputs'] === 3 &&
+      layout['outputs'] === 1 &&
+      layout['channelCount'] === 2 &&
+      layout['channelCountMode'] === 'explicit' &&
+      layout['channelInterpretation'] === 'speakers' &&
+      Array.isArray(layout['outputChannels']) &&
+      layout['outputChannels'][0] === 2,
+    'authored gate channel layout changed'
+  );
+  assert.ok(
+    productionCarrier?.['clockEpoch'] === witness.clockEpoch &&
+      productionCarrier['input'] === 1 &&
+      productionCarrier['frames'] === 8192 &&
+      productionCarrier['channels'] === 2 &&
+      productionCarrier['rate'] === trace.sampleRate &&
+      productionCarrier['channelCount'] === 2 &&
+      productionCarrier['channelCountMode'] === 'explicit' &&
+      productionCarrier['channelInterpretation'] === 'discrete',
+    'native anchor carrier routing is not isolated stereo'
+  );
+  const sourceStart = trace.events.find(
+    (event) => event.kind === 'production-anchor-start-request'
+  )?.value as Record<string, unknown> | undefined;
+  assert.ok(
+    sourceStart?.['clockEpoch'] === witness.clockEpoch &&
+      sourceStart['offset'] === 0 &&
+      sourceStart['playbackRate'] === 1 &&
+      sourceStart['detune'] === 0 &&
+      sourceStart['loop'] === false &&
+      typeof sourceStart['when'] === 'number' &&
+      Math.abs(
+        sourceStart['when'] * trace.sampleRate - witness.gateInitialFrame
+      ) <=
+        1 / 1024,
+    'native anchor carrier did not start at the frozen origin with unit rate'
+  );
+  const messages = trace.events
+    .filter((event) => event.kind === 'transport-message')
+    .map((event) => event.value as Record<string, unknown>);
+  const anchor = messages.find(
+    (message) => message?.['type'] === 'anchor-certified'
+  );
+  assert.ok(
+    anchor &&
+      anchor['clockEpoch'] === witness.clockEpoch &&
+      anchor['firstFrame'] === witness.gateInitialFrame &&
+      anchor['callbackOrdinal'] === 2 &&
+      Number.isSafeInteger(anchor['sampleCount']) &&
+      Number.isSafeInteger(anchor['quantumLength']) &&
+      Number(anchor['quantumLength']) >= 2 &&
+      Number(anchor['quantumLength']) <= 2048 &&
+      Number.isSafeInteger(anchor['bankSerial']) &&
+      anchor['lastCertifiedEnd'] ===
+        witness.gateInitialFrame + Number(anchor['sampleCount']) &&
+      anchor['clockCoverageEnd'] === witness.gateInitialFrame + 65536 - 2048,
+    'anchor certificate lacks exact production-anchor provenance'
+  );
+  const boot = trace.events
+    .filter((event) => event.kind === 'transport-bootstrap-clock')
+    .map((event) => event.value as Record<string, unknown>)
+    .filter((record) => record['clockEpoch'] === witness.clockEpoch)
+    .slice(0, 2);
+  assert.equal(
+    boot.length,
+    2,
+    'first two certified native parameter callbacks missing'
+  );
+  let expected = witness.gateInitialFrame,
+    total = 0;
+  for (let q = 0; q < 2; q++) {
+    const record = boot[q]!,
+      values = record['clockFrameA'],
+      tags = record['clockTagA'];
+    assert.ok(
+      Array.isArray(values) &&
+        values.length >= 2 &&
+        values.length <= 2048 &&
+        Array.isArray(tags) &&
+        (tags.length === 1 || tags.length === values.length) &&
+        record['callbackOrdinal'] === q + 1 &&
+        record['sampleCount'] === total &&
+        record['certifiedFrame'] === expected,
+      'bootstrap bank provenance invalid'
+    );
+    for (let i = 0; i < values.length; i++) {
+      const value: number = values[i];
+      assert.ok(
+        Number.isFinite(value) &&
+          Math.abs(value - Math.round(value)) < 1 / 16 &&
+          witness.gateInitialFrame + Math.round(value) === expected + i &&
+          tags[tags.length === 1 ? 0 : i] === anchor['bankSerial'],
+        'bootstrap bank sample disagrees with production anchor'
+      );
+    }
+    expected += values.length;
+    total += values.length;
+  }
+  assert.equal(
+    expected,
+    anchor['lastCertifiedEnd'],
+    'anchor boundary differs from actual callbacks'
+  );
+  assert.equal(
+    total,
+    anchor['sampleCount'],
+    'anchor count differs from actual callbacks'
+  );
+  assertPcmSilence(
+    trace,
+    witness.gateInitialFrame,
+    expected,
+    'authored PCM escaped before anchor certification'
+  );
+  return anchor;
+}
+
+function associateBootstrapClock(trace: MovingTrace['trace'], f0: number) {
+  const witness = trace.witness;
+  assert.ok(witness, 'bootstrap association lacks witness');
+  const tap: TapQuantum[] = [];
+  for (const chunk of trace.audio) {
+    const q = requireQuantumArrays(chunk, 'bootstrap association');
+    const ordinals = chunk.quantumOrdinals;
+    assert.ok(
+      ordinals && ordinals.length === q.lengths.length,
+      'bootstrap tap ordinals missing'
+    );
+    let cursor = 0;
+    for (let i = 0; i < q.lengths.length; i++) {
+      const length = q.lengths[i]!;
+      const carrier = Array.from({ length }, (_, j) =>
+        carrierFrame(chunk, cursor + j, witness)
+      );
+      tap.push({
+        label: q.frames[i]!,
+        length,
+        ordinal: ordinals[i]!,
+        offset: q.offsets[i]!,
+        carrier,
+      });
+      cursor += length;
+    }
+    assert.equal(
+      cursor,
+      chunk.channels[0]?.length,
+      'bootstrap tap chunk length mismatch'
+    );
+  }
+  const raw = trace.events
+    .filter((event) => event.kind === 'transport-bootstrap-clock')
+    .map((event) => event.value as Record<string, unknown>)
+    .filter((record) => record['clockEpoch'] === witness.clockEpoch);
+  const gate: GateQuantum[] = raw.map((record) => {
+    const active = record['active'] as {
+      bank: number;
+      startFrame: number;
+      endFrame: number;
+      serial: number;
+      clockEpoch: number;
+    };
+    assert.ok(
+      active &&
+        (active.bank === 0 || active.bank === 1) &&
+        active.clockEpoch === witness.clockEpoch,
+      'bootstrap active bank invalid'
+    );
+    const suffix = active.bank === 0 ? 'A' : 'B';
+    const frames = record['clockFrame' + suffix];
+    const tags = record['clockTag' + suffix];
+    assert.ok(
+      Array.isArray(frames) && Array.isArray(tags),
+      'bootstrap native samples missing'
+    );
+    return {
+      clockEpoch: Number(record['clockEpoch']),
+      cachedCurrentFrame: Number(record['cachedCurrentFrame']),
+      callbackOrdinal: Number(record['callbackOrdinal']),
+      sampleCount: Number(record['sampleCount']),
+      certifiedFrame: Number(record['certifiedFrame']),
+      startFrame: active.startFrame,
+      endFrame: active.endFrame,
+      serial: active.serial,
+      frames,
+      tags,
+    };
+  });
+  const association = associateGateSequence(tap, gate, witness.clockEpoch);
+  // Bootstrap starts before the witness; only its actual covered suffix is compared.
+  // Require the committed first frame and do not infer placement from the carrier.
+  const last = gate[gate.length - 1]!;
+  const end = Math.min(
+    last.certifiedFrame + last.frames.length,
+    witness.frozenAnchor + witness.length
+  );
+  assert.ok(
+    f0 >= witness.frozenAnchor && end > f0,
+    'bootstrap evidence does not cover committed frame'
+  );
+  assertAssociatedSamples(tap, gate, association.start, f0, end);
+  return { tap, gate, offset: association.offset };
+}
+
+function assertGateClockEvidence(
+  trace: MovingTrace['trace'],
+  crossing = false
+): number {
+  const witness = trace.witness;
+  assert.ok(witness, 'independent carrier provenance missing');
+  assert.ok(
+    Number.isSafeInteger(witness.gateInitialFrame) &&
+      Number.isSafeInteger(witness.frozenAnchor),
+    'gate origin or independent carrier origin missing'
+  );
+  const messages = trace.events
+    .filter((event) => event.kind === 'transport-message')
+    .map((event) => event.value as Record<string, unknown>);
+  assert.ok(
+    !messages.some((message) => message['type'] === 'clock-trace-overflow'),
+    'gate parameter trace overflow'
+  );
+  const records = messages.filter(
+    (message) =>
+      message['type'] === 'clock-trace' &&
+      message['clockEpoch'] === witness.clockEpoch
+  );
+  assert.ok(records.length >= 2, 'actual gate parameter samples missing');
+  if (crossing) {
+    const first = Number(records[0]!['certifiedFrame']);
+    const last = records[records.length - 1]!;
+    const active = last['active'];
+    assert.ok(
+      active && typeof active === 'object' && 'bank' in active,
+      'large-frame trace active bank missing'
+    );
+    const frames = last[active.bank === 0 ? 'clockFrameA' : 'clockFrameB'];
+    assert.ok(
+      Array.isArray(frames) &&
+        first < 2 ** 24 &&
+        Number(last['certifiedFrame']) + frames.length > 2 ** 24,
+      'native parameter capture did not span the large-frame boundary'
+    );
+  }
+  const quanta: Array<{
+    label: number;
+    count: number;
+    chunk: MovingTrace['trace']['audio'][number];
+    offset: number;
+    sampleOffset: number;
+    ordinal: number;
+  }> = [];
+  for (const chunk of trace.audio) {
+    assert.ok(
+      chunk.quantumFrames &&
+        chunk.quantumLengths &&
+        chunk.quantumOffsets &&
+        chunk.quantumOrdinals &&
+        chunk.quantumFrames.length === chunk.quantumLengths.length &&
+        chunk.quantumFrames.length === chunk.quantumOffsets.length &&
+        chunk.quantumFrames.length === chunk.quantumOrdinals.length,
+      'raw callback labels and offsets missing'
+    );
+    let offset = 0;
+    for (let i = 0; i < chunk.quantumFrames.length; i++) {
+      quanta.push({
+        label: chunk.quantumFrames[i]!,
+        count: chunk.quantumLengths[i]!,
+        chunk,
+        offset,
+        sampleOffset: chunk.quantumOffsets[i]!,
+        ordinal: chunk.quantumOrdinals[i]!,
+      });
+      offset += chunk.quantumLengths[i]!;
+    }
+  }
+  for (let i = 1; i < quanta.length; i++) {
+    assert.equal(
+      quanta[i]!.ordinal,
+      quanta[i - 1]!.ordinal + 1,
+      'tap callback ordinal gap'
+    );
+    assert.equal(
+      quanta[i]!.sampleOffset,
+      quanta[i - 1]!.sampleOffset + quanta[i - 1]!.count,
+      'tap callback offset gap'
+    );
+  }
+  const candidates = quanta.flatMap((_, start) =>
+    records.every((record, i) => {
+      const active = record['active'];
+      if (
+        !active ||
+        typeof active !== 'object' ||
+        !('bank' in active) ||
+        (active.bank !== 0 && active.bank !== 1)
+      )
+        return false;
+      const frames = record[active.bank === 0 ? 'clockFrameA' : 'clockFrameB'];
+      return (
+        Array.isArray(frames) &&
+        quanta[start + i]?.label === record['cachedCurrentFrame'] &&
+        quanta[start + i]?.count === frames.length
+      );
+    })
+      ? [start]
+      : []
+  );
+  assert.equal(
+    candidates.length,
+    1,
+    'gate and tap callback sequence cannot be uniquely aligned'
+  );
+  const associationOffset =
+    quanta[candidates[0]!]!.sampleOffset - Number(records[0]!['sampleCount']);
+  for (let r = 0; r < records.length; r++) {
+    const record = records[r]!,
+      quantum = quanta[candidates[0]! + r]!;
+    assert.equal(
+      quantum.sampleOffset - Number(record['sampleCount']),
+      associationOffset,
+      'gate/tap sample offset changed'
+    );
+    const active = record['active'] as {
+      bank: 0 | 1;
+      serial: number;
+      startFrame: number;
+      endFrame: number;
+      clockEpoch: number;
+    };
+    assert.ok(
+      active &&
+        (active.bank === 0 || active.bank === 1) &&
+        Number.isSafeInteger(active.startFrame) &&
+        Number.isSafeInteger(active.endFrame) &&
+        Number.isSafeInteger(active.serial) &&
+        active.clockEpoch === record['clockEpoch'] &&
+        active.clockEpoch === witness.clockEpoch &&
+        Number.isSafeInteger(record['callbackOrdinal']) &&
+        Number.isSafeInteger(record['sampleCount']),
+      'gate active descriptor missing'
+    );
+    const suffix = active.bank === 0 ? 'A' : 'B';
+    const frames = record['clockFrame' + suffix] as number[];
+    const tags = record['clockTag' + suffix] as number[];
+    assert.ok(
+      Array.isArray(frames) &&
+        frames.length === quantum.count &&
+        Array.isArray(tags) &&
+        (tags.length === 1 || tags.length === quantum.count),
+      'actual gate parameter array missing'
+    );
+    if (r > 0) {
+      const prior = records[r - 1]!,
+        priorQuantum = quanta[candidates[0]! + r - 1]!;
+      assert.equal(
+        Number(record['callbackOrdinal']),
+        Number(prior['callbackOrdinal']) + 1,
+        'gate trace callback sequence gap'
+      );
+      assert.equal(
+        Number(record['sampleCount']),
+        Number(prior['sampleCount']) + priorQuantum.count,
+        'gate trace cumulative offset gap'
+      );
+    }
+    for (let i = 0; i < quantum.count; i++) {
+      const actual = carrierFrame(quantum.chunk, quantum.offset + i, witness);
+      const relative = frames[i]!;
+      assert.ok(
+        actual !== null &&
+          Number.isFinite(relative) &&
+          Math.abs(relative - Math.round(relative)) < 1 / 16 &&
+          tags[tags.length === 1 ? 0 : i] === active.serial,
+        'native clock parameter or independent carrier invalid'
+      );
+      assert.equal(
+        active.startFrame + Math.round(relative),
+        actual,
+        'gate parameter and independent carrier disagree'
+      );
+      assert.ok(actual < active.endFrame, 'gate parameter exceeds active bank');
+      if (i === 0)
+        assert.equal(
+          record['certifiedFrame'],
+          actual,
+          'gate certified wrong frame'
+        );
+      const warming = record['warming'] as {
+        bank: 0 | 1;
+        serial: number;
+        startFrame: number;
+        endFrame: number;
+        clockEpoch: number;
+      } | null;
+      if (
+        warming &&
+        actual - i >= warming.startFrame &&
+        actual + (quantum.count - i) <= warming.endFrame
+      ) {
+        const warmSuffix = warming.bank === 0 ? 'A' : 'B';
+        const warmFrames = record['clockFrame' + warmSuffix],
+          warmTags = record['clockTag' + warmSuffix];
+        assert.ok(
+          warming.bank !== active.bank &&
+            warming.clockEpoch === active.clockEpoch &&
+            Array.isArray(warmFrames) &&
+            warmFrames.length === quantum.count &&
+            Array.isArray(warmTags) &&
+            (warmTags.length === 1 || warmTags.length === quantum.count),
+          'warming bank evidence missing'
+        );
+        const warm = warmFrames[i];
+        assert.ok(
+          Number.isFinite(warm) &&
+            Math.abs(warm - Math.round(warm)) < 1 / 16 &&
+            warmTags[warmTags.length === 1 ? 0 : i] === warming.serial &&
+            warming.startFrame + Math.round(warm) === actual,
+          'warming bank disagrees with independent carrier'
+        );
+      }
+    }
+  }
+  return associationOffset;
+}
+
+// Names the terminal clock fault recorded by the real gate, if any. Read-only
+// evidence for a failure message; it never changes what the assertions accept.
+function describeClockFault(trace: MovingTrace['trace']): string {
+  const fault = trace.events.find(
+    (event) =>
+      event.kind === 'scheduled-pcm' &&
+      event.value !== null &&
+      typeof event.value === 'object' &&
+      (event.value as Record<string, unknown>)['event'] ===
+        'clock-fault-diagnostic'
+  );
+  const gate = trace.events.find(
+    (event) =>
+      event.kind === 'transport-message' &&
+      event.value !== null &&
+      typeof event.value === 'object' &&
+      ['clock-fault', 'anchor-late'].includes(
+        String((event.value as Record<string, unknown>)['type'])
+      )
+  );
+  const skipped = trace.events.find(
+    (event) => event.kind === 'clock-stale-stop-skipped'
+  );
+  return [
+    `gate clock-fault: ${gate ? JSON.stringify(gate.value) : 'none'}`,
+    `fault diagnostic: ${fault ? JSON.stringify(fault.value) : 'none'}`,
+    `stop skipped: ${skipped ? JSON.stringify(skipped.value) : 'no'}`,
+  ].join('; ');
+}
+
+// A rare cached-global duplicate is evidence only when the real production
+// gate observed it and both quanta agree with the separately scheduled carrier
+// and source PCM. This is deliberately separate from the steady trace window.
+function assertNaturalStaleWitness(
+  trace: MovingTrace['trace'],
+  f0: number,
+  expected: readonly [Float32Array, Float32Array],
+  associationOffset: number
+): void {
+  const witness = trace.witness;
+  assert.ok(witness, 'independent stale-event carrier unavailable');
+  const messages = trace.events
+    .filter((event) => event.kind === 'transport-message')
+    .map((event) => event.value as Record<string, unknown>);
+  const captureId = trace.staleCaptureId;
+  assert.ok(
+    Number.isSafeInteger(captureId) && Number(captureId) > 0,
+    'stale capture id missing'
+  );
+  assert.ok(
+    !messages.some(
+      (message) =>
+        message?.['type'] === 'clock-stale-overflow' ||
+        message?.['type'] === 'clock-stale-control-error'
+    ) &&
+      !trace.events.some(
+        (event) => event.kind === 'clock-stale-control-timeout'
+      ),
+    'stale-pair recorder overflow or control failure'
+  );
+  const starts = messages.filter(
+    (message) =>
+      message?.['type'] === 'clock-stale-started' &&
+      message['clockEpoch'] === witness.clockEpoch &&
+      message['captureId'] === captureId
+  );
+  const stops = messages.filter(
+    (message) =>
+      message?.['type'] === 'clock-stale-stopped' &&
+      message['clockEpoch'] === witness.clockEpoch &&
+      message['captureId'] === captureId
+  );
+  assert.equal(
+    starts.length,
+    1,
+    'stale capture start acknowledgment missing or duplicated'
+  );
+  assert.equal(
+    stops.length,
+    1,
+    `stale capture stop acknowledgment missing or duplicated; ${describeClockFault(trace)}`
+  );
+  assert.ok(
+    Number.isSafeInteger(starts[0]!['afterCallbackOrdinal']) &&
+      Number.isSafeInteger(stops[0]!['lastCallbackOrdinal']) &&
+      stops[0]!['overflow'] === false,
+    'stale capture boundary or overflow invalid'
+  );
+  const pairs = messages.filter(
+    (message) =>
+      message?.['type'] === 'clock-stale-pair' &&
+      message['clockEpoch'] === witness.clockEpoch &&
+      message['captureId'] === captureId
+  );
+  assert.equal(
+    pairs.length,
+    stops[0]!['pairs'],
+    'stale capture pair count mismatch'
+  );
+  const startIndex = messages.indexOf(starts[0]!),
+    stopIndex = messages.indexOf(stops[0]!);
+  assert.ok(
+    startIndex < stopIndex &&
+      pairs.every((pair) => {
+        const index = messages.indexOf(pair);
+        return index > startIndex && index < stopIndex;
+      }),
+    'stale-pair messages are outside their acknowledged capture window'
+  );
+  assert.ok(
+    pairs.length > 0,
+    'no actual cached-global duplicate observed by the production gate'
+  );
+  const quanta: Array<{
+    label: number;
+    count: number;
+    chunk: MovingTrace['trace']['audio'][number];
+    offset: number;
+    sampleOffset: number;
+  }> = [];
+  for (const chunk of trace.audio) {
+    assert.ok(
+      chunk.quantumFrames && chunk.quantumLengths && chunk.quantumOffsets,
+      'tap callback provenance missing'
+    );
+    let offset = 0;
+    for (let i = 0; i < chunk.quantumFrames.length; i++) {
+      quanta.push({
+        label: chunk.quantumFrames[i]!,
+        count: chunk.quantumLengths[i]!,
+        chunk,
+        offset,
+        sampleOffset: chunk.quantumOffsets[i]!,
+      });
+      offset += chunk.quantumLengths[i]!;
+    }
+  }
+  let audiblePairs = 0;
+  for (const pair of pairs) {
+    const previous = pair['previous'] as Record<string, unknown> | undefined;
+    const current = pair['current'] as Record<string, unknown> | undefined;
+    assert.ok(
+      previous &&
+        current &&
+        pair['clockEpoch'] === witness.clockEpoch &&
+        previous['cachedCurrentFrame'] === current['cachedCurrentFrame'] &&
+        Number(current['callbackOrdinal']) ===
+          Number(previous['callbackOrdinal']) + 1 &&
+        Number(current['sampleCount']) ===
+          Number(previous['sampleCount']) + Number(previous['quantumLength']) &&
+        Number(previous['callbackOrdinal']) >
+          Number(starts[0]!['afterCallbackOrdinal']) &&
+        Number(current['callbackOrdinal']) <=
+          Number(stops[0]!['lastCallbackOrdinal']),
+      'stale recorder did not retain adjacent actual gate callbacks'
+    );
+    const indices = quanta.flatMap((quantum, index) =>
+      quantum.sampleOffset ===
+        Number(previous['sampleCount']) + associationOffset &&
+      quanta[index + 1]?.sampleOffset ===
+        Number(current['sampleCount']) + associationOffset &&
+      quantum.label === previous['cachedCurrentFrame'] &&
+      quanta[index + 1]?.label === current['cachedCurrentFrame'] &&
+      quantum.count === previous['quantumLength'] &&
+      quanta[index + 1]?.count === current['quantumLength']
+        ? [index]
+        : []
+    );
+    assert.equal(
+      indices.length,
+      1,
+      'stale gate callbacks cannot be uniquely correlated with independent tap'
+    );
+    let precedingEnd: number | null = null,
+      inside = true,
+      energy = 0;
+    for (const [record, index] of [
+      [previous, indices[0]!],
+      [current, indices[0]! + 1],
+    ] as const) {
+      const quantum = quanta[index]!;
+      const active = record['active'] as {
+        bank: 0 | 1;
+        serial: number;
+        startFrame: number;
+        endFrame: number;
+        clockEpoch: number;
+      };
+      assert.ok(
+        active &&
+          (active.bank === 0 || active.bank === 1) &&
+          active.clockEpoch === witness.clockEpoch &&
+          Number.isSafeInteger(active.serial) &&
+          Number.isSafeInteger(active.startFrame) &&
+          Number.isSafeInteger(active.endFrame),
+        'stale-pair bank descriptor invalid'
+      );
+      const suffix = active.bank === 0 ? 'A' : 'B';
+      const frames = record['clockFrame' + suffix],
+        tags = record['clockTag' + suffix];
+      assert.ok(
+        Array.isArray(frames) &&
+          frames.length === quantum.count &&
+          Array.isArray(tags) &&
+          (tags.length === 1 || tags.length === quantum.count),
+        'stale-pair native parameter samples unavailable'
+      );
+      for (let i = 0; i < quantum.count; i++) {
+        const sourceFrame = carrierFrame(
+            quantum.chunk,
+            quantum.offset + i,
+            witness
+          ),
+          value: number = frames[i];
+        assert.ok(
+          sourceFrame !== null &&
+            Number.isFinite(value) &&
+            Math.abs(value - Math.round(value)) < 1 / 16 &&
+            tags[tags.length === 1 ? 0 : i] === active.serial &&
+            active.startFrame + Math.round(value) === sourceFrame &&
+            sourceFrame < active.endFrame,
+          'stale-pair bank disagrees with independent source carrier'
+        );
+        if (i === 0) {
+          assert.equal(
+            record['certifiedFrame'],
+            sourceFrame,
+            'stale-pair certified frame mismatch'
+          );
+        }
+        if (precedingEnd !== null)
+          assert.equal(
+            sourceFrame,
+            precedingEnd,
+            'stale-pair repeated or omitted source samples'
+          );
+        precedingEnd = sourceFrame + 1;
+        const n = sourceFrame - f0;
+        if (n < 0 || n >= expected[0].length || n >= expected[1].length) {
+          inside = false;
+          continue;
+        }
+        for (let ch = 0; ch < 2; ch++) {
+          const actual = quantum.chunk.channels[ch]![quantum.offset + i]!,
+            reference = expected[ch]![n]!;
+          assert.ok(
+            Number.isFinite(actual) &&
+              Number.isFinite(reference) &&
+              Math.abs(actual - reference) <= 0.003,
+            'stale-pair source PCM mismatch'
+          );
+          energy += reference * reference;
+        }
+      }
+    }
+    if (inside && energy > 1e-8) audiblePairs++;
+  }
+  assert.ok(
+    audiblePairs > 0,
+    'no stale-pair covered audible independently referenced player PCM'
+  );
+}
+
+function assertStaleWitnessControls(
+  trace: MovingTrace['trace'],
+  f0: number,
+  expected: readonly [Float32Array, Float32Array],
+  associationOffset: number
+): void {
+  const witness = trace.witness;
+  assert.ok(witness, 'independent stale-control witness missing');
+  const chosen = trace.events.find((event) => {
+    if (
+      event.kind !== 'transport-message' ||
+      !event.value ||
+      typeof event.value !== 'object' ||
+      !('type' in event.value) ||
+      event.value.type !== 'clock-stale-pair' ||
+      !('current' in event.value) ||
+      !event.value.current ||
+      typeof event.value.current !== 'object' ||
+      !('certifiedFrame' in event.value.current) ||
+      !('quantumLength' in event.value.current) ||
+      !('previous' in event.value) ||
+      !event.value.previous ||
+      typeof event.value.previous !== 'object' ||
+      !('certifiedFrame' in event.value.previous)
+    )
+      return false;
+    const frame = Number(event.value.current.certifiedFrame);
+    return (
+      Number(event.value.previous.certifiedFrame) >= f0 &&
+      frame + Number(event.value.current.quantumLength) <=
+        f0 + expected[0].length
+    );
+  });
+  assert.ok(chosen, 'no actual source-bound stale event for negative controls');
+  const pair = chosen.value as { current: { certifiedFrame: number } };
+  const targetFrame = pair.current.certifiedFrame;
+  for (const kind of [
+    'missing-pair',
+    'missing-stop',
+    'stop-short',
+    'overflow',
+    'foreign-capture',
+    'shifted-bank',
+    'corrupt-carrier',
+    'corrupt-pcm',
+  ] as const) {
+    const corrupt = structuredClone(trace);
+    if (kind === 'missing-pair') {
+      corrupt.events = corrupt.events.filter(
+        (event) =>
+          !(
+            event.kind === 'transport-message' &&
+            event.value &&
+            typeof event.value === 'object' &&
+            'type' in event.value &&
+            event.value.type === 'clock-stale-pair'
+          )
+      );
+    } else if (kind === 'overflow') {
+      corrupt.events.push({
+        kind: 'transport-message',
+        timestamp: chosen.timestamp,
+        value: { type: 'clock-stale-overflow' },
+      });
+    } else if (kind === 'foreign-capture') {
+      const event = corrupt.events.find(
+        (entry) =>
+          entry.kind === 'transport-message' &&
+          entry.value &&
+          typeof entry.value === 'object' &&
+          'type' in entry.value &&
+          entry.value.type === 'clock-stale-pair'
+      );
+      assert.ok(
+        event?.value &&
+          typeof event.value === 'object' &&
+          'captureId' in event.value,
+        'stale pair capture id unavailable'
+      );
+      event.value.captureId = Number(event.value.captureId) + 1;
+    } else if (kind === 'shifted-bank') {
+      const event = corrupt.events.find(
+        (entry) =>
+          entry.kind === 'transport-message' &&
+          entry.value &&
+          typeof entry.value === 'object' &&
+          'type' in entry.value &&
+          entry.value.type === 'clock-stale-pair'
+      );
+      assert.ok(
+        event?.value &&
+          typeof event.value === 'object' &&
+          'current' in event.value,
+        'bank corruption did not reach a stale event'
+      );
+      const current = event.value.current as Record<string, unknown>;
+      const active = current['active'] as { bank: number };
+      const frames = current[active.bank === 0 ? 'clockFrameA' : 'clockFrameB'];
+      assert.ok(
+        Array.isArray(frames) && frames.length > 0,
+        'stale bank samples missing'
+      );
+      frames[0] = Number(frames[0]) + 1;
+    } else if (kind === 'missing-stop') {
+      corrupt.events = corrupt.events.filter(
+        (event) =>
+          !(
+            event.kind === 'transport-message' &&
+            event.value &&
+            typeof event.value === 'object' &&
+            'type' in event.value &&
+            event.value.type === 'clock-stale-stopped'
+          )
+      );
+    } else if (kind === 'stop-short') {
+      const event = corrupt.events.find(
+        (entry) =>
+          entry.kind === 'transport-message' &&
+          entry.value &&
+          typeof entry.value === 'object' &&
+          'type' in entry.value &&
+          entry.value.type === 'clock-stale-stopped'
+      );
+      assert.ok(
+        event?.value &&
+          typeof event.value === 'object' &&
+          'pairs' in event.value,
+        'stale stop record unavailable'
+      );
+      event.value.pairs = Number(event.value.pairs) - 1;
+    } else {
+      let injected = false;
+      for (const chunk of corrupt.audio) {
+        for (let i = 0; i < chunk.channels[0]!.length; i++) {
+          if (carrierFrame(chunk, i, witness) !== targetFrame) continue;
+          if (kind === 'corrupt-carrier') {
+            assert.ok(chunk.witness?.[1], 'stale carrier channel missing');
+            chunk.witness[1][i] = (chunk.witness[1][i]! + 1) % 65536;
+          } else chunk.channels[0]![i] = chunk.channels[0]![i]! + 0.1;
+          injected = true;
+          break;
+        }
+        if (injected) break;
+      }
+      assert.ok(injected, `${kind} did not reach the stale callback`);
+    }
+    const verify = () =>
+      assertNaturalStaleWitness(corrupt, f0, expected, associationOffset);
+    if (kind === 'corrupt-carrier')
+      assert.throws(verify, /stale-pair bank disagrees/);
+    else
+      assert.throws(verify, `${kind} stale-event corruption passed admission`);
+  }
+}
+interface ScheduledPcmComparison {
+  sampleCount: number;
+  rmse: [number, number];
+  shiftedRmse: [number, number];
+  swappedRmse: [number, number];
+  mutedPrefixRmse: [number, number];
+}
+
+function assertLatestRecoveryFrame(
+  trace: MovingTrace['trace'],
+  selection: Record<string, unknown>,
+  boundary: number,
+  rate: number,
+  audioOnly: boolean
+): void {
+  const generation = selection['generation'];
+  const request = trace.events.find(
+    (event) =>
+      event.kind === 'scheduled-pcm' &&
+      (event.value as Record<string, unknown>)?.['event'] ===
+        'recovery-request' &&
+      (event.value as Record<string, unknown>)?.['boundaryFrame'] ===
+        boundary &&
+      (event.value as Record<string, unknown>)?.['generation'] ===
+        selection['oldGeneration']
+  );
+  const inputsEvent = trace.events.find(
+    (event) =>
+      event.kind === 'scheduled-pcm' &&
+      (event.value as Record<string, unknown>)?.['event'] ===
+        'recovery-selection-inputs' &&
+      (event.value as Record<string, unknown>)?.['generation'] === generation
+  );
+  assert.ok(
+    request && inputsEvent,
+    'missing independent recovery request or inputs'
+  );
+  const origin = request.value as Record<string, unknown>,
+    input = inputsEvent.value as Record<string, unknown>;
+  const before = Number(origin['requestPerformanceBefore']),
+    after = Number(origin['requestPerformanceAfter']);
+  const requestWall = Number(selection['requestWall']),
+    deadline = Number(selection['deadline']);
+  assert.ok(
+    Number.isFinite(before) &&
+      Number.isFinite(after) &&
+      before <= requestWall &&
+      requestWall <= after &&
+      after <= request.timestamp &&
+      deadline === requestWall + 350,
+    'recovery reset its original request deadline'
+  );
+  assert.ok(
+    input['boundaryFrame'] === boundary &&
+      input['sampleRate'] === rate &&
+      input['guardFrames'] === 512 &&
+      input['compositionStartFrame'] === selection['compositionStartFrame'] &&
+      Array.isArray(input['phaseSamples']),
+    'invalid raw recovery bounds'
+  );
+  const bridge = input['bridge'] as {
+    contextTime: number;
+    performanceTime: number;
+    mappingAllowanceMs: number;
+  };
+  const vsync = Number(input['vsyncSeconds']),
+    contextNow = Number(input['contextAfterSeconds']);
+  const firstBatch = Number(input['firstBatchFrames']),
+    coverage = Number(input['clockCoverageEnd']);
+  const horizon = Number(input['horizonSeconds']),
+    scheduled = Number(input['scheduledThrough']);
+  const visual = input['visualThrough'] as { value: number; rate: number };
+  assert.ok(
+    bridge &&
+      [
+        bridge.contextTime,
+        bridge.performanceTime,
+        bridge.mappingAllowanceMs,
+        vsync,
+        contextNow,
+        horizon,
+      ].every(Number.isFinite) &&
+      bridge.mappingAllowanceMs >= 0 &&
+      vsync > 0 &&
+      Number.isSafeInteger(firstBatch) &&
+      firstBatch > 0 &&
+      Number.isSafeInteger(coverage) &&
+      Number.isSafeInteger(scheduled) &&
+      visual &&
+      Number.isFinite(visual.value) &&
+      Number.isFinite(visual.rate) &&
+      visual.rate > 0,
+    'invalid native recovery bounds'
+  );
+  assert.equal(
+    horizon,
+    0.5,
+    'recovery horizon differs from the PCM scheduling policy'
+  );
+  const firstScheduled = trace.events
+    .filter(
+      (event) =>
+        event.kind === 'scheduled-pcm' &&
+        event.value &&
+        typeof event.value === 'object' &&
+        'event' in event.value &&
+        event.value.event === 'scheduled' &&
+        'generation' in event.value &&
+        event.value.generation === generation &&
+        'contextStartFrame' in event.value &&
+        event.value.contextStartFrame === selection['f0']
+    )
+    .map((event) => event.value as Record<string, unknown>);
+  assert.ok(
+    firstScheduled.length > 0 &&
+      Math.max(
+        ...firstScheduled.map(
+          (event) =>
+            Number(event['contextEndFrame']) -
+            Number(event['contextStartFrame'])
+        )
+      ) === firstBatch,
+    'first-batch horizon is not supported by the real scheduled sources'
+  );
+  const coverageEvents = trace.events.filter(
+    (event) =>
+      event.kind === 'transport-message' &&
+      event.timestamp <= inputsEvent.timestamp &&
+      event.value &&
+      typeof event.value === 'object' &&
+      'type' in event.value &&
+      (event.value.type === 'anchor-certified' ||
+        event.value.type === 'clock-promoted') &&
+      'clockEpoch' in event.value &&
+      event.value.clockEpoch === selection['clockEpoch'] &&
+      'clockCoverageEnd' in event.value
+  );
+  const lastCoverage = coverageEvents.at(-1)?.value as
+    | Record<string, unknown>
+    | undefined;
+  assert.equal(
+    lastCoverage?.['clockCoverageEnd'],
+    coverage,
+    'coverage upper bound did not come from the accepted carrier bank'
+  );
+  const native = trace.events.find(
+    (event) =>
+      event.kind === 'audio-output-timestamp-observed' &&
+      event.value &&
+      typeof event.value === 'object' &&
+      'output' in event.value &&
+      event.value.output &&
+      typeof event.value.output === 'object' &&
+      'contextTime' in event.value.output &&
+      'performanceTime' in event.value.output &&
+      event.value.output.contextTime === bridge.contextTime &&
+      event.value.output.performanceTime === bridge.performanceTime &&
+      'injected' in event.value &&
+      event.value.injected === false &&
+      event.timestamp <= inputsEvent.timestamp
+  );
+  assert.ok(
+    native,
+    'recovery bridge was not read from the native output clock'
+  );
+  const band = recoveryPhaseBand(
+    input['phaseSamples'] as Record<string, unknown>[],
+    vsync,
+    audioOnly
+  );
+  const phaseUpper = band.upper;
+  const phaseLower = band.lower;
+  const wallUpper = Math.floor(
+    (bridge.contextTime +
+      (Math.min(phaseUpper - bridge.mappingAllowanceMs, deadline) -
+        bridge.performanceTime) /
+        1000) *
+      rate
+  );
+  const horizonUpper = Math.floor((contextNow + horizon) * rate) - firstBatch;
+  const latest = Math.min(
+    boundary + Math.floor(0.02 * rate),
+    wallUpper,
+    horizonUpper,
+    coverage - 1
+  );
+  const frame = Number(selection['f0']);
+  const safeWall = Math.max(
+    phaseLower + bridge.mappingAllowanceMs,
+    requestWall,
+    Number(input['readEndWallMs'])
+  );
+  const earliest = Math.max(
+    boundary,
+    Math.ceil(contextNow * rate) + 512,
+    Math.ceil(
+      (bridge.contextTime + (safeWall - bridge.performanceTime) / 1000) * rate
+    )
+  );
+  assert.ok(
+    Number.isSafeInteger(frame) &&
+      frame >= earliest &&
+      frame <= latest &&
+      Math.min(scheduled, Math.floor((visual.value * rate) / visual.rate)) >
+        Number(input['compositionStartFrame']),
+    'selected recovery frame is outside independent feasibility bounds'
+  );
+  assert.ok(
+    Number.isSafeInteger(latest) && frame === latest,
+    `recovery F1 is not latest independently feasible frame: ${frame} vs ${latest}`
+  );
+}
+
+// Independent lookahead invariant. Runtime frontier events carry two coordinates:
+// contextFrameThrough is the gate/context frame, while preparedThrough, scopeEndFrame,
+// decodedCap and descriptorCoverageEnd are composition frames at the sample rate.
+// The lookahead gap is therefore measured on compositionThrough.value (the
+// composition frame of the gate frontier), never on the context coordinate.
+const LOOKAHEAD_FRAMES = 4096;
+function assertLookaheadFrontiers(
+  events: readonly Record<string, unknown>[],
+  rate: number
+): number {
+  let checked = 0;
+  for (const event of events) {
+    if (event['event'] !== 'frontier') continue;
+    const composition = event['compositionThrough'] as
+      | { value?: unknown; rate?: unknown }
+      | undefined;
+    assert.ok(
+      composition &&
+        Number.isSafeInteger(composition.value) &&
+        composition.rate === rate,
+      'frontier lacks a composition-coordinate frontier'
+    );
+    const B = Number(composition.value);
+    const P = Number(event['preparedThrough']);
+    const S = Number(event['scopeEndFrame']);
+    const K = Number(event['reserveFrames']);
+    const E = Number(event['descriptorCoverageEnd']);
+    const cap = Number(event['decodedCap']);
+    assert.ok(
+      [B, P, S, K, E, cap].every(Number.isSafeInteger) &&
+        typeof event['descriptorReady'] === 'boolean',
+      'frontier lacks independent lookahead evidence'
+    );
+    // Successor handoff frontiers are governed by assertSuccessorPolicy (planner
+    // decision): they are exempt from the ordinary I1 gap, not from its window.
+    if (event['frontierKind'] === 'handoff') {
+      checked++;
+      continue;
+    }
+    const terminal = P === S;
+    if (!terminal)
+      assert.ok(
+        P - B >= LOOKAHEAD_FRAMES,
+        `frontier ${B} is within ${P - B} decoded frames of P=${P}, below K=${LOOKAHEAD_FRAMES}`
+      );
+    assert.equal(
+      K,
+      terminal ? 0 : LOOKAHEAD_FRAMES,
+      'frontier used a non-policy lookahead'
+    );
+    assert.equal(
+      cap,
+      terminal ? S : P - LOOKAHEAD_FRAMES,
+      'decoded cap disagrees with the lookahead invariant'
+    );
+    assert.ok(B <= cap, 'frontier exceeds the decoded horizon');
+    if (terminal) {
+      // Scope end: no successor exists, readiness is vacuous, and the half-open
+      // frontier may equal the coverage end.
+      assert.ok(
+        B === E && B <= S,
+        'terminal frontier does not end at its descriptor coverage'
+      );
+    } else {
+      // Readiness is enforced at closure (assertSuccessorPolicy). An ordinary
+      // frontier only must not pass the descriptor coverage it was accepted against.
+      assert.ok(B <= E, 'nonterminal frontier exceeds its descriptor coverage');
+    }
+    checked++;
+  }
+  return checked;
+}
+
+// Successor policy (planner decision). A successor's first arm may only follow a
+// predecessor closure that reported descriptorReady, and it must land inside that
+// predecessor's descriptor window (B_old, min(B_old+K, E)]. In a healthy-decode run it
+// must additionally keep the full reserve P-B >= K. A closure that was not ready
+// must never be followed by a successor epoch.
+function assertSuccessorPolicy(
+  events: readonly Record<string, unknown>[],
+  healthy: boolean
+): number {
+  let closure: Record<string, unknown> | null = null;
+  let checked = 0;
+  for (const event of events) {
+    if (event['event'] === 'recovery-render-closed') {
+      const stop = event['compositionStop'] as { value?: unknown } | undefined;
+      assert.ok(
+        typeof event['descriptorReady'] === 'boolean' &&
+          Number.isSafeInteger(Number(event['preparedThrough'])) &&
+          Number.isSafeInteger(Number(event['descriptorCoverageEnd'])) &&
+          Number.isSafeInteger(Number(stop?.value)),
+        'closure lacks the P, B and readiness receipt'
+      );
+      closure = event;
+      continue;
+    }
+    if (event['event'] === 'frontier' && event['frontierKind'] === 'handoff') {
+      if (closure === null)
+        throw new Error('successor handoff has no predecessor closure');
+      const predecessor: Record<string, unknown> = closure;
+      assert.equal(
+        predecessor['descriptorReady'],
+        true,
+        'successor emitted after a non-ready closure'
+      );
+      const stop = predecessor['compositionStop'] as { value: unknown };
+      assert.ok(
+        Number.isSafeInteger(stop.value),
+        'predecessor closure lacks a composition frontier'
+      );
+      const Bold = Number(stop.value);
+      const E = Number(predecessor['descriptorCoverageEnd']);
+      const composition = event['compositionThrough'] as { value: number };
+      const Bnew = Number(composition.value);
+      const P = Number(event['preparedThrough']);
+      assert.ok(
+        Bnew > Bold && Bnew <= Math.min(Bold + LOOKAHEAD_FRAMES, E),
+        `successor ${Bnew} outside predecessor window (${Bold}, ${Math.min(Bold + LOOKAHEAD_FRAMES, E)}]`
+      );
+      if (healthy)
+        assert.ok(
+          P - Bnew >= LOOKAHEAD_FRAMES,
+          `healthy successor ${Bnew} lacks its reserve below P=${P}`
+        );
+      closure = null;
+      checked++;
+    }
+  }
+  return checked;
+}
+
+// Compare each sample against independent source planes without fitting offsets.
+function assertSourcePcmSamples(
+  trace: MovingTrace['trace'],
+  f0: number,
+  expected: readonly [Float32Array, Float32Array],
+  first: number,
+  end: number
+): void {
+  const witness = trace.witness;
+  assert.ok(
+    witness &&
+      Number.isSafeInteger(f0) &&
+      Number.isSafeInteger(first) &&
+      Number.isSafeInteger(end) &&
+      first >= 0 &&
+      end > first &&
+      end <= expected[0].length &&
+      end <= expected[1].length,
+    'invalid pointwise PCM reference'
+  );
+  assertPcmCoverage(f0 + first, f0 + end, trace.audio, witness);
+  let seen = 0;
+  for (const chunk of trace.audio)
+    for (let i = 0; i < chunk.channels[0]!.length; i++) {
+      const frame = carrierFrame(chunk, i, witness);
+      if (frame === null) continue;
+      const index = frame - f0;
+      if (index < first || index >= end) continue;
+      for (let ch = 0; ch < 2; ch++) {
+        const actual = chunk.channels[ch]![i]!,
+          reference = expected[ch]![index]!;
+        assert.ok(
+          Number.isFinite(actual) &&
+            Number.isFinite(reference) &&
+            Math.abs(actual - reference) <= 0.003,
+          `source-bound PCM sample mismatch at ${index}, channel ${ch}`
+        );
+      }
+      seen++;
+    }
+  assert.equal(
+    seen,
+    end - first,
+    'pointwise PCM reference interval incomplete'
+  );
+}
+
+// Context frame F0 owns expected sample zero in both channels.
+function compareScheduledPcm(
+  chunks: MovingTrace['trace']['audio'],
+  f0: number,
+  expected: readonly [Float32Array, Float32Array],
+  first: number,
+  end: number,
+  witness: MovingTrace['trace']['witness']
+): ScheduledPcmComparison {
+  assert.ok(
+    Number.isSafeInteger(f0) &&
+      Number.isSafeInteger(first) &&
+      Number.isSafeInteger(end)
+  );
+  assert.ok(
+    first >= 0 &&
+      end > first &&
+      end <= expected[0].length &&
+      end <= expected[1].length
+  );
+  assert.ok(
+    chunks.length > 0 && chunks[chunks.length - 1]!.channels[0],
+    'scheduled PCM capture is empty'
+  );
+  assertPcmCoverage(f0 + first, f0 + end, chunks, witness);
+  assert.ok(witness, 'independent native carrier unavailable');
+  const sums = [0, 0],
+    shifted = [0, 0],
+    mutedPrefix = [0, 0],
+    swapped = [0, 0];
+  let count = 0;
+  const prefixEnd = Math.min(end, first + 960);
+  for (const chunk of chunks) {
+    assert.equal(
+      chunk.channels.length,
+      2,
+      'scheduled output must capture stereo'
+    );
+    assert.equal(
+      chunk.channels[0]!.length,
+      chunk.channels[1]!.length,
+      'stereo capture length mismatch'
+    );
+    for (let i = 0; i < chunk.channels[0]!.length; i++) {
+      const frame = carrierFrame(chunk, i, witness);
+      if (frame === null) continue;
+      const index = frame - f0;
+      if (index < first || index >= end) continue;
+      for (let ch = 0; ch < 2; ch++) {
+        const actual = chunk.channels[ch]![i]!;
+        const reference = expected[ch]![index]!;
+        assert.ok(
+          Number.isFinite(actual) && Number.isFinite(reference),
+          'non-finite PCM'
+        );
+        sums[ch]! += (actual - reference) ** 2;
+        const oneSampleLate = index > first ? expected[ch]![index - 1]! : 0;
+        shifted[ch]! += (oneSampleLate - reference) ** 2;
+        swapped[ch]! += (expected[1 - ch]![index]! - reference) ** 2;
+        if (index < prefixEnd) mutedPrefix[ch]! += reference ** 2;
+      }
+      count++;
+    }
+  }
+  assert.equal(
+    count,
+    end - first,
+    'scheduled PCM does not cover the complete expected frame range'
+  );
+  const metric = (values: number[]): [number, number] => [
+    Math.sqrt(values[0]! / count),
+    Math.sqrt(values[1]! / count),
+  ];
+  return {
+    sampleCount: count,
+    rmse: metric(sums),
+    shiftedRmse: metric(shifted),
+    swappedRmse: metric(swapped),
+    mutedPrefixRmse: [
+      Math.sqrt(mutedPrefix[0]! / (prefixEnd - first)),
+      Math.sqrt(mutedPrefix[1]! / (prefixEnd - first)),
+    ],
+  };
+}
+
+async function comparePostGainPcm(
+  capture: MovingTrace,
+  referenceCache: Map<number, Float32Array>,
+  healthyRms: number,
+  mutedRms: number,
+  requireSustainedAgreement = true,
+  sourceActiveFrame?: number
+): Promise<{
+  offset: number;
+  correlation: number;
+  gain: number;
+  longestDropoutMs: number;
+  agreement: Array<{ start: number; observed: number; repeated: number }>;
+  agreementFloor: number | null;
+  repeatedCeiling: number | null;
+}> {
+  const trace = capture.trace;
+  // A scheduled capture carries the independent carrier, which authenticates
+  // coverage where the engine repeats a cached currentFrame label. A native
+  // capture has no carrier, so its raw labels are the only authority.
+  const carried = trace.witness !== null && trace.witness !== undefined;
+  if (carried)
+    assertPcmCoverage(
+      capture.start.sampleFrame,
+      trace.sampleFrame,
+      trace.audio,
+      trace.witness
+    );
+  else
+    assertPcmSequence(
+      capture.start.sampleFrame,
+      trace.sampleFrame,
+      trace.audio
+    );
+  const rate = trace.sampleRate;
+  assert.ok(Number.isFinite(rate) && rate > 0, 'invalid PCM sample rate');
+  let reference = referenceCache.get(rate);
+  if (!reference) {
+    const decoded = await runChild(
+      [
+        'ffmpeg',
+        '-v',
+        'error',
+        '-i',
+        join(fixtureDir, 'media', 'mx_bed.wav'),
+        '-af',
+        'pan=mono|c0=c0',
+        '-ar',
+        String(rate),
+        '-f',
+        'f32le',
+        'pipe:1',
+      ],
+      { timeoutMs: 30000 }
+    );
+    assert.equal(
+      decoded.exit,
+      0,
+      `source audio decode failed: ${decoded.stderr}`
+    );
+    assert.equal(decoded.stdout.length % 4, 0, 'source PCM is truncated');
+    reference = new Float32Array(decoded.stdout.length / 4);
+    for (let i = 0; i < reference.length; i++)
+      reference[i] = decoded.stdout.readFloatLE(i * 4);
+    referenceCache.set(rate, reference);
+  }
+  assert.ok(
+    trace.audio.length > 0 && !trace.audioOverflow,
+    'post-gain PCM unavailable'
+  );
+  for (let i = 1; !carried && i < trace.audio.length; i++) {
+    const previous = trace.audio[i - 1]!;
+    assert.ok(previous.channels[0], 'post-gain PCM channel missing');
+    assert.equal(
+      trace.audio[i]!.sampleFrame,
+      previous.sampleFrame + previous.channels[0].length,
+      'post-gain PCM has a missing chunk'
+    );
+  }
+  const captured = trace.audio.flatMap((chunk) => chunk.channels[0] ?? []);
+  const n = Math.min(Math.floor(rate * 0.5), captured.length);
+  assert.ok(n >= rate * 0.25, 'post-gain PCM too short to align');
+  const maxOffset = Math.min(Math.floor(rate), reference.length - n);
+  const minOffset = -Math.min(Math.floor(rate), n - Math.ceil(rate * 0.25));
+  assert.ok(maxOffset > 0, 'source PCM too short to align');
+  const stride = Math.max(1, Math.floor(rate / 1000));
+  const score = (offset: number): { correlation: number; gain: number } => {
+    let cross = 0,
+      sourceEnergy = 0,
+      capturedEnergy = 0;
+    for (let i = 0; i < n; i += stride) {
+      const sourceIndex = offset + i;
+      if (sourceIndex < 0 || sourceIndex >= reference!.length) continue;
+      const source = reference![sourceIndex]!,
+        actual = captured[i]!;
+      cross += source * actual;
+      sourceEnergy += source * source;
+      capturedEnergy += actual * actual;
+    }
+    return {
+      correlation: cross / Math.sqrt(sourceEnergy * capturedEnergy),
+      gain: cross / sourceEnergy,
+    };
+  };
+  const coarseCandidates: Array<{ offset: number; correlation: number }> = [];
+  for (let candidate = minOffset; candidate <= maxOffset; candidate += stride) {
+    const correlation = score(candidate).correlation;
+    if (Number.isFinite(correlation))
+      coarseCandidates.push({ offset: candidate, correlation });
+  }
+  coarseCandidates.sort((a, b) => b.correlation - a.correlation);
+  let offset = 0,
+    best = -Infinity;
+  for (const coarse of coarseCandidates.slice(0, 16))
+    for (
+      let candidate = Math.max(minOffset, coarse.offset - stride);
+      candidate <= Math.min(maxOffset, coarse.offset + stride);
+      candidate++
+    ) {
+      const current = score(candidate).correlation;
+      if (Number.isFinite(current) && current > best) {
+        best = current;
+        offset = candidate;
+      }
+    }
+  const aligned = score(offset);
+  assert.ok(
+    aligned.correlation > 0 && aligned.gain > 0,
+    'post-gain PCM could not be correlated to source'
+  );
+  const window = Math.max(1, Math.round(rate * 0.005));
+  const threshold = Math.max(mutedRms * 2, healthyRms * 0.01);
+  let run = 0,
+    longest = sourceActiveFrame === undefined ? Math.max(0, -offset) : 0;
+  assert.ok(
+    reference.length - offset >= captured.length,
+    'source PCM does not cover the full capture'
+  );
+  const length = captured.length;
+  const sourceSample = (index: number) => (index < 0 ? 0 : reference![index]!);
+  let sourceEnergy = 0,
+    actualEnergy = 0;
+  for (let i = 0; i < Math.min(window, length); i++) {
+    sourceEnergy += (sourceSample(offset + i) * aligned.gain) ** 2;
+    actualEnergy += captured[i]! ** 2;
+  }
+  for (let start = 0; start + window <= length; start++) {
+    if (start > 0) {
+      sourceEnergy +=
+        (sourceSample(offset + start + window - 1) * aligned.gain) ** 2 -
+        (sourceSample(offset + start - 1) * aligned.gain) ** 2;
+      actualEnergy +=
+        captured[start + window - 1]! ** 2 - captured[start - 1]! ** 2;
+    }
+    if (
+      sourceActiveFrame !== undefined &&
+      capture.start.sampleFrame + start < sourceActiveFrame
+    )
+      continue;
+    const expected = Math.sqrt(Math.max(0, sourceEnergy) / window);
+    const actual = Math.sqrt(Math.max(0, actualEnergy) / window);
+    if (expected > threshold && actual <= threshold) {
+      run = run === 0 ? window : run + 1;
+      longest = Math.max(longest, run);
+    } else run = 0;
+  }
+  const agreement: Array<{
+    start: number;
+    observed: number;
+    repeated: number;
+  }> = [];
+  const segment = Math.floor(rate * 0.25);
+  const replayLength = Math.floor(rate * 0.5);
+  for (let start = replayLength; start + segment <= length; start += segment) {
+    let cross = 0,
+      replayCross = 0,
+      sourcePower = 0,
+      power = 0,
+      replayPower = 0;
+    for (let i = 0; i < segment; i += stride) {
+      const expected = sourceSample(offset + start + i);
+      const actual = captured[start + i]!;
+      const replay = captured[(start + i) % replayLength]!;
+      cross += expected * actual;
+      replayCross += expected * replay;
+      sourcePower += expected * expected;
+      power += actual * actual;
+      replayPower += replay * replay;
+    }
+    if (Math.sqrt(power / Math.ceil(segment / stride)) <= threshold) continue;
+    const observed = cross / Math.sqrt(sourcePower * power);
+    const repeated = replayCross / Math.sqrt(sourcePower * replayPower);
+    assert.ok(
+      Number.isFinite(observed) && Number.isFinite(repeated),
+      'audio agreement window is undefined'
+    );
+    agreement.push({ start, observed, repeated });
+  }
+  if (requireSustainedAgreement)
+    assert.ok(agreement.length > 0, 'no sustained audio agreement windows');
+  const agreementFloor = agreement.length
+    ? Math.min(...agreement.map((entry) => entry.observed))
+    : null;
+  const repeatedCeiling = agreement.length
+    ? Math.max(...agreement.map((entry) => entry.repeated))
+    : null;
+  return {
+    offset,
+    correlation: aligned.correlation,
+    gain: aligned.gain,
+    agreement,
+    agreementFloor,
+    repeatedCeiling,
+    longestDropoutMs: (longest * 1000) / rate,
+  };
+}
+
+async function decodeScreencastFrames(
+  cast: { frames: Array<Record<string, unknown>>; overflow: boolean },
+  rect: { x: number; y: number; width: number; height: number; scale: number }
+): Promise<Array<{ timestamp: number; pixels: Uint8Array }>> {
+  assert.equal(
+    rect.scale,
+    1,
+    'screencast calibration requires unit device scale'
+  );
+  const frames = cast.frames.map((frame) => {
+    const metadata = frame['metadata'] as { timestamp?: number } | undefined;
+    assert.ok(
+      typeof frame['data'] === 'string' && Number.isFinite(metadata?.timestamp),
+      'screencast frame missing image or timestamp'
+    );
+    return {
+      data: Buffer.from(frame['data'] as string, 'base64'),
+      timestamp: metadata!.timestamp! * 1000,
+    };
+  });
+  assert.ok(
+    frames.length >= 2 && !cast.overflow,
+    'screencast capture unavailable or overflowed'
+  );
+  const x = Math.round(rect.x),
+    y = Math.round(rect.y);
+  const width = Math.floor(rect.width),
+    height = Math.floor(rect.height);
+  assert.ok(
+    x >= 0 && y >= 0 && width > 0 && height > 0,
+    'canvas outside screencast viewport'
+  );
+  const output = await runChild(
+    [
+      'ffmpeg',
+      '-v',
+      'error',
+      '-f',
+      'image2pipe',
+      '-vcodec',
+      'mjpeg',
+      '-i',
+      'pipe:0',
+      '-vf',
+      // Convert to RGBA before cropping: on yuvj420p input ffmpeg rounds an odd crop origin or
+      // width to even, which moves the crop one column off the canvas.
+      `format=rgba,crop=${width}:${height}:${x}:${y},scale=64:36:flags=neighbor`,
+      '-fps_mode',
+      'passthrough',
+      '-f',
+      'rawvideo',
+      '-pix_fmt',
+      'rgba',
+      'pipe:1',
+    ],
+    {
+      input: Buffer.concat(frames.map((frame) => frame.data)),
+      timeoutMs: 30000,
+    }
+  );
+  assert.equal(
+    output.exit,
+    0,
+    `screencast JPEG decode failed: ${output.stderr}`
+  );
+  const frameBytes = 64 * 36 * 4;
+  assert.equal(
+    output.stdout.length,
+    frames.length * frameBytes,
+    'screencast decoder dropped frames'
+  );
+  return frames.map((frame, i) => ({
+    timestamp: frame.timestamp,
+    pixels: output.stdout.subarray(i * frameBytes, (i + 1) * frameBytes),
+  }));
+}
+
+// Odd-x decode controls on real encoded JPEGs, run through the production decoder. The canvas
+// sits at x = 220.609, which rounds to 221: an odd origin. ffmpeg snaps an odd crop origin on
+// 4:2:0 input to an even one, so the default crop reads one column off the canvas. The stages
+// are composed in RGBA and placed with pad, because overlay snaps odd offsets the same way.
+const SCREENCAST_STAGE = { width: 780, height: 437 };
+const SCREENCAST_CONTROL_RECT = {
+  x: 220.609375,
+  y: 54.0625,
+  width: 101,
+  height: 56.8125,
+  scale: 1,
+};
+
+// Splits an MJPEG stream at its start-of-image markers. Entropy-coded data stuffs every 0xFF
+// with 0x00, so a start marker cannot occur inside a frame.
+function splitJpegStream(stream: Buffer): Buffer[] {
+  const starts: number[] = [];
+  for (let i = 0; i + 1 < stream.length; i++)
+    if (stream[i] === 0xff && stream[i + 1] === 0xd8) starts.push(i);
+  return starts.map((start, i) =>
+    stream.subarray(start, starts[i + 1] ?? stream.length)
+  );
+}
+
+// One JPEG per source frame: the frame is drawn as its 64x36 bitmap, shown at the canvas size
+// with nearest-neighbour sampling, and placed at the canvas origin on a black stage.
+async function encodeScreencastStages(
+  source: string,
+  frames: number,
+  rect: { x: number; y: number; width: number; height: number }
+): Promise<Buffer[]> {
+  const place = `pad=${SCREENCAST_STAGE.width}:${SCREENCAST_STAGE.height}:${Math.round(rect.x)}:${Math.round(rect.y)}:color=black`;
+  const output = await runChild(
+    [
+      'ffmpeg',
+      '-v',
+      'error',
+      '-i',
+      source,
+      '-filter_complex',
+      `[0:v]scale=64:36:flags=neighbor,scale=${rect.width}:${Math.floor(rect.height)}:flags=neighbor,format=rgba,${place},format=yuvj420p[out]`,
+      '-map',
+      '[out]',
+      '-frames:v',
+      String(frames),
+      '-c:v',
+      'mjpeg',
+      '-q:v',
+      '2',
+      '-f',
+      'image2pipe',
+      'pipe:1',
+    ],
+    { timeoutMs: 20000 }
+  );
+  assert.equal(
+    output.exit,
+    0,
+    `screencast stage encode failed: ${output.stderr}`
+  );
+  return splitJpegStream(output.stdout);
+}
+
+// A single-colour JPEG at the canvas size and origin, on the same black stage.
+async function encodeSolidStage(
+  color: string,
+  rect: { x: number; y: number; width: number; height: number }
+): Promise<Buffer> {
+  const place = `pad=${SCREENCAST_STAGE.width}:${SCREENCAST_STAGE.height}:${Math.round(rect.x)}:${Math.round(rect.y)}:color=black`;
+  const output = await runChild(
+    [
+      'ffmpeg',
+      '-v',
+      'error',
+      '-f',
+      'lavfi',
+      '-i',
+      `color=c=${color}:s=${rect.width}x${Math.floor(rect.height)}:d=0.04`,
+      '-vf',
+      `format=rgba,${place},format=yuvj420p`,
+      '-frames:v',
+      '1',
+      '-c:v',
+      'mjpeg',
+      '-q:v',
+      '2',
+      '-f',
+      'image2pipe',
+      'pipe:1',
+    ],
+    { timeoutMs: 20000 }
+  );
+  assert.equal(
+    output.exit,
+    0,
+    `unrelated stage encode failed: ${output.stderr}`
+  );
+  return output.stdout;
+}
+
+// Decode-path controls. Every one of the 36 odd-x stages must classify as its own source frame
+// through decodeScreencastFrames; the default crop must fail on the same JPEGs; and black, white
+// and grey stages must classify as no source frame at all.
+async function assertScreencastDecodeControls(
+  references: readonly Uint8Array[]
+): Promise<void> {
+  const rect = SCREENCAST_CONTROL_RECT;
+  const stages = await encodeScreencastStages(
+    join(decoderMediaDir, 'fr30.webm'),
+    references.length,
+    rect
+  );
+  assert.equal(
+    stages.length,
+    references.length,
+    'odd-x control stage count mismatch'
+  );
+  const decoded = await decodeScreencastFrames(
+    {
+      frames: stages.map((jpeg, i) => ({
+        data: jpeg.toString('base64'),
+        metadata: { timestamp: i / 30 },
+      })),
+      overflow: false,
+    },
+    rect
+  );
+  for (let n = 0; n < references.length; n++) {
+    const cls = classifyVideoFrame(decoded[n]!.pixels, references);
+    assert.equal(
+      cls,
+      n,
+      `odd-x decode classified stage ${n} as ${String(cls)}`
+    );
+  }
+
+  const frameBytes = 64 * 36 * 4;
+  const defaultCrop = await runChild(
+    [
+      'ffmpeg',
+      '-v',
+      'error',
+      '-f',
+      'image2pipe',
+      '-vcodec',
+      'mjpeg',
+      '-i',
+      'pipe:0',
+      '-vf',
+      `crop=${rect.width}:${Math.floor(rect.height)}:${Math.round(rect.x)}:${Math.round(rect.y)},scale=64:36:flags=neighbor`,
+      '-fps_mode',
+      'passthrough',
+      '-f',
+      'rawvideo',
+      '-pix_fmt',
+      'rgba',
+      'pipe:1',
+    ],
+    { input: Buffer.concat(stages), timeoutMs: 30000 }
+  );
+  assert.equal(
+    defaultCrop.exit,
+    0,
+    `default crop control decode failed: ${defaultCrop.stderr}`
+  );
+  let defaultCorrect = 0;
+  for (let n = 0; n < references.length; n++) {
+    const pixels = defaultCrop.stdout.subarray(
+      n * frameBytes,
+      (n + 1) * frameBytes
+    );
+    if (classifyVideoFrame(pixels, references) === n) defaultCorrect++;
+  }
+  assert.ok(
+    defaultCorrect < references.length,
+    `the default crop classified all ${references.length} odd-x stages correctly; the control does not discriminate`
+  );
+
+  for (const color of ['black', 'white', '0x808080']) {
+    const solid = await encodeSolidStage(color, rect);
+    const [frame] = await decodeScreencastFrames(
+      {
+        frames: [0, 1].map((i) => ({
+          data: solid.toString('base64'),
+          metadata: { timestamp: i / 30 },
+        })),
+        overflow: false,
+      },
+      rect
+    );
+    assert.equal(
+      classifyVideoFrame(frame!.pixels, references),
+      null,
+      `unrelated ${color} stage was classified as a source frame`
+    );
+  }
+}
+
+async function proofProvenance(
+  browser: ChromeSession
+): Promise<Record<string, unknown>> {
+  const repository = fileURLToPath(new URL('../../../', import.meta.url));
+  const revision = await runChild(['git', 'rev-parse', 'HEAD'], {
+    cwd: repository,
+    timeoutMs: 10000,
+  });
+  assert.equal(revision.exit, 0, 'cannot identify proof source revision');
+  const tracked = await runChild(
+    ['git', 'ls-files', '-z', '--cached', '--others', '--exclude-standard'],
+    {
+      cwd: repository,
+      timeoutMs: 10000,
+    }
+  );
+  assert.equal(tracked.exit, 0, 'cannot enumerate tracked proof source');
+  const sourceHash = createHash('sha256');
+  for (const path of tracked.stdout
+    .toString('utf8')
+    .split('\0')
+    .filter(Boolean)
+    .sort()) {
+    sourceHash.update(path).update('\0');
+    try {
+      sourceHash.update(await readFile(join(repository, path)));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      sourceHash.update('<deleted>');
+    }
+    sourceHash.update('\0');
+  }
+  const assets: Record<string, string> = {};
+  for (const name of (await readdir(viewerDist)).sort()) {
+    try {
+      assets[name] = createHash('sha256')
+        .update(await readFile(join(viewerDist, name)))
+        .digest('hex');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EISDIR') throw error;
+    }
+  }
+  const media: Record<string, string> = {};
+  for (const [name, path] of [
+    ['fr30.webm', join(decoderMediaDir, 'fr30.webm')],
+    ...[
+      'secondary_b.mp4',
+      'plate_1001.png',
+      'plate_1002.png',
+      'mx_bed.wav',
+    ].map((file) => [file, join(fixtureDir, 'media', file)] as const),
+    ['timing-oracle.json', join(decoderMediaDir, 'timing-oracle.json')],
+    [
+      'boundary.otio',
+      fileURLToPath(
+        new URL(
+          '../../relic-format/test/fixtures/otio/edge-cases/playback-boundaries.otio',
+          import.meta.url
+        )
+      ),
+    ],
+  ] as const)
+    media[name] = createHash('sha256')
+      .update(await readFile(path))
+      .digest('hex');
+  const viewport = await browser.evaluate<Record<string, unknown>>(
+    '({width:innerWidth,height:innerHeight,deviceScaleFactor:devicePixelRatio})'
+  );
+  return {
+    revision: revision.stdout.toString('utf8').trim(),
+    workingTreeSha256: sourceHash.digest('hex'),
+    builtAssets: assets,
+    media,
+    browser: browser.browserVersion,
+    browserExecutable: browser.executablePath,
+    launchFlags: browser.launchFlags,
+    viewport,
+    capture: {
+      canvasGrid: [64, 36],
+      screencast: { format: 'jpeg', quality: 90, everyNthFrame: 1 },
+      audio:
+        'post-master-gain stereo with independent frozen-origin carrier; raw currentFrame labels retained',
+      maxSamples: 3000,
+    },
+  };
+}
+
+async function calibrateCaptureOverhead(
+  browser: ChromeSession,
+  provenance: Record<string, unknown>
+): Promise<void> {
+  const geometry = await browser.evaluate<{
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    scale: number;
+    timeOrigin: number;
+  }>(`(() => {
+    const canvas = document.querySelector('canvas.otio-canvas');
+    if (!(canvas instanceof HTMLCanvasElement)) throw new Error('canvas missing');
+    const r = canvas.getBoundingClientRect();
+    const width = Math.min(r.width, r.height * canvas.width / canvas.height);
+    const height = Math.min(r.height, r.width * canvas.height / canvas.width);
+    return {x:r.left + (r.width - width)/2, y:r.top + (r.height - height)/2,
+      width, height, scale:devicePixelRatio, timeOrigin:performance.timeOrigin};
+  })()`);
+  const records: Array<Record<string, unknown>> = [];
+  for (const [mode, fault] of [
+    ['light', 'none'],
+    ['full', 'none'],
+    ['light', 'freeze'],
+    ['full', 'freeze'],
+    ['light', 'stall'],
+    ['full', 'stall'],
+  ] as const) {
+    await seekTo(browser, 0);
+    const stopCast = await browser.startScreencast();
+    const result = await browser.evaluate<{
+      start: { timestamp: number; frame: number };
+      trace: {
+        timestamp: number;
+        frame: number;
+        visual?: Array<{ sampleDuration?: number }>;
+        samples?: unknown[];
+      };
+      clock: { samples: number[]; overflow: boolean; timestamp: number };
+    }>(`(async () => {
+      const delay = ms => {const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, ms); return promise;};
+      const root = document.querySelector('.otio-view');
+      const button = document.querySelector('button.otio-play');
+      if (!root || !(button instanceof HTMLButtonElement)) throw new Error('proof playback control missing');
+      globalThis.__otioProofTrace.setFault(${JSON.stringify(fault)});
+      globalThis.__otioProofTrace.startClockCalibration();
+      const start = ${mode === 'full' ? 'await globalThis.__otioProofTrace.start()' : 'globalThis.__otioProofTrace.startLightweight()'};
+      button.click();
+      await delay(250);
+      const first = {timestamp:performance.now(), frame:Number(root.dataset.frame),
+        buffering:root.dataset.buffering, playing:root.dataset.playing};
+      await delay(750);
+      const trace = ${mode === 'full' ? 'await globalThis.__otioProofTrace.stop()' : 'globalThis.__otioProofTrace.stopLightweight()'};
+      const clock = globalThis.__otioProofTrace.stopClockCalibration();
+      globalThis.__otioProofTrace.setFault('none');
+      if (root.dataset.playing === 'true') button.click();
+      return {start, trace, clock, first};
+    })()`);
+    const cast = await stopCast();
+    const decoded = await decodeScreencastFrames(cast, geometry);
+    const samples = decoded.filter((frame) => {
+      const timestamp = frame.timestamp - geometry.timeOrigin;
+      return (
+        timestamp >= result.start.timestamp &&
+        timestamp <= result.trace.timestamp
+      );
+    });
+    const states: Array<{ timestamp: number; pixels: Uint8Array }> = [];
+    for (const sample of samples) {
+      const previous = states[states.length - 1];
+      if (!previous || rmse(sample.pixels, previous.pixels) > 2)
+        states.push({ timestamp: sample.timestamp, pixels: sample.pixels });
+    }
+    const startMs = result.start.timestamp + geometry.timeOrigin;
+    const endMs = result.trace.timestamp + geometry.timeOrigin;
+    const gaps = [
+      states.length ? states[0]!.timestamp - startMs : endMs - startMs,
+    ];
+    for (let i = 1; i < states.length; i++)
+      gaps.push(states[i]!.timestamp - states[i - 1]!.timestamp);
+    if (states.length) gaps.push(endMs - states[states.length - 1]!.timestamp);
+    gaps.sort((a, b) => a - b);
+    const frameGaps = result.clock.samples
+      .slice(1)
+      .map((time, i) => time - result.clock.samples[i]!);
+    const first250FrameGaps = result.clock.samples
+      .slice(1)
+      .filter((time) => time <= result.start.timestamp + 250)
+      .map((time, i) => time - result.clock.samples[i]!);
+    const sampleCosts =
+      result.trace.visual?.flatMap((sample) =>
+        typeof sample.sampleDuration === 'number' ? [sample.sampleDuration] : []
+      ) ?? [];
+    const receipt = {
+      provenance,
+      mode,
+      fault,
+      geometry,
+      result,
+      cast,
+      stateTimes: states.map((state) => state.timestamp),
+      frameGaps,
+      sampleCosts,
+      p95: gaps[Math.min(gaps.length - 1, Math.floor(gaps.length * 0.95))],
+      max: gaps[gaps.length - 1],
+      first250FrameGaps,
+    };
+    await writeFile(
+      join(shotDir, `capture-overhead-${mode}-${fault}.json`),
+      JSON.stringify(receipt)
+    );
+    assert.ok(
+      !result.clock.overflow && !cast.overflow,
+      'capture-overhead sample overflow'
+    );
+    records.push(receipt);
+  }
+  for (const mode of ['light', 'full']) {
+    const healthy = records.find(
+      (r) => r['mode'] === mode && r['fault'] === 'none'
+    )!;
+    for (const fault of ['freeze', 'stall']) {
+      const bad = records.find(
+        (r) => r['mode'] === mode && r['fault'] === fault
+      )!;
+      assert.ok(
+        Number(bad['max']) > Number(healthy['max']),
+        `${mode} screencast did not distinguish ${fault} from healthy`
+      );
+    }
+  }
+}
+
+interface ColdPresentationMetrics {
+  changes: Array<{ timestamp: number; sourceFrame: number }>;
+  duration: number;
+  initialMs: number;
+  p95: number;
+  max: number;
+}
+
+function coldPresentationMetrics(
+  samples: Array<{ timestamp: number; sourceFrame: number }>,
+  playTimestamp: number,
+  warmTimestamp: number
+): ColdPresentationMetrics {
+  const changes: Array<{ timestamp: number; sourceFrame: number }> = [];
+  for (const sample of samples)
+    if (
+      !changes.length ||
+      changes[changes.length - 1]!.sourceFrame !== sample.sourceFrame
+    )
+      changes.push(sample);
+  const initialMs =
+    changes.length > 1 ? changes[1]!.timestamp - playTimestamp : Infinity;
+  const intervals: number[] = [];
+  for (let i = 2; i < changes.length; i++)
+    intervals.push(changes[i]!.timestamp - changes[i - 1]!.timestamp);
+  if (changes.length > 1)
+    intervals.push(warmTimestamp - changes[changes.length - 1]!.timestamp);
+  intervals.sort((a, b) => a - b);
+  return {
+    changes,
+    duration: warmTimestamp - playTimestamp,
+    initialMs,
+    p95:
+      intervals[
+        Math.min(intervals.length - 1, Math.floor(intervals.length * 0.95))
+      ] ?? Infinity,
+    max: intervals[intervals.length - 1] ?? Infinity,
+  };
+}
+
+// Jason, 2026-11-13: the 50 ms p95 budget is compared in display refreshes. A frame held three
+// refreshes is 50.0 ms at 60 Hz and meets the budget; four refreshes are 66.7 ms and exceed it.
+// Raw milliseconds against 50 decided by measurement noise: the same three-refresh hold read
+// 49.998 ms and 51.238 ms on the screencast and 48.7 ms on the canvas trace (diagnostic run
+// 43383354503), and with about 15 gaps in a window the p95 is the largest of them. The proof's
+// browsers present at 60 Hz. The 100 ms maximum stays a raw comparison.
+const DISPLAY_REFRESH_MS = 1000 / 60;
+const P95_BUDGET_REFRESHES = 3;
+function withinP95Budget(gapMs: number): boolean {
+  return (
+    Number.isFinite(gapMs) &&
+    Math.round(gapMs / DISPLAY_REFRESH_MS) <= P95_BUDGET_REFRESHES
+  );
+}
+
+function passesColdPresentation(metrics: ColdPresentationMetrics): boolean {
+  return (
+    metrics.changes.length >= 2 &&
+    metrics.initialMs <= 350 &&
+    withinP95Budget(metrics.p95) &&
+    metrics.max <= 100
+  );
+}
+
+function assertColdPresentationGateControls(): void {
+  const samples = (times: number[]) =>
+    times.map((timestamp, sourceFrame) => ({ timestamp, sourceFrame }));
+  assert.ok(
+    passesColdPresentation(
+      coldPresentationMetrics(samples([0, 350, 383]), 0, 416)
+    )
+  );
+  assert.ok(
+    !passesColdPresentation(
+      coldPresentationMetrics(samples([0, 351, 384]), 0, 417)
+    )
+  );
+  // A three-refresh hold meets the p95 budget however the instrument rounds it.
+  for (const hold of [48.7, 49.998, 50, 51.238])
+    assert.ok(
+      passesColdPresentation(
+        coldPresentationMetrics(samples([0, 300, 300 + hold]), 0, 333 + hold)
+      ),
+      `a three-refresh hold measured as ${hold} ms was refused`
+    );
+  // A four-refresh hold exceeds it, and so does anything nearer four refreshes than three.
+  for (const hold of [58.4, 66.7, 67])
+    assert.ok(
+      !passesColdPresentation(
+        coldPresentationMetrics(samples([0, 300, 300 + hold]), 0, 333 + hold)
+      ),
+      `a hold of ${hold} ms passed the p95 budget`
+    );
+  // A two-refresh frame passes, and a gap that could not be measured does not.
+  assert.ok(withinP95Budget(33.3) && !withinP95Budget(Number.NaN));
+  assert.ok(
+    !passesColdPresentation(coldPresentationMetrics(samples([0]), 0, 400))
+  );
+}
+
+async function assessMovingWindowControls(
+  browser: ChromeSession,
+  healthyRms: number,
+  mutedRms: number,
+  provenance: Record<string, unknown>,
+  focused = false
+): Promise<void> {
+  assertColdPresentationGateControls();
+  const decoded = await runChild(
+    [
+      'ffmpeg',
+      '-v',
+      'error',
+      '-i',
+      join(decoderMediaDir, 'fr30.webm'),
+      '-vf',
+      'scale=64:36:flags=neighbor',
+      '-frames:v',
+      '36',
+      '-f',
+      'rawvideo',
+      '-pix_fmt',
+      'rgba',
+      'pipe:1',
+    ],
+    { timeoutMs: 20000 }
+  );
+  assert.equal(decoded.exit, 0, `reference decoding failed: ${decoded.stderr}`);
+  const frameBytes = 64 * 36 * 4;
+  assert.equal(
+    decoded.stdout.length,
+    36 * frameBytes,
+    'independent reference frame count mismatch'
+  );
+  const windows = await packetWindows('fr30.webm', false);
+  const fixture = JSON.parse(
+    await readFile(
+      fileURLToPath(
+        new URL(
+          '../../relic-format/test/fixtures/otio/edge-cases/playback-boundaries.otio',
+          import.meta.url
+        )
+      ),
+      'utf8'
+    )
+  ) as {
+    tracks: {
+      children: Array<{
+        children: Array<{
+          metadata?: { relic?: { id?: string } };
+          source_range?: { start_time: { value: number; rate: number } };
+          media_references?: Record<
+            string,
+            {
+              available_range?: { start_time: { value: number; rate: number } };
+            }
+          >;
+          active_media_reference_key?: string;
+        }>;
+      }>;
+    };
+  };
+  const itemId = focused ? 'moving-a' : 'upper-video-a';
+  const item = fixture.tracks.children
+    .flatMap((track) => track.children)
+    .find((candidate) => candidate.metadata?.relic?.id === itemId);
+  const source = item?.source_range?.start_time;
+  const available =
+    item?.media_references?.[item.active_media_reference_key ?? '']
+      ?.available_range?.start_time;
+  assert.ok(
+    source && available && source.rate > 0 && available.rate > 0,
+    `fixture mapping unavailable for ${itemId}`
+  );
+  const sourceOffsetSeconds =
+    source.value / source.rate - available.value / available.rate;
+  assert.equal(
+    sourceOffsetSeconds,
+    focused ? 0 : 6 / 30,
+    'fixture mapping changed; update the reference span'
+  );
+  const sourceOffset = Math.round(sourceOffsetSeconds * 30);
+  // Every decoded frame is a candidate: the focused clip starts at source frame 0 and the
+  // capture runs through the stop path's fixed stale-control wait, so it can pass frame 30.
+  const references = Array.from({ length: 36 - sourceOffset }, (_, i) =>
+    decoded.stdout.subarray(
+      (i + sourceOffset) * frameBytes,
+      (i + sourceOffset + 1) * frameBytes
+    )
+  );
+  const wrongSourcePixels = await extractFrame(
+    join(fixtureDir, 'media', 'secondary_b.mp4'),
+    5,
+    64,
+    36
+  );
+  const classifyPixels = (pixels: Uint8Array, composition: number) => {
+    const matches = references
+      .map((reference, i) => ({
+        frame: i + sourceOffset,
+        error: rmse(pixels, reference),
+      }))
+      .sort((a, b) => a.error - b.error);
+    const best = matches[0]!,
+      next = matches[1]!;
+    return {
+      best,
+      ambiguous: best.error >= 12 || best.error >= next.error,
+      wrongSource:
+        !Number.isFinite(composition) ||
+        best.frame !==
+          windowForSeconds(
+            windows,
+            composition / 30 + sourceOffsetSeconds,
+            'moving-window'
+          ).frame,
+    };
+  };
+  const receipts: Array<Record<string, unknown>> = [];
+  const coldReferenceAudio = new Map<number, Float32Array>();
+  for (const [name, fault] of [
+    ['healthy-1', 'none'],
+    ['healthy-2', 'none'],
+    ['healthy-3', 'none'],
+    ['frozen', 'freeze'],
+    ['stalled', 'stall'],
+  ] as const) {
+    await seekTo(browser, 0);
+    const geometry = await browser.evaluate<{
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      scale: number;
+      timeOrigin: number;
+    }>(`(() => {
+      const canvas = document.querySelector('canvas.otio-canvas');
+      if (!(canvas instanceof HTMLCanvasElement)) throw new Error('canvas missing');
+      const r = canvas.getBoundingClientRect();
+      if (r.left < 0 || r.top < 0 || r.right > innerWidth || r.bottom > innerHeight)
+        throw new Error('canvas is clipped in screencast viewport');
+      const width = Math.min(r.width, r.height * canvas.width / canvas.height);
+      const height = Math.min(r.height, r.width * canvas.height / canvas.width);
+      return {x:r.left + (r.width - width) / 2, y:r.top + (r.height - height) / 2, width, height,
+        scale:devicePixelRatio, timeOrigin:performance.timeOrigin};
+    })()`);
+    const stopCast = await browser.startScreencast();
+    const capture = await browser.evaluate<
+      MovingTrace & { paused: string; warmFailed?: string }
+    >(`(async () => {
+      const sleep = ms => { const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, ms); return promise; };
+      const root = document.querySelector('.otio-view');
+      const button = document.querySelector('button.otio-play');
+      if (!root || !(button instanceof HTMLButtonElement)) throw new Error('missing playback controls');
+      if (root.dataset.playing === 'true') throw new Error('cold capture began while playback was running');
+      globalThis.__otioProofTrace.setFault('none');
+      const start = await globalThis.__otioProofTrace.start();
+      const playEdge = globalThis.__otioProofTrace.playRequest();
+      button.click();
+      const until = performance.now() + 12000;
+      while (root.dataset.playing !== 'true' && performance.now() < until) await sleep(10);
+      if (root.dataset.playing !== 'true') throw new Error('playback did not start');
+      let warm = null, warmFailed;
+      try { warm = await globalThis.__otioProofTrace.waitForPresentedChanges(3, 5000); }
+      catch (error) { warmFailed = String(error?.message ?? error); }
+      if (warmFailed !== undefined) {
+        // Playback never presented three frames. The trace says why (a starved frontier, a refusal),
+        // so it is returned rather than lost in the thrown page error.
+        const trace = await globalThis.__otioProofTrace.stop();
+        globalThis.__otioProofTrace.setFault('none');
+        ${SETTLE_PAUSE_JS}
+        const paused = await settlePause();
+        return {start, playEdge, warm: null, warmFailed, trace, paused};
+      }
+      globalThis.__otioProofTrace.setFault(${JSON.stringify(fault)});
+      // Without scheduled audio, stop() waits out a fixed 500 ms stale-control timeout while
+      // playback keeps running, so the focused window sleeps less to stay inside the 36 media frames.
+      await sleep(${focused ? 250 : 500});
+      const trace = await globalThis.__otioProofTrace.stop();
+      globalThis.__otioProofTrace.setFault('none');
+      ${SETTLE_PAUSE_JS}
+      const paused = await settlePause();
+      return {start, playEdge, warm, trace, paused};
+    })()`);
+    const cast = await stopCast();
+    const paused = capture.paused;
+    if (capture.warmFailed !== undefined)
+      assert.fail(
+        `${name}: ${capture.warmFailed}; scheduler faults: ${describeContinuityFaults(capture.trace.events, capture.start.timestamp).join(' | ') || 'none'}; reader sees: ${paused}`
+      );
+    if (fault === 'none')
+      assert.doesNotMatch(
+        paused,
+        /Scheduled audio stopped:/,
+        `pause after the ${name} capture failed`
+      );
+    assert.ok(capture.warm, 'warm presentation readiness not recorded');
+    assert.ok(capture.playEdge, 'play request edge not recorded');
+    const samples = capture.trace.visual.filter(
+      (sample) => sample.timestamp >= capture.warm!.timestamp
+    );
+    const issues: string[] = [];
+    if (
+      capture.trace.visualOverflow ||
+      capture.trace.audioOverflow ||
+      capture.trace.eventsOverflow ||
+      cast.overflow
+    )
+      issues.push('trace overflow');
+    if (
+      samples.length === 0 ||
+      samples.some(
+        (sample) => sample.error || sample.pixels16?.length !== frameBytes
+      )
+    )
+      issues.push('missing canvas pixels');
+    const identified: Array<{ timestamp: number; sourceFrame: number }> = [];
+    let staleControl: {
+      expectedFrame: number;
+      injectedFrame: number;
+      detected: boolean;
+    } | null = null;
+    let wrongSourceControl: { distance: number; detected: boolean } | null =
+      null;
+    for (const sample of samples) {
+      if (!sample.pixels16 || sample.pixels16.length !== frameBytes) continue;
+      const pixels = Uint8Array.from(sample.pixels16);
+      const composition = Number(sample.frame);
+      const result = classifyPixels(pixels, composition);
+      const best = result.best;
+      if (result.ambiguous)
+        issues.push('unresolved or ambiguous source pixels');
+      if (result.wrongSource)
+        issues.push('source pixels disagree with composition frame');
+      const expectedFrame = windowForSeconds(
+        windows,
+        composition / 30 + sourceOffsetSeconds,
+        'moving-window control'
+      ).frame;
+      const staleIndex = expectedFrame - sourceOffset - 1;
+      if (
+        !staleControl &&
+        !result.ambiguous &&
+        !result.wrongSource &&
+        staleIndex >= 0
+      ) {
+        const planted = classifyPixels(references[staleIndex]!, composition);
+        staleControl = {
+          expectedFrame,
+          injectedFrame: staleIndex + sourceOffset,
+          detected: !planted.ambiguous && planted.wrongSource,
+        };
+      }
+      if (!wrongSourceControl && !result.ambiguous && !result.wrongSource) {
+        const distance = rmse(
+          wrongSourcePixels,
+          references[expectedFrame - sourceOffset]!
+        );
+        const planted = classifyPixels(wrongSourcePixels, composition);
+        wrongSourceControl = {
+          distance,
+          detected:
+            distance >= 12 && (planted.ambiguous || planted.wrongSource),
+        };
+      }
+      const previous = identified[identified.length - 1];
+      if (previous && best.frame < previous.sourceFrame)
+        issues.push('source pixels moved backward');
+      if (!previous || previous.sourceFrame !== best.frame)
+        identified.push({
+          timestamp: sample.timestamp,
+          sourceFrame: best.frame,
+        });
+    }
+    const elapsedMs = capture.trace.timestamp - capture.warm.timestamp;
+    // The first observed state is left-censored. Charge the entire known
+    // capture edge through its first change, not two artificially short gaps.
+    const gaps = [
+      identified.length > 1
+        ? identified[1]!.timestamp - capture.warm.timestamp
+        : elapsedMs,
+    ];
+    for (let i = 2; i < identified.length; i++)
+      gaps.push(identified[i]!.timestamp - identified[i - 1]!.timestamp);
+    if (identified.length > 1)
+      gaps.push(
+        capture.trace.timestamp - identified[identified.length - 1]!.timestamp
+      );
+    gaps.sort((a, b) => a - b);
+    const coverage =
+      new Set(identified.map((entry) => entry.sourceFrame)).size /
+      ((elapsedMs * 30) / 1000);
+    const progress =
+      (capture.trace.frame - capture.warm.frame) / ((elapsedMs * 30) / 1000);
+    const p95 =
+      gaps[Math.min(gaps.length - 1, Math.floor(gaps.length * 0.95))] ??
+      Infinity;
+    const max = gaps[gaps.length - 1] ?? Infinity;
+    if (
+      !(
+        coverage >= 0.95 &&
+        progress >= 0.95 &&
+        progress <= 1.05 &&
+        withinP95Budget(p95) &&
+        max <= 100
+      )
+    )
+      issues.push('moving-window thresholds');
+    const screen = await decodeScreencastFrames(cast, geometry);
+    const coldCanvas = capture.trace.visual
+      .filter(
+        (sample) =>
+          sample.timestamp >= capture.playEdge!.timestamp &&
+          sample.timestamp < capture.warm!.timestamp
+      )
+      .map((sample) => {
+        if (
+          !sample.pixels16 ||
+          sample.pixels16.length !== frameBytes ||
+          sample.error
+        )
+          throw new Error('cold canvas sample lacks pixel provenance');
+        const classified = classifyPixels(
+          Uint8Array.from(sample.pixels16),
+          Number(sample.frame)
+        );
+        if (classified.ambiguous || classified.wrongSource)
+          issues.push('cold canvas source provenance');
+        return {
+          timestamp: sample.timestamp,
+          sourceFrame: classified.best.frame,
+        };
+      });
+    const coldScreen = screen
+      .filter((sample) => {
+        const time = sample.timestamp - geometry.timeOrigin;
+        return (
+          time >= capture.playEdge!.timestamp && time < capture.warm!.timestamp
+        );
+      })
+      .map((sample) => {
+        const matches = references
+          .map((reference, i) => ({
+            frame: i + sourceOffset,
+            error: rmse(sample.pixels, reference),
+          }))
+          .sort((a, b) => a.error - b.error);
+        const best = matches[0]!,
+          next = matches[1]!;
+        if (best.error >= 12 || best.error >= next.error)
+          issues.push('cold screencast source provenance');
+        return {
+          timestamp: sample.timestamp - geometry.timeOrigin,
+          sourceFrame: best.frame,
+        };
+      });
+    // Charge the left-censored initial state through the first observed
+    // change, then assess subsequent intervals against the steady gate.
+    const coldCanvasMetrics = coldPresentationMetrics(
+      coldCanvas,
+      capture.playEdge.timestamp,
+      capture.warm.timestamp
+    );
+    const coldScreenMetrics = coldPresentationMetrics(
+      coldScreen,
+      capture.playEdge.timestamp,
+      capture.warm.timestamp
+    );
+    if (
+      !passesColdPresentation(coldCanvasMetrics) ||
+      !passesColdPresentation(coldScreenMetrics)
+    )
+      issues.push('cold presentation thresholds');
+    const screenStates: Array<{
+      timestamp: number;
+      sourceFrame: number;
+      error: number;
+    }> = [];
+    for (const sample of screen) {
+      const timestamp = sample.timestamp - geometry.timeOrigin;
+      if (
+        timestamp < capture.warm.timestamp ||
+        timestamp > capture.trace.timestamp
+      )
+        continue;
+      const matches = references
+        .map((reference, i) => ({
+          frame: i + sourceOffset,
+          error: rmse(sample.pixels, reference),
+        }))
+        .sort((a, b) => a.error - b.error);
+      const best = matches[0]!,
+        next = matches[1]!;
+      if (best.error >= 12 || best.error >= next.error)
+        issues.push('screencast pixels lack unambiguous source provenance');
+      const closest = identified.reduce<(typeof identified)[number] | null>(
+        (prior, entry) =>
+          !prior ||
+          Math.abs(entry.timestamp - timestamp) <
+            Math.abs(prior.timestamp - timestamp)
+            ? entry
+            : prior,
+        null
+      );
+      if (
+        !closest ||
+        Math.abs(closest.timestamp - timestamp) > 50 ||
+        Math.abs(closest.sourceFrame - best.frame) > 1
+      )
+        issues.push('screencast and canvas traces disagree');
+      const previous = screenStates[screenStates.length - 1];
+      if (!previous || previous.sourceFrame !== best.frame)
+        screenStates.push({
+          timestamp,
+          sourceFrame: best.frame,
+          error: best.error,
+        });
+    }
+    const screenGaps = [
+      screenStates.length > 1
+        ? screenStates[1]!.timestamp - capture.warm.timestamp
+        : elapsedMs,
+    ];
+    for (let i = 2; i < screenStates.length; i++)
+      screenGaps.push(
+        screenStates[i]!.timestamp - screenStates[i - 1]!.timestamp
+      );
+    if (screenStates.length > 1)
+      screenGaps.push(
+        capture.trace.timestamp -
+          screenStates[screenStates.length - 1]!.timestamp
+      );
+    screenGaps.sort((a, b) => a - b);
+    const screenCoverage =
+      new Set(screenStates.map((entry) => entry.sourceFrame)).size /
+      ((elapsedMs * 30) / 1000);
+    const screenP95 =
+      screenGaps[
+        Math.min(screenGaps.length - 1, Math.floor(screenGaps.length * 0.95))
+      ] ?? Infinity;
+    const screenMax = screenGaps[screenGaps.length - 1] ?? Infinity;
+    if (
+      !(
+        screenCoverage >= 0.95 &&
+        withinP95Budget(screenP95) &&
+        screenMax <= 100
+      )
+    )
+      issues.push('screencast moving-window thresholds');
+    const audio = capture.trace.audio;
+    if (!focused && !audio.length) issues.push('missing controller audio');
+    for (let i = 1; i < audio.length; i++) {
+      const previous = audio[i - 1]!;
+      const current = audio[i]!;
+      const previousLast = previous.quantumOrdinals?.at(-1);
+      const currentFirst = current.quantumOrdinals?.[0];
+      // The renderer reports a cached currentFrame, so a chunk label can repeat one quantum and
+      // skip the next while every callback is present. When callback ordinals exist they decide
+      // whether a callback is missing. Without them the labels are all there is.
+      const contiguous =
+        previousLast !== undefined && currentFirst !== undefined
+          ? currentFirst === previousLast + 1
+          : previous.channels[0] !== undefined &&
+            current.sampleFrame ===
+              previous.sampleFrame + previous.channels[0].length;
+      if (!contiguous) issues.push('missing controller audio chunk');
+    }
+    const channel = audio.flatMap((chunk) => chunk.channels[0] ?? []);
+    const pcmEpoch = capture.trace.events.find(
+      (entry) =>
+        entry.kind === 'scheduled-pcm' &&
+        entry.value &&
+        typeof entry.value === 'object' &&
+        'event' in entry.value &&
+        entry.value.event === 'epoch'
+    )?.value as
+      | {
+          f0?: number;
+          c0?: number;
+          bridge?: {
+            contextTime: number;
+            performanceTime: number;
+            mappingAllowanceMs: number;
+          };
+          bridgeMappingAllowanceMs?: number;
+        }
+      | undefined;
+    const sourceActiveFrame = Number.isSafeInteger(pcmEpoch?.f0)
+      ? pcmEpoch!.f0
+      : undefined;
+    const activeChannel =
+      sourceActiveFrame === undefined
+        ? channel
+        : channel.slice(
+            Math.max(0, sourceActiveFrame - capture.start.sampleFrame)
+          );
+    const windowSize = Math.ceil(capture.trace.sampleRate * 0.02);
+    const silenceThreshold = Math.max(mutedRms * 2, healthyRms * 0.01);
+    let longestSilentSamples = 0,
+      silentSamples = 0,
+      energy = 0;
+    for (let i = 0; i < Math.min(windowSize, activeChannel.length); i++)
+      energy += activeChannel[i]! ** 2;
+    for (
+      let offset = 0;
+      offset + windowSize <= activeChannel.length;
+      offset++
+    ) {
+      if (offset > 0)
+        energy +=
+          activeChannel[offset + windowSize - 1]! ** 2 -
+          activeChannel[offset - 1]! ** 2;
+      if (Math.sqrt(Math.max(0, energy) / windowSize) <= silenceThreshold) {
+        silentSamples = silentSamples === 0 ? windowSize : silentSamples + 1;
+        longestSilentSamples = Math.max(longestSilentSamples, silentSamples);
+      } else silentSamples = 0;
+    }
+    if (!focused && longestSilentSamples > capture.trace.sampleRate * 0.02)
+      issues.push('post-gain silence exceeds 20ms');
+    let coldAudio: { offset: number; longestDropoutMs: number } | null = null;
+    let clockEvidence: Record<string, unknown> | null = null;
+    if (!focused) {
+      coldAudio = await comparePostGainPcm(
+        capture,
+        coldReferenceAudio,
+        healthyRms,
+        mutedRms,
+        false,
+        sourceActiveFrame
+      );
+      const solver = capture.trace.events.find(
+        (entry) =>
+          entry.kind === 'cold-controller' &&
+          (entry.value as { event?: string } | null)?.event === 'solver'
+      )?.value as
+        | {
+            chosenAnchor?: number;
+            intervalLower?: number;
+            intervalUpper?: number;
+          }
+        | undefined;
+      const bridges = [
+        capture.start.bridge,
+        capture.playEdge.bridge,
+        capture.trace.bridge,
+      ];
+      const offsets = bridges.map((bridge) =>
+        bridge.output
+          ? bridge.output.performanceTime - bridge.output.contextTime * 1000
+          : NaN
+      );
+      const anchor =
+        sourceActiveFrame !== undefined &&
+        pcmEpoch?.bridge &&
+        Number.isFinite(pcmEpoch.c0)
+          ? pcmEpoch.bridge.performanceTime +
+            (pcmEpoch.c0! - pcmEpoch.bridge.contextTime) * 1000
+          : solver?.chosenAnchor;
+      if (
+        !Number.isFinite(anchor) ||
+        offsets.some((value) => !Number.isFinite(value))
+      ) {
+        issues.push('cold audio clock bridge or solver anchor unavailable');
+      } else {
+        const bridgeOffset = offsets[1]!;
+        const measuredSpreadMs = Math.max(...offsets) - Math.min(...offsets);
+        const maxReadMs = Math.max(
+          ...bridges.map((bridge) => bridge.after - bridge.before)
+        );
+        const observedMappingAllowanceMs =
+          measuredSpreadMs +
+          maxReadMs +
+          (128 * 1000) / capture.trace.sampleRate;
+        const expectedOffset =
+          capture.start.sampleFrame -
+          ((anchor! - bridgeOffset) / 1000) * capture.trace.sampleRate;
+        const offsetErrorMs =
+          ((coldAudio.offset - expectedOffset) * 1000) /
+          capture.trace.sampleRate;
+        const clockLimitMs = (2 * 1000) / 30;
+        const controls: Array<{
+          kind: string;
+          fittedOffset: number;
+          offsetErrorMs: number;
+          dropoutMs: number;
+          rejected: boolean;
+        }> = [];
+        if (fault === 'none') {
+          const shift = Math.round(capture.trace.sampleRate * 0.1);
+          for (const [kind, direction] of [
+            ['lost-prefix', 1],
+            ['delayed-audio', -1],
+          ] as const) {
+            let position = 0;
+            const shifted = audio.map((chunk) => {
+              const channels = chunk.channels.map((samples) =>
+                samples.map((_, i) => {
+                  const sourceIndex = position + i + direction * shift;
+                  if (sourceIndex < 0 || sourceIndex >= channel.length)
+                    return 0;
+                  // The fixture is mono; both worklet channels carry that source.
+                  return channel[sourceIndex]!;
+                })
+              );
+              position += chunk.channels[0]?.length ?? 0;
+              return { ...chunk, channels };
+            });
+            const planted = await comparePostGainPcm(
+              { ...capture, trace: { ...capture.trace, audio: shifted } },
+              coldReferenceAudio,
+              healthyRms,
+              mutedRms,
+              false,
+              sourceActiveFrame
+            );
+            const plantedErrorMs =
+              ((planted.offset - expectedOffset) * 1000) /
+              capture.trace.sampleRate;
+            const rejected =
+              plantedErrorMs > observedMappingAllowanceMs ||
+              Math.abs(plantedErrorMs) + observedMappingAllowanceMs >
+                clockLimitMs ||
+              planted.longestDropoutMs > 20;
+            controls.push({
+              kind,
+              fittedOffset: planted.offset,
+              offsetErrorMs: plantedErrorMs,
+              dropoutMs: planted.longestDropoutMs,
+              rejected,
+            });
+            if (
+              !rejected ||
+              Math.abs(planted.offset - coldAudio.offset) <=
+                (2 * capture.trace.sampleRate) / 30
+            )
+              issues.push(
+                `cold ${kind} negative control was not distinguished`
+              );
+          }
+        }
+        // A common bias in the reported output timestamps and the anchor
+        // derived from them cancels from this browser-observable comparison.
+        // This synthetic control models a possible physical timing error; it
+        // does not claim that the actual device has that error.
+        const timestampBiasMs = 100;
+        const biasedExpectedOffset =
+          capture.start.sampleFrame -
+          ((anchor! + timestampBiasMs - (bridgeOffset + timestampBiasMs)) /
+            1000) *
+            capture.trace.sampleRate;
+        const biasedErrorMs =
+          ((coldAudio.offset - biasedExpectedOffset) * 1000) /
+          capture.trace.sampleRate;
+        assert.ok(
+          Math.abs(biasedErrorMs - offsetErrorMs) < 1e-7 &&
+            timestampBiasMs > clockLimitMs,
+          'common timestamp bias control did not expose the physical-output blind spot'
+        );
+        clockEvidence = {
+          anchor,
+          intervalLower: solver?.intervalLower,
+          intervalUpper: solver?.intervalUpper,
+          playRequest: capture.playEdge.timestamp,
+          bridges,
+          measuredSpreadMs,
+          maxReadMs,
+          observedMappingAllowanceMs,
+          measurement:
+            'browser-estimated output timing, not physical speaker/display timing',
+          timestampBiasControl: {
+            timestampBiasMs,
+            biasedErrorMs,
+            detected: false,
+            hypothetical: true,
+          },
+          signedFittedOffset: coldAudio.offset,
+          expectedOffset,
+          offsetErrorMs,
+          controls,
+        };
+        if (anchor! < capture.playEdge.timestamp)
+          issues.push('cold anchor precedes play request');
+        if (offsetErrorMs > observedMappingAllowanceMs)
+          issues.push('cold audio source begins ahead of the canonical clock');
+        if (
+          observedMappingAllowanceMs >= (2 * 1000) / 30 ||
+          Math.abs(offsetErrorMs) + observedMappingAllowanceMs > (2 * 1000) / 30
+        )
+          issues.push(
+            'cold browser-estimated audio epoch exceeds two-frame bound'
+          );
+      }
+      if (coldAudio.longestDropoutMs > 20)
+        issues.push('source-aware cold PCM dropout exceeds 20ms');
+    }
+    const receipt = {
+      name,
+      fault,
+      elapsedMs,
+      coverage,
+      progress,
+      p95,
+      max,
+      screenStates,
+      screenCoverage,
+      screenP95,
+      coldCanvasMetrics,
+      coldScreenMetrics,
+      coldAudio,
+      clockEvidence,
+      screenMax,
+      initialCanvasCensoredMs:
+        identified.length > 1
+          ? identified[1]!.timestamp - capture.warm.timestamp
+          : elapsedMs,
+      initialScreenCensoredMs:
+        screenStates.length > 1
+          ? screenStates[1]!.timestamp - capture.warm.timestamp
+          : elapsedMs,
+      longestSilentSamples,
+      silenceThreshold,
+      issues,
+      identified,
+      staleControl,
+      wrongSourceControl,
+      provenance,
+      capture,
+      geometry,
+      cast,
+    };
+    await writeFile(
+      join(
+        shotDir,
+        `${focused ? 'focused' : 'composition'}-moving-window-${name}.json`
+      ),
+      JSON.stringify(receipt)
+    );
+    receipts.push(receipt);
+    // A healthy window that failed is judged now, against its own trace: the rerun rule reads
+    // the newest trace, and by the end of this loop that is the stalled control's.
+    if (fault === 'none') {
+      lastCapturedTrace = capture.trace;
+      assert.deepEqual(issues, [], `healthy moving window failed: ${name}`);
+    }
+  }
+  if (!focused) {
+    const stillA = await extractFrame(
+      join(fixtureDir, 'media', 'plate_1001.png'),
+      0,
+      64,
+      36
+    );
+    const stillB = await extractFrame(
+      join(fixtureDir, 'media', 'plate_1002.png'),
+      0,
+      64,
+      36
+    );
+    assert.ok(
+      rmse(stillA, stillB) > 0,
+      'still reference pixels cannot distinguish the fixture images'
+    );
+    const oraclePath = fileURLToPath(
+      new URL(
+        '../../relic-format/test/fixtures/otio/edge-cases/playback-boundaries-oracle.json',
+        import.meta.url
+      )
+    );
+    const timingOracle = JSON.parse(await readFile(oraclePath, 'utf8')) as {
+      fixture: {
+        evaluations_at_time: Array<{
+          time: { value: number };
+          contributions: Array<{ node_id: string; transition_weight: number }>;
+        }>;
+      };
+    };
+    for (const [frame, ids] of [
+      [30, ['upper-video-a', 'upper-video-b']],
+      [60, ['moving-a', 'moving-b', 'upper-video-b', 'boundary-gap-a']],
+      [150, ['upper-video-c', 'upper-video-d']],
+    ] as const) {
+      const sample = timingOracle.fixture.evaluations_at_time.find(
+        (item) => item.time.value === frame
+      );
+      assert.ok(sample, `official transition sample ${frame} missing`);
+      for (const id of ids)
+        assert.ok(
+          sample.contributions.some(
+            (part) => part.node_id === id && part.transition_weight === 0.5
+          ),
+          `official transition weight missing for ${id} at ${frame}`
+        );
+    }
+    const readVideo = (frame: number) =>
+      extractFrame(join(decoderMediaDir, 'fr30.webm'), frame, 64, 36);
+    const readSecondary = (frame: number) =>
+      extractFrame(join(fixtureDir, 'media', 'secondary_b.mp4'), frame, 64, 36);
+    const videoFrameNumbers = [36, 37, 60, 61, 6, 7, 21, 22];
+    const videoFrames = new Map<number, Uint8Array>();
+    await Promise.all(
+      videoFrameNumbers.map(async (frame) => {
+        videoFrames.set(frame, await readVideo(frame));
+      })
+    );
+    const [b30, b31, upper60, upper61] = await Promise.all([
+      readSecondary(4),
+      readSecondary(5),
+      readSecondary(28),
+      readSecondary(29),
+    ]);
+    const transitions = [30, 60, 150];
+    function transitionComparison(
+      frame: number,
+      time: number,
+      pixels: Uint8Array
+    ) {
+      const u = (time - (frame - 3)) / 6;
+      const secondaryIndex = Math.floor(
+        ((time - (frame === 60 ? 24 : frame - 6)) * 24) / 30
+      );
+      const incoming = secondaryIndex === 4 ? b30 : b31;
+      let expected: Uint8Array;
+      let hardCuts: Uint8Array[];
+      if (frame === 60) {
+        const lowerAIndex = windowForSeconds(
+          windows,
+          time / 30,
+          'dissolve lower outgoing'
+        ).frame;
+        const lowerBIndex = windowForSeconds(
+          windows,
+          (time - 54) / 30,
+          'dissolve lower incoming'
+        ).frame;
+        const lowerA = videoFrames.get(lowerAIndex);
+        const lowerB = videoFrames.get(lowerBIndex);
+        assert.ok(
+          lowerA && lowerB,
+          `missing independently decoded dissolve frames ${lowerAIndex}/${lowerBIndex}`
+        );
+        const upper = secondaryIndex === 28 ? upper60 : upper61;
+        const lower = blend(lowerA, lowerB, 1 - u, u);
+        expected = blend(lower, upper, u, 1 - u);
+        hardCuts = [
+          upper,
+          lower,
+          blend(lowerA, upper, u, 1 - u),
+          blend(lowerB, upper, u, 1 - u),
+        ];
+      } else {
+        const index = windowForSeconds(
+          windows,
+          (time - (frame === 30 ? -6 : 129)) / 30,
+          'dissolve upper outgoing'
+        ).frame;
+        const outgoing = videoFrames.get(index);
+        assert.ok(
+          outgoing,
+          `missing independently decoded dissolve frame ${index}`
+        );
+        expected = blend(outgoing, incoming, 1 - u, u);
+        hardCuts = [outgoing, incoming];
+      }
+      return {
+        time,
+        expected: rmse(pixels, expected),
+        hardCuts: hardCuts.map((alternative) => rmse(pixels, alternative)),
+      };
+    }
+    const referenceAudio = new Map<number, Float32Array>();
+    for (let repetition = 1; repetition <= 5; repetition++) {
+      await seekTo(browser, 0);
+      const geometry = await browser.evaluate<{
+        x: number;
+        y: number;
+        width: number;
+        height: number;
+        scale: number;
+        timeOrigin: number;
+      }>(`(() => {
+        const canvas = document.querySelector('canvas.otio-canvas');
+        if (!(canvas instanceof HTMLCanvasElement)) throw new Error('canvas missing');
+        const r = canvas.getBoundingClientRect();
+        if (r.left < 0 || r.top < 0 || r.right > innerWidth || r.bottom > innerHeight)
+          throw new Error('canvas is clipped in screencast viewport');
+        const width = Math.min(r.width, r.height * canvas.width / canvas.height);
+        const height = Math.min(r.height, r.width * canvas.height / canvas.width);
+        return {x:r.left + (r.width - width) / 2, y:r.top + (r.height - height) / 2, width, height,
+          scale:devicePixelRatio, timeOrigin:performance.timeOrigin};
+      })()`);
+      const stopCast = await browser.startScreencast();
+      const capture = await browser.evaluate<
+        MovingTrace & {
+          paused: string;
+          live: { x: number; y: number; width: number; height: number };
+          refusedBeforeCapture?: string;
+        }
+      >(`(async () => {
+      const sleep = ms => { const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, ms); return promise; };
+      const root = document.querySelector('.otio-view');
+      const button = document.querySelector('button.otio-play');
+      if (!root || !(button instanceof HTMLButtonElement)) throw new Error('missing playback controls');
+      if (root.dataset.playing !== 'true') button.click();
+      const deadline = performance.now() + 12000;
+      while (root.dataset.playing !== 'true' && performance.now() < deadline) await sleep(10);
+      if (root.dataset.playing !== 'true') throw new Error('playback did not start');
+      // Scheduled audio starts at its epoch, some tens of milliseconds after the play request
+      // that sets data-playing. This capture is of playback under way, so it waits for the
+      // composition to move. The startup lead has its own budget in the cold-start stages
+      // and is not a dropout.
+      while (!(Number(root.dataset.frame) >= 1) && performance.now() < deadline) await sleep(5);
+      if (!(Number(root.dataset.frame) >= 1)) {
+        // Playback never moved before the trace began, so no trace holds why. The reader's
+        // diagnostics do (a scheduler refusal), and the page state says the rest.
+        const diagnostics = Array.from(document.querySelectorAll('.otio-diagnostic')).map(node => node.textContent ?? '').join(' ');
+        return {refusedBeforeCapture: diagnostics || ('buffering=' + root.dataset.buffering + ' playing=' + root.dataset.playing + ' frame=' + root.dataset.frame)};
+      }
+      await sleep(40);
+      // The canvas box is measured once playback is under way. Starting play removes a leftover
+      // scheduler diagnostic, which gives the stage back its row: run 5099c87d measured the box
+      // 397 px high before play and it was 442 px high during it, so the crop missed the left
+      // 33 px of the picture, including the marker in the still plates.
+      const live = (() => {
+        const canvas = document.querySelector('canvas.otio-canvas');
+        if (!(canvas instanceof HTMLCanvasElement)) throw new Error('canvas missing');
+        const r = canvas.getBoundingClientRect();
+        const width = Math.min(r.width, r.height * canvas.width / canvas.height);
+        const height = Math.min(r.height, r.width * canvas.height / canvas.width);
+        return {x:r.left + (r.width - width) / 2, y:r.top + (r.height - height) / 2, width, height};
+      })();
+      globalThis.__otioProofTrace.setFault(${JSON.stringify(repetition === 4 ? 'skip-still' : 'none')});
+      const start = await globalThis.__otioProofTrace.start();
+      if (${repetition === 5}) {
+        await sleep(2200);
+        const muted = globalThis.__otioProofTrace.mute();
+        await sleep(300);
+        globalThis.__otioProofTrace.restore(muted.value);
+        await sleep(3100);
+      } else await sleep(5600);
+      const trace = await globalThis.__otioProofTrace.stop();
+      globalThis.__otioProofTrace.setFault('none');
+      ${SETTLE_PAUSE_JS}
+      const paused = await settlePause();
+      return {start, trace, paused, live};
+    })()`);
+      const cast = await stopCast();
+      if (capture.refusedBeforeCapture !== undefined) {
+        const found = viewerInterruptionText(capture.refusedBeforeCapture);
+        if (found !== null) throw new InterruptedOutsideTrace(found);
+        assert.fail(
+          `sustained capture ${repetition}: playback did not advance: ${capture.refusedBeforeCapture}`
+        );
+      }
+      const paused = capture.paused;
+      if (/Scheduled audio stopped:/.test(paused)) {
+        const faults = describeContinuityFaults(
+          capture.trace.events,
+          capture.start.timestamp
+        );
+        await writeFile(
+          join(shotDir, `boundary-sustained-${repetition}-refused.json`),
+          JSON.stringify({ provenance, paused, faults, capture })
+        );
+        assert.fail(
+          `sustained capture ${repetition} ended with a scheduler refusal: ${paused}; faults inside the capture: ${faults.join(' | ') || 'none'}`
+        );
+      }
+      const elapsedMs = capture.trace.timestamp - capture.start.timestamp;
+      const progress =
+        (capture.trace.frame - capture.start.frame) / ((elapsedMs * 30) / 1000);
+      const stills = [
+        { from: 75, to: 90, reference: stillA, other: stillB },
+        { from: 90, to: 105, reference: stillB, other: stillA },
+        { from: 105, to: 120, reference: stillA, other: stillB },
+      ].map(({ from, to, reference, other }) => {
+        const matches = capture.trace.visual.filter((sample) => {
+          const frame = Number(sample.frame);
+          return (
+            frame >= from &&
+            frame < to &&
+            sample.pixels16?.length === frameBytes
+          );
+        });
+        const errors = matches.map((sample) => {
+          const pixels = Uint8Array.from(sample.pixels16!);
+          return {
+            expected: rmse(pixels, reference),
+            other: rmse(pixels, other),
+          };
+        });
+        return { from, to, errors };
+      });
+      const liveGeometry = { ...geometry, ...capture.live };
+      const screen = await decodeScreencastFrames(cast, liveGeometry);
+      const matchPresentedCanvas = (timestamp: number, pixels: Uint8Array) => {
+        let best: (typeof capture.trace.visual)[number] | null = null;
+        let error = Infinity;
+        for (const sample of capture.trace.visual) {
+          if (
+            Math.abs(sample.timestamp - timestamp) > 50 ||
+            sample.pixels16?.length !== frameBytes
+          )
+            continue;
+          const candidate = rmse(pixels, Uint8Array.from(sample.pixels16));
+          if (
+            candidate < error ||
+            (candidate === error &&
+              (!best || sample.timestamp > best.timestamp))
+          ) {
+            best = sample;
+            error = candidate;
+          }
+        }
+        return error < 12 ? best : null;
+      };
+      const unmatchedScreenFrames = screen.filter((sample) => {
+        const timestamp = sample.timestamp - geometry.timeOrigin;
+        return (
+          timestamp >= capture.start.timestamp + 50 &&
+          timestamp <= capture.trace.timestamp &&
+          !matchPresentedCanvas(timestamp, sample.pixels)
+        );
+      }).length;
+      const screenStills = [
+        { from: 75, to: 90, reference: stillA, other: stillB },
+        { from: 90, to: 105, reference: stillB, other: stillA },
+        { from: 105, to: 120, reference: stillA, other: stillB },
+      ].map(({ from, to, reference, other }) => {
+        const errors: Array<{ expected: number; other: number; skew: number }> =
+          [];
+        for (const frame of screen) {
+          const timestamp = frame.timestamp - geometry.timeOrigin;
+          const closest = matchPresentedCanvas(timestamp, frame.pixels);
+          if (!closest) continue;
+          const composition = Number(closest.frame);
+          if (composition >= from && composition < to)
+            errors.push({
+              expected: rmse(frame.pixels, reference),
+              other: rmse(frame.pixels, other),
+              skew: Math.abs(closest.timestamp - timestamp),
+            });
+        }
+        return { from, to, errors };
+      });
+      const transitionChecks = transitions.map((frame) => {
+        const canvas = capture.trace.visual
+          .filter(
+            (sample) =>
+              Number(sample.frame) >= frame &&
+              Number(sample.frame) < frame + 1 &&
+              sample.pixels16?.length === frameBytes
+          )
+          .map((sample) =>
+            transitionComparison(
+              frame,
+              Number(sample.frame),
+              Uint8Array.from(sample.pixels16!)
+            )
+          );
+        const compositor = screen.flatMap((sample) => {
+          const timestamp = sample.timestamp - geometry.timeOrigin;
+          const closest = matchPresentedCanvas(timestamp, sample.pixels);
+          if (
+            !closest ||
+            Number(closest.frame) < frame ||
+            Number(closest.frame) >= frame + 1
+          )
+            return [];
+          return [
+            transitionComparison(frame, Number(closest.frame), sample.pixels),
+          ];
+        });
+        return { frame, canvas, compositor };
+      });
+      const audio = await comparePostGainPcm(
+        capture,
+        referenceAudio,
+        healthyRms,
+        mutedRms
+      );
+      await writeFile(
+        join(shotDir, `boundary-sustained-${repetition}.json`),
+        JSON.stringify({
+          provenance,
+          capture,
+          cast,
+          geometry,
+          liveGeometry,
+          elapsedMs,
+          progress,
+          stills,
+          screenStills,
+          transitionChecks,
+          unmatchedScreenFrames,
+          audio,
+        })
+      );
+      assert.ok(
+        audio.agreementFloor !== null &&
+          audio.repeatedCeiling !== null &&
+          audio.agreementFloor > audio.repeatedCeiling &&
+          audio.agreementFloor > 0,
+        `audio source agreement is not separated from repeated-audio control: ${audio.agreementFloor} vs ${audio.repeatedCeiling}`
+      );
+      if (repetition === 5)
+        assert.ok(
+          audio.longestDropoutMs > 20,
+          'controller mute control was not detected'
+        );
+      else
+        assert.ok(
+          audio.longestDropoutMs <= 20,
+          `post-gain dropout ${audio.longestDropoutMs}ms`
+        );
+      assert.ok(
+        !capture.trace.visualOverflow &&
+          !capture.trace.audioOverflow &&
+          !capture.trace.eventsOverflow &&
+          !cast.overflow,
+        'boundary trace overflow'
+      );
+      assert.equal(
+        unmatchedScreenFrames,
+        0,
+        'screencast frames lack a matching recent canvas presentation'
+      );
+      assert.ok(
+        progress >= 0.95 && progress <= 1.05,
+        `boundary wall progress ratio ${progress}`
+      );
+      for (const still of stills) {
+        assert.ok(
+          still.errors.length > 0,
+          `skipped still interval [${still.from}, ${still.to})`
+        );
+        const matched = still.errors.every(
+          (error) => error.expected < 12 && error.expected < error.other
+        );
+        if (repetition === 4 && still.from === 90)
+          assert.equal(
+            matched,
+            false,
+            'skipped-still control was not detected'
+          );
+        else
+          assert.ok(
+            matched,
+            `wrong still pixels in [${still.from}, ${still.to})`
+          );
+      }
+      for (const still of screenStills) {
+        assert.ok(
+          still.errors.length > 0,
+          `missing screencast still interval [${still.from}, ${still.to})`
+        );
+        const matched = still.errors.every(
+          (error) => error.expected < 12 && error.expected < error.other
+        );
+        if (repetition === 4 && still.from === 90)
+          assert.equal(
+            matched,
+            false,
+            'screencast accepted skipped-still control'
+          );
+        else
+          assert.ok(
+            matched,
+            `wrong screencast still pixels in [${still.from}, ${still.to})`
+          );
+      }
+      for (const transition of transitionChecks) {
+        for (const [surface, values] of [
+          ['canvas', transition.canvas],
+          ['compositor', transition.compositor],
+        ] as const) {
+          assert.ok(
+            values.length > 0,
+            `${surface} missing dissolve midpoint ${transition.frame}`
+          );
+          assert.ok(
+            values.every(
+              (value) =>
+                value.expected < 12 &&
+                value.hardCuts.every((hardCut) => value.expected < hardCut)
+            ),
+            `${surface} failed dissolve or accepted hard-cut control at ${transition.frame}`
+          );
+        }
+      }
+    }
+  }
+  for (const receipt of receipts) {
+    const issues = receipt['issues'] as string[];
+    if (receipt['fault'] === 'none') {
+      assert.deepEqual(
+        issues,
+        [],
+        `healthy moving window failed: ${receipt['name']}`
+      );
+      const stale = receipt['staleControl'] as { detected: boolean } | null;
+      assert.ok(
+        stale?.detected,
+        'independently decoded stale source-frame control was not rejected'
+      );
+      const wrong = receipt['wrongSourceControl'] as {
+        detected: boolean;
+      } | null;
+      assert.ok(
+        wrong?.detected,
+        'independently decoded wrong-media control was not rejected'
+      );
+    } else {
+      assert.ok(
+        issues.includes('moving-window thresholds'),
+        `moving-window gate did not detect ${receipt['name']}`
+      );
+      assert.ok(
+        issues.includes('screencast moving-window thresholds'),
+        `screencast gate did not detect ${receipt['name']}`
+      );
+      if (receipt['fault'] === 'freeze')
+        assert.ok(
+          (receipt['progress'] as number) >= 0.95,
+          'freeze control did not advance the composition clock'
+        );
+    }
+  }
+}
+
+async function assertVideoReservationInvalidation(
+  browser: ChromeSession,
+  provenance: Record<string, unknown>
+): Promise<void> {
+  await seekTo(browser, 0);
+  const capture = await browser.evaluate<
+    MovingTrace & { playing: string; diagnostic: string }
+  >(`(async () => {
+    const sleep = ms => { const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, ms); return promise; };
+    const root = document.querySelector('.otio-view');
+    const button = document.querySelector('button.otio-play');
+    if (!(root instanceof HTMLElement) || !(button instanceof HTMLButtonElement)) throw new Error('reservation proof controls missing');
+    const start = await globalThis.__otioProofTrace.start();
+    globalThis.__otioProofPcmFault = 'invalidate-next-reserved-tag';
+    const playEdge = globalThis.__otioProofTrace.playRequest();
+    button.click();
+    await sleep(2500);
+    const trace = await globalThis.__otioProofTrace.stop();
+    globalThis.__otioProofPcmFault = null;
+    const playing = root.dataset.playing ?? '';
+    const diagnostic = Array.from(document.querySelectorAll('.otio-diagnostic')).map(node => node.textContent ?? '').join(' ');
+    ${SETTLE_PAUSE_JS}
+    await settlePause();
+    return {start, playEdge, trace, playing, diagnostic};
+  })()`);
+  await writeFile(
+    join(shotDir, 'video-reservation-invalidated.json'),
+    JSON.stringify({ provenance, capture })
+  );
+  const events = capture.trace.events.filter(
+    (entry) => entry.kind === 'scheduled-pcm'
+  );
+  const faultIndex = events.findIndex((entry) => {
+    const value = entry.value;
+    return (
+      value &&
+      typeof value === 'object' &&
+      'event' in value &&
+      value.event === 'fault' &&
+      'code' in value &&
+      value.code === 'reserved-frame-invalidated'
+    );
+  });
+  assert.ok(faultIndex >= 0, 'reserved-frame invalidation was not applied');
+  const closure = events.slice(faultIndex + 1).find((entry) => {
+    const value = entry.value;
+    return (
+      value &&
+      typeof value === 'object' &&
+      'event' in value &&
+      value.event === 'gate-close' &&
+      'contextStopFrame' in value
+    );
+  });
+  const closureValue = closure?.value;
+  assert.ok(
+    closureValue &&
+      typeof closureValue === 'object' &&
+      'contextStopFrame' in closureValue &&
+      'compositionStop' in closureValue &&
+      'generation' in closureValue,
+    'invalidated frame did not close the audio frontier'
+  );
+  const gateFrame = Number(closureValue.contextStopFrame);
+  assert.ok(
+    Number.isSafeInteger(gateFrame),
+    'invalidated frontier gate is not a context frame'
+  );
+  const interruption = events.slice(faultIndex + 1).find((entry) => {
+    const value = entry.value as { event?: string; stage?: string } | null;
+    return value?.event === 'error' && value.stage === 'visual';
+  });
+  assert.ok(
+    interruption,
+    'loss of committed pixels did not report a visual interruption'
+  );
+  assert.equal(
+    capture.playing,
+    'false',
+    'loss of committed pixels left playback active'
+  );
+  assert.match(
+    capture.diagnostic,
+    /Scheduled audio stopped:/,
+    'visual interruption was not visible'
+  );
+  assert.ok(
+    !events
+      .slice(faultIndex + 1)
+      .some(
+        (entry) => (entry.value as { event?: string } | null)?.event === 'epoch'
+      ),
+    'loss of committed pixels silently resumed without reacquiring them'
+  );
+  assertPcmSilence(
+    capture.trace,
+    gateFrame,
+    lastCarrierEnd(capture.trace),
+    'audio continued past invalidated video frontier'
+  );
+  pass('scheduled-video-reservation-invalidation');
+  await seekTo(browser, 0);
+  const future = await browser.evaluate<
+    MovingTrace & {
+      sawHeld: boolean;
+      handoffBeforeRelease: boolean;
+    }
+  >(`(async () => {
+    const sleep = ms => { const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, ms); return promise; };
+    const root = document.querySelector('.otio-view');
+    const button = document.querySelector('button.otio-play');
+    if (!(root instanceof HTMLElement) || !(button instanceof HTMLButtonElement)) throw new Error('future-video controls missing');
+    const start = await globalThis.__otioProofTrace.start();
+    globalThis.__otioProofTrace.enableRecoveryMarker();
+    globalThis.__otioProofHoldOldDrain = true;
+    const playEdge = globalThis.__otioProofTrace.playRequest();
+    button.click();
+    await sleep(500);
+    globalThis.__otioProofTrace.withholdFutureVideoUntil('recovery-render-closed');
+    const liftDeadline = performance.now() + 4000;
+    while (!globalThis.__otioProofTrace.hasTraceEvent('pcm-fault-lift') && performance.now() < liftDeadline) await sleep(10);
+    globalThis.__otioProofPcmFault = null;
+    const handoffDeadline=performance.now()+500;
+    while ((!globalThis.__otioProofTrace.hasPcmEvent('recovery-handoff') ||
+            !globalThis.__otioProofTrace.hasPcmEvent('recovery-old-drain-held')) &&
+           performance.now()<handoffDeadline) await sleep(10);
+    const sawHeld=globalThis.__otioProofTrace.hasPcmEvent('recovery-old-drain-held');
+    const handoffBeforeRelease=globalThis.__otioProofTrace.hasPcmEvent('recovery-handoff');
+    globalThis.__otioProofHoldOldDrain = false;
+    await sleep(700);
+    const trace = await globalThis.__otioProofTrace.stop();
+    ${SETTLE_PAUSE_JS}
+    await settlePause();
+    return {start, playEdge, trace, sawHeld, handoffBeforeRelease};
+  })()`);
+  await writeFile(
+    join(shotDir, 'video-future-starvation.json'),
+    JSON.stringify({ provenance, capture: future })
+  );
+  const faultLifts = future.trace.events.flatMap((entry, index) =>
+    entry.kind === 'pcm-fault-lift' ? [index] : []
+  );
+  const firstClosureAt = future.trace.events.findIndex(
+    (entry) =>
+      entry.kind === 'scheduled-pcm' &&
+      (entry.value as { event?: string } | null)?.event ===
+        'recovery-render-closed'
+  );
+  assert.ok(
+    faultLifts.length === 1 &&
+      firstClosureAt >= 0 &&
+      (
+        future.trace.events[faultLifts[0]!]!.value as {
+          triggerIndex?: number | null;
+        } | null
+      )?.triggerIndex === firstClosureAt,
+    'withheld future video was not lifted at the first recovery-render-closed'
+  );
+  const sawBuffering = future.trace.events.some(
+    (entry) =>
+      entry.kind === 'buffering-change' &&
+      entry.value !== null &&
+      typeof entry.value === 'object' &&
+      (entry.value as { current?: unknown }).current === 'true'
+  );
+  assert.ok(sawBuffering, 'withholding future video did not reach buffering');
+  const futureEvents = future.trace.events
+    .filter((entry) => entry.kind === 'scheduled-pcm')
+    .map((entry) => entry.value as Record<string, unknown>);
+  const firstEpoch = futureEvents.find((event) => event['event'] === 'epoch');
+  const closedIndex = futureEvents.findIndex(
+    (event) => event['event'] === 'gate-close' && event['reason'] === 'frontier'
+  );
+  assert.ok(
+    firstEpoch && closedIndex >= 0,
+    'future video starvation lacks an epoch or render gate expiry'
+  );
+  const closed = futureEvents[closedIndex]!;
+  const resumed = futureEvents
+    .slice(closedIndex + 1)
+    .find((event) => event['event'] === 'epoch');
+  assert.ok(
+    resumed,
+    'future video starvation did not produce a replacement epoch'
+  );
+  assert.notEqual(
+    firstEpoch['generation'],
+    resumed['generation'],
+    'future video recovery reused an expired generation'
+  );
+  const stop = closed['compositionStop'] as { value: number; rate: number };
+  const restart = resumed['compositionT0'] as { value: number; rate: number };
+  const sampleRate = Number(resumed['contextSampleRate']);
+  const closeFrame = Number(closed['contextStopFrame']);
+  const resumeFrame = Number(resumed['f0']);
+  const originalStart = firstEpoch['compositionT0'] as {
+    value: number;
+    rate: number;
+  };
+  const originalFrame = Number(firstEpoch['f0']);
+  const originalRate = Number(firstEpoch['contextSampleRate']);
+  assert.equal(
+    originalRate,
+    sampleRate,
+    'recovery changed the context sample rate'
+  );
+  assert.equal(
+    closed['generation'],
+    firstEpoch['generation'],
+    'frontier closure belongs to another generation'
+  );
+  assert.ok(originalStart?.rate > 0 && Number.isSafeInteger(originalFrame));
+  const committedSeconds =
+    originalStart.value / originalStart.rate +
+    (closeFrame - originalFrame) / originalRate;
+  assert.ok(
+    stop?.rate > 0 &&
+      restart?.rate > 0 &&
+      Number.isFinite(sampleRate) &&
+      sampleRate > 0
+  );
+  assert.ok(
+    Number.isSafeInteger(closeFrame) &&
+      Number.isSafeInteger(resumeFrame) &&
+      resumeFrame >= closeFrame &&
+      resumeFrame - closeFrame <= Math.floor(sampleRate * 0.02),
+    'future-video recovery gap exceeds the 20ms sample bound'
+  );
+  const videoSelection = futureEvents.find(
+    (event) =>
+      event['event'] === 'recovery-selection' &&
+      event['generation'] === resumed['generation'] &&
+      event['boundaryFrame'] === closeFrame
+  );
+  assert.ok(
+    videoSelection && videoSelection['f0'] === resumeFrame,
+    'video recovery lacks its selected frame'
+  );
+  assertLatestRecoveryFrame(
+    future.trace,
+    videoSelection,
+    closeFrame,
+    sampleRate,
+    false // This fixture draws video and requires phase samples.
+  );
+  assert.ok(
+    assertSuccessorPolicy(futureEvents, true) > 0,
+    'healthy video recovery produced no checked successor handoff'
+  );
+  const heldDrain = futureEvents.find(
+    (event) =>
+      event['event'] === 'recovery-old-drain-held' &&
+      event['boundaryFrame'] === closeFrame
+  );
+  const releasedDrain = futureEvents.find(
+    (event) =>
+      event['event'] === 'recovery-old-drain-released' &&
+      event['boundaryFrame'] === closeFrame
+  );
+  const videoHandoff = futureEvents.find(
+    (event) =>
+      event['event'] === 'recovery-handoff' &&
+      event['boundaryFrame'] === closeFrame
+  );
+  assert.ok(
+    future.sawHeld &&
+      future.handoffBeforeRelease &&
+      heldDrain &&
+      releasedDrain &&
+      videoHandoff &&
+      videoHandoff['oldDrainObserved'] === false &&
+      Number(videoHandoff['wallMs']) <= Number(releasedDrain['wallMs']),
+    'video successor did not start before releasing held old drain'
+  );
+  const videoDrain = future.trace.events.find(
+    (event) =>
+      event.kind === 'recovery-old-drain-native-read' &&
+      event.value &&
+      typeof event.value === 'object' &&
+      'boundaryFrame' in event.value &&
+      event.value.boundaryFrame === closeFrame
+  );
+  assert.ok(
+    videoDrain?.value &&
+      typeof videoDrain.value === 'object' &&
+      'state' in videoDrain.value &&
+      videoDrain.value.state === 'running' &&
+      'output' in videoDrain.value &&
+      videoDrain.value.output &&
+      typeof videoDrain.value.output === 'object' &&
+      'contextTime' in videoDrain.value.output &&
+      'performanceTime' in videoDrain.value.output &&
+      'after' in videoDrain.value &&
+      'renderAfter' in videoDrain.value &&
+      Number.isFinite(Number(videoDrain.value.output.contextTime)) &&
+      Number.isFinite(Number(videoDrain.value.output.performanceTime)) &&
+      Number(videoDrain.value.output.contextTime) * sampleRate >= closeFrame &&
+      Number(videoDrain.value.output.contextTime) <=
+        Number(videoDrain.value.renderAfter) +
+          DEFAULT_CLOCK_POLICY.futureToleranceMs / 1000 &&
+      Number(videoDrain.value.output.performanceTime) > 0 &&
+      Number(videoDrain.value.output.performanceTime) <=
+        Number(videoDrain.value.after) +
+          DEFAULT_CLOCK_POLICY.futureToleranceMs &&
+      Number(videoDrain.value.after) -
+        Number(videoDrain.value.output.performanceTime) <=
+        DEFAULT_CLOCK_POLICY.freshnessMs,
+    'video old drain lacked a fresh native output timestamp at D'
+  );
+  const videoArmClock = future.trace.events.find(
+    (event) =>
+      event.kind === 'audio-arm-native-output' &&
+      event.value &&
+      typeof event.value === 'object' &&
+      'generation' in event.value &&
+      event.value.generation === resumed['generation']
+  );
+  assert.ok(
+    videoArmClock?.value &&
+      typeof videoArmClock.value === 'object' &&
+      'output' in videoArmClock.value &&
+      videoArmClock.value.output &&
+      typeof videoArmClock.value.output === 'object' &&
+      'contextTime' in videoArmClock.value.output &&
+      'performanceTime' in videoArmClock.value.output &&
+      Number(videoArmClock.value.output.contextTime) * sampleRate <
+        closeFrame &&
+      Number(videoArmClock.value.output.performanceTime) > 0,
+    'video successor was not armed with real output still before D'
+  );
+  const exactCommittedSample =
+    (originalStart.value * sampleRate) / originalStart.rate +
+    closeFrame -
+    originalFrame;
+  assert.ok(
+    Number.isSafeInteger(exactCommittedSample) &&
+      (restart.value * sampleRate) / restart.rate === exactCommittedSample &&
+      (stop.value * sampleRate) / stop.rate === exactCommittedSample,
+    'future video recovery did not preserve the independently calculated committed sample'
+  );
+  if (resumeFrame > closeFrame)
+    assertPcmSilence(
+      future.trace,
+      closeFrame,
+      resumeFrame,
+      'audio crossed the closed future-video gate'
+    );
+  assert.ok(
+    !futureEvents.some(
+      (event) => event['event'] === 'error' && event['stage'] === 'visual'
+    ),
+    'withholding future frames was misreported as lost committed pixels'
+  );
+  assert.ok(
+    !future.trace.audioOverflow &&
+      !future.trace.visualOverflow &&
+      !future.trace.eventsOverflow,
+    'future recovery trace overflow'
+  );
+  assert.ok(
+    !futureEvents
+      .slice(closedIndex + 1)
+      .some((event) => event['event'] === 'error'),
+    'future recovery ended in an interruption'
+  );
+  const sourceAudio = await runChild(
+    [
+      'ffmpeg',
+      '-v',
+      'error',
+      '-i',
+      join(fixtureDir, 'media', 'mx_bed.wav'),
+      '-ar',
+      String(sampleRate),
+      '-af',
+      'pan=stereo|c0=c0|c1=c0',
+      '-f',
+      'f32le',
+      'pipe:1',
+    ],
+    { timeoutMs: 30000 }
+  );
+  assert.equal(
+    sourceAudio.exit,
+    0,
+    `future recovery source audio decode failed: ${sourceAudio.stderr}`
+  );
+  const committedSample = Math.round(committedSeconds * sampleRate);
+  assert.ok(
+    Math.abs(committedSample / sampleRate - committedSeconds) < 1e-9,
+    'committed position is off the sample lattice'
+  );
+  const windowFrames = Math.round(sampleRate * 0.02);
+  const compareFrames = windowFrames * 10;
+  assert.ok(
+    (committedSample + compareFrames) * 8 <= sourceAudio.stdout.length,
+    'future recovery reference audio is too short'
+  );
+  assertPcmCoverage(
+    resumeFrame,
+    resumeFrame + compareFrames,
+    future.trace.audio,
+    future.trace.witness
+  );
+  const planes: [Float32Array, Float32Array] = [
+    new Float32Array(committedSample + compareFrames),
+    new Float32Array(committedSample + compareFrames),
+  ];
+  for (let n = committedSample; n < committedSample + compareFrames; n++)
+    for (let channel = 0; channel < 2; channel++)
+      planes[channel]![n] = sourceAudio.stdout.readFloatLE(n * 8 + channel * 4);
+  const videoOldArm = future.trace.events.find(
+    (event) =>
+      event.kind === 'transport-command' &&
+      event.value &&
+      typeof event.value === 'object' &&
+      'type' in event.value &&
+      event.value.type === 'arm' &&
+      'generation' in event.value &&
+      event.value.generation === firstEpoch['generation']
+  );
+  const videoNewArm = future.trace.events.find(
+    (event) =>
+      event.kind === 'transport-command' &&
+      event.value &&
+      typeof event.value === 'object' &&
+      'type' in event.value &&
+      event.value.type === 'arm' &&
+      'generation' in event.value &&
+      event.value.generation === resumed['generation']
+  );
+  assert.ok(
+    videoOldArm?.value &&
+      videoNewArm?.value &&
+      typeof videoOldArm.value === 'object' &&
+      typeof videoNewArm.value === 'object' &&
+      'slot' in videoOldArm.value &&
+      'slot' in videoNewArm.value &&
+      (videoOldArm.value.slot === 0 || videoOldArm.value.slot === 1) &&
+      (videoNewArm.value.slot === 0 || videoNewArm.value.slot === 1) &&
+      videoOldArm.value.slot !== videoNewArm.value.slot,
+    'video recovery did not use isolated old and successor slots'
+  );
+  assert.ok(
+    future.trace.events.some(
+      (event) =>
+        event.kind === 'recovery-old-marker-scheduled' &&
+        event.value &&
+        typeof event.value === 'object' &&
+        'frame' in event.value &&
+        event.value.frame === closeFrame &&
+        'late' in event.value &&
+        event.value.late === false
+    ),
+    'video recovery old-slot marker was not armed before closure'
+  );
+  const videoWitness = future.trace.witness;
+  assert.ok(videoWitness, 'video recovery independent carrier missing');
+  let videoMarkerSamples = 0;
+  for (const chunk of future.trace.audio) {
+    assert.ok(
+      chunk.marker && chunk.marker.length === chunk.channels[0]!.length,
+      'video recovery old-slot marker capture missing'
+    );
+    for (let i = 0; i < chunk.marker.length; i++) {
+      const frame = carrierFrame(chunk, i, videoWitness);
+      if (frame === null || frame < resumeFrame || frame >= resumeFrame + 128)
+        continue;
+      assert.ok(
+        Math.abs(chunk.marker[i]! - 0.375) < 0.00001,
+        'old-slot marker not present during video recovery'
+      );
+      for (let ch = 0; ch < 2; ch++)
+        assert.ok(
+          Math.abs(
+            chunk.channels[ch]![i]! -
+              planes[ch]![committedSample + frame - resumeFrame]!
+          ) <= 0.003,
+          'old-slot marker leaked into video recovery PCM'
+        );
+      videoMarkerSamples++;
+    }
+  }
+  assert.equal(
+    videoMarkerSamples,
+    128,
+    'video recovery marker overlap not captured'
+  );
+  for (
+    let first = committedSample;
+    first < committedSample + compareFrames;
+    first += windowFrames
+  ) {
+    const comparison = compareScheduledPcm(
+      future.trace.audio,
+      resumeFrame - committedSample,
+      planes,
+      first,
+      first + windowFrames,
+      future.trace.witness
+    );
+    assert.ok(
+      comparison.rmse.every((value) => value <= 0.003),
+      `future video recovery PCM mismatch or 20ms dropout at ${first}`
+    );
+  }
+  const referenceVideo = await runChild(
+    [
+      'ffmpeg',
+      '-v',
+      'error',
+      '-i',
+      join(decoderMediaDir, 'fr30.webm'),
+      '-vf',
+      'scale=64:36:flags=neighbor',
+      '-frames:v',
+      '36',
+      '-f',
+      'rawvideo',
+      '-pix_fmt',
+      'rgba',
+      'pipe:1',
+    ],
+    { timeoutMs: 30000 }
+  );
+  assert.equal(
+    referenceVideo.exit,
+    0,
+    `future recovery source video decode failed: ${referenceVideo.stderr}`
+  );
+  const frameBytes = 64 * 36 * 4;
+  assert.equal(referenceVideo.stdout.length, frameBytes * 36);
+  const bridge = resumed['bridge'] as {
+    contextTime: number;
+    performanceTime: number;
+  };
+  assert.ok(
+    Number.isFinite(bridge?.contextTime) &&
+      Number.isFinite(bridge?.performanceTime),
+    'future recovery output estimate missing'
+  );
+  const presentationStart =
+    bridge.performanceTime +
+    (resumeFrame / sampleRate - bridge.contextTime) * 1000;
+  const identified: Array<{ frame: number; timestamp: number }> = [];
+  for (const visual of future.trace.visual) {
+    const seconds =
+      committedSeconds + (visual.timestamp - presentationStart) / 1000;
+    if (
+      seconds < committedSeconds ||
+      seconds >= Math.min(0.9, committedSeconds + 0.5)
+    )
+      continue;
+    assert.ok(
+      !visual.error && visual.pixels16?.length === frameBytes,
+      'future recovery pixels unavailable'
+    );
+    let best = -1,
+      bestError = Infinity;
+    for (let frame = 6; frame < 36; frame++) {
+      const error = rmse(
+        Uint8Array.from(visual.pixels16!),
+        referenceVideo.stdout.subarray(
+          frame * frameBytes,
+          (frame + 1) * frameBytes
+        )
+      );
+      if (error < bestError) {
+        bestError = error;
+        best = frame;
+      }
+    }
+    assert.ok(
+      bestError < 12 && Math.abs((best - 6) / 30 - seconds) <= 2 / 30,
+      'future recovery pixels disagree with independent source and browser-estimated timing'
+    );
+    if (identified.at(-1)?.frame !== best)
+      identified.push({ frame: best, timestamp: visual.timestamp });
+  }
+  assert.ok(
+    identified.length >= 4,
+    'future recovery lacks independently identified advancing pixels'
+  );
+  const intervals = identified
+    .slice(1)
+    .map((sample, index) => sample.timestamp - identified[index]!.timestamp)
+    .sort((a, b) => a - b);
+  assert.ok(
+    withinP95Budget(intervals[Math.ceil(intervals.length * 0.95) - 1]!) &&
+      intervals.at(-1)! <= 100,
+    'future recovery exceeded steady presentation gates'
+  );
+  pass('scheduled-video-future-recovery');
+}
+
+// Publishes the authored playback-boundaries document (fr30.webm video and mx_bed.wav
+// audio) for the cold-start scenario, using the same media copies as the boundary proof.
+// The 44.1 kHz document carries a loopback-only PCM16 mx_bed converted from the 48 kHz source.
+// Scheduled admission refuses a WAV whose rate differs from the context's and falls back to
+// native compatibility, which never reads the output clock, so the 44.1 kHz cold run needs a
+// WAV at the context rate to exercise the scheduled path.
+function coldBoundaryDirectory(rate: 44100 | 48000): string {
+  return join(
+    scratch,
+    rate === 48000
+      ? 'cold-playback-boundaries.otiod'
+      : 'cold-playback-boundaries-44100.otiod'
+  );
+}
+
+async function publishColdBoundaryDocument(
+  rate: 44100 | 48000 = 48000
+): Promise<string> {
+  const directory = coldBoundaryDirectory(rate);
+  const media = join(directory, 'media');
+  await mkdir(media, { recursive: true });
+  await cp(
+    fileURLToPath(
+      new URL(
+        '../../relic-format/test/fixtures/otio/edge-cases/playback-boundaries.otio',
+        import.meta.url
+      )
+    ),
+    join(directory, 'content.otio')
+  );
+  await cp(join(decoderMediaDir, 'fr30.webm'), join(media, 'fr30.webm'));
+  for (const name of ['plate_1001.png', 'plate_1002.png', 'secondary_b.mp4'])
+    await cp(join(fixtureDir, 'media', name), join(media, name));
+  if (rate === 48000) {
+    await cp(
+      join(fixtureDir, 'media', 'mx_bed.wav'),
+      join(media, 'mx_bed.wav')
+    );
+  } else {
+    const converted = await runChild(
+      [
+        'ffmpeg',
+        '-v',
+        'error',
+        '-y',
+        '-i',
+        join(fixtureDir, 'media', 'mx_bed.wav'),
+        '-ar',
+        '44100',
+        '-acodec',
+        'pcm_s16le',
+        join(media, 'mx_bed.wav'),
+      ],
+      { timeoutMs: 30000 }
+    );
+    assert.equal(converted.exit, 0, converted.stderr);
+  }
+  return publishLegacyDirectory(
+    directory,
+    rate === 48000
+      ? 'OTIO legacy cold boundaries'
+      : 'OTIO legacy cold boundaries 44100'
+  );
+}
+
+// Independent references for the cold document, decoded by ffmpeg and never taken from
+// the player: the 64x36 fr30 frames (same scale as the screencast crop), the expected
+// authored frame from the boundary oracle (upper track at composition time 0), and the
+// mx_bed.wav stereo PCM at the context rate, starting at source time 0.
+const AUTHORED_PCM_FRAMES = 4096;
+async function buildColdVideoOracle(
+  rate: number,
+  fps = 30,
+  mediaPath = join(decoderMediaDir, 'fr30.webm'),
+  audioPath = join(fixtureDir, 'media', 'mx_bed.wav')
+): Promise<{
+  references: Uint8Array[];
+  expectedIndex: number;
+  audio: Float32Array;
+  audioSha256: string;
+}> {
+  const frameCount = (36 * fps) / 30;
+  const video = await runChild(
+    [
+      'ffmpeg',
+      '-v',
+      'error',
+      '-i',
+      mediaPath,
+      '-vf',
+      'scale=64:36:flags=neighbor',
+      '-frames:v',
+      String(frameCount),
+      '-f',
+      'rawvideo',
+      '-pix_fmt',
+      'rgba',
+      'pipe:1',
+    ],
+    { timeoutMs: 20000 }
+  );
+  assert.equal(video.exit, 0, `reference video decode failed: ${video.stderr}`);
+  const frameBytes = 64 * 36 * 4;
+  assert.equal(
+    video.stdout.length,
+    frameCount * frameBytes,
+    'reference frame count mismatch'
+  );
+  const references = Array.from({ length: frameCount }, (_, i) =>
+    Uint8Array.from(video.stdout.subarray(i * frameBytes, (i + 1) * frameBytes))
+  );
+  const oracle = JSON.parse(
+    await readFile(
+      fileURLToPath(
+        new URL(
+          '../../relic-format/test/fixtures/otio/edge-cases/playback-boundaries-oracle.json',
+          import.meta.url
+        )
+      ),
+      'utf8'
+    )
+  ) as {
+    fixture: {
+      evaluations_at_time: Array<{
+        time: { value: number; rate: number };
+        contributions: Array<{
+          node_id: string;
+          bundle_path: string;
+          kind: string;
+          library_source_time: { value: number; rate: number };
+        }>;
+      }>;
+    };
+  };
+  const atZero = oracle.fixture.evaluations_at_time.find(
+    (entry) => entry.time.value === 0
+  );
+  const upper = atZero?.contributions.find(
+    (entry) => entry.node_id === 'upper-video-a' && entry.kind === 'Video'
+  );
+  assert.ok(
+    upper && upper.bundle_path === 'media/fr30.webm',
+    'oracle upper video contribution missing at time 0'
+  );
+  const expectedIndex = Math.round(
+    (upper.library_source_time.value / upper.library_source_time.rate) * fps
+  );
+  const audioDecode = await runChild(
+    [
+      'ffmpeg',
+      '-v',
+      'error',
+      '-i',
+      audioPath,
+      '-t',
+      String(AUTHORED_PCM_FRAMES / rate),
+      '-f',
+      'f32le',
+      '-af',
+      'pan=stereo|c0=c0|c1=c0',
+      '-ar',
+      String(rate),
+      'pipe:1',
+    ],
+    { timeoutMs: 20000 }
+  );
+  assert.equal(
+    audioDecode.exit,
+    0,
+    `reference audio decode failed: ${audioDecode.stderr}`
+  );
+  const audioSha256 = createHash('sha256')
+    .update(audioDecode.stdout)
+    .digest('hex');
+  const bytes = Uint8Array.from(audioDecode.stdout);
+  const audio = new Float32Array(bytes.buffer.slice(0, bytes.byteLength));
+  assert.ok(
+    audio.length >= 2 * AUTHORED_PCM_FRAMES,
+    'reference audio too short'
+  );
+  // mx_bed.wav is mono. The authored clip has weight 1.0 and no pan law, so each output
+  // channel must equal the mono sample at unity. The proof asserts that premise on the
+  // decoded reference instead of assuming it.
+  for (let k = 0; k < AUTHORED_PCM_FRAMES; k++)
+    assert.equal(
+      audio[2 * k],
+      audio[2 * k + 1],
+      'mx_bed reference is not mono; the unity-per-channel oracle does not apply'
+    );
+  return { references, expectedIndex, audio, audioSha256 };
+}
+
+// The 60 fps document is the boundary fixture with every 30 fps RationalTime rescaled to
+// 60 fps (rate 60, value doubled), so the same seconds of timeline play at twice the
+// rate. Its video is the fixture's own fr30 source re-timed to 60 fps by ffmpeg, and the
+// independent oracle decodes that shipped file, never a value taken from the player.
+function scaleRationalTimes(
+  node: unknown,
+  from: number,
+  to: number,
+  counter: { scaled: number }
+): unknown {
+  if (Array.isArray(node))
+    return node.map((item) => scaleRationalTimes(item, from, to, counter));
+  if (node === null || typeof node !== 'object') return node;
+  const record = node as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(record))
+    out[key] = scaleRationalTimes(value, from, to, counter);
+  if (record['OTIO_SCHEMA'] === 'RationalTime.1' && record['rate'] === from) {
+    assert.equal(
+      typeof record['value'],
+      'number',
+      'RationalTime lacks a numeric value'
+    );
+    out['rate'] = to;
+    out['value'] = (record['value'] as number) * (to / from);
+    counter.scaled += 1;
+  }
+  return out;
+}
+
+async function publishSixtyFpsDocument(): Promise<string> {
+  const directory = join(scratch, 'sixty-fps-boundaries.otiod');
+  const media = join(directory, 'media');
+  await mkdir(media, { recursive: true });
+  const source = JSON.parse(
+    await readFile(
+      fileURLToPath(
+        new URL(
+          '../../relic-format/test/fixtures/otio/edge-cases/playback-boundaries.otio',
+          import.meta.url
+        )
+      ),
+      'utf8'
+    )
+  ) as unknown;
+  const counter = { scaled: 0 };
+  const scaled = scaleRationalTimes(source, 30, 60, counter);
+  assert.ok(
+    counter.scaled > 0,
+    'boundary fixture has no 30 fps RationalTime to rescale'
+  );
+  const text = JSON.stringify(scaled, null, 2);
+  assert.ok(
+    text.includes('media/fr30.webm'),
+    'boundary fixture lost its fr30 reference'
+  );
+  await writeFile(
+    join(directory, 'content.otio'),
+    text.replaceAll('media/fr30.webm', 'media/fr60.webm')
+  );
+  const retimed = await runChild(
+    [
+      'ffmpeg',
+      '-v',
+      'error',
+      '-y',
+      '-i',
+      join(decoderMediaDir, 'fr30.webm'),
+      '-vf',
+      'fps=60',
+      '-an',
+      '-c:v',
+      'libvpx',
+      '-b:v',
+      '1M',
+      '-deadline',
+      'realtime',
+      join(media, 'fr60.webm'),
+    ],
+    { timeoutMs: 240000 }
+  );
+  assert.equal(retimed.exit, 0, `60 fps retime failed: ${retimed.stderr}`);
+  await cp(join(fixtureDir, 'media', 'mx_bed.wav'), join(media, 'mx_bed.wav'));
+  for (const name of ['plate_1001.png', 'plate_1002.png', 'secondary_b.mp4'])
+    await cp(join(fixtureDir, 'media', name), join(media, name));
+  return publishLegacyDirectory(directory, 'OTIO legacy 60fps boundaries');
+}
+
+// Index of the first stereo frame where the independent reference is nonzero in either
+// channel. mx_bed opens on a zero sample, so the first audible output frame is the
+// committed start plus this index, not the start itself.
+function firstReferenceNonzero(reference: Float32Array): number {
+  for (let k = 0; 2 * k + 1 < reference.length; k++)
+    if (reference[2 * k] !== 0 || reference[2 * k + 1] !== 0) return k;
+  throw new Error(
+    'independent reference is silent; first audible frame unproven'
+  );
+}
+
+// Authored PCM comparator: actual[k] must match reference frame k in both channels
+// within 0.003, and every frame must be present. An absent frame is never accepted.
+function compareAuthoredPcm(
+  actual: Array<[number, number] | undefined>,
+  reference: Float32Array,
+  frames: number
+): boolean {
+  for (let k = 0; k < frames; k++) {
+    const pair = actual[k];
+    if (!pair) return false;
+    if (Math.abs(pair[0] - reference[2 * k]!) > 0.003) return false;
+    if (Math.abs(pair[1] - reference[2 * k + 1]!) > 0.003) return false;
+  }
+  return true;
+}
+
+// A reference is usable only when it carries real audible content.
+function referenceIsAudible(reference: Float32Array, frames: number): boolean {
+  let sum = 0;
+  for (let i = 0; i < 2 * frames; i++) sum += reference[i]! * reference[i]!;
+  return Math.sqrt(sum / (2 * frames)) > 1e-3;
+}
+
+// Controls for the authored comparator: the reference matches itself, a one-frame shift
+// and silent output are rejected, and a silent reference is not usable.
+function assertAuthoredPcmControls(): void {
+  const frames = 8;
+  const reference = new Float32Array(2 * frames);
+  for (let i = 0; i < reference.length; i++) reference[i] = 0.1 + 0.01 * i;
+  const self: Array<[number, number] | undefined> = [];
+  for (let k = 0; k < frames; k++)
+    self.push([reference[2 * k]!, reference[2 * k + 1]!]);
+  assert.ok(
+    compareAuthoredPcm(self, reference, frames),
+    'authored comparator rejected the reference itself'
+  );
+  const shifted: Array<[number, number] | undefined> = [];
+  for (let k = 0; k < frames; k++) {
+    const j = Math.min(k + 1, frames - 1);
+    shifted.push([reference[2 * j]!, reference[2 * j + 1]!]);
+  }
+  assert.ok(
+    !compareAuthoredPcm(shifted, reference, frames),
+    'one-frame shift was accepted'
+  );
+  const silent: Array<[number, number] | undefined> = [];
+  for (let k = 0; k < frames; k++) silent.push([0, 0]);
+  assert.ok(
+    !compareAuthoredPcm(silent, reference, frames),
+    'silent output was accepted'
+  );
+  assert.ok(
+    !referenceIsAudible(new Float32Array(2 * frames), frames),
+    'silent reference counted as audible'
+  );
+}
+
+// Collects the carrier-identified output frames [f0, f0+frames) in order.
+function collectAuthoredPcm(
+  trace: MovingTrace['trace'],
+  f0: number,
+  frames: number
+): Array<[number, number] | undefined> {
+  const witness = trace.witness;
+  assert.ok(witness, 'authored PCM comparison lacks the independent carrier');
+  const out: Array<[number, number] | undefined> = new Array(frames).fill(
+    undefined
+  );
+  for (const chunk of trace.audio) {
+    for (let i = 0; i < chunk.channels[0]!.length; i++) {
+      const frame = carrierFrame(chunk, i, witness);
+      if (frame === null) continue;
+      const k = frame - f0;
+      if (k < 0 || k >= frames) continue;
+      out[k] = [chunk.channels[0]![i]!, chunk.channels[1]![i]!];
+    }
+  }
+  return out;
+}
+
+// The boundary fixture's stages come in two parts that share nothing but the fixture. The
+// audio part holds scheduled playback to its budgets (post-gain tap, moving windows, sustained
+// captures, reservation and recovery controls). The comment part posts a comment on the second
+// moving occurrence and follows it through three revisions, with no audio capture.
+//   'all'              both, in one browser, as the full path runs them
+//   'scheduled-audio'  the audio part only, for the scheduled-audio slice
+//   'comment'          the comment part only, for the slice without scheduled audio
+//   'interaction'      the interaction-only proof: a new publish, its layout matrix, the comment
+type CalibrationPart = 'all' | 'scheduled-audio' | 'comment' | 'interaction';
+async function calibratePostGainTap(
+  sessionToken: string,
+  part: CalibrationPart = 'all'
+): Promise<void> {
+  const interactionOnly = part === 'interaction';
+  const audio = part === 'all' || part === 'scheduled-audio';
+  const directory = join(scratch, 'playback-boundaries.otiod');
+  const media = join(directory, 'media');
+  await mkdir(media, { recursive: true });
+  await cp(
+    fileURLToPath(
+      new URL(
+        '../../relic-format/test/fixtures/otio/edge-cases/playback-boundaries.otio',
+        import.meta.url
+      )
+    ),
+    join(directory, 'content.otio')
+  );
+  await cp(join(decoderMediaDir, 'fr30.webm'), join(media, 'fr30.webm'));
+  for (const name of [
+    'plate_1001.png',
+    'plate_1002.png',
+    'mx_bed.wav',
+    'secondary_b.mp4',
+  ])
+    await cp(join(fixtureDir, 'media', name), join(media, name));
+  let url: string;
+  if (interactionOnly) {
+    const published = await callMcp('relic_publish', {
+      path: directory,
+      title: 'OTIO playback boundary proof',
+      cover: false,
+    });
+    url = String(published['url'] ?? published['link'] ?? '');
+    assert.ok(
+      url.startsWith(origin) && url.includes('#'),
+      'boundary fixture publish failed'
+    );
+  } else {
+    url = await publishLegacyDirectory(
+      directory,
+      'OTIO playback boundary proof'
+    );
+  }
+  const relicId = new URL(url).pathname.split('/').filter(Boolean).at(-1);
+  assert.ok(relicId, 'boundary fixture relic ID missing');
+  // The fixture is 48 kHz. A context at any other rate makes the viewer play natively with the
+  // reason "sample-rate conversion is required", and the dropout and agreement checks below are
+  // claims about scheduled audio only. Linux headless Chrome defaults to 44.1 kHz, so the rate is
+  // pinned as it is for every other scheduled stage, and the capture's rate is asserted.
+  const browser = await openBrowser(url, sessionToken, {
+    label: interactionOnly
+      ? 'interaction-only'
+      : audio
+        ? 'post-gain-calibration'
+        : 'focused-comment',
+    recordProofTrace: audio,
+    ...(audio ? { proofSampleRate: 48000 as const } : {}),
+  });
+  try {
+    await browser.send('Emulation.setDeviceMetricsOverride', {
+      width: 1440,
+      height: 900,
+      deviceScaleFactor: 1,
+      mobile: false,
+    });
+    await waitReady(browser);
+    if (!interactionOnly)
+      await assertLegacyProgramState(browser, 'post-gain-calibration');
+    const provenance = await proofProvenance(browser);
+    if (audio) {
+      const stopCast = await browser.startScreencast();
+      const capture = await browser.evaluate<{
+        start: {
+          sampleRate: number;
+          contextState: string;
+          sampleFrame: number;
+        };
+        mute: { value: number; sampleFrame: number };
+        refusedBeforeCapture?: string;
+        paused: string;
+        restored: number;
+        trace: {
+          sampleRate: number;
+          sampleFrame: number;
+          contextState: string;
+          audioOverflow: boolean;
+          visualOverflow: boolean;
+          eventsOverflow: boolean;
+          audio: MovingTrace['trace']['audio'];
+          witness: MovingTrace['trace']['witness'];
+          visual: Array<{ timestamp: number; error?: string }>;
+        };
+      }>(`(async () => {
+      const sleep = ms => { const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, ms); return promise; };
+      const button = document.querySelector('button.otio-play');
+      const root = document.querySelector('.otio-view');
+      if (!(button instanceof HTMLButtonElement) || !root) throw new Error('playback controls missing');
+      button.click();
+      const deadline = performance.now() + 12000;
+      while (root.dataset.playing !== 'true' && performance.now() < deadline) await sleep(25);
+      if (root.dataset.playing !== 'true') throw new Error('playback did not start');
+      await sleep(600);
+      const refused = Array.from(document.querySelectorAll('.otio-diagnostic')).map(node => node.textContent ?? '').join(' ');
+      if (refused.includes('Scheduled audio stopped:')) return {refusedBeforeCapture: refused};
+      const start = await globalThis.__otioProofTrace.start();
+      await sleep(600);
+      const mute = globalThis.__otioProofTrace.mute();
+      await sleep(600);
+      const restored = globalThis.__otioProofTrace.restore(mute.value);
+      await sleep(600);
+      const trace = await globalThis.__otioProofTrace.stop();
+      ${SETTLE_PAUSE_JS}
+      const paused = await settlePause();
+      return {start, mute, restored, trace, paused};
+    })()`);
+      const cast = await stopCast();
+      if (capture.refusedBeforeCapture !== undefined) {
+        const found = viewerInterruptionText(capture.refusedBeforeCapture);
+        if (found !== null) throw new InterruptedOutsideTrace(found);
+        assert.fail(
+          `playback stopped before the post-gain capture began: ${capture.refusedBeforeCapture}`
+        );
+      }
+      await writeFile(
+        join(shotDir, 'post-gain-calibration.json'),
+        JSON.stringify({ provenance, capture, cast })
+      );
+      // The viewer can stop just as the capture begins, before the trace records anything of
+      // it (lane 43383354503/calibration-8: a boundary failed 16 ms in, then 2.4 s of silence).
+      // What the reader is shown once the capture ends says so.
+      const interrupted = viewerInterruptionText(capture.paused);
+      if (interrupted !== null) throw new InterruptedOutsideTrace(interrupted);
+      assert.ok(
+        proofWorkletRequests > 0,
+        'same-origin proof worklet was not requested'
+      );
+      assert.equal(
+        capture.start.contextState,
+        'running',
+        'audio context not running'
+      );
+      assert.equal(
+        capture.start.sampleRate,
+        48000,
+        'post-gain calibration context is not at the fixture rate, so audio was not scheduled'
+      );
+      assert.equal(
+        capture.trace.audioOverflow,
+        false,
+        'post-gain PCM capture overflow'
+      );
+      assert.equal(
+        capture.trace.visualOverflow,
+        false,
+        'canvas capture overflow'
+      );
+      assert.equal(
+        capture.trace.eventsOverflow,
+        false,
+        'audio event capture overflow'
+      );
+      assert.equal(cast.overflow, false, 'screencast capture overflow');
+      assert.ok(
+        cast.frames.length >= 2,
+        'screencast returned fewer than two frames'
+      );
+      assert.ok(
+        capture.trace.visual.length >= 2 &&
+          capture.trace.visual.every((s) => !s.error),
+        'canvas trace unavailable'
+      );
+      const chunks = capture.trace.audio;
+      // This stage plays scheduled audio at the fixture rate, where the engine
+      // repeats a cached currentFrame label now and then. As in the scheduled
+      // stages, the independent carrier and the callback sequence authenticate
+      // coverage and give every sample its frame. Raw labels stay diagnostic.
+      const witness = capture.trace.witness;
+      assertPcmCoverage(
+        capture.start.sampleFrame,
+        capture.trace.sampleFrame,
+        chunks,
+        witness
+      );
+      assert.ok(witness, 'independent native carrier unavailable');
+      assert.ok(chunks.length > 2, 'post-gain PCM tap produced no chunks');
+      const rms = (from: number, to: number): number => {
+        let sum = 0,
+          count = 0;
+        for (const chunk of chunks)
+          for (const channel of chunk.channels)
+            for (let i = 0; i < channel.length; i++) {
+              const frame = carrierFrame(chunk, i, witness);
+              if (frame !== null && frame >= from && frame < to) {
+                sum += channel[i]! ** 2;
+                count++;
+              }
+            }
+        assert.ok(count > 0, 'audio calibration window has no PCM');
+        return Math.sqrt(sum / count);
+      };
+      const guard = Math.ceil(capture.trace.sampleRate * 0.15);
+      const before = rms(
+        capture.start.sampleFrame + guard,
+        capture.mute.sampleFrame - guard
+      );
+      const muted = rms(
+        capture.mute.sampleFrame + guard,
+        capture.restored - guard
+      );
+      assert.ok(
+        before > 0.0001,
+        `post-gain source was silent before mute: ${before}`
+      );
+      assert.ok(
+        muted < before * 0.01,
+        `master-gain mute did not silence the tapped signal: ${before} -> ${muted}`
+      );
+      pass('post-gain-tap-calibration');
+      await assessMovingWindowControls(browser, before, muted, provenance);
+      await assertVideoReservationInvalidation(browser, provenance);
+      await calibrateCaptureOverhead(browser, provenance);
+      await focusItem(browser, 'moving-a');
+      await assessMovingWindowControls(
+        browser,
+        before,
+        muted,
+        provenance,
+        true
+      );
+      await leaveFocus(browser);
+    }
+    if (part === 'scheduled-audio') return;
+    await focusItem(browser, 'moving-b');
+    if (interactionOnly) {
+      const matrix: Array<Record<string, unknown>> = [];
+      for (const [width, scheme] of [
+        [1440, 'light'],
+        [390, 'light'],
+        [1440, 'dark'],
+        [390, 'dark'],
+      ] as const) {
+        await browser.send('Emulation.setDeviceMetricsOverride', {
+          width,
+          height: 900,
+          deviceScaleFactor: 1,
+          mobile: width < 600,
+        });
+        await browser.send('Emulation.setEmulatedMedia', {
+          features: [{ name: 'prefers-color-scheme', value: scheme }],
+        });
+        const fit = await browser.evaluate<boolean>(`(() => {
+          const button=document.querySelector('.otio-zoom-fit');
+          if (!(button instanceof HTMLButtonElement)) return false;
+          button.click(); return true;
+        })()`);
+        assert.ok(fit, 'focused Fit control missing');
+        await openComposer(browser);
+        const seeded = await browser.evaluate<boolean>(`(() => {
+          const field=document.querySelector('.popover-composer textarea.popover-field');
+          if (!(field instanceof HTMLTextAreaElement)) return false;
+          field.value='Draft survives zoom.';
+          field.dispatchEvent(new Event('input',{bubbles:true}));
+          globalThis.__interactionDraft=field; return true;
+        })()`);
+        assert.ok(seeded, 'focused draft unavailable');
+        const wheel = await assertFocusedWheelZoom(browser, true);
+        const draftKept = await browser.evaluate<boolean>(`(() => {
+          const field=document.querySelector('.popover-composer textarea.popover-field');
+          return field === globalThis.__interactionDraft && field?.value === 'Draft survives zoom.';
+        })()`);
+        assert.ok(draftKept, 'wheel zoom lost focused draft');
+        const geometry = await measureComposer(browser);
+        assertComposerProbe(
+          geometry,
+          `${width}px ${scheme} interaction composer`,
+          false
+        );
+        await browser.screenshot(`interaction-${width}-${scheme}`);
+        matrix.push({ width, scheme, geometry, wheel });
+        await dismissComposer(browser);
+      }
+      await writeFile(
+        join(shotDir, 'interaction-layout.json'),
+        JSON.stringify({ provenance, matrix })
+      );
+      await browser.send('Emulation.setDeviceMetricsOverride', {
+        width: 1440,
+        height: 900,
+        deviceScaleFactor: 1,
+        mobile: false,
+      });
+    }
+    const local = await browser.evaluate<{
+      origin: number;
+      rate: number;
+      start: string;
+      end: string;
+    } | null>(`(() => {
+      const root = document.querySelector('.otio-view');
+      const input = document.querySelector('.otio-selection-in');
+      const output = document.querySelector('.otio-selection-out');
+      const range = document.querySelector('button[data-otio-mode="range"]');
+      if (!(root instanceof HTMLElement) || !(input instanceof HTMLInputElement) ||
+          !(output instanceof HTMLInputElement) || !(range instanceof HTMLButtonElement)) return null;
+      range.click();
+      input.value = '2'; input.dispatchEvent(new Event('change', {bubbles:true}));
+      output.value = '6'; output.dispatchEvent(new Event('change', {bubbles:true}));
+      return {origin: Number(root.dataset.domainOrigin), rate: Number(root.dataset.domainRate),
+        start: input.value, end: output.value};
+    })()`);
+    assert.ok(
+      local && local.origin === 60 && local.rate === 30,
+      `wrong focus origin: ${JSON.stringify(local)}`
+    );
+    assert.equal(local.start, '2');
+    assert.equal(local.end, '6');
+    const body = 'Check the second moving occurrence.';
+    await postComposer(browser, body);
+    const comment = commentByBody(await readComments(relicId), body);
+    if (interactionOnly)
+      await writeFile(
+        join(shotDir, 'interaction-original-comment.json'),
+        JSON.stringify({ provenance, comment })
+      );
+    const anchor = comment['anchor'] as {
+      item_id?: string;
+      track_id?: string;
+      relic_version?: number;
+      range?: TimeRange;
+    };
+    assert.equal(anchor.item_id, 'moving-b');
+    assert.equal(anchor.track_id, 'boundary-lower');
+    assert.equal(anchor.relic_version, 1);
+    assert.ok(
+      rangeClose(anchor.range, {
+        start_time: { value: 62, rate: 30 },
+        duration: { value: 4, rate: 30 },
+      }),
+      'local range was not persisted in composition coordinates'
+    );
+    const resolved = resolvedOf(comment);
+    const spans = resolved['intersections'] as Array<Record<string, unknown>>;
+    assert.equal(resolved['status'], 'resolved');
+    assert.ok(Array.isArray(spans), 'focused comment has no source spans');
+    const span = spans.find((item) => item['node_id'] === 'moving-b');
+    assert.ok(
+      span &&
+        rationalClose(asRange(span['source_range'])?.start_time, {
+          value: 8,
+          rate: 30,
+        }),
+      'focused comment resolved to the wrong source interval'
+    );
+    assert.ok(
+      rationalClose(asRange(span['file_relative_source_range'])?.start_time, {
+        value: 8,
+        rate: 30,
+      }),
+      'focused comment resolved to the wrong file-relative interval'
+    );
+    const encrypted = JSON.stringify(
+      await (await fetch(`${origin}/api/relics/${relicId}/comments`)).json()
+    );
+    assert.ok(
+      !encrypted.includes(body) && !encrypted.includes('moving-b'),
+      'focused comment leaked plaintext'
+    );
+    const commentId = String(comment['comment_id'] ?? '');
+    assert.ok(commentId, 'focused comment has no ID');
+    const reopened = await openBrowser(url, sessionToken, {
+      label: 'nonzero-focus-reload',
+    });
+    try {
+      await waitReady(reopened);
+      const clicked = await reopened.evaluate<boolean>(`(async () => {
+        const deadline = Date.now() + 10000;
+        while (Date.now() < deadline) {
+          const mark = [...document.querySelectorAll('.otio-comment-mark')]
+            .find(node => node.dataset.commentId === ${JSON.stringify(commentId)});
+          if (mark instanceof HTMLButtonElement) { mark.click(); return true; }
+          const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, 50); await promise;
+        }
+        return false;
+      })()`);
+      assert.ok(clicked, 'focused comment was not revealed after reload');
+      const revealed = await reopened.evaluate<boolean>(`(async () => {
+        const deadline = Date.now() + 10000;
+        while (Date.now() < deadline) {
+          const root = document.querySelector('.otio-view');
+          if (root?.dataset.scopeNodeId === 'moving-b') return true;
+          const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, 50); await promise;
+        }
+        return false;
+      })()`);
+      assert.ok(
+        revealed,
+        'reload reveal did not restore the original focused item'
+      );
+    } finally {
+      await reopened.close();
+    }
+    if (interactionOnly)
+      assert.equal(
+        mails.length,
+        0,
+        `interaction comment unexpectedly invoked mailer: ${JSON.stringify(mails.map(({ to, mail }) => ({ to, subject: mail.subject })))}`
+      );
+    // An addressed reply normally emails the reviewer. The reviewer has stopped
+    // email for this relic, in the full path as in the interaction-only run,
+    // so the republishes below send nothing.
+    await store.putOptOut({
+      relicId,
+      addressHash: await sha256Hex('reader@example.test'),
+      at: fakeNow,
+    });
+    const sourceRange: TimeRange = {
+      start_time: { value: 8, rate: 30 },
+      duration: { value: 4, rate: 30 },
+    };
+    let revisionDir = directory;
+    for (const [operation, status] of [
+      ['boundary-insert', 'mapped'],
+      ['boundary-trim', 'partial'],
+      ['boundary-ambiguous', 'ambiguous'],
+    ] as const) {
+      const nextDir = join(scratch, `${operation}.otiod`);
+      const result = JSON.parse(
+        await oracle([
+          'mutate',
+          operation,
+          revisionDir,
+          nextDir,
+          JSON.stringify(sourceRange),
+        ])
+      ) as { status: string; mapped_range: TimeRange | null };
+      assert.equal(result.status, status, `official ${operation} oracle`);
+      const updated = await callMcp('relic_republish', {
+        relic_id: relicId,
+        path: nextDir,
+        cover: false,
+        notify: false,
+        ...(operation === 'boundary-insert'
+          ? {
+              addresses: [
+                { comment_id: commentId, note: 'Retained the clip.' },
+              ],
+            }
+          : {}),
+      });
+      assert.ok(updated['version'], `${operation} did not republish`);
+      const after = commentByBody(await readComments(relicId), body);
+      const originalAnchor = after['anchor'] as {
+        item_id?: string;
+        track_id?: string;
+        range?: TimeRange;
+      };
+      assert.equal(originalAnchor.item_id, 'moving-b');
+      assert.equal(originalAnchor.track_id, 'boundary-lower');
+      assert.ok(
+        rangeClose(originalAnchor.range, anchor.range),
+        `${operation} rewrote original anchor`
+      );
+      const projection = resolvedOf(after)['current_projection'] as {
+        status?: string;
+        mapped_range?: TimeRange;
+        mapped_start_seconds?: number | null;
+      };
+      assert.equal(projection.status, status, `${operation} projection status`);
+      if (status === 'ambiguous') {
+        assert.equal(projection.mapped_range, undefined);
+        assert.ok(
+          projection.mapped_start_seconds == null,
+          'ambiguous projection guessed a coordinate'
+        );
+      } else {
+        assert.ok(
+          rangeClose(projection.mapped_range, result.mapped_range),
+          `${operation} projection disagrees with official reader`
+        );
+      }
+      revisionDir = nextDir;
+      if (interactionOnly)
+        await writeFile(
+          join(shotDir, `interaction-${operation}.json`),
+          JSON.stringify({ provenance, oracle: result, comment: after })
+        );
+    }
+    if (interactionOnly) {
+      assert.deepEqual(
+        browser.blocked,
+        [],
+        'interaction proof attempted non-loopback network'
+      );
+      assert.deepEqual(
+        browser.continuedNonLoopback,
+        [],
+        'interaction proof continued non-loopback network'
+      );
+    }
+    if (!interactionOnly) pass('focused-nonzero-comment');
+  } finally {
+    await browser.close();
+  }
+}
+async function runNativeAudioCompatibilityProof(
+  sessionToken: string
+): Promise<void> {
+  const source = fileURLToPath(
+    new URL(
+      '../../relic-format/test/fixtures/otio/scheduled-audio.otiod/',
+      import.meta.url
+    )
+  );
+  const directory = join(scratch, 'scheduled-native.otiod');
+  await cp(source, directory, { recursive: true });
+  const compressed = await runChild(
+    [
+      'ffmpeg',
+      '-v',
+      'error',
+      '-i',
+      join(source, 'media', 'indexed-stereo.wav'),
+      '-f',
+      'mp3',
+      'pipe:1',
+    ],
+    { timeoutMs: 30000 }
+  );
+  assert.equal(
+    compressed.exit,
+    0,
+    `native compatibility fixture conversion failed: ${compressed.stderr}`
+  );
+  assert.ok(compressed.stdout.length > 0);
+  await writeFile(
+    join(directory, 'media', 'indexed-stereo.mp3'),
+    compressed.stdout
+  );
+  const document = await readFile(join(directory, 'content.otio'), 'utf8');
+  assert.ok(
+    document.includes('media/indexed-stereo.wav'),
+    'native compatibility source reference missing'
+  );
+  await writeFile(
+    join(directory, 'content.otio'),
+    document.replaceAll('media/indexed-stereo.wav', 'media/indexed-stereo.mp3')
+  );
+  const url = await publishLegacyDirectory(
+    directory,
+    'OTIO legacy native-compatibility'
+  );
+  const browser = await openBrowser(url, sessionToken, {
+    label: 'native-audio-compatibility',
+    recordProofTrace: true,
+  });
+  try {
+    await waitReady(browser);
+    await assertLegacyProgramState(browser, 'native-compatibility');
+    const provenance = await proofProvenance(browser);
+    const capture = await browser.evaluate<MovingTrace>(`(async () => {
+      const sleep = ms => { const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, ms); return promise; };
+      const button = document.querySelector('button.otio-play');
+      const root = document.querySelector('.otio-view');
+      if (!(button instanceof HTMLButtonElement) || !(root instanceof HTMLElement)) throw new Error('native compatibility controls missing');
+      const start = await globalThis.__otioProofTrace.start();
+      const playEdge = globalThis.__otioProofTrace.playRequest();
+      button.click();
+      await sleep(1500);
+      const trace = await globalThis.__otioProofTrace.stop();
+      if (root.dataset.playing === 'true') button.click();
+      return {start, playEdge, trace};
+    })()`);
+    await writeFile(
+      join(shotDir, 'native-audio-compatibility.json'),
+      JSON.stringify({ provenance, capture })
+    );
+    const backends = capture.trace.events
+      .filter((entry) => entry.kind === 'scheduled-pcm')
+      .map((entry) => entry.value as Record<string, unknown>)
+      .filter((event) => event['event'] === 'backend');
+    const backend = backends.at(-1);
+    assert.equal(
+      backend?.['backend'],
+      'native',
+      'compressed audio did not select native compatibility'
+    );
+    assert.ok(
+      typeof backend?.['reason'] === 'string' && backend['reason'].length > 0,
+      'native compatibility reason missing'
+    );
+    assert.ok(
+      capture.trace.events.some(
+        (entry) => entry.kind === 'play' && entry.mediaType === 'AUDIO'
+      ),
+      'native compatibility did not play an audio element'
+    );
+    const samples = capture.trace.audio.flatMap(
+      (chunk) => chunk.channels[0] ?? []
+    );
+    assert.ok(
+      samples.length > 0 && samples.some((value) => Math.abs(value) > 0.001),
+      'native compatibility output was silent'
+    );
+    assert.ok(
+      !capture.trace.audioOverflow && !capture.trace.eventsOverflow,
+      'native compatibility trace overflow'
+    );
+    pass('scheduled-pcm-native-compatibility');
+  } finally {
+    await browser.close();
+  }
+}
+// Pure cold-start verdict. The thresholds are the unchanged original 350 ms budget
+// for both first audible source-correct output and first visual presentation, at
+// least two native promotions, and no suspend request after the play edge.
+function coldStartVerdict(input: {
+  audibleMs: number;
+  visualMs: number;
+  promotions: number;
+  suspendsAfterPlay: number;
+}): boolean {
+  return (
+    input.audibleMs <= 350 &&
+    input.visualMs <= 350 &&
+    input.promotions >= 2 &&
+    input.suspendsAfterPlay === 0
+  );
+}
+
+// First nonzero output at or after f0, using only carrier-identified samples. Returns
+// null when no nonzero sample exists, so absent output is never inferred.
+function firstNonzeroFrame(
+  trace: MovingTrace['trace'],
+  f0: number
+): { frame: number } | null {
+  const witness = trace.witness;
+  assert.ok(witness, 'cold audible measurement lacks the independent carrier');
+  let best: number | null = null;
+  for (const chunk of trace.audio) {
+    for (let i = 0; i < chunk.channels[0]!.length; i++) {
+      const frame = carrierFrame(chunk, i, witness);
+      if (frame === null || frame < f0) continue;
+      const left = chunk.channels[0]![i]!,
+        right = chunk.channels[1]![i]!;
+      if (Math.abs(left) > 1e-6 || Math.abs(right) > 1e-6) {
+        if (best === null || frame < best) best = frame;
+      }
+    }
+  }
+  return best === null ? null : { frame: best };
+}
+
+// Maps a committed frame to wall time with the nearest prior native output
+// observation (getOutputTimestamp). The bound is the read duration plus the
+// extrapolation distance, reported rather than hidden.
+function mapFrameToWall(
+  observations: Array<{
+    before: number;
+    after: number;
+    contextTime: number;
+    performanceTime: number;
+  }>,
+  frame: number,
+  rate: number
+): { wallMs: number; boundMs: number } | null {
+  let chosen: (typeof observations)[number] | null = null;
+  for (const obs of observations) {
+    if (
+      obs.contextTime * rate <= frame &&
+      (chosen === null || obs.contextTime > chosen.contextTime)
+    )
+      chosen = obs;
+  }
+  if (chosen === null) return null;
+  const extrapolationMs = (frame / rate - chosen.contextTime) * 1000;
+  return {
+    wallMs: chosen.performanceTime + extrapolationMs,
+    boundMs: chosen.after - chosen.before + extrapolationMs,
+  };
+}
+
+// Synthetic controls for the cold measurement: an observation after the frame must
+// not be used, and the mapping must follow the nearest prior observation.
+function assertColdMeasurementControls(): void {
+  const obs = [
+    { before: 0, after: 1, contextTime: 0.0, performanceTime: 1000 },
+    { before: 50, after: 51, contextTime: 0.5, performanceTime: 1500 },
+  ];
+  // Frame 12000 at 48 kHz is 0.25 s: nearest prior observation is the first one, so the
+  // wall time is 1000 ms plus 250 ms of extrapolation.
+  const quarter = mapFrameToWall(obs, 12000, 48000);
+  assert.ok(
+    quarter !== null && Math.abs(quarter.wallMs - 1250) < 1e-9,
+    'cold mapping did not extrapolate from the nearest prior observation'
+  );
+  // Frame 24000 at 48 kHz is exactly the second observation (0.5 s), which counts as prior.
+  const exact = mapFrameToWall(obs, 24000, 48000);
+  assert.ok(
+    exact !== null && Math.abs(exact.wallMs - 1500) < 1e-9,
+    'cold mapping did not use the exact prior observation'
+  );
+  assert.equal(
+    mapFrameToWall(obs.slice(1), 100, 48000),
+    null,
+    'mapping used an observation after the frame'
+  );
+}
+
+// First screencast frame whose pixels differ from the baseline. Returns -1 when none
+// differ, so an unchanged capture is never reported as presentation.
+function firstChangedScreencastIndex(
+  baseline: Uint8Array,
+  frames: Array<Uint8Array>
+): number {
+  return frames.findIndex(
+    (pixels) =>
+      pixels.length !== baseline.length ||
+      pixels.some((value, i) => value !== baseline[i])
+  );
+}
+
+// Negative controls for the screencast comparator: identical frames never count as a
+// change, and a single differing byte does.
+function assertScreencastComparatorControls(): void {
+  const base = new Uint8Array([1, 2, 3, 4]);
+  assert.equal(
+    firstChangedScreencastIndex(base, [new Uint8Array([1, 2, 3, 4])]),
+    -1,
+    'identical screencast frame counted as presentation'
+  );
+  assert.equal(
+    firstChangedScreencastIndex(base, [
+      new Uint8Array([1, 2, 3, 4]),
+      new Uint8Array([1, 2, 3, 5]),
+    ]),
+    1,
+    'single changed byte was not detected'
+  );
+}
+// Source-matched presentation: a frame is accepted only when it is the expected
+// authored video frame, within the existing classifier's error bound and clearly
+// closer to it than to any other reference. A mere byte difference never qualifies.
+function matchesExpectedVideoFrame(
+  pixels: Uint8Array,
+  references: readonly Uint8Array[],
+  expected: number
+): boolean {
+  const ranked = references
+    .map((reference, index) => ({ index, error: rmse(pixels, reference) }))
+    .sort((a, b) => a.error - b.error);
+  const best = ranked[0];
+  const next = ranked[1];
+  if (!best || !next || best.index !== expected) return false;
+  return best.error < 12 && best.error < next.error;
+}
+
+// Cells of the 64x36 crop that a viewer overlay covers. A cell touching any overlay is
+// excluded from the comparison; the threshold stays 12, and at least 80% of cells must remain.
+function overlayCellMask(
+  crop: { x: number; y: number; width: number; height: number },
+  overlays: ReadonlyArray<{
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  }>
+): Uint8Array {
+  const mask = new Uint8Array(64 * 36).fill(1);
+  for (let row = 0; row < 36; row++)
+    for (let col = 0; col < 64; col++) {
+      const x0 = crop.x + (col * crop.width) / 64;
+      const x1 = crop.x + ((col + 1) * crop.width) / 64;
+      const y0 = crop.y + (row * crop.height) / 36;
+      const y1 = crop.y + ((row + 1) * crop.height) / 36;
+      if (
+        overlays.some(
+          (o) =>
+            x1 > o.x && x0 < o.x + o.width && y1 > o.y && y0 < o.y + o.height
+        )
+      )
+        mask[row * 64 + col] = 0;
+    }
+  const kept = mask.reduce((sum, value) => sum + value, 0);
+  assert.ok(
+    kept >= 0.8 * 64 * 36,
+    `overlay mask removed too much of the frame (${kept} of ${64 * 36} cells kept)`
+  );
+  return mask;
+}
+
+// RMSE over the unmasked cells only; the same arithmetic as rmse() on the full frame.
+function maskedRmse(
+  pixels: Uint8Array,
+  reference: Uint8Array,
+  mask: Uint8Array
+): number {
+  let sum = 0;
+  let count = 0;
+  for (let cell = 0; cell < mask.length; cell++) {
+    if (mask[cell] === 0) continue;
+    for (let channel = 0; channel < 4; channel++) {
+      const i = cell * 4 + channel;
+      const d = pixels[i]! - reference[i]!;
+      sum += d * d;
+      count++;
+    }
+  }
+  return Math.sqrt(sum / count);
+}
+
+// Classifies a screencast crop against the independent fr30 references with the same
+// rule as matchesExpectedVideoFrame. Returns null when the frame is noise or ambiguous,
+// so no frame is assigned a source it does not clearly match.
+function classifyVideoFrame(
+  pixels: Uint8Array,
+  references: readonly Uint8Array[],
+  mask?: Uint8Array
+): number | null {
+  const ranked = references
+    .map((reference, index) => ({
+      index,
+      error: mask
+        ? maskedRmse(pixels, reference, mask)
+        : rmse(pixels, reference),
+    }))
+    .sort((a, b) => a.error - b.error);
+  const best = ranked[0];
+  const next = ranked[1];
+  if (!best || !next) return null;
+  return best.error < 12 && best.error < next.error ? best.index : null;
+}
+
+// Selects the first post-play presentation of a later source-correct frame. The paused view
+// must show a classified source frame: with no pre-play class the result is -1, so movement is
+// never attributed to a view nothing classified. The pre-play class is excluded, not required
+// absent. A frame is accepted only when it is at or after the expected source frame and no
+// further ahead than the elapsed timeline allows (one source frame per 1/30 s at speed 1, plus
+// one frame of rounding). Returns the index or -1.
+function selectPresentedFrame(
+  preplay: number | null,
+  frames: Array<{ elapsedMs: number; cls: number | null }>,
+  expected: number
+): number {
+  if (preplay === null) return -1;
+  for (let i = 0; i < frames.length; i++) {
+    const frame = frames[i];
+    if (!frame || frame.cls === null) continue;
+    if (frame.cls === preplay || frame.cls < expected) continue;
+    const elapsedSourceFrames = (frame.elapsedMs * 30) / 1000;
+    if (frame.cls - expected > Math.floor(elapsedSourceFrames) + 1) continue;
+    return i;
+  }
+  return -1;
+}
+
+// Phase band from independent per-sample inputs. Each sample carries its own resident slot
+// count K. The viewer's band for a leaf is [dL + 1000*(v - offset), dL + 1000*((K-1)*w -
+// offset)] in absolute ms, where offset = (iL0Plus1Start - sourceT0Seconds) / rL, w is the
+// leaf's minimum window and v the vsync. The phase is the intersection over leaves. K is
+// required per sample: a missing or sub-3 count fails, it is never assumed. With K = 3 this
+// is exactly the former two-window band, so the fixed-3 case is a special case, not the rule.
+function phaseBandFromSamples(
+  samples: Record<string, unknown>[],
+  vsync: number
+): { lower: number; upper: number } {
+  let upper = Infinity;
+  let lower = -Infinity;
+  for (const raw of samples) {
+    const dL = Number(raw['dL']),
+      start = Number(raw['iL0Plus1Start']),
+      source = Number(raw['sourceT0Seconds']),
+      r = Number(raw['rL']),
+      width = Number(raw['wMinSeconds']),
+      slots = raw['residentSlots'];
+    assert.ok(
+      [dL, start, source, r, width].every(Number.isFinite) &&
+        r > 0 &&
+        width >= vsync,
+      'invalid independent phase input'
+    );
+    assert.ok(
+      typeof slots === 'number' && Number.isSafeInteger(slots) && slots >= 3,
+      `phase sample lacks a resident slot count of at least three: ${String(slots)}`
+    );
+    const offsetMs = (1000 * (start - source)) / r;
+    lower = Math.max(lower, dL + 1000 * vsync - offsetMs);
+    upper = Math.min(upper, dL + 1000 * (slots - 1) * width - offsetMs);
+  }
+  assert.ok(
+    Number.isFinite(lower) && Number.isFinite(upper),
+    'phase band has no samples'
+  );
+  return { lower, upper };
+}
+
+// Only an independently classified audio-only document has no video phase.
+function recoveryPhaseBand(
+  samples: Record<string, unknown>[],
+  vsync: number,
+  audioOnly: boolean
+): { lower: number; upper: number } {
+  if (!audioOnly) return phaseBandFromSamples(samples, vsync);
+  assert.equal(
+    samples.length,
+    0,
+    'audio-only recovery recorded a video phase sample'
+  );
+  return { lower: -Infinity, upper: Infinity };
+}
+
+// Controls for the per-sample phase band. The band must grow with K (a fixed-3 oracle would
+// not), must equal the former two-window band at K = 3, and must refuse a missing count.
+function assertPhaseBandControls(): void {
+  const sample = (slots: number | undefined, width: number) => ({
+    dL: 100,
+    iL0Plus1Start: 0.05,
+    sourceT0Seconds: 0,
+    rL: 1,
+    wMinSeconds: width,
+    residentSlots: slots,
+  });
+  const vsync = 1 / 60;
+  const width = 0.033;
+  const three = phaseBandFromSamples([sample(3, width)], vsync);
+  const formerUpper = 100 + 1000 * (2 * width) - 50;
+  const formerLower = 100 + 1000 * vsync - 50;
+  assert.ok(
+    Math.abs(three.upper - formerUpper) < 1e-9 &&
+      Math.abs(three.lower - formerLower) < 1e-9,
+    'K = 3 band disagrees with the former two-window band'
+  );
+  const five = phaseBandFromSamples([sample(5, width)], vsync);
+  assert.ok(
+    five.upper > three.upper + 1000 * width,
+    'K = 5 band did not widen: the oracle ignores the actual slot count'
+  );
+  const mixed = phaseBandFromSamples(
+    [sample(5, width), sample(3, width)],
+    vsync
+  );
+  assert.ok(
+    Math.abs(mixed.upper - three.upper) < 1e-9,
+    'the intersection took the wider leaf instead of the narrower one'
+  );
+  assert.throws(
+    () => phaseBandFromSamples([sample(undefined, width)], vsync),
+    /resident slot count/,
+    'a sample without a slot count was accepted instead of refused'
+  );
+  assert.throws(
+    () => phaseBandFromSamples([sample(2, width)], vsync),
+    /resident slot count/,
+    'a two-slot sample was accepted below the three-slot floor'
+  );
+  assert.deepEqual(recoveryPhaseBand([], vsync, true), {
+    lower: -Infinity,
+    upper: Infinity,
+  });
+  assert.throws(
+    () => recoveryPhaseBand([sample(3, width)], vsync, true),
+    /audio-only recovery recorded a video phase sample/
+  );
+  assert.throws(
+    () => recoveryPhaseBand([], vsync, false),
+    /phase band has no samples/
+  );
+  assert.deepEqual(recoveryPhaseBand([sample(3, width)], vsync, false), three);
+  const reference = (target_url: string) => ({
+    OTIO_SCHEMA: 'ExternalReference.1',
+    target_url,
+  });
+  assert.equal(
+    isAudioOnlyDocument([reference('media/a.wav'), reference('media/b.mp3')]),
+    true
+  );
+  assert.equal(
+    isAudioOnlyDocument([reference('media/a.wav'), reference('media/v.webm')]),
+    false
+  );
+  assert.equal(isAudioOnlyDocument([]), false);
+}
+
+// Controls: a paused view already showing the expected frame must not block the
+// movement; a later frame is selected; an identical pre-play frame is skipped; a
+// frame ahead of the timeline is rejected.
+function assertFrameSelectionControls(): void {
+  assert.equal(
+    selectPresentedFrame(
+      6,
+      [
+        { elapsedMs: 10, cls: 6 },
+        { elapsedMs: 40, cls: 7 },
+      ],
+      6
+    ),
+    1,
+    'paused expected frame blocked the later frame'
+  );
+  assert.equal(
+    selectPresentedFrame(null, [{ elapsedMs: 10, cls: 6 }], 6),
+    -1,
+    'a frame was selected with no classified pre-play frame; movement is unattributable'
+  );
+  assert.equal(
+    selectPresentedFrame(6, [{ elapsedMs: 10, cls: 20 }], 6),
+    -1,
+    'frame ahead of the timeline was accepted'
+  );
+}
+
+// Controls for the overlay mask (overlayCellMask, maskedRmse, classifyVideoFrame with a
+// mask). Each control uses a synthetic 64x36 RGBA source with exact expectations, so a
+// mask that quietly hides a real difference fails a named control. The threshold, the
+// 80% floor and the selector's timing rule are the production ones, not relaxed here.
+function syntheticFrame(seed: number): Uint8Array {
+  const frame = new Uint8Array(64 * 36 * 4);
+  for (let i = 0; i < frame.length; i++)
+    frame[i] = (seed * 37 + i * 13 + (i >> 2) * 7) % 251;
+  return frame;
+}
+
+function assertOverlayMaskControls(): void {
+  const crop = { x: 0, y: 0, width: 64, height: 36 };
+  const refs = [1, 2, 3].map(syntheticFrame);
+  const label = [{ x: 0, y: 0, width: 10, height: 10 }];
+  const mask = overlayCellMask(crop, label);
+  // A scope label drawn over the top-left cells: those bytes change, nothing else does.
+  const withLabel = (
+    source: Uint8Array,
+    labelSource: Uint8Array
+  ): Uint8Array => {
+    const out = Uint8Array.from(source);
+    for (let row = 0; row < 10; row++)
+      for (let col = 0; col < 10; col++)
+        for (let c = 0; c < 4; c++) {
+          const i = (row * 64 + col) * 4 + c;
+          out[i] = labelSource[i]!;
+        }
+    return out;
+  };
+  const inverted = (source: Uint8Array): Uint8Array =>
+    Uint8Array.from(source, (value) => 255 - value);
+
+  // 1. Unchanged frame: the paused source frame with only the label changed is still that
+  // source, and a frame equal to the pre-play class never counts as movement.
+  const unchanged = withLabel(refs[0]!, inverted(refs[0]!));
+  assert.equal(
+    classifyVideoFrame(unchanged, refs, mask),
+    0,
+    'unchanged source frame with a label was not classified as its own source'
+  );
+  assert.notEqual(
+    classifyVideoFrame(unchanged, refs),
+    0,
+    'unmasked comparison accepted the labelled frame: the label control is vacuous'
+  );
+  assert.equal(
+    selectPresentedFrame(0, [{ elapsedMs: 300, cls: 0 }], 0),
+    -1,
+    'an unchanged paused frame was counted as movement'
+  );
+
+  // 2. Wrong frame: a different source is never accepted as the expected one, even when its
+  // differences sit under the label and the label cells are hidden.
+  const wrong = withLabel(refs[1]!, refs[0]!);
+  assert.equal(
+    classifyVideoFrame(wrong, refs, mask),
+    1,
+    'a wrong source frame hidden under the label was not classified as its own source'
+  );
+  assert.equal(
+    matchesExpectedVideoFrame(refs[1]!, refs, 0),
+    false,
+    'a wrong source frame was accepted as the expected frame'
+  );
+  const wrongOutside = withLabel(refs[2]!, refs[0]!);
+  assert.equal(
+    classifyVideoFrame(wrongOutside, refs, mask),
+    2,
+    'a wrong source whose differences lie outside the label was not classified as that source'
+  );
+
+  // 3. Obscured over 20 percent: 7 covered rows (19.4% of cells) pass, 8 rows (22.2%) fail.
+  assert.doesNotThrow(
+    () => overlayCellMask(crop, [{ x: 0, y: 0, width: 64, height: 7 }]),
+    'a 19% overlay was rejected, but the floor is 20%'
+  );
+  assert.throws(
+    () => overlayCellMask(crop, [{ x: 0, y: 0, width: 64, height: 8 }]),
+    /removed too much/,
+    'a 22% overlay was accepted: the mask hid more than 20% of the frame'
+  );
+
+  // 4. Timing: at 10 ms only one source frame of advance is allowed (rounding included).
+  assert.equal(
+    selectPresentedFrame(35, [{ elapsedMs: 10, cls: 1 }], 0),
+    0,
+    'the frame at the timeline bound was rejected'
+  );
+  assert.equal(
+    selectPresentedFrame(35, [{ elapsedMs: 10, cls: 2 }], 0),
+    -1,
+    'a frame two source frames ahead of 10 ms was accepted'
+  );
+}
+
+// Controls: the expected frame passes; a noise-only frame and a wrong-source frame
+// are rejected; a single-byte difference from the expected frame still matches.
+function assertSourceMatchControls(): void {
+  const frameA = new Uint8Array(16).fill(10);
+  const frameB = new Uint8Array(16).fill(100);
+  const frameC = new Uint8Array(16).fill(200);
+  const refs = [frameA, frameB, frameC];
+  assert.ok(
+    matchesExpectedVideoFrame(frameB, refs, 1),
+    'expected authored frame rejected'
+  );
+  const noise = new Uint8Array(16).map((_, i) => (i % 2 === 0 ? 0 : 255));
+  assert.ok(
+    !matchesExpectedVideoFrame(noise, refs, 1),
+    'noise-only frame accepted as presentation'
+  );
+  assert.ok(
+    !matchesExpectedVideoFrame(frameC, refs, 1),
+    'wrong-source frame accepted'
+  );
+  const oneByte = Uint8Array.from(frameB);
+  oneByte[0] = 101;
+  assert.ok(
+    matchesExpectedVideoFrame(oneByte, refs, 1),
+    'single-byte difference rejected from expected frame'
+  );
+}
+
+// Real over-cap control, with no production hook. Retained ring slots are sized to the
+// viewer canvas, not the media, so the canvas is set to 4096x4096 (16.8 Mi pixels per
+// slot) before playback: two slots fit the 32 Mi-pixel total cap exactly and the
+// default three-slot ring cannot be admitted. The viewer must refuse through its own
+// admission path with ring-cap-exhausted, start no playback, and commit no causal epoch.
+const OVERCAP_SIZE = 4096;
+
+async function publishOverCapDocument(rate: 44100 | 48000): Promise<string> {
+  const directory = join(scratch, `overcap-boundaries-${rate}.otiod`);
+  const media = join(directory, 'media');
+  await mkdir(media, { recursive: true });
+  const content = await readFile(
+    fileURLToPath(
+      new URL(
+        '../../relic-format/test/fixtures/otio/edge-cases/playback-boundaries.otio',
+        import.meta.url
+      )
+    ),
+    'utf8'
+  );
+  assert.ok(
+    content.includes('media/fr30.webm'),
+    'boundary fixture no longer references media/fr30.webm'
+  );
+  await writeFile(
+    join(directory, 'content.otio'),
+    content.replaceAll('media/fr30.webm', 'media/overcap.webm')
+  );
+  const encoded = await runChild(
+    [
+      'ffmpeg',
+      '-v',
+      'error',
+      '-y',
+      '-f',
+      'lavfi',
+      '-i',
+      `testsrc=size=${OVERCAP_SIZE}x${OVERCAP_SIZE}:rate=30`,
+      '-t',
+      '1',
+      '-c:v',
+      'libvpx-vp9',
+      '-b:v',
+      '2M',
+      '-deadline',
+      'realtime',
+      join(media, 'overcap.webm'),
+    ],
+    { cwd: scratch, timeoutMs: 240000 }
+  );
+  assert.equal(encoded.exit, 0, 'over-cap fixture encode failed');
+  for (const name of ['plate_1001.png', 'plate_1002.png', 'secondary_b.mp4'])
+    await cp(join(fixtureDir, 'media', name), join(media, name));
+  if (rate === 48000) {
+    await cp(
+      join(fixtureDir, 'media', 'mx_bed.wav'),
+      join(media, 'mx_bed.wav')
+    );
+  } else {
+    const converted = await runChild(
+      [
+        'ffmpeg',
+        '-v',
+        'error',
+        '-y',
+        '-i',
+        join(fixtureDir, 'media', 'mx_bed.wav'),
+        '-ar',
+        '44100',
+        '-acodec',
+        'pcm_s16le',
+        join(media, 'mx_bed.wav'),
+      ],
+      { timeoutMs: 30000 }
+    );
+    assert.equal(converted.exit, 0, converted.stderr);
+  }
+  return publishLegacyDirectory(directory, 'OTIO legacy over-cap');
+}
+
+async function runOverCapRefusal(
+  sessionToken: string,
+  rate: 44100 | 48000
+): Promise<void> {
+  const url = await publishOverCapDocument(rate);
+  const isolated = await openBrowser(url, sessionToken, {
+    label: `overcap-refusal-${rate}`,
+    defaultAutoplay: true,
+    recordProofTrace: true,
+    proofSampleRate: rate,
+  });
+  try {
+    await waitReady(isolated);
+    await assertLegacyProgramState(isolated, 'over-cap');
+    const provenance = await proofProvenance(isolated);
+    const button = await isolated.evaluate<{ x: number; y: number }>(`(() => {
+      const control = document.querySelector('button.otio-play');
+      if (!(control instanceof HTMLButtonElement)) throw new Error('over-cap play control missing');
+      const rect = control.getBoundingClientRect();
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    })()`);
+    // Ring slots are sized to the canvas (outputSize), so the proof sets the canvas to
+    // the over-cap size before play and reads it back, rather than trusting the setter.
+    const canvasSize = await isolated.evaluate<{
+      width: number;
+      height: number;
+    }>(`(() => {
+      const canvas = document.querySelector('canvas.otio-canvas');
+      if (!(canvas instanceof HTMLCanvasElement)) throw new Error('over-cap canvas missing');
+      canvas.width = ${OVERCAP_SIZE};
+      canvas.height = ${OVERCAP_SIZE};
+      return { width: canvas.width, height: canvas.height };
+    })()`);
+    assert.deepEqual(
+      canvasSize,
+      { width: OVERCAP_SIZE, height: OVERCAP_SIZE },
+      'over-cap canvas did not take the cap-sized dimensions'
+    );
+    // Full 4096px readbacks compete with the startup deadline; this control
+    // verifies ring admission from viewer events rather than canvas pixels.
+    await isolated.evaluate(
+      `(async () => globalThis.__otioProofTrace.start({canvasReadback:false}))()`
+    );
+    await isolated.evaluate(
+      `(() => globalThis.__otioProofTrace.playRequest())()`
+    );
+    await clickWithRealPointer(isolated, button.x, button.y);
+    const settled = Promise.withResolvers<void>();
+    setTimeout(settled.resolve, 2500);
+    await settled.promise;
+    const result = await isolated.evaluate<{
+      playing: string;
+      trace: MovingTrace['trace'];
+    }>(`(async () => {
+      const root = document.querySelector('.otio-view'), control = document.querySelector('button.otio-play');
+      const playing = root?.dataset.playing ?? '';
+      const trace = await globalThis.__otioProofTrace.stop();
+      if (playing === 'true' && control instanceof HTMLButtonElement) control.click();
+      return { playing, trace };
+    })()`);
+    await writeFile(
+      join(shotDir, `overcap-refusal-${rate}.json`),
+      JSON.stringify({ provenance, capture: result })
+    );
+    assert.ok(
+      !result.trace.audioOverflow && !result.trace.eventsOverflow,
+      'over-cap proof trace overflow'
+    );
+    assert.equal(
+      result.trace.visual.length,
+      0,
+      'over-cap capture read back the cap-sized canvas'
+    );
+    const refusals = legacyColdValues(result.trace).filter(
+      (value) => value['event'] === 'ring-refused'
+    );
+    assert.ok(
+      refusals.length > 0 &&
+        refusals.every((value) => value['code'] === 'ring-cap-exhausted'),
+      `over-cap archive was not refused only by the cap: ${JSON.stringify(refusals)}`
+    );
+    // Admission, not decode failure: the refusal must follow real decoded frames of the
+    // over-cap video, and the cap it reports must be the viewer's 32 Mi-pixel total.
+    const refusalEntry = result.trace.events.find(
+      (entry) =>
+        entry.kind === 'cold-controller' &&
+        (entry.value as Record<string, unknown>)['event'] === 'ring-refused' &&
+        (entry.value as Record<string, unknown>)['code'] ===
+          'ring-cap-exhausted'
+    );
+    assert.ok(refusalEntry, 'cap refusal event missing from the trace');
+    const refusal = refusalEntry.value as Record<string, unknown>;
+    assert.equal(
+      refusal['capPixels'],
+      32 * 1024 * 1024,
+      'cap refusal reports a cap other than 32 Mi pixels'
+    );
+    // The ring requested requiredSlots canvases at the canvas size. Its refusal is
+    // justified only when the pixels it already holds plus that request exceed the cap.
+    // The held pixels must themselves stay within the cap, so no budget is violated.
+    const requested = refusal['requiredSlots'];
+    const held = refusal['slots'];
+    const usedPixels = refusal['usedPixels'];
+    assert.ok(
+      Number.isSafeInteger(requested) && (requested as number) >= 3,
+      `cap refusal requested fewer than the three-slot floor: ${String(requested)}`
+    );
+    assert.ok(
+      Number.isSafeInteger(held) &&
+        (held as number) >= 0 &&
+        (held as number) < (requested as number),
+      `cap refusal holds ${String(held)} slots, not below the request ${String(requested)}`
+    );
+    assert.ok(
+      Number.isSafeInteger(usedPixels) &&
+        (usedPixels as number) >= 0 &&
+        (usedPixels as number) <= 32 * 1024 * 1024,
+      `budget violation: admitted pixels ${String(usedPixels)} exceed the 32 Mi cap`
+    );
+    assert.ok(
+      (usedPixels as number) +
+        (requested as number) * OVERCAP_SIZE * OVERCAP_SIZE >
+        32 * 1024 * 1024,
+      'cap refusal is not explained: the requested canvases fit within the cap'
+    );
+    assert.notEqual(
+      result.playing,
+      'true',
+      'over-cap archive started playback after its cap refusal'
+    );
+    const epochs = result.trace.events.filter(
+      (entry) =>
+        entry.kind === 'scheduled-pcm' &&
+        (entry.value as Record<string, unknown> | undefined)?.['event'] ===
+          'epoch'
+    );
+    assert.equal(
+      epochs.length,
+      0,
+      'over-cap archive committed a causal epoch after refusing'
+    );
+  } finally {
+    await isolated.close();
+  }
+}
+
+// Native output observations (performance.now() ms paired with AudioContext time), the
+// same records the cold start maps frames through.
+function nativeOutputObservations(trace: MovingTrace['trace']): Array<{
+  before: number;
+  after: number;
+  contextTime: number;
+  performanceTime: number;
+}> {
+  return trace.events
+    .filter((entry) => entry.kind === 'audio-output-timestamp-observed')
+    .map((entry) => entry.value as Record<string, unknown>)
+    .filter(
+      (value) =>
+        value['injected'] === false &&
+        value['output'] !== null &&
+        typeof value['output'] === 'object'
+    )
+    .map((value) => {
+      const output = value['output'] as {
+        contextTime: number;
+        performanceTime: number;
+      };
+      return {
+        before: Number(value['before']),
+        after: Number(value['after']),
+        contextTime: output.contextTime,
+        performanceTime: output.performanceTime,
+      };
+    })
+    .filter(
+      (obs) =>
+        Number.isFinite(obs.contextTime) &&
+        Number.isFinite(obs.performanceTime) &&
+        obs.contextTime > 0
+    );
+}
+
+// Pre-play canvas baseline. The trace sampler records canvas readbacks only after a tick,
+// so the proof waits, in the page and under a deadline, until one sample exists while the
+// context is still suspended. Only then is the play request issued. The baseline is a real
+// readback taken before play, never a fabricated or post-play frame.
+async function awaitPreplayVisualBaseline(
+  browser: ChromeSession
+): Promise<number> {
+  const count = await browser.evaluate<number>(`(async () => {
+    const deadline = performance.now() + 3000;
+    while (globalThis.__otioProofTrace.visualSampleCount() < 1 && performance.now() < deadline) {
+      const {promise, resolve} = Promise.withResolvers();
+      setTimeout(resolve, 10);
+      await promise;
+    }
+    return globalThis.__otioProofTrace.visualSampleCount();
+  })()`);
+  assert.ok(
+    count >= 1,
+    'no pre-play canvas sample was recorded before the play request'
+  );
+  return count;
+}
+
+// Shared cold-start driver: a fresh suspended context, one trusted click, and the
+// viewer's own trace over the playback window. Every legacy-cold proof uses it.
+async function driveFreshLegacyClick(
+  browser: ChromeSession
+): Promise<{ playEdge: { timestamp: number }; trace: MovingTrace['trace'] }> {
+  const button = await browser.evaluate<{ x: number; y: number }>(`(() => {
+    const control = document.querySelector('button.otio-play');
+    if (!(control instanceof HTMLButtonElement)) throw new Error('legacy play control missing');
+    const rect = control.getBoundingClientRect();
+    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+  })()`);
+  const start = await browser.evaluate<{ contextState: string }>(
+    `(async () => globalThis.__otioProofTrace.start())()`
+  );
+  assert.equal(
+    start.contextState,
+    'suspended',
+    'legacy proof context was not fresh and suspended before the click'
+  );
+  await awaitPreplayVisualBaseline(browser);
+  const playEdge = await browser.evaluate<{ timestamp: number }>(
+    `(() => globalThis.__otioProofTrace.playRequest())()`
+  );
+  await clickWithRealPointer(browser, button.x, button.y);
+  const settled = Promise.withResolvers<void>();
+  setTimeout(settled.resolve, 2500);
+  await settled.promise;
+  const outcome = await browser.evaluate<{
+    trace: MovingTrace['trace'];
+  }>(`(async () => {
+    const root = document.querySelector('.otio-view'), control = document.querySelector('button.otio-play');
+    const trace = await globalThis.__otioProofTrace.stop();
+    if (root?.dataset.playing === 'true' && control instanceof HTMLButtonElement) control.click();
+    return { trace };
+  })()`);
+  return { playEdge, trace: outcome.trace };
+}
+
+// 60 fps cold start. The document is the boundary fixture rescaled to 60 fps and its video is
+// the fixture's fr30 source re-timed by ffmpeg. The independent oracle decodes the shipped fr60
+// file and mx_bed.wav with ffmpeg; expected frame indexes are seconds multiplied by 60.
+//
+// The viewer schedules audio only when every video frame lasts at least one display refresh. WebM
+// stores whole milliseconds, so fr60 has 16 ms frames, and until the viewer has measured the
+// display it assumes 60 Hz (16.7 ms). It therefore refuses scheduled audio for this document and
+// plays it natively. Jason decided on 2026-11-12 to keep that behaviour and to have this stage
+// assert what the viewer did. A native run must carry that exact refusal, with the shortest frame
+// checked against ffprobe, and must still play audibly and show the expected frame. A scheduled
+// run keeps every scheduled check: the ring comes from the viewer's own records, and the audible
+// wall time must lie inside the solved phase interval (absolute performance.now() ms). Scheduled
+// audio at 60 fps is unproven while every run takes the native branch, and the log line says which.
+async function runSixtyFpsColdProof(
+  sessionToken: string,
+  rate: 48000
+): Promise<void> {
+  const url = await publishSixtyFpsDocument();
+  const oracle = await buildColdVideoOracle(
+    rate,
+    60,
+    join(scratch, 'sixty-fps-boundaries.otiod', 'media', 'fr60.webm')
+  );
+  assert.ok(
+    referenceIsAudible(oracle.audio, AUTHORED_PCM_FRAMES),
+    '60 fps independent mx_bed reference is silent; audible output unproven'
+  );
+  const browser = await openBrowser(url, sessionToken, {
+    label: `sixty-fps-cold-${rate}`,
+    defaultAutoplay: true,
+    recordProofTrace: true,
+    proofSampleRate: rate,
+  });
+  try {
+    await waitReady(browser);
+    await assertLegacyProgramState(browser, 'sixty-fps-cold');
+    const provenance = await proofProvenance(browser);
+    const { playEdge, trace } = await driveFreshLegacyClick(browser);
+    await writeFile(
+      join(shotDir, `sixty-fps-cold-${rate}.json`),
+      JSON.stringify({
+        provenance,
+        playEdge,
+        trace,
+        expectedIndex: oracle.expectedIndex,
+      })
+    );
+    assert.ok(
+      !trace.audioOverflow && !trace.eventsOverflow,
+      '60 fps proof trace overflow'
+    );
+    const scheduledEvents = trace.events
+      .filter((entry) => entry.kind === 'scheduled-pcm')
+      .map((entry) => entry.value as Record<string, unknown>);
+    const backend = scheduledEvents
+      .filter((value) => value['event'] === 'backend')
+      .at(-1);
+    assert.ok(backend, '60 fps run selected no audio backend');
+    const frameBytes = 64 * 36 * 4;
+    // ffmpeg's fps=60 shows every fr30 picture twice, so decoded frames 2k and 2k+1 are the same
+    // picture and no frame can be closer to one than to the other. The premise is checked on the
+    // decoded references, and frames are then matched against the distinct pictures.
+    assert.ok(
+      oracle.references.length % 2 === 0 &&
+        oracle.references.every(
+          (reference, index) =>
+            index % 2 === 0 ||
+            Buffer.compare(reference, oracle.references[index - 1]!) === 0
+        ),
+      '60 fps references are not doubled fr30 pictures; the picture oracle does not apply'
+    );
+    const pictures = oracle.references.filter((_, index) => index % 2 === 0);
+    const expectedPicture = Math.floor(oracle.expectedIndex / 2);
+    const usable = trace.visual.filter(
+      (sample) =>
+        !sample.error &&
+        sample.pixels16 !== undefined &&
+        sample.pixels16.length === frameBytes
+    );
+    const presentedExpectedFrame = (): boolean =>
+      usable.some((sample) =>
+        matchesExpectedVideoFrame(
+          Uint8Array.from(sample.pixels16!),
+          pictures,
+          expectedPicture
+        )
+      );
+    if (backend['backend'] === 'native') {
+      assert.equal(
+        backend['reason'],
+        'video timing cannot be certified',
+        '60 fps native playback was not the video timing refusal'
+      );
+      const refusal = scheduledEvents.find(
+        (value) => value['event'] === 'video-timing-uncertified'
+      );
+      assert.ok(refusal, '60 fps timing refusal carries no evidence');
+      const packetStarts = await layerPacketStarts(
+        join(scratch, 'sixty-fps-boundaries.otiod', 'media', 'fr60.webm')
+      );
+      let shortestFrame = Number.POSITIVE_INFINITY;
+      for (let i = 1; i < packetStarts.length; i++)
+        shortestFrame = Math.min(
+          shortestFrame,
+          packetStarts[i]! - packetStarts[i - 1]!
+        );
+      const minWindow = refusal['minWindowSeconds'];
+      const vsync = refusal['vsyncSeconds'];
+      assert.ok(
+        refusal['timingKind'] === 'windows' &&
+          refusal['videoRate'] === 1 &&
+          typeof minWindow === 'number' &&
+          Math.abs(minWindow - shortestFrame) < 1e-6,
+        `60 fps refusal's shortest frame ${String(minWindow)} s is not ffprobe's ${shortestFrame} s`
+      );
+      assert.ok(
+        typeof vsync === 'number' && vsync > 0 && minWindow < vsync,
+        `60 fps refusal's shortest frame ${minWindow} s is not under its refresh interval ${String(vsync)} s`
+      );
+      assert.ok(
+        !scheduledEvents.some(
+          (value) => value['event'] === 'error' || value['event'] === 'epoch'
+        ),
+        '60 fps native playback raised a scheduled error or committed an epoch'
+      );
+      assert.ok(
+        !legacyColdValues(trace).some(
+          (value) =>
+            value['event'] === 'ring-refused' ||
+            value['event'] === 'epoch-unplaceable'
+        ),
+        '60 fps native playback recorded a ring refusal'
+      );
+      assert.ok(
+        trace.events.some(
+          (entry) => entry.kind === 'play' && entry.mediaType === 'AUDIO'
+        ),
+        '60 fps native playback did not play an audio element'
+      );
+      const output = trace.audio.flatMap((chunk) => chunk.channels[0] ?? []);
+      assert.ok(
+        output.length > 0 && output.some((value) => Math.abs(value) > 0.001),
+        '60 fps native playback output was silent'
+      );
+      // The paused view shows the authored picture. After the click the pictures only move
+      // forward, start inside the 350 ms budget, and are never ahead of the timeline (one fr30
+      // picture per 1/30 s plus one of rounding). Unclassified frames are skipped, not assumed.
+      // The top clip, upper-video-a, spans the first second of the composition (30 frames at
+      // 30 fps in the fixture) and a later clip reuses the same media from an earlier picture,
+      // so only the first second after the click is judged. Wall time never leads composition time.
+      const TOP_CLIP_MS = 1000;
+      const classified = usable.flatMap((sample) => {
+        const picture = classifyVideoFrame(
+          Uint8Array.from(sample.pixels16!),
+          pictures
+        );
+        return picture === null
+          ? []
+          : [{ elapsedMs: sample.timestamp - playEdge.timestamp, picture }];
+      });
+      assert.equal(
+        classified.filter((entry) => entry.elapsedMs <= 0).at(-1)?.picture,
+        expectedPicture,
+        `60 fps paused view did not show the expected authored frame ${oracle.expectedIndex}`
+      );
+      const played = classified.filter(
+        (entry) => entry.elapsedMs > 0 && entry.elapsedMs <= TOP_CLIP_MS
+      );
+      for (let i = 0; i < played.length; i++) {
+        const entry = played[i]!;
+        assert.ok(
+          entry.picture >= (played[i - 1]?.picture ?? expectedPicture),
+          `60 fps native presentation moved backwards to picture ${entry.picture} at ${entry.elapsedMs} ms`
+        );
+        assert.ok(
+          entry.picture - expectedPicture <=
+            Math.floor((entry.elapsedMs * 30) / 1000) + 1,
+          `60 fps native presentation showed picture ${entry.picture} ahead of the timeline at ${entry.elapsedMs} ms`
+        );
+      }
+      const firstMoved = played.find(
+        (entry) => entry.picture > expectedPicture
+      );
+      assert.ok(
+        firstMoved && firstMoved.elapsedMs <= 350,
+        `60 fps native presentation first moved at ${String(firstMoved?.elapsedMs)} ms, past the 350 ms start budget`
+      );
+      const distinctPlayed = new Set(played.map((entry) => entry.picture));
+      assert.ok(
+        distinctPlayed.size >= 10,
+        `60 fps native presentation showed only ${distinctPlayed.size} source pictures`
+      );
+      console.log(
+        `OTIO_SIXTY_FPS backend=native reason="video timing cannot be certified" shortestFrameSeconds=${minWindow} refreshSeconds=${vsync} scheduled=unproven`
+      );
+      pass('legacy-sixty-fps-cold-start');
+      return;
+    }
+    const solvers = assertLegacyRingEvidence(trace, true);
+    const epoch = trace.events
+      .filter((entry) => entry.kind === 'scheduled-pcm')
+      .map((entry) => entry.value as Record<string, unknown>)
+      .find((value) => value['event'] === 'epoch');
+    assert.ok(
+      epoch,
+      '60 fps cold start never committed an epoch; output unproven'
+    );
+    const f0 = Number(epoch['f0']);
+    assert.ok(
+      Number.isSafeInteger(f0),
+      '60 fps epoch lacks its committed frame'
+    );
+    assertIndependentCarrier(trace, f0, f0 + rate);
+    assert.ok(
+      compareAuthoredPcm(
+        collectAuthoredPcm(trace, f0, AUTHORED_PCM_FRAMES),
+        oracle.audio,
+        AUTHORED_PCM_FRAMES
+      ),
+      '60 fps output differs from the independent mx_bed reference at the committed start'
+    );
+    const firstOut = firstNonzeroFrame(trace, f0);
+    assert.ok(
+      firstOut,
+      '60 fps cold start produced no nonzero source-correct output'
+    );
+    assert.equal(
+      firstOut.frame,
+      f0 + firstReferenceNonzero(oracle.audio),
+      '60 fps first nonzero output is not the committed start plus the reference first nonzero sample'
+    );
+    const mapped = mapFrameToWall(nativeOutputObservations(trace), f0, rate);
+    assert.ok(
+      mapped,
+      '60 fps no native output timestamp precedes the first source frame'
+    );
+    const phase = solvers.at(-1);
+    if (!phase) throw new Error('60 fps cold start has no phase solve');
+    assert.ok(
+      mapped.wallMs + mapped.boundMs >= phase.phaseLowerMs &&
+        mapped.wallMs - mapped.boundMs <= phase.phaseUpperMs,
+      `60 fps audible wall ${mapped.wallMs}ms (±${mapped.boundMs}ms) lies outside the phase interval [${phase.phaseLowerMs}, ${phase.phaseUpperMs}]ms`
+    );
+    assert.ok(
+      presentedExpectedFrame(),
+      `60 fps presentation never showed the expected authored frame ${oracle.expectedIndex}`
+    );
+    console.log('OTIO_SIXTY_FPS backend=pcm');
+    pass('legacy-sixty-fps-cold-start');
+  } finally {
+    await browser.close();
+  }
+}
+
+// Restart during a held cold start: a trusted play whose PCM response is held (the hold is
+// asserted, so the run exists), a trusted pause that must cancel that run ('pause' cancel
+// carrying its generation), the held responses released, then a trusted restart. Proven:
+// the cancel happened, the restarted run commits an epoch of a newer generation, its output
+// at that epoch matches the independent source from composition time 0 (the paused frame
+// must read 0), and its first audible frame is the reference's first nonzero sample.
+// NOT proven: that output from the cancelled generation was excluded. Audio chunks carry no
+// generation, and a restart that commits the same f0 yields identical samples, so no
+// comparison here can separate stale from fresh output. Stale exclusion needs the run
+// generation in every PCM batch's marker lane (a viewer change), and is not claimed.
+async function runRestartDuringStart(
+  sessionToken: string,
+  rate: 48000
+): Promise<void> {
+  const url = await publishColdBoundaryDocument();
+  const videoOracle = await buildColdVideoOracle(rate);
+  const browser = await openBrowser(url, sessionToken, {
+    label: `restart-during-start-${rate}`,
+    defaultAutoplay: true,
+    recordProofTrace: true,
+    proofSampleRate: rate,
+  });
+  try {
+    await waitReady(browser);
+    await assertLegacyProgramState(browser, 'restart-during-start');
+    const provenance = await proofProvenance(browser);
+    const button = await browser.evaluate<{ x: number; y: number }>(`(() => {
+      const control = document.querySelector('button.otio-play');
+      if (!(control instanceof HTMLButtonElement)) throw new Error('restart play control missing');
+      const rect = control.getBoundingClientRect();
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    })()`);
+    const start = await browser.evaluate<{ contextState: string }>(
+      `(async () => globalThis.__otioProofTrace.start())()`
+    );
+    assert.equal(
+      start.contextState,
+      'suspended',
+      'restart proof context was not fresh and suspended before the first click'
+    );
+    await browser.evaluate<void>(
+      `globalThis.__otioProofTrace.holdPcmResponses(true)`
+    );
+    const firstPlay = await browser.evaluate<{ timestamp: number }>(
+      `(() => globalThis.__otioProofTrace.playRequest())()`
+    );
+    await clickWithRealPointer(browser, button.x, button.y);
+    const held = await browser.evaluate<number>(`(async () => {
+      const sleep = ms => { const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, ms); return promise; };
+      const deadline = performance.now() + 3000;
+      while (!globalThis.__otioProofTrace.heldPcmCount() && performance.now() < deadline) await sleep(10);
+      return globalThis.__otioProofTrace.heldPcmCount();
+    })()`);
+    assert.ok(held > 0, 'first start held no PCM response to supersede');
+    const beforePause = await browser.evaluate<{
+      playing: string | null;
+    }>(
+      `(() => ({playing: document.querySelector('.otio-view')?.dataset.playing ?? null}))()`
+    );
+    assert.equal(
+      beforePause.playing,
+      'true',
+      `held start is not in a playing state before the pause (${beforePause.playing})`
+    );
+    await clickWithRealPointer(browser, button.x, button.y);
+    const cancelled = await browser.evaluate<boolean>(`(async () => {
+      const sleep = ms => { const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, ms); return promise; };
+      const deadline = performance.now() + 3000;
+      while (!globalThis.__otioProofTrace.hasPcmCancel('pause') && performance.now() < deadline) await sleep(10);
+      return globalThis.__otioProofTrace.hasPcmCancel('pause');
+    })()`);
+    assert.ok(cancelled, 'pause did not cancel the held start');
+    const released = await browser.evaluate<number>(
+      `globalThis.__otioProofTrace.holdPcmResponses(false)`
+    );
+    const paused = await browser.evaluate<{
+      frame: string | null;
+    }>(`(async () => {
+      const sleep = ms => { const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, ms); return promise; };
+      await sleep(300);
+      return {frame: document.querySelector('.otio-view')?.dataset.frame ?? null};
+    })()`);
+    assert.equal(
+      Number(paused.frame),
+      0,
+      `restart proof: the paused frame was ${paused.frame}, not 0; the restart is not from the start`
+    );
+    const secondPlay = await browser.evaluate<{ timestamp: number }>(
+      `(() => globalThis.__otioProofTrace.playRequest())()`
+    );
+    await clickWithRealPointer(browser, button.x, button.y);
+    const outcome = await browser.evaluate<{
+      trace: MovingTrace['trace'];
+      playing: string;
+    }>(`(async () => {
+      const sleep = ms => { const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, ms); return promise; };
+      await sleep(2500);
+      const playing = document.querySelector('.otio-view')?.dataset.playing ?? '';
+      const trace = await globalThis.__otioProofTrace.stop();
+      if (playing === 'true') document.querySelector('button.otio-play').click();
+      return { trace, playing };
+    })()`);
+    await writeFile(
+      join(shotDir, `restart-during-start-${rate}.json`),
+      JSON.stringify({
+        provenance,
+        firstPlay,
+        secondPlay,
+        held,
+        released,
+        outcome,
+      })
+    );
+    const trace = outcome.trace;
+    assert.ok(
+      !trace.audioOverflow && !trace.eventsOverflow,
+      'restart proof trace overflow'
+    );
+    const scheduled = trace.events
+      .filter((entry) => entry.kind === 'scheduled-pcm')
+      .map((entry) => entry.value as Record<string, unknown>);
+    const cancel = scheduled.find(
+      (value) => value['event'] === 'cancel' && value['reason'] === 'pause'
+    );
+    assert.ok(cancel, 'restart proof has no pause cancel record');
+    const restarted = scheduled.filter(
+      (value) =>
+        value['event'] === 'epoch' &&
+        Number(value['wallMs']) >= secondPlay.timestamp
+    );
+    assert.ok(
+      restarted.length > 0,
+      'restarted run committed no epoch after the restart'
+    );
+    assert.notEqual(
+      restarted[0]!['generation'],
+      cancel['generation'],
+      'restarted epoch belongs to the cancelled generation'
+    );
+    const f0 = Number(restarted[0]!['f0']);
+    assert.ok(Number.isSafeInteger(f0), 'restarted epoch lacks its frame');
+    assertIndependentCarrier(trace, f0, f0 + rate);
+    assert.ok(
+      compareAuthoredPcm(
+        collectAuthoredPcm(trace, f0, AUTHORED_PCM_FRAMES),
+        videoOracle.audio,
+        AUTHORED_PCM_FRAMES
+      ),
+      'restarted output differs from the independent source at its committed start'
+    );
+    const firstOut = firstNonzeroFrame(trace, f0);
+    assert.ok(
+      firstOut,
+      'restarted run produced no nonzero source-correct output'
+    );
+    assert.equal(
+      firstOut.frame,
+      f0 + firstReferenceNonzero(videoOracle.audio),
+      'restarted first audible frame is not the committed start plus the reference first nonzero sample'
+    );
+    pass('scheduled-pcm-restart-during-start');
+  } finally {
+    await browser.close();
+  }
+}
+
+// Forced three-slot control. The proof-only viewer build (RELIC_VIEWER_DIST, produced by
+// proof-viewer-three-slot.ts) pins the retained requirement to the old fixed ring. On the
+// measured high-latency cold boundary the viewer must refuse explicitly with
+// ring-slots-insufficient, every solve must report three slots, and no epoch may commit.
+async function runThreeSlotControl(sessionToken: string): Promise<void> {
+  const url = await publishColdBoundaryDocument();
+  const browser = await openBrowser(url, sessionToken, {
+    label: 'three-slot-forced-48000',
+    defaultAutoplay: true,
+    recordProofTrace: true,
+    proofSampleRate: 48000,
+  });
+  try {
+    await waitReady(browser);
+    await assertLegacyProgramState(browser, 'three-slot');
+    const provenance = await proofProvenance(browser);
+    const { trace } = await driveFreshLegacyClick(browser);
+    await writeFile(
+      join(shotDir, 'three-slot-forced-48000.json'),
+      JSON.stringify({ provenance, trace })
+    );
+    assert.ok(
+      !trace.audioOverflow && !trace.eventsOverflow,
+      'three-slot proof trace overflow'
+    );
+    const values = legacyColdValues(trace);
+    const refusals = values.filter(
+      (value) => value['event'] === 'ring-refused'
+    );
+    assert.ok(
+      refusals.length > 0 &&
+        refusals.every((value) => value['code'] === 'ring-slots-insufficient'),
+      `forced three-slot ring was not refused only as insufficient: ${JSON.stringify(refusals)}`
+    );
+    // The forced control's only acceptable outcome is the band refusal. A clock or input
+    // failure, or any other unplaced epoch, is a different failure and fails the control.
+    const unplacedEpochs = values.filter(
+      (value) => value['event'] === 'epoch-unplaceable'
+    );
+    assert.equal(
+      unplacedEpochs.length,
+      0,
+      `forced three-slot control failed for a non-band reason: ${JSON.stringify(unplacedEpochs[0])}`
+    );
+    const solvers = values.filter(
+      (value) => value['event'] === 'solver'
+    ) as unknown as LegacyRingSolver[];
+    assert.ok(solvers.length > 0, 'forced three-slot run recorded no solve');
+    for (const solver of solvers) {
+      assert.ok(
+        Array.isArray(solver.samples) && solver.samples.length > 0,
+        'forced three-slot solve carries no samples'
+      );
+      for (const sample of solver.samples)
+        assert.equal(
+          sample.residentSlots,
+          3,
+          'forced run did not hold three resident slots in every sample'
+        );
+    }
+    assert.equal(
+      trace.events.filter(
+        (entry) =>
+          entry.kind === 'scheduled-pcm' &&
+          (entry.value as Record<string, unknown> | undefined)?.['event'] ===
+            'epoch'
+      ).length,
+      0,
+      'forced three-slot run committed a causal epoch after refusing'
+    );
+    pass('legacy-three-slot-forced-refusal');
+  } finally {
+    await browser.close();
+  }
+}
+
+// Fresh suspended context: a real trusted click is the first gesture. Audible output
+// is the first nonzero carrier-identified sample mapped through native output
+// timestamps; visual presentation is the first changed canvas pixel and the first
+// screencast frame that matches the expected authored video frame.
+async function runColdStartProof(
+  url: string,
+  sessionToken: string,
+  rate: 44100 | 48000
+): Promise<void> {
+  assertColdMeasurementControls();
+  assertScreencastComparatorControls();
+  assertSourceMatchControls();
+  assertFrameSelectionControls();
+  assertOverlayMaskControls();
+  assertPhaseBandControls();
+  assertAuthoredPcmControls();
+  const videoOracle = await buildColdVideoOracle(
+    rate,
+    30,
+    join(decoderMediaDir, 'fr30.webm'),
+    join(coldBoundaryDirectory(rate), 'media', 'mx_bed.wav')
+  );
+  await assertScreencastDecodeControls(videoOracle.references);
+  assert.ok(
+    referenceIsAudible(videoOracle.audio, AUTHORED_PCM_FRAMES),
+    'independent mx_bed reference is silent; audible output unproven'
+  );
+  assert.equal(
+    coldStartVerdict({
+      audibleMs: 350,
+      visualMs: 350,
+      promotions: 2,
+      suspendsAfterPlay: 0,
+    }),
+    true
+  );
+  assert.equal(
+    coldStartVerdict({
+      audibleMs: 351,
+      visualMs: 350,
+      promotions: 2,
+      suspendsAfterPlay: 0,
+    }),
+    false
+  );
+  assert.equal(
+    coldStartVerdict({
+      audibleMs: 350,
+      visualMs: 351,
+      promotions: 2,
+      suspendsAfterPlay: 0,
+    }),
+    false
+  );
+  assert.equal(
+    coldStartVerdict({
+      audibleMs: 350,
+      visualMs: 350,
+      promotions: 1,
+      suspendsAfterPlay: 0,
+    }),
+    false
+  );
+  assert.equal(
+    coldStartVerdict({
+      audibleMs: 350,
+      visualMs: 350,
+      promotions: 2,
+      suspendsAfterPlay: 1,
+    }),
+    false
+  );
+  assert.equal(
+    coldStartVerdict({
+      audibleMs: Number.NaN,
+      visualMs: 350,
+      promotions: 2,
+      suspendsAfterPlay: 0,
+    }),
+    false
+  );
+
+  const isolated = await openBrowser(url, sessionToken, {
+    label: `cold-start-${rate}`,
+    defaultAutoplay: true,
+    recordProofTrace: true,
+    proofSampleRate: rate,
+  });
+  try {
+    await waitReady(isolated);
+    await assertLegacyProgramState(isolated, 'cold-start');
+    const provenance = await proofProvenance(isolated);
+    const canvasGeometry = await isolated.evaluate<{
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      scale: number;
+      timeOrigin: number;
+    }>(`(() => {
+      const canvas = document.querySelector('canvas.otio-canvas');
+      if (!(canvas instanceof HTMLCanvasElement)) throw new Error('cold start canvas missing');
+      const r = canvas.getBoundingClientRect();
+      // The viewer draws the frame contained in the element box (object-fit contain), so the
+      // crop is the drawn frame, not the letterboxed element. Same formula as the other stage.
+      const width = Math.min(r.width, r.height * canvas.width / canvas.height);
+      const height = Math.min(r.height, r.width * canvas.height / canvas.width);
+      return { x: r.left + (r.width - width) / 2, y: r.top + (r.height - height) / 2, width, height, scale: devicePixelRatio, timeOrigin: performance.timeOrigin };
+    })()`);
+    const stopCast = await isolated.startScreencast();
+    const button = await isolated.evaluate<{ x: number; y: number }>(`(() => {
+      const control = document.querySelector('button.otio-play');
+      if (!(control instanceof HTMLButtonElement)) throw new Error('cold start play control missing');
+      const rect = control.getBoundingClientRect();
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    })()`);
+    const start = await isolated.evaluate<{
+      contextState: string;
+      sampleRate: number;
+    }>(`(async () => globalThis.__otioProofTrace.start())()`);
+    assert.equal(
+      start.contextState,
+      'suspended',
+      'cold-start context was not fresh and suspended before the click'
+    );
+    assert.equal(
+      start.sampleRate,
+      rate,
+      'cold-start context rate differs from the fixture rate'
+    );
+    await awaitPreplayVisualBaseline(isolated);
+    const playEdge = await isolated.evaluate<{ timestamp: number }>(
+      `(() => globalThis.__otioProofTrace.playRequest())()`
+    );
+    await clickWithRealPointer(isolated, button.x, button.y);
+    await new Promise<void>((resolve) => setTimeout(resolve, 2500));
+    const outcome = await isolated.evaluate<{
+      trace: MovingTrace['trace'];
+      playing: string;
+    }>(`(async () => {
+      const root = document.querySelector('.otio-view'), control = document.querySelector('button.otio-play');
+      const playing = root?.dataset.playing ?? '';
+      const trace = await globalThis.__otioProofTrace.stop();
+      if (root?.dataset.playing === 'true' && control instanceof HTMLButtonElement) control.click();
+      return { trace, playing };
+    })()`);
+    await writeFile(
+      join(shotDir, `scheduled-pcm-cold-start-${rate}.json`),
+      JSON.stringify({
+        provenance,
+        start,
+        playEdge,
+        outcome,
+        clockAudit: auditClockEvidence(outcome.trace),
+        fixtureHash: videoOracle.audioSha256,
+      })
+    );
+    const playMs = playEdge.timestamp;
+    const trace = outcome.trace;
+    assertCarrierIdentity(trace, 'cold start epoch');
+    // Continuity, asserted before the promotion count. A fault or an underflow cancel inside
+    // the window is the reason a later native promotion never happens, so it is named here.
+    // Nothing is excused: a faulted or stopped run fails with its own record.
+    // Bank records (schedule-cancel, schedule-set, worklet-message incl. proof-promotion-tags)
+    // are kept in their own array. An overflow here would drop a promotion record, so it fails.
+    assert.ok(
+      !trace.bankOverflow,
+      'bank marker records overflowed; a promotion record may be missing'
+    );
+    const continuityFaults = describeContinuityFaults(trace.events, playMs);
+    assert.equal(
+      continuityFaults.length,
+      0,
+      `cold playback faulted inside the capture window: ${continuityFaults.join(' | ')}`
+    );
+    assertClockAudit(auditClockEvidence(trace), 'cold start');
+    assert.equal(
+      outcome.playing,
+      'true',
+      'cold playback was not running at the end of the capture window'
+    );
+    // The legacy cold boundary's retained ring, measured from the viewer's own records.
+    const ringSolvers = assertLegacyRingEvidence(trace, true);
+    const events = trace.events
+      .filter((entry) => entry.kind === 'scheduled-pcm')
+      .map((entry) => entry.value as Record<string, unknown>);
+    const firstEpoch = events.find((event) => event['event'] === 'epoch');
+    assert.ok(
+      firstEpoch,
+      'cold start never committed an epoch; output unproven'
+    );
+    const f0 = Number(firstEpoch['f0']);
+    assert.ok(
+      Number.isSafeInteger(f0),
+      'cold start epoch lacks its committed frame'
+    );
+    reportEngineFrameClock(trace, 'cold start epoch');
+    associateBootstrapClock(trace, f0);
+    assertIndependentCarrier(trace, f0, f0 + rate);
+    assert.ok(
+      compareAuthoredPcm(
+        collectAuthoredPcm(trace, f0, AUTHORED_PCM_FRAMES),
+        videoOracle.audio,
+        AUTHORED_PCM_FRAMES
+      ),
+      'cold output differs from the independently decoded mx_bed reference at the committed start'
+    );
+    const firstOut = firstNonzeroFrame(trace, f0);
+    assert.ok(
+      firstOut,
+      'cold start produced no nonzero source-correct output; audible unproven'
+    );
+    assert.equal(
+      firstOut.frame,
+      f0 + firstReferenceNonzero(videoOracle.audio),
+      `first nonzero output at frame ${firstOut.frame} is not the committed start ${f0} plus the reference's first nonzero sample`
+    );
+    const observations = trace.events
+      .filter((entry) => entry.kind === 'audio-output-timestamp-observed')
+      .map((entry) => entry.value as Record<string, unknown>)
+      .filter(
+        (value) =>
+          value['injected'] === false &&
+          value['output'] !== null &&
+          typeof value['output'] === 'object'
+      )
+      .map((value) => {
+        const output = value['output'] as {
+          contextTime: number;
+          performanceTime: number;
+        };
+        return {
+          before: Number(value['before']),
+          after: Number(value['after']),
+          contextTime: output.contextTime,
+          performanceTime: output.performanceTime,
+        };
+      })
+      .filter(
+        (obs) =>
+          Number.isFinite(obs.contextTime) &&
+          Number.isFinite(obs.performanceTime) &&
+          obs.contextTime > 0
+      );
+    const mapped = mapFrameToWall(observations, f0, rate);
+    assert.ok(
+      mapped,
+      'no native output timestamp precedes the first source frame; audible unproven'
+    );
+    const audibleMs = mapped.wallMs - playMs;
+    // Causal check: the measured output wall time (absolute performance.now() ms, the
+    // viewer's origin) must overlap the phase interval solved from the resident slots.
+    // Bounds are absolute: do not subtract the play request from them.
+    const phase = ringSolvers.at(-1);
+    if (!phase) throw new Error('legacy cold start has no phase solve');
+    assert.ok(
+      mapped.wallMs + mapped.boundMs >= phase.phaseLowerMs &&
+        mapped.wallMs - mapped.boundMs <= phase.phaseUpperMs,
+      `measured output wall ${mapped.wallMs}ms (±${mapped.boundMs}ms) lies outside the resident phase interval [${phase.phaseLowerMs}, ${phase.phaseUpperMs}]ms`
+    );
+    const audibleUpperMs = audibleMs + mapped.boundMs;
+    const canvas = trace.visual.filter(
+      (sample) => sample.pixels16 && !sample.error
+    );
+    const baseline = [...canvas]
+      .reverse()
+      .find((sample) => sample.timestamp < playMs);
+    if (!baseline || !baseline.pixels16)
+      throw new Error('no pre-play rendered pixel baseline; visual unproven');
+    const basePixels = baseline.pixels16;
+    const changed = canvas.find(
+      (sample) =>
+        sample.timestamp >= playMs &&
+        sample.pixels16 !== undefined &&
+        sample.pixels16.some((value, i) => value !== basePixels[i])
+    );
+    assert.ok(changed, 'no rendered pixel change after play; visual unproven');
+    const canvasVisualMs = changed.timestamp - playMs;
+    // Source-correct presentation movement. The paused view must already show a classified
+    // source frame (the pre-play class): without one nothing is attributable, and the proof
+    // fails as visual unproven. Presentation is the first post-play frame that classifies as a
+    // later source frame, within the timeline bound (selectPresentedFrame). Its time is the
+    // conservative upper bound. The lower bound is the frame before it, which must differ from
+    // it in both pixels and class, so the lower bound is always a real frame time.
+    const cast = await stopCast();
+    const screen = await decodeScreencastFrames(cast, canvasGeometry);
+    const screenTime = (sample: { timestamp: number }) =>
+      sample.timestamp - canvasGeometry.timeOrigin;
+    // The viewer draws its scope label (.otio-preview-scope) over the frame, inside the crop.
+    // Real screenshot evidence (screencast-first) shows the label; masking its cells keeps every
+    // other cell of the frame in the comparison, and the threshold is unchanged.
+    const overlays = await isolated.evaluate<
+      Array<{ x: number; y: number; width: number; height: number }>
+    >(`(() => Array.from(document.querySelectorAll('.otio-preview-scope'))
+      .filter((element) => element.getClientRects().length > 0)
+      .map((element) => { const q = element.getBoundingClientRect(); return {x: q.left, y: q.top, width: q.width, height: q.height}; }))()`);
+    const screenMask = overlayCellMask(canvasGeometry, overlays);
+    const classOf = (pixels: Uint8Array) =>
+      classifyVideoFrame(pixels, videoOracle.references, screenMask);
+    const screenBefore = screen.filter((sample) => screenTime(sample) < playMs);
+    const lastBefore = screenBefore[screenBefore.length - 1];
+    const preplayClass = lastBefore ? classOf(lastBefore.pixels) : null;
+    if (preplayClass === null)
+      throw new Error(
+        `no classified pre-play screencast frame; visual unproven (pre-play frames ${screenBefore.length})`
+      );
+    const screenAfter = screen.filter((sample) => screenTime(sample) >= playMs);
+    const selectionInput = screenAfter.map((sample) => ({
+      elapsedMs: screenTime(sample) - playMs,
+      cls: classOf(sample.pixels),
+    }));
+    const presentedIndex = selectPresentedFrame(
+      preplayClass,
+      selectionInput,
+      videoOracle.expectedIndex
+    );
+    if (presentedIndex < 0) {
+      // Real screenshot evidence for the crop: the geometry used, and the first screencast
+      // JPEG exactly as Chrome delivered it, so the crop can be checked against the image.
+      await writeFile(
+        join(shotDir, `screencast-geometry-${rate}.json`),
+        JSON.stringify(canvasGeometry, null, 1)
+      );
+      const firstFrame = cast.frames[0];
+      if (firstFrame && typeof firstFrame['data'] === 'string')
+        await writeFile(
+          join(shotDir, `screencast-first-${rate}.jpg`),
+          Buffer.from(firstFrame['data'] as string, 'base64')
+        );
+      // Diagnostic receipt, written before the failure: every post-play screencast frame's
+      // best and runner-up independent references under the same mask, so the next run shows
+      // what the selector saw.
+      const detail = screenAfter.map((sample, i) => {
+        const ranked = videoOracle.references
+          .map((reference, index) => ({
+            index,
+            error: maskedRmse(sample.pixels, reference, screenMask),
+          }))
+          .sort((a, b) => a.error - b.error);
+        return {
+          elapsedMs: selectionInput[i]!.elapsedMs,
+          best: ranked[0]?.index ?? null,
+          bestError: ranked[0]?.error ?? null,
+          nextError: ranked[1]?.error ?? null,
+          cls: selectionInput[i]!.cls,
+        };
+      });
+      await writeFile(
+        join(shotDir, `screencast-classification-${rate}.json`),
+        JSON.stringify(
+          {
+            expectedIndex: videoOracle.expectedIndex,
+            preplayClass,
+            screenBeforeCount: screenBefore.length,
+            screenAfterCount: screenAfter.length,
+            frames: detail,
+          },
+          null,
+          1
+        )
+      );
+      const classified = selectionInput.filter(
+        (frame) => frame.cls !== null
+      ).length;
+      throw new Error(
+        `no post-play screencast frame presented a later source-correct video frame; visual unproven (screencast after play ${screenAfter.length}, classified ${classified}, pre-play class ${preplayClass}; see screencast-classification-${rate}.json)`
+      );
+    }
+    const screenChanged = screenAfter[presentedIndex];
+    if (!screenChanged) throw new Error('screencast selection index invalid');
+    // The frame before the presented one: the last pre-play frame when the presented frame is
+    // the first after play. Its time is the lower bound, and it must be a distinct frame.
+    const priorFrame =
+      presentedIndex > 0 ? screenAfter[presentedIndex - 1] : lastBefore;
+    if (!priorFrame)
+      throw new Error(
+        'no frame before the presented screencast frame; visual unproven'
+      );
+    const presentedClass = selectionInput[presentedIndex]!.cls;
+    const priorClass =
+      presentedIndex > 0
+        ? selectionInput[presentedIndex - 1]!.cls
+        : preplayClass;
+    assert.notEqual(
+      priorClass,
+      presentedClass,
+      'screencast presentation kept the source class of the frame before it'
+    );
+    assert.ok(
+      priorFrame.pixels.some((value, i) => value !== screenChanged.pixels[i]),
+      'screencast presentation is pixel-identical to the frame before it'
+    );
+    const screenVisualLowerMs = screenTime(priorFrame) - playMs;
+    const visualMs = screenTime(screenChanged) - playMs;
+    assert.ok(
+      canvasVisualMs <= 350,
+      `canvas readback changed at ${canvasVisualMs} ms (budget 350)`
+    );
+    assert.ok(
+      Number.isFinite(screenVisualLowerMs) && screenVisualLowerMs < visualMs,
+      'screencast change did not follow a distinct prior frame'
+    );
+    const promotions = trace.events.filter(
+      (entry) =>
+        entry.kind === 'transport-message' &&
+        (entry.value as Record<string, unknown>)['type'] === 'clock-promoted'
+    ).length;
+    const suspendsAfterPlay = trace.events.filter(
+      (entry) =>
+        entry.kind === 'audio-suspend-request' && entry.timestamp >= playMs
+    ).length;
+    assert.ok(
+      audibleUpperMs <= 350,
+      `cold audible bound ${audibleUpperMs} ms exceeds 350 (estimate ${audibleMs} ms, bound ${mapped.boundMs} ms)`
+    );
+    assert.ok(
+      visualMs <= 350,
+      `cold visual presentation took ${visualMs} ms (budget 350)`
+    );
+    assert.ok(
+      promotions >= 2,
+      `cold start produced ${promotions} promotions (need 2)`
+    );
+    assert.equal(
+      suspendsAfterPlay,
+      0,
+      'cold start suspended the context after the play request'
+    );
+    assert.ok(
+      coldStartVerdict({
+        audibleMs: audibleUpperMs,
+        visualMs,
+        promotions,
+        suspendsAfterPlay,
+      }),
+      'cold-start verdict failed'
+    );
+    pass('scheduled-pcm-cold-start');
+  } finally {
+    await isolated.close();
+  }
+}
+
+async function runScheduledPcmProof(
+  sessionToken: string,
+  rate: 44100 | 48000 = 48000
+): Promise<void> {
+  assertNoLeaseClockControls();
+  const originalDirectory = fileURLToPath(
+    new URL(
+      '../../relic-format/test/fixtures/otio/scheduled-audio.otiod/',
+      import.meta.url
+    )
+  );
+  const directory =
+    rate === 48000
+      ? originalDirectory
+      : join(scratch, 'scheduled-audio-44100.otiod');
+  if (rate === 44100) {
+    await cp(originalDirectory, directory, { recursive: true });
+    const converted = await runChild(
+      [
+        'ffmpeg',
+        '-v',
+        'error',
+        '-y',
+        '-i',
+        join(originalDirectory, 'media', 'indexed-stereo.wav'),
+        '-ar',
+        '44100',
+        '-acodec',
+        'pcm_s16le',
+        join(directory, 'media', 'indexed-stereo.wav'),
+      ],
+      { timeoutMs: 30000 }
+    );
+    assert.equal(converted.exit, 0, converted.stderr);
+  }
+  const oracle = JSON.parse(
+    await readFile(join(directory, 'media', 'sample-oracle.json'), 'utf8')
+  ) as {
+    sample_rate: number;
+    channels: number;
+    frames: number;
+    pcm_sha256: string;
+  };
+  assert.equal(oracle.sample_rate, 48000);
+  assert.equal(oracle.channels, 2);
+  // Derive the expectation from published media kinds, never from the trace.
+  const audioOnly = isAudioOnlyDocument(
+    JSON.parse(await readFile(join(directory, 'content.otio'), 'utf8'))
+  );
+  const decoded = await runChild(
+    [
+      'ffmpeg',
+      '-v',
+      'error',
+      '-i',
+      join(directory, 'media', 'indexed-stereo.wav'),
+      '-f',
+      's16le',
+      'pipe:1',
+    ],
+    { timeoutMs: 30000 }
+  );
+  assert.equal(decoded.exit, 0, decoded.stderr);
+  assert.equal(
+    decoded.stdout.length % 4,
+    0,
+    'scheduled fixture PCM is not stereo PCM16'
+  );
+  const decodedHash = createHash('sha256').update(decoded.stdout).digest('hex');
+  if (rate === 48000) {
+    assert.equal(decoded.stdout.length, oracle.frames * 4);
+    assert.equal(
+      decodedHash,
+      oracle.pcm_sha256,
+      'scheduled fixture PCM hash mismatch'
+    );
+  } else {
+    oracle.sample_rate = rate;
+    oracle.frames = decoded.stdout.length / 4;
+    oracle.pcm_sha256 = decodedHash;
+  }
+  const formula = (channel: number, frame: number): number =>
+    (((frame * (channel === 0 ? 109 : 257) + (channel === 0 ? 12345 : 5345)) %
+      16001) -
+      8000) /
+    32768;
+  const source = (channel: number, frame: number): number =>
+    decoded.stdout.readInt16LE(frame * 4 + channel * 2) / 32768;
+  if (rate === 48000)
+    for (let n = 0; n < oracle.frames; n++)
+      for (let ch = 0; ch < 2; ch++)
+        assert.equal(
+          source(ch, n),
+          formula(ch, n),
+          `fixture formula disagrees at ${n}/${ch}`
+        );
+  const length = 3 * oracle.sample_rate;
+  const expected: [Float32Array, Float32Array] = [
+    new Float32Array(length),
+    new Float32Array(length),
+  ];
+  const unit = oracle.sample_rate / 30;
+  const ramp = (t: number, from: number, to: number) =>
+    Math.max(0, Math.min(1, (t - from) / (to - from)));
+  for (let n = 0; n < length; n++) {
+    const t = n / unit;
+    const outer = ramp(t, 56, 62),
+      a = ramp(t, 53, 58),
+      b = ramp(t, 61, 66);
+    for (let ch = 0; ch < 2; ch++) {
+      let sum = 0;
+      if (t < 58) sum += source(ch, 30 * unit + n) * (1 - a) * (1 - outer);
+      if (t >= 53 && t < 62)
+        sum += source(ch, 100 * unit + n - 56 * unit) * a * (1 - outer);
+      if (t >= 56 && t < 66)
+        sum += source(ch, 20 * unit + n - 60 * unit) * (1 - b) * outer;
+      if (t >= 61) sum += source(ch, 50 * unit + n - 64 * unit) * b * outer;
+      if (t < 30) sum += source(ch, 10 * unit + n);
+      else if (t < 60) sum += source(ch, 60 * unit + n - 30 * unit);
+      expected[ch]![n] = sum;
+    }
+  }
+  const url = await publishLegacyDirectory(
+    directory,
+    `OTIO legacy scheduled-pcm ${rate}`
+  );
+  const coldUrl = await publishColdBoundaryDocument(rate);
+  // Linux focus-only publish is asserted once, at the top of the composition stages.
+  await runColdStartProof(coldUrl, sessionToken, rate);
+  const browser = await openBrowser(url, sessionToken, {
+    label: `scheduled-pcm-${rate}`,
+    recordProofTrace: true,
+    proofSampleRate: rate,
+  });
+  try {
+    await waitReady(browser);
+    await assertLegacyProgramState(browser, 'scheduled-pcm');
+    const provenance = await proofProvenance(browser);
+    // Chrome on a 10 ms sink renders 384 or 512 frames per callback. When the burst that closes
+    // a starved run overshoots its frontier far enough, overshoot plus the guard passes the 20 ms
+    // gap at the first recovery check and the viewer refuses truthfully. Jason approved, on
+    // 2026-11-12, rerunning only that exact signature in a fresh browser, at most three times.
+    // Every other failure is rethrown unchanged, and each rerun keeps the refused trace.
+    const FRONTIER_OVERSHOOT_RERUNS = 3;
+    // The frontier is the epoch start plus the PCM prepared when the pulls are withheld, and a
+    // fresh browser tends to repeat both: one control refused four times out of four at frontier
+    // 39424 in CI run 43179069879. A rerun at the same instant is not another attempt. Each rerun
+    // withholds one PCM batch later (4096 frames, about 93 ms), which moves the frontier to
+    // another place in the sink's burst pattern.
+    const starveAfterMs = (attempt: number): number =>
+      600 + 100 * (attempt - 1);
+    const recoveryCapture: { trace: MovingTrace['trace'] | null } = {
+      trace: null,
+    };
+    // Read through a call: the units assign the capture, which the compiler cannot see here.
+    const refusedCapture = (): MovingTrace['trace'] | null =>
+      recoveryCapture.trace;
+    const rerunFrontierOvershoot = async (
+      label: string,
+      unit: (attempt: number) => Promise<void>
+    ): Promise<void> => {
+      for (let attempt = 1; ; attempt++) {
+        recoveryCapture.trace = null;
+        try {
+          await unit(attempt);
+          return;
+        } catch (error) {
+          const refused = refusedCapture();
+          const evidence =
+            refused === null
+              ? null
+              : recoveryFrontierOvershoot(refused.events, rate);
+          if (evidence === null) throw error;
+          await writeFile(
+            join(shotDir, `${label}-frontier-overshoot-attempt${attempt}.json`),
+            JSON.stringify({ label, attempt, evidence, trace: refused })
+          );
+          if (attempt > FRONTIER_OVERSHOOT_RERUNS)
+            throw new Error(
+              `${label}: ${attempt}/${attempt} attempts overshot the frontier (${evidence})`,
+              { cause: error }
+            );
+          console.log(
+            `OTIO_RECOVERY_FRONTIER_OVERSHOOT label=${label} attempt=${attempt} ${evidence}`
+          );
+        }
+      }
+    };
+    let longEpoch: number | undefined;
+    let warmAnchor: Record<string, unknown> | undefined;
+    if (clockProofMode === 'long') {
+      const warmup = await browser.evaluate<{
+        identity: {
+          clockEpoch: number;
+          contextState: string;
+          sampleFrame: number;
+          sampleRate: number;
+        };
+        trace: MovingTrace['trace'];
+      }>(`(async () => {
+        const {promise, resolve} = Promise.withResolvers();
+        const button = document.querySelector('button.otio-play');
+        if (!(button instanceof HTMLButtonElement)) throw new Error('long proof play button missing');
+        await globalThis.__otioProofTrace.start();
+        globalThis.__otioProofTrace.playRequest();
+        button.click();
+        setTimeout(resolve, 700);
+        await promise;
+        const identity = globalThis.__otioProofTrace.clockIdentity();
+        const trace = await globalThis.__otioProofTrace.stop();
+        if (document.querySelector('.otio-view')?.dataset.playing === 'true') button.click();
+        return {identity,trace};
+      })()`);
+      await writeClockShot(
+        join(shotDir, 'scheduled-clock-long-bootstrap.json'),
+        { provenance, capture: warmup },
+        'scheduled-clock-long-bootstrap',
+        warmup.trace
+      );
+      warmAnchor = assertAnchorEvidence(warmup.trace);
+      const initial = warmup.identity;
+      assert.equal(
+        initial.contextState,
+        'running',
+        'long proof context is not running'
+      );
+      longEpoch = initial.clockEpoch;
+      await seekTo(browser, 0);
+      let current = initial;
+      const target = 2 ** 24 - Math.floor(initial.sampleRate * 0.6);
+      while (current.sampleFrame < target) {
+        const { promise, resolve } = Promise.withResolvers<void>();
+        const remainingMs =
+          ((target - current.sampleFrame) * 1000) / initial.sampleRate;
+        setTimeout(resolve, Math.max(10, Math.min(2000, remainingMs / 2)));
+        await promise;
+        current = await browser.evaluate<typeof initial>(
+          'globalThis.__otioProofTrace.clockIdentity()'
+        );
+        assert.equal(
+          current.contextState,
+          'running',
+          'long proof context stopped'
+        );
+        assert.equal(
+          current.clockEpoch,
+          initial.clockEpoch,
+          'long proof clock session changed'
+        );
+      }
+      await writeClockShot(
+        join(shotDir, 'scheduled-clock-long-checkpoint.json'),
+        { provenance, initial, current },
+        'scheduled-clock-long-checkpoint',
+        null,
+        'identity checkpoint only; the clock trace is in scheduled-clock-long-bootstrap'
+      );
+    }
+    const capture = await browser.evaluate<
+      MovingTrace & {
+        staleStop: { pairsAtStop: number; msFromWindow: number } | null;
+      }
+    >(`(async () => {
+      const sleep = ms => { const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, ms); return promise; };
+      const root = document.querySelector('.otio-view');
+      const button = document.querySelector('button.otio-play');
+      if (!(root instanceof HTMLElement) || !(button instanceof HTMLButtonElement)) throw new Error('scheduled proof controls missing');
+      const start = await globalThis.__otioProofTrace.start();
+      const playEdge = globalThis.__otioProofTrace.playRequest();
+      button.click();
+      await sleep(${clockProofMode === 'long' ? 100 : 600});
+      await globalThis.__otioProofTrace.awaitClockTraceReady(8000);
+      globalThis.__otioProofTrace.clockTrace('start');
+      const staleBegin = performance.now();
+      const staleQuota = ${STALE_PAIR_QUOTA}, staleCap = ${STALE_PAIR_CAP};
+      const decideStale = ${staleStopDecision.toString()};
+      let staleStop = null;
+      const tryStaleStop = async () => {
+        if (staleStop) return;
+        const pairs = globalThis.__otioProofTrace.stalePairCount();
+        const decision = decideStale({pairs, quota: staleQuota, cap: staleCap,
+          elapsedMs: performance.now() - staleBegin, deadlineMs: 800 + 3000});
+        if (decision !== 'stop') return;
+        staleStop = {pairsAtStop: pairs, msFromWindow: performance.now() - staleBegin};
+        await globalThis.__otioProofTrace.stopStaleWindow();
+      };
+      while (performance.now() - staleBegin < 800) { await tryStaleStop(); await sleep(10); }
+      globalThis.__otioProofTrace.clockTrace('stop');
+      while (!staleStop) { await tryStaleStop(); if (!staleStop) await sleep(10); }
+      await sleep(${clockProofMode === 'long' ? 2800 : 2300});
+      const trace = await globalThis.__otioProofTrace.stop();
+      if (root.dataset.playing === 'true') button.click();
+      return {start, playEdge, trace, staleStop};
+    })()`);
+    const provenanceAfter = await proofProvenance(browser);
+    await writeClockShot(
+      join(shotDir, `scheduled-pcm-${rate}.json`),
+      { provenance, provenanceAfter, capture, fixtureHash: oracle.pcm_sha256 },
+      `scheduled-pcm-${rate}`,
+      capture.trace
+    );
+    assert.equal(
+      provenanceAfter['workingTreeSha256'],
+      provenance['workingTreeSha256'],
+      'proof source changed during capture'
+    );
+    assert.deepEqual(
+      provenanceAfter['builtAssets'],
+      provenance['builtAssets'],
+      'viewer assets changed during capture'
+    );
+    assert.ok(
+      !capture.trace.audioOverflow && !capture.trace.eventsOverflow,
+      'scheduled proof trace overflow'
+    );
+    // The legacy fixture's phase intervals and resident slots are measured from the
+    // viewer's cold-controller records; any explicit refusal fails the capture here.
+    await runOverCapRefusal(sessionToken, rate);
+    // Planner rule: a running context is never suspended after the play request.
+    // A suspend here is the cold-start cause, so it fails the capture rather than
+    // being excused as bootstrap.
+    const playEdge = capture.playEdge;
+    if (playEdge === undefined)
+      throw new Error('scheduled capture lacks its play edge');
+    const suspendsAfterPlay = capture.trace.events.filter(
+      (entry) =>
+        entry.kind === 'audio-suspend-request' &&
+        entry.timestamp >= playEdge.timestamp
+    );
+    assert.equal(
+      suspendsAfterPlay.length,
+      0,
+      `playback suspended the context after the play request (${suspendsAfterPlay.length} suspend requests)`
+    );
+    const pcmEvents = capture.trace.events
+      .filter((entry) => entry.kind === 'scheduled-pcm')
+      .map((entry) => entry.value as Record<string, unknown>);
+    const backend = pcmEvents
+      .filter((event) => event['event'] === 'backend')
+      .at(-1);
+    assert.equal(
+      backend?.['backend'],
+      'pcm',
+      'scheduled fixture did not select the PCM backend'
+    );
+    const epochs = pcmEvents.filter((event) => event['event'] === 'epoch');
+    assert.equal(
+      epochs.length,
+      1,
+      'scheduled proof requires one observed playback epoch'
+    );
+    const epoch = epochs[0]!;
+    const f0 = Number(epoch['f0']),
+      c0 = Number(epoch['c0']);
+    if (clockProofMode === 'long') {
+      const identity = await browser.evaluate<{
+        clockEpoch: number;
+        contextState: string;
+        sampleFrame: number;
+      }>('globalThis.__otioProofTrace.clockIdentity()');
+      assert.ok(
+        f0 < 2 ** 24 && f0 + length > 2 ** 24,
+        'scheduled PCM did not cross the large-frame boundary'
+      );
+      assert.equal(
+        identity.clockEpoch,
+        longEpoch,
+        'scheduled PCM used a different clock session'
+      );
+      assert.equal(
+        identity.contextState,
+        'running',
+        'long proof context stopped during capture'
+      );
+    }
+    const t0 = epoch['compositionT0'] as { value: number; rate: number };
+    assert.equal(Number(epoch['contextSampleRate']), oracle.sample_rate);
+    assert.equal(
+      c0,
+      f0 / oracle.sample_rate,
+      'scheduled epoch does not own an integral context frame'
+    );
+    assert.equal(
+      t0.value,
+      0,
+      'scheduled proof did not start at composition zero'
+    );
+    assert.ok(t0.rate > 0);
+    const bridge = epoch['bridge'] as {
+      contextTime: number;
+      performanceTime: number;
+      mappingAllowanceMs: number;
+    };
+    assert.ok(
+      Number.isFinite(bridge?.contextTime) &&
+        Number.isFinite(bridge?.performanceTime),
+      'scheduled output clock bridge missing'
+    );
+    assert.ok(
+      Number.isFinite(bridge.mappingAllowanceMs) &&
+        bridge.mappingAllowanceMs >= 0,
+      'scheduled epoch observed mapping allowance missing'
+    );
+    assert.equal(
+      epoch['bridgeMappingAllowanceMs'],
+      bridge.mappingAllowanceMs,
+      'scheduled epoch mapping allowance disagrees with its bridge'
+    );
+    const outputStartMs =
+      bridge.performanceTime + (c0 - bridge.contextTime) * 1000;
+    assert.ok(
+      capture.playEdge &&
+        outputStartMs >= capture.playEdge.timestamp &&
+        outputStartMs - capture.playEdge.timestamp <= 350,
+      'scheduled audio epoch must be causal and within the initial budget'
+    );
+    const gateMessages = capture.trace.events
+      .filter((entry) => entry.kind === 'transport-message')
+      .map((entry) => entry.value as Record<string, unknown>)
+      .filter(Boolean);
+    const anchor =
+      clockProofMode === 'long'
+        ? warmAnchor
+        : assertAnchorEvidence(capture.trace);
+    assert.ok(anchor, 'initial native anchor evidence unavailable');
+    const promotions = gateMessages.filter(
+      (message) => message['type'] === 'clock-promoted'
+    );
+    assert.ok(
+      promotions.length >= 2,
+      'two native bank promotions not observed'
+    );
+    assert.ok(
+      promotions.every(
+        (message) =>
+          message['clockEpoch'] === anchor['clockEpoch'] &&
+          Number.isSafeInteger(message['boundary']) &&
+          Number.isSafeInteger(message['clockCoverageEnd'])
+      ),
+      'invalid bank promotion provenance'
+    );
+    assertIndependentCarrier(capture.trace, f0, f0 + length);
+    const gateAssociationOffset = assertGateClockEvidence(
+      capture.trace,
+      clockProofMode === 'long'
+    );
+    assertNaturalStaleWitness(
+      capture.trace,
+      f0,
+      expected,
+      gateAssociationOffset
+    );
+    assertStaleWitnessControls(
+      capture.trace,
+      f0,
+      expected,
+      gateAssociationOffset
+    );
+    const nativeWitness = capture.trace.witness;
+    assert.ok(nativeWitness, 'native carrier metadata missing');
+    const carrierControl = {
+      ...capture.trace,
+      audio: capture.trace.audio.map((chunk) => ({
+        ...chunk,
+        ...(chunk.witness
+          ? { witness: chunk.witness.map((channel) => channel.slice()) }
+          : {}),
+      })),
+    };
+    let carrierInjected = false;
+    for (const chunk of carrierControl.audio) {
+      if (carrierInjected) break;
+      for (let i = 0; i < chunk.channels[0]!.length; i++) {
+        if (carrierFrame(chunk, i, nativeWitness) === f0) {
+          assert.ok(chunk.witness?.[1], 'carrier control has no low channel');
+          chunk.witness[1][i] = (chunk.witness[1][i]! + 1) % 65536;
+          carrierInjected = true;
+          break;
+        }
+      }
+    }
+    assert.ok(
+      carrierInjected,
+      'shifted carrier did not reach the source epoch'
+    );
+    assert.throws(
+      () => assertIndependentCarrier(carrierControl, f0, f0 + length),
+      'shifted captured carrier passed admission'
+    );
+    await writeClockShot(
+      join(shotDir, `scheduled-carrier-control-${rate}.json`),
+      {
+        provenance,
+        control: 'one-sample-carrier-shift',
+        injected: true,
+        boundary: f0,
+        admission: 'rejected',
+      },
+      `scheduled-carrier-control-${rate}`,
+      capture.trace
+    );
+    const comparison = compareScheduledPcm(
+      capture.trace.audio,
+      f0,
+      expected,
+      0,
+      length,
+      nativeWitness
+    );
+    for (let ch = 0; ch < 2; ch++) {
+      assert.ok(
+        comparison.rmse[ch]! <= 0.003,
+        `scheduled PCM channel ${ch} RMSE ${comparison.rmse[ch]}`
+      );
+      assert.ok(
+        comparison.shiftedRmse[ch]! > 0.003,
+        `one-sample negative control did not fail for channel ${ch}`
+      );
+      assert.ok(
+        comparison.mutedPrefixRmse[ch]! > 0.003,
+        `muted-prefix negative control did not fail for channel ${ch}`
+      );
+      assert.ok(
+        comparison.swappedRmse[ch]! > 0.003,
+        `stereo swap or duplication control did not fail for channel ${ch}`
+      );
+    }
+    for (const [first, end] of [
+      [30 * unit - unit, 30 * unit + unit],
+      [53 * unit, 66 * unit],
+    ] as const) {
+      const region = compareScheduledPcm(
+        capture.trace.audio,
+        f0,
+        expected,
+        first,
+        end,
+        nativeWitness
+      );
+      assert.ok(
+        region.rmse.every((value) => value <= 0.003),
+        `scheduled cut or dissolve RMSE ${region.rmse}`
+      );
+    }
+    // Every 20 ms source-active window must agree, so a localized dropout
+    // cannot disappear inside a passing whole-run average.
+    const windowFrames = Math.floor(rate * 0.02);
+    for (let first = 0; first + windowFrames <= length; first += windowFrames) {
+      const window = compareScheduledPcm(
+        capture.trace.audio,
+        f0,
+        expected,
+        first,
+        first + windowFrames,
+        nativeWitness
+      );
+      assert.ok(
+        window.rmse.every((value) => value <= 0.003),
+        `scheduled 20ms PCM window failed at ${first}: ${window.rmse}`
+      );
+    }
+    assert.ok(
+      capture.trace.audio.length > 2,
+      'not enough PCM records for sequence controls'
+    );
+    for (const control of [
+      'missing',
+      'reordered',
+      'duplicate',
+      'offset',
+    ] as const) {
+      const corrupt = capture.trace.audio.map((chunk) => ({
+        ...chunk,
+        ...(chunk.quantumOffsets
+          ? { quantumOffsets: chunk.quantumOffsets.slice() }
+          : {}),
+      }));
+      if (control === 'missing') corrupt.splice(1, 1);
+      if (control === 'reordered')
+        [corrupt[1], corrupt[2]] = [corrupt[2]!, corrupt[1]!];
+      if (control === 'duplicate') corrupt.splice(1, 0, corrupt[1]!);
+      if (control === 'offset') {
+        assert.ok(
+          corrupt[1]!.quantumOffsets?.length,
+          'offset control has no callback'
+        );
+        corrupt[1]!.quantumOffsets![0]!++;
+      }
+      assert.throws(
+        () => assertPcmCoverage(f0, f0 + length, corrupt, nativeWitness),
+        `${control} PCM provenance passed admission`
+      );
+    }
+    {
+      const labeled = capture.trace.audio.map((chunk) => ({
+        ...chunk,
+        ...(chunk.quantumFrames
+          ? { quantumFrames: chunk.quantumFrames.slice() }
+          : {}),
+      }));
+      const target = labeled.find(
+        (chunk) =>
+          (chunk.quantumFrames?.length ?? 0) >= 2 &&
+          (carrierFrame(chunk, 0, nativeWitness) ?? -1) >= f0
+      );
+      assert.ok(
+        target?.quantumFrames,
+        'raw-label negative control lacks two callbacks'
+      );
+      target.quantumFrames[1] = target.quantumFrames[0]!;
+      const boundaryIndex = labeled.findIndex(
+        (chunk, index) =>
+          index > 0 &&
+          (chunk.quantumFrames?.length ?? 0) > 0 &&
+          (labeled[index - 1]!.quantumFrames?.length ?? 0) > 0 &&
+          (carrierFrame(chunk, 0, nativeWitness) ?? -1) >= f0
+      );
+      assert.ok(
+        boundaryIndex > 0,
+        'raw cross-chunk label control has no boundary'
+      );
+      const prior = labeled[boundaryIndex - 1]!.quantumFrames!;
+      const boundary = labeled[boundaryIndex]!;
+      boundary.sampleFrame = prior[prior.length - 1]!;
+      boundary.quantumFrames![0] = boundary.sampleFrame;
+      assertPcmCoverage(f0, f0 + length, labeled, nativeWitness);
+      const result = compareScheduledPcm(
+        labeled,
+        f0,
+        expected,
+        0,
+        length,
+        nativeWitness
+      );
+      assert.ok(
+        result.rmse.every((value) => value <= 0.003),
+        'cached-label repetition changed source-bound PCM qualification'
+      );
+    }
+    {
+      const missing = capture.trace.audio.map((chunk) => ({
+        ...chunk,
+        channels: chunk.channels.map((channel) => channel.slice()),
+        ...(chunk.witness
+          ? { witness: chunk.witness.map((channel) => channel.slice()) }
+          : {}),
+        ...(chunk.quantumFrames
+          ? { quantumFrames: chunk.quantumFrames.slice() }
+          : {}),
+        ...(chunk.quantumLengths
+          ? { quantumLengths: chunk.quantumLengths.slice() }
+          : {}),
+        ...(chunk.quantumOrdinals
+          ? { quantumOrdinals: chunk.quantumOrdinals.slice() }
+          : {}),
+        ...(chunk.quantumOffsets
+          ? { quantumOffsets: chunk.quantumOffsets.slice() }
+          : {}),
+      }));
+      const target = missing.find(
+        (chunk) =>
+          (chunk.quantumLengths?.length ?? 0) >= 2 &&
+          (carrierFrame(chunk, 0, nativeWitness) ?? -1) >= f0
+      );
+      assert.ok(
+        target?.quantumLengths &&
+          target.quantumFrames &&
+          target.quantumOrdinals &&
+          target.quantumOffsets &&
+          target.witness,
+        'single-quantum control lacks provenance'
+      );
+      const begin = target.quantumLengths[0]!,
+        size = target.quantumLengths[1]!;
+      for (const channel of [...target.channels, ...target.witness])
+        channel.splice(begin, size);
+      target.quantumFrames.splice(1, 1);
+      target.quantumLengths.splice(1, 1);
+      target.quantumOrdinals.splice(1, 1);
+      target.quantumOffsets.splice(1, 1);
+      assert.throws(
+        () => assertPcmCoverage(f0, f0 + length, missing, nativeWitness),
+        'missing single captured quantum passed carrier/offset admission'
+      );
+    }
+    // Corrupt the captured output, then invoke the same source comparison used
+    // for admission. Reference-only sensitivity figures cannot prove rejection.
+    for (const control of ['shift', 'dropout', 'swap', 'mono'] as const) {
+      const corrupted = capture.trace.audio.map((chunk) => ({
+        ...chunk,
+        channels: chunk.channels.map((channel) => channel.slice()),
+      }));
+      let previous = [0, 0];
+      let injected = 0;
+      for (const chunk of corrupted) {
+        for (let i = 0; i < chunk.channels[0]!.length; i++) {
+          const frame = carrierFrame(chunk, i, nativeWitness);
+          const left = chunk.channels[0]![i]!,
+            right = chunk.channels[1]![i]!;
+          if (frame !== null && frame >= f0 && frame < f0 + length) {
+            if (control === 'shift') {
+              chunk.channels[0]![i] = previous[0]!;
+              chunk.channels[1]![i] = previous[1]!;
+            } else if (control === 'dropout' && frame < f0 + windowFrames) {
+              chunk.channels[0]![i] = 0;
+              chunk.channels[1]![i] = 0;
+            } else if (control === 'swap') {
+              chunk.channels[0]![i] = right;
+              chunk.channels[1]![i] = left;
+            } else if (control === 'mono') {
+              chunk.channels[1]![i] = left;
+            }
+            if (control !== 'dropout' || frame < f0 + windowFrames) injected++;
+          }
+          previous = [left, right];
+        }
+      }
+      assert.ok(injected > 0, `${control} control did not reach captured PCM`);
+      assert.throws(() => {
+        const result = compareScheduledPcm(
+          corrupted,
+          f0,
+          expected,
+          0,
+          control === 'dropout' ? windowFrames : length,
+          nativeWitness
+        );
+        assert.ok(
+          result.rmse.every((value) => value <= 0.003),
+          `${control} captured PCM rejected: ${result.rmse}`
+        );
+      }, `${control} corrupted capture passed PCM admission`);
+    }
+    assert.ok(
+      pcmEvents.some((event) => event['event'] === 'frontier'),
+      'scheduled readiness frontier missing'
+    );
+    const checkedFrontiers = assertLookaheadFrontiers(pcmEvents, rate);
+    assert.ok(
+      checkedFrontiers > 0,
+      'no committed frontier carried lookahead evidence'
+    );
+    const forgedFrontier = pcmEvents.find(
+      (event) => event['event'] === 'frontier'
+    )!;
+    const forgedComposition = forgedFrontier['compositionThrough'] as {
+      value: number;
+      rate: number;
+    };
+    const forgedB = Number(forgedComposition.value);
+    const forgedP = forgedB + LOOKAHEAD_FRAMES - 1;
+    // Cross-coordinate control: the context coordinate is made to look safe while
+    // the composition frontier violates P-B >= K. A checker that measured the gap
+    // on contextFrameThrough would accept this; the composition checker must not.
+    assert.throws(
+      () =>
+        assertLookaheadFrontiers(
+          [
+            {
+              ...forgedFrontier,
+              preparedThrough: forgedP,
+              decodedCap: forgedP - LOOKAHEAD_FRAMES,
+              scopeEndFrame: forgedP + 1,
+              reserveFrames: LOOKAHEAD_FRAMES,
+              descriptorCoverageEnd: forgedP,
+              descriptorReady: true,
+              contextFrameThrough: forgedP - LOOKAHEAD_FRAMES - 5000,
+            },
+          ],
+          rate
+        ),
+      /below K=/,
+      'checker measured the lookahead gap on the context coordinate'
+    );
+    assert.throws(
+      () =>
+        assertLookaheadFrontiers(
+          [
+            {
+              ...forgedFrontier,
+              compositionThrough: { value: forgedB, rate: rate + 1 },
+            },
+          ],
+          rate
+        ),
+      /composition-coordinate/,
+      'checker accepted a frontier in another sample rate'
+    );
+    assertCarrierDecodeControls();
+    // Successor-policy controls (synthetic, deterministic). The planner rule is
+    // exercised on every polarity: a valid successor, one beyond B_old+K, one after
+    // a non-ready closure, a healthy successor without reserve, and an ordinary
+    // extension below K.
+    const syntheticB = 100000;
+    const syntheticClosure = (ready: boolean): Record<string, unknown> => ({
+      event: 'recovery-render-closed',
+      compositionStop: { value: syntheticB, rate },
+      preparedThrough: syntheticB + LOOKAHEAD_FRAMES + 500,
+      descriptorCoverageEnd: syntheticB + LOOKAHEAD_FRAMES + 200,
+      descriptorReady: ready,
+    });
+    const syntheticHandoff = (
+      offset: number,
+      reserve: number
+    ): Record<string, unknown> => ({
+      event: 'frontier',
+      frontierKind: 'handoff',
+      compositionThrough: { value: syntheticB + offset, rate },
+      contextFrameThrough: syntheticB + offset,
+      preparedThrough: syntheticB + offset + reserve,
+      scopeEndFrame: syntheticB + 10 * LOOKAHEAD_FRAMES,
+      reserveFrames: LOOKAHEAD_FRAMES,
+      decodedCap: syntheticB + offset + reserve - LOOKAHEAD_FRAMES,
+      descriptorCoverageEnd: syntheticB + LOOKAHEAD_FRAMES + 200,
+      descriptorReady: true,
+    });
+    assert.equal(
+      assertSuccessorPolicy(
+        [syntheticClosure(true), syntheticHandoff(100, LOOKAHEAD_FRAMES + 50)],
+        true
+      ),
+      1,
+      'valid successor rejected'
+    );
+    assert.throws(
+      () =>
+        assertSuccessorPolicy(
+          [
+            syntheticClosure(true),
+            syntheticHandoff(LOOKAHEAD_FRAMES + 1, LOOKAHEAD_FRAMES + 50),
+          ],
+          false
+        ),
+      /predecessor window/,
+      'successor beyond B_old+K was accepted'
+    );
+    assert.throws(
+      () =>
+        assertSuccessorPolicy(
+          [
+            syntheticClosure(false),
+            syntheticHandoff(100, LOOKAHEAD_FRAMES + 50),
+          ],
+          false
+        ),
+      /non-ready closure/,
+      'successor after a non-ready closure was accepted'
+    );
+    assert.throws(
+      () =>
+        assertSuccessorPolicy(
+          [syntheticClosure(true), syntheticHandoff(100, LOOKAHEAD_FRAMES - 1)],
+          true
+        ),
+      /lacks its reserve/,
+      'healthy successor without reserve was accepted'
+    );
+    assert.throws(
+      () =>
+        assertLookaheadFrontiers(
+          [
+            {
+              event: 'frontier',
+              frontierKind: 'extension',
+              compositionThrough: { value: syntheticB, rate },
+              contextFrameThrough: syntheticB,
+              preparedThrough: syntheticB + LOOKAHEAD_FRAMES - 1,
+              scopeEndFrame: syntheticB + 10 * LOOKAHEAD_FRAMES,
+              reserveFrames: LOOKAHEAD_FRAMES,
+              decodedCap: syntheticB - 1,
+              descriptorCoverageEnd: syntheticB + LOOKAHEAD_FRAMES,
+              descriptorReady: true,
+            },
+          ],
+          rate
+        ),
+      /below K=/,
+      'ordinary extension below K was accepted'
+    );
+    // Ordinary extensions may be staged without a ready descriptor (readiness is
+    // enforced at closure); a transient false is not an I1 failure.
+    assert.equal(
+      assertLookaheadFrontiers(
+        [
+          {
+            event: 'frontier',
+            frontierKind: 'extension',
+            compositionThrough: { value: syntheticB, rate },
+            contextFrameThrough: syntheticB,
+            preparedThrough: syntheticB + LOOKAHEAD_FRAMES + 100,
+            scopeEndFrame: syntheticB + 10 * LOOKAHEAD_FRAMES,
+            reserveFrames: LOOKAHEAD_FRAMES,
+            decodedCap: syntheticB + 100,
+            descriptorCoverageEnd: syntheticB + LOOKAHEAD_FRAMES,
+            descriptorReady: false,
+          },
+        ],
+        rate
+      ),
+      1,
+      'ordinary extension with transient descriptorReady=false was rejected'
+    );
+    assert.ok(
+      pcmEvents.filter((event) => event['event'] === 'scheduled').length > 1,
+      'scheduled queue did not replenish'
+    );
+    const scheduled = pcmEvents.filter(
+      (event) => event['event'] === 'scheduled'
+    );
+    for (const span of scheduled) {
+      const sourceStart = Number(span['sourceStartFrame']);
+      const sourceEnd = Number(span['sourceEndFrame']);
+      const contextStart = Number(span['contextStartFrame']);
+      const contextEnd = Number(span['contextEndFrame']);
+      assert.ok(
+        [sourceStart, sourceEnd, contextStart, contextEnd].every(
+          Number.isSafeInteger
+        ),
+        'scheduled ownership is not integral'
+      );
+      assert.ok(
+        sourceStart >= 0 && sourceEnd > sourceStart && contextStart >= f0,
+        'invalid scheduled ownership interval'
+      );
+      assert.equal(
+        sourceEnd - sourceStart,
+        contextEnd - contextStart,
+        'scheduled source and context frame counts differ'
+      );
+      assert.equal(
+        span['generation'],
+        epoch['generation'],
+        'scheduled frame belongs to another generation'
+      );
+      assert.equal(
+        span['sampleRate'],
+        oracle.sample_rate,
+        'scheduled sample rate changed'
+      );
+    }
+    assert.ok(
+      !capture.trace.events.some(
+        (event) => event.kind === 'play' && event.mediaType === 'AUDIO'
+      ),
+      'scheduled mode played a native audio element'
+    );
+    assert.deepEqual(
+      browser.blocked,
+      [],
+      'scheduled proof attempted a non-loopback request'
+    );
+    pass('scheduled-pcm-playback');
+    if (clockProofMode === 'long') return;
+    async function runRecoveryProof(
+      session: ChromeSession,
+      sessionProvenance: unknown,
+      starveMs = 600
+    ): Promise<void> {
+      const recoveryWindowFrames = Math.floor(oracle.sample_rate * 0.02);
+      assert.ok(recoveryWindowFrames > 0, 'invalid recovery sample rate');
+      await seekTo(session, 0);
+      const recovery = await session.evaluate<
+        MovingTrace & {
+          held: number;
+          released: number;
+          sawHeld: boolean;
+          handoffBeforeRelease: boolean;
+          sawBuffering: boolean;
+          pcmReleasedAt: number;
+          drainFlagClearedAt: number;
+        }
+      >(`(async () => {
+      const sleep = ms => { const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, ms); return promise; };
+      const root = document.querySelector('.otio-view');
+      const button = document.querySelector('button.otio-play');
+      if (!(root instanceof HTMLElement) || !(button instanceof HTMLButtonElement)) throw new Error('recovery controls missing');
+      const start = await globalThis.__otioProofTrace.start();
+      globalThis.__otioProofTrace.enableRecoveryMarker();
+      globalThis.__otioProofHoldOldDrain = true;
+      const playEdge = globalThis.__otioProofTrace.playRequest();
+      button.click();
+      await sleep(${starveMs});
+      globalThis.__otioProofTrace.holdPcmResponses(true);
+      const closeDeadline = performance.now() + 4000;
+      while (!globalThis.__otioProofTrace.hasPcmEvent('recovery-render-closed') &&
+             performance.now() < closeDeadline) await sleep(5);
+      const held = globalThis.__otioProofTrace.heldPcmCount();
+      const pcmReleasedAt = performance.now();
+      const released = globalThis.__otioProofTrace.holdPcmResponses(false);
+      const handoffDeadline = performance.now() + 1000;
+      while ((!globalThis.__otioProofTrace.hasPcmEvent('recovery-handoff') ||
+              !globalThis.__otioProofTrace.hasPcmEvent('recovery-old-drain-held')) &&
+             performance.now() < handoffDeadline) await sleep(5);
+      const sawHeld = globalThis.__otioProofTrace.hasPcmEvent('recovery-old-drain-held');
+      const handoffBeforeRelease = globalThis.__otioProofTrace.hasPcmEvent('recovery-handoff');
+      const drainFlagClearedAt = performance.now();
+      globalThis.__otioProofHoldOldDrain = false;
+      const releaseDeadline = performance.now() + 1000;
+      while (!globalThis.__otioProofTrace.hasPcmEvent('recovery-old-drain-released') &&
+             performance.now() < releaseDeadline) await sleep(5);
+      await sleep(300);
+      const trace = await globalThis.__otioProofTrace.stop();
+      const sawBuffering = trace.events.some((event) =>
+        event.kind === 'buffering-change' &&
+        event.value !== null &&
+        typeof event.value === 'object' &&
+        event.value.current === 'true');
+      if (root.dataset.playing === 'true') button.click();
+      return { start, playEdge, trace, held, released, sawHeld, handoffBeforeRelease, sawBuffering, pcmReleasedAt, drainFlagClearedAt };
+    })()`);
+      recoveryCapture.trace = recovery.trace;
+      await writeClockShot(
+        join(shotDir, `scheduled-pcm-starvation-recovery-${rate}.json`),
+        { provenance: sessionProvenance, capture: recovery },
+        `scheduled-pcm-starvation-recovery-${rate}`,
+        recovery.trace
+      );
+      assert.ok(
+        recovery.held > 0 && recovery.released === recovery.held,
+        'recovery did not withhold and release future PCM'
+      );
+      const recoveryEvents = recovery.trace.events
+        .filter((entry) => entry.kind === 'scheduled-pcm')
+        .map((entry) => entry.value as Record<string, unknown>);
+      assert.ok(
+        assertLookaheadFrontiers(recoveryEvents, rate) > 0,
+        'recovery run committed no lookahead-checked frontier'
+      );
+      assert.ok(
+        assertSuccessorPolicy(recoveryEvents, false) > 0,
+        'audio recovery produced no checked successor handoff'
+      );
+      const firstEpoch = recoveryEvents.find(
+        (event) => event['event'] === 'epoch'
+      );
+      const gateIndex = recoveryEvents.findIndex(
+        (event) => event['event'] === 'gate-close'
+      );
+      assert.ok(
+        firstEpoch && gateIndex >= 0,
+        'starvation lacks original epoch or actual gate closure'
+      );
+      const gate = recoveryEvents[gateIndex]!;
+      const resumed = recoveryEvents
+        .slice(gateIndex + 1)
+        .find((event) => event['event'] === 'epoch');
+      assert.ok(resumed, 'starvation did not produce a replacement epoch');
+      assert.notEqual(
+        resumed['generation'],
+        firstEpoch['generation'],
+        'starvation reused expired generation'
+      );
+      const stopFrame = Number(gate['contextStopFrame']);
+      const resumeFrame = Number(resumed['f0']);
+      const stop = gate['compositionStop'] as { value: number; rate: number };
+      const resume = resumed['compositionT0'] as {
+        value: number;
+        rate: number;
+      };
+      const originalStart = firstEpoch['compositionT0'] as {
+        value: number;
+        rate: number;
+      };
+      const originalFrame = Number(firstEpoch['f0']);
+      assert.equal(
+        gate['generation'],
+        firstEpoch['generation'],
+        'PCM closure belongs to another generation'
+      );
+      assert.equal(Number(firstEpoch['contextSampleRate']), oracle.sample_rate);
+      assert.ok(originalStart?.rate > 0 && Number.isSafeInteger(originalFrame));
+      const committedSample =
+        (originalStart.value * oracle.sample_rate) / originalStart.rate +
+        stopFrame -
+        originalFrame;
+      assert.ok(
+        Number.isSafeInteger(stopFrame) &&
+          Number.isSafeInteger(resumeFrame) &&
+          resumeFrame >= stopFrame &&
+          resumeFrame - stopFrame <= recoveryWindowFrames,
+        'recovery gap exceeds the 20ms sample bound'
+      );
+      const traceEvents = recovery.trace.events;
+      const findArm = (generation: unknown) =>
+        traceEvents.find(
+          (event) =>
+            event.kind === 'transport-command' &&
+            event.value &&
+            typeof event.value === 'object' &&
+            'type' in event.value &&
+            event.value.type === 'arm' &&
+            'generation' in event.value &&
+            event.value.generation === generation
+        );
+      const oldArm = findArm(firstEpoch['generation']),
+        newArm = findArm(resumed['generation']);
+      assert.ok(
+        oldArm?.value &&
+          newArm?.value &&
+          typeof oldArm.value === 'object' &&
+          typeof newArm.value === 'object' &&
+          'slot' in oldArm.value &&
+          'slot' in newArm.value &&
+          (oldArm.value.slot === 0 || oldArm.value.slot === 1) &&
+          (newArm.value.slot === 0 || newArm.value.slot === 1) &&
+          oldArm.value.slot !== newArm.value.slot,
+        'old and replacement generations did not occupy separate authored gate slots'
+      );
+      const markerConnection = traceEvents.find(
+        (event) => event.kind === 'recovery-old-marker-connected'
+      );
+      assert.ok(
+        markerConnection?.value &&
+          typeof markerConnection.value === 'object' &&
+          'generation' in markerConnection.value &&
+          'slot' in markerConnection.value &&
+          markerConnection.value.generation === firstEpoch['generation'] &&
+          markerConnection.value.slot === oldArm.value.slot,
+        'old-generation marker was not attached to the old physical slot'
+      );
+      assert.ok(
+        traceEvents.some(
+          (event) =>
+            event.kind === 'recovery-old-marker-scheduled' &&
+            event.value &&
+            typeof event.value === 'object' &&
+            'frame' in event.value &&
+            event.value.frame === stopFrame &&
+            'late' in event.value &&
+            event.value.late === false
+        ),
+        'old-slot marker was not armed before the real closure boundary'
+      );
+      const closure = traceEvents.find(
+        (event) =>
+          event.kind === 'transport-message' &&
+          event.value &&
+          typeof event.value === 'object' &&
+          'generation' in event.value &&
+          event.value.generation === firstEpoch['generation'] &&
+          'closedFrame' in event.value &&
+          event.value.closedFrame === stopFrame &&
+          'accepted' in event.value &&
+          event.value.accepted === true
+      );
+      assert.ok(
+        closure && closure.timestamp <= newArm.timestamp,
+        'successor arm was submitted before acknowledged old render closure'
+      );
+      const startedSources = traceEvents.filter(
+        (event) =>
+          event.kind === 'scheduled-pcm' &&
+          event.value &&
+          typeof event.value === 'object' &&
+          'event' in event.value &&
+          event.value.event === 'scheduled' &&
+          'generation' in event.value &&
+          event.value.generation === resumed['generation']
+      );
+      assert.ok(
+        startedSources.length > 0 &&
+          startedSources.some(
+            (event) =>
+              event.value &&
+              typeof event.value === 'object' &&
+              'contextStartFrame' in event.value &&
+              event.value.contextStartFrame === resumeFrame
+          ),
+        'no actually started successor source begins at selected F1'
+      );
+      for (const event of startedSources) {
+        assert.ok(
+          event.value &&
+            typeof event.value === 'object' &&
+            'contextStartFrame' in event.value &&
+            Number.isSafeInteger(event.value.contextStartFrame) &&
+            Number(event.value.contextStartFrame) >= resumeFrame &&
+            event.timestamp >= closure.timestamp,
+          'successor source started before closure or was rebased after scheduling'
+        );
+      }
+      const actualArm = traceEvents.find(
+        (event) =>
+          event.kind === 'audio-arm-native-output' &&
+          event.value &&
+          typeof event.value === 'object' &&
+          'generation' in event.value &&
+          event.value.generation === resumed['generation']
+      );
+      assert.ok(
+        actualArm?.value &&
+          typeof actualArm.value === 'object' &&
+          'output' in actualArm.value &&
+          actualArm.value.output &&
+          typeof actualArm.value.output === 'object' &&
+          'contextTime' in actualArm.value.output &&
+          'performanceTime' in actualArm.value.output &&
+          'contextBefore' in actualArm.value &&
+          'contextAfter' in actualArm.value &&
+          'before' in actualArm.value &&
+          'after' in actualArm.value &&
+          'state' in actualArm.value,
+        'successor arm lacks a real output-timestamp observation'
+      );
+      const outputContext = Number(actualArm.value.output.contextTime);
+      const outputPerformance = Number(actualArm.value.output.performanceTime);
+      assert.ok(
+        Number.isFinite(outputContext) &&
+          outputContext > 0 &&
+          Number.isFinite(outputPerformance) &&
+          outputPerformance > 0 &&
+          actualArm.value.state === 'running' &&
+          Number(actualArm.value.before) <= Number(actualArm.value.after) &&
+          Number(actualArm.value.contextBefore) <=
+            Number(actualArm.value.contextAfter) &&
+          outputPerformance <=
+            Number(actualArm.value.after) +
+              DEFAULT_CLOCK_POLICY.futureToleranceMs &&
+          Number(actualArm.value.after) - outputPerformance <=
+            DEFAULT_CLOCK_POLICY.freshnessMs &&
+          outputContext <=
+            Number(actualArm.value.contextAfter) +
+              DEFAULT_CLOCK_POLICY.futureToleranceMs / 1000 &&
+          outputContext * rate < stopFrame,
+        'successor arm was not observed while real output remained before D'
+      );
+      const stamps = traceEvents
+        .filter(
+          (event) =>
+            event.kind === 'audio-output-timestamp-observed' &&
+            event.value &&
+            typeof event.value === 'object' &&
+            'output' in event.value &&
+            event.value.output &&
+            typeof event.value.output === 'object' &&
+            'contextTime' in event.value.output &&
+            'performanceTime' in event.value.output &&
+            'injected' in event.value &&
+            event.value.injected === false
+        )
+        .map((event) => ({
+          timestamp: event.timestamp,
+          value: event.value as {
+            output: { contextTime: number; performanceTime: number };
+          },
+        }))
+        .filter(
+          (entry) =>
+            Number.isFinite(entry.value.output.contextTime) &&
+            Number.isFinite(entry.value.output.performanceTime) &&
+            entry.value.output.contextTime > 0 &&
+            entry.value.output.performanceTime > 0
+        );
+      const prior = stamps
+        .filter((entry) => entry.timestamp <= actualArm.timestamp)
+        .at(-1);
+      const after = stamps.find(
+        (entry) =>
+          entry.timestamp > actualArm.timestamp &&
+          entry.value.output.contextTime > outputContext &&
+          entry.value.output.performanceTime > outputPerformance
+      );
+      assert.ok(
+        prior &&
+          after &&
+          prior.value.output.contextTime <= outputContext &&
+          prior.value.output.performanceTime <= outputPerformance,
+        'real output timestamp was not continuously advancing across handoff'
+      );
+      const bracket = traceEvents.filter(
+        (event) =>
+          event.kind === 'audio-output-timestamp-observed' &&
+          event.timestamp >= prior.timestamp &&
+          event.timestamp <= after.timestamp
+      );
+      let lastContext = 0,
+        lastPerformance = 0;
+      for (const observed of bracket) {
+        const value = observed.value as {
+          injected?: boolean;
+          output?: { contextTime?: number; performanceTime?: number };
+        };
+        const contextTime = Number(value?.output?.contextTime),
+          performanceTime = Number(value?.output?.performanceTime);
+        assert.ok(
+          value?.injected === false &&
+            Number.isFinite(contextTime) &&
+            Number.isFinite(performanceTime) &&
+            contextTime > 0 &&
+            performanceTime > 0 &&
+            contextTime >= lastContext &&
+            performanceTime >= lastPerformance &&
+            performanceTime <=
+              observed.timestamp + DEFAULT_CLOCK_POLICY.futureToleranceMs &&
+            observed.timestamp - performanceTime <=
+              DEFAULT_CLOCK_POLICY.freshnessMs,
+          'output mapping was invalid or regressed inside the handoff bracket'
+        );
+        lastContext = contextTime;
+        lastPerformance = performanceTime;
+      }
+      assert.ok(stop?.rate > 0 && resume?.rate > 0);
+      const resumeSample = committedSample;
+      assert.ok(
+        Number.isSafeInteger(resumeSample) &&
+          resumeSample >= recoveryWindowFrames &&
+          resumeSample + recoveryWindowFrames <= length,
+        'replacement epoch lacks a comparable sample interval'
+      );
+      assert.equal(
+        (stop.value * oracle.sample_rate) / stop.rate,
+        committedSample,
+        'closure changed the exact committed composition sample'
+      );
+      assert.equal(
+        (resume.value * oracle.sample_rate) / resume.rate,
+        committedSample,
+        'replacement skipped or replayed a committed source sample'
+      );
+      const candidate = recoveryEvents.find(
+        (event) =>
+          event['event'] === 'recovery-candidate-ready' &&
+          event['oldGeneration'] === firstEpoch['generation'] &&
+          event['boundaryFrame'] === stopFrame
+      );
+      const renderClosed = recoveryEvents.find(
+        (event) =>
+          event['event'] === 'recovery-render-closed' &&
+          event['boundaryFrame'] === stopFrame
+      );
+      const selection = recoveryEvents.find(
+        (event) =>
+          event['event'] === 'recovery-selection' &&
+          event['oldGeneration'] === firstEpoch['generation']
+      );
+      const finalGuard = recoveryEvents.find(
+        (event) =>
+          event['event'] === 'recovery-final-guard' &&
+          event['oldGeneration'] === firstEpoch['generation']
+      );
+      const handoff = recoveryEvents.find(
+        (event) =>
+          event['event'] === 'recovery-handoff' &&
+          event['oldGeneration'] === firstEpoch['generation']
+      );
+      assert.ok(
+        candidate && renderClosed && selection && finalGuard && handoff,
+        'two-phase handoff provenance incomplete'
+      );
+      const heldDrain = recoveryEvents.find(
+        (event) =>
+          event['event'] === 'recovery-old-drain-held' &&
+          event['boundaryFrame'] === stopFrame
+      );
+      const releasedDrain = recoveryEvents.find(
+        (event) =>
+          event['event'] === 'recovery-old-drain-released' &&
+          event['boundaryFrame'] === stopFrame
+      );
+      assert.ok(
+        recovery.sawBuffering &&
+          recovery.sawHeld &&
+          recovery.handoffBeforeRelease &&
+          heldDrain &&
+          releasedDrain &&
+          Number(handoff['wallMs']) <= Number(releasedDrain['wallMs']) &&
+          Number(heldDrain['wallMs']) <= Number(releasedDrain['wallMs']),
+        `successor was not armed before release of an actually held old drain (sawHeld=${recovery.sawHeld}, handoffBeforeRelease=${recovery.handoffBeforeRelease}, heldDrain=${heldDrain ? Number(heldDrain['wallMs']) : 'none'}, releasedDrain=${releasedDrain ? Number(releasedDrain['wallMs']) : 'none'}, handoff=${Number(handoff['wallMs'])}, pcmReleasedAt=${recovery.pcmReleasedAt}, drainFlagClearedAt=${recovery.drainFlagClearedAt})`
+      );
+      // The release must land after the held drain and inside the runtime's
+      // 1000 ms drain window, not at a sampled DOM moment.
+      assert.ok(
+        Number(releasedDrain['wallMs']) - Number(heldDrain['wallMs']) >= 0 &&
+          Number(releasedDrain['wallMs']) - Number(heldDrain['wallMs']) <= 1000,
+        `old-drain release fell outside its 1000 ms window (held=${Number(heldDrain['wallMs'])}, released=${Number(releasedDrain['wallMs'])})`
+      );
+      assert.ok(
+        Number(candidate['wallMs']) <= Number(renderClosed['wallMs']) &&
+          Number(renderClosed['wallMs']) <= Number(selection['wallMs']) &&
+          Number(selection['wallMs']) <= Number(finalGuard['wallMs']) &&
+          Number(finalGuard['wallMs']) <= Number(handoff['wallMs']),
+        'handoff phases are not ordered around render closure'
+      );
+      assert.equal(
+        candidate['boundaryFrame'],
+        stopFrame,
+        'staged candidate targets another closure'
+      );
+      assert.equal(
+        candidate['compositionStart'],
+        committedSample,
+        'staged candidate did not reserve the exact committed sample'
+      );
+      assert.equal(
+        candidate['slot'],
+        newArm.value.slot,
+        'staged candidate used wrong successor slot'
+      );
+      assert.ok(
+        candidate['generation'] === resumed['generation'] &&
+          selection['generation'] === resumed['generation'] &&
+          finalGuard['generation'] === resumed['generation'] &&
+          handoff['generation'] === resumed['generation'],
+        'staged or committed handoff provenance belongs to another generation'
+      );
+      assert.equal(
+        renderClosed['oldSlot'],
+        oldArm.value.slot,
+        'render closure identified wrong old slot'
+      );
+      assert.equal(
+        renderClosed['clockEpoch'],
+        selection['clockEpoch'],
+        'handoff crossed clock sessions'
+      );
+      assert.equal(
+        selection['boundaryFrame'],
+        stopFrame,
+        'handoff selection targets another closure'
+      );
+      assert.equal(
+        selection['compositionStartFrame'],
+        committedSample,
+        'handoff source origin changed'
+      );
+      assert.equal(
+        selection['f0'],
+        resumeFrame,
+        'handoff selection was rebased'
+      );
+      assert.equal(
+        selection['slot'],
+        newArm.value.slot,
+        'handoff selected the wrong input slot'
+      );
+      assertLatestRecoveryFrame(
+        recovery.trace,
+        selection,
+        stopFrame,
+        rate,
+        audioOnly
+      );
+      assert.ok(
+        Number.isSafeInteger(selection['feasibleLower']) &&
+          Number.isSafeInteger(selection['feasibleUpper']) &&
+          Number(selection['feasibleLower']) <= resumeFrame &&
+          selection['feasibleUpper'] === resumeFrame &&
+          resumeFrame <= stopFrame + recoveryWindowFrames &&
+          (selection['phaseLower'] === null ||
+            (Number.isSafeInteger(selection['phaseLower']) &&
+              Number(selection['phaseLower']) <= resumeFrame)) &&
+          (selection['phaseUpper'] === null ||
+            (Number.isSafeInteger(selection['phaseUpper']) &&
+              resumeFrame <= Number(selection['phaseUpper']))),
+        'F1 was not the latest feasible in-band sample'
+      );
+      const recoveryBridge = resumed['bridge'] as {
+        contextTime: number;
+        performanceTime: number;
+      };
+      const mappedF1 =
+        recoveryBridge.performanceTime +
+        (resumeFrame / rate - recoveryBridge.contextTime) * 1000;
+      assert.ok(
+        Number.isFinite(selection['requestWall']) &&
+          Number.isFinite(selection['deadline']) &&
+          Number(selection['deadline']) ===
+            Number(selection['requestWall']) + 350 &&
+          Number.isFinite(selection['epochWall']) &&
+          Math.abs(Number(selection['epochWall']) - mappedF1) <= 1e-6 &&
+          mappedF1 <= Number(selection['deadline']),
+        'handoff reset its original deadline or changed the selected output mapping'
+      );
+      assert.ok(
+        Number(selection['guardFrames']) === 512 &&
+          resumeFrame - Number(selection['contextFrame']) >= 512,
+        'handoff selection violated the 512-frame guard'
+      );
+      assert.ok(
+        finalGuard['boundaryFrame'] === stopFrame &&
+          finalGuard['f0'] === resumeFrame &&
+          finalGuard['slot'] === newArm.value.slot &&
+          finalGuard['guardFrames'] === 512 &&
+          Number.isSafeInteger(finalGuard['contextFrame']) &&
+          resumeFrame - Number(finalGuard['contextFrame']) >= 512 &&
+          finalGuard['clockEpoch'] === selection['clockEpoch'] &&
+          Number(finalGuard['wallMs']) >=
+            Math.min(...startedSources.map((event) => event.timestamp)),
+        'post-start handoff guard or epoch did not remain valid'
+      );
+      assert.ok(
+        handoff['f0'] === resumeFrame &&
+          handoff['boundaryFrame'] === stopFrame &&
+          handoff['slot'] === newArm.value.slot &&
+          handoff['clockEpoch'] === selection['clockEpoch'] &&
+          handoff['oldDrainObserved'] === false,
+        'handoff waited for old output drain or changed the staged epoch'
+      );
+      const originalSample =
+        (originalStart.value * oracle.sample_rate) / originalStart.rate;
+      assert.ok(
+        Number.isSafeInteger(originalSample),
+        'old epoch origin is not a sample'
+      );
+      const oldPrefix = compareScheduledPcm(
+        recovery.trace.audio,
+        originalFrame - originalSample,
+        expected,
+        committedSample - recoveryWindowFrames,
+        committedSample,
+        recovery.trace.witness
+      );
+      assert.ok(
+        oldPrefix.rmse.every((value) => value <= 0.003),
+        'old generation lost or mixed source PCM before render closure'
+      );
+      assertSourcePcmSamples(
+        recovery.trace,
+        originalFrame - originalSample,
+        expected,
+        committedSample - recoveryWindowFrames,
+        committedSample
+      );
+      if (resumeFrame > stopFrame)
+        assertPcmSilence(
+          recovery.trace,
+          stopFrame,
+          resumeFrame,
+          'new or stale PCM crossed the closed gate before successor F1'
+        );
+      const recovered = compareScheduledPcm(
+        recovery.trace.audio,
+        resumeFrame - resumeSample,
+        expected,
+        resumeSample,
+        resumeSample + recoveryWindowFrames,
+        recovery.trace.witness
+      );
+      assert.ok(
+        recovered.rmse.every((value) => value <= 0.003),
+        'replacement epoch did not restart at the exact post-gain stereo sample'
+      );
+      assertSourcePcmSamples(
+        recovery.trace,
+        resumeFrame - resumeSample,
+        expected,
+        resumeSample,
+        resumeSample + recoveryWindowFrames
+      );
+      const witness = recovery.trace.witness;
+      assert.ok(witness, 'recovery marker lacks independent carrier');
+      const probeCount = Math.min(128, recoveryWindowFrames);
+      let markerSamples = 0;
+      for (const chunk of recovery.trace.audio) {
+        assert.ok(
+          chunk.marker && chunk.marker.length === chunk.channels[0]!.length,
+          'old-slot marker capture unavailable'
+        );
+        for (let i = 0; i < chunk.marker.length; i++) {
+          const frame = carrierFrame(chunk, i, witness);
+          if (
+            frame === null ||
+            frame < resumeFrame ||
+            frame >= resumeFrame + probeCount
+          )
+            continue;
+          assert.ok(
+            Math.abs(chunk.marker[i]! - 0.375) < 0.00001,
+            'delayed old-slot marker was not present during replacement PCM'
+          );
+          const sample = resumeSample + (frame - resumeFrame);
+          for (let ch = 0; ch < 2; ch++)
+            assert.ok(
+              Math.abs(chunk.channels[ch]![i]! - expected[ch]![sample]!) <=
+                0.003,
+              'old-slot marker leaked into replacement PCM'
+            );
+          markerSamples++;
+        }
+      }
+      assert.equal(
+        markerSamples,
+        probeCount,
+        'old-slot marker overlap was not fully captured'
+      );
+      const drained = recoveryEvents.find(
+        (event) =>
+          event['event'] === 'recovery-old-drained' &&
+          event['boundaryFrame'] === stopFrame
+      );
+      const drainRead = traceEvents.find(
+        (event) =>
+          event.kind === 'recovery-old-drain-native-read' &&
+          event.value &&
+          typeof event.value === 'object' &&
+          'boundaryFrame' in event.value &&
+          event.value.boundaryFrame === stopFrame
+      );
+      assert.ok(
+        drained &&
+          drainRead?.value &&
+          typeof drainRead.value === 'object' &&
+          'renderBefore' in drainRead.value &&
+          'renderAfter' in drainRead.value &&
+          'before' in drainRead.value &&
+          'after' in drainRead.value &&
+          'output' in drainRead.value &&
+          drainRead.value.output &&
+          typeof drainRead.value.output === 'object' &&
+          'contextTime' in drainRead.value.output &&
+          'performanceTime' in drainRead.value.output &&
+          'state' in drainRead.value &&
+          drainRead.value.state === 'running' &&
+          Number.isFinite(Number(drainRead.value.output.contextTime)) &&
+          Number.isFinite(Number(drainRead.value.output.performanceTime)) &&
+          Number(drainRead.value.output.contextTime) * rate >= stopFrame &&
+          Number(drainRead.value.output.performanceTime) > 0 &&
+          Number(drainRead.value.before) <= Number(drainRead.value.after) &&
+          Number(drainRead.value.renderBefore) <=
+            Number(drainRead.value.renderAfter) &&
+          Number(drainRead.value.output.contextTime) <=
+            Number(drainRead.value.renderAfter) +
+              DEFAULT_CLOCK_POLICY.futureToleranceMs / 1000 &&
+          Number(drainRead.value.output.performanceTime) <=
+            Number(drainRead.value.after) +
+              DEFAULT_CLOCK_POLICY.futureToleranceMs &&
+          Number(drainRead.value.after) -
+            Number(drainRead.value.output.performanceTime) <=
+            DEFAULT_CLOCK_POLICY.freshnessMs &&
+          Number(drained['wallMs']) >= Number(handoff['wallMs']),
+        'old output drain did not occur after successor handoff'
+      );
+      const postDrainFrame = Math.max(
+        resumeFrame,
+        Math.ceil(Number(drainRead.value.renderAfter) * rate) + 128
+      );
+      const postDrainSample = resumeSample + postDrainFrame - resumeFrame;
+      assert.ok(
+        Number.isSafeInteger(postDrainFrame) &&
+          Number.isSafeInteger(postDrainSample) &&
+          postDrainSample >= 0 &&
+          postDrainSample + recoveryWindowFrames <= length,
+        'no source-bound post-drain observation window'
+      );
+      const afterOldDrain = compareScheduledPcm(
+        recovery.trace.audio,
+        resumeFrame - resumeSample,
+        expected,
+        postDrainSample,
+        postDrainSample + recoveryWindowFrames,
+        recovery.trace.witness
+      );
+      assert.ok(
+        afterOldDrain.rmse.every((value) => value <= 0.003),
+        'late old-drain completion altered successor PCM'
+      );
+      assertSourcePcmSamples(
+        recovery.trace,
+        resumeFrame - resumeSample,
+        expected,
+        postDrainSample,
+        postDrainSample + recoveryWindowFrames
+      );
+      assert.ok(
+        !recoveryEvents.some(
+          (event) =>
+            Number(event['wallMs']) > Number(handoff['wallMs']) &&
+            event['generation'] === resumed['generation'] &&
+            (event['event'] === 'cancel' || event['event'] === 'error')
+        ),
+        'late old-drain completion canceled the successor generation'
+      );
+      pass('scheduled-pcm-starvation-recovery');
+    }
+    async function runRecoveryFaults(): Promise<void> {
+      for (const fault of [
+        'recovery-phase-mismatch',
+        'recovery-impossible-guard',
+        'recovery-excess-work',
+        'recovery-earlier-feasible',
+        'recovery-delayed-staging',
+        'descriptor-budget',
+      ] as const)
+        await rerunFrontierOvershoot(`${fault}-${rate}`, (attempt) =>
+          runRecoveryFault(fault, starveAfterMs(attempt))
+        );
+    }
+    async function runRecoveryFault(
+      fault:
+        | 'recovery-phase-mismatch'
+        | 'recovery-impossible-guard'
+        | 'recovery-excess-work'
+        | 'recovery-earlier-feasible'
+        | 'recovery-delayed-staging'
+        | 'descriptor-budget',
+      starveMs: number
+    ): Promise<void> {
+      {
+        const isolated = await openBrowser(url, sessionToken, {
+          label: `${fault}-${rate}`,
+          recordProofTrace: true,
+          proofSampleRate: rate,
+        });
+        try {
+          await waitReady(isolated);
+          // The descriptor fault is consumed during candidate staging, before closure.
+          const result = await isolated.evaluate<
+            MovingTrace & {
+              held: number;
+              released: number;
+              playing: string;
+              buffering: string;
+              diagnostic: string;
+            }
+          >(`(async()=>{
+            const sleep=ms=>{const {promise,resolve}=Promise.withResolvers();setTimeout(resolve,ms);return promise;};
+            const root=document.querySelector('.otio-view'),button=document.querySelector('button.otio-play');
+            if(!(root instanceof HTMLElement)||!(button instanceof HTMLButtonElement)) throw new Error('recovery fault controls missing');
+            const start=await globalThis.__otioProofTrace.start(),playEdge=globalThis.__otioProofTrace.playRequest();
+            if (${JSON.stringify(fault)}==='descriptor-budget') globalThis.__otioProofPcmFault='descriptor-budget';
+            button.click(); await sleep(${starveMs});
+            if (${JSON.stringify(fault)}==='recovery-excess-work') globalThis.__otioProofTrace.injectRecoveryOverrun();
+            else globalThis.__otioProofPcmFault=${JSON.stringify(fault)};
+            globalThis.__otioProofTrace.holdPcmResponses(true);
+            const waitUntil=performance.now()+4000;
+            while((!globalThis.__otioProofTrace.heldPcmCount()||root.dataset.buffering!=='true')&&performance.now()<waitUntil) await sleep(10);
+            const held=globalThis.__otioProofTrace.heldPcmCount();
+            const released=globalThis.__otioProofTrace.holdPcmResponses(false);
+            const faultDeadline=performance.now()+1000;
+            while(!globalThis.__otioProofTrace.hasPcmEvent('recovery-fault') &&
+              !globalThis.__otioProofTrace.hasTraceEvent('recovery-overrun-injected') &&
+              performance.now()<faultDeadline) await sleep(10);
+            await sleep(${JSON.stringify(fault)}==='recovery-delayed-staging' ? 700 : 300);
+            const playing=root.dataset.playing ?? '', buffering=root.dataset.buffering ?? '';
+            const diagnostic=Array.from(document.querySelectorAll('.otio-diagnostic'))
+              .filter(node=>{const style=getComputedStyle(node); return node.getClientRects().length>0 &&
+                style.visibility!=='hidden' && style.display!=='none' && Number(style.opacity)>0;})
+              .map(node=>node.textContent ?? '').join(' ');
+            globalThis.__otioProofPcmFault=null;
+            const trace=await globalThis.__otioProofTrace.stop();
+            if(root.dataset.playing==='true') button.click();
+            return {start,playEdge,trace,held,released,playing,buffering,diagnostic};
+          })()`);
+          recoveryCapture.trace = result.trace;
+          await writeFile(
+            join(shotDir, `${fault}-${rate}.json`),
+            JSON.stringify({ provenance, capture: result })
+          );
+          assert.ok(
+            result.held > 0 &&
+              result.held === result.released &&
+              !result.trace.audioOverflow &&
+              !result.trace.eventsOverflow,
+            `${fault} control did not hold and release real PCM cleanly`
+          );
+          if (fault !== 'recovery-earlier-feasible') {
+            assert.equal(
+              result.playing,
+              'false',
+              `${fault} left playback active`
+            );
+            assert.equal(
+              result.buffering,
+              'false',
+              `${fault} left playback buffering`
+            );
+            assert.match(
+              result.diagnostic,
+              /Scheduled audio stopped:/,
+              `${fault} did not render its interruption diagnostic`
+            );
+          }
+          const events = result.trace.events
+            .filter((event) => event.kind === 'scheduled-pcm')
+            .map((event) => event.value as Record<string, unknown>);
+          const closedIndex = events.findIndex(
+            (event) => event['event'] === 'gate-close'
+          );
+          assert.ok(
+            closedIndex >= 0,
+            `${fault} never acknowledged the old render closure`
+          );
+          const boundary = Number(events[closedIndex]!['contextStopFrame']);
+          assert.ok(
+            events
+              .slice(0, closedIndex)
+              .some((event) => event['event'] === 'epoch'),
+            `${fault} never established an old media epoch`
+          );
+          if (fault === 'recovery-earlier-feasible') {
+            assert.ok(
+              events.some(
+                (event) =>
+                  event['event'] === 'recovery-fault' &&
+                  event['code'] === fault &&
+                  event['boundaryFrame'] === boundary
+              ),
+              'earlier-feasible control did not actually run'
+            );
+            const selected = events.find(
+              (event) =>
+                event['event'] === 'recovery-selection' &&
+                event['boundaryFrame'] === boundary
+            );
+            assert.ok(
+              selected,
+              'earlier-feasible control never selected a real successor'
+            );
+            assert.throws(
+              () =>
+                assertLatestRecoveryFrame(
+                  result.trace,
+                  selected,
+                  boundary,
+                  rate,
+                  audioOnly
+                ),
+              /recovery F1 is not latest independently feasible frame/,
+              'latest-feasible proof accepted the deliberately earlier actual selection'
+            );
+            return;
+          }
+          if (fault === 'recovery-excess-work') {
+            const injection = result.trace.events.find(
+              (event) => event.kind === 'recovery-overrun-injected'
+            );
+            assert.ok(
+              injection?.value &&
+                typeof injection.value === 'object' &&
+                'sourceStarted' in injection.value &&
+                injection.value.sourceStarted === true &&
+                'crossedBeforeDeadline' in injection.value &&
+                injection.value.crossedBeforeDeadline === true &&
+                'f1' in injection.value &&
+                'contextFrame' in injection.value &&
+                Number(injection.value.contextFrame) + 512 >
+                  Number(injection.value.f1),
+              'post-start work did not actually consume the unchanged guard within the original deadline'
+            );
+            assert.ok(
+              events.some(
+                (event) =>
+                  event['event'] === 'scheduled' &&
+                  Number(event['wallMs']) >= injection.timestamp
+              ),
+              'overrun control did not start a real successor source'
+            );
+            assert.ok(
+              !result.trace.events.some(
+                (event) =>
+                  event.kind === 'transport-command' &&
+                  event.timestamp >= injection.timestamp &&
+                  event.value &&
+                  typeof event.value === 'object' &&
+                  'type' in event.value &&
+                  event.value.type === 'arm'
+              ),
+              'overrun started or rebased a successor after the guard was consumed'
+            );
+            assert.ok(
+              events.some(
+                (event) =>
+                  event['event'] === 'error' &&
+                  Number(event['wallMs']) >= injection.timestamp &&
+                  (event['code'] === 'PCM scheduling deadline missed' ||
+                    event['code'] === 'recovery final guard exceeded' ||
+                    event['code'] ===
+                      'recovery final clock or visual guard failed')
+              ),
+              'post-start guard overrun did not interrupt'
+            );
+          } else if (fault === 'descriptor-budget') {
+            assertDescriptorBudgetRefusal(events, closedIndex, boundary);
+            assert.match(
+              result.diagnostic,
+              /Scheduled audio stopped: descriptor-budget-exhausted/,
+              'descriptor budget refusal did not render its cause'
+            );
+            const closure = result.trace.events.filter(
+              (event) => event.kind === 'scheduled-pcm'
+            )[closedIndex]!;
+            assert.ok(
+              !result.trace.events.some(
+                (event) =>
+                  event.kind === 'transport-command' &&
+                  event.timestamp >= closure.timestamp &&
+                  event.value &&
+                  typeof event.value === 'object' &&
+                  'type' in event.value &&
+                  event.value.type === 'arm'
+              ),
+              'descriptor budget refusal still armed a successor'
+            );
+          } else {
+            const injectionIndex = events.findIndex(
+              (event, index) =>
+                index > closedIndex &&
+                event['event'] === 'recovery-fault' &&
+                event['code'] === fault &&
+                event['boundaryFrame'] === boundary
+            );
+            assert.ok(
+              injectionIndex > closedIndex,
+              `${fault} did not reach the real post-closure solver`
+            );
+            assert.ok(
+              events
+                .slice(injectionIndex + 1)
+                .some(
+                  (event) =>
+                    event['event'] === 'error' &&
+                    event['code'] ===
+                      (fault === 'recovery-phase-mismatch'
+                        ? 'video recovery phase has no causal audio epoch'
+                        : fault === 'recovery-delayed-staging'
+                          ? 'PCM recovery deadline expired'
+                          : 'recovery render handoff has no feasible frame')
+                ),
+              `${fault} did not produce a visible interruption`
+            );
+          }
+          if (fault === 'recovery-delayed-staging') {
+            const request = result.trace.events.find(
+              (event) =>
+                event.kind === 'scheduled-pcm' &&
+                (event.value as Record<string, unknown>)?.['event'] ===
+                  'recovery-request' &&
+                (event.value as Record<string, unknown>)?.['boundaryFrame'] ===
+                  boundary
+            );
+            const timeout = events.find(
+              (event) =>
+                event['event'] === 'recovery-timeout' &&
+                event['boundaryFrame'] === boundary
+            );
+            assert.ok(
+              request && timeout,
+              'delayed staging lacked the original request or deadline timeout'
+            );
+            const origin = request.value as Record<string, unknown>;
+            const before = Number(origin['requestPerformanceBefore']),
+              after = Number(origin['requestPerformanceAfter']);
+            const original = Number(timeout['requestWall']),
+              deadline = Number(timeout['deadline']);
+            assert.ok(
+              Number.isFinite(before) &&
+                Number.isFinite(after) &&
+                before <= original &&
+                original <= after &&
+                after <= request.timestamp &&
+                deadline === original + 350 &&
+                Number(timeout['observedWall']) > deadline,
+              'delayed staging reset the original recovery deadline'
+            );
+            assert.ok(
+              !events.some(
+                (event) =>
+                  event['event'] === 'recovery-selection' &&
+                  event['boundaryFrame'] === boundary
+              ),
+              'delayed staging selected a successor after expiry'
+            );
+          }
+          assert.ok(
+            !events
+              .slice(closedIndex + 1)
+              .some((event) => event['event'] === 'epoch'),
+            `${fault} admitted a successor epoch`
+          );
+          assert.ok(
+            !events.some(
+              (event) =>
+                event['event'] === 'backend' && event['backend'] === 'native'
+            ),
+            `${fault} silently switched backend`
+          );
+          assertPcmSilence(
+            result.trace,
+            boundary,
+            lastCarrierEnd(result.trace),
+            `${fault} emitted PCM after the rejected handoff`
+          );
+        } finally {
+          await isolated.close();
+        }
+      }
+    }
+    async function runHeldPullSequences(): Promise<void> {
+      const runHeld = async (
+        label: string,
+        releaseAfterClosure: boolean,
+        starveMs: number
+      ) => {
+        const isolated = await openBrowser(url, sessionToken, {
+          label: `${label}-${rate}`,
+          recordProofTrace: true,
+          proofSampleRate: rate,
+        });
+        try {
+          await waitReady(isolated);
+          const result = await isolated.evaluate<
+            MovingTrace & {
+              held: number;
+              released: number;
+              releaseAt: number;
+              playing: string;
+              buffering: string;
+              diagnostic: string;
+            }
+          >(`(async()=>{
+            const sleep=ms=>{const {promise,resolve}=Promise.withResolvers();setTimeout(resolve,ms);return promise;};
+            const root=document.querySelector('.otio-view'),button=document.querySelector('button.otio-play');
+            if(!(root instanceof HTMLElement)||!(button instanceof HTMLButtonElement)) throw new Error('held-pull controls missing');
+            const proof=globalThis.__otioProofTrace;
+            const start=await proof.start(),playEdge=proof.playRequest();
+            button.click(); await sleep(${starveMs});
+            proof.holdPcmResponses(true);
+            ${releaseAfterClosure ? "proof.releasePcmResponsesOn('recovery-render-closed');" : ''}
+            const until=performance.now()+4000;
+            while(!proof.hasPcmEvent('recovery-render-closed') && performance.now()<until) await sleep(10);
+            ${
+              releaseAfterClosure
+                ? "while(!proof.hasTraceEvent('pcm-hold-release') && performance.now()<until) await sleep(10); await sleep(1500);"
+                : 'const held=proof.heldPcmCount(); await sleep(2500); const releaseAt=performance.now(); const released=proof.holdPcmResponses(false); await sleep(400);'
+            }
+            const playing=root.dataset.playing ?? '', buffering=root.dataset.buffering ?? '';
+            const diagnostic=Array.from(document.querySelectorAll('.otio-diagnostic'))
+              .filter(node=>{const style=getComputedStyle(node); return node.getClientRects().length>0 &&
+                style.visibility!=='hidden' && style.display!=='none' && Number(style.opacity)>0;})
+              .map(node=>node.textContent ?? '').join(' ');
+            const captured=await proof.stop();
+            ${releaseAfterClosure ? "const release=captured.events.find(e=>e.kind==='pcm-hold-release'); const held=release?.value?.released ?? 0, released=held, releaseAt=release?.timestamp ?? NaN;" : ''}
+            if(root.dataset.playing==='true') button.click();
+            return {start,playEdge,trace:captured,held,released,releaseAt,playing,buffering,diagnostic};
+          })()`);
+          recoveryCapture.trace = result.trace;
+          await writeFile(
+            join(shotDir, `${label}-${rate}.json`),
+            JSON.stringify({ provenance, capture: result })
+          );
+          assert.ok(
+            result.held > 0 &&
+              !result.trace.audioOverflow &&
+              !result.trace.eventsOverflow,
+            `${label} did not hold real PCM responses`
+          );
+          assert.ok(
+            result.trace.witness,
+            `${label} lacks the independent carrier witness`
+          );
+          const events: Record<string, unknown>[] = result.trace.events
+            .filter((entry) => entry.kind === 'scheduled-pcm')
+            .map(
+              (entry): Record<string, unknown> => ({
+                ...(entry.value as Record<string, unknown>),
+                timestamp: entry.timestamp,
+              })
+            );
+          const closures = events
+            .map((event, index) => ({ event, index }))
+            .filter(({ event }) => event['event'] === 'recovery-render-closed');
+          assert.ok(
+            closures.length >= 1,
+            `${label} never acknowledged a render closure`
+          );
+          const first = closures[0]!;
+          assert.equal(
+            first.event['descriptorReady'],
+            true,
+            `${label} first closure was not ready`
+          );
+          const handoffAt = events.findIndex(
+            (event, index) =>
+              index > first.index &&
+              event['event'] === 'frontier' &&
+              event['frontierKind'] === 'handoff'
+          );
+          assert.ok(
+            handoffAt > first.index,
+            `${label} produced no successor handoff`
+          );
+          assertSuccessorPolicy(events, false);
+          assertLookaheadFrontiers(events, rate);
+          if (!releaseAfterClosure) {
+            assert.ok(
+              closures.length >= 2,
+              'continued hold did not reach a second closure'
+            );
+            const second = closures[1]!;
+            assert.ok(
+              events
+                .slice(first.index + 1, second.index)
+                .filter((event) => event['event'] === 'epoch').length === 1,
+              'first ready recovery did not admit exactly one successor epoch'
+            );
+            assert.equal(
+              second.event['descriptorReady'],
+              false,
+              'second closure claimed a ready descriptor'
+            );
+            const refusal = events.findIndex(
+              (event, index) =>
+                index > second.index &&
+                event['event'] === 'recovery-candidate-failed' &&
+                event['code'] === 'descriptor-not-ready'
+            );
+            assert.ok(
+              refusal > second.index,
+              'no-reserve closure was not visibly refused'
+            );
+            assert.ok(
+              !events
+                .slice(second.index + 1)
+                .some((event) => event['event'] === 'epoch'),
+              'no-reserve closure admitted a second epoch'
+            );
+            assert.ok(
+              events
+                .slice(refusal + 1)
+                .some((event) => event['event'] === 'error'),
+              'no-reserve refusal did not stop playback visibly'
+            );
+            assert.equal(
+              result.playing,
+              'false',
+              'no-reserve refusal left playback active'
+            );
+            assert.match(
+              result.diagnostic,
+              /Scheduled audio stopped:/,
+              'no-reserve refusal was not rendered'
+            );
+            assertPcmSilence(
+              result.trace,
+              Number(second.event['boundaryFrame']),
+              lastCarrierEnd(result.trace),
+              `${label} emitted PCM after the no-reserve refusal`
+            );
+          } else {
+            assertHeldReleaseBeforeSuccessor(result.trace.events);
+            assert.ok(
+              !events.some(
+                (event) =>
+                  event['event'] === 'recovery-candidate-failed' &&
+                  event['code'] === 'descriptor-not-ready'
+              ),
+              'released run still refused a descriptor'
+            );
+            assert.ok(
+              !events.some((event) => event['event'] === 'error'),
+              'released run stopped playback'
+            );
+            assert.equal(
+              result.playing,
+              'true',
+              'released run did not keep playing'
+            );
+            assert.ok(
+              events
+                .slice(handoffAt + 1)
+                .some(
+                  (event) =>
+                    event['event'] === 'frontier' &&
+                    event['frontierKind'] === 'extension'
+                ),
+              'no ordinary I1 extension followed the released successor'
+            );
+          }
+        } finally {
+          await isolated.close();
+        }
+      };
+      await rerunFrontierOvershoot(
+        `held-first-ready-then-no-reserve-${rate}`,
+        (attempt) =>
+          runHeld(
+            'held-first-ready-then-no-reserve',
+            false,
+            starveAfterMs(attempt)
+          )
+      );
+      await rerunFrontierOvershoot(
+        `held-released-before-successor-${rate}`,
+        (attempt) =>
+          runHeld(
+            'held-released-before-successor',
+            true,
+            starveAfterMs(attempt)
+          )
+      );
+    }
+    async function runAnchorControls(): Promise<void> {
+      for (const kind of [
+        'source-offset',
+        'start-time',
+        'missing-first-quantum',
+        'missing',
+        'truncated',
+        'held-bank',
+        'shift-bank',
+        'stale-epoch',
+      ] as const) {
+        const isolated = await openBrowser(url, sessionToken, {
+          label: `scheduled-anchor-${rate}-${kind}`,
+          recordProofTrace: true,
+          proofSampleRate: rate,
+        });
+        try {
+          await waitReady(isolated);
+          const outcome = await isolated.evaluate<
+            MovingTrace & {
+              credits: {
+                gateReservations: number;
+                carrierReservations: number;
+                bytes: number;
+                nodes: number;
+              };
+            }
+          >(`(async () => {
+          const sleep = ms => {const {promise,resolve}=Promise.withResolvers(); setTimeout(resolve,ms); return promise;};
+          const button=document.querySelector('button.otio-play');
+          if (!(button instanceof HTMLButtonElement)) throw new Error('anchor proof play button missing');
+          const start=await globalThis.__otioProofTrace.start();
+          globalThis.__otioProofTrace.nextAnchorControl(${JSON.stringify(kind)});
+          const playEdge=globalThis.__otioProofTrace.playRequest();
+          button.click(); await sleep(1200);
+          const trace=await globalThis.__otioProofTrace.stop();
+          if(document.querySelector('.otio-view')?.dataset.playing==='true') button.click();
+          const credits=globalThis.__otioProofPcmSnapshot();
+          return {start,playEdge,trace,credits};
+        })()`);
+          await writeClockShot(
+            join(shotDir, `scheduled-anchor-${rate}-${kind}.json`),
+            { provenance, capture: outcome },
+            `scheduled-anchor-${rate}-${kind}`,
+            outcome.trace
+          );
+          assert.ok(
+            !outcome.trace.audioOverflow && !outcome.trace.eventsOverflow,
+            `${kind} anchor control capture overflow`
+          );
+          assert.equal(
+            outcome.trace.events.filter(
+              (event) => event.kind === 'witness-attach'
+            ).length,
+            kind === 'shift-bank' ? 2 : 1,
+            `${kind} used an unexpected number of anchor gates`
+          );
+          const injectionKind =
+            kind === 'stale-epoch'
+              ? 'anchor-stale-epoch-injected'
+              : kind === 'held-bank' || kind === 'shift-bank'
+                ? 'anchor-bank-control-injected'
+                : 'anchor-carrier-control-injected';
+          assert.ok(
+            outcome.trace.events.some((event) => event.kind === injectionKind),
+            `${kind} control did not reach the actual anchor boundary`
+          );
+          assert.ok(
+            !outcome.trace.events.some(
+              (event) =>
+                event.kind === 'scheduled-pcm' &&
+                event.value &&
+                typeof event.value === 'object' &&
+                'event' in event.value &&
+                event.value.event === 'epoch'
+            ),
+            `${kind} admitted a media epoch`
+          );
+          assert.ok(
+            !outcome.trace.events.some(
+              (event) =>
+                event.kind === 'transport-message' &&
+                event.value &&
+                typeof event.value === 'object' &&
+                'type' in event.value &&
+                event.value.type === 'anchor-certified'
+            ),
+            `${kind} unexpectedly certified an anchor`
+          );
+          if (kind === 'stale-epoch') {
+            assert.ok(
+              outcome.trace.events.some(
+                (event) =>
+                  event.kind === 'scheduled-pcm' &&
+                  event.value &&
+                  typeof event.value === 'object' &&
+                  'event' in event.value &&
+                  event.value.event === 'error'
+              ),
+              'stale anchor epoch was not rejected by the client'
+            );
+          } else if (kind === 'shift-bank') {
+            assertShiftedBankRefusal(outcome.trace.events);
+            assert.equal(outcome.credits.gateReservations, 0);
+            assert.equal(outcome.credits.carrierReservations, 0);
+          } else {
+            assert.ok(
+              outcome.trace.events.some(
+                (event) =>
+                  event.kind === 'transport-message' &&
+                  event.value &&
+                  typeof event.value === 'object' &&
+                  'type' in event.value &&
+                  event.value.type === 'clock-fault'
+              ),
+              `${kind} never reached native render-clock rejection`
+            );
+          }
+          if (kind === 'truncated') {
+            const witness = outcome.trace.events.find(
+              (event) => event.kind === 'witness-attach'
+            );
+            const initial = (
+              witness?.value as Record<string, unknown> | undefined
+            )?.['gateInitialFrame'];
+            assert.ok(
+              typeof initial === 'number' && Number.isSafeInteger(initial)
+            );
+            assert.ok(
+              outcome.trace.events.some(
+                (event) =>
+                  event.kind === 'transport-message' &&
+                  (event.value as Record<string, unknown> | null)?.['type'] ===
+                    'clock-fault' &&
+                  (event.value as Record<string, unknown> | null)?.[
+                    'expectedFrame'
+                  ] ===
+                    initial + 128
+              ),
+              'truncated carrier did not fail on the second anchor quantum'
+            );
+          }
+          for (const chunk of outcome.trace.audio)
+            for (const channel of chunk.channels)
+              assert.ok(
+                channel.every(
+                  (sample) =>
+                    Number.isFinite(sample) && Math.abs(sample) < 0.001
+                ),
+                `${kind} emitted authored PCM before anchor`
+              );
+          if (kind === 'missing' && outcome.trace.contextState !== 'closed')
+            assert.ok(
+              outcome.credits.carrierReservations >= 1 &&
+                outcome.credits.bytes >= 65536 &&
+                outcome.credits.nodes >= 1,
+              'unended native anchor carrier released its budget'
+            );
+        } finally {
+          await isolated.close();
+        }
+      }
+    }
+    if (rate === 44100) {
+      // Nothing after this uses the shared browser at 44.1 kHz, so a rerun may take a fresh one.
+      await rerunFrontierOvershoot(
+        `scheduled-pcm-starvation-recovery-${rate}`,
+        async (attempt) => {
+          if (attempt === 1) {
+            await runRecoveryProof(browser, provenance);
+            return;
+          }
+          const fresh = await openBrowser(url, sessionToken, {
+            label: `scheduled-pcm-starvation-recovery-${rate}-rerun${attempt - 1}`,
+            recordProofTrace: true,
+            proofSampleRate: rate,
+          });
+          try {
+            await waitReady(fresh);
+            await runRecoveryProof(
+              fresh,
+              await proofProvenance(fresh),
+              starveAfterMs(attempt)
+            );
+          } finally {
+            await fresh.close();
+          }
+        }
+      );
+      await runRecoveryFaults();
+      await runHeldPullSequences();
+      await runAnchorControls();
+      return;
+    }
+    await seekTo(browser, 0);
+    const tracks = await browser.evaluate<
+      MovingTrace & { edges: number[] }
+    >(`(async () => {
+      const sleep = ms => { const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, ms); return promise; };
+      const start = await globalThis.__otioProofTrace.start();
+      const playEdge = globalThis.__otioProofTrace.playRequest();
+      const button = document.querySelector('button.otio-play');
+      const mute = document.querySelector('[data-track-toggle="scheduled-cuts"]');
+      const solo = document.querySelector('[data-track-solo="scheduled-cuts"]');
+      if (!(button instanceof HTMLButtonElement) || !(mute instanceof HTMLButtonElement) || !(solo instanceof HTMLButtonElement)) throw new Error('track mute/solo controls missing');
+      button.click();
+      await sleep(400);
+      const edges = [];
+      for (const control of [mute, mute, solo, solo]) {
+        edges.push(globalThis.__otioProofTrace.audioFrame());
+        control.click();
+        await sleep(300);
+      }
+      const trace = await globalThis.__otioProofTrace.stop();
+      if (document.querySelector('.otio-view')?.dataset.playing === 'true') button.click();
+      return {start, playEdge, trace, edges};
+    })()`);
+    await writeClockShot(
+      join(shotDir, 'scheduled-pcm-track-controls.json'),
+      { provenance, capture: tracks },
+      'scheduled-pcm-track-controls',
+      tracks.trace
+    );
+    const trackEpochs = tracks.trace.events
+      .filter((entry) => entry.kind === 'scheduled-pcm')
+      .map((entry) => entry.value as Record<string, unknown>)
+      .filter((event) => event['event'] === 'epoch');
+    assert.equal(
+      trackEpochs.length,
+      1,
+      'track controls restarted the scheduled epoch'
+    );
+    const trackF0 = Number(trackEpochs[0]!['f0']);
+    const trackWitness = tracks.trace.witness;
+    assert.ok(trackWitness, 'track controls lack independent carrier');
+    assertCarrierIdentity(tracks.trace, 'track controls epoch');
+    reportEngineFrameClock(tracks.trace, 'track controls epoch');
+    associateBootstrapClock(tracks.trace, trackF0);
+    for (let phase = 0; phase < 4; phase++) {
+      const from = tracks.edges[phase]! + 4800;
+      const to =
+        (tracks.edges[phase + 1] ?? lastCarrierEnd(tracks.trace)) - 2400;
+      assertPcmCoverage(from, to, tracks.trace.audio, trackWitness);
+      let count = 0;
+      const errors = [0, 0];
+      for (const chunk of tracks.trace.audio)
+        for (let i = 0; i < (chunk.channels[0]?.length ?? 0); i++) {
+          const frame = carrierFrame(chunk, i, trackWitness);
+          if (frame === null) continue;
+          const n = frame - trackF0;
+          if (frame < from || frame >= to || n < 0 || n >= length) continue;
+          const t = n / unit;
+          for (let ch = 0; ch < 2; ch++) {
+            const cut =
+              t < 30
+                ? source(ch, 10 * unit + n)
+                : t < 60
+                  ? source(ch, 60 * unit + n - 30 * unit)
+                  : 0;
+            const nested = expected[ch]![n]! - cut;
+            const reference =
+              phase === 0 ? nested : phase === 2 ? cut : expected[ch]![n]!;
+            errors[ch]! += (chunk.channels[ch]![i]! - reference) ** 2;
+          }
+          count++;
+        }
+      assert.ok(count > 0, `track control phase ${phase} has no PCM`);
+      assert.ok(
+        errors.every((sum) => Math.sqrt(sum / count) <= 0.003),
+        `mute/solo phase ${phase} has wrong PCM`
+      );
+    }
+    pass('scheduled-pcm-mute-solo');
+    // The stages below reuse this browser, so the 48 kHz pass runs once. Its gap holds 384 + 512.
+    await runRecoveryProof(browser, provenance);
+    await seekTo(browser, 0);
+    const interrupted = await browser.evaluate<
+      MovingTrace & { held: number; released: number; releaseFrame: number }
+    >(`(async () => {
+      const sleep = ms => { const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, ms); return promise; };
+      const root = document.querySelector('.otio-view');
+      const button = document.querySelector('button.otio-play');
+      if (!(root instanceof HTMLElement) || !(button instanceof HTMLButtonElement)) throw new Error('starvation controls missing');
+      const start = await globalThis.__otioProofTrace.start();
+      const playEdge = globalThis.__otioProofTrace.playRequest();
+      button.click();
+      await sleep(600);
+      globalThis.__otioProofTrace.holdPcmResponses(true);
+      const deadline = performance.now() + 4000;
+      while ((globalThis.__otioProofTrace.heldPcmCount() === 0 || root.dataset.buffering !== 'true') && performance.now() < deadline) await sleep(20);
+      const held = globalThis.__otioProofTrace.heldPcmCount();
+      if (root.dataset.playing === 'true') button.click();
+      await sleep(100);
+      const releaseFrame = globalThis.__otioProofTrace.audioFrame();
+      const released = globalThis.__otioProofTrace.holdPcmResponses(false);
+      await sleep(350);
+      const trace = await globalThis.__otioProofTrace.stop();
+      return {start, playEdge, trace, held, released, releaseFrame};
+    })()`);
+    await writeClockShot(
+      join(shotDir, 'scheduled-pcm-starvation.json'),
+      { provenance, capture: interrupted },
+      'scheduled-pcm-starvation',
+      interrupted.trace
+    );
+    assert.ok(
+      interrupted.held > 0 && interrupted.released === interrupted.held,
+      'starvation control did not withhold and release PCM'
+    );
+    assert.ok(
+      interrupted.trace.events.some(
+        (entry) =>
+          entry.kind === 'buffering-change' &&
+          (entry.value as { current?: string })?.current === 'true'
+      ),
+      'real PCM starvation did not expose buffering'
+    );
+    assert.ok(
+      interrupted.trace.events.some(
+        (entry) =>
+          entry.kind === 'scheduled-pcm' &&
+          (entry.value as { event?: string })?.event === 'cancel'
+      ),
+      'starvation did not cancel the active generation'
+    );
+    assertPcmSilence(
+      interrupted.trace,
+      interrupted.releaseFrame + 256,
+      lastCarrierEnd(interrupted.trace),
+      'released stale PCM produced sound after cancellation'
+    );
+    pass('scheduled-pcm-starvation-cancel');
+    for (const action of ['seek', 'scope'] as const) {
+      await seekTo(browser, 0);
+      const setup = await browser.evaluate<{
+        start: MovingTrace['start'];
+        held: number;
+        precondition: Record<string, string | null>;
+        state: Record<string, string | null>;
+        trace: MovingTrace['trace'] | null;
+      }>(`(async () => {
+        const sleep = ms => { const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, ms); return promise; };
+        const root = document.querySelector('.otio-view'), button = document.querySelector('button.otio-play');
+        if (!(root instanceof HTMLElement) || !(button instanceof HTMLButtonElement)) throw new Error('seek setup controls missing');
+        const precondition = {playing: root.dataset.playing ?? null, frame: root.dataset.frame ?? null, buffering: root.dataset.buffering ?? null};
+        if (root.dataset.playing === 'true') {
+          button.click();
+          const pauseDeadline = performance.now() + 3000;
+          while (root.dataset.playing === 'true' && performance.now() < pauseDeadline) await sleep(10);
+        }
+        const start = await globalThis.__otioProofTrace.start();
+        button.click();
+        await sleep(500);
+        globalThis.__otioProofTrace.holdPcmResponses(true);
+        const deadline = performance.now() + 3000;
+        while (!globalThis.__otioProofTrace.heldPcmCount() && performance.now() < deadline) await sleep(10);
+        const held = globalThis.__otioProofTrace.heldPcmCount();
+        const state = {playing: root.dataset.playing ?? null, frame: root.dataset.frame ?? null, buffering: root.dataset.buffering ?? null};
+        if (held > 0) return {start, held, precondition, state, trace: null};
+        globalThis.__otioProofTrace.holdPcmResponses(false);
+        const trace = await globalThis.__otioProofTrace.stop();
+        if (root.dataset.playing === 'true') button.click();
+        return {start, held, precondition, state, trace};
+      })()`);
+      await writeClockShot(
+        join(shotDir, `scheduled-${action}-setup.json`),
+        { provenance, ...setup },
+        `scheduled-${action}-setup`,
+        setup.trace,
+        setup.trace === null
+          ? 'setup held PCM before stop; its clock evidence is in the cancel shot'
+          : null
+      );
+      assert.ok(
+        setup.held > 0,
+        `seek/scope setup held no PCM response; precondition=${JSON.stringify(setup.precondition)} state=${JSON.stringify(setup.state)}`
+      );
+      const start = setup.start;
+      await browser.evaluate<void>(`(() => {
+        if (${JSON.stringify(action)} === 'seek') {
+          const input = document.querySelector('input.otio-seek');
+          const root = document.querySelector('.otio-view');
+          if (!(input instanceof HTMLInputElement) || !(root instanceof HTMLElement)) throw new Error('seek control missing');
+          input.value = String(30 - Number(root.dataset.domainOrigin));
+          input.dispatchEvent(new Event('input', {bubbles:true}));
+          input.dispatchEvent(new Event('change', {bubbles:true}));
+        } else {
+          const item = [...document.querySelectorAll('.otio-item')].find(node => node.dataset.itemId === 'scheduled-cut-b');
+          if (!(item instanceof HTMLButtonElement)) throw new Error('scope control missing');
+          item.click();
+        }
+      })()`);
+      const outcome = await browser.evaluate<{
+        trace: MovingTrace['trace'];
+        released: number;
+        releaseFrame: number;
+        paused: {
+          playing: string | null;
+          frame: string | null;
+          timestamp: number;
+        } | null;
+        resumePlayEdge: { timestamp: number } | null;
+      }>(`(async () => {
+        const sleep = ms => { const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, ms); return promise; };
+        const deadline = performance.now() + 3000;
+        while (!globalThis.__otioProofTrace.hasPcmCancel(${JSON.stringify(action)}) && performance.now() < deadline) await sleep(10);
+        if (!globalThis.__otioProofTrace.hasPcmCancel(${JSON.stringify(action)})) throw new Error('no cancellation before stale release');
+        const releaseFrame = globalThis.__otioProofTrace.audioFrame();
+        const released = globalThis.__otioProofTrace.holdPcmResponses(false);
+        let paused=null, resumePlayEdge=null;
+        if (${JSON.stringify(action)} === 'seek') {
+          const root=document.querySelector('.otio-view'), button=document.querySelector('button.otio-play');
+          if (!(root instanceof HTMLElement) || !(button instanceof HTMLButtonElement)) throw new Error('seek replay controls missing');
+          const targetDeadline=performance.now()+350;
+          while ((root.dataset.playing!=='false' || Number(root.dataset.frame)!==30) && performance.now()<targetDeadline) await sleep(10);
+          paused={playing:root.dataset.playing ?? null, frame:root.dataset.frame ?? null, timestamp:performance.now()};
+          await sleep(100);
+          resumePlayEdge=globalThis.__otioProofTrace.playRequest();
+          button.click();
+        }
+        await sleep(500);
+        const trace = await globalThis.__otioProofTrace.stop();
+        const root = document.querySelector('.otio-view');
+        if (root?.dataset.playing === 'true') document.querySelector('button.otio-play').click();
+        return {trace, released, releaseFrame, paused, resumePlayEdge};
+      })()`);
+      await writeClockShot(
+        join(shotDir, `scheduled-${action}-cancel.json`),
+        { provenance, start, ...outcome },
+        `scheduled-${action}-cancel`,
+        outcome.trace
+      );
+      assert.ok(
+        outcome.released > 0,
+        `${action} did not release a stale response`
+      );
+      const events = outcome.trace.events
+        .filter((entry) => entry.kind === 'scheduled-pcm')
+        .map((entry) => entry.value as Record<string, unknown>);
+      const cancellation = events.findIndex(
+        (event) => event['event'] === 'cancel' && event['reason'] === action
+      );
+      assert.ok(
+        cancellation >= 0,
+        `${action} did not cancel its prior generation`
+      );
+      const generation = events[cancellation]!['generation'];
+      assert.ok(
+        !events
+          .slice(cancellation + 1)
+          .some(
+            (event) =>
+              event['event'] === 'scheduled' &&
+              event['generation'] === generation
+          ),
+        `${action} accepted a stale PCM result after cancellation`
+      );
+      const nextEpoch = events
+        .slice(cancellation + 1)
+        .find((event) => event['event'] === 'epoch');
+      if (action === 'seek') {
+        assert.ok(
+          outcome.paused?.playing === 'false' &&
+            Number(outcome.paused.frame) === 30,
+          'UI seek did not settle paused at the selected frame'
+        );
+        assert.ok(
+          outcome.resumePlayEdge,
+          'explicit replay request was not captured'
+        );
+        assert.ok(
+          !events
+            .slice(cancellation + 1)
+            .some(
+              (event) =>
+                event['event'] === 'epoch' &&
+                Number(event['wallMs']) < outcome.resumePlayEdge!.timestamp
+            ),
+          'paused UI seek resumed before the user requested playback'
+        );
+        assert.ok(
+          nextEpoch,
+          'explicit play after paused seek did not produce a replacement epoch'
+        );
+        assert.notEqual(
+          nextEpoch['generation'],
+          generation,
+          'seek replay reused the canceled generation'
+        );
+        const origin = nextEpoch['compositionT0'] as {
+          value: number;
+          rate: number;
+        };
+        const sourceSample = (origin.value * oracle.sample_rate) / origin.rate;
+        assert.equal(
+          sourceSample,
+          30 * unit,
+          'seek replay did not retain the requested composition sample'
+        );
+        const bridge = nextEpoch['bridge'] as {
+          contextTime: number;
+          performanceTime: number;
+        };
+        const outputStart =
+          bridge.performanceTime +
+          (Number(nextEpoch['c0']) - bridge.contextTime) * 1000;
+        assert.ok(
+          Number.isFinite(outputStart) &&
+            outputStart >= outcome.resumePlayEdge.timestamp &&
+            outputStart - outcome.resumePlayEdge.timestamp <= 350,
+          'seek replay missed the original explicit play-request budget'
+        );
+        const reference = compareScheduledPcm(
+          outcome.trace.audio,
+          Number(nextEpoch['f0']) - sourceSample,
+          expected,
+          sourceSample,
+          sourceSample + 960,
+          outcome.trace.witness
+        );
+        assert.ok(
+          reference.rmse.every((value) => value <= 0.003),
+          'seek replay changed or skipped the requested source PCM prefix'
+        );
+      } else {
+        assert.equal(
+          nextEpoch,
+          undefined,
+          'scope replacement unexpectedly resumed'
+        );
+      }
+      const nextFrame = nextEpoch
+        ? Number(nextEpoch['f0'])
+        : lastCarrierEnd(outcome.trace);
+      assert.ok(
+        Number.isSafeInteger(nextFrame),
+        `${action} has no integral observation boundary`
+      );
+      const quietStart = outcome.releaseFrame + 256;
+      assert.ok(
+        nextFrame > quietStart,
+        `${action} left no observation window for stale output`
+      );
+      assertPcmSilence(
+        outcome.trace,
+        quietStart,
+        nextFrame,
+        `${action} stale response produced audible PCM`
+      );
+      if (action === 'scope') await leaveFocus(browser);
+    }
+    pass('scheduled-pcm-seek-scope-cancel');
+    await seekTo(browser, 0);
+    const failure = await browser.evaluate<
+      MovingTrace & { playing: string; diagnostic: string }
+    >(`(async () => {
+      const sleep = ms => { const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, ms); return promise; };
+      const start = await globalThis.__otioProofTrace.start();
+      const playEdge = globalThis.__otioProofTrace.playRequest();
+      document.querySelector('button.otio-play').click();
+      await sleep(500);
+      globalThis.__otioProofTrace.failNextPcm();
+      await sleep(1800);
+      const trace = await globalThis.__otioProofTrace.stop();
+      const root = document.querySelector('.otio-view');
+      const playing = root?.dataset.playing ?? '';
+      const diagnostic = Array.from(document.querySelectorAll('.otio-diagnostic')).map(node => node.textContent ?? '').join(' ');
+      if (root?.dataset.playing === 'true') document.querySelector('button.otio-play').click();
+      return {start, playEdge, trace, playing, diagnostic};
+    })()`);
+    await writeClockShot(
+      join(shotDir, 'scheduled-pcm-terminal-failure.json'),
+      { provenance, capture: failure },
+      'scheduled-pcm-terminal-failure',
+      failure.trace
+    );
+    const failureEvents = failure.trace.events
+      .filter((entry) => entry.kind === 'scheduled-pcm')
+      .map((entry) => entry.value as Record<string, unknown>);
+    const providerErrorIndex = failureEvents.findIndex(
+      (event) => event['event'] === 'error' && event['stage'] === 'provider'
+    );
+    assert.ok(
+      providerErrorIndex >= 0,
+      'injected worker failure did not produce a provider error'
+    );
+    const providerGeneration = failureEvents[providerErrorIndex]!['generation'];
+    assert.ok(
+      providerGeneration !== undefined,
+      'provider error has no generation'
+    );
+    const providerClosure = failureEvents
+      .slice(providerErrorIndex + 1)
+      .find(
+        (event) =>
+          event['event'] === 'gate-close' &&
+          event['generation'] === providerGeneration
+      );
+    assert.ok(
+      providerClosure,
+      'provider failure did not acknowledge closure of its generation'
+    );
+    const providerBoundary = Number(providerClosure['contextStopFrame']);
+    assert.ok(
+      Number.isSafeInteger(providerBoundary),
+      'provider gate has no render-frame boundary'
+    );
+    const finalProviderChunk = failure.trace.audio.at(-1);
+    assert.ok(
+      finalProviderChunk?.channels[0] && finalProviderChunk.channels[1],
+      'provider capture lacks stereo PCM'
+    );
+    const providerEnd = lastCarrierEnd(failure.trace);
+    assert.ok(
+      providerEnd > providerBoundary,
+      'provider capture ends before the gate boundary'
+    );
+    assertPcmSilence(
+      failure.trace,
+      providerBoundary,
+      providerEnd,
+      'provider emitted PCM after gate closure'
+    );
+    assert.equal(
+      failure.playing,
+      'false',
+      'terminal provider failure left playback active'
+    );
+    assert.match(
+      failure.diagnostic,
+      /Scheduled audio stopped:/,
+      'provider failure was not visible to the reader'
+    );
+    assert.ok(
+      !failureEvents.some(
+        (event) => event['event'] === 'backend' && event['backend'] === 'native'
+      ),
+      'terminal provider failure silently switched backend'
+    );
+    pass('scheduled-pcm-terminal-failure');
+    for (const stage of ['schedule', 'clock'] as const) {
+      await seekTo(browser, 0);
+      const fault = await browser.evaluate<
+        MovingTrace & { playing: string; diagnostic: string }
+      >(`(async () => {
+        const sleep = ms => { const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, ms); return promise; };
+        const root = document.querySelector('.otio-view');
+        const button = document.querySelector('button.otio-play');
+        if (!(root instanceof HTMLElement) || !(button instanceof HTMLButtonElement)) throw new Error('fault controls missing');
+        const start = await globalThis.__otioProofTrace.start();
+        const playEdge = globalThis.__otioProofTrace.playRequest();
+        button.click();
+        await sleep(500);
+        if (${JSON.stringify(stage)} === 'schedule') globalThis.__otioProofTrace.failNextSourceStart();
+        else globalThis.__otioProofTrace.setInvalidControllerClock(true);
+        await sleep(1500);
+        globalThis.__otioProofTrace.setInvalidControllerClock(false);
+        const trace = await globalThis.__otioProofTrace.stop();
+        const playing = root.dataset.playing ?? '';
+        const diagnostic = Array.from(document.querySelectorAll('.otio-diagnostic')).map(node => node.textContent ?? '').join(' ');
+        if (root.dataset.playing === 'true') button.click();
+        return {start, playEdge, trace, playing, diagnostic};
+      })()`);
+      await writeFile(
+        join(shotDir, `scheduled-pcm-${stage}-failure.json`),
+        JSON.stringify({
+          provenance,
+          capture: fault,
+          clockAudit: auditClockEvidence(fault.trace),
+        })
+      );
+      assertClockAudit(auditClockEvidence(fault.trace), `${stage} fault`);
+      const faultEvents = fault.trace.events
+        .filter((entry) => entry.kind === 'scheduled-pcm')
+        .map((entry) => entry.value as Record<string, unknown>);
+      assert.ok(
+        faultEvents.some((event) => event['event'] === 'epoch'),
+        `${stage} fault occurred before playback epoch`
+      );
+      if (stage === 'schedule')
+        assert.ok(
+          fault.trace.events.some(
+            (entry) => entry.kind === 'source-start-fault'
+          ),
+          'scheduled node fault was not injected'
+        );
+      const errorIndex = faultEvents.findIndex(
+        (event) => event['event'] === 'error' && event['stage'] === stage
+      );
+      assert.ok(errorIndex >= 0, `${stage} failure was not reported`);
+      const failedGeneration = faultEvents[errorIndex]!['generation'];
+      assert.ok(
+        failedGeneration !== undefined,
+        `${stage} error has no generation`
+      );
+      const closure = faultEvents
+        .slice(errorIndex + 1)
+        .find(
+          (event) =>
+            event['event'] === 'gate-close' &&
+            event['generation'] === failedGeneration
+        );
+      assert.ok(
+        closure,
+        `${stage} failure did not acknowledge the failing generation gate closure`
+      );
+      const boundary = Number(closure['contextStopFrame']);
+      assert.ok(
+        Number.isSafeInteger(boundary),
+        `${stage} gate has no render-frame boundary`
+      );
+      const end = fault.trace.audio.at(-1);
+      assert.ok(
+        end?.channels[0] && end.channels[1],
+        `${stage} capture lacks stereo PCM`
+      );
+      const endFrame = lastCarrierEnd(fault.trace);
+      assert.ok(
+        endFrame > boundary,
+        `${stage} capture ends before the gate boundary`
+      );
+      assertPcmSilence(
+        fault.trace,
+        boundary,
+        endFrame,
+        `${stage} emitted PCM after gate closure`
+      );
+      assert.equal(
+        fault.playing,
+        'false',
+        `${stage} failure left playback active`
+      );
+      assert.match(
+        fault.diagnostic,
+        /Scheduled audio stopped:/,
+        `${stage} failure was not visible`
+      );
+      assert.ok(
+        !faultEvents.some(
+          (event) =>
+            event['event'] === 'backend' && event['backend'] === 'native'
+        ),
+        `${stage} failure silently switched backend`
+      );
+    }
+    await runRecoveryFaults();
+    await runHeldPullSequences();
+    await runAnchorControls();
+    for (const kind of ['hold', 'wrong-tag'] as const) {
+      const isolated = await openBrowser(url, sessionToken, {
+        label: `scheduled-clock-${kind}`,
+        recordProofTrace: true,
+        proofSampleRate: 48000,
+      });
+      try {
+        await waitReady(isolated);
+        const fault = await isolated.evaluate<
+          MovingTrace & { injected: unknown }
+        >(`(async () => {
+          const sleep = ms => { const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, ms); return promise; };
+          const root = document.querySelector('.otio-view');
+          const button = document.querySelector('button.otio-play');
+          if (!(root instanceof HTMLElement) || !(button instanceof HTMLButtonElement)) throw new Error('missing controls');
+          const start = await globalThis.__otioProofTrace.start();
+          const playEdge = globalThis.__otioProofTrace.playRequest();
+          button.click();
+          await sleep(600);
+          await globalThis.__otioProofTrace.awaitClockTraceReady(8000);
+          globalThis.__otioProofTrace.clockTrace('start');
+          await sleep(100);
+          const injected = globalThis.__otioProofTrace.corruptClock(${JSON.stringify(kind)});
+          await sleep(500);
+          const trace = await globalThis.__otioProofTrace.stop();
+          if (root.dataset.playing === 'true') button.click();
+          return {start, playEdge, trace, injected};
+        })()`);
+        await writeFile(
+          join(shotDir, `scheduled-clock-${kind}.json`),
+          JSON.stringify({
+            provenance,
+            capture: fault,
+            clockAudit: auditClockEvidence(fault.trace),
+          })
+        );
+        assert.ok(
+          fault.injected &&
+            !fault.trace.audioOverflow &&
+            !fault.trace.eventsOverflow,
+          `${kind} control was not injected or its capture overflowed`
+        );
+        assertClockAudit(
+          auditClockEvidence(fault.trace),
+          `scheduled-clock-${kind}`
+        );
+        const failure = fault.trace.events.find(
+          (entry) =>
+            entry.kind === 'transport-message' &&
+            entry.value &&
+            typeof entry.value === 'object' &&
+            'type' in entry.value &&
+            entry.value.type === 'clock-fault'
+        );
+        assert.ok(
+          failure?.value &&
+            typeof failure.value === 'object' &&
+            'expectedFrame' in failure.value &&
+            Number.isSafeInteger(failure.value.expectedFrame),
+          `${kind} did not reach a render-thread clock fault`
+        );
+        const boundary = Number(failure.value.expectedFrame);
+        const witness = fault.trace.witness;
+        assert.ok(witness, `${kind} carrier missing`);
+        const margin = Math.floor(fault.trace.sampleRate / 10);
+        assertIndependentCarrier(
+          fault.trace,
+          boundary - margin,
+          boundary + margin
+        );
+        let beforeEnergy = 0,
+          beforeCount = 0,
+          afterCount = 0;
+        for (const chunk of fault.trace.audio)
+          for (let i = 0; i < chunk.channels[0]!.length; i++) {
+            const frame = carrierFrame(chunk, i, witness);
+            if (frame === null) continue;
+            if (frame >= boundary - margin && frame < boundary - 128) {
+              beforeEnergy +=
+                chunk.channels[0]![i]! ** 2 + chunk.channels[1]![i]! ** 2;
+              beforeCount += 2;
+            }
+            if (frame >= boundary && frame < boundary + margin) {
+              assert.ok(
+                Math.abs(chunk.channels[0]![i]!) < 0.001 &&
+                  Math.abs(chunk.channels[1]![i]!) < 0.001,
+                `${kind} emitted PCM after clock fault`
+              );
+              afterCount++;
+            }
+          }
+        assert.ok(
+          beforeCount > 0 && beforeEnergy / beforeCount > 1e-8,
+          `${kind} had no audible prefix`
+        );
+        assert.equal(
+          afterCount,
+          margin,
+          `${kind} silent fault suffix incomplete`
+        );
+      } finally {
+        await isolated.close();
+      }
+    }
+    for (const kind of [
+      'withhold',
+      'late-install',
+      'late-origin',
+      'late-arm',
+      'stale-serial',
+      'delay-ack',
+    ] as const) {
+      const isolated = await openBrowser(url, sessionToken, {
+        label: `scheduled-bank-${kind}`,
+        recordProofTrace: true,
+        proofSampleRate: 48000,
+      });
+      try {
+        await waitReady(isolated);
+        const outcome = await isolated.evaluate<MovingTrace>(`(async () => {
+          const sleep = ms => {const {promise,resolve} = Promise.withResolvers(); setTimeout(resolve,ms); return promise;};
+          const button = document.querySelector('button.otio-play');
+          if (!(button instanceof HTMLButtonElement)) throw new Error('bank control play button missing');
+          const start = await globalThis.__otioProofTrace.start();
+          globalThis.__otioProofTrace.nextClockBankControl(${JSON.stringify(kind)});
+          const playEdge = globalThis.__otioProofTrace.playRequest();
+          button.click();
+          await sleep(300);
+          await globalThis.__otioProofTrace.awaitClockTraceReady(8000);
+          globalThis.__otioProofTrace.clockTrace('start');
+          await sleep(800);
+          globalThis.__otioProofTrace.clockTrace('stop');
+          await sleep(500);
+          const trace = await globalThis.__otioProofTrace.stop();
+          if (document.querySelector('.otio-view')?.dataset.playing === 'true') button.click();
+          return {start, playEdge, trace};
+        })()`);
+        await writeClockShot(
+          join(shotDir, `scheduled-bank-${kind}.json`),
+          { provenance, capture: outcome },
+          `scheduled-bank-${kind}`,
+          outcome.trace
+        );
+        assert.ok(
+          !outcome.trace.audioOverflow && !outcome.trace.eventsOverflow,
+          `${kind} capture overflowed`
+        );
+        const injected = outcome.trace.events.find(
+          (event) =>
+            event.kind ===
+            (kind === 'late-arm'
+              ? 'clock-late-arm-injected'
+              : kind === 'delay-ack'
+                ? 'clock-promotion-ack-held'
+                : 'clock-bank-control-injected')
+        );
+        assert.ok(
+          injected?.value && typeof injected.value === 'object',
+          `${kind} did not reach the gate command path`
+        );
+        const requestId =
+          'requestId' in injected.value ? injected.value.requestId : undefined;
+        const messages = outcome.trace.events
+          .filter((event) => event.kind === 'transport-message')
+          .map((event) => event.value as Record<string, unknown>);
+        if (kind === 'delay-ack') {
+          const released = outcome.trace.events.find(
+            (event) => event.kind === 'clock-promotion-ack-released'
+          );
+          assert.ok(
+            released?.value &&
+              typeof released.value === 'object' &&
+              'requestId' in released.value &&
+              released.value.requestId === requestId &&
+              released.timestamp > injected.timestamp,
+            'delayed promotion acknowledgment was not released'
+          );
+          assert.ok(
+            'retired' in injected.value &&
+              injected.value.retired &&
+              typeof injected.value.retired === 'object' &&
+              'endFrame' in injected.value.retired &&
+              Number.isSafeInteger(injected.value.retired.endFrame),
+            'retired bank boundary missing'
+          );
+          const oldCoverage = Number(injected.value.retired.endFrame) - 2048;
+          for (const event of outcome.trace.events) {
+            if (
+              event.kind !== 'transport-command' ||
+              event.timestamp < injected.timestamp ||
+              event.timestamp >= released.timestamp ||
+              !event.value ||
+              typeof event.value !== 'object' ||
+              !('type' in event.value) ||
+              (event.value.type !== 'arm' && event.value.type !== 'extend')
+            )
+              continue;
+            assert.ok(
+              'throughFrame' in event.value &&
+                Number(event.value.throughFrame) <= oldCoverage,
+              'pending promotion acknowledgment expanded media coverage'
+            );
+          }
+          assert.ok(
+            messages.some(
+              (message) =>
+                message?.['type'] === 'clock-promoted' &&
+                message['requestId'] === requestId
+            ),
+            'released promotion was not observed'
+          );
+        } else if (kind === 'late-arm') {
+          assert.ok(
+            outcome.trace.events.some(
+              (event) => event.kind === 'clock-late-arm-submitted'
+            ),
+            'late arm was not submitted'
+          );
+          assert.ok(
+            messages.some(
+              (message) =>
+                message?.['type'] === 'arm' &&
+                message['accepted'] === false &&
+                message['reason'] === 'invalid or late arm'
+            ),
+            'late arm was not rejected by the render gate'
+          );
+          for (const chunk of outcome.trace.audio)
+            for (const channel of chunk.channels)
+              assert.ok(
+                channel.every(
+                  (sample) =>
+                    Number.isFinite(sample) && Math.abs(sample) < 0.001
+                ),
+                'late arm emitted audio'
+              );
+        } else if (kind === 'stale-serial') {
+          assert.ok(
+            outcome.trace.events.some(
+              (event) => event.kind === 'clock-stale-serial-submitted'
+            ),
+            'stale serial was not submitted'
+          );
+          assert.ok(
+            messages.some(
+              (message) =>
+                message?.['type'] === 'bank-rejected' &&
+                message['requestId'] === requestId
+            ),
+            'stale serial was not rejected'
+          );
+        } else if (kind === 'late-install') {
+          assert.ok(
+            outcome.trace.events.some(
+              (event) => event.kind === 'clock-bank-late-submitted'
+            ),
+            'late installation was not submitted'
+          );
+          assert.ok(
+            messages.some(
+              (message) =>
+                message?.['type'] === 'bank-rejected' &&
+                message['requestId'] === requestId
+            ),
+            'late installation was not rejected'
+          );
+        } else if (kind === 'withhold') {
+          const closed = messages.find(
+            (message) =>
+              message?.['type'] === 'closed' &&
+              message['accepted'] === true &&
+              Number.isSafeInteger(message['closedFrame'])
+          );
+          assert.ok(
+            closed,
+            'withheld renewal did not close at its committed frontier'
+          );
+          const scheduledEpoch = outcome.trace.events.find(
+            (event) =>
+              event.kind === 'scheduled-pcm' &&
+              event.value &&
+              typeof event.value === 'object' &&
+              'event' in event.value &&
+              event.value.event === 'epoch'
+          );
+          assert.ok(
+            scheduledEpoch?.value &&
+              typeof scheduledEpoch.value === 'object' &&
+              'f0' in scheduledEpoch.value,
+            'withheld renewal has no scheduled epoch'
+          );
+          const startFrame = Number(scheduledEpoch.value.f0),
+            closeFrame = Number(closed['closedFrame']);
+          const prefixLength = closeFrame - startFrame,
+            witness = outcome.trace.witness;
+          assert.ok(
+            witness &&
+              Number.isSafeInteger(prefixLength) &&
+              prefixLength > 0 &&
+              prefixLength <= length,
+            'invalid withheld frontier'
+          );
+          const margin = Math.floor(outcome.trace.sampleRate / 10);
+          assertIndependentCarrier(
+            outcome.trace,
+            startFrame,
+            closeFrame + margin
+          );
+          const prefix = compareScheduledPcm(
+            outcome.trace.audio,
+            startFrame,
+            expected,
+            0,
+            prefixLength,
+            witness
+          );
+          assert.ok(
+            prefix.rmse.every((value) => value <= 0.003),
+            'withheld frontier lost or changed source samples'
+          );
+          let suffix = 0;
+          for (const chunk of outcome.trace.audio)
+            for (let i = 0; i < chunk.channels[0]!.length; i++) {
+              const frame = carrierFrame(chunk, i, witness);
+              if (
+                frame !== null &&
+                frame >= closeFrame &&
+                frame < closeFrame + margin
+              ) {
+                assert.ok(
+                  Math.abs(chunk.channels[0]![i]!) < 0.001 &&
+                    Math.abs(chunk.channels[1]![i]!) < 0.001,
+                  'withheld frontier emitted a suffix'
+                );
+                suffix++;
+              }
+            }
+          assert.equal(suffix, margin, 'withheld frontier suffix not captured');
+        } else {
+          assert.ok(
+            messages.some((message) => message?.['type'] === 'clock-fault'),
+            'late-origin ramp was not rejected by the render gate'
+          );
+          const failed = messages.find(
+            (message) =>
+              message?.['type'] === 'clock-trace' &&
+              message['certifiedFrame'] === null &&
+              message['warming']
+          );
+          assert.ok(failed, 'late-origin ramp did not reach a traced handoff');
+          const active = failed['active'] as {
+            bank: number;
+            startFrame: number;
+          };
+          const warming = failed['warming'] as {
+            bank: number;
+            startFrame: number;
+            serial: number;
+          };
+          const a = failed[active.bank === 0 ? 'clockFrameA' : 'clockFrameB'];
+          const b = failed[warming.bank === 0 ? 'clockFrameA' : 'clockFrameB'];
+          const tag = failed[warming.bank === 0 ? 'clockTagA' : 'clockTagB'];
+          assert.ok(
+            Array.isArray(a) &&
+              Array.isArray(b) &&
+              Array.isArray(tag) &&
+              b.length >= 2 &&
+              b[1] - b[0] === 1 &&
+              tag[0] === warming.serial &&
+              active.startFrame + Math.round(a[0]) !==
+                warming.startFrame + Math.round(b[0]),
+            'late-origin control lacked locally advancing, wrong-origin native evidence'
+          );
+        }
+      } finally {
+        await isolated.close();
+      }
+    }
+    {
+      const isolated = await openBrowser(url, sessionToken, {
+        label: 'scheduled-clock-serial-exhaustion',
+        recordProofTrace: true,
+        proofSampleRate: 48000,
+        proofSerialExhaustion: true,
+      });
+      try {
+        await waitReady(isolated);
+        const outcome = await isolated.evaluate<MovingTrace>(`(async () => {
+          const sleep = ms => {const {promise,resolve} = Promise.withResolvers(); setTimeout(resolve,ms); return promise;};
+          const button = document.querySelector('button.otio-play');
+          if (!(button instanceof HTMLButtonElement)) throw new Error('serial proof play button missing');
+          const start = await globalThis.__otioProofTrace.start();
+          const playEdge = globalThis.__otioProofTrace.playRequest();
+          button.click(); await sleep(600);
+          await globalThis.__otioProofTrace.awaitClockTraceReady(8000);
+          globalThis.__otioProofTrace.clockTrace('start');
+          await sleep(400);
+          globalThis.__otioProofTrace.clockTrace('stop');
+          await sleep(700);
+          const trace = await globalThis.__otioProofTrace.stop();
+          if (document.querySelector('.otio-view')?.dataset.playing === 'true') button.click();
+          return {start, playEdge, trace};
+        })()`);
+        await writeClockShot(
+          join(shotDir, 'scheduled-clock-serial-exhaustion.json'),
+          { provenance, capture: outcome },
+          'scheduled-clock-serial-exhaustion',
+          outcome.trace
+        );
+        const messages = outcome.trace.events
+          .filter((event) => event.kind === 'transport-message')
+          .map((event) => event.value as Record<string, unknown>);
+        assert.ok(
+          outcome.trace.events.some(
+            (event) =>
+              event.kind === 'scheduled-pcm' &&
+              event.value &&
+              typeof event.value === 'object' &&
+              'event' in event.value &&
+              event.value.event === 'clock-renewal-unavailable'
+          ),
+          'exhausted serial did not reject renewal'
+        );
+        assert.ok(
+          !outcome.trace.events.some(
+            (event) =>
+              event.kind === 'transport-command' &&
+              event.value &&
+              typeof event.value === 'object' &&
+              'type' in event.value &&
+              event.value.type === 'install-bank'
+          ),
+          'exhausted serial attempted or wrapped a bank installation'
+        );
+        assert.ok(
+          messages.some((message) => {
+            if (message?.['type'] !== 'clock-trace') return false;
+            const active = message['active'];
+            return (
+              !!active &&
+              typeof active === 'object' &&
+              'serial' in active &&
+              active.serial === 2 ** 24 - 1 &&
+              message['certifiedFrame'] !== null
+            );
+          }),
+          'maximum serial did not render under the actual gate'
+        );
+        const closed = messages.find(
+          (message) =>
+            message?.['type'] === 'closed' &&
+            message['accepted'] === true &&
+            Number.isSafeInteger(message['closedFrame'])
+        );
+        const epoch = outcome.trace.events.find(
+          (event) =>
+            event.kind === 'scheduled-pcm' &&
+            event.value &&
+            typeof event.value === 'object' &&
+            'event' in event.value &&
+            event.value.event === 'epoch'
+        );
+        assert.ok(
+          closed &&
+            epoch?.value &&
+            typeof epoch.value === 'object' &&
+            'f0' in epoch.value &&
+            outcome.trace.witness,
+          'exhausted session lacks a committed prefix and closure'
+        );
+        const f0 = Number(epoch.value.f0),
+          end = Number(closed['closedFrame']);
+        assert.ok(
+          end > f0 && end - f0 <= length,
+          'invalid exhausted clock frontier'
+        );
+        assertIndependentCarrier(outcome.trace, f0, end);
+        const prefix = compareScheduledPcm(
+          outcome.trace.audio,
+          f0,
+          expected,
+          0,
+          end - f0,
+          outcome.trace.witness
+        );
+        assert.ok(
+          prefix.rmse.every((value) => value <= 0.003),
+          'exhausted clock lost committed PCM'
+        );
+        const margin = Math.floor(outcome.trace.sampleRate / 10);
+        assertIndependentCarrier(outcome.trace, end, end + margin);
+        let silent = 0;
+        for (const chunk of outcome.trace.audio)
+          for (let i = 0; i < chunk.channels[0]!.length; i++) {
+            const frame = carrierFrame(chunk, i, outcome.trace.witness);
+            if (frame !== null && frame >= end && frame < end + margin) {
+              assert.ok(
+                Math.abs(chunk.channels[0]![i]!) < 0.001 &&
+                  Math.abs(chunk.channels[1]![i]!) < 0.001,
+                'exhausted clock emitted beyond frontier'
+              );
+              silent++;
+            }
+          }
+        assert.equal(
+          silent,
+          margin,
+          'exhausted clock silent suffix incomplete'
+        );
+      } finally {
+        await isolated.close();
+      }
+    }
+    {
+      const isolated = await openBrowser(url, sessionToken, {
+        label: 'borrowed-failed-retirement',
+        recordProofTrace: true,
+        proofBorrowed: 'lease',
+        proofSampleRate: 48000,
+      });
+      try {
+        await waitReady(isolated);
+        const result = await isolated.evaluate<
+          MovingTrace & {
+            prepareError: string | null;
+            before: {
+              nodes: number;
+              bytes: number;
+              gateReservations: number;
+              activeSession: boolean;
+            };
+            after: {
+              nodes: number;
+              bytes: number;
+              gateReservations: number;
+              activeSession: boolean;
+              otherGateReservations: number;
+            };
+          }
+        >(`(async () => {
+          const sleep = ms => {const {promise,resolve} = Promise.withResolvers(); setTimeout(resolve,ms); return promise;};
+          await globalThis.__otioProofTrace.resumeBorrowed();
+          const button = document.querySelector('button.otio-play');
+          if (!(button instanceof HTMLButtonElement)) throw new Error('retirement proof play button missing');
+          const start = await globalThis.__otioProofTrace.start();
+          const playEdge = globalThis.__otioProofTrace.playRequest();
+          button.click(); await sleep(700);
+          const before = globalThis.__otioProofPcmSnapshot();
+          globalThis.__otioProofTrace.withholdRetirement();
+          let prepareError = null;
+          try { await globalThis.__otioProofBorrowedAudio.controller.prepareAudioContextChange(); }
+          catch (error) { prepareError = String(error); }
+          await sleep(300);
+          const after = globalThis.__otioProofPcmSnapshot();
+          const trace = await globalThis.__otioProofTrace.stop();
+          return {start, playEdge, trace, before, after, prepareError};
+        })()`);
+        await writeClockShot(
+          join(shotDir, 'borrowed-failed-retirement.json'),
+          { provenance, capture: result },
+          'borrowed-failed-retirement',
+          result.trace
+        );
+        assert.equal(
+          result.prepareError,
+          null,
+          'preparing the borrowed audio context failed'
+        );
+        assert.ok(
+          result.before.activeSession && result.before.gateReservations >= 1,
+          'retirement control did not begin with an active gate reservation'
+        );
+        assert.ok(
+          result.trace.events.some(
+            (event) => event.kind === 'clock-dispose-withheld'
+          ),
+          'retirement control did not withhold the actual dispose command'
+        );
+        assert.ok(
+          !result.after.activeSession &&
+            result.after.otherGateReservations >= 1 &&
+            result.after.gateReservations >= 1 &&
+            result.after.nodes >= 2 &&
+            result.after.bytes >= 32768,
+          'unacknowledged gate retirement released its resource credits'
+        );
+      } finally {
+        await isolated.close();
+      }
+    }
+    for (const ownership of ['lease', 'no-lease'] as const) {
+      const isolated = await openBrowser(url, sessionToken, {
+        label: `borrowed-context-${ownership}`,
+        recordProofTrace: true,
+        proofBorrowed: ownership,
+        proofSampleRate: 48000,
+      });
+      try {
+        await waitReady(isolated);
+        const result = await isolated.evaluate<
+          MovingTrace & {
+            lifecycle: {
+              state: string;
+              before: number;
+              after: number;
+              events: Array<{ name: string; actor: string }>;
+            };
+          }
+        >(`(async () => {
+          const sleep = ms => {const {promise,resolve} = Promise.withResolvers(); setTimeout(resolve,ms); return promise;};
+          await globalThis.__otioProofTrace.resumeBorrowed();
+          const button = document.querySelector('button.otio-play');
+          if (!(button instanceof HTMLButtonElement)) throw new Error('borrowed proof play button missing');
+          const start = await globalThis.__otioProofTrace.start();
+          const playEdge = globalThis.__otioProofTrace.playRequest();
+          button.click(); await sleep(1500);
+          const trace = await globalThis.__otioProofTrace.stop();
+          const lifecycle = await globalThis.__otioProofTrace.disposeBorrowed();
+          return {start, playEdge, trace, lifecycle};
+        })()`);
+        const noLeaseViolations =
+          ownership === 'no-lease'
+            ? noLeaseClockViolations(result.trace.events)
+            : null;
+        const clockAudit = await writeClockShot(
+          join(shotDir, `borrowed-context-${ownership}.json`),
+          { provenance, capture: result, noLeaseViolations },
+          `borrowed-context-${ownership}`,
+          result.trace,
+          ownership === 'no-lease' ? BORROWED_NO_LEASE_NO_CLOCK : null
+        );
+        assert.equal(
+          result.lifecycle.state,
+          'running',
+          `${ownership} borrowed context was stopped`
+        );
+        assert.ok(
+          result.lifecycle.after > result.lifecycle.before,
+          `${ownership} borrowed context did not remain usable`
+        );
+        assert.ok(
+          !result.lifecycle.events.some((event) => event.name === 'close'),
+          `${ownership} borrowed context was closed`
+        );
+        assert.ok(
+          !result.lifecycle.events.some(
+            (event) => event.name === 'suspend' && event.actor !== 'lease'
+          ),
+          `${ownership} borrowed context was suspended without its owner's lease`
+        );
+        const backends = result.trace.events
+          .filter(
+            (event) =>
+              event.kind === 'scheduled-pcm' &&
+              event.value &&
+              typeof event.value === 'object' &&
+              'event' in event.value &&
+              event.value.event === 'backend'
+          )
+          .map((event) => event.value as Record<string, unknown>);
+        if (ownership === 'no-lease') {
+          assert.ok(
+            !result.lifecycle.events.some((event) => event.name === 'suspend'),
+            'no-lease context was suspended'
+          );
+          assert.deepEqual(
+            noLeaseViolations,
+            [],
+            'no-lease clock premise failed'
+          );
+          assert.ok(
+            result.trace.events.some(
+              (entry) => entry.kind === 'play' && entry.mediaType === 'AUDIO'
+            ),
+            'no-lease native compatibility did not play an audio element'
+          );
+          assert.ok(
+            result.trace.audio
+              .flatMap((chunk) => chunk.channels[0] ?? [])
+              .some((value) => Math.abs(value) > 0.001),
+            'no-lease native compatibility output was silent'
+          );
+          assert.ok(
+            !result.trace.audioOverflow && !result.trace.eventsOverflow,
+            'no-lease trace overflow'
+          );
+        } else {
+          assert.ok(
+            clockAudit.nativeReads > 0 && clockAudit.noDataReason === null,
+            'owner-leased borrowed context recorded no native clock read'
+          );
+          assert.ok(
+            result.lifecycle.events.some((event) => event.name === 'acquire') &&
+              result.lifecycle.events.some((event) => event.name === 'release'),
+            'borrowed owner lease was not acquired and released'
+          );
+          assert.ok(
+            !result.lifecycle.events.some((event) => event.name === 'suspend'),
+            'running owner-leased context was suspended'
+          );
+          assert.ok(
+            backends.some((backend) => backend['backend'] === 'pcm'),
+            'owner-leased context did not select scheduled PCM'
+          );
+          const epoch = result.trace.events.find(
+            (event) =>
+              event.kind === 'scheduled-pcm' &&
+              event.value &&
+              typeof event.value === 'object' &&
+              'event' in event.value &&
+              event.value.event === 'epoch'
+          );
+          assert.ok(
+            epoch?.value &&
+              typeof epoch.value === 'object' &&
+              'f0' in epoch.value &&
+              result.trace.witness,
+            'owner-leased scheduled epoch or carrier missing'
+          );
+          const boundary = Number(epoch.value.f0);
+          assertIndependentCarrier(result.trace, boundary, boundary + 960);
+          const prefix = compareScheduledPcm(
+            result.trace.audio,
+            boundary,
+            expected,
+            0,
+            960,
+            result.trace.witness
+          );
+          assert.ok(
+            prefix.rmse.every((value) => value <= 0.003),
+            'owner-leased context changed source PCM'
+          );
+        }
+      } finally {
+        await isolated.close();
+      }
+    }
+    {
+      // Refuse the leased bootstrap at its anchor after resume. The owner
+      // receives its context suspended before the failed lease is released.
+      const isolated = await openBrowser(url, sessionToken, {
+        label: 'borrowed-bootstrap-restore',
+        recordProofTrace: true,
+        proofBorrowed: 'lease',
+        proofSampleRate: 48000,
+      });
+      try {
+        await waitReady(isolated);
+        const provenance = await proofProvenance(isolated);
+        const button = await isolated.evaluate<{
+          x: number;
+          y: number;
+        }>(`(() => {
+          const control = document.querySelector('button.otio-play');
+          if (!(control instanceof HTMLButtonElement)) throw new Error('bootstrap restore play control missing');
+          const rect = control.getBoundingClientRect();
+          return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+        })()`);
+        const armed = await isolated.evaluate<{
+          start: { contextState: string };
+          playEdge: { timestamp: number };
+        }>(`(async () => {
+          const start = await globalThis.__otioProofTrace.start();
+          const playEdge = globalThis.__otioProofTrace.playRequest();
+          globalThis.__otioProofTrace.nextAnchorControl('source-offset');
+          return { start, playEdge };
+        })()`);
+        assert.equal(
+          armed.start.contextState,
+          'suspended',
+          'bootstrap restore context was not fresh and suspended before the click'
+        );
+        await clickWithRealPointer(isolated, button.x, button.y);
+        const settled = Promise.withResolvers<void>();
+        setTimeout(settled.resolve, 2500);
+        await settled.promise;
+        const outcome = await isolated.evaluate<{
+          state: string;
+          trace: MovingTrace['trace'];
+        }>(`(async () => {
+          const root = document.querySelector('.otio-view'), control = document.querySelector('button.otio-play');
+          const context = globalThis.__otioProofBorrowedAudio?.context;
+          if (!context) throw new Error('bootstrap restore context missing');
+          const state = context.state;
+          const trace = await globalThis.__otioProofTrace.stop();
+          if (root?.dataset.playing === 'true' && control instanceof HTMLButtonElement) control.click();
+          return { state, trace };
+        })()`);
+        const lifecycle = await isolated.evaluate<{
+          state: string;
+          events: Array<{ name: string; actor: string }>;
+        }>(`(async () => globalThis.__otioProofTrace.disposeBorrowed())()`);
+        await writeClockShot(
+          join(shotDir, 'borrowed-bootstrap-restore.json'),
+          { provenance, capture: { armed, outcome, lifecycle } },
+          'borrowed-bootstrap-restore',
+          outcome.trace
+        );
+        const pcm = outcome.trace.events
+          .filter((event) => event.kind === 'scheduled-pcm')
+          .map((event) => (event.value ?? {}) as Record<string, unknown>);
+        const transport = outcome.trace.events
+          .filter((event) => event.kind === 'transport-message')
+          .map((event) => (event.value ?? {}) as Record<string, unknown>);
+        assert.ok(
+          outcome.trace.events.some(
+            (event) => event.kind === 'anchor-carrier-control-injected'
+          ),
+          'bootstrap restore fault did not reach the anchor carrier'
+        );
+        assert.ok(
+          transport.some((message) => message['type'] === 'clock-fault') &&
+            !transport.some(
+              (message) => message['type'] === 'anchor-certified'
+            ),
+          'bootstrap restore clock was not refused before anchor certification'
+        );
+        assert.ok(
+          !pcm.some((value) => value['event'] === 'epoch') &&
+            pcm.some(
+              (value) =>
+                value['event'] === 'error' &&
+                String(value['code'] ?? '').startsWith(
+                  'PCM preparation failed:'
+                )
+            ),
+          'bootstrap restore did not fail inside the leased clock bootstrap'
+        );
+        assert.equal(
+          pcm.filter((value) => value['event'] === 'borrowed-context-restored')
+            .length,
+          1,
+          'borrowed context restore was not reported exactly once'
+        );
+        assert.ok(
+          !pcm.some(
+            (value) => value['event'] === 'borrowed-context-restore-failed'
+          ),
+          'borrowed context restore failed'
+        );
+        const leaseIndex = (name: string) =>
+          lifecycle.events.findIndex(
+            (event) => event.name === name && event.actor === 'lease'
+          );
+        const acquired = leaseIndex('acquire');
+        const resumed = leaseIndex('resume');
+        const suspended = leaseIndex('suspend');
+        const released = leaseIndex('release');
+        assert.ok(
+          acquired >= 0 &&
+            resumed > acquired &&
+            suspended > resumed &&
+            released > suspended,
+          `bootstrap restore lease order was ${lifecycle.events
+            .map((event) => `${event.name}:${event.actor}`)
+            .join(' ')}`
+        );
+        assert.ok(
+          !lifecycle.events.some(
+            (event) => event.name === 'suspend' && event.actor !== 'lease'
+          ),
+          "bootstrap restore context was suspended without its owner's lease"
+        );
+        assert.ok(
+          !lifecycle.events.some((event) => event.name === 'close'),
+          'bootstrap restore context was closed'
+        );
+        assert.equal(
+          outcome.state,
+          'suspended',
+          'failed bootstrap did not restore the fresh context to suspended'
+        );
+        pass('scheduled-pcm-bootstrap-restore');
+      } finally {
+        await isolated.close();
+      }
+    }
+    // Clock-hold controls (I5), injected through the proof wrapper after playback is steady.
+    // An 86 us context hold is sub-resolution and must play through. A 200 us context hold and a
+    // performance-only hold must interrupt with partial-advance. Each injected read is marked
+    // injected, so the audit still certifies every native read and every bridge.
+    for (const control of [
+      { label: 'clock-hold-86', hold: { deltaUs: 86 }, expect: 'playing' },
+      {
+        label: 'clock-hold-200',
+        hold: { deltaUs: 200 },
+        expect: 'partial-advance',
+      },
+      {
+        label: 'clock-perf-only',
+        hold: { perfUs: 100 },
+        expect: 'partial-advance',
+      },
+    ]) {
+      const isolated = await openBrowser(url, sessionToken, {
+        label: control.label,
+        recordProofTrace: true,
+        proofSampleRate: 48000,
+      });
+      try {
+        await waitReady(isolated);
+        const provenance = await proofProvenance(isolated);
+        const fault = await isolated.evaluate<{
+          start: { contextState: string };
+          playEdge: { timestamp: number };
+          hold: { kind: string; deltaUs: number | null; perfUs: number | null };
+          trace: MovingTrace['trace'];
+          playing: string;
+        }>(`(async () => {
+          const sleep = ms => { const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, ms); return promise; };
+          const root = document.querySelector('.otio-view');
+          const button = document.querySelector('button.otio-play');
+          if (!(root instanceof HTMLElement) || !(button instanceof HTMLButtonElement)) throw new Error('clock hold controls missing');
+          const start = await globalThis.__otioProofTrace.start();
+          const playEdge = globalThis.__otioProofTrace.playRequest();
+          button.click();
+          await sleep(800);
+          const hold = globalThis.__otioProofTrace.setClockHold(${JSON.stringify(control.hold)});
+          await sleep(1500);
+          globalThis.__otioProofTrace.setClockHold(null);
+          const trace = await globalThis.__otioProofTrace.stop();
+          const playing = root.dataset.playing ?? '';
+          if (root.dataset.playing === 'true') button.click();
+          return {start, playEdge, hold, trace, playing};
+        })()`);
+        const clockAudit = auditClockEvidence(fault.trace);
+        await writeFile(
+          join(shotDir, `scheduled-${control.label}.json`),
+          JSON.stringify({ provenance, capture: { ...fault, clockAudit } })
+        );
+        assert.ok(
+          !fault.trace.audioOverflow && !fault.trace.eventsOverflow,
+          `${control.label} capture overflowed`
+        );
+        assertClockAudit(clockAudit, control.label);
+        assert.ok(
+          clockAudit.injectedReads > 0,
+          `${control.label} injected no reads`
+        );
+        const faultValues = fault.trace.events
+          .filter((entry) => entry.kind === 'scheduled-pcm')
+          .map((entry) => entry.value as Record<string, unknown>);
+        const errorCodes = faultValues
+          .filter((value) => value['event'] === 'error')
+          .map((value) => String(value['code']));
+        if (control.expect === 'playing') {
+          assert.equal(
+            fault.playing,
+            'true',
+            `${control.label} stopped playback under a sub-resolution hold`
+          );
+          assert.deepEqual(
+            errorCodes,
+            [],
+            `${control.label} faulted: ${errorCodes.join(', ')}`
+          );
+          assert.ok(
+            clockAudit.clockHolds > 0 &&
+              clockAudit.holdsMatched === clockAudit.clockHolds,
+            `${control.label} clock-hold events ${clockAudit.holdsMatched}/${clockAudit.clockHolds} matched recorded reads`
+          );
+        } else {
+          assert.equal(
+            fault.playing,
+            'false',
+            `${control.label} left playback active`
+          );
+          assert.ok(
+            errorCodes.includes(
+              `audio output clock interrupted: ${control.expect}`
+            ),
+            `${control.label} did not report ${control.expect}: ${errorCodes.join(', ')}`
+          );
+        }
+      } finally {
+        await isolated.close();
+      }
+    }
+    // Per-site clock controls. A one-shot 86 us hold lands on the single read that one site makes.
+    // The hold is that site clock's lastAccepted +86 us at its performanceTime, and it is held through
+    // that performanceTime. The site's consumed stamp must equal lastAccepted and must be native. A
+    // raw-stamp substitution makes the consumed stamp the held read, which the audit fails as used-held-read.
+    // The recovery control starves PCM so the gate closes at its prepared frontier, releases held pulls only
+    // after the selection, and never uses the video-withholding fault: readiness refuses within the 20 ms gap
+    // before any poll could lift that fault. The hold lasts until the sink stamps again, which on a
+    // 10 ms sink comes with a render burst, so the hold can spend the gap in two ways: the fresh read
+    // is already past it, or the burst lands between the selection and the commit. Only those two
+    // exact signatures are rerun, in a fresh browser that starves one PCM batch later, and the control
+    // gets three attempts in all. Every other outcome fails.
+    const captureSiteControl = async (
+      control: {
+        label: string;
+        site: string;
+        recovery: boolean;
+      },
+      starveMs: number
+    ) => {
+      const isolated = await openBrowser(url, sessionToken, {
+        label: control.label,
+        recordProofTrace: true,
+        proofSampleRate: 48000,
+      });
+      try {
+        await waitReady(isolated);
+        const provenance = await proofProvenance(isolated);
+        const fault = await isolated.evaluate<{
+          armed: { site: string; kind: string; deltaUs: number | null };
+          trace: MovingTrace['trace'];
+          playing: string;
+        }>(`(async () => {
+          const sleep = ms => { const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, ms); return promise; };
+          const root = document.querySelector('.otio-view');
+          const button = document.querySelector('button.otio-play');
+          if (!(root instanceof HTMLElement) || !(button instanceof HTMLButtonElement)) throw new Error('site hold controls missing');
+          const recovery = ${JSON.stringify(control.recovery)};
+          const start = await globalThis.__otioProofTrace.start();
+          const armed = globalThis.__otioProofTrace.setSiteClockHold({site: ${JSON.stringify(control.site)}, deltaUs: 86});
+          const playEdge = globalThis.__otioProofTrace.playRequest();
+          button.click();
+          await sleep(${control.recovery ? starveMs : 500});
+          if (recovery) {
+            globalThis.__otioProofTrace.holdPcmResponses(true);
+            globalThis.__otioProofTrace.releasePcmResponsesOn('recovery-selection');
+            const deadline = performance.now() + 4000;
+            while (!globalThis.__otioProofTrace.hasTraceEvent('pcm-hold-release') && !globalThis.__otioProofTrace.hasPcmEvent('error') && performance.now() < deadline) await sleep(10);
+          }
+          await sleep(${control.recovery ? 1200 : 1500});
+          const trace = await globalThis.__otioProofTrace.stop();
+          const playing = root.dataset.playing ?? '';
+          if (root.dataset.playing === 'true') button.click();
+          return {start, armed, playEdge, trace, playing};
+        })()`);
+        return { provenance, fault };
+      } finally {
+        await isolated.close();
+      }
+    };
+    for (const control of [
+      { label: 'site-select-epoch', site: 'select-epoch', recovery: false },
+      { label: 'site-commit', site: 'commit', recovery: false },
+      {
+        label: 'site-recovery-bridge',
+        site: 'recovery-bridge',
+        recovery: true,
+      },
+    ] as const) {
+      const attempts = control.recovery ? 3 : 1;
+      for (let attempt = 1; attempt <= attempts; attempt++) {
+        const { provenance, fault } = await captureSiteControl(
+          control,
+          starveAfterMs(attempt)
+        );
+        const events = fault.trace.events;
+        assert.ok(
+          !fault.trace.audioOverflow && !fault.trace.eventsOverflow,
+          `${control.label} capture overflowed`
+        );
+        const evidence = control.recovery
+          ? (siteBridgeGapInfeasibleAfterHold(events, rate) ??
+            siteBridgeCommitLeadAfterHold(events, rate) ??
+            siteBridgeFinalGuardAfterHold(events, rate))
+          : null;
+        if (evidence !== null) {
+          // The receipt keeps this attempt's audit. The verdict is the classified signature.
+          await writeClockShot(
+            join(shotDir, `scheduled-${control.label}-attempt${attempt}.json`),
+            { provenance, capture: fault },
+            control.label,
+            fault.trace
+          );
+          if (attempt < attempts) {
+            console.log(
+              `OTIO_SITE_RECOVERY_GAP_INFEASIBLE attempt=${attempt} ${evidence}`
+            );
+            continue;
+          }
+          throw new Error(
+            `${control.label}: ${attempts}/${attempts} attempts hit the 20 ms gap after the hold (${evidence})`
+          );
+        }
+        await writeClockShot(
+          join(shotDir, `scheduled-${control.label}.json`),
+          { provenance, capture: fault },
+          control.label,
+          fault.trace
+        );
+        assert.ok(
+          !fault.trace.audioOverflow && !fault.trace.eventsOverflow,
+          `${control.label} capture overflowed`
+        );
+        assert.equal(
+          fault.playing,
+          'true',
+          `${control.label}: playback stopped under the one-shot hold at ${control.site}`
+        );
+        assert.ok(
+          !events.some(
+            (entry) =>
+              entry.kind === 'scheduled-pcm' &&
+              (entry.value as { event?: string } | null)?.event === 'error'
+          ),
+          `${control.label}: scheduled PCM raised an error`
+        );
+        const consumedAt = events.flatMap((entry, index) =>
+          entry.kind === 'clock-site-hold-consumed' &&
+          (entry.value as { site?: string } | null)?.site === control.site
+            ? [index]
+            : []
+        );
+        assert.ok(
+          consumedAt.length >= 1,
+          `${control.label}: the one-shot hold never reached a ${control.site} read`
+        );
+        assert.ok(
+          consumedAt.length === 1,
+          `${control.label}: the one-shot hold was consumed ${consumedAt.length} times`
+        );
+        const at = consumedAt[0]!;
+        const consumedValue = events[at]!.value as Record<string, unknown>;
+        const held = clockStamp(consumedValue);
+        const anchor = clockStamp(consumedValue['anchor']);
+        const marker = (events[at - 1]?.value ?? null) as Record<
+          string,
+          unknown
+        > | null;
+        const observed = (events[at + 1]?.value ?? null) as Record<
+          string,
+          unknown
+        > | null;
+        const markerLast = clockStamp(marker?.['lastAccepted']);
+        const observedOutput = clockStamp(observed?.['output']);
+        assert.ok(
+          events[at - 1]?.kind === 'scheduled-pcm' &&
+            marker?.['event'] === 'clock-site' &&
+            marker?.['site'] === control.site &&
+            marker?.['phase'] === 'read' &&
+            markerLast !== null &&
+            anchor !== null &&
+            sameClockStamp(markerLast, anchor) &&
+            events[at + 1]?.kind === 'audio-output-timestamp-observed' &&
+            observed?.['injected'] === true &&
+            observed?.['site'] === control.site &&
+            held !== null &&
+            observedOutput !== null &&
+            sameClockStamp(observedOutput, held),
+          `${control.label}: the hold did not land on the ${control.site} read that named its anchor`
+        );
+        const pcm = events
+          .filter((entry) => entry.kind === 'scheduled-pcm')
+          .map((entry) => entry.value as Record<string, unknown>);
+        assert.ok(
+          held !== null &&
+            anchor !== null &&
+            pcm.some((value) => {
+              const stamp = clockStamp(value);
+              const last = clockStamp(value['lastAccepted']);
+              return (
+                value['event'] === 'clock-hold' &&
+                stamp !== null &&
+                last !== null &&
+                sameClockStamp(stamp, held) &&
+                sameClockStamp(last, anchor)
+              );
+            }),
+          `${control.label}: the ${control.site} read was not judged a held read of its last accepted pair`
+        );
+        assert.ok(
+          pcm.some(
+            (value) =>
+              value['event'] === 'clock-site' &&
+              value['phase'] === 'use' &&
+              value['site'] === control.site
+          ),
+          `${control.label}: ${control.site} never reported the stamp it consumed`
+        );
+        if (control.recovery) {
+          const payload = (index: number): Record<string, unknown> =>
+            (events[index]?.value ?? {}) as Record<string, unknown>;
+          const pcmAt = (index: number, name: string): boolean =>
+            events[index]?.kind === 'scheduled-pcm' &&
+            payload(index)['event'] === name;
+          const bridgeAt = (index: number, phase: string): boolean =>
+            pcmAt(index, 'clock-site') &&
+            payload(index)['site'] === 'recovery-bridge' &&
+            payload(index)['phase'] === phase;
+          const closureAt = events.findIndex((_, index) =>
+            pcmAt(index, 'recovery-render-closed')
+          );
+          assert.ok(
+            closureAt >= 0 &&
+              payload(closureAt)['descriptorReady'] === true &&
+              events.findIndex(
+                (_, index) => index > closureAt && bridgeAt(index, 'read')
+              ) ===
+                at - 1,
+            `${control.label}: the PCM-hold closure was not ready before its bridge read`
+          );
+          const useAt = events.findIndex(
+            (_, index) => index > at && bridgeAt(index, 'use')
+          );
+          const boundaryFrame = payload(closureAt)['boundaryFrame'];
+          const selectionAt = events.findIndex(
+            (_, index) =>
+              index > useAt &&
+              pcmAt(index, 'recovery-selection') &&
+              payload(index)['boundaryFrame'] === boundaryFrame
+          );
+          const selectedFrame = payload(selectionAt)['f0'];
+          const gapFrames = Math.floor(0.02 * rate);
+          assert.ok(
+            useAt >= 0 &&
+              selectionAt > useAt &&
+              typeof boundaryFrame === 'number' &&
+              typeof selectedFrame === 'number' &&
+              selectedFrame >= boundaryFrame &&
+              selectedFrame <= boundaryFrame + gapFrames,
+            `${control.label}: recovery never selected a successor within the 20 ms gap after the held bridge read`
+          );
+          assert.ok(
+            !events.some(
+              (_, index) =>
+                index > closureAt &&
+                index < selectionAt &&
+                (pcmAt(index, 'recovery-clock-observation-rejected') ||
+                  pcmAt(index, 'error'))
+            ),
+            `${control.label}: recovery refused its bridge before selecting a successor`
+          );
+          const releaseAt = events.flatMap((entry, index) =>
+            entry.kind === 'pcm-hold-release' ? [index] : []
+          );
+          const release =
+            releaseAt.length === 1 ? payload(releaseAt[0]!) : null;
+          const released = release === null ? 0 : Number(release['released']);
+          assert.ok(
+            release !== null &&
+              release['trigger'] === 'recovery-selection' &&
+              release['triggerIndex'] === selectionAt &&
+              released >= 1 &&
+              releaseAt[0]! > selectionAt,
+            `${control.label}: held PCM was not released at its recovery selection`
+          );
+        }
+        break;
+      }
+    }
+    pass('scheduled-pcm-schedule-clock-failures');
+  } finally {
+    await browser.close();
+  }
+}
+
 try {
   await Bun.spawn(['mkdir', '-p', shotDir, mediaDir]).exited;
+  if (process.env['RELIC_OTIO_INTERACTION_ONLY'] === '1') {
+    const token = await createSession();
+    await calibratePostGainTap(token, 'interaction');
+    assert.equal(mails.length, 0, 'interaction proof emitted external mail');
+    console.log('OTIO_INTERACTION_ONLY_OK');
+    throw new InteractionOnlyComplete();
+  }
   await assertPacketGateRejectsPlantedFrames();
   pass('packet-gate-negative-controls');
+  await assertQuantizedMovingOracle();
+  if (process.env['RELIC_OTIO_PACKET_ORACLE_ONLY'] === '1')
+    throw new DecoderOnlyComplete();
   const sessionToken = await createSession();
   if (process.env['RELIC_OTIO_DECODER_ONLY'] === '1') {
     await runDecoderTimingProof(sessionToken);
     console.log('OTIO_DECODER_OK');
     throw new DecoderOnlyComplete();
   }
+  // Real new-publish output, asserted before any composition proof: on Linux it must be
+  // focus-only with its reason; on macOS it must be playable. Neither branch skips. It
+  // belongs to the slice without scheduled audio.
+  if (pathScope !== 'scheduled-audio')
+    await runFocusOnlyPublishCheck(
+      sessionToken,
+      fileURLToPath(
+        new URL(
+          '../../relic-format/test/fixtures/otio/scheduled-audio.otiod/',
+          import.meta.url
+        )
+      )
+    );
+  const proofViewerManifest =
+    process.env['RELIC_OTIO_PROOF_VIEWER_MANIFEST'] ?? '';
+  if (proofViewerManifest !== '') {
+    const manifest = JSON.parse(
+      await readFile(proofViewerManifest, 'utf8')
+    ) as {
+      kind?: string;
+      outdir?: string;
+      landmarkCount?: number;
+    };
+    assert.equal(
+      manifest.kind,
+      'three-slot',
+      'proof viewer manifest is not the three-slot build'
+    );
+    assert.equal(
+      manifest.landmarkCount,
+      1,
+      'three-slot manifest does not record exactly one landmark'
+    );
+    assert.equal(
+      String(manifest.outdir).replace(/\/$/, ''),
+      viewerDist.replace(/\/$/, ''),
+      'RELIC_VIEWER_DIST is not the three-slot build named by its manifest'
+    );
+    await runThreeSlotControl(sessionToken);
+    console.log('OTIO_THREE_SLOT_OK');
+    throw new DecoderOnlyComplete();
+  }
+  if (pathScope === 'without-scheduled-audio') {
+    assert.equal(
+      clockProofMode,
+      '',
+      'a clock proof mode runs scheduled-audio stages, which this scope leaves out'
+    );
+    console.log('OTIO_PATH_SCOPE without-scheduled-audio');
+    // The comment part of the boundary fixture needs no audio capture, so it stays here.
+    await calibratePostGainTap(sessionToken, 'comment');
+  } else {
+    await runNativeAudioCompatibilityProof(sessionToken);
+    await rerunViewerInterruption('scheduled-pcm-48000', () =>
+      runScheduledPcmProof(sessionToken)
+    );
+    if (clockProofMode !== 'long')
+      await rerunViewerInterruption('scheduled-pcm-44100', () =>
+        runScheduledPcmProof(sessionToken, 44100)
+      );
+    if (clockProofMode === '')
+      await rerunViewerInterruption('sixty-fps-cold', () =>
+        runSixtyFpsColdProof(sessionToken, 48000)
+      );
+    if (clockProofMode === '')
+      await rerunViewerInterruption('restart-during-start', () =>
+        runRestartDuringStart(sessionToken, 48000)
+      );
+    if (clockProofMode === 'long') {
+      console.log('OTIO_CLOCK_LONG_OK');
+      throw new DecoderOnlyComplete();
+    }
+    if (clockProofMode === 'focused') {
+      console.log('OTIO_CLOCK_FOCUSED_OK');
+      throw new DecoderOnlyComplete();
+    }
+    await rerunViewerInterruption('post-gain-tap-calibration', () =>
+      calibratePostGainTap(
+        sessionToken,
+        pathScope === 'scheduled-audio' ? 'scheduled-audio' : 'all'
+      )
+    );
+  }
+  if (pathScope === 'scheduled-audio') {
+    const missing = stagesNotPassed();
+    assert.deepEqual(
+      missing,
+      [],
+      `scheduled-audio stages not passed: ${missing.join(', ')}`
+    );
+    assert.equal(
+      mails.length,
+      0,
+      `the scheduled-audio slice captured ${mails.length} mail send(s)`
+    );
+    console.log('OTIO_SCHEDULED_AUDIO_OK');
+    throw new DecoderOnlyComplete();
+  }
 
-  const published = await callMcp('relic_publish', {
-    path: fixtureDir,
-    title: 'Relik Feature Editorial',
-    cover: false,
-  });
-  const relicId = String(published['relic_id']);
-  const shareUrl = String(published['url'] ?? published['link'] ?? '');
-  assert.ok(relicId, 'publish returned no relic_id');
-  assert.ok(shareUrl.includes('#'), 'publish returned no keyed link');
-  assert.ok(
-    shareUrl.startsWith(origin),
-    `publish URL left loopback: ${shareUrl}`
+  // The qualification, revision and state stages below exercise the live player, which
+  // only a legacy archive reaches: a new publish of this fixture carries a program the
+  // viewer plays or refuses as a whole. New publishes are proven by the focus-only
+  // publish check and by the separate program proof.
+  const shareUrl = await publishLegacyDirectory(
+    fixtureDir,
+    'Relik Feature Editorial'
   );
+  const relicId = new URL(shareUrl).pathname.split('/').filter(Boolean).at(-1);
+  assert.ok(relicId, 'publish returned no relic_id');
   console.log(`PUBLISHED relic_id=${relicId}`);
   pass('published');
 
@@ -9121,6 +22169,7 @@ try {
   });
   try {
     await waitReady(browser);
+    await assertLegacyProgramState(browser, 'qualification');
     await runLayoutMatrix(browser, 'initial', plan);
     if (process.env.RELIC_OTIO_LAYOUT_ONLY === '1') {
       console.log('OTIO_LAYOUT_OK');
@@ -9213,10 +22262,17 @@ try {
     }
     pass('pixels-offset');
 
-    await seekTo(browser, 0);
-    await clearMediaSeekTargets(browser);
+    // The viewer leaves native playback for its seek cadence when a native start fails twice
+    // (fallbackToSeekCadence in otio-playback.ts), and on a shared runner it sometimes does:
+    // run 43450210844 sought both videos once per frame from frame 4 on, with the clock still
+    // advancing. Nothing is injected here, so that is the viewer's own interruption and the
+    // stage reruns under the same rule as the scheduled-audio stages. A seek to frame 0 clears
+    // the viewer's fallback, so the rerun starts natively again in the same page.
+    await rerunViewerInterruption('native-playback', async () => {
+      await seekTo(browser, 0);
+      await clearMediaSeekTargets(browser);
 
-    await browser.evaluate<void>(`(() => {
+      await browser.evaluate<void>(`(() => {
       globalThis.__otioObservedFrames = [];
       const root = document.querySelector('section.otio-view');
       if (root?.dataset?.frame != null) {
@@ -9234,17 +22290,17 @@ try {
       globalThis.__otioFrameObserver = observer;
     })()`);
 
-    // A label capture reads the first painted label at or past each target, so
-    // a sample can land up to one label step past it. Linux CI measured the
-    // largest step at 3.6 frames over 12 runs of this stage. The last target
-    // stays at or below 44.999 minus twice that step, so a sample cannot cross
-    // the frame-44 ceiling (the overlay ends at frame 48) on an ordinary step.
-    await installLabelCapture(browser, width, height, {
-      kind: 'targets',
-      targets: [3, 8, 13, 18, 22, 27, 32, 37],
-    });
+      // A label capture reads the first painted label at or past each target, so
+      // a sample can land up to one label step past it. Linux CI measured the
+      // largest step at 3.6 frames over 12 runs of this stage. The last target
+      // stays at or below 44.999 minus twice that step, so a sample cannot cross
+      // the frame-44 ceiling (the overlay ends at frame 48) on an ordinary step.
+      await installLabelCapture(browser, width, height, {
+        kind: 'targets',
+        targets: [3, 8, 13, 18, 22, 27, 32, 37],
+      });
 
-    const playbackStarted = await browser.evaluate<boolean>(`(() => {
+      const playbackStarted = await browser.evaluate<boolean>(`(() => {
       const { promise, resolve } = Promise.withResolvers();
       const btn = document.querySelector('button.otio-play');
       const root = document.querySelector('section.otio-view');
@@ -9260,20 +22316,20 @@ try {
       check();
       return promise;
     })()`);
-    assert.ok(playbackStarted, 'steady playback did not enter playing state');
+      assert.ok(playbackStarted, 'steady playback did not enter playing state');
 
-    // Samples are captured in-page via MutationObserver when the clock first
-    // reaches each target frame, all at or before frame 44. The Picture-in-Picture
-    // layer ends at frame 48, where the drawn set changes and the exact resync
-    // paints before the clock label updates.
-    await waitLabelCaptures(browser, {
-      count: 8,
-      ceiling: 45,
-      timeoutMs: 30_000,
-      label: 'playback',
-    });
+      // Samples are captured in-page via MutationObserver when the clock first
+      // reaches each target frame, all at or before frame 44. The Picture-in-Picture
+      // layer ends at frame 48, where the drawn set changes and the exact resync
+      // paints before the clock label updates.
+      await waitLabelCaptures(browser, {
+        count: 8,
+        ceiling: 45,
+        timeoutMs: 30_000,
+        label: 'playback',
+      });
 
-    await browser.evaluate<void>(`(() => {
+      await browser.evaluate<void>(`(() => {
       const root = document.querySelector('section.otio-view');
       const btn = document.querySelector('button.otio-play');
       if (root?.dataset.playing === 'true' && btn instanceof HTMLButtonElement) {
@@ -9284,11 +22340,15 @@ try {
       }
     })()`);
 
-    const playbackSamples = await collectLabelCaptures(browser, width, height);
-    const observedPlaybackFrames = await browser.evaluate<number[]>(`(() => {
+      const playbackSamples = await collectLabelCaptures(
+        browser,
+        width,
+        height
+      );
+      const observedPlaybackFrames = await browser.evaluate<number[]>(`(() => {
       return (globalThis.__otioObservedFrames || []).slice();
     })()`);
-    const seekTargets = await browser.evaluate<number[]>(`(() => {
+      const seekTargets = await browser.evaluate<number[]>(`(() => {
       return (
         globalThis.__relicOtioVideoSeekTargets ??
         globalThis.__relicOtioMediaSeekTargets ??
@@ -9296,80 +22356,81 @@ try {
       ).slice();
     })()`);
 
-    const minObserved =
-      observedPlaybackFrames.length > 0
-        ? Math.min(...observedPlaybackFrames)
-        : (playbackSamples[0]?.dataFrame ?? 0);
-    const maxObserved =
-      observedPlaybackFrames.length > 0
-        ? Math.max(...observedPlaybackFrames)
-        : (playbackSamples[playbackSamples.length - 1]?.dataFrame ?? 72);
-    const elapsedMediaFrames = Math.max(
-      24,
-      Math.round(maxObserved - minObserved)
-    );
+      const minObserved =
+        observedPlaybackFrames.length > 0
+          ? Math.min(...observedPlaybackFrames)
+          : (playbackSamples[0]?.dataFrame ?? 0);
+      const maxObserved =
+        observedPlaybackFrames.length > 0
+          ? Math.max(...observedPlaybackFrames)
+          : (playbackSamples[playbackSamples.length - 1]?.dataFrame ?? 72);
+      const elapsedMediaFrames = Math.max(
+        24,
+        Math.round(maxObserved - minObserved)
+      );
 
-    const distinctFloors = new Set(
-      observedPlaybackFrames.map((f) => Math.floor(f))
-    );
-    const floorProgressRatio = distinctFloors.size / elapsedMediaFrames;
-    assert.ok(
-      floorProgressRatio >= 0.6,
-      `distinct floor(data-frame) progress ${distinctFloors.size}/${elapsedMediaFrames} (${(floorProgressRatio * 100).toFixed(1)}%) below 60% floor (frozen hold)`
-    );
-
-    const seekRatio = seekTargets.length / elapsedMediaFrames;
-    assert.ok(
-      seekRatio <= 0.1,
-      `steady playback seek ratio ${(seekRatio * 100).toFixed(1)}% exceeded 10% ceiling (${seekTargets.length} seeks / ${elapsedMediaFrames} elapsed frames: ${seekTargets.slice(0, 10).join(', ')}...)`
-    );
-
-    for (const [idx, item] of playbackSamples.entries()) {
-      const timelineFrame = Math.floor(item.dataFrame + 1e-4);
+      const distinctFloors = new Set(
+        observedPlaybackFrames.map((f) => Math.floor(f))
+      );
+      const floorProgressRatio = distinctFloors.size / elapsedMediaFrames;
       assert.ok(
-        timelineFrame <= 44,
-        `playback sample ${idx + 1}/8 timeline frame ${timelineFrame} exceeded frame 44, the Picture-in-Picture layer ends at frame 48`
-      );
-      const expectedFileFrame =
-        plan.primary_clip_frames?.[String(timelineFrame)] ??
-        plan.primary_file_frame + (timelineFrame - plan.primary_frame);
-
-      const expectedRow = await frameRowCenter(
-        join(mediaDir, plan.primary_media),
-        expectedFileFrame
-      );
-      const wrongRow = await frameRowCenter(
-        join(mediaDir, plan.primary_media),
-        expectedFileFrame + 2
+        floorProgressRatio >= 0.6,
+        `distinct floor(data-frame) progress ${distinctFloors.size}/${elapsedMediaFrames} (${(floorProgressRatio * 100).toFixed(1)}%) below 60% floor (frozen hold)`
       );
 
-      const toExpectedPx =
-        Math.abs(item.center - expectedRow.center) * expectedRow.width;
-      const toWrongPx =
-        Math.abs(item.center - wrongRow.center) * wrongRow.width;
+      const seekRatio = seekTargets.length / elapsedMediaFrames;
+      if (seekRatio > 0.1)
+        throw new InterruptedOutsideTrace(
+          `viewer left native playback and sought during steady playback: seek ratio ${(seekRatio * 100).toFixed(1)}% exceeded 10% ceiling (${seekTargets.length} seeks / ${elapsedMediaFrames} elapsed frames: ${seekTargets.slice(0, 10).join(', ')}...)`
+        );
 
-      assert.ok(
-        toExpectedPx <= 3,
-        `playback sample ${idx + 1}/8 canvas bar is ${toExpectedPx.toFixed(2)} px from official file frame ${expectedFileFrame} at timeline frame ${timelineFrame}`
-      );
-      assert.ok(
-        toWrongPx >= 12,
-        `playback sample ${idx + 1}/8 canvas bar is ${toWrongPx.toFixed(2)} px from wrong file frame ${expectedFileFrame + 2} at timeline frame ${timelineFrame}`
-      );
+      for (const [idx, item] of playbackSamples.entries()) {
+        const timelineFrame = Math.floor(item.dataFrame + 1e-4);
+        assert.ok(
+          timelineFrame <= 44,
+          `playback sample ${idx + 1}/8 timeline frame ${timelineFrame} exceeded frame 44, the Picture-in-Picture layer ends at frame 48`
+        );
+        const expectedFileFrame =
+          plan.primary_clip_frames?.[String(timelineFrame)] ??
+          plan.primary_file_frame + (timelineFrame - plan.primary_frame);
 
-      const expectedFrame = await extractFrame(
-        join(mediaDir, plan.primary_media),
-        expectedFileFrame,
-        width,
-        height
-      );
-      const expectedBar = barColumn(expectedFrame, width, height);
-      const actualBar = barColumn(item.sample, width, height);
-      assert.ok(
-        Math.abs(actualBar - expectedBar) <= 1,
-        `playback sample ${idx + 1}/8 bar column ${actualBar} does not match official expected column ${expectedBar} at timeline frame ${timelineFrame}`
-      );
-    }
+        const expectedRow = await frameRowCenter(
+          join(mediaDir, plan.primary_media),
+          expectedFileFrame
+        );
+        const wrongRow = await frameRowCenter(
+          join(mediaDir, plan.primary_media),
+          expectedFileFrame + 2
+        );
+
+        const toExpectedPx =
+          Math.abs(item.center - expectedRow.center) * expectedRow.width;
+        const toWrongPx =
+          Math.abs(item.center - wrongRow.center) * wrongRow.width;
+
+        assert.ok(
+          toExpectedPx <= 3,
+          `playback sample ${idx + 1}/8 canvas bar is ${toExpectedPx.toFixed(2)} px from official file frame ${expectedFileFrame} at timeline frame ${timelineFrame}`
+        );
+        assert.ok(
+          toWrongPx >= 12,
+          `playback sample ${idx + 1}/8 canvas bar is ${toWrongPx.toFixed(2)} px from wrong file frame ${expectedFileFrame + 2} at timeline frame ${timelineFrame}`
+        );
+
+        const expectedFrame = await extractFrame(
+          join(mediaDir, plan.primary_media),
+          expectedFileFrame,
+          width,
+          height
+        );
+        const expectedBar = barColumn(expectedFrame, width, height);
+        const actualBar = barColumn(item.sample, width, height);
+        assert.ok(
+          Math.abs(actualBar - expectedBar) <= 1,
+          `playback sample ${idx + 1}/8 bar column ${actualBar} does not match official expected column ${expectedBar} at timeline frame ${timelineFrame}`
+        );
+      }
+    });
     pass('native-playback');
     // Parity oracle: determine shared-window intervals across parity layers.
     assert.equal(
@@ -10686,6 +23747,13 @@ try {
     );
     for (const pointerCase of pointerCases) {
       console.log('POINTER_CASE', pointerCase.caseName);
+      // Opening a comment focuses its clip, and a focused view shows only that
+      // clip's marks. Each case starts from the whole composition, reached the
+      // way a reviewer returns to it.
+      const focused = await browser.evaluate<boolean>(
+        `Boolean(document.querySelector('.otio-view')?.dataset.scopeNodeId)`
+      );
+      if (focused) await leaveFocus(browser);
       await assertCommentMarkPointerClick(
         browser,
         pointerCase,
@@ -10712,6 +23780,29 @@ try {
       field.dispatchEvent(new Event('input', { bubbles: true }));
       window.__otioResizeField = field;
     })()`);
+    // The resizes below shrink the timeline to a row or two. A row left at the
+    // bottom of a tall timeline is clipped by any shorter one whatever the
+    // viewer does, so the reviewer's row starts at the top of the timeline and
+    // the viewer has to keep it there.
+    const rowAtTop = await browser.evaluate<{
+      rowTop: number;
+      viewportTop: number;
+    } | null>(`(async () => {
+      const scroll = document.querySelector('.otio-timeline-scroll');
+      const row = document.querySelector('.otio-selection')?.closest('.otio-track-row');
+      if (!(scroll instanceof HTMLElement) || !(row instanceof HTMLElement)) return null;
+      const viewportTop = () => scroll.getBoundingClientRect().top + scroll.clientTop;
+      scroll.scrollTop += row.getBoundingClientRect().top - viewportTop();
+      const { promise, resolve } = Promise.withResolvers();
+      requestAnimationFrame(() => requestAnimationFrame(resolve));
+      setTimeout(resolve, 100);
+      await promise;
+      return { rowTop: row.getBoundingClientRect().top, viewportTop: viewportTop() };
+    })()`);
+    assert.ok(
+      rowAtTop && Math.abs(rowAtTop.rowTop - rowAtTop.viewportTop) <= 1,
+      `the selected row could not be scrolled to the top of the timeline: ${JSON.stringify(rowAtTop)}`
+    );
     for (const [shotWidth, shotHeight] of [
       [320, 480],
       [390, 568],
@@ -11001,9 +24092,13 @@ try {
       const range = document.querySelector('button[data-otio-mode="range"]');
       if (!(input instanceof HTMLInputElement) || !(output instanceof HTMLInputElement) ||
           !(range instanceof HTMLButtonElement)) return false;
+      const root = document.querySelector('.otio-view');
+      if (!(root instanceof HTMLElement)) return false;
+      const origin = Number(root.dataset.domainOrigin);
+      if (!Number.isFinite(origin)) return false;
       range.click();
-      input.value = '12'; input.dispatchEvent(new Event('change', {bubbles:true}));
-      output.value = '20'; output.dispatchEvent(new Event('change', {bubbles:true}));
+      input.value = String(12 - origin); input.dispatchEvent(new Event('change', {bubbles:true}));
+      output.value = String(20 - origin); output.dispatchEvent(new Event('change', {bubbles:true}));
       return true;
     })()`);
     assert.ok(adjusted, 'focus range controls are missing');
@@ -11080,7 +24175,28 @@ try {
         features: [{ name: 'prefers-color-scheme', value: scheme }],
       });
       await focusItem(focused, plan.comment_source.relic_id);
+      const fit = await focused.evaluate<boolean>(`(() => {
+        const button = document.querySelector('.otio-zoom-fit');
+        if (!(button instanceof HTMLButtonElement)) return false;
+        button.click(); return true;
+      })()`);
+      assert.ok(fit, 'focus fit control missing');
       await openComposer(focused);
+      const draftSet = await focused.evaluate<boolean>(`(() => {
+        const field = document.querySelector('.popover-composer textarea.popover-field');
+        if (!(field instanceof HTMLTextAreaElement)) return false;
+        field.value = 'Draft survives timeline zoom.';
+        field.dispatchEvent(new Event('input', {bubbles:true}));
+        globalThis.__zoomDraft = field;
+        return true;
+      })()`);
+      assert.ok(draftSet, 'focused draft missing before zoom');
+      await assertFocusedWheelZoom(focused);
+      const draftKept = await focused.evaluate<boolean>(`(() => {
+        const field = document.querySelector('.popover-composer textarea.popover-field');
+        return field === globalThis.__zoomDraft && field?.value === 'Draft survives timeline zoom.';
+      })()`);
+      assert.ok(draftKept, 'timeline zoom discarded the open draft');
       const geometry = await measureComposer(focused);
       assertComposerProbe(
         geometry,
@@ -11787,19 +24903,15 @@ try {
     codec_media: string;
   };
   assert.equal(statePlan.missing_file, plan.nested_image_file);
-  const statePublished = await callMcp('relic_publish', {
-    path: stateDir,
-    title: 'OTIO state proof',
-    cover: false,
-  });
-  const stateUrl = String(
-    statePublished['url'] ?? statePublished['link'] ?? ''
-  );
+  // Track hiding, the held predecessor and the black-probe policy are live-player
+  // behavior, so this fixture is published as a legacy archive too.
+  const stateUrl = await publishLegacyDirectory(stateDir, 'OTIO state proof');
   const stateBrowser = await openBrowser(stateUrl, sessionToken, {
     label: 'state-occlusion',
   });
   try {
     await waitReady(stateBrowser);
+    await assertLegacyProgramState(stateBrowser, 'state-occlusion');
     await setTracksHidden(stateBrowser, plan.nested_occluders, true);
     await seekTo(stateBrowser, plan.nested_frame);
     const held = await sampleCanvas(stateBrowser, width, height);
@@ -12053,14 +25165,21 @@ try {
   );
   pass('no-mail');
 
-  const missing = REQUIRED.filter((stage) => !passed.has(stage));
+  // The three-slot stage is accounted only by the proof-only three-slot run (see REQUIRED),
+  // and a slice accounts for its own stages (see stagesNotPassed).
+  const missing = stagesNotPassed();
   assert.deepEqual(missing, [], `stages not passed: ${missing.join(', ')}`);
-  console.log('OTIO_PATH_OK');
+  console.log(
+    pathScope === 'without-scheduled-audio'
+      ? 'OTIO_PATH_WITHOUT_SCHEDULED_AUDIO_OK'
+      : 'OTIO_PATH_OK'
+  );
 } catch (error) {
   if (
     !(
       error instanceof LayoutOnlyComplete ||
-      error instanceof DecoderOnlyComplete
+      error instanceof DecoderOnlyComplete ||
+      error instanceof InteractionOnlyComplete
     )
   )
     throw error;

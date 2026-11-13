@@ -165,6 +165,56 @@ describe('the app shell', () => {
     expect(chunkWithSignInText).toBe(true);
   });
 
+  test('keeps the JSX compiler out of the eager shell', async () => {
+    // Sucrase is the compiler. Routing loads it on demand from its own chunk,
+    // so nothing reachable from viewer.js through static imports may carry it.
+    for (const stale of new Bun.Glob('chunk-*.js').scanSync(`${pkgDir}dist`)) {
+      await unlink(`${pkgDir}dist/${stale}`).catch(() => {});
+    }
+    const built = Bun.spawnSync([process.execPath, 'build.ts'], {
+      cwd: pkgDir,
+    });
+    expect(built.exitCode).toBe(0);
+
+    const markers = [
+      'enableLegacyTypeScriptModuleInterop',
+      'jsxFragmentPragma',
+    ];
+    const staticImport = /(?:from|import)\s*"\.\/(chunk-[a-z0-9]+\.js)"/g;
+
+    // The static closure of viewer.js: every chunk it reaches without import().
+    const eager = new Map<string, string>();
+    const pending = ['viewer.js'];
+    for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
+      if (eager.has(next)) continue;
+      const text = await Bun.file(`${pkgDir}dist/${next}`).text();
+      eager.set(next, text);
+      for (const match of text.matchAll(staticImport)) {
+        if (match[1] !== undefined) pending.push(match[1]);
+      }
+    }
+    const leaked = [...eager]
+      .filter(([, text]) => markers.some((marker) => text.includes(marker)))
+      .map(([file]) => file);
+    expect(leaked).toEqual([]);
+
+    const chunks = [...new Bun.Glob('chunk-*.js').scanSync(`${pkgDir}dist`)];
+    const carriers: string[] = [];
+    for (const chunk of chunks) {
+      const text = await Bun.file(`${pkgDir}dist/${chunk}`).text();
+      if (markers.every((marker) => text.includes(marker)))
+        carriers.push(chunk);
+    }
+    expect(carriers).toHaveLength(1);
+
+    // Routing may live in any eagerly imported shell chunk after code splitting.
+    expect(
+      [...eager.values()].some((text) =>
+        text.includes(`import("./${carriers[0]}")`)
+      )
+    ).toBe(true);
+  });
+
   test('loads dashboard search on demand, not in viewer.js', async () => {
     // Runs on the clean build above, so no stale chunk can satisfy it.
     const marker = 'Reading contents, ';
@@ -214,7 +264,6 @@ describe('the app shell', () => {
     expect(shell).toContain(carriers[0]!);
     expect(await precachedAssets()).toContain(`/assets/${carriers[0]}`);
   });
-
   test('the renderer is emitted as its own chunk', async () => {
     // The other half of the same property. An empty `dist` with no chunk at
     // all would satisfy the shell assertions above while shipping a viewer
@@ -305,6 +354,10 @@ describe('the app shell', () => {
 
     const shell = Bun.file(`${pkgDir}dist/viewer.js`);
     const timingWorker = Bun.file(`${pkgDir}dist/otio-video-timing-worker.js`);
+    const pcmWorker = Bun.file(`${pkgDir}dist/otio-audio-pcm-worker.js`);
+    const gateWorklet = Bun.file(
+      `${pkgDir}dist/otio-transport-gate-worklet.js`
+    );
     const distributedLicense = Bun.file(`${pkgDir}dist/mediabunny-license.txt`);
     const installedLicense = Bun.file(
       `${pkgDir}node_modules/mediabunny/LICENSE`
@@ -313,6 +366,10 @@ describe('the app shell', () => {
     const timingWorkerText = await timingWorker.text();
     const shellText = await shell.text();
     expect(await timingWorker.exists()).toBe(true);
+    expect(await pcmWorker.exists()).toBe(true);
+    expect(await gateWorklet.exists()).toBe(true);
+    expect(await gateWorklet.text()).toContain('otio-transport-gate');
+    expect(await pcmWorker.text()).toContain('Mediabunny 1.62.0 by Vanilagy');
     expect(await distributedLicense.exists()).toBe(true);
     expect(timingWorker.size).toBeGreaterThan(50 * 1024);
     expect(timingWorkerText).toContain(
@@ -326,6 +383,8 @@ describe('the app shell', () => {
     const requests = await precachedAssets();
     expect(requests).toContain('/assets/viewer.js');
     expect(requests).not.toContain('/assets/otio-video-timing-worker.js');
+    expect(requests).not.toContain('/assets/otio-audio-pcm-worker.js');
+    expect(requests).not.toContain('/assets/otio-transport-gate-worklet.js');
     expect(requests).not.toContain('/assets/mediabunny-license.txt');
   });
 

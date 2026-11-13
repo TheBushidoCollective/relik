@@ -48,9 +48,18 @@ interface ZipFileEntry {
 /** ZIP's non-ZIP64 entry-count sentinel is not usable by this writer. */
 export const MAX_ZIP_ENTRY_COUNT = 0xffff;
 const MAX_ZIP_FILENAME_BYTES = 0xffff;
-const ZIP_ENTRY_HEADER_BYTES = 30 + 46;
+export const ZIP_LOCAL_HEADER_BYTES = 30;
+export const ZIP_CENTRAL_HEADER_BYTES = 46;
+export const ZIP_END_BYTES = 22;
+const ZIP_ENTRY_HEADER_BYTES =
+  ZIP_LOCAL_HEADER_BYTES + ZIP_CENTRAL_HEADER_BYTES;
 // Every entry name is encoded by TextEncoder, so both ZIP headers must mark it UTF-8.
 const ZIP_UTF8_FILENAME_FLAG = 0x0800;
+// Shared header values: version 20, made by 0x0014, time 0, date 1980-01-01.
+const ZIP_VERSION = 20;
+const ZIP_MADE_BY = 0x0014;
+const ZIP_DOS_TIME = 0x0000;
+const ZIP_DOS_DATE = 0x0021;
 const VERSION_BYTES = new TextEncoder().encode('1.0.0');
 const TEXT_ENCODER = new TextEncoder();
 const MAX_RAW_REFERENCE_CHARS = MAX_ZIP_FILENAME_BYTES * 3;
@@ -133,67 +142,168 @@ function checkedAdd(left: number, right: number, where: string): number {
   return total;
 }
 
-/**
- * Build a standard deterministic ZIP archive. Count validation deliberately
- * happens before compression or an entries-sized allocation.
- */
-export function buildZipArchive(
-  entries: readonly ZipFileEntry[],
-  maxArchiveBytes = PLAINTEXT_CAP_BYTES
-): Uint8Array {
-  if (entries.length >= MAX_ZIP_ENTRY_COUNT) {
+/** A ZIP entry's facts for layout. Its bytes are written separately. */
+export interface ZipLayoutEntry {
+  readonly name: string;
+  readonly nameBytes: Uint8Array;
+  readonly method: 0 | 8;
+  readonly compressedSize: number;
+  readonly uncompressedSize: number;
+}
+
+/** Byte offsets and the exact size of an archive, decided before any byte is written. */
+export interface ZipLayout {
+  readonly localHeaderOffsets: readonly number[];
+  readonly directoryOffset: number;
+  readonly directorySize: number;
+  readonly totalSize: number;
+}
+
+/** One entry's header fields, as the writers below serialise them. */
+export interface ZipEntryRecord {
+  readonly nameBytes: Uint8Array;
+  readonly method: 0 | 8;
+  readonly crc32: number;
+  readonly compressedSize: number;
+  readonly uncompressedSize: number;
+  readonly localHeaderOffset: number;
+}
+
+function zipView(target: Uint8Array): DataView {
+  return new DataView(target.buffer, target.byteOffset, target.byteLength);
+}
+
+/** Writes a local file header and its name at `at`. Returns the bytes written. */
+export function writeZipLocalHeader(
+  target: Uint8Array,
+  at: number,
+  e: ZipEntryRecord
+): number {
+  const view = zipView(target);
+  view.setUint32(at + 0, 0x04034b50, true);
+  view.setUint16(at + 4, ZIP_VERSION, true);
+  view.setUint16(at + 6, ZIP_UTF8_FILENAME_FLAG, true);
+  view.setUint16(at + 8, e.method, true);
+  view.setUint16(at + 10, ZIP_DOS_TIME, true);
+  view.setUint16(at + 12, ZIP_DOS_DATE, true);
+  view.setUint32(at + 14, e.crc32, true);
+  view.setUint32(at + 18, e.compressedSize, true);
+  view.setUint32(at + 22, e.uncompressedSize, true);
+  view.setUint16(at + 26, e.nameBytes.length, true);
+  view.setUint16(at + 28, 0, true);
+  target.set(e.nameBytes, at + ZIP_LOCAL_HEADER_BYTES);
+  return ZIP_LOCAL_HEADER_BYTES + e.nameBytes.length;
+}
+
+/** Writes a central directory record at `at`. Returns the bytes written. */
+export function writeZipCentralRecord(
+  target: Uint8Array,
+  at: number,
+  e: ZipEntryRecord
+): number {
+  const view = zipView(target);
+  view.setUint32(at + 0, 0x02014b50, true);
+  view.setUint16(at + 4, ZIP_MADE_BY, true);
+  view.setUint16(at + 6, ZIP_VERSION, true);
+  view.setUint16(at + 8, ZIP_UTF8_FILENAME_FLAG, true);
+  view.setUint16(at + 10, e.method, true);
+  view.setUint16(at + 12, ZIP_DOS_TIME, true);
+  view.setUint16(at + 14, ZIP_DOS_DATE, true);
+  view.setUint32(at + 16, e.crc32, true);
+  view.setUint32(at + 20, e.compressedSize, true);
+  view.setUint32(at + 24, e.uncompressedSize, true);
+  view.setUint16(at + 28, e.nameBytes.length, true);
+  view.setUint16(at + 30, 0, true);
+  view.setUint16(at + 32, 0, true);
+  view.setUint16(at + 34, 0, true);
+  view.setUint16(at + 36, 0, true);
+  view.setUint32(at + 38, 0, true);
+  view.setUint32(at + 42, e.localHeaderOffset, true);
+  target.set(e.nameBytes, at + ZIP_CENTRAL_HEADER_BYTES);
+  return ZIP_CENTRAL_HEADER_BYTES + e.nameBytes.length;
+}
+
+/** Writes the end-of-central-directory record at `at`. Returns the bytes written. */
+export function writeZipEnd(
+  target: Uint8Array,
+  at: number,
+  end: {
+    readonly entryCount: number;
+    readonly directorySize: number;
+    readonly directoryOffset: number;
+    readonly comment: Uint8Array;
+  }
+): number {
+  const view = zipView(target);
+  view.setUint32(at + 0, 0x06054b50, true);
+  view.setUint16(at + 4, 0, true);
+  view.setUint16(at + 6, 0, true);
+  view.setUint16(at + 8, end.entryCount, true);
+  view.setUint16(at + 10, end.entryCount, true);
+  view.setUint32(at + 12, end.directorySize, true);
+  view.setUint32(at + 16, end.directoryOffset, true);
+  view.setUint16(at + 20, end.comment.length, true);
+  target.set(end.comment, at + ZIP_END_BYTES);
+  return ZIP_END_BYTES + end.comment.length;
+}
+
+function assertZipEntryCount(count: number): void {
+  if (count >= MAX_ZIP_ENTRY_COUNT) {
     bundleRefusal(
-      `ZIP has ${entries.length} entries; this non-ZIP64 writer permits at most ${MAX_ZIP_ENTRY_COUNT - 1}`
+      `ZIP has ${count} entries; this non-ZIP64 writer permits at most ${MAX_ZIP_ENTRY_COUNT - 1}`
     );
   }
+}
+
+/**
+ * Plans a standard archive from entry sizes alone: offsets, directory size, and
+ * the exact total. Count, name, ZIP32, overflow, and budget checks run before
+ * any archive-sized allocation.
+ */
+export function planZipLayout(
+  entries: readonly ZipLayoutEntry[],
+  maxArchiveBytes: number
+): ZipLayout {
+  assertZipEntryCount(entries.length);
   assertSafeLimit(maxArchiveBytes, 'maxArchiveBytes');
 
-  const dosTime = 0x0000;
-  const dosDate = 0x0021; // 1980-01-01
-  const prepared: Array<{
-    readonly entry: ZipFileEntry;
-    readonly nameBytes: Uint8Array;
-    readonly crc: number;
-    readonly compressed: Uint8Array;
-  }> = [];
-
-  let localHeadersTotal = 0;
-  let centralDirTotal = 0;
+  const localHeaderOffsets: number[] = [];
+  let localTotal = 0;
+  let directorySize = 0;
   for (const entry of entries) {
-    const nameLength = utf8Length(
-      entry.name,
-      `ZIP entry name ${JSON.stringify(entry.name)}`
-    );
-    if (entry.data.length > 0xffffffff) {
+    if (entry.nameBytes.length > MAX_ZIP_FILENAME_BYTES) {
+      bundleRefusal(
+        `ZIP entry name ${JSON.stringify(entry.name)} exceeds the ZIP filename byte limit`
+      );
+    }
+    if (entry.uncompressedSize > 0xffffffff) {
       bundleRefusal(`ZIP entry ${entry.name} exceeds the ZIP32 size limit`);
     }
-    const nameBytes = TEXT_ENCODER.encode(entry.name);
-    const compressed =
-      entry.method === 8
-        ? deflateRawSync(entry.data, { level: 9 })
-        : entry.data;
-    if (compressed.length > 0xffffffff) {
+    if (entry.compressedSize > 0xffffffff) {
       bundleRefusal(
         `Compressed ZIP entry ${entry.name} exceeds the ZIP32 size limit`
       );
     }
-
-    localHeadersTotal = checkedAdd(
-      localHeadersTotal,
-      checkedAdd(30 + nameLength, compressed.length, 'ZIP local header size'),
+    localHeaderOffsets.push(localTotal);
+    localTotal = checkedAdd(
+      localTotal,
+      checkedAdd(
+        ZIP_LOCAL_HEADER_BYTES + entry.nameBytes.length,
+        entry.compressedSize,
+        'ZIP local header size'
+      ),
       'ZIP local headers'
     );
-    centralDirTotal = checkedAdd(
-      centralDirTotal,
-      46 + nameLength,
+    directorySize = checkedAdd(
+      directorySize,
+      ZIP_CENTRAL_HEADER_BYTES + entry.nameBytes.length,
       'ZIP central directory'
     );
-    prepared.push({ entry, nameBytes, crc: crc32(entry.data), compressed });
   }
 
   const totalSize = checkedAdd(
-    checkedAdd(localHeadersTotal, centralDirTotal, 'ZIP archive size'),
-    22,
+    checkedAdd(localTotal, directorySize, 'ZIP archive size'),
+    ZIP_END_BYTES,
     'ZIP archive size'
   );
   if (totalSize > maxArchiveBytes) {
@@ -201,71 +311,99 @@ export function buildZipArchive(
       `Generated .otioz archive size (${totalSize} bytes) exceeds limit of ${maxArchiveBytes} bytes`
     );
   }
+  return {
+    localHeaderOffsets,
+    directoryOffset: localTotal,
+    directorySize,
+    totalSize,
+  };
+}
 
-  const buffer = new Uint8Array(totalSize);
-  const view = new DataView(
-    buffer.buffer,
-    buffer.byteOffset,
-    buffer.byteLength
+/** Writes one entry's local header and compressed payload, and returns its directory record. */
+function writeZipEntry(
+  archive: Uint8Array,
+  offset: number,
+  nameBytes: Uint8Array,
+  method: 0 | 8,
+  data: Uint8Array,
+  compressed: Uint8Array
+): ZipEntryRecord {
+  const record: ZipEntryRecord = {
+    nameBytes,
+    method,
+    crc32: crc32(data),
+    compressedSize: compressed.length,
+    uncompressedSize: data.length,
+    localHeaderOffset: offset,
+  };
+  writeZipLocalHeader(archive, offset, record);
+  archive.set(compressed, offset + ZIP_LOCAL_HEADER_BYTES + nameBytes.length);
+  return record;
+}
+
+/** Writes the central directory and the end record after the local entries. */
+function writeZipDirectory(
+  archive: Uint8Array,
+  layout: ZipLayout,
+  records: readonly ZipEntryRecord[]
+): Uint8Array {
+  let cursor = layout.directoryOffset;
+  for (const record of records) {
+    cursor += writeZipCentralRecord(archive, cursor, record);
+  }
+  writeZipEnd(archive, cursor, {
+    entryCount: records.length,
+    directorySize: layout.directorySize,
+    directoryOffset: layout.directoryOffset,
+    comment: new Uint8Array(0),
+  });
+  return archive;
+}
+
+/**
+ * Build a standard deterministic ZIP archive. Count and size validation happen
+ * before any archive-sized allocation.
+ */
+export function buildZipArchive(
+  entries: readonly ZipFileEntry[],
+  maxArchiveBytes = PLAINTEXT_CAP_BYTES
+): Uint8Array {
+  assertZipEntryCount(entries.length);
+  const prepared = entries.map((entry) => {
+    utf8Length(entry.name, `ZIP entry name ${JSON.stringify(entry.name)}`);
+    return {
+      name: entry.name,
+      nameBytes: TEXT_ENCODER.encode(entry.name),
+      method: entry.method,
+      data: entry.data,
+      compressed:
+        entry.method === 8
+          ? deflateRawSync(entry.data, { level: 9 })
+          : entry.data,
+    };
+  });
+  const layout = planZipLayout(
+    prepared.map((item) => ({
+      name: item.name,
+      nameBytes: item.nameBytes,
+      method: item.method,
+      compressedSize: item.compressed.length,
+      uncompressedSize: item.data.length,
+    })),
+    maxArchiveBytes
   );
-  let localCursor = 0;
-  const localHeaderOffsets: number[] = [];
-
-  for (const item of prepared) {
-    const offset = localCursor;
-    localHeaderOffsets.push(offset);
-    view.setUint32(offset + 0, 0x04034b50, true);
-    view.setUint16(offset + 4, 20, true);
-    view.setUint16(offset + 6, ZIP_UTF8_FILENAME_FLAG, true);
-    view.setUint16(offset + 8, item.entry.method, true);
-    view.setUint16(offset + 10, dosTime, true);
-    view.setUint16(offset + 12, dosDate, true);
-    view.setUint32(offset + 14, item.crc, true);
-    view.setUint32(offset + 18, item.compressed.length, true);
-    view.setUint32(offset + 22, item.entry.data.length, true);
-    view.setUint16(offset + 26, item.nameBytes.length, true);
-    view.setUint16(offset + 28, 0, true);
-    buffer.set(item.nameBytes, offset + 30);
-    buffer.set(item.compressed, offset + 30 + item.nameBytes.length);
-    localCursor += 30 + item.nameBytes.length + item.compressed.length;
-  }
-
-  const centralDirectoryOffset = localCursor;
-  let centralCursor = centralDirectoryOffset;
-  for (let index = 0; index < prepared.length; index++) {
-    const item = prepared[index]!;
-    const localOffset = localHeaderOffsets[index]!;
-    view.setUint32(centralCursor + 0, 0x02014b50, true);
-    view.setUint16(centralCursor + 4, 0x0014, true);
-    view.setUint16(centralCursor + 6, 20, true);
-    view.setUint16(centralCursor + 8, ZIP_UTF8_FILENAME_FLAG, true);
-    view.setUint16(centralCursor + 10, item.entry.method, true);
-    view.setUint16(centralCursor + 12, dosTime, true);
-    view.setUint16(centralCursor + 14, dosDate, true);
-    view.setUint32(centralCursor + 16, item.crc, true);
-    view.setUint32(centralCursor + 20, item.compressed.length, true);
-    view.setUint32(centralCursor + 24, item.entry.data.length, true);
-    view.setUint16(centralCursor + 28, item.nameBytes.length, true);
-    view.setUint16(centralCursor + 30, 0, true);
-    view.setUint16(centralCursor + 32, 0, true);
-    view.setUint16(centralCursor + 34, 0, true);
-    view.setUint16(centralCursor + 36, 0, true);
-    view.setUint32(centralCursor + 38, 0, true);
-    view.setUint32(centralCursor + 42, localOffset, true);
-    buffer.set(item.nameBytes, centralCursor + 46);
-    centralCursor += 46 + item.nameBytes.length;
-  }
-
-  const centralDirectorySize = centralCursor - centralDirectoryOffset;
-  view.setUint32(centralCursor + 0, 0x06054b50, true);
-  view.setUint16(centralCursor + 4, 0, true);
-  view.setUint16(centralCursor + 6, 0, true);
-  view.setUint16(centralCursor + 8, entries.length, true);
-  view.setUint16(centralCursor + 10, entries.length, true);
-  view.setUint32(centralCursor + 12, centralDirectorySize, true);
-  view.setUint32(centralCursor + 16, centralDirectoryOffset, true);
-  view.setUint16(centralCursor + 20, 0, true);
-  return buffer;
+  const archive = new Uint8Array(layout.totalSize);
+  const records = prepared.map((item, index) =>
+    writeZipEntry(
+      archive,
+      layout.localHeaderOffsets[index]!,
+      item.nameBytes,
+      item.method,
+      item.data,
+      item.compressed
+    )
+  );
+  return writeZipDirectory(archive, layout, records);
 }
 
 interface CollectedMedia {
@@ -493,11 +631,12 @@ function isNotFound(error: unknown): boolean {
   return error.code === 'ENOENT';
 }
 
-async function readHeldFile(
+/** Refuses a file whose size is not representable or exceeds the remaining budget. */
+function heldSize(
   file: ConfinedBundleFile,
   relativePath: string,
   maxBytes: number
-): Promise<Uint8Array> {
+): number {
   const size = file.size;
   if (!Number.isSafeInteger(size) || size < 0) {
     bundleRefusal(`Securely opened ${relativePath} has an invalid fstat size`);
@@ -507,18 +646,10 @@ async function readHeldFile(
       `Securely opened ${relativePath} size (${size} bytes) exceeds remaining bundle limit of ${maxBytes} bytes`
     );
   }
-  const bytes = await file.readBounded(maxBytes);
-  if (!(bytes instanceof Uint8Array)) {
-    bundleRefusal(`Securely opened ${relativePath} returned non-byte data`);
-  }
-  if (bytes.length > maxBytes || bytes.length !== size) {
-    bundleRefusal(
-      `Securely opened ${relativePath} changed while being read or exceeded its byte budget`
-    );
-  }
-  return bytes;
+  return size;
 }
 
+/** content.otio: the size is checked, then one exact allocation is read into. */
 async function readRegular(
   root: ConfinedBundleDirectory,
   relativePath: string,
@@ -526,48 +657,106 @@ async function readRegular(
 ): Promise<Uint8Array> {
   const file = await root.openRegular(relativePath);
   try {
-    return await readHeldFile(file, relativePath, maxBytes);
+    const bytes = new Uint8Array(heldSize(file, relativePath, maxBytes));
+    await file.readInto(bytes);
+    return bytes;
   } finally {
     await file.close();
   }
 }
 
-async function readMediaRegular(
+interface ProbedMedia {
+  readonly openedPath: string;
+  readonly size: number;
+}
+
+interface PlannedMedia {
+  readonly name: string;
+  readonly nameBytes: Uint8Array;
+  readonly relative: string;
+  readonly openedPath: string;
+  readonly size: number;
+}
+
+/**
+ * Pass 1: open a referenced file through the pinned root, size it, and close it.
+ * The alternate media/ root is compatibility only. It is never a response to a
+ * symlink, non-directory component, permission problem, or special file.
+ */
+async function probeMediaRegular(
   root: ConfinedBundleDirectory,
   relativePath: string,
   maxBytes: number
-): Promise<Uint8Array> {
+): Promise<ProbedMedia> {
   let file: ConfinedBundleFile;
   let openedPath = relativePath;
   try {
     file = await root.openRegular(relativePath);
   } catch (error) {
-    // The alternate media/ root is compatibility only. It is never a response
-    // to a symlink, non-directory component, permission problem, or special file.
     if (!isNotFound(error) || relativePath.startsWith('media/')) throw error;
     openedPath = `media/${relativePath}`;
     file = await root.openRegular(openedPath);
   }
   try {
-    return await readHeldFile(file, openedPath, maxBytes);
+    return { openedPath, size: heldSize(file, openedPath, maxBytes) };
   } finally {
     await file.close();
   }
 }
 
+/** Pass 2: reopen a sized file through the pinned root and fill its archive slot. */
+async function readPlannedMedia(
+  root: ConfinedBundleDirectory,
+  media: PlannedMedia,
+  target: Uint8Array
+): Promise<void> {
+  let file: ConfinedBundleFile;
+  try {
+    file = await root.openRegular(media.openedPath);
+  } catch (error) {
+    throw new PublishError(
+      'source_unreadable',
+      `Could not securely read referenced media ${media.relative}: ${(error as Error).message}`
+    );
+  }
+  try {
+    if (file.size !== media.size) {
+      bundleRefusal(
+        `Securely opened ${media.openedPath} changed while being read`
+      );
+    }
+    try {
+      await file.readInto(target);
+    } catch (error) {
+      throw new PublishError(
+        'source_unreadable',
+        `Could not securely read referenced media ${media.relative}: ${(error as Error).message}`
+      );
+    }
+  } finally {
+    await file.close();
+  }
+}
+
+/** Fixed-entry framing plus the ZIP structures that must fit before media is read. */
 function baseZipHeaderBytes(): number {
   return (
     ZIP_ENTRY_HEADER_BYTES +
     utf8Length('content.otio', 'content.otio') * 2 +
     ZIP_ENTRY_HEADER_BYTES +
     utf8Length('version.txt', 'version.txt') * 2 +
-    22
+    ZIP_END_BYTES
   );
 }
 
 /**
  * Securely package an .otiod directory into a standard deterministic .otioz.
  * Every descendant read remains attached to the root descriptor opened below.
+ *
+ * Pass 1 sizes each referenced file through the pinned root and closes it, so
+ * the layout and the single archive allocation are decided before any media byte
+ * is read. Pass 2 reopens each file through the same root and reads it straight
+ * into its archive slot.
  */
 export async function bundleOtiod(
   directoryPath: string,
@@ -629,15 +818,13 @@ export async function bundleOtiod(
       ),
     });
 
-    const mediaEntries: Array<{
-      readonly name: OtioBundleEntryName;
-      readonly data: Uint8Array;
-    }> = [];
+    // Pass 1: size every referenced file through the pinned root. No media byte is read.
+    const planned: PlannedMedia[] = [];
     for (const archivePath of Array.from(mediaRefMap.keys()).sort()) {
       const media = mediaRefMap.get(archivePath)!;
-      let fileBytes: Uint8Array;
+      let probed: ProbedMedia;
       try {
-        fileBytes = await readMediaRegular(
+        probed = await probeMediaRegular(
           root,
           media.relative,
           limit - aggregateUncompressed
@@ -650,23 +837,92 @@ export async function bundleOtiod(
           `Could not securely read referenced media ${media.relative}: ${(error as Error).message}`
         );
       }
-      aggregateUncompressed += fileBytes.length;
-      mediaEntries.push({ name: archivePath, data: fileBytes });
+      aggregateUncompressed += probed.size;
+      planned.push({
+        name: archivePath,
+        nameBytes: TEXT_ENCODER.encode(archivePath),
+        relative: media.relative,
+        openedPath: probed.openedPath,
+        size: probed.size,
+      });
     }
 
-    const zipEntries: ZipFileEntry[] = [
-      { name: 'content.otio', data: contentOtioBytes, method: 8 },
-      { name: 'version.txt', data: VERSION_BYTES, method: 8 },
-      ...mediaEntries.map((entry) => ({
-        name: entry.name,
-        data: entry.data,
-        method: 0 as const,
-      })),
+    // The layout comes from sizes alone. Entry count, names, ZIP32 limits, and
+    // the exact total are refused here, before the one archive allocation.
+    const contentName = TEXT_ENCODER.encode('content.otio');
+    const versionName = TEXT_ENCODER.encode('version.txt');
+    const contentCompressed = deflateRawSync(contentOtioBytes, { level: 9 });
+    const versionCompressed = deflateRawSync(VERSION_BYTES, { level: 9 });
+    const layout = planZipLayout(
+      [
+        {
+          name: 'content.otio',
+          nameBytes: contentName,
+          method: 8,
+          compressedSize: contentCompressed.length,
+          uncompressedSize: contentOtioBytes.length,
+        },
+        {
+          name: 'version.txt',
+          nameBytes: versionName,
+          method: 8,
+          compressedSize: versionCompressed.length,
+          uncompressedSize: VERSION_BYTES.length,
+        },
+        ...planned.map((media) => ({
+          name: media.name,
+          nameBytes: media.nameBytes,
+          method: 0 as const,
+          compressedSize: media.size,
+          uncompressedSize: media.size,
+        })),
+      ],
+      limit
+    );
+    const archive = new Uint8Array(layout.totalSize);
+    const records: ZipEntryRecord[] = [
+      writeZipEntry(
+        archive,
+        layout.localHeaderOffsets[0]!,
+        contentName,
+        8,
+        contentOtioBytes,
+        contentCompressed
+      ),
+      writeZipEntry(
+        archive,
+        layout.localHeaderOffsets[1]!,
+        versionName,
+        8,
+        VERSION_BYTES,
+        versionCompressed
+      ),
     ];
-    const zipBytes = buildZipArchive(zipEntries, limit);
+
+    // Pass 2: each file is reopened through the same pinned root and read into its slot.
+    for (let index = 0; index < planned.length; index++) {
+      const media = planned[index]!;
+      const offset = layout.localHeaderOffsets[index + 2]!;
+      const dataStart =
+        offset + ZIP_LOCAL_HEADER_BYTES + media.nameBytes.length;
+      const target = archive.subarray(dataStart, dataStart + media.size);
+      await readPlannedMedia(root, media, target);
+      const record: ZipEntryRecord = {
+        nameBytes: media.nameBytes,
+        method: 0,
+        crc32: crc32(target),
+        compressedSize: media.size,
+        uncompressedSize: media.size,
+        localHeaderOffset: offset,
+      };
+      writeZipLocalHeader(archive, offset, record);
+      records.push(record);
+    }
+
+    writeZipDirectory(archive, layout, records);
 
     try {
-      await indexOtioZip(zipBytes, {
+      await indexOtioZip(archive, {
         maxExpandedBytes: limit,
         maxInflatedBytes: MAX_INFLATED_ZIP_BYTES,
         inflater: async (compressed, _uncompressedSize, maxBytes) =>
@@ -681,7 +937,7 @@ export async function bundleOtiod(
 
     const base = files.basename(resolvedDir);
     return {
-      bytes: zipBytes,
+      bytes: archive,
       defaultFilename: base.toLowerCase().endsWith('.otiod')
         ? `${base.slice(0, -6)}.otioz`
         : `${base}.otioz`,

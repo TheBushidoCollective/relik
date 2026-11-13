@@ -418,6 +418,34 @@ input.on('data', (chunk) => {
     await rm(fakeBinPath, { force: true });
   });
 
+  test('kills a browser that never answers Browser.close and waits for exit', async () => {
+    if (!isPosix) return;
+    const fakeBinPath = path.join(
+      tmpdir(),
+      `fake-wedged-chrome-${Date.now()}.mjs`
+    );
+    const script = `#!/usr/bin/env node
+import fs from 'node:fs';
+const input = fs.createReadStream(null, { fd: 3 });
+const output = fs.createWriteStream(null, { fd: 4 });
+input.on('data', chunk => {
+  if (chunk.toString('utf8').includes('Browser.getVersion'))
+    output.write(JSON.stringify({id:1,result:{product:'MockChrome/120.0'}})+'\\0');
+});
+`;
+    await writeFile(fakeBinPath, script, { mode: 0o755 });
+    try {
+      const running = await launchChrome(fakeBinPath, {
+        startupTimeoutMs: 3000,
+      });
+      expect(running.pid).toBeDefined();
+      await running.close();
+      expect(() => process.kill(running.pid!, 0)).toThrow();
+    } finally {
+      await rm(fakeBinPath, { force: true });
+    }
+  }, 15000);
+
   test('throws ChromeLaunchError on early exit and captures stderr tail', async () => {
     if (!isPosix) return;
 

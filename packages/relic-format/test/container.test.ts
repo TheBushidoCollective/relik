@@ -5,6 +5,7 @@ import {
   decryptContentRange,
   encryptedSize,
   encryptRelic,
+  encryptRelicParts,
   envelopePrefixLength,
   openEnvelope,
   openRelic,
@@ -574,5 +575,140 @@ describe('the envelope fits record 0 alone', () => {
   test('the maximum header is well inside the production record size', () => {
     expect(MAX_HEADER_BYTES).toBe(1301);
     expect(MAX_HEADER_BYTES).toBeLessThan(recordCapacity(RECORD_SIZE));
+  });
+});
+
+describe('encryptRelicParts', () => {
+  const key = generateKey();
+  const salt = new Uint8Array(16).fill(3);
+  const partRs = 128;
+  const partCapacity = recordCapacity(partRs);
+  const content = bytes(partCapacity * 20 + 13, 11);
+  const base = {
+    filename: 'a.bin',
+    mimetype: 'application/octet-stream',
+    key,
+    rs: partRs,
+    salt,
+  };
+
+  function joinParts(parts: readonly Uint8Array[]): Uint8Array {
+    const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+    let at = 0;
+    for (const part of parts) {
+      out.set(part, at);
+      at += part.length;
+    }
+    return out;
+  }
+
+  /** Splits `content` at each cut, which must be strictly increasing. */
+  function splitAt(cuts: readonly number[]): Uint8Array[] {
+    const points = [0, ...cuts, content.length];
+    const parts: Uint8Array[] = [];
+    for (let i = 0; i + 1 < points.length; i++) {
+      parts.push(content.subarray(points[i], points[i + 1]));
+    }
+    return parts;
+  }
+
+  // The contiguous writer is kept here as an independent reference for the
+  // multipart record assembly, rather than calling encryptRelic, which delegates
+  // to encryptRelicParts.
+  async function contiguousReference(
+    contentBytes: Uint8Array
+  ): Promise<Uint8Array> {
+    const keys = await deriveKeys(key, salt);
+    const envelope = encodeEnvelope({
+      version: FORMAT_VERSION,
+      entries: [
+        {
+          filename: base.filename,
+          mimetype: base.mimetype,
+          offset: 0,
+          length: contentBytes.length,
+        },
+      ],
+    });
+    const result = new Uint8Array(
+      encryptedSize(contentBytes.length, partRs, envelope.length)
+    );
+    const header = encodeHeader(salt, partRs);
+    result.set(header);
+    let offset = header.length;
+    if (contentBytes.length === 0) {
+      result.set(await encryptRecord(keys, 0, envelope, true), offset);
+      return result;
+    }
+    const first = await encryptRecord(keys, 0, envelope, false, partCapacity);
+    result.set(first, offset);
+    offset += first.length;
+    const count = Math.ceil(contentBytes.length / partCapacity);
+    for (let index = 0; index < count; index++) {
+      const start = index * partCapacity;
+      const record = await encryptRecord(
+        keys,
+        index + 1,
+        contentBytes.subarray(start, start + partCapacity),
+        index === count - 1
+      );
+      result.set(record, offset);
+      offset += record.length;
+    }
+    return result;
+  }
+
+  async function expectParity(parts: readonly Uint8Array[]): Promise<void> {
+    const joined = joinParts(parts);
+    const expected = await contiguousReference(joined);
+    const actual = await encryptRelicParts({ ...base, parts });
+    expect(actual).toEqual(expected);
+    const opened = await openRelic(actual, key);
+    expect(opened.content).toEqual(joined);
+  }
+
+  test('no parts encrypts the same as empty content', async () => {
+    await expectParity([]);
+  });
+
+  test('one part encrypts the same as the content', async () => {
+    await expectParity([content]);
+  });
+
+  test('an empty part first changes nothing', async () => {
+    await expectParity([new Uint8Array(0), content]);
+  });
+
+  test('a split at every record boundary, and one byte either side, matches', async () => {
+    const cuts = new Set<number>();
+    for (let k = 1; k * partCapacity <= content.length; k++) {
+      for (const delta of [-1, 0, 1]) {
+        const cut = k * partCapacity + delta;
+        if (cut > 0 && cut < content.length) cuts.add(cut);
+      }
+    }
+    expect(cuts.size).toBeGreaterThanOrEqual(3 * 19);
+    for (const cut of [...cuts].sort((a, b) => a - b)) {
+      await expectParity(splitAt([cut]));
+    }
+  });
+
+  test('1-byte parts across three records match', async () => {
+    const head = Array.from({ length: partCapacity * 3 }, (_, i) =>
+      content.subarray(i, i + 1)
+    );
+    await expectParity([...head, content.subarray(partCapacity * 3)]);
+  });
+
+  test('a content range of at least 20 records is spanned by the test', () => {
+    expect(content.length).toBeGreaterThanOrEqual(20 * partCapacity);
+  });
+
+  test('501 references to one 1 MiB buffer are refused before allocation', async () => {
+    const mib = new Uint8Array(1024 * 1024);
+    const parts = Array.from({ length: 501 }, () => mib);
+    await expect(encryptRelicParts({ ...base, parts })).rejects.toBeInstanceOf(
+      ContentTooLargeError
+    );
   });
 });

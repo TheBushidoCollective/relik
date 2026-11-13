@@ -92,7 +92,7 @@ export async function planCover(
   }
 
   const declaredMimetype = guessMimetype(source.filename, source.rendererClass);
-  const routeDecision = routeFor(
+  const routeDecision = await routeFor(
     source.filename,
     declaredMimetype,
     source.bytes

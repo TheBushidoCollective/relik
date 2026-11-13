@@ -55,7 +55,9 @@
   "overrides": [
     {
       "includes": [
-        "packages/relic-format/test/fixtures/otio/expected-oracle.json"
+        "packages/relic-format/test/fixtures/otio/expected-oracle.json",
+        "packages/relic-format/test/fixtures/otio/edge-cases/playback-boundaries-oracle.json",
+        "packages/relic-format/test/fixtures/otio/scheduled-audio.otiod/media/sample-oracle.json"
       ],
       "formatter": {
         "enabled": false

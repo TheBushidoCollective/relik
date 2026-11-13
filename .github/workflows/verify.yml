@@ -21,7 +21,7 @@ env:
 jobs:
   verify:
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 45
 
     steps:
       - uses: actions/checkout@v4
@@ -75,6 +75,12 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      # The program oracle runs in the unit suite and needs the pinned OTIO runner.
+      - name: Install pinned uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.8.22"
+
       - name: Lint
         run: bun run lint
 
@@ -118,10 +124,6 @@ jobs:
       # Official OpenTimelineIO 0.18.1 conformance. The generator derives
       # expected ranges from the pinned library, not from this repo's
       # evaluator. A mismatch here is a real disagreement with the standard.
-      - name: Install pinned uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          version: "0.8.22"
 
       - name: Install headless Chrome
         run: |
@@ -149,8 +151,11 @@ jobs:
           uv run --with opentimelineio==0.18.1 python3 scripts/generate-otio-fixtures.py --check
           bash scripts/generate-otio-media.sh --check
 
-      # Loopback-only path. The script prints OTIO_PATH_OK only after the
-      # browser, official reader, and fresh MCP readback all pass.
+      # Loopback-only path. This job runs every stage except the legacy
+      # scheduled-audio ones, and the script prints
+      # OTIO_PATH_WITHOUT_SCHEDULED_AUDIO_OK only after the browser, official
+      # reader, and fresh MCP readback all pass. The scheduled-audio stages run
+      # in otio-scheduled-audio.yml, which reports and does not block.
       - name: Prepare OTIO browser proof receipt
         run: mkdir -p "$OTIO_BROWSER_PROOF_DIR"
 
@@ -165,6 +170,7 @@ jobs:
       - name: OTIO path
         env:
           RELIC_OTIO_SHOTS_DIR: ${{ github.workspace }}/otio-path-shots
+          RELIC_OTIO_PATH_SCOPE: without-scheduled-audio
         run: |
           set -euo pipefail
           command -v ffmpeg >/dev/null
@@ -176,6 +182,25 @@ jobs:
             env -u DISPLAY -u WAYLAND_DISPLAY \
               bun packages/relic-mcp/test/otio-path.ts \
               2>&1 | tee "$OTIO_BROWSER_PROOF_DIR/otio-path.log"
+
+      # Proof-only three-slot viewer: the production source with one exact landmark pinned
+      # to the old fixed ring. Never a product build; the build fails if the landmark is
+      # absent or duplicated. The forced run must refuse at the measured high latency.
+      - name: Build three-slot proof viewer
+        run: |
+          set -euo pipefail
+          bun packages/relic-mcp/test/proof-viewer-three-slot.ts "$RUNNER_TEMP/relic-viewer-three-slot"
+
+      - name: OTIO three-slot forced refusal
+        run: |
+          set -euo pipefail
+          RELIC_VIEWER_DIST="$RUNNER_TEMP/relic-viewer-three-slot" \
+          RELIC_OTIO_PROOF_VIEWER_MANIFEST="$RUNNER_TEMP/relic-viewer-three-slot/proof-viewer-manifest.json" \
+          RELIC_OTIO_PATH_CLIENT=source \
+            RELIC_OTIO_CHROME_PATH="$(command -v google-chrome)" \
+            env -u DISPLAY -u WAYLAND_DISPLAY \
+              bun packages/relic-mcp/test/otio-path.ts \
+              2>&1 | tee "$OTIO_BROWSER_PROOF_DIR/otio-path-three-slot.log"
 
 
       - name: Load progress path

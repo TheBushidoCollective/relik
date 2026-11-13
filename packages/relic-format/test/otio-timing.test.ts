@@ -2,10 +2,14 @@ import { describe, expect, test } from 'bun:test';
 import { readOtioDocument } from '../src/otio-identity.ts';
 import {
   addRationalTimes,
+  audioScheduleForOtioRange,
+  otioAudioSampleLattice,
   compareRationalTimes,
+  classifyOtioTransition,
   evaluateOtioAt,
   intersectRanges,
   markersForOtioTimeline,
+  otioPlaybackBoundaries,
   otioSamplingMap,
   rangeContainsTime,
   rescaleTime,
@@ -359,7 +363,13 @@ describe('otio-timing evaluator and source spans', () => {
 
     expect(outClip?.transition_weight).toBeCloseTo(0.5, 5);
     expect(inClip?.transition_weight).toBeCloseTo(0.5, 5);
-    expect(outClip?.transition_type).toBe('SMPTE_Dissolve');
+    expect(evalResult.active_transitions).toEqual([
+      expect.objectContaining({
+        node_id: expect.any(String),
+        track_id: 'track_v1',
+        render_kind: 'smpte-dissolve',
+      }),
+    ]);
   });
 
   test('sourceSpansForOtioRange returns clips, the transition, and handles', () => {
@@ -2537,5 +2547,435 @@ describe('OTIO held image sequence resource bounds and evaluation memoization', 
         contrib.diagnostics.some((d) => d.message.includes('was not searched'))
       ).toBe(false);
     }
+  });
+});
+
+describe('transition admission and boundary scheduling', () => {
+  function documentWithTransition(type: string | undefined, kind = 'Video') {
+    const transition = {
+      ...transitionNode('transition', 6, 4),
+      transition_type: type,
+    };
+    const track = {
+      ...trackNode('track', [
+        clipNode('before', 'Before', 0, 24, 0, 48),
+        transition,
+        clipNode('after', 'After', 0, 24, 0, 48),
+      ]),
+      kind,
+    };
+    return readOtioDocument(
+      JSON.stringify({
+        OTIO_SCHEMA: 'Timeline.1',
+        metadata: { relic: { id: 'timeline' } },
+        tracks: { OTIO_SCHEMA: 'Stack.1', children: [track] },
+      })
+    );
+  }
+
+  test('only the exact standard schema and type are supported', () => {
+    const node = requiredNode(
+      documentWithTransition('SMPTE_Dissolve'),
+      'transition'
+    );
+    expect(classifyOtioTransition(node)).toBe('smpte-dissolve');
+    expect(classifyOtioTransition({ ...node, schema: 'Transition.2' })).toBe(
+      'opaque'
+    );
+    const { transition_type: _type, ...missingType } = node;
+    expect(classifyOtioTransition(missingType)).toBe('opaque');
+    for (const type of ['', 'SMPTE_Dissolve_custom', 'custom dissolve']) {
+      expect(classifyOtioTransition({ ...node, transition_type: type })).toBe(
+        'opaque'
+      );
+    }
+  });
+
+  test('opaque video and audio transitions use the editorial cut and report context', () => {
+    for (const kind of ['Video', 'Audio']) {
+      for (const type of [undefined, '', 'custom dissolve']) {
+        const doc = documentWithTransition(type, kind);
+        for (const [frame, expected] of [
+          [23, 'before'],
+          [24, 'after'],
+        ] as const) {
+          const evaluated = evaluateOtioAt(doc, 'timeline', {
+            value: frame,
+            rate: 24,
+          });
+          const contributions =
+            kind === 'Audio'
+              ? evaluated.audio_contributions
+              : evaluated.video_contributions;
+          expect(contributions.map((item) => item.node_id)).toEqual([expected]);
+          expect(contributions[0]?.transition_weight).toBe(1);
+          expect(evaluated.active_transitions).toEqual([
+            {
+              node_id: 'transition',
+              track_id: 'track',
+              ancestry: expect.arrayContaining([
+                'timeline',
+                'track',
+                'transition',
+              ]),
+              render_kind: 'opaque',
+            },
+          ]);
+          expect(
+            evaluated.diagnostics.some(
+              (item) =>
+                item.code === 'unsupported-effect' &&
+                item.target?.node_id === 'transition'
+            )
+          ).toBe(true);
+        }
+      }
+    }
+  });
+
+  test('nested audio transitions are recorded without relying on video leaves', () => {
+    const audioTrack = {
+      ...trackNode('nested-audio', [
+        clipNode('nested-before', 'Before', 0, 24, 0, 48),
+        { ...transitionNode('nested-transition', 6, 4), transition_type: '' },
+        clipNode('nested-after', 'After', 0, 24, 0, 48),
+      ]),
+      kind: 'Audio',
+    };
+    const doc = readOtioDocument(
+      timelineWithTrack('timeline', 'outer', [
+        stackNode('nested-stack', [audioTrack]),
+      ])
+    );
+    const result = evaluateOtioAt(doc, 'timeline', { value: 24, rate: 24 });
+    expect(result.video_contributions).toEqual([]);
+    expect(result.active_transitions).toEqual([
+      expect.objectContaining({
+        node_id: 'nested-transition',
+        track_id: 'nested-audio',
+        render_kind: 'opaque',
+        ancestry: expect.arrayContaining([
+          'outer',
+          'nested-stack',
+          'nested-audio',
+          'nested-transition',
+        ]),
+      }),
+    ]);
+    expect(result.audio_contributions.map((item) => item.node_id)).toEqual([
+      'nested-after',
+    ]);
+  });
+
+  test('a transition between gaps remains active without a media contribution', () => {
+    const gap = (id: string) => ({
+      OTIO_SCHEMA: 'Gap.1',
+      metadata: { relic: { id } },
+      source_range: rangeFromEndpoints(0, 24),
+    });
+    const doc = readOtioDocument(
+      timelineWithTrack('timeline', 'track', [
+        gap('before'),
+        { ...transitionNode('transition', 6, 4), transition_type: '' },
+        gap('after'),
+      ])
+    );
+    const evaluated = evaluateOtioAt(doc, 'timeline', { value: 24, rate: 24 });
+    expect(evaluated.video_contributions).toEqual([]);
+    expect(evaluated.active_transitions[0]).toMatchObject({
+      node_id: 'transition',
+      track_id: 'track',
+      render_kind: 'opaque',
+    });
+  });
+
+  test('boundaries retain exposure, cut and mixed-rate deduplication', () => {
+    const doc = documentWithTransition('SMPTE_Dissolve');
+    const boundaries = otioPlaybackBoundaries(doc, 'timeline', {
+      start_time: { value: 36, rate: 48 },
+      duration: { value: 20, rate: 48 },
+    });
+    expect(
+      boundaries.map((entry) => entry.time.value / entry.time.rate)
+    ).toEqual([18 / 24, 24 / 24, 28 / 24]);
+    expect(
+      boundaries.every((entry) => entry.node_ids.includes('transition'))
+    ).toBe(true);
+    expect(boundaries[1]?.node_ids).toEqual(
+      expect.arrayContaining(['before', 'after'])
+    );
+  });
+
+  test('an ancestor trim does not restart the dissolve curve', () => {
+    const doc = readOtioDocument(
+      timelineWithTrack(
+        'timeline',
+        'track',
+        [
+          clipNode('before', 'Before', 0, 24, 0, 48),
+          transitionNode('transition', 6, 4),
+          clipNode('after', 'After', 0, 24, 0, 48),
+        ],
+        rangeFromEndpoints(20, 30)
+      )
+    );
+    const result = evaluateOtioAt(doc, 'timeline', { value: 2, rate: 24 });
+    expect(result.active_transitions[0]?.render_kind).toBe('smpte-dissolve');
+    expect(
+      result.video_contributions.find((item) => item.node_id === 'after')
+        ?.transition_weight
+    ).toBeCloseTo(0.4);
+  });
+});
+
+describe('interval audio schedule', () => {
+  function audioDocument(trim?: OtioTimeRange) {
+    return readOtioDocument(
+      JSON.stringify({
+        OTIO_SCHEMA: 'Timeline.1',
+        metadata: { relic: { id: 'timeline' } },
+        tracks: {
+          OTIO_SCHEMA: 'Stack.1',
+          children: [
+            {
+              ...trackNode(
+                'audio',
+                [
+                  clipNode('before', 'Before', 24, 48, 0, 120),
+                  transitionNode('fade', 6, 4),
+                  clipNode('after', 'After', 48, 72, 0, 120),
+                ],
+                trim
+              ),
+              kind: 'Audio',
+            },
+          ],
+        },
+      })
+    );
+  }
+
+  test('matches point traversal at boundaries and retains untrimmed fade after trim', () => {
+    const doc = audioDocument(rangeFromEndpoints(20, 30));
+    const scope = rangeFromEndpoints(0, 10);
+    const spans = audioScheduleForOtioRange(doc, 'timeline', scope);
+    for (const frame of [0, 1, 3, 4, 7, 9]) {
+      const time = { value: frame, rate: 24 };
+      const actual = evaluateOtioAt(doc, 'timeline', time).audio_contributions;
+      const active = spans.filter(
+        (span) =>
+          rangeContainsTime(span.timeline_range, time) &&
+          span.disposition === 'media'
+      );
+      expect(active.map((span) => span.node_id).sort()).toEqual(
+        actual.map((item) => item.node_id).sort()
+      );
+      for (const item of actual) {
+        const span = active.find(
+          (candidate) => candidate.node_id === item.node_id
+        )!;
+        const gain = span.gain_factors.reduce((value, factor) => {
+          const u =
+            (timeToSeconds(time) - timeToSeconds(factor.range.start_time)) /
+            timeToSeconds(factor.range.duration);
+          return value * (factor.direction === 'in' ? u : 1 - u);
+        }, 1);
+        expect(gain).toBeCloseTo(item.transition_weight);
+        expect(span.source_mapping?.source_origin).toBeDefined();
+      }
+    }
+    const fades = spans.flatMap((span) => span.gain_factors);
+    expect(fades.length).toBeGreaterThan(0);
+    expect(fades.every((factor) => factor.range.start_time.value < 0)).toBe(
+      true
+    );
+    expect(
+      new Set(
+        spans
+          .filter((span) => span.node_id === 'before')
+          .map((span) => span.occurrence)
+      ).size
+    ).toBe(1);
+  });
+
+  test('distinguishes missing media, authored silence, and exact sample boundaries', () => {
+    const doc = readOtioDocument(
+      JSON.stringify({
+        OTIO_SCHEMA: 'Timeline.1',
+        metadata: { relic: { id: 'timeline' } },
+        tracks: {
+          OTIO_SCHEMA: 'Stack.1',
+          children: [
+            {
+              ...trackNode('audio', [
+                clipNode('a', 'A', 24, 48, 12, 120),
+                {
+                  OTIO_SCHEMA: 'Gap.1',
+                  source_range: rangeFromEndpoints(0, 24),
+                },
+                {
+                  ...clipNode('missing', 'Missing', 0, 24, 0, 120),
+                  media_reference: { OTIO_SCHEMA: 'MissingReference.1' },
+                },
+              ]),
+              kind: 'Audio',
+            },
+          ],
+        },
+      })
+    );
+    const spans = audioScheduleForOtioRange(
+      doc,
+      'timeline',
+      rangeFromEndpoints(0, 72)
+    );
+    const media = spans.find((span) => span.node_id === 'a')!;
+    expect(media.disposition).toBe('media');
+    expect(otioAudioSampleLattice(media, 48000)).toMatchObject({
+      eligible: true,
+      timeline_start: 0,
+      timeline_end: 48000,
+      source_start: 24000,
+      source_end: 72000,
+    });
+    expect(spans.some((span) => span.disposition === 'silence')).toBe(true);
+    expect(spans.find((span) => span.node_id === 'missing')?.disposition).toBe(
+      'unavailable'
+    );
+    expect(
+      otioAudioSampleLattice(
+        {
+          ...media,
+          timeline_range: {
+            start_time: { value: 1, rate: 96000 },
+            duration: { value: 1, rate: 24 },
+          },
+        },
+        48000
+      ).eligible
+    ).toBe(false);
+    expect(
+      otioAudioSampleLattice(
+        {
+          ...media,
+          source_mapping: {
+            ...media.source_mapping!,
+            scalar: 2,
+          },
+        },
+        48000
+      ).eligible
+    ).toBe(false);
+  });
+  test('preserves independent same-file voices and multiplied nested fades', () => {
+    const shared = clipNode('a', 'A', 24, 48, 0, 120).media_reference;
+    const a = {
+      ...clipNode('a', 'A', 24, 48, 0, 120),
+      media_reference: shared,
+    };
+    const b = {
+      ...clipNode('b', 'B', 48, 72, 0, 120),
+      media_reference: shared,
+    };
+    const inner = {
+      ...trackNode('inner-audio', [a, transitionNode('inner-fade', 6, 4), b]),
+      kind: 'Audio',
+    };
+    const group = stackNode('group', [inner]);
+    const other = stackNode('other', [
+      {
+        ...trackNode('other-audio', [
+          { ...clipNode('c', 'C', 24, 72, 0, 120), media_reference: shared },
+        ]),
+        kind: 'Audio',
+      },
+    ]);
+    const doc = readOtioDocument(
+      timelineWithTrack('timeline', 'outer', [
+        group,
+        transitionNode('outer-fade', 6, 4),
+        other,
+      ])
+    );
+    const spans = audioScheduleForOtioRange(
+      doc,
+      'timeline',
+      rangeFromEndpoints(0, 60)
+    );
+    const aSpan = spans.find((span) => span.node_id === 'a');
+    const bSpan = spans.find((span) => span.node_id === 'b');
+    expect(aSpan?.bundle_path).toBe(bSpan?.bundle_path);
+    expect(aSpan?.occurrence).not.toBe(bSpan?.occurrence);
+    for (const tick of [
+      0, 35999, 36000, 47999, 48000, 83999, 84000, 95999, 96000,
+    ]) {
+      const t = { value: tick, rate: 48000 };
+      const contributions = evaluateOtioAt(
+        doc,
+        'timeline',
+        t
+      ).audio_contributions;
+      const scheduled = spans.filter(
+        (span) =>
+          span.disposition === 'media' &&
+          rangeContainsTime(span.timeline_range, t)
+      );
+      expect(scheduled.map((span) => span.node_id).sort()).toEqual(
+        contributions.map((item) => item.node_id).sort()
+      );
+      for (const item of contributions) {
+        const span = scheduled.find(
+          (candidate) => candidate.node_id === item.node_id
+        )!;
+        const gain = span.gain_factors.reduce((product, factor) => {
+          const position =
+            (timeToSeconds(t) - timeToSeconds(factor.range.start_time)) /
+            timeToSeconds(factor.range.duration);
+          return (
+            product * (factor.direction === 'in' ? position : 1 - position)
+          );
+        }, 1);
+        expect(gain).toBeCloseTo(item.transition_weight);
+      }
+    }
+  });
+  test('does not invent child media outside an untrimmed nested stack', async () => {
+    const text = await Bun.file(
+      new URL(
+        './fixtures/otio/scheduled-audio.otiod/content.otio',
+        import.meta.url
+      )
+    ).text();
+    const authored = JSON.parse(text);
+    const outer = authored.tracks.children[0];
+    const incoming = outer.children[2];
+    const doc = readOtioDocument(text);
+    const at = { value: 57, rate: 30 };
+    expect(
+      evaluateOtioAt(doc, 'scheduled-audio', at).audio_contributions.map(
+        (item) => item.node_id
+      )
+    ).toContain('scheduled-b1');
+    expect(
+      audioScheduleForOtioRange(doc, 'scheduled-audio', {
+        start_time: at,
+        duration: { value: 1, rate: 30 },
+      }).some((span) => span.node_id === 'scheduled-b1')
+    ).toBe(true);
+    incoming.source_range = null;
+    const withoutHandles = readOtioDocument(JSON.stringify(authored));
+    expect(
+      evaluateOtioAt(
+        withoutHandles,
+        'scheduled-audio',
+        at
+      ).audio_contributions.map((item) => item.node_id)
+    ).not.toContain('scheduled-b1');
+    expect(
+      audioScheduleForOtioRange(withoutHandles, 'scheduled-audio', {
+        start_time: at,
+        duration: { value: 1, rate: 30 },
+      }).some((span) => span.node_id === 'scheduled-b1')
+    ).toBe(false);
   });
 });

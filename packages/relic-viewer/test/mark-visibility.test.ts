@@ -198,6 +198,36 @@ describe('concealMarks', () => {
     expect(concealMarks(marks, everything).has('c4')).toBe(false);
     expect(marks[0]!.node.getAttribute(CONCEALED_ATTRIBUTE)).toBeNull();
   });
+
+  test('a mark that is its own subject is drawn again once only this rule hides it', () => {
+    // The stylesheet takes a hidden mark out of layout, so this stub loses its
+    // box to the attribute the way an element does in a browser.
+    class SelfHiding extends StubElement {
+      shown = false;
+      override getClientRects(): { length: number } {
+        return {
+          length:
+            this.shown && this.getAttribute(CONCEALED_ATTRIBUTE) !== 'hidden'
+              ? 1
+              : 0,
+        };
+      }
+    }
+    const body = el('body');
+    const node = body.append(new SelfHiding('button')) as SelfHiding;
+    node.setAttribute('data-comment-id', 'c5');
+    const marks: ConcealableMark[] = [
+      { node: node as unknown as Element, subject: node as unknown as Element },
+    ];
+    expect(concealMarks(marks, everything).get('c5')).toBe('hidden');
+    expect(node.getAttribute(CONCEALED_ATTRIBUTE)).toBe('hidden');
+    // Still hidden for its own reason: the attribute is written back.
+    expect(concealMarks(marks, everything).get('c5')).toBe('hidden');
+    expect(node.getAttribute(CONCEALED_ATTRIBUTE)).toBe('hidden');
+    node.shown = true;
+    expect(concealMarks(marks, everything).has('c5')).toBe(false);
+    expect(node.getAttribute(CONCEALED_ATTRIBUTE)).toBeNull();
+  });
 });
 
 describe('createScrollportWatch', () => {

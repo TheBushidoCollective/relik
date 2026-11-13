@@ -161,6 +161,20 @@ export interface OtioDocumentV1 {
 
 export type OtioSampleKind = 'media' | 'black';
 
+export type OtioTransitionRenderKind = 'smpte-dissolve' | 'opaque';
+
+export interface OtioActiveTransition {
+  readonly node_id: string;
+  readonly track_id: string;
+  readonly ancestry: readonly string[];
+  readonly render_kind: OtioTransitionRenderKind;
+}
+
+export interface OtioPlaybackBoundary {
+  readonly time: OtioRationalTime;
+  readonly node_ids: readonly string[];
+}
+
 export interface OtioVideoContribution {
   readonly track_id: string;
   readonly track_index: number;
@@ -173,7 +187,6 @@ export interface OtioVideoContribution {
   readonly source_frame?: number;
   readonly alpha: number;
   readonly transition_weight: number;
-  readonly transition_type?: string;
   readonly active_effects: readonly OtioEffect[];
   readonly diagnostics: readonly OtioDiagnostic[];
   readonly ancestry: readonly string[];
@@ -190,7 +203,6 @@ export interface OtioAudioContribution {
   readonly source_time: OtioRationalTime;
   readonly volume: number;
   readonly transition_weight: number;
-  readonly transition_type?: string;
   readonly active_effects: readonly OtioEffect[];
   readonly diagnostics: readonly OtioDiagnostic[];
   readonly ancestry: readonly string[];
@@ -231,6 +243,7 @@ export interface OtioEvaluationResult {
   readonly video_contributions: readonly OtioVideoContribution[];
   readonly audio_contributions: readonly OtioAudioContribution[];
   readonly active_markers: readonly OtioTimelineMarker[];
+  readonly active_transitions: readonly OtioActiveTransition[];
   readonly diagnostics: readonly OtioDiagnostic[];
   /** Null when the selected timeline has no video stack to composite. */
   readonly video_composition: OtioVideoComposition | null;
@@ -245,6 +258,40 @@ export interface OtioSourceMapping {
   readonly source_origin: OtioRationalTime;
   readonly scalar: number;
 }
+
+/** A linear fade in original, untrimmed composition coordinates. */
+export interface OtioAudioGainFactor {
+  readonly range: OtioTimeRange;
+  readonly direction: 'in' | 'out';
+}
+
+/**
+ * One occurrence over a half-open composition interval. Multiple spans with
+ * the same occurrence are the same voice, not independent clip instances.
+ * Gain factors multiply, and remain in untrimmed transition coordinates.
+ */
+export interface OtioAudioScheduleSpan {
+  readonly occurrence: string;
+  readonly node_id: string;
+  readonly track_id: string;
+  readonly bundle_path: OtioBundleEntryName | null;
+  readonly timeline_range: OtioTimeRange;
+  readonly source_mapping: OtioSourceMapping | null;
+  readonly gain_factors: readonly OtioAudioGainFactor[];
+  readonly disposition: 'media' | 'silence' | 'unavailable';
+  readonly diagnostics: readonly OtioDiagnostic[];
+}
+
+/** Integer sample coordinates, or a reason this interval cannot be scheduled exactly. */
+export type OtioAudioSampleLattice =
+  | {
+      readonly eligible: true;
+      readonly timeline_start: number;
+      readonly timeline_end: number;
+      readonly source_start: number;
+      readonly source_end: number;
+    }
+  | { readonly eligible: false; readonly reason: string };
 
 export interface OtioSourceSpan {
   readonly timeline_id: string;
@@ -314,6 +361,8 @@ export type InflaterFn = (
 
 export interface OtioZipEntryInfo {
   readonly name: string;
+  /** Decoded central-directory name, before normalization. */
+  readonly rawName: string;
   readonly method: number;
   readonly compressedSize: number;
   readonly uncompressedSize: number;
@@ -322,8 +371,19 @@ export interface OtioZipEntryInfo {
   readonly isDirectory: boolean;
 }
 
+/** The central directory as the end-of-central-directory record declares it. */
+export interface OtioZipDirectory {
+  /** Central directory start, which is also the end of the local-entry region. */
+  readonly offset: number;
+  readonly size: number;
+  readonly entryCount: number;
+  /** Archive size is `offset + size + 22 + commentLength`. */
+  readonly commentLength: number;
+}
+
 export interface OtioZipIndex {
   readonly entries: ReadonlyMap<string, OtioZipEntryInfo>;
+  readonly directory: OtioZipDirectory;
   readonly versionText: string;
   readonly contentOtioBytes: Uint8Array;
   readonly contentSha256: string;

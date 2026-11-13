@@ -174,6 +174,7 @@ const operatorTokens = new Map([['operator-token', 'test-operator-secret']]);
 const fakeNow = Date.now();
 
 let handler: ((request: Request) => Promise<Response>) | undefined;
+const commentDeletes: Array<{ path: string; status: number }> = [];
 const service = Bun.serve({
   port: 0,
   async fetch(request) {
@@ -240,7 +241,14 @@ handler = async (request: Request): Promise<Response> => {
       headers: { 'content-type': 'application/octet-stream' },
     });
   }
-  return app.fetch(request);
+  const response = await app.fetch(request);
+  if (
+    request.method === 'DELETE' &&
+    /^\/api\/relics\/[^/]+\/comments\/[^/]+$/.test(url.pathname)
+  ) {
+    commentDeletes.push({ path: url.pathname, status: response.status });
+  }
+  return response;
 };
 
 async function sha256Hex(value: string): Promise<string> {
@@ -277,6 +285,8 @@ async function callMcp(
       RELIC_PUBLISH_STATE: statePath,
       RELIC_CLIENT_NAME: 'relic-mcp/comment-popover-path',
       RELIC_CHROME_PATH: 'none',
+      // Explicit: this fixture is source-only in this test, independent of the platform.
+      RELIC_OTIO_CHROME_PATH: 'none',
     },
     stdin: 'pipe',
     stdout: 'pipe',
@@ -597,6 +607,10 @@ async function openBrowser(
                 offerButtonRect: r ? { left: r.left, top: r.top, width: r.width, height: r.height } : null,
                 elementFromPoint: el?.outerHTML?.slice(0, 100),
                 cardHtml: card?.outerHTML?.slice(0, 200),
+                otioReady: document.querySelector('.otio-view')?.dataset?.ready,
+                otioPreviewState: document.querySelector('.otio-view')?.dataset?.previewState,
+                otioProgramState: document.querySelector('.otio-view')?.getAttribute('data-otio-program-state'),
+                otioProgramReason: document.querySelector('.otio-view')?.getAttribute('data-otio-program-reason'),
               };
             })()`);
             console.error(
@@ -2281,9 +2295,28 @@ console.log('Testing Class 9: OTIO...');
     scheme: 'light',
   });
   try {
+    // This fixture is intentionally unsupported: an enabled unsupported effect
+    // and a dissolve keep the view's readiness at 'diagnostic', never 'true',
+    // and the test publishes with no renderer, so the program is unavailable.
+    // Assert that exact settled state; do not wait for 'true'.
     await session.waitFor(
-      "document.querySelector('.otio-view')?.dataset?.ready === 'true'",
+      "(() => { const v = document.querySelector('.otio-view'); return !!v && v.dataset.ready === 'diagnostic' && v.dataset.previewState === 'unavailable' && v.getAttribute('data-otio-program-state') === 'unavailable' && v.getAttribute('data-otio-program-reason') === 'unsupported-browser'; })()",
       25000
+    );
+    const commentButtonBox = await session.evaluate<{
+      width: number;
+      height: number;
+    } | null>(`(() => {
+      const b = document.querySelector('button.otio-comment-selection');
+      if (!b) return null;
+      const r = b.getBoundingClientRect();
+      return { width: r.width, height: r.height };
+    })()`);
+    assert.ok(
+      commentButtonBox &&
+        commentButtonBox.width > 0 &&
+        commentButtonBox.height > 0,
+      'OTIO comment button is not visible in the unavailable view'
     );
     // Open composer via selection Comment button
     await session.evaluate(`(() => {
@@ -2323,8 +2356,325 @@ console.log('Testing Class 9: OTIO...');
       cardSelector: '.popover-card[data-comment-id]',
       anchorSelector: '.otio-comment-mark[data-comment-id]',
     });
+
+    const otioId = new URL(getRelic('otio')).pathname
+      .split('/')
+      .filter(Boolean)
+      .at(-1);
+    assert.ok(otioId, 'OTIO relic ID missing');
+    const otioRows = await store.listComments(otioId);
+    assert.equal(otioRows.length, 1);
+    const otioComment = otioRows[0]!;
+    const otioDeletes = commentDeletes.length;
+    await session.waitFor(
+      `!!document.querySelector(${JSON.stringify(`.popover-card .comment-delete[data-delete-comment-id=${JSON.stringify(otioComment.id)}]`)})`
+    );
+    await session.evaluate(
+      `document.querySelector(${JSON.stringify(`.popover-card .comment-delete[data-delete-comment-id=${JSON.stringify(otioComment.id)}]`)}).click()`
+    );
+    await session.waitFor(
+      "!!document.querySelector('dialog.comment-delete-dialog[open]')"
+    );
+    await session.screenshot('delete-otio-confirm-desktop-light.png');
+    await session.evaluate(
+      "Array.from(document.querySelectorAll('dialog.comment-delete-dialog button')).find(b => b.textContent.trim() === 'Delete comment').click()"
+    );
+    await waitForCondition(
+      async () => (await store.listComments(otioId)).length === 0,
+      'OTIO comment deletion'
+    );
+    assert.deepEqual(commentDeletes.slice(otioDeletes), [
+      {
+        path: `/api/relics/${encodeURIComponent(otioId)}/comments/${encodeURIComponent(otioComment.id)}`,
+        status: 204,
+      },
+    ]);
+    await session.waitFor(
+      `!document.querySelector(${JSON.stringify(`.otio-comment-mark[data-comment-id=${JSON.stringify(otioComment.id)}]`)})`
+    );
+    await session.screenshot('delete-otio-result-desktop-light.png');
   } finally {
     await session.close();
+  }
+}
+
+// Deletion proof uses only the loopback app and its in-memory store. The
+// markdown comment created above gives this flow a real encrypted anchor.
+console.log('Testing comment deletion...');
+{
+  const relicId = new URL(getRelic('markdown')).pathname
+    .split('/')
+    .filter(Boolean)
+    .at(-1);
+  assert.ok(relicId, 'markdown relic ID missing');
+  const initial = await store.listComments(relicId);
+  assert.equal(
+    initial.length,
+    1,
+    'expected the markdown root from the earlier proof'
+  );
+  const root = initial[0]!;
+  const otherToken = await createSession('other@example.test');
+  const owner = await openBrowser(getRelic('markdown'), verifiedToken);
+  const other = await openBrowser(getRelic('markdown'), otherToken);
+  const rowSelector = (id: string): string =>
+    `.comment[data-comment-id=${JSON.stringify(id)}]`;
+  const deleteSelector = (id: string): string =>
+    `.comment-delete[data-delete-comment-id=${JSON.stringify(id)}]`;
+  const reload = async (session: BrowserSession): Promise<void> => {
+    await session.send('Page.reload');
+    await session.waitFor("document.querySelectorAll('.doc p').length >= 3");
+  };
+  const openRoot = async (session: BrowserSession): Promise<void> => {
+    await session.waitFor(
+      `!!document.querySelector(${JSON.stringify(`mark.relic-text-mark[data-comment-id=${JSON.stringify(root.id)}]`)})`
+    );
+    await session.evaluate(
+      `document.querySelector(${JSON.stringify(`mark.relic-text-mark[data-comment-id=${JSON.stringify(root.id)}]`)}).click()`
+    );
+    await session.waitFor(
+      "!!document.querySelector('.popover-card .popover-reply')"
+    );
+  };
+  const reply = async (
+    session: BrowserSession,
+    text: string
+  ): Promise<void> => {
+    const before = (await store.listComments(relicId)).length;
+    await openRoot(session);
+    await session.evaluate(`(() => {
+      document.querySelector('.popover-reply').click();
+      const field = document.querySelector('.popover-card textarea.popover-field');
+      field.value = ${JSON.stringify(text)};
+      field.dispatchEvent(new Event('input', { bubbles: true }));
+      document.querySelector('.popover-card .popover-action.is-primary').click();
+    })()`);
+    await waitForCondition(
+      async () => (await store.listComments(relicId)).length === before + 1,
+      `storing ${text}`
+    );
+    await session.waitFor(
+      `document.querySelector('.popover-card')?.textContent.includes(${JSON.stringify(text)})`
+    );
+  };
+  const showDialog = async (
+    session: BrowserSession,
+    id: string
+  ): Promise<void> => {
+    await session.waitFor(
+      `!!document.querySelector(${JSON.stringify(deleteSelector(id))})`
+    );
+    await session.evaluate(
+      `document.querySelector(${JSON.stringify(deleteSelector(id))}).click()`
+    );
+    await session.waitFor(
+      "!!document.querySelector('dialog.comment-delete-dialog[open]')"
+    );
+  };
+  const dialogButton = (label: string): string =>
+    `Array.from(document.querySelectorAll('dialog.comment-delete-dialog button')).find(b => b.textContent.trim() === ${JSON.stringify(label)})`;
+  try {
+    await reply(owner, 'Own reply for deletion proof');
+    const ownReply = (await store.listComments(relicId)).find(
+      (row) => row.id !== root.id && row.author === root.author
+    );
+    assert.ok(ownReply, 'own reply was not stored');
+    await reply(other, 'Other reader reply survives');
+    const foreignReply = (await store.listComments(relicId)).find(
+      (row) => row.author === 'other@example.test'
+    );
+    assert.ok(foreignReply, 'other reader reply was not stored');
+
+    await reload(owner);
+    await openRoot(owner);
+    await owner.waitFor(
+      `!!document.querySelector(${JSON.stringify(deleteSelector(ownReply.id))})`
+    );
+    assert.equal(
+      await owner.evaluate<boolean>(
+        `!!document.querySelector(${JSON.stringify(deleteSelector(foreignReply.id))})`
+      ),
+      false,
+      'another reader’s reply exposed a Delete control'
+    );
+    const beforeUnauthorized = await store.listComments(relicId);
+    const refused = await other.evaluate<number>(
+      `fetch(${JSON.stringify(`/api/relics/${encodeURIComponent(relicId)}/comments/${encodeURIComponent(root.id)}`)}, { method: 'DELETE' }).then(r => r.status)`
+    );
+    assert.equal(refused, 403, 'other reader must not delete the root');
+    assert.deepEqual(await store.listComments(relicId), beforeUnauthorized);
+
+    const beforeCancel = commentDeletes.length;
+    await showDialog(owner, ownReply.id);
+    assert.equal(
+      await owner.evaluate<boolean>(
+        `${dialogButton('Cancel')} === document.activeElement`
+      ),
+      true,
+      'confirmation must focus Cancel'
+    );
+    const copy = await owner.evaluate<string>(
+      "document.querySelector('dialog.comment-delete-dialog').textContent"
+    );
+    assert.match(copy, /replies will stay/i);
+    assert.match(copy, /no undo/i);
+    await owner.screenshot('delete-confirm-desktop-light.png');
+    await owner.setViewport(1440, 900, 'dark');
+    await owner.screenshot('delete-confirm-desktop-dark.png');
+    await owner.setViewport(1440, 900, 'light');
+    await owner.evaluate(`${dialogButton('Cancel')}.click()`);
+    assert.equal(commentDeletes.length, beforeCancel, 'cancel sent a DELETE');
+    assert.deepEqual(await store.listComments(relicId), beforeUnauthorized);
+
+    await owner.setViewport(320, 800, 'dark');
+    await showDialog(owner, ownReply.id);
+    await owner.screenshot('delete-confirm-mobile-dark.png');
+    await owner.setViewport(320, 800, 'light');
+    await owner.screenshot('delete-confirm-mobile-light.png');
+    await owner.setViewport(320, 800, 'dark');
+    // A synthetic KeyboardEvent has no native dialog default action.
+    await owner.send('Input.dispatchKeyEvent', {
+      type: 'keyDown',
+      key: 'Escape',
+      code: 'Escape',
+      windowsVirtualKeyCode: 27,
+      nativeVirtualKeyCode: 27,
+    });
+    await owner.send('Input.dispatchKeyEvent', {
+      type: 'keyUp',
+      key: 'Escape',
+      code: 'Escape',
+      windowsVirtualKeyCode: 27,
+      nativeVirtualKeyCode: 27,
+    });
+    await owner.waitFor(
+      "!document.querySelector('dialog.comment-delete-dialog[open]')"
+    );
+    assert.equal(commentDeletes.length, beforeCancel, 'Escape sent a DELETE');
+    await showDialog(owner, ownReply.id);
+    await owner.evaluate(`${dialogButton('Delete comment')}.click()`);
+    await waitForCondition(
+      async () =>
+        !(await store.listComments(relicId)).some(
+          (row) => row.id === ownReply.id
+        ),
+      'own reply deletion'
+    );
+    assert.deepEqual(commentDeletes.slice(beforeCancel), [
+      {
+        path: `/api/relics/${encodeURIComponent(relicId)}/comments/${encodeURIComponent(ownReply.id)}`,
+        status: 204,
+      },
+    ]);
+    assert.deepEqual(
+      await store.getComment(relicId, foreignReply.id),
+      foreignReply
+    );
+    await owner.waitFor(
+      `!document.querySelector(${JSON.stringify(rowSelector(ownReply.id))})`
+    );
+    await owner.screenshot('delete-reply-mobile-dark.png');
+
+    // Delete the root from the sidebar. Its surviving reply must be visible,
+    // with its original ciphertext unchanged, both before and after reload.
+    await owner.setViewport(1440, 900, 'light');
+    await owner.evaluate(`(() => {
+      const toggle = document.querySelector('.thread-toggle');
+      if (toggle?.getAttribute('aria-expanded') !== 'true') toggle?.click();
+    })()`);
+    await owner.pressEscape();
+    await owner.waitFor("!document.querySelector('.popover-card')");
+    await showDialog(owner, root.id);
+    await owner.evaluate(`${dialogButton('Delete comment')}.click()`);
+    await waitForCondition(
+      async () =>
+        !(await store.listComments(relicId)).some((row) => row.id === root.id),
+      'root deletion'
+    );
+    await owner.waitFor(
+      `!document.querySelector(${JSON.stringify(rowSelector(root.id))})`
+    );
+    await owner.waitFor(
+      `!document.querySelector(${JSON.stringify(`mark.relic-text-mark[data-comment-id=${JSON.stringify(root.id)}]`)})`
+    );
+    await owner.waitFor(
+      `!!document.querySelector(${JSON.stringify(rowSelector(foreignReply.id))})`
+    );
+    assert.deepEqual(await store.listComments(relicId), [foreignReply]);
+    await owner.screenshot('delete-root-survivor-desktop-light.png');
+    await reload(owner);
+    await owner.waitFor(
+      `!!document.querySelector(${JSON.stringify(rowSelector(foreignReply.id))})`
+    );
+    assert.equal(
+      await owner.evaluate<boolean>(
+        `!!document.querySelector(${JSON.stringify(rowSelector(root.id))})`
+      ),
+      false,
+      'reload resurrected the deleted root'
+    );
+    assert.deepEqual(await store.listComments(relicId), [foreignReply]);
+    await owner.setViewport(320, 800, 'dark');
+    await owner.screenshot('delete-root-survivor-mobile-dark.png');
+
+    // The sidebar also supports freeform and unreadable own comments. Seed an
+    // unreadable ciphertext in the local store without inventing clear content.
+    const sealed = {
+      ...root,
+      id: crypto.randomUUID(),
+      ciphertext: 'unreadable-local-proof-ciphertext',
+    };
+    await store.putComment(sealed);
+    await reload(owner);
+    await owner.waitFor(
+      `!!document.querySelector(${JSON.stringify(deleteSelector(sealed.id))})`
+    );
+    await showDialog(owner, sealed.id);
+    assert.match(
+      await owner.evaluate<string>(
+        "document.querySelector('dialog.comment-delete-dialog').textContent"
+      ),
+      /comment text unavailable/i
+    );
+    await owner.evaluate(`${dialogButton('Delete comment')}.click()`);
+    await waitForCondition(
+      async () =>
+        !(await store.listComments(relicId)).some(
+          (row) => row.id === sealed.id
+        ),
+      'sealed comment deletion'
+    );
+    assert.deepEqual(await store.listComments(relicId), [foreignReply]);
+
+    await owner.evaluate(`(() => {
+      const toggle = document.querySelector('.thread-toggle');
+      if (toggle?.getAttribute('aria-expanded') !== 'true') toggle?.click();
+      const field = document.querySelector('.compose-textarea');
+      field.value = 'Freeform deletion proof';
+      field.dispatchEvent(new Event('input', { bubbles: true }));
+      field.closest('form').requestSubmit();
+    })()`);
+    await waitForCondition(
+      async () => (await store.listComments(relicId)).length === 2,
+      'freeform comment creation'
+    );
+    const freeform = (await store.listComments(relicId)).find(
+      (row) => row.id !== foreignReply.id
+    );
+    assert.ok(freeform, 'freeform comment was not stored');
+    await showDialog(owner, freeform.id);
+    await owner.evaluate(`${dialogButton('Delete comment')}.click()`);
+    await waitForCondition(
+      async () =>
+        !(await store.listComments(relicId)).some(
+          (row) => row.id === freeform.id
+        ),
+      'freeform comment deletion'
+    );
+    assert.deepEqual(await store.listComments(relicId), [foreignReply]);
+  } finally {
+    await owner.close();
+    await other.close();
   }
 }
 

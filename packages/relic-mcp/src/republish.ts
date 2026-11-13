@@ -15,7 +15,7 @@ import {
   decodeKey,
   deriveRendererClass,
   deriveShareProof,
-  encryptRelic,
+  encryptRelicParts,
   isValidRelicId,
   modelFormatFromFilename,
   normalizeTitle,
@@ -40,7 +40,10 @@ import {
   putContainer,
   readSource,
   reportComplete,
+  challengeSizeLimit,
 } from './publish.ts';
+import type { ProgramReport } from './program/report.ts';
+import { buildProgramArchive, isOtioBundleName } from './program/build.ts';
 import {
   loadPublishState,
   type PublishState,
@@ -127,6 +130,8 @@ export interface RepublishResult {
    * counts.
    */
   readonly cover: CoverReport;
+  /** The program: rendered per timeline, or focus-only with the reasons. */
+  readonly program?: ProgramReport;
   readonly notify: boolean;
 }
 
@@ -404,12 +409,59 @@ export async function republish(
     );
   }
 
+  // The program and the server's cap are read after the comment gate, so a
+  // refused republish never reaches the network for them. An OTIO republish
+  // checks the source against the cap before any render, exactly as publish
+  // does, so both refuse the same file with the same reason. A non-OTIO
+  // republish makes no cap request.
+  const otio = isOtioBundleName(source.basename);
+  const challenge = otio
+    ? await postJson(deps, `${deps.serviceOrigin}/api/challenge`, {})
+    : undefined;
+  const sizeLimit =
+    challenge === undefined
+      ? Number.MAX_SAFE_INTEGER
+      : challengeSizeLimit(challenge);
+  const sizeBasis = String(challenge?.['size_basis']);
+  if (otio && source.bytes.length > sizeLimit) {
+    throw new PublishError(
+      'local_size_precheck_failed',
+      `${source.basename} is ${source.bytes.length} bytes, over the ` +
+        `${sizeLimit}-byte cap`,
+      {
+        size_limit_bytes: sizeLimit,
+        declared_size_bytes: source.bytes.length,
+        size_basis: sizeBasis,
+      }
+    );
+  }
+  const programBuild = await buildProgramArchive({
+    archive: source.bytes,
+    sourceName: source.basename,
+    sizeLimit,
+    policy: deps.programPolicy ?? { forceEncoderAbsent: false },
+    renderer: deps.renderProgram,
+    clientName: deps.clientName,
+  });
+  if (otio && programBuild.length > sizeLimit) {
+    throw new PublishError(
+      'local_size_precheck_failed',
+      `${source.basename} with its program is ${programBuild.length} bytes, over the ` +
+        `${sizeLimit}-byte cap`,
+      {
+        size_limit_bytes: sizeLimit,
+        declared_size_bytes: programBuild.length,
+        size_basis: sizeBasis,
+      }
+    );
+  }
+
   // The stored key, not a fresh one. This is the line that keeps the
   // existing share URL decrypting the new version; a fresh key here would
   // silently cut every recipient off from content they were told this link
   // carries.
-  const container = await encryptRelic({
-    content: source.bytes,
+  const container = await encryptRelicParts({
+    parts: programBuild.parts,
     filename,
     mimetype: guessMimetype(filename, rendererClass),
     key: decodeKey(state.key),
@@ -430,7 +482,7 @@ export async function republish(
     {
       publish_token: state.publish_token,
       renderer_class: rendererClass,
-      declared_size_bytes: source.bytes.length,
+      declared_size_bytes: programBuild.length,
       declared_ciphertext_bytes: container.length,
       title: normalizedTitle,
       ...(input.ttl_days === undefined ? {} : { ttl_days: input.ttl_days }),
@@ -566,5 +618,8 @@ export async function republish(
     ...(acknowledgements.length > 0 ? { acknowledgements } : {}),
     cover: coverReport,
     notify: input.notify !== false,
+    ...(programBuild.report.status === 'not_applicable'
+      ? {}
+      : { program: programBuild.report }),
   };
 }

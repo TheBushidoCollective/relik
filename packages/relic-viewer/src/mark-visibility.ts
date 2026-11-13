@@ -193,18 +193,45 @@ export function concealMarks(
   live = true
 ): ReadonlyMap<string, Concealment> {
   watch.sync(marks.map((mark) => mark.node));
-  // 'shown' marks a comment with at least one mark drawn, which conceals
-  // nothing however many of its marks are hidden.
-  const merged = new Map<string, Concealment | 'shown'>();
+  // A mark that is its own subject is taken out of layout by the hidden
+  // concealment itself. Left in place, the attribute would be the only thing
+  // hiding the mark and the reason it still tests as hidden, so it is lifted
+  // before anything is measured and written back below if the mark is hidden
+  // for a reason of its own.
+  if (live) {
+    for (const { node, subject } of marks) {
+      if (
+        subject === node &&
+        node.getAttribute(CONCEALED_ATTRIBUTE) === 'hidden'
+      )
+        node.removeAttribute(CONCEALED_ATTRIBUTE);
+    }
+  }
+  // Every mark is measured before any attribute is written, so one write
+  // cannot force layout for the next read.
+  const measured: {
+    node: Element;
+    id: string;
+    concealment: Concealment | 'shown';
+  }[] = [];
   for (const { node, subject } of marks) {
     const id = node.getAttribute('data-comment-id');
     if (id === null || id === '') continue;
-    const concealment: Concealment | 'shown' =
-      !live || !isRendered(subject)
-        ? 'hidden'
-        : !watch.inView(node)
-          ? 'offscreen'
-          : 'shown';
+    measured.push({
+      node,
+      id,
+      concealment:
+        !live || !isRendered(subject)
+          ? 'hidden'
+          : !watch.inView(node)
+            ? 'offscreen'
+            : 'shown',
+    });
+  }
+  // 'shown' marks a comment with at least one mark drawn, which conceals
+  // nothing however many of its marks are hidden.
+  const merged = new Map<string, Concealment | 'shown'>();
+  for (const { node, id, concealment } of measured) {
     setConcealed(node, concealment === 'shown' ? undefined : concealment);
     const previous = merged.get(id);
     merged.set(id, mergeReason(previous, concealment));

@@ -55,7 +55,7 @@ enum relic_read_result {
   RELIC_READ_ERROR = 2,
 };
 
-static napi_value relic_file_read(napi_env env, napi_callback_info info);
+static napi_value relic_file_read_into(napi_env env, napi_callback_info info);
 static napi_value relic_file_close(napi_env env, napi_callback_info info);
 static napi_value relic_root_open_regular(napi_env env, napi_callback_info info);
 static napi_value relic_root_close(napi_env env, napi_callback_info info);
@@ -475,7 +475,7 @@ static napi_value relic_make_file(napi_env env, int fd, off_t size) {
   napi_value size_value;
   napi_property_descriptor size_property;
   napi_property_descriptor methods[] = {
-    {"read", NULL, relic_file_read, NULL, NULL, NULL, napi_default, NULL},
+    {"readInto", NULL, relic_file_read_into, NULL, NULL, NULL, napi_default, NULL},
     {"close", NULL, relic_file_close, NULL, NULL, NULL, napi_default, NULL},
   };
 
@@ -761,27 +761,28 @@ static enum relic_read_result relic_probe_growth(
   }
 }
 
-static napi_value relic_file_read(napi_env env, napi_callback_info info) {
+static napi_value relic_file_read_into(napi_env env, napi_callback_info info) {
   size_t argc = 1;
   napi_value arguments[1];
   napi_value receiver;
+  napi_value result;
+  napi_value array_buffer;
   struct relic_file_handle *file;
-  napi_valuetype argument_type;
-  double maximum_as_double;
-  uint64_t maximum;
+  bool is_typedarray = false;
+  napi_typedarray_type array_type;
+  size_t element_count = 0;
+  size_t byte_offset = 0;
+  void *data = NULL;
   struct stat stat_before = {0};
   struct stat stat_after = {0};
-  size_t length;
-  void *buffer_data = NULL;
-  napi_value buffer;
   enum relic_read_result read_result;
   int read_error = 0;
 
   if (napi_get_cb_info(env, info, &argc, arguments, &receiver, NULL) != napi_ok || argc != 1) {
     return relic_throw_error(
       env,
-      "ERR_RELIC_NATIVE_SIZE_LIMIT",
-      "read requires exactly one nonnegative safe-integer maxBytes value"
+      "ERR_RELIC_NATIVE_INVALID_BUFFER",
+      "readInto requires exactly one Uint8Array target"
     );
   }
 
@@ -792,24 +793,38 @@ static napi_value relic_file_read(napi_env env, napi_callback_info info) {
   }
 
   if (
-    napi_typeof(env, arguments[0], &argument_type) != napi_ok ||
-    argument_type != napi_number ||
-    napi_get_value_double(env, arguments[0], &maximum_as_double) != napi_ok ||
-    !(maximum_as_double >= 0.0) ||
-    maximum_as_double > (double)RELIC_MAX_SAFE_INTEGER
+    napi_is_typedarray(env, arguments[0], &is_typedarray) != napi_ok ||
+    !is_typedarray ||
+    napi_get_typedarray_info(
+      env,
+      arguments[0],
+      &array_type,
+      &element_count,
+      &data,
+      &array_buffer,
+      &byte_offset
+    ) != napi_ok ||
+    array_type != napi_uint8_array
   ) {
     return relic_throw_error(
       env,
-      "ERR_RELIC_NATIVE_SIZE_LIMIT",
-      "read maxBytes must be a nonnegative safe integer"
+      "ERR_RELIC_NATIVE_INVALID_BUFFER",
+      "readInto requires a Uint8Array target"
     );
   }
-  maximum = (uint64_t)maximum_as_double;
-  if ((double)maximum != maximum_as_double) {
+
+  if (file->size < 0 || (uintmax_t)element_count != (uintmax_t)file->size) {
     return relic_throw_error(
       env,
       "ERR_RELIC_NATIVE_SIZE_LIMIT",
-      "read maxBytes must be a nonnegative safe integer"
+      "readInto target length must equal the confined file size"
+    );
+  }
+  if (element_count > 0 && data == NULL) {
+    return relic_throw_error(
+      env,
+      "ERR_RELIC_NATIVE_SIZE_LIMIT",
+      "readInto target is detached"
     );
   }
 
@@ -823,24 +838,8 @@ static napi_value relic_file_read(napi_env env, napi_callback_info info) {
       "confined file changed after it was opened"
     );
   }
-  if ((uintmax_t)file->size > maximum || (uintmax_t)file->size > SIZE_MAX) {
-    return relic_throw_error(
-      env,
-      "ERR_RELIC_NATIVE_SIZE_LIMIT",
-      "confined file exceeds the caller's read bound"
-    );
-  }
 
-  length = (size_t)file->size;
-  if (napi_create_buffer(env, length, &buffer_data, &buffer) != napi_ok) {
-    return relic_throw_error(
-      env,
-      "ERR_RELIC_NATIVE_SIZE_LIMIT",
-      "native secure-open could not allocate a bounded read buffer"
-    );
-  }
-
-  read_result = relic_read_exact(file->fd, buffer_data, length, &read_error);
+  read_result = relic_read_exact(file->fd, data, element_count, &read_error);
   if (read_result == RELIC_READ_ERROR) {
     return relic_throw_errno(env, read_error, "pread confined file");
   }
@@ -875,7 +874,8 @@ static napi_value relic_file_read(napi_env env, napi_callback_info info) {
     );
   }
 
-  return buffer;
+  if (napi_get_undefined(env, &result) != napi_ok) return NULL;
+  return result;
 }
 
 static napi_value relic_file_close(napi_env env, napi_callback_info info) {
@@ -900,7 +900,7 @@ NAPI_MODULE_INIT() {
 
   if (
     napi_define_properties(env, exports, 1, methods) != napi_ok ||
-    napi_create_uint32(env, 1, &abi_version) != napi_ok ||
+    napi_create_uint32(env, 2, &abi_version) != napi_ok ||
     napi_set_named_property(env, exports, "abiVersion", abi_version) != napi_ok
   ) {
     napi_throw_error(env, "ERR_RELIC_NATIVE_ABI_MISMATCH", "could not initialize native secure-open");

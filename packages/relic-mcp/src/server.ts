@@ -79,6 +79,7 @@ import { confirmDevice, enrollDevice } from './device.ts';
 import { loadPrivatePublishState } from './state.ts';
 import { readDecisions } from './decisions.ts';
 import { shareRelic } from './share.ts';
+import { type ProgramReport, programText } from './program/report.ts';
 
 export type { JsonRpcRequest, JsonRpcResponse };
 export {
@@ -282,6 +283,13 @@ export function formatCoverText(cover: CoverReport): string {
   return `Cover image: none. ${cover.detail} Link previews show the generic Relic card.`;
 }
 
+/** The program paragraph for a transcript, with its own trailing break, or nothing. */
+export function programParagraph(report: ProgramReport | undefined): string {
+  if (report === undefined) return '';
+  const text = programText(report);
+  return text === '' ? '' : `${text}\n\n`;
+}
+
 export const TOOL_DEFINITION = {
   name: TOOL_NAME,
   title: 'Publish a relic',
@@ -307,10 +315,12 @@ export const TOOL_DEFINITION = {
     'held-descriptor behavior, and replacement behavior are verified by the CI ' +
     'probe on the listed versions. A target or kernel that cannot satisfy that ' +
     'requirement refuses it rather than using a pathname fallback. A raw .otio ' +
-    'file or an existing .otioz archive is published ' +
-    'as given. OTIO covers use only the public title and format label; media ' +
-    'frames stay out of the unencrypted preview. Takes a filesystem path, never ' +
-    'inline content.',
+    'file is published as given, with no program. An .otioz archive or a packaged ' +
+    '.otiod gets a playable program per timeline on macOS: each is rendered here in a ' +
+    'headless browser under a macOS sandbox and packed in before encryption. On other ' +
+    'platforms, or where a timeline cannot be rendered, it is focus-only with a stated reason. OTIO covers use only the public title ' +
+    'and format label; media frames stay out of the unencrypted preview. Takes a ' +
+    'filesystem path, never inline content.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -452,8 +462,8 @@ export const REPUBLISH_TOOL_DEFINITION = {
     'held-descriptor behavior, and replacement behavior are verified by the CI ' +
     'probe on the listed versions. A target or kernel that cannot satisfy that ' +
     'requirement refuses it rather than using a pathname fallback. A raw .otio ' +
-    'file or an existing .otioz archive is republished ' +
-    'as given. OTIO covers use only the public title and format label; media ' +
+    'file is republished as given, with no program. An .otioz archive or a packaged ' +
+    '.otiod is rendered again per timeline on macOS, as publish does, and is focus-only elsewhere or where a timeline cannot be rendered. OTIO covers use only the public title and format label; media ' +
     'frames stay out of the unencrypted preview.' +
     REPUBLISH_DISCIPLINE_DISCLOSURE +
     ' Each new version emails a change notice, naming the title and version and never the key, to each verified commenter and each address added with relic_share, minus any that stopped emails; pass notify: false to skip it. At most one email per person per relic per 10 minutes, and one stop link stops every email about that relic.',
@@ -2331,6 +2341,7 @@ async function callTool(
                   : 'Published without a title, so a link preview shows only that it is a relic.'
               }\n\n` +
               `${formatCoverText(result.cover)}\n\n` +
+              programParagraph(result.program) +
               // No lifetime is the default, so the agent relaying this needs
               // a sentence that says so, not a date-shaped hole.
               (result.relic_expires_at === null
@@ -3105,6 +3116,7 @@ async function callRepublish(
                   : 'Published without a title, so a link preview shows only that it is a relic.'
               }\n\n` +
               `${formatCoverText(result.cover)}\n\n` +
+              programParagraph(result.program) +
               (result.relic_expires_at === null
                 ? 'The relic does not expire; it is kept until it is deleted.'
                 : `Expires ${result.relic_expires_at}.`) +
@@ -3894,6 +3906,55 @@ to the relic id. The share email carrying the full link is composed here on
 this machine for you to send from your own mailbox, so the key never reaches
 the service. Readers holding the link can also share from the viewer once the
 relic was published or republished by this client version.
+
+What the program adds: for an OpenTimelineIO bundle (.otioz, or a .otiod that
+is packaged first), this process renders each timeline to an H.264/AAC MP4 in
+an owned headless browser shell, with networking closed. Programs render on
+macOS only in this version. On Linux no browser starts, and every timeline is
+published focus-only with the reason "program rendering is confined only on
+macOS in this version, so this timeline has no program".
+
+On macOS each publish creates a private RAM volume and runs the headless shell
+under one deny-default macOS sandbox profile that applies to every process the
+shell starts. Chromium's own sandbox is off, because it cannot start inside that
+profile, so the profile is the containment. It allows writes only to the RAM
+volume; reads only of the system libraries, fonts, and the shell's own directory;
+no network; no home directory; the audio component registrar and one IOKit user
+client; and executing only the shell. GPU and hardware video decoding are
+disabled. Before
+every launch a probe runs twice: unconfined, where every access must succeed,
+then confined, where each outside write, read, exec and connection must be
+refused and the inside write must succeed. If either run deviates, or the volume
+cannot be created, no browser starts and every timeline is focus-only with that
+reason. The browser gets a minimal environment: HOME, the temporary and cache
+directories inside the volume, and a fixed PATH. Nothing else is inherited. Only
+a headless shell whose file layout matches the expected build is accepted.
+
+After rendering, this process unmounts and detaches its volume and removes only
+what it created. SIGINT and SIGTERM abort active renders and wait for browser
+and volume cleanup before exit. SIGKILL, power loss, and other forced termination
+cannot run cleanup; the RAM mount may persist until system cleanup or reboot.
+Within that volume the context is off-the-record, the HTTP
+cache is disabled, and no decoded media is written to a disk by this process.
+The MP4 is packed into the bundle before encryption, so it is encrypted like the
+source. A timeline that cannot be rendered here (no browser, no encoder, an
+unsupported effect, codec, or transition, missing media, or the size cap) is
+published focus-only, and the reason is written in the publish result and in the
+bundle's manifest. A publish that cannot deliver its manifest, or that finds
+relic/ entries already in the archive, is refused with the reason rather than
+degraded. Nothing is sent to a remote renderer, and no browser or encoder is
+installed or downloaded. Set RELIC_OTIO_CHROME_PATH to choose the browser, or to
+none to turn programs off.
+
+What the program does not cover: with Chromium's sandbox off, one profile covers
+every process the shell starts, so an exploit in a media decoder reaches
+everything that profile allows, though nothing beyond it. Seatbelt does not filter
+every system call, and its profile language is private and deprecated, so a
+future macOS release may change it; the per-launch probe then fails closed. The
+OS crash reporter sits outside the profile and can write crash details, including
+strings a compromised process chose, to ~/Library/Logs/DiagnosticReports. No claim
+is made about the operating system's swap. Anything readable inside the volume,
+such as the host name, could appear in the published MP4.
 
 What this does NOT protect against: the key is returned to your agent in the
 URL, so it enters the model's context and your session transcript. That is

@@ -22,6 +22,7 @@ export * from './mnemonic.ts';
 export * from './model.ts';
 export * from './otio-identity.ts';
 export * from './otio-json.ts';
+export * from './otio-program.ts';
 export * from './otio-sequence.ts';
 export * from './otio-timing.ts';
 export * from './otio-types.ts';

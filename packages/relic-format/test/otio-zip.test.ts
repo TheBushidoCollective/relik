@@ -1088,3 +1088,117 @@ describe('range-backed OTIO ZIP', () => {
     await expectZipFailure(badFlags, 'corrupt-archive');
   });
 });
+
+describe('central directory facts and raw names', () => {
+  const version = new TextEncoder().encode('1.0.0');
+  const document = new TextEncoder().encode('{"OTIO_SCHEMA":"Timeline.1"}');
+  const names = [
+    'version.txt',
+    'content.otio',
+    'media/',
+    'media\\clip.mp4',
+  ] as const;
+
+  function archiveFiles(): Uint8Array {
+    return createZipBuffer([
+      { name: 'version.txt', data: version },
+      { name: 'content.otio', data: document },
+      { name: 'media/', data: new Uint8Array(0) },
+      { name: 'media\\clip.mp4', data: new Uint8Array([1, 2, 3]) },
+    ]);
+  }
+
+  /** Appends an EOCD comment; the EOCD is the last 22 bytes of `zip`. */
+  function withComment(zip: Uint8Array, comment: Uint8Array): Uint8Array {
+    const out = new Uint8Array(zip.length + comment.length);
+    out.set(zip);
+    out.set(comment, zip.length);
+    new DataView(out.buffer).setUint16(zip.length - 2, comment.length, true);
+    return out;
+  }
+
+  test('the directory is what the end record declares, with and without a comment', async () => {
+    const plain = archiveFiles();
+    const cdSize = names.reduce(
+      (sum, name) => sum + 46 + new TextEncoder().encode(name).length,
+      0
+    );
+    const plainIndex = await indexOtioZip(plain);
+    expect(plainIndex.directory).toEqual({
+      offset: plain.length - 22 - cdSize,
+      size: cdSize,
+      entryCount: names.length,
+      commentLength: 0,
+    });
+
+    const comment = new TextEncoder().encode('archive comment');
+    const archive = withComment(plain, comment);
+    const index = await indexOtioZip(archive);
+    const { offset, size, entryCount, commentLength } = index.directory;
+    expect({ offset, size, entryCount, commentLength }).toEqual({
+      offset: plain.length - 22 - cdSize,
+      size: cdSize,
+      entryCount: names.length,
+      commentLength: comment.length,
+    });
+    expect(offset + size + 22 + commentLength).toBe(archive.length);
+  });
+
+  test('rawName keeps the decoded central-directory name beside the normalized key', async () => {
+    const index = await indexOtioZip(archiveFiles());
+    expect(index.entries.get('media/clip.mp4')?.rawName).toBe(
+      'media\\clip.mp4'
+    );
+    expect(index.entries.get('media')?.rawName).toBe('media/');
+    expect(index.entries.get('media')?.isDirectory).toBe(true);
+    expect(index.entries.get('content.otio')?.rawName).toBe('content.otio');
+  });
+
+  test('a digest is computed once per index and entry, including concurrent callers', async () => {
+    const media = Uint8Array.from(
+      { length: 3 * 1024 * 1024 + 7 },
+      (_, i) => (i * 7) & 0xff
+    );
+    const zip = createZipBuffer([
+      { name: 'version.txt', data: version },
+      { name: 'content.otio', data: document },
+      { name: 'media/clip.mp4', data: media },
+    ]);
+    const expected = createHash('sha256').update(media).digest('hex');
+
+    const makeSource = () => {
+      const reads: number[] = [];
+      return {
+        reads,
+        source: {
+          size: zip.length,
+          async read(start: number, end: number) {
+            reads.push(end - start);
+            return zip.subarray(start, end);
+          },
+        },
+      };
+    };
+
+    const single = makeSource();
+    const indexed = await indexOtioZip(single.source);
+    const singleBase = single.reads.length;
+    expect(await indexed.digestEntry('media/clip.mp4')).toBe(expected);
+    const singleCost = single.reads.length - singleBase;
+    expect(singleCost).toBeGreaterThan(0);
+    const afterFirst = single.reads.length;
+    expect(await indexed.digestEntry('media/clip.mp4')).toBe(expected);
+    expect(single.reads.length).toBe(afterFirst);
+
+    const concurrent = makeSource();
+    const other = await indexOtioZip(concurrent.source);
+    const concurrentBase = concurrent.reads.length;
+    const [a, b] = await Promise.all([
+      other.digestEntry('media/clip.mp4'),
+      other.digestEntry('media/clip.mp4'),
+    ]);
+    expect(a).toBe(expected);
+    expect(b).toBe(expected);
+    expect(concurrent.reads.length - concurrentBase).toBe(singleCost);
+  });
+});

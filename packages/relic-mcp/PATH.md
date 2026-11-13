@@ -439,6 +439,150 @@ Success ends with:
 OTIO_PATH_OK
 ```
 
+### The two slices CI runs
+
+`RELIC_OTIO_PATH_SCOPE` runs one slice of the path, and each slice accounts for exactly its own stages. Neither slice prints `OTIO_PATH_OK`.
+
+```bash
+RELIC_OTIO_PATH_SCOPE=without-scheduled-audio \
+RELIC_OTIO_PATH_CLIENT=source \
+RELIC_OTIO_CHROME_PATH="$(command -v google-chrome)" \
+env -u DISPLAY -u WAYLAND_DISPLAY \
+  bun packages/relic-mcp/test/otio-path.ts
+```
+
+ends with `OTIO_PATH_WITHOUT_SCHEDULED_AUDIO_OK`. It is every stage except the legacy scheduled-audio ones. `verify.yml` runs it, and `verify.yml` gates a merge and a deploy.
+
+One stage of this slice reruns. The viewer leaves native playback for its seek cadence when a native start fails twice, and on a shared runner it did so on the first attempt in 2 of 8 lanes of the `native-playback` stage (diagnostic runs 43447651105, 43450210844 and 43453480614). Nothing is injected in that stage, so it reruns in its own page, at most three times, under the rule Jason set on 2026-11-13 for interruptions the viewer itself reports. Each such attempt writes `native-playback-viewer-interruption-attempt<N>.json` and prints an `OTIO_VIEWER_INTERRUPTION label=native-playback` line, and a stage the viewer leaves on every attempt fails.
+
+```bash
+RELIC_OTIO_PATH_SCOPE=scheduled-audio \
+RELIC_OTIO_PATH_CLIENT=source \
+RELIC_OTIO_CHROME_PATH="$(command -v google-chrome)" \
+env -u DISPLAY -u WAYLAND_DISPLAY \
+  bun packages/relic-mcp/test/otio-path.ts
+```
+
+ends with `OTIO_SCHEDULED_AUDIO_OK`. It is the legacy scheduled-audio stages: native compatibility, scheduled PCM at 48 kHz and 44.1 kHz, the 60 fps cold start, the restart during start, and the boundary fixture's audio captures. `otio-scheduled-audio.yml` runs it on every pull request and on the pushes that deploy, as a separate run that uploads its receipts (`otio-scheduled-audio-linux`) and that nothing depends on.
+
+Jason decided this split on 2026-11-13 (`docs/decisions.md`). Those stages hold a legacy archive's scheduled playback to millisecond budgets, and a shared runner interrupts that playback within a minute of almost every attempt: 8 of 8 parallel lanes failed, from different timing causes, in diagnostic run 43383354503. A red `otio-scheduled-audio` run says the stages did not pass on that runner. Read its receipts before rerunning it, and do not treat it as evidence of a regression until they show a failure that is not the runner interrupting playback.
+
+Three rules apply inside that slice. A stage in which the viewer itself reports an interruption, with nothing injected by the proof, reruns in a fresh browser up to three times and keeps each trace; a stage interrupted on every attempt fails. The 50 ms p95 presentation budget is compared in display refreshes, so a frame held three refreshes (50.0 ms at 60 Hz) meets it and four refreshes (66.7 ms) exceed it; the 100 ms maximum is raw milliseconds. Scheduled 60 fps playback is not proven: the viewer falls back to native audio there, and the stage asserts that.
+
+## Rendered OpenTimelineIO program
+
+The publisher and viewer paths are implemented on PR 155. Release requires the checks below, including current-revision playback proof. The `OTIO_PATH_OK` run above covers legacy composition playback, not program rendering.
+
+Publishing a timeline must produce an archive that `format.md` 3.19 requires. Each of the following must hold.
+
+**Contents.** The archive contains `relic/program.json` and one MP4 per rendered timeline outside `content.otio`. The manifest is present on every archive published under this path.
+
+**Identity.** `content.otio`, `document_sha256`, and `relic_version` are unchanged from the composition path.
+
+**Size.** The plaintext archive fits within 500 MiB. Manifest and program bytes have a separate 100 MiB bound. The current renderer uses one 1280x720 output; the proposed resolution ladder is not implemented.
+
+**Reasons.** Every timeline that cannot be rendered records a specific code and reason. No approximate render is stored.
+
+The proof must check each of these before this section's status changes.
+
+**Check 1, decoding.** Each MP4 is decoded independently. Frame count, timestamps, audio length, and start alignment match the timeline.
+
+**Check 2, reference match.** Rendered frames and audio match independently prepared references made from the source media. The method and tolerance are fixed in the proof before it runs.
+
+**Check 3, refusal.** The viewer refuses a program on any failed check (schema, document digest, file hash, size, timing, or browser support) and shows focus-only with the reason.
+
+**Check 4, legacy and corrupt manifests.** Remove the manifest from one archive and confirm it plays as before. Flip one byte in the manifest and in one MP4 of another archive and confirm focus-only, never legacy playback.
+
+**Check 5, focus-only reasons.** An unsupported effect or transition, an oversized archive, a missing local Chrome, and a browser without H.264/AAC encoding each produce an unavailable timeline with its matching reason: `unsupported-effect` or `unsupported-transition`, `size-cap-exceeded`, `unsupported-browser`, and `encoder-unavailable`. A Linux publisher without H.264/AAC is focus-only under Jason's rule. A focus-only archive never contains a whole-timeline composite.
+
+**Check 6, budgets.** Cold and warm startup within 350 ms. Steady presentation p95 within 50 ms with a 100 ms maximum gap. Source-aware audio dropout within 20 ms. Failures are reported as failures.
+
+**Check 7, comments.** A comment anchored on a program-bearing timeline still decrypts and resolves against `content.otio`.
+
+**Check 8, isolation and disk.** The render page runs with networking disabled and a temporary profile. The probe records that run's network activity, and it fails if any rendered frame or audio byte is written to a file or to browser storage. This is an absolute constraint, shared with `publish.md` 4.8.
+
+**Check 9, legacy readers (agent-run).** Build the viewer from the revision before the program change, and open two archives with it. A legacy archive must open exactly as it did before. A program-bearing archive from the new publisher must either open its `content.otio` as before or refuse with a clear error, and it must never render a partial program. The proof output records the result. A failure blocks release of program archives until it passes. No human decision is needed: the agent runs the check and fixes what it finds.
+
+### Commands for this section
+
+Each runs from the repository root on macOS against a loopback service, with an owned headless shell. None of them is in CI: the publisher renders only inside its confined profile, which exists on macOS in this version, so a Linux runner publishes focus-only.
+
+```bash
+export RELIC_OTIO_CHROME_PATH=<path to chrome-headless-shell>
+export OTIO_PYTHON=<python with opentimelineio>
+mise exec -- bun packages/relic-mcp/test/otio-program-path.ts
+mise exec -- bun packages/relic-mcp/test/otio-program-controls.ts
+mise exec -- bun packages/relic-mcp/test/program-jail-path.ts
+mise exec -- bun packages/relic-mcp/test/program-signal-path.ts
+RELIC_LEGACY_VIEWER_DIST=<dist of a viewer built before the program change> \
+  mise exec -- bun packages/relic-mcp/test/otio-program-legacy-reader-path.ts
+```
+
+- `otio-program-path.ts` ends with `OTIO_PROGRAM_PATH_OK` and no `OTIO_PROGRAM_DEFERRED_FAILURES`. It covers Checks 1, 2, 6 and 7: the stored archive is unpacked with Python's zipfile, the MP4 is decoded with ffprobe and ffmpeg and compared with an analytic reference, and the viewer's first Play, time mapping, focus, comments and audio are measured. The next section describes its playback arms.
+- `otio-program-controls.ts` ends with `OTIO_PROGRAM_CONTROLS_OK` after 14 stages. It covers Check 5 and the parts of Checks 3 and 4 a publish can reach. An unsupported transition, an unsupported effect, a program over the size cap, a missing Chrome and a disabled encoder each publish an archive that carries `relic/program.json`, reports every timeline unavailable with the matching reason, and stores no MP4. An invalid size setting refuses the publish. Six single-field manifest mutations and a wrong program digest are each refused by the format's reader with the stated code, and the viewer shows the tampered relic unavailable with `digest-mismatch` and refuses composition play.
+- `program-jail-path.ts` ends with `PROGRAM_JAIL_PATH_OK`. It covers the isolation half of Check 8: the production jail passes its probe, five weakened profiles are each caught, the jailed browser's navigation to a loopback listener is denied with no connection made, a notification posted from inside the jail is denied, and WebCodecs still encodes H.264 and AAC inside the jail.
+- `program-signal-path.ts` ends with `PROGRAM_SIGNAL_PATH_OK`: a render stopped by SIGTERM exits 143 and leaves no browser process and no RAM disk mount behind.
+- `otio-program-legacy-reader-path.ts` ends with `OTIO_LEGACY_READER_OK`. It is Check 9. It serves the older viewer, opens a legacy archive and a program archive of one document, and prints one `OTIO_LEGACY_READER archive=<legacy|program> outcome=<opened|refused>` line for each.
+
+What no command here proves end to end: the viewer's refusal of each manifest mutation other than the digest tamper (the viewer calls the format's `readOtioProgramArchive`, which the controls and `packages/relic-format/test/otio-program.test.ts` prove), and a byte flipped inside a stored MP4 (the same unit tests refuse it). Check 8's stricter wording, that the probe fails if any rendered byte is written to a file or to browser storage, is also not what is proven: the jail confines every write to a private RAM volume that is released after the render, and its probe proves that a write outside that volume does not land. Check 4's legacy half is the path slice above, which plays archives with no manifest.
+
+Results on 2026-11-13, macOS, headless shell 1228. Product source is identical from `fb60b14f` to the revision that added this record.
+
+| Command | Revision | Result |
+| --- | --- | --- |
+| `otio-program-path.ts` | `fb60b14f` | `OTIO_PROGRAM_PATH_OK`, 31 stages, no deferred failures |
+| `otio-program-controls.ts` | this revision | `OTIO_PROGRAM_CONTROLS_OK`, 14 stages |
+| `program-jail-path.ts` | this revision | `PROGRAM_JAIL_PATH_OK` |
+| `program-signal-path.ts` | this revision | `PROGRAM_SIGNAL_PATH_OK` |
+| `otio-program-legacy-reader-path.ts` | this revision, older viewer built from main `238854c5` | `OTIO_LEGACY_READER_OK`: the legacy archive and the program archive both opened, with the same view, and both played the composition |
+
+The controls proof had never passed before this revision. It published one source several times, which the client refuses, it rewrote archives with a ZIP attribute Relic's reader rejects, and it required a focus-only archive to carry no manifest, against the 2026-11-10 decision. Those three faults were in the proof and its harness, not in the publisher or the viewer.
+
+## Primer for the rendered program's first Play
+
+Run from the repository root with an owned headless shell. The proof never falls back to an installed Chrome, so the variable is required:
+
+```bash
+RELIC_OTIO_CHROME_PATH=<path to chrome-headless-shell> \
+  mise exec -- bun packages/relic-mcp/test/otio-program-path.ts
+```
+
+Success ends with `OTIO_PROGRAM_PATH_OK` and no `OTIO_PROGRAM_DEFERRED_FAILURES`. Each trial is a fresh browser. Before navigation, two OS readings 250 ms apart must both read the default output idle on the same device, or the trial fails with `external audio before navigation`. The trace starts on `about:blank` and writes its start mark before navigation, so preload is inside the trace. There is no fixed gap between trials. Every trial runs with Chrome's `--mute-audio`, so nothing reaches a speaker. The proof runs on this Mac only and is not in CI.
+
+The primer groups measure what the browser and the OS report. Presented frames come from `requestVideoFrameCallback`, with the element clock and the frame's timing metadata beside each frame. Device starts (`OutputController::Play`) come from Chrome's trace and are the gated count. Stream creation (`AudioOutputDevice::Start`, `CreateStream`) and device callbacks (`AUHALStream::Render`) are telemetry: they show what Chrome's output thread did and never prove an audio gap. The default output's running flag comes from the OS, read by `otio-device-running.swift` through `otio-program-device-state.ts`, and is not an audio tap. A trusted pointerdown writes a `performance.mark`, which ties the page clock to the trace clock. No audio tap is attached to any video measurement.
+
+The budgets are the user's acceptance and are not loosened:
+- The first new frame within 350 ms of a trusted Play, including the first-click Play. The first new frame is the first presented frame one program frame past the frame shown at the Play, so a frame that only repeats the resting frame does not count.
+- No gap between presented frames over 100 ms, and p95 within 50 ms, over the 4 s after Play. The gaps judged are those between presented frames inside the window, plus the two edge gaps. The leading edge is the gap from the window start to the first presented frame when a frame came earlier. The trailing edge is the gap from the last presented frame to the end of the 4 s window, so a stall that runs to the window end fails. The start before the first presented frame is the 350 ms startup budget, not a gap. A freeze inside the window shows as a gap, and media time moving backward fails.
+- Audio is not judged from callbacks. The 20 ms audio budget is proven only by the sampled audio arms below.
+  The samples come from the program renderer before the mixer and device; they do not prove speaker output.
+- Zero device starts after a prepared or unmute Play, because the primer's output is reused. First-click has exactly one device start after its Play, shared by the primer and the program.
+
+Control arms must fail the way the hypothesis predicts, or the pass means nothing. Only sequence L labels trials cold. After metadata the output must first run, within 3 s, then read idle on two consecutive polls, within 30 s of load. The trial then holds 600 ms of quiet and reads the OS again. A trial is cold only when that pattern was met, the trace shows no device activity in the 500 ms before its first trusted event, and the OS reads the default output idle at that event. Any other trial is warm, absent or unproven and does not count. The cold label rests on the device-start mechanism, which the proof asserts directly. Each cold trial of bare `none`, bare `sham` and the viewer `sham` build must start the output after its Play, and the sham must not start it between Prepare and Play. The real prepared arm must start no device after its Play. Each of those groups needs at least three cold trials, and fewer is inconclusive, which fails. Each cold trial of bare `none` and `sham` must miss at least one program frame slot, with the trailing gap to the window end included. A presented gap misses a slot when it rounds to two or more program frames, which at 30 fps is 50 ms or more. The observed 66.8 ms cold gap misses one slot. A cold control without one did not fail the way the hypothesis predicts, and the stage fails. The viewer `sham` frame gaps remain telemetry, and nothing here claims a stall for them.
+
+The arms:
+- **Bare controls:** `none`, `sham`, `av` (real primer), `av-blob` (the same program loaded through a Blob URL whose SHA-256 is checked first), `audio-only`, `context` and `video-only`. `audio-only` and `context` are reported in sequence L and wait for the output pattern like every audio arm. `video-only` is the absent-audio control. It is a lossless remux of the program's video track with audio stripped. The proof checks that its video packets are identical to the source's, that the source has an audio stream and the control has none (ffprobe), and it fails the stage otherwise. In sequence L it has no output to wait for: the OS is read for 3 s after metadata, and any running reading fails it. Its trace must show no device start at all. Each arm runs Prepare, waits 1500 ms, then Play. Every bare page also runs a per-frame loop, lighter than the viewer's `tick` (which emits only on a frame change and enforces bounds), from the program's `play` event until `pause` or `end`. Each animation frame records its page time and writes `video.currentTime` into a non-media `<output>`. The loop only reads the media element. Every late bare trial fails when its window has no presented frame, no display tick or a tick gap over 100 ms, and when presentation time is missing. Late bare `av` and `av-blob` also fail when the window has fewer than 90 intervals, a program frame is dropped between presented frames, a presented gap misses a program frame slot (50 ms or more at 30 fps, with the trailing gap from the last presented frame to the window end included), or the presented span differs from the media span by 16.7 ms (half a program frame) or more over the window. The user's 350 ms first-frame, 50 ms p95 and 100 ms gap limits still gate these arms through the window gate on the frame callbacks. The bare presentation p95 and the share of frames in one display tick class are reported only and never gate. Cold `none` and `sham` are judged per trial by missed slots, as the control arms above describe. The detector and the cold comparator are checked on every proof by deterministic negative controls. Injected 150 ms and 300 ms stalls and an observed 66.8 ms gap must be measured as stalls, a healthy measured 38.9 ms gap must not, and a stall that runs to the window end must be measured. Synthetic windows with a missing tick, a stalled tick, a dropped frame, a stalled presentation, a presentation that stops before the window end, a held frame then catch-up, a slow program clock, too few frames, missing presentation time or no presented frame must be rejected. Judder inside one slot, measured healthy extremes, and cold windows with a 66.8 ms or 150 ms gap or one that stops early must be accepted per trial. Pools in which every cold trial missed a slot must be accepted. Pools with one trial that missed no slot, a trial without presentation evidence or a trial that presented no frame must be rejected. Each failure fails its stage.
+- **Viewer prepared:** a trusted click on the Markers inspector tab, the primer running within 3 s, then a trusted Play. Sequence L gates it as a cold trial. Sequence F gates it as a fresh visit.
+- **Viewer sham:** the same script on the sham build, where the primer's `element.muted = false;` is `true`. The sham is trusted only if three checks pass. The source transform changes exactly one line of `otio-audio-output.ts`, that primer mute line, verified against the original. The bundle diff, with each hashed chunk name normalised, finds exactly one byte difference in the built output, and it is the `.muted=!1` to `.muted=!0` site. Negative controls must be rejected: production against itself, and a one-byte tamper of either side. Each arm is served from its own complete build directory, switched whole, and each trial records which build answered its JavaScript requests. A trial whose requests came from any other build fails. Production and VIEWER_DIST are never written to.
+- **Viewer first-click:** a trusted Play only. In sequence L, Buffering must show before the first new frame, and exactly one device start after the Play must occur, shared by the primer and the program. In sequence F the user budgets are gated, and Buffering and the device-start count are reported.
+- **Viewer unmute:** Mute (`button.otio-program-mute`, which toggles `aria-pressed`), primer running, Play, then Unmute after 1.5 s on the same control. `aria-pressed` must go true after the first click and false after the second. Presented gaps must stay within 100 ms from 500 ms before to 2000 ms after Unmute, over at least 40 intervals, including the gap from the last presented frame to the window end and the gap from the window start to the first frame inside it, so a stall that runs in from the start or out to the end fails. `muted` must be false within 1 s. Both sequences gate it.
+- **Wrap checks:** the primer alone for 12 s, with and without `AudioRendererMixerImmediatePause`, in sequence L. Exactly one device start (`OutputController::Play`) must occur after Prepare, with a covered quiet window.
+- **Sequence F, fresh visit (`fresh-viewer-*` and `fresh-reported`):** the viewer arms run once the viewer enables Play: the program's metadata has loaded, its playback session is ready, and the Play button is not disabled. The proof waits for that enabled state, not for metadata, before any trusted event, in sequence L as well. There is no separate wait for the output device. The user budgets are gated on prepared, first-click and unmute. Sham and the bare arms are reported only. A failed pre-navigation check in any F trial fails `fresh-reported`.
+
+Every trial also checks that the primer is `idle` before the first trusted event, that the program stays paused and unmoved until Play, and that the trace shows no device activity in the quiet window. The sham arms also fail when the muted primer starts the output between Prepare and Play. Clicks are hit-tested: a trusted click on an element that has no area or is covered by another element fails with `trusted click target not hittable`.
+
+Each trusted mark must come before every playback-rate change and device Play in the 5 ms before it, except a zero rate that Chrome re-applies as the program's pipeline finishes starting, seeking or resuming.
+
+The hidden leg runs once, on the sequence F prepared arm in round 0. It minimizes this viewer's own proof-owned browser window over CDP (`Browser.setWindowBounds` with `windowState: minimized`, found by `Browser.getWindowForTarget`), which hides the page, and restores the window to normal afterward. The proof logs visibility changes and primer changes on the viewer's own clock. It passes only when the viewer reads `hidden` after the minimize step, a visibility change to hidden is logged after it, and the primer reads `idle` within 1.5 s of that change. Activating a second tab or window, `Page.bringToFront`, a second browser context and focus emulation were each probed in an isolated headless shell and none hid the page, so they are not used. If the browser does not hide the viewer, the leg fails with `hidden leg unproven: <reason>`. `document.hidden` is never faked.
+
+Failure strings a trial can report: `external audio before navigation`, `trace does not cover 500 ms before the first trusted event`, `output device activity before the first trusted event: <names>`, `page reacted before <mark> by <n> µs (<event>)`, `default output <name> running at the first trusted event`, `default output not running within 3 s after metadata`, `default output not quiet within 30 s of load`, `default output never ran after metadata`, `cold trial started no device after Play`, `video-only control: default output <name> ran with no audio track`, `video-only control started the output device <n> time(s)`, `video-only control has no trace start mark`, `sham started the output device before Play; control invalid`, `media time moved backward after the first new frame`, `no new frame after the trusted Play`, `<n> device start(s) after Play, expected <n>`, and `hidden leg unproven: <reason>`.
+
+Each video trial writes a `clockDeficit` summary to its receipt: the wall gap between presented frames minus how far the element clock advanced. A frozen element clock over a long wall gap is marked as an element-clock stall. This is diagnostic and never gates.
+
+**Sampled audio arms (stages 19 and 20):** the production viewer runs under an isolated, muted browser. The program audio track is read with `MediaStreamTrackProcessor` and paired in delivery order with that trial's Chrome renderer and mixer-input trace. The track timestamp is a pairing key, not a playout time. A missing render, unexplained chunk, trace loss, incomplete capture, or pre-gesture audible render fails the proof. Samples in the Play-to-stop window are aligned to an independent analytic reference at the resting media position. The unchanged gates require onset and silent gaps within 20 ms, the composition SNR bound, and no 20 ms window fault. Negative controls drop, repeat, zero, and retime chunks and move the Play mark; each must be rejected. An extra early-start trial must also be rejected. Receipts retain the gated samples and trace inputs for replay.
+
+Not measured here: slower outputs such as Bluetooth or HDMI. On such a device the first-click start may exceed 350 ms, and the proof then fails. That is a result to report, not a bound to relax.
+
 ## Passkey-confirmed decisions
 
 Run the full loopback proof from the repository root:

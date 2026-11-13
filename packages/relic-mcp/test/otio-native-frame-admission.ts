@@ -1419,6 +1419,84 @@ function createHtmlTestPage(delayRvfcMs = 0): string {
       });
     };
 
+    // Opt-in diagnostic only: retain both observation streams from the same
+    // playback run so a callback omission can be compared with rAF readout.
+    window.runSupplementalRafExperiment = function(mediaUrl, start, end) {
+      return new Promise((resolve, reject) => {
+        const video = document.getElementById('test-video');
+        const canvas = document.getElementById('test-canvas-vf');
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        const samples = [];
+        let frameCallback = null;
+        let animation = null;
+        let complete = false;
+        let requestedAt = 0;
+        const timeout = setTimeout(() => finish('timeout'), 5000);
+        function finish(reason) {
+          if (complete) return;
+          complete = true;
+          clearTimeout(timeout);
+          if (frameCallback !== null) video.cancelVideoFrameCallback(frameCallback);
+          if (animation !== null) cancelAnimationFrame(animation);
+          video.pause();
+          resolve({ reason, samples });
+        }
+        function capture(kind, now, metadata) {
+          let frame;
+          try {
+            frame = new VideoFrame(video);
+            samples.push({
+              kind, now, requestedAt: kind === 'rvfc' ? requestedAt : null,
+              returnedAt: performance.now(),
+              metadataTime: metadata?.mediaTime ?? null,
+              presentedFrames: metadata?.presentedFrames ?? null,
+              expectedDisplayTime: metadata?.expectedDisplayTime ?? null,
+              mediaTime: frame.timestamp / 1e6,
+              width: canvas.width, height: canvas.height,
+              pixelsBase64: readPixels(frame, ctx, canvas),
+            });
+          } catch (error) {
+            samples.push({ kind, now, error: String(error) });
+          } finally {
+            frame?.close();
+          }
+        }
+        function requestFrame() {
+          requestedAt = performance.now();
+          frameCallback = video.requestVideoFrameCallback((now, metadata) => {
+            frameCallback = null;
+            if (complete) return;
+            capture('rvfc', now, metadata);
+            requestFrame();
+          });
+        }
+        function tick(now) {
+          if (complete) return;
+          capture('raf', now);
+          if (video.currentTime >= end) return finish('end');
+          animation = requestAnimationFrame(tick);
+        }
+        video.pause();
+        video.removeAttribute('src');
+        video.load();
+        video.onerror = () => { finish('video-error'); };
+        video.onloadeddata = () => {
+          video.onloadeddata = null;
+          const startPlay = () => {
+            video.removeEventListener('seeked', startPlay);
+            requestFrame();
+            animation = requestAnimationFrame(tick);
+            video.play().catch((error) => { finish('play-rejected:' + error); });
+          };
+          video.addEventListener('seeked', startPlay);
+          video.currentTime = start;
+        };
+        video.muted = true;
+        video.src = mediaUrl;
+        video.load();
+      });
+    };
+
     window.runTwoElementAdmissionProbe = function(mediaUrl1, mediaUrl2, offset1, offset2, minSamples) {
       return new Promise((resolve, reject) => {
         const video1 = document.getElementById('test-video');
@@ -3169,6 +3247,53 @@ export async function runAdmissionProof(
             sessionId,
             `window.runAdmissionProbe('${mediaUrl}', ${options.minSamples})`
           );
+          if (process.env.OTIO_SUPPLEMENTAL_RAF_EXPERIMENT === '1') {
+            const experiment = await evaluateInPage<{
+              reason: string;
+              samples: (BrowserFrameSample & {
+                kind: 'raf' | 'rvfc';
+                now: number;
+                requestedAt: number | null;
+                returnedAt: number;
+                metadataTime: number | null;
+              })[];
+            }>(
+              cdp,
+              sessionId,
+              `window.runSupplementalRafExperiment(${JSON.stringify(mediaUrl)}, 0.1165, 0.3)`
+            );
+            const rows = experiment.samples.map((sample, index) => {
+              const evaluated = evaluateFrameSample(
+                sample,
+                index,
+                caseWindows,
+                refFrames,
+                API_ROUNDING_Q,
+                uncertifiedFrames
+              );
+              return {
+                kind: sample.kind,
+                now: sample.now,
+                requestedAt: sample.requestedAt,
+                returnedAt: sample.returnedAt,
+                mediaTime: sample.mediaTime,
+                metadataTime: sample.metadataTime,
+                presentedFrames: sample.presentedFrames,
+                expectedFrame: evaluated.expectedFrame,
+                closestFrame: evaluated.closestFrame,
+                match: evaluated.isMatch,
+                reason: evaluated.rejectionReason,
+              };
+            });
+            console.log(
+              'OTIO_SUPPLEMENTAL_RAF_EXPERIMENT',
+              JSON.stringify({
+                case: testCase.caseName,
+                stop: experiment.reason,
+                rows,
+              })
+            );
+          }
 
           const insideEvaluations: SampleEvaluation[] = (
             probeRes.inside_rvfc ?? []

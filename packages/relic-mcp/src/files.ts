@@ -16,8 +16,8 @@ import type {
 function confinedFile(file: NativeOpenedRegularFile): ConfinedBundleFile {
   return {
     size: file.size,
-    readBounded(maxBytes) {
-      return file.read(maxBytes);
+    readInto(target) {
+      return file.readInto(target);
     },
     close() {
       return file.close();

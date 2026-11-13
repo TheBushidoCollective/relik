@@ -91,6 +91,7 @@ import {
   disposeOtioViews,
   type OtioAimDetail,
   otioControllerFor,
+  type OtioUiController,
 } from './otio-bridge.ts';
 import {
   landmarkScrollDelta,
@@ -142,12 +143,14 @@ import {
   type CommentCipher,
   type CommentEntry,
   type CommentNode,
+  canDeleteComment,
   canEditComment,
   canResolveComment,
   collectDisplayedEntries,
   commentCipher,
   commentTime,
   DELIVERY_DISCLOSURE,
+  deleteComment,
   DISPLAY_NAME_NOTE,
   EDITED_LABEL,
   editComment,
@@ -218,7 +221,6 @@ import {
   type RenderedChange,
   type TreeDiff,
 } from './domdiff.ts';
-import { transpileJsx } from './jsx.ts';
 import { renderMarkdown } from './markdown.ts';
 import type { DashboardSearch, RowMatch } from './dashboard-search.ts';
 import {
@@ -256,6 +258,7 @@ import {
   sharedSummary,
   shareRefusal,
 } from './share.ts';
+import { createLifecycle, healStaleShell } from './stale-shell.ts';
 import { buildCodeTable, buildProse } from './text-views.ts';
 import {
   type CachedPrefix,
@@ -422,6 +425,68 @@ export function sniffImageType(content: Uint8Array): string {
     return 'image/webp';
   }
   return 'application/octet-stream';
+}
+
+/**
+ * Counts opens in this page. A result from an earlier open may not act once a
+ * newer one has started.
+ */
+let openGeneration = 0;
+
+/**
+ * Reloads the page once when a JSX compile failed because this page is a
+ * stale deploy. True when a reload started, so the caller leaves the page
+ * alone. The key is recalled from the vault, so the reloaded page reopens the
+ * relic by itself. Only the initial open and a submitted key entry call this:
+ * both are pages with no established view and no unsent work. Everywhere else
+ * a compiler failure is shown with a manual reload instruction instead.
+ */
+function healForRelic(
+  relicId: string,
+  deps: ViewerDeps,
+  isCurrent: () => boolean
+): Promise<boolean> {
+  return healStaleShell({
+    serviceOrigin: deps.serviceOrigin,
+    recallKey: () => deps.keyVault.recall(relicId),
+    isCurrent,
+    fetch: deps.fetch,
+  });
+}
+
+/** The reload instruction, shown when this browser still holds the key. */
+const MANUAL_RELOAD_HINT = 'Reload this page to try again.';
+
+/** The instruction shown instead when the vault cannot reopen the relic. */
+const REOPEN_LINK_HINT = 'Reopen the original link to try again.';
+
+/**
+ * Whether this browser still holds the relic's key, so a reload can reopen it.
+ * A vault that fails to read counts as not holding it.
+ */
+function vaultHoldsKey(relicId: string, deps: ViewerDeps): boolean {
+  try {
+    return deps.keyVault.recall(relicId) !== undefined;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * What a reader is shown when a historical version or comparison cannot load.
+ * A compiler failure is named with the way out: a reload when the vault holds
+ * the key, otherwise reopening the original link, because a reload would not
+ * reopen the relic.
+ */
+function failureText(
+  res: {
+    readonly detail: string;
+    readonly jsxCompilerUnavailable?: true | undefined;
+  },
+  keyKept: boolean
+): string {
+  if (res.jsxCompilerUnavailable !== true) return res.detail;
+  return `${res.detail} ${keyKept ? MANUAL_RELOAD_HINT : REOPEN_LINK_HINT}`;
 }
 
 function decodeText(content: Uint8Array): string {
@@ -1507,23 +1572,20 @@ function sandboxFrame(
 }
 
 /**
- * A component's payload, or nothing when it will not compile.
+ * A component's payload, or nothing when routing could not compile it.
  *
- * The service origin must never execute relic content, and the transform
- * never does: it is a text-to-text rewrite whose output is posted as a
- * string. The frame turns that string back into running code by importing it
- * as a module. React is bundled into the inlined frame script because the
- * opaque origin cannot fetch same-origin assets or any remote dependency.
+ * Routing already transpiled the component and carried the text on the view,
+ * so rendering never touches the compiler. The service origin never executes
+ * relic content: the transform is a text-to-text rewrite, and only its output
+ * string is posted. The frame turns that string back into running code by
+ * importing it as a module. React is bundled into the inlined frame script
+ * because the opaque origin cannot fetch same-origin assets or any remote
+ * dependency.
  */
 function jsxPayload(view: ReadyView): RenderPayload | undefined {
-  try {
-    return {
-      type: 'relic:render-jsx',
-      code: transpileJsx(decodeText(documentBytes(view)), view.filename),
-    };
-  } catch {
-    return undefined;
-  }
+  return view.componentModule === undefined
+    ? undefined
+    : { type: 'relic:render-jsx', code: view.componentModule };
 }
 
 function payloadFor(view: ReadyView): RenderPayload | undefined {
@@ -1550,8 +1612,8 @@ export function renderSandboxedHtml(
 
 /**
  * A component renders on the usercontent origin and nowhere else, exactly
- * like HTML, but what crosses the frame boundary is different: the source is
- * transpiled here, on the service origin, into plain JavaScript first.
+ * like HTML, but what crosses the frame boundary is different: routing already
+ * transpiled the source, and the frame receives that text as it was checked.
  */
 export function renderSandboxedJsx(
   view: ReadyView,
@@ -1562,9 +1624,10 @@ export function renderSandboxedJsx(
 
   const payload = jsxPayload(view);
   if (payload === undefined) {
-    // Routing already established the bytes parse, so landing here means a
-    // path the route decision could not see. Source view is the honest
-    // fallback: it shows exactly what was published without running it.
+    // Routing compiles every component before it reaches here, so this is
+    // reached only when markup wears a component's name and does not
+    // transpile. Source view is the honest fallback: it shows exactly what was
+    // published without running it.
     wrapper.appendChild(
       notice(
         'This file is named like a React component, but its contents do not ' +
@@ -3380,6 +3443,14 @@ export function renderComparison(
 
   let request = 0;
 
+  /** Leaving the comparison invalidates any result still in flight. */
+  const closeComparison = (): void => {
+    request += 1;
+    for (const version of pinned) store.unpin(version);
+    pinned.clear();
+    onClose();
+  };
+
   const scaffold = buildComparisonScaffold(
     current.currentVersion,
     leftVersion,
@@ -3467,12 +3538,16 @@ export function renderComparison(
     }
 
     if (leftRes.kind === 'unavailable') {
-      scaffold.result.replaceChildren(notice(leftRes.detail));
+      scaffold.result.replaceChildren(
+        notice(failureText(leftRes, vaultHoldsKey(relicId, deps)))
+      );
       changesSidebar.setChanges(0, undefined);
       return;
     }
     if (rightRes.kind === 'unavailable') {
-      scaffold.result.replaceChildren(notice(rightRes.detail));
+      scaffold.result.replaceChildren(
+        notice(failureText(rightRes, vaultHoldsKey(relicId, deps)))
+      );
       changesSidebar.setChanges(0, undefined);
       return;
     }
@@ -3539,12 +3614,7 @@ export function renderComparison(
 
   document.body.replaceChildren(
     buildBar(current, relicId, {
-      onCompare: () => {
-        request++;
-        for (const version of pinned) store.unpin(version);
-        pinned.clear();
-        onClose();
-      },
+      onCompare: closeComparison,
       comparisonOpen: true,
       selectedVersion: rightVersion,
       onShare: (opener) => {
@@ -3986,6 +4056,8 @@ interface ThreadHandle {
    * path ignores it, because there the page outlives the fetch.
    */
   readonly ready: Promise<void>;
+  /** Settles active thread reads and deletions before a caller tears down. */
+  readonly idle: () => Promise<void>;
   /** The stage the marks are painted on. */
   readonly attach: (host: HTMLElement) => void;
 }
@@ -5908,6 +5980,9 @@ export function buildThread(
   const outcome = document.createElement('div');
   outcome.className = 'thread-outcome';
   outcome.setAttribute('aria-live', 'polite');
+  const deletionOutcome = document.createElement('div');
+  deletionOutcome.className = 'comment-delete-outcome';
+  deletionOutcome.setAttribute('aria-live', 'polite');
 
   let settled = false;
   let readyResolve: () => void = () => {};
@@ -5961,7 +6036,15 @@ export function buildThread(
     },
   });
 
-  section.append(title, marks.tools, status, list, composer, outcome);
+  section.append(
+    title,
+    marks.tools,
+    status,
+    deletionOutcome,
+    list,
+    composer,
+    outcome
+  );
 
   // A public link holds one key for every version, and a private view resolves
   // each version's key through that version's own wrap. The cipher is derived
@@ -5978,8 +6061,39 @@ export function buildThread(
   let session: SessionState = { kind: 'unknown' };
   let host: HTMLElement | undefined;
   let lastEntries: readonly CommentEntry[] = [];
+  // The complete successful read is distinct from the version-filtered rows
+  // held by paintMarks. Only this snapshot can distinguish a missing parent
+  // from one that is deliberately hidden on another revision.
+  let allEntries: readonly CommentEntry[] = [];
+  let hasThreadSnapshot = false;
+  let loadGeneration = 0;
+  const threadWork = new Set<Promise<void>>();
+  const confirmedAbsent = new Set<string>();
+  const pendingDeletes = new Set<string>();
+  const unconfirmedDeletes = new Set<string>();
+  let deleteDialog: HTMLDialogElement | undefined;
+  const deleteNotice = document.createElement('div');
+  deleteNotice.className = 'mark-hint comment-delete-notice';
+  deleteNotice.setAttribute('role', 'status');
+  deleteNotice.setAttribute('aria-live', 'polite');
+  deleteNotice.style.pointerEvents = 'auto';
+  deleteNotice.hidden = true;
+  let addressedById = new Map<string, AddressedBy>();
+  let composerDraft = '';
+  let composerNameDraft: string | undefined;
+  let sidebarBody: HTMLTextAreaElement | undefined;
+  let sidebarName: HTMLInputElement | undefined;
+  let sidebarPost: HTMLButtonElement | undefined;
+  let sidebarPaintCount: (() => void) | undefined;
+  let composerDraftRevision = 0;
+  let sidebarSubmission:
+    | { readonly body: string; readonly revision: number }
+    | undefined;
+  let sessionGeneration = 0;
+  const projectionAttempts = new WeakMap<OtioUiController, Set<string>>();
+  const otioProjectionWork = new WeakMap<OtioUiController, Promise<void>>();
+  let otioMarkPaintGeneration = 0;
   const versionStore = versionsFor(relicId, view, deps);
-  const projectionAttempts = new Set<string>();
   const projectionFailures = new Set<string>();
 
   const addOtioFeedbackContext = (
@@ -6045,47 +6159,76 @@ export function buildThread(
     row.appendChild(context);
   };
 
-  let projectionRunning = false;
   const projectEarlierOtioFeedback = async (
     entries: readonly CommentEntry[]
   ): Promise<void> => {
-    if (projectionRunning) return;
     if (host === undefined) return;
     if (view.content.size > AUTO_PROJECTION_MAX_BYTES) return;
     const controller = otioControllerFor(host);
-    if (controller === undefined) return;
-    projectionRunning = true;
+    if (controller === undefined || controller.disposed) return;
+    const attempts = projectionAttempts.get(controller) ?? new Set<string>();
+    projectionAttempts.set(controller, attempts);
     let changed = false;
-    for (const entry of entries) {
-      if (
-        entry.kind !== 'open' ||
-        entry.anchor?.kind !== 'otio' ||
-        !sealedOtioAnchorMatchesEntryVersion(entry) ||
-        entry.anchor.relic_version === view.version ||
-        projectionAttempts.has(entry.id)
-      ) {
-        continue;
+    const pass = async (): Promise<void> => {
+      for (const entry of entries) {
+        if (
+          entry.kind !== 'open' ||
+          entry.anchor?.kind !== 'otio' ||
+          !sealedOtioAnchorMatchesEntryVersion(entry) ||
+          entry.anchor.relic_version === view.version ||
+          attempts.has(entry.id)
+        ) {
+          continue;
+        }
+        attempts.add(entry.id);
+        const anchor = entry.anchor;
+        versionStore.pin(anchor.relic_version);
+        try {
+          const original = await versionStore.get(anchor.relic_version, {
+            maxBytes: AUTO_PROJECTION_MAX_BYTES,
+          });
+          if (
+            typeof document === 'undefined' ||
+            controller.disposed ||
+            host === undefined ||
+            otioControllerFor(host) !== controller
+          ) {
+            attempts.delete(entry.id);
+            return;
+          }
+          if (original.kind !== 'ready')
+            throw new Error('Original context unavailable');
+          await controller.project(anchor, original.view.content);
+        } catch {
+          if (
+            controller.disposed ||
+            host === undefined ||
+            otioControllerFor(host) !== controller
+          ) {
+            attempts.delete(entry.id);
+            return;
+          }
+          projectionFailures.add(entry.id);
+        } finally {
+          versionStore.unpin(anchor.relic_version);
+        }
+        changed = true;
       }
-      projectionAttempts.add(entry.id);
-      const anchor = entry.anchor;
-      versionStore.pin(anchor.relic_version);
-      try {
-        const original = await versionStore.get(anchor.relic_version, {
-          maxBytes: AUTO_PROJECTION_MAX_BYTES,
-        });
-        if (original.kind !== 'ready')
-          throw new Error('Original context unavailable');
-        await controller.project(anchor, original.view.content);
-      } catch {
-        projectionFailures.add(entry.id);
-      } finally {
-        versionStore.unpin(anchor.relic_version);
-      }
-      changed = true;
-    }
-    projectionRunning = false;
+    };
+    // One pass per controller, chained: a later call joins the earlier work,
+    // so loads run one at a time and completion covers the latest paint.
+    const joined = (
+      otioProjectionWork.get(controller) ?? Promise.resolve()
+    ).then(pass);
+    otioProjectionWork.set(
+      controller,
+      joined.catch(() => {})
+    );
+    await joined;
     if (
       changed &&
+      typeof document !== 'undefined' &&
+      !controller.disposed &&
       host !== undefined &&
       otioControllerFor(host) === controller
     ) {
@@ -6281,6 +6424,11 @@ export function buildThread(
   const paintMarks = (entries: readonly CommentEntry[]): void => {
     lastEntries = entries;
     if (host === undefined) return;
+    const markHost = host;
+    const markController = otioControllerFor(markHost);
+    if (markController?.disposed) return;
+    const markPass = ++otioMarkPaintGeneration;
+    const markBatch = markController?.beginMarkBatch();
     const currentSurface = anchorSurfaceFor(host);
     if (currentSurface !== undefined)
       invalidateImageMarkRequests(currentSurface);
@@ -6289,7 +6437,7 @@ export function buildThread(
     pendingImagePlaced = false;
     if (!textWindowFor(host)) unwrapTextQuotes(host);
     host.querySelector('.comment-pins')?.remove();
-    otioControllerFor(host)?.clearMarks();
+    markController?.clearMarks();
     host
       .querySelector<HTMLIFrameElement>('iframe.usercontent-frame')
       ?.contentWindow?.postMessage({ type: 'relic:clear-marks' }, '*');
@@ -6408,7 +6556,29 @@ export function buildThread(
         '*'
       );
     reconcileHostMarks();
-    void projectEarlierOtioFeedback(entries);
+    const projected = projectEarlierOtioFeedback(entries);
+    if (markController !== undefined && markBatch !== undefined) {
+      const work = Promise.withResolvers<void>();
+      threadWork.add(work.promise);
+      void projected
+        .then(() => {
+          if (
+            typeof document === 'undefined' ||
+            markController.disposed ||
+            !hasThreadSnapshot ||
+            markPass !== otioMarkPaintGeneration ||
+            host !== markHost ||
+            otioControllerFor(markHost) !== markController ||
+            markHost.isConnected === false
+          )
+            return;
+          markController.completeMarkBatch(markBatch);
+        })
+        .finally(() => {
+          threadWork.delete(work.promise);
+          work.resolve();
+        });
+    }
   };
 
   /**
@@ -6569,6 +6739,7 @@ export function buildThread(
    * the scrubber.
    */
   let rerenderRows: (() => void) | undefined;
+  let repaintCardPermissions: (() => void) | undefined;
 
   const frameWindow = (): Window | null =>
     host?.querySelector<HTMLIFrameElement>('iframe.usercontent-frame')
@@ -6788,6 +6959,284 @@ export function buildThread(
   const entryById = (id: string): CommentEntry | undefined =>
     lastEntries.find((entry) => entry.id === id);
 
+  const findNode = (
+    nodes: readonly CommentNode[],
+    id: string
+  ): CommentNode | undefined => {
+    for (const node of nodes) {
+      if (node.entry.id === id) return node;
+      const child = findNode(node.replies, id);
+      if (child !== undefined) return child;
+    }
+    return undefined;
+  };
+
+  /** Every depth and placement uses the same recovery note and author gate. */
+  const renderCommentNode = (
+    node: CommentNode,
+    isReply = false
+  ): HTMLElement => {
+    const entry = node.entry;
+    const row = commentRow(
+      entry,
+      entry.id !== null && unplaceable.has(entry.id),
+      entry.id !== null ? (addressedById.get(entry.id) ?? null) : null,
+      node.replies.map((child) => renderCommentNode(child, true)),
+      isReply
+    );
+    const head = row.children[0];
+    if (node.recovery !== undefined) {
+      const note = line('thread-note comment-recovery', node.recovery.detail);
+      note.dataset['recovery'] = node.recovery.kind;
+      row.replaceChildren(note, ...Array.from(row.children));
+    }
+    addOtioFeedbackContext(row, entry);
+    if (canDeleteComment(entry, session) && entry.id !== null) {
+      const id = entry.id;
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'popover-action comment-delete';
+      remove.dataset['deleteCommentId'] = id;
+      remove.textContent = pendingDeletes.has(id) ? 'Deleting...' : 'Delete';
+      remove.disabled = pendingDeletes.has(id) || unconfirmedDeletes.has(id);
+      remove.addEventListener('click', (event) => {
+        event.stopPropagation();
+        if (!remove.disabled) confirmDelete(entry, remove);
+      });
+      head?.appendChild(remove);
+    }
+    return row;
+  };
+
+  // Replacing only the rows keeps reply/edit fields, their selection and the
+  // panel itself alive. A delayed mutation never opens or replaces a card.
+  const repaintCardRows = (): void => {
+    const panel = popover?.current();
+    if (panel === undefined || cardId === undefined) return;
+    const rows = panel.querySelector('.popover-thread');
+    if (rows === null) return;
+    const scrollTop = rows.scrollTop;
+    const node = findNode(threadEntries(lastEntries, allEntries), cardId);
+    if (node !== undefined) rows.replaceChildren(renderCommentNode(node));
+    repaintCardPermissions?.();
+    popover?.reposition();
+    rows.scrollTop = scrollTop;
+  };
+
+  const repaintDeleteControls = (): void => {
+    if (
+      deleteDialog !== undefined &&
+      (session.kind !== 'verified' ||
+        deleteDialog.dataset['commentAuthor'] !== session.email)
+    ) {
+      deleteDialog.close();
+    }
+    const focused = document.activeElement;
+    const focusedId =
+      typeof HTMLElement !== 'undefined' && focused instanceof HTMLElement
+        ? focused.dataset['deleteCommentId']
+        : undefined;
+    const inCard =
+      typeof Element !== 'undefined' &&
+      focused instanceof Element &&
+      focused.closest('.popover');
+    rerenderRows?.();
+    repaintCardRows();
+    if (focusedId === undefined || deleteDialog !== undefined) return;
+    const root = inCard ? popover?.current() : list;
+    const replacement = root?.querySelector<HTMLButtonElement>(
+      `[data-delete-comment-id="${focusedId}"]`
+    );
+    const fallback = section.classList.contains('is-open') ? toggle : tab;
+    (replacement && !replacement.disabled ? replacement : fallback).focus({
+      preventScroll: true,
+    });
+  };
+
+  const showDeleteOutcome = (text: string, refreshable = false): void => {
+    deletionOutcome.replaceChildren(line('thread-note', text));
+    deleteNotice.replaceChildren(line('', text));
+    if (refreshable) {
+      deletionOutcome.appendChild(deleteRefreshControl());
+      deleteNotice.appendChild(deleteRefreshControl());
+    }
+    deleteNotice.setAttribute(
+      'aria-live',
+      section.classList.contains('is-open') ? 'off' : 'polite'
+    );
+    deleteNotice.hidden = false;
+    // A status with no outcome must not join the stage's aiming hints.
+    // Mount it only once it has something to report.
+    host?.appendChild(deleteNotice);
+  };
+
+  const deleteRefreshControl = (): HTMLElement => {
+    const again = document.createElement('button');
+    again.type = 'button';
+    again.className = 'action';
+    again.textContent = 'Refresh comments';
+    again.addEventListener('click', () => {
+      again.disabled = true;
+      void refresh().then((readBack) => {
+        if (readBack !== true) {
+          again.disabled = false;
+          return;
+        }
+        showDeleteOutcome(
+          'Comments refreshed. Check the thread before deleting again.'
+        );
+      });
+    });
+    return again;
+  };
+
+  const performDelete = async (entry: CommentEntry): Promise<void> => {
+    const id = entry.id;
+    if (
+      id === null ||
+      !canDeleteComment(entry, session) ||
+      pendingDeletes.has(id) ||
+      unconfirmedDeletes.has(id)
+    )
+      return;
+    const work = Promise.withResolvers<void>();
+    threadWork.add(work.promise);
+    try {
+      pendingDeletes.add(id);
+      // A read begun before this write must never paint over its result.
+      loadGeneration++;
+      repaintDeleteControls();
+      showDeleteOutcome('Deleting comment...');
+      const result = await deleteComment(relicId, id, deps);
+      if (typeof document === 'undefined') return;
+      pendingDeletes.delete(id);
+      loadGeneration++;
+      if (
+        result.kind === 'deleted' ||
+        result.refusal.code === 'comment_not_found'
+      ) {
+        confirmedAbsent.add(id);
+        allEntries = allEntries.filter((candidate) => candidate.id !== id);
+        if (cardId === id) closeCard();
+        if (activeId === id) setActiveMark(undefined);
+        paintThreadSnapshot();
+        const message =
+          result.kind === 'deleted'
+            ? 'Comment deleted. Replies remain.'
+            : 'This comment was already absent. Replies remain.';
+        showDeleteOutcome(message);
+        const readBack = await refresh();
+        if (readBack === false) {
+          showDeleteOutcome(
+            `${message} The thread could not be refreshed. The confirmed removal is kept here.`,
+            true
+          );
+        }
+        return;
+      }
+      // A transport failure can follow a committed write. Read before allowing
+      // another deliberate attempt; never turn Try again into another DELETE.
+      const refusal = result.refusal;
+      unconfirmedDeletes.add(id);
+      if (refusal.code === 'invalid_session') {
+        sessionGeneration++;
+        session = { kind: 'anonymous' };
+        section.dataset['session'] = session.kind;
+        paintComposer();
+        repaintCardPermissions?.();
+      } else if (refusal.code === 'comment_forbidden') {
+        // DELETE uses this refusal for both ownership and an expired cookie.
+        // Ask the session endpoint rather than guessing which one occurred.
+        await recheck();
+      }
+      repaintDeleteControls();
+      showDeleteOutcome(
+        'Deletion could not be confirmed. Refresh comments to check whether it took effect.',
+        true
+      );
+      deletionOutcome.appendChild(
+        threadRefusal({ ...refusal, retryable: false }, () => {})
+      );
+    } finally {
+      threadWork.delete(work.promise);
+      work.resolve();
+    }
+  };
+
+  const confirmDelete = (entry: CommentEntry, opener: HTMLElement): void => {
+    if (deleteDialog !== undefined || !canDeleteComment(entry, session)) return;
+    const dialog = document.createElement('dialog');
+    dialog.className = 'share-panel comment-delete-dialog';
+    dialog.dataset['commentAuthor'] = entry.author ?? '';
+    dialog.setAttribute('aria-label', 'Delete comment?');
+    dialog.setAttribute('aria-describedby', 'comment-delete-consequence');
+    const heading = line('share-title', 'Delete comment?');
+    const head = document.createElement('div');
+    head.className = 'share-head';
+    head.appendChild(heading);
+    const body = document.createElement('div');
+    body.className = 'share-body';
+    const consequence = line(
+      'thread-note',
+      'This removes only your comment. Replies will stay. Relik has no undo.'
+    );
+    consequence.id = 'comment-delete-consequence';
+    const excerpt =
+      entry.kind === 'open'
+        ? plainLabel(entry.body).replace(/\s+/g, ' ').trim().slice(0, 240)
+        : 'Comment text unavailable.';
+    body.append(
+      line('comment-author', plainLabel(entry.author ?? '')),
+      line('comment-body', excerpt || 'Comment text unavailable.'),
+      consequence
+    );
+    const tools = document.createElement('div');
+    tools.className = 'popover-tools';
+    const cancel = document.createElement('button');
+    cancel.type = 'button';
+    cancel.className = 'action comment-delete-cancel';
+    cancel.textContent = 'Cancel';
+    cancel.setAttribute('autofocus', '');
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'action comment-delete-confirm';
+    remove.textContent = 'Delete comment';
+    const cleanUp = (): void => {
+      if (deleteDialog !== dialog) return;
+      deleteDialog = undefined;
+      dialog.remove();
+      if (opener.isConnected) opener.focus({ preventScroll: true });
+      else tab.focus({ preventScroll: true });
+    };
+    const dismiss = (): void => {
+      if (typeof dialog.close === 'function') dialog.close();
+      cleanUp();
+    };
+    cancel.addEventListener('click', dismiss);
+    dialog.addEventListener('cancel', (event) => {
+      event.preventDefault();
+      dismiss();
+    });
+    dialog.addEventListener('close', cleanUp);
+    dialog.addEventListener('keydown', (event) => event.stopPropagation());
+    dialog.addEventListener('pointerdown', (event) => event.stopPropagation());
+    remove.addEventListener('click', () => {
+      // Capture the row before closing. Confirmation cannot drift to another
+      // card while its request is waiting.
+      remove.disabled = true;
+      dismiss();
+      void performDelete(entry);
+    });
+    tools.append(cancel, remove);
+    body.appendChild(tools);
+    dialog.append(head, body);
+    deleteDialog = dialog;
+    document.body.appendChild(dialog);
+    if (typeof dialog.showModal === 'function') dialog.showModal();
+    else dialog.setAttribute('open', '');
+    cancel.focus({ preventScroll: true });
+  };
+
   /**
    * The card, built from the same renderer the sidebar uses.
    *
@@ -6810,22 +7259,13 @@ export function buildThread(
     // The card takes the panel, so a composer that held it is over.
     dropComposing();
 
-    const nodes = threadEntries(lastEntries);
-    const node = nodes.find((candidate) => candidate.entry.id === entry.id);
-    const replies = (node?.replies ?? []).map((reply) =>
-      commentRow(reply.entry, false, undefined, [], true)
-    );
+    const nodes = threadEntries(lastEntries, allEntries);
+    const node = findNode(nodes, entry.id);
     const rows = document.createElement('ol');
-    rows.className = 'popover-thread';
-    const row = commentRow(
-      entry,
-      unplaceable.has(entry.id),
-      undefined,
-      replies,
-      false
-    );
-    addOtioFeedbackContext(row, entry);
-    rows.appendChild(row);
+    rows.className = 'popover-thread popover-bounded-body';
+    rows.tabIndex = 0;
+    rows.setAttribute('aria-label', 'Comments');
+    rows.appendChild(renderCommentNode(node ?? { entry, replies: [] }));
 
     const id = entry.id;
     const actions: PopoverAction[] = [];
@@ -6895,123 +7335,131 @@ export function buildThread(
             })();
           },
         });
+        composer.element.style.flex = 'none';
         layer.current()?.appendChild(composer.element);
         layer.reposition();
         composer.field.focus();
       },
     });
 
-    if (canEditComment(entry, session) && entry.kind === 'open') {
-      actions.push({
-        label: 'Edit',
-        className: 'popover-edit',
-        onSelect: () => {
-          cardGeneration++;
-          stickyId = id;
-          const target = document.createElement('p');
-          target.className = 'popover-target';
-          target.textContent = markTargetLabel(entry.anchor);
-          const panel = popoverCard({
-            content: target,
-            actions: [],
-            commentId: id,
-          });
-          const composer = inlineComposer({
-            placeholder: 'What it should say instead',
-            submitLabel: 'Save',
-            value: entry.body,
-            disclosure: 'Editing replaces the text. No earlier copy is kept.',
-            onCancel: reopen,
-            onSubmit: (body) => {
-              const opener = cipher;
-              if (opener === undefined) return;
-              composer.setBusy(true);
-              void (async () => {
-                const result = await editComment(
-                  relicId,
-                  id,
-                  {
-                    body,
-                    display_name: entry.displayName,
-                    // Carried forward rather than rebuilt. An edit changes
-                    // what a remark says and never where it points, and
-                    // moving the mark would leave every reply answering
-                    // something the reader can no longer see.
-                    anchor: entry.anchor,
-                    addresses: entry.addresses ?? null,
-                  },
-                  deps,
-                  opener
-                );
-                if (layer.current() !== panel) {
-                  if (result.kind !== 'refused') await refresh();
-                  return;
-                }
-                if (result.kind === 'refused') {
-                  composer.setBusy(false);
-                  composer.setNote(result.refusal.headline);
-                  return;
-                }
-                await refresh();
-                if (layer.current() === panel) reopen();
-              })();
-            },
-          });
-          const editKind = entry.anchor ? entry.anchor.kind : 'text';
-          panel.dataset['anchorKind'] = editKind;
-          panel.appendChild(composer.element);
-          activePanel = panel;
-          layer.show(panel, box, {
-            follow: () => anchorBoxFor(id),
-            reveal: sticky,
-            prefer: preferFor(editKind),
-          });
-          composer.field.focus({ preventScroll: true });
-        },
-      });
-    }
+    const permissionActions = (): PopoverAction[] => {
+      const actions: PopoverAction[] = [];
+      const entry = entryById(id);
+      if (entry === undefined) return actions;
+      if (canEditComment(entry, session) && entry.kind === 'open') {
+        actions.push({
+          label: 'Edit',
+          className: 'popover-edit',
+          onSelect: () => {
+            cardGeneration++;
+            stickyId = id;
+            const target = document.createElement('p');
+            target.className = 'popover-target';
+            target.textContent = markTargetLabel(entry.anchor);
+            const panel = popoverCard({
+              content: target,
+              actions: [],
+              commentId: id,
+            });
+            const composer = inlineComposer({
+              placeholder: 'What it should say instead',
+              submitLabel: 'Save',
+              value: entry.body,
+              disclosure: 'Editing replaces the text. No earlier copy is kept.',
+              onCancel: reopen,
+              onSubmit: (body) => {
+                const opener = cipher;
+                if (opener === undefined) return;
+                composer.setBusy(true);
+                void (async () => {
+                  const result = await editComment(
+                    relicId,
+                    id,
+                    {
+                      body,
+                      display_name: entry.displayName,
+                      // Carried forward rather than rebuilt. An edit changes
+                      // what a remark says and never where it points, and
+                      // moving the mark would leave every reply answering
+                      // something the reader can no longer see.
+                      anchor: entry.anchor,
+                      addresses: entry.addresses ?? null,
+                    },
+                    deps,
+                    opener
+                  );
+                  if (layer.current() !== panel) {
+                    if (result.kind !== 'refused') await refresh();
+                    return;
+                  }
+                  if (result.kind === 'refused') {
+                    composer.setBusy(false);
+                    composer.setNote(result.refusal.headline);
+                    return;
+                  }
+                  await refresh();
+                  if (layer.current() === panel) reopen();
+                })();
+              },
+            });
+            const editKind = entry.anchor ? entry.anchor.kind : 'text';
+            panel.dataset['anchorKind'] = editKind;
+            panel.appendChild(composer.element);
+            activePanel = panel;
+            layer.show(panel, box, {
+              follow: () => anchorBoxFor(id),
+              reveal: sticky,
+              prefer: preferFor(editKind),
+            });
+            composer.field.focus({ preventScroll: true });
+          },
+        });
+      }
 
-    if (canResolveComment(entry, session)) {
-      const settled = (entry.resolution ?? null) !== null;
-      actions.push({
-        label: settled ? 'Reopen' : 'Resolve',
-        className: 'popover-resolve',
-        onSelect: () => {
-          const resolvePanel = activePanel;
-          const resolveGeneration = cardGeneration;
-          stickyId = id;
-          void (async () => {
-            const result = await setCommentResolved(
-              relicId,
-              id,
-              !settled,
-              deps
-            );
-            if (
-              layer.current() !== resolvePanel ||
-              cardGeneration !== resolveGeneration
-            ) {
-              if (result.kind !== 'refused') await refresh();
-              return;
-            }
-            if (result.kind === 'refused') {
-              const note = document.createElement('p');
-              note.className = 'popover-note';
-              note.textContent = result.refusal.headline;
-              layer.current()?.appendChild(note);
-              layer.reposition();
-              return;
-            }
-            await refresh();
-            if (
-              layer.current() === resolvePanel &&
-              cardGeneration === resolveGeneration
-            )
-              reopen();
-          })();
-        },
-      });
-    }
+      if (canResolveComment(entry, session)) {
+        const settled = (entry.resolution ?? null) !== null;
+        actions.push({
+          label: settled ? 'Reopen' : 'Resolve',
+          className: 'popover-resolve',
+          onSelect: () => {
+            const resolvePanel = activePanel;
+            const resolveGeneration = cardGeneration;
+            stickyId = id;
+            void (async () => {
+              const result = await setCommentResolved(
+                relicId,
+                id,
+                !settled,
+                deps
+              );
+              if (
+                layer.current() !== resolvePanel ||
+                cardGeneration !== resolveGeneration
+              ) {
+                if (result.kind !== 'refused') await refresh();
+                return;
+              }
+              if (result.kind === 'refused') {
+                const note = document.createElement('p');
+                note.className = 'popover-note';
+                note.textContent = result.refusal.headline;
+                layer.current()?.appendChild(note);
+                layer.reposition();
+                return;
+              }
+              await refresh();
+              if (
+                layer.current() === resolvePanel &&
+                cardGeneration === resolveGeneration
+              )
+                reopen();
+            })();
+          },
+        });
+      }
+      return actions;
+    };
+    actions.push(...permissionActions());
 
     actions.push({
       label: 'Open in thread',
@@ -7044,7 +7492,32 @@ export function buildThread(
     const cardKind =
       entry.kind === 'open' && entry.anchor ? entry.anchor.kind : 'text';
     const card = popoverCard({ content: rows, actions, commentId: id });
+    // Recursive threads can exceed either side of the target. Reuse the
+    // bounded-body scroller while keeping the card's actions on screen.
+    card.style.display = 'flex';
+    card.style.flexDirection = 'column';
+    card.style.overflow = 'hidden';
+    const tools = card.querySelector<HTMLElement>('.popover-tools');
+    if (tools !== null) tools.style.flex = 'none';
     activePanel = card;
+    repaintCardPermissions = (): void => {
+      if (layer.current() !== card) return;
+      // The toolbar can change identity without replacing a reply field.
+      const tools = card.querySelector('.popover-tools');
+      if (tools === null) return;
+      tools.querySelector('.popover-edit')?.remove();
+      tools.querySelector('.popover-resolve')?.remove();
+      const before = tools.querySelector('.popover-open-thread');
+      for (const action of permissionActions()) {
+        const control = document.createElement('button');
+        control.type = 'button';
+        control.className = `popover-action ${action.className ?? ''}`;
+        control.textContent = action.label;
+        control.addEventListener('click', action.onSelect);
+        if (before !== null) before.before(control);
+        else tools.appendChild(control);
+      }
+    };
     card.dataset['anchorKind'] = cardKind;
     holdOnHover(card);
     layer.show(card, box, {
@@ -7683,6 +8156,7 @@ export function buildThread(
   // a reader who has learned one has learned the other.
   document.addEventListener('keydown', (event: KeyboardEvent) => {
     if (event.key !== 'Escape') return;
+    if (deleteDialog !== undefined) return;
     if (popover?.current() !== undefined) closeCard();
     else cardGeneration++;
   });
@@ -7729,6 +8203,7 @@ export function buildThread(
    * throw the sentences away, and nothing here could give them back.
    */
   document.addEventListener('pointerdown', (event: Event) => {
+    if (deleteDialog !== undefined) return;
     if (popover?.current() === undefined) {
       if (
         !(event.target instanceof Element) ||
@@ -7857,31 +8332,48 @@ export function buildThread(
     }
   });
 
-  const refresh = async (): Promise<void> => {
-    if (typeof document === 'undefined') return;
-    if (cipher === undefined) return;
-    status.replaceChildren(line('thread-note', THREAD_LOADING_NOTE));
-    const state = await loadThread(relicId, deps, cipher, cipherFor);
-    // The fetch above can outlive the page that asked for it. In a browser
-    // this is a navigation; under test it is teardown. Either way there is
-    // nothing left to paint into, and painting is what throws.
-    if (typeof document === 'undefined') return;
-    if (state.kind === 'refused') {
-      list.replaceChildren();
-      status.replaceChildren(
-        threadRefusal(state.refusal, () => {
-          void refresh();
-        })
+  const refresh = async (): Promise<boolean | undefined> => {
+    if (typeof document === 'undefined') return false;
+    const opener = cipher;
+    if (opener === undefined) return false;
+    const work = Promise.withResolvers<void>();
+    threadWork.add(work.promise);
+    try {
+      const generation = ++loadGeneration;
+      status.replaceChildren(line('thread-note', THREAD_LOADING_NOTE));
+      const state = await loadThread(relicId, deps, opener, cipherFor);
+      if (typeof document === 'undefined') return false;
+      if (generation !== loadGeneration) return undefined;
+      if (state.kind === 'refused') {
+        if (!hasThreadSnapshot) list.replaceChildren();
+        status.replaceChildren(
+          threadRefusal(state.refusal, () => {
+            void refresh();
+          })
+        );
+        return false;
+      }
+      allEntries = state.entries.filter(
+        (entry) => entry.id === null || !confirmedAbsent.has(entry.id)
       );
-      return;
+      hasThreadSnapshot = true;
+      unconfirmedDeletes.clear();
+      paintThreadSnapshot();
+      return true;
+    } finally {
+      threadWork.delete(work.promise);
+      work.resolve();
     }
+  };
+
+  const paintThreadSnapshot = (): void => {
     // Paint first, then build the rows. Which marks landed is only known
     // after the paint pass, and a row that has to say its mark could not be
     // placed cannot be built before that is decided.
     const viewedVersion = view.version;
     const isCurrentVersion = view.version === view.currentVersion;
     const hasHistory = view.currentVersion > 1;
-    const filteredEntries = state.entries.filter((entry) => {
+    const filteredEntries = allEntries.filter((entry) => {
       // OTIO placement is eligible only when its sealed target is bound to the
       // service-stamped revision. A mismatch remains on that service revision
       // as unresolvable body text, never as a claimed historical coordinate.
@@ -7909,34 +8401,17 @@ export function buildThread(
       return viewedVersion === 1;
     });
 
-    const addressedMap = resolveAddressedMap(state.entries);
-    const tree = threadEntries(filteredEntries);
+    addressedById = resolveAddressedMap(allEntries);
+    const tree = threadEntries(filteredEntries, allEntries);
     const displayedEntries = collectDisplayedEntries(tree);
 
     paintMarks(displayedEntries);
 
-    const renderNode = (node: CommentNode, isReply = false): HTMLElement => {
-      const replies = node.replies.map((child) => renderNode(child, true));
-      const isUnplaceable =
-        node.entry.id !== null && unplaceable.has(node.entry.id);
-      const addressed =
-        node.entry.id !== null ? addressedMap.get(node.entry.id) : null;
-      const row = commentRow(
-        node.entry,
-        isUnplaceable,
-        addressed,
-        replies,
-        isReply
-      );
-      addOtioFeedbackContext(row, node.entry);
-      return row;
-    };
-
     const renderRows = (): void => {
-      list.replaceChildren(...tree.map((node) => renderNode(node)));
+      list.replaceChildren(...tree.map((node) => renderCommentNode(node)));
     };
-    renderRows();
     rerenderRows = renderRows;
+    repaintDeleteControls();
     updateThreadToggle(toggle, displayedEntries.length);
     status.replaceChildren(
       ...(displayedEntries.length === 0
@@ -8008,6 +8483,8 @@ export function buildThread(
     );
 
     const name = displayNameInput();
+    if (composerNameDraft !== undefined) name.value = composerNameDraft;
+    sidebarName = name;
     form.appendChild(field('Display name', name));
     // The aside that used to inflate the identity disclosure into a
     // paragraph, said where it is actually a question.
@@ -8016,6 +8493,8 @@ export function buildThread(
     const body = document.createElement('textarea');
     body.className = 'compose-textarea';
     body.rows = 4;
+    body.value = composerDraft;
+    sidebarBody = body;
     body.required = true;
     form.appendChild(field('Comment', body));
 
@@ -8031,13 +8510,20 @@ export function buildThread(
       count.textContent = `${used} of ${MAX_BODY_BYTES} bytes`;
       count.classList.toggle('over', used > MAX_BODY_BYTES);
     };
+    sidebarPaintCount = paintCount;
     paintCount();
-    body.addEventListener('input', paintCount);
+    body.addEventListener('input', () => {
+      composerDraftRevision++;
+      composerDraft = body.value;
+      paintCount();
+    });
 
     const post = document.createElement('button');
     post.type = 'submit';
     post.className = 'action primary';
     post.textContent = 'Post comment';
+    post.disabled = sidebarSubmission !== undefined;
+    sidebarPost = post;
 
     foot.append(count, post);
     form.appendChild(foot);
@@ -8045,66 +8531,99 @@ export function buildThread(
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
       const sealer = cipher;
-      if (sealer === undefined || post.disabled) return;
-      const target = marks.target();
-      if (target?.kind === 'image') {
-        post.disabled = true;
-        body.disabled = true;
-        const placement = await awaitPendingImage(target);
-        body.disabled = false;
-        post.disabled = false;
-        if (!form.isConnected) return;
-        if (placement !== 'placed' || marks.target() !== target) {
-          outcome.replaceChildren(
-            line(
-              'thread-note',
-              placement === 'unavailable'
-                ? 'This image is unavailable. Choose it again or clear the target.'
-                : placement === 'timeout'
-                  ? 'Could not verify this image. Try posting again.'
-                  : 'The target changed. Review it and post again.'
-            )
-          );
-          return;
-        }
-      }
-      const draft = {
+      if (
+        sealer === undefined ||
+        post.disabled ||
+        sidebarSubmission !== undefined
+      )
+        return;
+      const submitted = {
         body: body.value,
-        display_name: name.value.trim().length > 0 ? name.value.trim() : null,
-        anchor: marks.target(),
+        revision: composerDraftRevision,
       };
-      // The target is spent. Leaving it set would aim the reader's next
-      // comment at the last thing they marked, which is the bug this whole
-      // change exists to remove, one comment later.
-      marks.clear();
+      sidebarSubmission = submitted;
       post.disabled = true;
-      outcome.replaceChildren(line('thread-note', 'Encrypting and posting.'));
-      void postComment(relicId, draft, deps, sealer, view.version).then(
-        async (result) => {
-          post.disabled = false;
-          if (result.kind === 'refused') {
-            outcome.replaceChildren(threadRefusal(result.refusal, () => {}));
-            if (result.refusal.code === 'invalid_session') {
-              session = { kind: 'anonymous' };
-              composer.replaceChildren(composeIdentity());
-            }
+      const work = Promise.withResolvers<void>();
+      threadWork.add(work.promise);
+      try {
+        const target = marks.target();
+        if (target?.kind === 'image') {
+          body.disabled = true;
+          const placement = await awaitPendingImage(target);
+          body.disabled = false;
+          if (!form.isConnected) return;
+          if (placement !== 'placed' || marks.target() !== target) {
+            outcome.replaceChildren(
+              line(
+                'thread-note',
+                placement === 'unavailable'
+                  ? 'This image is unavailable. Choose it again or clear the target.'
+                  : placement === 'timeout'
+                    ? 'Could not verify this image. Try posting again.'
+                    : 'The target changed. Review it and post again.'
+              )
+            );
             return;
           }
-          body.value = '';
-          // The body is this comment's and goes. The name is the reader's and
-          // stays, here and on the next relic they open.
-          writeDisplayName(name.value);
-          paintCount();
-          outcome.replaceChildren(
-            line(
-              'thread-note',
-              `Posted as ${plainLabel(result.author)}, which is what everybody ` +
-                'holding this link now sees.'
-            )
-          );
-          await refresh();
         }
-      );
+        const draft = {
+          body: submitted.body,
+          display_name: name.value.trim().length > 0 ? name.value.trim() : null,
+          anchor: marks.target(),
+        };
+        // The target belongs to this captured submission, not the next draft.
+        marks.clear();
+        outcome.replaceChildren(line('thread-note', 'Encrypting and posting.'));
+        const result = await postComment(
+          relicId,
+          draft,
+          deps,
+          sealer,
+          view.version
+        );
+        if (typeof document === 'undefined') return;
+        if (result.kind === 'refused') {
+          outcome.replaceChildren(threadRefusal(result.refusal, () => {}));
+          if (result.refusal.code === 'invalid_session') {
+            sessionGeneration++;
+            session = { kind: 'anonymous' };
+            section.dataset['session'] = session.kind;
+            paintComposer();
+            repaintDeleteControls();
+            repaintCardPermissions?.();
+          }
+          return;
+        }
+        // A passkey or session repaint may have replaced the original form.
+        // Clear the submitted text only if the live draft is still that text.
+        const liveBody = sidebarBody?.value ?? composerDraft;
+        if (
+          composerDraftRevision === submitted.revision &&
+          liveBody === submitted.body
+        ) {
+          composerDraft = '';
+          if (sidebarBody !== undefined) sidebarBody.value = '';
+        }
+        writeDisplayName(sidebarName?.value ?? composerNameDraft ?? name.value);
+        sidebarPaintCount?.();
+        outcome.replaceChildren(
+          line(
+            'thread-note',
+            `Posted as ${plainLabel(result.author)}, which is what everybody ` +
+              'holding this link now sees.'
+          )
+        );
+        await refresh();
+      } finally {
+        if (sidebarSubmission === submitted) {
+          sidebarSubmission = undefined;
+          if (sidebarPost !== undefined) sidebarPost.disabled = false;
+        }
+        post.disabled = false;
+        body.disabled = false;
+        threadWork.delete(work.promise);
+        work.resolve();
+      }
     });
 
     return form;
@@ -8113,6 +8632,12 @@ export function buildThread(
   let offerHost: HTMLElement | undefined;
 
   const paintComposer = (): void => {
+    if (sidebarBody !== undefined) composerDraft = sidebarBody.value;
+    if (sidebarName !== undefined) composerNameDraft = sidebarName.value;
+    sidebarBody = undefined;
+    sidebarName = undefined;
+    sidebarPost = undefined;
+    sidebarPaintCount = undefined;
     if (session.kind === 'verified') {
       const commentEl = composeComment(session.email);
       composer.replaceChildren(
@@ -8165,7 +8690,10 @@ export function buildThread(
    */
   const recheck = async (): Promise<void> => {
     if (cipher === undefined) return;
+    const generation = ++sessionGeneration;
     const discovered = await readSession(deps);
+    if (typeof document === 'undefined' || generation !== sessionGeneration)
+      return;
     let mounted = false;
     if (offerOwed && discovered.kind === 'verified') {
       offerOwed = false;
@@ -8175,9 +8703,12 @@ export function buildThread(
       sessionSignature(discovered) !== sessionSignature(session);
     if (sessionChanged) {
       session = discovered;
+      section.dataset['session'] = session.kind;
     }
     if (sessionChanged || mounted) {
       paintComposer();
+      repaintDeleteControls();
+      repaintCardPermissions?.();
     }
   };
 
@@ -8206,16 +8737,19 @@ export function buildThread(
         );
         return;
       }
+      const generation = ++sessionGeneration;
       const [, discovered] = await Promise.all([refresh(), readSession(deps)]);
       if (typeof document === 'undefined') return;
-      session = discovered;
+      if (generation === sessionGeneration) session = discovered;
       section.dataset['threadReady'] = 'true';
-      section.dataset['session'] = discovered.kind;
-      if (discovered.kind === 'verified' && takePasskeyOfferMarker()) {
-        mountOfferFor(discovered.email);
+      section.dataset['session'] = session.kind;
+      if (session.kind === 'verified' && takePasskeyOfferMarker()) {
+        mountOfferFor(session.email);
       }
       paintComposer();
-      if (discovered.kind === 'verified') {
+      repaintDeleteControls();
+      repaintCardPermissions?.();
+      if (session.kind === 'verified') {
         announceVerified();
       }
     } finally {
@@ -8244,6 +8778,9 @@ export function buildThread(
     tab,
     resizer,
     ready,
+    idle: async () => {
+      while (threadWork.size > 0) await Promise.all([...threadWork]);
+    },
     toggle: toggleOpen,
     attach: (next) => {
       if (host !== undefined && host !== next) {
@@ -8255,6 +8792,7 @@ export function buildThread(
       }
       host = next;
       popover = popoverLayer(next);
+      if (!deleteNotice.hidden) next.appendChild(deleteNotice);
       // Once per stage. A second binding would toggle the class twice on one
       // pointer crossing, which reads as the pairing not working at all.
       if (next.dataset.pairBind !== '1') {
@@ -9140,6 +9678,7 @@ export function renderReady(
   deps: ViewerDeps,
   afterRender?: (page: HTMLElement) => void
 ): void {
+  const lifecycle = createLifecycle();
   /** The attached taskbar, so a count arriving can replace just that row. */
   let bar: HTMLElement | undefined;
   let commentCount: number | undefined;
@@ -9268,6 +9807,7 @@ export function renderReady(
   }
   let pinnedView: number | undefined;
   const showSingle = (viewToShow: ReadyView, alreadyPinned = false): void => {
+    lifecycle.advance();
     decisionPanel?.close();
     if (viewToShow !== activeView || decisionTally === undefined) {
       refreshDecisionTally(viewToShow);
@@ -9312,21 +9852,23 @@ export function renderReady(
     trackRenderState(stage, wrap, viewToShow.route);
   };
 
-  let versionRequest = 0;
-
   const showVersion = async (v: number): Promise<void> => {
-    const requestedVersion = ++versionRequest;
+    // Every selection starts a new state. A result still in flight for an
+    // earlier selection, or for a screen the reader has left, may not act.
+    lifecycle.advance();
+    const selection = lifecycle.token();
+    // A pill left by an earlier selection belongs to that selection. Removing
+    // it here means this selection never writes into or removes another's.
+    document
+      .querySelector?.('div.render-status[data-version-progress]')
+      ?.remove();
     if (v === activeView.version) {
       showSingle(activeView);
       return;
     }
 
-    let versionPill = document.querySelector
-      ? (document.querySelector(
-          'div.render-status[data-version-progress]'
-        ) as HTMLElement | null)
-      : null;
-    if (!versionPill && document.createElement) {
+    let versionPill: HTMLElement | null = null;
+    if (document.createElement) {
       versionPill = document.createElement('div');
       versionPill.className = 'render-status';
       versionPill.dataset['versionProgress'] = '';
@@ -9342,16 +9884,12 @@ export function renderReady(
       } else if (document.body?.appendChild) {
         document.body.appendChild(versionPill);
       }
-    } else if (versionPill) {
-      const label =
-        versionPill.querySelector?.('.render-status-label') ?? versionPill;
-      label.textContent = `Opening version ${v}`;
     }
     versionStore.pin(v);
 
     const res = await versionStore.get(v, {
       onProgress: (p) => {
-        if (requestedVersion !== versionRequest) return;
+        if (!lifecycle.isCurrent(selection)) return;
         if (versionPill) {
           const label =
             versionPill.querySelector?.('.render-status-label') ?? versionPill;
@@ -9370,9 +9908,9 @@ export function renderReady(
       },
     });
 
-    if (requestedVersion === versionRequest) versionPill?.remove?.();
+    if (lifecycle.isCurrent(selection)) versionPill?.remove?.();
 
-    if (requestedVersion !== versionRequest) {
+    if (!lifecycle.isCurrent(selection)) {
       versionStore.unpin(v);
       return;
     }
@@ -9380,13 +9918,13 @@ export function renderReady(
       showSingle(res.view, true);
     } else {
       versionStore.unpin(v);
-      toast(res.detail);
+      toast(failureText(res, vaultHoldsKey(relicId, deps)));
     }
   };
 
   const showComparison = (left?: number, right?: number): void => {
+    lifecycle.advance();
     decisionPanel?.close();
-    versionRequest++;
     if (pinnedView !== undefined) versionStore.unpin(pinnedView);
     pinnedView = undefined;
     renderComparison(
@@ -9987,10 +10525,13 @@ export function renderDead(
 
     let activeCachedPrefix = cachedPrefix;
 
+    let keySubmissions = 0;
     form.addEventListener('submit', (event) => {
       event.preventDefault();
       const enteredValue = input.value;
       if (enteredValue.trim().length === 0) return;
+      const submitted = ++keySubmissions;
+      const openAtSubmit = openGeneration;
 
       submit.disabled = true;
       feedback.replaceChildren();
@@ -10020,7 +10561,20 @@ export function renderDead(
               activeCachedPrefix = result.cachedPrefix;
             }
           } else if (result.kind === 'dead') {
-            feedback.textContent = result.dead.detail;
+            const detail = result.dead.detail;
+            if (result.jsxCompilerUnavailable === true) {
+              // A stale deploy may heal by reloading. Only this submission,
+              // while it is still on screen, may decide.
+              const stillHere = (): boolean =>
+                submitted === keySubmissions && openAtSubmit === openGeneration;
+              void healForRelic(relicId, deps, stillHere).then((reloading) => {
+                if (!reloading && stillHere()) {
+                  feedback.textContent = detail;
+                }
+              });
+            } else {
+              feedback.textContent = detail;
+            }
           }
         },
         () => {
@@ -10711,11 +11265,13 @@ export async function boot(
   }
 
   const runOpen = async (resume?: LoadResume): Promise<void> => {
+    const thisOpen = ++openGeneration;
     const plate = adoptOrMountPlate(relicId);
     let state: ViewerState;
     try {
       state = await load(relicId, deps, (p) => plate.paint(p), resume);
     } catch {
+      if (thisOpen !== openGeneration) return;
       plate.remove();
       renderDead(
         {
@@ -10732,7 +11288,18 @@ export async function boot(
       );
       return;
     }
+    // A newer open has started (a second Retry, say): this result must not
+    // repaint over it.
+    if (thisOpen !== openGeneration) return;
 
+    if (state.kind === 'dead' && state.jsxCompilerUnavailable === true) {
+      const reloading = await healForRelic(
+        relicId,
+        deps,
+        () => thisOpen === openGeneration
+      );
+      if (reloading || thisOpen !== openGeneration) return;
+    }
     try {
       if (state.kind === 'ready') {
         plate.remove();

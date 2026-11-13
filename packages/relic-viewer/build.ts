@@ -257,6 +257,35 @@ export async function buildViewer(options?: {
     process.exit(1);
   }
 
+  const builtPcmWorker = await Bun.build({
+    entrypoints: [`${pkgDir}src/otio-audio-pcm-worker.ts`],
+    outdir: out,
+    target: 'browser',
+    format: 'esm',
+    minify: true,
+    splitting: false,
+    naming: '[name].js',
+    banner: mediabunny.banner,
+  });
+  if (!builtPcmWorker.success) {
+    for (const log of builtPcmWorker.logs) console.error(log);
+    process.exit(1);
+  }
+
+  // The render-side gate is loaded only for scheduled PCM playback.
+  const builtTransportGate = await Bun.build({
+    entrypoints: [`${pkgDir}src/otio-transport-gate-worklet.ts`],
+    outdir: out,
+    target: 'browser',
+    format: 'esm',
+    minify: true,
+    splitting: false,
+    naming: '[name].js',
+  });
+  if (!builtTransportGate.success) {
+    for (const log of builtTransportGate.logs) console.error(log);
+    process.exit(1);
+  }
   // Model parsing and WebGL are loaded only when a 3D relic is opened.
   for (const entry of ['model-view', 'model-parse-worker']) {
     const modelBuild = await Bun.build({

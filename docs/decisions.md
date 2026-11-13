@@ -844,8 +844,12 @@ The coarse renderer class expands from nine to ten values: `markdown`, `code`, `
 **The generic cover exception.**
 By default, `relic-mcp` generates an unencrypted 1200x630 cover image for renderable documents and media. For `otio` relics, unencrypted first-screen media rendering is skipped by default. Unfurl previews display a generic card carrying the publisher-declared title and format label. This exception protects sensitive timeline media frames, cuts, and track metadata from leaking into unencrypted link preview caches without the decryption key.
 
+**Unchanged on 2026-11-10.** A program is rendered only into the encrypted archive and is never produced as an unencrypted preview, so this exception still holds for every OTIO relic.
+
 **Codec, effect, and browser boundaries.**
 Browser playback operates under browser-managed SDR decoding with canvas composition and additive audio. There is no universal effect execution engine, plugin runner, transcode service, or remote asset resolver. Codec decoding is verified via actual element loading rather than speculative `canPlayType`. Unsupported effects, unrecognized schemas, and missing media trigger explicit diagnostic states (`unsupported-effect`, `unsupported-codec`, `unsupported-schema`, `missing-media`) and provide a deliberate "Preview base media without unsupported effects" control. Incomplete playback is never disguised as complete fidelity.
+
+**Scoped on 2026-11-10.** The rule above binds the viewer and the server, and this text stays as written. The 2026-11-10 program decision lets the publisher's own browser encode an MP4 locally before encryption. No server and no viewer encode a timeline. See that entry for the publisher-side renderer and its boundary.
 
 **Encrypted timeline feedback anchoring.**
 Reviewers can anchor point comments or half-open range comments to specific tracks or the entire composition. A new anchor kind (`kind: 'otio'`, `v: 1`) carries rational time coordinates (`{value, rate}`), timeline ID, track ID, optional item ID, document SHA-256, and human snapshot labels. Anchor payloads fit within the 1,536-byte budget before encryption and the 8,192 base64url character ciphertext cap. Comment bodies and anchors remain encrypted under the relic's derived comment key. Historical comments resolve against the original revision's decrypted document, and conservative current-revision projections (`same`, `mapped`, `partial`, `changed`, `ambiguous`, `missing`) are reported separately to publisher agents without rewriting original anchors.
@@ -854,6 +858,8 @@ Reviewers can anchor point comments or half-open range comments to specific trac
 - Browser playback is limited to browser-supported SDR video and audio formats; professional codecs (ProRes, DNxHD) or RAW formats require pre-transcoded web-compatible proxy media inside the bundle.
 - Nonlinear retiming and complex transitions without web-native equivalents fall back to base media preview or diagnostic placeholders.
 - A raw `.otio` file lacking bundled media provides structural track inspection and download, not media playback.
+
+**Annotated on 2026-11-10.** The placeholder behavior above is the viewer's, and it still governs focus-only playback. A timeline with an unsupported feature gets no program: its archive is focus-only with the exact reason. The residual on professional codecs carries over the same way, so a timeline whose media the publisher's browser cannot decode is focus-only with its code. See the 2026-11-10 entry.
 
 ## 2026-10-24: Copy link shows the link and the key phrase
 
@@ -925,6 +931,8 @@ The same bundled video decoded continuously at 30 fps in the native HTML video p
 - WebCodecs would add a demuxing and codec-feed pipeline; the measured seek bottleneck can be removed using the existing media element.
 - The boundary from the 2026-10-20 OpenTimelineIO native playback decision is retained: browser playback operates under browser-managed SDR decoding with canvas composition and additive audio, without transcode services, WASM decoders, or WebCodecs pipelines.
 
+**Scoped on 2026-11-10.** The boundary above governs the viewer. The 2026-11-10 program decision lets the publisher's own browser encode H.264/AAC locally before encryption, and that entry does not choose the encoder API. If the renderer uses WebCodecs, it is a publisher-side exception to this boundary and does not reach the viewer. Nothing is proven until the renderer ships.
+
 `VideoFrame` is used only to read the media element's current frame together with its timestamp inside `requestVideoFrameCallback`. No WebCodecs decoder, demuxer or codec configuration is involved. Tagging from the callback metadata can pair a tag with a newer frame when the main thread is late. The admission probe measured it: one fr60 sample in twenty disagreed in a two-decoder run under host load, and with a 40 ms delay injected into the callback the metadata method disagreed on every sample in four classes (fr60, fr30 WebM, no-duration WebM and the 1080p long-GOP file). The `VideoFrame` method matched every sample in every class in the unthrottled, 4x CPU and 40 ms delay runs. Native playback also requires `VideoFrame`; without it the viewer plays on seek cadence.
 
 **No format, CSP, or privacy change.**
@@ -946,6 +954,28 @@ Media Blobs whose scanner index stops short of the file end (such as `no-duratio
 Every change to the set of drawn video occurrences (cuts, unhiding a track, soloing, or entering a dissolve) triggers one exact resync (pausing, running exact `renderAt`, and re-anchoring phase).
 - In admitted native mode, video decoders run continuously rather than seeking on every transport tick.
 - For rapid cuts or montages, frequent resyncs could hitch; this is bounded by a change-rate guard (more than 3 changes in 5 s falls back to seek cadence) and a storm guard (3 failure resyncs in 10 s falls back to seek cadence). Lookahead preroll remains an uncommitted future consideration if measured multi-clip cut performance requires it.
+
+**Update, 2026-11-09:** A native boundary can retain continuing decoders and the transport anchor when it only retires occurrences or joins occurrences prepared against the fixed anchor. The join requires phase-admitted video, current required snapshot tags, and entering audio that is playing within the existing drift tolerance. Preparation uses two workers; unprepared or ineligible boundaries retain the resync path.
+
+**Scheduled PCM scope and initial playback budget, 2026-11-09.** Jason approved a separate maximum of 350 ms from the play request to initial presentation. The steady playback p95 remains 50 ms, the maximum gap remains 100 ms, and the source-aware audio dropout limit remains 20 ms. The initial budget does not authorize skipping the source prefix or backdating the playback epoch.
+
+The scheduled PCM design is limited to independently validated local WAV PCM16 or float32, mono or stereo, at the context's 44.1 or 48 kHz sample rate, with unit-rate sample-aligned mappings. Other codecs, layouts, rates, retimes and mappings retain scope-wide browser-native playback with an explicit compatibility reason. Scheduled qualification requires captured post-gain output against source samples at the actual context-frame epoch, not a fitted offset; it does not establish equivalent timing for native compatibility mode. The video producer and readiness frontier remain part of the smooth-playback requirement.
+
+The scheduled path uses an audio-render-thread gate to enforce the committed prefix. Expiry cannot be renewed after it has occurred. Recoverable starvation resumes at a new epoch on the committed sample lattice; losing committed pixels or a trustworthy output clock is an interruption, not evidence of a future stop or permission to switch to native audio. Scope replacement stays paused. The existing three-slot native video ring remains subject to measured sustained-playback qualification; it cannot recover a frame the native element already passed. A direct video producer would require a separate architecture decision.
+
+Playback synchronization uses the browser's estimated audio-output timestamp. The existing two-frame A/V comparison is a browser-estimated check, not a guarantee about physical sound and display output. Its observed mapping allowance describes measured timestamp variation, not hardware accuracy. Audio-device changes or browser interruptions may require resynchronization. Qualification retains the approved startup, steady presentation and source-aware dropout limits and must report failures rather than infer hardware accuracy.
+
+**Update, 2026-11-12: one timestamp from the future.** Decided by Jason on 2026-11-12. Chrome on a sink with 10 ms callbacks stamped output ahead of the read by more than the 2 ms bound about once per Linux CI run (2.1, 4.0 and 6.0 ms recorded), and the 2.1 and 4.0 ms stamps each interrupted healthy playback. One such stamp is now a bad sample, not a lost clock: it adds no evidence and the last accepted pair stands. Playback is interrupted when a second, different future stamp arrives before an accepted one, or when no accepted stamp arrives within the existing 50 ms freshness window. The 2 ms bound for accepted evidence is unchanged and no bound was raised. Each skip is counted on the clock and recorded in the proof trace as `clock-future-skip`.
+
+**Update, 2026-11-12: frontier overshoot on a 10 ms sink.** Decided by Jason on 2026-11-12. A starved run closes at its frontier inside a render burst. Chrome on Linux renders 384 or 512 frames per callback, so the context can sit 384 frames past the frontier before the viewer hears of the closure. With the 512-frame scheduling guard the earliest start is then 896 frames past the frontier. The 20 ms gap is 960 frames at 48 kHz and 882 frames at 44.1 kHz, so at 44.1 kHz on such a sink the viewer refuses that recovery (`recovery render handoff has no feasible frame`) and scheduled playback stops. The product is unchanged: the gap and the guard stand and the refusal is truthful. The guard was not reduced, on the reasoning (not measured) that a start command landing just after a burst begins needs a full burst of lead. The path proof reruns only this exact signature (the first recovery check, an overshoot under one guard, nothing injected between the closure and the refusal), in a fresh browser, at most three times, and keeps each refused trace. Each rerun starves the run one PCM batch later, because a fresh browser otherwise repeats the same frontier and the same refusal. Any other refusal fails the proof. By the same arithmetic, a held read on such a sink that lasts until the next stamp can also leave no feasible frame.
+
+**Update, 2026-11-12: the spread before start uses the playback window.** Decided by Jason on 2026-11-12. On Chrome on Linux the first output timestamp after the stream starts sat one or two callback periods from the rest: about 20 ms in 146 of 239 recorded starts and about 10 ms in 30. At 20 ms the 10 ms spread bound catches it at once and calibration restarts. At 10 ms it sits on the bound: 6 starts kept that sample and selected their start frame with a mapping allowance between 9.4 and 10 ms, and one of them failed when the last read before starting measured 10.002 ms against a sample 80 ms old (`no certified initial audiovisual frontier`, CI run 43235935771). Calibration still measures the spread over every sample since the first. Once the clock is calibrated, a read before start measures it over the same rolling 30 ms window playback uses. The 10 ms bound is unchanged, and a step over it inside the window still resets calibration, or fails an armed clock.
+
+**Update, 2026-11-12: 60 fps focus playback falls back to native audio.** Decided by Jason on 2026-11-12. Scheduled audio requires every video frame to last at least one display refresh. The viewer assumes a 60 Hz display (16.7 ms) until it has measured one, and it has not at the first play. A 60 fps WebM stores whole milliseconds, so its shortest frame is 16 ms, and the viewer refuses scheduled audio with `video timing cannot be certified` and plays the scope natively. This was observed on Linux CI and on macOS at the same revision. The product is unchanged. The path proof asserts what the viewer did: a native run must carry that refusal with the shortest frame equal to ffprobe's, must be audible, must show the authored picture while paused, and must move forward inside the 350 ms start budget without running ahead of the timeline. A scheduled run keeps every scheduled check. Scheduled audio at 60 fps is unproven: no run has taken that branch. The proof's picture oracle previously compared against decoded frames that are doubled fr30 pictures, which no frame could match uniquely, so the stage could not have passed in either mode.
+
+Native-clock qualification is independent of browser-estimated output timing. A successful standalone clock experiment does not qualify the player: source-correct post-gain stereo must be correlated with a separate frozen-origin witness across real bank promotions and an observed stale cached label. The same admission path must reject corrupt, held, late or absent evidence. Missing provenance is a failure, not a reason to reconstruct timestamps.
+
+For an unsolicited interruption, a render-frame clock cannot identify a wall-clock gap before the platform reports it. Closing a gate in response to that notification does not prove that no old-generation samples were rendered before the notification. A stronger pre-notification guarantee requires a native render-side epoch or latch.
 
 **Residuals:**
 - Paused inspection, transport seeks, and scrubbing remain exact midpoint seeks into certified presentation windows.
@@ -1083,6 +1113,74 @@ Authorized by Jason Waldrip on 2026-11-10.
   egress ceiling must be reviewed against this change; this record does not
   claim that an external monitor was changed.
 
+## 2026-11-10: OpenTimelineIO timelines render locally into the archive as a program, with focus-only fallback
+
+The publisher and viewer paths are implemented on PR 155. Release remains blocked on playback proof: one legacy cold start measured 411.3 ms against the 350 ms limit, and active external audio prevented the program's cold-device qualification. `packages/relic-mcp/PATH.md` lists the release checks. (Status superseded on 2026-11-13: see "The OpenTimelineIO proof splits into a blocking slice and a reported one" below.)
+
+**The publisher renders each timeline before encryption.** `relic-mcp` renders every timeline in a composition in a local browser with networking disabled and a temporary profile. The renderer reuses the viewer's compositing and timeline evaluation. It decodes frames at the same certified source times the viewer uses, and it mixes audio at 48 kHz with the playback fade math. Output is H.264/AAC MP4, and only after the browser confirms encoder support. The archive gains `relic/program.json` and one MP4 per timeline, outside `content.otio`.
+
+**Resolution and cap.** The current renderer uses a single 1280x720 output. The proposed 1080p, 720p, and 540p ladder remains unimplemented. The finished plaintext archive must fit the 500 MiB cap in `format.md` 3.11; manifest and program bytes also have a separate 100 MiB bound. If the program cannot fit, the timeline is focus-only.
+
+**Focus-only.** Publishing still succeeds. A timeline without a valid program carries no program, and its manifest records a specific code for the reason. The reasons are: no local Chrome, no H.264/AAC encoder, an unsupported feature, a render failure, and a size overrun. A render never approximates. No partial, lower-fidelity, or substituted program is stored. Under Jason's rule, a Linux publisher whose Chrome cannot encode H.264/AAC is focus-only.
+
+**Legacy archives and corrupt manifests.** Main directed this on 2026-11-10, and it is binding.
+
+An archive published before this decision has no `relic/program.json`. It keeps its existing playback, so previously shared links do not break.
+
+Every archive published under this decision carries `relic/program.json`, even when its program is unavailable. A manifest that reports unavailable, or that fails validation, shows focus-only with its reason.
+
+A missing manifest is legacy. A present manifest that is corrupt, unparseable, or tampered is never legacy and is never silently ignored. The viewer shows focus-only and says the manifest is invalid.
+
+**Viewer behaviour.** When a valid program exists, normal mode plays one native video and maps media time to timeline time. Focusing one track or clip plays that track's original media. Focusing a stack or the whole timeline plays the program range. When a program is unavailable or invalid, the viewer shows focus-only: track and clip focus on original media, with the stored reason. Whether the composited whole-timeline path from 2026-10-20 stays reachable in focus-only is open (see below). Comment anchors keep their current format and bind to `content.otio`.
+
+**Budgets.** The plan applies the 2026-11-09 numbers to program playback. Startup from the play request is 350 ms cold and warm, approved for scheduled PCM on 2026-11-09. Steady presentation is 50 ms at p95 with a 100 ms maximum gap, and source-aware audio dropout is 20 ms. Jason is needed only if cold program startup exceeds 350 ms. Failures are reported, not inferred.
+
+**Privacy.** The program is plaintext only in the publisher's browser and inside the encrypted archive. No program field reaches object metadata, the grant request, or the relic row (`format.md` 3.2). The 2026-10-20 cover exception stands, so no unencrypted timeline media is rendered for preview. The length leak (`service.md` section 5) now covers the larger archive total, and the published disclosure must still list it. Networking-disabled rendering is a requirement of this decision and is not proven.
+
+**Resolved on 2026-11-10 by Jason's direction, through Main.** Items 1 to 5 are settled. Item 6 is an agent-run verification, not a question for Jason.
+
+**1. Plaintext temporary file: settled.** Rendered output is plaintext and is held in memory only, within the program bound. It is never written to disk. This is an absolute constraint. `publish.md` 4.8 is unchanged and applies in full.
+
+**2. Renderer: settled.** Local Chrome with WebCodecs encoders, producing H.264/AAC MP4 after the browser confirms support. This supersedes the 2026-11-09 WebCodecs boundary for the publisher renderer only, as annotated above.
+
+**3. Whole-timeline view without a program: settled.** There is none. A timeline with no valid program is focus-only, and the viewer does not composite it from original media.
+
+**4. Unsupported features: settled.** A timeline with an unsupported effect or transition gets no program and is focus-only with `unsupported-effect` or `unsupported-transition`. The 2026-10-20 diagnostic states apply to focused items only.
+
+**5. Reason codes: settled, taken from the implementation.** The codes are the enum `OTIO_PROGRAM_REASON_CODES` in `packages/relic-format/src/otio-program.ts`, listed in `format.md` 3.19. The reader's thrown codes are the `OtioProgramErrorCode` union in the same file. No other names are program codes.
+
+**6. Legacy-reader compatibility: agent-run verification.** Whether a pre-change viewer opens a program archive safely is checked by `packages/relic-mcp/PATH.md` Check 9. The agent runs it before release. A failure blocks program archives until the new viewer or publisher is fixed and the check passes.
+
+**Supersession register.** Earlier entries are annotated in place, not rewritten.
+
+**2026-10-20 codec, effect, and browser boundaries:** scoped to the viewer and the server, annotated above.
+
+**2026-10-20 residuals (professional codecs, unsupported transitions):** carry over to focus-only reasons, annotated above.
+
+**2026-10-20 generic cover exception:** unchanged, annotated above.
+
+**2026-11-09 boundary against WebCodecs and transcode pipelines:** retained for the viewer, scoped for the publisher renderer, annotated above.
+
+**`viewer.md` 3.6 composition and normal-mode playback:** applied on 2026-11-10. Program-bearing archives in the available state use the program path, and the composition rules apply to legacy archives only.
+
+**`publish.md` 4.8, no plaintext temporary file:** no conflict. Rendered output is held in memory and never written to disk, so 4.8 is unchanged and applies in full.
+
+**Locked inputs.** `frame.md` and `preconditions.md` are unchanged. This decision adds a program for OpenTimelineIO only. It does not make general archives first-party rendered.
+
+
+## 2026-11-11: Rolling evidence for scheduled audio recovery
+
+Jason chose a rolling window for recovery clock calibration. At the confirming
+read, every counted timestamp must be no more than 50 ms old. The evidence
+must contain at least three advances spanning at least 30 ms, including a read
+after the recovery request. The 20 ms audio gap limit is unchanged.
+If playback already read the newest timestamp, a valid post-request re-read
+confirms that timestamp once. It does not add another clock advance.
+
+Devices whose output timestamps advance too slowly to satisfy those conditions
+cannot use this recovery path. They stop with an error rather than treating
+insufficient evidence as a successful recovery.
+
 ## 2026-11-11: Private shares
 
 Authorized by Jason Waldrip on 2026-11-11. The build plan is `docs/plans/private-shares/README.md`. This entry records the decisions and the reversals. The plan holds the evidence.
@@ -1117,7 +1215,6 @@ Authorized by Jason Waldrip on 2026-11-11. The build plan is `docs/plans/private
   - Fixed in the second round: PS2-01 (key commitment), PS2-02 (the browser keeps a floor of owner-signed facts), PS2-03 (coverage repair wraps only relics the unlocked identity owns), PS2-04 (revocation and removal travel as owner-signed statements, not by absence), PS2-05 (relic-mcp pins only owner-signed values, so service-asserted epochs and flags cannot brick publishing), PS2-06 (revocation and recovery changes move the owner epoch before the wrap sweep, so a concurrent seal undoes itself), PS2-07 (a sweep keeps a wrap that another current role still needs), PS2-11 (the proof harness never reads or writes the operator's relic-mcp files), and PS2-12 (these corrections).
   - Open by decision: PS-07 and PS2-09 (uploads that are not erased, and the overwrite denial of service), PS2-08 (KEM key squatting, with no proof of possession), PS2-10 (owner bind of a public relic by a leaked publish token). Each is described under the residuals above.
 - **Test defects found by the end-to-end path.** The end-to-end proof `private-shares-path.ts` found three defects that the unit tests had missed. The dashboard and ready-view roots were detached by a render. A grantee could not open a version sealed before the grant. The owner could not open a republished version, because the relic version was passed as the envelope fragment version. Each is fixed with a regression test.
-
 ## 2026-11-11: Decisions are open only when the author asks
 
 - Decided with Jason, in the moment: the band's Decisions control shows only on a relic whose author asked for decisions. Before this the control was on every relic published by a client that sent a share verifier, and read "not open yet" on older ones.
@@ -1125,3 +1222,44 @@ Authorized by Jason Waldrip on 2026-11-11. The build plan is `docs/plans/private
 - The list, options, and record routes refuse with `409 decision_unavailable` unless `decisionsOpen` is `true`, ahead of the proof check. The viewer already read that refusal as "closed" and now draws no control for it.
 - The control is also not drawn while the list is loading or after a transient list failure, so a closed relic never flashes it. A reload recovers an open one.
 - Relics published before this change have no `decisionsOpen` and stay closed until their author republishes with `decisions: true`. Decisions already recorded on them are not deleted and are not shown. The share verifier no longer implies a decision surface.
+
+## 2026-11-12: The OpenTimelineIO path proves the live player on legacy archives
+
+- Decided with Jason: `packages/relic-mcp/test/otio-path.ts` publishes a legacy archive, one with no program, for every stage that exercises the live player. That covers qualification, comments, focus, the decoder proofs, the revision stages, the state fixture and the coincident-comment scenario. A new publish of those fixtures carries a program, which the viewer plays or refuses as a whole, so it never reaches the live player.
+- A new publish is still proven twice: by the focus-only publish check at the start of the path, and by `otio-program-path.ts`.
+- The legacy publish helper records the relic in the MCP's publish state the way `publish()` does. Comment readback and republish then run against it by `relic_id`. A republish through the MCP writes a version with a program, and the revision stages assert the comment projections across those versions.
+- The path had not run past its scheduled-audio stages on this branch. Run on a legacy archive, it found four defects in the branch, each fixed with the proof left as strict as it was:
+  - At 320x900 a blocked preview's "Preview base media" button sat below the fold of its status panel. The zoom tools had taken a heading row and the audio timing notice had grown the diagnostics list. The zoom tools moved into the selection row, and the phone diagnostics list is capped at 7rem.
+  - A comment mark hidden by its own concealment attribute stayed hidden for good. Opening a comment focuses its clip and hides the marks outside it, and those marks never came back. `concealMarks` now lifts that attribute from a self-subject mark before it measures.
+  - A resize moved the reader's row out of the timeline, because the grid's width is rewritten on every resize and that turns the browser's scroll anchoring off. The view now holds the row at the top of the timeline viewport itself.
+  - A RAM disk that failed to format or mount was left attached, because the cleanup required a volume name that diskutil reports only for a mounted volume.
+- Raw `currentFrame` labels repeat on a loaded runner. The post-gain calibration and the post-gain comparison now authenticate coverage with the independent carrier when a capture has one, as the scheduled stages already did. A native capture has no carrier and keeps the raw labels.
+- The path's focus stages go back to the composition before they focus a clip outside the focused one. A focused view draws only that clip, by design.
+
+## 2026-11-13: The OpenTimelineIO proof splits into a blocking slice and a reported one
+
+Three decisions by Jason on 2026-11-13, after no `verify` run on PR 155 had passed.
+
+- **The legacy scheduled-audio stages run in their own job.** They are native compatibility, scheduled PCM at 48 kHz and 44.1 kHz, the 60 fps cold start, the restart during start, and the boundary fixture's audio captures. `otio-scheduled-audio.yml` runs them on every pull request and on the pushes that deploy, uploads their receipts, and blocks nothing. Every other stage of `otio-path.ts` stays in `verify.yml`, which gates a merge and a deploy.
+- **An interruption the viewer itself reports reruns.** When nothing is injected by the proof and the viewer reports the interruption truthfully, the stage reruns at most three times and keeps the evidence of each attempt. A stage interrupted on every attempt fails.
+- **The 50 ms p95 presentation budget is compared in display refreshes.** A frame held three refreshes (50.0 ms at 60 Hz) meets it, and four refreshes (66.7 ms) exceed it. The 100 ms maximum stays in raw milliseconds. The 350 ms startup and 20 ms audio budgets are unchanged.
+
+One application of the second decision was made by the agent, not by Jason. The blocking slice's `native-playback` stage asserts that steady playback seeks on no more than 10% of frames. On a shared runner the viewer's native start failed twice on the first attempt in 2 of 8 lanes, and the viewer fell back to its seek cadence, the bounded fallback from 2026-10-25, with the clock still advancing. The stage now reruns under the same rule. If that reading of the decision is wrong, the stage goes back to failing on the first fallback.
+
+Two product defects were found by the proof and fixed on the branch.
+
+- A pause could show "Scheduled audio stopped: PCM stop deadline missed" on healthy playback. The scheduler read the output clock a second time before stopping each source, and a device callback between the reads refused a stop the first read had admitted. It now decides on the first read (`314a1b65`).
+- A publish could end with an uncaught `write EPIPE` and leave a RAM disk attached. The tool runner wrote to a tool's standard input with no error listener. It now lets the exit code decide (`fb60b14f`).
+
+What is proven, and where:
+
+- The blocking slice passed in 6 of 6 lanes on GitHub's Linux runners at `c0ff0b37` (diagnostic run 43453480614): lint, typecheck, the unit tests the branch touched, the path slice (`OTIO_PATH_WITHOUT_SCHEDULED_AUDIO_OK`), the three-slot refusal and the load-progress path. One lane used the `native-playback` rerun once.
+- The rendered program, its controls, the render jail, signal cleanup and the legacy reader check passed on macOS. `packages/relic-mcp/PATH.md` holds the commands, the revisions and what each one covers. The legacy reader check found that a viewer built before the program change opens a program archive exactly as it opens a legacy one.
+
+What is not proven:
+
+- The legacy scheduled-audio slice passed in 2 of 18 lanes on GitHub's Linux runners (runs 43447651105, 43450210844 and 43453480614). The others failed in different stages: the viewer reported an interruption of scheduled playback on every attempt, a healthy capture window failed, or a stage that withholds video did not reach the state it expects. Those stages hold a legacy archive's scheduled playback to millisecond budgets on a shared runner. This is the reported slice, and a red run of it is the expected state until that playback holds on a runner.
+- Scheduled playback at 60 fps. The viewer falls back to native audio there, and the stage asserts the fallback.
+- Speaker output. Every audio capture reads the renderer before the mixer and the device.
+- Program rendering on Linux. The publisher renders only inside its macOS jail in this version, so a Linux publisher writes a focus-only archive, and the program proofs run on a Mac and are not in CI.
+- `PATH.md` Check 8 as worded. The jail denies the network and confines writes to a private RAM volume, and its probe proves both. No probe inspects the profile for rendered bytes.

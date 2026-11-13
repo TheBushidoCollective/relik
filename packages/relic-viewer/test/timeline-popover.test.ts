@@ -556,6 +556,9 @@ describe('a marker on the timeline', () => {
     const controller: OtioUiController = {
       document,
       revision: 1,
+      disposed: false,
+      beginMarkBatch: () => 0,
+      completeMarkBatch: () => {},
       paint: () => true,
       reveal: (target, id) => {
         revealed.push({ anchor: target, ...(id ? { id } : {}) });
@@ -629,5 +632,375 @@ describe('a marker on the timeline', () => {
 
     expect(only(mounted.stage, 'popover-field')).toBe(field);
     expect(field.value).toBe('Half a sentence');
+  });
+});
+
+describe('deletion preserves the timeline review state', () => {
+  beforeEach(installDom);
+  afterEach(clearDom);
+
+  test('deleting an OTIO row preserves another target, its draft and fullscreen focus', async () => {
+    const otio = readOtioDocument(
+      JSON.stringify({
+        OTIO_SCHEMA: 'Timeline.1',
+        name: 'A',
+        metadata: { relic: { id: 'timeline' } },
+        tracks: {
+          OTIO_SCHEMA: 'Stack.1',
+          children: [
+            {
+              OTIO_SCHEMA: 'Track.1',
+              kind: 'Video',
+              name: 'Video 1',
+              metadata: { relic: { id: 'track-a' } },
+              children: [
+                {
+                  OTIO_SCHEMA: 'Gap.1',
+                  name: 'Primary Grade A',
+                  metadata: { relic: { id: 'clip-a' } },
+                  source_range: {
+                    start_time: { value: 0, rate: 24 },
+                    duration: { value: 48, rate: 24 },
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      })
+    );
+    const anchor: Extract<CommentAnchor, { kind: 'otio' }> = {
+      kind: 'otio',
+      v: 1,
+      relic_version: 1,
+      document_sha256: otio.document_sha256,
+      timeline_id: 'timeline',
+      track_id: 'track-a',
+      item_id: 'clip-a',
+      range: {
+        start_time: { value: 4, rate: 24 },
+        duration: { value: 12, rate: 24 },
+      },
+      snapshot: { timeline: 'A', track: 'Video 1', item: 'Primary Grade A' },
+    };
+    const mounted = await mount({}, 'verified', [
+      {
+        id: 'otio-own',
+        body: 'Primary grade range, before the dissolve.',
+        anchor,
+        version: 1,
+      },
+    ]);
+    const root = new Node('div');
+    root.className = 'otio-view is-element-focused';
+    root.dataset['focusNode'] = 'clip-a';
+    root.dataset['playhead'] = '24';
+    mounted.stage.appendChild(root);
+    let revealed = 0;
+    let painted: string[] = [];
+    const controller: OtioUiController = {
+      document: otio,
+      revision: 1,
+      disposed: false,
+      beginMarkBatch: () => 0,
+      completeMarkBatch: () => {},
+      paint: (_target, id) => {
+        painted.push(id);
+        return true;
+      },
+      reveal: () => {
+        revealed++;
+      },
+      clearMarks: () => {
+        painted = [];
+      },
+      measure: () => ({
+        ...AT,
+        x: AT.left,
+        y: AT.top,
+        right: AT.left + AT.width,
+        bottom: AT.top + AT.height,
+        toJSON: () => ({}),
+      }),
+      project: async (target) => ({
+        status: 'same',
+        original_anchor: target,
+        mapped_timeline_id: 'timeline',
+        mapped_track_id: 'track-a',
+        mapped_item_id: 'clip-a',
+        mapped_range: target.range,
+        mapped_ranges: [target.range],
+        source_spans: [],
+        diagnostics: [],
+      }),
+      projection: () => undefined,
+      dispose: () => {},
+    };
+    attachOtioController(root as unknown as HTMLElement, controller);
+    mounted.repaint();
+    const doc = Reflect.get(globalThis, 'document') as unknown as {
+      fullscreenElement?: Node;
+    };
+    doc.fullscreenElement = root;
+    aimOtio(
+      mounted,
+      {
+        ...anchor,
+        range: {
+          ...anchor.range,
+          start_time: { value: 24, rate: 24 },
+        },
+      },
+      false,
+      { left: 0, top: 0, width: 800, height: 600 }
+    );
+    const panel = only(root, 'popover-card');
+    const field = only(panel, 'popover-field');
+    field.value = 'This different target still needs a reply.';
+    const sidebarState = expanded(mounted);
+    const remove = mounted.thread.querySelector(
+      '[data-delete-comment-id="otio-own"]'
+    );
+    expect(remove).not.toBeNull();
+    remove?.dispatch('click');
+    const confirmation = only(documentNode, 'comment-delete-dialog');
+    only(confirmation, 'comment-delete-cancel').dispatch('click');
+    expect(only(root, 'popover-field')).toBe(field);
+    expect(
+      mounted.calls.filter((call) => call.method === 'DELETE')
+    ).toHaveLength(0);
+    remove?.dispatch('click');
+    only(
+      only(documentNode, 'comment-delete-dialog'),
+      'comment-delete-confirm'
+    ).dispatch('click');
+    await mounted.idle();
+    expect(only(root, 'popover-card')).toBe(panel);
+    expect(only(panel, 'popover-field')).toBe(field);
+    expect(field.value).toBe('This different target still needs a reply.');
+    expect(root.dataset['focusNode']).toBe('clip-a');
+    expect(root.dataset['playhead']).toBe('24');
+    expect(doc.fullscreenElement).toBe(root);
+    expect(root.classList.contains('is-element-focused')).toBe(true);
+    expect(revealed).toBe(0);
+    expect(painted).not.toContain('otio-own');
+    expect(expanded(mounted)).toBe(sidebarState);
+    expect(mounted.counts.at(-1)).toBe(0);
+  });
+
+  test('deleting a time row never seeks or pauses the media player', async () => {
+    const mounted = await mount({}, 'verified', [
+      { id: 'time-own', body: 'Bars jump.', anchor: { kind: 'time', t: 3.5 } },
+    ]);
+    const video = new Node('video');
+    video.className = 'media-player media-video relic-media';
+    let pauses = 0;
+    let seeks = 0;
+    Object.defineProperties(video, {
+      duration: { value: 20 },
+      currentTime: {
+        get: () => 9,
+        set: () => {
+          seeks++;
+        },
+      },
+      pause: {
+        value: () => {
+          pauses++;
+        },
+      },
+    });
+    mounted.stage.appendChild(video);
+    mounted.stage.dispatch('relic-repaint');
+    const remove = mounted.thread.querySelector(
+      '[data-delete-comment-id="time-own"]'
+    );
+    remove?.dispatch('click');
+    only(
+      only(documentNode, 'comment-delete-dialog'),
+      'comment-delete-confirm'
+    ).dispatch('click');
+    await mounted.idle();
+    expect(pauses).toBe(0);
+    expect(seeks).toBe(0);
+    expect(withClass(mounted.stage, 'time-marker')).toHaveLength(0);
+    expect(mounted.counts.at(-1)).toBe(0);
+  });
+});
+
+describe('OTIO mark-batch completion', () => {
+  beforeEach(installDom);
+  afterEach(clearDom);
+
+  const document = readOtioDocument(
+    JSON.stringify({
+      OTIO_SCHEMA: 'Timeline.1',
+      metadata: { relic: { id: 'batch-timeline' } },
+      tracks: {
+        OTIO_SCHEMA: 'Stack.1',
+        children: [
+          {
+            OTIO_SCHEMA: 'Track.1',
+            kind: 'Video',
+            metadata: { relic: { id: 'batch-track' } },
+            children: [
+              {
+                OTIO_SCHEMA: 'Clip.1',
+                metadata: { relic: { id: 'batch-clip' } },
+                source_range: {
+                  start_time: { value: 0, rate: 24 },
+                  duration: { value: 24, rate: 24 },
+                },
+              },
+            ],
+          },
+        ],
+      },
+    })
+  );
+  const anchor: Extract<CommentAnchor, { kind: 'otio' }> = {
+    kind: 'otio',
+    v: 1,
+    relic_version: 1,
+    document_sha256: document.document_sha256,
+    timeline_id: 'batch-timeline',
+    track_id: 'batch-track',
+    item_id: 'batch-clip',
+    range: {
+      start_time: { value: 5, rate: 24 },
+      duration: { value: 0, rate: 24 },
+    },
+    snapshot: { timeline: 'Timeline', track: 'Video', item: 'Primary Grade A' },
+  };
+
+  function probe() {
+    let disposed = false;
+    let sequence = 0;
+    const begun: number[] = [];
+    const completed: number[] = [];
+    const controller: OtioUiController = {
+      document,
+      revision: 1,
+      get disposed() {
+        return disposed;
+      },
+      beginMarkBatch: () => {
+        const batch = ++sequence;
+        begun.push(batch);
+        return batch;
+      },
+      completeMarkBatch: (batch) => {
+        completed.push(batch);
+      },
+      paint: () => true,
+      reveal: () => {},
+      clearMarks: () => {},
+      measure: () => undefined,
+      project: async (target) => ({
+        status: 'same',
+        original_anchor: target,
+        mapped_timeline_id: 'batch-timeline',
+        mapped_track_id: 'batch-track',
+        mapped_item_id: 'batch-clip',
+        mapped_range: target.range,
+        mapped_ranges: [target.range],
+        source_spans: [],
+        diagnostics: [],
+      }),
+      projection: () => undefined,
+      dispose: () => {
+        disposed = true;
+      },
+    };
+    return { controller, begun, completed };
+  }
+
+  test('only the latest synchronous repaint batch completes', async () => {
+    const mounted = await mount({}, 'verified', [
+      { id: 'batch', body: 'Primary Grade A', anchor, version: 1 },
+    ]);
+    documentNode.appendChild(mounted.stage);
+    const root = new Node('div');
+    root.className = 'otio-view';
+    mounted.stage.appendChild(root);
+    const current = probe();
+    attachOtioController(root as unknown as HTMLElement, current.controller);
+    mounted.repaint();
+    mounted.repaint();
+    await mounted.idle();
+    expect(current.begun).toEqual([1, 2]);
+    expect(current.completed).toEqual([2]);
+  });
+
+  test('a repaint waits for earlier projection work already started by another batch', async () => {
+    const mounted = await mount({ version: 2, currentVersion: 2 }, 'verified', [
+      { id: 'earlier-batch', body: 'Primary Grade A', anchor, version: 1 },
+    ]);
+    documentNode.appendChild(mounted.stage);
+    const root = new Node('div');
+    root.className = 'otio-view';
+    mounted.stage.appendChild(root);
+    const current = probe();
+    attachOtioController(root as unknown as HTMLElement, current.controller);
+    const historical = Promise.withResolvers<Response>();
+    let requests = 0;
+    mounted.setHistoricalResponse(() => {
+      requests++;
+      return historical.promise;
+    });
+    mounted.repaint();
+    mounted.repaint();
+    for (let turn = 0; turn < 8; turn++) await Promise.resolve();
+    expect(requests).toBe(1);
+    expect(current.completed).toEqual([]);
+    historical.resolve(
+      Response.json({ code: 'version_invalid' }, { status: 403 })
+    );
+    await mounted.idle();
+    expect(current.begun.length).toBeGreaterThanOrEqual(2);
+    expect(current.completed).toEqual([current.begun.at(-1)!]);
+  });
+
+  test('a disposed controller cannot complete a delayed projection batch', async () => {
+    const mounted = await mount({ version: 2, currentVersion: 2 }, 'verified', [
+      { id: 'disposed-batch', body: 'Primary Grade A', anchor, version: 1 },
+    ]);
+    documentNode.appendChild(mounted.stage);
+    const root = new Node('div');
+    root.className = 'otio-view';
+    mounted.stage.appendChild(root);
+    const current = probe();
+    attachOtioController(root as unknown as HTMLElement, current.controller);
+    const historical = Promise.withResolvers<Response>();
+    mounted.setHistoricalResponse(() => historical.promise);
+    mounted.repaint();
+    current.controller.dispose();
+    historical.resolve(
+      Response.json({ code: 'version_invalid' }, { status: 403 })
+    );
+    await mounted.idle();
+    expect(current.completed).toEqual([]);
+  });
+
+  test('replacing the mounted controller invalidates an older batch completion', async () => {
+    const mounted = await mount({}, 'verified', [
+      { id: 'replaced-batch', body: 'Primary Grade A', anchor, version: 1 },
+    ]);
+    documentNode.appendChild(mounted.stage);
+    const root = new Node('div');
+    root.className = 'otio-view';
+    mounted.stage.appendChild(root);
+    const old = probe();
+    attachOtioController(root as unknown as HTMLElement, old.controller);
+    mounted.repaint();
+    const replacement = probe();
+    attachOtioController(
+      root as unknown as HTMLElement,
+      replacement.controller
+    );
+    mounted.repaint();
+    await mounted.idle();
+    expect(old.completed).toEqual([]);
+    expect(replacement.completed).toEqual([replacement.begun.at(-1)!]);
   });
 });

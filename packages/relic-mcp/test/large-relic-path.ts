@@ -210,6 +210,7 @@ activeHandler = async (request) => {
     };
     reads.push(receipt);
     let offset = 0;
+    const startedAt = performance.now();
     const stream = new ReadableStream<Uint8Array>({
       async pull(controller) {
         if (receipt.canceled || request.signal.aborted) return;
@@ -222,8 +223,14 @@ activeHandler = async (request) => {
         controller.enqueue(bytes.subarray(offset, end));
         receipt.sent += end - offset;
         offset = end;
-        // Give the viewer a chance to authenticate record zero and cancel.
-        if (offset <= 512 * 1024) await Bun.sleep(4);
+        // Give the viewer a chance to authenticate record zero and cancel. The stream is paced by
+        // the clock for its first 300 ms, which is at most about 1.2 MiB, and then runs free. The
+        // earlier byte cutoff at 512 KiB paced for as little as 128 ms, after which a loopback
+        // socket takes megabytes in milliseconds: one CI run had sent 3.6 MB by the time of the
+        // check (run 43250043960; its cancel time was not recorded). A viewer that never cancels
+        // is still caught, because the confirmation checks wait 500 ms and the free-running
+        // stream passes their 2 MiB bound long before that.
+        if (performance.now() - startedAt < 300) await Bun.sleep(4);
       },
       cancel() {
         receipt.canceled = true;
@@ -823,6 +830,10 @@ try {
   const otioDirectory = await makeLargeOtiod(base, scratch, otioTemplate);
   const otio = await publish(otioDirectory);
   assert.ok(
+    otio.peakRss <= 1_400_000_000,
+    `OTIO MCP peak RSS exceeded budget: ${otio.peakRss}`
+  );
+  assert.ok(
     otio.plaintextBytes >= 498 * MIB && otio.plaintextBytes <= CAP,
     `unexpected OTIO archive size: ${otio.plaintextBytes}`
   );
@@ -837,9 +848,19 @@ try {
   await acceptPrompt(browser, otioPage, otio.plaintextBytes);
   await browser.waitFor(
     otioPage,
-    `!!document.querySelector('.otio-view[data-ready="true"]')`,
-    'large OTIO preview',
+    `!!document.querySelector('.otio-view[data-ready="diagnostic"][data-otio-program-state="unavailable"][data-otio-program-reason="size-cap-exceeded"]')`,
+    'large OTIO focus-only diagnostic',
     900_000
+  );
+  await browser.evaluate(
+    otioPage,
+    `(() => {
+      const play = document.querySelector('button.otio-play');
+      if (!(play instanceof HTMLButtonElement) || !play.disabled) throw new Error('focus-only Play must be disabled');
+      const clip = document.querySelector('button.otio-item[data-schema^="Clip."][data-focus-node-id]');
+      if (!(clip instanceof HTMLButtonElement)) throw new Error('OTIO clip focus missing');
+      clip.click();
+    })()`
   );
   const timing = await browser.waitFor<{ kind: string; count: number }>(
     otioPage,
@@ -950,7 +971,7 @@ try {
   await acceptPrompt(browser, reopenedOtio, otio.plaintextBytes);
   await browser.waitFor(
     reopenedOtio,
-    `!!document.querySelector('.otio-view[data-ready="true"]') && !!document.querySelector('.otio-comment-mark[data-comment-id]')`,
+    `!!document.querySelector('.otio-view[data-ready="diagnostic"][data-otio-program-state="unavailable"][data-otio-program-reason="size-cap-exceeded"]') && !!document.querySelector('.otio-comment-mark[data-comment-id]')`,
     'OTIO comment after reload',
     900_000
   );
@@ -973,7 +994,7 @@ try {
     'OTIO comment placement changed after reload'
   );
   console.log(
-    `LARGE_STEP_5_OTIO_REVIEWED archive_bytes=${otio.plaintextBytes} timing=${timing.kind} windows=${timing.count} played_frame=${playedFrame} leaf_time=${leaf.time} comment_reload=true ${rendererMemoryReceipt(otioGrowth)}`
+    `LARGE_STEP_5_OTIO_REVIEWED archive_bytes=${otio.plaintextBytes} timing=${timing.kind} windows=${timing.count} played_frame=${playedFrame} leaf_time=${leaf.time} comment_reload=true client_peak_rss=${otio.peakRss} ${rendererMemoryReceipt(otioGrowth)}`
   );
   await browser.closePage(reopenedOtio);
   await release(otio);

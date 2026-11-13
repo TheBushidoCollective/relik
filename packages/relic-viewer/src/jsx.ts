@@ -10,6 +10,9 @@
  *
  * The mount contract is a default export: the frame imports the module and
  * renders `module.default` as the component.
+ *
+ * Only routing loads this module, and it does so dynamically, which keeps the
+ * transform out of the eager viewer shell.
  */
 
 import { transform } from 'sucrase';

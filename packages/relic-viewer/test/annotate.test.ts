@@ -11,6 +11,12 @@ import {
 } from '../src/main.ts';
 import type { ReadyView, ViewerDeps } from '../src/viewer.ts';
 
+// DOM writes signal asynchronous assertions without guessing at clock delays.
+const domWaiters = new Set<() => void>();
+function notifyDom(): void {
+  for (const check of domWaiters) queueMicrotask(check);
+}
+
 /** What every element in the stub tree measures, in CSS pixels. */
 const STUB_LAID_OUT_HEIGHT = 28;
 const STUB_STAGE_WIDTH = 800;
@@ -105,12 +111,41 @@ export class Node {
 
   setAttribute(name: string, value: string): void {
     this.attributes.set(name, value);
+    if (name.startsWith('data-')) {
+      const key = name
+        .slice(5)
+        .replace(/-([a-z])/g, (_, letter: string) => letter.toUpperCase());
+      this.dataset[key] = value;
+    }
+    notifyDom();
   }
 
   getAttribute(name: string): string | null {
     return this.attributes.get(name) ?? null;
   }
 
+  removeAttribute(name: string): void {
+    this.attributes.delete(name);
+    if (name.startsWith('data-')) {
+      const key = name
+        .slice(5)
+        .replace(/-([a-z])/g, (_, letter: string) => letter.toUpperCase());
+      delete this.dataset[key];
+    }
+  }
+
+  showModal(): void {
+    this.setAttribute('open', '');
+  }
+
+  close(): void {
+    this.removeAttribute('open');
+    this.dispatch('close');
+  }
+
+  get isConnected(): boolean {
+    return documentNode?.contains(this) ?? false;
+  }
   hasAttribute(name: string): boolean {
     return this.attributes.has(name);
   }
@@ -118,6 +153,7 @@ export class Node {
     child.remove();
     child.parent = this;
     this.children.push(child);
+    notifyDom();
     return child;
   }
 
@@ -182,6 +218,11 @@ export class Node {
   }
 
   focus(): void {
+    const held = Reflect.get(globalThis, 'document') as unknown as
+      | { activeElement?: Node }
+      | undefined;
+    if (held?.activeElement) held.activeElement.focused = false;
+    if (held) held.activeElement = this;
     this.focused = true;
   }
 
@@ -208,16 +249,20 @@ export class Node {
    * and the whole question is what a click on a paragraph does.
    */
   dispatch(type: string, detail: Record<string, unknown> = {}): void {
+    let stopped = false;
     const event = {
       type,
       target: this,
       preventDefault: (): void => {},
-      stopPropagation: (): void => {},
+      stopPropagation: (): void => {
+        stopped = true;
+      },
       ...detail,
     };
     let walk: Node | undefined = this;
     while (walk !== undefined) {
       for (const handler of walk.listeners.get(type) ?? []) handler(event);
+      if (stopped) break;
       walk = walk.parent;
     }
   }
@@ -292,6 +337,7 @@ let scripted: Scripted;
 export let documentNode: Node;
 
 export function installDom(): void {
+  domWaiters.clear();
   documentNode = new Node('#document');
   scripted = {
     collapsed: true,
@@ -301,6 +347,8 @@ export function installDom(): void {
     top: 240,
   };
   const root = new Node('html');
+  const body = new Node('body');
+  documentNode.appendChild(body);
   (globalThis as { Element?: unknown }).Element = Node;
   (globalThis as { HTMLElement?: unknown }).HTMLElement = Node;
   // The argument the walker is asked for. Its value is the platform's, not
@@ -314,6 +362,8 @@ export function installDom(): void {
       node.textContent = text;
       return node;
     },
+    body,
+    activeElement: body,
     documentElement: root,
     addEventListener: (type: string, handler: (event: unknown) => void) => {
       documentNode.addEventListener(type, handler);
@@ -372,6 +422,7 @@ export function installDom(): void {
 }
 
 export function clearDom(): void {
+  domWaiters.clear();
   delete (globalThis as { window?: unknown }).window;
   delete (globalThis as { Element?: unknown }).Element;
   delete (globalThis as { HTMLElement?: unknown }).HTMLElement;
@@ -439,8 +490,34 @@ export interface Mounted {
   readonly repaint: () => void;
   /** Waits for the thread to finish its next load. */
   settle(): Promise<void>;
+  idle(): Promise<void>;
   /** Opens a ciphertext the page wrote, so a write can be read back. */
   openSealed(ciphertext: string): Promise<{ body: string; anchor?: unknown }>;
+  /** Every displayed count, including local acknowledgment and server readback. */
+  readonly counts: readonly number[];
+  /** Control only the local fake's next DELETE response. */
+  setDeleteResponse(
+    handler: (id: string) => Response | Promise<Response>
+  ): void;
+  /** Control subsequent comment reads, including deliberately stale responses. */
+  setCommentRead(
+    handler: (() => Response | Promise<Response>) | undefined
+  ): void;
+  commentResponse(): Response;
+  /** Control only the local fake's historical-version mint response. */
+  setHistoricalResponse(
+    handler: (() => Response | Promise<Response>) | undefined
+  ): void;
+  forgetComment(id: string): void;
+  /** Change only the fake server's cookie state, without a visibility signal. */
+  setReader(reader: 'verified' | 'anonymous'): void;
+  setPostResponse(
+    handler: (ciphertext: string) => Response | Promise<Response>
+  ): void;
+  editStoredComment(id: string, body: string): Promise<void>;
+  setStoredResolved(id: string, resolved: boolean): void;
+  changeReader(reader: 'verified' | 'anonymous'): Promise<void>;
+  waitFor(predicate: () => boolean): Promise<void>;
 }
 
 /**
@@ -461,12 +538,15 @@ export interface Mounted {
 interface Seed {
   readonly id: string;
   readonly body: string;
-  readonly anchor: CommentAnchor;
+  readonly anchor: CommentAnchor | null;
   readonly version?: number;
   /** Defaults to the reader's own address, so a seed is editable by default. */
   readonly author?: string;
   readonly editedAt?: string;
   readonly resolvedBy?: string;
+  readonly addresses?: string | null;
+  readonly sealed?: boolean;
+  readonly unreadable?: boolean;
 }
 export async function mount(
   overrides: Partial<ReadyView> = {},
@@ -476,6 +556,51 @@ export async function mount(
   const ready = view(overrides);
   const sealed: string[] = [];
   const calls: Call[] = [];
+  const counts: number[] = [];
+  let currentReader = reader;
+  let deleteResponse: (id: string) => Response | Promise<Response> = () =>
+    new Response(null, { status: 204 });
+  let commentRead: (() => Response | Promise<Response>) | undefined;
+  let historicalResponse: (() => Response | Promise<Response>) | undefined;
+  let postResponse: (ciphertext: string) => Response | Promise<Response> = () =>
+    Response.json({ comment_id: 'c1', author: 'ada@example.com' });
+  let records = await Promise.all(
+    seeds.map(async (seed) => ({
+      comment_id: seed.id,
+      author: seed.author ?? 'ada@example.com',
+      created_at: '2026-08-24T00:00:00Z',
+      ...(seed.version !== undefined ? { version: seed.version } : {}),
+      edited_at: seed.editedAt ?? null,
+      resolved_at:
+        seed.resolvedBy === undefined ? null : '2026-08-25T00:00:00Z',
+      resolved_by: seed.resolvedBy ?? null,
+      ciphertext: seed.unreadable
+        ? undefined
+        : seed.sealed
+          ? 'unreadable-ciphertext'
+          : await seedCipher().then((cipher) =>
+              cipher.seal({
+                body: seed.body,
+                display_name: null,
+                anchor: seed.anchor,
+                addresses: seed.addresses ?? null,
+              })
+            ),
+    }))
+  );
+  const commentResponse = (): Response => Response.json(records);
+  const waitFor = (predicate: () => boolean): Promise<void> => {
+    if (predicate()) return Promise.resolve();
+    const { promise, resolve } = Promise.withResolvers<void>();
+    const check = (): void => {
+      if (!predicate()) return;
+      domWaiters.delete(check);
+      resolve();
+    };
+    domWaiters.add(check);
+    queueMicrotask(check);
+    return promise;
+  };
   const deps: ViewerDeps = {
     serviceOrigin: 'https://relik.example',
     fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -485,7 +610,37 @@ export async function mount(
         method: init?.method ?? 'GET',
         body: typeof init?.body === 'string' ? init.body : undefined,
       });
-      if (init?.method === 'PATCH') {
+      notifyDom();
+      if (url.endsWith('/mint') && historicalResponse !== undefined)
+        return historicalResponse();
+      if (url.endsWith('/api/auth/passkeys/options')) {
+        return Response.json(
+          { code: 'passkey_fresh_link_required' },
+          { status: 403 }
+        );
+      }
+      if (init?.method === 'DELETE') {
+        const id = decodeURIComponent(url.slice(url.lastIndexOf('/') + 1));
+        const response = await deleteResponse(id);
+        if (response.status === 204) {
+          records = records.filter((record) => record.comment_id !== id);
+        }
+        return response;
+      }
+      if (init?.method === 'PATCH' && typeof init.body === 'string') {
+        const id = decodeURIComponent(url.slice(url.lastIndexOf('/') + 1));
+        const record = records.find((candidate) => candidate.comment_id === id);
+        const patch: unknown = JSON.parse(init.body);
+        if (record && typeof patch === 'object' && patch !== null) {
+          if ('ciphertext' in patch && typeof patch.ciphertext === 'string') {
+            record.ciphertext = patch.ciphertext;
+            record.edited_at = '2026-08-26T00:00:00Z';
+          }
+          if ('resolved' in patch && typeof patch.resolved === 'boolean') {
+            record.resolved_at = patch.resolved ? '2026-08-26T00:00:00Z' : null;
+            record.resolved_by = patch.resolved ? 'ada@example.com' : null;
+          }
+        }
         return new Response(null, { status: 204 });
       }
       if (init?.method === 'POST' && typeof init.body === 'string') {
@@ -497,6 +652,7 @@ export async function mount(
           typeof wire.ciphertext === 'string'
         ) {
           sealed.push(wire.ciphertext);
+          return postResponse(wire.ciphertext);
         }
         return new Response(
           JSON.stringify({ comment_id: 'c1', author: 'ada@example.com' }),
@@ -505,27 +661,12 @@ export async function mount(
       }
       // Verified by default, because the reader who aims a mark is usually
       // the reader who posts. Anonymous is the state the chip has to survive.
-      const body = url.endsWith('/api/auth/session')
-        ? { email: reader === 'verified' ? 'ada@example.com' : null }
-        : await Promise.all(
-            seeds.map(async (seed) => ({
-              comment_id: seed.id,
-              author: seed.author ?? 'ada@example.com',
-              created_at: '2026-08-24T00:00:00Z',
-              ...(seed.version !== undefined ? { version: seed.version } : {}),
-              edited_at: seed.editedAt ?? null,
-              resolved_at:
-                seed.resolvedBy === undefined ? null : '2026-08-25T00:00:00Z',
-              resolved_by: seed.resolvedBy ?? null,
-              ciphertext: await seedCipher().then((cipher) =>
-                cipher.seal({
-                  body: seed.body,
-                  display_name: null,
-                  anchor: seed.anchor,
-                })
-              ),
-            }))
-          );
+      if (!url.endsWith('/api/auth/session')) {
+        return commentRead === undefined ? commentResponse() : commentRead();
+      }
+      const body = {
+        email: currentReader === 'verified' ? 'ada@example.com' : null,
+      };
       return new Response(JSON.stringify(body), {
         status: 200,
         headers: { 'content-type': 'application/json' },
@@ -548,7 +689,9 @@ export async function mount(
   let reported = 0;
   let awaited = 0;
   let announce: (() => void) | undefined;
-  const handle = buildThread(ready, RELIC_ID, deps, () => {
+  const handle = buildThread(ready, RELIC_ID, deps, (count) => {
+    counts.push(count);
+    notifyDom();
     reported += 1;
     announce?.();
   });
@@ -595,9 +738,51 @@ export async function mount(
     thread,
     stage,
     content,
+    counts,
+    setDeleteResponse: (handler) => {
+      deleteResponse = handler;
+    },
+    setCommentRead: (handler) => {
+      commentRead = handler;
+    },
+    commentResponse,
+    setHistoricalResponse: (handler) => {
+      historicalResponse = handler;
+    },
+    forgetComment: (id) => {
+      records = records.filter((record) => record.comment_id !== id);
+    },
+    setReader: (next) => {
+      currentReader = next;
+    },
+    setPostResponse: (handler) => {
+      postResponse = handler;
+    },
+    editStoredComment: async (id, body) => {
+      const record = records.find((candidate) => candidate.comment_id === id);
+      if (!record?.ciphertext)
+        throw new Error(`Missing readable fixture: ${id}`);
+      const cipher = await seedCipher();
+      const opened = await cipher.open(record.ciphertext);
+      record.ciphertext = await cipher.seal({ ...opened, body });
+      record.edited_at = '2026-08-26T00:00:00Z';
+    },
+    setStoredResolved: (id, resolved) => {
+      const record = records.find((candidate) => candidate.comment_id === id);
+      if (!record) throw new Error(`Missing fixture: ${id}`);
+      record.resolved_at = resolved ? '2026-08-26T00:00:00Z' : null;
+      record.resolved_by = resolved ? 'ada@example.com' : null;
+    },
+    changeReader: async (next) => {
+      currentReader = next;
+      documentNode.dispatch('visibilitychange');
+      await waitFor(() => thread.dataset['session'] === next);
+    },
+    waitFor,
     chip: () => textOf(only(thread, 'compose-target')),
     repaint: () => handle.attach(stage as unknown as HTMLElement),
     settle: loaded,
+    idle: handle.idle,
     openSealed: async (ciphertext: string) => {
       const cipher = commentCipher(await deriveCommentKey(KEY_BYTES));
       return cipher.open(ciphertext);

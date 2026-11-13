@@ -1505,8 +1505,12 @@ function remark(
   };
 }
 
+function threadAll(entries: readonly CommentEntry[]) {
+  return threadEntries(entries, entries);
+}
+
 function shown(entries: readonly CommentEntry[]): string[] {
-  return collectDisplayedEntries(threadEntries(entries)).flatMap((entry) =>
+  return collectDisplayedEntries(threadAll(entries)).flatMap((entry) =>
     entry.id === null ? [] : [entry.id]
   );
 }
@@ -1654,7 +1658,7 @@ describe('OTIO comment safety', () => {
   });
 
   test('a sealed reply loop is shown once, including after an edit', () => {
-    const before = threadEntries([
+    const before = threadAll([
       remark('A', null, 'The root'),
       remark('B', 'A', 'The reply'),
     ]);
@@ -1662,7 +1666,7 @@ describe('OTIO comment safety', () => {
     expect(before[0]?.replies.map((node) => node.entry.id)).toEqual(['B']);
     expect(before[0]?.recovery).toBeUndefined();
 
-    const edited = threadEntries([
+    const edited = threadAll([
       remark('A', 'B', 'The root, edited'),
       remark('B', 'A', 'The reply'),
     ]);
@@ -1687,14 +1691,14 @@ describe('OTIO comment safety', () => {
   });
 
   test('a self-cycle and a three-cycle do not recurse or drop a row', () => {
-    const self = threadEntries([remark('A', 'A', 'loop')]);
+    const self = threadAll([remark('A', 'A', 'loop')]);
     expect(collectDisplayedEntries(self).map((entry) => entry.id)).toEqual([
       'A',
     ]);
     expect(self[0]?.recovery?.kind).toBe('cycle');
     expect(self[0]?.replies).toHaveLength(0);
 
-    const triple = threadEntries([
+    const triple = threadAll([
       remark('A', 'B', 'one'),
       remark('B', 'C', 'two'),
       remark('C', 'A', 'three'),
@@ -1708,29 +1712,56 @@ describe('OTIO comment safety', () => {
     expect(triple.every((node) => node.replies.length === 0)).toBe(true);
   });
 
-  test('a reply to a hidden row is shown once, and a missing target stays omitted', () => {
-    const tree = threadEntries([
+  test('an unavailable parent leaves its reply and descendants visible once', () => {
+    const entries = [
       remark('A', null, 'kept'),
-      remark('B', 'missing', 'hidden reply'),
-      remark('C', 'B', 'grandchild'),
+      remark('B', 'missing', 'surviving reply', 'A'),
+      remark('C', 'B', 'grandchild', 'missing'),
+    ];
+    const tree = threadEntries(entries, entries);
+    expect(collectDisplayedEntries(tree).map((entry) => entry.id)).toEqual([
+      'A',
+      'B',
+      'C',
     ]);
-    expect(
-      collectDisplayedEntries(tree)
-        .map((entry) => entry.id)
-        .sort()
-    ).toEqual(['A', 'C']);
-    const orphan = tree.find((node) => node.entry.id === 'C');
+    const orphan = tree.find((node) => node.entry.id === 'B');
     expect(orphan?.recovery).toEqual({
       kind: 'orphan',
       detail: THREAD_ORPHAN_RECOVERY,
-      addresses: 'B',
+      addresses: 'missing',
     });
-    expect(tree.some((node) => node.entry.id === 'B')).toBe(false);
+    expect(orphan?.replies.map((node) => node.entry.id)).toEqual(['C']);
     expect(tree.find((node) => node.entry.id === 'A')?.replies).toEqual([]);
   });
 
+  test('a filtered parent still hides its direct reply, without hiding its descendant', () => {
+    const parent = remark('A', null);
+    const reply = remark('B', 'A');
+    const descendant = remark('C', 'B');
+    const tree = threadEntries(
+      [reply, descendant],
+      [parent, reply, descendant]
+    );
+    expect(collectDisplayedEntries(tree).map((entry) => entry.id)).toEqual([
+      'C',
+    ]);
+    expect(tree[0]?.recovery?.addresses).toBe('B');
+  });
+
+  test('a deleted intermediate reply leaves its descendant separate from the root', () => {
+    const entries = [remark('A', null), remark('C', 'B'), remark('D', 'C')];
+    const tree = threadEntries(entries, entries);
+    expect(collectDisplayedEntries(tree).map((entry) => entry.id)).toEqual([
+      'A',
+      'C',
+      'D',
+    ]);
+    expect(tree[1]?.recovery?.addresses).toBe('B');
+    expect(tree[1]?.replies[0]?.entry.id).toBe('D');
+  });
+
   test('a clear address hint cannot thread a remark or invent a loop', () => {
-    const tree = threadEntries([
+    const tree = threadAll([
       remark('A', null, 'root', 'B'),
       remark('B', null, 'other', 'A'),
     ]);
@@ -1740,7 +1771,7 @@ describe('OTIO comment safety', () => {
   });
 
   test('an ordinary branch still nests each reply once', () => {
-    const tree = threadEntries([
+    const tree = threadAll([
       remark('A', null, 'root'),
       remark('B', 'A', 'left'),
       remark('C', 'A', 'right'),
@@ -1814,7 +1845,7 @@ describe('OTIO comment safety', () => {
     });
     const second = await loadThread(RELIC_ID, deps, cipher);
     if (second.kind !== 'ready') throw new Error('reload refused');
-    const tree = threadEntries(second.entries);
+    const tree = threadAll(second.entries);
     expect(shown(second.entries).sort()).toEqual(['A', 'B']);
     expect(tree.every((node) => node.recovery?.kind === 'cycle')).toBe(true);
     expect(

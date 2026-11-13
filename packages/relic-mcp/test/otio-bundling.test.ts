@@ -216,7 +216,7 @@ describe('OTIO bundling', () => {
     );
     let documentSize = content.length;
     let mediaSize = 100 * 1024 * 1024 + 1;
-    let mediaBudget = 0;
+    let mediaTarget = 0;
     let mediaReads = 0;
     let documentReads = 0;
     const files: FileReader = {
@@ -227,18 +227,18 @@ describe('OTIO bundling', () => {
             if (path === 'content.otio') {
               return {
                 size: documentSize,
-                async readBounded() {
+                async readInto(target) {
                   documentReads += 1;
-                  return content;
+                  target.set(content);
                 },
                 async close() {},
               };
             }
             return {
               size: mediaSize,
-              async readBounded(maxBytes) {
+              async readInto(target) {
                 mediaReads += 1;
-                mediaBudget = maxBytes;
+                mediaTarget = target.length;
                 throw new Error('media read reached');
               },
               async close() {},
@@ -254,8 +254,8 @@ describe('OTIO bundling', () => {
       message: expect.stringContaining('media read reached'),
     });
     expect(mediaReads).toBe(1);
-    expect(mediaBudget).toBeGreaterThan(mediaSize);
-    expect(mediaBudget).toBeLessThanOrEqual(PLAINTEXT_CAP_BYTES);
+    // Pass 1 only sizes the media; pass 2 reads it into a slot of exactly its size.
+    expect(mediaTarget).toBe(mediaSize);
 
     mediaSize = PLAINTEXT_CAP_BYTES + 1;
     await expect(bundleOtiod('large.otiod', files)).rejects.toMatchObject({
@@ -269,6 +269,201 @@ describe('OTIO bundling', () => {
       code: 'local_size_precheck_failed',
     });
     expect(documentReads).toBe(readsBefore);
+  });
+
+  test('bundled archive is byte-identical to buildZipArchive over the same entries', async () => {
+    const dir = join(scratch, 'parity.otiod');
+    await mkdir(join(dir, 'media', 'seq'), { recursive: true });
+    const contentText = JSON.stringify({
+      OTIO_SCHEMA: 'Timeline.1',
+      name: 'Parity',
+      tracks: {
+        OTIO_SCHEMA: 'Stack.1',
+        children: [
+          {
+            OTIO_SCHEMA: 'Track.1',
+            kind: 'Video',
+            children: [
+              {
+                OTIO_SCHEMA: 'Clip.1',
+                name: 'A',
+                media_reference: {
+                  OTIO_SCHEMA: 'ExternalReference.1',
+                  target_url: 'media/a.mp4',
+                },
+              },
+              {
+                OTIO_SCHEMA: 'Clip.1',
+                name: 'B',
+                media_reference: {
+                  OTIO_SCHEMA: 'ExternalReference.1',
+                  target_url: 'media/b.mp4',
+                },
+              },
+              {
+                OTIO_SCHEMA: 'Clip.1',
+                name: 'Sequence',
+                media_reference: {
+                  OTIO_SCHEMA: 'ImageSequenceReference.1',
+                  target_url_base: 'media/seq/',
+                  name_prefix: 'frame.',
+                  name_suffix: '.png',
+                  start_frame: 1,
+                  frame_step: 1,
+                  rate: 24,
+                  frame_zero_padding: 4,
+                  available_range: {
+                    OTIO_SCHEMA: 'TimeRange.1',
+                    duration: {
+                      OTIO_SCHEMA: 'RationalTime.1',
+                      value: 2,
+                      rate: 24,
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        ],
+      },
+    });
+    await writeFile(join(dir, 'content.otio'), contentText);
+    await writeFile(join(dir, 'media', 'a.mp4'), 'a-bytes');
+    await writeFile(join(dir, 'media', 'b.mp4'), 'b-bytes');
+    await writeFile(join(dir, 'media', 'seq', 'frame.0001.png'), 'frame1');
+    // frame.0002 is absent: an optional sequence frame is omitted, not fatal.
+
+    const result = await bundleOtiod(dir, nodeFiles);
+    const encoder = new TextEncoder();
+    expect(result.bytes).toEqual(
+      buildZipArchive([
+        { name: 'content.otio', data: encoder.encode(contentText), method: 8 },
+        { name: 'version.txt', data: encoder.encode('1.0.0'), method: 8 },
+        { name: 'media/a.mp4', data: encoder.encode('a-bytes'), method: 0 },
+        { name: 'media/b.mp4', data: encoder.encode('b-bytes'), method: 0 },
+        {
+          name: 'media/seq/frame.0001.png',
+          data: encoder.encode('frame1'),
+          method: 0,
+        },
+      ])
+    );
+    // One exact allocation: the archive owns its whole buffer, with no copy.
+    expect(result.bytes.byteOffset).toBe(0);
+    expect(result.bytes.buffer.byteLength).toBe(result.bytes.length);
+  });
+
+  test('bundles an alternate media/ root and Unicode names byte-identically to buildZipArchive', async () => {
+    const dir = join(scratch, 'alt-unicode.otiod');
+    await mkdir(join(dir, 'media'), { recursive: true });
+    const unicodeName = 'café-日本語.mov';
+    const contentText = JSON.stringify(
+      timelineWithClips('alt', [
+        // The root has no clip.mp4, so it resolves through media/clip.mp4.
+        externalClip('alt', 'clip.mp4'),
+        externalClip('uni', `media/${unicodeName}`),
+      ])
+    );
+    await writeFile(join(dir, 'content.otio'), contentText);
+    await writeFile(join(dir, 'media', 'clip.mp4'), 'alt-root-bytes');
+    await writeFile(join(dir, 'media', unicodeName), 'unicode-bytes');
+
+    // Records every target handed to readInto, to prove each media read lands in the archive.
+    const targets: Uint8Array[] = [];
+    const files: FileReader = {
+      ...nodeFiles,
+      async openBundleRoot(path) {
+        const root = await nodeFiles.openBundleRoot(path);
+        return {
+          async openRegular(relativePath) {
+            const file = await root.openRegular(relativePath);
+            return {
+              size: file.size,
+              async readInto(target) {
+                targets.push(target);
+                return file.readInto(target);
+              },
+              close: () => file.close(),
+            };
+          },
+          close: () => root.close(),
+        };
+      },
+    };
+
+    const result = await bundleOtiod(dir, files);
+    const encoder = new TextEncoder();
+    // Entries sort by archive name: the Unicode name sorts before media/clip.mp4.
+    expect(result.bytes).toEqual(
+      buildZipArchive([
+        { name: 'content.otio', data: encoder.encode(contentText), method: 8 },
+        { name: 'version.txt', data: encoder.encode('1.0.0'), method: 8 },
+        {
+          name: `media/${unicodeName}`,
+          data: encoder.encode('unicode-bytes'),
+          method: 0,
+        },
+        {
+          name: 'media/clip.mp4',
+          data: encoder.encode('alt-root-bytes'),
+          method: 0,
+        },
+      ])
+    );
+
+    // content.otio is read into its own buffer. Each media read lands in an archive slot.
+    const archiveTargets = targets.filter(
+      (target) => target.buffer === result.bytes.buffer
+    );
+    expect(targets.length).toBe(3);
+    expect(archiveTargets.length).toBe(2);
+    expect(
+      archiveTargets.map((target) => target.length).sort((a, b) => a - b)
+    ).toEqual(['unicode-bytes'.length, 'alt-root-bytes'.length]);
+    expect(result.bytes.buffer.byteLength).toBe(result.bytes.length);
+  });
+
+  test('refuses a media file whose size changes between the sizing and reading passes', async () => {
+    const dir = join(scratch, 'resized.otiod');
+    await mkdir(join(dir, 'media'), { recursive: true });
+    await writeFile(
+      join(dir, 'content.otio'),
+      JSON.stringify(
+        timelineWithClips('resize', [externalClip('clip', 'media/a.mp4')])
+      )
+    );
+    await writeFile(join(dir, 'media', 'a.mp4'), 'aaaaa');
+
+    let mediaOpens = 0;
+    const files: FileReader = {
+      ...nodeFiles,
+      async openBundleRoot(path) {
+        const root = await nodeFiles.openBundleRoot(path);
+        return {
+          async openRegular(relativePath) {
+            const file = await root.openRegular(relativePath);
+            if (relativePath !== 'media/a.mp4') return file;
+            mediaOpens += 1;
+            if (mediaOpens === 1) return file;
+            // The file grows between pass 1 and pass 2.
+            return {
+              get size() {
+                return file.size + 1;
+              },
+              readInto: (target) => file.readInto(target),
+              close: () => file.close(),
+            };
+          },
+          close: () => root.close(),
+        };
+      },
+    };
+
+    await expect(bundleOtiod(dir, files)).rejects.toMatchObject({
+      code: 'otio_bundle_invalid',
+      message: expect.stringContaining('changed while being read'),
+    });
+    expect(mediaOpens).toBe(2);
   });
 
   test('bundles .otiod directory into deterministic official .otioz archive', async () => {
@@ -1332,13 +1527,11 @@ describe('OTIO bundling', () => {
       held = heldFile;
       await rename(heldPath, join(media, 'held-original.mp4'));
       await symlink(outsidePath, heldPath);
-      try {
-        const bytes = await heldFile.readBounded(1024);
-        expect(new TextDecoder().decode(bytes)).toBe('held bytes');
-      } catch {
-        // A platform may refuse the descriptor after a concurrent rename. It
-        // must never read the replacement path.
-      }
+      // The held descriptor still names the original inode, so it reads the
+      // original bytes. A refusal or a replacement read fails this test.
+      const bytes = new Uint8Array(heldFile.size);
+      await heldFile.readInto(bytes);
+      expect(new TextDecoder().decode(bytes)).toBe('held bytes');
     } finally {
       await held?.close();
       await root.close();

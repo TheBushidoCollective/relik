@@ -13,6 +13,7 @@
  * 8. Noscript plate and hidden loading stage when scripts disabled
  * 9. Static plate when viewer.js is blocked
  * 10. Version switching preserving stage until ready
+ * 11. JSX component relic: rendered frame, comparison, and compiler-load recovery (run with --only=jsx)
  *
  * Output: prints LOAD_PROGRESS_PATH_OK with the fixture and run counts.
  */
@@ -21,7 +22,14 @@ import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -1003,6 +1011,56 @@ const repubRes = await callMcp('relic_republish', {
 });
 assert.equal(repubRes['version'], 2, 'md republish must advance to version 2');
 
+// JSX comparison relic, kept outside `fixtures` (the run 1-9 set). v2 is
+// published by republishing the same file, so both versions share one link.
+const compareDir = join(scratch, 'compare-src');
+await mkdir(compareDir, { recursive: true });
+const comparePath = join(compareDir, 'Compare.jsx');
+const compareJsx = (heading: string, items: string[]): string =>
+  [
+    'export default function Compare() {',
+    '  return (',
+    '    <div style={{ padding: "32px", fontFamily: "sans-serif" }}>',
+    `      <h1>${heading}</h1>`,
+    '      <ul>',
+    ...items.map((item) => `        <li>${item}</li>`),
+    '      </ul>',
+    '    </div>',
+    '  );',
+    '}',
+    '',
+  ].join('\n');
+await writeFile(
+  comparePath,
+  compareJsx('Relik JSX version one', ['Alpha', 'Beta'])
+);
+const compareRes = await callMcp('relic_publish', {
+  path: comparePath,
+  cover: false,
+  title: '',
+});
+const compareRelicId = String(compareRes['relic_id'] ?? '');
+const compareUrl = String(compareRes['url'] ?? compareRes['share_url'] ?? '');
+assert.ok(
+  compareRelicId !== '' && compareUrl.includes('#'),
+  'JSX compare publish must return a relic id and key'
+);
+await writeFile(
+  comparePath,
+  compareJsx('Relik JSX version two', ['Alpha', 'Gamma'])
+);
+const compareRepub = await callMcp('relic_republish', {
+  path: comparePath,
+  relic_id: compareRelicId,
+  notify: false,
+  cover: false,
+});
+assert.equal(
+  compareRepub['version'],
+  2,
+  'JSX compare republish must advance to version 2'
+);
+
 // --- Chrome Launch ----------------------------------------------------------
 
 const defaultOwnedShell =
@@ -1049,12 +1107,39 @@ const cdp = connectPipe(
 );
 await attestBrowserHeadless(cdp, launch);
 
+// A request rule for the browser proof. `times` fails the first N matching
+// requests, every matching request with 'all', or with 'page' every matching
+// request until the page next navigates. 'page' is a chunk a stale shell asks
+// for after a deploy removed it: it fails however often the page asks, and a
+// reload stops asking for it. A browser that keeps a failed import for the
+// page's life asks once; one that fetches it again asks every time, so a
+// count of one cannot stand for the missing chunk there. `hold` keeps the
+// first failing response unanswered until releaseHeld, so a proof can act
+// while it waits; failures after the release are answered at once.
+interface BlockRule {
+  urlPattern: string;
+  times: number | 'all' | 'page';
+  hold?: boolean;
+}
+
+// Glob match for Fetch patterns, where `*` matches any run of characters.
+function urlMatches(pattern: string, url: string): boolean {
+  const source = pattern
+    .split('*')
+    .map((part) => part.replace(/[.+?^${}()|[\]\\]/g, '\\$&'))
+    .join('.*');
+  return new RegExp(`^${source}$`).test(url);
+}
+
 // Helper to open a page session with recorder and assertions
 interface OpenRunOptions {
   viewport?: { width: number; height: number; mobile?: boolean };
   colorScheme?: 'light' | 'dark';
   disableScripts?: boolean;
   blockViewerJs?: boolean;
+  blocks?: BlockRule[];
+  fixedWait?: boolean;
+  bypassServiceWorker?: boolean;
   onBeforeNavigate?: (sessionId: string) => Promise<void>;
 }
 interface RenderEvent {
@@ -1106,6 +1191,10 @@ interface RunOutcome {
     loadingFinished: boolean;
     loadingFailed?: { errorText: string; canceled: boolean } | undefined;
   };
+  blocks: Record<string, number>;
+  navigationUrls: string[];
+  setBlocks: (next: BlockRule[]) => void;
+  releaseHeld: () => void;
   close: () => Promise<void>;
 }
 
@@ -1133,6 +1222,13 @@ async function runRelicPage(
     { cacheDisabled: true },
     sessionId
   );
+  if (options.bypassServiceWorker) {
+    await cdp.send(
+      'Network.setBypassServiceWorker',
+      { bypass: true },
+      sessionId
+    );
+  }
 
   const vp = options.viewport ?? { width: 1440, height: 900, mobile: false };
   await cdp.send(
@@ -1187,6 +1283,84 @@ async function runRelicPage(
       }
     });
   }
+
+  // Every main-frame navigation, so a proof counts reloads and checks what each
+  // reloaded URL carried.
+  const navigationUrls: string[] = [];
+  const stopNav = cdp.onEvent((e) => {
+    if (e.method !== 'Page.frameNavigated' || e.sessionId !== sessionId) return;
+    const frame = (e.params as { frame: { url: string; parentId?: string } })
+      .frame;
+    if (frame.parentId === undefined && frame.url !== 'about:blank') {
+      navigationUrls.push(frame.url);
+    }
+  });
+
+  // Network rules fail matching requests and count what was really failed.
+  // setBlocks swaps the rules mid-page; Fetch patterns stay as enabled here.
+  let activeRules: BlockRule[] = options.blocks ?? [];
+  const remaining = new Map<string, number | 'all' | 'page'>();
+  // A 'page' rule lasts through the navigation current when it was set. A rule
+  // given at open is set before the open's own navigation, which counts as it.
+  let pageRuleThrough = 1;
+  let holdOpen = true;
+  const resetRules = (next: BlockRule[]): void => {
+    activeRules = next;
+    remaining.clear();
+    for (const rule of next) remaining.set(rule.urlPattern, rule.times);
+    pageRuleThrough = Math.max(navigationUrls.length, 1);
+    holdOpen = true;
+  };
+  resetRules(activeRules);
+  const blocks: Record<string, number> = {};
+  for (const rule of activeRules) blocks[rule.urlPattern] = 0;
+  if (activeRules.length > 0) {
+    await cdp.send(
+      'Fetch.enable',
+      {
+        patterns: activeRules.map((rule) => ({
+          urlPattern: rule.urlPattern,
+          requestStage: 'Request',
+        })),
+      },
+      sessionId
+    );
+  }
+  const heldAnswers: Array<() => void> = [];
+  const stopBlock = cdp.onEvent((e) => {
+    if (e.method !== 'Fetch.requestPaused' || e.sessionId !== sessionId) return;
+    const params = e.params as { requestId: string; request: { url: string } };
+    const rule = activeRules.find((r) =>
+      urlMatches(r.urlPattern, params.request.url)
+    );
+    const left =
+      rule === undefined ? undefined : remaining.get(rule.urlPattern);
+    const failIt =
+      left === 'all' ||
+      (left === 'page' && navigationUrls.length <= pageRuleThrough) ||
+      (typeof left === 'number' && left > 0);
+    if (rule !== undefined && failIt) {
+      if (typeof left === 'number') remaining.set(rule.urlPattern, left - 1);
+      blocks[rule.urlPattern] = (blocks[rule.urlPattern] ?? 0) + 1;
+    }
+    const answer = (): void => {
+      void cdp
+        .send(
+          failIt ? 'Fetch.failRequest' : 'Fetch.continueRequest',
+          failIt
+            ? { requestId: params.requestId, errorReason: 'BlockedByClient' }
+            : { requestId: params.requestId },
+          sessionId
+        )
+        .catch(() => {});
+    };
+    if (failIt && rule?.hold === true && holdOpen) heldAnswers.push(answer);
+    else answer();
+  });
+  const releaseHeld = (): void => {
+    holdOpen = false;
+    for (const answer of heldAnswers.splice(0)) answer();
+  };
 
   let isolatedContextId: number | undefined;
   const stopContextListener = cdp.onEvent((e) => {
@@ -1282,7 +1456,7 @@ async function runRelicPage(
   let readyShot: Buffer | null = null;
 
   // Poll for completion or settling
-  if (!options.disableScripts && !options.blockViewerJs) {
+  if (!options.disableScripts && !options.blockViewerJs && !options.fixedWait) {
     const start = Date.now();
     let _settled = false;
 
@@ -1415,12 +1589,192 @@ async function runRelicPage(
     firstProgressShot,
     readyShot,
     storageRequest: storageReq,
+    blocks,
+    navigationUrls,
+    setBlocks: resetRules,
+    releaseHeld,
     close: async () => {
       stopContextListener();
+      stopBlock();
       stopNetListener();
+      stopNav();
       await cdp.send('Target.closeTarget', { targetId }).catch(() => {});
     },
   };
+}
+
+// Evaluates in the page's main world and fails loudly on a script error.
+async function evalMain<T = unknown>(
+  sessionId: string,
+  expression: string
+): Promise<T> {
+  const res = (await cdp.send(
+    'Runtime.evaluate',
+    { expression, returnByValue: true },
+    sessionId
+  )) as { result?: { value?: T }; exceptionDetails?: unknown };
+  assert.equal(
+    res.exceptionDetails,
+    undefined,
+    `evaluate failed: ${expression.slice(0, 120)}`
+  );
+  return res.result?.value as T;
+}
+
+async function waitUntil(
+  check: () => Promise<boolean>,
+  timeoutMs: number,
+  label: string
+): Promise<void> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (await check()) return;
+    await Bun.sleep(50);
+  }
+  throw new Error(`Timed out waiting for ${label}`);
+}
+
+// Frames a page shows: the ones in its own process, from its frame tree, and the ones Chrome
+// put in a process of their own, which are separate iframe targets and absent from that tree.
+// Chrome isolates a sandboxed frame that way in the full browser; the headless shell keeps it
+// in the page's process. A frame is the page's own only if the page owns its iframe element.
+async function pageFrames(
+  sessionId: string
+): Promise<Array<{ frameId: string; remote: boolean }>> {
+  const tree = (await cdp.send('Page.getFrameTree', {}, sessionId)) as {
+    frameTree: { childFrames?: Array<{ frame: { id: string } }> };
+  };
+  const local = (tree.frameTree.childFrames ?? []).map(
+    (child) => child.frame.id
+  );
+  const targets = (await cdp.send('Target.getTargets', {})) as {
+    targetInfos: Array<{ targetId: string; type: string }>;
+  };
+  const remote = targets.targetInfos
+    .filter((info) => info.type === 'iframe' && !local.includes(info.targetId))
+    .map((info) => info.targetId);
+  return [
+    ...local.map((frameId) => ({ frameId, remote: false })),
+    ...remote.map((frameId) => ({ frameId, remote: true })),
+  ];
+}
+
+// Text of each usercontent frame inside `container`. A frame in the page's process is read
+// from an isolated world the way html-image-comments-path.ts does; a frame in its own process
+// is read through its own target. Frames outside the container are ignored, so a stale frame
+// cannot satisfy a check.
+async function usercontentTexts(
+  sessionId: string,
+  container: string
+): Promise<string[]> {
+  const texts: string[] = [];
+  for (const { frameId, remote } of await pageFrames(sessionId)) {
+    const owner = (await cdp
+      .send('DOM.getFrameOwner', { frameId }, sessionId)
+      .catch(() => null)) as { backendNodeId: number } | null;
+    if (!owner) continue;
+    const resolved = (await cdp
+      .send(
+        'DOM.resolveNode',
+        { backendNodeId: owner.backendNodeId },
+        sessionId
+      )
+      .catch(() => null)) as { object?: { objectId?: string } } | null;
+    const objectId = resolved?.object?.objectId;
+    if (!objectId) continue;
+    const inside = (await cdp
+      .send(
+        'Runtime.callFunctionOn',
+        {
+          objectId,
+          functionDeclaration: `function () { return this.closest(${JSON.stringify(container)}) !== null; }`,
+          returnByValue: true,
+        },
+        sessionId
+      )
+      .catch(() => null)) as { result?: { value?: boolean } } | null;
+    if (inside?.result?.value !== true) continue;
+    const expression = 'document.body ? document.body.textContent || "" : ""';
+    if (remote) {
+      const attached = (await cdp
+        .send('Target.attachToTarget', { targetId: frameId, flatten: true })
+        .catch(() => null)) as { sessionId: string } | null;
+      if (!attached) continue;
+      const read = (await cdp
+        .send(
+          'Runtime.evaluate',
+          { expression, returnByValue: true },
+          attached.sessionId
+        )
+        .catch(() => null)) as { result?: { value?: string } } | null;
+      await cdp
+        .send('Target.detachFromTarget', { sessionId: attached.sessionId })
+        .catch(() => {});
+      texts.push(read?.result?.value ?? '');
+      continue;
+    }
+    // A frame can leave between the tree read and this call while the page reloads or
+    // swaps its view ("No frame for given id found" on Linux CI, diagnostic run
+    // 43447651105). It has no text to give, and the caller's wait reads again.
+    const world = (await cdp
+      .send(
+        'Page.createIsolatedWorld',
+        { frameId, worldName: 'jsx-component-proof' },
+        sessionId
+      )
+      .catch(() => null)) as { executionContextId: number } | null;
+    if (!world) continue;
+    const read = (await cdp
+      .send(
+        'Runtime.evaluate',
+        {
+          expression,
+          contextId: world.executionContextId,
+          returnByValue: true,
+        },
+        sessionId
+      )
+      .catch(() => null)) as { result?: { value?: string } } | null;
+    texts.push(read?.result?.value ?? '');
+  }
+  return texts;
+}
+
+// What a usercontent wait saw when it timed out: the frames the page has, where each lives,
+// and how much text each returned. Printed so a failed run says why, not only that it waited.
+async function describeUsercontent(
+  sessionId: string,
+  container: string
+): Promise<string> {
+  const frames = await pageFrames(sessionId).catch(() => []);
+  const texts = await usercontentTexts(sessionId, container).catch(() => []);
+  const stage = await evalMain<string>(
+    sessionId,
+    `(() => { const el = document.querySelector(${JSON.stringify(container)}); return el ? el.className + ' state=' + (el.getAttribute('data-render-state') ?? '') + ' frames=' + el.querySelectorAll('iframe').length : 'container missing'; })()`
+  ).catch(() => 'stage unreadable');
+  return `frames=${JSON.stringify(frames.map((frame) => (frame.remote ? 'own-process' : 'page-process')))} texts=${JSON.stringify(texts.map((text) => text.slice(0, 80)))} stage=${stage}`;
+}
+
+// The one dist chunk carrying the lazily loaded compiler. Its markers are
+// Sucrase option names; the shell-budget test asserts they sit in one chunk.
+async function findCompilerChunk(dir: string): Promise<string> {
+  const carriers: string[] = [];
+  for (const name of await readdir(dir)) {
+    if (!/^chunk-[^/]+\.js$/.test(name)) continue;
+    const text = await readFile(join(dir, name), 'utf8');
+    if (
+      text.includes('enableLegacyTypeScriptModuleInterop') &&
+      text.includes('jsxFragmentPragma')
+    ) {
+      carriers.push(name);
+    }
+  }
+  assert.equal(
+    carriers.length,
+    1,
+    `expected one compiler chunk in ${dir}, found ${carriers.length}`
+  );
+  return carriers[0]!;
 }
 
 // Check filtering args
@@ -2607,6 +2961,1028 @@ try {
     console.log(
       `  ✓ Version switch smoothly preserved stage, showed status pill, and rendered v1 (${dur}ms)`
     );
+  }
+
+  // =========================================================================
+  // RUN 10: JSX component relic (frame, comparison, compiler-load recovery)
+  // =========================================================================
+  if (
+    !onlyFilter ||
+    onlyFilter === '10' ||
+    onlyFilter === 'run10' ||
+    onlyFilter === 'jsx'
+  ) {
+    console.log(
+      '\n--- Run 10: JSX component relic (frame, comparison, compiler-load recovery) ---'
+    );
+    const t0 = Date.now();
+    const viewport = { width: 1440, height: 900 };
+    const summaryExpr = `Array.from(document.querySelectorAll('.diff-summary span')).map((s) => s.textContent || '')`;
+
+    // Steps 1 and 2 share one page: open v2, then open its comparison.
+    const jsxRun = await runRelicPage(compareUrl, {
+      viewport,
+      colorScheme: 'light',
+    });
+    runsExecuted++;
+    const jsxSid = jsxRun.sessionId;
+
+    // Step 1: v2 renders in one sandboxed frame, without the source notice.
+    await waitUntil(
+      () =>
+        evalMain<boolean>(
+          jsxSid,
+          `Boolean(document.querySelector('main.stage.stage-sandboxed-jsx[data-render-state="ready"]'))`
+        ),
+      30_000,
+      'JSX stage to reach render state ready'
+    );
+    const sandboxFrames = await evalMain<number>(
+      jsxSid,
+      `document.querySelectorAll('iframe.usercontent-frame[sandbox="allow-scripts"]').length`
+    );
+    assert.equal(
+      sandboxFrames,
+      1,
+      `JSX step 1: expected one sandboxed frame, found ${sandboxFrames}`
+    );
+    const stageText = await evalMain<string>(
+      jsxSid,
+      `document.querySelector('main.stage')?.textContent || ''`
+    );
+    assert.ok(
+      !stageText.includes('do not compile'),
+      'JSX step 1: the component must render, not show the do-not-compile notice'
+    );
+    let v2Texts: string[] = [];
+    await waitUntil(
+      async () => {
+        v2Texts = await usercontentTexts(jsxSid, 'main.stage');
+        return v2Texts.some((t) => t.includes('version two'));
+      },
+      15_000,
+      'version two inside the rendered frame'
+    ).catch(async (error: unknown) => {
+      throw new Error(
+        `${error instanceof Error ? error.message : String(error)}: ${await describeUsercontent(jsxSid, 'main.stage')}`
+      );
+    });
+    assert.ok(
+      !v2Texts.some((t) => t.includes('This component could not be rendered.')),
+      'JSX step 1: the frame reports a render failure'
+    );
+    const v2Shot = (await cdp.send(
+      'Page.captureScreenshot',
+      { format: 'png' },
+      jsxSid
+    )) as { data: string };
+    await writeFile(
+      join(proofDir, '10-jsx-v2-frame.png'),
+      Buffer.from(v2Shot.data, 'base64')
+    );
+    console.log('JSX_STEP_1_FRAME_OK');
+
+    // Step 2: the comparison frames both versions, each in its own pane.
+    await evalMain(
+      jsxSid,
+      `(() => {
+        const button = document.querySelector('.action-history');
+        if (!button) throw new Error('action-history button missing');
+        button.click();
+        return true;
+      })()`
+    );
+    await waitUntil(
+      async () =>
+        (await evalMain<number>(
+          jsxSid,
+          `document.querySelectorAll('.compare-pane iframe.usercontent-frame').length`
+        )) === 2,
+      30_000,
+      'two comparison panes'
+    );
+    await waitUntil(
+      async () => {
+        const texts = await evalMain<string[]>(jsxSid, summaryExpr);
+        return (
+          texts.length > 0 &&
+          texts.every((t) => t !== 'Rendering both versions.')
+        );
+      },
+      30_000,
+      'comparison summary to settle'
+    );
+    const summaryTexts = await evalMain<string[]>(jsxSid, summaryExpr);
+    assert.ok(
+      !summaryTexts.some((t) =>
+        t.includes('could not read their rendered structure')
+      ),
+      `JSX step 2: comparison could not read rendered structure: ${summaryTexts.join(' | ')}`
+    );
+    let cmpTexts: string[] = [];
+    await waitUntil(
+      async () => {
+        cmpTexts = await usercontentTexts(jsxSid, '.compare-pane');
+        return (
+          cmpTexts.length === 2 &&
+          cmpTexts.some((t) => t.includes('version one')) &&
+          cmpTexts.some((t) => t.includes('version two'))
+        );
+      },
+      30_000,
+      'both comparison frames to show their versions'
+    );
+    const cmpShot = (await cdp.send(
+      'Page.captureScreenshot',
+      { format: 'png' },
+      jsxSid
+    )) as { data: string };
+    await writeFile(
+      join(proofDir, '10-jsx-compare.png'),
+      Buffer.from(cmpShot.data, 'base64')
+    );
+    console.log('JSX_STEP_2_COMPARE_OK panes=2');
+    await jsxRun.close();
+
+    // Step 3: a failed compiler fetch never shows damaged content or source.
+    // The page reloads at most once. The vault supplies the key on reload, and
+    // no reload carries the fragment. Each block is counted where it is
+    // intercepted, so a case that blocks nothing cannot pass.
+    const compilerPattern = `*${await findCompilerChunk(viewerDist)}*`;
+    const probePattern = '*/assets/icon.svg*';
+    const compareKey = compareUrl.split('#')[1] ?? '';
+    assert.ok(
+      compareKey !== '',
+      'JSX step 3: the compare link must carry a key'
+    );
+    // What the viewer shows when a comparison's compiler could not be loaded while
+    // this browser still holds the key: the dead view's detail for a compiler
+    // failure, which version stays open (2 is current in every fixture below), and
+    // the reload instruction.
+    const COMPILER_FAILURE_LINE =
+      'Something went wrong reaching the service. Version 2 remains open. Reload this page to try again.';
+    const readyExpr = `Boolean(document.querySelector('main.stage[data-render-state="ready"]'))`;
+    const deadExpr = `Boolean(document.querySelector('main.stage.stage-dead'))`;
+    const stateExpr = `(() => ({
+      dead: document.querySelector('main.stage.stage-dead') !== null,
+      accession: document.querySelector('main.stage-dead .card .accession')?.textContent || '',
+      body: document.body?.textContent || '',
+      stageCode: document.querySelector('.stage-code') !== null,
+    }))()`;
+    // A check during navigation reads as not yet, not as a failure.
+    const isTrue = (sid: string, expr: string): Promise<boolean> =>
+      evalMain<boolean>(sid, expr).catch(() => false);
+    const clickSelector = async (
+      sid: string,
+      selector: string
+    ): Promise<void> => {
+      await evalMain(
+        sid,
+        `(() => {
+          const el = document.querySelector(${JSON.stringify(selector)});
+          if (!el) throw new Error(${JSON.stringify(selector + ' missing')});
+          el.click();
+          return true;
+        })()`
+      );
+    };
+    type StageState = {
+      dead: boolean;
+      accession: string;
+      body: string;
+      stageCode: boolean;
+    };
+    const assertUnreachable = async (
+      sid: string,
+      label: string
+    ): Promise<void> => {
+      const s = await evalMain<StageState>(sid, stateExpr);
+      assert.ok(s.dead, `${label}: the dead card must show`);
+      assert.ok(
+        s.accession.includes('service_unreachable'),
+        `${label}: accession must be service_unreachable, found "${s.accession}"`
+      );
+      assert.ok(
+        s.body.includes('Something went wrong reaching the service.'),
+        `${label}: the card must say the service could not be reached`
+      );
+      assert.ok(
+        !s.body.includes('content_damaged'),
+        `${label}: must not read as damaged content`
+      );
+      assert.equal(
+        s.stageCode,
+        false,
+        `${label}: must not fall back to the source view`
+      );
+    };
+    const savePng = async (sid: string, name: string): Promise<void> => {
+      const shot = (await cdp.send(
+        'Page.captureScreenshot',
+        { format: 'png' },
+        sid
+      )) as { data: string };
+      await writeFile(join(proofDir, name), Buffer.from(shot.data, 'base64'));
+    };
+    const assertNoKeyInReloads = (run: RunOutcome, label: string): void => {
+      for (const url of run.navigationUrls.slice(1)) {
+        assert.ok(
+          !url.includes('#') && !url.includes(compareKey),
+          `${label}: a reload carried the fragment: ${url}`
+        );
+      }
+    };
+    const mintsOfCompare = (): number =>
+      relicMintCounts.get(compareRelicId) ?? 0;
+
+    // 3a: the first compiler fetch fails once. One reload, the vault supplies
+    // the key, and the component renders.
+    {
+      const mints = mintsOfCompare();
+      const run = await runRelicPage(compareUrl, {
+        viewport,
+        colorScheme: 'light',
+        bypassServiceWorker: true,
+        fixedWait: true,
+        blocks: [{ urlPattern: compilerPattern, times: 1 }],
+      });
+      runsExecuted++;
+      await waitUntil(
+        () => isTrue(run.sessionId, readyExpr),
+        45_000,
+        '3a: component ready after one reload'
+      );
+      const reloads = run.navigationUrls.length - 1;
+      assert.equal(
+        run.blocks[compilerPattern] ?? 0,
+        1,
+        `3a: expected one intercepted compiler fetch, saw ${run.blocks[compilerPattern] ?? 0}`
+      );
+      assert.equal(
+        reloads,
+        1,
+        `3a: expected exactly one reload, saw ${reloads}`
+      );
+      assertNoKeyInReloads(run, '3a');
+      assert.equal(
+        await evalMain<string>(run.sessionId, 'location.hash'),
+        '',
+        '3a: the reloaded page must not keep a fragment'
+      );
+      await waitUntil(
+        async () =>
+          (await usercontentTexts(run.sessionId, 'main.stage')).some((t) =>
+            t.includes('version two')
+          ),
+        15_000,
+        '3a: version two inside the frame'
+      );
+      const minted = mintsOfCompare() - mints;
+      assert.equal(
+        minted,
+        1 + reloads,
+        `3a: one open plus one reload must mint ${1 + reloads} times, saw ${minted}`
+      );
+      await savePng(run.sessionId, '10-3a-heal-once.png');
+      console.log(
+        `JSX_STEP_3A_HEAL_ONCE_OK reloads=${reloads} blocked=${run.blocks[compilerPattern] ?? 0}`
+      );
+      await run.close();
+    }
+
+    // 3b: every compiler fetch fails. One reload is allowed; the second failure
+    // shows the card and nothing reloads again.
+    {
+      const run = await runRelicPage(compareUrl, {
+        viewport,
+        colorScheme: 'light',
+        bypassServiceWorker: true,
+        fixedWait: true,
+        blocks: [{ urlPattern: compilerPattern, times: 'all' }],
+      });
+      runsExecuted++;
+      await waitUntil(
+        async () =>
+          run.navigationUrls.length >= 2 &&
+          (await isTrue(run.sessionId, deadExpr)),
+        45_000,
+        '3b: second attempt fails after the one reload'
+      );
+      await Bun.sleep(1500);
+      const reloads = run.navigationUrls.length - 1;
+      assert.equal(
+        reloads,
+        1,
+        `3b: at most one reload is allowed, saw ${reloads}`
+      );
+      assert.ok(
+        (run.blocks[compilerPattern] ?? 0) >= 2,
+        `3b: the reloaded attempt must also be intercepted, saw ${run.blocks[compilerPattern] ?? 0}`
+      );
+      await assertUnreachable(run.sessionId, '3b');
+      assertNoKeyInReloads(run, '3b');
+      await savePng(run.sessionId, '10-3b-no-loop.png');
+      console.log(
+        `JSX_STEP_3B_NO_LOOP_OK reloads=${reloads} blocked=${run.blocks[compilerPattern] ?? 0}`
+      );
+      await run.close();
+    }
+
+    // 3c: the network is down, so the server check fails. No reload happens and
+    // the card stays. Try again recovers once the network is back: with one
+    // reload where the browser keeps a failed import for the page's life (the
+    // headless shell), and in place where it fetches the import again (Chrome
+    // on Linux CI, diagnostic run 43381985257). Never more than one reload.
+    {
+      const run = await runRelicPage(compareUrl, {
+        viewport,
+        colorScheme: 'light',
+        bypassServiceWorker: true,
+        fixedWait: true,
+        blocks: [
+          { urlPattern: compilerPattern, times: 'all' },
+          { urlPattern: probePattern, times: 'all' },
+        ],
+      });
+      runsExecuted++;
+      await waitUntil(
+        () => isTrue(run.sessionId, deadExpr),
+        45_000,
+        '3c: card while the network is down'
+      );
+      assert.equal(
+        run.navigationUrls.length - 1,
+        0,
+        '3c: the page reloaded while the server check was failing'
+      );
+      assert.ok(
+        (run.blocks[probePattern] ?? 0) >= 1,
+        '3c: the server check was never intercepted'
+      );
+      await assertUnreachable(run.sessionId, '3c');
+      run.setBlocks([]);
+      await clickSelector(run.sessionId, '[data-dead-action="retry"]');
+      await waitUntil(
+        () => isTrue(run.sessionId, readyExpr),
+        45_000,
+        '3c: component ready after Try again'
+      );
+      const reloads = run.navigationUrls.length - 1;
+      assert.ok(
+        reloads <= 1,
+        `3c: Try again may reload at most once when the network is back, saw ${reloads}`
+      );
+      await waitUntil(
+        async () =>
+          (await usercontentTexts(run.sessionId, 'main.stage')).some((t) =>
+            t.includes('version two')
+          ),
+        15_000,
+        '3c: version two inside the frame after Try again'
+      );
+      assertNoKeyInReloads(run, '3c');
+      await savePng(run.sessionId, '10-3c-network-retry.png');
+      console.log(
+        `JSX_STEP_3C_NETWORK_RETRY_OK reloads=${reloads} probes=${run.blocks[probePattern] ?? 0}`
+      );
+      await run.close();
+    }
+
+    // 3d: a typed key whose first compiler fetch fails recovers the same way. A
+    // separate relic keeps the vault empty until the key is typed.
+    {
+      const typedPath = join(compareDir, 'Typed.jsx');
+      await writeFile(typedPath, compareJsx('Relik JSX typed key', ['Alpha']));
+      const typedRes = await callMcp('relic_publish', {
+        path: typedPath,
+        cover: false,
+        title: '',
+      });
+      const typedUrl = String(typedRes['url'] ?? typedRes['share_url'] ?? '');
+      const typedKey = typedUrl.split('#')[1] ?? '';
+      assert.ok(typedKey !== '', '3d: publish must return a key');
+      const bareUrl = typedUrl.split('#')[0] ?? '';
+      const run = await runRelicPage(bareUrl, {
+        viewport,
+        colorScheme: 'light',
+        bypassServiceWorker: true,
+        fixedWait: true,
+        blocks: [{ urlPattern: compilerPattern, times: 1 }],
+      });
+      runsExecuted++;
+      await waitUntil(
+        () =>
+          isTrue(
+            run.sessionId,
+            `Boolean(document.querySelector('.key-entry-form'))`
+          ),
+        30_000,
+        '3d: key entry form'
+      );
+      await evalMain(
+        run.sessionId,
+        `(() => {
+          const input = document.querySelector('#relic-key-input');
+          if (!input) throw new Error('#relic-key-input not found');
+          input.value = ${JSON.stringify(typedKey)};
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+          const form = document.querySelector('.key-entry-form');
+          if (!form) throw new Error('.key-entry-form not found');
+          form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+          return true;
+        })()`
+      );
+      await waitUntil(
+        () => isTrue(run.sessionId, readyExpr),
+        45_000,
+        '3d: component ready after the typed key'
+      );
+      const reloads = run.navigationUrls.length - 1;
+      assert.equal(
+        run.blocks[compilerPattern] ?? 0,
+        1,
+        `3d: expected one intercepted compiler fetch, saw ${run.blocks[compilerPattern] ?? 0}`
+      );
+      assert.equal(
+        reloads,
+        1,
+        `3d: expected exactly one reload, saw ${reloads}`
+      );
+      assert.ok(
+        run.navigationUrls.every((url) => !url.includes(typedKey)),
+        '3d: a navigation carried the key'
+      );
+      await savePng(run.sessionId, '10-3d-typed-key.png');
+      console.log(
+        `JSX_STEP_3D_TYPED_KEY_OK reloads=${reloads} blocked=${run.blocks[compilerPattern] ?? 0}`
+      );
+      await run.close();
+    }
+
+    // Watches the page body for `text` over `ms`, and reports whether it was
+    // ever present. A proof that a page stays put needs this window, not a
+    // single read.
+    const watchForText = async (
+      sid: string,
+      text: string,
+      ms: number
+    ): Promise<boolean> => {
+      let seen = false;
+      const end = Date.now() + ms;
+      while (Date.now() < end) {
+        if (!seen) {
+          seen = await isTrue(
+            sid,
+            `(document.body?.textContent ?? '').includes(${JSON.stringify(text)})`
+          );
+        }
+        await Bun.sleep(100);
+      }
+      return seen;
+    };
+
+    // 3e: the current version is HTML and the comparison needs the v1 JSX. The
+    // compiler fetch fails once during Compare. The page must not reload on its
+    // own: it shows an explanatory error. A manual reload then recovers, and
+    // Compare frames both versions.
+    {
+      const mixedPath = join(compareDir, 'Mixed.jsx');
+      await writeFile(
+        mixedPath,
+        compareJsx('Relik JSX version one', ['Alpha', 'Beta'])
+      );
+      const mixedRes = await callMcp('relic_publish', {
+        path: mixedPath,
+        cover: false,
+        title: '',
+      });
+      const mixedId = String(mixedRes['relic_id'] ?? '');
+      const mixedUrl = String(mixedRes['url'] ?? mixedRes['share_url'] ?? '');
+      assert.ok(
+        mixedId !== '' && mixedUrl.includes('#'),
+        '3e: publish must return an id and key'
+      );
+      const mixedHtmlPath = join(compareDir, 'Mixed.html');
+      await writeFile(
+        mixedHtmlPath,
+        '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Mixed</title></head><body><h1>Relik HTML version two</h1></body></html>\n'
+      );
+      const mixedRepub = await callMcp('relic_republish', {
+        path: mixedHtmlPath,
+        relic_id: mixedId,
+        notify: false,
+        cover: false,
+      });
+      assert.equal(
+        mixedRepub['version'],
+        2,
+        '3e: the HTML republish must advance to version 2'
+      );
+      const run = await runRelicPage(mixedUrl, {
+        viewport,
+        colorScheme: 'light',
+        bypassServiceWorker: true,
+        fixedWait: true,
+        blocks: [{ urlPattern: compilerPattern, times: 0 }],
+      });
+      runsExecuted++;
+      await waitUntil(
+        async () =>
+          (await usercontentTexts(run.sessionId, 'main.stage')).some((t) =>
+            t.includes('version two')
+          ),
+        45_000,
+        '3e: current HTML version rendered'
+      );
+      run.setBlocks([{ urlPattern: compilerPattern, times: 'page' }]);
+      await clickSelector(run.sessionId, '.action-history');
+      await waitUntil(
+        async () => (run.blocks[compilerPattern] ?? 0) >= 1,
+        30_000,
+        '3e: compiler fetch intercepted'
+      );
+      // Long enough for a stale automatic reload, which needs the server check,
+      // to have run if it were going to. The reader is shown the viewer's own
+      // words for a compiler it could not load, then the way out. The older
+      // "could not be loaded for comparison" line left the viewer with the
+      // large-relic change on main (95aa4814).
+      const errorShown = await watchForText(
+        run.sessionId,
+        COMPILER_FAILURE_LINE,
+        6_000
+      );
+      const autoReloads = run.navigationUrls.length - 1;
+      assert.equal(
+        autoReloads,
+        0,
+        `3e: the failed comparison reloaded the page on its own (${autoReloads} reloads)`
+      );
+      const errorText = await evalMain<string>(
+        run.sessionId,
+        `document.body?.textContent ?? ''`
+      );
+      assert.ok(
+        errorShown,
+        `3e: the failed comparison must tell the reader it could not be loaded and to reload; the page said: ${errorText.replace(/\s+/g, ' ').slice(-400)}`
+      );
+      await savePng(run.sessionId, '10-3e-error-no-auto-reload.png');
+
+      // The reader reloads by hand. Page.reload is that user action, counted as
+      // one navigation, and the vault must still reopen the relic.
+      await cdp.send('Page.reload', {}, run.sessionId);
+      await waitUntil(
+        async () =>
+          run.navigationUrls.length >= 2 &&
+          (await usercontentTexts(run.sessionId, 'main.stage')).some((t) =>
+            t.includes('version two')
+          ),
+        45_000,
+        '3e: manual reload shows the current version'
+      );
+      const manualReloads = run.navigationUrls.length - 1;
+      assert.equal(
+        manualReloads,
+        1,
+        `3e: expected exactly one manual reload, saw ${manualReloads}`
+      );
+      assertNoKeyInReloads(run, '3e');
+
+      await clickSelector(run.sessionId, '.action-history');
+      await waitUntil(
+        async () =>
+          (await evalMain<number>(
+            run.sessionId,
+            `document.querySelectorAll('.compare-pane iframe.usercontent-frame').length`
+          )) === 2,
+        30_000,
+        '3e: two comparison panes after manual reload'
+      );
+      await waitUntil(
+        async () => {
+          const texts = await evalMain<string[]>(run.sessionId, summaryExpr);
+          return (
+            texts.length > 0 &&
+            texts.every((t) => t !== 'Rendering both versions.')
+          );
+        },
+        30_000,
+        '3e: comparison summary to settle'
+      );
+      const summaryTexts = await evalMain<string[]>(run.sessionId, summaryExpr);
+      assert.ok(
+        !summaryTexts.some((t) =>
+          t.includes('could not read their rendered structure')
+        ),
+        `3e: comparison could not read rendered structure: ${summaryTexts.join(' | ')}`
+      );
+      await waitUntil(
+        async () => {
+          const cmp = await usercontentTexts(run.sessionId, '.compare-pane');
+          return (
+            cmp.length === 2 &&
+            cmp.some((t) => t.includes('version one')) &&
+            cmp.some((t) => t.includes('version two'))
+          );
+        },
+        30_000,
+        '3e: both comparison frames show their versions'
+      );
+      await savePng(run.sessionId, '10-3e-manual-recovery.png');
+      console.log(
+        `JSX_STEP_3E_MANUAL_RECOVERY_OK auto_reloads=0 manual_reloads=1 blocked=${run.blocks[compilerPattern] ?? 0}`
+      );
+      await run.close();
+    }
+
+    // 3f: a compare whose compiler reply returns after the reader has left it
+    // must neither reload the page nor take a draft with it. The compiler reply
+    // is held. The reader exits compare, opens Share and types a draft. Then the
+    // held reply is released, and the page must stay put.
+    {
+      const staleJsxPath = join(compareDir, 'Stale.jsx');
+      await writeFile(
+        staleJsxPath,
+        compareJsx('Relik JSX version one', ['Alpha', 'Beta'])
+      );
+      const staleRes = await callMcp('relic_publish', {
+        path: staleJsxPath,
+        cover: false,
+        title: '',
+      });
+      const staleId = String(staleRes['relic_id'] ?? '');
+      const staleUrl = String(staleRes['url'] ?? staleRes['share_url'] ?? '');
+      assert.ok(
+        staleId !== '' && staleUrl.includes('#'),
+        '3f: publish must return an id and key'
+      );
+      const staleHtmlPath = join(compareDir, 'Stale.html');
+      await writeFile(
+        staleHtmlPath,
+        '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Stale</title></head><body><h1>Relik HTML version two</h1></body></html>\n'
+      );
+      const staleRepub = await callMcp('relic_republish', {
+        path: staleHtmlPath,
+        relic_id: staleId,
+        notify: false,
+        cover: false,
+      });
+      assert.equal(
+        staleRepub['version'],
+        2,
+        '3f: the HTML republish must advance to version 2'
+      );
+      const run = await runRelicPage(staleUrl, {
+        viewport,
+        colorScheme: 'light',
+        bypassServiceWorker: true,
+        fixedWait: true,
+        blocks: [{ urlPattern: compilerPattern, times: 0 }],
+      });
+      runsExecuted++;
+      await waitUntil(
+        async () =>
+          (await usercontentTexts(run.sessionId, 'main.stage')).some((t) =>
+            t.includes('version two')
+          ),
+        45_000,
+        '3f: current HTML version rendered'
+      );
+      run.setBlocks([
+        { urlPattern: compilerPattern, times: 'page', hold: true },
+      ]);
+      await clickSelector(run.sessionId, '.action-history');
+      await waitUntil(
+        async () => (run.blocks[compilerPattern] ?? 0) >= 1,
+        30_000,
+        '3f: compiler request held'
+      );
+      await clickSelector(run.sessionId, '.action-history');
+      const pressed = await evalMain<string>(
+        run.sessionId,
+        `document.querySelector('.action-history')?.getAttribute('aria-pressed') ?? ''`
+      );
+      assert.equal(
+        pressed,
+        'false',
+        '3f: the reader must have left comparison while the reply is held'
+      );
+      await clickSelector(run.sessionId, '.action-share');
+      await waitUntil(
+        () =>
+          isTrue(
+            run.sessionId,
+            `Boolean(document.querySelector('.share-panel input[type="email"]'))`
+          ),
+        15_000,
+        '3f: sign-in draft field'
+      );
+      const draft = 'reader@example.com';
+      await evalMain(
+        run.sessionId,
+        `(() => {
+          const box = document.querySelector('.share-panel input[type="email"]');
+          if (!box) throw new Error('sign-in draft field missing');
+          box.value = ${JSON.stringify(draft)};
+          box.dispatchEvent(new Event('input', { bubbles: true }));
+          return true;
+        })()`
+      );
+      run.releaseHeld();
+      // Longer than the server check, so a stale reload would have happened by now.
+      await Bun.sleep(6_000);
+      const reloads = run.navigationUrls.length - 1;
+      assert.equal(
+        reloads,
+        0,
+        `3f: a stale compare reloaded the page after the reader left it (${reloads} reloads)`
+      );
+      assert.ok(
+        (run.blocks[compilerPattern] ?? 0) >= 1,
+        `3f: the held compiler fetch was never intercepted, saw ${run.blocks[compilerPattern] ?? 0}`
+      );
+      assert.equal(
+        await evalMain<string>(
+          run.sessionId,
+          `document.querySelector('.share-panel input[type="email"]')?.value ?? ''`
+        ),
+        draft,
+        '3f: the draft did not survive the stale reply'
+      );
+      assert.ok(
+        await isTrue(run.sessionId, readyExpr),
+        '3f: the single view must still be ready'
+      );
+      await savePng(run.sessionId, '10-3f-stale-compare-kept-draft.png');
+      console.log('JSX_STEP_3F_STALE_COMPARE_OK reloads=0 draft=kept');
+      await run.close();
+    }
+
+    // 3g: a version switch whose compiler reply returns after the reader has
+    // chosen the current version must neither reload the page nor take a draft
+    // with it. The historical request is held, the reader picks the current
+    // version again, opens Share and types a draft, and the held reply is
+    // released. The page must stay on the current version and keep the draft.
+    {
+      const switchJsxPath = join(compareDir, 'Switch.jsx');
+      await writeFile(
+        switchJsxPath,
+        compareJsx('Relik JSX version one', ['Alpha', 'Beta'])
+      );
+      const switchRes = await callMcp('relic_publish', {
+        path: switchJsxPath,
+        cover: false,
+        title: '',
+      });
+      const switchId = String(switchRes['relic_id'] ?? '');
+      const switchUrl = String(
+        switchRes['url'] ?? switchRes['share_url'] ?? ''
+      );
+      assert.ok(
+        switchId !== '' && switchUrl.includes('#'),
+        '3g: publish must return an id and key'
+      );
+      const switchHtmlPath = join(compareDir, 'Switch.html');
+      await writeFile(
+        switchHtmlPath,
+        '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Switch</title></head><body><h1>Relik HTML version two</h1></body></html>\n'
+      );
+      const switchRepub = await callMcp('relic_republish', {
+        path: switchHtmlPath,
+        relic_id: switchId,
+        notify: false,
+        cover: false,
+      });
+      assert.equal(
+        switchRepub['version'],
+        2,
+        '3g: the HTML republish must advance to version 2'
+      );
+      const run = await runRelicPage(switchUrl, {
+        viewport,
+        colorScheme: 'light',
+        bypassServiceWorker: true,
+        fixedWait: true,
+        blocks: [{ urlPattern: compilerPattern, times: 0 }],
+      });
+      runsExecuted++;
+      await waitUntil(
+        async () =>
+          (await usercontentTexts(run.sessionId, 'main.stage')).some((t) =>
+            t.includes('version two')
+          ),
+        45_000,
+        '3g: current HTML version rendered'
+      );
+      run.setBlocks([
+        { urlPattern: compilerPattern, times: 'page', hold: true },
+      ]);
+      await clickSelector(run.sessionId, '.version-option[data-version="1"]');
+      await waitUntil(
+        async () => (run.blocks[compilerPattern] ?? 0) >= 1,
+        30_000,
+        '3g: historical compiler request held'
+      );
+      await clickSelector(run.sessionId, '.version-option[data-version="2"]');
+      await clickSelector(run.sessionId, '.action-share');
+      await waitUntil(
+        () =>
+          isTrue(
+            run.sessionId,
+            `Boolean(document.querySelector('.share-panel input[type="email"]'))`
+          ),
+        15_000,
+        '3g: sign-in draft field'
+      );
+      const draft = 'reader@example.com';
+      await evalMain(
+        run.sessionId,
+        `(() => {
+          const box = document.querySelector('.share-panel input[type="email"]');
+          if (!box) throw new Error('sign-in draft field missing');
+          box.value = ${JSON.stringify(draft)};
+          box.dispatchEvent(new Event('input', { bubbles: true }));
+          return true;
+        })()`
+      );
+      run.releaseHeld();
+      // Longer than the server check, so a stale reload would have happened by now.
+      await Bun.sleep(6_000);
+      const reloads = run.navigationUrls.length - 1;
+      assert.equal(
+        reloads,
+        0,
+        `3g: a stale version switch reloaded the page after the reader chose the current version (${reloads} reloads)`
+      );
+      assert.ok(
+        (run.blocks[compilerPattern] ?? 0) >= 1,
+        `3g: the held compiler fetch was never intercepted, saw ${run.blocks[compilerPattern] ?? 0}`
+      );
+      assert.ok(
+        (await usercontentTexts(run.sessionId, 'main.stage')).some((t) =>
+          t.includes('version two')
+        ),
+        '3g: the page must still show the current version'
+      );
+      assert.equal(
+        await evalMain<string>(
+          run.sessionId,
+          `document.querySelector('.share-panel input[type="email"]')?.value ?? ''`
+        ),
+        draft,
+        '3g: the draft did not survive the stale reply'
+      );
+      assert.ok(
+        await isTrue(run.sessionId, readyExpr),
+        '3g: the current view must still be ready'
+      );
+      await savePng(run.sessionId, '10-3g-stale-switch-kept-draft.png');
+      console.log('JSX_STEP_3G_STALE_SWITCH_OK reloads=0 draft=kept');
+      await run.close();
+    }
+
+    // 3h: the reader stays in the same comparison view, opens Share and types an
+    // unsent sign-in address while the historical compiler reply is held. When the
+    // reply fails, the page must not reload, the draft must remain, and the reader
+    // must see the comparison failure instead of a silent blank.
+    {
+      const sameJsxPath = join(compareDir, 'SameView.jsx');
+      await writeFile(
+        sameJsxPath,
+        compareJsx('Relik JSX version one', ['Alpha', 'Beta'])
+      );
+      const sameRes = await callMcp('relic_publish', {
+        path: sameJsxPath,
+        cover: false,
+        title: '',
+      });
+      const sameId = String(sameRes['relic_id'] ?? '');
+      const sameUrl = String(sameRes['url'] ?? sameRes['share_url'] ?? '');
+      assert.ok(
+        sameId !== '' && sameUrl.includes('#'),
+        '3h: publish must return an id and key'
+      );
+      const sameHtmlPath = join(compareDir, 'SameView.html');
+      await writeFile(
+        sameHtmlPath,
+        '<!DOCTYPE html><html><head><meta charset="utf-8"><title>SameView</title></head><body><h1>Relik HTML version two</h1></body></html>\n'
+      );
+      const sameRepub = await callMcp('relic_republish', {
+        path: sameHtmlPath,
+        relic_id: sameId,
+        notify: false,
+        cover: false,
+      });
+      assert.equal(
+        sameRepub['version'],
+        2,
+        '3h: the HTML republish must advance to version 2'
+      );
+      const run = await runRelicPage(sameUrl, {
+        viewport,
+        colorScheme: 'light',
+        bypassServiceWorker: true,
+        fixedWait: true,
+        blocks: [{ urlPattern: compilerPattern, times: 0 }],
+      });
+      runsExecuted++;
+      await waitUntil(
+        async () =>
+          (await usercontentTexts(run.sessionId, 'main.stage')).some((t) =>
+            t.includes('version two')
+          ),
+        45_000,
+        '3h: current HTML version rendered'
+      );
+      run.setBlocks([
+        { urlPattern: compilerPattern, times: 'page', hold: true },
+      ]);
+      await clickSelector(run.sessionId, '.action-history');
+      await waitUntil(
+        async () => (run.blocks[compilerPattern] ?? 0) >= 1,
+        30_000,
+        '3h: compiler request held'
+      );
+      const stillComparing = await evalMain<string>(
+        run.sessionId,
+        `document.querySelector('.action-history')?.getAttribute('aria-pressed') ?? ''`
+      );
+      assert.equal(
+        stillComparing,
+        'true',
+        '3h: the reader must still be in the comparison view'
+      );
+      await clickSelector(run.sessionId, '.action-share');
+      await waitUntil(
+        () =>
+          isTrue(
+            run.sessionId,
+            `Boolean(document.querySelector('.share-panel input[type="email"]'))`
+          ),
+        15_000,
+        '3h: sign-in draft field in the comparison view'
+      );
+      const draft = 'reader@example.com';
+      await evalMain(
+        run.sessionId,
+        `(() => {
+          const box = document.querySelector('.share-panel input[type="email"]');
+          if (!box) throw new Error('sign-in draft field missing');
+          box.value = ${JSON.stringify(draft)};
+          box.dispatchEvent(new Event('input', { bubbles: true }));
+          return true;
+        })()`
+      );
+      run.releaseHeld();
+      // Watch for the failure text for the whole window a stale reload needs.
+      const errorText = COMPILER_FAILURE_LINE;
+      let errorSeen = false;
+      const watchEnd = Date.now() + 6_000;
+      while (Date.now() < watchEnd) {
+        if (!errorSeen) {
+          errorSeen = await isTrue(
+            run.sessionId,
+            `document.body?.textContent?.includes(${JSON.stringify(errorText)}) === true`
+          );
+        }
+        await Bun.sleep(100);
+      }
+      const reloads = run.navigationUrls.length - 1;
+      assert.equal(
+        reloads,
+        0,
+        `3h: the pending compare failure reloaded the page over a live draft (${reloads} reloads)`
+      );
+      assert.ok(
+        (run.blocks[compilerPattern] ?? 0) >= 1,
+        `3h: the held compiler fetch was never intercepted, saw ${run.blocks[compilerPattern] ?? 0}`
+      );
+      assert.ok(
+        errorSeen,
+        `3h: the reader was never told the comparison failed ("${errorText}")`
+      );
+      assert.equal(
+        await evalMain<string>(
+          run.sessionId,
+          `document.querySelector('.share-panel input[type="email"]')?.value ?? ''`
+        ),
+        draft,
+        '3h: the unsent draft did not survive the pending failure'
+      );
+      await savePng(run.sessionId, '10-3h-same-view-draft-kept.png');
+      console.log(
+        'JSX_STEP_3H_SAME_VIEW_DRAFT_OK reloads=0 draft=kept error=shown'
+      );
+      await run.close();
+    }
+
+    console.log('JSX_COMPONENT_PATH_OK');
+
+    const dur = Date.now() - t0;
+    runSummary.push({
+      name: 'Run 10: JSX component relic frame, comparison, compiler-load recovery',
+      durationMs: dur,
+      status: 'pass',
+    });
   }
 
   // =========================================================================

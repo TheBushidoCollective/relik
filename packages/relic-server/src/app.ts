@@ -417,10 +417,14 @@ export function createApp(options: AppOptions = {}): RelicApp {
       'cache-control': 'no-store',
       'referrer-policy': 'no-referrer',
       'x-content-type-options': 'nosniff',
-      ...(name === 'model-parse-worker.js'
+      ...(name === 'otio-audio-pcm-worker.js' ||
+      name === 'otio-transport-gate-worklet.js' ||
+      name === 'model-parse-worker.js'
         ? {
             'content-security-policy':
-              "default-src 'none'; script-src 'self'; connect-src 'none'; worker-src 'none'",
+              name === 'model-parse-worker.js'
+                ? "default-src 'none'; script-src 'self'; connect-src 'none'; worker-src 'none'"
+                : "default-src 'none'; script-src 'self'; connect-src 'none'; worker-src 'none'; base-uri 'none'",
           }
         : {}),
     });
