@@ -1618,19 +1618,41 @@ async function waitUntil(
   throw new Error(`Timed out waiting for ${label}`);
 }
 
-// Text of each usercontent frame inside `container`, read from an isolated
-// world the way html-image-comments-path.ts does. Frames outside the container
-// are ignored, so a stale frame cannot satisfy a check.
+// Frames a page shows: the ones in its own process, from its frame tree, and the ones Chrome
+// put in a process of their own, which are separate iframe targets and absent from that tree.
+// Chrome isolates a sandboxed frame that way in the full browser; the headless shell keeps it
+// in the page's process. A frame is the page's own only if the page owns its iframe element.
+async function pageFrames(
+  sessionId: string
+): Promise<Array<{ frameId: string; remote: boolean }>> {
+  const tree = (await cdp.send('Page.getFrameTree', {}, sessionId)) as {
+    frameTree: { childFrames?: Array<{ frame: { id: string } }> };
+  };
+  const local = (tree.frameTree.childFrames ?? []).map(
+    (child) => child.frame.id
+  );
+  const targets = (await cdp.send('Target.getTargets', {})) as {
+    targetInfos: Array<{ targetId: string; type: string }>;
+  };
+  const remote = targets.targetInfos
+    .filter((info) => info.type === 'iframe' && !local.includes(info.targetId))
+    .map((info) => info.targetId);
+  return [
+    ...local.map((frameId) => ({ frameId, remote: false })),
+    ...remote.map((frameId) => ({ frameId, remote: true })),
+  ];
+}
+
+// Text of each usercontent frame inside `container`. A frame in the page's process is read
+// from an isolated world the way html-image-comments-path.ts does; a frame in its own process
+// is read through its own target. Frames outside the container are ignored, so a stale frame
+// cannot satisfy a check.
 async function usercontentTexts(
   sessionId: string,
   container: string
 ): Promise<string[]> {
-  const tree = (await cdp.send('Page.getFrameTree', {}, sessionId)) as {
-    frameTree: { childFrames?: Array<{ frame: { id: string } }> };
-  };
   const texts: string[] = [];
-  for (const child of tree.frameTree.childFrames ?? []) {
-    const frameId = child.frame.id;
+  for (const { frameId, remote } of await pageFrames(sessionId)) {
     const owner = (await cdp
       .send('DOM.getFrameOwner', { frameId }, sessionId)
       .catch(() => null)) as { backendNodeId: number } | null;
@@ -1656,6 +1678,25 @@ async function usercontentTexts(
       )
       .catch(() => null)) as { result?: { value?: boolean } } | null;
     if (inside?.result?.value !== true) continue;
+    const expression = 'document.body ? document.body.textContent || "" : ""';
+    if (remote) {
+      const attached = (await cdp
+        .send('Target.attachToTarget', { targetId: frameId, flatten: true })
+        .catch(() => null)) as { sessionId: string } | null;
+      if (!attached) continue;
+      const read = (await cdp
+        .send(
+          'Runtime.evaluate',
+          { expression, returnByValue: true },
+          attached.sessionId
+        )
+        .catch(() => null)) as { result?: { value?: string } } | null;
+      await cdp
+        .send('Target.detachFromTarget', { sessionId: attached.sessionId })
+        .catch(() => {});
+      texts.push(read?.result?.value ?? '');
+      continue;
+    }
     const world = (await cdp.send(
       'Page.createIsolatedWorld',
       { frameId, worldName: 'jsx-component-proof' },
@@ -1665,7 +1706,7 @@ async function usercontentTexts(
       .send(
         'Runtime.evaluate',
         {
-          expression: 'document.body ? document.body.textContent || "" : ""',
+          expression,
           contextId: world.executionContextId,
           returnByValue: true,
         },
@@ -1675,6 +1716,21 @@ async function usercontentTexts(
     texts.push(read?.result?.value ?? '');
   }
   return texts;
+}
+
+// What a usercontent wait saw when it timed out: the frames the page has, where each lives,
+// and how much text each returned. Printed so a failed run says why, not only that it waited.
+async function describeUsercontent(
+  sessionId: string,
+  container: string
+): Promise<string> {
+  const frames = await pageFrames(sessionId).catch(() => []);
+  const texts = await usercontentTexts(sessionId, container).catch(() => []);
+  const stage = await evalMain<string>(
+    sessionId,
+    `(() => { const el = document.querySelector(${JSON.stringify(container)}); return el ? el.className + ' state=' + (el.getAttribute('data-render-state') ?? '') + ' frames=' + el.querySelectorAll('iframe').length : 'container missing'; })()`
+  ).catch(() => 'stage unreadable');
+  return `frames=${JSON.stringify(frames.map((frame) => (frame.remote ? 'own-process' : 'page-process')))} texts=${JSON.stringify(texts.map((text) => text.slice(0, 80)))} stage=${stage}`;
 }
 
 // The one dist chunk carrying the lazily loaded compiler. Its markers are
@@ -2944,7 +3000,11 @@ try {
       },
       15_000,
       'version two inside the rendered frame'
-    );
+    ).catch(async (error: unknown) => {
+      throw new Error(
+        `${error instanceof Error ? error.message : String(error)}: ${await describeUsercontent(jsxSid, 'main.stage')}`
+      );
+    });
     assert.ok(
       !v2Texts.some((t) => t.includes('This component could not be rendered.')),
       'JSX step 1: the frame reports a render failure'
