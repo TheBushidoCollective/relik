@@ -6578,13 +6578,15 @@ export function createOtioPlayback(
   }
 
   // The decoder settled on a certified window other than req after its seek. Two causes
-  // were measured. Chromium 149 paints the first frame it decodes whose container duration
-  // reaches the seek time, and a frame whose decode-order duration overstates its
-  // presentation duration is painted in place of the next one. Every Chromium measured
-  // starts decoding at a key frame whose decode time precedes the seek time, which skips
-  // the frame presented just before that key frame. Playback presents frames by their
-  // timestamps, so the frame is taken from playback: from where the seek left the decoder
-  // when it shows an earlier window, then from just before the required window.
+  // were measured, both in variable frame rate MP4 with B-frames. Chromium 149 paints the
+  // first frame it decodes whose container duration reaches the seek time, and a frame
+  // whose decode-order duration overstates its presentation duration is painted in place
+  // of the next one. Every Chromium measured (149, 156, 157) starts decoding at a key
+  // frame that is decoded further ahead of its presentation than the file's first frame
+  // is, for a seek shortly before that key frame is shown, which skips the frame presented
+  // before it. Playback presents frames by their timestamps, so the frame is taken from
+  // playback: from where the seek left the decoder when it shows an earlier window, then
+  // from just before the required window.
   async function recoverPresentedFrame(
     media: HTMLVideoElement,
     timing: Extract<OtioVideoTiming, { kind: 'windows' }>,
@@ -6610,7 +6612,20 @@ export function createOtioPlayback(
     // The last whole microsecond before the window, which is as fine as a seek resolves.
     const before = Math.max(0, (Math.ceil(start * 1e6 - 1e-3) - 1) / 1e6);
     if (!(await seekElement(media, before, gen)) || stale(gen)) return null;
-    const { outcome, frame } = readPresentedFrame(media, timing);
+    let read = readPresentedFrame(media, timing);
+    if (
+      read.outcome.kind === 'match' &&
+      read.frame !== null &&
+      read.outcome.index > req
+    ) {
+      // This can still be the frame from before the seek. One presentation later it is
+      // where the decoder settled.
+      read.frame.close();
+      await nextPresentation(media, OTIO_PAUSED_PRESENT_POLL_MS);
+      if (stale(gen)) return null;
+      read = readPresentedFrame(media, timing);
+    }
+    const { outcome, frame } = read;
     if (outcome.kind === 'match' && frame !== null) {
       if (outcome.index === req) return frame;
       frame.close();
