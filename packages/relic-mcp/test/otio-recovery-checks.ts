@@ -924,136 +924,115 @@ export function recoveryFrontierOvershoot(
   return `frontier ${boundary} overshot by ${overshoot} frames at the first recovery check: ${contextFrame} + ${GAP_GUARD_FRAMES} > gap upper ${gapUpper} at ${rate} Hz`;
 }
 
-const STARVATION_SCHEDULE_REFUSALS: Record<string, true> = {
-  [HANDOFF_REFUSAL]: true,
-  [CAUSAL_REFUSAL]: true,
-  [CLOCK_REFUSAL]: true,
-  'committed recovery frame is unavailable': true,
-  'recovery final guard exceeded': true,
-  'recovery final clock or visual guard failed': true,
-  'video recovery readiness timed out': true,
-  'video recovery phase expired': true,
-  'PCM recovery deadline expired': true,
+// What the proof's own controls leave in a trace when they act. Any of these inside a run means
+// the proof caused or shaped what followed, and the stage's own assertions decide the outcome.
+const PROOF_CONTROL_KINDS: Record<string, true> = {
+  'source-start-fault': true,
+  'clock-site-hold-consumed': true,
+  'pcm-hold-release': true,
+  'pcm-fault-lift': true,
+  'clock-dispose-withheld': true,
+  'clock-late-arm-submitted': true,
+  'clock-bank-late-submitted': true,
+  'clock-stale-serial-submitted': true,
+  'clock-promotion-ack-held': true,
 };
-const STARVATION_VISUAL_REFUSALS: Record<string, true> = {
-  'recovery-frame-unavailable': true,
-  'recovery-phase-expired': true,
+const PROOF_CONTROL_PCM_EVENTS: Record<string, true> = {
+  fault: true,
+  'recovery-fault': true,
+  'recovery-old-drain-held': true,
 };
+function isProofControl(entry: TraceEntry): boolean {
+  if (entry.kind === 'scheduled-pcm')
+    return (
+      PROOF_CONTROL_PCM_EVENTS[String(entryValue(entry)['event'])] === true
+    );
+  return (
+    entry.kind.endsWith('-injected') || PROOF_CONTROL_KINDS[entry.kind] === true
+  );
+}
 
-// The refusal a play request gets when the earliest epoch the audio output can start at is past the
-// video phase band: the runner delayed the start, and the viewer declines to play out of phase. CI
-// run 43376038918: earliestWall 52393.703 against upperWall 52393.5, five of five ring slots.
-const STARTUP_REFUSAL =
-  'no causal audio epoch: the earliest guarded epoch is past the video phase band';
-
-// A capture whose last play request was refused before it had any audio epoch: after that request
-// no frontier closed and no epoch committed, the only faults are the underflow cancel and that one
-// refusal, and the proof injected nothing. What came before the request (a start the stage paused
-// on purpose, CI run 43377955990) belongs to an earlier start. When the viewer recorded how far
-// past the band the epoch fell, the evidence carries it.
-function startupStarvation(events: readonly TraceEntry[]): string | null {
-  let from = 0;
+// Jason, 2026-11-13: any interruption the viewer itself reports, in a run where the proof
+// injected nothing, reruns in a fresh browser up to three times and keeps its trace. A stage
+// that is interrupted on every attempt still fails. This replaces the list of exact refusal
+// signatures approved on 2026-11-12: a shared runner produced a new one on most runs (a start
+// refused 0.2 ms past the video phase band, "PCM scheduling failed", "no certified initial
+// audiovisual frontier", a buffering stall with no refusal at all).
+//
+// The run judged starts at the last play request in the trace. What came before belongs to an
+// earlier start, such as one a stage paused on purpose (CI run 43377955990). The viewer reports
+// an interruption there in one of two ways: a scheduled-audio error, which it also shows the
+// reader, or buffering that comes back after it had cleared. A capture begun mid-playback has
+// no play request, and buffering it starts in counts the same way. The underflow cancel and a
+// closed frontier are context for the evidence line, not interruptions on their own.
+//
+// Returns the evidence, or null when the viewer reported nothing or a proof control acted.
+export function viewerInterruption(
+  events: readonly TraceEntry[]
+): string | null {
+  let from = -1;
   events.forEach((entry, index) => {
     if (entry.kind === 'play-request') from = index;
   });
-  let errors = 0;
-  let margin = '';
-  for (let index = from; index < events.length; index++) {
-    const entry = events[index];
+  const midPlayback = from < 0;
+  const reported: string[] = [];
+  const context: string[] = [];
+  const note = (list: string[], text: string): void => {
+    if (!list.includes(text)) list.push(text);
+  };
+  let bufferingCleared = false;
+  for (let index = Math.max(from, 0); index < events.length; index++) {
+    const entry = events[index]!;
+    if (isProofControl(entry)) return null;
     const value = entryValue(entry);
-    if (isPcm(entry, 'epoch') || isPcm(entry, 'gate-close')) return null;
-    if (isPcm(entry, 'cancel')) {
-      if (value['reason'] !== 'underflow') return null;
-    } else if (isPcm(entry, 'error')) {
-      if (value['stage'] !== 'schedule' || value['code'] !== STARTUP_REFUSAL)
-        return null;
-      errors++;
+    if (isPcm(entry, 'error'))
+      note(reported, `${String(value['stage'])}: ${String(value['code'])}`);
+    else if (isPcm(entry, 'cancel') && value['reason'] === 'underflow')
+      note(context, 'cancel underflow');
+    else if (isPcm(entry, 'gate-close') && value['reason'] === 'frontier') {
+      const boundary = safeInt(value['contextStopFrame']);
+      note(
+        context,
+        `frontier closed${boundary === null ? '' : ` at frame ${boundary}`}`
+      );
+    } else if (entry.kind === 'buffering-initial') {
+      if (midPlayback && entry.value === 'true')
+        note(reported, 'buffering when the capture began');
+      else if (midPlayback) bufferingCleared = true;
+    } else if (entry.kind === 'buffering-change') {
+      if (value['current'] !== 'true') bufferingCleared = true;
+      else if (bufferingCleared)
+        note(reported, 'buffering returned after it had cleared');
     } else if (
-      entry?.kind === 'cold-controller' &&
+      entry.kind === 'cold-controller' &&
       value['event'] === 'ring-refused' &&
       typeof value['earliestWall'] === 'number' &&
       typeof value['upperWall'] === 'number'
     )
-      margin = `; earliest epoch ${value['earliestWall'].toFixed(3)} ms against the band's upper edge ${value['upperWall'].toFixed(3)} ms, ${String(value['slots'])} of ${String(value['requiredSlots'])} ring slots`;
+      note(
+        context,
+        `earliest epoch ${value['earliestWall'].toFixed(3)} ms against the band's upper edge ${value['upperWall'].toFixed(3)} ms, ${String(value['slots'])} of ${String(value['requiredSlots'])} ring slots`
+      );
   }
-  if (errors === 0) return null;
-  for (const entry of events)
-    if (
-      isPcm(entry, 'recovery-fault') ||
-      entry.kind === 'recovery-overrun-injected' ||
-      entry.kind === 'clock-site-hold-consumed'
-    )
-      return null;
-  return `startup refused before any audio epoch: ${STARTUP_REFUSAL}${margin}`;
+  if (reported.length === 0) return null;
+  return `viewer reported ${reported.join(', ')}${context.length > 0 ? ` (${context.join('; ')})` : ''}`;
 }
 
-// A capture whose audio frontier closed and whose recovery then refused, with nothing injected.
-// This is the viewer's designed, truthful outcome when the host cannot keep the 20 ms gap, and on
-// a loaded shared runner it happens to a healthy build. The signature: a frontier close, then
-// only faults from the recovery family (the underflow cancel, and errors from the refusals the
-// recovery makes), at least one of them an error, and no fault, overrun or hold injected by the
-// proof. Jason approved the general rerun on 2026-11-12: such a stage reruns in a fresh browser
-// at most three times, keeps each trace, and a stage that starves on every attempt still fails.
-// Returns the evidence, or null for anything else.
-export function naturalStarvation(
-  events: readonly TraceEntry[]
-): string | null {
-  const faults: number[] = [];
-  events.forEach((entry, index) => {
-    if (isPcm(entry, 'error') || isPcm(entry, 'cancel')) faults.push(index);
-  });
-  if (faults.length === 0) return null;
-  const startup = startupStarvation(events);
-  if (startup !== null) return startup;
-  let errors = 0;
-  const shape: string[] = [];
-  for (const index of faults) {
-    const value = entryValue(events[index]);
-    if (value['event'] === 'cancel') {
-      if (value['reason'] !== 'underflow') return null;
-      shape.push('cancel underflow');
-      continue;
-    }
-    const code = String(value['code']);
-    const allowed =
-      value['stage'] === 'schedule'
-        ? STARVATION_SCHEDULE_REFUSALS[code] === true
-        : value['stage'] === 'visual' &&
-          STARVATION_VISUAL_REFUSALS[code] === true;
-    if (!allowed) return null;
-    errors++;
-    shape.push(`${String(value['stage'])}: ${code}`);
-  }
-  if (errors === 0) return null;
-  for (const entry of events)
-    if (
-      isPcm(entry, 'recovery-fault') ||
-      entry.kind === 'recovery-overrun-injected' ||
-      entry.kind === 'clock-site-hold-consumed'
-    )
-      return null;
-  let close = -1;
-  for (let i = faults[0]! - 1; i >= 0 && close < 0; i--)
-    if (
-      isPcm(events[i], 'gate-close') &&
-      entryValue(events[i])['reason'] === 'frontier'
-    )
-      close = i;
-  if (close < 0) return null;
-  const boundary = safeInt(entryValue(events[close])['contextStopFrame']);
-  return `frontier closed${boundary === null ? '' : ` at frame ${boundary}`}, then ${shape.join(', ')}`;
-}
-
-// The refusal the reader sees when playback died before a capture began, so no trace holds it:
-// "Scheduled audio stopped: <code>" with a code the recovery family raises. Returns the code, or
+// What the reader is shown when playback stopped before a capture began, so no trace holds it:
+// "Scheduled audio stopped: <reason>", or the view's buffering state. Nothing has been injected
+// that early, so either one is an interruption the viewer reported. Returns the evidence, or
 // null for any other text.
-export function starvationRefusalText(text: string): string | null {
+export function viewerInterruptionText(text: string): string | null {
   const marker = 'Scheduled audio stopped: ';
   const at = text.indexOf(marker);
-  if (at < 0) return null;
-  const rest = text.slice(at + marker.length);
-  if (rest.startsWith(STARTUP_REFUSAL)) return STARTUP_REFUSAL;
-  for (const code of Object.keys(STARVATION_SCHEDULE_REFUSALS))
-    if (rest.startsWith(code)) return code;
-  return null;
+  if (at >= 0) {
+    // The diagnostics list repeats the line; keep the first statement of the reason.
+    const rest = text.slice(at + marker.length);
+    const end = rest.indexOf(' unsupported-browser');
+    const reason = (end < 0 ? rest : rest.slice(0, end)).trim();
+    return reason === '' ? null : `viewer reported ${reason}`;
+  }
+  return /(^|\s)buffering=true(\s|$)/.test(text)
+    ? 'viewer reported buffering before the capture began'
+    : null;
 }

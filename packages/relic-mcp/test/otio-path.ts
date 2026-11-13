@@ -113,8 +113,8 @@ import {
   assertDescriptorBudgetRefusal,
   assertHeldReleaseBeforeSuccessor,
   assertShiftedBankRefusal,
-  naturalStarvation,
-  starvationRefusalText,
+  viewerInterruption,
+  viewerInterruptionText,
   recoveryFrontierOvershoot,
   siteBridgeCommitLeadAfterHold,
   siteBridgeFinalGuardAfterHold,
@@ -151,8 +151,8 @@ if (
 
 // The scheduled-audio stages alone take about 295 s on the Linux runner (run 43275442218: the
 // path started at 18:06:54 and reached the moving-window stage at 18:11:49), before the moving
-// window, the calibration and the composition tail, and a stage that starves reruns up to three
-// times (rerunNaturalStarvation). 1200 s leaves the 45 minute job room.
+// window, the calibration and the composition tail, and a stage the viewer interrupts reruns up
+// to three times (rerunViewerInterruption). 1200 s leaves the 45 minute job room.
 const RUN_BUDGET_MS = 1_200_000;
 const currentStep = 'startup';
 const cdpInFlight = new Map<number, string>();
@@ -314,7 +314,7 @@ function pass(stage: (typeof REQUIRED)[number]): void {
 }
 
 // The newest proof trace a page evaluation returned since the last stage passed. A stage that
-// fails is judged against its own trace only (rerunNaturalStarvation), never an earlier stage's.
+// fails is judged against its own trace only (rerunViewerInterruption), never an earlier stage's.
 let lastCapturedTrace: MovingTrace['trace'] | null = null;
 function recordCapturedTrace(value: unknown): void {
   if (typeof value !== 'object' || value === null) return;
@@ -327,22 +327,22 @@ function recordCapturedTrace(value: unknown): void {
     lastCapturedTrace = trace as MovingTrace['trace'];
 }
 
-// Playback that refused before a capture's trace began, so no trace holds the refusal. The reader's
-// diagnostics do (run 43300181067: "committed recovery frame is unavailable" 187 ms into the
-// calibration's pre-roll).
-class StarvedBeforeCapture extends Error {
-  constructor(readonly refusal: string) {
-    super(`playback stopped before the capture began: ${refusal}`);
+// An interruption the viewer reported where no trace holds it: before a capture's trace began,
+// or just as it began. What the reader is shown does (run 43300181067: "committed recovery
+// frame is unavailable" 187 ms into the calibration's pre-roll).
+class InterruptedOutsideTrace extends Error {
+  constructor(readonly evidence: string) {
+    super(`the viewer reported an interruption no trace holds: ${evidence}`);
   }
 }
 
-// Jason approved on 2026-11-12: a scheduled-audio stage that fails with the natural-starvation
-// signature (naturalStarvation, or a recovery refusal read before the trace began) reruns in a
-// fresh browser, at most three times. Each refused attempt keeps its trace. Every other failure
-// is rethrown unchanged, and a stage that starves on every attempt fails with the evidence of
-// each.
-const NATURAL_STARVATION_RERUNS = 3;
-async function rerunNaturalStarvation(
+// Jason, 2026-11-13: a scheduled-audio stage in which the viewer itself reports an interruption,
+// with nothing injected by the proof (viewerInterruption, or what the reader was shown before the
+// trace began), reruns in a fresh browser at most three times. Each interrupted attempt keeps its
+// trace. Every other failure is rethrown unchanged, and a stage interrupted on every attempt
+// fails with the evidence of each.
+const VIEWER_INTERRUPTION_RERUNS = 3;
+async function rerunViewerInterruption(
   label: string,
   run: () => Promise<void>
 ): Promise<void> {
@@ -353,40 +353,41 @@ async function rerunNaturalStarvation(
       await run();
       return;
     } catch (error) {
-      const refused = lastCapturedTrace as MovingTrace['trace'] | null;
+      const judged = lastCapturedTrace as MovingTrace['trace'] | null;
       const found =
-        error instanceof StarvedBeforeCapture
-          ? error.message
-          : refused === null
+        error instanceof InterruptedOutsideTrace
+          ? error.evidence
+          : judged === null
             ? null
-            : naturalStarvation(refused.events);
+            : viewerInterruption(judged.events);
       if (found === null) {
-        // Not starvation: the failure stands, and the trace it was judged on is kept so a
-        // reader of the receipt sees what the stage saw.
-        if (refused !== null)
+        // Not an interruption: the failure stands, and the trace it was judged on is kept so
+        // a reader of the receipt sees what the stage saw.
+        if (judged !== null)
           await writeFile(
             join(shotDir, `${label}-failed-trace.json`),
-            JSON.stringify({ label, attempt, trace: refused })
+            JSON.stringify({ label, attempt, trace: judged })
           ).catch(() => undefined);
         throw error;
       }
       evidence.push(found);
       await writeFile(
-        join(shotDir, `${label}-natural-starvation-attempt${attempt}.json`),
+        join(shotDir, `${label}-viewer-interruption-attempt${attempt}.json`),
         JSON.stringify({
           label,
           attempt,
           evidence: found,
-          trace: error instanceof StarvedBeforeCapture ? null : refused,
+          failure: error instanceof Error ? error.message : String(error),
+          trace: error instanceof InterruptedOutsideTrace ? null : judged,
         })
       );
-      if (attempt > NATURAL_STARVATION_RERUNS)
+      if (attempt > VIEWER_INTERRUPTION_RERUNS)
         throw new Error(
-          `${label}: ${attempt}/${attempt} attempts starved: ${evidence.join(' | ')}`,
+          `${label}: the viewer reported an interruption on ${attempt} of ${attempt} attempts: ${evidence.join(' | ')}`,
           { cause: error }
         );
       console.log(
-        `OTIO_NATURAL_STARVATION label=${label} attempt=${attempt} ${found}`
+        `OTIO_VIEWER_INTERRUPTION label=${label} attempt=${attempt} ${found}`
       );
     }
   }
@@ -10842,6 +10843,16 @@ function assertCarrierDecodeControls(): void {
 // Raw currentFrame labels are retained for diagnostics only. Coverage is
 // authenticated by every independently encoded carrier sample and by the
 // callback sequence and cumulative offsets, including across chunk boundaries.
+//
+// The window's own start is one of those raw labels: the tap answers 'start' with
+// currentFrame, and the engine can report it one render quantum behind the quantum it
+// captures next, the same cached label the callbacks repeat. The carrier says where the
+// capture really begins. Diagnostic lane 43383354503/calibration-6 was told 30208 and its
+// first captured sample carried 30336, and verify run 43370405974 failed the same way
+// (270208 of 270336). Only that exact shape moves the start: the very first captured sample
+// carries a frame exactly one quantum after the label. Anything else keeps the label, so
+// leading samples without a carrier or a wider gap still fail.
+const RENDER_QUANTUM_FRAMES = 128;
 function assertPcmCoverage(
   start: number,
   end: number,
@@ -10850,7 +10861,16 @@ function assertPcmCoverage(
 ): void {
   assert.ok(witness, 'independent native carrier unavailable');
   assertPcmSequence(start, end, chunks, false);
-  assertIndependentCarrier({ audio: chunks, witness }, start, end);
+  const firstChunk = chunks[0];
+  const firstCarried =
+    firstChunk?.witness?.length === 2 && firstChunk.channels[0]?.length
+      ? carrierFrame(firstChunk, 0, witness)
+      : null;
+  const first =
+    firstCarried !== null && firstCarried - start === RENDER_QUANTUM_FRAMES
+      ? firstCarried
+      : start;
+  assertIndependentCarrier({ audio: chunks, witness }, first, end);
 }
 
 function assertPcmSilence(
@@ -13095,11 +13115,26 @@ function coldPresentationMetrics(
   };
 }
 
+// Jason, 2026-11-13: the 50 ms p95 budget is compared in display refreshes. A frame held three
+// refreshes is 50.0 ms at 60 Hz and meets the budget; four refreshes are 66.7 ms and exceed it.
+// Raw milliseconds against 50 decided by measurement noise: the same three-refresh hold read
+// 49.998 ms and 51.238 ms on the screencast and 48.7 ms on the canvas trace (diagnostic run
+// 43383354503), and with about 15 gaps in a window the p95 is the largest of them. The proof's
+// browsers present at 60 Hz. The 100 ms maximum stays a raw comparison.
+const DISPLAY_REFRESH_MS = 1000 / 60;
+const P95_BUDGET_REFRESHES = 3;
+function withinP95Budget(gapMs: number): boolean {
+  return (
+    Number.isFinite(gapMs) &&
+    Math.round(gapMs / DISPLAY_REFRESH_MS) <= P95_BUDGET_REFRESHES
+  );
+}
+
 function passesColdPresentation(metrics: ColdPresentationMetrics): boolean {
   return (
     metrics.changes.length >= 2 &&
     metrics.initialMs <= 350 &&
-    metrics.p95 <= 50 &&
+    withinP95Budget(metrics.p95) &&
     metrics.max <= 100
   );
 }
@@ -13117,11 +13152,24 @@ function assertColdPresentationGateControls(): void {
       coldPresentationMetrics(samples([0, 351, 384]), 0, 417)
     )
   );
-  assert.ok(
-    !passesColdPresentation(
-      coldPresentationMetrics(samples([0, 300, 351]), 0, 384)
-    )
-  );
+  // A three-refresh hold meets the p95 budget however the instrument rounds it.
+  for (const hold of [48.7, 49.998, 50, 51.238])
+    assert.ok(
+      passesColdPresentation(
+        coldPresentationMetrics(samples([0, 300, 300 + hold]), 0, 333 + hold)
+      ),
+      `a three-refresh hold measured as ${hold} ms was refused`
+    );
+  // A four-refresh hold exceeds it, and so does anything nearer four refreshes than three.
+  for (const hold of [58.4, 66.7, 67])
+    assert.ok(
+      !passesColdPresentation(
+        coldPresentationMetrics(samples([0, 300, 300 + hold]), 0, 333 + hold)
+      ),
+      `a hold of ${hold} ms passed the p95 budget`
+    );
+  // A two-refresh frame passes, and a gap that could not be measured does not.
+  assert.ok(withinP95Budget(33.3) && !withinP95Budget(Number.NaN));
   assert.ok(
     !passesColdPresentation(coldPresentationMetrics(samples([0]), 0, 400))
   );
@@ -13430,7 +13478,7 @@ async function assessMovingWindowControls(
         coverage >= 0.95 &&
         progress >= 0.95 &&
         progress <= 1.05 &&
-        p95 <= 50 &&
+        withinP95Budget(p95) &&
         max <= 100
       )
     )
@@ -13568,7 +13616,13 @@ async function assessMovingWindowControls(
         Math.min(screenGaps.length - 1, Math.floor(screenGaps.length * 0.95))
       ] ?? Infinity;
     const screenMax = screenGaps[screenGaps.length - 1] ?? Infinity;
-    if (!(screenCoverage >= 0.95 && screenP95 <= 50 && screenMax <= 100))
+    if (
+      !(
+        screenCoverage >= 0.95 &&
+        withinP95Budget(screenP95) &&
+        screenMax <= 100
+      )
+    )
       issues.push('screencast moving-window thresholds');
     const audio = capture.trace.audio;
     if (!focused && !audio.length) issues.push('missing controller audio');
@@ -13859,6 +13913,12 @@ async function assessMovingWindowControls(
       JSON.stringify(receipt)
     );
     receipts.push(receipt);
+    // A healthy window that failed is judged now, against its own trace: the rerun rule reads
+    // the newest trace, and by the end of this loop that is the stalled control's.
+    if (fault === 'none') {
+      lastCapturedTrace = capture.trace;
+      assert.deepEqual(issues, [], `healthy moving window failed: ${name}`);
+    }
   }
   if (!focused) {
     const stillA = await extractFrame(
@@ -14030,7 +14090,7 @@ async function assessMovingWindowControls(
         // Playback never moved before the trace began, so no trace holds why. The reader's
         // diagnostics do (a scheduler refusal), and the page state says the rest.
         const diagnostics = Array.from(document.querySelectorAll('.otio-diagnostic')).map(node => node.textContent ?? '').join(' ');
-        return {refusedBeforeCapture: diagnostics || ('playing=' + root.dataset.playing + ' frame=' + root.dataset.frame)};
+        return {refusedBeforeCapture: diagnostics || ('buffering=' + root.dataset.buffering + ' playing=' + root.dataset.playing + ' frame=' + root.dataset.frame)};
       }
       await sleep(40);
       // The canvas box is measured once playback is under way. Starting play removes a leftover
@@ -14062,8 +14122,8 @@ async function assessMovingWindowControls(
     })()`);
       const cast = await stopCast();
       if (capture.refusedBeforeCapture !== undefined) {
-        const code = starvationRefusalText(capture.refusedBeforeCapture);
-        if (code !== null) throw new StarvedBeforeCapture(code);
+        const found = viewerInterruptionText(capture.refusedBeforeCapture);
+        if (found !== null) throw new InterruptedOutsideTrace(found);
         assert.fail(
           `sustained capture ${repetition}: playback did not advance: ${capture.refusedBeforeCapture}`
         );
@@ -14932,7 +14992,7 @@ async function assertVideoReservationInvalidation(
     .map((sample, index) => sample.timestamp - identified[index]!.timestamp)
     .sort((a, b) => a - b);
   assert.ok(
-    intervals[Math.ceil(intervals.length * 0.95) - 1]! <= 50 &&
+    withinP95Budget(intervals[Math.ceil(intervals.length * 0.95) - 1]!) &&
       intervals.at(-1)! <= 100,
     'future recovery exceeded steady presentation gates'
   );
@@ -15399,6 +15459,7 @@ async function calibratePostGainTap(
         };
         mute: { value: number; sampleFrame: number };
         refusedBeforeCapture?: string;
+        paused: string;
         restored: number;
         trace: {
           sampleRate: number;
@@ -15431,13 +15492,13 @@ async function calibratePostGainTap(
       await sleep(600);
       const trace = await globalThis.__otioProofTrace.stop();
       ${SETTLE_PAUSE_JS}
-      await settlePause();
-      return {start, mute, restored, trace};
+      const paused = await settlePause();
+      return {start, mute, restored, trace, paused};
     })()`);
       const cast = await stopCast();
       if (capture.refusedBeforeCapture !== undefined) {
-        const code = starvationRefusalText(capture.refusedBeforeCapture);
-        if (code !== null) throw new StarvedBeforeCapture(code);
+        const found = viewerInterruptionText(capture.refusedBeforeCapture);
+        if (found !== null) throw new InterruptedOutsideTrace(found);
         assert.fail(
           `playback stopped before the post-gain capture began: ${capture.refusedBeforeCapture}`
         );
@@ -15446,6 +15507,11 @@ async function calibratePostGainTap(
         join(shotDir, 'post-gain-calibration.json'),
         JSON.stringify({ provenance, capture, cast })
       );
+      // The viewer can stop just as the capture begins, before the trace records anything of
+      // it (lane 43383354503/calibration-8: a boundary failed 16 ms in, then 2.4 s of silence).
+      // What the reader is shown once the capture ends says so.
+      const interrupted = viewerInterruptionText(capture.paused);
+      if (interrupted !== null) throw new InterruptedOutsideTrace(interrupted);
       assert.ok(
         proofWorkletRequests > 0,
         'same-origin proof worklet was not requested'
@@ -21976,19 +22042,19 @@ try {
     await calibratePostGainTap(sessionToken, 'comment');
   } else {
     await runNativeAudioCompatibilityProof(sessionToken);
-    await rerunNaturalStarvation('scheduled-pcm-48000', () =>
+    await rerunViewerInterruption('scheduled-pcm-48000', () =>
       runScheduledPcmProof(sessionToken)
     );
     if (clockProofMode !== 'long')
-      await rerunNaturalStarvation('scheduled-pcm-44100', () =>
+      await rerunViewerInterruption('scheduled-pcm-44100', () =>
         runScheduledPcmProof(sessionToken, 44100)
       );
     if (clockProofMode === '')
-      await rerunNaturalStarvation('sixty-fps-cold', () =>
+      await rerunViewerInterruption('sixty-fps-cold', () =>
         runSixtyFpsColdProof(sessionToken, 48000)
       );
     if (clockProofMode === '')
-      await rerunNaturalStarvation('restart-during-start', () =>
+      await rerunViewerInterruption('restart-during-start', () =>
         runRestartDuringStart(sessionToken, 48000)
       );
     if (clockProofMode === 'long') {
@@ -21999,7 +22065,7 @@ try {
       console.log('OTIO_CLOCK_FOCUSED_OK');
       throw new DecoderOnlyComplete();
     }
-    await rerunNaturalStarvation('post-gain-tap-calibration', () =>
+    await rerunViewerInterruption('post-gain-tap-calibration', () =>
       calibratePostGainTap(
         sessionToken,
         pathScope === 'scheduled-audio' ? 'scheduled-audio' : 'all'

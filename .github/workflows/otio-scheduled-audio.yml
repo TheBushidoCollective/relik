@@ -121,7 +121,7 @@ jobs:
             fi
             echo ""
             echo '```text'
-            grep -E '^(STAGE|OTIO_NATURAL_STARVATION|OTIO_RECOVERY_FRONTIER_OVERSHOOT|OTIO_SIXTY_FPS|OTIO_SCHEDULED_AUDIO_OK|AssertionError|error:)' \
+            grep -E '^(STAGE|OTIO_VIEWER_INTERRUPTION|OTIO_RECOVERY_FRONTIER_OVERSHOOT|OTIO_SIXTY_FPS|OTIO_SCHEDULED_AUDIO_OK|AssertionError|error:)' \
               "$OTIO_BROWSER_PROOF_DIR/otio-scheduled-audio.log" | cut -c1-300 | tail -60 || true
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"

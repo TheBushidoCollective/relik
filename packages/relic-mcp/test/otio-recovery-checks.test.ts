@@ -3,9 +3,9 @@ import {
   assertDescriptorBudgetRefusal,
   assertHeldReleaseBeforeSuccessor,
   assertShiftedBankRefusal,
-  naturalStarvation,
+  viewerInterruption,
   recoveryFrontierOvershoot,
-  starvationRefusalText,
+  viewerInterruptionText,
   siteBridgeCommitLeadAfterHold,
   siteBridgeFinalGuardAfterHold,
   siteBridgeGapInfeasibleAfterHold,
@@ -1252,8 +1252,10 @@ test('frontier-overshoot classifier refuses anything injected or any further rec
   ).not.toBeNull();
 });
 
-// Natural-starvation classifier. Modelled on CI runs 43279024045, 43290221910 and 43297935043.
-const starved = (...tail: BridgeEntry[]): BridgeEntry[] => [
+// Viewer-reported interruption (Jason, 2026-11-13). Modelled on CI runs 43279024045,
+// 43290221910, 43297935043, 43376038918, 43377955990 and diagnostic run 43383354503.
+type Entry = { kind: string; value?: unknown };
+const starved = (...tail: Entry[]): Entry[] => [
   bridgePcm({
     event: 'gate-close',
     reason: 'frontier',
@@ -1263,230 +1265,193 @@ const starved = (...tail: BridgeEntry[]): BridgeEntry[] => [
   ...tail,
 ];
 const underflow = () => bridgePcm({ event: 'cancel', reason: 'underflow' });
-const visualRefusal = (code = 'recovery-frame-unavailable'): BridgeEntry =>
+const visualRefusal = (code = 'recovery-frame-unavailable'): Entry =>
   bridgePcm({ event: 'error', stage: 'visual', code });
+const playRequest = (): Entry => ({ kind: 'play-request', value: {} });
+const STARTUP_BAND_REFUSAL =
+  'no causal audio epoch: the earliest guarded epoch is past the video phase band';
 
-test('natural-starvation classifier names each recovery refusal after a frontier close', () => {
+test('a recovery refusal after a closed frontier is an interruption the viewer reported', () => {
   for (const trace of [
-    // The recovery had no frame for a video source.
     starved(
       visualRefusal(),
       underflow(),
       bridgeError('committed recovery frame is unavailable')
     ),
-    // The output clock was already past the gap, with and without the gap refusal event.
     starved(underflow(), bridgeError(BRIDGE_HANDOFF)),
-    starved(
-      bridgePcm({ event: 'recovery-gap-infeasible' }),
-      underflow(),
-      bridgeError(BRIDGE_HANDOFF)
-    ),
-    // A burst before the final guard.
     starved(bridgeError('recovery final guard exceeded'), underflow()),
     starved(visualRefusal('recovery-phase-expired'), underflow()),
-  ])
-    expect(naturalStarvation(trace)).toContain('frontier closed at frame 1000');
+  ]) {
+    const found = viewerInterruption(trace);
+    expect(found).toContain('viewer reported');
+    expect(found).toContain('frontier closed at frame 1000');
+  }
+  expect(
+    viewerInterruption(starved(underflow(), bridgeError(BRIDGE_HANDOFF)))
+  ).toBe(
+    `viewer reported schedule: ${BRIDGE_HANDOFF} (frontier closed at frame 1000; cancel underflow)`
+  );
 });
 
-test('natural-starvation classifier refuses anything else', () => {
-  // No frontier close first: the run did not starve, or the fault came before the close.
-  expect(
-    naturalStarvation([underflow(), bridgeError(BRIDGE_HANDOFF)])
-  ).toBeNull();
-  expect(
-    naturalStarvation([
-      bridgeError(BRIDGE_HANDOFF),
-      bridgePcm({ event: 'gate-close', reason: 'frontier' }),
-    ])
-  ).toBeNull();
-  expect(
-    naturalStarvation([
-      bridgePcm({ event: 'gate-close', reason: 'abort' }),
-      underflow(),
-      bridgeError(BRIDGE_HANDOFF),
-    ])
-  ).toBeNull();
-  // A cancel alone is no refusal, and any other fault code or cancel reason is a different failure.
-  expect(naturalStarvation(starved(underflow()))).toBeNull();
-  expect(naturalStarvation(starved())).toBeNull();
-  expect(
-    naturalStarvation(
-      starved(
-        underflow(),
-        bridgePcm({
-          event: 'error',
-          stage: 'provider',
-          code: 'PCM provider failed',
-        })
-      )
-    )
-  ).toBeNull();
-  expect(
-    naturalStarvation(
-      starved(
-        underflow(),
-        bridgePcm({
-          event: 'error',
-          stage: 'schedule',
-          code: 'transport stop rejected: invalid stop',
-        })
-      )
-    )
-  ).toBeNull();
-  expect(
-    naturalStarvation(
-      starved(
-        bridgePcm({ event: 'cancel', reason: 'seek' }),
-        bridgeError(BRIDGE_HANDOFF)
-      )
-    )
-  ).toBeNull();
-  // The wrong stage for a code from the other table.
-  expect(
-    naturalStarvation(starved(visualRefusal(BRIDGE_HANDOFF), underflow()))
-  ).toBeNull();
-  // Anything the proof injected is its own control, not natural.
-  for (const injected of [
-    bridgePcm({ event: 'recovery-fault', code: 'recovery-delayed-staging' }),
-    { kind: 'recovery-overrun-injected', value: {} },
-    bridgeConsumed(),
-  ])
+test('any scheduled-audio error the viewer raises counts, whatever its code', () => {
+  // Seen on the runner beyond the first approved list.
+  for (const [stage, code] of [
+    ['schedule', 'PCM scheduling failed'],
+    ['schedule', 'no certified initial audiovisual frontier'],
+    ['clock', 'commit-clock-rejected'],
+    ['schedule', STARTUP_BAND_REFUSAL],
+  ] as const)
     expect(
-      naturalStarvation(
-        starved(injected, underflow(), bridgeError(BRIDGE_HANDOFF))
-      )
-    ).toBeNull();
-  // The constructor of a plain record is no refusal code.
-  expect(
-    naturalStarvation(
-      starved(
+      viewerInterruption([
+        playRequest(),
         underflow(),
-        bridgePcm({ event: 'error', stage: 'schedule', code: 'constructor' })
-      )
-    )
-  ).toBeNull();
-});
-
-// CI run 43376038918: the play request was refused 91 ms in, 0.2 ms past the video phase band.
-const STARTUP_BAND_REFUSAL =
-  'no causal audio epoch: the earliest guarded epoch is past the video phase band';
-
-test('natural-starvation classifier names a startup refusal before any audio epoch', () => {
+        bridgePcm({ event: 'error', stage, code }),
+      ])
+    ).toContain(`${stage}: ${code}`);
+  // The margin the viewer recorded for a refused start is carried as context.
   expect(
-    naturalStarvation([
-      bridgePcm({ event: 'backend', backend: 'pcm' }),
+    viewerInterruption([
+      playRequest(),
+      {
+        kind: 'cold-controller',
+        value: {
+          event: 'ring-refused',
+          earliestWall: 1602.6797,
+          upperWall: 1601.1,
+          slots: 5,
+          requiredSlots: 5,
+        },
+      },
       underflow(),
       bridgeError(STARTUP_BAND_REFUSAL),
     ])
-  ).toContain('startup refused before any audio epoch');
-});
-
-// CI run 43377955990: the stage paused a held start on purpose, and the restart was refused
-// 1.58 ms past the band.
-const playRequest = (): BridgeEntry => ({ kind: 'play-request', value: {} });
-const ringRefused = (): BridgeEntry => ({
-  kind: 'cold-controller',
-  value: {
-    event: 'ring-refused',
-    earliestWall: 1602.6797,
-    upperWall: 1601.1,
-    slots: 5,
-    requiredSlots: 5,
-  },
-});
-
-test('natural-starvation classifier judges a startup refusal from the last play request', () => {
-  const restarted = naturalStarvation([
-    playRequest(),
-    bridgePcm({ event: 'cancel', reason: 'pause' }),
-    playRequest(),
-    ringRefused(),
-    underflow(),
-    bridgeError(STARTUP_BAND_REFUSAL),
-  ]);
-  expect(restarted).toContain('startup refused before any audio epoch');
-  expect(restarted).toContain(
+  ).toContain(
     "earliest epoch 1602.680 ms against the band's upper edge 1601.100 ms, 5 of 5 ring slots"
   );
-  // The last start had an epoch, a closed frontier or another cancel: not a refused start.
-  for (const after of [
-    bridgePcm({ event: 'epoch', generation: 4 }),
-    bridgePcm({ event: 'gate-close', reason: 'frontier' }),
-    bridgePcm({ event: 'cancel', reason: 'pause' }),
-    bridgeError('PCM provider failed'),
-  ])
+});
+
+test('buffering that comes back, or that a mid-playback capture starts in, counts', () => {
+  // After a play request: the start buffers, clears, and buffers again.
+  expect(
+    viewerInterruption([
+      playRequest(),
+      { kind: 'buffering-change', value: { old: null, current: 'true' } },
+      { kind: 'buffering-change', value: { old: 'true', current: 'false' } },
+      { kind: 'buffering-change', value: { old: 'false', current: 'true' } },
+    ])
+  ).toBe('viewer reported buffering returned after it had cleared');
+  // A capture begun mid-playback, already buffering (the silent post-gain capture).
+  expect(
+    viewerInterruption([
+      { kind: 'buffering-initial', value: 'true' },
+      bridgePcm({ event: 'backend', backend: 'pcm' }),
+    ])
+  ).toBe('viewer reported buffering when the capture began');
+  // A capture begun mid-playback and not buffering, which then buffers.
+  expect(
+    viewerInterruption([
+      { kind: 'buffering-initial', value: 'false' },
+      { kind: 'buffering-change', value: { old: 'false', current: 'true' } },
+    ])
+  ).toBe('viewer reported buffering returned after it had cleared');
+});
+
+test('a run the viewer did not interrupt is not one', () => {
+  expect(viewerInterruption([])).toBeNull();
+  // The buffering every start goes through, and a capture that begins before it.
+  expect(
+    viewerInterruption([
+      { kind: 'buffering-initial', value: 'true' },
+      playRequest(),
+      { kind: 'buffering-change', value: { old: null, current: 'true' } },
+      { kind: 'buffering-change', value: { old: 'true', current: 'false' } },
+      bridgePcm({ event: 'epoch', generation: 3 }),
+    ])
+  ).toBeNull();
+  // A closed frontier, a cancel, or a recovery that went on: context, never a report.
+  expect(viewerInterruption(starved())).toBeNull();
+  expect(viewerInterruption(starved(underflow()))).toBeNull();
+  for (const reason of ['pause', 'seek', 'scope'])
     expect(
-      naturalStarvation([
+      viewerInterruption([
         playRequest(),
-        after,
-        underflow(),
-        bridgeError(STARTUP_BAND_REFUSAL),
+        bridgePcm({ event: 'cancel', reason }),
       ])
     ).toBeNull();
-  // An injection anywhere in the trace is the proof's own control.
+});
+
+test('a run a proof control acted in is left to the stage', () => {
+  for (const control of [
+    bridgePcm({ event: 'fault', code: 'reserved-frame-invalidated' }),
+    bridgePcm({ event: 'recovery-fault', code: 'recovery-delayed-staging' }),
+    bridgePcm({ event: 'recovery-old-drain-held' }),
+    bridgeConsumed(),
+    { kind: 'recovery-overrun-injected', value: {} },
+    { kind: 'clock-corruption-injected', value: {} },
+    { kind: 'pcm-fault-lift', value: {} },
+    { kind: 'pcm-hold-release', value: {} },
+    { kind: 'source-start-fault', value: null },
+    { kind: 'clock-stale-serial-submitted', value: {} },
+  ] as Entry[])
+    expect(
+      viewerInterruption(
+        starved(control, underflow(), bridgeError(BRIDGE_HANDOFF))
+      )
+    ).toBeNull();
+});
+
+test('the run judged starts at the last play request', () => {
+  // CI run 43377955990: the stage paused a held start on purpose, then the restart was refused.
   expect(
-    naturalStarvation([
-      bridgeConsumed(),
+    viewerInterruption([
+      playRequest(),
+      { kind: 'pcm-hold-release', value: {} },
+      bridgePcm({ event: 'cancel', reason: 'pause' }),
       playRequest(),
       underflow(),
       bridgeError(STARTUP_BAND_REFUSAL),
     ])
-  ).toBeNull();
-});
-
-test('natural-starvation classifier refuses a startup refusal that is anything else', () => {
-  // Playback that had an epoch, or a closed frontier, is not a start that never happened.
-  for (const earlier of [
-    bridgePcm({ event: 'epoch', generation: 3 }),
-    bridgePcm({ event: 'gate-close', reason: 'frontier' }),
-    bridgePcm({ event: 'recovery-fault', code: 'recovery-delayed-staging' }),
-    { kind: 'recovery-overrun-injected', value: {} },
-    bridgeConsumed(),
-  ] as BridgeEntry[])
-    expect(
-      naturalStarvation([
-        earlier,
-        underflow(),
-        bridgeError(STARTUP_BAND_REFUSAL),
-      ])
-    ).toBeNull();
-  // Another cancel reason, another code, or the refusal with no cancel at all.
+  ).toContain(`schedule: ${STARTUP_BAND_REFUSAL}`);
+  // An error from the earlier start is not this start's.
   expect(
-    naturalStarvation([
-      bridgePcm({ event: 'cancel', reason: 'seek' }),
+    viewerInterruption([
+      playRequest(),
+      bridgeError(BRIDGE_HANDOFF),
+      playRequest(),
+      bridgePcm({ event: 'epoch', generation: 4 }),
+    ])
+  ).toBeNull();
+  // A control that acted in this start still leaves it to the stage.
+  expect(
+    viewerInterruption([
+      playRequest(),
+      playRequest(),
+      bridgeConsumed(),
+      underflow(),
       bridgeError(STARTUP_BAND_REFUSAL),
     ])
   ).toBeNull();
-  expect(
-    naturalStarvation([underflow(), bridgeError('PCM provider failed')])
-  ).toBeNull();
-  expect(naturalStarvation([underflow()])).toBeNull();
-  // The refusal text the reader shows names it too, and only when the marker is there.
-  expect(
-    starvationRefusalText(`Scheduled audio stopped: ${STARTUP_BAND_REFUSAL}`)
-  ).toBe(STARTUP_BAND_REFUSAL);
-  expect(starvationRefusalText(STARTUP_BAND_REFUSAL)).toBeNull();
 });
 
-test('starvation refusal text names a recovery refusal and nothing else', () => {
+test('what the reader was shown before a capture began names the interruption', () => {
   expect(
-    starvationRefusalText(
+    viewerInterruptionText(
       'unsupported-browser · Scheduled audio stopped: committed recovery frame is unavailable unsupported-browser · Scheduled audio stopped: committed recovery frame is unavailable'
     )
-  ).toBe('committed recovery frame is unavailable');
+  ).toBe('viewer reported committed recovery frame is unavailable');
   expect(
-    starvationRefusalText(`Scheduled audio stopped: ${BRIDGE_HANDOFF}`)
-  ).toBe(BRIDGE_HANDOFF);
-  expect(starvationRefusalText('')).toBeNull();
+    viewerInterruptionText('Scheduled audio stopped: PCM scheduling failed')
+  ).toBe('viewer reported PCM scheduling failed');
+  expect(viewerInterruptionText('buffering=true playing=true frame=0')).toBe(
+    'viewer reported buffering before the capture began'
+  );
+  // Nothing reported: not buffering, no refusal, or a refusal with no reason.
+  expect(viewerInterruptionText('')).toBeNull();
   expect(
-    starvationRefusalText('Scheduled audio stopped: PCM provider failed')
+    viewerInterruptionText('buffering=false playing=true frame=0')
   ).toBeNull();
   expect(
-    starvationRefusalText(
-      'Scheduled audio stopped: transport stop rejected: invalid stop'
-    )
+    viewerInterruptionText(`${BRIDGE_HANDOFF} without the stopped marker`)
   ).toBeNull();
-  expect(
-    starvationRefusalText(`${BRIDGE_HANDOFF} without the stopped marker`)
-  ).toBeNull();
+  expect(viewerInterruptionText('Scheduled audio stopped: ')).toBeNull();
 });
