@@ -3109,6 +3109,12 @@ try {
       compareKey !== '',
       'JSX step 3: the compare link must carry a key'
     );
+    // What the viewer shows when a comparison's compiler could not be loaded while
+    // this browser still holds the key: the dead view's detail for a compiler
+    // failure, which version stays open (2 is current in every fixture below), and
+    // the reload instruction.
+    const COMPILER_FAILURE_LINE =
+      'Something went wrong reaching the service. Version 2 remains open. Reload this page to try again.';
     const readyExpr = `Boolean(document.querySelector('main.stage[data-render-state="ready"]'))`;
     const deadExpr = `Boolean(document.querySelector('main.stage.stage-dead'))`;
     const stateExpr = `(() => ({
@@ -3490,10 +3496,13 @@ try {
         '3e: compiler fetch intercepted'
       );
       // Long enough for a stale automatic reload, which needs the server check,
-      // to have run if it were going to.
+      // to have run if it were going to. The reader is shown the viewer's own
+      // words for a compiler it could not load, then the way out. The older
+      // "could not be loaded for comparison" line left the viewer with the
+      // large-relic change on main (95aa4814).
       const errorShown = await watchForText(
         run.sessionId,
-        'could not be loaded for comparison',
+        COMPILER_FAILURE_LINE,
         6_000
       );
       const autoReloads = run.navigationUrls.length - 1;
@@ -3502,17 +3511,13 @@ try {
         0,
         `3e: the failed comparison reloaded the page on its own (${autoReloads} reloads)`
       );
-      assert.ok(
-        errorShown,
-        '3e: the failed comparison must tell the reader it could not be loaded'
-      );
       const errorText = await evalMain<string>(
         run.sessionId,
         `document.body?.textContent ?? ''`
       );
       assert.ok(
-        errorText.includes('Reload this page to try again.'),
-        '3e: the failure must end with the instruction "Reload this page to try again."'
+        errorShown,
+        `3e: the failed comparison must tell the reader it could not be loaded and to reload; the page said: ${errorText.replace(/\s+/g, ' ').slice(-400)}`
       );
       await savePng(run.sessionId, '10-3e-error-no-auto-reload.png');
 
@@ -3923,7 +3928,7 @@ try {
       );
       run.releaseHeld();
       // Watch for the failure text for the whole window a stale reload needs.
-      const errorText = 'could not be loaded for comparison';
+      const errorText = COMPILER_FAILURE_LINE;
       let errorSeen = false;
       const watchEnd = Date.now() + 6_000;
       while (Date.now() < watchEnd) {
