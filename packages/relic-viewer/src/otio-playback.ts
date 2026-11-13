@@ -235,8 +235,8 @@ const OTIO_PAUSED_PRESENT_POLL_MS = 16;
 // one. Chromium 149 presented that frame 0 to 11 ms after play() in 69 recoveries, so one
 // step waits 250 ms, inside the leaf's present timeout.
 const OTIO_PAUSED_RECOVERY_STEP_MS = 250;
-// A quarter rate holds a 60 fps frame for four refreshes of a 60 Hz display, so the frame
-// callback cannot skip it.
+// A quarter rate holds a 60 fps frame for four refreshes of a 60 Hz display, reducing the
+// chance that the frame callback skips it.
 const OTIO_PAUSED_RECOVERY_RATE = 0.25;
 const OTIO_RETAINED_VIDEO_TIMING_BYTES = 16 * 1024 * 1024;
 export const OTIO_GRAPHICS_RESTORE_MS = 3000;

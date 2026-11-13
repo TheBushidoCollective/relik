@@ -12003,6 +12003,57 @@ describe('VideoFrame readout (planner tests 1-6)', () => {
     }
   });
 
+  test('R6 (issue 166): the frame from before the recovery seek is not taken for where the decoder settled', async () => {
+    const {
+      playback,
+      outCanvas,
+      media: decoder,
+    } = recoveryFixture('late presentation video');
+    try {
+      await playback.seek({ value: 0, rate: 30 });
+      const media = decoder();
+      media.presentationLag = true;
+      media.present(7.5 / 30);
+      // The seek to before window 5 reports seeked while frame 7 is still shown. Frame 5 is
+      // presented a moment later.
+      const inherited = Object.getOwnPropertyDescriptor(
+        MockMedia.prototype,
+        'currentTime'
+      );
+      if (!inherited?.get || !inherited.set)
+        throw new Error('MockMedia.currentTime is not an accessor');
+      const { get, set } = inherited;
+      Object.defineProperty(media, 'currentTime', {
+        configurable: true,
+        get: () => get.call(media) as number,
+        set: (value: number) => {
+          set.call(media, value);
+          if (value < 5 / 30) setTimeout(() => media.present(5.5 / 30), 5);
+        },
+      });
+      let plays = 0;
+      media.play = () => {
+        plays++;
+        media.paused = false;
+        return Promise.resolve();
+      };
+      MockVideoFrame.reset();
+
+      await playback.seek({ value: 5, rate: 30 });
+
+      expect(outCanvas.pixel.r).toBe(105);
+      expect(
+        playback.getState().diagnostics.some((d) => d.code === 'invalid-timing')
+      ).toBe(false);
+      expect(media.seekTargets.at(-1)).toBe(0.166666);
+      expect(plays).toBe(0);
+      expect(media.rvfcCallbacks.size).toBe(0);
+      expect(MockVideoFrame.closes).toBe(MockVideoFrame.constructions);
+    } finally {
+      playback.dispose();
+    }
+  });
+
   test('R3 (issue 166): when neither step presents the frame, the decoder returns to the midpoint and the leaf is withheld', async () => {
     const {
       playback,
