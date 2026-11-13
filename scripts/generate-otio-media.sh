@@ -143,6 +143,7 @@ names = (
     "fr24b.mov",
     "fr30.webm",
     "vfr.mp4",
+    "vfr-key.mp4",
     "short-edit.mp4",
     "rate-edit.mp4",
     "loop-edit.mp4",
@@ -155,6 +156,7 @@ codecs = {
     "fr24b.mov": "h264",
     "fr30.webm": "vp9",
     "vfr.mp4": "h264",
+    "vfr-key.mp4": "h264",
     "short-edit.mp4": "h264",
     "rate-edit.mp4": "h264",
     "loop-edit.mp4": "h264",
@@ -350,6 +352,22 @@ for name in names:
             for row in frames
         ],
     }
+    if name == "vfr-key.mp4":
+        # The demuxer takes a seek time as a presentation time and shifts it by one
+        # constant, the first packet's presentation offset, to search decode times. A key
+        # frame whose own offset is larger is where decoding starts for a seek to the
+        # middle of the frame shown before it, and that frame is never decoded.
+        lead = packets[0]["pts"] - packets[0]["dts"]
+        order = sorted(packet["pts"] for packet in packets)
+        keys = {row.get("best_effort_timestamp") for row in frames if row.get("pict_type") == "I"}
+        early = [
+            packet["pts"]
+            for packet in packets[1:]
+            if packet["pts"] in keys
+            and (order[order.index(packet["pts"]) - 1] + packet["pts"]) / 2 - lead >= packet["dts"]
+        ]
+        if not early:
+            raise SystemExit("vfr-key.mp4 lost its early-decoded key frame")
 for name in ("fr24b.mp4", "fr24b.mov"):
     if not any(frame.get("pict_type") == "B" for frame in report["files"][name]["frames"]):
         raise SystemExit(f"{name} lost its B-frame control")
@@ -366,7 +384,7 @@ PY
 
 check_decoder() {
   local required=(
-    fr24.mp4 fr60.mp4 fr24b.mp4 fr24b.mov fr30.webm vfr.mp4
+    fr24.mp4 fr60.mp4 fr24b.mp4 fr24b.mov fr30.webm vfr.mp4 vfr-key.mp4
     short-edit.mp4 rate-edit.mp4 loop-edit.mp4 no-duration.webm timing-oracle.json
   )
   local name
@@ -382,6 +400,7 @@ check_decoder() {
   assert_codec "$DECODER_DIR/fr24b.mov" h264
   assert_codec "$DECODER_DIR/fr30.webm" vp9
   assert_codec "$DECODER_DIR/vfr.mp4" h264
+  assert_codec "$DECODER_DIR/vfr-key.mp4" h264
   frames_differ "$DECODER_DIR/fr24.mp4"
   frames_differ "$DECODER_DIR/fr60.mp4"
   frames_differ "$DECODER_DIR/fr24b.mp4"
@@ -392,7 +411,7 @@ check_decoder() {
 
 generate_decoder() {
   mkdir -p "$DECODER_DIR"
-  rm -f "$DECODER_DIR"/{fr24.mp4,fr60.mp4,fr24b.mp4,fr24b.mov,fr30.webm,vfr.mp4,short-edit.mp4,rate-edit.mp4,loop-edit.mp4,no-duration.webm,timing-oracle.json}
+  rm -f "$DECODER_DIR"/{fr24.mp4,fr60.mp4,fr24b.mp4,fr24b.mov,fr30.webm,vfr.mp4,vfr-key.mp4,short-edit.mp4,rate-edit.mp4,loop-edit.mp4,no-duration.webm,timing-oracle.json}
   local coded
   coded="$(frame_code_filter)"
   ffmpeg -y -hide_banner -loglevel error -f lavfi -i "color=c=black:s=64x16:r=24:d=2" \
@@ -408,6 +427,13 @@ generate_decoder() {
   vfr="format=yuv420p,geq=lum='if(lt(X,8),235,16+219*mod(floor(N/pow(2,floor(X/8)-1)),2))':cb=128:cr=128,select='not(mod(n,2))+eq(mod(n,7),3)'"
   ffmpeg -y -hide_banner -loglevel error -f lavfi -i "color=c=black:s=64x16:r=24:d=2" \
     -vf "$vfr" -fps_mode vfr -c:v libx264 -preset medium -pix_fmt yuv420p "$DECODER_DIR/vfr.mp4"
+  # Frames 16 and 17 are dropped, so frame 15 is shown for three frame times, and the frame
+  # after it is a forced key frame. That key frame is decoded four frame times before it is
+  # shown, where the first frame is decoded two before. A seek to the middle of frame 15
+  # starts decoding at the key frame.
+  ffmpeg -y -hide_banner -loglevel error -f lavfi -i "color=c=black:s=64x16:r=24:d=2" \
+    -vf "$coded,select='not(between(n,16,17))'" -fps_mode vfr -c:v libx264 -preset medium \
+    -sc_threshold 0 -force_key_frames 0.75 -forced-idr 1 -pix_fmt yuv420p "$DECODER_DIR/vfr-key.mp4"
   python3 - "$DECODER_DIR" <<'PY'
 import pathlib
 import struct

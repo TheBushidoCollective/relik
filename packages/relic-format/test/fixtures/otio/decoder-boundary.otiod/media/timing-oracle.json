@@ -3125,6 +3125,384 @@
         }
       ]
     },
+    "vfr-key.mp4": {
+      "stream": {
+        "codec_name": "h264",
+        "time_base": "1/12288"
+      },
+      "packets": [
+        {
+          "pts": 0,
+          "duration": 512
+        },
+        {
+          "pts": 1024,
+          "duration": 512
+        },
+        {
+          "pts": 512,
+          "duration": 512
+        },
+        {
+          "pts": 2048,
+          "duration": 512
+        },
+        {
+          "pts": 1536,
+          "duration": 512
+        },
+        {
+          "pts": 3072,
+          "duration": 512
+        },
+        {
+          "pts": 2560,
+          "duration": 512
+        },
+        {
+          "pts": 4096,
+          "duration": 512
+        },
+        {
+          "pts": 3584,
+          "duration": 512
+        },
+        {
+          "pts": 5120,
+          "duration": 512
+        },
+        {
+          "pts": 4608,
+          "duration": 512
+        },
+        {
+          "pts": 7168,
+          "duration": 512
+        },
+        {
+          "pts": 6144,
+          "duration": 512
+        },
+        {
+          "pts": 5632,
+          "duration": 512
+        },
+        {
+          "pts": 6656,
+          "duration": 512
+        },
+        {
+          "pts": 7680,
+          "duration": 512
+        },
+        {
+          "pts": 9216,
+          "duration": 512
+        },
+        {
+          "pts": 10240,
+          "duration": 1536
+        },
+        {
+          "pts": 9728,
+          "duration": 512
+        },
+        {
+          "pts": 11264,
+          "duration": 512
+        },
+        {
+          "pts": 10752,
+          "duration": 512
+        },
+        {
+          "pts": 12288,
+          "duration": 512
+        },
+        {
+          "pts": 11776,
+          "duration": 512
+        },
+        {
+          "pts": 13312,
+          "duration": 512
+        },
+        {
+          "pts": 12800,
+          "duration": 512
+        },
+        {
+          "pts": 15360,
+          "duration": 512
+        },
+        {
+          "pts": 14336,
+          "duration": 512
+        },
+        {
+          "pts": 13824,
+          "duration": 512
+        },
+        {
+          "pts": 14848,
+          "duration": 512
+        },
+        {
+          "pts": 16384,
+          "duration": 512
+        },
+        {
+          "pts": 15872,
+          "duration": 512
+        },
+        {
+          "pts": 17408,
+          "duration": 512
+        },
+        {
+          "pts": 16896,
+          "duration": 512
+        },
+        {
+          "pts": 18432,
+          "duration": 512
+        },
+        {
+          "pts": 17920,
+          "duration": 512
+        },
+        {
+          "pts": 19456,
+          "duration": 512
+        },
+        {
+          "pts": 18944,
+          "duration": 512
+        },
+        {
+          "pts": 20480,
+          "duration": 512
+        },
+        {
+          "pts": 19968,
+          "duration": 512
+        },
+        {
+          "pts": 21504,
+          "duration": 512
+        },
+        {
+          "pts": 20992,
+          "duration": 512
+        },
+        {
+          "pts": 23552,
+          "duration": 512
+        },
+        {
+          "pts": 22528,
+          "duration": 512
+        },
+        {
+          "pts": 22016,
+          "duration": 512
+        },
+        {
+          "pts": 23040,
+          "duration": 512
+        },
+        {
+          "pts": 24064,
+          "duration": 512
+        }
+      ],
+      "frames": [
+        {
+          "best_effort_timestamp": 0,
+          "pict_type": "I"
+        },
+        {
+          "best_effort_timestamp": 512,
+          "pict_type": "B"
+        },
+        {
+          "best_effort_timestamp": 1024,
+          "pict_type": "P"
+        },
+        {
+          "best_effort_timestamp": 1536,
+          "pict_type": "B"
+        },
+        {
+          "best_effort_timestamp": 2048,
+          "pict_type": "P"
+        },
+        {
+          "best_effort_timestamp": 2560,
+          "pict_type": "B"
+        },
+        {
+          "best_effort_timestamp": 3072,
+          "pict_type": "P"
+        },
+        {
+          "best_effort_timestamp": 3584,
+          "pict_type": "B"
+        },
+        {
+          "best_effort_timestamp": 4096,
+          "pict_type": "P"
+        },
+        {
+          "best_effort_timestamp": 4608,
+          "pict_type": "B"
+        },
+        {
+          "best_effort_timestamp": 5120,
+          "pict_type": "P"
+        },
+        {
+          "best_effort_timestamp": 5632,
+          "pict_type": "B"
+        },
+        {
+          "best_effort_timestamp": 6144,
+          "pict_type": "B"
+        },
+        {
+          "best_effort_timestamp": 6656,
+          "pict_type": "B"
+        },
+        {
+          "best_effort_timestamp": 7168,
+          "pict_type": "P"
+        },
+        {
+          "best_effort_timestamp": 7680,
+          "pict_type": "P"
+        },
+        {
+          "best_effort_timestamp": 9216,
+          "pict_type": "I"
+        },
+        {
+          "best_effort_timestamp": 9728,
+          "pict_type": "B"
+        },
+        {
+          "best_effort_timestamp": 10240,
+          "pict_type": "P"
+        },
+        {
+          "best_effort_timestamp": 10752,
+          "pict_type": "B"
+        },
+        {
+          "best_effort_timestamp": 11264,
+          "pict_type": "P"
+        },
+        {
+          "best_effort_timestamp": 11776,
+          "pict_type": "B"
+        },
+        {
+          "best_effort_timestamp": 12288,
+          "pict_type": "P"
+        },
+        {
+          "best_effort_timestamp": 12800,
+          "pict_type": "B"
+        },
+        {
+          "best_effort_timestamp": 13312,
+          "pict_type": "P"
+        },
+        {
+          "best_effort_timestamp": 13824,
+          "pict_type": "B"
+        },
+        {
+          "best_effort_timestamp": 14336,
+          "pict_type": "B"
+        },
+        {
+          "best_effort_timestamp": 14848,
+          "pict_type": "B"
+        },
+        {
+          "best_effort_timestamp": 15360,
+          "pict_type": "P"
+        },
+        {
+          "best_effort_timestamp": 15872,
+          "pict_type": "B"
+        },
+        {
+          "best_effort_timestamp": 16384,
+          "pict_type": "P"
+        },
+        {
+          "best_effort_timestamp": 16896,
+          "pict_type": "B"
+        },
+        {
+          "best_effort_timestamp": 17408,
+          "pict_type": "P"
+        },
+        {
+          "best_effort_timestamp": 17920,
+          "pict_type": "B"
+        },
+        {
+          "best_effort_timestamp": 18432,
+          "pict_type": "P"
+        },
+        {
+          "best_effort_timestamp": 18944,
+          "pict_type": "B"
+        },
+        {
+          "best_effort_timestamp": 19456,
+          "pict_type": "P"
+        },
+        {
+          "best_effort_timestamp": 19968,
+          "pict_type": "B"
+        },
+        {
+          "best_effort_timestamp": 20480,
+          "pict_type": "P"
+        },
+        {
+          "best_effort_timestamp": 20992,
+          "pict_type": "B"
+        },
+        {
+          "best_effort_timestamp": 21504,
+          "pict_type": "P"
+        },
+        {
+          "best_effort_timestamp": 22016,
+          "pict_type": "B"
+        },
+        {
+          "best_effort_timestamp": 22528,
+          "pict_type": "B"
+        },
+        {
+          "best_effort_timestamp": 23040,
+          "pict_type": "B"
+        },
+        {
+          "best_effort_timestamp": 23552,
+          "pict_type": "P"
+        },
+        {
+          "best_effort_timestamp": 24064,
+          "pict_type": "P"
+        }
+      ]
+    },
     "short-edit.mp4": {
       "stream": {
         "codec_name": "h264",

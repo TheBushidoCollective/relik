@@ -171,6 +171,7 @@ describe('released Mediabunny scanner against independent synthetic ffprobe timi
       'fr24b.mp4',
       'fr24b.mov',
       'vfr.mp4',
+      'vfr-key.mp4',
     ]) {
       const file = timingOracle.files[name];
       if (!file) throw new Error(`missing ffprobe oracle for ${name}`);

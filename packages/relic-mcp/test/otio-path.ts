@@ -239,6 +239,7 @@ const REQUIRED = [
   'decoder-near-zero',
   'decoder-edit-diagnostics',
   'decoder-no-duration',
+  'decoder-frame-before-key',
   'decoder-worker-csp',
   'screenshots',
   'focus-video',
@@ -8171,6 +8172,12 @@ const PACKET_GATE_CASES: readonly PacketCanvasCase[] = [
     includeFinal: true,
   })),
   {
+    label: 'frame before an early-decoded key frame',
+    file: 'vfr-key.mp4',
+    seconds: 16 / 24,
+    includeFinal: true,
+  },
+  {
     label: 'quantized WebM 2/30',
     file: 'fr30.webm',
     seconds: 2 / 30,
@@ -9081,6 +9088,59 @@ async function runDecoderTimingProof(sessionToken: string): Promise<void> {
     pass('decoder-no-duration');
   } finally {
     await noDurationBrowser.close();
+  }
+
+  // vfr-key.mp4 shows one frame for three frame times and follows it with a key frame that
+  // is decoded early. A seek to the middle of the long frame starts decoding at that key
+  // frame in every Chromium measured (149, 156, 157), so the decoder presents the key frame
+  // and the player has to recover the frame it asked for.
+  const keyUrl = await publishDecoderCase('frame-before-key', [
+    decoderClip(
+      'frame-before-key',
+      'vfr-key.mp4',
+      decoderRange(0, 24, 48),
+      decoderRange(0, 24, 48)
+    ),
+  ]);
+  const keyBrowser = await openBrowser(keyUrl, sessionToken, {
+    recordMediaSeekTargets: true,
+    recordDecoderPresentation: true,
+    label: 'decoder-frame-before-key',
+  });
+  try {
+    assert.equal(await waitReady(keyBrowser), 'true');
+    const held = windowForSeconds(
+      await packetWindows('vfr-key.mp4', true),
+      16 / 24,
+      'frame before the key frame'
+    );
+    assert.deepEqual(
+      [Number(held.start.toFixed(6)), Number(held.end.toFixed(6))],
+      [0.625, 0.75],
+      'vfr-key.mp4 ffprobe PTS changed'
+    );
+    await clearMediaSeekTargets(keyBrowser);
+    await clearDecoderPresentation(keyBrowser);
+    await seekTo(keyBrowser, 16);
+    assert.equal(
+      (
+        await assertPacketCanvas(
+          keyBrowser,
+          'frame before an early-decoded key frame',
+          'vfr-key.mp4',
+          16 / 24
+        )
+      ).frame,
+      15
+    );
+    // Reported, not asserted: a browser that presents the frame at the first seek needs
+    // no recovery, and that is not a failure.
+    console.log(
+      `DECODER_FRAME_BEFORE_KEY seek_targets=${(await keyBrowser.mediaSeekTargets()).join(',')}`
+    );
+    pass('decoder-frame-before-key');
+  } finally {
+    await keyBrowser.close();
   }
 }
 

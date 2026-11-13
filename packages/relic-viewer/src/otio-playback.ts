@@ -231,6 +231,13 @@ const MEDIA_SEEK_TIME_PRECISION_SECONDS = 2e-6;
 // four times that for its certified window before it is withheld.
 export const OTIO_PAUSED_PRESENT_TIMEOUT_MS = 1000;
 const OTIO_PAUSED_PRESENT_POLL_MS = 16;
+// A paused decoder that settled on the wrong window is played until it presents the right
+// one. Chromium 149 presented that frame 0 to 11 ms after play() in 69 recoveries, so one
+// step waits 250 ms, inside the leaf's present timeout.
+const OTIO_PAUSED_RECOVERY_STEP_MS = 250;
+// A quarter rate holds a 60 fps frame for four refreshes of a 60 Hz display, reducing the
+// chance that the frame callback skips it.
+const OTIO_PAUSED_RECOVERY_RATE = 0.25;
 const OTIO_RETAINED_VIDEO_TIMING_BYTES = 16 * 1024 * 1024;
 export const OTIO_GRAPHICS_RESTORE_MS = 3000;
 
@@ -998,6 +1005,17 @@ export function createOtioPlayback(
   const videos = new Map<string, LoadedVideo>();
   const audios = new Map<string, LoadedAudio>();
   const decodedAt = new WeakMap<HTMLMediaElement, number>();
+  // A decoder that a recovery left presenting a window, with the seek target it was
+  // recovered for. Its position is no longer that target.
+  const recoveredAt = new WeakMap<
+    HTMLMediaElement,
+    { readonly target: number; readonly window: number }
+  >();
+  // Decoders a recovery is playing, each with the render it works for and how to stop it.
+  const recovering = new Map<
+    HTMLMediaElement,
+    { readonly gen: number; stop(): void }
+  >();
   const images = new ImageFrameCache(OTIO_RETAINED_IMAGE_PIXELS);
   const imageElements = new Map<string, LoadedImage>();
   const surfacePool: HTMLCanvasElement[] = [];
@@ -6082,6 +6100,7 @@ export function createOtioPlayback(
     media.addEventListener('seeked', onSeeked);
     media.addEventListener('loadeddata', onReady);
     media.addEventListener('error', onError);
+    recoveredAt.delete(media);
     try {
       if (!media.seeking || !matchesTarget()) media.currentTime = target;
     } catch {
@@ -6376,7 +6395,14 @@ export function createOtioPlayback(
     stopPcm('pause');
     cancelStartupSampling?.();
     audioReconcileRevision++;
-    for (const video of videos.values()) video.element.pause();
+    for (const video of videos.values()) {
+      // A recovery pauses its own decoder. One working for the current render carries on,
+      // because pausing a timeline that is already paused leaves that render in flight.
+      // One whose render was superseded stops here, before anything else uses the decoder.
+      const recovery = recovering.get(video.element);
+      if (recovery === undefined) video.element.pause();
+      else if (stale(recovery.gen)) recovery.stop();
+    }
     for (const audio of audios.values()) {
       audio.element.pause();
       const currentActive = audio.element.getAttribute('data-active');
@@ -6468,6 +6494,148 @@ export function createOtioPlayback(
     return leaves;
   }
 
+  // Plays a paused decoder until it presents the certified window req and returns that
+  // frame, which the caller owns. Null when a later window came first, the frame cannot be
+  // identified, nothing arrived by `until`, or the render was superseded. The decoder is
+  // paused and its rate restored before the result is delivered, because a render that
+  // supersedes this one may seek the decoder at once.
+  function playUntilPresented(
+    media: HTMLVideoElement,
+    timing: OtioVideoTiming,
+    req: number,
+    gen: number,
+    until: number
+  ): Promise<VideoFrame | null> {
+    const rvfcMedia = media as HTMLVideoElementWithRvfc;
+    const signal = scopeAbort.signal;
+    if (
+      typeof rvfcMedia.requestVideoFrameCallback !== 'function' ||
+      stale(gen) ||
+      signal.aborted
+    ) {
+      return Promise.resolve(null);
+    }
+    const { promise, resolve } = Promise.withResolvers<VideoFrame | null>();
+    const rate = media.playbackRate;
+    let settled = false;
+    let handle: number | null = null;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const finish = (frame: VideoFrame | null): void => {
+      if (settled) {
+        frame?.close();
+        return;
+      }
+      settled = true;
+      if (timer !== null) clearTimeout(timer);
+      signal.removeEventListener('abort', onAbort);
+      if (handle !== null) rvfcMedia.cancelVideoFrameCallback?.(handle);
+      handle = null;
+      if (recovering.get(media) === recovery) recovering.delete(media);
+      media.pause();
+      applyRate(media, rate);
+      resolve(frame);
+    };
+    const onAbort = (): void => finish(null);
+    const recovery = { gen, stop: onAbort };
+    const onFrame = (): void => {
+      handle = null;
+      if (settled) return;
+      if (stale(gen)) {
+        finish(null);
+        return;
+      }
+      const { outcome, frame } = readPresentedFrame(media, timing);
+      if (outcome.kind === 'match' && frame !== null) {
+        if (outcome.index === req) {
+          finish(frame);
+          return;
+        }
+        frame.close();
+        if (outcome.index > req) {
+          finish(null);
+          return;
+        }
+      } else if (outcome.kind !== 'outside') {
+        finish(null);
+        return;
+      }
+      handle = rvfcMedia.requestVideoFrameCallback?.(onFrame) ?? null;
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+    recovering.set(media, recovery);
+    handle = rvfcMedia.requestVideoFrameCallback(onFrame);
+    timer = setTimeout(
+      () => finish(null),
+      Math.max(0, until - presentClockMs())
+    );
+    applyRate(media, OTIO_PAUSED_RECOVERY_RATE);
+    try {
+      void Promise.resolve(media.play()).catch(() => finish(null));
+    } catch {
+      finish(null);
+    }
+    return promise;
+  }
+
+  // The decoder settled on a certified window other than req after its seek. Two causes
+  // were measured, both in variable frame rate MP4 with B-frames. Chromium 149 paints the
+  // first frame it decodes whose container duration reaches the seek time, and a frame
+  // whose decode-order duration overstates its presentation duration is painted in place
+  // of the next one. Every Chromium measured (149, 156, 157) starts decoding at a key
+  // frame that is decoded further ahead of its presentation than the file's first frame
+  // is, for a seek shortly before that key frame is shown, which skips the frame presented
+  // before it. Playback presents frames by their timestamps, so the frame is taken from
+  // playback: from where the seek left the decoder when it shows an earlier window, then
+  // from just before the required window.
+  async function recoverPresentedFrame(
+    media: HTMLVideoElement,
+    timing: Extract<OtioVideoTiming, { kind: 'windows' }>,
+    req: number,
+    shown: number,
+    gen: number,
+    deadline: number
+  ): Promise<VideoFrame | null> {
+    const start = timing.starts[req];
+    if (start === undefined) return null;
+    const stepEnd = (): number =>
+      Math.min(deadline, presentClockMs() + OTIO_PAUSED_RECOVERY_STEP_MS);
+    if (shown < req) {
+      const played = await playUntilPresented(
+        media,
+        timing,
+        req,
+        gen,
+        stepEnd()
+      );
+      if (played !== null || stale(gen)) return played;
+    }
+    // The last whole microsecond before the window, which is as fine as a seek resolves.
+    const before = Math.max(0, (Math.ceil(start * 1e6 - 1e-3) - 1) / 1e6);
+    if (!(await seekElement(media, before, gen)) || stale(gen)) return null;
+    let read = readPresentedFrame(media, timing);
+    if (
+      read.outcome.kind === 'match' &&
+      read.frame !== null &&
+      read.outcome.index > req
+    ) {
+      // This can still be the frame from before the seek. One presentation later it is
+      // where the decoder settled.
+      read.frame.close();
+      await nextPresentation(media, OTIO_PAUSED_PRESENT_POLL_MS);
+      if (stale(gen)) return null;
+      read = readPresentedFrame(media, timing);
+    }
+    const { outcome, frame } = read;
+    if (outcome.kind === 'match' && frame !== null) {
+      if (outcome.index === req) return frame;
+      frame.close();
+      if (outcome.index > req) return null;
+    } else if (outcome.kind !== 'outside') {
+      return null;
+    }
+    return playUntilPresented(media, timing, req, gen, stepEnd());
+  }
+
   // Waits until the decoder presents the certified window for req. Returns the
   // verified frame, which the caller owns, 'element' when the browser cannot
   // report frame identity, or 'empty' when no media may paint this leaf.
@@ -6475,11 +6643,14 @@ export function createOtioPlayback(
     media: HTMLVideoElement,
     timing: OtioVideoTiming | null,
     req: number,
+    target: number,
     gen: number,
     contrib: OtioVideoContribution,
     key: string
   ): Promise<{ readonly frame: VideoFrame } | 'element' | 'empty'> {
     let deadline: number | null = null;
+    let settledOn: number | null = null;
+    let recoveryTried = false;
     for (;;) {
       const { outcome, frame } = readPresentedFrame(media, timing);
       if (outcome.kind === 'match' && frame !== null) {
@@ -6492,6 +6663,36 @@ export function createOtioPlayback(
       if (stale(gen)) return 'empty';
       const now = presentClockMs();
       deadline ??= now + OTIO_PAUSED_PRESENT_TIMEOUT_MS;
+      // The same wrong window read twice, one presentation apart, is where the decoder
+      // settled. A single read can still be the frame it showed before the seek.
+      if (
+        !recoveryTried &&
+        outcome.kind === 'match' &&
+        settledOn === outcome.index &&
+        timing?.kind === 'windows'
+      ) {
+        recoveryTried = true;
+        const recovered = await recoverPresentedFrame(
+          media,
+          timing,
+          req,
+          outcome.index,
+          gen,
+          deadline
+        );
+        decodedAt.delete(media);
+        if (recovered !== null) {
+          recoveredAt.set(media, { target, window: req });
+          return { frame: recovered };
+        }
+        if (stale(gen)) return 'empty';
+        // Back to where the seek left the decoder, to wait out the deadline as before.
+        await seekElement(media, target, gen);
+        if (stale(gen)) return 'empty';
+        settledOn = null;
+        continue;
+      }
+      settledOn = outcome.kind === 'match' ? outcome.index : null;
       if (now >= deadline) {
         const shown =
           outcome.kind === 'match' ? String(outcome.index) : 'outside';
@@ -6592,6 +6793,32 @@ export function createOtioPlayback(
     } else {
       videoTimingFailures.delete(key);
     }
+    const req =
+      midpoint !== null && typeof VideoFrame === 'function'
+        ? certifiedWindowIndex(contrib.source_time, timing)
+        : null;
+    // A decoder that a recovery left on this window is used as it stands. Seeking it to
+    // the midpoint again would bring back the frame the recovery replaced.
+    const held = recoveredAt.get(video.element);
+    if (held !== undefined) {
+      if (
+        req !== null &&
+        held.window === req &&
+        held.target === target &&
+        video.element.paused &&
+        !video.element.seeking
+      ) {
+        const { outcome, frame } = readPresentedFrame(video.element, timing);
+        if (outcome.kind === 'match' && frame !== null) {
+          if (outcome.index === req) {
+            frames.push(frame);
+            return { kind: 'image', source: frame, alpha: contrib.alpha };
+          }
+          frame.close();
+        }
+      }
+      recoveredAt.delete(video.element);
+    }
     const ready = await seekElement(video.element, target, gen);
     if (stale(gen)) return { kind: 'empty' };
     if (!ready) {
@@ -6606,26 +6833,24 @@ export function createOtioPlayback(
       );
       return { kind: 'empty' };
     }
-    if (midpoint !== null && typeof VideoFrame === 'function') {
-      const req = certifiedWindowIndex(contrib.source_time, timing);
-      if (req !== null) {
-        const verified = await awaitPresentedFrame(
-          video.element,
-          timing,
-          req,
-          gen,
-          contrib,
-          key
-        );
-        if (verified === 'empty') return { kind: 'empty' };
-        if (verified !== 'element') {
-          frames.push(verified.frame);
-          return {
-            kind: 'image',
-            source: verified.frame,
-            alpha: contrib.alpha,
-          };
-        }
+    if (req !== null) {
+      const verified = await awaitPresentedFrame(
+        video.element,
+        timing,
+        req,
+        target,
+        gen,
+        contrib,
+        key
+      );
+      if (verified === 'empty') return { kind: 'empty' };
+      if (verified !== 'element') {
+        frames.push(verified.frame);
+        return {
+          kind: 'image',
+          source: verified.frame,
+          alpha: contrib.alpha,
+        };
       }
     }
     return {

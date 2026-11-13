@@ -978,8 +978,8 @@ Native-clock qualification is independent of browser-estimated output timing. A 
 For an unsolicited interruption, a render-frame clock cannot identify a wall-clock gap before the platform reports it. Closing a gate in response to that notification does not prove that no old-generation samples were rendered before the notification. A stronger pre-notification guarantee requires a native render-side epoch or latch.
 
 **Residuals:**
-- Paused inspection, transport seeks, and scrubbing remain exact midpoint seeks into certified presentation windows.
-- Any media path failing native admission criteria runs on today's exact midpoint seek cadence with existing diagnostic reporting.
+- Paused inspection, transport seeks, and scrubbing begin at the exact midpoint of a certified presentation window. Update, 2026-11-13 (issue #166): a decoder settled on another window gets bounded muted playback recovery; only a frame verified against the required window may paint.
+- Any media path failing native admission criteria runs on that verified seek path with existing diagnostic reporting.
 
 ## 2026-10-25: A passkey signs a returning reader in, without an email
 
