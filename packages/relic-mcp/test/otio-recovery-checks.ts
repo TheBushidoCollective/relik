@@ -946,34 +946,45 @@ const STARVATION_VISUAL_REFUSALS: Record<string, true> = {
 const STARTUP_REFUSAL =
   'no causal audio epoch: the earliest guarded epoch is past the video phase band';
 
-// A capture whose play request was refused before any audio epoch existed: no frontier ever closed,
-// the only faults are the underflow cancel and that one refusal, and the proof injected nothing.
-function startupStarvation(
-  events: readonly TraceEntry[],
-  faults: readonly number[]
-): string | null {
+// A capture whose last play request was refused before it had any audio epoch: after that request
+// no frontier closed and no epoch committed, the only faults are the underflow cancel and that one
+// refusal, and the proof injected nothing. What came before the request (a start the stage paused
+// on purpose, CI run 43377955990) belongs to an earlier start. When the viewer recorded how far
+// past the band the epoch fell, the evidence carries it.
+function startupStarvation(events: readonly TraceEntry[]): string | null {
+  let from = 0;
+  events.forEach((entry, index) => {
+    if (entry.kind === 'play-request') from = index;
+  });
   let errors = 0;
-  for (const index of faults) {
-    const value = entryValue(events[index]);
-    if (value['event'] === 'cancel') {
+  let margin = '';
+  for (let index = from; index < events.length; index++) {
+    const entry = events[index];
+    const value = entryValue(entry);
+    if (isPcm(entry, 'epoch') || isPcm(entry, 'gate-close')) return null;
+    if (isPcm(entry, 'cancel')) {
       if (value['reason'] !== 'underflow') return null;
-      continue;
-    }
-    if (value['stage'] !== 'schedule' || value['code'] !== STARTUP_REFUSAL)
-      return null;
-    errors++;
+    } else if (isPcm(entry, 'error')) {
+      if (value['stage'] !== 'schedule' || value['code'] !== STARTUP_REFUSAL)
+        return null;
+      errors++;
+    } else if (
+      entry?.kind === 'cold-controller' &&
+      value['event'] === 'ring-refused' &&
+      typeof value['earliestWall'] === 'number' &&
+      typeof value['upperWall'] === 'number'
+    )
+      margin = `; earliest epoch ${value['earliestWall'].toFixed(3)} ms against the band's upper edge ${value['upperWall'].toFixed(3)} ms, ${String(value['slots'])} of ${String(value['requiredSlots'])} ring slots`;
   }
   if (errors === 0) return null;
   for (const entry of events)
     if (
       isPcm(entry, 'recovery-fault') ||
-      isPcm(entry, 'epoch') ||
-      isPcm(entry, 'gate-close') ||
       entry.kind === 'recovery-overrun-injected' ||
       entry.kind === 'clock-site-hold-consumed'
     )
       return null;
-  return `startup refused before any audio epoch: ${STARTUP_REFUSAL}`;
+  return `startup refused before any audio epoch: ${STARTUP_REFUSAL}${margin}`;
 }
 
 // A capture whose audio frontier closed and whose recovery then refused, with nothing injected.
@@ -992,7 +1003,7 @@ export function naturalStarvation(
     if (isPcm(entry, 'error') || isPcm(entry, 'cancel')) faults.push(index);
   });
   if (faults.length === 0) return null;
-  const startup = startupStarvation(events, faults);
+  const startup = startupStarvation(events);
   if (startup !== null) return startup;
   let errors = 0;
   const shape: string[] = [];

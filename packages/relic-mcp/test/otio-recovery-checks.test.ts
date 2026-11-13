@@ -1381,6 +1381,59 @@ test('natural-starvation classifier names a startup refusal before any audio epo
   ).toContain('startup refused before any audio epoch');
 });
 
+// CI run 43377955990: the stage paused a held start on purpose, and the restart was refused
+// 1.58 ms past the band.
+const playRequest = (): BridgeEntry => ({ kind: 'play-request', value: {} });
+const ringRefused = (): BridgeEntry => ({
+  kind: 'cold-controller',
+  value: {
+    event: 'ring-refused',
+    earliestWall: 1602.6797,
+    upperWall: 1601.1,
+    slots: 5,
+    requiredSlots: 5,
+  },
+});
+
+test('natural-starvation classifier judges a startup refusal from the last play request', () => {
+  const restarted = naturalStarvation([
+    playRequest(),
+    bridgePcm({ event: 'cancel', reason: 'pause' }),
+    playRequest(),
+    ringRefused(),
+    underflow(),
+    bridgeError(STARTUP_BAND_REFUSAL),
+  ]);
+  expect(restarted).toContain('startup refused before any audio epoch');
+  expect(restarted).toContain(
+    "earliest epoch 1602.680 ms against the band's upper edge 1601.100 ms, 5 of 5 ring slots"
+  );
+  // The last start had an epoch, a closed frontier or another cancel: not a refused start.
+  for (const after of [
+    bridgePcm({ event: 'epoch', generation: 4 }),
+    bridgePcm({ event: 'gate-close', reason: 'frontier' }),
+    bridgePcm({ event: 'cancel', reason: 'pause' }),
+    bridgeError('PCM provider failed'),
+  ])
+    expect(
+      naturalStarvation([
+        playRequest(),
+        after,
+        underflow(),
+        bridgeError(STARTUP_BAND_REFUSAL),
+      ])
+    ).toBeNull();
+  // An injection anywhere in the trace is the proof's own control.
+  expect(
+    naturalStarvation([
+      bridgeConsumed(),
+      playRequest(),
+      underflow(),
+      bridgeError(STARTUP_BAND_REFUSAL),
+    ])
+  ).toBeNull();
+});
+
 test('natural-starvation classifier refuses a startup refusal that is anything else', () => {
   // Playback that had an epoch, or a closed frontier, is not a start that never happened.
   for (const earlier of [
