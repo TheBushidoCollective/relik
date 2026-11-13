@@ -1713,11 +1713,17 @@ async function usercontentTexts(
       texts.push(read?.result?.value ?? '');
       continue;
     }
-    const world = (await cdp.send(
-      'Page.createIsolatedWorld',
-      { frameId, worldName: 'jsx-component-proof' },
-      sessionId
-    )) as { executionContextId: number };
+    // A frame can leave between the tree read and this call while the page reloads or
+    // swaps its view ("No frame for given id found" on Linux CI, diagnostic run
+    // 43447651105). It has no text to give, and the caller's wait reads again.
+    const world = (await cdp
+      .send(
+        'Page.createIsolatedWorld',
+        { frameId, worldName: 'jsx-component-proof' },
+        sessionId
+      )
+      .catch(() => null)) as { executionContextId: number } | null;
+    if (!world) continue;
     const read = (await cdp
       .send(
         'Runtime.evaluate',
