@@ -151,8 +151,11 @@ jobs:
           uv run --with opentimelineio==0.18.1 python3 scripts/generate-otio-fixtures.py --check
           bash scripts/generate-otio-media.sh --check
 
-      # Loopback-only path. The script prints OTIO_PATH_OK only after the
-      # browser, official reader, and fresh MCP readback all pass.
+      # Loopback-only path. This job runs every stage except the legacy
+      # scheduled-audio ones, and the script prints
+      # OTIO_PATH_WITHOUT_SCHEDULED_AUDIO_OK only after the browser, official
+      # reader, and fresh MCP readback all pass. The scheduled-audio stages run
+      # in otio-scheduled-audio.yml, which reports and does not block.
       - name: Prepare OTIO browser proof receipt
         run: mkdir -p "$OTIO_BROWSER_PROOF_DIR"
 
@@ -167,6 +170,7 @@ jobs:
       - name: OTIO path
         env:
           RELIC_OTIO_SHOTS_DIR: ${{ github.workspace }}/otio-path-shots
+          RELIC_OTIO_PATH_SCOPE: without-scheduled-audio
         run: |
           set -euo pipefail
           command -v ffmpeg >/dev/null

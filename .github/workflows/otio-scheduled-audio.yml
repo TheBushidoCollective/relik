@@ -1,0 +1,139 @@
+name: otio-scheduled-audio
+
+# The legacy scheduled-audio stages of the OTIO path, on their own.
+#
+# They play a legacy archive through the sample-scheduled audio path and hold
+# it to millisecond budgets. A shared runner interrupts that playback within a
+# minute of almost every attempt: 8 of 8 parallel lanes failed, from different
+# timing causes, in diagnostic run 43383354503. Jason decided on 2026-11-13
+# that these stages run on every pull request and every deploy, upload their
+# evidence, and do not block. verify.yml runs every other stage of the path
+# and does block: it gates a merge, and deploy.yml calls it as its gate.
+#
+# Nothing depends on this workflow. It is a separate run, so a deploy never
+# waits on it and a rollback queued behind a deploy is not held up by it. A
+# red run here says the stages did not pass on that runner, and the uploaded
+# receipts say why. It is not a reason to rerun until green, and it is not
+# evidence that playback regressed until the receipts show a failure that is
+# not the runner interrupting playback.
+on:
+  pull_request:
+  # The same pushes that deploy.yml deploys.
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+
+# A newer push to the same pull request supersedes the run in flight. Each
+# push to main keeps its own report.
+concurrency:
+  group: otio-scheduled-audio-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  scheduled-audio:
+    name: scheduled audio (reports, does not block)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: jdx/mise-action@v2
+        with:
+          # The versions in mise.toml, not whatever the runner ships.
+          install: true
+          cache: true
+
+      - name: Configure OTIO browser proof path
+        run: echo "OTIO_BROWSER_PROOF_DIR=$RUNNER_TEMP/otio-browser-proof" >> "$GITHUB_ENV"
+
+      - name: Require Linux native build prerequisites
+        run: |
+          set -euo pipefail
+          command -v docker
+          docker version --format '{{.Server.Version}}'
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends binutils xvfb xauth ffmpeg
+          command -v readelf
+          echo "RELIC_READELF=$(command -v readelf)" >> "$GITHUB_ENV"
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install pinned uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.8.22"
+
+      # The path serves real files out of the viewer's dist and runs the MCP bundle.
+      - name: Build
+        run: bun run build
+
+      - name: Build MCP bundle
+        run: bun run --cwd packages/relic-mcp build
+
+      - name: Install headless Chrome
+        run: |
+          if ! command -v google-chrome >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends wget ca-certificates
+            wget -q -O /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+            sudo apt-get install -y /tmp/chrome.deb
+          fi
+          google-chrome --headless=new --disable-gpu --dump-dom about:blank >/dev/null
+
+      - name: Prepare OTIO browser proof receipt
+        run: mkdir -p "$OTIO_BROWSER_PROOF_DIR"
+
+      # Loopback-only. The script prints OTIO_SCHEDULED_AUDIO_OK only after every
+      # scheduled-audio stage has passed.
+      - name: OTIO scheduled-audio stages
+        id: stages
+        env:
+          RELIC_OTIO_SHOTS_DIR: ${{ github.workspace }}/otio-path-shots
+          RELIC_OTIO_PATH_SCOPE: scheduled-audio
+        run: |
+          set -euo pipefail
+          command -v ffmpeg >/dev/null
+          command -v ffprobe >/dev/null
+          command -v uv >/dev/null
+          command -v google-chrome >/dev/null
+          RELIC_OTIO_PATH_CLIENT=source \
+            RELIC_OTIO_CHROME_PATH="$(command -v google-chrome)" \
+            env -u DISPLAY -u WAYLAND_DISPLAY \
+              bun packages/relic-mcp/test/otio-path.ts \
+              2>&1 | tee "$OTIO_BROWSER_PROOF_DIR/otio-scheduled-audio.log"
+
+      - name: Report the result
+        if: always()
+        run: |
+          {
+            echo "### Legacy scheduled-audio stages"
+            echo ""
+            if [ "${{ steps.stages.outcome }}" = "success" ]; then
+              echo "Every stage passed on this runner."
+            else
+              echo "The stages did not pass on this runner (step outcome: ${{ steps.stages.outcome }})."
+              echo "This job reports and does not block. The receipts are in the"
+              echo "\`otio-scheduled-audio-linux\` artifact."
+            fi
+            echo ""
+            echo '```text'
+            grep -E '^(STAGE|OTIO_NATURAL_STARVATION|OTIO_RECOVERY_FRONTIER_OVERSHOOT|OTIO_SIXTY_FPS|OTIO_SCHEDULED_AUDIO_OK|AssertionError|error:)' \
+              "$OTIO_BROWSER_PROOF_DIR/otio-scheduled-audio.log" | cut -c1-300 | tail -60 || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload scheduled-audio receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: otio-scheduled-audio-linux
+          path: |
+            ${{ env.OTIO_BROWSER_PROOF_DIR }}
+            otio-path-shots
+          if-no-files-found: warn
+          retention-days: 7
+          compression-level: 9

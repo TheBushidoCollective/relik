@@ -16,6 +16,13 @@
  * stage is a failure. Expected frames come from the official reader of the
  * stored archive, not from a copied literal.
  *
+ * RELIC_OTIO_PATH_SCOPE runs one slice of the path, and each slice accounts for
+ * exactly its own stages. Unset runs every stage. `scheduled-audio` runs the
+ * legacy scheduled-audio stages alone and ends with OTIO_SCHEDULED_AUDIO_OK.
+ * `without-scheduled-audio` runs every other stage and ends with
+ * OTIO_PATH_WITHOUT_SCHEDULED_AUDIO_OK. CI runs the two slices as separate jobs
+ * (see pathScope below); neither line is OTIO_PATH_OK.
+ *
  * Prerequisites:
  *   mise exec -- bun install --frozen-lockfile
  *   mise exec -- bun run --cwd packages/relic-mcp build
@@ -128,6 +135,19 @@ if (
   clockProofMode !== 'long'
 )
   throw new Error(`Unknown OTIO clock proof mode: ${clockProofMode}`);
+
+// The scheduled-audio stages play a legacy archive through the sample-scheduled audio path and
+// hold it to millisecond budgets. A shared CI runner interrupts that playback within a minute
+// of almost every attempt (diagnostic run 43383354503: 8 of 8 lanes failed, from different
+// timing causes). Jason decided on 2026-11-13 that they run in their own CI job, on every pull
+// request and deploy, which uploads its evidence and does not block. Every other stage blocks.
+const pathScope = process.env['RELIC_OTIO_PATH_SCOPE'] ?? '';
+if (
+  pathScope !== '' &&
+  pathScope !== 'scheduled-audio' &&
+  pathScope !== 'without-scheduled-audio'
+)
+  throw new Error(`Unknown OTIO path scope: ${pathScope}`);
 
 // The scheduled-audio stages alone take about 295 s on the Linux runner (run 43275442218: the
 // path started at 18:06:54 and reached the moving-window stage at 18:11:49), before the moving
@@ -252,6 +272,39 @@ const REQUIRED = [
   // OTIO_THREE_SLOT_OK marker. It is never accounted by the default-mode check below.
   'legacy-three-slot-forced-refusal',
 ] as const;
+
+// The stages of the scheduled-audio slice (see pathScope). Typed against REQUIRED, so a
+// stage renamed there cannot stay behind here.
+const SCHEDULED_AUDIO_STAGES: Partial<Record<(typeof REQUIRED)[number], true>> =
+  {
+    'post-gain-tap-calibration': true,
+    'scheduled-pcm-playback': true,
+    'scheduled-pcm-cold-start': true,
+    'scheduled-pcm-starvation-cancel': true,
+    'scheduled-pcm-starvation-recovery': true,
+    'scheduled-pcm-schedule-clock-failures': true,
+    'scheduled-pcm-bootstrap-restore': true,
+    'scheduled-video-future-recovery': true,
+    'scheduled-pcm-native-compatibility': true,
+    'scheduled-video-reservation-invalidation': true,
+    'scheduled-pcm-seek-scope-cancel': true,
+    'scheduled-pcm-terminal-failure': true,
+    'scheduled-pcm-mute-solo': true,
+    'legacy-sixty-fps-cold-start': true,
+    'scheduled-pcm-restart-during-start': true,
+  };
+
+// The stages this run must pass: its slice of REQUIRED. The three-slot stage is accounted
+// only by the proof-only three-slot run.
+function stagesNotPassed(): string[] {
+  return REQUIRED.filter((stage) => {
+    if (stage === 'legacy-three-slot-forced-refusal') return false;
+    const scheduledAudio = SCHEDULED_AUDIO_STAGES[stage] === true;
+    if (pathScope === 'scheduled-audio' && !scheduledAudio) return false;
+    if (pathScope === 'without-scheduled-audio' && scheduledAudio) return false;
+    return !passed.has(stage);
+  });
+}
 
 const passed = new Set<string>();
 function pass(stage: (typeof REQUIRED)[number]): void {
@@ -15257,10 +15310,21 @@ function collectAuthoredPcm(
   return out;
 }
 
+// The boundary fixture's stages come in two parts that share nothing but the fixture. The
+// audio part holds scheduled playback to its budgets (post-gain tap, moving windows, sustained
+// captures, reservation and recovery controls). The comment part posts a comment on the second
+// moving occurrence and follows it through three revisions, with no audio capture.
+//   'all'              both, in one browser, as the full path runs them
+//   'scheduled-audio'  the audio part only, for the scheduled-audio slice
+//   'comment'          the comment part only, for the slice without scheduled audio
+//   'interaction'      the interaction-only proof: a new publish, its layout matrix, the comment
+type CalibrationPart = 'all' | 'scheduled-audio' | 'comment' | 'interaction';
 async function calibratePostGainTap(
   sessionToken: string,
-  interactionOnly = false
+  part: CalibrationPart = 'all'
 ): Promise<void> {
+  const interactionOnly = part === 'interaction';
+  const audio = part === 'all' || part === 'scheduled-audio';
   const directory = join(scratch, 'playback-boundaries.otiod');
   const media = join(directory, 'media');
   await mkdir(media, { recursive: true });
@@ -15306,9 +15370,13 @@ async function calibratePostGainTap(
   // claims about scheduled audio only. Linux headless Chrome defaults to 44.1 kHz, so the rate is
   // pinned as it is for every other scheduled stage, and the capture's rate is asserted.
   const browser = await openBrowser(url, sessionToken, {
-    label: interactionOnly ? 'interaction-only' : 'post-gain-calibration',
-    recordProofTrace: !interactionOnly,
-    ...(interactionOnly ? {} : { proofSampleRate: 48000 as const }),
+    label: interactionOnly
+      ? 'interaction-only'
+      : audio
+        ? 'post-gain-calibration'
+        : 'focused-comment',
+    recordProofTrace: audio,
+    ...(audio ? { proofSampleRate: 48000 as const } : {}),
   });
   try {
     await browser.send('Emulation.setDeviceMetricsOverride', {
@@ -15321,7 +15389,7 @@ async function calibratePostGainTap(
     if (!interactionOnly)
       await assertLegacyProgramState(browser, 'post-gain-calibration');
     const provenance = await proofProvenance(browser);
-    if (!interactionOnly) {
+    if (audio) {
       const stopCast = await browser.startScreencast();
       const capture = await browser.evaluate<{
         start: {
@@ -15477,6 +15545,7 @@ async function calibratePostGainTap(
       );
       await leaveFocus(browser);
     }
+    if (part === 'scheduled-audio') return;
     await focusItem(browser, 'moving-b');
     if (interactionOnly) {
       const matrix: Array<Record<string, unknown>> = [];
@@ -21838,7 +21907,7 @@ try {
   await Bun.spawn(['mkdir', '-p', shotDir, mediaDir]).exited;
   if (process.env['RELIC_OTIO_INTERACTION_ONLY'] === '1') {
     const token = await createSession();
-    await calibratePostGainTap(token, true);
+    await calibratePostGainTap(token, 'interaction');
     assert.equal(mails.length, 0, 'interaction proof emitted external mail');
     console.log('OTIO_INTERACTION_ONLY_OK');
     throw new InteractionOnlyComplete();
@@ -21855,16 +21924,18 @@ try {
     throw new DecoderOnlyComplete();
   }
   // Real new-publish output, asserted before any composition proof: on Linux it must be
-  // focus-only with its reason; on macOS it must be playable. Neither branch skips.
-  await runFocusOnlyPublishCheck(
-    sessionToken,
-    fileURLToPath(
-      new URL(
-        '../../relic-format/test/fixtures/otio/scheduled-audio.otiod/',
-        import.meta.url
+  // focus-only with its reason; on macOS it must be playable. Neither branch skips. It
+  // belongs to the slice without scheduled audio.
+  if (pathScope !== 'scheduled-audio')
+    await runFocusOnlyPublishCheck(
+      sessionToken,
+      fileURLToPath(
+        new URL(
+          '../../relic-format/test/fixtures/otio/scheduled-audio.otiod/',
+          import.meta.url
+        )
       )
-    )
-  );
+    );
   const proofViewerManifest =
     process.env['RELIC_OTIO_PROOF_VIEWER_MANIFEST'] ?? '';
   if (proofViewerManifest !== '') {
@@ -21894,33 +21965,62 @@ try {
     console.log('OTIO_THREE_SLOT_OK');
     throw new DecoderOnlyComplete();
   }
-  await runNativeAudioCompatibilityProof(sessionToken);
-  await rerunNaturalStarvation('scheduled-pcm-48000', () =>
-    runScheduledPcmProof(sessionToken)
-  );
-  if (clockProofMode !== 'long')
-    await rerunNaturalStarvation('scheduled-pcm-44100', () =>
-      runScheduledPcmProof(sessionToken, 44100)
+  if (pathScope === 'without-scheduled-audio') {
+    assert.equal(
+      clockProofMode,
+      '',
+      'a clock proof mode runs scheduled-audio stages, which this scope leaves out'
     );
-  if (clockProofMode === '')
-    await rerunNaturalStarvation('sixty-fps-cold', () =>
-      runSixtyFpsColdProof(sessionToken, 48000)
+    console.log('OTIO_PATH_SCOPE without-scheduled-audio');
+    // The comment part of the boundary fixture needs no audio capture, so it stays here.
+    await calibratePostGainTap(sessionToken, 'comment');
+  } else {
+    await runNativeAudioCompatibilityProof(sessionToken);
+    await rerunNaturalStarvation('scheduled-pcm-48000', () =>
+      runScheduledPcmProof(sessionToken)
     );
-  if (clockProofMode === '')
-    await rerunNaturalStarvation('restart-during-start', () =>
-      runRestartDuringStart(sessionToken, 48000)
+    if (clockProofMode !== 'long')
+      await rerunNaturalStarvation('scheduled-pcm-44100', () =>
+        runScheduledPcmProof(sessionToken, 44100)
+      );
+    if (clockProofMode === '')
+      await rerunNaturalStarvation('sixty-fps-cold', () =>
+        runSixtyFpsColdProof(sessionToken, 48000)
+      );
+    if (clockProofMode === '')
+      await rerunNaturalStarvation('restart-during-start', () =>
+        runRestartDuringStart(sessionToken, 48000)
+      );
+    if (clockProofMode === 'long') {
+      console.log('OTIO_CLOCK_LONG_OK');
+      throw new DecoderOnlyComplete();
+    }
+    if (clockProofMode === 'focused') {
+      console.log('OTIO_CLOCK_FOCUSED_OK');
+      throw new DecoderOnlyComplete();
+    }
+    await rerunNaturalStarvation('post-gain-tap-calibration', () =>
+      calibratePostGainTap(
+        sessionToken,
+        pathScope === 'scheduled-audio' ? 'scheduled-audio' : 'all'
+      )
     );
-  if (clockProofMode === 'long') {
-    console.log('OTIO_CLOCK_LONG_OK');
+  }
+  if (pathScope === 'scheduled-audio') {
+    const missing = stagesNotPassed();
+    assert.deepEqual(
+      missing,
+      [],
+      `scheduled-audio stages not passed: ${missing.join(', ')}`
+    );
+    assert.equal(
+      mails.length,
+      0,
+      `the scheduled-audio slice captured ${mails.length} mail send(s)`
+    );
+    console.log('OTIO_SCHEDULED_AUDIO_OK');
     throw new DecoderOnlyComplete();
   }
-  if (clockProofMode === 'focused') {
-    console.log('OTIO_CLOCK_FOCUSED_OK');
-    throw new DecoderOnlyComplete();
-  }
-  await rerunNaturalStarvation('post-gain-tap-calibration', () =>
-    calibratePostGainTap(sessionToken)
-  );
 
   // The qualification, revision and state stages below exercise the live player, which
   // only a legacy archive reaches: a new publish of this fixture carries a program the
@@ -24986,13 +25086,15 @@ try {
   );
   pass('no-mail');
 
-  // The three-slot stage is accounted only by the proof-only three-slot run (see REQUIRED).
-  const missing = REQUIRED.filter(
-    (stage) =>
-      stage !== 'legacy-three-slot-forced-refusal' && !passed.has(stage)
-  );
+  // The three-slot stage is accounted only by the proof-only three-slot run (see REQUIRED),
+  // and a slice accounts for its own stages (see stagesNotPassed).
+  const missing = stagesNotPassed();
   assert.deepEqual(missing, [], `stages not passed: ${missing.join(', ')}`);
-  console.log('OTIO_PATH_OK');
+  console.log(
+    pathScope === 'without-scheduled-audio'
+      ? 'OTIO_PATH_WITHOUT_SCHEDULED_AUDIO_OK'
+      : 'OTIO_PATH_OK'
+  );
 } catch (error) {
   if (
     !(
