@@ -82,6 +82,11 @@ export function run(
     clearTimeout(timer);
     resolve({ code: code ?? -1, stdout, stderr });
   });
+  // A tool that exits, or never starts, before it reads its input closes the pipe under this
+  // write. That is not a second failure: the exit code or the spawn error above decides the
+  // outcome. Without a listener the write error is an uncaught exception that ends the
+  // process, which is how a publish died with "write EPIPE" while attaching the RAM disk.
+  child.stdin.on('error', () => undefined);
   child.stdin.end(input);
   return promise;
 }
