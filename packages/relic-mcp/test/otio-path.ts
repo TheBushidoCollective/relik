@@ -14008,14 +14008,42 @@ async function assessMovingWindowControls(
         }
         return error < 12 ? best : null;
       };
-      const unmatchedScreenFrames = screen.filter((sample) => {
+      // Pixel equality between a compositor frame and a canvas sample is recorded, not asserted.
+      // On the Linux runner the sampler sees about one draw in two, so a compositor frame can show
+      // a stripe position the sampler never recorded (run 1f645879: 148 of 319 frames match no
+      // sample within a 400 ms lag and a 2 px registration tolerance). What the stage asserts is
+      // against independent ground truth: each compositor frame is associated to a composition
+      // frame by the nearest canvas sample in time, and compared with the decoded reference.
+      const inWindow = screen.filter((sample) => {
         const timestamp = sample.timestamp - geometry.timeOrigin;
         return (
           timestamp >= capture.start.timestamp + 50 &&
-          timestamp <= capture.trace.timestamp &&
-          !matchPresentedCanvas(timestamp, sample.pixels)
+          timestamp <= capture.trace.timestamp
         );
-      }).length;
+      });
+      const unmatchedScreenFrames = inWindow.filter(
+        (sample) =>
+          !matchPresentedCanvas(
+            sample.timestamp - geometry.timeOrigin,
+            sample.pixels
+          )
+      ).length;
+      const nearestCanvas = (timestamp: number) => {
+        let best: (typeof capture.trace.visual)[number] | null = null;
+        for (const sample of capture.trace.visual) {
+          if (sample.pixels16?.length !== frameBytes) continue;
+          const skew = Math.abs(sample.timestamp - timestamp);
+          if (
+            skew <= 50 &&
+            (!best || skew < Math.abs(best.timestamp - timestamp))
+          )
+            best = sample;
+        }
+        return best;
+      };
+      const screenWithoutCanvas = inWindow.filter(
+        (sample) => !nearestCanvas(sample.timestamp - geometry.timeOrigin)
+      ).length;
       const screenStills = [
         { from: 75, to: 90, reference: stillA, other: stillB },
         { from: 90, to: 105, reference: stillB, other: stillA },
@@ -14023,12 +14051,14 @@ async function assessMovingWindowControls(
       ].map(({ from, to, reference, other }) => {
         const errors: Array<{ expected: number; other: number; skew: number }> =
           [];
-        for (const frame of screen) {
+        for (const frame of inWindow) {
           const timestamp = frame.timestamp - geometry.timeOrigin;
-          const closest = matchPresentedCanvas(timestamp, frame.pixels);
+          const closest = nearestCanvas(timestamp);
           if (!closest) continue;
           const composition = Number(closest.frame);
-          if (composition >= from && composition < to)
+          // The association is good to one frame at 30 fps, so only the interior of the interval,
+          // two frames clear of each edge, can be attributed to it.
+          if (composition >= from + 2 && composition < to - 2)
             errors.push({
               expected: rmse(frame.pixels, reference),
               other: rmse(frame.pixels, other),
@@ -14052,17 +14082,24 @@ async function assessMovingWindowControls(
               Uint8Array.from(sample.pixels16!)
             )
           );
-        const compositor = screen.flatMap((sample) => {
+        const compositor = inWindow.flatMap((sample) => {
           const timestamp = sample.timestamp - geometry.timeOrigin;
-          const closest = matchPresentedCanvas(timestamp, sample.pixels);
-          if (
-            !closest ||
-            Number(closest.frame) < frame ||
-            Number(closest.frame) >= frame + 1
-          )
-            return [];
+          const closest = nearestCanvas(timestamp);
+          if (!closest) return [];
+          const at = Number(closest.frame);
+          if (at < frame - 1 || at >= frame + 2) return [];
+          // Good to one frame: the compositor frame must be the dissolve at the associated
+          // frame or its neighbour, and it must beat each hard-cut control there.
+          const candidates = [
+            Math.floor(at) - 1,
+            Math.floor(at),
+            Math.floor(at) + 1,
+          ]
+            .filter((time) => Math.abs(time - frame) <= 2)
+            .map((time) => transitionComparison(frame, time, sample.pixels));
+          if (candidates.length === 0) return [];
           return [
-            transitionComparison(frame, Number(closest.frame), sample.pixels),
+            candidates.reduce((a, b) => (b.expected < a.expected ? b : a)),
           ];
         });
         return { frame, canvas, compositor };
@@ -14086,6 +14123,8 @@ async function assessMovingWindowControls(
           screenStills,
           transitionChecks,
           unmatchedScreenFrames,
+          screenWithoutCanvas,
+          screenFramesInWindow: inWindow.length,
           audio,
         })
       );
@@ -14113,10 +14152,9 @@ async function assessMovingWindowControls(
           !cast.overflow,
         'boundary trace overflow'
       );
-      assert.equal(
-        unmatchedScreenFrames,
-        0,
-        'screencast frames lack a matching recent canvas presentation'
+      assert.ok(
+        inWindow.length >= 100 && screenWithoutCanvas <= inWindow.length * 0.05,
+        `screencast frames without a canvas sample in time: ${screenWithoutCanvas} of ${inWindow.length}`
       );
       assert.ok(
         progress >= 0.95 && progress <= 1.05,
