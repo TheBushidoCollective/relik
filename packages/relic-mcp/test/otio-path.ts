@@ -13819,50 +13819,77 @@ async function assessMovingWindowControls(
       extractFrame(join(decoderMediaDir, 'fr30.webm'), frame, 64, 36);
     const readSecondary = (frame: number) =>
       extractFrame(join(fixtureDir, 'media', 'secondary_b.mp4'), frame, 64, 36);
-    const videoFrameNumbers = [36, 37, 60, 61, 6, 7, 21, 22];
     const videoFrames = new Map<number, Uint8Array>();
-    await Promise.all(
-      videoFrameNumbers.map(async (frame) => {
-        videoFrames.set(frame, await readVideo(frame));
-      })
-    );
-    const [b30, b31, upper60, upper61] = await Promise.all([
-      readSecondary(4),
-      readSecondary(5),
-      readSecondary(28),
-      readSecondary(29),
-    ]);
+    const secondaryFrames = new Map<number, Uint8Array>();
     const transitions = [30, 60, 150];
+    // The independently decoded sources a dissolve at composition time `time` is made of.
+    const referenceIndices = (frame: number, time: number) => {
+      const secondary = Math.floor(
+        ((time - (frame === 60 ? 24 : frame - 6)) * 24) / 30
+      );
+      const video =
+        frame === 60
+          ? [
+              windowForSeconds(windows, time / 30, 'dissolve lower outgoing')
+                .frame,
+              windowForSeconds(
+                windows,
+                (time - 54) / 30,
+                'dissolve lower incoming'
+              ).frame,
+            ]
+          : [
+              windowForSeconds(
+                windows,
+                (time - (frame === 30 ? -6 : 129)) / 30,
+                'dissolve upper outgoing'
+              ).frame,
+            ];
+      return { secondary, video };
+    };
+    // Times [frame, frame + 1) are the canvas samples; the compositor frames are associated to the
+    // nearest canvas sample, good to one frame, so the neighbours two frames either side are
+    // decoded as well.
+    const wantedVideo = new Set<number>([36, 37, 60, 61, 6, 7, 21, 22]);
+    const wantedSecondary = new Set<number>([4, 5, 28, 29]);
+    for (const frame of transitions)
+      for (let time = frame - 2; time <= frame + 2; time++) {
+        const wanted = referenceIndices(frame, time);
+        wantedSecondary.add(wanted.secondary);
+        for (const index of wanted.video) wantedVideo.add(index);
+      }
+    await Promise.all([
+      ...[...wantedVideo].map(async (frame) => {
+        videoFrames.set(frame, await readVideo(frame));
+      }),
+      ...[...wantedSecondary].map(async (frame) => {
+        secondaryFrames.set(frame, await readSecondary(frame));
+      }),
+    ]);
     function transitionComparison(
       frame: number,
       time: number,
       pixels: Uint8Array
     ) {
       const u = (time - (frame - 3)) / 6;
-      const secondaryIndex = Math.floor(
-        ((time - (frame === 60 ? 24 : frame - 6)) * 24) / 30
+      const wanted = referenceIndices(frame, time);
+      const incoming = secondaryFrames.get(wanted.secondary);
+      assert.ok(
+        incoming,
+        `missing independently decoded secondary frame ${wanted.secondary} at ${time}`
       );
-      const incoming = secondaryIndex === 4 ? b30 : b31;
       let expected: Uint8Array;
       let hardCuts: Uint8Array[];
       if (frame === 60) {
-        const lowerAIndex = windowForSeconds(
-          windows,
-          time / 30,
-          'dissolve lower outgoing'
-        ).frame;
-        const lowerBIndex = windowForSeconds(
-          windows,
-          (time - 54) / 30,
-          'dissolve lower incoming'
-        ).frame;
+        const lowerAIndex = wanted.video[0]!;
+        const lowerBIndex = wanted.video[1]!;
         const lowerA = videoFrames.get(lowerAIndex);
         const lowerB = videoFrames.get(lowerBIndex);
         assert.ok(
           lowerA && lowerB,
           `missing independently decoded dissolve frames ${lowerAIndex}/${lowerBIndex}`
         );
-        const upper = secondaryIndex === 28 ? upper60 : upper61;
+        const upper = incoming;
         const lower = blend(lowerA, lowerB, 1 - u, u);
         expected = blend(lower, upper, u, 1 - u);
         hardCuts = [
@@ -13872,11 +13899,7 @@ async function assessMovingWindowControls(
           blend(lowerB, upper, u, 1 - u),
         ];
       } else {
-        const index = windowForSeconds(
-          windows,
-          (time - (frame === 30 ? -6 : 129)) / 30,
-          'dissolve upper outgoing'
-        ).frame;
+        const index = wanted.video[0]!;
         const outgoing = videoFrames.get(index);
         assert.ok(
           outgoing,
