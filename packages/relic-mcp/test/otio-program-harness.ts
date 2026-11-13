@@ -45,7 +45,11 @@ export const VIEWER_DIST =
 export function sha256Text(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex');
 }
-/** A publish the service refused with a JSON-RPC error, such as program_refused. */
+/**
+ * A publish the client refused: a JSON-RPC error, or a tool error such as program_refused or
+ * source_already_published. The payload is the error, or the tool result's structured content
+ * with its text.
+ */
 export class PublishRefusedError extends Error {
   readonly payload: unknown;
 
@@ -97,7 +101,12 @@ elif mode == "rewrite":
             name = info.filename
             path = os.path.join(replacements, name.replace("/", "__"))
             data = open(path, "rb").read() if os.path.exists(path) else zin.read(name)
-            zout.writestr(name, data, compress_type=info.compress_type)
+            zout.writestr(info, data, compress_type=info.compress_type)
+        # zipfile gives an entry without attributes the mode 0600 and no file type, which
+        # Relic's reader refuses as corrupt before it reads a manifest. The publisher writes
+        # no attributes, so the rewritten directory carries none either.
+        for info in zout.filelist:
+            info.external_attr = 0
 `;
 
 export interface ProofHarness {
@@ -106,7 +115,12 @@ export interface ProofHarness {
   readonly storage: MemoryStorage;
   readonly store: MemoryStore;
   createSession(): Promise<string>;
-  publish(path: string, env?: Record<string, string>): Promise<PublishResult>;
+  /** `forceNew` publishes a separate relic of a source this harness already published. */
+  publish(
+    path: string,
+    env?: Record<string, string>,
+    options?: { forceNew?: boolean }
+  ): Promise<PublishResult>;
   /** Decrypts the stored ciphertext with the local publish key. */
   openStored(
     relicId: string
@@ -243,7 +257,7 @@ export async function createProofHarness(
       });
       return token;
     },
-    async publish(path, env = {}) {
+    async publish(path, env = {}, options = {}) {
       const child = spawn('node', [RELIC_MCP_BUNDLE], {
         cwd: scratch,
         env: {
@@ -267,7 +281,11 @@ export async function createProofHarness(
           jsonrpc: '2.0',
           id: 1,
           method: 'tools/call',
-          params: { name: 'relic_publish', arguments: { path } },
+          params: {
+            name: 'relic_publish',
+            arguments:
+              options.forceNew === true ? { path, force_new: true } : { path },
+          },
         })}\n`
       );
       const code = await exit;
@@ -279,12 +297,23 @@ export async function createProofHarness(
       const line =
         Buffer.concat(stdout).toString('utf8').trim().split('\n').pop() ?? '';
       const response = JSON.parse(line) as {
-        result?: { structuredContent?: Record<string, unknown> };
+        result?: {
+          structuredContent?: Record<string, unknown>;
+          content?: Array<{ text?: string }>;
+          isError?: boolean;
+        };
         error?: unknown;
       };
       if (response.error !== undefined)
         throw new PublishRefusedError(response.error);
       const structured = response.result?.structuredContent ?? {};
+      if (response.result?.isError === true)
+        throw new PublishRefusedError({
+          ...structured,
+          text: (response.result.content ?? [])
+            .map((part) => part.text ?? '')
+            .join('\n'),
+        });
       const relicId = String(structured['relic_id'] ?? '');
       const shareUrl = String(structured['url'] ?? structured['link'] ?? '');
       return {

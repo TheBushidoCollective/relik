@@ -50,16 +50,62 @@ function expectUnavailable(
   pass(`control-${label}`);
 }
 
-async function assertSourceOnly(relicId: string, label: string): Promise<void> {
+/**
+ * A focus-only archive, as the 2026-11-10 decision requires: it carries the manifest, the
+ * manifest reports every timeline unavailable and names the stated reason, and no rendered
+ * program is stored.
+ */
+async function assertFocusOnly(
+  relicId: string,
+  label: string,
+  code: string
+): Promise<void> {
   const { archive } = await harness.openStored(relicId);
   const entries = await harness.listEntries(archive);
   assert.ok(
     entries.includes('content.otio'),
     `${label}: source archive missing content.otio`
   );
+  assert.deepEqual(
+    entries.filter((entry) => entry.startsWith('relic/program/')),
+    [],
+    `${label}: a rendered program was stored`
+  );
   assert.ok(
-    !entries.some((entry) => entry.startsWith('relic/program')),
-    `${label}: a program entry was written`
+    entries.includes('relic/program.json'),
+    `${label}: the archive carries no manifest`
+  );
+  const manifest = JSON.parse(
+    Buffer.from(
+      await harness.readEntry(archive, 'relic/program.json')
+    ).toString('utf8')
+  ) as {
+    timelines: Array<{
+      status: string;
+      program?: unknown;
+      reasons: Array<{ code: string }>;
+    }>;
+  };
+  assert.ok(
+    manifest.timelines.length > 0,
+    `${label}: manifest has no timeline`
+  );
+  for (const timeline of manifest.timelines) {
+    assert.equal(
+      timeline.status,
+      'unavailable',
+      `${label}: manifest timeline status ${timeline.status}`
+    );
+    assert.equal(
+      timeline.program,
+      undefined,
+      `${label}: an unavailable timeline describes a program`
+    );
+  }
+  const codes = manifest.timelines.flatMap((t) => t.reasons.map((r) => r.code));
+  assert.ok(
+    codes.includes(code),
+    `${label}: stored reasons ${JSON.stringify(codes)}, expected ${code}`
   );
 }
 
@@ -70,8 +116,8 @@ async function variantControl(
 ): Promise<void> {
   const fixture = await buildProgramFixture(harness.scratch, variant);
   const published = await harness.publish(fixture.bundleDir);
+  await assertFocusOnly(published.relicId, variant, code);
   expectUnavailable(published.program, code, variant);
-  await assertSourceOnly(published.relicId, variant);
 }
 
 /** The validator's verdict on an archive: accepted, or the error code it threw. */
@@ -189,15 +235,21 @@ const VALIDATOR_CASES: ReadonlyArray<{
 await variantControl('custom-wipe', 'unsupported-transition');
 await variantControl('unknown-effect', 'unsupported-effect');
 
+// Every control below publishes the one positive fixture under a different condition, and the
+// client refuses to publish a source twice unless it is asked for a separate relic.
+const SEPARATE_RELIC = { forceNew: true } as const;
+
 {
   const fixture = await buildProgramFixture(harness.scratch, 'positive');
 
   let overCapPublished: PublishResult | undefined;
   let overCapRefused: PublishRefusedError | undefined;
   try {
-    overCapPublished = await harness.publish(fixture.bundleDir, {
-      RELIC_PROGRAM_MAX_BYTES: '1000',
-    });
+    overCapPublished = await harness.publish(
+      fixture.bundleDir,
+      { RELIC_PROGRAM_MAX_BYTES: '1000' },
+      SEPARATE_RELIC
+    );
   } catch (error) {
     if (!(error instanceof PublishRefusedError)) throw error;
     overCapRefused = error;
@@ -214,37 +266,57 @@ await variantControl('unknown-effect', 'unsupported-effect');
       overCapPublished,
       'over-cap produced neither a result nor a refusal'
     );
+    await assertFocusOnly(
+      overCapPublished.relicId,
+      'over-cap',
+      'size-cap-exceeded'
+    );
     expectUnavailable(
       overCapPublished.program,
       'size-cap-exceeded',
       'over-cap'
     );
-    await assertSourceOnly(overCapPublished.relicId, 'over-cap');
   }
 
-  const noBrowser = await harness.publish(fixture.bundleDir, {
-    RELIC_OTIO_CHROME_PATH: '/nonexistent/chrome',
-    RELIC_CHROME_PATH: '/nonexistent/chrome',
-  });
+  const noBrowser = await harness.publish(
+    fixture.bundleDir,
+    {
+      RELIC_OTIO_CHROME_PATH: '/nonexistent/chrome',
+      RELIC_CHROME_PATH: '/nonexistent/chrome',
+    },
+    SEPARATE_RELIC
+  );
+  await assertFocusOnly(
+    noBrowser.relicId,
+    'browser-missing',
+    'unsupported-browser'
+  );
   expectUnavailable(
     noBrowser.program,
     'unsupported-browser',
     'browser-missing'
   );
-  await assertSourceOnly(noBrowser.relicId, 'browser-missing');
 
-  const noEncoder = await harness.publish(fixture.bundleDir, {
-    RELIC_PROGRAM_ENCODER_OFF: '1',
-  });
+  const noEncoder = await harness.publish(
+    fixture.bundleDir,
+    { RELIC_PROGRAM_ENCODER_OFF: '1' },
+    SEPARATE_RELIC
+  );
+  await assertFocusOnly(
+    noEncoder.relicId,
+    'encoder-off',
+    'encoder-unavailable'
+  );
   expectUnavailable(noEncoder.program, 'encoder-unavailable', 'encoder-off');
-  await assertSourceOnly(noEncoder.relicId, 'encoder-off');
 
   for (const value of ['0', '-5', 'abc']) {
     let refusal: PublishRefusedError | undefined;
     try {
-      await harness.publish(fixture.bundleDir, {
-        RELIC_PROGRAM_MAX_BYTES: value,
-      });
+      await harness.publish(
+        fixture.bundleDir,
+        { RELIC_PROGRAM_MAX_BYTES: value },
+        SEPARATE_RELIC
+      );
     } catch (error) {
       if (error instanceof PublishRefusedError) refusal = error;
       else throw error;
@@ -263,7 +335,11 @@ await variantControl('unknown-effect', 'unsupported-effect');
   // The validator must refuse each manifest mutation with the stated code. The baseline is a
   // valid positive archive, so every refusal below comes from its one mutated field.
   const fixture = await buildProgramFixture(harness.scratch, 'positive');
-  const published = await harness.publish(fixture.bundleDir);
+  const published = await harness.publish(
+    fixture.bundleDir,
+    {},
+    SEPARATE_RELIC
+  );
   assert.equal(
     published.program.status,
     'rendered',

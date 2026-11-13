@@ -453,6 +453,8 @@ env -u DISPLAY -u WAYLAND_DISPLAY \
 
 ends with `OTIO_PATH_WITHOUT_SCHEDULED_AUDIO_OK`. It is every stage except the legacy scheduled-audio ones. `verify.yml` runs it, and `verify.yml` gates a merge and a deploy.
 
+One stage of this slice reruns. The viewer leaves native playback for its seek cadence when a native start fails twice, and on a shared runner it did so on the first attempt in 2 of 8 lanes of the `native-playback` stage (diagnostic runs 43447651105, 43450210844 and 43453480614). Nothing is injected in that stage, so it reruns in its own page, at most three times, under the rule Jason set on 2026-11-13 for interruptions the viewer itself reports. Each such attempt writes `native-playback-viewer-interruption-attempt<N>.json` and prints an `OTIO_VIEWER_INTERRUPTION label=native-playback` line, and a stage the viewer leaves on every attempt fails.
+
 ```bash
 RELIC_OTIO_PATH_SCOPE=scheduled-audio \
 RELIC_OTIO_PATH_CLIENT=source \
@@ -501,7 +503,40 @@ The proof must check each of these before this section's status changes.
 
 **Check 9, legacy readers (agent-run).** Build the viewer from the revision before the program change, and open two archives with it. A legacy archive must open exactly as it did before. A program-bearing archive from the new publisher must either open its `content.otio` as before or refuse with a clear error, and it must never render a partial program. The proof output records the result. A failure blocks release of program archives until it passes. No human decision is needed: the agent runs the check and fixes what it finds.
 
-No command for this section exists yet. When one exists, add it here with its exact success line. Change this section's status only after that command has passed at the revision being shipped.
+### Commands for this section
+
+Each runs from the repository root on macOS against a loopback service, with an owned headless shell. None of them is in CI: the publisher renders only inside its confined profile, which exists on macOS in this version, so a Linux runner publishes focus-only.
+
+```bash
+export RELIC_OTIO_CHROME_PATH=<path to chrome-headless-shell>
+export OTIO_PYTHON=<python with opentimelineio>
+mise exec -- bun packages/relic-mcp/test/otio-program-path.ts
+mise exec -- bun packages/relic-mcp/test/otio-program-controls.ts
+mise exec -- bun packages/relic-mcp/test/program-jail-path.ts
+mise exec -- bun packages/relic-mcp/test/program-signal-path.ts
+RELIC_LEGACY_VIEWER_DIST=<dist of a viewer built before the program change> \
+  mise exec -- bun packages/relic-mcp/test/otio-program-legacy-reader-path.ts
+```
+
+- `otio-program-path.ts` ends with `OTIO_PROGRAM_PATH_OK` and no `OTIO_PROGRAM_DEFERRED_FAILURES`. It covers Checks 1, 2, 6 and 7: the stored archive is unpacked with Python's zipfile, the MP4 is decoded with ffprobe and ffmpeg and compared with an analytic reference, and the viewer's first Play, time mapping, focus, comments and audio are measured. The next section describes its playback arms.
+- `otio-program-controls.ts` ends with `OTIO_PROGRAM_CONTROLS_OK` after 14 stages. It covers Check 5 and the parts of Checks 3 and 4 a publish can reach. An unsupported transition, an unsupported effect, a program over the size cap, a missing Chrome and a disabled encoder each publish an archive that carries `relic/program.json`, reports every timeline unavailable with the matching reason, and stores no MP4. An invalid size setting refuses the publish. Six single-field manifest mutations and a wrong program digest are each refused by the format's reader with the stated code, and the viewer shows the tampered relic unavailable with `digest-mismatch` and refuses composition play.
+- `program-jail-path.ts` ends with `PROGRAM_JAIL_PATH_OK`. It covers the isolation half of Check 8: the production jail passes its probe, five weakened profiles are each caught, the jailed browser's navigation to a loopback listener is denied with no connection made, a notification posted from inside the jail is denied, and WebCodecs still encodes H.264 and AAC inside the jail.
+- `program-signal-path.ts` ends with `PROGRAM_SIGNAL_PATH_OK`: a render stopped by SIGTERM exits 143 and leaves no browser process and no RAM disk mount behind.
+- `otio-program-legacy-reader-path.ts` ends with `OTIO_LEGACY_READER_OK`. It is Check 9. It serves the older viewer, opens a legacy archive and a program archive of one document, and prints one `OTIO_LEGACY_READER archive=<legacy|program> outcome=<opened|refused>` line for each.
+
+What no command here proves end to end: the viewer's refusal of each manifest mutation other than the digest tamper (the viewer calls the format's `readOtioProgramArchive`, which the controls and `packages/relic-format/test/otio-program.test.ts` prove), and a byte flipped inside a stored MP4 (the same unit tests refuse it). Check 8's stricter wording, that the probe fails if any rendered byte is written to a file or to browser storage, is also not what is proven: the jail confines every write to a private RAM volume that is released after the render, and its probe proves that a write outside that volume does not land. Check 4's legacy half is the path slice above, which plays archives with no manifest.
+
+Results on 2026-11-13, macOS, headless shell 1228. Product source is identical from `fb60b14f` to the revision that added this record.
+
+| Command | Revision | Result |
+| --- | --- | --- |
+| `otio-program-path.ts` | `fb60b14f` | `OTIO_PROGRAM_PATH_OK`, 31 stages, no deferred failures |
+| `otio-program-controls.ts` | this revision | `OTIO_PROGRAM_CONTROLS_OK`, 14 stages |
+| `program-jail-path.ts` | this revision | `PROGRAM_JAIL_PATH_OK` |
+| `program-signal-path.ts` | this revision | `PROGRAM_SIGNAL_PATH_OK` |
+| `otio-program-legacy-reader-path.ts` | this revision, older viewer built from main `238854c5` | `OTIO_LEGACY_READER_OK`: the legacy archive and the program archive both opened, with the same view, and both played the composition |
+
+The controls proof had never passed before this revision. It published one source several times, which the client refuses, it rewrote archives with a ZIP attribute Relic's reader rejects, and it required a focus-only archive to carry no manifest, against the 2026-11-10 decision. Those three faults were in the proof and its harness, not in the publisher or the viewer.
 
 ## Primer for the rendered program's first Play
 

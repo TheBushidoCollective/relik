@@ -1115,7 +1115,7 @@ Authorized by Jason Waldrip on 2026-11-10.
 
 ## 2026-11-10: OpenTimelineIO timelines render locally into the archive as a program, with focus-only fallback
 
-The publisher and viewer paths are implemented on PR 155. Release remains blocked on playback proof: one legacy cold start measured 411.3 ms against the 350 ms limit, and active external audio prevented the program's cold-device qualification. `packages/relic-mcp/PATH.md` lists the release checks.
+The publisher and viewer paths are implemented on PR 155. Release remains blocked on playback proof: one legacy cold start measured 411.3 ms against the 350 ms limit, and active external audio prevented the program's cold-device qualification. `packages/relic-mcp/PATH.md` lists the release checks. (Status superseded on 2026-11-13: see "The OpenTimelineIO proof splits into a blocking slice and a reported one" below.)
 
 **The publisher renders each timeline before encryption.** `relic-mcp` renders every timeline in a composition in a local browser with networking disabled and a temporary profile. The renderer reuses the viewer's compositing and timeline evaluation. It decodes frames at the same certified source times the viewer uses, and it mixes audio at 48 kHz with the playback fade math. Output is H.264/AAC MP4, and only after the browser confirms encoder support. The archive gains `relic/program.json` and one MP4 per timeline, outside `content.otio`.
 
@@ -1235,3 +1235,31 @@ Authorized by Jason Waldrip on 2026-11-11. The build plan is `docs/plans/private
   - A RAM disk that failed to format or mount was left attached, because the cleanup required a volume name that diskutil reports only for a mounted volume.
 - Raw `currentFrame` labels repeat on a loaded runner. The post-gain calibration and the post-gain comparison now authenticate coverage with the independent carrier when a capture has one, as the scheduled stages already did. A native capture has no carrier and keeps the raw labels.
 - The path's focus stages go back to the composition before they focus a clip outside the focused one. A focused view draws only that clip, by design.
+
+## 2026-11-13: The OpenTimelineIO proof splits into a blocking slice and a reported one
+
+Three decisions by Jason on 2026-11-13, after no `verify` run on PR 155 had passed.
+
+- **The legacy scheduled-audio stages run in their own job.** They are native compatibility, scheduled PCM at 48 kHz and 44.1 kHz, the 60 fps cold start, the restart during start, and the boundary fixture's audio captures. `otio-scheduled-audio.yml` runs them on every pull request and on the pushes that deploy, uploads their receipts, and blocks nothing. Every other stage of `otio-path.ts` stays in `verify.yml`, which gates a merge and a deploy.
+- **An interruption the viewer itself reports reruns.** When nothing is injected by the proof and the viewer reports the interruption truthfully, the stage reruns at most three times and keeps the evidence of each attempt. A stage interrupted on every attempt fails.
+- **The 50 ms p95 presentation budget is compared in display refreshes.** A frame held three refreshes (50.0 ms at 60 Hz) meets it, and four refreshes (66.7 ms) exceed it. The 100 ms maximum stays in raw milliseconds. The 350 ms startup and 20 ms audio budgets are unchanged.
+
+One application of the second decision was made by the agent, not by Jason. The blocking slice's `native-playback` stage asserts that steady playback seeks on no more than 10% of frames. On a shared runner the viewer's native start failed twice on the first attempt in 2 of 8 lanes, and the viewer fell back to its seek cadence, the bounded fallback from 2026-10-25, with the clock still advancing. The stage now reruns under the same rule. If that reading of the decision is wrong, the stage goes back to failing on the first fallback.
+
+Two product defects were found by the proof and fixed on the branch.
+
+- A pause could show "Scheduled audio stopped: PCM stop deadline missed" on healthy playback. The scheduler read the output clock a second time before stopping each source, and a device callback between the reads refused a stop the first read had admitted. It now decides on the first read (`314a1b65`).
+- A publish could end with an uncaught `write EPIPE` and leave a RAM disk attached. The tool runner wrote to a tool's standard input with no error listener. It now lets the exit code decide (`fb60b14f`).
+
+What is proven, and where:
+
+- The blocking slice passed in 6 of 6 lanes on GitHub's Linux runners at `c0ff0b37` (diagnostic run 43453480614): lint, typecheck, the unit tests the branch touched, the path slice (`OTIO_PATH_WITHOUT_SCHEDULED_AUDIO_OK`), the three-slot refusal and the load-progress path. One lane used the `native-playback` rerun once.
+- The rendered program, its controls, the render jail, signal cleanup and the legacy reader check passed on macOS. `packages/relic-mcp/PATH.md` holds the commands, the revisions and what each one covers. The legacy reader check found that a viewer built before the program change opens a program archive exactly as it opens a legacy one.
+
+What is not proven:
+
+- The legacy scheduled-audio slice passed in 2 of 18 lanes on GitHub's Linux runners (runs 43447651105, 43450210844 and 43453480614). The others failed in different stages: the viewer reported an interruption of scheduled playback on every attempt, a healthy capture window failed, or a stage that withholds video did not reach the state it expects. Those stages hold a legacy archive's scheduled playback to millisecond budgets on a shared runner. This is the reported slice, and a red run of it is the expected state until that playback holds on a runner.
+- Scheduled playback at 60 fps. The viewer falls back to native audio there, and the stage asserts the fallback.
+- Speaker output. Every audio capture reads the renderer before the mixer and the device.
+- Program rendering on Linux. The publisher renders only inside its macOS jail in this version, so a Linux publisher writes a focus-only archive, and the program proofs run on a Mac and are not in CI.
+- `PATH.md` Check 8 as worded. The jail denies the network and confines writes to a private RAM volume, and its probe proves both. No probe inspects the profile for rendered bytes.
