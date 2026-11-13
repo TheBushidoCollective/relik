@@ -11847,6 +11847,281 @@ describe('VideoFrame readout (planner tests 1-6)', () => {
       playback.dispose();
     }
   });
+
+  // Issue 166. Each test seeks a paused timeline to frame 5 of a 30 fps clip whose decoder
+  // does not present frame 5 for a seek to that frame's midpoint.
+  function recoveryFixture(label: string): {
+    readonly playback: ReturnType<typeof createOtioPlayback>;
+    readonly outCanvas: SoftCanvas;
+    media(): MockMedia;
+  } {
+    const mediaBlob = new Blob([label], { type: 'video/mp4' });
+    const timing: OtioVideoTiming = {
+      kind: 'windows',
+      starts: Float64Array.from({ length: 60 }, (_, i) => i / 30),
+      ends: Float64Array.from({ length: 60 }, (_, i) => (i + 1) / 30),
+    };
+    const fixture = timingMediaFixture({
+      blobs: new Map([['media/clip.mp4', mediaBlob]]),
+      timings: new Map([[mediaBlob, timing]]),
+    });
+    const outCanvas = new SoftCanvas();
+    outCanvas.width = 960;
+    outCanvas.height = 540;
+    const playback = createOtioPlayback({
+      document: sampledMediaDocument({ kind: 'Video', rate: 30, duration: 60 }),
+      timelineId: 'timeline_1',
+      canvas: outCanvas as unknown as HTMLCanvasElement,
+      resolveMedia: fixture.resolver,
+      readVideoTiming: fixture.readVideoTiming,
+    });
+    return {
+      playback,
+      outCanvas,
+      media() {
+        const media = created.find((m) => m.src.includes('media/clip.mp4'));
+        if (!media) throw new Error('the clip has no decoder element');
+        media.enableRvfc();
+        media.pixelAt = (s) => ({
+          r: 100 + Math.floor(s * 30 + 1e-4),
+          g: 0,
+          b: 0,
+          a: 1,
+        });
+        return media;
+      },
+    };
+  }
+
+  async function untilPlaying(media: MockMedia): Promise<void> {
+    for (let i = 0; i < 400 && media.paused; i++) {
+      const { promise, resolve } = Promise.withResolvers<void>();
+      setTimeout(resolve, 5);
+      await promise;
+    }
+    if (media.paused) throw new Error('the decoder was never played');
+  }
+
+  test('R1 (issue 166): a decoder settled on an earlier window is played to the required frame, and a repaint does not seek again', async () => {
+    const {
+      playback,
+      outCanvas,
+      media: decoder,
+    } = recoveryFixture('earlier window video');
+    try {
+      await playback.seek({ value: 0, rate: 30 });
+      const media = decoder();
+      media.presentationLag = true;
+      media.present(3.5 / 30); // every seek leaves the decoder showing frame 3
+      const rates: number[] = [];
+      media.play = () => {
+        rates.push(media.playbackRate);
+        media.paused = false;
+        // Playback presents frames by timestamp: frame 5 covers the seek time.
+        queueMicrotask(() => media.present(5.5 / 30));
+        return Promise.resolve();
+      };
+      MockVideoFrame.reset();
+
+      await playback.seek({ value: 5, rate: 30 });
+
+      expect(outCanvas.pixel.r).toBe(105);
+      const state = playback.getState();
+      expect(state.buffering).toBe(false);
+      expect(state.diagnostics.some((d) => d.code === 'invalid-timing')).toBe(
+        false
+      );
+      expect(rates).toEqual([0.25]);
+      expect(media.paused).toBe(true);
+      expect(media.playbackRate).toBe(1);
+      expect(media.rvfcCallbacks.size).toBe(0);
+      expect(MockVideoFrame.closes).toBe(MockVideoFrame.constructions);
+
+      // The decoder still presents frame 5. A render of the same time uses it as it stands.
+      const seeks = media.seekTargets.length;
+      await playback.seek({ value: 5, rate: 30 });
+      expect(outCanvas.pixel.r).toBe(105);
+      expect(media.seekTargets.length).toBe(seeks);
+      expect(rates).toEqual([0.25]);
+      expect(MockVideoFrame.closes).toBe(MockVideoFrame.constructions);
+    } finally {
+      playback.dispose();
+    }
+  });
+
+  test('R2 (issue 166): a decoder settled on a later window is sought to just before the required window', async () => {
+    const {
+      playback,
+      outCanvas,
+      media: decoder,
+    } = recoveryFixture('later window video');
+    try {
+      await playback.seek({ value: 0, rate: 30 });
+      const media = decoder();
+      media.presentationLag = true;
+      media.present(7.5 / 30);
+      // Decoding for a seek inside window 5 starts at a later key frame and shows frame 7.
+      // From before the window it starts early enough to show frame 5.
+      const inherited = Object.getOwnPropertyDescriptor(
+        MockMedia.prototype,
+        'currentTime'
+      );
+      if (!inherited?.get || !inherited.set)
+        throw new Error('MockMedia.currentTime is not an accessor');
+      const { get, set } = inherited;
+      Object.defineProperty(media, 'currentTime', {
+        configurable: true,
+        get: () => get.call(media) as number,
+        set: (value: number) => {
+          set.call(media, value);
+          media.presentedTime = value < 5 / 30 ? 5.5 / 30 : 7.5 / 30;
+          media.pixel = media.pixelAt?.(media.presentedTime) ?? media.pixel;
+        },
+      });
+      let plays = 0;
+      media.play = () => {
+        plays++;
+        media.paused = false;
+        return Promise.resolve();
+      };
+      MockVideoFrame.reset();
+
+      await playback.seek({ value: 5, rate: 30 });
+
+      expect(outCanvas.pixel.r).toBe(105);
+      expect(
+        playback.getState().diagnostics.some((d) => d.code === 'invalid-timing')
+      ).toBe(false);
+      // The last whole microsecond before 5/30 s. Nothing had to be played.
+      expect(media.seekTargets.at(-1)).toBe(0.166666);
+      expect(plays).toBe(0);
+      expect(media.paused).toBe(true);
+      expect(media.rvfcCallbacks.size).toBe(0);
+      expect(MockVideoFrame.closes).toBe(MockVideoFrame.constructions);
+    } finally {
+      playback.dispose();
+    }
+  });
+
+  test('R3 (issue 166): when neither step presents the frame, the decoder returns to the midpoint and the leaf is withheld', async () => {
+    const {
+      playback,
+      outCanvas,
+      media: decoder,
+    } = recoveryFixture('unrecoverable video');
+    const clock = installFakePresentClock();
+    try {
+      await playback.seek({ value: 0, rate: 30 });
+      const media = decoder();
+      media.presentationLag = true;
+      media.present(3.5 / 30); // playing never presents another frame
+      let plays = 0;
+      media.play = () => {
+        plays++;
+        media.paused = false;
+        return Promise.resolve();
+      };
+      MockVideoFrame.reset();
+
+      await playback.seek({ value: 5, rate: 30 });
+
+      expect(plays).toBe(2); // from the midpoint, then from before the window
+      // The midpoint of window 5, then the last microsecond before it, then the
+      // midpoint again so the decoder ends where a failed wait always left it.
+      const [midpoint, before, restored] = media.seekTargets.slice(-3);
+      expect(midpoint).toBeCloseTo(5.5 / 30, 9);
+      expect(before).toBe(0.166666);
+      expect(restored).toBe(midpoint);
+      expect(media.paused).toBe(true);
+      expect(media.playbackRate).toBe(1);
+      expect(outCanvas.pixel.r).toBe(0);
+      const issue = playback
+        .getState()
+        .diagnostics.find((d) => d.code === 'invalid-timing');
+      expect(issue?.message).toContain(
+        'Decoder presented window 3 instead of certified window 5'
+      );
+      expect(media.rvfcCallbacks.size).toBe(0);
+      expect(MockVideoFrame.closes).toBe(MockVideoFrame.constructions);
+    } finally {
+      clock.restore();
+      playback.dispose();
+    }
+  });
+
+  test('R4 (issue 166): a seek that supersedes a recovery pauses the decoder and restores its rate before the new seek runs', async () => {
+    const {
+      playback,
+      outCanvas,
+      media: decoder,
+    } = recoveryFixture('superseded recovery video');
+    try {
+      await playback.seek({ value: 0, rate: 30 });
+      const media = decoder();
+      media.presentationLag = true;
+      media.present(3.5 / 30);
+      media.play = () => {
+        media.paused = false; // plays, and presents nothing
+        return Promise.resolve();
+      };
+      MockVideoFrame.reset();
+
+      const superseded = playback.seek({ value: 5, rate: 30 });
+      await untilPlaying(media);
+      expect(media.playbackRate).toBe(0.25);
+
+      const next = playback.seek({ value: 9, rate: 30 });
+      expect(media.paused).toBe(true);
+      expect(media.playbackRate).toBe(1);
+      expect(media.rvfcCallbacks.size).toBe(0);
+
+      // From here the decoder presents the frame it is sought to.
+      media.presentationLag = false;
+      media.presentedTime = null;
+      await next;
+      await superseded;
+      expect(outCanvas.pixel.r).toBe(109);
+      expect(
+        playback.getState().diagnostics.some((d) => d.code === 'invalid-timing')
+      ).toBe(false);
+      expect(MockVideoFrame.closes).toBe(MockVideoFrame.constructions);
+    } finally {
+      playback.dispose();
+    }
+  });
+
+  test('R5 (issue 166): pausing an already paused timeline does not stop a recovery', async () => {
+    const {
+      playback,
+      outCanvas,
+      media: decoder,
+    } = recoveryFixture('paused during recovery video');
+    try {
+      await playback.seek({ value: 0, rate: 30 });
+      const media = decoder();
+      media.presentationLag = true;
+      media.present(3.5 / 30);
+      media.play = () => {
+        media.paused = false;
+        return Promise.resolve();
+      };
+      MockVideoFrame.reset();
+
+      const pending = playback.seek({ value: 5, rate: 30 });
+      await untilPlaying(media);
+      playback.pause();
+      expect(media.paused).toBe(false);
+
+      media.present(5.5 / 30);
+      await pending;
+      expect(outCanvas.pixel.r).toBe(105);
+      expect(media.paused).toBe(true);
+      expect(media.playbackRate).toBe(1);
+      expect(MockVideoFrame.closes).toBe(MockVideoFrame.constructions);
+    } finally {
+      playback.dispose();
+    }
+  });
 });
 
 describe('otio native playback regressions 5-9, clock and capability gate', () => {
