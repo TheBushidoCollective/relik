@@ -3261,7 +3261,10 @@ try {
     }
 
     // 3c: the network is down, so the server check fails. No reload happens and
-    // the card stays. Try again reloads once the network is back.
+    // the card stays. Try again recovers once the network is back: with one
+    // reload where the browser keeps a failed import for the page's life (the
+    // headless shell), and in place where it fetches the import again (Chrome
+    // on Linux CI, diagnostic run 43381985257). Never more than one reload.
     {
       const run = await runRelicPage(compareUrl, {
         viewport,
@@ -3297,10 +3300,17 @@ try {
         '3c: component ready after Try again'
       );
       const reloads = run.navigationUrls.length - 1;
-      assert.equal(
-        reloads,
-        1,
-        `3c: Try again should reload once when the network is back, saw ${reloads}`
+      assert.ok(
+        reloads <= 1,
+        `3c: Try again may reload at most once when the network is back, saw ${reloads}`
+      );
+      await waitUntil(
+        async () =>
+          (await usercontentTexts(run.sessionId, 'main.stage')).some((t) =>
+            t.includes('version two')
+          ),
+        15_000,
+        '3c: version two inside the frame after Try again'
       );
       assertNoKeyInReloads(run, '3c');
       await savePng(run.sessionId, '10-3c-network-retry.png');
