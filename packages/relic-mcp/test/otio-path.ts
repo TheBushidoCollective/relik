@@ -13937,7 +13937,10 @@ async function assessMovingWindowControls(
       })()`);
       const stopCast = await browser.startScreencast();
       const capture = await browser.evaluate<
-        MovingTrace & { paused: string }
+        MovingTrace & {
+          paused: string;
+          live: { x: number; y: number; width: number; height: number };
+        }
       >(`(async () => {
       const sleep = ms => { const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, ms); return promise; };
       const root = document.querySelector('.otio-view');
@@ -13954,6 +13957,18 @@ async function assessMovingWindowControls(
       while (!(Number(root.dataset.frame) >= 1) && performance.now() < deadline) await sleep(5);
       if (!(Number(root.dataset.frame) >= 1)) throw new Error('playback did not advance');
       await sleep(40);
+      // The canvas box is measured once playback is under way. Starting play removes a leftover
+      // scheduler diagnostic, which gives the stage back its row: run 5099c87d measured the box
+      // 397 px high before play and it was 442 px high during it, so the crop missed the left
+      // 33 px of the picture, including the marker in the still plates.
+      const live = (() => {
+        const canvas = document.querySelector('canvas.otio-canvas');
+        if (!(canvas instanceof HTMLCanvasElement)) throw new Error('canvas missing');
+        const r = canvas.getBoundingClientRect();
+        const width = Math.min(r.width, r.height * canvas.width / canvas.height);
+        const height = Math.min(r.height, r.width * canvas.height / canvas.width);
+        return {x:r.left + (r.width - width) / 2, y:r.top + (r.height - height) / 2, width, height};
+      })();
       globalThis.__otioProofTrace.setFault(${JSON.stringify(repetition === 4 ? 'skip-still' : 'none')});
       const start = await globalThis.__otioProofTrace.start();
       if (${repetition === 5}) {
@@ -13967,7 +13982,7 @@ async function assessMovingWindowControls(
       globalThis.__otioProofTrace.setFault('none');
       ${SETTLE_PAUSE_JS}
       const paused = await settlePause();
-      return {start, trace, paused};
+      return {start, trace, paused, live};
     })()`);
       const cast = await stopCast();
       const paused = capture.paused;
@@ -14009,7 +14024,8 @@ async function assessMovingWindowControls(
         });
         return { from, to, errors };
       });
-      const screen = await decodeScreencastFrames(cast, geometry);
+      const liveGeometry = { ...geometry, ...capture.live };
+      const screen = await decodeScreencastFrames(cast, liveGeometry);
       const matchPresentedCanvas = (timestamp: number, pixels: Uint8Array) => {
         let best: (typeof capture.trace.visual)[number] | null = null;
         let error = Infinity;
@@ -14140,6 +14156,7 @@ async function assessMovingWindowControls(
           capture,
           cast,
           geometry,
+          liveGeometry,
           elapsedMs,
           progress,
           stills,
