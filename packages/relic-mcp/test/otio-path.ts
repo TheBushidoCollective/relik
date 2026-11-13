@@ -307,7 +307,16 @@ async function rerunNaturalStarvation(
           : refused === null
             ? null
             : naturalStarvation(refused.events);
-      if (found === null) throw error;
+      if (found === null) {
+        // Not starvation: the failure stands, and the trace it was judged on is kept so a
+        // reader of the receipt sees what the stage saw.
+        if (refused !== null)
+          await writeFile(
+            join(shotDir, `${label}-failed-trace.json`),
+            JSON.stringify({ label, attempt, trace: refused })
+          ).catch(() => undefined);
+        throw error;
+      }
       evidence.push(found);
       await writeFile(
         join(shotDir, `${label}-natural-starvation-attempt${attempt}.json`),
@@ -10649,6 +10658,13 @@ function assertIndependentCarrier(
   );
   let seen = 0;
   let previous: number | null = null;
+  // Where the carrier sits against the window, for the failure message: a coverage gap is told
+  // apart by whether the nulls lie before the first carrier sample, after the last, or inside.
+  let samples = 0;
+  let nullsBefore = 0;
+  let nullsAfter = 0;
+  let firstCarrier: number | null = null;
+  let lastCarrier: number | null = null;
   for (const chunk of trace.audio) {
     assert.ok(chunk.witness?.length === 2, 'carrier channels missing');
     assert.equal(
@@ -10664,6 +10680,8 @@ function assertIndependentCarrier(
     for (let i = 0; i < chunk.channels[0]!.length; i++) {
       const frame = carrierFrame(chunk, i, witness);
       if (frame === null) {
+        if (previous === null) nullsBefore++;
+        else nullsAfter++;
         assert.equal(
           previous,
           null,
@@ -10678,13 +10696,16 @@ function assertIndependentCarrier(
           'independent carrier skipped or repeated a sample'
         );
       previous = frame;
+      lastCarrier = frame;
+      firstCarrier ??= frame;
       if (frame >= first && frame < end) seen++;
     }
+    samples += chunk.channels[0]!.length;
   }
   assert.equal(
     seen,
     end - first,
-    'independent carrier does not cover scheduled PCM'
+    `independent carrier does not cover scheduled PCM (window ${first}..${end}, ${samples} captured samples in ${trace.audio.length} chunks, carrier ${firstCarrier}..${lastCarrier}, ${nullsBefore} samples without carrier before its first, ${nullsAfter} after)`
   );
 }
 
