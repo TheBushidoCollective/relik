@@ -1108,11 +1108,17 @@ const cdp = connectPipe(
 await attestBrowserHeadless(cdp, launch);
 
 // A request rule for the browser proof. `times` fails the first N matching
-// requests, or every matching request with 'all'. `hold` keeps a failing
-// response unanswered until releaseHeld, so a proof can act while it waits.
+// requests, every matching request with 'all', or with 'page' every matching
+// request until the page next navigates. 'page' is a chunk a stale shell asks
+// for after a deploy removed it: it fails however often the page asks, and a
+// reload stops asking for it. A browser that keeps a failed import for the
+// page's life asks once; one that fetches it again asks every time, so a
+// count of one cannot stand for the missing chunk there. `hold` keeps the
+// first failing response unanswered until releaseHeld, so a proof can act
+// while it waits; failures after the release are answered at once.
 interface BlockRule {
   urlPattern: string;
-  times: number | 'all';
+  times: number | 'all' | 'page';
   hold?: boolean;
 }
 
@@ -1278,14 +1284,32 @@ async function runRelicPage(
     });
   }
 
+  // Every main-frame navigation, so a proof counts reloads and checks what each
+  // reloaded URL carried.
+  const navigationUrls: string[] = [];
+  const stopNav = cdp.onEvent((e) => {
+    if (e.method !== 'Page.frameNavigated' || e.sessionId !== sessionId) return;
+    const frame = (e.params as { frame: { url: string; parentId?: string } })
+      .frame;
+    if (frame.parentId === undefined && frame.url !== 'about:blank') {
+      navigationUrls.push(frame.url);
+    }
+  });
+
   // Network rules fail matching requests and count what was really failed.
   // setBlocks swaps the rules mid-page; Fetch patterns stay as enabled here.
   let activeRules: BlockRule[] = options.blocks ?? [];
-  const remaining = new Map<string, number | 'all'>();
+  const remaining = new Map<string, number | 'all' | 'page'>();
+  // A 'page' rule lasts through the navigation current when it was set. A rule
+  // given at open is set before the open's own navigation, which counts as it.
+  let pageRuleThrough = 1;
+  let holdOpen = true;
   const resetRules = (next: BlockRule[]): void => {
     activeRules = next;
     remaining.clear();
     for (const rule of next) remaining.set(rule.urlPattern, rule.times);
+    pageRuleThrough = Math.max(navigationUrls.length, 1);
+    holdOpen = true;
   };
   resetRules(activeRules);
   const blocks: Record<string, number> = {};
@@ -1311,7 +1335,10 @@ async function runRelicPage(
     );
     const left =
       rule === undefined ? undefined : remaining.get(rule.urlPattern);
-    const failIt = left === 'all' || (typeof left === 'number' && left > 0);
+    const failIt =
+      left === 'all' ||
+      (left === 'page' && navigationUrls.length <= pageRuleThrough) ||
+      (typeof left === 'number' && left > 0);
     if (rule !== undefined && failIt) {
       if (typeof left === 'number') remaining.set(rule.urlPattern, left - 1);
       blocks[rule.urlPattern] = (blocks[rule.urlPattern] ?? 0) + 1;
@@ -1327,24 +1354,13 @@ async function runRelicPage(
         )
         .catch(() => {});
     };
-    if (failIt && rule?.hold === true) heldAnswers.push(answer);
+    if (failIt && rule?.hold === true && holdOpen) heldAnswers.push(answer);
     else answer();
   });
   const releaseHeld = (): void => {
+    holdOpen = false;
     for (const answer of heldAnswers.splice(0)) answer();
   };
-
-  // Every main-frame navigation, so a proof counts reloads and checks what each
-  // reloaded URL carried.
-  const navigationUrls: string[] = [];
-  const stopNav = cdp.onEvent((e) => {
-    if (e.method !== 'Page.frameNavigated' || e.sessionId !== sessionId) return;
-    const frame = (e.params as { frame: { url: string; parentId?: string } })
-      .frame;
-    if (frame.parentId === undefined && frame.url !== 'about:blank') {
-      navigationUrls.push(frame.url);
-    }
-  });
 
   let isolatedContextId: number | undefined;
   const stopContextListener = cdp.onEvent((e) => {
@@ -3466,7 +3482,7 @@ try {
         45_000,
         '3e: current HTML version rendered'
       );
-      run.setBlocks([{ urlPattern: compilerPattern, times: 1 }]);
+      run.setBlocks([{ urlPattern: compilerPattern, times: 'page' }]);
       await clickSelector(run.sessionId, '.action-history');
       await waitUntil(
         async () => (run.blocks[compilerPattern] ?? 0) >= 1,
@@ -3620,7 +3636,9 @@ try {
         45_000,
         '3f: current HTML version rendered'
       );
-      run.setBlocks([{ urlPattern: compilerPattern, times: 1, hold: true }]);
+      run.setBlocks([
+        { urlPattern: compilerPattern, times: 'page', hold: true },
+      ]);
       await clickSelector(run.sessionId, '.action-history');
       await waitUntil(
         async () => (run.blocks[compilerPattern] ?? 0) >= 1,
@@ -3667,10 +3685,9 @@ try {
         0,
         `3f: a stale compare reloaded the page after the reader left it (${reloads} reloads)`
       );
-      assert.equal(
-        run.blocks[compilerPattern] ?? 0,
-        1,
-        `3f: expected the held compiler fetch to be intercepted once, saw ${run.blocks[compilerPattern] ?? 0}`
+      assert.ok(
+        (run.blocks[compilerPattern] ?? 0) >= 1,
+        `3f: the held compiler fetch was never intercepted, saw ${run.blocks[compilerPattern] ?? 0}`
       );
       assert.equal(
         await evalMain<string>(
@@ -3745,7 +3762,9 @@ try {
         45_000,
         '3g: current HTML version rendered'
       );
-      run.setBlocks([{ urlPattern: compilerPattern, times: 1, hold: true }]);
+      run.setBlocks([
+        { urlPattern: compilerPattern, times: 'page', hold: true },
+      ]);
       await clickSelector(run.sessionId, '.version-option[data-version="1"]');
       await waitUntil(
         async () => (run.blocks[compilerPattern] ?? 0) >= 1,
@@ -3783,10 +3802,9 @@ try {
         0,
         `3g: a stale version switch reloaded the page after the reader chose the current version (${reloads} reloads)`
       );
-      assert.equal(
-        run.blocks[compilerPattern] ?? 0,
-        1,
-        `3g: expected the held compiler fetch to be intercepted once, saw ${run.blocks[compilerPattern] ?? 0}`
+      assert.ok(
+        (run.blocks[compilerPattern] ?? 0) >= 1,
+        `3g: the held compiler fetch was never intercepted, saw ${run.blocks[compilerPattern] ?? 0}`
       );
       assert.ok(
         (await usercontentTexts(run.sessionId, 'main.stage')).some((t) =>
@@ -3864,7 +3882,9 @@ try {
         45_000,
         '3h: current HTML version rendered'
       );
-      run.setBlocks([{ urlPattern: compilerPattern, times: 1, hold: true }]);
+      run.setBlocks([
+        { urlPattern: compilerPattern, times: 'page', hold: true },
+      ]);
       await clickSelector(run.sessionId, '.action-history');
       await waitUntil(
         async () => (run.blocks[compilerPattern] ?? 0) >= 1,
@@ -3921,10 +3941,9 @@ try {
         0,
         `3h: the pending compare failure reloaded the page over a live draft (${reloads} reloads)`
       );
-      assert.equal(
-        run.blocks[compilerPattern] ?? 0,
-        1,
-        `3h: expected the held compiler fetch to be intercepted once, saw ${run.blocks[compilerPattern] ?? 0}`
+      assert.ok(
+        (run.blocks[compilerPattern] ?? 0) >= 1,
+        `3h: the held compiler fetch was never intercepted, saw ${run.blocks[compilerPattern] ?? 0}`
       );
       assert.ok(
         errorSeen,
