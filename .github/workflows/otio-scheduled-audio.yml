@@ -11,11 +11,13 @@ name: otio-scheduled-audio
 # and does block: it gates a merge, and deploy.yml calls it as its gate.
 #
 # Nothing depends on this workflow. It is a separate run, so a deploy never
-# waits on it and a rollback queued behind a deploy is not held up by it. A
-# red run here says the stages did not pass on that runner, and the uploaded
-# receipts say why. It is not a reason to rerun until green, and it is not
-# evidence that playback regressed until the receipts show a failure that is
-# not the runner interrupting playback.
+# waits on it and a rollback queued behind a deploy is not held up by it. It
+# does not turn the commit red either: the stages step is continue-on-error,
+# so a runner that interrupts playback shows as a green run with a warning
+# annotation and a failure summary, and the uploaded receipts say why. A
+# warning here is not a reason to rerun until green, and it is not evidence
+# that playback regressed until the receipts show a failure that is not the
+# runner interrupting playback.
 on:
   pull_request:
   # The same pushes that deploy.yml deploys.
@@ -91,6 +93,9 @@ jobs:
       # scheduled-audio stage has passed.
       - name: OTIO scheduled-audio stages
         id: stages
+        # Reports, does not block. See the header: a failing stage must not put
+        # a red X on main for a check nothing depends on.
+        continue-on-error: true
         env:
           RELIC_OTIO_SHOTS_DIR: ${{ github.workspace }}/otio-path-shots
           RELIC_OTIO_PATH_SCOPE: scheduled-audio
@@ -125,6 +130,9 @@ jobs:
               "$OTIO_BROWSER_PROOF_DIR/otio-scheduled-audio.log" | cut -c1-300 | tail -60 || true
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ steps.stages.outcome }}" != "success" ]; then
+            echo "::warning title=Legacy scheduled-audio stages did not pass::Reports only, does not block. Receipts are in the otio-scheduled-audio-linux artifact."
+          fi
 
       - name: Upload scheduled-audio receipts
         if: always()
