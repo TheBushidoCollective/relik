@@ -199,6 +199,42 @@ export const COMMENT_ANCHOR_MAX_PAGE = 10_000;
 export const COMMENT_ANCHOR_MAX_SECONDS = 86_400;
 
 /**
+ * Longest replacement a suggestion may carry, in UTF-8 bytes.
+ *
+ * The sealed comment is capped at 8,192 base64url characters, which leaves
+ * about 6,116 bytes of plaintext JSON. A 2,048-byte replacement plus a
+ * 512-byte struck quote plus two 128-byte context runs and the fallback body
+ * fits with room for JSON escaping of ordinary text. A replacement made of
+ * characters JSON escapes can still overflow, and that is refused by the
+ * ciphertext cap rather than truncated.
+ */
+export const SUGGESTION_REPLACEMENT_LIMIT_BYTES = 2048;
+
+/**
+ * How a suggestion edits its anchor. `replace` swaps the anchored text, with an
+ * empty replacement meaning delete. `after` and `before` insert next to it and
+ * leave the anchored text in place.
+ */
+export type SuggestionMode = 'replace' | 'after' | 'before';
+
+/** The sealed `suggestion` field. `v` is the payload version. */
+export interface SuggestionPayload {
+  readonly v: 1;
+  readonly mode: SuggestionMode;
+  readonly replacement: string;
+}
+
+/**
+ * What the publisher did with a suggestion, sealed on the acknowledgement
+ * comment that addresses it. Only a comment authored by the publisher counts.
+ */
+export type SuggestionOutcome =
+  | 'accepted'
+  | 'superseded'
+  | 'declined'
+  | 'deferred';
+
+/**
  * What a comment carries.
  *
  * `display_name` aliases the commenter's identity for presentation and never
