@@ -75,6 +75,18 @@ variable "max_instances" {
   default     = 4
 }
 
+variable "timeout_seconds" {
+  description = "Maximum request duration in seconds; null leaves the Cloud Run default unchanged."
+  type        = number
+  default     = null
+}
+
+variable "max_request_concurrency" {
+  description = "Maximum concurrent requests per instance; null leaves the Cloud Run default unchanged."
+  type        = number
+  default     = null
+}
+
 variable "cpu" {
   description = "CPU per instance."
   type        = string
