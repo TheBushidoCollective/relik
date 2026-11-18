@@ -512,7 +512,7 @@ function parseCommentFields(parsed: unknown): CommentPlaintext {
   const anchor = parseAnchor(fields['anchor']);
   const suggestion = parseSuggestion(fields['suggestion']);
   const outcome = parseSuggestionOutcome(fields['suggestion_outcome']);
-  if (fields['suggestion'] != null) {
+  if (fields['suggestion'] != null && suggestion !== 'unsupported') {
     if (
       (anchor?.kind !== 'source' && anchor?.kind !== 'unsupported') ||
       addresses != null

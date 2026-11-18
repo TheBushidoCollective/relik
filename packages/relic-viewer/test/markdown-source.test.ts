@@ -263,6 +263,19 @@ describe('source-mapped markdown', () => {
       renderMarkdown(input)
     );
   });
+
+  test('renders a long wrapped list item in linear time and still matches renderMarkdown', () => {
+    const small = `- a\n${' b\n'.repeat(50)}- c\n`;
+    expect(withoutSegments(renderMarkdownWithSource(small).html)).toBe(
+      renderMarkdown(small)
+    );
+    // Joining after every continuation line copied the whole item each time:
+    // 32,000 lines took about ten seconds. Linear takes a fraction of a second.
+    const large = `- a\n${' b\n'.repeat(32_000)}`;
+    const started = performance.now();
+    renderMarkdownWithSource(large);
+    expect(performance.now() - started).toBeLessThan(3000);
+  }, 30_000);
 });
 
 describe('code source segment', () => {

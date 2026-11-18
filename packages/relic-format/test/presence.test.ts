@@ -147,6 +147,11 @@ describe('presence keys and sealed frames', () => {
       t: Date.now() - 30_001,
     });
     expect(await openPresence(keys.seal, keys.room, stale)).toBeUndefined();
+    const future = await sealPresence(keys.seal, keys.room, {
+      ...frame(),
+      t: Date.now() + 30_001,
+    });
+    expect(await openPresence(keys.seal, keys.room, future)).toBeUndefined();
   });
 
   test('refuses malformed values and oversized names or frames before sealing', async () => {

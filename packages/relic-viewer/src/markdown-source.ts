@@ -293,26 +293,27 @@ function parse(source: string, value: Mapped): MappedBlock[] {
     if (/^\s*([-*+]|\d+\.)\s+/.test(line.text)) {
       flush();
       const ordered = /^\s*\d+\./.test(line.text);
-      const items: Mapped[] = [];
+      const parts: Mapped[][] = [];
       while (index < lines.length) {
         const current = (lines[index] as Line).value;
         const marker = /^\s*([-*+]|\d+\.)\s+/.exec(current.text);
         if (marker !== null) {
-          items.push(slice(current, marker[0].length));
+          parts.push([slice(current, marker[0].length)]);
         } else if (
           /^\s+\S/.test(current.text) &&
           !/^\s*(>|```)/.test(current.text)
         ) {
-          const previous = items.length - 1;
-          items[previous] = joinWithSpaces(source, [
-            items[previous] as Mapped,
-            trim(current),
-          ]);
+          (parts[parts.length - 1] as Mapped[]).push(trim(current));
         } else {
           break;
         }
         index++;
       }
+      // Joined once per item: joining after every continuation line copies the
+      // whole accumulated item each time, which is quadratic in a wrapped item.
+      const items: Mapped[] = parts.map((item) =>
+        item.length === 1 ? (item[0] as Mapped) : joinWithSpaces(source, item)
+      );
       out.push({ kind: 'list', ordered, items });
       continue;
     }

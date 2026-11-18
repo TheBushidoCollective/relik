@@ -393,6 +393,31 @@ describe('strict parsing', () => {
     expect(opened.unsupported_fields).toEqual(['extra']);
   });
 
+  test('drops and reports a future-version suggestion whatever its anchor, rather than refusing the comment', async () => {
+    // The anchor and addresses rules describe a suggestion this reader
+    // understands. A newer writer's payload is a version gap, not tampering.
+    const key = await deriveCommentKey(generateKey());
+    for (const extra of [
+      {},
+      { anchor: { kind: 'quote', exact: 'x' } },
+      { anchor: { kind: 'page', page: 3 } },
+      { addresses: 'c_123' },
+    ]) {
+      const sealed = await sealRaw(
+        key,
+        JSON.stringify({
+          body: 'hi',
+          display_name: null,
+          suggestion: { v: 2 },
+          ...extra,
+        })
+      );
+      const opened = await decryptComment(key, sealed);
+      expect(opened.body).toBe('hi');
+      expect(opened.unsupported_fields).toEqual(['suggestion']);
+    }
+  });
+
   test('round trips a text mark and a pin, and omits a null mark from the envelope', async () => {
     const key = await deriveCommentKey(generateKey());
     const text = {

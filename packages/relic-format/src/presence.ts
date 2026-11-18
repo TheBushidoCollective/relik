@@ -119,7 +119,7 @@ export async function openPresence(
     }
     const json = padding === -1 ? plaintext : plaintext.subarray(0, padding);
     const parsed: unknown = JSON.parse(decoder.decode(json));
-    if (!isPresence(parsed) || Date.now() - parsed.t > MAX_AGE_MS) {
+    if (!isPresence(parsed) || Math.abs(Date.now() - parsed.t) > MAX_AGE_MS) {
       return undefined;
     }
     return parsed;
