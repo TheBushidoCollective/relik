@@ -256,7 +256,8 @@ export class PresenceClient {
       `/api/presence/${this.keys.room}`,
       this.options.serviceOrigin
     );
-    url.protocol = 'wss:';
+    // An http origin is the loopback test or dev service; production is https.
+    url.protocol = url.protocol === 'http:' ? 'ws:' : 'wss:';
     let socket: PresenceSocket;
     try {
       socket = this.env.socket(url.toString());

@@ -225,6 +225,34 @@ describe('presence client', () => {
     expect(env.sockets).toHaveLength(2);
   });
 
+  test('uses ws for an http service origin (loopback or dev) and wss for https', async () => {
+    const keys = await derivePresenceKeys(keyBytes, 'relic-one');
+    for (const [origin, scheme] of [
+      ['http://127.0.0.1:4001', 'ws'],
+      ['https://relik.test', 'wss'],
+    ] as const) {
+      const env = new FakeEnvironment();
+      const client = new PresenceClient({
+        serviceOrigin: origin,
+        relicId: 'relic-one',
+        keyBytes,
+        version: 4,
+        name: 'Alice',
+        color: 2,
+        access,
+        environment: env,
+        onChange: () => {},
+        onPosted: () => {},
+      });
+      await client.start();
+      const host = new URL(origin).host;
+      expect(env.sockets[0]!.url).toBe(
+        `${scheme}://${host}/api/presence/${keys.room}`
+      );
+      client.dispose();
+    }
+  });
+
   test('sends one equally sized sealed frame each second only while suggesting and visible', async () => {
     const { client, env } = await makeClient();
     const socket = env.sockets[0]!;
