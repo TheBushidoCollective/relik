@@ -24,6 +24,11 @@ import type { DecisionList } from '@relic/format';
 import type { CoverKind, CoverReport } from '@relic/format/cover';
 import { MNEMONIC_WORDS } from '@relic/format/mnemonic';
 import {
+  APPLY_SUGGESTIONS_TOOL_DEFINITION,
+  APPLY_SUGGESTIONS_TOOL_NAME,
+  callApplySuggestions,
+} from './apply-suggestions.ts';
+import {
   type CommentAnchorInput,
   type CommentRecord,
   type CommentsSummary,
@@ -2071,6 +2076,7 @@ export async function handleMessage(
             ENROLL_TOOL_DEFINITION,
             CONFIRM_TOOL_DEFINITION,
             BIND_TOOL_DEFINITION,
+            APPLY_SUGGESTIONS_TOOL_DEFINITION,
           ],
         },
       };
@@ -2216,6 +2222,10 @@ async function callTool(
 
   if (params['name'] === BIND_TOOL_NAME) {
     return callBindOwner(id, params, deps);
+  }
+
+  if (params['name'] === APPLY_SUGGESTIONS_TOOL_NAME) {
+    return callApplySuggestions(id, params, deps, toolError);
   }
 
   if (params['name'] !== TOOL_NAME) {
