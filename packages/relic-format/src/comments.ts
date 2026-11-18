@@ -523,7 +523,6 @@ function parseCommentFields(parsed: unknown): CommentPlaintext {
     }
     if (
       suggestion !== undefined &&
-      suggestion !== 'unsupported' &&
       anchor.kind === 'source' &&
       suggestion.mode === 'replace' &&
       suggestion.replacement === anchor.exact
