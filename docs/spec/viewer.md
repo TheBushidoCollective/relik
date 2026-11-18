@@ -634,6 +634,35 @@ The frame receives locators and comment IDs, never bodies or keys. Placement ack
 - **When this browser is not keeping the key, the reader is told before they leave.** Storage can be absent or refuse to write, and in that case following the link in the same tab loses the key for good. The composer says so, and advises typing the code from the email right here, or opening the link in a new tab and coming back to the one that still holds the key in memory. Discovering it afterwards is the §6.1 missing-key screen, which is honest and much too late.
 **Two authentication paths exist and only one of them is a browser.** A verified session is the human path. The publish token is the agent and publisher path, attributed as `publisher`, and it is not offered here: the token lives on the publishing machine and a field for it on this origin would be the key-entry surface §6.4 bans, aimed at a different secret. A comment attributed to `publisher` is marked as having published the relic, which is true by construction rather than by claim, since only the machine that published it holds a token.
 
+#### Suggested edits (specified, viewer UI not yet built)
+
+**Reading and Suggesting.** Reading mode shows pending suggestions as tracked replacements, deletions, and insertions. A card and the thread show the author, literal struck and inserted text, replies, and the state below. When Markdown syntax is involved, the card also shows the source. Identical suggestions share a mark and identify the other authors. A conflict shows its default member inline with a count; its card lists every member. There is no conflict chooser.
+
+In Reading mode, **Show suggestions applied** renders a read-only preview with non-conflicting edits and the default member of each conflict applied. Edited stretches are faintly marked. Selecting edited text offers Reply and Copy text, not a new comment or suggestion. A link overlapping an applied suggestion has no destination and carries the title "Link added by a suggestion".
+
+**Who can suggest.** Suggesting is offered only on the current version of a Markdown or code relic, to a reader with a verified session, when the source is valid UTF-8, at most 1 MiB, and contains neither CR nor NUL. The toggle gives the reason when unavailable. Signed-out readers can see tracked changes and cards; Suggest edit takes them to sign-in. Historical versions are read-only and say "Suggestions can only be made on the current version." A publisher has no additional browser controls to accept or decline.
+
+**Drafts.** A selection offers Suggest edit. Typing over text strikes it and inserts the replacement; Backspace or Delete at the draft edge extends the strike. A Markdown draft stays inside one block; code may span lines. Enter inserts a blank line in a Markdown paragraph and a newline in code or a fenced block; it is refused elsewhere. Tab works only in code. Counters show the 512-byte struck and 2048-byte inserted limits. Leaving the block or document, turning Suggesting off, or pressing Cmd/Ctrl+Enter commits the draft; Escape cancels it. An author edits their own pending suggestion by typing, can withdraw or delete it, and sees a receipt with Undo. Typing inside another reader's insertion is refused: "That text is <name>'s suggestion. Reply to it instead."
+
+**Refusals preserve the draft.** Edits across formatting or Markdown blocks, oversized text, forbidden line breaks, and `\|` in a table cell are refused. A passage without a unique source match says "This passage repeats in the source. Select a longer passage." If the layout cannot be matched to source, Suggesting turns off with "This document's layout could not be matched to its source." An unexpected page mutation that cannot be reverted stops Suggesting with "Suggesting stopped because the page changed unexpectedly." A failed post remains "Not posted" with Retry and Discard; leaving with an open or failed draft prompts the reader. At most 200 pending suggestions are painted per version; the remainder stay in the thread with "N more suggestions are in the comments panel."
+
+**States and authority.** An outcome written by the publisher takes precedence over a resolution or reply. A reader's reply never settles a suggestion. An outcome from anyone other than the publisher is shown as an ordinary reply.
+
+| State | Card text |
+|---|---|
+| accepted | "Accepted in vN", with the publisher's note |
+| superseded | "Superseded", with the note |
+| declined | "Not taken", with the note |
+| deferred | "Seen by the publisher, not applied yet", with the note |
+| withdrawn by its author | "Withdrawn" |
+| closed by the publisher without an outcome | "Closed by the publisher" |
+| publisher replied without an outcome | "The publisher replied", with the note |
+| pending on the current version | Inline tracked change |
+| unanswered on an older version | "No answer from the publisher is visible to you" |
+| deleted by its author | Gone |
+
+Suggestions remain on their original version after republish; the new version starts without them. Private readers see only comments on versions they can access, so an answer on a newer version may be invisible to them. Suggestion text enters the page as text, never markup. The applied preview is not the published file.
+
 ### 6.7 The landing page at `/` and `/install`
 
 **The one screen on this origin aimed at a publisher rather than a recipient, and it exists because `/` was broken.** The route served the viewer shell itself, fed a placeholder relic id where a real one belongs, so the homepage rendered as a relic that does not exist rather than as an introduction. The PWA manifest's `start_url` is `/`, so an installed app launched cold landed on that same broken screen, which is the opposite of the neutral page §6.4's PWA case calls for. One fix closes both: `/` serves a landing page, and the cold launch now lands on a page that says what Relic is, which is the honest answer for somebody holding no link at all. On 2026-11-05 the page was rebuilt as a marketing and install page at Jason Waldrip's request.
