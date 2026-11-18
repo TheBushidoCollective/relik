@@ -20,6 +20,7 @@ import type {
   MarkdownDelimiterPair,
   SourceSegment,
 } from './markdown-source.ts';
+import type { LocalPresence } from './presence.ts';
 
 export interface SuggestControllerOptions {
   readonly view: ReadyView;
@@ -37,12 +38,20 @@ export interface SuggestControllerOptions {
   readonly repaint: () => void;
   readonly signIn: () => void;
   readonly open: (id: string, target?: HTMLElement) => void;
+  readonly onPresenceChange?: () => void;
+  readonly onPosted?: (commentId: string) => void;
 }
 
 export interface SuggestController {
   readonly suggesting: boolean;
   readonly draftOpen: boolean;
   readonly applied: boolean;
+  readonly currentVersion: boolean;
+  presenceDocument():
+    | { root: HTMLElement; segments: readonly SourceSegment[] }
+    | undefined;
+  presenceState(): LocalPresence;
+  refreshOnPresence(): void;
   sync(): void;
   repaint(ordinary: () => void): void;
   card(entry: CommentEntry): HTMLElement | null;
@@ -122,6 +131,78 @@ function restoreOffsets(
   selection?.removeAllRanges();
   selection?.addRange(range);
 }
+function presencePoint(
+  root: HTMLElement,
+  segments: readonly SourceSegment[],
+  pending: readonly { readonly id: string; readonly end: number }[],
+  draft: SuggestDraft | null,
+  node: Node,
+  offset: number,
+  side: 'start' | 'end'
+): number | undefined {
+  if (!root.contains(node)) return undefined;
+  const parent = node.nodeType === 1 ? (node as Element) : node.parentElement;
+  const insertion = parent?.closest<HTMLElement>('ins[data-sg]');
+  if (insertion && root.contains(insertion)) {
+    if (insertion.hasAttribute('data-sg-draft')) return draft?.end;
+    return pending.find((item) => item.id === insertion.getAttribute('data-sg'))
+      ?.end;
+  }
+  const all = Array.from(root.querySelectorAll<HTMLElement>('[data-seg]'));
+  if (root.hasAttribute('data-seg')) all.unshift(root);
+  let element = parent?.closest<HTMLElement>('[data-seg]') ?? null;
+  let local: number | undefined;
+  try {
+    if (!element || !root.contains(element)) {
+      let before: HTMLElement | undefined;
+      let after: HTMLElement | undefined;
+      for (const candidate of all) {
+        const probe = root.ownerDocument.createRange();
+        probe.selectNodeContents(candidate);
+        const comparison = probe.comparePoint(node, offset);
+        if (comparison < 0) {
+          after = candidate;
+          break;
+        }
+        if (comparison > 0) before = candidate;
+        else {
+          element = candidate;
+          break;
+        }
+      }
+      if (!element) {
+        element =
+          (side === 'start' ? (after ?? before) : (before ?? after)) ?? null;
+        if (element) {
+          const segment = segments[all.indexOf(element)];
+          if (segment) local = element === after ? 0 : segment.text.length;
+        }
+      }
+    }
+    if (!element) return undefined;
+    const segment = segments[all.indexOf(element)];
+    if (!segment) return undefined;
+    if (local === undefined) {
+      const range = root.ownerDocument.createRange();
+      range.setStart(element, 0);
+      range.setEnd(node, offset);
+      const fragment = range.cloneContents();
+      for (const excluded of fragment.querySelectorAll(
+        'ins[data-sg], [data-sg-decoration]'
+      ))
+        excluded.remove();
+      local = fragment.textContent?.length ?? 0;
+    }
+    if (local < 0 || local > segment.text.length) return undefined;
+    return segment.kind === 'join'
+      ? local === 0
+        ? segment.start
+        : segment.end
+      : segment.start + local;
+  } catch {
+    return undefined;
+  }
+}
 
 /** This module is the only lazy entry point for the suggestion feature. */
 export function mountSuggestionController(
@@ -157,6 +238,26 @@ export function mountSuggestionController(
   let draftSequence = 0;
   let activeCommit: WritableCommit | undefined;
   let previous: CommentPlaintext | undefined;
+  let modeOffPending = false;
+  let modeOffTimer: number | undefined;
+  const presenceChange = (): void => options.onPresenceChange?.();
+  const releaseModeOff = (): void => {
+    window.clearTimeout(modeOffTimer);
+    modeOffTimer = undefined;
+    if (!modeOffPending) return;
+    modeOffPending = false;
+    presenceChange();
+  };
+  const setEditorSuggesting = (on: boolean): boolean => {
+    if (!editor) return false;
+    if (on) releaseModeOff();
+    else if (editor.suggesting && editor.draft && options.onPosted)
+      modeOffPending = true;
+    const changed = editor.setSuggesting(on);
+    if (!changed || (!on && modeOffPending && !activeCommit)) releaseModeOff();
+    presenceChange();
+    return changed;
+  };
   const editorChrome = doc.createElement('div');
   editorChrome.className = 'sg-editor-chrome';
   host.appendChild(editorChrome);
@@ -314,10 +415,21 @@ export function mountSuggestionController(
   ): void => {
     if (destroyed) return;
     if (result.kind === 'not-posted') {
+      releaseModeOff();
       showFailure(result.reason);
       return;
     }
-    if (result.kind !== 'posted') return;
+    if (result.kind !== 'posted') {
+      releaseModeOff();
+      return;
+    }
+    if (result.commentId !== null) options.onPosted?.(result.commentId);
+    if (modeOffPending) {
+      // Keep the presence mode through the next one-second tick so the
+      // confirmed post leaves before the sender stops announcing itself.
+      if (result.commentId === null) releaseModeOff();
+      else modeOffTimer = window.setTimeout(releaseModeOff, 1000);
+    }
     failureHost.replaceChildren();
     const sent = activeCommit;
     const old = previous;
@@ -432,6 +544,7 @@ export function mountSuggestionController(
             if (sequence === draftSequence) transport?.discard();
           });
         }
+        presenceChange();
       },
       onCommit: (commit) => {
         ++draftSequence;
@@ -464,7 +577,7 @@ export function mountSuggestionController(
   const sync = (): void => {
     const session = options.session();
     if (session.kind !== 'verified' && editor?.suggesting)
-      editor.setSuggesting(false);
+      setEditorSuggesting(false);
     const cipher = options.cipher();
     if (!transport && cipher) {
       transport = new SuggestTransport({
@@ -487,6 +600,7 @@ export function mountSuggestionController(
     );
     ensureEditor();
     updateControls();
+    presenceChange();
   };
 
   const repaint = (ordinary: () => void): void => {
@@ -518,8 +632,9 @@ export function mountSuggestionController(
     };
     if (editor) editor.updatePending(views.pending, draw);
     else draw();
-    if (failed && editor?.suggesting) editor.setSuggesting(false);
+    if (failed && editor?.suggesting) setEditorSuggesting(false);
     updateControls();
+    presenceChange();
   };
 
   const stopInputDuringSend = (event: Event): void => {
@@ -546,7 +661,8 @@ export function mountSuggestionController(
       if (!host.isConnected || editor?.draft) return;
       if (latest !== null && latest > currentVersion) {
         currentVersion = latest;
-        if (editor?.suggesting) editor.setSuggesting(false);
+        if (editor?.suggesting) setEditorSuggesting(false);
+        presenceChange();
       }
       await options.refresh();
     });
@@ -572,6 +688,8 @@ export function mountSuggestionController(
       event.returnValue = '';
     }
   };
+  const selectionChanged = (): void => presenceChange();
+  doc.addEventListener('selectionchange', selectionChanged);
   doc.addEventListener('visibilitychange', hidden);
   window.addEventListener('focus', activity);
   window.addEventListener('pagehide', pagehide);
@@ -588,6 +706,51 @@ export function mountSuggestionController(
     get applied() {
       return applied;
     },
+    get currentVersion() {
+      return view.version === currentVersion;
+    },
+    presenceDocument() {
+      return root ? { root, segments } : undefined;
+    },
+    presenceState() {
+      const suggesting = !!editor?.suggesting || modeOffPending;
+      const draft = editor?.draft ?? null;
+      const selection = suggesting ? doc.getSelection() : null;
+      const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+      const pending = views?.pending ?? [];
+      const start =
+        root && range
+          ? presencePoint(
+              root,
+              segments,
+              pending,
+              draft,
+              range.startContainer,
+              range.startOffset,
+              'start'
+            )
+          : undefined;
+      const end =
+        root && range
+          ? presencePoint(
+              root,
+              segments,
+              pending,
+              draft,
+              range.endContainer,
+              range.endOffset,
+              'end'
+            )
+          : undefined;
+      return {
+        suggesting,
+        ...(start === undefined || end === undefined
+          ? {}
+          : { caret: { s: start, e: end } }),
+        ...(draft === null ? {} : { typing: { s: draft.start, e: draft.end } }),
+      };
+    },
+    refreshOnPresence: activity,
     sync,
     repaint,
     card(entry) {
@@ -618,7 +781,7 @@ export function mountSuggestionController(
       }
       if (on && applied) this.setApplied(false);
       const saved = root ? selectionOffsets(root, range) : null;
-      if (editor?.setSuggesting(on) && on && root) {
+      if (setEditorSuggesting(on) && on && root) {
         root.focus({ preventScroll: true });
         restoreOffsets(root, saved);
       }
@@ -626,7 +789,7 @@ export function mountSuggestionController(
     },
     setApplied(on) {
       if (on && (!sourceResult.ok || !root || !original)) return;
-      if (editor?.suggesting && !editor.setSuggesting(false)) return;
+      if (editor?.suggesting && !setEditorSuggesting(false)) return;
       applied = on;
       if (original) original.hidden = on;
       if (!on) {
@@ -662,11 +825,13 @@ export function mountSuggestionController(
         return false;
       }
       destroyed = true;
+      window.clearTimeout(modeOffTimer);
       editor?.destroy();
       root?.removeEventListener('beforeinput', stopInputDuringSend, true);
       root?.removeEventListener('paste', stopInputDuringSend, true);
       root?.removeEventListener('drop', stopInputDuringSend, true);
       root?.removeEventListener('keydown', stopInputDuringSend, true);
+      doc.removeEventListener('selectionchange', selectionChanged);
       doc.removeEventListener('visibilitychange', hidden);
       window.removeEventListener('focus', activity);
       window.removeEventListener('pagehide', pagehide);
