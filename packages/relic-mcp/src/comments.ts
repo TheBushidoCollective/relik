@@ -1315,8 +1315,9 @@ export function describeAnchor(anchor: CommentAnchor | null): string {
       return `on ${where} (${span}, relic version ${anchor.relic_version})`;
     }
 
+    case 'source':
     case 'unsupported':
-      return `carrying a mark this client does not understand (declared kind "${anchor.declared}")`;
+      return `carrying a mark this client does not understand (declared kind "${anchor.kind === 'source' ? 'source' : anchor.declared}")`;
   }
 }
 

@@ -1404,17 +1404,18 @@ export async function resolveAnchors(
       });
       continue;
     }
-    if (anchor.kind === 'unsupported') {
-      const futureOtio = anchor.declared.startsWith('otio-v');
+    if (anchor.kind === 'unsupported' || anchor.kind === 'source') {
+      const declared = anchor.kind === 'source' ? 'source' : anchor.declared;
+      const futureOtio = declared.startsWith('otio-v');
       updatedComments.push({
         ...comment,
         resolved: {
           kind: 'unsupported',
           status: 'unresolvable',
-          declared: anchor.declared,
+          declared,
           explanation: futureOtio
-            ? `Unsupported OTIO anchor version "${anchor.declared}". A newer anchor version is not evidence the comment was tampered with.`
-            : `Unsupported anchor kind "${anchor.declared}".`,
+            ? `Unsupported OTIO anchor version "${declared}". A newer anchor version is not evidence the comment was tampered with.`
+            : `Unsupported anchor kind "${declared}".`,
         },
       });
       continue;
