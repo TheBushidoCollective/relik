@@ -473,6 +473,13 @@ function applyStrike(value: Mapped, context: InlineContext): Mapped {
   });
 }
 
+// The same placeholder markdown.ts uses for code spans. Built through RegExp
+// from a constant so the control character never sits in a regex literal.
+const SENTINEL = '\u0000';
+const SENTINEL_CODE = new RegExp(`${SENTINEL}(\\d+)${SENTINEL}`, 'g');
+const SENTINEL_ANY = new RegExp(SENTINEL, 'g');
+const NUL_OR_CR = new RegExp(`[\\r${SENTINEL}]`, 'g');
+
 // Keep these passes in the same order as inline() in markdown.ts. In particular,
 // they operate on escaped HTML, including markup emitted by earlier passes.
 function inline(value: Mapped, context: InlineContext): Mapped {
@@ -550,7 +557,7 @@ function inline(value: Mapped, context: InlineContext): Mapped {
   out = applyStrike(out, context);
 
   input = out;
-  out = replaceMapped(input, /\u0000(\d+)\u0000/g, (match) =>
+  out = replaceMapped(input, SENTINEL_CODE, (match) =>
     concat([
       literal('<code>'),
       code[Number(match[1])] ?? empty(0),
@@ -558,7 +565,7 @@ function inline(value: Mapped, context: InlineContext): Mapped {
     ])
   );
   input = out;
-  return replaceMapped(input, /\u0000/g, () => empty(0));
+  return replaceMapped(input, SENTINEL_ANY, () => empty(0));
 }
 
 interface RenderContext {
@@ -749,7 +756,7 @@ export function renderMarkdownWithSource(source: string): MarkdownWithSource {
 export function codeSegments(source: string): readonly SourceSegment[] {
   return [
     {
-      text: source.replace(/[\r\u0000]/g, ''),
+      text: source.replace(NUL_OR_CR, ''),
       start: 0,
       end: source.length,
       block: 0,

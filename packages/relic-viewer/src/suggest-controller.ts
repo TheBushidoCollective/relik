@@ -101,11 +101,11 @@ function restoreOffsets(
     root,
     NodeFilter.SHOW_TEXT
   );
-  let node: Node | null;
+  let node: Node | null = walker.nextNode();
   let count = 0;
   let start: [Node, number] | undefined;
   let end: [Node, number] | undefined;
-  while ((node = walker.nextNode())) {
+  for (; node; node = walker.nextNode()) {
     const element = node.parentElement;
     if (element?.closest('ins[data-sg], [data-sg-decoration]')) continue;
     const length = node.textContent?.length ?? 0;
