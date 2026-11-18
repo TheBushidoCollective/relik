@@ -72,6 +72,7 @@ import {
 import type { LinkRequestOutcome } from './passkey-common.ts';
 import type { DecisionPanelHandle } from './decision-panel.ts';
 import type { SuggestController } from './suggest-controller.ts';
+import type { PresenceController } from './presence-controller.ts';
 import {
   type DecisionAccess,
   type DecisionTally,
@@ -6161,6 +6162,11 @@ export function buildThread(
   let suggestionLoading: Promise<SuggestController | undefined> | undefined;
   let suggestionDisposed = false;
   let suggestionPainting = false;
+  let presence: PresenceController | undefined;
+  let presenceLoading: Promise<void> | undefined;
+  let presenceReader: string | undefined;
+  let presenceGeneration = 0;
+  let presencePageHidden = false;
   const textSuggestions = view.route === 'markdown' || view.route === 'code';
   const sourceIssue = (() => {
     if (!textSuggestions)
@@ -6229,6 +6235,7 @@ export function buildThread(
     suggestionNotice
   );
   const updateSuggestionStub = (): void => {
+    syncPresence();
     if (suggestionController) {
       suggestionController.sync();
       return;
@@ -6276,6 +6283,8 @@ export function buildThread(
           },
           repaint: () => paintMarks(lastEntries),
           signIn: () => setOpen(true),
+          onPresenceChange: () => syncPresence(),
+          onPosted: (id) => presence?.announcePosted(id),
           open: (id, target) => {
             const box = target
               ? anchorFromClientRect(
@@ -6301,6 +6310,97 @@ export function buildThread(
       });
     return suggestionLoading;
   };
+  const stopPresence = (): void => {
+    presenceGeneration++;
+    presence?.dispose();
+    presence = undefined;
+    presenceReader = undefined;
+    presenceSlot.replaceChildren();
+    presenceSlot.className = '';
+  };
+  const syncPresence = (): void => {
+    const stage = host;
+    const reader = session.kind === 'verified' ? session.email : undefined;
+    if (
+      !stage ||
+      !reader ||
+      !textSuggestions ||
+      suggestionDisposed ||
+      presencePageHidden ||
+      view.version !== view.currentVersion ||
+      suggestionController?.currentVersion === false
+    ) {
+      if (presence || presenceLoading) stopPresence();
+      return;
+    }
+    if (presence && presenceReader !== reader) stopPresence();
+    if (presence) {
+      presence.sync();
+      return;
+    }
+    if (presenceLoading) return;
+    const generation = ++presenceGeneration;
+    presenceLoading = Promise.all([
+      import('./presence-controller.ts'),
+      ensureSuggestion(),
+      keyFor(view.version),
+    ])
+      .then(([module, suggestion, keyBytes]) => {
+        if (
+          generation !== presenceGeneration ||
+          host !== stage ||
+          session.kind !== 'verified' ||
+          session.email !== reader ||
+          suggestionDisposed ||
+          !suggestion ||
+          !suggestion.currentVersion
+        )
+          return;
+        presenceSlot.className = '';
+        presence = module.mountPresenceController({
+          serviceOrigin: deps.serviceOrigin,
+          relicId,
+          keyBytes,
+          version: view.version,
+          name: readDisplayName() || null,
+          color: Math.floor(Math.random() * 4) + 1,
+          stage: stage.querySelector<HTMLElement>('.stage') ?? stage,
+          chip: presenceSlot,
+          suggestion,
+          access: () => ({
+            signedIn: session.kind === 'verified' && session.email === reader,
+            rendererClass: view.route,
+            currentVersion: suggestion.currentVersion,
+          }),
+        });
+        presenceReader = reader;
+      })
+      .catch(() => {
+        if (generation !== presenceGeneration) return;
+        presenceSlot.className = 'sg-presence is-off';
+        presenceSlot.textContent = 'Live presence unavailable';
+      })
+      .finally(() => {
+        presenceLoading = undefined;
+        if (generation !== presenceGeneration) syncPresence();
+      });
+  };
+  const presenceWindow =
+    textSuggestions &&
+    typeof window !== 'undefined' &&
+    typeof window.addEventListener === 'function'
+      ? window
+      : undefined;
+  const hidePresence = (): void => {
+    presencePageHidden = true;
+    stopPresence();
+  };
+  const showPresence = (): void => {
+    presencePageHidden = false;
+    syncPresence();
+  };
+  presenceWindow?.addEventListener('pagehide', hidePresence);
+  presenceWindow?.addEventListener('pageshow', showPresence);
   readingMode.addEventListener('click', () =>
     suggestionController?.setSuggesting(false)
   );
@@ -7405,6 +7505,7 @@ export function buildThread(
         sessionGeneration++;
         session = { kind: 'anonymous' };
         section.dataset['session'] = session.kind;
+        updateSuggestionStub();
         paintComposer();
         repaintCardPermissions?.();
       } else if (refusal.code === 'comment_forbidden') {
@@ -8871,6 +8972,7 @@ export function buildThread(
             sessionGeneration++;
             session = { kind: 'anonymous' };
             section.dataset['session'] = session.kind;
+            updateSuggestionStub();
             paintComposer();
             repaintDeleteControls();
             repaintCardPermissions?.();
@@ -9068,6 +9170,9 @@ export function buildThread(
     dispose: () => {
       if (suggestionController && !suggestionController.destroy()) return false;
       suggestionDisposed = true;
+      stopPresence();
+      presenceWindow?.removeEventListener('pagehide', hidePresence);
+      presenceWindow?.removeEventListener('pageshow', showPresence);
       return true;
     },
     ready,
@@ -9082,6 +9187,7 @@ export function buildThread(
         frameRects.clear();
         pendingImagePlaced = false;
         disposeHostConcealment();
+        stopPresence();
       }
       host = next;
       popover = popoverLayer(next);
@@ -9130,6 +9236,7 @@ export function buildThread(
       }
       paintMarks(lastEntries);
       marks.attach(next);
+      syncPresence();
       if (
         lastEntries.some((entry) => entry.kind === 'open' && entry.suggestion)
       )

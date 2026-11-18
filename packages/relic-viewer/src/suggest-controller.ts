@@ -238,6 +238,7 @@ export function mountSuggestionController(
   let draftSequence = 0;
   let activeCommit: WritableCommit | undefined;
   let previous: CommentPlaintext | undefined;
+  let committingOnPageHide = false;
   let modeOffPending = false;
   let modeOffTimer: number | undefined;
   const presenceChange = (): void => options.onPresenceChange?.();
@@ -423,6 +424,7 @@ export function mountSuggestionController(
       releaseModeOff();
       return;
     }
+    if (!activeCommit) return;
     if (result.commentId !== null) options.onPosted?.(result.commentId);
     if (modeOffPending) {
       // Keep the presence mode through the next one-second tick so the
@@ -563,6 +565,14 @@ export function mountSuggestionController(
         previous =
           priorEntry?.kind === 'open' ? plaintext(priorEntry) : undefined;
         activeCommit = commit;
+        if (committingOnPageHide) {
+          // The live draft was already prepared on its last edit. Reuse it so
+          // a ready keepalive request starts inside the lifecycle event.
+          void transport
+            .flushOnPageHide()
+            .then((result) => finish(result, saved));
+          return;
+        }
         void transport
           .prepare(commit)
           .then((result) =>
@@ -669,7 +679,15 @@ export function mountSuggestionController(
   };
   const flush = (): void => {
     if (!host.isConnected) return;
-    if (editor?.draft && !editor.commit()) return;
+    if (editor?.draft) {
+      committingOnPageHide = true;
+      try {
+        editor.commit();
+      } finally {
+        committingOnPageHide = false;
+      }
+      return;
+    }
     void transport
       ?.flushOnPageHide()
       .then((result) => finish(result, lastDraft));

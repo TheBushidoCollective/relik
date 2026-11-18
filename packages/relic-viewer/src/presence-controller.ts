@@ -27,6 +27,7 @@ export interface PresenceControllerOptions {
 }
 
 export interface PresenceController {
+  readonly ready: Promise<void>;
   sync(): void;
   announcePosted(commentId: string): void;
   dispose(): void;
@@ -100,8 +101,9 @@ export function mountPresenceController(
     schedule();
   };
   sync();
-  void client.start();
+  const ready = client.start();
   return {
+    ready,
     sync,
     announcePosted(commentId) {
       if (disposed) return;

@@ -7039,6 +7039,7 @@ fieldset.delete-choice legend { margin-bottom: 0.4rem; padding: 0; font-weight: 
   color: var(--surface);
   font: 600 0.62rem / 1 var(--mono);
 }
+.presence-stage { position: relative; }
 .presence-layer {
   position: absolute;
   inset: 0;
