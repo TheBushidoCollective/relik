@@ -6342,18 +6342,16 @@ export function buildThread(
     const generation = ++presenceGeneration;
     presenceLoading = Promise.all([
       import('./presence-controller.ts'),
-      ensureSuggestion(),
       keyFor(view.version),
     ])
-      .then(([module, suggestion, keyBytes]) => {
+      .then(([module, keyBytes]) => {
         if (
           generation !== presenceGeneration ||
           host !== stage ||
           session.kind !== 'verified' ||
           session.email !== reader ||
           suggestionDisposed ||
-          !suggestion ||
-          !suggestion.currentVersion
+          suggestionController?.currentVersion === false
         )
           return;
         presenceSlot.className = '';
@@ -6366,11 +6364,13 @@ export function buildThread(
           color: Math.floor(Math.random() * 4) + 1,
           stage: stage.querySelector<HTMLElement>('.stage') ?? stage,
           chip: presenceSlot,
-          suggestion,
+          suggestion: () => suggestionController,
+          ensureSuggestion,
+          refresh,
           access: () => ({
             signedIn: session.kind === 'verified' && session.email === reader,
             rendererClass: view.route,
-            currentVersion: suggestion.currentVersion,
+            currentVersion: suggestionController?.currentVersion ?? true,
           }),
         });
         presenceReader = reader;

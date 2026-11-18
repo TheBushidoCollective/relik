@@ -241,6 +241,8 @@ export function mountSuggestionController(
   let committingOnPageHide = false;
   let modeOffPending = false;
   let modeOffTimer: number | undefined;
+  let pendingPresenceRefresh = false;
+  let presenceRefreshTimer: number | undefined;
   const presenceChange = (): void => options.onPresenceChange?.();
   const releaseModeOff = (): void => {
     window.clearTimeout(modeOffTimer);
@@ -391,6 +393,7 @@ export function mountSuggestionController(
       if (transport?.discard()) {
         failureHost.replaceChildren();
         activeCommit = undefined;
+        resumePresenceRefresh();
       }
     });
     panel.append(title);
@@ -436,6 +439,7 @@ export function mountSuggestionController(
     const sent = activeCommit;
     const old = previous;
     activeCommit = undefined;
+    resumePresenceRefresh();
     void options.refresh();
     if (!draft || !editor || !sent) return;
     editor.showReceipt({
@@ -543,7 +547,10 @@ export function mountSuggestionController(
         } else {
           transport?.setDraftOpen(false);
           queueMicrotask(() => {
-            if (sequence === draftSequence) transport?.discard();
+            if (sequence === draftSequence) {
+              transport?.discard();
+              resumePresenceRefresh();
+            }
           });
         }
         presenceChange();
@@ -586,6 +593,11 @@ export function mountSuggestionController(
 
   const sync = (): void => {
     const session = options.session();
+    if (session.kind !== 'verified') {
+      pendingPresenceRefresh = false;
+      window.clearTimeout(presenceRefreshTimer);
+      presenceRefreshTimer = undefined;
+    }
     if (session.kind !== 'verified' && editor?.suggesting)
       setEditorSuggesting(false);
     const cipher = options.cipher();
@@ -610,6 +622,7 @@ export function mountSuggestionController(
     );
     ensureEditor();
     updateControls();
+    resumePresenceRefresh();
     presenceChange();
   };
 
@@ -677,6 +690,38 @@ export function mountSuggestionController(
       await options.refresh();
     });
   };
+  function resumePresenceRefresh(): void {
+    if (
+      destroyed ||
+      !pendingPresenceRefresh ||
+      !transport ||
+      !host.isConnected ||
+      doc.visibilityState !== 'visible' ||
+      editor?.draft ||
+      activeCommit
+    )
+      return;
+    const next = transport.nextActivityRefreshAt;
+    const delay =
+      next === null ? 0 : Math.max(0, next - (options.deps.now ?? Date.now)());
+    if (delay > 0) {
+      if (presenceRefreshTimer === undefined) {
+        presenceRefreshTimer = window.setTimeout(() => {
+          presenceRefreshTimer = undefined;
+          resumePresenceRefresh();
+        }, delay);
+      }
+      return;
+    }
+    window.clearTimeout(presenceRefreshTimer);
+    presenceRefreshTimer = undefined;
+    pendingPresenceRefresh = false;
+    activity();
+  }
+  const refreshVisible = (): void => {
+    if (pendingPresenceRefresh) resumePresenceRefresh();
+    else activity();
+  };
   const flush = (): void => {
     if (!host.isConnected) return;
     if (editor?.draft) {
@@ -694,7 +739,7 @@ export function mountSuggestionController(
   };
   const hidden = (): void => {
     if (doc.visibilityState === 'hidden') flush();
-    else activity();
+    else refreshVisible();
   };
   const pagehide = (): void => flush();
   const beforeunload = (event: BeforeUnloadEvent): void => {
@@ -709,7 +754,7 @@ export function mountSuggestionController(
   const selectionChanged = (): void => presenceChange();
   doc.addEventListener('selectionchange', selectionChanged);
   doc.addEventListener('visibilitychange', hidden);
-  window.addEventListener('focus', activity);
+  window.addEventListener('focus', refreshVisible);
   window.addEventListener('pagehide', pagehide);
   window.addEventListener('beforeunload', beforeunload);
 
@@ -768,7 +813,10 @@ export function mountSuggestionController(
         ...(draft === null ? {} : { typing: { s: draft.start, e: draft.end } }),
       };
     },
-    refreshOnPresence: activity,
+    refreshOnPresence() {
+      pendingPresenceRefresh = true;
+      resumePresenceRefresh();
+    },
     sync,
     repaint,
     card(entry) {
@@ -844,6 +892,7 @@ export function mountSuggestionController(
       }
       destroyed = true;
       window.clearTimeout(modeOffTimer);
+      window.clearTimeout(presenceRefreshTimer);
       editor?.destroy();
       root?.removeEventListener('beforeinput', stopInputDuringSend, true);
       root?.removeEventListener('paste', stopInputDuringSend, true);
@@ -851,7 +900,7 @@ export function mountSuggestionController(
       root?.removeEventListener('keydown', stopInputDuringSend, true);
       doc.removeEventListener('selectionchange', selectionChanged);
       doc.removeEventListener('visibilitychange', hidden);
-      window.removeEventListener('focus', activity);
+      window.removeEventListener('focus', refreshVisible);
       window.removeEventListener('pagehide', pagehide);
       window.removeEventListener('beforeunload', beforeunload);
       editorChrome.remove();
