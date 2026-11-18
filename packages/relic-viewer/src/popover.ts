@@ -649,6 +649,10 @@ export interface SelectionOfferOptions {
   readonly canCopy: boolean;
   readonly onCopy: () => void;
   readonly onComment: () => void;
+  readonly onSuggest?: () => void;
+  readonly onReply?: () => void;
+  readonly allowComment?: boolean;
+  readonly reason?: string;
   readonly onCancel: () => void;
 }
 
@@ -675,15 +679,41 @@ export function selectionOffer(options: SelectionOfferOptions): HTMLElement {
       })
     );
   }
-  panel.appendChild(
-    popoverButton({
-      label: 'Comment',
-      className: 'popover-comment',
-      kind: 'primary',
-      ariaLabel: `Comment on "${shortQuote(options.text)}"`,
-      onSelect: options.onComment,
-    })
-  );
+  if (options.onReply || options.allowComment !== false) {
+    panel.appendChild(
+      popoverButton(
+        options.onReply
+          ? {
+              label: 'Reply',
+              className: 'popover-reply',
+              kind: 'primary',
+              onSelect: options.onReply,
+            }
+          : {
+              label: 'Comment',
+              className: 'popover-comment',
+              kind: 'primary',
+              ariaLabel: `Comment on "${shortQuote(options.text)}"`,
+              onSelect: options.onComment,
+            }
+      )
+    );
+  }
+  if (options.onSuggest) {
+    panel.appendChild(
+      popoverButton({
+        label: 'Suggest edit',
+        className: 'popover-suggest',
+        onSelect: options.onSuggest,
+      })
+    );
+  }
+  if (options.reason) {
+    const reason = document.createElement('p');
+    reason.className = 'popover-reason';
+    reason.textContent = options.reason;
+    panel.appendChild(reason);
+  }
   panel.appendChild(
     popoverButton({
       label: '\u00d7',

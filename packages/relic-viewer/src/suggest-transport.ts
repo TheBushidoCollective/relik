@@ -1,5 +1,6 @@
 import {
   COMMENT_CIPHERTEXT_LIMIT_CHARS,
+  CommentTooLargeError,
   decryptComment,
   encryptComment,
   parseRelicId,
@@ -35,6 +36,7 @@ export type TransportFailure =
   | 'network'
   | 'server'
   | 'malformed-thread'
+  | 'ciphertext-too-large'
   | 'seal'
   | 'sending';
 export type TransportResult =
@@ -149,7 +151,9 @@ export class SuggestTransport {
   prepare(change: WriteCommit): Promise<TransportResult> {
     if (
       this.inFlight ||
-      (this.active?.phase === 'not-posted' && this.active.reason !== 'seal')
+      (this.active?.phase === 'not-posted' &&
+        this.active.reason !== 'seal' &&
+        this.active.reason !== 'ciphertext-too-large')
     ) {
       return Promise.resolve({ kind: 'not-posted', reason: 'sending' });
     }
@@ -175,7 +179,11 @@ export class SuggestTransport {
       const ciphertext = await this.options.seal(change.plaintext);
       if (this.active !== active) return { kind: 'superseded' };
       if (ciphertext.length > COMMENT_CIPHERTEXT_LIMIT_CHARS)
-        throw new Error('Ciphertext exceeds the comment limit');
+        throw new CommentTooLargeError(
+          'ciphertext',
+          ciphertext.length,
+          COMMENT_CIPHERTEXT_LIMIT_CHARS
+        );
       active.body = JSON.stringify(
         change.existingId === null
           ? { ciphertext, version: this.options.version }
@@ -183,11 +191,15 @@ export class SuggestTransport {
       );
       active.phase = 'ready';
       return { kind: 'ready' };
-    } catch {
+    } catch (error) {
       if (this.active !== active) return { kind: 'superseded' };
+      const reason =
+        error instanceof CommentTooLargeError && error.field === 'ciphertext'
+          ? 'ciphertext-too-large'
+          : 'seal';
       active.phase = 'not-posted';
-      active.reason = 'seal';
-      return { kind: 'not-posted', reason: 'seal' };
+      active.reason = reason;
+      return { kind: 'not-posted', reason };
     }
   }
 

@@ -354,11 +354,11 @@ describe('version comparison affordance', () => {
     );
 
     const docBody = getBody();
-    // Main's public render replaces the body's children with the taskbar and
-    // the relic row. CSS and measurements assume both sit directly in the body.
+    // The mode bar belongs between the taskbar and the relic row.
     const children = docBody.children.map((child) => child.tagName);
-    expect(children).toEqual(['HEADER', 'DIV']);
+    expect(children).toEqual(['HEADER', 'DIV', 'DIV']);
     expect(docBody.children[0]?.className).toBe('bar');
+    expect(docBody.children[1]?.className).toBe('sg-strip');
     expect(withClass(docBody, 'stage-code')).toHaveLength(1);
     expect(
       docBody.children.some(

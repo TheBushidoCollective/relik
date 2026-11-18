@@ -71,6 +71,7 @@ import {
 } from './copy-link.ts';
 import type { LinkRequestOutcome } from './passkey-common.ts';
 import type { DecisionPanelHandle } from './decision-panel.ts';
+import type { SuggestController } from './suggest-controller.ts';
 import {
   type DecisionAccess,
   type DecisionTally,
@@ -3856,7 +3857,8 @@ export function commentRow(
   unplaceable = false,
   addressed?: AddressedBy | null,
   replies: HTMLElement[] = [],
-  isReply = false
+  isReply = false,
+  suggestionCard?: HTMLElement | null
 ): HTMLElement {
   const row = document.createElement('li');
   row.className =
@@ -3930,7 +3932,9 @@ export function commentRow(
   }
 
   const resolvedAddressed =
-    addressed ?? (entry.kind === 'open' ? entry.addressed : null);
+    entry.kind === 'open' && entry.suggestion
+      ? null
+      : (addressed ?? (entry.kind === 'open' ? entry.addressed : null));
   if (resolvedAddressed !== null && resolvedAddressed !== undefined) {
     const addressedBadge = document.createElement('span');
     addressedBadge.className = 'comment-badge comment-badge-addressed';
@@ -3960,7 +3964,10 @@ export function commentRow(
   if (entry.kind === 'open') {
     const body = document.createElement('div');
     body.className = 'comment-body';
-    body.innerHTML = renderMarkdown(entry.body);
+    if (entry.suggestion) {
+      if (suggestionCard) body.appendChild(suggestionCard);
+      else body.textContent = 'This passage cannot be found in this version.';
+    } else body.innerHTML = renderMarkdown(entry.body);
     row.appendChild(body);
   } else if (entry.kind === 'sealed') {
     row.appendChild(
@@ -4046,6 +4053,8 @@ interface ThreadHandle {
   readonly tab: HTMLElement;
   /** The divider between the relic and the sidebar. */
   readonly resizer: HTMLElement;
+  readonly suggestionBar?: HTMLElement;
+  readonly dispose: () => boolean;
   /** Opens or closes the sidebar beside the relic. */
   readonly toggle: () => void;
   /**
@@ -4469,6 +4478,14 @@ export interface MarkDeps {
     box: AnchorBox | undefined,
     options?: ComposeOptions
   ) => boolean;
+  readonly suggestionSelection?: (range: Range) => {
+    readonly applied: boolean;
+    readonly suggesting: boolean;
+    readonly canSuggest: boolean;
+    readonly replyId: string | null;
+  };
+  readonly suggestSelection?: (range: Range) => void;
+  readonly replyToSuggestion?: (id: string, box: AnchorBox) => void;
 }
 
 /** What a composer opened over the page is told beyond where it goes. */
@@ -4825,6 +4842,10 @@ export function buildMarkControls(deps: MarkDeps): MarkControls {
     readonly text: string;
     readonly canCopy: boolean;
     readonly deselect: () => void;
+    readonly range?: Range;
+    readonly applied?: boolean;
+    readonly replyId?: string | null;
+    readonly canSuggest?: boolean;
   }): void => {
     const surface = host;
     if (surface === undefined) return;
@@ -4868,6 +4889,32 @@ export function buildMarkControls(deps: MarkDeps): MarkControls {
         dismiss();
         aim(offered.target);
       },
+      ...(offered.canSuggest && offered.range
+        ? {
+            onSuggest: () => {
+              dismiss();
+              deps.suggestSelection?.(offered.range!);
+            },
+          }
+        : {}),
+      ...(offered.applied
+        ? {
+            allowComment: false,
+            reason:
+              'This view is read-only. Reply to a suggestion to discuss it.',
+            ...(offered.replyId
+              ? {
+                  onReply: () => {
+                    dismiss();
+                    deps.replyToSuggestion?.(
+                      offered.replyId!,
+                      offered.anchorBox
+                    );
+                  },
+                }
+              : {}),
+          }
+        : {}),
       onCancel: () => {
         dismiss();
         offered.deselect();
@@ -4892,6 +4939,11 @@ export function buildMarkControls(deps: MarkDeps): MarkControls {
       return;
     }
     const range = selection.getRangeAt(0);
+    const suggestion = deps.suggestionSelection?.(range);
+    if (suggestion?.suggesting) {
+      dismiss();
+      return;
+    }
     if (!surface.contains(range.commonAncestorContainer)) {
       dismiss();
       return;
@@ -4905,11 +4957,12 @@ export function buildMarkControls(deps: MarkDeps): MarkControls {
     // it succeeded. A button that anchors to a position the reader did not
     // select is worse than no button: the chip names their words either way,
     // so the only place the difference shows is the mark, after posting.
-    const target = captureSelectionQuote(surface, range, selection);
-    if (target === null) {
+    const captured = captureSelectionQuote(surface, range, selection);
+    if (captured === null && !suggestion?.applied) {
       dismiss();
       return;
     }
+    const target: CommentAnchor = captured ?? { kind: 'text', quote };
 
     dismiss();
     const rect = range.getBoundingClientRect();
@@ -4922,10 +4975,15 @@ export function buildMarkControls(deps: MarkDeps): MarkControls {
       anchorBox: anchorFromClientRect(rect, box, surface),
       text: quote,
       canCopy: true,
+      ...(suggestion?.canSuggest ? { range: range.cloneRange() } : {}),
+      applied: suggestion?.applied ?? false,
+      replyId: suggestion?.replyId ?? null,
+      canSuggest: suggestion?.canSuggest ?? false,
       deselect: () => {
         window.getSelection()?.removeAllRanges();
       },
     });
+    if (suggestion?.applied) return;
 
     // Keyboard and sidebar affordance
     const qa = document.createElement('button');
@@ -6034,6 +6092,40 @@ export function buildThread(
       openComposer(anchor, targetBox, options);
       return true;
     },
+    suggestionSelection: (range) => {
+      const selectedRoot = host?.querySelector(
+        view.route === 'code' ? 'pre.code-body' : 'article.prose'
+      );
+      return {
+        applied: suggestionController?.applied ?? false,
+        suggesting: suggestionController?.suggesting ?? false,
+        canSuggest:
+          sourceIssue === null &&
+          !!selectedRoot?.contains(range.commonAncestorContainer),
+        replyId: suggestionController?.selectedSuggestion(range) ?? null,
+      };
+    },
+    suggestSelection: (range) => {
+      if (session.kind !== 'verified') {
+        setOpen(true);
+        return;
+      }
+      void ensureSuggestion(range).then((controller) => {
+        if (!controller) return;
+        const selected = window.getSelection();
+        controller.setSuggesting(
+          true,
+          selected?.rangeCount ? selected.getRangeAt(0) : range
+        );
+      });
+    },
+    replyToSuggestion: (id, box) => {
+      cardForId(id, box, true);
+      popover
+        ?.current()
+        ?.querySelector<HTMLButtonElement>('.popover-reply')
+        ?.click();
+    },
   });
 
   section.append(
@@ -6065,6 +6157,164 @@ export function buildThread(
   // held by paintMarks. Only this snapshot can distinguish a missing parent
   // from one that is deliberately hidden on another revision.
   let allEntries: readonly CommentEntry[] = [];
+  let suggestionController: SuggestController | undefined;
+  let suggestionLoading: Promise<SuggestController | undefined> | undefined;
+  let suggestionDisposed = false;
+  let suggestionPainting = false;
+  const textSuggestions = view.route === 'markdown' || view.route === 'code';
+  const sourceIssue = (() => {
+    if (!textSuggestions)
+      return 'Suggestions are available on markdown and code.';
+    if (view.version !== view.currentVersion)
+      return 'Suggestions can only be made on the current version.';
+    const source = view.document;
+    if (!source || source.truncated || source.bytes.length > 1_048_576)
+      return 'Suggesting is off: suggestions work on files up to 1 MiB.';
+    try {
+      const text = new TextDecoder('utf-8', { fatal: true }).decode(
+        source.bytes
+      );
+      if (/[\r\0]/.test(text))
+        return 'Suggesting is off: this file contains carriage returns (CR) or NUL characters, which a suggestion can’t point at.';
+    } catch {
+      return 'Suggesting is off: this file is not valid UTF-8.';
+    }
+    return null;
+  })();
+  const suggestionBar = document.createElement('div');
+  suggestionBar.className = 'sg-strip';
+  const modeGroup = document.createElement('div');
+  modeGroup.className = 'sg-seg';
+  modeGroup.setAttribute('role', 'group');
+  modeGroup.setAttribute('aria-label', 'Reading mode');
+  const readingMode = document.createElement('button');
+  readingMode.type = 'button';
+  readingMode.dataset['sgReading'] = '';
+  readingMode.textContent = 'Reading';
+  readingMode.setAttribute('aria-pressed', 'true');
+  const suggestingMode = document.createElement('button');
+  suggestingMode.type = 'button';
+  suggestingMode.dataset['sgSuggesting'] = '';
+  suggestingMode.textContent = 'Suggesting';
+  suggestingMode.setAttribute('aria-pressed', 'false');
+  suggestingMode.disabled = true;
+  modeGroup.append(readingMode, suggestingMode);
+  const appliedMode = document.createElement('button');
+  appliedMode.type = 'button';
+  appliedMode.className = 'sg-switch';
+  appliedMode.dataset['sgApplied'] = '';
+  appliedMode.setAttribute('role', 'switch');
+  appliedMode.setAttribute('aria-checked', 'false');
+  const switchBox = document.createElement('span');
+  switchBox.className = 'sg-switch-box';
+  switchBox.setAttribute('aria-hidden', 'true');
+  const appliedLabel = document.createElement('span');
+  appliedLabel.textContent = 'Show suggestions applied';
+  appliedMode.append(switchBox, appliedLabel);
+  const presenceSlot = document.createElement('span');
+  presenceSlot.dataset['sgPresence'] = '';
+  const suggestionCount = document.createElement('span');
+  suggestionCount.className = 'sg-strip-meta';
+  suggestionCount.dataset['sgCount'] = '';
+  suggestionCount.textContent = '0 suggestions';
+  suggestionCount.title = 'Hover over a change to see its thread.';
+  const suggestionNotice = document.createElement('span');
+  suggestionNotice.className = 'sg-strip-meta';
+  suggestionNotice.dataset['sgNotice'] = '';
+  suggestionBar.append(
+    modeGroup,
+    appliedMode,
+    presenceSlot,
+    suggestionCount,
+    suggestionNotice
+  );
+  const updateSuggestionStub = (): void => {
+    if (suggestionController) {
+      suggestionController.sync();
+      return;
+    }
+    const reason =
+      sourceIssue ??
+      (session.kind === 'verified' ? null : 'Sign in to suggest edits.');
+    suggestingMode.disabled = reason !== null;
+    suggestingMode.title = reason ?? '';
+    suggestionNotice.textContent = reason ?? '';
+  };
+  const ensureSuggestion = (
+    initialSelection?: Range
+  ): Promise<SuggestController | undefined> => {
+    if (suggestionController) return Promise.resolve(suggestionController);
+    if (suggestionLoading) return suggestionLoading;
+    const stage = host;
+    if (!stage || suggestionDisposed) return Promise.resolve(undefined);
+    suggestionLoading = import('./suggest-controller.ts')
+      .then(({ mountSuggestionController }) => {
+        if (suggestionDisposed || host !== stage) return undefined;
+        const controller = mountSuggestionController({
+          view,
+          relicId,
+          deps,
+          host: stage,
+          bar: suggestionBar,
+          ...(initialSelection ? { initialSelection } : {}),
+          session: () => session,
+          cipher: () => cipher,
+          entries: () => allEntries,
+          displayName: () => readDisplayName() || null,
+          refresh,
+          readCurrentVersion: async () => {
+            try {
+              const result = await decisionAccess(
+                view,
+                relicId,
+                deps
+              ).listDecisions();
+              return result.kind === 'listed' ? result.currentVersion : null;
+            } catch {
+              return null;
+            }
+          },
+          repaint: () => paintMarks(lastEntries),
+          signIn: () => setOpen(true),
+          open: (id, target) => {
+            const box = target
+              ? anchorFromClientRect(
+                  target.getBoundingClientRect(),
+                  stage.getBoundingClientRect(),
+                  stage
+                )
+              : undefined;
+            cardForId(id, box, true);
+          },
+        });
+        suggestionController = controller;
+        paintMarks(lastEntries);
+        rerenderRows?.();
+        controller.restoreSelection();
+        return controller;
+      })
+      .catch(() => {
+        suggestingMode.disabled = true;
+        suggestionNotice.textContent =
+          'Suggesting stopped because the page changed unexpectedly.';
+        return undefined;
+      });
+    return suggestionLoading;
+  };
+  readingMode.addEventListener('click', () =>
+    suggestionController?.setSuggesting(false)
+  );
+  suggestingMode.addEventListener('click', () => {
+    void ensureSuggestion().then((controller) =>
+      controller?.setSuggesting(true)
+    );
+  });
+  appliedMode.addEventListener('click', () => {
+    void ensureSuggestion().then((controller) =>
+      controller?.setApplied(!controller.applied)
+    );
+  });
+  updateSuggestionStub();
   let hasThreadSnapshot = false;
   let loadGeneration = 0;
   const threadWork = new Set<Promise<void>>();
@@ -6424,6 +6674,17 @@ export function buildThread(
   const paintMarks = (entries: readonly CommentEntry[]): void => {
     lastEntries = entries;
     if (host === undefined) return;
+    if (suggestionController && !suggestionPainting) {
+      suggestionController.repaint(() => {
+        suggestionPainting = true;
+        try {
+          paintMarks(entries);
+        } finally {
+          suggestionPainting = false;
+        }
+      });
+      return;
+    }
     const markHost = host;
     const markController = otioControllerFor(markHost);
     if (markController?.disposed) return;
@@ -6451,7 +6712,7 @@ export function buildThread(
     unplaceable.clear();
     textWindowFor(host)?.setMarks(
       entries.flatMap((entry) =>
-        entry.kind === 'open' && entry.anchor !== null
+        entry.kind === 'open' && entry.anchor !== null && !entry.suggestion
           ? [
               {
                 id: entry.id,
@@ -6463,7 +6724,8 @@ export function buildThread(
       )
     );
     for (const entry of entries) {
-      if (entry.kind !== 'open' || entry.anchor === null) continue;
+      if (entry.kind !== 'open' || entry.anchor === null || entry.suggestion)
+        continue;
       if (
         entry.anchor.kind === 'otio' &&
         !sealedOtioAnchorMatchesEntryVersion(entry)
@@ -6982,7 +7244,8 @@ export function buildThread(
       entry.id !== null && unplaceable.has(entry.id),
       entry.id !== null ? (addressedById.get(entry.id) ?? null) : null,
       node.replies.map((child) => renderCommentNode(child, true)),
-      isReply
+      isReply,
+      suggestionController?.card(entry)
     );
     const head = row.children[0];
     if (node.recovery !== undefined) {
@@ -7346,7 +7609,11 @@ export function buildThread(
       const actions: PopoverAction[] = [];
       const entry = entryById(id);
       if (entry === undefined) return actions;
-      if (canEditComment(entry, session) && entry.kind === 'open') {
+      if (
+        entry.kind === 'open' &&
+        !entry.suggestion &&
+        canEditComment(entry, session)
+      ) {
         actions.push({
           label: 'Edit',
           className: 'popover-edit',
@@ -7419,7 +7686,11 @@ export function buildThread(
       if (canResolveComment(entry, session)) {
         const settled = (entry.resolution ?? null) !== null;
         actions.push({
-          label: settled ? 'Reopen' : 'Resolve',
+          label: settled
+            ? 'Reopen'
+            : entry.kind === 'open' && entry.suggestion
+              ? 'Withdraw'
+              : 'Resolve',
           className: 'popover-resolve',
           onSelect: () => {
             const resolvePanel = activePanel;
@@ -7952,6 +8223,8 @@ export function buildThread(
    * comment's, or the list for a cluster of them on the timeline.
    */
   const cardForMark = (mark: HTMLElement, sticky: boolean): void => {
+    if (suggestionController?.suggesting && mark.hasAttribute('data-sg-id'))
+      return;
     const members = (mark.dataset['clusterMembers'] ?? '')
       .split(' ')
       .filter((member) => member.length > 0);
@@ -8009,6 +8282,8 @@ export function buildThread(
       if (popover?.contains(event.target) === true) return;
       const mark = event.target.closest<HTMLElement>('[data-comment-id]');
       if (mark === null) return;
+      if (suggestionController?.suggesting && mark.hasAttribute('data-sg-id'))
+        return;
       event.preventDefault();
       const isKeyboard = (event as MouseEvent).detail === 0;
       if (isKeyboard) {
@@ -8404,6 +8679,14 @@ export function buildThread(
     addressedById = resolveAddressedMap(allEntries);
     const tree = threadEntries(filteredEntries, allEntries);
     const displayedEntries = collectDisplayedEntries(tree);
+    suggestionController?.sync();
+    if (
+      !suggestionController &&
+      displayedEntries.some(
+        (entry) => entry.kind === 'open' && entry.suggestion
+      )
+    )
+      void ensureSuggestion();
 
     paintMarks(displayedEntries);
 
@@ -8704,6 +8987,8 @@ export function buildThread(
     if (sessionChanged) {
       session = discovered;
       section.dataset['session'] = session.kind;
+      updateSuggestionStub();
+      if (suggestionController) paintMarks(lastEntries);
     }
     if (sessionChanged || mounted) {
       paintComposer();
@@ -8743,6 +9028,8 @@ export function buildThread(
       if (generation === sessionGeneration) session = discovered;
       section.dataset['threadReady'] = 'true';
       section.dataset['session'] = session.kind;
+      updateSuggestionStub();
+      if (suggestionController) paintMarks(lastEntries);
       if (session.kind === 'verified' && takePasskeyOfferMarker()) {
         mountOfferFor(session.email);
       }
@@ -8777,6 +9064,12 @@ export function buildThread(
     element: section,
     tab,
     resizer,
+    ...(textSuggestions ? { suggestionBar } : {}),
+    dispose: () => {
+      if (suggestionController && !suggestionController.destroy()) return false;
+      suggestionDisposed = true;
+      return true;
+    },
     ready,
     idle: async () => {
       while (threadWork.size > 0) await Promise.all([...threadWork]);
@@ -8837,6 +9130,10 @@ export function buildThread(
       }
       paintMarks(lastEntries);
       marks.attach(next);
+      if (
+        lastEntries.some((entry) => entry.kind === 'open' && entry.suggestion)
+      )
+        void ensureSuggestion();
     },
   };
 }
@@ -9808,6 +10105,10 @@ export function renderReady(
   let pinnedView: number | undefined;
   const showSingle = (viewToShow: ReadyView, alreadyPinned = false): void => {
     lifecycle.advance();
+    if (thread && !thread.dispose()) {
+      if (alreadyPinned) versionStore.unpin(viewToShow.version);
+      return;
+    }
     decisionPanel?.close();
     if (viewToShow !== activeView || decisionTally === undefined) {
       refreshDecisionTally(viewToShow);
@@ -9845,6 +10146,7 @@ export function renderReady(
     disposeOtioViews(document.body);
     document.body.replaceChildren(
       bar,
+      ...(thread?.suggestionBar ? [thread.suggestionBar] : []),
       buildRelicRow(wrap, thread?.element, thread?.resizer, thread?.tab)
     );
     thread?.attach(wrap);
@@ -9924,6 +10226,7 @@ export function renderReady(
 
   const showComparison = (left?: number, right?: number): void => {
     lifecycle.advance();
+    if (thread && !thread.dispose()) return;
     decisionPanel?.close();
     if (pinnedView !== undefined) versionStore.unpin(pinnedView);
     pinnedView = undefined;

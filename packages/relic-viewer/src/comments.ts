@@ -114,6 +114,8 @@ export type CommentEntry =
       readonly version?: number | null;
       /** The comment id this one answers, decrypted from the sealed copy only. */
       readonly addresses?: string | null;
+      readonly suggestion?: CommentPlaintext['suggestion'];
+      readonly suggestion_outcome?: CommentPlaintext['suggestion_outcome'];
       /** The clear routing hint supplied by the server, if any. Never authoritative. */
       readonly clearAddresses?: string | null;
       readonly addressed?: AddressedBy | null;
@@ -641,6 +643,10 @@ export async function openEntry(
       anchor: plaintext.anchor ?? null,
       version,
       addresses: plaintext.addresses ?? null,
+      ...(plaintext.suggestion ? { suggestion: plaintext.suggestion } : {}),
+      ...(plaintext.suggestion_outcome
+        ? { suggestion_outcome: plaintext.suggestion_outcome }
+        : {}),
       clearAddresses,
       editedAt,
       resolution,
@@ -1079,7 +1085,7 @@ export interface QuoteContext {
  */
 const NON_CONTENT =
   '.comment-pins, .comment-region, .mark-bubble, .mark-hint,' +
-  ' .mark-quote-action, .text-window-tools, .popover, script, style, [hidden], pre.raw';
+  ' .mark-quote-action, .text-window-tools, .popover, ins[data-sg], [data-sg-decoration], script, style, [hidden], pre.raw';
 
 /**
  * The document's content text, in order, as the reader sees it.
