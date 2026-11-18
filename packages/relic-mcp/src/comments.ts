@@ -45,7 +45,13 @@ import {
   encryptComment,
   isValidRelicId,
   parseImageCommentAnchor,
+  type SuggestionOutcome,
+  type SuggestionPayload,
 } from '@relic/format';
+import {
+  suggestionStates,
+  type SuggestionStateInfo,
+} from '@relic/format/suggestions';
 import { mintRelic } from './inventory.ts';
 import {
   getJson,
@@ -118,6 +124,12 @@ export interface CommentRecord {
    * Taken from the sealed copy only.
    */
   readonly addresses: string | null;
+  /** Sealed suggestion data and the publisher-authored lifecycle result. */
+  readonly suggestion: SuggestionPayload | null;
+  readonly suggestion_outcome: SuggestionOutcome | null;
+  readonly suggestion_state: SuggestionStateInfo['state'] | null;
+  readonly suggestion_answer: SuggestionStateInfo['answer'];
+  readonly unsupported_fields: readonly string[];
   readonly readable: boolean;
   /** Null exactly when `readable` is true. */
   readonly unreadable_reason: string | null;
@@ -156,6 +168,23 @@ export interface CommentRecord {
    * requested. Null when freeform or when resolution was not requested.
    */
   readonly resolved?: ResolvedAnchor | null;
+}
+
+/** Replies do not settle suggestions; only an outcome or resolution does. */
+export function isOpenComment(comment: CommentRecord): boolean {
+  if (!comment.readable) return false;
+  if (comment.suggestion !== null) {
+    return (
+      comment.suggestion_state === 'pending' ||
+      comment.suggestion_state === 'replied' ||
+      comment.suggestion_state === 'unanswered'
+    );
+  }
+  return (
+    !comment.addressed &&
+    comment.addresses === null &&
+    comment.resolution === null
+  );
 }
 
 export interface CommentsSummary {
@@ -252,6 +281,11 @@ export function formatUnaddressedRefusal(
         'A comment this client cannot read cannot be verified as addressed.'
     );
   }
+  if (openComments.some((comment) => comment.suggestion !== null)) {
+    parts.push(
+      'A suggestion needs a publisher outcome or a resolution; a reply alone does not settle it.'
+    );
+  }
 
   if (openComments.length > 0) {
     const list = openComments
@@ -324,6 +358,8 @@ export interface CommentInput {
    * Sealed into the ciphertext and passed in the clear to the service for notification routing.
    */
   readonly addresses?: string | null | undefined;
+  /** Publisher outcome for a suggestion named by addresses. */
+  readonly outcome?: SuggestionOutcome | undefined;
 }
 
 export async function readComments(
@@ -398,6 +434,9 @@ export async function readComments(
     body: string | null;
     anchor: CommentAnchor | null;
     addresses: string | null;
+    suggestion?: SuggestionPayload | null;
+    suggestion_outcome?: SuggestionOutcome | null;
+    unsupported_fields?: readonly string[];
     version: number | null;
     edited_at: string | null;
     resolution: Resolution | null;
@@ -472,6 +511,9 @@ export async function readComments(
         // so a caller never has to distinguish two ways of saying no mark.
         anchor: plaintext.anchor ?? null,
         addresses: plaintext.addresses ?? null,
+        suggestion: plaintext.suggestion ?? null,
+        suggestion_outcome: plaintext.suggestion_outcome ?? null,
+        unsupported_fields: plaintext.unsupported_fields ?? [],
         version,
         edited_at: editedAt,
         resolution,
@@ -525,6 +567,32 @@ export async function readComments(
     }
   }
 
+  // Explicit scopes avoid a content mint. In that case the local published
+  // version and stamped rows provide a lower bound on the current version.
+  // If another machine published without a newer comment, unanswered may
+  // display as pending; either state still blocks the republish gate.
+  const lifecycleVersion =
+    currentVersion ??
+    entries.reduce(
+      (version, entry) => Math.max(version, entry.version ?? 1),
+      local.state.version
+    );
+  const states = suggestionStates(
+    entries
+      .filter((entry) => entry.readable)
+      .map((entry) => ({
+        id: entry.comment_id,
+        author: entry.author,
+        version: entry.version ?? 1,
+        created_at: entry.created_at,
+        addresses: entry.addresses,
+        suggestion_outcome: entry.suggestion_outcome ?? null,
+        resolution: entry.resolution,
+        has_suggestion: entry.suggestion != null,
+      })),
+    lifecycleVersion
+  );
+
   const comments: CommentRecord[] = entries
     // The version scope, mirroring the viewer's thread filter exactly
     // (packages/relic-viewer/src/main.ts 4577-4597): a relic with no history
@@ -550,8 +618,14 @@ export async function readComments(
       return scope === 1;
     })
     .map((entry) => {
-      const addressedBy = addressedByMap.get(entry.comment_id) ?? null;
-      const addressed = addressedBy !== null;
+      const state = states.get(entry.comment_id);
+      const answer = state?.answer ?? null;
+      const addressedBy =
+        entry.suggestion != null
+          ? answer?.outcome != null
+            ? { comment_id: answer.comment_id, version: answer.version }
+            : null
+          : (addressedByMap.get(entry.comment_id) ?? null);
       return {
         comment_id: entry.comment_id,
         author: entry.author,
@@ -560,9 +634,14 @@ export async function readComments(
         body: entry.body,
         anchor: entry.anchor,
         addresses: entry.addresses,
+        suggestion: entry.suggestion ?? null,
+        suggestion_outcome: entry.suggestion_outcome ?? null,
+        suggestion_state: state?.state ?? null,
+        suggestion_answer: answer,
+        unsupported_fields: entry.unsupported_fields ?? [],
         readable: entry.readable,
         unreadable_reason: entry.unreadable_reason,
-        addressed,
+        addressed: addressedBy !== null,
         addressed_by: addressedBy,
         addressed_by_comment_id: addressedBy?.comment_id ?? null,
         addressed_by_version: addressedBy?.version ?? null,
@@ -574,17 +653,7 @@ export async function readComments(
 
   const addressedCount = comments.filter((c) => c.addressed).length;
   const unreadableCount = comments.filter((c) => !c.readable).length;
-  // A comment is open when it is readable, has not been addressed by another
-  // comment, is not itself a reply or update acknowledgement, and has not
-  // been resolved. Resolving is one of the ways a comment is handled, so a
-  // settled one does not read as open.
-  const openCount = comments.filter(
-    (c) =>
-      c.readable &&
-      !c.addressed &&
-      c.addresses === null &&
-      c.resolution === null
-  ).length;
+  const openCount = comments.filter(isOpenComment).length;
   const resolvedCount = comments.filter((c) => c.resolution !== null).length;
 
   const summary: CommentsSummary = {
@@ -626,7 +695,8 @@ export async function readComments(
 
 export async function postComment(
   input: CommentInput,
-  deps: PublishDeps
+  deps: PublishDeps,
+  context?: { readonly fromRepublish: true }
 ): Promise<CommentResult> {
   const local = await localRelic(input.relic_id);
   const state = local.state;
@@ -691,11 +761,68 @@ export async function postComment(
   }
 
   const anchor = validateAndNormalizeAnchor(input.anchor);
+  const outcome = input.outcome;
+  if (
+    outcome !== undefined &&
+    outcome !== 'accepted' &&
+    outcome !== 'superseded' &&
+    outcome !== 'declined' &&
+    outcome !== 'deferred'
+  ) {
+    throw new PublishError(
+      'invalid_suggestion_outcome',
+      'outcome must be accepted, superseded, declined, or deferred.'
+    );
+  }
+  if (outcome !== undefined && (addresses === null || anchor !== null)) {
+    throw new PublishError(
+      'suggestion_outcome_requires_suggestion',
+      'An outcome requires addresses to name a readable suggestion and cannot carry an anchor.'
+    );
+  }
+  if (
+    outcome !== undefined &&
+    local.access === 'public' &&
+    (outcome === 'accepted' || outcome === 'superseded') &&
+    context?.fromRepublish !== true
+  ) {
+    throw new PublishError(
+      'suggestion_outcome_requires_republish',
+      'Public suggestions can be accepted or superseded only through relic_republish.'
+    );
+  }
+  const target =
+    outcome === undefined
+      ? undefined
+      : (
+          await readComments(input.relic_id, deps, { version: '*' })
+        ).comments.find((comment) => comment.comment_id === addresses);
+  if (
+    outcome !== undefined &&
+    (target === undefined || !target.readable || target.suggestion === null)
+  ) {
+    throw new PublishError(
+      'suggestion_outcome_requires_suggestion',
+      'addresses must name a readable suggestion on this relic.'
+    );
+  }
 
   const commentVersion =
     local.access === 'private'
       ? await currentPrivateVersion(deps, input.relic_id, local.state)
       : undefined;
+  if (
+    local.access === 'private' &&
+    (outcome === 'accepted' || outcome === 'superseded') &&
+    (target?.version == null ||
+      commentVersion === undefined ||
+      commentVersion <= target.version)
+  ) {
+    throw new PublishError(
+      'suggestion_outcome_requires_new_version',
+      'Republish the private relic to a newer version before accepting or superseding this suggestion.'
+    );
+  }
   const commentKey = await commentKeyFor(
     deps,
     input.relic_id,
@@ -708,6 +835,7 @@ export async function postComment(
     display_name: displayName,
     anchor,
     ...(addresses == null ? {} : { addresses }),
+    ...(outcome === undefined ? {} : { suggestion_outcome: outcome }),
   });
   refuseOversizedCiphertext(ciphertext);
   // The token travels in the body, where the republish grant already puts it,
@@ -868,6 +996,10 @@ export async function editComment(
     display_name: existing.display_name,
     anchor: existing.anchor,
     ...(existing.addresses == null ? {} : { addresses: existing.addresses }),
+    ...(existing.suggestion == null ? {} : { suggestion: existing.suggestion }),
+    ...(existing.suggestion_outcome == null
+      ? {}
+      : { suggestion_outcome: existing.suggestion_outcome }),
   }).catch((error: unknown) => {
     // A comment this machine could read but cannot re-seal (an anchor the
     // current writer refuses, most likely) is a named refusal, not a

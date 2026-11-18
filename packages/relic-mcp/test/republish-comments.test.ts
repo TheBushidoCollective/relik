@@ -614,3 +614,136 @@ describe('republish comments gate', () => {
     );
   });
 });
+
+describe('suggestions at the republish gate', () => {
+  test('reader replies do not settle suggestions and outcome acknowledgements use the new version', async () => {
+    const filePath = join(scratch, 'suggestions.md');
+    await writeFile(filePath, '# Draft\n');
+    const published = await publish({ path: filePath, cover: false }, deps);
+    const state = await loadPublishState(published.relic_id);
+    if (!state) throw new Error('publish state missing');
+    const key = await deriveCommentKey(decodeKey(state.key));
+    const createdAt = Date.parse('2026-08-20T00:00:00Z');
+    await store.putComment({
+      id: 'suggestion-1',
+      relicId: published.relic_id,
+      author: 'reader@example.com',
+      createdAt,
+      version: 1,
+      ciphertext: await encryptComment(key, {
+        body: 'Suggested edit',
+        display_name: null,
+        anchor: { kind: 'source', exact: 'Draft' },
+        suggestion: { v: 1, mode: 'replace', replacement: 'Revised' },
+      }),
+    });
+    await store.putComment({
+      id: 'reader-reply',
+      relicId: published.relic_id,
+      author: 'other@example.com',
+      createdAt: createdAt + 1,
+      version: 1,
+      ciphertext: await encryptComment(key, {
+        body: 'Please consider this.',
+        display_name: null,
+        addresses: 'suggestion-1',
+      }),
+    });
+    await store.putComment({
+      id: 'ordinary-1',
+      relicId: published.relic_id,
+      author: 'reader@example.com',
+      createdAt: createdAt + 2,
+      version: 1,
+      ciphertext: await encryptComment(key, {
+        body: 'A separate note.',
+        display_name: null,
+      }),
+    });
+    const thread = await readComments(published.relic_id, deps, {
+      version: '*',
+    });
+    expect(thread.summary.open).toBe(2);
+    expect(thread.comments[0]).toMatchObject({
+      suggestion_state: 'pending',
+      addressed: false,
+    });
+    await writeFile(filePath, '# Revised\n');
+
+    let writes = 0;
+    const trackingDeps: PublishDeps = {
+      ...deps,
+      fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input));
+        if (
+          url.pathname.endsWith('/republish') ||
+          (url.pathname.endsWith('/comments') && init?.method === 'POST')
+        )
+          writes++;
+        return deps.fetch(input, init);
+      }) as typeof fetch,
+    };
+    await expect(
+      republish(
+        { relic_id: published.relic_id, path: filePath, cover: false },
+        trackingDeps
+      )
+    ).rejects.toMatchObject({ code: 'unaddressed_comments' });
+    await expect(
+      republish(
+        {
+          relic_id: published.relic_id,
+          path: filePath,
+          cover: false,
+          addresses: [{ comment_id: 'suggestion-1', note: 'Applied.' }],
+        },
+        trackingDeps
+      )
+    ).rejects.toMatchObject({ code: 'suggestion_outcome_required' });
+    await expect(
+      republish(
+        {
+          relic_id: published.relic_id,
+          path: filePath,
+          cover: false,
+          addresses: [
+            { comment_id: 'ordinary-1', note: 'Done.', outcome: 'accepted' },
+          ],
+        },
+        trackingDeps
+      )
+    ).rejects.toMatchObject({ code: 'outcome_not_applicable' });
+    expect(writes).toBe(0);
+
+    const result = await republish(
+      {
+        relic_id: published.relic_id,
+        path: filePath,
+        cover: false,
+        addresses: [
+          { comment_id: 'suggestion-1', note: 'Applied.', outcome: 'accepted' },
+          { comment_id: 'ordinary-1', note: 'Considered.' },
+        ],
+      },
+      trackingDeps
+    );
+    expect(result.version).toBe(2);
+    const read = await readComments(published.relic_id, deps, { version: '*' });
+    const suggestion = read.comments.find(
+      (row) => row.comment_id === 'suggestion-1'
+    );
+    expect(suggestion).toMatchObject({
+      suggestion_state: 'accepted',
+      suggestion_answer: { version: 2, outcome: 'accepted' },
+    });
+    const acknowledgement = read.comments.find(
+      (row) => row.suggestion_outcome === 'accepted'
+    );
+    expect(acknowledgement).toMatchObject({
+      author: 'publisher',
+      version: 2,
+      addresses: 'suggestion-1',
+    });
+    expect(read.summary.open).toBe(0);
+  });
+});
