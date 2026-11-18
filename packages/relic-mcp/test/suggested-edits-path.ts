@@ -17,12 +17,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Readable, Writable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
-import {
-  type CommentPlaintext,
-  decryptComment,
-  deriveCommentKey,
-  parseFragment,
-} from '@relic/format';
+import { decryptComment, deriveCommentKey, parseFragment } from '@relic/format';
 import {
   type SuggestionInput,
   mergeSuggestions,
@@ -268,6 +263,7 @@ async function browser(): Promise<Browser> {
   const child = spawn(found.path, launch.args, {
     stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'],
   });
+  child.stderr?.resume();
   let cdp: CdpConnection | undefined;
   const pages: Page[] = [];
   try {
@@ -367,7 +363,10 @@ async function browser(): Promise<Browser> {
               undefined,
               `browser evaluation: ${JSON.stringify(result['exceptionDetails'])}\n${expression.slice(0, 400)}`
             );
-            return (result['result'] as { value?: T }).value as T;
+            const value = result['result'];
+            if (!value || typeof value !== 'object' || !('value' in value))
+              return undefined as T;
+            return value.value as T;
           },
           async wait(expression, label) {
             await until(
@@ -384,6 +383,10 @@ async function browser(): Promise<Browser> {
         await page.send('Runtime.addBinding', { name: '__relicTraceFetch' });
         await page.send('Page.addScriptToEvaluateOnNewDocument', {
           source: `(() => {
+          window.__relicProofFocusEvents = [];
+          for (const name of ['focus', 'blur'])
+            window.addEventListener(name, () => window.__relicProofFocusEvents.push(name));
+          document.addEventListener('visibilitychange', () => window.__relicProofFocusEvents.push(document.visibilityState));
           const original = window.fetch;
           window.fetch = function(input, init) {
             const url = typeof input === 'string' ? input : input.url;
@@ -429,9 +432,13 @@ async function browser(): Promise<Browser> {
         return page;
       },
       async close() {
-        connection.dispose();
-        child.kill('SIGKILL');
-        await rm(profile, { recursive: true, force: true });
+        await cleanupOwnedBrowserStartup({
+          child,
+          connection,
+          forgetChild: undefined,
+          profile,
+          removeProfile: undefined,
+        });
       },
     };
     return result;
@@ -536,12 +543,30 @@ async function refresh(
   page: Page,
   other: Page
 ): Promise<void> {
+  const windowInfo = await browserInstance.cdp.send(
+    'Browser.getWindowForTarget',
+    {
+      targetId: page.target,
+    }
+  );
+  const windowId = windowInfo['windowId'];
+  assert.equal(typeof windowId, 'number', 'target window was not available');
+  await browserInstance.cdp.send('Browser.setWindowBounds', {
+    windowId,
+    bounds: { windowState: 'minimized' },
+  });
+  await Bun.sleep(100);
+  await browserInstance.cdp.send('Browser.setWindowBounds', {
+    windowId,
+    bounds: { windowState: 'normal' },
+  });
   await browserInstance.cdp.send('Target.activateTarget', {
     targetId: other.target,
   });
   await browserInstance.cdp.send('Target.activateTarget', {
     targetId: page.target,
   });
+  await page.send('Page.bringToFront');
 }
 function writesFor(id: string, method: string): number {
   return writes.filter(
@@ -577,20 +602,25 @@ async function publish(path: string, source: string) {
 
 const results = new Map<number, string>();
 const failures = new Map<number, string>();
-async function step(number: number, action: () => Promise<string>): Promise<void> {
+async function step(
+  number: number,
+  action: () => Promise<string>
+): Promise<void> {
   try {
     const evidence = await action();
     results.set(number, evidence);
     console.log(`STEP ${number} PROVEN ${evidence}`);
   } catch (error) {
-    const message = error instanceof Error ? error.stack ?? error.message : String(error);
+    const message =
+      error instanceof Error ? (error.stack ?? error.message) : String(error);
     failures.set(number, message);
     console.error(`STEP ${number} NOT_PROVEN ${message}`);
   }
 }
 function needs(...numbers: number[]): void {
   for (const number of numbers) {
-    if (!results.has(number)) throw new Error(`depends on unproven step ${number}`);
+    if (!results.has(number))
+      throw new Error(`depends on unproven step ${number}`);
   }
 }
 async function leave(page: Page): Promise<void> {
@@ -604,12 +634,23 @@ async function writeSuggestion(
   replacement: string
 ): Promise<void> {
   const before = writesFor(id, 'POST');
+  const beforeCount = await page.evaluate<number>(
+    "Number.parseInt(document.querySelector('[data-sg-count]').textContent, 10)"
+  );
+  assert.ok(Number.isInteger(beforeCount), 'suggestion count is unavailable');
   await suggesting(page);
   await select(page, selector, selected);
   await input(page, replacement);
   await page.wait("document.querySelector('ins[data-sg-draft]')", 'open draft');
   await leave(page);
-  await until(async () => writesFor(id, 'POST') === before + 1, 'suggestion POST');
+  await until(
+    async () => writesFor(id, 'POST') === before + 1,
+    'suggestion POST'
+  );
+  await page.wait(
+    `Number.parseInt(document.querySelector('[data-sg-count]').textContent, 10) === ${beforeCount + 1}`,
+    'posted suggestion reflected in the count before the next edit'
+  );
 }
 
 let ownedBrowser: Browser | undefined;
@@ -627,8 +668,27 @@ try {
   ownedBrowser = await browser();
   const browserInstance = ownedBrowser;
   const a = await browserInstance.open(md.url, tokenA);
+  await step(0, async () => {
+    await a.wait(
+      "document.querySelector('.presence-stage')",
+      'presence startup'
+    );
+    assert.equal((await store.listComments(md.id)).length, 0);
+    assert.equal(
+      await a.evaluate<number>(
+        "document.querySelectorAll('article.prose [data-seg]').length"
+      ),
+      0,
+      'presence startup mapped the document before a peer or suggestion existed'
+    );
+    return 'one signed-in reader with no peers or comments kept the original markdown DOM';
+  });
   const b = await browserInstance.open(md.url, tokenB);
-  assert.notEqual(a.context, b.context, 'reader sessions must use isolated contexts');
+  assert.notEqual(
+    a.context,
+    b.context,
+    'reader sessions must use isolated contexts'
+  );
   let firstId = '';
   let conflictId = '';
   let hostileId = '';
@@ -641,13 +701,24 @@ try {
     await suggesting(a);
     await select(a, 'article.prose strong', 'hours at a time');
     await input(a, 'CANARY-A1');
-    await a.wait("document.querySelector('del.sg-del.is-draft') && document.querySelector('ins.sg-ins.is-draft')", 'draft diff');
+    await a.wait(
+      "document.querySelector('del.sg-del.is-draft') && document.querySelector('ins.sg-ins.is-draft')",
+      'draft diff'
+    );
     const draft = await a.evaluate<{ struck: string; inserted: string }>(`({
       struck: document.querySelector('del.sg-del.is-draft')?.textContent,
       inserted: document.querySelector('ins.sg-ins.is-draft')?.textContent,
     })`);
-    assert.deepEqual(draft, { struck: 'hours at a time', inserted: 'CANARY-A1' });
-    assert.equal(await b.evaluate<boolean>("document.body.textContent.includes('CANARY-A1')"), false);
+    assert.deepEqual(draft, {
+      struck: 'hours at a time',
+      inserted: 'CANARY-A1',
+    });
+    assert.equal(
+      await b.evaluate<boolean>(
+        "document.body.textContent.includes('CANARY-A1')"
+      ),
+      false
+    );
     assert.equal(writesFor(md.id, 'POST'), 0);
     return 'A saw the struck bold source and CANARY-A1 insertion; B and the server saw no draft';
   });
@@ -655,41 +726,81 @@ try {
   await step(2, async () => {
     needs(1);
     await leave(a);
-    await until(async () => writesFor(md.id, 'POST') === 1, 'one posted suggestion');
+    await until(
+      async () => writesFor(md.id, 'POST') === 1,
+      'one posted suggestion'
+    );
     const rows = await plaintextRows(md.id, md.key);
     assert.equal(rows.length, 1);
     const first = rows[0]!;
     assert.equal(first.plain.anchor?.kind, 'source');
-    if (first.plain.anchor?.kind !== 'source') throw new Error('missing source anchor');
+    if (first.plain.anchor?.kind !== 'source')
+      throw new Error('missing source anchor');
     assert.equal(first.plain.anchor.exact, 'hours at a time');
     assert.equal(first.plain.suggestion?.replacement, 'CANARY-A1');
-    firstId = first.row.comment_id;
+    firstId = first.row.id;
     // Activity refresh is deliberately throttled for ten seconds.
     await Bun.sleep(10_100);
     await refresh(browserInstance, b, a);
-    await b.wait("document.body.textContent.includes('CANARY-A1')", 'B sees suggestion after refocus');
+    try {
+      await b.wait(
+        "document.body.textContent.includes('CANARY-A1')",
+        'B sees suggestion after refocus'
+      );
+    } catch (error) {
+      const observed = await b.evaluate(`({
+        focus: document.hasFocus(),
+        visibility: document.visibilityState,
+        events: window.__relicProofFocusEvents,
+        count: document.querySelector('[data-sg-count]')?.textContent
+      })`);
+      throw new Error(
+        `${String(error)}; refocus=${JSON.stringify(observed)}; fetches=${JSON.stringify(b.trace)}`
+      );
+    }
     assert.equal(writesFor(md.id, 'POST'), 1);
     return 'one POST decrypted to source exact \"hours at a time\"; B saw CANARY-A1 after refocus';
   });
 
   await step(3, async () => {
-    needs(2);
-    await a.wait(`document.querySelector(${JSON.stringify(`ins[data-sg="${firstId}"]`)})`, 'A posted suggestion paint');
+    needs(1);
+    assert.ok(firstId, 'the first suggestion was not stored');
+    await a.wait(
+      `document.querySelector(${JSON.stringify(`ins[data-sg="${firstId}"]`)})`,
+      'A posted suggestion paint'
+    );
     await suggesting(a);
     await select(a, `ins[data-sg="${firstId}"]`, 'CANARY-A1');
     // Place the caret at the end of the existing insertion.
     await key(a, 'ArrowRight', 'ArrowRight', 39);
     await input(a, '-EDIT');
     await leave(a);
-    await until(async () => writesFor(md.id, 'PATCH') === 1, 'one suggestion PATCH');
+    await until(
+      async () => writesFor(md.id, 'PATCH') === 1,
+      'one suggestion PATCH'
+    );
     assert.equal(writesFor(md.id, 'POST'), 1);
     const rows = await plaintextRows(md.id, md.key);
     assert.equal(rows.length, 1);
     assert.equal(rows[0]?.plain.suggestion?.replacement, 'CANARY-A1-EDIT');
-    await a.wait(`document.querySelector(${JSON.stringify(`[data-sg-id="${firstId}"]`)})`, 'edited mark');
+    await a.wait(
+      `document.querySelector(${JSON.stringify(`ins[data-sg="${firstId}"]`)})?.textContent === 'CANARY-A1-EDIT'`,
+      'edited insertion repainted'
+    );
     await click(a, `[data-sg-id="${firstId}"]`);
     await a.wait("document.querySelector('.popover-card')", 'suggestion card');
-    assert.match((await a.evaluate<string>("document.querySelector('.popover-card').textContent")).toLowerCase(), /edited/);
+    await a.wait(
+      "document.querySelector('.popover-card .comment-badge-edited')",
+      'edited badge'
+    );
+    assert.match(
+      (
+        await a.evaluate<string>(
+          "document.querySelector('.popover-card').textContent"
+        )
+      ).toLowerCase(),
+      /edited/
+    );
     return 'one PATCH, no additional POST, and the card showed edited';
   });
 
@@ -698,46 +809,93 @@ try {
     const hostile = '<script>alert(1)</script> ** </span><b>x</b> <img src=x>';
     await writeSuggestion(a, md.id, 'article.prose', 'Hostile target', hostile);
     const rows = await plaintextRows(md.id, md.key);
-    const posted = rows.find((entry) => entry.plain.suggestion?.replacement === hostile);
+    const posted = rows.find(
+      (entry) => entry.plain.suggestion?.replacement === hostile
+    );
     assert.ok(posted);
-    hostileId = posted.row.comment_id;
-    await a.wait(`document.querySelector(${JSON.stringify(`[data-sg-id="${hostileId}"]`)})`, 'hostile mark');
-    const rendered = await a.evaluate<{ text: string; unsafe: number }>(`(() => {
-      const root = document.querySelector(${JSON.stringify(`[data-sg-id="${hostileId}"]`)});
+    hostileId = posted.row.id;
+    await a.wait(
+      `document.querySelector(${JSON.stringify(`[data-sg-id="${hostileId}"]`)})`,
+      'hostile mark'
+    );
+    const rendered = await a.evaluate<{
+      text: string;
+      unsafe: number;
+    }>(`(() => {
+      const root = document.querySelector(${JSON.stringify(`ins[data-sg="${hostileId}"]`)});
       return { text: root.textContent, unsafe: root.querySelectorAll('script, img, b').length };
     })()`);
-    assert.ok(rendered.text.includes(hostile), 'hostile text did not render literally');
+    assert.ok(
+      rendered.text.includes(hostile),
+      'hostile text did not render literally'
+    );
     assert.equal(rendered.unsafe, 0, 'hostile text created elements');
     await Bun.sleep(10_100);
     await refresh(browserInstance, b, a);
-    await b.wait(`document.querySelector(${JSON.stringify(`[data-sg-id="${hostileId}"]`)})`, 'B sees hostile suggestion');
+    await b.wait(
+      `document.querySelector(${JSON.stringify(`[data-sg-id="${hostileId}"]`)})`,
+      'B sees hostile suggestion'
+    );
     await click(b, `[data-sg-id="${hostileId}"]`);
     await b.wait("document.querySelector('.popover-reply')", 'reply button');
     await click(b, '.popover-reply');
-    await b.wait("document.querySelector('textarea.popover-field')", 'reply editor');
+    await b.wait(
+      "document.querySelector('textarea.popover-field')",
+      'reply editor'
+    );
     await click(b, 'textarea.popover-field');
     await input(b, 'Reader B reply');
     await click(b, '.popover-card .popover-action.is-primary');
-    await until(async () => (await plaintextRows(md.id, md.key)).some((entry) => entry.plain.addresses === hostileId && entry.plain.body === 'Reader B reply'), 'stored reply');
+    await until(
+      async () =>
+        (await plaintextRows(md.id, md.key)).some(
+          (entry) =>
+            entry.plain.addresses === hostileId &&
+            entry.plain.body === 'Reader B reply'
+        ),
+      'stored reply'
+    );
     await Bun.sleep(10_100);
     await refresh(browserInstance, a, b);
     await click(a, `[data-sg-id="${hostileId}"]`);
-    await a.wait("document.querySelector('.popover-card')?.textContent.includes('Reader B reply')", 'A sees reply');
+    await a.wait(
+      "document.querySelector('.popover-card')?.textContent.includes('Reader B reply')",
+      'A sees reply'
+    );
     return 'hostile markup stayed text without script, img or b elements; B replied and A saw it';
   });
 
   await step(5, async () => {
     needs(2);
-    await b.wait(`document.querySelector(${JSON.stringify(`[data-sg-id="${firstId}"] del.sg-del`)})`, 'B sees original strike');
-    await writeSuggestion(b, md.id, `[data-sg-id="${firstId}"] del.sg-del`, 'hours at a time', 'Reader B alternative');
+    await b.wait(
+      `document.querySelector(${JSON.stringify(`[data-sg-id="${firstId}"] del.sg-del`)})`,
+      'B sees original strike'
+    );
+    await writeSuggestion(
+      b,
+      md.id,
+      `[data-sg-id="${firstId}"] del.sg-del`,
+      'hours at a time',
+      'Reader B alternative'
+    );
     const rows = await plaintextRows(md.id, md.key);
-    const conflict = rows.find((entry) => entry.plain.suggestion?.replacement === 'Reader B alternative');
+    const conflict = rows.find(
+      (entry) => entry.plain.suggestion?.replacement === 'Reader B alternative'
+    );
     assert.ok(conflict);
-    conflictId = conflict.row.comment_id;
-    await b.wait("document.querySelector('.sg-chg.is-conflict .sg-chip')?.textContent === '2'", 'conflict badge');
+    conflictId = conflict.row.id;
+    await b.wait(
+      "document.querySelector('.sg-chg.is-conflict .sg-chip')?.textContent === '2'",
+      'conflict badge'
+    );
     await click(b, '.sg-chg.is-conflict');
-    await b.wait("document.querySelectorAll('.popover-card .card-member').length === 2", 'conflict card');
-    const card = await b.evaluate<string>("document.querySelector('.popover-card').textContent");
+    await b.wait(
+      "document.querySelectorAll('.popover-card .card-member').length === 2",
+      'conflict card'
+    );
+    const card = await b.evaluate<string>(
+      "document.querySelector('.popover-card').textContent"
+    );
     assert.ok(card.includes('CANARY-A1'));
     assert.ok(card.includes('Reader B alternative'));
     return 'overlapping edits showed badge 2 and both alternatives in the card';
@@ -745,42 +903,456 @@ try {
 
   await step(6, async () => {
     needs(3, 4, 5);
-    await writeSuggestion(a, md.id, 'article.prose', 'Link target', '[link title](https://example.test)');
+    await Bun.sleep(10_100);
+    await refresh(browserInstance, a, b);
+    await a.wait(
+      "document.querySelector('.sg-chg.is-conflict .sg-chip')?.textContent === '2'",
+      'A sees the conflicting suggestion'
+    );
+    await writeSuggestion(
+      a,
+      md.id,
+      'article.prose',
+      'Link target',
+      '[link title](https://example.test)'
+    );
     let rows = await plaintextRows(md.id, md.key);
-    const link = rows.find((entry) => entry.plain.suggestion?.replacement === '[link title](https://example.test)');
+    const link = rows.find(
+      (entry) =>
+        entry.plain.suggestion?.replacement ===
+        '[link title](https://example.test)'
+    );
     assert.ok(link);
-    linkId = link.row.comment_id;
-    await writeSuggestion(a, md.id, 'article.prose', 'Deferred target', 'deferred replacement');
+    linkId = link.row.id;
+    await writeSuggestion(
+      a,
+      md.id,
+      'article.prose',
+      'Deferred target',
+      'deferred replacement'
+    );
     rows = await plaintextRows(md.id, md.key);
-    const deferred = rows.find((entry) => entry.plain.suggestion?.replacement === 'deferred replacement');
+    const deferred = rows.find(
+      (entry) => entry.plain.suggestion?.replacement === 'deferred replacement'
+    );
     assert.ok(deferred);
-    deferredId = deferred.row.comment_id;
+    deferredId = deferred.row.id;
     const inputs: SuggestionInput[] = rows.flatMap(({ row, plain }) => {
       if (!plain.suggestion || plain.anchor?.kind !== 'source') return [];
-      return [{
-        id: row.comment_id, created_at: row.created_at,
-        exact: plain.anchor.exact, prefix: plain.anchor.prefix,
-        suffix: plain.anchor.suffix, suggestion: plain.suggestion,
-      }];
+      return [
+        {
+          id: row.id,
+          created_at: new Date(row.createdAt).toISOString(),
+          exact: plain.anchor.exact,
+          ...(plain.anchor.prefix === undefined
+            ? {}
+            : { prefix: plain.anchor.prefix }),
+          ...(plain.anchor.suffix === undefined
+            ? {}
+            : { suffix: plain.anchor.suffix }),
+          suggestion: plain.suggestion,
+        },
+      ];
     });
-    const merged = mergeSuggestions(markdown, resolveSuggestions(markdown, inputs), inputs, 'defaults');
+    const merged = mergeSuggestions(
+      markdown,
+      resolveSuggestions(markdown, inputs),
+      inputs,
+      'defaults'
+    );
     const expectedHtml = renderMarkdown(merged.text);
     await click(a, '[data-sg-applied]');
-    await a.wait("document.querySelector('[data-sg-applied][aria-checked=true]')", 'applied view');
-    const applied = await a.evaluate<{ expected: string; actual: string; href: string | null; link: boolean }>(`(() => {
+    await a.wait(
+      "document.querySelector('[data-sg-applied][aria-checked=true]')",
+      'applied view'
+    );
+    const applied = await a.evaluate<{
+      expected: string;
+      actual: string;
+      href: string | null;
+      link: boolean;
+    }>(`(() => {
       const expected = new DOMParser().parseFromString(${JSON.stringify(expectedHtml)}, 'text/html').body.textContent;
       const root = document.querySelector('article.prose:not([hidden])');
       const link = Array.from(root.querySelectorAll('a')).find(a => a.textContent === 'link title');
       return { expected, actual: root.textContent, href: link?.getAttribute('href') ?? null, link: !!link };
     })()`);
-    assert.equal(applied.actual, applied.expected, 'applied DOM differs from rendered mergeSuggestions(defaults)');
+    assert.equal(
+      applied.actual,
+      applied.expected,
+      'applied DOM differs from rendered mergeSuggestions(defaults)'
+    );
     assert.equal(applied.link, true, 'inserted link was not rendered');
     assert.equal(applied.href, null, 'inserted link has an active href');
     await select(a, 'article.prose:not([hidden]) [data-sg]', 'CANARY-A1');
-    await a.send('Input.dispatchMouseEvent', { type: 'mouseReleased', button: 'left', x: 20, y: 20, clickCount: 1 });
-    await a.wait("document.querySelector('.popover-offer')", 'applied selection offer');
-    const verbs = await a.evaluate<string[]>("Array.from(document.querySelectorAll('.popover-offer button:not(.popover-cancel)'), b => b.textContent.trim()).sort()");
+    const selectionBox = await a.evaluate<{ x: number; y: number }>(`(() => {
+      const rect = window.getSelection().getRangeAt(0).getBoundingClientRect();
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    })()`);
+    await a.send('Input.dispatchMouseEvent', {
+      type: 'mouseReleased',
+      button: 'left',
+      ...selectionBox,
+      clickCount: 1,
+    });
+    await a.wait(
+      "document.querySelector('.popover-offer')",
+      'applied selection offer'
+    );
+    const verbs = await a.evaluate<string[]>(
+      "Array.from(document.querySelectorAll('.popover-offer button:not(.popover-cancel)'), b => b.textContent.trim()).sort()"
+    );
     assert.deepEqual(verbs, ['Copy text', 'Reply']);
     return 'applied text matched the default merge; edited selection offered Reply and Copy text; inserted link had no href';
   });
 
+  await step(7, async () => {
+    const repeated = `${'R'.repeat(160)}repeatphrase${'R'.repeat(160)}`;
+    const longText = 'L'.repeat(513);
+    const source =
+      '# Refusals\n\nEscape target.\n\nCross **formatting** boundary.\n\n' +
+      `First paragraph.\n\nSecond paragraph.\n\n${longText}\n\n${repeated}\n\n${repeated}\n`;
+    const fixture = await publish(join(scratch, 'refusals.md'), source);
+    const page = await browserInstance.open(fixture.url, tokenA);
+    await suggesting(page);
+    const baseline = writes.length;
+    await select(page, 'article.prose', 'Escape target');
+    await input(page, 'cancelled');
+    await page.wait(
+      "document.querySelector('ins.is-draft')",
+      'draft to cancel'
+    );
+    await key(page, 'Escape', 'Escape', 27);
+    await page.wait(
+      "!document.querySelector('ins.is-draft')",
+      'cancelled draft'
+    );
+    assert.equal(writes.length, baseline, 'Escape wrote a comment');
+    const refuse = async (
+      start: string,
+      end: string,
+      replacement: string,
+      code: string
+    ) => {
+      await select(page, 'article.prose', start, end);
+      await input(page, replacement);
+      await page.wait(
+        `document.querySelector('.sg-refusal-code')?.textContent.includes(${JSON.stringify(code)})`,
+        `${code} refusal`
+      );
+      assert.equal(writes.length, baseline, `${code} sent a write`);
+    };
+    await refuse('Cross ', 'formatting', 'no', 'crosses-formatting');
+    await refuse('First paragraph', 'Second paragraph', 'no', 'crosses-blocks');
+    await refuse(longText, longText, 'no', 'quote-too-long');
+    await refuse(
+      'Escape target',
+      'Escape target',
+      'X'.repeat(2049),
+      'too-long'
+    );
+    await select(page, 'article.prose', 'repeatphrase');
+    await input(page, 'ambiguous');
+    await leave(page);
+    await page.wait(
+      "document.querySelector('.sg-refusal-code')?.textContent.includes('repeats')",
+      'repeated passage refusal'
+    );
+    assert.equal(writes.length, baseline, 'repeated passage sent a write');
+    await page.evaluate("document.querySelector('article.prose').focus()");
+    await key(page, 'Escape', 'Escape', 27);
+    assert.equal(writes.length, baseline);
+    return 'Escape and formatting, paragraph, 513-byte strike, 2049-byte insertion and repeated-source refusals sent no writes';
+  });
+
+  await step(8, async () => {
+    const fixture = await publish(
+      join(scratch, 'lifecycle.md'),
+      '# Lifecycle\n\nClose target.\n\nRetry target.\n'
+    );
+    const prior = writesFor(fixture.id, 'POST');
+    const retry = await browserInstance.open(fixture.url, tokenA);
+    await suggesting(retry);
+    await select(retry, 'article.prose', 'Retry target');
+    await input(retry, 'retry replacement');
+    retry.blocked = true;
+    await leave(retry);
+    await retry.wait(
+      "document.querySelector('.sg-receipt.is-failed')",
+      'failed suggestion receipt'
+    );
+    assert.equal(retry.blockedWrites, 1, 'blocked write was not observed');
+    assert.equal(
+      writesFor(fixture.id, 'POST'),
+      prior,
+      'blocked request reached store'
+    );
+    retry.blocked = false;
+    await click(retry, '.sg-receipt.is-failed .popover-action');
+    await until(
+      async () => writesFor(fixture.id, 'POST') === prior + 1,
+      'successful retry'
+    );
+    const saved = await plaintextRows(fixture.id, fixture.key);
+    assert.equal(
+      saved.filter(
+        (entry) => entry.plain.suggestion?.replacement === 'retry replacement'
+      ).length,
+      1
+    );
+    console.log(
+      'STEP 8 RETRY PROVEN one blocked request, one stored comment after Retry'
+    );
+    const closing = await browserInstance.open(fixture.url, tokenA);
+    await suggesting(closing);
+    await select(closing, 'article.prose', 'Close target');
+    await input(closing, 'close replacement');
+    await closing.wait("document.querySelector('ins.is-draft')", 'close draft');
+    await closing.send('Page.close');
+    await until(
+      async () => writesFor(fixture.id, 'POST') === prior + 2,
+      'page-close POST'
+    );
+    const sent = closing.trace.filter(
+      (entry) =>
+        entry.method === 'POST' &&
+        entry.url.includes(`/api/relics/${fixture.id}/comments`)
+    );
+    assert.equal(sent.length, 1, 'closing sent more than one POST');
+    assert.equal(sent[0]?.keepalive, true, 'close POST was not keepalive');
+    return 'Page.close sent one keepalive POST; an intercepted failure retried to exactly one stored comment';
+  });
+
+  await step(9, async () => {
+    const fixture = await publish(
+      join(scratch, 'program.ts'),
+      'const first = 1;\nconst insertHere = 2;\nconst last = 3;\n'
+    );
+    const page = await browserInstance.open(fixture.url, tokenA);
+    await suggesting(page);
+    await select(page, 'pre.code-body', 'insertHere');
+    await input(page, 'draft');
+    await key(page, 'Enter', 'Enter', 13, '\r');
+    await key(page, 'Tab', 'Tab', 9);
+    await input(page, 'next');
+    const state = await page.evaluate<{
+      insertion: string;
+      gutter: string;
+      expectedLines: number;
+      topDelta: number;
+    }>(`(() => {
+      const code = document.querySelector('pre.code-body');
+      const gutter = code.parentElement.querySelector('pre.gutter');
+      return {
+        insertion: code.querySelector('ins[data-sg-draft]')?.textContent,
+        gutter: gutter.textContent,
+        expectedLines: code.textContent.split('\\n').length,
+        topDelta: Math.abs(code.getBoundingClientRect().top - gutter.getBoundingClientRect().top),
+      };
+    })()`);
+    assert.equal(state.insertion, 'draft\n\tnext');
+    assert.equal(
+      state.gutter.split('\n').length,
+      state.expectedLines,
+      'gutter row count differs from code'
+    );
+    assert.ok(
+      state.gutter.split('\n').includes('+'),
+      'inserted line has no gutter marker'
+    );
+    assert.ok(
+      state.topDelta <= 2,
+      `gutter is vertically misaligned by ${state.topDelta}px`
+    );
+    await leave(page);
+    await until(
+      async () => writesFor(fixture.id, 'POST') === 1,
+      'one multiline code POST'
+    );
+    const rows = await plaintextRows(fixture.id, fixture.key);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0]?.plain.suggestion?.replacement, 'draft\n\tnext');
+    return `Enter and Tab posted once; gutter rows matched code and top offset was ${state.topDelta}px`;
+  });
+
+  if (!legacyDist) console.log('STEP 12 SKIPPED no RELIC_SUGGEST_MAIN_DIST');
+  else
+    await step(12, async () => {
+      needs(1);
+      assert.ok(firstId, 'the first suggestion was not stored');
+      assert.equal(
+        await Bun.file(join(legacyDist, 'viewer.js')).exists(),
+        true,
+        'legacy viewer.js missing'
+      );
+      app = appFor(legacyDist);
+      try {
+        const legacy = await browserInstance.open(md.url, tokenB);
+        assert.equal(
+          await legacy.evaluate<boolean>(
+            "!!document.querySelector('[data-sg-suggesting]')"
+          ),
+          false
+        );
+        const before = await legacy.evaluate<string>(
+          "document.querySelector('article.prose strong').textContent"
+        );
+        await select(legacy, 'article.prose strong', 'hours at a time');
+        await input(legacy, 'CANARY-LEGACY');
+        assert.equal(
+          await legacy.evaluate<string>(
+            "document.querySelector('article.prose strong').textContent"
+          ),
+          before
+        );
+        assert.equal(
+          await legacy.evaluate<boolean>(
+            "document.body.textContent.includes('CANARY-LEGACY')"
+          ),
+          false
+        );
+        await legacy.wait(
+          "document.body.textContent.includes('Suggested edit:') && document.body.textContent.includes('cannot show')",
+          'legacy fallback and unplaceable note'
+        );
+        negative = 'ran';
+        return 'efa3afee could not enter Suggesting or type the draft, and displayed the fallback body and cannot show note';
+      } finally {
+        app = appFor(viewerDist);
+      }
+    });
+
+  await step(10, async () => {
+    needs(3, 4, 5, 6);
+    const written = await mcp('relic_apply_suggestions', {
+      relic_id: md.id,
+      path: markdownPath,
+      accept: [firstId],
+      write: true,
+    });
+    assert.equal(written['written'], true);
+    const republished = await mcp('relic_republish', {
+      relic_id: md.id,
+      path: markdownPath,
+      cover: false,
+      notify: false,
+      addresses: [
+        { comment_id: firstId, outcome: 'accepted', note: 'Applied.' },
+        {
+          comment_id: conflictId,
+          outcome: 'superseded',
+          note: 'Another edit was applied.',
+        },
+        {
+          comment_id: hostileId,
+          outcome: 'declined',
+          note: 'Not taking this edit.',
+        },
+        {
+          comment_id: linkId,
+          outcome: 'declined',
+          note: 'Not taking this edit.',
+        },
+        {
+          comment_id: deferredId,
+          outcome: 'deferred',
+          note: 'Seen for later.',
+        },
+      ],
+    });
+    assert.equal(republished['version'], 2);
+    assert.equal((await store.getRelic(md.id))?.version, 2);
+    const rows = await plaintextRows(md.id, md.key);
+    for (const [id, outcome] of [
+      [firstId, 'accepted'],
+      [conflictId, 'superseded'],
+      [hostileId, 'declined'],
+      [deferredId, 'deferred'],
+    ] as const) {
+      assert.equal(
+        rows.filter(
+          (entry) =>
+            entry.row.author === 'publisher' &&
+            entry.plain.addresses === id &&
+            entry.plain.suggestion_outcome === outcome
+        ).length,
+        1,
+        `missing ${outcome} outcome`
+      );
+    }
+    return 'MCP applied the selected edit and republished v2 with accepted, superseded, declined and deferred outcomes';
+  });
+
+  await step(11, async () => {
+    needs(10);
+    const page = await browserInstance.open(md.url, tokenA);
+    await click(page, '[data-sg-applied]');
+    await page.wait(
+      "document.querySelector('[data-sg-applied][aria-checked=true]')",
+      'v2 applied view'
+    );
+    assert.equal(
+      await page.evaluate<string>(
+        "document.querySelector('[data-sg-count]').textContent"
+      ),
+      '0 suggestions'
+    );
+    assert.equal(
+      await page.evaluate<number>(
+        "document.querySelectorAll('[data-sg-id]').length"
+      ),
+      0,
+      'v2 has suggestion marks'
+    );
+    await click(page, '[data-sg-applied]');
+    await page.wait(
+      "document.querySelector('[data-sg-applied][aria-checked=false]')",
+      'v2 reading view'
+    );
+    await click(page, '.version-trigger');
+    await click(page, '.version-option[data-version="1"]');
+    await page.wait(
+      "document.querySelector('.version-long')?.textContent.includes('1')",
+      'v1 version selection'
+    );
+    await click(page, '.action-comments');
+    await page.wait(
+      "document.querySelector('.thread.is-open')",
+      'v1 comments open'
+    );
+    for (const [id, label] of [
+      [firstId, 'Accepted in v2'],
+      [conflictId, 'Superseded'],
+      [hostileId, 'Not taken'],
+      [deferredId, 'Seen by the publisher'],
+    ] as const) {
+      const row = `.comment[data-comment-id="${id}"]`;
+      await page.wait(
+        `document.querySelector(${JSON.stringify(row)})?.textContent.includes(${JSON.stringify(label)})`,
+        label
+      );
+      assert.equal(
+        await page.evaluate<boolean>(`(() => {
+          const row = document.querySelector(${JSON.stringify(row)});
+          return !!row && row.getClientRects().length > 0;
+        })()`),
+        true,
+        `${label} was not visible in the open comments panel`
+      );
+    }
+    return 'v1 displayed Accepted in v2, Superseded, Not taken and Seen by the publisher; v2 had no suggestion marks';
+  });
+} finally {
+  await ownedBrowser?.close();
+  await service.stop(true);
+  await rm(scratch, { recursive: true, force: true });
+}
+if (failures.size > 0) {
+  throw new Error(
+    `Suggestion path failed steps ${[...failures.keys()].sort((a, b) => a - b).join(', ')}`
+  );
+}
+console.log(`SUGGESTED_EDITS_PATH_OK classes=2 negative=${negative}`);
+console.log(
+  'HEADLESS_LIMITS OS IME, real clipboard and drag and drop were not exercised'
+);
