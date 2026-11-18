@@ -446,7 +446,7 @@ function docMD() {
     },
     blocks: [
       B('h1', 'h1', [T('Offline sync for field crews')]),
-      B('p1', 'p', [T('Field crews lose signal for '), C('c-shift'), T('. Today the app discards any form that fails to upload, and the crew re-enters it from paper that evening. This spec makes every form save on the device first and sync when a connection returns.')]),
+      B('p1', 'p', [T('Field crews lose signal for '), C('c-shift'), T('. Today the app discards any form that fails to upload, and the crew re-enters it from paper that evening. This spec makes every form save on the device first and sync when a connection returns'), C('c-link'), T('.')]),
       B('h2a', 'h2', [T('Scope')]),
       B('p2', 'p', [T('The first release covers '), C('c-forms'), T(' and photo attachments. Signatures and map edits stay online-only until '), C('c-version', 'strong'), T(', because their conflict rules are not settled.')]),
       B('li1', 'li', [T('Forms save to the device within '), C('c-200'), T(' of the last keystroke.')], { list: 'u1' }),
@@ -463,7 +463,7 @@ function docMD() {
       B('t2b', 'td', [T('10 minutes')], { in: 'tr2' }),
       B('t3a', 'td', [T('Signal returns')], { in: 'tr3' }),
       B('t3b', 'td', [T('Retries at once')], { in: 'tr3' }),
-      B('p4', 'p', [T('Nothing leaves the queue until the server confirms it by checksum. See the '), T('upload contract', 'a'), T(' for the exact response'), C('c-link'), T('.')]),
+      B('p4', 'p', [T('Nothing leaves the queue until the server confirms it by checksum. See the '), T('upload contract', 'a'), T(' for the exact response.')]),
       B('h2c', 'h2', [C('c-hostile')]),
       B('p5', 'p', [T(P5)]),
       B('q2', 'blockquote', [T(CALLOUT)], { repeats: true }),
@@ -479,8 +479,8 @@ function docMD() {
       'c-mine': { author: 'you', block: 'li2', del: 'over Wi-Fi only', ins: 'over Wi-Fi or unmetered cellular', time: '3 min ago', replies: [] },
       'c-del': { author: 'lena', block: 'li3', del: ', flags the form in red,', ins: '', time: '48 min ago', replies: [
         { who: 'priya', time: '35 min ago', body: 'Agreed. Red alone fails for colour-blind leads, and the split icon already says it.' }] },
-      'c-link': { author: 'marcus', block: 'p4', del: '', ins: ' and the [error codes](https://larkspur.dev/specs/upload#errors)', exact: 'e', mode: 'after',
-        source: ['', ' and the [error codes](https://larkspur.dev/specs/upload#errors)'], applied: [' and the ', { a: 'error codes' }], time: '27 min ago', replies: [] },
+      'c-link': { author: 'marcus', block: 'p1', del: '', ins: ', as logged in the [March field trial](https://larkspur.dev/field/march-trial)', exact: 's', mode: 'after',
+        source: ['', ', as logged in the [March field trial](https://larkspur.dev/field/march-trial)'], applied: [', as logged in the ', { a: 'March field trial' }], time: '27 min ago', replies: [] },
       'c-15': { author: 'priya', group: 'g-retry', block: 'p3', del: 'every 30 seconds', ins: 'every 15 seconds', time: '50 min ago', replies: [
         { who: 'dana', time: '31 min ago', body: '15 s doubles the radio wake-ups. Do we have a battery number for it?' }] },
       'c-60': { author: 'marcus', group: 'g-retry', block: 'p3', del: 'every 30 seconds', ins: 'every minute', time: '44 min ago', replies: [] },
@@ -529,10 +529,11 @@ const OUTCOMES = {
   'c-shift': { badge: 'Accepted in v2', tone: 'ok', chip: 'accepted in v2', note: 'Applied. Multi-day gaps get their own section next.' },
   'c-60': { badge: 'Accepted in v2', tone: 'ok', chip: 'accepted in v2', note: 'A minute keeps the radio quiet, and the battery run backs it.' },
   'c-15': { badge: 'Superseded', tone: 'quiet', chip: 'superseded', note: 'Marcus\u2019s \u201cevery minute\u201d shipped in version 2 instead.' },
-  'c-5s': { badge: 'Seen by the publisher, not applied yet', tone: 'wait', chip: 'seen', note: 'Worth doing once the radio driver reports signal changes.' },
+  'c-5s': { badge: 'Not taken', tone: 'quiet', chip: 'not taken', note: 'The radio driver already waits for a stable signal.' },
   'c-version': { badge: 'Not taken', tone: 'quiet', chip: 'not taken', note: 'Signatures still go offline in 3.2. Keeping it.' },
   'c-200': { badge: 'The publisher replied', tone: 'wait', chip: 'replied', note: 'Is 500 ms from the Tab A8 run or the Pixel? I will decide after both.' },
-  'c-mine': { badge: 'No answer from the publisher is visible to you', tone: 'soft', chip: 'no answer', note: null },
+  'c-mine': { badge: 'Seen by the publisher, not applied yet', tone: 'wait', chip: 'seen', note: 'Needs a data-cost check with the carrier first.' },
+  'c-forms': { badge: 'No answer from the publisher is visible to you', tone: 'soft', chip: 'no answer', note: null },
   'c-del': { badge: 'Withdrawn', tone: 'quiet', chip: 'withdrawn', note: null },
   'c-link': { badge: 'Closed by the publisher', tone: 'quiet', chip: 'closed', note: null },
 };
@@ -566,7 +567,7 @@ S('R4', 'Reading', 'Your own pending suggestion, styled as yours, with Withdraw 
 S('R5', 'Reading', 'A hostile replacement containing <script> and ** markup, shown as literal text inline and in its card', { extra: ['c-hostile'], after: () => openCardAt('c-hostile', { pinned: true }) });
 S('A1', 'Applied', '\u201cShow suggestions applied\u201d: clean text with faint marks; the inserted link has no href, only its title', { applied: true, after: () => pinLinkNote() });
 S('A2', 'Applied', 'Selecting edited text offers Reply and Copy text; Comment and Suggest edit are absent, with one line saying why', { applied: true, after: () => { selectInBlock('p1', 'most of a shift'); selectionOffer(); } });
-S('S1', 'Suggesting', 'Suggesting on: the mode bar, your caret and the hint, with two peer carets. Click any paragraph and type.', { mode: 'suggesting', peers: MD_PEERS_S1, after: () => placeCaret('p3', 112) });
+S('S1', 'Suggesting', 'Suggesting on: the mode bar, your caret and the hint, with two peer carets. Click any paragraph and type.', { mode: 'suggesting', peers: MD_PEERS_S1, after: () => placeCaret('p2', 96) });
 S('S2', 'Suggesting', 'Typing: the draft, \u201cEsc cancels \u00b7 Leave the paragraph to post\u201d, and the counters near the struck limit', { mode: 'suggesting', after: seedS2 });
 S('S2-dark', 'Suggesting', 'S2 in dark mode', { label: 'S2', theme: 'dark', mode: 'suggesting', after: seedS2 });
 S('S3', 'Suggesting', 'The selection offer with Suggest edit', { after: () => { selectInBlock('p3', 'A banner shows how many forms are waiting'); selectionOffer(); } });
@@ -583,11 +584,11 @@ S('S6h', 'Suggesting', 'Refused on leaving: a passage that repeats in the source
 S('S7', 'Suggesting', '\u201cNot posted\u201d with Retry and Discard, and a note that leaving the page will ask first', { mode: 'suggesting', after: () => { seedDraft({ block: 'p1', find: 'from paper that evening', ins: 'from paper at the end of the shift' }); commit('left', { fail: true }); } });
 S('S8', 'Suggesting', 'Signed out: Suggest edit leads to sign-in', { signedIn: false, after: () => { selectInBlock('p3', 'tapping it opens the queue'); selectionOffer(); const b = V.offer && V.offer.querySelector('[data-suggest]'); if (b) b.click(); } });
 S('S9a', 'Suggesting', 'Suggesting unavailable: an older version', { version: 1, versions: 2, active: [], unavailable: 'older' });
-S('S9b', 'Suggesting', 'Suggesting unavailable: the file is over 1 MiB', { unavailable: 'too_large', setup: (v) => { v.doc.filename = 'field-ops-handbook.md'; v.doc.accession = 'M3QK9D2XW7RT4PZ1'; } });
-S('S9c', 'Suggesting', 'Suggesting unavailable: CR or NUL in the file', { cls: 'code', unavailable: 'has_cr' });
-S('S9d', 'Suggesting', 'Suggesting unavailable: the file is not UTF-8', { cls: 'code', unavailable: 'not_utf8', setup: (v) => { v.doc.filename = 'drain-queue.legacy.ts'; v.doc.accession = 'W8NP2KT6QD4XM9RE'; } });
-S('S9e', 'Suggesting', 'Suggesting unavailable: the layout could not be matched to the source', { unavailable: 'layout' });
-S('O1', 'Outcomes', 'The version 1 page after version 2 lands: every state from plan 3.3 on the changes and in the panel, read-only', { version: 1, versions: 2, outcomes: true, sidebar: true, unavailable: 'older' });
+S('S9b', 'Suggesting', 'Suggesting unavailable: the file is over 1 MiB', { active: [], unavailable: 'too_large', setup: (v) => { v.doc.filename = 'field-ops-handbook.md'; v.doc.accession = 'M3QK9D2XW7RT4PZ1'; } });
+S('S9c', 'Suggesting', 'Suggesting unavailable: CR or NUL in the file', { cls: 'code', active: [], unavailable: 'has_cr' });
+S('S9d', 'Suggesting', 'Suggesting unavailable: the file is not UTF-8', { cls: 'code', active: [], unavailable: 'not_utf8', setup: (v) => { v.doc.filename = 'drain-queue.legacy.ts'; v.doc.accession = 'W8NP2KT6QD4XM9RE'; } });
+S('S9e', 'Suggesting', 'Suggesting unavailable: the layout could not be matched to the source', { active: [], unavailable: 'layout' });
+S('O1', 'Outcomes', 'The version 1 page after version 2 lands: every state from plan 3.3 on the changes and in the panel, read-only', { version: 1, versions: 2, outcomes: true, sidebar: true, unavailable: 'older', extra: ['c-forms'] });
 S('O2', 'Outcomes', 'The version 2 page: clean, no version 1 suggestions, Suggesting available', { version: 2, versions: 2, active: [], setup: bakeV2 });
 S('C1', 'Code', 'A multi-line draft using Enter and Tab, with + rows in the gutter so numbering stays aligned', { cls: 'code', mode: 'suggesting', after: () => seedDraft({ block: 'file', find: 'failures += 1;', after: true, ins: '\n\t\t\tif (failures === 5) notifyLead(form.id);' }) });
 S('C2', 'Code', 'The code applied view', { cls: 'code', applied: true });
@@ -1688,8 +1689,8 @@ function conflictCard(gid) {
   return h('div', { class: 'popover popover-card sg-card is-conflict', role: 'dialog', 'aria-label': `${g.members.length} suggestions on one passage` },
     h('div', { class: 'card-head' }, h('span', { class: 'card-who' }, `${g.members.length} suggestions on this passage`)),
     h('div', { class: 'card-row' }, h('span', { class: 'k' }, 'Original'), h('span', { class: 'v' }, h('del', { class: 'sg-del' }, g.del))),
-    members,
     h('p', { class: 'card-note' }, `The applied view shows ${first(def.author)}\u2019s (posted first).`),
+    members,
     h('div', { class: 'popover-tools' }, h('button', { type: 'button', class: 'popover-action is-quiet is-end', onclick: closeCard }, 'Close')));
 }
 
@@ -1867,10 +1868,10 @@ function renderThread() {
       item.append(h('p', { class: 'comment-body' }, fallbackBody(ch)),
         h('p', { class: 'comment-sub' }, 'This comment points at part of the document that this page cannot show.'));
     } else {
-      item.append(h('div', { class: 'comment-head', style: 'margin:0 0 .3rem' }, stateEl(id).firstChild, ch.author === 'you' ? h('span', { class: 'comment-badge' }, 'yours') : null),
+      item.append(...[h('div', { class: 'comment-head', style: 'margin:0 0 .3rem' }, stateEl(id).firstChild, ch.author === 'you' ? h('span', { class: 'comment-badge' }, 'yours') : null),
         h('p', { class: 'comment-body' }, ch.del ? h('del', { class: 'sg-del' }, ch.del) : null, ch.del && ch.ins ? ' ' : null, ch.ins ? h('ins', { class: 'sg-ins' }, ch.ins) : null),
         ch.group ? h('p', { class: 'comment-sub' }, `One of ${V.groups[ch.group].members.length} suggestions on \u201c${V.groups[ch.group].del}\u201d`) : null,
-        ch.also && ch.also.length ? h('p', { class: 'comment-sub' }, 'Also suggested by ' + ch.also.map((k) => PEOPLE[k].name).join(', ')) : null);
+        ch.also && ch.also.length ? h('p', { class: 'comment-sub' }, 'Also suggested by ' + ch.also.map((k) => PEOPLE[k].name).join(', ')) : null].filter(Boolean));
       const out = V.outcomes && V.outcomes[id];
       if (out && out.note) item.append(h('ol', { class: 'comment-replies' }, h('li', null, h('div', { class: 'comment-head' }, h('span', { class: 'comment-name' }, PEOPLE.dana.name), h('span', { class: 'comment-badge is-soft' }, 'publisher')), h('p', { class: 'comment-body' }, out.note))));
     }
