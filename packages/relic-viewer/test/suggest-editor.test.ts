@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { existsSync, readdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import type * as EditorModule from '../src/suggest-editor.ts';
@@ -657,8 +659,8 @@ describe('suggestion editor in the browser', () => {
         },
       });
       const profile = join(
-        import.meta.dir,
-        `.suggest-editor-${crypto.randomUUID()}`
+        tmpdir(),
+        `relic-suggest-editor-${crypto.randomUUID()}`
       );
       const browser = spawn(
         shell!,
@@ -683,7 +685,10 @@ describe('suggestion editor in the browser', () => {
         if (result.error) throw new Error(result.error);
         expect(result.passed).toHaveLength(16);
       } finally {
-        browser.kill();
+        browser.kill('SIGKILL');
+        if (browser.exitCode === null && browser.signalCode === null) {
+          await once(browser, 'exit');
+        }
         server.stop(true);
         await rm(profile, { recursive: true, force: true });
       }
