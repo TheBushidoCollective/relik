@@ -6409,7 +6409,7 @@ ${
         "img-src 'self' blob: data:",
         "media-src 'self' blob: data:",
         "manifest-src 'self'",
-        `connect-src 'self' ${new URL(config.serviceOrigin).origin} https:`,
+        `connect-src 'self' ${new URL(config.serviceOrigin).origin} wss://${new URL(config.serviceOrigin).host} https:`,
         `frame-src ${new URL(config.usercontentOrigin).origin}`,
         "base-uri 'none'",
         "form-action 'none'",
@@ -7273,6 +7273,14 @@ relic id. A hash of an email address is not anonymous: anyone who can guess the 
 
 Deleting a relic deletes its comments, its shared addresses, and its stop records. An expired
 relic sends no more emails, and those records stay until it is deleted, like the rest of it.
+
+## Live presence while suggesting
+
+When you are signed in and have a relic open, your browser keeps a connection to Relic's presence relay so you can see other readers' cursors and when they are typing. While you are in Suggesting mode with the page in front of you, your browser sends one update a second; otherwise it sends nothing.
+
+Each update is encrypted in your browser with a key derived from the relic's key (the link for a public relic, the version key you were granted for a private one), padded to one fixed size, and passed to the other people in the same room. The relay never writes an update down and cannot read one: it does not see your cursor, what you type, or the name you entered.
+
+What we do see: that a browser at your IP address joined a room, when it connected and left, how many browsers share the room, and when yours is sending updates, which shows when you are suggesting. The room's name is derived from that key and does not name the relic, but we can usually match it to the relic from your IP address and timing. Your browser sends your sign-in cookie with the connection, as with every request to Relic; the relay does not read it. Connection records are kept with our other request logs for ${retention} days.
 
 ## Decisions and passkeys
 
