@@ -572,7 +572,7 @@ export function mountDataTable(
       const sorted = sort !== undefined && sort.column === column;
       if (sorted) {
         const indicator = element('span', 'dt-sort');
-        indicator.dataset['dir'] = sort.direction;
+        indicator.dataset['dir'] = sort?.direction ?? 'asc';
         cell.append(indicator);
       }
       const commentButton = element('button', 'dt-hc-comment');
