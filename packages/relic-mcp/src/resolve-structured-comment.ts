@@ -5,12 +5,17 @@
  * found in this version", never a guess at the current file.
  */
 
-import type { CellCommentAnchor, PathCommentAnchor } from '@relic/format';
+import type {
+  CellCommentAnchor,
+  CommentAnchor,
+  PathCommentAnchor,
+} from '@relic/format';
 import type { CommentRecord } from './comments.ts';
 import {
   type CellResolution,
   type PathResolution,
   type StructuredReader,
+  type TimeCuesResolution,
   structuredReaderFor,
 } from './resolve-structured.ts';
 
@@ -79,4 +84,25 @@ export async function resolveStructuredComment(
     resolved:
       anchor.kind === 'cell' ? reader.cell(anchor) : reader.path(anchor),
   };
+}
+
+/**
+ * Resolves one subtitle time anchor against the version it was written on. A
+ * comment that records no version is not found, as a cell or path comment is,
+ * rather than read against whatever the file is now.
+ */
+export function resolveSubtitleTime(
+  comment: CommentRecord,
+  anchor: Extract<CommentAnchor, { kind: 'time' }>,
+  reader: StructuredReader
+): TimeCuesResolution {
+  if (comment.version === null) {
+    return {
+      kind: 'time',
+      status: 'unresolvable',
+      explanation:
+        'The time is not found in this version: the comment records no version.',
+    };
+  }
+  return reader.subtitleTime(anchor);
 }

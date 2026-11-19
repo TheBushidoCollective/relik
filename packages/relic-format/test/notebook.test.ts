@@ -2,7 +2,6 @@ import { describe, expect, test } from 'bun:test';
 import {
   ansiSpans,
   decodeBase64,
-  escapeInvisible,
   imageFormatOf,
   NOTEBOOK_MAX_CELLS,
   NOTEBOOK_MAX_OUTPUTS_PER_CELL,
@@ -13,6 +12,7 @@ import {
   notebookTarget,
   parseNotebook,
 } from '../src/notebook.ts';
+import { escapeInvisible } from '../src/structured-text.ts';
 
 // A 1x1 PNG, base64, as nbformat stores it.
 const PNG_B64 =

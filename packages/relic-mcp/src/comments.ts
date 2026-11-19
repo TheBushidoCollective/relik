@@ -68,6 +68,7 @@ import {
   type ResolvedAnchor,
   resolveAnchors,
 } from './resolve-anchor.ts';
+import { jsonLine } from './untrusted-text.ts';
 import {
   loadPrivatePublishState,
   loadPublishState,
@@ -1367,20 +1368,20 @@ export function describeAnchor(anchor: CommentAnchor | null): string {
 
   switch (anchor.kind) {
     case 'text':
-      return `on "${anchor.quote}"`;
+      return `on ${jsonLine(anchor.quote)}`;
 
     case 'quote': {
       const contextParts: string[] = [];
       if (anchor.prefix !== undefined) {
-        contextParts.push(`"${anchor.prefix}" before`);
+        contextParts.push(`${jsonLine(anchor.prefix)} before`);
       }
       if (anchor.suffix !== undefined) {
-        contextParts.push(`"${anchor.suffix}" after`);
+        contextParts.push(`${jsonLine(anchor.suffix)} after`);
       }
       if (contextParts.length > 0) {
-        return `on "${anchor.exact}" (context: ${contextParts.join(', ')})`;
+        return `on ${jsonLine(anchor.exact)} (context: ${contextParts.join(', ')})`;
       }
-      return `on "${anchor.exact}"`;
+      return `on ${jsonLine(anchor.exact)}`;
     }
 
     case 'pin': {
@@ -1459,17 +1460,17 @@ export function describeAnchor(anchor: CommentAnchor | null): string {
       const where = ranged ? `cells ${from} to ${to}` : `cell ${from}`;
       return anchor.sheet === undefined
         ? `on ${where}`
-        : `on ${where} of sheet "${anchor.sheet}"`;
+        : `on ${where} of sheet ${jsonLine(anchor.sheet)}`;
     }
 
     case 'path':
       return anchor.pointer === ''
         ? 'on the whole document'
-        : `on the JSON path ${anchor.pointer}`;
+        : `on the JSON path ${jsonLine(anchor.pointer)}`;
 
     case 'source':
     case 'unsupported':
-      return `carrying a mark this client does not understand (declared kind "${anchor.kind === 'source' ? 'source' : anchor.declared}")`;
+      return `carrying a mark this client does not understand (declared kind ${jsonLine(anchor.kind === 'source' ? 'source' : anchor.declared)})`;
   }
 }
 

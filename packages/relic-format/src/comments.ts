@@ -40,6 +40,7 @@ import {
   MalformedCommentError,
 } from './errors.ts';
 import type { OtioAnchorV1, OtioRationalTime } from './otio-types.ts';
+import { isInvisible } from './structured-text.ts';
 
 /**
  * The third label. Distinct from RFC 8188's two by construction, and namespaced
@@ -1271,7 +1272,7 @@ function requirePointer(value: unknown): string {
       'path anchor pointer has a "~" that is not "~0" or "~1"'
     );
   }
-  if (value.includes('\u0000') || value.includes('\r')) {
+  if (pointerHasForbiddenCharacter(value)) {
     throw new MalformedCommentError('path anchor pointer contains a NUL or CR');
   }
   const bytes = new TextEncoder().encode(value).length;
@@ -1284,16 +1285,23 @@ function requirePointer(value: unknown): string {
   return value;
 }
 
-/** Control characters (C0 and DEL) and the bidi embedding and isolate controls. */
+/**
+ * Whether a pointer holds a NUL or CR, which the anchor writer refuses. The
+ * viewer's pointer builder shares this rule, so a node the writer would refuse
+ * is never offered for a comment.
+ */
+export function pointerHasForbiddenCharacter(value: string): boolean {
+  return value.includes('\u0000') || value.includes('\r');
+}
+
+/**
+ * Invisible and reordering characters, as `structured-text.ts` defines them.
+ * Used for sheet names: the sheet is shown in a label, so a character that
+ * reorders or hides text is refused.
+ */
 function hasControlOrBidiCharacter(text: string): boolean {
   for (const character of text) {
-    const code = character.codePointAt(0) ?? 0;
-    if (code <= 0x1f || code === 0x7f) return true;
-    if (
-      (code >= 0x202a && code <= 0x202e) ||
-      (code >= 0x2066 && code <= 0x2069)
-    )
-      return true;
+    if (isInvisible(character.codePointAt(0) ?? 0)) return true;
   }
   return false;
 }

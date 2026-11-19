@@ -23,6 +23,7 @@ import {
   type TableParseFailure,
 } from '@relic/format/csv';
 import {
+  JSON_TREE_MAX_BYTES,
   type JsonTreeFailure,
   type JsonTreeResult,
   jsonStringValue,
@@ -31,13 +32,13 @@ import {
   utf8Length,
 } from '@relic/format/json-tree';
 import {
-  escapeInvisible,
   type NotebookOutput,
   type NotebookRefusal,
   type NotebookResult,
   notebookTarget,
   parseNotebook,
 } from '@relic/format/notebook';
+import { escapeInvisible } from '@relic/format/structured-text';
 import {
   type SubtitleCue,
   type SubtitleParseResult,
@@ -55,6 +56,8 @@ export const PATH_EXCERPT_LIMIT_BYTES = 512;
 export const CUE_TEXT_LIMIT_BYTES = 512;
 /** Matching cues returned for one time anchor. The rest are counted, not sent. */
 export const TIME_CUE_LIMIT = 20;
+/** The largest structured file any reader parses (the JSON tree cap). Larger content is refused before it is decoded. */
+export const STRUCTURED_MAX_BYTES = JSON_TREE_MAX_BYTES;
 
 export type StructuredKind =
   | 'table'
@@ -333,6 +336,7 @@ function lineAt(breaks: readonly number[], offset: number): number {
 export class StructuredReader {
   readonly kind: StructuredKind;
   readonly #source: string;
+  readonly #oversize: number | undefined;
   readonly #tsv: boolean;
   readonly #filename: string;
   readonly #mimetype: string;
@@ -342,10 +346,16 @@ export class StructuredReader {
   #subtitles: SubtitleParseResult | undefined;
   #breaks: number[] | undefined;
 
-  constructor(source: string, filename: string, mimetype: string) {
+  constructor(
+    source: string,
+    filename: string,
+    mimetype: string,
+    oversize?: number
+  ) {
     this.#source = source;
     this.#filename = filename;
     this.#mimetype = mimetype;
+    this.#oversize = oversize;
     this.kind = structuredKindOf(filename, mimetype);
     this.#tsv =
       /\.tsv$/i.test(filename) ||
@@ -597,41 +607,74 @@ export class StructuredReader {
   }
 
   #tableParse(): TableParse {
-    this.#table ??= parseTable(this.#source, {
-      delimiter: this.#tsv ? '\t' : 'auto',
-    });
+    this.#table ??=
+      this.#oversize === undefined
+        ? parseTable(this.#source, {
+            delimiter: this.#tsv ? '\t' : 'auto',
+          })
+        : { ok: false, reason: 'too-large', limit: 'bytes' };
     return this.#table;
   }
 
   #treeParse(): JsonTreeResult {
-    this.#tree ??= parseJsonTree(this.#source);
+    this.#tree ??=
+      this.#oversize === undefined
+        ? parseJsonTree(this.#source)
+        : {
+            ok: false,
+            failure: {
+              kind: 'too-large',
+              bytes: this.#oversize,
+              limit: JSON_TREE_MAX_BYTES,
+            },
+          };
     return this.#tree;
   }
 
   #notebookParse(): NotebookResult {
-    this.#notebook ??= parseNotebook(this.#source);
+    this.#notebook ??=
+      this.#oversize === undefined
+        ? parseNotebook(this.#source)
+        : {
+            ok: false,
+            refusal: {
+              kind: 'json',
+              failure: {
+                kind: 'too-large',
+                bytes: this.#oversize,
+                limit: JSON_TREE_MAX_BYTES,
+              },
+            },
+          };
     return this.#notebook;
   }
 
   #subtitleParse(): SubtitleParseResult {
-    this.#subtitles ??= parseSubtitles(
-      this.#source,
-      subtitleFormatFor(this.#filename, this.#mimetype)
-    );
+    this.#subtitles ??=
+      this.#oversize === undefined
+        ? parseSubtitles(
+            this.#source,
+            subtitleFormatFor(this.#filename, this.#mimetype)
+          )
+        : { ok: false, reason: 'too-large', skipped: 0 };
     return this.#subtitles;
   }
 }
 
-/** A reader for one relic file. Bytes are decoded only for a structured kind. */
+/**
+ * A reader for one relic file. Bytes are decoded only for a structured kind,
+ * and only up to the largest parser cap: a larger file is refused as too large
+ * without being decoded, and every parser answers with its own too-large result.
+ */
 export function structuredReaderFor(
   content: Uint8Array,
   filename: string,
   mimetype: string
 ): StructuredReader {
-  const kind = structuredKindOf(filename, mimetype);
-  const source =
-    kind === 'other'
-      ? ''
-      : new TextDecoder('utf-8', { fatal: false }).decode(content);
+  if (structuredKindOf(filename, mimetype) === 'other')
+    return new StructuredReader('', filename, mimetype);
+  if (content.byteLength > STRUCTURED_MAX_BYTES)
+    return new StructuredReader('', filename, mimetype, content.byteLength);
+  const source = new TextDecoder('utf-8', { fatal: false }).decode(content);
   return new StructuredReader(source, filename, mimetype);
 }
