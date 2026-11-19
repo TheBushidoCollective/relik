@@ -159,7 +159,22 @@ body {
 .cf-viewer .bar { position: relative; }
 .cf-viewer .filename { overflow-wrap: anywhere; }
 .cf-icon { width: 14px; height: 14px; flex: none; fill: currentColor; }
-.cf-more-wrap { position: relative; display: flex; margin-left: auto; border-left: 1px solid var(--rule); }
+/* main.ts: at 34rem and wider the actions sit in the bar; below it they fold into More. */
+.cf-actions { display: flex; align-items: stretch; margin-left: auto; border-left: 1px solid var(--rule); }
+.cf-act {
+  display: inline-flex; align-items: center; justify-content: center; gap: 0.45rem; min-height: 2.75rem; min-width: 2.75rem; padding: 0 0.9rem;
+  background: transparent; color: var(--ink); border: 0; border-right: 1px solid var(--rule); font: inherit; font-size: 0.82rem; cursor: pointer; white-space: nowrap;
+}
+.cf-act:not(:has(~ .cf-act:not([hidden]))) { border-right: 0; }
+.cf-act:focus-visible, .cf-more:focus-visible { outline-offset: -2px !important; }
+.cf-act:hover, .cf-act[aria-expanded="true"] { background: var(--ground); color: var(--patina-ink); }
+.cf-act[hidden] { display: none; }
+.cf-act-skipped .cf-badge { margin-left: 0.1rem; }
+.cf-more-wrap { position: relative; display: none; margin-left: auto; border-left: 1px solid var(--rule); }
+@container (max-width: 34rem) {
+  .cf-actions { display: none; }
+  .cf-more-wrap { display: flex; }
+}
 .cf-more {
   display: inline-flex; align-items: center; justify-content: center; gap: 0.45rem; min-height: 2.75rem; min-width: 2.75rem; padding: 0 0.9rem;
   background: transparent; color: var(--ink); border: 0; font: inherit; font-size: 0.82rem; cursor: pointer;
@@ -394,11 +409,14 @@ body {
     <button type="button" data-cf="delete-ask" aria-pressed="false">Delete comment: asks</button>
     <button type="button" data-cf="delete-ticked" aria-pressed="false">Delete comment: ticked</button>
     <button type="button" data-cf="delete-skipped" aria-pressed="false">Delete comment: skipped</button>
-    <button type="button" data-cf="menu" aria-pressed="false">Relic menu, 3 skipped</button>
-    <button type="button" data-cf="skipped-1" aria-pressed="false">Skipped list: 1</button>
-    <button type="button" data-cf="skipped-3" aria-pressed="false">Skipped list: 3</button>
-    <button type="button" data-cf="skipped-after" aria-pressed="false">Skipped list: after Ask again</button>
-    <button type="button" data-cf="skipped-empty" aria-pressed="false">Skipped list: empty</button>
+    <button type="button" data-cf="bar-0" aria-pressed="false">Bar: nothing skipped</button>
+    <button type="button" data-cf="bar-1" aria-pressed="false">Bar: 1 skipped</button>
+    <button type="button" data-cf="bar-3" aria-pressed="false">Bar: 3 skipped</button>
+    <button type="button" data-cf="skipped-3" aria-pressed="false">Skipped panel: 3</button>
+    <button type="button" data-cf="skipped-after" aria-pressed="false">Skipped panel: after Ask again</button>
+    <button type="button" data-cf="skipped-1" aria-pressed="false">Skipped panel: 1</button>
+    <button type="button" data-cf="skipped-last" aria-pressed="false">Skipped panel: after the last Ask again</button>
+    <button type="button" data-cf="menu" aria-pressed="false">390 wide: More menu, 3 skipped</button>
     <button type="button" data-cf="private-delete" aria-pressed="false">Private delete</button>
     <button type="button" data-cf="private-revoke" aria-pressed="false">Private revoke (rekey)</button>
     <button type="button" data-cf-toggle="dark" aria-pressed="false">Dark</button>
@@ -413,6 +431,13 @@ body {
       <div class="identity">
         <span class="filename">harbour-survey-walkthrough.mp4</span>
         <span class="sub">Plays in your browser, no author code</span>
+      </div>
+      <div class="cf-actions" id="cf-actions">
+        <button type="button" class="cf-act" aria-label="Plays in your browser, no author code" title="Plays in your browser, no author code. What Relic knows." data-menu-note="In the viewer this opens what Relic knows, in a new tab."><svg class="cf-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M5.7 3.3 2 7l3.7 3.7.7-.7L3.4 7l3-3-.7-.7zm4.6 0-.7.7 3 3-3 3 .7.7L14 7l-3.7-3.7z"/></svg></button>
+        <button type="button" class="cf-act" data-menu-note="In the viewer this opens your Relics list in a new tab."><svg class="cf-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 2h4.5v4.5H2V2zm7.5 0H14v4.5H9.5V2zM2 9.5h4.5V14H2V9.5zm7.5 0H14V14H9.5V9.5z"/></svg><span>Relics</span></button>
+        <button type="button" class="cf-act" data-menu-note="In the viewer this downloads the file."><svg class="cf-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M7.5 1h1v7.3l2.6-2.6.7.7L8 10.2 4.2 6.4l.7-.7 2.6 2.6V1zM2 12h12v1H2v-1z"/></svg><span>Download</span></button>
+        <button type="button" class="cf-act" id="cf-act-report" data-menu-note="In the viewer this opens the report form."><svg class="cf-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 1h1v14H3V1zm2 1h8l-2 3 2 3H5V2z"/></svg><span>Report</span></button>
+        <button type="button" class="cf-act cf-act-skipped" id="cf-skip-btn" aria-haspopup="dialog" aria-controls="cf-skipped" aria-expanded="false" hidden><svg class="cf-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 3.3 6.7 8 2 12.7l.7.7L8.1 8 2.7 2.6zm6 0L12.7 8 8 12.7l.7.7L14.1 8 8.7 2.6z"/></svg><span>Skipped</span><span class="cf-badge" id="cf-skip-btn-count">0</span></button>
       </div>
       <div class="cf-more-wrap" id="cf-more-wrap">
         <button type="button" class="cf-more" id="cf-more" aria-expanded="false" aria-controls="cf-menu" title="More">
@@ -540,7 +565,7 @@ body {
     <li>Large file open keeps its dialog: filename, type and size, Cancel and Open. Don't ask again for this relic sits beside Open. Ticking the box records nothing. The choice is recorded only by a trusted click on Open, through <code>confirm-prefs.ts</code> as <code>large-open</code>, for this relic and this version. Cancel and Escape record nothing, and a new version asks again.</li>
     <li>Delete comment keeps its dialog and its sentence. Don't ask again for my comments on this relic sits under the sentence. The choice is recorded only by a trusted click on Delete comment, as <code>delete-comment</code>, for this relic across its versions, because comments span versions.</li>
     <li>While that choice stands, Delete on your own comment sends the delete at once and the thread shows the existing outcome line. Relik has no undo for it, so the strip above the thread says so and offers Ask again, and the Skipped confirmations list repeats the sentence the dialog used to show.</li>
-    <li>Skipped confirmations is an item in the relic bar's More menu, with a count. Its panel lists only this relic's choices, each with its scope in plain words and an Ask again button. Ask again clears that one choice, says so, and moves focus to the next row. With nothing skipped it says what the viewer asks about.</li>
+    <li>Skipped confirmations has two entry points. At 34rem and wider, where the actions sit in the bar, a Skipped button with the count appears only while at least one choice stands on this relic; at zero there is no button. Below 34rem it is an item in the More menu, with the count. Both open the same panel, which lists only this relic's choices, each with its scope in plain words and an Ask again button. Ask again clears that one choice, says so, and moves focus to the next row. After the last one the panel shows its empty state, and the bar button goes when the panel closes.</li>
     <li>Private delete and private revoke are not kinds in <code>confirm-prefs.ts</code>, so nothing can skip them. Their sheets carry no checkbox and one line saying why they always ask.</li>
     <li>A frame message cannot set, clear or read any of these choices, as with links.</li>
   </ul>
@@ -714,8 +739,10 @@ body {
     opened: '<code>main.ts</code> <code>confirmLargeOpen</code> resolves true; the plate goes to Fetching. With the choice recorded, the next open of version 3 skips the dialog and goes straight to Fetching. Version 4 asks again. Try both buttons.',
     del: '<code>main.ts</code> <code>confirmDelete</code>, <code>dialog.share-panel.comment-delete-dialog</code>. New: the checkbox, recorded as <code>delete-comment</code> for this relic, every version, only by a trusted click on Delete comment.',
     skipped: '<code>main.ts</code> <code>confirmDelete</code> is skipped and the delete goes straight to the request; the outcome line is the existing <code>showDeleteOutcome</code> text. New: the strip above the thread. Press Delete on the 09:40 comment.',
-    menu: '<code>main.ts</code> relic bar More menu, <code>.band-more-list</code>. New: the Skipped confirmations item and its count, read from <code>confirm-prefs.ts</code> for this relic.',
-    list: 'New panel opened from the More menu item, styled as the viewer\'s side sheet (<code>.share-panel</code>). Ask again clears one choice in <code>confirm-prefs.ts</code>. Escape or Close returns focus to More.',
+    menu: 'Below 34rem the bar\'s actions fold into More (<code>main.ts</code> <code>.band-more-list</code>). New: the Skipped confirmations item with its count. It stays in the menu at zero, so the empty state is reachable here.',
+    bar: '34rem and wider, the actions sit in the bar (<code>main.ts</code> <code>.bar .actions</code>). New: Skipped with its count, present only while at least one choice stands on this relic. At zero there is no button. Below 34rem it is the More menu item instead (try Mobile, 390 wide).',
+    list: 'New panel, styled as the viewer\'s side sheet (<code>.share-panel</code>), opened from Skipped in the bar, or from the More menu item below 34rem. Ask again clears one choice in <code>confirm-prefs.ts</code>. Escape or Close returns focus to the control that opened it.',
+    last: 'The last Ask again leaves the panel open on its empty state. When the panel closes, Skipped leaves the bar and focus moves to Report, the action before it. Below 34rem the More item stays, without a count.',
     pdelete: '<code>private/delete.ts</code> <code>createDeleteDialog</code>, <code>dialog.sheet</code>. Not a kind in <code>confirm-prefs.ts</code>. New: the last line only.',
     revoke: '<code>private/rekey.ts</code> <code>createRevokeDialog</code>, the revoke and republish (rekey) sheet. Not a kind in <code>confirm-prefs.ts</code>. New: the last line only.',
   };
@@ -746,6 +773,8 @@ body {
   const skipEmpty = $('cf-skip-empty');
   const skipIntro = $('cf-skip-intro');
   const skipStatus = $('cf-skip-status');
+  const skipBtn = $('cf-skip-btn');
+  const skipCount = $('cf-skip-btn-count');
   const pdelete = $('cf-pdelete');
   const revoke = $('cf-revoke');
   const mapsEl = $('cf-maps');
@@ -780,8 +809,10 @@ body {
     el.hidden = true;
     scrim.hidden = true;
     bar.inert = false; plate.inert = false; ready.inert = false;
+    renderBadge();
     if (restore) {
-      if (opener && opener.isConnected) opener.focus();
+      if (opener && opener.isConnected && visible(opener)) opener.focus();
+      else if (opener === skipBtn) $('cf-act-report').focus();
       else if (!ready.hidden) $('cf-thread-title').focus();
       else moreBtn.focus();
     }
@@ -815,14 +846,22 @@ body {
   moreBtn.addEventListener('click', () => (menu.hidden ? openMenu() : closeMenu(false)));
   document.addEventListener('pointerdown', (event) => { if (!menu.hidden && !moreWrap.contains(event.target)) closeMenu(false); });
   moreWrap.addEventListener('focusout', (event) => { if (event.relatedTarget && !moreWrap.contains(event.relatedTarget)) closeMenu(false); });
-  menu.querySelectorAll('[data-menu-note]').forEach((item) => {
-    item.addEventListener('click', () => { closeMenu(true); say(item.dataset.menuNote); });
+  cfViewer.querySelectorAll('[data-menu-note]').forEach((item) => {
+    item.addEventListener('click', () => { const inMenu = menu.contains(item); closeMenu(inMenu); say(item.dataset.menuNote); });
   });
   $('cf-skipped-item').addEventListener('click', () => { closeMenu(false); openSkipped(true); });
 
   function renderBadge() {
-    badge.hidden = prefs.size === 0;
-    badge.textContent = String(prefs.size);
+    const n = prefs.size;
+    badge.hidden = n === 0;
+    badge.textContent = String(n);
+    // Desktop: present only while something is skipped, or while its own panel is open.
+    const panelOpen = !!modal && modal.el === skipped;
+    skipBtn.hidden = n === 0 && !panelOpen;
+    skipCount.hidden = n === 0;
+    skipCount.textContent = String(n);
+    skipBtn.setAttribute('aria-label', 'Skipped confirmations, ' + n);
+    skipBtn.setAttribute('aria-expanded', String(panelOpen && modal.opener === skipBtn));
   }
   function renderStrip() { strip.hidden = !prefs.has('delete-comment'); }
   function syncPrefs() { renderBadge(); renderStrip(); if (!skipped.hidden) renderSkipped(); }
@@ -862,7 +901,8 @@ body {
     const at = order.indexOf(kind);
     prefs.delete(kind);
     syncPrefs();
-    skipStatus.textContent = KINDS[kind].name + ' will ask again.';
+    skipStatus.textContent = KINDS[kind].name + ' will ask again.'
+      + (prefs.size === 0 && visible(skipBtn) ? ' Nothing else is skipped, so Skipped leaves the bar when this closes.' : '');
     if (!moveFocus) return;
     const rows = [...skipList.querySelectorAll('.cf-skip-row .cf-btn')];
     (rows[Math.min(at, rows.length - 1)] || $('cf-skipped-title')).focus();
@@ -870,8 +910,11 @@ body {
   function openSkipped(focus) {
     skipStatus.textContent = '';
     renderSkipped();
-    openModal(skipped, { opener: moreBtn, focus, dismissOnScrim: true, initial: $('cf-skipped-title') });
+    const opener = visible(skipBtn) ? skipBtn : moreBtn;
+    openModal(skipped, { opener, focus, dismissOnScrim: true, initial: $('cf-skipped-title') });
+    renderBadge();
   }
+  skipBtn.addEventListener('click', () => openSkipped(true));
   $('cf-skipped-close').addEventListener('click', () => closeModal());
 
   // ---- large file open ----
@@ -1058,11 +1101,14 @@ body {
     'delete-ask': (f) => { reset('ready', []); setMaps('del'); requestDelete(comments[0], null, f, false); },
     'delete-ticked': (f) => { reset('ready', []); setMaps('del'); requestDelete(comments[0], null, f, true); },
     'delete-skipped': () => { reset('ready', ['delete-comment']); setMaps('skipped'); },
-    menu: (f) => { reset('ready', ORDER); setMaps('menu'); openMenu(); if (f) $('cf-skipped-item').focus(); },
-    'skipped-1': (f) => { reset('ready', ['link']); setMaps('list'); openSkipped(f); },
+    'bar-0': () => { reset('ready', []); setMobile(false); setMaps('bar'); },
+    'bar-1': () => { reset('ready', ['link']); setMobile(false); setMaps('bar'); },
+    'bar-3': () => { reset('ready', ORDER); setMobile(false); setMaps('bar'); },
     'skipped-3': (f) => { reset('ready', ORDER); setMaps('list'); openSkipped(f); },
     'skipped-after': (f) => { reset('ready', ORDER); setMaps('list'); openSkipped(false); askAgain('large-open', f); },
-    'skipped-empty': (f) => { reset('ready', []); setMaps('list'); openSkipped(f); },
+    'skipped-1': (f) => { reset('ready', ['link']); setMaps('last'); openSkipped(f); },
+    'skipped-last': (f) => { reset('ready', ['link']); setMaps('last'); openSkipped(false); askAgain('link', f); },
+    menu: (f) => { reset('ready', ORDER); setMobile(true); setMaps('menu'); openMenu(); if (f) $('cf-skipped-item').focus(); },
     'private-delete': (f) => {
       reset('ready', []); setMaps('pdelete');
       $('cf-scope-versions').checked = true; picks.forEach((i) => { i.checked = i.dataset.version === '1'; }); syncPicks();
@@ -1082,9 +1128,13 @@ body {
       const on = button.getAttribute('aria-pressed') !== 'true';
       button.setAttribute('aria-pressed', String(on));
       if (button.dataset.cfToggle === 'dark') document.body.classList.toggle('theme-dark', on);
-      else cfViewer.classList.toggle('is-mobile', on);
+      else setMobile(on);
     });
   });
+  function setMobile(on) {
+    cfViewer.classList.toggle('is-mobile', on);
+    document.querySelector('#cf-states [data-cf-toggle="mobile"]').setAttribute('aria-pressed', String(on));
+  }
   // #large-ask and friends open that state; the default is the first. No focus is taken on load.
   const wanted = location.hash.slice(1);
   const first = stateButtons.find((b) => b.dataset.cf === wanted) || stateButtons[0];
