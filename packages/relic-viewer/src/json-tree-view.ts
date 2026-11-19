@@ -22,6 +22,7 @@ import {
   keyLabel,
   nodeForAnchor,
   noticeFor,
+  pointerWritable,
   summaryText,
   TREE_EXPAND_ALL_LIMIT,
   TREE_INSPECTOR_CUT_CHARS,
@@ -30,6 +31,7 @@ import {
   visibleText,
 } from './json-tree-rows.ts';
 import { rowWindow } from './table-model.ts';
+import { visibleLabel } from './visible-label.ts';
 
 const ROW_HEIGHT = 24;
 const INDENT = 16;
@@ -121,6 +123,18 @@ const KEY_MOVES: Readonly<
   Enter: 'toggle',
   ' ': 'toggle',
 };
+
+/**
+ * Why Comment is off for the selected value. A key whose pointer holds a NUL
+ * or a CR is refused by the writer, so the reason names that rather than
+ * blaming a duplicate.
+ */
+function commentBlockedReason(path: string | undefined): string {
+  if (path !== undefined && !pointerWritable(path)) {
+    return 'A comment cannot name a key that contains a NUL or carriage return.';
+  }
+  return 'A later key with this name is the one that counts. Comment on that one.';
+}
 
 function drawTree(
   mount: StructuredMount,
@@ -249,12 +263,13 @@ function drawTree(
     crumbs.replaceChildren(...parts);
 
     const path0 = tree.pointer(state.selected);
-    pointer.textContent = path0 ?? 'No path addresses this value';
+    pointer.textContent =
+      path0 === undefined
+        ? 'No path addresses this value'
+        : visibleLabel(path0);
     copyPath.disabled = path0 === undefined;
     comment.disabled = state.selectionAnchor() === undefined;
-    comment.title = comment.disabled
-      ? 'A later key with this name is the one that counts. Comment on that one.'
-      : '';
+    comment.title = comment.disabled ? commentBlockedReason(path0) : '';
 
     const selectedKind = tree.kind(state.selected);
     const literal = tree.valueSource(state.selected);
@@ -282,6 +297,19 @@ function drawTree(
     }
   };
 
+  /** The rows a render would draw now. A scroll that keeps them is not a redraw. */
+  const windowKey = (): string => {
+    const window = rowWindow(
+      state.rowCount,
+      scroller.scrollTop,
+      scroller.clientHeight,
+      ROW_HEIGHT,
+      OVERSCAN
+    );
+    return `${window.first}:${window.end}:${state.rowCount}`;
+  };
+  let drawnWindow = '';
+
   const render = (): void => {
     spacer.style.height = `${state.rowCount * ROW_HEIGHT}px`;
     const window = rowWindow(
@@ -298,6 +326,7 @@ function drawTree(
     rows.replaceChildren(...drawn);
     renderCrumbs();
     updateActive();
+    drawnWindow = windowKey();
   };
 
   /** Scrolls the selected row into the window, so the arrow keys never lose it. */
@@ -334,10 +363,16 @@ function drawTree(
     }
   };
 
-  scroller.addEventListener('scroll', () => render(), {
-    signal,
-    passive: true,
-  });
+  scroller.addEventListener(
+    'scroll',
+    () => {
+      if (windowKey() !== drawnWindow) render();
+    },
+    {
+      signal,
+      passive: true,
+    }
+  );
   win.addEventListener('resize', () => render(), { signal });
 
   scroller.addEventListener(
@@ -412,14 +447,18 @@ function drawTree(
     'click',
     () => {
       const path = tree.pointer(state.selected);
-      if (path !== undefined) void copyText(path, 'Copied the path.');
+      if (path !== undefined)
+        void copyText(visibleText(path), 'Copied the path.');
     },
     { signal }
   );
   copyValue.addEventListener(
     'click',
     () => {
-      void copyText(tree.valueSource(state.selected), 'Copied the value.');
+      void copyText(
+        visibleText(tree.valueSource(state.selected)),
+        'Copied the value.'
+      );
     },
     { signal }
   );

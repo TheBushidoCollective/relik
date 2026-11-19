@@ -28,6 +28,7 @@ import {
   type CsvTable,
 } from '@relic/format/csv';
 import type { StructuredPart } from './structured-view-bridge.ts';
+import { LABEL_DISPLAY_LIMIT } from './visible-label.ts';
 import {
   anchorCoversCell,
   columnLetters,
@@ -75,6 +76,46 @@ export function visibleText(value: string): string {
       : char;
   }
   return out;
+}
+
+/** Cell, header and inspector text shows at most this many source characters. */
+export const DISPLAY_CUT_CHARS = 512;
+
+/**
+ * Text as the grid shows it: cut to `DISPLAY_CUT_CHARS` before it is escaped,
+ * so a long cell costs a bounded render. Copy takes the whole cell.
+ */
+export function displayText(value: string): string {
+  if (value.length <= DISPLAY_CUT_CHARS) return visibleText(value);
+  let cut = value.slice(0, DISPLAY_CUT_CHARS);
+  const last = cut.charCodeAt(cut.length - 1);
+  if (last >= 0xd800 && last <= 0xdbff) cut = cut.slice(0, -1);
+  return `${visibleText(cut)}…`;
+}
+
+/** Controls and bidi characters a copy must not carry raw. Tab and LF are kept. */
+const CLIPBOARD_ESCAPE =
+  /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2028\u2029\u2066-\u2069]/g;
+
+/**
+ * A selection as the clipboard receives it: the grid's escape form for every
+ * control, CR and bidi character. Tab and LF stay, since they separate cells
+ * and rows. Without this an ESC[201~ in a cell ends a terminal's paste early.
+ */
+export function clipboardText(text: string): string {
+  return text.replace(
+    CLIPBOARD_ESCAPE,
+    (character) =>
+      `\\u{${(character.codePointAt(0) ?? 0).toString(16).toUpperCase()}}`
+  );
+}
+
+/** A label's text: the display text, cut to the label length. */
+function labelText(value: string): string {
+  const shown = displayText(value);
+  return shown.length > LABEL_DISPLAY_LIMIT
+    ? `${shown.slice(0, LABEL_DISPLAY_LIMIT).trimEnd()}…`
+    : shown;
 }
 
 /** Whether a code point must be shown as an escape: controls and bidi formatting marks. */
@@ -386,6 +427,8 @@ export function mountDataTable(
   let disposed = false;
   let frame = 0;
   let findTimer = 0;
+  /** The `bodyKey` the rows on screen were drawn with. */
+  let drawnKey = '';
 
   const keyOf = (record: number, column: number): number =>
     record * TABLE_COLUMN_LIMIT + column;
@@ -436,7 +479,7 @@ export function mountDataTable(
   grid.setAttribute('role', 'grid');
   grid.setAttribute(
     'aria-label',
-    `${options.filename}, ${formatter.format(table.records)} records`
+    `${labelText(options.filename)}, ${formatter.format(table.records)} records`
   );
   grid.setAttribute('aria-rowcount', String(table.records));
   grid.setAttribute('aria-colcount', String(drawn + 1));
@@ -595,7 +638,7 @@ export function mountDataTable(
       const name = element(
         'span',
         'dt-text',
-        headerRow ? visibleText(value) : ''
+        headerRow ? displayText(value) : ''
       );
       cell.append(letter, name);
       const sorted = sort !== undefined && sort.column === column;
@@ -615,7 +658,7 @@ export function mountDataTable(
     } else if (value === '') {
       cell.append(element('span', 'dt-text dt-blank', 'blank'));
     } else {
-      cell.append(element('span', 'dt-text', visibleText(value)));
+      cell.append(element('span', 'dt-text', displayText(value)));
     }
     paintCell(cell, record, column, role);
     return cell;
@@ -631,6 +674,27 @@ export function mountDataTable(
       cells.push(cell);
     }
     head.replaceChildren(...cells);
+  };
+
+  /**
+   * What a body render depends on from the scroll: the drawn window, the rows
+   * pinned by a selection, and the row count. Equal keys draw the same rows.
+   */
+  const bodyKey = (): string => {
+    const first = headerRow ? 1 : 0;
+    const bodyCount = model.records - first;
+    const window = rowWindow(
+      bodyCount,
+      Math.max(0, grid.scrollTop - HEAD_HEIGHT),
+      viewportHeight(),
+      ROW_HEIGHT,
+      OVERSCAN
+    );
+    const pins = selection ? [selection.anchor, selection.focus] : [];
+    const pinRows = pins.map(
+      (pin) => displayIndexOf(model, pin.record) - first
+    );
+    return [bodyCount, window.first, window.end, ...pinRows].join(':');
   };
 
   const renderBody = (): void => {
@@ -662,6 +726,7 @@ export function mountDataTable(
       rows.push(buildRow(first + i, i));
     }
     body.replaceChildren(...rows);
+    drawnKey = bodyKey();
   };
 
   const buildRow = (display: number, index: number): HTMLElement => {
@@ -705,14 +770,14 @@ export function mountDataTable(
             'dt-sub',
             columnName === ''
               ? `Row ${rect.r0 + 1}`
-              : `Row ${rect.r0 + 1}, ${columnName}`
+              : `Row ${rect.r0 + 1}, ${labelText(columnName)}`
           )
         );
         cells.push(
           element(
             'pre',
             'dt-value',
-            value === '' ? '(blank)' : visibleText(value)
+            value === '' ? '(blank)' : displayText(value)
           )
         );
       } else {
@@ -727,7 +792,7 @@ export function mountDataTable(
       const copy = element('button', 'dt-copy', 'Copy');
       copy.type = 'button';
       copy.addEventListener('click', () => {
-        const text = rectText(table, rect);
+        const text = clipboardText(rectText(table, rect));
         void navigator.clipboard?.writeText(text).catch(() => undefined);
       });
       cells.push(copy);
@@ -752,7 +817,8 @@ export function mountDataTable(
     if (frame !== 0 || disposed) return;
     frame = requestAnimationFrame(() => {
       frame = 0;
-      update(false);
+      // A scroll inside the drawn window puts the same rows on screen.
+      if (bodyKey() !== drawnKey) update(false);
     });
   };
 
