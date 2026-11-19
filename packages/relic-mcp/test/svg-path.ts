@@ -1,32 +1,44 @@
 /**
- * An SVG published as a relic renders in the sandboxed frame, and the script
- * inside it can reach nothing. Runs against the built viewer, the MCP bundle,
- * and loopback services, in an isolated headless browser:
+ * An SVG published as a relic renders in the sandboxed frame, and the script in
+ * it reaches nothing it should. Runs the built viewer, the MCP bundle and
+ * loopback services in an isolated headless browser:
  *
  *   mise exec -- bun run --cwd packages/relic-viewer build
  *   mise exec -- bun run --cwd packages/relic-mcp build
  *   RELIC_CHROME_PATH=<isolated headless shell> \
  *     mise exec -- bun packages/relic-mcp/test/svg-path.ts
  *
- * The positive run publishes an SVG whose script reads the parent, the cookie
- * and storage, fetches an external URL and the service, opens a popup, and
- * navigates the top window. Each attempt records what the sandbox returned.
- * The drawing must show in the frame, and every attempt must be refused.
+ * Each process model runs the same checks in its own browser:
+ *   default   the browser's own model. The headless shell keeps the frame in
+ *             the page's process; full Chrome may isolate it.
+ *   isolated  --site-per-process --enable-features=IsolateSandboxedIframes.
+ *             The frame must appear as its own out-of-process iframe target.
+ * The usercontent origin is relic-usercontent.test, which the host resolver maps
+ * to 127.0.0.1. It is cross-site from the service, as in production (spec 2),
+ * and it does not depend on IPv6 resolution.
  *
- * The negative control serves a throwaway copy of the viewer whose frame
- * grants allow-same-origin and allow-top-navigation. The isolation assertions
- * must fail there, or the positive run proves nothing.
+ * The positive run publishes an SVG whose script tries to read the parent, the
+ * cookie and storage, fetch an external URL and the service, open a popup, and
+ * navigate the top window. The script reports into its own document, and the
+ * harness reads that report from the frame wherever the frame lives. The
+ * drawing must show in the frame, and every attempt must be refused.
  *
- * Request interception is a harness aid: it sees what leaves the page. The
- * script's own recorded errors and the console's CSP refusals show what the
- * sandbox refused. The shim is served by the production app, so its headers
- * are the production policy. Both origins are loopback, so the frame is
- * same-site with the viewer and process isolation is not exercised here.
+ * Three controls show that each detector can fire, in the same browser:
+ *   A  the frame sandbox is loosened in a throwaway viewer copy; the origin,
+ *      cookie, storage and top-navigation checks must flip;
+ *   B  the shim's connection policy is loosened; the service and network checks
+ *      must fire;
+ *   C  a user-gesture window.open must create a popup target that is counted.
+ *
+ * Request interception is a harness aid: it sees what leaves a page or a frame.
+ * It covers the page session and every out-of-process frame session. Control B
+ * shows it reaches the frame, so the zero counts in the positive run are not
+ * vacuous.
  */
 import assert from 'node:assert/strict';
 import { type ChildProcess, spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Readable, Writable } from 'node:stream';
@@ -36,7 +48,11 @@ import { createApp } from '@relic/server/src/app.ts';
 import { diskAssets } from '@relic/server/src/assets.ts';
 import { MemoryStorage } from '@relic/server/src/storage.ts';
 import { MemoryStore } from '@relic/server/src/store.ts';
-import { type CdpConnection, connectPipe } from '../src/cover/cdp.ts';
+import {
+  type CdpConnection,
+  type CdpEvent,
+  connectPipe,
+} from '../src/cover/cdp.ts';
 import { chromeArgs, discoverChrome } from '../src/cover/chrome.ts';
 import {
   attestBrowserHeadless,
@@ -44,93 +60,164 @@ import {
   createBrowserHeadlessLaunch,
 } from './browser-headless.ts';
 
+/** A CDP payload or a JSON object returned by the browser. */
+type Json = Record<string, unknown>;
+
+/** The app's request surface; the proof only calls fetch. */
 interface AppLike {
   fetch(request: Request): Response | Promise<Response>;
 }
-type Json = Record<string, unknown>;
+
+interface Mode {
+  readonly name: 'default' | 'isolated';
+  readonly flags: readonly string[];
+}
+
 interface Seen {
   readonly server: 'service' | 'usercontent';
   readonly path: string;
-  readonly origin: string | null;
 }
-interface FrameNode {
+
+interface Child {
+  readonly sessionId: string;
+  readonly targetId: string;
+  readonly type: string;
+}
+
+interface Logged {
+  readonly scope: 'page' | 'frame';
+  readonly text: string;
+}
+
+interface Paused {
+  readonly scope: 'page' | 'frame';
+  readonly url: string;
+  readonly resourceType: string;
+}
+
+interface Page {
+  readonly targetId: string;
+  readonly sessionId: string;
+  readonly children: Map<string, Child>;
+  readonly mainNavigations: string[];
+  readonly logs: Logged[];
+  readonly paused: Paused[];
+  readonly setupErrors: string[];
+}
+
+interface Browser {
+  readonly popups: string[];
+  send: (method: string, params?: Json, sessionId?: string) => Promise<Json>;
+  open(url: string, token: string): Promise<Page>;
+  close(): Promise<void>;
+}
+
+/** Where the viewer's usercontent frame lives: in this page, or in its own target. */
+interface ViewerFrame {
+  readonly kind: 'in-process' | 'out-of-process';
+  readonly frameId: string;
+  readonly sessionId: string | undefined;
+}
+
+/** The viewer's iframe element, read from the top page. */
+interface FrameElement {
+  readonly src: string | null;
+  readonly sandbox: string | null;
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+/** A CDP RemoteObject. Only `value` and `objectId` are read. */
+interface RemoteObject {
+  readonly value?: unknown;
+  readonly objectId?: string;
+}
+
+interface FrameTree {
   readonly frame: { readonly id: string; readonly url: string };
-  readonly childFrames?: readonly FrameNode[];
+  readonly childFrames?: readonly FrameTree[];
 }
+
+interface TargetInfo {
+  readonly targetId: string;
+  readonly type: string;
+  readonly url?: string;
+  readonly openerId?: string;
+}
+
+interface NavigatedFrame {
+  readonly parentId?: string;
+  readonly url?: string;
+}
+
 interface Pixels {
   readonly width: number;
   readonly height: number;
   readonly channels: number;
   readonly data: Buffer;
 }
-interface PageHandle {
-  readonly target: string;
-  readonly mainNavigations: string[];
-  readonly logs: string[];
-  readonly worlds: Map<string, number>;
-  send(method: string, params?: Json): Promise<Json>;
-  evaluate<T>(expression: string): Promise<T>;
-}
-interface BrowserHandle {
-  readonly popups: string[];
-  readonly externalPaused: string[];
-  open(url: string, token: string): Promise<PageHandle>;
-  targetUrl(target: string): Promise<string>;
-  close(): Promise<void>;
-}
-interface RunEvidence {
+
+interface Evidence {
+  readonly frame: ViewerFrame['kind'];
+  readonly navigateAttempted: boolean;
+  readonly sandbox: string | null;
+  readonly src: string | null;
+  readonly shimLocation: string;
   readonly probe: Json;
   readonly popupProbe: Json;
-  readonly sandbox: string | null;
-  readonly frameSrc: string | null;
-  readonly navigationsBefore: number;
-  readonly navigationsAfter: number;
-  readonly topUrl: string;
+  readonly topBefore: string;
+  readonly topAfter: string;
+  readonly mainNavigations: number;
+  readonly documentRequests: number;
+  readonly externalRequests: number;
   readonly popups: number;
   readonly serviceHits: number;
-  readonly serviceNullOrigin: number;
-  readonly externalPaused: number;
-  readonly cspRefusals: number;
+  readonly cspLogs: string[];
   readonly pixels: { readonly red: number; readonly blue: number } | undefined;
 }
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const viewerDist = join(root, 'packages/relic-viewer/dist');
 const bundle = join(root, 'packages/relic-mcp/dist/relic-mcp.js');
+// Screenshots are written only when a directory is named, so CI can upload them.
+const shotsDir = process.env['RELIC_SVG_PATH_SHOTS'];
 const scratch = await mkdtemp(join(tmpdir(), 'relic-svg-path-'));
 const statePath = join(scratch, 'state.json');
 const EXTERNAL = 'https://collector.relic-proof.invalid';
 const SERVICE_PROBE_PATH = '/svg-probe-service-fetch';
-const SHIM_CSP_DIRECTIVES = [
-  "default-src 'none'",
-  "script-src 'unsafe-inline' blob:",
-  'img-src data: blob:',
-  "form-action 'none'",
-  "base-uri 'none'",
-  "webrtc 'block'",
+// Resolves to 127.0.0.1 through the host resolver, so the usercontent origin is
+// cross-site from the service with no dependence on localhost or IPv6.
+const USERCONTENT_HOST = 'relic-usercontent.test';
+const LOOSENED_SANDBOX = 'allow-scripts allow-same-origin allow-top-navigation';
+const RED: readonly [number, number, number] = [229, 57, 53];
+const BLUE: readonly [number, number, number] = [30, 136, 229];
+const CSP_LOG =
+  /Content Security Policy|Refused to|Unsafe attempt|Blocked opening|sandbox/i;
+const FRAME_ELEMENT =
+  "(() => { const f = document.querySelector('iframe.usercontent-frame'); if (!f) return null; const r = f.getBoundingClientRect(); return { src: f.getAttribute('src'), sandbox: f.getAttribute('sandbox'), x: r.x, y: r.y, width: r.width, height: r.height }; })()";
+const MODES: readonly Mode[] = [
+  { name: 'default', flags: [] },
+  {
+    name: 'isolated',
+    flags: ['--site-per-process', '--enable-features=IsolateSandboxedIframes'],
+  },
 ];
 
 const store = new MemoryStore();
 const operatorTokens = new Map([['operator-token', 'test-operator-secret']]);
 const seen: Seen[] = [];
-const checks: Array<{ label: string; ok: boolean }> = [];
+const checks: Array<{ readonly label: string; readonly ok: boolean }> = [];
 let activeApp: AppLike | undefined;
-
-function check(label: string, ok: boolean, evidence: string): void {
-  checks.push({ label, ok });
-  console.log(`${ok ? 'PROVEN' : 'NOT_PROVEN'} ${label} | ${evidence}`);
-}
+let shimPolicyOverride: string | undefined;
 
 async function handle(
   server: Seen['server'],
   request: Request
 ): Promise<Response> {
   const url = new URL(request.url);
-  seen.push({
-    server,
-    path: url.pathname,
-    origin: request.headers.get('origin'),
-  });
+  seen.push({ server, path: url.pathname });
   const app = activeApp;
   if (app === undefined) return new Response('Not ready', { status: 503 });
   if (
@@ -154,7 +241,17 @@ async function handle(
   if (url.pathname === SERVICE_PROBE_PATH) {
     return new Response('reached', { status: 200 });
   }
-  return app.fetch(request);
+  const response = await app.fetch(request);
+  if (
+    server === 'usercontent' &&
+    url.pathname === '/sandbox.html' &&
+    shimPolicyOverride !== undefined
+  ) {
+    const headers = new Headers(response.headers);
+    headers.set('content-security-policy', shimPolicyOverride);
+    return new Response(response.body, { status: response.status, headers });
+  }
+  return response;
 }
 
 const service = Bun.serve({
@@ -168,7 +265,7 @@ const usercontent = Bun.serve({
   fetch: (request) => handle('usercontent', request),
 });
 const origin = `http://127.0.0.1:${service.port}`;
-const usercontentOrigin = `http://127.0.0.1:${usercontent.port}`;
+const usercontentOrigin = `http://${USERCONTENT_HOST}:${usercontent.port}`;
 const storage = new MemoryStorage(`${origin}/__storage`);
 
 function appFor(dist: string): AppLike {
@@ -183,10 +280,13 @@ function appFor(dist: string): AppLike {
   });
 }
 
-// The SVG under test. The script records its attempts in the frame's own DOM,
-// because the harness cannot read a sandboxed frame's JavaScript globals. The
-// top-window navigation waits 1.5 s after the results are written, so they
-// are read before any navigation can unload the frame.
+function check(label: string, ok: boolean, evidence: string): void {
+  checks.push({ label, ok });
+  console.log(`${ok ? 'PROVEN' : 'NOT_PROVEN'} ${label} | ${evidence}`);
+}
+
+// The SVG under test. Its script reports each attempt into its own document, and
+// the top-window navigation waits until those results are written.
 function svgSource(): string {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="480" height="320" viewBox="0 0 480 320">
   <rect id="red" x="20" y="20" width="200" height="280" fill="#e53935"/>
@@ -207,14 +307,14 @@ function svgSource(): string {
         () => { probe[name] = 'reached'; },
         (error) => { probe[name] = 'blocked:' + (error && error.name); });
       Promise.all([
-        settle('externalFetch', fetch('${EXTERNAL}/beacon?from=svg')),
-        settle('serviceFetch', fetch('${origin}${SERVICE_PROBE_PATH}')),
+        settle('externalFetch', fetch('${EXTERNAL}/beacon?from=svg', { mode: 'no-cors' })),
+        settle('serviceFetch', fetch('${origin}${SERVICE_PROBE_PATH}', { mode: 'no-cors' })),
       ]).then(() => {
         document.documentElement.setAttribute('data-svg-probe', JSON.stringify(probe));
         probe.popup = window.open('${EXTERNAL}/popup?from=svg') === null ? 'null' : 'object';
         document.documentElement.setAttribute('data-svg-popup', JSON.stringify(probe));
         window.setTimeout(() => {
-          probe.topNavigation = 'assigned';
+          document.documentElement.setAttribute('data-svg-navigate', 'attempted');
           window.top.location = '${EXTERNAL}/navigate?from=svg';
         }, 1500);
       });
@@ -332,7 +432,117 @@ async function until(
   throw new Error(`Timed out waiting for ${label}`);
 }
 
-async function launchBrowser(): Promise<BrowserHandle> {
+// A CDP event for a page or a child target. Page-level state is kept per target,
+// and the frame's own session contributes requests and console lines too.
+function onPageEvent(
+  connection: CdpConnection,
+  pages: Map<string, Page>,
+  page: Page,
+  sessionId: string,
+  event: CdpEvent
+): void {
+  const scope = sessionId === page.sessionId ? 'page' : 'frame';
+  switch (event.method) {
+    case 'Target.attachedToTarget': {
+      // An out-of-process child. It stays paused until interception is attached
+      // in prepareChild, so no request from it leaves before that.
+      const childId = event.params['sessionId'];
+      const info = event.params['targetInfo'] as TargetInfo | undefined;
+      if (typeof childId !== 'string' || info === undefined) return;
+      page.children.set(childId, {
+        sessionId: childId,
+        targetId: info.targetId,
+        type: info.type,
+      });
+      pages.set(childId, page);
+      void prepareChild(
+        connection,
+        page,
+        childId,
+        event.params['waitingForDebugger'] === true
+      );
+      return;
+    }
+    case 'Page.frameNavigated': {
+      const frame = event.params['frame'] as NavigatedFrame | undefined;
+      if (scope === 'page' && frame?.parentId === undefined) {
+        page.mainNavigations.push(frame?.url ?? '');
+      }
+      return;
+    }
+    case 'Page.javascriptDialogOpening':
+      void connection
+        .send('Page.handleJavaScriptDialog', { accept: true }, sessionId)
+        .catch(() => {});
+      return;
+    case 'Log.entryAdded': {
+      const entry = event.params['entry'] as
+        | { readonly text?: string }
+        | undefined;
+      page.logs.push({ scope, text: entry?.text ?? '' });
+      return;
+    }
+    case 'Fetch.requestPaused': {
+      const requestId = event.params['requestId'];
+      if (typeof requestId !== 'string') return;
+      const request = event.params['request'] as
+        | { readonly url?: string }
+        | undefined;
+      const resourceType = event.params['resourceType'];
+      const url = request?.url ?? '';
+      page.paused.push({
+        scope,
+        url,
+        resourceType: typeof resourceType === 'string' ? resourceType : '',
+      });
+      const local =
+        url.startsWith(`${origin}/`) ||
+        url.startsWith(`${usercontentOrigin}/`) ||
+        url.startsWith('data:') ||
+        url.startsWith('blob:') ||
+        url === 'about:blank';
+      void connection
+        .send(
+          local ? 'Fetch.continueRequest' : 'Fetch.failRequest',
+          local ? { requestId } : { requestId, errorReason: 'BlockedByClient' },
+          sessionId
+        )
+        .catch(() => {});
+      return;
+    }
+    default:
+      return;
+  }
+}
+
+// Interception is attached before the child runs, then the child resumes.
+async function prepareChild(
+  connection: CdpConnection,
+  page: Page,
+  sessionId: string,
+  waiting: boolean
+): Promise<void> {
+  try {
+    await connection.send(
+      'Fetch.enable',
+      { patterns: [{ urlPattern: '*', requestStage: 'Request' }] },
+      sessionId
+    );
+    await connection.send('Log.enable', {}, sessionId);
+  } catch (error) {
+    page.setupErrors.push(
+      `${sessionId}: ${error instanceof Error ? error.message : String(error)}`
+    );
+  } finally {
+    if (waiting) {
+      await connection
+        .send('Runtime.runIfWaitingForDebugger', {}, sessionId)
+        .catch(() => {});
+    }
+  }
+}
+
+async function launchBrowser(mode: Mode): Promise<Browser> {
   const requested = process.env['RELIC_CHROME_PATH'];
   assert.ok(
     requested && requested !== 'none' && requested !== 'disabled',
@@ -346,14 +556,15 @@ async function launchBrowser(): Promise<BrowserHandle> {
   );
   if (found.kind !== 'found') throw new Error('unreachable');
   const profile = await mkdtemp(join(tmpdir(), 'relic-svg-chrome-'));
+  const base = chromeArgs(found.path, profile).map((argument) =>
+    argument === '--proxy-bypass-list=<-loopback>'
+      ? `--proxy-bypass-list=<-loopback>;127.0.0.1:${service.port};${USERCONTENT_HOST}`
+      : argument === '--host-resolver-rules=MAP * ~NOTFOUND'
+        ? `--host-resolver-rules=MAP ${USERCONTENT_HOST} 127.0.0.1, MAP * ~NOTFOUND, EXCLUDE 127.0.0.1`
+        : argument
+  );
   const launch = createBrowserHeadlessLaunch(
-    chromeArgs(found.path, profile).map((argument) =>
-      argument === '--proxy-bypass-list=<-loopback>'
-        ? `--proxy-bypass-list=<-loopback>;127.0.0.1:${service.port};127.0.0.1:${usercontent.port}`
-        : argument === '--host-resolver-rules=MAP * ~NOTFOUND'
-          ? '--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1'
-          : argument
-    ),
+    [...base.slice(0, -1), ...mode.flags, 'about:blank'],
     profile
   );
   const child: ChildProcess = spawn(found.path, launch.args, {
@@ -365,146 +576,103 @@ async function launchBrowser(): Promise<BrowserHandle> {
     cdp = connectPipe(child.stdio[3] as Writable, child.stdio[4] as Readable);
     await attestBrowserHeadless(cdp, launch);
     const connection = cdp;
-    const pages = new Map<string, PageHandle>();
+    const pages = new Map<string, Page>();
     const popups: string[] = [];
-    const externalPaused: string[] = [];
     connection.onEvent((event) => {
       if (event.method === 'Target.targetCreated') {
-        const info = event.params['targetInfo'] as
-          | { type?: string; openerId?: string; url?: string }
-          | undefined;
+        const info = event.params['targetInfo'] as TargetInfo | undefined;
         if (info?.type === 'page' && info.openerId !== undefined) {
-          popups.push(info.url ?? '');
+          popups.push(info.targetId);
         }
         return;
       }
-      const page = event.sessionId ? pages.get(event.sessionId) : undefined;
-      if (!page) return;
-      if (event.method === 'Page.frameNavigated') {
-        const frame = event.params['frame'] as
-          | { parentId?: string; url?: string }
-          | undefined;
-        if (frame && frame.parentId === undefined) {
-          page.mainNavigations.push(frame.url ?? '');
-        }
-        return;
+      if (event.sessionId === undefined) return;
+      const page = pages.get(event.sessionId);
+      if (page !== undefined) {
+        onPageEvent(connection, pages, page, event.sessionId, event);
       }
-      if (event.method === 'Log.entryAdded') {
-        const entry = event.params['entry'] as { text?: string } | undefined;
-        page.logs.push(entry?.text ?? '');
-        return;
-      }
-      if (event.method === 'Page.javascriptDialogOpening') {
-        void page
-          .send('Page.handleJavaScriptDialog', { accept: true })
-          .catch(() => {});
-        return;
-      }
-      if (event.method !== 'Fetch.requestPaused') return;
-      const request = event.params['request'] as
-        | { url?: string; method?: string }
-        | undefined;
-      const requestId = event.params['requestId'];
-      if (typeof requestId !== 'string') return;
-      const url = request?.url ?? '';
-      const local =
-        url.startsWith(`${origin}/`) ||
-        url.startsWith(`${usercontentOrigin}/`) ||
-        url.startsWith('data:') ||
-        url.startsWith('blob:') ||
-        url === 'about:blank';
-      if (!local) externalPaused.push(`${request?.method ?? 'GET'} ${url}`);
-      void page
-        .send(
-          local ? 'Fetch.continueRequest' : 'Fetch.failRequest',
-          local ? { requestId } : { requestId, errorReason: 'BlockedByClient' }
-        )
-        .catch(() => {});
     });
+    await connection.send('Target.setDiscoverTargets', { discover: true });
     return {
       popups,
-      externalPaused,
+      send: (method, params, sessionId) =>
+        connection.send(method, params, sessionId),
       async open(url, token) {
         const created = await connection.send('Target.createBrowserContext', {
           disposeOnDetach: true,
         });
-        const context = String(created['browserContextId']);
         const target = await connection.send('Target.createTarget', {
           url: 'about:blank',
-          browserContextId: context,
+          browserContextId: String(created['browserContextId']),
         });
         const targetId = String(target['targetId']);
         const attached = await connection.send('Target.attachToTarget', {
           targetId,
           flatten: true,
         });
-        const id = String(attached['sessionId']);
-        const send = (method: string, params?: Json) =>
-          connection.send(method, params, id);
-        const handle: PageHandle = {
-          target: targetId,
+        const sessionId = String(attached['sessionId']);
+        const page: Page = {
+          targetId,
+          sessionId,
+          children: new Map(),
           mainNavigations: [],
           logs: [],
-          worlds: new Map(),
-          send,
-          async evaluate<T>(expression: string): Promise<T> {
-            const result = await send('Runtime.evaluate', {
-              expression,
-              awaitPromise: true,
-              returnByValue: true,
-              timeout: 20_000,
-            });
-            assert.equal(
-              result['exceptionDetails'],
-              undefined,
-              `browser evaluation: ${JSON.stringify(result['exceptionDetails'])}`
-            );
-            const value = result['result'] as { value?: unknown } | undefined;
-            return value?.value as T;
-          },
+          paused: [],
+          setupErrors: [],
         };
-        pages.set(id, handle);
-        await send('Page.enable');
-        await send('Runtime.enable');
-        await send('Network.enable');
-        await send('Log.enable');
-        await send('Network.setCacheDisabled', { cacheDisabled: true });
-        await send('Fetch.enable', {
-          patterns: [{ urlPattern: '*', requestStage: 'Request' }],
-        });
-        await send('Network.setCookie', {
-          name: 'relic_session',
-          value: token,
-          url: origin,
-          httpOnly: true,
-          secure: false,
-          sameSite: 'Lax',
-        });
-        await send('Emulation.setDeviceMetricsOverride', {
-          width: 1440,
-          height: 900,
-          deviceScaleFactor: 1,
-          mobile: false,
-        });
+        pages.set(sessionId, page);
+        await connection.send('Page.enable', {}, sessionId);
+        await connection.send('DOM.enable', {}, sessionId);
+        await connection.send('Log.enable', {}, sessionId);
+        await connection.send('Network.enable', {}, sessionId);
+        await connection.send(
+          'Network.setCacheDisabled',
+          { cacheDisabled: true },
+          sessionId
+        );
+        await connection.send(
+          'Fetch.enable',
+          { patterns: [{ urlPattern: '*', requestStage: 'Request' }] },
+          sessionId
+        );
+        await connection.send(
+          'Target.setAutoAttach',
+          { autoAttach: true, waitForDebuggerOnStart: true, flatten: true },
+          sessionId
+        );
+        await connection.send(
+          'Network.setCookie',
+          {
+            name: 'relic_session',
+            value: token,
+            url: origin,
+            httpOnly: true,
+            secure: false,
+            sameSite: 'Lax',
+          },
+          sessionId
+        );
+        await connection.send(
+          'Emulation.setDeviceMetricsOverride',
+          { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false },
+          sessionId
+        );
         const loaded = connection.waitForEvent('Page.loadEventFired', {
-          sessionId: id,
+          sessionId,
           timeoutMs: 60_000,
         });
-        const navigation = await send('Page.navigate', { url });
+        const navigation = await connection.send(
+          'Page.navigate',
+          { url },
+          sessionId
+        );
         assert.equal(
           navigation['errorText'],
           undefined,
           `navigation failed: ${String(navigation['errorText'])}`
         );
         await loaded;
-        return handle;
-      },
-      async targetUrl(target) {
-        const info = await connection.send('Target.getTargetInfo', {
-          targetId: target,
-        });
-        const targetInfo = info['targetInfo'] as { url?: string } | undefined;
-        return targetInfo?.url ?? '';
+        return page;
       },
       async close() {
         await cleanupOwnedBrowserStartup({
@@ -528,61 +696,209 @@ async function launchBrowser(): Promise<BrowserHandle> {
   }
 }
 
-// The usercontent frame's CDP id, found through the frame tree.
-async function usercontentFrameId(
-  page: PageHandle
-): Promise<string | undefined> {
-  const tree = await page.send('Page.getFrameTree');
-  const top = tree['frameTree'] as FrameNode;
-  return top.childFrames?.find((node) =>
-    node.frame.url.startsWith(usercontentOrigin)
-  )?.frame.id;
+// The value of a CDP evaluation, or undefined when it threw.
+function remoteValue(result: Json | undefined): unknown {
+  if (result === undefined || result['exceptionDetails'] !== undefined) {
+    return undefined;
+  }
+  // A CDP RemoteObject. An undefined result has no `value`.
+  const wrapped = result['result'] as RemoteObject | undefined;
+  return wrapped?.value;
 }
 
-// Reads an attribute of the frame's document from an isolated world, which
-// sees the DOM across origins. The world is rebuilt when the frame's document
-// is replaced by the shim's document.write.
-async function frameAttribute(
-  page: PageHandle,
-  frameId: string,
-  name: string
-): Promise<string | null> {
-  try {
-    let contextId = page.worlds.get(frameId);
-    if (contextId === undefined) {
-      const world = await page.send('Page.createIsolatedWorld', {
-        frameId,
-        worldName: 'relic-svg-proof',
-        grantUniveralAccess: true,
-      });
-      contextId = Number(world['executionContextId']);
-      page.worlds.set(frameId, contextId);
+async function pageRead(
+  browser: Browser,
+  page: Page,
+  expression: string
+): Promise<unknown> {
+  return remoteValue(
+    await browser
+      .send(
+        'Runtime.evaluate',
+        { expression, returnByValue: true, awaitPromise: true },
+        page.sessionId
+      )
+      .catch((): undefined => undefined)
+  );
+}
+
+// True when the frame behind this owner element is the viewer's usercontent iframe.
+async function ownsViewerFrame(
+  browser: Browser,
+  page: Page,
+  frameId: string
+): Promise<boolean> {
+  const owner = await browser
+    .send('DOM.getFrameOwner', { frameId }, page.sessionId)
+    .catch((): undefined => undefined);
+  const backendNodeId = owner?.['backendNodeId'];
+  if (typeof backendNodeId !== 'number') return false;
+  const resolved = await browser
+    .send('DOM.resolveNode', { backendNodeId }, page.sessionId)
+    .catch((): undefined => undefined);
+  const element = resolved?.['object'] as RemoteObject | undefined;
+  if (typeof element?.objectId !== 'string') return false;
+  const verdict = await browser
+    .send(
+      'Runtime.callFunctionOn',
+      {
+        objectId: element.objectId,
+        functionDeclaration:
+          'function () { return this.classList.contains("usercontent-frame"); }',
+        returnByValue: true,
+      },
+      page.sessionId
+    )
+    .catch((): undefined => undefined);
+  return remoteValue(verdict) === true;
+}
+
+// The viewer's frame: an out-of-process iframe target when the browser isolates
+// it, otherwise a child of the page's own frame tree.
+async function viewerFrame(
+  browser: Browser,
+  page: Page
+): Promise<ViewerFrame | undefined> {
+  for (const child of page.children.values()) {
+    if (
+      child.type === 'iframe' &&
+      (await ownsViewerFrame(browser, page, child.targetId))
+    ) {
+      return {
+        kind: 'out-of-process',
+        frameId: child.targetId,
+        sessionId: child.sessionId,
+      };
     }
-    const result = await page.send('Runtime.evaluate', {
-      expression: `document.documentElement.getAttribute(${JSON.stringify(name)})`,
-      contextId,
-      returnByValue: true,
-    });
-    const value = result['result'] as { value?: unknown } | undefined;
-    return typeof value?.value === 'string' ? value.value : null;
-  } catch {
-    page.worlds.delete(frameId);
+  }
+  const tree = await browser.send('Page.getFrameTree', {}, page.sessionId);
+  const top = tree['frameTree'] as FrameTree | undefined;
+  for (const node of top?.childFrames ?? []) {
+    if (await ownsViewerFrame(browser, page, node.frame.id)) {
+      return {
+        kind: 'in-process',
+        frameId: node.frame.id,
+        sessionId: undefined,
+      };
+    }
+  }
+  return undefined;
+}
+
+async function awaitViewerFrame(
+  browser: Browser,
+  page: Page
+): Promise<ViewerFrame> {
+  const deadline = Date.now() + 60_000;
+  while (Date.now() < deadline) {
+    const frame = await viewerFrame(browser, page);
+    if (frame !== undefined) return frame;
+    await Bun.sleep(100);
+  }
+  throw new Error(
+    `Timed out waiting for the viewer's usercontent frame\nDIAGNOSTIC ${await diagnose(browser, page)}`
+  );
+}
+
+// One evaluation inside the viewer's frame. A remote frame is read through its
+// own session; an in-process frame through an isolated world.
+async function frameRead(
+  browser: Browser,
+  page: Page,
+  frame: ViewerFrame,
+  expression: string
+): Promise<unknown> {
+  if (frame.sessionId !== undefined) {
+    return remoteValue(
+      await browser
+        .send(
+          'Runtime.evaluate',
+          { expression, returnByValue: true, awaitPromise: true },
+          frame.sessionId
+        )
+        .catch((): undefined => undefined)
+    );
+  }
+  const world = await browser
+    .send(
+      'Page.createIsolatedWorld',
+      {
+        frameId: frame.frameId,
+        worldName: 'svg-path-proof',
+        grantUniveralAccess: true,
+      },
+      page.sessionId
+    )
+    .catch((): undefined => undefined);
+  const contextId = world?.['executionContextId'];
+  if (typeof contextId !== 'number') return undefined;
+  return remoteValue(
+    await browser
+      .send(
+        'Runtime.evaluate',
+        { expression, contextId, returnByValue: true },
+        page.sessionId
+      )
+      .catch((): undefined => undefined)
+  );
+}
+
+async function awaitFrame(
+  browser: Browser,
+  page: Page,
+  frame: ViewerFrame,
+  expression: string,
+  label: string
+): Promise<unknown> {
+  const deadline = Date.now() + 60_000;
+  while (Date.now() < deadline) {
+    const value = await frameRead(browser, page, frame, expression);
+    if (value !== undefined && value !== null && value !== '') return value;
+    await Bun.sleep(50);
+  }
+  throw new Error(
+    `Timed out waiting for ${label}\nDIAGNOSTIC ${await diagnose(browser, page)}`
+  );
+}
+
+async function readJson(
+  browser: Browser,
+  page: Page,
+  frame: ViewerFrame,
+  name: string
+): Promise<Json> {
+  const raw = await awaitFrame(
+    browser,
+    page,
+    frame,
+    `document.documentElement.getAttribute(${JSON.stringify(name)})`,
+    `the script's ${name} report`
+  );
+  assert.equal(typeof raw, 'string', `${name} is not a string`);
+  return JSON.parse(String(raw)) as Json;
+}
+
+function frameElementOf(value: unknown): FrameElement | null {
+  if (typeof value !== 'object' || value === null) return null;
+  // A CDP object; every field is checked before use.
+  const fields = value as Json;
+  const { src, sandbox, x, y, width, height } = fields;
+  if (
+    typeof x !== 'number' ||
+    typeof y !== 'number' ||
+    typeof width !== 'number' ||
+    typeof height !== 'number'
+  ) {
     return null;
   }
-}
-
-async function awaitFrameJson(page: PageHandle, name: string): Promise<Json> {
-  let found: Json | undefined;
-  await until(async () => {
-    const frameId = await usercontentFrameId(page);
-    if (frameId === undefined) return false;
-    const raw = await frameAttribute(page, frameId, name);
-    if (raw === null) return false;
-    found = JSON.parse(raw) as Json;
-    return true;
-  }, `frame attribute ${name}`);
-  assert.ok(found, `frame attribute ${name} missing`);
-  return found;
+  return {
+    src: typeof src === 'string' ? src : null,
+    sandbox: typeof sandbox === 'string' ? sandbox : null,
+    x,
+    y,
+    width,
+    height,
+  };
 }
 
 function predict(
@@ -667,7 +983,12 @@ function decodePng(bytes: Buffer): Pixels {
 
 function countColor(
   pixels: Pixels,
-  rect: { x: number; y: number; width: number; height: number },
+  rect: {
+    readonly x: number;
+    readonly y: number;
+    readonly width: number;
+    readonly height: number;
+  },
   [red, green, blue]: readonly [number, number, number],
   tolerance = 24
 ): number {
@@ -691,82 +1012,338 @@ function countColor(
   return count;
 }
 
-// One reader, one published SVG, one browser page. Every number here is read
-// from the page or the network layer, never from the script's own claim.
+async function diagnose(browser: Browser, page: Page): Promise<string> {
+  const version = await browser
+    .send('Browser.getVersion')
+    .catch((): Json => ({}));
+  const processes = await browser
+    .send('SystemInfo.getProcessInfo')
+    .catch((): Json => ({}));
+  const targets = await browser
+    .send('Target.getTargets')
+    .catch((): Json => ({}));
+  const tree = await browser
+    .send('Page.getFrameTree', {}, page.sessionId)
+    .catch((): Json => ({}));
+  const infos = Array.isArray(targets['targetInfos'])
+    ? (targets['targetInfos'] as Json[])
+    : [];
+  const procs = Array.isArray(processes['processInfo'])
+    ? (processes['processInfo'] as Json[])
+    : [];
+  return JSON.stringify(
+    {
+      product: version['product'],
+      renderers: procs.filter((item) => item['type'] === 'renderer').length,
+      element: frameElementOf(await pageRead(browser, page, FRAME_ELEMENT)),
+      children: [...page.children.values()],
+      targets: infos.map((item) => ({
+        type: item['type'],
+        url: item['url'],
+        attached: item['attached'],
+      })),
+      frameTree: tree['frameTree'],
+      logs: page.logs.slice(-12),
+      paused: page.paused.slice(-12),
+      setupErrors: page.setupErrors,
+    },
+    null,
+    1
+  );
+}
+
+// One reader, one published SVG, one page. Every value is read from the frame's
+// own report, the top page, the network layer or the server, never from a claim.
 async function probeRun(
-  browser: BrowserHandle,
+  browser: Browser,
   url: string,
   token: string,
   app: AppLike,
-  withPixels: boolean
-): Promise<RunEvidence> {
+  shot: string | undefined
+): Promise<Evidence> {
   activeApp = app;
   const seenBefore = seen.length;
   const popupsBefore = browser.popups.length;
-  const externalBefore = browser.externalPaused.length;
   const page = await browser.open(url, token);
-  await until(async () => {
-    return (await usercontentFrameId(page)) !== undefined;
-  }, 'usercontent frame');
-  const sandbox = await page.evaluate<string | null>(
-    "(() => { const f = document.querySelector('iframe.usercontent-frame'); return f ? f.getAttribute('sandbox') : null; })()"
+  const frame = await awaitViewerFrame(browser, page);
+  const element = frameElementOf(await pageRead(browser, page, FRAME_ELEMENT));
+  const shimLocation = String(
+    await awaitFrame(
+      browser,
+      page,
+      frame,
+      `(() => { const h = location.href; return h.startsWith(${JSON.stringify(`${usercontentOrigin}/sandbox.html`)}) ? h : ''; })()`,
+      'the usercontent shim document'
+    )
   );
-  const frameSrc = await page.evaluate<string | null>(
-    "(() => { const f = document.querySelector('iframe.usercontent-frame'); return f ? f.getAttribute('src') : null; })()"
-  );
-  const probe = await awaitFrameJson(page, 'data-svg-probe');
-  const popupProbe = await awaitFrameJson(page, 'data-svg-popup');
-  // Results are read before the top-window navigation fires, 1.5 s after the
-  // popup probe. This is the navigation count at that moment.
-  const navigationsBefore = page.mainNavigations.length;
+  const probe = await readJson(browser, page, frame, 'data-svg-probe');
+  const popupProbe = await readJson(browser, page, frame, 'data-svg-popup');
+  // The top-window attempt comes 1.5 s after the popup report, so counts taken
+  // now are before it. The attempt marker is read after it: a refused attempt
+  // leaves the frame alive to report it, while an allowed navigation may replace
+  // the frame first, so a missing marker is evidence, not a timeout.
+  const topBefore = String(await pageRead(browser, page, 'location.href'));
+  const mainBefore = page.mainNavigations.length;
   await Bun.sleep(2_500);
-  const navigationsAfter = page.mainNavigations.length;
-  const topUrl = await browser.targetUrl(page.target);
-  const serviceHits = seen
-    .slice(seenBefore)
-    .filter((entry) => entry.path === SERVICE_PROBE_PATH).length;
-  const serviceNullOrigin = seen
-    .slice(seenBefore)
-    .filter((entry) => entry.origin === 'null').length;
-  let pixels: RunEvidence['pixels'];
-  if (withPixels) {
-    const rect = await page.evaluate<{
-      x: number;
-      y: number;
-      width: number;
-      height: number;
-    }>(
-      "(() => { const r = document.querySelector('iframe.usercontent-frame').getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height }; })()"
+  const navigateAttempted =
+    (await frameRead(
+      browser,
+      page,
+      frame,
+      "document.documentElement.getAttribute('data-svg-navigate')"
+    )) === 'attempted';
+  const topAfter = String(await pageRead(browser, page, 'location.href'));
+  let pixels: Evidence['pixels'];
+  if (shot !== undefined) {
+    const screenshot = await browser.send(
+      'Page.captureScreenshot',
+      { format: 'png' },
+      page.sessionId
     );
-    const shot = await page.send('Page.captureScreenshot', { format: 'png' });
-    const decoded = decodePng(Buffer.from(String(shot['data']), 'base64'));
-    pixels = {
-      red: countColor(decoded, rect, [229, 57, 53]),
-      blue: countColor(decoded, rect, [30, 136, 229]),
-    };
+    const bytes = Buffer.from(String(screenshot['data']), 'base64');
+    if (shotsDir !== undefined) {
+      await mkdir(shotsDir, { recursive: true });
+      await writeFile(join(shotsDir, shot), bytes);
+    }
+    if (element !== null) {
+      const decoded = decodePng(bytes);
+      pixels = {
+        red: countColor(decoded, element, RED),
+        blue: countColor(decoded, element, BLUE),
+      };
+    }
   }
   return {
+    frame: frame.kind,
+    navigateAttempted,
+    sandbox: element?.sandbox ?? null,
+    src: element?.src ?? null,
+    shimLocation,
     probe,
     popupProbe,
-    sandbox,
-    frameSrc,
-    navigationsBefore,
-    navigationsAfter,
-    topUrl,
-    popups: browser.popups.length - popupsBefore,
-    serviceHits,
-    serviceNullOrigin,
-    externalPaused: browser.externalPaused.length - externalBefore,
-    cspRefusals: page.logs.filter((text) =>
-      /Content Security Policy|Refused to/i.test(text)
+    topBefore,
+    topAfter,
+    mainNavigations: page.mainNavigations.length - mainBefore,
+    documentRequests: page.paused.filter(
+      (item) =>
+        item.url.startsWith(`${EXTERNAL}/navigate`) &&
+        item.resourceType === 'Document'
     ).length,
+    externalRequests: page.paused.filter((item) =>
+      item.url.startsWith(EXTERNAL)
+    ).length,
+    popups: browser.popups.length - popupsBefore,
+    serviceHits: seen
+      .slice(seenBefore)
+      .filter(
+        (entry) =>
+          entry.server === 'service' && entry.path === SERVICE_PROBE_PATH
+      ).length,
+    cspLogs: page.logs
+      .filter((line) => CSP_LOG.test(line.text))
+      .map((line) => `${line.scope}: ${line.text.slice(0, 160)}`),
     pixels,
   };
 }
 
+// Control C: a user-gesture window.open must produce a popup target.
+async function popupDetector(browser: Browser): Promise<number> {
+  const created = await browser.send('Target.createTarget', {
+    url: 'about:blank',
+  });
+  const attached = await browser.send('Target.attachToTarget', {
+    targetId: String(created['targetId']),
+    flatten: true,
+  });
+  const before = browser.popups.length;
+  await browser.send(
+    'Runtime.evaluate',
+    {
+      expression: "window.open('about:blank') !== null",
+      userGesture: true,
+      returnByValue: true,
+    },
+    String(attached['sessionId'])
+  );
+  await until(
+    async () => browser.popups.length > before,
+    'a user-gesture popup target',
+    15_000
+  );
+  return browser.popups.length - before;
+}
+
+function checkPositive(m: string, mode: Mode, e: Evidence): void {
+  const p = e.probe;
+  for (const line of e.cspLogs)
+    console.log(`INFO ${m}: browser refusal: ${line}`);
+  if (mode.name === 'isolated') {
+    check(
+      `${m}: the usercontent frame is out of process (its own iframe target)`,
+      e.frame === 'out-of-process',
+      `frame=${e.frame}`
+    );
+  } else {
+    console.log(`INFO ${m}: the usercontent frame is ${e.frame} in this run`);
+  }
+  check(
+    `${m}: the frame is sandboxed to allow-scripts alone and loads the usercontent shim`,
+    e.sandbox === 'allow-scripts' &&
+      (e.src ?? '').startsWith(`${usercontentOrigin}/sandbox.html`) &&
+      e.shimLocation.startsWith(`${usercontentOrigin}/sandbox.html`),
+    `sandbox=${String(e.sandbox)} src=${String(e.src)}`
+  );
+  check(
+    `${m}: the script ran and its origin is opaque`,
+    p['origin'] === 'null',
+    `origin=${String(p['origin'])}`
+  );
+  check(
+    `${m}: the parent window cannot be read`,
+    String(p['parentLocation']).startsWith('threw:SecurityError'),
+    `parentLocation=${String(p['parentLocation'])}`
+  );
+  check(
+    `${m}: the top document cannot be read`,
+    String(p['topDocument']).startsWith('threw:SecurityError'),
+    `topDocument=${String(p['topDocument'])}`
+  );
+  check(
+    `${m}: document.cookie cannot be read`,
+    p['cookie'] === 'threw:SecurityError',
+    `cookie=${String(p['cookie'])}`
+  );
+  check(
+    `${m}: localStorage cannot be read`,
+    p['localStorage'] === 'threw:SecurityError',
+    `localStorage=${String(p['localStorage'])}`
+  );
+  check(
+    `${m}: an external fetch is refused and never reaches the network layer`,
+    p['externalFetch'] === 'blocked:TypeError' && e.externalRequests === 0,
+    `externalFetch=${String(p['externalFetch'])} requests at interception=${e.externalRequests} csp=${e.cspLogs.length}`
+  );
+  check(
+    `${m}: a fetch of the service is refused and the service records no probe request`,
+    p['serviceFetch'] === 'blocked:TypeError' && e.serviceHits === 0,
+    `serviceFetch=${String(p['serviceFetch'])} service hits=${e.serviceHits}`
+  );
+  check(
+    `${m}: window.open returns null and no popup target appears`,
+    e.popupProbe['popup'] === 'null' && e.popups === 0,
+    `popup=${String(e.popupProbe['popup'])} popup targets=${e.popups}`
+  );
+  check(
+    `${m}: the top-window navigation is attempted and refused`,
+    e.navigateAttempted &&
+      e.documentRequests === 0 &&
+      e.mainNavigations === 0 &&
+      new URL(e.topAfter).origin === new URL(e.topBefore).origin &&
+      new URL(e.topAfter).pathname === new URL(e.topBefore).pathname,
+    `attempt marker=${e.navigateAttempted} navigation requests=${e.documentRequests} main-frame navigations=${e.mainNavigations} top=${e.topAfter}`
+  );
+  check(
+    `${m}: the drawing renders in the frame`,
+    (e.pixels?.red ?? 0) >= 2000 && (e.pixels?.blue ?? 0) >= 2000,
+    `red=${e.pixels?.red ?? 0} blue=${e.pixels?.blue ?? 0} px in the frame rect`
+  );
+}
+
+function checkSandboxControl(m: string, e: Evidence): void {
+  const p = e.probe;
+  check(
+    `${m}: control A: the loosened sandbox is in effect`,
+    e.sandbox === LOOSENED_SANDBOX,
+    `sandbox=${String(e.sandbox)}`
+  );
+  check(
+    `${m}: control A: the origin check flips (not opaque)`,
+    p['origin'] !== 'null',
+    `origin=${String(p['origin'])}`
+  );
+  check(
+    `${m}: control A: the cookie check flips (readable)`,
+    String(p['cookie']).startsWith('read:'),
+    `cookie=${String(p['cookie'])}`
+  );
+  check(
+    `${m}: control A: the storage check flips (readable)`,
+    String(p['localStorage']).startsWith('read:'),
+    `localStorage=${String(p['localStorage'])}`
+  );
+  check(
+    `${m}: control A: the top-navigation check fires (request reaches interception)`,
+    e.documentRequests >= 1,
+    `navigation requests=${e.documentRequests}`
+  );
+  console.log(
+    `INFO ${m}: control A parent location: ${String(p['parentLocation'])} (the origin split is a separate layer)`
+  );
+}
+
+function checkConnectControl(m: string, e: Evidence): void {
+  check(
+    `${m}: control B: the service fetch reaches the service, which records it`,
+    e.serviceHits >= 1 && e.probe['serviceFetch'] === 'reached',
+    `service hits=${e.serviceHits} serviceFetch=${String(e.probe['serviceFetch'])}`
+  );
+  check(
+    `${m}: control B: the external fetch reaches network-layer interception`,
+    e.externalRequests >= 1,
+    `requests at interception=${e.externalRequests}`
+  );
+}
+
+async function runMode(
+  mode: Mode,
+  url: string,
+  token: string,
+  loosenedDist: string,
+  connectPolicy: string
+): Promise<void> {
+  const m = mode.name;
+  const browser = await launchBrowser(mode);
+  try {
+    const positive = await probeRun(
+      browser,
+      url,
+      token,
+      appFor(viewerDist),
+      `${m}.png`
+    );
+    checkPositive(m, mode, positive);
+    const sandboxControl = await probeRun(
+      browser,
+      url,
+      token,
+      appFor(loosenedDist),
+      undefined
+    );
+    checkSandboxControl(m, sandboxControl);
+    shimPolicyOverride = connectPolicy;
+    const connectControl = await probeRun(
+      browser,
+      url,
+      token,
+      appFor(viewerDist),
+      undefined
+    ).finally(() => {
+      shimPolicyOverride = undefined;
+    });
+    checkConnectControl(m, connectControl);
+    const created = await popupDetector(browser);
+    check(
+      `${m}: control C: a user-gesture window.open creates a popup target the check counts`,
+      created >= 1,
+      `popup targets created=${created}`
+    );
+  } finally {
+    await browser.close();
+  }
+}
+
 async function main(): Promise<void> {
-  const productionApp = appFor(viewerDist);
-  activeApp = productionApp;
+  activeApp = appFor(viewerDist);
   const svgPath = join(scratch, 'drawing.svg');
   await writeFile(svgPath, svgSource());
   const published = await mcp('relic_publish', { path: svgPath, cover: false });
@@ -775,169 +1352,54 @@ async function main(): Promise<void> {
   assert.ok(url.startsWith(`${origin}/`), 'published url is not the service');
   const token = await session('reader@relic.test');
 
-  const shim = await fetch(`${usercontentOrigin}/sandbox.html`);
-  const shimCsp = shim.headers.get('content-security-policy') ?? '';
-  const shimHolds = [...SHIM_CSP_DIRECTIVES, `frame-ancestors ${origin}`].every(
-    (directive) => shimCsp.includes(directive)
-  );
+  const shim = await fetch(`http://127.0.0.1:${usercontent.port}/sandbox.html`);
+  const shimPolicy = shim.headers.get('content-security-policy') ?? '';
+  await shim.arrayBuffer();
+  const productionDirectives = [
+    "default-src 'none'",
+    "script-src 'unsafe-inline' blob:",
+    `frame-ancestors ${origin}`,
+  ];
   check(
     'the shim is served with the production policy',
-    shim.status === 200 && shimHolds,
-    `status ${shim.status}; CSP ${shimHolds ? 'holds' : 'lacks'} default-src 'none', script-src 'unsafe-inline' blob:, frame-ancestors ${origin}`
+    shim.status === 200 &&
+      productionDirectives.every((directive) => shimPolicy.includes(directive)),
+    `status ${shim.status}; policy ${shimPolicy.slice(0, 96)}...`
   );
   check(
-    'the publisher sees renderer_class image for the svg; routing still uses the frame',
+    'the publisher sees renderer_class image for the svg',
     published['renderer_class'] === 'image',
     `renderer_class=${String(published['renderer_class'])}`
   );
 
-  const browser = await launchBrowser();
+  // Control A's copy of the viewer, with the frame sandbox loosened.
+  const loosenedDist = await mkdtemp(join(tmpdir(), 'relic-svg-loosened-'));
   try {
-    const positive = await probeRun(browser, url, token, productionApp, true);
-    const red = positive.pixels?.red ?? 0;
-    const blue = positive.pixels?.blue ?? 0;
-    check(
-      'the drawing renders in the frame (red rect)',
-      red >= 2000,
-      `${red} red pixels in the frame rect`
-    );
-    check(
-      'the drawing renders in the frame (blue circle)',
-      blue >= 2000,
-      `${blue} blue pixels in the frame rect`
-    );
-    check(
-      'the frame is sandboxed to allow-scripts alone and loads the usercontent shim',
-      positive.sandbox === 'allow-scripts' &&
-        positive.frameSrc?.startsWith(`${usercontentOrigin}/sandbox.html`) ===
-          true,
-      `sandbox="${String(positive.sandbox)}" src=${String(positive.frameSrc)}`
-    );
-    const p = positive.probe;
-    check(
-      'the script ran and reported its attempts',
-      typeof p['externalFetch'] === 'string' &&
-        typeof p['serviceFetch'] === 'string',
-      `externalFetch=${String(p['externalFetch'])} serviceFetch=${String(p['serviceFetch'])}`
-    );
-    check(
-      'the script has an opaque origin',
-      p['origin'] === 'null',
-      `window.origin=${String(p['origin'])}`
-    );
-    check(
-      'window.parent.location is unreadable (SecurityError)',
-      String(p['parentLocation']).startsWith('threw:SecurityError'),
-      `parentLocation=${String(p['parentLocation'])}`
-    );
-    check(
-      'window.top.document is unreadable (SecurityError)',
-      String(p['topDocument']).startsWith('threw:SecurityError'),
-      `topDocument=${String(p['topDocument'])}`
-    );
-    check(
-      'document.cookie is unreadable (SecurityError)',
-      p['cookie'] === 'threw:SecurityError',
-      `cookie=${String(p['cookie'])}`
-    );
-    check(
-      'localStorage is unreadable (SecurityError)',
-      p['localStorage'] === 'threw:SecurityError',
-      `localStorage=${String(p['localStorage'])}`
-    );
-    check(
-      'an external fetch from the script is refused (TypeError)',
-      p['externalFetch'] === 'blocked:TypeError',
-      `externalFetch=${String(p['externalFetch'])}`
-    );
-    check(
-      'a fetch of the service origin from the script is refused (TypeError)',
-      p['serviceFetch'] === 'blocked:TypeError',
-      `serviceFetch=${String(p['serviceFetch'])}`
-    );
-    check(
-      'nothing from the frame reached the service (path or null origin)',
-      positive.serviceHits === 0 && positive.serviceNullOrigin === 0,
-      `probe-path hits=${positive.serviceHits}; requests with Origin null=${positive.serviceNullOrigin}`
-    );
-    check(
-      'window.open from the script opened no popup',
-      positive.popupProbe['popup'] === 'null' && positive.popups === 0,
-      `popup=${String(positive.popupProbe['popup'])}; new popup targets=${positive.popups}`
-    );
-    const topDocument = positive.topUrl.split('#')[0];
-    const publishedDocument = url.split('#')[0];
-    check(
-      'the top-window navigation was refused: no main-frame navigation, viewer document unchanged',
-      positive.navigationsAfter === positive.navigationsBefore &&
-        topDocument === publishedDocument,
-      `main-frame navigations ${positive.navigationsBefore}->${positive.navigationsAfter}; top document ${topDocument}; fragment present=${positive.topUrl.includes('#')} (format.md 2.5 strips it)`
-    );
-    check(
-      'the console logged CSP refusals for the external requests',
-      positive.cspRefusals >= 1,
-      `CSP refusal log entries=${positive.cspRefusals}`
-    );
-    console.log(
-      `INFO interception paused ${positive.externalPaused} external request(s); the harness failed each one`
-    );
-
-    // Negative control: a throwaway viewer whose frame grants the origin.
-    const loosenedDist = await mkdtemp(join(tmpdir(), 'relic-svg-loosened-'));
-    try {
-      await cp(viewerDist, loosenedDist, { recursive: true });
-      const original = 'setAttribute("sandbox","allow-scripts")';
-      const loosened =
-        'setAttribute("sandbox","allow-scripts allow-same-origin allow-top-navigation")';
-      let rewritten = 0;
-      for (const name of ['main.js', 'viewer.js']) {
-        const path = join(loosenedDist, name);
-        const text = await readFile(path, 'utf8');
-        if (text.includes(original)) {
-          await writeFile(path, text.split(original).join(loosened));
-          rewritten++;
-        }
+    await cp(viewerDist, loosenedDist, { recursive: true });
+    const original = 'setAttribute("sandbox","allow-scripts")';
+    const loosened = `setAttribute("sandbox","${LOOSENED_SANDBOX}")`;
+    let rewritten = 0;
+    for (const name of ['main.js', 'viewer.js']) {
+      const path = join(loosenedDist, name);
+      const text = await readFile(path, 'utf8');
+      if (text.includes(original)) {
+        await writeFile(path, text.split(original).join(loosened));
+        rewritten++;
       }
-      assert.ok(
-        rewritten >= 1,
-        'the frame sandbox string was not in the viewer'
-      );
-      const control = await probeRun(
-        browser,
-        url,
-        token,
-        appFor(loosenedDist),
-        false
-      );
-      check(
-        'negative control: the copied frame sandbox is loosened',
-        control.sandbox ===
-          'allow-scripts allow-same-origin allow-top-navigation',
-        `control sandbox="${String(control.sandbox)}"`
-      );
-      const c = control.probe;
-      // Each flag is true when the isolation property still holds in the
-      // loosened copy. Every one must be false for the control to be valid.
-      const holds = {
-        opaqueOrigin: c['origin'] === 'null',
-        cookieRefused: c['cookie'] === 'threw:SecurityError',
-        storageRefused: c['localStorage'] === 'threw:SecurityError',
-        topNavigationRefused:
-          control.navigationsAfter === control.navigationsBefore,
-      };
-      const stillHolding = Object.entries(holds)
-        .filter(([, value]) => value)
-        .map(([name]) => name);
-      check(
-        'negative control: each isolation assertion fails when the sandbox is loosened',
-        stillHolding.length === 0,
-        `control origin=${String(c['origin'])} cookie=${String(c['cookie'])} localStorage=${String(c['localStorage'])} navigations ${control.navigationsBefore}->${control.navigationsAfter}; still holding=[${stillHolding.join(',')}]`
-      );
-    } finally {
-      await rm(loosenedDist, { recursive: true, force: true });
+    }
+    check(
+      'control A: the frame sandbox string was found and loosened in a copy',
+      rewritten >= 1,
+      `files rewritten=${rewritten}`
+    );
+    // Control B: the production policy plus a connection allowance for the
+    // service and the external host, so the frame's own fetches can leave.
+    const connectPolicy = `${shimPolicy}; connect-src ${origin} ${EXTERNAL}`;
+    for (const mode of MODES) {
+      await runMode(mode, url, token, loosenedDist, connectPolicy);
     }
   } finally {
-    await browser.close();
+    await rm(loosenedDist, { recursive: true, force: true });
   }
 }
 
