@@ -1143,6 +1143,7 @@ function toCell(label: string, detail: string, control: string): Cell {
   }
   if (label === 'EGRESS') return { code: 'EGRESS', detail };
   if (label === 'BLOCKED-PRE') return { code: 'BLOCKED-PRE', detail };
+  if (label === 'BLOCKED-NAV') return { code: 'BLOCKED-NAV', detail };
   if (label === 'BLOCKED') return { code: 'BLOCKED', detail };
   return { code: 'EGRESS', detail: `${label} ${detail}` };
 }
