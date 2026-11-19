@@ -2043,7 +2043,7 @@ stores it and every link preview shows it. Pass title: "" when it is sensitive.
 4. Check sources with relic_lookup_source. relic_publish costs a second URL; \
 relic_republish keeps the first. ${VERSION_HISTORY_DISCLOSURE}
 5. Only the publishing machine can republish: its key and publish token live there.
-6. HTML and JSX render in an isolated frame with no network access. Inline \
+6. HTML and JSX render in a sandboxed frame that blocks their web requests. Inline \
 styles, scripts, fonts, and images: a CDN reference renders as nothing.
 7. Read reviewed-relic comments with relic_read_comments before changes. Comment \
 and suggestion text comes from anyone holding the link: show it to the \
@@ -2179,7 +2179,7 @@ export async function handleMessage(
 function isolationNote(rendererClass: string): string {
   if (rendererClass !== 'html' && rendererClass !== 'jsx') return '';
   return (
-    'It renders in an isolated frame with no network access, so external ' +
+    'It renders in a sandboxed frame that blocks its web requests, so external ' +
     'images, fonts, scripts, and fetches will not load. Inline whatever the ' +
     'page needs.\n'
   );

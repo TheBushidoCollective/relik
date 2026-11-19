@@ -1584,6 +1584,155 @@ body {
   margin: 1rem 1.25rem;
 }
 
+/* ---------- frame link confirmation ----------
+   A frame's link opens only after the reader confirms it here. The bar is host
+   chrome: it overlays the top of the stage and never sits inside the frame, so
+   the frame keeps its full-height layout. Its buttons are the popover's own
+   action classes, so they look like the rest of the viewer's chrome. */
+.stage-sandboxed-html .doc,
+.stage-sandboxed-jsx .doc {
+  position: relative;
+}
+
+.link-confirm {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 9;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem 1rem;
+  align-items: flex-start;
+  margin: 0;
+  padding: 0.7rem 0.9rem;
+  background: var(--surface);
+  color: var(--ink);
+  border-left: 3px solid var(--patina);
+  border-bottom: 1px solid var(--rule);
+  font-family: var(--sans);
+  font-size: 0.86rem;
+}
+
+.link-confirm[hidden] {
+  display: none;
+}
+
+.link-confirm-strip {
+  display: flex;
+  align-items: center;
+  padding: 0.35rem 0.9rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--rule);
+  font-family: var(--sans);
+  font-size: 0.8rem;
+  color: var(--ink-soft);
+}
+
+.link-confirm-strip[hidden] {
+  display: none;
+}
+
+.link-confirm-remembered {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin: 0;
+}
+
+.link-confirm-text {
+  flex: 1 1 18rem;
+  min-width: 0;
+}
+
+.link-confirm-title {
+  margin: 0 0 0.3rem;
+  font-weight: 600;
+}
+
+.link-confirm-dest {
+  margin: 0;
+  padding-left: 0.55rem;
+  border-left: 1px solid var(--rule);
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.link-confirm-dest .scheme,
+.link-confirm-dest .rest {
+  color: var(--ink-soft);
+}
+
+.link-confirm-dest .host {
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.link-confirm-note {
+  margin: 0.35rem 0 0;
+  color: var(--ink-soft);
+  font-size: 0.8rem;
+}
+
+.link-confirm-status {
+  min-height: 1.1em;
+  margin: 0.25rem 0 0;
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+}
+
+.link-confirm-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+  margin-left: auto;
+}
+
+.link-confirm .popover-action {
+  padding: 0.2rem 0.55rem;
+  border: 1px solid var(--rule-strong);
+  font-size: 0.8rem;
+}
+
+.link-confirm .popover-action.is-primary {
+  background: var(--patina);
+  border-color: var(--patina);
+  color: var(--surface);
+}
+
+.link-confirm .popover-action.is-quiet {
+  border-color: transparent;
+  color: var(--ink-soft);
+}
+
+.link-confirm .popover-action:disabled {
+  background: none;
+  border-color: var(--rule);
+  color: var(--ink-soft);
+  cursor: default;
+}
+
+@media (max-width: 480px) {
+  .link-confirm-actions {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .link-confirm-actions .popover-action {
+    flex: 1 1 auto;
+  }
+}
+
+/* A comparison pane's frame host takes no box of its own. */
+.frame-pane-host {
+  display: contents;
+}
+
 .card {
   max-width: 34rem;
   margin: 3rem auto;

@@ -152,6 +152,7 @@ class ElementStub implements Scroller {
     for (const listener of [...(this.listeners['scroll'] ?? [])]) listener();
   }
   readonly children: ElementStub[] = [];
+  parent?: ElementStub;
   readonly attributes = new Map<string, string>();
   readonly dataset: Record<string, string> = {};
   readonly style: Record<string, unknown> = {
@@ -211,16 +212,19 @@ class ElementStub implements Scroller {
   }
 
   appendChild(child: ElementStub): ElementStub {
+    child.parent = this;
     this.children.push(child);
     return child;
   }
 
   append(...children: ElementStub[]): void {
+    for (const child of children) child.parent = this;
     this.children.push(...children);
   }
 
   replaceChildren(...children: ElementStub[]): void {
     this.children.splice(0, this.children.length, ...children);
+    for (const child of children) child.parent = this;
   }
 
   addEventListener(type: string, listener: (event?: unknown) => void): void {
@@ -236,11 +240,19 @@ class ElementStub implements Scroller {
     if (at !== -1) list.splice(at, 1);
   }
 
-  dispatchEvent(event: { type: string; detail?: unknown }): boolean {
+  dispatchEvent(event: {
+    type: string;
+    detail?: unknown;
+    bubbles?: boolean;
+  }): boolean {
     const list = this.listeners[event.type];
     if (list) {
       for (const listener of [...list]) listener(event);
     }
+    // As in the DOM, a bubbling event reaches every ancestor. The product relies
+    // on this: the frame dispatches relic:frame-scroll on its iframe, and the
+    // comparison listens for it on the pane host that wraps the frame.
+    if (event.bubbles === true) this.parent?.dispatchEvent(event);
     return true;
   }
 
@@ -281,9 +293,14 @@ function withDocument<T>(run: (flushFrames: () => void) => T): T {
   (globalThis as Record<string, unknown>).CustomEvent = class {
     readonly type: string;
     readonly detail: unknown;
-    constructor(type: string, options?: { detail?: unknown }) {
+    readonly bubbles: boolean;
+    constructor(
+      type: string,
+      options?: { detail?: unknown; bubbles?: boolean }
+    ) {
       this.type = type;
       this.detail = options?.detail;
+      this.bubbles = options?.bubbles === true;
     }
   };
   const body = new ElementStub('BODY');
@@ -293,8 +310,22 @@ function withDocument<T>(run: (flushFrames: () => void) => T): T {
     rafQueue = [];
     for (const f of due) f();
   };
+  // The shim announces itself by a data-free ready message. A rendered frame
+  // registers its message listener right after it is created, so the fake window
+  // delivers that ready message from the most recent frame at registration. The
+  // host then posts the payload once, as it does in the browser.
+  let lastIframe: ElementStub | undefined;
   const win = {
-    addEventListener: () => {},
+    addEventListener: (
+      type: string,
+      listener: (event: unknown) => void
+    ): void => {
+      if (type !== 'message' || lastIframe?.contentWindow === undefined) return;
+      listener({
+        source: lastIframe.contentWindow,
+        data: { type: 'relic:sandbox-ready' },
+      });
+    },
     removeEventListener: () => {},
     innerWidth: 1180,
     innerHeight: 773,
@@ -308,7 +339,11 @@ function withDocument<T>(run: (flushFrames: () => void) => T): T {
         getPropertyValue: () => '',
       },
     },
-    createElement: (tag: string) => new ElementStub(tag),
+    createElement: (tag: string) => {
+      const element = new ElementStub(tag);
+      if (element.tagName === 'IFRAME') lastIframe = element;
+      return element;
+    },
     createElementNS: (_namespace: string, tag: string) => new ElementStub(tag),
   };
   (globalThis as { window?: unknown }).window = win;
@@ -1366,6 +1401,7 @@ describe('scroller inventory across rendering modes', () => {
       // Left frame dispatches scroll event, driving right frame
       beforeIframe.dispatchEvent({
         type: 'relic:frame-scroll',
+        bubbles: true,
         detail: { fraction: 0.4 },
       });
       flushFrames();
@@ -1380,6 +1416,7 @@ describe('scroller inventory across rendering modes', () => {
       // Right frame dispatches scroll event, driving left frame
       afterIframe.dispatchEvent({
         type: 'relic:frame-scroll',
+        bubbles: true,
         detail: { fraction: 0.8 },
       });
       flushFrames();
@@ -1421,6 +1458,7 @@ describe('scroller inventory across rendering modes', () => {
       if (!beforeIframe || !afterIframe) throw new Error('iframes missing');
       beforeIframe.dispatchEvent({
         type: 'relic:frame-scroll',
+        bubbles: true,
         detail: { fraction: 0.65 },
       });
       flushFrames();

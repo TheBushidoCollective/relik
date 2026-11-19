@@ -150,13 +150,28 @@ describe('the sandbox page', () => {
       'content-security-policy'
     ) ?? '';
 
-  test('cuts the frame off from the network entirely', async () => {
+  test('denies the frame HTTP requests by policy', async () => {
     const csp = await sandboxPolicy();
     expect(csp).toContain("default-src 'none'");
     expect(csp).toContain("worker-src 'none'");
     expect(csp).toContain("form-action 'none'");
     expect(csp).toContain("base-uri 'none'");
-    expect(csp).toContain("webrtc 'block'");
+    // WebRTC has no CSP directive that Chrome enforces, so none is pinned here.
+    // The containment is a backstop, not a boundary: the egress probe records its open routes.
+    expect(csp).toContain('sandbox allow-scripts');
+  });
+
+  test('a direct navigation to the shim gets the sandbox flags too', async () => {
+    // The iframe attribute covers the framed case. A top-level navigation has no
+    // attribute, so the response itself must carry the flags.
+    const navigation = new Request('https://relic.example/sandbox.html', {
+      headers: { 'sec-fetch-dest': 'document', 'sec-fetch-mode': 'navigate' },
+    });
+    const response = await app().fetch(navigation);
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-security-policy')).toContain(
+      'sandbox allow-scripts'
+    );
   });
 
   test('lets script come only from the document and a local blob', async () => {
@@ -187,8 +202,8 @@ describe('the sandbox page', () => {
         "worker-src 'none'",
         "form-action 'none'",
         "base-uri 'none'",
+        'sandbox allow-scripts',
         'frame-ancestors https://relic.example',
-        "webrtc 'block'",
       ].join('; ')
     );
   });

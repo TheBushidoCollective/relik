@@ -139,6 +139,10 @@ import {
   isFrameSelectionClearedMessage,
   isFrameSelectionMessage,
 } from './annotate-frame.ts';
+import { FrameHandshake } from './frame-handshake.ts';
+import { createLinkConfirmBar } from './link-confirm-bar.ts';
+import { type ConfirmPrefs, createConfirmPrefs } from './confirm-prefs.ts';
+import { describeLinkRequest, LinkConfirmGate } from './open-link-confirm.ts';
 import {
   type AddressedBy,
   addressedBadgeLabel,
@@ -1380,25 +1384,11 @@ function renderImageView(view: ReadyView): HTMLElement {
 type RenderPayload =
   | { readonly type: 'relic:render'; readonly html: string }
   | { readonly type: 'relic:render-jsx'; readonly code: string };
-type OpenWindow = (
-  url: string,
-  target: string,
-  features: string
-) => WindowProxy | null;
-
-/** Open one frame-requested destination without an opener or referrer. */
-export function openFrameExternalLink(
-  message: FrameOpenLinkMessage,
-  open: OpenWindow = (url, target, features) =>
-    window.open(url, target, features)
-): boolean {
-  if (!isFrameOpenLinkMessage(message)) return false;
-  open(message.href, '_blank', 'noopener,noreferrer');
-  return true;
-}
-
 interface FrameHandle {
   readonly frame: HTMLIFrameElement;
+  /** The confirmation bar for this frame's link requests. Place it above the frame. */
+  readonly linkConfirm: HTMLElement;
+  readonly linkRemembered: HTMLElement;
   /**
    * Mark this frame's own rendered nodes, once the parent holds a diff.
    *
@@ -1422,9 +1412,12 @@ interface FrameHandle {
  * Scripts and nothing else. Popups are removed by dropping the flag, not by
  * CSP: a popup opens a new top-level context this frame's policy does not
  * govern.
- * Reader-activated external links are the deliberate exception: the frame
- * sends a validated destination to the parent, which opens it without an
- * opener or referrer while leaving the sandbox unchanged.
+ *
+ * A link the frame asks to open is a request, not an action. The host shows the
+ * destination in its own chrome (linkConfirm), and a tab opens only from a
+ * trusted click on that bar after the reader has had time to read it. The
+ * frame's own click check is not trusted, because author code runs in the same
+ * realm and can post the request directly.
  *
  * A comparison needs two renders of untrusted content, and it gets them from
  * two of these rather than by relaxing the frame's one-render guard. The
@@ -1445,12 +1438,32 @@ function sandboxFrame(
   frame.src = `${usercontentOrigin}/sandbox.html`;
   frame.title = view.filename;
 
-  // An opaque-origin frame has no origin to target, so '*' is the only option
-  // the platform offers. It is safe here because the payload is the content
-  // that frame is about to display anyway. The key is never in it.
+  // The frame is opaque, so no targetOrigin can name it and '*' is the only
+  // value that reaches it. What limits who receives a post is the handshake: the
+  // payload goes once, to the document that announced itself, and nothing goes
+  // to a frame whose document changed after its first load.
+  const handshake = new FrameHandshake();
   const post = (message: object): void => {
+    if (!handshake.canPost()) return;
     frame.contentWindow?.postMessage(message, '*');
   };
+
+  // A link the frame asks to open is confirmed by the reader, in host chrome,
+  // before any tab opens. See open-link-confirm.ts and link-confirm-bar.ts.
+  const linkBar = createLinkConfirmBar(
+    new LinkConfirmGate(),
+    (href) => {
+      window.open(href, '_blank', 'noopener,noreferrer');
+    },
+    view.relicId === undefined
+      ? undefined
+      : {
+          relicId: view.relicId,
+          version: view.version,
+          prefs: confirmPrefs(),
+          activated: () => navigator.userActivation?.isActive === true,
+        }
+  );
 
   // The frame cannot see where it sits in the page, so the page says whether
   // the frame is in view. A mark inside a frame scrolled out of view is not
@@ -1472,14 +1485,15 @@ function sandboxFrame(
       : undefined;
   visibility?.observe(frame);
 
-  // Both paths, because the race runs in either direction: `load` can fire
-  // before the frame's own script attaches its listener, and the frame's
-  // ready message can arrive before `load`. The frame renders at most once,
-  // so posting twice is harmless and losing the message is not.
+  // The payload is posted once, in reply to the frame's first ready message.
+  // That message comes from the shim's own document, which is listening before
+  // it announces itself, so nothing is lost. Later ready messages, and any load
+  // after the first, post nothing: see FrameHandshake.
   const onMessage = (event: MessageEvent): void => {
     if (event.source !== frame.contentWindow) return;
     const type = (event.data as { type?: unknown } | null)?.type;
     if (type === 'relic:sandbox-ready') {
+      if (!handshake.onReady()) return;
       post(payload);
       reportVisibility();
       // Announced on this origin too, because marks are posted into the
@@ -1578,7 +1592,9 @@ function sandboxFrame(
       return;
     }
     if (isFrameOpenLinkMessage(event.data)) {
-      openFrameExternalLink(event.data);
+      // The frame's request is offered to the reader, never acted on here.
+      const destination = describeLinkRequest(event.data.href);
+      if (destination !== undefined) linkBar.request(destination);
       return;
     }
     if (isFrameScrollMessage(event.data)) {
@@ -1595,7 +1611,9 @@ function sandboxFrame(
     window.addEventListener('message', onMessage);
   }
   frame.addEventListener('load', () => {
-    post(payload);
+    // No payload here. The payload waits for the frame's own ready message, and
+    // a later load means the document changed, which FrameHandshake records.
+    handshake.onLoad();
     frame.dispatchEvent(
       new CustomEvent('relic:frame-navigation', { bubbles: true })
     );
@@ -1603,6 +1621,8 @@ function sandboxFrame(
 
   return {
     frame,
+    linkConfirm: linkBar.element,
+    linkRemembered: linkBar.remembered,
     annotate: (marks, anchors) =>
       post({ type: 'relic:annotate', marks, anchors }),
     setScroll: (position: ScrollPosition) =>
@@ -1642,12 +1662,11 @@ export function renderSandboxedHtml(
 ): HTMLElement {
   const wrapper = document.createElement('div');
   wrapper.className = 'doc doc-html';
-  wrapper.appendChild(
-    sandboxFrame(view, usercontentOrigin, {
-      type: 'relic:render',
-      html: decodeText(documentBytes(view)),
-    }).frame
-  );
+  const handle = sandboxFrame(view, usercontentOrigin, {
+    type: 'relic:render',
+    html: decodeText(documentBytes(view)),
+  });
+  wrapper.append(handle.linkRemembered, handle.linkConfirm, handle.frame);
   return wrapper;
 }
 
@@ -1679,7 +1698,8 @@ export function renderSandboxedJsx(
     return wrapper;
   }
 
-  wrapper.appendChild(sandboxFrame(view, usercontentOrigin, payload).frame);
+  const handle = sandboxFrame(view, usercontentOrigin, payload);
+  wrapper.append(handle.linkRemembered, handle.linkConfirm, handle.frame);
   return wrapper;
 }
 
@@ -2462,8 +2482,11 @@ function framePane(view: ReadyView, usercontentOrigin: string): ComparisonPane {
   const handle = sandboxFrame(view, usercontentOrigin, payload, (reported) =>
     settle?.(reported)
   );
+  const host = document.createElement('div');
+  host.className = 'frame-pane-host';
+  host.append(handle.linkRemembered, handle.linkConfirm, handle.frame);
   return {
-    element: handle.frame,
+    element: host,
     tree,
     annotate: handle.annotate,
     setScroll: handle.setScroll,
@@ -4171,6 +4194,12 @@ function preferenceStore(): Storage | undefined {
   } catch {
     return undefined;
   }
+}
+/** The confirmation store for this browser, shared by every relic on this origin. */
+let confirmPrefsStore: ConfirmPrefs | undefined;
+function confirmPrefs(): ConfirmPrefs {
+  confirmPrefsStore ??= createConfirmPrefs(preferenceStore());
+  return confirmPrefsStore;
 }
 
 /** The display name this reader last posted under, on any relic. */
@@ -6015,7 +6044,7 @@ function visibleOtioEntryAtVersion(
  * The thread, in the service-origin chrome.
  *
  * It cannot live in the render frame and this is not a preference: the frame
- * is network denied, `default-src 'none'` with sandbox exactly
+ * is denied HTTP requests, `default-src 'none'` with sandbox exactly
  * `allow-scripts`, so it could not fetch a comment if it tried. The chrome
  * around it can, and it is also the only side of the boundary that holds the
  * key the bodies are sealed under.

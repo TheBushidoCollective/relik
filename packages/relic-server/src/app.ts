@@ -437,11 +437,11 @@ export function createApp(options: AppOptions = {}): RelicApp {
    * the service origin may frame it, so the page cannot be embedded by a
    * third party to borrow the rendering path.
    *
-   * The other half is that the frame cannot reach the network at all. The
-   * iframe sandbox omits `allow-same-origin`, so the document runs in an
-   * opaque origin where `'self'` matches nothing, which makes "only our
-   * host" mean "only what is inlined in this response": the frame's own
-   * scripts and the bundle it carries. Every fetch directive is closed.
+   * The other half is that the frame cannot make HTTP requests. The iframe
+   * sandbox omits `allow-same-origin`, so the document runs in an opaque
+   * origin where `'self'` matches nothing, which makes "only our host" mean
+   * "only what is inlined in this response": the frame's own scripts and the
+   * bundle it carries. Every fetch directive is closed.
    * `blob:` remains in `script-src` for one reason: the JSX mount imports a
    * module built from posted code, and that import is local.
    *
@@ -453,14 +453,13 @@ export function createApp(options: AppOptions = {}): RelicApp {
    * but no user gesture preceded it, so CSP is not what stopped it; popups
    * are closed by the sandbox attribute in the viewer.
    *
-   * WebRTC egress: Chrome ignores CSP `webrtc 'block'`. Runtime containment
-   * in the sandboxed frame neutralizes `RTCPeerConnection` constructors across
-   * the global prototype chain and blocks nested frame creation so author code
-   * cannot reach an unpatched realm. This is a tested deny-list in the frame's
-   * JavaScript realm rather than an architectural impossibility, serving as
-   * defense in depth alongside the opaque sandbox. Future browser APIs or parser
-   * entry points could reopen egress channels before we patch them. Legitimate
-   * relics cannot use nested frames or workers.
+   * WebRTC is not a CSP matter. Chrome ignores CSP `webrtc 'block'`, so no such
+   * directive is sent. The shim removes the RTCPeerConnection constructors from
+   * its realm and wraps the paths that create frames (installSandboxContainment
+   * in sandbox.ts). That is a backstop: the egress probe in
+   * packages/relic-mcp/test/frame-egress-path.ts reproduces four routes it does
+   * not stop, so WebRTC egress from author script is not prevented here.
+   * Legitimate relics cannot use nested frames or workers.
    */
   async function serveSandbox(request: Request): Promise<Response> {
     const asset = await assets.get('sandbox.html');
@@ -486,8 +485,11 @@ export function createApp(options: AppOptions = {}): RelicApp {
         "worker-src 'none'",
         "form-action 'none'",
         "base-uri 'none'",
+        // Framed, the iframe attribute already makes this document opaque. This
+        // also covers a direct navigation to the shim, and a commit that somehow
+        // lacks the attribute: scripts only, no top navigation, no popups.
+        'sandbox allow-scripts',
         `frame-ancestors ${new URL(config.serviceOrigin).origin}`,
-        "webrtc 'block'",
       ].join('; '),
     });
   }
@@ -6738,7 +6740,7 @@ claude plugin install relic@relic</code></pre>
         <img src="/assets/landing-html.png" width="1440" height="900" loading="lazy"
           alt="A published HTML page open in the Relic viewer, rendered in a sandboxed frame.">
         <figcaption>What the other person sees for an HTML file: the page,
-        rendered in their browser in a frame with no network access.</figcaption>
+        rendered in their browser in a sandboxed frame that blocks its web requests.</figcaption>
       </figure>
     </div>
   </section>
@@ -6766,7 +6768,7 @@ claude plugin install relic@relic</code></pre>
           <div><dt>PDF</dt><dd>An in-browser document viewer.</dd></div>
           <div><dt>Audio, video</dt><dd>An in-browser player.</dd></div>
           <div><dt>OpenTimelineIO</dt><dd>A timeline player with tracks, trims and dissolves.</dd></div>
-          <div><dt>HTML, JSX</dt><dd>A sandboxed frame on a separate origin, with no network. Inline what the page needs.</dd></div>
+          <div><dt>HTML, JSX</dt><dd>A sandboxed frame on a separate origin, which blocks its web requests. Inline what the page needs.</dd></div>
           <div><dt>Anything else</dt><dd>A download.</dd></div>
         </dl>
         <div>

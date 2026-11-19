@@ -5,7 +5,7 @@
  * Four things shape all of it:
  *
  * 1. **The thread lives on the service origin, never in the render frame.**
- *    The frame is network denied, `default-src 'none'` with sandbox exactly
+ *    The frame is denied HTTP requests, `default-src 'none'` with sandbox exactly
  *    `allow-scripts`, so it could not fetch a comment if it wanted to. The
  *    chrome around it can.
  * 2. **Bodies are ciphertext to the server.** It stores and returns them and

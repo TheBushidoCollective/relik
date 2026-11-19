@@ -13,14 +13,18 @@ import {
   sanitizeFrameHtml,
 } from '../src/sandbox.ts';
 
+// The browser comes from the environment first, as the browser probes do, then
+// from the paths CI installs. The user's own Chrome is never a candidate: a test
+// run must not launch it. With no browser, the browser test is skipped.
 const CHROME_PATHS = [
-  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
   '/usr/bin/google-chrome',
   '/usr/bin/chromium',
   '/usr/bin/chromium-browser',
 ];
 
 const findChromeBinary = (): string | undefined => {
+  const fromEnv = process.env['RELIC_CHROME_PATH'];
+  if (fromEnv && fromEnv !== 'none' && existsSync(fromEnv)) return fromEnv;
   for (const path of CHROME_PATHS) {
     if (existsSync(path)) return path;
   }
@@ -197,8 +201,69 @@ describe('installSandboxContainment unit containment', () => {
   });
 });
 
+describe('installSandboxContainment checks every argument', () => {
+  test('an object whose toString names a frame is refused, as the string is', () => {
+    function MockDocument() {}
+    MockDocument.prototype = {
+      createElement(_tag: unknown) {
+        return { tagName: 'created' };
+      },
+    };
+    installSandboxContainment({
+      Document: MockDocument,
+    } as unknown as Window);
+    const proto = MockDocument.prototype as unknown as {
+      createElement(tag: unknown): unknown;
+    };
+    expect(() => proto.createElement({ toString: () => 'iframe' })).toThrow();
+    expect(proto.createElement({ toString: () => 'div' })).toEqual({
+      tagName: 'created',
+    });
+  });
+
+  test('a fragment that holds a frame is refused by append, and a plain fragment passes', () => {
+    const appended: unknown[] = [];
+    function MockFragment() {}
+    MockFragment.prototype = {
+      append(...nodes: unknown[]) {
+        appended.push(...nodes);
+      },
+    };
+    installSandboxContainment({
+      Node: { ELEMENT_NODE: 1, DOCUMENT_FRAGMENT_NODE: 11, prototype: {} },
+      DocumentFragment: MockFragment,
+    } as unknown as Window);
+    const proto = MockFragment.prototype as unknown as {
+      append(...nodes: unknown[]): void;
+    };
+    const holdsFrame = {
+      nodeType: 11,
+      querySelector: () => ({ tagName: 'IFRAME' }),
+    };
+    const plain = { nodeType: 11, querySelector: () => null };
+    expect(() => proto.append(holdsFrame)).toThrow();
+    expect(appended).toEqual([]);
+    proto.append(plain);
+    expect(appended).toEqual([plain]);
+  });
+
+  test('sanitising reads its argument once: the markup checked is the markup parsed', () => {
+    const framed = {
+      toString: () => '<iframe src="about:blank"></iframe><p>x</p>',
+    };
+    const cleaned = sanitizeFrameHtml(framed);
+    expect(cleaned).not.toContain('<iframe');
+    expect(cleaned).toContain('<p>x</p>');
+  });
+});
+
 describe('WebRTC STUN egress headless browser regression', () => {
   const chromeBinary = findChromeBinary();
+  if (chromeBinary === undefined) {
+    console.warn(
+      'SKIPPED frame-webrtc-egress browser test: no headless browser found. Set RELIC_CHROME_PATH to an isolated chrome-headless-shell.'
+    );
+  }
 
   test.skipIf(!chromeBinary)(
     'closed egress blocks STUN packet transmission across all bypass vectors',
