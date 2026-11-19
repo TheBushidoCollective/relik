@@ -243,6 +243,7 @@ export function mountSuggestionController(
   let modeOffTimer: number | undefined;
   let pendingPresenceRefresh = false;
   let presenceRefreshTimer: number | undefined;
+  let awaitingPresenceRefresh: Promise<unknown> | undefined;
   const presenceChange = (): void => options.onPresenceChange?.();
   const releaseModeOff = (): void => {
     window.clearTimeout(modeOffTimer);
@@ -701,6 +702,18 @@ export function mountSuggestionController(
       activeCommit
     )
       return;
+    const inFlight = transport.activityRefreshInFlight;
+    if (inFlight) {
+      if (awaitingPresenceRefresh !== inFlight) {
+        awaitingPresenceRefresh = inFlight;
+        void inFlight.then(() => {
+          if (awaitingPresenceRefresh === inFlight)
+            awaitingPresenceRefresh = undefined;
+          resumePresenceRefresh();
+        });
+      }
+      return;
+    }
     const next = transport.nextActivityRefreshAt;
     const delay =
       next === null ? 0 : Math.max(0, next - (options.deps.now ?? Date.now)());

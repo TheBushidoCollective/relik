@@ -57,6 +57,7 @@ async function browserCases(
   };
   const nativeSetTimeout = window.setTimeout.bind(window);
   const nativeClearTimeout = window.clearTimeout.bind(window);
+  const nativeNow = Date.now;
   const wait = (): Promise<void> => {
     const { promise, resolve: done } = Promise.withResolvers<void>();
     nativeSetTimeout(done, 5);
@@ -134,6 +135,7 @@ async function browserCases(
     }
   }
   const clock = new Clock();
+  Date.now = () => clock.now;
   window.setTimeout = ((run: TimerHandler, delay?: number) => {
     if (typeof run !== 'function') throw new Error('unexpected string timer');
     return clock.later(run as () => void, delay);
@@ -240,11 +242,9 @@ async function browserCases(
         color: 1,
         stage,
         chip,
-        suggestion: {
-          presenceDocument: () => undefined,
-          presenceState: () => ({ suggesting: false }),
-          refreshOnPresence() {},
-        },
+        suggestion: () => undefined,
+        ensureSuggestion: async () => undefined,
+        refresh: async () => {},
         access: () => state,
         environment: env,
       });
@@ -294,11 +294,9 @@ async function browserCases(
         color: 1,
         stage: document.body,
         chip: document.createElement('div'),
-        suggestion: {
-          presenceDocument: () => undefined,
-          presenceState: () => ({ suggesting: false }),
-          refreshOnPresence() {},
-        },
+        suggestion: () => undefined,
+        ensureSuggestion: async () => undefined,
+        refresh: async () => {},
         access,
         environment: pendingEnv,
       });
@@ -306,6 +304,80 @@ async function browserCases(
       await pending.ready;
       equal(pendingEnv.sockets.length, 0, 'disposal beats key derivation');
       equal(clock.tasks.size, 0, 'early disposal leaves no timers');
+    });
+
+    await check('source mapping waits for a peer caret', async () => {
+      const stage = document.createElement('div');
+      const paragraph = document.createElement('p');
+      const original = document.createTextNode('ordinary reading text');
+      paragraph.append(original);
+      stage.append(paragraph);
+      const chip = document.createElement('div');
+      document.body.append(stage, chip);
+      const env = new Environment();
+      let calls = 0;
+      let mapped = false;
+      const adapter = {
+        presenceDocument: () => ({ root: paragraph, segments: [] }),
+        presenceState: () => ({ suggesting: false }),
+        refreshOnPresence() {},
+      };
+      const controller = presence.mountPresenceController({
+        serviceOrigin: location.origin,
+        relicId: 'lazy-relic',
+        keyBytes: key,
+        version: 1,
+        name: null,
+        color: 1,
+        stage,
+        chip,
+        suggestion: () => (mapped ? adapter : undefined),
+        ensureSuggestion: async () => {
+          calls++;
+          mapped = true;
+          return adapter;
+        },
+        refresh: async () => {},
+        access,
+        environment: env,
+      });
+      await controller.ready;
+      env.sockets[0]!.open();
+      equal(calls, 0, 'startup must not load suggestions');
+      assert(paragraph.firstChild === original, 'startup changed reading text');
+      assert(
+        !stage.querySelector('.presence-layer'),
+        'startup added an overlay'
+      );
+      const remote = new Socket(env.sockets[0]!.url);
+      remote.open();
+      const keys = await format.derivePresenceKeys(key, 'lazy-relic');
+      const send = async (caret?: { s: number; e: number }): Promise<void> => {
+        const c = await format.sealPresence(keys.seal, keys.room, {
+          v: 1,
+          t: clock.now,
+          name: null,
+          color: 1,
+          version: 1,
+          ...(caret ? { caret } : {}),
+        });
+        remote.send(JSON.stringify({ v: 1, c }));
+        await clock.settle();
+      };
+      await send();
+      equal(calls, 0, 'peer without a range must not load suggestions');
+      await send({ s: 1, e: 1 });
+      await eventually(
+        () => calls === 1,
+        'peer caret did not load suggestions'
+      );
+      await send({ s: 2, e: 2 });
+      equal(calls, 1, 'peer ranges load suggestions only once');
+      controller.dispose();
+      remote.close();
+      stage.remove();
+      chip.remove();
+      equal(clock.tasks.size, 0, 'lazy fixture leaves no timers');
     });
 
     interface Write {
@@ -329,6 +401,9 @@ async function browserCases(
       const announced: string[] = [];
       let reads = 0;
       let refreshes = 0;
+      let notifications = 0;
+      const readTimes: number[] = [];
+      const notificationTimes: number[] = [];
       let live: Presence.PresenceController | undefined;
       const source = 'hello world';
       const view = {
@@ -343,6 +418,7 @@ async function browserCases(
       ): Promise<Response> => {
         if (!init?.method || init.method === 'GET') {
           reads++;
+          readTimes.push(clock.now);
           return Response.json([]);
         }
         const deferred = Promise.withResolvers<Response>();
@@ -393,7 +469,19 @@ async function browserCases(
         color: 1,
         stage,
         chip,
-        suggestion: adapter,
+        suggestion: () => ({
+          presenceDocument: () => adapter.presenceDocument(),
+          presenceState: () => adapter.presenceState(),
+          refreshOnPresence: () => {
+            notifications++;
+            notificationTimes.push(clock.now);
+            adapter.refreshOnPresence();
+          },
+        }),
+        ensureSuggestion: async () => adapter,
+        refresh: async () => {
+          refreshes++;
+        },
         access,
         environment: env,
       });
@@ -409,9 +497,14 @@ async function browserCases(
         writes,
         announced,
         adapter,
+        readTimes,
+        notificationTimes,
         live,
         get reads() {
           return reads;
+        },
+        get notifications() {
+          return notifications;
         },
         get refreshes() {
           return refreshes;
@@ -513,16 +606,56 @@ async function browserCases(
         sender.live.announcePosted('comment-2');
         await clock.advance(5000);
         equal(receiver.reads, 1, 'activity throttle prevents a second refetch');
-        await clock.advance(5000);
+        equal(
+          receiver.notifications,
+          2,
+          'second peer notification reaches the controller'
+        );
+        await clock.advance(1999);
+        equal(receiver.reads, 1, 'second ping waits for the end of the window');
+        await clock.advance(1);
+        try {
+          await eventually(
+            () => receiver.reads === 2,
+            'trailing refetch did not run'
+          );
+        } catch {
+          throw new Error(
+            `trailing refresh: now=${clock.now}, reads=${receiver.readTimes}, notifications=${receiver.notificationTimes}, tasks=${Array.from(clock.tasks.values(), (task) => task.at)}`
+          );
+        }
         sender.live.announcePosted('comment-3');
         await clock.advance(1000);
-        await eventually(
-          () => receiver.reads === 2,
-          'later peer post did not refetch'
+        await clock.advance(8999);
+        equal(
+          receiver.reads,
+          2,
+          'third ping observes the next throttle window'
         );
-        assert(
-          receiver.refreshes >= 2,
+        await clock.advance(1);
+        await eventually(
+          () => receiver.reads === 3,
+          'third ping did not refetch'
+        );
+        await eventually(
+          () => receiver.refreshes >= 3,
           'normal thread renderer was not refreshed'
+        );
+        draft(receiver);
+        sender.live.announcePosted('comment-4');
+        await clock.advance(11_000);
+        equal(receiver.reads, 3, 'open draft defers peer refetch');
+        receiver.adapter.setSuggesting(false);
+        await eventually(
+          () => receiver.writes.length === 1,
+          'draft commit did not start'
+        );
+        receiver.writes[0]!.respond(
+          Response.json({ comment_id: 'receiver-1' })
+        );
+        await eventually(
+          () => receiver.reads === 4,
+          'deferred refetch did not run after commit'
         );
         sender.dispose();
         receiver.dispose();
@@ -555,6 +688,7 @@ async function browserCases(
   } finally {
     window.setTimeout = nativeSetTimeout;
     window.clearTimeout = nativeClearTimeout;
+    Date.now = nativeNow;
     Reflect.deleteProperty(document, 'visibilityState');
   }
   return passed;
@@ -633,6 +767,7 @@ describe('viewer presence integration', () => {
         if (outcome.error) throw new Error(outcome.error);
         expect(outcome.passed).toEqual([
           'access gating, version changes and disposal',
+          'source mapping waits for a peer caret',
           'confirmed mode-off post reaches peers and refresh is throttled',
           'pagehide flushes an open draft with keepalive',
         ]);

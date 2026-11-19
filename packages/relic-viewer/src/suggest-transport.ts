@@ -144,6 +144,10 @@ export class SuggestTransport {
     return this.lastRefresh === null ? null : this.lastRefresh + 10_000;
   }
 
+  get activityRefreshInFlight(): Promise<ThreadResult> | null {
+    return this.refreshInFlight;
+  }
+
   /** Set this as soon as editing begins, even before a valid anchor can be sealed. */
   setDraftOpen(open: boolean): void {
     this.draftOpen = open;
