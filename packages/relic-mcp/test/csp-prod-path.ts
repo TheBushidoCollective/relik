@@ -590,6 +590,43 @@ const CASES: readonly CaseDef[] = [
     }
   ),
 
+  // (a4) The parent-blob route, one experiment. The parent creates a blob and a
+  // srcdoc child (through the Review2 capture route). The child's own inline script
+  // (allowed in the control, refused in production) fetches the parent's blob and
+  // then loads it as a script. Each step reports, so the result shows whether the
+  // parent's blob is reachable from the opaque child at all.
+  scriptCase(
+    'a-r7-srcdoc-child-loads-parent-blob',
+    'a',
+    'srcdoc child fetches and loads a blob created by the parent (one experiment)',
+    'report',
+    (ch) => {
+      const parentBlobCode =
+        "top.postMessage({ type: 'probe:result', result: { id: 'a-r7', phase: 'parent-blob-ran' } }, '*');";
+      const childBody =
+        libJs(ch) +
+        'fetch(U).then(function (r) { return r.text(); })' +
+        ".then(function (t) { report({ id: 'a-r7', phase: 'fetched', text: t.slice(0, 40) });" +
+        " var s = document.createElement('script'); s.src = U; document.body.appendChild(s); })" +
+        ".catch(function (e) { report({ id: 'a-r7', phase: 'fetch-error', err: String(e && e.name) }); });";
+      return (
+        'var realCall = Function.prototype.call, realApply = Function.prototype.apply, seen = {};' +
+        ' function spy(fn) { if (typeof fn === "function" && fn.name) seen[fn.name] = fn; }' +
+        ' Function.prototype.call = function () { spy(this); return Reflect.apply(realCall, this, arguments); };' +
+        ' Function.prototype.apply = function () { spy(this); return Reflect.apply(realApply, this, arguments); };' +
+        ' try { document.body.appendChild(document.createElement("p")); }' +
+        ' finally { Function.prototype.call = realCall; Function.prototype.apply = realApply; }' +
+        ` var U = URL.createObjectURL(new Blob([${jsStr(parentBlobCode)}], { type: 'text/javascript' }));` +
+        ' var create = seen.createElement || Document.prototype.createElement;' +
+        ' var append = seen.appendChild || Node.prototype.appendChild;' +
+        ` var child = '<!doctype html><meta charset="utf-8"><body><' + 'script>var U = ' + JSON.stringify(U) + ';' + ${jsStr(childBody)} + '</' + 'script>';` +
+        ` var el = create.call(document, '${IFRAME}'); el.srcdoc = child; append.call(document.body, el);` +
+        " report({ id: 'a-r7', phase: 'parent-created' });"
+      );
+    }
+  ),
+
+  // (a3) Positive control for the srcdoc child realm: a data: script in the child.
   // (a3) Positive control for the srcdoc child realm: a data: script in the child.
   // It shows whether a script that runs in a srcdoc child can reach WebRTC in this
   // build. Production refuses data: script, so the control decides what is measured.
@@ -1242,7 +1279,7 @@ for (const item of published) {
     const ctrlText =
       ctrl.arrived > 0
         ? `EGRESS(${ctrl.text}) ${domText(ctrl.capture)}`
-        : `silent(ran=${started(ctrl.capture, item.def.id)}, reports=${ctrl.capture.results.length}, errors=${ctrl.capture.errors.length}) ${domText(ctrl.capture)}`;
+        : `silent(ran=${started(ctrl.capture, item.def.id)}, reports=${ctrl.capture.results.length}, errors=${ctrl.capture.errors.length}) results=${JSON.stringify(ctrl.capture.results).slice(0, 900)} ${domText(ctrl.capture)}`;
     console.log(`  ${model}: control=${ctrlText}`);
     console.log(`  ${model}: production-${domText(prod.capture)}`);
     if (verdict.startsWith('EGRESS')) {
