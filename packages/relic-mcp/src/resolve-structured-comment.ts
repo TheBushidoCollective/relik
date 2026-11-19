@@ -1,8 +1,10 @@
 /**
  * Ties a `cell` or `path` comment to the version it was written on (plan
  * section 5). The comment resolves against that version only. A version the
- * service cannot give back, or a comment that records no version, is "not
- * found in this version", never a guess at the current file.
+ * service cannot give back, or a cell or path comment that records no version,
+ * is "not found in this version", never a guess at the current file. A
+ * subtitle time comment with no version belongs to version 1, as the viewer
+ * places it; the caller reads version 1 for it.
  */
 
 import type {
@@ -87,22 +89,12 @@ export async function resolveStructuredComment(
 }
 
 /**
- * Resolves one subtitle time anchor against the version it was written on. A
- * comment that records no version is not found, as a cell or path comment is,
- * rather than read against whatever the file is now.
+ * Resolves one subtitle time anchor against the reader the caller passes: the
+ * version the comment was written on, or version 1 when it records none.
  */
 export function resolveSubtitleTime(
-  comment: CommentRecord,
   anchor: Extract<CommentAnchor, { kind: 'time' }>,
   reader: StructuredReader
 ): TimeCuesResolution {
-  if (comment.version === null) {
-    return {
-      kind: 'time',
-      status: 'unresolvable',
-      explanation:
-        'The time is not found in this version: the comment records no version.',
-    };
-  }
   return reader.subtitleTime(anchor);
 }

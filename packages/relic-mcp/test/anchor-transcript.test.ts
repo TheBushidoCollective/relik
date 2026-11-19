@@ -134,22 +134,14 @@ describe('content over the largest parser cap is refused before it is decoded', 
   });
 });
 
-describe('a subtitle time comment is resolved against the version it was written on', () => {
-  test('a comment that records no version is not found, and one that does is read', () => {
+describe('a subtitle time comment is resolved against the reader it is given', () => {
+  test('the cue covering the time is read from that reader', () => {
     const srt = reader('1\n00:00:01,000 --> 00:00:02,000\nhi\n', 'a.srt');
     const anchor = { kind: 'time', t: 1.5 } as Extract<
       CommentAnchor,
       { kind: 'time' }
     >;
-    expect(resolveSubtitleTime(commentOn(anchor, null), anchor, srt)).toEqual({
-      kind: 'time',
-      status: 'unresolvable',
-      explanation:
-        'The time is not found in this version: the comment records no version.',
-    });
-    expect(
-      resolveSubtitleTime(commentOn(anchor, 1), anchor, srt)
-    ).toMatchObject({
+    expect(resolveSubtitleTime(anchor, srt)).toMatchObject({
       status: 'resolved',
     });
   });

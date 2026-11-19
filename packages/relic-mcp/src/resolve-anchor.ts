@@ -1467,9 +1467,13 @@ export async function resolveAnchors(
       );
       continue;
     }
-
+    // A row carrying no version predates versioning and belongs to version 1,
+    // as the viewer places it. A time anchor on such a row resolves against
+    // version 1, never the current revision. Cell and path rows refuse null in
+    // resolveStructuredComment, because every structured kind writes a version.
     const fetched = await loadRevision(
-      comment.version ?? (anchor.kind === 'source' ? 1 : undefined)
+      comment.version ??
+        (anchor.kind === 'source' || anchor.kind === 'time' ? 1 : undefined)
     );
     if (!fetched.ok) {
       updatedComments.push({
@@ -1477,7 +1481,10 @@ export async function resolveAnchors(
         resolved: {
           kind: anchor.kind,
           status: 'unresolvable',
-          explanation: fetched.error,
+          explanation:
+            anchor.kind === 'time'
+              ? `The time is not found in this version: ${fetched.error}`
+              : fetched.error,
         } as ResolvedAnchor,
       });
       continue;
@@ -1771,7 +1778,7 @@ export async function resolveAnchors(
         if (reader.kind === 'subtitles') {
           updatedComments.push({
             ...comment,
-            resolved: resolveSubtitleTime(comment, anchor, reader),
+            resolved: resolveSubtitleTime(anchor, reader),
           });
           break;
         }
