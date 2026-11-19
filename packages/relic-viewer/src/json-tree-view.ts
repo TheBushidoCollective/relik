@@ -125,15 +125,22 @@ const KEY_MOVES: Readonly<
 };
 
 /**
- * Why Comment is off for the selected value. A key whose pointer holds a NUL
- * or a CR is refused by the writer, so the reason names that rather than
- * blaming a duplicate.
+ * Why Comment is off for the selected value. A shadowed key is not the one
+ * that counts. Otherwise the path itself is the problem: the format's
+ * `pointer()` returns nothing for a key that holds a NUL or a CR, which the
+ * writer refuses, and for a path longer than the anchor limit.
  */
-function commentBlockedReason(path: string | undefined): string {
-  if (path !== undefined && !pointerWritable(path)) {
-    return 'A comment cannot name a key that contains a NUL or carriage return.';
+function commentBlockedReason(
+  shadowed: boolean,
+  path: string | undefined
+): string {
+  if (shadowed) {
+    return 'A later key with this name is the one that counts. Comment on that one.';
   }
-  return 'A later key with this name is the one that counts. Comment on that one.';
+  if (path === undefined || !pointerWritable(path)) {
+    return 'A comment cannot name this value: its path holds a NUL or carriage return, or is longer than 512 bytes.';
+  }
+  return 'This value cannot be commented on.';
 }
 
 function drawTree(
@@ -269,7 +276,9 @@ function drawTree(
         : visibleLabel(path0);
     copyPath.disabled = path0 === undefined;
     comment.disabled = state.selectionAnchor() === undefined;
-    comment.title = comment.disabled ? commentBlockedReason(path0) : '';
+    comment.title = comment.disabled
+      ? commentBlockedReason(tree.isShadowed(state.selected), path0)
+      : '';
 
     const selectedKind = tree.kind(state.selected);
     const literal = tree.valueSource(state.selected);

@@ -310,7 +310,7 @@ async function pageCases(
         );
         eq(
           f.root.querySelector('.jt-pointer')?.textContent,
-          '/a\\u000db',
+          'No path addresses this value',
           'pointer'
         );
       } finally {
