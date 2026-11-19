@@ -1474,7 +1474,7 @@ export function describeAnchor(anchor: CommentAnchor | null): string {
 }
 
 /** A1 notation for one cell: column letters, then the 1-based row. */
-function cellName(row: number, col: number): string {
+export function cellName(row: number, col: number): string {
   let letters = '';
   for (let n = col; n > 0; n = Math.floor((n - 1) / 26)) {
     letters = String.fromCharCode(65 + ((n - 1) % 26)) + letters;

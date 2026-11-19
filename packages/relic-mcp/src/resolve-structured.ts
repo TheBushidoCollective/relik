@@ -19,7 +19,6 @@ import {
   cellText,
   parseTable,
   recordWidth,
-  type TableDelimiter,
   type TableParse,
   type TableParseFailure,
 } from '@relic/format/csv';
@@ -599,7 +598,7 @@ export class StructuredReader {
 
   #tableParse(): TableParse {
     this.#table ??= parseTable(this.#source, {
-      delimiter: (this.#tsv ? '\t' : 'auto') satisfies TableDelimiter | 'auto',
+      delimiter: this.#tsv ? '\t' : 'auto',
     });
     return this.#table;
   }
@@ -621,4 +620,18 @@ export class StructuredReader {
     );
     return this.#subtitles;
   }
+}
+
+/** A reader for one relic file. Bytes are decoded only for a structured kind. */
+export function structuredReaderFor(
+  content: Uint8Array,
+  filename: string,
+  mimetype: string
+): StructuredReader {
+  const kind = structuredKindOf(filename, mimetype);
+  const source =
+    kind === 'other'
+      ? ''
+      : new TextDecoder('utf-8', { fatal: false }).decode(content);
+  return new StructuredReader(source, filename, mimetype);
 }
