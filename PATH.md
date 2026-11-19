@@ -130,6 +130,17 @@ mise exec -- bun packages/relic-mcp/test/frame-egress-path.ts
 
 Success is not yet reachable: cases 1, 1b, 2 and 4 are open routes and print REAL, so the probe exits nonzero by design (`FRAME_EGRESS_PATH_FAILED`). It is not a CI gate, and `verify.yml` does not run it. A clean run prints `FRAME_EGRESS_PATH_OK` when every channel is blocked and no case is open, or `FRAME_EGRESS_PATH_OK_WITH_UNPROVEN` when nothing egresses but some channels are unobservable. Cases 3a, 3b and 5 print CANNOT TEST. `RELIC_FRAME_EGRESS_CHROME_PATH` selects the browser (default: the owned isolated headless shell).
 
+# Link bar stages and top-frame navigation (manual, not CI)
+
+The stress probe, `svg-top-nav-stress.ts`, runs the link bar stages with trusted CDP input: a gesture with no Open, a gesture with Open, a remembered choice on a later load, a republished version, and frame claims that try to set or clear the choice. It then runs the top-frame navigation attacks against the production viewer and a positive control. It is manual and is not a CI gate: `verify.yml` does not run it.
+
+```sh
+mise exec -- bun run --cwd packages/relic-viewer build
+RELIC_CHROME_PATH=<isolated-headless-shell> RELIC_TOP_NAV_N=10 mise exec -- bun packages/relic-mcp/test/svg-top-nav-stress.ts
+```
+
+A clean run prints ten `F1 PASS` lines (five per mode) and no `F1 FAILED`. It exits 7 today by design: no viewer gesture row receives a trusted click on the link, so the gesture claim is unproven (`VIEWER-GESTURE-UNEXERCISED`). Exit 5 means the control is blind for an attack the viewer rows claim blocked, and exit 6 means an F1 stage failed. Unproven: the trusted click on the link does not reach the viewer frame in the stress rows, and the cause is not isolated. The F1 gesture stage shows the same link opens the bar.
+
 # Reader suggestions
 
 The MCP and browser paths publish fixtures to an in-process loopback service.

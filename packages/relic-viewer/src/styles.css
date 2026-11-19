@@ -1618,6 +1618,29 @@ body {
   display: none;
 }
 
+.link-confirm-strip {
+  display: flex;
+  align-items: center;
+  padding: 0.35rem 0.9rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--rule);
+  font-family: var(--sans);
+  font-size: 0.8rem;
+  color: var(--ink-soft);
+}
+
+.link-confirm-strip[hidden] {
+  display: none;
+}
+
+.link-confirm-remembered {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin: 0;
+}
+
 .link-confirm-text {
   flex: 1 1 18rem;
   min-width: 0;

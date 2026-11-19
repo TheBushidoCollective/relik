@@ -1388,6 +1388,7 @@ interface FrameHandle {
   readonly frame: HTMLIFrameElement;
   /** The confirmation bar for this frame's link requests. Place it above the frame. */
   readonly linkConfirm: HTMLElement;
+  readonly linkRemembered: HTMLElement;
   /**
    * Mark this frame's own rendered nodes, once the parent holds a diff.
    *
@@ -1621,6 +1622,7 @@ function sandboxFrame(
   return {
     frame,
     linkConfirm: linkBar.element,
+    linkRemembered: linkBar.remembered,
     annotate: (marks, anchors) =>
       post({ type: 'relic:annotate', marks, anchors }),
     setScroll: (position: ScrollPosition) =>
@@ -1664,7 +1666,7 @@ export function renderSandboxedHtml(
     type: 'relic:render',
     html: decodeText(documentBytes(view)),
   });
-  wrapper.append(handle.linkConfirm, handle.frame);
+  wrapper.append(handle.linkRemembered, handle.linkConfirm, handle.frame);
   return wrapper;
 }
 
@@ -1697,7 +1699,7 @@ export function renderSandboxedJsx(
   }
 
   const handle = sandboxFrame(view, usercontentOrigin, payload);
-  wrapper.append(handle.linkConfirm, handle.frame);
+  wrapper.append(handle.linkRemembered, handle.linkConfirm, handle.frame);
   return wrapper;
 }
 
@@ -2482,7 +2484,7 @@ function framePane(view: ReadyView, usercontentOrigin: string): ComparisonPane {
   );
   const host = document.createElement('div');
   host.className = 'frame-pane-host';
-  host.append(handle.linkConfirm, handle.frame);
+  host.append(handle.linkRemembered, handle.linkConfirm, handle.frame);
   return {
     element: host,
     tree,

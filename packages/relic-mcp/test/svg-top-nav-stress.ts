@@ -27,6 +27,20 @@
  * That is a tab the host opened, not a navigation of the top window, but the
  * probe prints it as TOP_FRAME_ESCAPE and stops. Read `topChanged`, `hits` and
  * `popups` in the printed state to tell the two apart.
+ *
+ * After the stress rows, each mode runs the F1 bar stages with trusted CDP input:
+ * (a) a gesture on the link and no Open click opens no tab; (b) a gesture and a
+ * trusted Open opens one tab and remembers nothing; (c) a trusted "Don't ask
+ * again" and Open, then a later load of the same relic and version opens with no
+ * bar; (d) a republished version asks again; (e) frame claims to set or clear the
+ * choice change nothing.
+ *
+ * The positive control serves the shim without its CSP sandbox and form-action
+ * directives and with preventDefault neutralised for clicks, so the platform
+ * decides. Exit codes: 3 a top-frame escape in a viewer row; 4 viewer jobs never
+ * attempted; 5 the control is blind for an attack the viewer rows claim blocked;
+ * 6 an F1 stage failed; 7 no viewer gesture row received a trusted click on the
+ * link, so the gesture claim is unexercised.
  */
 import assert from 'node:assert/strict';
 import { type ChildProcess, spawn } from 'node:child_process';
@@ -138,7 +152,10 @@ interface Page {
 interface Browser {
   send(method: string, params?: Json, sessionId?: string): Promise<Json>;
   open(url: string, token: string): Promise<Page>;
-  close(page: Page): Promise<void>;
+  openIn(browserContextId: string, url: string, token: string): Promise<Page>;
+  createContext(): Promise<string>;
+  closePage(page: Page): Promise<void>;
+  disposeContext(browserContextId: string): Promise<void>;
   shutdown(): Promise<void>;
 }
 
@@ -199,7 +216,8 @@ const scratch = await mkdtemp(join(tmpdir(), 'relic-top-nav-'));
 const statePath = join(scratch, 'state.json');
 const EXTERNAL = 'https://collector.relic-proof.invalid';
 const USERCONTENT_HOST = 'relic-usercontent.test';
-const LOOSENED_SANDBOX = 'allow-scripts allow-same-origin allow-top-navigation';
+const LOOSENED_SANDBOX =
+  'allow-scripts allow-same-origin allow-top-navigation allow-forms';
 const TOP_ATTACKS: readonly Attack[] = [
   'top-location',
   'window-open-top',
@@ -333,6 +351,7 @@ function attackSvg(attack: Attack, delay: number): string {
         a.href = url;
         a.target = '_top';
         a.addEventListener('click', () => mark('top-nav-click'));
+        window.addEventListener('click', (e) => { if (e.target === a) mark('top-nav-input-diag-final-prevented-' + e.defaultPrevented); });
         for (const t of ['pointerdown', 'mousedown', 'pointerup', 'mouseup']) document.addEventListener(t, () => mark('top-nav-input-' + t));
         document.body.appendChild(a);
         const r = a.getBoundingClientRect();
@@ -350,7 +369,10 @@ function attackSvg(attack: Attack, delay: number): string {
           a.href = url;
           a.target = '_top';
           document.body.appendChild(a);
+          window.addEventListener('click', (e) => { if (e.target === a) mark('top-nav-input-diag-final-prevented-' + e.defaultPrevented); });
           a.click();
+          const href = a.getAttribute('href');
+          mark('top-nav-input-diag-href-' + (href ? 'present' : 'missing') + '-target-' + a.target + '-connected-' + a.isConnected);
         } else if (attack === 'form-top') {
           const f = document.createElement('form');
           f.method = 'get';
@@ -690,10 +712,15 @@ async function launchBrowser(mode: Mode): Promise<Browser> {
       send: (method, params, sessionId) =>
         connection.send(method, params, sessionId),
       async open(url, token) {
+        return this.openIn(await this.createContext(), url, token);
+      },
+      async createContext() {
         const created = await connection.send('Target.createBrowserContext', {
           disposeOnDetach: true,
         });
-        const browserContextId = String(created['browserContextId']);
+        return String(created['browserContextId']);
+      },
+      async openIn(browserContextId, url, token) {
         const target = await connection.send('Target.createTarget', {
           url: 'about:blank',
           browserContextId,
@@ -719,6 +746,12 @@ async function launchBrowser(mode: Mode): Promise<Browser> {
         };
         pages.set(sessionId, page);
         await connection.send('Page.enable', {}, sessionId);
+        // Focus emulation, not an activation: concurrent probe pages still receive trusted input.
+        await connection.send(
+          'Emulation.setFocusEmulationEnabled',
+          { enabled: true },
+          sessionId
+        );
         await connection.send('Log.enable', {}, sessionId);
         await connection.send('Network.enable', {}, sessionId);
         await connection.send(
@@ -787,6 +820,19 @@ async function launchBrowser(mode: Mode): Promise<Browser> {
           .send('Target.disposeBrowserContext', {
             browserContextId: page.browserContextId,
           })
+          .catch(() => {});
+      },
+      async closePage(page) {
+        pages.delete(page.sessionId);
+        for (const child of page.children.values())
+          pages.delete(child.sessionId);
+        await connection
+          .send('Target.closeTarget', { targetId: page.targetId })
+          .catch(() => {});
+      },
+      async disposeContext(browserContextId) {
+        await connection
+          .send('Target.disposeBrowserContext', { browserContextId })
           .catch(() => {});
       },
       async shutdown() {
@@ -885,7 +931,11 @@ async function marksOf(
 
 // The trusted click on the gesture attack's link, at the frame's top-left corner.
 // Returns what the top document has under the point, so a missed click is visible.
-async function gestureClick(browser: Browser, page: Page): Promise<string> {
+async function gestureClick(
+  browser: Browser,
+  page: Page,
+  dy = 24
+): Promise<string> {
   const rect = await pageRead(
     browser,
     page,
@@ -897,7 +947,7 @@ async function gestureClick(browser: Browser, page: Page): Promise<string> {
     return 'no-frame';
   }
   const x = point.x + 24;
-  const y = point.y + 24;
+  const y = point.y + dy;
   const under = await pageRead(
     browser,
     page,
@@ -977,7 +1027,7 @@ async function observe(
       if (
         job.attack === 'anchor-top-gesture' &&
         !clicked &&
-        Date.now() - attemptAt >= job.delay
+        Date.now() - attemptAt >= job.delay + 1000
       ) {
         clicked = true;
         clickAt = await gestureClick(browser, page);
@@ -1168,6 +1218,547 @@ function jobsFor(config: Config): Job[] {
   return jobs;
 }
 
+// ---- Positive control -------------------------------------------------------
+//
+// The control is the viewer with its frame granted top navigation. The shim's
+// CSP `sandbox allow-scripts` directive intersects the iframe attribute, so a
+// control that keeps the directive cannot escape whatever the attribute grants.
+// That is why it was blind. The control serves the shim without that one
+// directive, and it turns off the shim's anchor containment (its preventDefault
+// on every anchor click), so an anchor's own navigation decides what happens.
+// The viewer rows keep the production shim unchanged.
+const CONTROL_DIRECTIVE = 'sandbox allow-scripts; ';
+// The form directive is removed for the same reason: a form that targets the top
+// is refused by it, whatever the iframe attribute grants.
+const CONTROL_FORM_DIRECTIVE = "form-action 'none'; ";
+// A listener would not do: the shim renders through document.open(), which removes
+// listeners added before it. The Event prototype is the same object afterwards.
+const CONTROL_CONTAINMENT_OFF =
+  "<script>(() => { const prevent = Event.prototype.preventDefault; Event.prototype.preventDefault = function () { if (this.type === 'click') return; return prevent.call(this); }; })();</script>";
+
+function controlAppFor(dist: string): AppLike {
+  const inner = appFor(dist);
+  return {
+    async fetch(request: Request): Promise<Response> {
+      if (new URL(request.url).pathname !== '/sandbox.html')
+        return inner.fetch(request);
+      // The server gzips text for a client that accepts it, and this rewrite needs the text.
+      const offered = new Headers(request.headers);
+      offered.delete('accept-encoding');
+      const response = await inner.fetch(
+        new Request(request, { headers: offered })
+      );
+      const csp = response.headers.get('content-security-policy');
+      if (csp === null || !csp.includes(CONTROL_DIRECTIVE)) {
+        throw new Error(
+          'control: sandbox.html no longer has the directive it removes'
+        );
+      }
+      const html = await response.text();
+      // The shim opens with a doctype and no head element, so the script goes after the doctype.
+      const doctype = /^<!doctype html>/i.exec(html);
+      const at = doctype === null ? 0 : doctype[0].length;
+      const headers = new Headers(response.headers);
+      headers.set(
+        'content-security-policy',
+        csp.replace(CONTROL_DIRECTIVE, '').replace(CONTROL_FORM_DIRECTIVE, '')
+      );
+      headers.delete('content-length');
+      headers.delete('content-encoding');
+      return new Response(
+        `${html.slice(0, at)}${CONTROL_CONTAINMENT_OFF}${html.slice(at)}`,
+        {
+          status: response.status,
+          headers,
+        }
+      );
+    },
+  };
+}
+
+function reportControl(outcomes: readonly Outcome[]): number {
+  const escaped = (outcome: Outcome): boolean =>
+    outcome.topChanged ||
+    outcome.hits.some((hit) => hit.classification === 'top-frame navigation') ||
+    outcome.popups.some((url) => isAttackRequest(url));
+  let failures = 0;
+  for (const attack of TOP_ATTACKS) {
+    const control = outcomes.filter(
+      (outcome) =>
+        outcome.config === 'positive-control' && outcome.attack === attack
+    );
+    const viewer = outcomes.filter(
+      (outcome) => outcome.config === 'viewer' && outcome.attack === attack
+    );
+    const controlAttempted = control.filter(
+      (outcome) => outcome.attempts > 0 || escaped(outcome)
+    ).length;
+    const controlEscapes = control.filter(escaped).length;
+    const directive = control.some((outcome) =>
+      outcome.shimCsp?.includes('sandbox allow-scripts')
+    )
+      ? 'present'
+      : 'absent';
+    if (controlAttempted === 0) {
+      console.log(
+        `CONTROL-UNATTEMPTED ${attack}: the control never reached the attack`
+      );
+      failures += 1;
+      continue;
+    }
+    const viewerClaimsBlocked =
+      viewer.some((outcome) => outcome.attempts > 0) &&
+      viewer.every((outcome) => !escaped(outcome));
+    console.log(
+      `${controlEscapes > 0 ? 'CONTROL-OBSERVED' : 'CONTROL-BLIND'} ${attack}: ${controlEscapes}/${control.length} escaped, attempted ${controlAttempted}, shim CSP sandbox directive ${directive}`
+    );
+    if (controlEscapes === 0 && viewerClaimsBlocked) {
+      console.log(
+        `CONTROL-BLIND-FAIL ${attack}: viewer rows claim this is blocked, and the control cannot show an escape`
+      );
+      failures += 1;
+    }
+  }
+  return failures;
+}
+
+// ---- F1 bar stages ----------------------------------------------------------
+//
+// Each stage drives the viewer with trusted CDP input: the frame's link is
+// clicked at its corner, and the bar's own buttons are clicked where the page
+// draws them. A new tab is counted as a page target created during the stage.
+
+interface Published {
+  readonly id: string;
+  readonly url: string;
+  readonly path: string;
+}
+
+interface F1Relics {
+  readonly gesture: Published;
+  readonly forge: Published;
+}
+
+interface F1Stage {
+  readonly id: string;
+  readonly ok: boolean;
+  readonly detail: string;
+}
+
+interface Point {
+  readonly x: number;
+  readonly y: number;
+  readonly w: number;
+  readonly h: number;
+}
+
+interface BarState {
+  readonly hidden: boolean;
+  readonly pending: boolean;
+  readonly remembered: boolean;
+  readonly openEnabled: boolean;
+  readonly openAt: Point | null;
+  readonly rememberAt: Point | null;
+  readonly checked: boolean;
+}
+
+const PREFS_KEY = 'relic-confirm-prefs:v1';
+
+const BAR_EXPR = `JSON.stringify((() => {
+  const bar = document.querySelector('section.link-confirm');
+  if (!bar) return null;
+  const at = (el) => {
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    if (r.width === 0 || r.height === 0) return null;
+    return { x: r.x + r.width / 2, y: r.y + r.height / 2, w: r.width, h: r.height };
+  };
+  const pending = bar.querySelector('.link-confirm-pending');
+  const remembered = document.querySelector('.link-confirm-remembered');
+  const open = bar.querySelector('.link-confirm-actions .popover-action.is-primary');
+  const label = bar.querySelector('label.link-confirm-remember');
+  const box = label ? label.querySelector('input[type="checkbox"]') : null;
+  return {
+    hidden: bar.hidden,
+    pending: !!pending && !pending.hidden,
+    remembered: !!remembered && !remembered.hidden,
+    openEnabled: !!open && !open.disabled,
+    openAt: at(open),
+    rememberAt: at(label),
+    checked: !!box && box.checked,
+  };
+})())`;
+
+async function until(
+  check: () => Promise<boolean>,
+  ms: number
+): Promise<boolean> {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    if (await check()) return true;
+    await Bun.sleep(50);
+  }
+  return false;
+}
+
+async function barOf(browser: Browser, page: Page): Promise<BarState | null> {
+  const raw = await pageRead(browser, page, BAR_EXPR);
+  return typeof raw === 'string' ? (JSON.parse(raw) as BarState | null) : null;
+}
+
+// Number of link choices the viewer origin has stored, or -1 when the stored value is not JSON.
+async function storedLinkPrefs(browser: Browser, page: Page): Promise<number> {
+  const raw = await pageRead(
+    browser,
+    page,
+    `localStorage.getItem(${JSON.stringify(PREFS_KEY)})`
+  );
+  if (typeof raw !== 'string') return 0;
+  try {
+    const entries = JSON.parse(raw) as Array<{ readonly kind?: unknown }>;
+    return entries.filter((entry) => entry.kind === 'link').length;
+  } catch {
+    return -1;
+  }
+}
+
+async function pageIds(browser: Browser): Promise<Set<string>> {
+  const targets = await browser.send('Target.getTargets', {});
+  const infos = (targets['targetInfos'] ?? []) as Array<{
+    readonly targetId?: string;
+    readonly type?: string;
+  }>;
+  return new Set(
+    infos.flatMap((info) =>
+      info.type === 'page' && info.targetId !== undefined ? [info.targetId] : []
+    )
+  );
+}
+
+// Page targets created since the snapshot: every new tab, opener or not.
+async function popupsSince(
+  browser: Browser,
+  before: ReadonlySet<string>,
+  ms: number
+): Promise<number> {
+  await Bun.sleep(ms);
+  const now = await pageIds(browser);
+  return [...now].filter((id) => !before.has(id)).length;
+}
+
+async function attackReady(
+  browser: Browser,
+  page: Page,
+  mark: string
+): Promise<boolean> {
+  const seen = await until(
+    async () =>
+      (await marksOf(browser, page)).some((item) => item.kind === mark),
+    20_000
+  );
+  await Bun.sleep(300);
+  return seen;
+}
+
+async function gestureBar(browser: Browser, page: Page): Promise<boolean> {
+  await gestureClick(browser, page);
+  return until(
+    async () => (await barOf(browser, page))?.pending === true,
+    4000
+  );
+}
+
+async function readyOpenable(
+  browser: Browser,
+  page: Page
+): Promise<BarState | null> {
+  const ready = await until(
+    async () => (await barOf(browser, page))?.openEnabled === true,
+    4000
+  );
+  return ready ? barOf(browser, page) : null;
+}
+
+// A trusted click, as a reader's mouse makes: move, press, release.
+async function trustedClick(
+  browser: Browser,
+  page: Page,
+  at: Point
+): Promise<void> {
+  const base = { x: at.x, y: at.y, button: 'left', clickCount: 1 };
+  await browser.send(
+    'Input.dispatchMouseEvent',
+    { type: 'mouseMoved', x: at.x, y: at.y },
+    page.sessionId
+  );
+  await browser.send(
+    'Input.dispatchMouseEvent',
+    { type: 'mousePressed', ...base },
+    page.sessionId
+  );
+  await browser.send(
+    'Input.dispatchMouseEvent',
+    { type: 'mouseReleased', ...base },
+    page.sessionId
+  );
+}
+
+// A gesture on the link, then Open once it is readable. Counts tabs before and after the Open.
+async function openOnce(
+  browser: Browser,
+  page: Page
+): Promise<{ shown: boolean; idle: number; popups: number }> {
+  const before = await pageIds(browser);
+  const shown = await gestureBar(browser, page);
+  const idle = shown ? await popupsSince(browser, before, 1500) : -1;
+  const state = shown ? await readyOpenable(browser, page) : null;
+  if (state?.openAt) await trustedClick(browser, page, state.openAt);
+  const popups = await popupsSince(browser, before, 1500);
+  return { shown, idle, popups };
+}
+
+// A gesture, a trusted tick of "Don't ask again", then a trusted Open.
+async function rememberAndOpen(
+  browser: Browser,
+  page: Page
+): Promise<{
+  shown: boolean;
+  ticked: boolean;
+  popups: number;
+  stored: number;
+}> {
+  const before = await pageIds(browser);
+  const shown = await gestureBar(browser, page);
+  const state = shown ? await readyOpenable(browser, page) : null;
+  if (state?.rememberAt) await trustedClick(browser, page, state.rememberAt);
+  const ticked = await until(
+    async () => (await barOf(browser, page))?.checked === true,
+    2000
+  );
+  const latest = await barOf(browser, page);
+  if (ticked && latest?.openAt)
+    await trustedClick(browser, page, latest.openAt);
+  const popups = await popupsSince(browser, before, 1500);
+  const stored = await storedLinkPrefs(browser, page);
+  return { shown, ticked, popups, stored };
+}
+
+async function publishSvg(name: string, svg: string): Promise<Published> {
+  const path = join(scratch, name);
+  await writeFile(path, svg);
+  const published = await mcp('relic_publish', { path, cover: false });
+  return {
+    id: String(published['relic_id']),
+    url: String(published['url']),
+    path,
+  };
+}
+
+async function republish(relic: Published, svg: string): Promise<void> {
+  await writeFile(relic.path, svg);
+  await mcp('relic_republish', { relic_id: relic.id, path: relic.path });
+}
+
+// The gesture relic with changed content: a new version to the store.
+function gestureVariant(): string {
+  return attackSvg('anchor-top-gesture', 0)
+    .replace('fill="#e53935"', 'fill="#1e88e5"')
+    .replace('</svg>', `<!-- ${randomUUID()} -->\n</svg>`);
+}
+
+// The gesture relic, plus claims to set and to clear the reader's choice, posted on
+// load. The host must ignore every one of them. The mark says they were sent.
+function forgeSvg(): string {
+  const claims = `(() => {
+    const claims = [
+      { type: 'relic:remember-confirm', kind: 'link', relicId: 'forged', version: 1, remember: true },
+      { type: 'relic:forget-confirm', kind: 'link', relicId: 'forged', version: 1 },
+      { type: 'relic:confirm-pref', kind: 'link', relicId: 'forged', version: 1, value: true },
+      { type: 'relic:confirm-pref', kind: 'link', relicId: 'forged', version: 1, value: false },
+    ];
+    for (const claim of claims) window.parent.postMessage(claim, '*');
+    window.parent.postMessage({ kind: 'top-nav-forge-sent', type: 'forge', count: claims.length }, '*');
+  })();`;
+  return attackSvg('anchor-top-gesture', 0).replace(
+    '</svg>',
+    `<script>${claims}</script>\n</svg>`
+  );
+}
+
+async function runF1(
+  browser: Browser,
+  mode: Mode['name'],
+  token: string,
+  relics: F1Relics
+): Promise<F1Stage[]> {
+  const stages: F1Stage[] = [];
+  const record = (id: string, ok: boolean, detail: string): void => {
+    stages.push({ id: `${mode} ${id}`, ok, detail });
+  };
+
+  // (a) A trusted gesture on the link and no Open click: no tab opens.
+  {
+    const context = await browser.createContext();
+    const page = await browser.openIn(context, relics.gesture.url, token);
+    try {
+      const ready = await attackReady(browser, page, 'top-nav-attempt');
+      const before = await pageIds(browser);
+      const shown = await gestureBar(browser, page);
+      const popups = await popupsSince(browser, before, 1500);
+      record(
+        'a gesture, no Open',
+        ready && shown && popups === 0,
+        `bar=${shown} popups=${popups}`
+      );
+    } finally {
+      await browser.closePage(page);
+      await browser.disposeContext(context);
+    }
+  }
+
+  // (b) A gesture, then a trusted Open once readable: exactly one tab, nothing remembered.
+  {
+    const context = await browser.createContext();
+    const page = await browser.openIn(context, relics.gesture.url, token);
+    try {
+      await attackReady(browser, page, 'top-nav-attempt');
+      const run = await openOnce(browser, page);
+      const stored = await storedLinkPrefs(browser, page);
+      record(
+        'b gesture, Open, not remembered',
+        run.shown && run.popups === 1 && stored === 0,
+        `bar=${run.shown} popups=${run.popups} stored=${stored}`
+      );
+    } finally {
+      await browser.closePage(page);
+      await browser.disposeContext(context);
+    }
+  }
+
+  // (c) Remembered with a trusted tick and Open, then a later load of the same relic and
+  // version: a gesture opens one tab with no bar. (d) A republished version asks again.
+  {
+    const context = await browser.createContext();
+    try {
+      const first = await browser.openIn(context, relics.gesture.url, token);
+      let firstOk = false;
+      let detail = '';
+      try {
+        await attackReady(browser, first, 'top-nav-attempt');
+        const run = await rememberAndOpen(browser, first);
+        firstOk =
+          run.shown && run.ticked && run.popups === 1 && run.stored === 1;
+        detail = `first: bar=${run.shown} ticked=${run.ticked} popups=${run.popups} stored=${run.stored}; `;
+      } finally {
+        await browser.closePage(first);
+      }
+      const second = await browser.openIn(context, relics.gesture.url, token);
+      let secondOk = false;
+      try {
+        await attackReady(browser, second, 'top-nav-attempt');
+        const before = await pageIds(browser);
+        const under = await gestureClick(browser, second);
+        const active = await pageRead(
+          browser,
+          second,
+          'navigator.userActivation.isActive'
+        );
+        const popups = await popupsSince(browser, before, 1500);
+        const state = await barOf(browser, second);
+        secondOk = popups === 1 && state?.pending !== true;
+        detail += `later: popups=${popups} pending=${state?.pending ?? 'no-bar'} remembered-row=${state?.remembered ?? 'no-bar'} under=${under} active=${String(active)}`;
+      } finally {
+        await browser.closePage(second);
+      }
+      record(
+        'c remembered, later load opens with no bar',
+        firstOk && secondOk,
+        detail
+      );
+
+      await republish(relics.gesture, gestureVariant());
+      const next = await browser.openIn(context, relics.gesture.url, token);
+      try {
+        await attackReady(browser, next, 'top-nav-attempt');
+        const run = await openOnce(browser, next);
+        record(
+          'd republished version asks again',
+          run.shown && run.idle === 0 && run.popups === 1,
+          `bar=${run.shown} popupsBeforeOpen=${run.idle} popupsAfterOpen=${run.popups}`
+        );
+      } finally {
+        await browser.closePage(next);
+      }
+    } finally {
+      await browser.disposeContext(context);
+    }
+  }
+
+  // (e) Frame claims to set or clear the choice change nothing.
+  {
+    const context = await browser.createContext();
+    try {
+      let setOk = false;
+      let detail = '';
+      const first = await browser.openIn(context, relics.forge.url, token);
+      try {
+        const sent = await attackReady(browser, first, 'top-nav-forge-sent');
+        await attackReady(browser, first, 'top-nav-attempt');
+        const before = await pageIds(browser);
+        const shown = await gestureBar(browser, first);
+        const popups = await popupsSince(browser, before, 1500);
+        const stored = await storedLinkPrefs(browser, first);
+        setOk = sent && shown && popups === 0 && stored === 0;
+        detail = `set claims: sent=${sent} bar=${shown} popups=${popups} stored=${stored}; `;
+      } finally {
+        await browser.closePage(first);
+      }
+
+      const remembered = await browser.openIn(context, relics.forge.url, token);
+      let rememberedRun = { shown: false, ticked: false, popups: 0, stored: 0 };
+      try {
+        await attackReady(browser, remembered, 'top-nav-forge-sent');
+        await attackReady(browser, remembered, 'top-nav-attempt');
+        rememberedRun = await rememberAndOpen(browser, remembered);
+      } finally {
+        await browser.closePage(remembered);
+      }
+
+      const last = await browser.openIn(context, relics.forge.url, token);
+      let clearOk = false;
+      try {
+        await attackReady(browser, last, 'top-nav-forge-sent');
+        await attackReady(browser, last, 'top-nav-attempt');
+        const before = await pageIds(browser);
+        const under = await gestureClick(browser, last);
+        const active = await pageRead(
+          browser,
+          last,
+          'navigator.userActivation.isActive'
+        );
+        const popups = await popupsSince(browser, before, 1500);
+        const state = await barOf(browser, last);
+        clearOk =
+          rememberedRun.ticked &&
+          rememberedRun.popups === 1 &&
+          popups === 1 &&
+          state?.pending !== true;
+        detail += `clear claims after a remembered choice: popups=${popups} pending=${state?.pending ?? 'no-bar'} remembered-row=${state?.remembered ?? 'no-bar'} under=${under} active=${String(active)}`;
+      } finally {
+        await browser.closePage(last);
+      }
+      record(
+        'e frame claims to set or clear the choice do nothing',
+        setOk && clearOk,
+        detail
+      );
+    } finally {
+      await browser.disposeContext(context);
+    }
+  }
+  return stages;
+}
+
 async function main(): Promise<void> {
   activeApp = appFor(viewerDist);
   const token = await session('reader@relic.test');
@@ -1195,6 +1786,15 @@ async function main(): Promise<void> {
     );
   }
 
+  // The F1 bar stages publish their own relics, so the stress rows keep theirs.
+  const f1: F1Relics = {
+    gesture: await publishSvg(
+      'f1-gesture.svg',
+      attackSvg('anchor-top-gesture', 0)
+    ),
+    forge: await publishSvg('f1-forge.svg', forgeSvg()),
+  };
+  let f1Failed = 0;
   const outcomes: Outcome[] = [];
   let topEscape: Outcome | undefined;
   const record = async (outcome: Outcome): Promise<void> => {
@@ -1222,7 +1822,9 @@ async function main(): Promise<void> {
       try {
         for (const config of ['viewer', 'positive-control'] as const) {
           activeApp =
-            config === 'viewer' ? appFor(viewerDist) : appFor(loosenedDist);
+            config === 'viewer'
+              ? appFor(viewerDist)
+              : controlAppFor(loosenedDist);
           const jobs = jobsFor(config).map((job) => ({
             ...job,
             mode: mode.name,
@@ -1237,6 +1839,15 @@ async function main(): Promise<void> {
             () => topEscape !== undefined
           );
           if (topEscape !== undefined) break;
+        }
+        if (topEscape === undefined) {
+          activeApp = appFor(viewerDist);
+          for (const stage of await runF1(browser, mode.name, token, f1)) {
+            console.log(
+              `F1 ${stage.ok ? 'PASS' : 'FAIL'} ${stage.id}: ${stage.detail}`
+            );
+            if (!stage.ok) f1Failed += 1;
+          }
         }
       } finally {
         await browser.shutdown();
@@ -1257,6 +1868,26 @@ async function main(): Promise<void> {
   if (unattempted > 0) {
     console.log(`UNATTEMPTED viewer jobs=${unattempted}`);
     process.exitCode = 4;
+  }
+  const controlFailures = reportControl(outcomes);
+  if (controlFailures > 0) process.exitCode = 5;
+  // A gesture claim needs a trusted click on the link in the viewer rows. With none,
+  // the rows prove nothing about the gesture, so the run must not pass.
+  const viewerGestureClicks = outcomes.filter(
+    (outcome) =>
+      outcome.config === 'viewer' &&
+      outcome.attack === 'anchor-top-gesture' &&
+      outcome.clicks > 0
+  ).length;
+  if (viewerGestureClicks === 0) {
+    console.log(
+      'VIEWER-GESTURE-UNEXERCISED: no viewer gesture row received a trusted click on the link'
+    );
+    process.exitCode = 7;
+  }
+  if (f1Failed > 0) {
+    console.log(`F1 FAILED ${f1Failed}`);
+    process.exitCode = 6;
   }
   summarize(outcomes);
 }

@@ -11,9 +11,10 @@
  * When the reader ticks "Don't ask again for this relic", the choice is recorded
  * only with a trusted click on Open, through the confirmation store. While the
  * choice stands for this relic and version, a request that follows a reader
- * gesture opens without the bar. Then the bar shows only its remembered row, which
- * offers to turn the choice back on. A frame message can raise the bar and can
- * never set or clear a choice.
+ * gesture opens without the bar. The remembered choice is a strip above the frame,
+ * which offers to turn the choice back on. The pending bar is an overlay only while
+ * a request waits for confirmation. A frame message can raise the bar and can never
+ * set or clear a choice.
  */
 
 import { type ConfirmPrefs, readerConfirmed } from './confirm-prefs.ts';
@@ -27,6 +28,8 @@ import {
 export interface LinkConfirmBar {
   /** The bar. Place it directly above the frame it belongs to. Hidden when there is nothing to show. */
   readonly element: HTMLElement;
+  /** The remembered-choice strip. Place it in the page flow above the frame, not over it. Hidden unless the choice stands. */
+  readonly remembered: HTMLElement;
   /** A link request from the frame: show it, open it when remembered and gesture-driven, or count it as dropped. */
   request(destination: LinkDestination): void;
 }
@@ -118,10 +121,14 @@ export function createLinkConfirmBar(
   actions.append(cancel, openButton);
   pending.append(text, actions);
 
-  // The idle part: shown only while the choice stands for this relic and version.
+  // The remembered choice is a strip in the page flow above the frame, never an
+  // overlay, so it cannot cover frame content. It shows only while the choice
+  // stands for this relic and version.
+  const strip = document.createElement('section');
+  strip.className = 'link-confirm-strip';
+  strip.hidden = true;
   const remembered = document.createElement('p');
   remembered.className = 'link-confirm-remembered';
-  remembered.hidden = true;
   const rememberedNote = document.createElement('span');
   rememberedNote.textContent = REMEMBERED_TEXT;
   const turnBackOn = document.createElement('button');
@@ -129,8 +136,9 @@ export function createLinkConfirmBar(
   turnBackOn.className = 'popover-action is-quiet';
   turnBackOn.textContent = TURN_BACK_ON;
   remembered.append(rememberedNote, turnBackOn);
+  strip.append(remembered);
 
-  element.append(pending, remembered);
+  element.append(pending);
 
   let readTimer = 0;
   let expireTimer = 0;
@@ -141,8 +149,8 @@ export function createLinkConfirmBar(
   /** Idle state without touching timers or listeners, which is safe at creation. */
   const applyIdle = (): void => {
     pending.hidden = true;
-    remembered.hidden = !isRemembered();
-    element.hidden = !isRemembered();
+    element.hidden = true;
+    strip.hidden = !isRemembered();
   };
 
   /** Leaves the pending state: stops its timers and keys, then shows the idle state. */
@@ -206,6 +214,7 @@ export function createLinkConfirmBar(
 
   return {
     element,
+    remembered: strip,
     request(next: LinkDestination): void {
       if (rem !== undefined && isRemembered() && rem.activated()) {
         // Remembered for this relic and version, and a reader gesture is active:
@@ -225,7 +234,7 @@ export function createLinkConfirmBar(
       status.textContent = READ_DELAY_STATUS;
       if (rememberBox !== undefined) rememberBox.checked = false;
       pending.hidden = false;
-      remembered.hidden = true;
+      strip.hidden = true;
       element.hidden = false;
       document.addEventListener('keydown', onKey);
       window.clearTimeout(readTimer);

@@ -69,7 +69,7 @@ body {
   outline: 2px solid var(--patina); outline-offset: 2px;
 }
 
-/* The viewer: accession band, then the confirmation bar, then the frame. */
+/* The viewer: accession band, then the frame. The confirmation bar overlays the frame's top; the remembered strip sits above the frame in the page flow. */
 .viewer-stage { max-width: 58rem; margin: 0 auto 2rem; padding: 0 1rem; }
 .viewer { background: var(--surface); border: 1px solid var(--rule); }
 .viewer.is-mobile { width: 390px; max-width: 100%; margin: 0 auto; }
@@ -88,6 +88,7 @@ body {
 
 /* The bar reuses the notice's rule and the popover's action treatment. */
 .link-confirm {
+  position: absolute; top: 0; left: 0; right: 0; z-index: 9;
   display: flex; flex-wrap: wrap; gap: 0.6rem 1rem; align-items: flex-start;
   margin: 0; padding: 0.7rem 0.9rem;
   background: var(--surface); color: var(--ink);
@@ -96,8 +97,10 @@ body {
 }
 .link-confirm[hidden] { display: none; }
 .link-confirm-remember { display: flex; align-items: center; gap: 0.4rem; margin: 0.4rem 0 0; font-size: 0.8rem; color: var(--ink-soft); }
-.link-confirm-remembered { display: flex; align-items: center; flex-wrap: wrap; gap: 0.6rem; margin: 0.4rem 0; font-size: 0.8rem; color: var(--ink-soft); }
-.link-confirm-remembered[hidden] { display: none; }
+.frame-pane-host { position: relative; }
+.link-confirm-strip { display: flex; align-items: center; padding: 0.35rem 0.9rem; background: var(--surface); border-bottom: 1px solid var(--rule); font-size: 0.8rem; color: var(--ink-soft); }
+.link-confirm-strip[hidden] { display: none; }
+.link-confirm-remembered { display: flex; align-items: center; flex-wrap: wrap; gap: 0.6rem; margin: 0; }
 .link-confirm-text { flex: 1 1 18rem; min-width: 0; }
 .link-confirm-title { margin: 0 0 0.3rem; font-weight: 600; }
 .link-confirm-dest {
@@ -175,6 +178,7 @@ body {
       </div>
     </header>
 
+    <div class="frame-pane-host">
     <section class="link-confirm" id="confirm" role="alertdialog" aria-labelledby="confirm-title" aria-describedby="confirm-dest confirm-note" hidden>
       <div class="link-confirm-text">
         <p class="link-confirm-title" id="confirm-title">This page asks to open a link in a new tab.</p>
@@ -189,7 +193,7 @@ body {
       </div>
     </section>
 
-    <p class="link-confirm-remembered" id="remembered-row" hidden><span>Links from this relic open without asking.</span> <button type="button" class="action is-quiet" id="turn-back-on">Turn back on</button></p>
+    <section class="link-confirm-strip" id="remembered-strip" hidden><p class="link-confirm-remembered"><span>Links from this relic open without asking.</span> <button type="button" class="action is-quiet" id="turn-back-on">Turn back on</button></p></section>
 
     <div class="usercontent-frame" role="document" aria-label="Relic content, sandboxed">
       <article class="doc">
@@ -200,6 +204,7 @@ body {
         <p>A German publisher lists its titles here: <a class="frame-link" href="#" data-link="idn">Bücher catalogue</a>.</p>
         <p>Docs with an odd path, as an author might write them: <a class="frame-link" href="#" data-link="hostile">documentation index</a>.</p>
       </article>
+    </div>
     </div>
     <p class="toast" id="toast" role="status" hidden></p>
   </div>
@@ -214,7 +219,7 @@ body {
     <li>One request is pending at a time. Requests that arrive while one is pending, or within two seconds of a close, are dropped and counted. The bar says how many.</li>
     <li>The new tab is opened by the viewer with <code>noopener,noreferrer</code>. The frame never opens a tab.</li>
     <li>The reader can tick Don't ask again for this relic before pressing Open link. The choice is recorded only by that trusted click, for this relic and this version, in the viewer's own storage, which the frame cannot read.</li>
-    <li>While the choice stands, a link requested during a reader gesture opens without the bar, its read delay and its cooldown. The row under the bar offers Turn back on. A new version of the relic asks again, and a frame message can raise the bar but never sets or clears the choice.</li>
+    <li>While the choice stands, a link requested during a reader gesture opens without the bar, its read delay and its cooldown. The strip above the frame offers Turn back on; it takes its own line of space and never covers the frame. A new version of the relic asks again, and a frame message can raise the bar but never sets or clears the choice.</li>
   </ul>
 </section>
 
@@ -320,7 +325,7 @@ body {
     if (event.key === 'Escape' && pending !== null) close();
   });
 
-  const rememberedRow = document.getElementById('remembered-row');
+  const rememberedRow = document.getElementById('remembered-strip');
   const setRemembered = (on) => { rememberedRow.hidden = !on; };
   document.getElementById('turn-back-on').addEventListener('click', () => setRemembered(false));
   const states = {
