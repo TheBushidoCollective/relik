@@ -430,6 +430,45 @@ export function sniffImageType(content: Uint8Array): string {
 }
 
 /**
+ * The mimetype a media element's Blob is given, derived from the bytes and
+ * never from the declaration (`viewer.md` 1.6). An unrecognized signature gets
+ * `application/octet-stream`, which the element sniffs on its own. Every value
+ * returned is a fixed media type, so no declared type reaches the blob and no
+ * document type can come out of this function.
+ */
+export function sniffMediaType(content: Uint8Array): string {
+  const at = (offset: number, text: string): boolean =>
+    [...text].every(
+      (char, index) => content[offset + index] === char.charCodeAt(0)
+    );
+
+  if (at(4, 'ftyp')) {
+    if (at(8, 'M4A ') || at(8, 'M4B ')) return 'audio/mp4';
+    if (at(8, 'qt  ')) return 'video/quicktime';
+    return 'video/mp4';
+  }
+  if (
+    content[0] === 0x1a &&
+    content[1] === 0x45 &&
+    content[2] === 0xdf &&
+    content[3] === 0xa3
+  ) {
+    return 'video/webm';
+  }
+  if (at(0, 'OggS')) return 'audio/ogg';
+  if (at(0, 'RIFF') && at(8, 'WAVE')) return 'audio/wav';
+  if (at(0, 'fLaC')) return 'audio/flac';
+  if (at(0, 'ID3')) return 'audio/mpeg';
+  // An MPEG-1 Layer III frame: eleven sync bits, then layer bits 01.
+  const second = content[1] ?? 0;
+  const layerIII = ((second >> 1) & 3) === 1;
+  if (content[0] === 0xff && (second & 0xe0) === 0xe0 && layerIII) {
+    return 'audio/mpeg';
+  }
+  return 'application/octet-stream';
+}
+
+/**
  * Counts opens in this page. A result from an earlier open may not act once a
  * newer one has started.
  */
@@ -1744,7 +1783,8 @@ export function renderMediaView(view: ReadyView): HTMLElement {
   const wrapper = document.createElement('div');
   wrapper.className = 'doc doc-media';
 
-  const blob = view.content.blob(view.declaredMimetype);
+  // The blob's type comes from its bytes, never the declaration (viewer.md 1.6).
+  const blob = view.content.blob(sniffMediaType(view.content.head));
   const blobUrl = URL.createObjectURL(blob);
 
   let revoked = false;

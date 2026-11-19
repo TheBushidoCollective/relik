@@ -1452,7 +1452,11 @@ function classFromMimetype(mimetype: string, filename: string): RendererClass {
   if (type.startsWith('text/') || type === 'application/json') return 'code';
   if (type === 'application/octet-stream') {
     // Uninformative, so fall back to the name, which is the only other
-    // declared signal.
+    // declared signal. An SVG name is an SVG document, which runs in the
+    // frame just as image/svg+xml does, so it takes that class rather than
+    // the raster class the extension table gives it.
+    if (/.+\.svg$/i.test(filename.slice(filename.lastIndexOf('/') + 1)))
+      return 'html';
     return deriveRendererClass(new Uint8Array([0x20]), filename);
   }
   return 'binary';
