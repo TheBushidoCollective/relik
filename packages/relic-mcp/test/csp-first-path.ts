@@ -446,14 +446,15 @@ function hostDocument(run: Run): string {
   const frame =
     OPEN +
     IFRAME +
-    ` id="f" sandbox="allow-scripts" src="${frameOrigin}/frame/${run.id}"></` +
+    ` id="f" ${run.frameAttrs} src="${frameOrigin}/frame/${run.id}"></` +
     IFRAME +
     '>';
   const js = `
 var AUTHOR = ${jsStr(run.author)};
 var frame = document.getElementById('f');
 var sent = false;
-window.__probe = { results: [], done: false, shim: ${jsStr(run.column)} };
+window.__probe = { results: [], done: false, shim: ${jsStr(run.column)}, events: [] };
+frame.addEventListener('load', function () { window.__probe.events.push('load'); });
 addEventListener('message', function (e) {
   var d = e.data;
   if (!d || typeof d !== 'object') return;
@@ -462,7 +463,7 @@ addEventListener('message', function (e) {
     frame.contentWindow.postMessage({ type: 'relic:render', html: AUTHOR }, '*');
     setTimeout(function () { window.__probe.done = true; }, ${run.settle});
   }
-  if (d.type === 'probe') window.__probe.results.push(d.v);
+  if (d.type === 'probe') { window.__probe.results.push(d.v); window.__probe.events.push('probe:' + (d.v && d.v.k) + ':' + (d.v && d.v.id)); }
 });`;
   return (
     '<!doctype html><meta charset="utf-8"><title>host</title>' +
