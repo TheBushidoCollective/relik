@@ -11,6 +11,7 @@ import type { CommentAnchor } from '@relic/format';
 import type { AnchorAdapter, AnchorSurface } from './anchoring.ts';
 import { cellReference } from './table-model.ts';
 import { drawnStructuredView } from './structured-view-bridge.ts';
+import { visibleLabel } from './visible-label.ts';
 
 type CellAnchor = Extract<CommentAnchor, { kind: 'cell' }>;
 
@@ -27,7 +28,7 @@ export const cellAnchorAdapter: AnchorAdapter<'cell'> = {
     const where = ranged ? `cells ${from} to ${to}` : `cell ${from}`;
     return anchor.sheet === undefined
       ? `Commenting on ${where}`
-      : `Commenting on ${where} of ${anchor.sheet}`;
+      : `Commenting on ${where} of ${visibleLabel(anchor.sheet)}`;
   },
 
   supports(surface: AnchorSurface): boolean {
