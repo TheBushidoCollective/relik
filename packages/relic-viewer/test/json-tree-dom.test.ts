@@ -413,6 +413,8 @@ describe('JSON tree view in the browser', () => {
           )
         );
         const stalled = Promise.withResolvers<never>();
+        // A real timer on purpose: this drives a real browser, and a hang has to
+        // fail with evidence before bun's own test limit hides it.
         const timer = setTimeout(() => {
           stalled.reject(
             new Error(
