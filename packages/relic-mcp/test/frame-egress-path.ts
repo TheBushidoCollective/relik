@@ -52,6 +52,7 @@
 import assert from 'node:assert/strict';
 import { type ChildProcess, spawn } from 'node:child_process';
 import dgram from 'node:dgram';
+import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
 import { access, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { networkInterfaces, tmpdir } from 'node:os';
@@ -124,21 +125,32 @@ const LISTENER_UNOBSERVABLE: Readonly<Record<string, string>> = {
 };
 
 /**
- * The throwaway shim for the negative control: the same handshake and render
- * message as the production shim, with no containment installed.
+ * The throwaway shim for the negative control. It re-emits author scripts as
+ * blob scripts, the way the production shim does, and installs no RTC guard and
+ * no containment. Served behind the production policy, with its own script hash
+ * in place of the production shim's, it must still show WebRTC egress: the
+ * policy and the blob path do not stop WebRTC, and only the realm guard does.
  */
-const THROWAWAY_SHIM = `<!doctype html><meta charset="utf-8"><title>Relic content</title><script>
-addEventListener('message', function (event) {
+const THROWAWAY_JS = `addEventListener('message', function (event) {
   if (event.source !== parent) return;
   var data = event.data;
-  if (data && data.type === 'relic:render' && typeof data.html === 'string') {
-    document.open();
-    document.write(data.html);
-    document.close();
+  if (!data || data.type !== 'relic:render' || typeof data.html !== 'string') return;
+  var doc = new DOMParser().parseFromString(data.html, 'text/html');
+  var scripts = Array.prototype.slice.call(doc.querySelectorAll('script'));
+  for (var i = 0; i < scripts.length; i++) {
+    var s = scripts[i];
+    if (s.hasAttribute('src')) continue;
+    var type = (s.getAttribute('type') || '').trim().toLowerCase();
+    if (type !== '' && type !== 'text/javascript' && type !== 'module') continue;
+    s.setAttribute('src', URL.createObjectURL(new Blob([s.textContent], { type: 'text/javascript' })));
   }
+  document.open();
+  document.write('<!doctype html>' + doc.documentElement.outerHTML);
+  document.close();
 });
-parent.postMessage({ type: 'relic:sandbox-ready' }, '*');
-</script>`;
+parent.postMessage({ type: 'relic:sandbox-ready' }, '*');`;
+const THROWAWAY_HASH = `sha256-${createHash('sha256').update(THROWAWAY_JS).digest('base64')}`;
+const THROWAWAY_SHIM = `<!doctype html><meta charset="utf-8"><title>Relic content</title><script>${THROWAWAY_JS}</script>`;
 
 /** Installed in the host page before navigation, so no probe message is missed. */
 const CAPTURE_JS = `(function () {
@@ -674,8 +686,9 @@ const usercontent = Bun.serve({
         status: 200,
         headers: {
           'content-type': 'text/html; charset=utf-8',
-          'content-security-policy':
-            production.headers.get('content-security-policy') ?? '',
+          'content-security-policy': (
+            production.headers.get('content-security-policy') ?? ''
+          ).replace(/script-src '[^']+'/, `script-src '${THROWAWAY_HASH}'`),
         },
       });
     }

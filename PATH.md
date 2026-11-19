@@ -114,9 +114,23 @@ Success requires `COMMENT_POPOVER_PATH_OK classes=9`, attached composers and pos
 
 Saved comment cards and timeline cluster cards expose **Dismiss** (`.popover-dismiss`, accessible name `Dismiss comment overlay`). Exercise pointer and keyboard dismissal after Post and on an existing mark, then reopen from the mark and thread. Closing the overlay must preserve the stored comment, counts, sidebar, playback and fullscreen without a mutation request. New/edit composers have no Dismiss, and replying hides it to protect the draft. Keyboard focus restoration must not immediately reopen the card; asynchronous work from a dismissed card must not reopen it or replace a newer panel. The clickable interaction reference is `docs/plans/anchored-popover/mockup.html`.
 
+# Production CSP proof for the render frame
+
+The probe publishes each relic through the built MCP bundle and opens it in the production viewer and shim, in an isolated headless shell with a throwaway profile, in two process models. Each case has a plain-shim control on the same relic bytes, and a row counts as blocked only where that control shows the channel. It exits 1 on any production egress or any relic that does not run.
+
+## Acceptance command
+
+```sh
+mise exec -- bun run --cwd packages/relic-viewer build
+mise exec -- bun run --cwd packages/relic-mcp build:bundle
+mise exec -- bun packages/relic-mcp/test/csp-prod-path.ts
+```
+
+A clean run prints `CSP_PROD_OK` and no `CSP_PROD_FAIL`. The unproven rows follow `CSP_PROD_UNPROVEN`. `RELIC_CSP_PROD_CHROME_PATH` selects the browser. The default is the owned isolated headless shell, and the probe does not fall back to another browser. `RELIC_CSP_PROD_ONLY=id,id` runs a subset for diagnosis. `verify.yml` does not run this probe. The measured routes and the unproven list are in `docs/spec/viewer.md`, section 4.
+
 # Frame egress from the sandboxed render frame
 
-The probe measures which channels the sandboxed frame reaches, using the real MCP bundle, the real app and the production policy, with a relic whose own script tries every channel. It runs in an isolated headless shell with a throwaway profile, and every channel has its own loopback listener and UDP socket. It proves the blocked channels it measures and reports the open routes. It does not prove that no other channel exists.
+The probe measures which channels a relic's own script reaches from the sandboxed frame, using the real MCP bundle, the real app and the production policy, in an isolated headless shell with a throwaway profile. Every channel has its own loopback listener and UDP socket. It proves the channels it observes blocked and states the rest as unproven. It does not prove that no other channel exists. The per-route proof with controls is the section above.
 
 ## Acceptance command
 
@@ -128,7 +142,7 @@ mise exec -- bun run --cwd packages/relic-mcp build
 mise exec -- bun packages/relic-mcp/test/frame-egress-path.ts
 ```
 
-Success is not yet reachable: cases 1, 1b, 2 and 4 are open routes and print REAL, so the probe exits nonzero by design (`FRAME_EGRESS_PATH_FAILED`). It is not a CI gate, and `verify.yml` does not run it. A clean run prints `FRAME_EGRESS_PATH_OK` when every channel is blocked and no case is open, or `FRAME_EGRESS_PATH_OK_WITH_UNPROVEN` when nothing egresses but some channels are unobservable. Cases 3a, 3b and 5 print CANNOT TEST. `RELIC_FRAME_EGRESS_CHROME_PATH` selects the browser (default: the owned isolated headless shell).
+Last run on `fix/csp-build`, 2026-11-19: the four Review2 routes (cases 1, 1b, 2 and 4) print BLOCKED, and the probe prints `FRAME_EGRESS_PATH_OK_WITH_UNPROVEN` and exits 0. Its negative control is a shim that re-emits author scripts as blob scripts and installs no RTC guard, served behind the production policy with its own script hash. It must show WebRTC egress, and it does (`rtc:shim-realm`). So the policy and the blob path do not stop WebRTC, and the realm guard does. Cases 3a, 3b and 5 print CANNOT TEST, and the UNPROVEN rows are channels a loopback listener cannot observe in this build. `RELIC_FRAME_EGRESS_CHROME_PATH` selects the browser (default: the owned isolated headless shell).
 
 # Link bar stages and top-frame navigation (manual, not CI)
 
