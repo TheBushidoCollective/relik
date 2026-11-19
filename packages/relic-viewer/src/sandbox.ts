@@ -31,6 +31,8 @@
 // also settles the instance question hooks depend on: the `React` global
 // the component resolves and the `createRoot` that mounts it are the same
 // module by construction.
+// First, so the WebRTC constructors are gone before any other module runs.
+import './rtc-guard.ts';
 import type { AnchorRect } from '@relic/format';
 import {
   COMMENT_ANCHOR_CONTEXT_LIMIT_BYTES,
@@ -62,6 +64,7 @@ import {
   takeTailUtf8,
 } from './annotate-frame.ts';
 import { isSetScrollMessage } from './frame-scroll.ts';
+import { reemitAuthorScripts } from './frame-scripts.ts';
 import {
   CONCEALMENT_CSS,
   type ConcealableMark,
@@ -3141,16 +3144,22 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
 
   const handle = createSandboxHandler(
     (html, imageControlsEnabled) => {
+      // Author scripts are re-emitted as blob scripts first, so the policy never
+      // sees an inline one. The markup is parsed here and not in the live document.
+      const markup = reemitAuthorScripts(sanitizeFrameHtml(html));
       document.open();
       installSandboxContainment(window, document);
       // Install the capture listener before authored inline scripts execute
       // during document.write. A script-triggered anchor click must never win
       // the race and replace the rendered relic before interaction is wired.
       initInteraction(imageControlsEnabled);
-      document.write(sanitizeFrameHtml(html));
+      document.write(markup);
       document.close();
       listen();
       scheduleReport();
+      // A re-emitted script runs once its blob loads, which can be after the
+      // report above. The load event follows every script the parser ran.
+      window.addEventListener('load', scheduleReport, { once: true });
     },
     (code) => {
       // React render and effects may run before the mount promise settles.

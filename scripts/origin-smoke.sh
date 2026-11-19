@@ -29,10 +29,10 @@ grep -qi "^content-security-policy:.*frame-ancestors $ORIGIN\(;\|[[:space:]]*\$\
   exit 1
 }
 
-echo "and the service allows exactly that usercontent origin as a frame source"
+echo "and the service allows exactly the usercontent shim document as a frame source"
 curl -fsS -D "$scratch/vh" -o/dev/null "$SERVICE/aaaaaaaaaaaaaaaaaaaaaaaaaa"
-grep -qi "^content-security-policy:.*frame-src $USERCONTENT\(;\|[[:space:]]*\$\)" "$scratch/vh" || {
-  echo "service frame-src does not name $USERCONTENT:"
+grep -qi "^content-security-policy:.*frame-src $USERCONTENT/sandbox.html\(;\|[[:space:]]*\$\)" "$scratch/vh" || {
+  echo "service frame-src does not name $USERCONTENT/sandbox.html:"
   grep -i '^content-security-policy:' "$scratch/vh"
   exit 1
 }

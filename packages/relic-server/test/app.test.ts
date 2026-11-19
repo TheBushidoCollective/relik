@@ -225,12 +225,20 @@ describe('the shell', () => {
     expect(response.headers.get('x-robots-tag')).toBe('noindex');
   });
 
-  test('frames only the usercontent origin', async () => {
+  test('frames only the shim document on the usercontent origin', async () => {
     const { id } = await publish();
     const csp = await app
       .fetch(req(`/${id}`))
       .then((r) => r.headers.get('content-security-policy'));
-    expect(csp).toContain('frame-src https://relic-usercontent.example');
+    const frameSrc = csp
+      ?.split(';')
+      .map((directive) => directive.trim())
+      .filter((directive) => directive.startsWith('frame-src '));
+    // Exact path, one source, nothing else: a same-origin page would be
+    // framed by an origin source, and self-navigation to it is the open route.
+    expect(frameSrc).toEqual([
+      'frame-src https://relic-usercontent.example/sandbox.html',
+    ]);
   });
 
   test('permits the manifest it links, which default-src none refused', async () => {

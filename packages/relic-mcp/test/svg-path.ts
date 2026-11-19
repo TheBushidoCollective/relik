@@ -211,10 +211,6 @@ const seen: Seen[] = [];
 const checks: Array<{ readonly label: string; readonly ok: boolean }> = [];
 let activeApp: AppLike | undefined;
 let shimPolicyOverride: string | undefined;
-// Control A only: the shim's CSP `sandbox allow-scripts` directive forces an opaque
-// origin whatever the iframe attribute grants, so the control drops that directive.
-let shimDropSandboxDirective = false;
-const SANDBOX_DIRECTIVE = 'sandbox allow-scripts; ';
 
 async function handle(
   server: Seen['server'],
@@ -255,21 +251,6 @@ async function handle(
     headers.set('content-security-policy', shimPolicyOverride);
     return new Response(response.body, { status: response.status, headers });
   }
-  if (
-    server === 'usercontent' &&
-    url.pathname === '/sandbox.html' &&
-    shimDropSandboxDirective
-  ) {
-    const headers = new Headers(response.headers);
-    const csp = headers.get('content-security-policy') ?? '';
-    if (!csp.includes(SANDBOX_DIRECTIVE)) {
-      throw new Error(
-        'control A: the shim CSP no longer has the sandbox directive it drops'
-      );
-    }
-    headers.set('content-security-policy', csp.replace(SANDBOX_DIRECTIVE, ''));
-    return new Response(response.body, { status: response.status, headers });
-  }
   return response;
 }
 
@@ -297,6 +278,34 @@ function appFor(dist: string): AppLike {
     operatorTokens,
     mailer: { send: async () => {}, sendMail: async () => {} },
   });
+}
+
+// The shim's response carries `sandbox allow-scripts`, and a CSP sandbox directive
+// caps the frame's flags whatever the iframe attribute grants. With that directive,
+// a loosened iframe attribute flips nothing, so control A is blind. Control A serves
+// the loosened copy without that one directive, and only that one. The viewer rows
+// keep the production app. The wrapper fails if the directive is absent, so the
+// control cannot silently become a no-op.
+const SHIM_SANDBOX_DIRECTIVE = 'sandbox allow-scripts; ';
+function withoutShimSandboxDirective(inner: AppLike): AppLike {
+  return {
+    async fetch(request: Request): Promise<Response> {
+      const response = await inner.fetch(request);
+      if (new URL(request.url).pathname !== '/sandbox.html') return response;
+      const csp = response.headers.get('content-security-policy');
+      if (csp === null || !csp.includes(SHIM_SANDBOX_DIRECTIVE)) {
+        throw new Error(
+          'control A: sandbox.html no longer carries the sandbox directive it removes'
+        );
+      }
+      const headers = new Headers(response.headers);
+      headers.set(
+        'content-security-policy',
+        csp.replace(SHIM_SANDBOX_DIRECTIVE, '')
+      );
+      return new Response(response.body, { status: response.status, headers });
+    },
+  };
 }
 
 function check(label: string, ok: boolean, evidence: string): void {
@@ -1331,16 +1340,13 @@ async function runMode(
       `${m}.png`
     );
     checkPositive(m, mode, positive);
-    shimDropSandboxDirective = true;
     const sandboxControl = await probeRun(
       browser,
       url,
       token,
-      appFor(loosenedDist),
+      withoutShimSandboxDirective(appFor(loosenedDist)),
       undefined
-    ).finally(() => {
-      shimDropSandboxDirective = false;
-    });
+    );
     checkSandboxControl(m, sandboxControl);
     shimPolicyOverride = connectPolicy;
     const connectControl = await probeRun(
@@ -1379,7 +1385,8 @@ async function main(): Promise<void> {
   await shim.arrayBuffer();
   const productionDirectives = [
     "default-src 'none'",
-    "script-src 'unsafe-inline' blob:",
+    "script-src 'sha256-",
+    "frame-src 'none'",
     `frame-ancestors ${origin}`,
   ];
   check(

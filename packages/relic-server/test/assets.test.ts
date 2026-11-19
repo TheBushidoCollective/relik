@@ -150,14 +150,28 @@ describe('the sandbox page', () => {
       'content-security-policy'
     ) ?? '';
 
+  // The shim's one inline script, computed here from the served body rather
+  // than read back from the server's own helper, so a mismatch fails.
+  const shimHash = async (): Promise<string> => {
+    const body = await (await app().fetch(get('/sandbox.html'))).text();
+    const match = /<script type="module">([\s\S]*?)<\/script>/.exec(body);
+    if (match?.[1] === undefined) throw new Error('no inline module script');
+    const digest = new Bun.CryptoHasher('sha256')
+      .update(match[1])
+      .digest('base64');
+    return `sha256-${digest}`;
+  };
+
   test('denies the frame HTTP requests by policy', async () => {
     const csp = await sandboxPolicy();
     expect(csp).toContain("default-src 'none'");
     expect(csp).toContain("worker-src 'none'");
+    expect(csp).toContain("frame-src 'none'");
+    expect(csp).toContain("object-src 'none'");
     expect(csp).toContain("form-action 'none'");
     expect(csp).toContain("base-uri 'none'");
-    // WebRTC has no CSP directive that Chrome enforces, so none is pinned here.
-    // The containment is a backstop, not a boundary: the egress probe records its open routes.
+    // Chrome does not enforce `webrtc 'block'`, so none is pinned here. The
+    // RTC constructors are removed in the shim's realm (rtc-guard.ts).
     expect(csp).toContain('sandbox allow-scripts');
   });
 
@@ -174,16 +188,17 @@ describe('the sandbox page', () => {
     );
   });
 
-  test('lets script come only from the document and a local blob', async () => {
-    const csp = await sandboxPolicy();
+  test('admits script only by the shim hash and a local blob', async () => {
     // Directive-scoped because frame-ancestors legitimately carries an
-    // https:// origin. The script-src token must be exactly this pair: any
-    // scheme source (a CDN import, a component fetch) lands here.
-    const scriptSrc = csp
+    // https:// origin. The script-src tokens must be exactly the shim's hash
+    // and blob:. No unsafe-inline, unsafe-eval or scheme source.
+    const scriptSrc = (await sandboxPolicy())
       .split(';')
       .map((directive) => directive.trim())
       .find((directive) => directive.startsWith('script-src '));
-    expect(scriptSrc).toBe("script-src 'unsafe-inline' blob:");
+    expect(scriptSrc).toBe(`script-src '${await shimHash()}' blob:`);
+    expect(scriptSrc).not.toContain('unsafe-inline');
+    expect(scriptSrc).not.toContain('unsafe-eval');
     expect(scriptSrc).not.toContain('https:');
     expect(scriptSrc).not.toContain('http:');
   });
@@ -194,12 +209,14 @@ describe('the sandbox page', () => {
     expect(await sandboxPolicy()).toBe(
       [
         "default-src 'none'",
-        "script-src 'unsafe-inline' blob:",
+        `script-src '${await shimHash()}' blob:`,
         "style-src 'unsafe-inline'",
         'img-src data: blob:',
         'font-src data:',
         'media-src data: blob:',
         "worker-src 'none'",
+        "frame-src 'none'",
+        "object-src 'none'",
         "form-action 'none'",
         "base-uri 'none'",
         'sandbox allow-scripts',
