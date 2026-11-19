@@ -1542,10 +1542,17 @@ await stage('layout', async () => {
       }
       if (item.ready === '.nb-cell') {
         await page.click('.nb-cell[data-cell="1"] .nb-box');
-        await page.waitFor(
-          `document.querySelector('.nb-comment[data-pointer="/cells/1"]')?.getBoundingClientRect().height > 0`,
-          'the chosen cell shows its Comment on a phone'
-        );
+        try {
+          await page.waitFor(
+            `document.querySelector('.nb-comment[data-pointer="/cells/1"]')?.getBoundingClientRect().height > 0`,
+            'the chosen cell shows its Comment on a phone'
+          );
+        } catch (error) {
+          const seen = await page.evaluate<string>(
+            `(() => { const box = document.querySelector('.nb-cell[data-cell="1"] .nb-box'); if (!box) return 'no box'; const r = box.getBoundingClientRect(); const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return JSON.stringify({ classes: box.className, rect: [r.left, r.top, r.width, r.height], hit: hit ? hit.className || hit.tagName : null, inner: [innerWidth, innerHeight], narrow: matchMedia('(max-width: 40rem)').matches, selected: document.querySelectorAll('.is-selected').length, tools: getComputedStyle(box.querySelector('.nb-tools')).display }); })()`
+          );
+          throw new Error(`${String(error)} | seen=${seen}`);
+        }
       }
       const overflow = await page.evaluate<number>(PAGE_OVERFLOW);
       const small = await page.evaluate<unknown[]>(SMALL_TARGETS);
