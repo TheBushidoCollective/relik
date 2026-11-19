@@ -215,3 +215,23 @@ A run with any product defect prints `DEFECT <id>: <evidence>` on stderr for eac
 Current state: the run prints every receipt and ends `PRIVATE_SHARES_PATH_OK` with exit code 0. The four defects an earlier run of this path found (the dashboard and ready-view roots detached by a render, a grantee unable to open a version sealed before the grant, and the owner unable to open a republished version) are fixed, and each has a regression test at the layer where it lived.
 
 The live probe, `private-shares-live-probe.ts`, is operator-run against production. It refuses unless `--i-am-the-operator`, `RELIC_ORIGIN`, `PROBE_OPERATOR_EMAIL` and `RELIC_CHROME_PATH` are given, and it refuses in CI. The manual rehearsal, `private-shares-manual.ts`, prints mail to the terminal for real Chrome and Safari passkeys and writes a receipt per provider. Neither is part of CI.
+
+# Structured formats (tables, trees, subtitles, notebooks)
+
+A reader opens a .csv or .tsv as a table, a .json as a tree, an .srt or .vtt as subtitles and an .ipynb as a notebook. A cell, a node, a cue or a notebook cell or output takes a comment, the mark stays on it after a reload, and the MCP resolves the comment against the file it was written on. A page that cannot draw a comment's anchor says so, and the comment's text stays readable.
+
+## Acceptance command
+
+The implementation provides this loopback-only proof:
+
+```sh
+mise exec -- bun run verify
+mise exec -- bun run --cwd packages/relic-mcp build
+RELIC_CHROME_PATH="$(command -v google-chrome)" mise exec -- bun packages/relic-mcp/test/structured-formats-path.ts
+```
+
+Success requires `STAGE_TABLE_OK`, `STAGE_TREE_OK`, `STAGE_CUES_OK`, `STAGE_NOTEBOOK_OK`, `STAGE_OLD_READER_OK` and `STAGE_REFUSALS_OK`, then `STRUCTURED_FORMATS_PATH_OK`. Each stage publishes its own file through the MCP, comments through the viewer with real mouse and text input, and reads the comment back through the MCP. The table stage also requires the C14 and B4:D9 anchors to be exact `cell` anchors, the marks to survive a reload, a sort to move the C14 mark with its record, and the MCP to resolve the cell text and header.
+
+The refusals stage is the negative control for the MCP validators: six malformed anchors are refused before anything is posted. Negative control for the table route was run by hand and is documented at the top of the script: with the csv and tsv routes removed, the table stage fails at "the table draws". A run that does not reach every stage prints `STRUCTURED_FORMATS_PATH_PARTIAL` and never the OK marker.
+
+All proof writes target the local in-memory service. The browser is an isolated headless Chrome. Not proven here: other browsers, a 390 px layout review, the OS clipboard and IME, xlsx and documents (their own paths), and suggesting inside cells.
