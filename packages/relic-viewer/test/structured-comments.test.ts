@@ -271,16 +271,24 @@ async function browserCases(
     return { host, thread };
   };
 
-  // A reader's mouse press and release over a drawn element, as the table takes it.
-  const press = (element: Element): void => {
-    element.dispatchEvent(
+  // A reader's press and release over a drawn cell. The table re-renders its rows
+  // on mousedown, so the cell the press started on can be detached by the time
+  // the button is released. The release lands on the cell now under the pointer,
+  // which is the one the same selector finds after the render.
+  const press = (host: HTMLElement, selector: string): void => {
+    const start = host.querySelector(selector);
+    if (start === null) throw new Error(`no element for ${selector}`);
+    start.dispatchEvent(
       new MouseEvent('mousedown', {
         bubbles: true,
         cancelable: true,
         button: 0,
       })
     );
-    element.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+    const release = host.querySelector(selector);
+    if (release === null)
+      throw new Error(`no element after press: ${selector}`);
+    release.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
   };
   // A reader's selection of a whole element's text, as the cue list makes it.
   const selectText = (element: Element): void => {
@@ -313,24 +321,17 @@ async function browserCases(
     submit.click();
     await wrote.promise;
   };
-  const anchorPosted = async (index: number): Promise<CommentAnchor> => {
-    const body = await cipher.open(posted[index] as string);
+  // The most recent post. Posts are shared by every case, so a case reads what
+  // it wrote last, never an index that another case may have filled.
+  const anchorPosted = async (): Promise<CommentAnchor> => {
+    const sealed = posted.at(-1);
+    if (sealed === undefined) throw new Error('nothing was posted');
+    const body = await cipher.open(sealed);
     return body.anchor as CommentAnchor;
   };
   const targetLabel = (host: HTMLElement): string =>
     host.querySelector('.popover-target')?.textContent ?? '';
   const offerComment = async (host: HTMLElement): Promise<void> => {
-    setTimeout(() => {
-      const live = window.getSelection();
-      const root = host.querySelector('.structured-view');
-      void progress(
-        `probe: popovers=${host.querySelectorAll('.popover').length} anchorNode=${live?.anchorNode?.nodeName}/${(live?.anchorNode as Element | null)?.className} collapsed=${live?.isCollapsed} inRoot=${root?.contains(live?.anchorNode ?? null)} rootClass=${root?.className}`
-      );
-    }, 200);
-    const live = window.getSelection();
-    void progress(
-      `selection: collapsed=${live?.isCollapsed} ranges=${live?.rangeCount} text=${JSON.stringify(live?.toString())}`
-    );
     await until(
       'the selection offer opens',
       () => host.querySelector('.popover-comment') !== null
@@ -349,11 +350,9 @@ async function browserCases(
         () => host.querySelector('.dt-cell') !== null
       );
       // Record 1 is the "bolt" row, which is row 2 of the file; column 1 is qty.
-      const cell = host.querySelector<HTMLElement>(
-        '.dt-cell[data-r="1"][data-c="1"]'
-      );
-      truth(cell, 'the bolt qty cell is drawn');
-      press(cell);
+      const bolt = '.dt-cell[data-r="1"][data-c="1"]';
+      truth(host.querySelector(bolt), 'the bolt qty cell is drawn');
+      press(host, bolt);
       await offerComment(host);
       await openComposerWith(host, 'the cell');
       truth(
@@ -362,7 +361,7 @@ async function browserCases(
       );
       await postFromComposer(host, 'Check this quantity');
       eq(
-        await anchorPosted(0),
+        await anchorPosted(),
         { kind: 'cell', row: 2, col: 2 },
         'the posted cell anchor'
       );
@@ -383,7 +382,7 @@ async function browserCases(
       await openComposerWith(host, 'the column header');
       await postFromComposer(host, 'Header note');
       eq(
-        await anchorPosted(1),
+        await anchorPosted(),
         { kind: 'cell', row: 1, col: 2 },
         'the posted header anchor'
       );
@@ -414,7 +413,7 @@ async function browserCases(
     await openComposerWith(host, 'the node');
     await postFromComposer(host, 'Look at this value');
     eq(
-      await anchorPosted(0),
+      await anchorPosted(),
       { kind: 'path', pointer: '/name' },
       'the posted node pointer'
     );
@@ -436,7 +435,7 @@ async function browserCases(
     truth(targetLabel(host).includes('subtitle'), `chip: ${targetLabel(host)}`);
     await postFromComposer(host, 'Quote check');
     eq(
-      await anchorPosted(0),
+      await anchorPosted(),
       { kind: 'time', t: 1.2, t_end: 4.8 },
       'the posted cue span'
     );
@@ -466,7 +465,7 @@ async function browserCases(
       await openComposerWith(host, 'the cell');
       await postFromComposer(host, 'Why print here');
       eq(
-        await anchorPosted(0),
+        await anchorPosted(),
         { kind: 'path', pointer: '/cells/1' },
         'the posted cell pointer'
       );
@@ -518,11 +517,7 @@ async function browserCases(
         'the table draws',
         () => host.querySelector('.dt-cell') !== null
       );
-      press(
-        host.querySelector<HTMLElement>(
-          '.dt-cell[data-r="1"][data-c="1"]'
-        ) as HTMLElement
-      );
+      press(host, '.dt-cell[data-r="1"][data-c="1"]');
       await offerComment(host);
       await openComposerWith(host, 'the cell');
       await postFromComposer(host, 'Keep this mark');

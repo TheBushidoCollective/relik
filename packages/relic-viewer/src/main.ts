@@ -7909,7 +7909,10 @@ export function buildThread(
             stickyId = id;
             const target = document.createElement('p');
             target.className = 'popover-target';
-            target.textContent = markTargetLabel(entry.anchor);
+            target.textContent = markTargetLabel(
+              entry.anchor,
+              host === undefined ? undefined : anchorSurfaceFor(host)
+            );
             const panel = popoverCard({
               content: target,
               actions: [],
@@ -8297,7 +8300,10 @@ export function buildThread(
       familyOf(held.anchor.kind) === familyOf(anchor.kind)
     ) {
       held.anchor = anchor;
-      held.target.textContent = markTargetLabel(anchor);
+      held.target.textContent = markTargetLabel(
+        anchor,
+        host === undefined ? undefined : anchorSurfaceFor(host)
+      );
       held.panel.classList.toggle(
         'is-focused-otio-composer',
         anchor.kind === 'otio' && focusedOtioViewport() !== undefined
@@ -8325,7 +8331,10 @@ export function buildThread(
 
     const target = document.createElement('p');
     target.className = 'popover-target';
-    target.textContent = markTargetLabel(anchor);
+    target.textContent = markTargetLabel(
+      anchor,
+      host === undefined ? undefined : anchorSurfaceFor(host)
+    );
     boundedBody.appendChild(target);
 
     const composer = inlineComposer({
