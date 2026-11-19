@@ -103,10 +103,8 @@ describe('the same SVG under the other declarations it can carry', () => {
 });
 
 describe('a mismatched .svg, the disagreement rule (viewer.md 1.3)', () => {
-  // The implementation resolves a disagreement to the less privileged class,
-  // so these pin that outcome. viewer.md 1.3 states download-only for the
-  // same inputs; the two are not yet reconciled, and these tests record what
-  // the viewer does today.
+  // A disagreement resolves to the less privileged class with the mismatch
+  // notice, which viewer.md 1.3 states; these tests pin that outcome.
   test('PNG bytes named .svg are shown as the image they are, with a notice', async () => {
     const decision = await routeFor('drawing.svg', 'image/svg+xml', PNG);
     expect(decision.route).toBe('image');

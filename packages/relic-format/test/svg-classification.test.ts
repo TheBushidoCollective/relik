@@ -92,7 +92,7 @@ describe('the privilege tiers the disagreement rule compares', () => {
   });
 
   test('html against image resolves to image, the less privileged class', () => {
-    // Pins the implementation. viewer.md 1.3 states download-only here.
+    // viewer.md 1.3: a disagreement renders the less privileged class.
     expect(leastPrivileged('html', 'image')).toBe('image');
     expect(leastPrivileged('image', 'html')).toBe('image');
   });
