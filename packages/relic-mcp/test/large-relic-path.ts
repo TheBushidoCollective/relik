@@ -100,6 +100,7 @@ const scratch = await realpath(
 
 interface StorageRead {
   readonly key: string;
+  readonly blobDirectoryExists: boolean;
   sent: number;
   canceled: boolean;
   completed: boolean;
@@ -204,6 +205,10 @@ activeHandler = async (request) => {
     if (!bytes) return new Response(null, { status: 404 });
     const receipt: StorageRead = {
       key,
+      blobDirectoryExists:
+        existsSync(
+          join(scratch, 'browser-profile', 'Default', 'blob_storage')
+        ) || existsSync(join(scratch, 'browser-profile', 'blob_storage')),
       sent: 0,
       canceled: false,
       completed: false,
@@ -388,6 +393,12 @@ async function acceptPrompt(
   page: Page,
   bytes: number
 ): Promise<void> {
+  if (process.env['LRP_PROBE_VARIANT'] === 'negative') {
+    await b.evaluate(
+      page,
+      `document.querySelector('[data-large-open][open]')?.setAttribute('data-large-open-bytes', '1')`
+    );
+  }
   const size = await b.waitFor<string>(
     page,
     `document.querySelector('[data-large-open][open]')?.getAttribute('data-large-open-bytes') || ''`,
@@ -617,12 +628,21 @@ try {
   );
   await browser.pressure(mediaPage);
   const mediaBaseline = await browser.rendererMemory();
+  const blobDirectoryAtAccept =
+    existsSync(join(scratch, 'browser-profile', 'Default', 'blob_storage')) ||
+    existsSync(join(scratch, 'browser-profile', 'blob_storage'));
+  const mediaReadsAtAccept = reads.filter(
+    (entry) => entry.key === media.id
+  ).length;
   await acceptPrompt(browser, mediaPage, CAP);
   await browser.waitFor(
     mediaPage,
     `(() => { const v = document.querySelector('video'); return v && v.readyState >= 2 && Number.isFinite(v.duration); })()`,
     'video metadata',
     900_000
+  );
+  console.log(
+    `LRP_QUOTA_READY at_accept=${blobDirectoryAtAccept} at_fetch=${reads.filter((entry) => entry.key === media.id)[mediaReadsAtAccept]?.blobDirectoryExists}`
   );
   await browser.pressure(mediaPage);
   const mediaGrowth = memoryGrowth(

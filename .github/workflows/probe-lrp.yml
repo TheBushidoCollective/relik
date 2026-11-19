@@ -1,0 +1,122 @@
+name: large relic filesystem probe
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  large-relic-probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [fixed]
+        sample: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30]
+        include:
+          - variant: negative
+            sample: 0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v2
+        with:
+          install: true
+          cache: true
+      - name: Record runner environment
+        run: |
+          findmnt -no SOURCE,FSTYPE,OPTIONS /
+          findmnt -T "$RUNNER_TEMP" -o SOURCE,FSTYPE,TARGET,OPTIONS
+          df -h "$RUNNER_TEMP" /dev/shm
+          free -m
+          ulimit -a
+          uname -r
+          (cat /etc/image* /opt/runner/provisioner 2>/dev/null || true)
+      - name: Install proof prerequisites
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends binutils ca-certificates ffmpeg iproute2 util-linux wget
+          command -v docker
+          docker version --format '{{.Server.Version}}'
+          command -v readelf
+          command -v unshare
+          command -v runuser
+          ffmpeg -hide_banner -encoders 2>/dev/null | grep 'libvpx-vp9'
+          if ! command -v google-chrome >/dev/null 2>&1; then
+            wget -q -O "$RUNNER_TEMP/chrome.deb" https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+            sudo apt-get install -y "$RUNNER_TEMP/chrome.deb"
+          fi
+          google-chrome --version
+          echo "RELIC_READELF=$(command -v readelf)" >> "$GITHUB_ENV"
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Build viewer and MCP bundle
+        run: |
+          set -euo pipefail
+          unset CC
+          bun run --cwd packages/relic-viewer build
+          bun run --cwd packages/relic-mcp build
+      - name: Exercise the large relic path
+        env:
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          set -euo pipefail
+          echo FAIL > "$RUNNER_TEMP/lrp-result"
+          profile_root=''
+          case "$VARIANT" in
+            shm)
+              profile_root="$(mktemp -d /dev/shm/lrp-profile.XXXXXX)"
+              ;;
+            tmpfs)
+              profile_root="$RUNNER_TEMP/lrp-profile-tmpfs"
+              mkdir "$profile_root"
+              sudo mount -t tmpfs -o size=4g tmpfs "$profile_root"
+              sudo chown "$(id -u):$(id -g)" "$profile_root"
+              ;;
+          esac
+          cleanup() {
+            if [ "$VARIANT" = tmpfs ]; then
+              sudo umount "$profile_root"
+              rmdir "$profile_root"
+            elif [ "$VARIANT" = shm ]; then
+              rm -rf -- "$profile_root"
+            fi
+          }
+          trap cleanup EXIT
+          if [ -n "$profile_root" ]; then
+            findmnt -T "$profile_root" -o SOURCE,FSTYPE,TARGET,OPTIONS
+            df -h "$profile_root"
+          fi
+          bun_bin="$(mise which bun)"
+          node_bin="$(mise which node)"
+          proof_path="$(dirname "$node_bin"):$(dirname "$bun_bin"):/usr/local/bin:/usr/bin:/bin"
+          sudo unshare --net -- bash -c '
+            set -euo pipefail
+            ip link set lo up
+            ip -brief address
+            if [ "$(ip -o link show | wc -l)" -ne 1 ]; then
+              echo "expected a loopback-only network namespace" >&2
+              exit 1
+            fi
+            exec runuser -u "$1" -- env -i \
+              HOME="$2" PATH="$3" TMPDIR="$4" \
+              RELIC_PROOF_CHROME_PATH="$5" \
+              LRP_PROBE_PROFILE_ROOT="$7" LRP_PROBE_VARIANT="$8" \
+              "$6" packages/relic-mcp/test/large-relic-path.ts
+          ' _ "$USER" "$HOME" "$proof_path" "$RUNNER_TEMP" \
+            "$(command -v google-chrome)" "$bun_bin" "$profile_root" "$VARIANT"
+          echo PASS > "$RUNNER_TEMP/lrp-result"
+      - name: Record sample result
+        if: always()
+        env:
+          VARIANT: ${{ matrix.variant }}
+          SAMPLE: ${{ matrix.sample }}
+        run: |
+          device="$(findmnt -no SOURCE / | head -1)"
+          fstype="$(findmnt -no FSTYPE / | head -1)"
+          result=NO_RUN
+          if [ -f "$RUNNER_TEMP/lrp-result" ]; then result="$(cat "$RUNNER_TEMP/lrp-result")"; fi
+          printf 'LRP_SAMPLE device=%s fstype=%s variant=%s sample=%s result=%s\n' "$device" "$fstype" "$VARIANT" "$SAMPLE" "$result"
