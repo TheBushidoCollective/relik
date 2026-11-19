@@ -4,7 +4,7 @@ import { once } from 'node:events';
 import { existsSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { rm } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import type * as EditorModule from '../src/suggest-editor.ts';
 import type * as MarkdownModule from '../src/markdown-source.ts';
 import type {
@@ -662,13 +662,31 @@ describe('suggestion editor in the browser', () => {
         tmpdir(),
         `relic-suggest-editor-${crypto.randomUUID()}`
       );
+      // The startup flags every other browser proof uses (see chromeArgs in
+      // packages/relic-mcp/src/cover/chrome.ts). With only --headless a fresh
+      // Chrome on a CI runner did first-run and background network work and
+      // took ~28 s to reach the page, against this test's old 30 s limit.
       const browser = spawn(
         shell!,
         [
-          '--headless',
+          basename(shell!).includes('headless-shell')
+            ? '--headless'
+            : '--headless=new',
           '--disable-gpu',
           '--no-sandbox',
           `--user-data-dir=${profile}`,
+          '--no-first-run',
+          '--no-default-browser-check',
+          '--disable-background-networking',
+          '--disable-component-update',
+          '--disable-default-apps',
+          '--disable-extensions',
+          '--disable-sync',
+          '--disable-domain-reliability',
+          '--disable-breakpad',
+          '--disable-crash-reporter',
+          '--metrics-recording-only',
+          '--mute-audio',
           `http://127.0.0.1:${server.port}/`,
         ],
         { stdio: 'ignore' }
@@ -693,6 +711,6 @@ describe('suggestion editor in the browser', () => {
         await rm(profile, { recursive: true, force: true });
       }
     },
-    30000
+    90000
   );
 });
