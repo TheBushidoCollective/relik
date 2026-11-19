@@ -304,6 +304,7 @@ export async function buildViewer(options?: {
   }
   await copyFile(`${pkgDir}src/model-view.css`, `${out}model-view.css`);
   await copyFile(`${pkgDir}src/cue-view.css`, `${out}cue-view.css`);
+  await copyFile(`${pkgDir}src/json-tree-view.css`, `${out}json-tree-view.css`);
 
   // `main.js` is served as `viewer.js`, because that is the name the shell and
   // the service worker's cache list both reference.
