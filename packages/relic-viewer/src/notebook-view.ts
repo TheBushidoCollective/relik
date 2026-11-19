@@ -17,9 +17,9 @@
  * a drawn view.
  */
 
+import type { CommentAnchor } from '@relic/format';
 import {
   type AnsiSpan,
-  type CommentAnchor,
   type Notebook,
   type NotebookBody,
   type NotebookCell,

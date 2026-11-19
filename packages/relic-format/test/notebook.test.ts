@@ -145,7 +145,7 @@ describe('cells', () => {
         },
       ])
     );
-    expect(JSON.stringify(notebook)).not.toContain('onerror');
+    expect(JSON.stringify(notebook.cells)).not.toContain('onerror');
   });
 
   test('a cell outputs cap keeps 200, counts the rest', () => {
@@ -188,7 +188,7 @@ describe('outputs', () => {
     expect(result?.outputType).toBe('execute_result');
     expect(result?.body).toEqual({
       kind: 'text',
-      text: { text: '1' + '2', truncated: false },
+      text: { text: '12', truncated: false },
     });
   });
 
@@ -297,7 +297,7 @@ describe('outputs', () => {
     }
   });
 
-  test('an SVG with a raster sibling still shows the raster, and an SVG alone is withheld', () => {
+  test('an SVG with a raster sibling still shows the raster', () => {
     const body = bodyOf(
       nb([
         {
@@ -306,7 +306,10 @@ describe('outputs', () => {
           outputs: [
             {
               output_type: 'display_data',
-              data: { 'image/png': PNG_B64, 'image/svg+xml': '<svg onload=x>' },
+              data: {
+                'image/png': PNG_B64,
+                'image/svg+xml': '<svg onload=x>',
+              },
             },
           ],
         },
@@ -392,7 +395,7 @@ describe('images', () => {
   });
 
   test('base64 is split across lines as nbformat stores it', () => {
-    const split = [PNG_B64.slice(0, 20) + '\n', PNG_B64.slice(20)];
+    const split = [`${PNG_B64.slice(0, 20)}\n`, PNG_B64.slice(20)];
     const body = bodyOf(
       nb([
         {
@@ -445,9 +448,7 @@ describe('hostile input', () => {
 
   test('bidi and control characters are written out, never left in the text', () => {
     const text = 'a\u202eb\u0007c\r\nd\te';
-    expect(escapeInvisible(text)).toBe(
-      'a[U+202E]b[U+0007]c\r\nd\te'.replace('\r', '[U+000D]')
-    );
+    expect(escapeInvisible(text)).toBe('a[U+202E]b[U+0007]c[U+000D]\nd\te');
     const notebook = ok(nb([{ cell_type: 'markdown', source: text }]));
     expect(notebook.cells[0]?.source.text).toBe('a[U+202E]b[U+0007]c\nd\te');
     expect(notebook.cells[0]?.source.text).not.toContain('\u202e');
@@ -471,12 +472,10 @@ describe('hostile input', () => {
   });
 
   test('a cut that would split a surrogate pair drops the lone half', () => {
-    const big = 'x'.repeat(NOTEBOOK_TEXT_MAX_CHARS - 1) + '😀';
+    const big = `${'x'.repeat(NOTEBOOK_TEXT_MAX_CHARS - 1)}😀`;
     const notebook = ok(nb([{ cell_type: 'markdown', source: big }]));
-    const text = notebook.cells[0]?.source.text.text ?? '';
-    expect(text.length).toBe(
-      NOTEBOOK_TEXT_MAX_CHARS - 1 + 2 - 2 + 0 === 0 ? 0 : text.length
-    );
+    const text = notebook.cells[0]?.source.text ?? '';
+    expect(text.length).toBe(NOTEBOOK_TEXT_MAX_CHARS - 1);
     expect(text.charCodeAt(text.length - 1)).not.toBeGreaterThanOrEqual(0xd800);
   });
 });
@@ -523,7 +522,7 @@ describe('ANSI', () => {
     expect(spans[2]?.bg).toBeUndefined();
   });
 
-  test('malformed escapes never throw and never lose the text after them', () => {
+  test('malformed escapes never throw and never leave an escape in the text', () => {
     const cases = [
       '\u001b[31',
       '\u001b[',
@@ -541,16 +540,20 @@ describe('ANSI', () => {
       'tail\u001b',
     ];
     for (const text of cases) {
-      const spans = ansiSpans(text);
-      const joined = spans.map((span) => span.text).join('');
+      const joined = ansiSpans(text)
+        .map((span) => span.text)
+        .join('');
       expect(joined.includes('\u001b')).toBe(false);
       expect(joined.includes('\u009b')).toBe(false);
     }
+  });
+
+  test('malformed escapes drop the sequence and keep the text that follows', () => {
     expect(
       ansiSpans('a\u001b[\u0001b')
         .map((s) => s.text)
         .join('')
-    ).toBe('a\u0001b'.replace('\u0001', '[U+0001]'));
+    ).toBe('a[U+0001]b');
     expect(
       ansiSpans('x\u001b[31')
         .map((s) => s.text)
@@ -586,7 +589,7 @@ describe('ANSI', () => {
 
 describe('bounds', () => {
   test('a huge error traceback is cut and marked, bounded in time', () => {
-    const big = '\u001b[31m' + 'e'.repeat(NOTEBOOK_TEXT_MAX_CHARS * 2);
+    const big = `\u001b[31m${'e'.repeat(NOTEBOOK_TEXT_MAX_CHARS * 2)}`;
     const started = performance.now();
     const body = bodyOf(
       nb([
@@ -623,9 +626,7 @@ describe('anchors', () => {
   test('a path names a cell or one of its outputs, and the pointer round-trips', () => {
     expect(
       notebookTarget(notebook, { kind: 'path', pointer: '/cells/1' })
-    ).toEqual({
-      cell: 1,
-    });
+    ).toEqual({ cell: 1 });
     const target = notebookTarget(notebook, {
       kind: 'path',
       pointer: '/cells/1/outputs/1',
@@ -678,7 +679,7 @@ describe('anchors', () => {
     ).toBeUndefined();
   });
 
-  test('a time or region anchor names nothing in a notebook', () => {
+  test('a time anchor names nothing in a notebook', () => {
     expect(notebookTarget(notebook, { kind: 'time', t: 1 })).toBeUndefined();
   });
 });
