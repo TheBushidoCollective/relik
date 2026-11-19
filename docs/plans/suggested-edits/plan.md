@@ -203,7 +203,7 @@ export function suggestionFallbackBody(exact: string, s: SuggestionPayload): str
 - A reader's reply never changes the state.
 - Edits keep the existing "edited" badge (main.ts:3908-3917).
 - **Gate (public relic_republish).** A suggestion is open when it is readable and its state is pending, replied or unanswered. An open suggestion blocks the republish through the existing `unaddressed_comments` path (republish.ts:384-410), no matter how many replies it has.
-  - An `addresses` entry that names a suggestion must carry `outcome`, or the call refuses with `suggestion_outcome_required` before any network call.
+  - An `addresses` entry that names a suggestion must carry `outcome`, or the call refuses with `suggestion_outcome_required`. The check runs after the thread is read and before any grant, upload or comment write, because the encrypted thread exists only on the service and a suggestion cannot be recognised without it.
   - An entry that names an ordinary comment must not carry one (`outcome_not_applicable`).
   - Acknowledgements are still posted after the new version lands (republish.ts:586-601), so "Accepted in vN" names the new version.
   - A missing outcome never counts as `deferred` by default.
