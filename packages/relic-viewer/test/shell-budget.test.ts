@@ -388,6 +388,29 @@ describe('the app shell', () => {
     expect(requests).not.toContain('/assets/mediabunny-license.txt');
   });
 
+  test('precaches the structured-view stylesheets with the shell', async () => {
+    const built = Bun.spawnSync([process.execPath, 'build.ts'], {
+      cwd: pkgDir,
+    });
+    expect(built.exitCode).toBe(0);
+
+    const stylesheets = [
+      '/assets/cue-view.css',
+      '/assets/json-tree-view.css',
+      '/assets/data-table.css',
+      '/assets/notebook-view.css',
+    ];
+    const requests = await precachedAssets();
+    for (const stylesheet of stylesheets) {
+      expect(requests).toContain(stylesheet);
+      expect(
+        await Bun.file(
+          `${pkgDir}dist/${stylesheet.slice('/assets/'.length)}`
+        ).exists()
+      ).toBe(true);
+    }
+  });
+
   test('keeps the private reader out of the shell, in exactly one lazy chunk', async () => {
     const built = Bun.spawnSync([process.execPath, 'build.ts'], {
       cwd: pkgDir,

@@ -154,6 +154,7 @@ describe('mountStructuredView: the source view stands in until a view draws', ()
     expect(handle.structured).toBe(false);
     expect(state.children).toEqual([{ source: true }]);
     expect(state.events).toEqual([
+      { type: 'relic:structured-state', detail: 'source' },
       { type: 'relic:render-state', detail: 'ready' },
     ]);
   });

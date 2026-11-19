@@ -891,13 +891,26 @@ export function mountDataTable(
   head.addEventListener(
     'click',
     (event) => {
-      // Keep a comment button's click from sorting its column.
-      if (
-        event.target instanceof Element &&
-        event.target.closest('.dt-hc-comment')
-      ) {
-        event.stopPropagation();
-      }
+      // A column's comment button comments on that column's first row, the
+      // anchor a selection of the header gives. It never sorts the column.
+      if (!(event.target instanceof Element)) return;
+      const comment = event.target.closest<HTMLElement>('.dt-hc-comment');
+      if (comment === null) return;
+      event.stopPropagation();
+      const column = Number(
+        comment.closest<HTMLElement>('.dt-hcell')?.dataset['c']
+      );
+      if (!Number.isInteger(column)) return;
+      selectOne(0, column);
+      update(false);
+      root.dispatchEvent(
+        new CustomEvent('relic:structured-comment', {
+          bubbles: true,
+          detail: {
+            anchor: anchorForRect({ r0: 0, r1: 0, c0: column, c1: column }),
+          },
+        })
+      );
     },
     true
   );
