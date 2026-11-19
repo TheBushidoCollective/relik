@@ -253,7 +253,7 @@ interface CaseDef {
   /** For 'text': a string the rendered page body must contain. */
   readonly needle?: string;
   /** A trusted mouse click on the element the script armed, not a script click. */
-  readonly trigger?: 'click';
+  readonly trigger?: 'click' | undefined;
   /** The relic's whole source, given the channel addresses. */
   readonly source: (ch: Ch) => string;
 }
@@ -870,7 +870,7 @@ interface Published {
   readonly def: CaseDef;
   readonly url: string;
   readonly channel: Channel;
-  readonly error?: string;
+  readonly error?: string | undefined;
 }
 
 // ---------------------------------------------------------------------------
