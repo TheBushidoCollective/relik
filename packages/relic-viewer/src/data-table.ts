@@ -336,28 +336,84 @@ interface Coverage {
 
 const NO_EDGES: ReadonlySet<string> = new Set<string>();
 
-function coverageOf(
-  marks: readonly Mark[],
-  row: number,
-  col: number
-): Coverage {
-  let count = 0;
-  let ranged = false;
-  let edges: Set<string> | undefined;
-  for (const mark of marks) {
-    if (!anchorCoversCell(mark.anchor, row, col)) continue;
-    count++;
-    const rowEnd = mark.anchor.row_end ?? mark.anchor.row;
-    const colEnd = mark.anchor.col_end ?? mark.anchor.col;
-    if (rowEnd === mark.anchor.row && colEnd === mark.anchor.col) continue;
-    ranged = true;
-    edges ??= new Set<string>();
-    if (row === mark.anchor.row) edges.add('mk-t');
-    if (row === rowEnd) edges.add('mk-b');
-    if (col === mark.anchor.col) edges.add('mk-l');
-    if (col === colEnd) edges.add('mk-r');
+/** Whether a mark covers one cell and no other. */
+function isPointAnchor(anchor: CellCommentAnchor): boolean {
+  return (
+    (anchor.row_end ?? anchor.row) === anchor.row &&
+    (anchor.col_end ?? anchor.col) === anchor.col
+  );
+}
+
+/**
+ * The marks a table paints, indexed for the cells they cover. A single-cell
+ * mark is found by its row, and only ranges are scanned, so painting one cell
+ * costs the marks that can reach it rather than every mark on the table.
+ */
+class MarkIndex {
+  readonly #byId = new Map<string, Mark>();
+  readonly #points = new Map<number, Set<Mark>>();
+  readonly #ranges = new Set<Mark>();
+
+  /** Adds or replaces the mark with this id. Returns the anchor it replaced. */
+  put(id: string, anchor: CellCommentAnchor): CellCommentAnchor | undefined {
+    const replaced = this.remove(id);
+    const mark: Mark = { anchor, id };
+    this.#byId.set(id, mark);
+    if (isPointAnchor(anchor)) {
+      const row = this.#points.get(anchor.row) ?? new Set<Mark>();
+      row.add(mark);
+      this.#points.set(anchor.row, row);
+    } else {
+      this.#ranges.add(mark);
+    }
+    return replaced;
   }
-  return { count, ranged, edges: edges ?? NO_EDGES };
+
+  /** Removes the mark with this id. Returns the anchor it held. */
+  remove(id: string): CellCommentAnchor | undefined {
+    const mark = this.#byId.get(id);
+    if (mark === undefined) return undefined;
+    this.#byId.delete(id);
+    if (isPointAnchor(mark.anchor)) {
+      const row = this.#points.get(mark.anchor.row);
+      row?.delete(mark);
+      if (row !== undefined && row.size === 0) {
+        this.#points.delete(mark.anchor.row);
+      }
+    } else {
+      this.#ranges.delete(mark);
+    }
+    return mark.anchor;
+  }
+
+  clear(): void {
+    this.#byId.clear();
+    this.#points.clear();
+    this.#ranges.clear();
+  }
+
+  /** The marks covering one cell, 1-based as anchors are. */
+  coverage(row: number, col: number): Coverage {
+    let count = 0;
+    let ranged = false;
+    let edges: Set<string> | undefined;
+    const take = (mark: Mark): void => {
+      if (!anchorCoversCell(mark.anchor, row, col)) return;
+      count++;
+      const rowEnd = mark.anchor.row_end ?? mark.anchor.row;
+      const colEnd = mark.anchor.col_end ?? mark.anchor.col;
+      if (rowEnd === mark.anchor.row && colEnd === mark.anchor.col) return;
+      ranged = true;
+      edges ??= new Set<string>();
+      if (row === mark.anchor.row) edges.add('mk-t');
+      if (row === rowEnd) edges.add('mk-b');
+      if (col === mark.anchor.col) edges.add('mk-l');
+      if (col === colEnd) edges.add('mk-r');
+    };
+    for (const mark of this.#points.get(row) ?? []) take(mark);
+    for (const mark of this.#ranges) take(mark);
+    return { count, ranged, edges: edges ?? NO_EDGES };
+  }
 }
 
 /** Builds an element with a class and text set through `textContent`. */
@@ -418,7 +474,7 @@ export function mountDataTable(
     return numericCache[column] ?? false;
   };
 
-  const marks: Mark[] = [];
+  const marks = new MarkIndex();
   let selection: Selection | undefined;
   let findHits: CellRef[] = [];
   let findCurrent = -1;
@@ -575,7 +631,7 @@ export function mountDataTable(
   ): void => {
     const row = record + 1;
     const col = column + 1;
-    const cover = coverageOf(marks, row, col);
+    const cover = marks.coverage(row, col);
     const isSelected =
       selection !== undefined &&
       inRect(selectionRect(selection), record, column);
@@ -1069,18 +1125,55 @@ export function mountDataTable(
   // ---- first paint ----------------------------------------------------------
   update(false);
 
+  /**
+   * Repaints the drawn cells a mark covered before it changed and covers now.
+   * A single cell is found directly; a range visits the drawn cells only, so a
+   * comment costs its own cells rather than a rebuild of the window.
+   */
+  const repaintCovered = (
+    ...anchors: readonly (CellCommentAnchor | undefined)[]
+  ): void => {
+    for (const anchor of anchors) {
+      if (anchor === undefined) continue;
+      if (isPointAnchor(anchor)) {
+        const record = anchor.row - 1;
+        const column = anchor.col - 1;
+        const cell = elementAt(record, column);
+        if (cell !== undefined) {
+          paintCell(
+            cell,
+            record,
+            column,
+            cell.classList.contains('dt-hcell') ? 'head' : 'body'
+          );
+        }
+        continue;
+      }
+      for (const [key, cell] of bodyIndex) {
+        const record = Math.floor(key / TABLE_COLUMN_LIMIT);
+        const column = key % TABLE_COLUMN_LIMIT;
+        if (anchorCoversCell(anchor, record + 1, column + 1)) {
+          paintCell(cell, record, column, 'body');
+        }
+      }
+      for (const [column, cell] of headIndex) {
+        if (anchorCoversCell(anchor, 1, column + 1)) {
+          paintCell(cell, 0, column, 'head');
+        }
+      }
+    }
+  };
+
   return {
     paintMark(anchor: CommentAnchor, commentId: string): boolean {
       if (anchor.kind !== 'cell') return false;
       if (!markFits(anchor, table.records, drawn)) return false;
-      const existing = marks.findIndex((mark) => mark.id === commentId);
-      if (existing >= 0) marks.splice(existing, 1);
-      marks.push({ anchor, id: commentId });
-      update(false);
+      const replaced = marks.put(commentId, anchor);
+      repaintCovered(replaced, anchor);
       return true;
     },
     clearMarks(): void {
-      marks.length = 0;
+      marks.clear();
       update(false);
     },
     selectionAnchor(): CommentAnchor | undefined {

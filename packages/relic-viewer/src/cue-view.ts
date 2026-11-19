@@ -183,6 +183,13 @@ export function mountView(mount: StructuredMount): StructuredPart | undefined {
   return drawCues(mount, parsed.file);
 }
 
+/**
+ * A time comment is drawn on at most this many cues. A span over a long file
+ * would otherwise put one node on every cue; the mark's title says how many
+ * were left unmarked.
+ */
+const CUE_MARKS_PER_COMMENT = 500;
+
 function drawCues(mount: StructuredMount, file: SubtitleFile): StructuredPart {
   const root = mount.root;
   const doc = root.ownerDocument;
@@ -446,29 +453,45 @@ function drawCues(mount: StructuredMount, file: SubtitleFile): StructuredPart {
     return spanAnchor(first.cue.start, last.cue.end);
   };
 
+  /** The mark nodes each comment put on the cues, so a repaint touches only its own. */
+  const markNodes = new Map<string, HTMLElement[]>();
+
+  /** Removes one comment's mark nodes from the cues. */
+  const unmark = (commentId: string): void => {
+    for (const node of markNodes.get(commentId) ?? []) node.remove();
+    markNodes.delete(commentId);
+  };
+
   const paintMark = (anchor: CommentAnchor, commentId: string): boolean => {
     if (anchor.kind !== 'time') return false;
     const hits = overlapping(anchor);
     if (hits.length === 0) return false;
-    for (const mark of Array.from(
-      root.querySelectorAll<HTMLElement>('.cue-mark')
-    )) {
-      if (mark.dataset['commentId'] === commentId) mark.remove();
-    }
-    for (const hit of hits) {
+    unmark(commentId);
+    // A span over the whole file would otherwise put a node on every cue.
+    const shown = hits.slice(0, CUE_MARKS_PER_COMMENT);
+    const title =
+      shown.length < hits.length
+        ? `Commented. This comment spans ${hits.length} cues; the first ${shown.length} are marked.`
+        : 'Commented';
+    const nodes: HTMLElement[] = [];
+    for (const hit of shown) {
       const mark = el('span', 'cue-mark');
       mark.dataset['commentId'] = commentId;
-      mark.title = 'Commented';
+      mark.title = title;
       hit.text.insertBefore(mark, hit.add);
       hit.row.classList.add('is-commented');
       hit.band.classList.add('is-commented');
+      nodes.push(mark);
     }
+    markNodes.set(commentId, nodes);
     return true;
   };
 
   const clearMarks = (): void => {
-    for (const mark of Array.from(root.querySelectorAll('.cue-mark')))
-      mark.remove();
+    for (const nodes of markNodes.values()) {
+      for (const node of nodes) node.remove();
+    }
+    markNodes.clear();
     for (const cueRow of cueRows) {
       cueRow.row.classList.remove('is-commented', 'is-active');
       cueRow.band.classList.remove('is-commented');
@@ -481,13 +504,10 @@ function drawCues(mount: StructuredMount, file: SubtitleFile): StructuredPart {
     if (hit === undefined) return;
     hit.row.scrollIntoView({ block: 'center' });
     if (commentId === undefined) return;
-    for (const mark of Array.from(
-      root.querySelectorAll<HTMLElement>('.cue-mark')
-    )) {
-      mark.classList.toggle(
-        'is-active',
-        mark.dataset['commentId'] === commentId
-      );
+    for (const [id, nodes] of markNodes) {
+      for (const node of nodes) {
+        node.classList.toggle('is-active', id === commentId);
+      }
     }
   };
 

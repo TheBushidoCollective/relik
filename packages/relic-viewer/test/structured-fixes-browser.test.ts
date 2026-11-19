@@ -47,6 +47,13 @@ async function pageCases(
       options: { filename: string }
     ) => { dispose(): void };
     mountJsonTree: (mount: unknown) => { dispose(): void } | undefined;
+    mountCues: (mount: unknown) =>
+      | {
+          paintMark(anchor: unknown, id: string): boolean;
+          clearMarks(): void;
+          dispose(): void;
+        }
+      | undefined;
     parseTable: (text: string) => {
       ok: boolean;
       table?: unknown;
@@ -356,6 +363,82 @@ async function pageCases(
     }
   });
 
+  await check(
+    'a comment spanning every cue marks 500 of them, and the title says so',
+    async () => {
+      const cues: string[] = [];
+      const stamp = (s: number): string => {
+        const h = String(Math.floor(s / 3600)).padStart(2, '0');
+        const m = String(Math.floor((s % 3600) / 60)).padStart(2, '0');
+        const sec = String(s % 60).padStart(2, '0');
+        return `${h}:${m}:${sec},000`;
+      };
+      for (let i = 0; i < 2000; i++) {
+        cues.push(
+          `${i + 1}\n${stamp(i * 2)} --> ${stamp(i * 2 + 2)}\ncue ${i}\n`
+        );
+      }
+      const root = document.createElement('section');
+      document.body.append(root);
+      const part = api.mountCues({
+        root,
+        filename: 'long.srt',
+        mimetype: 'application/x-subrip',
+        source: cues.join('\n'),
+        sourceView: () => document.createElement('pre'),
+        reportUnshown: () => {},
+      });
+      try {
+        truth(part, 'the cues were refused');
+        truth(
+          part?.paintMark({ kind: 'time', t: 0, t_end: 4000 }, 'whole'),
+          'the span was not painted'
+        );
+        const marks = root.querySelectorAll<HTMLElement>('.cue-mark');
+        eq(marks.length, 500, 'marks on the cues');
+        truth(
+          marks[0]?.title.includes('spans 2000 cues') === true,
+          `the title is "${marks[0]?.title}"`
+        );
+      } finally {
+        part?.dispose();
+        root.remove();
+      }
+    }
+  );
+
+  await check(
+    'a table cell mark repaints its own cell and no other',
+    async () => {
+      const lines = ['a,b'];
+      for (let i = 0; i < 20; i++) lines.push(`x${i},y${i}`);
+      const f = mountTable(lines.join('\n'), 'cells.csv');
+      try {
+        f.grid.dispatchEvent(new Event('scroll'));
+        await frames();
+        truth(
+          f.part.paintMark({ kind: 'cell', row: 3, col: 2 }, 'one'),
+          'the mark was not painted'
+        );
+        truth(
+          f.grid
+            .querySelector('[data-r="2"][data-c="1"]')
+            ?.classList.contains('is-marked'),
+          'the marked cell has no is-marked class'
+        );
+        truth(
+          !f.grid
+            .querySelector('[data-r="2"][data-c="0"]')
+            ?.classList.contains('is-marked'),
+          'a neighbouring cell is marked'
+        );
+      } finally {
+        f.part.dispose();
+        f.root.remove();
+      }
+    }
+  );
+
   return passed;
 }
 
@@ -474,7 +557,7 @@ describe('structured views in the browser', () => {
           clearTimeout(timer);
         }
         if (result.error) throw new Error(result.error);
-        expect(result.passed).toHaveLength(8);
+        expect(result.passed).toHaveLength(10);
       } finally {
         browser.kill('SIGKILL');
         if (browser.exitCode === null && browser.signalCode === null) {

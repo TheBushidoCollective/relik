@@ -380,27 +380,29 @@ function drawNotebook(
 
   for (const cell of notebook.cells) list.append(cellItem(cell));
 
+  /** Puts the badge for one element's marks on it, dropping its stale badge. */
+  const refreshMark = (key: string, element: HTMLElement): void => {
+    for (const child of Array.from(element.children)) {
+      if (
+        child.classList.contains('nb-mark') ||
+        child.classList.contains('nb-mark-n')
+      )
+        child.remove();
+    }
+    const total = marks.get(key)?.size ?? 0;
+    element.classList.toggle('is-commented', total > 0);
+    if (total === 0) return;
+    const badge =
+      total === 1
+        ? el(doc, 'span', 'nb-mark', undefined)
+        : el(doc, 'span', 'nb-mark-n', String(total));
+    badge.title = total === 1 ? 'Commented' : `${total} comments`;
+    element.append(badge);
+  };
+
   /** Puts the badge for every painted mark on its element, and drops the stale ones. */
   const refreshMarks = (): void => {
-    for (const [key, element] of elements) {
-      for (const child of Array.from(element.children)) {
-        if (
-          child.classList.contains('nb-mark') ||
-          child.classList.contains('nb-mark-n')
-        )
-          child.remove();
-      }
-      const ids = marks.get(key);
-      const total = ids?.size ?? 0;
-      element.classList.toggle('is-commented', total > 0);
-      if (total === 0) continue;
-      const badge =
-        total === 1
-          ? el(doc, 'span', 'nb-mark', undefined)
-          : el(doc, 'span', 'nb-mark-n', String(total));
-      badge.title = total === 1 ? 'Commented' : `${total} comments`;
-      element.append(badge);
-    }
+    for (const [key, element] of elements) refreshMark(key, element);
   };
 
   const elementFor = (target: NotebookTarget): HTMLElement | undefined =>
@@ -500,11 +502,12 @@ function drawNotebook(
       const target = notebookTarget(notebook, anchor);
       if (target === undefined) return false;
       const key = keyOf(target);
-      if (!elements.has(key)) return false;
+      const element = elements.get(key);
+      if (element === undefined) return false;
       const ids = marks.get(key) ?? new Set<string>();
       ids.add(commentId);
       marks.set(key, ids);
-      refreshMarks();
+      refreshMark(key, element);
       return true;
     },
     clearMarks(): void {
