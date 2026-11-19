@@ -14,6 +14,10 @@ import {
 } from '@relic/format';
 import type { AnchorAdapter, AnchorSurface } from './anchoring.ts';
 import {
+  drawnStructuredView,
+  type StructuredViewHandle,
+} from './structured-view-bridge.ts';
+import {
   quotedTargetLabel,
   walkContentTextNodes,
   wrapTextQuoteWithContext,
@@ -253,6 +257,49 @@ export const quoteAdapter: AnchorAdapter<'quote'> = {
     if (surface.host.querySelector('iframe.usercontent-frame') !== null) {
       return false;
     }
+    // A drawn tree, notebook or table places its own legacy quotes, so the
+    // generic adapter does not wrap text inside those rows.
+    if (drawnTextView(surface.host) !== undefined) return false;
     return true;
+  },
+};
+
+/**
+ * The drawn structured view that places a legacy quote or text comment itself.
+ * A tree or notebook finds the words in its source. A table cannot place one
+ * yet, so it declines them: the comment reads as unplaceable instead of text
+ * being wrapped inside its grid (plan section 5; A1 notes, item 6).
+ */
+export function drawnTextView(
+  host: HTMLElement
+): StructuredViewHandle | undefined {
+  return (
+    drawnStructuredView(host, 'tree') ??
+    drawnStructuredView(host, 'notebook') ??
+    drawnStructuredView(host, 'table')
+  );
+}
+
+/**
+ * Legacy quote comments on a drawn tree, notebook or table. The view places
+ * the mark itself, so no text is wrapped inside its rows.
+ */
+export const structuredQuoteAdapter: AnchorAdapter<'quote'> = {
+  kind: 'quote',
+
+  label(anchor: Extract<CommentAnchor, { kind: 'quote' }>): string {
+    return quotedTargetLabel(anchor.exact);
+  },
+
+  paint(surface, _overlay, anchor, commentId): boolean {
+    return drawnTextView(surface.host)?.paintMark(anchor, commentId) ?? false;
+  },
+
+  reveal(surface, anchor, commentId): void {
+    drawnTextView(surface.host)?.reveal(anchor, commentId);
+  },
+
+  supports(surface: AnchorSurface): boolean {
+    return drawnTextView(surface.host) !== undefined;
   },
 };

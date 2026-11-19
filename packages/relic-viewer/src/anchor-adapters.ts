@@ -43,7 +43,7 @@ import {
 import { otioAdapter } from './annotate-otio.ts';
 import { pageAnchorAdapter } from './annotate-page.ts';
 import { pathAnchorAdapter } from './annotate-path.ts';
-import { quoteAdapter } from './annotate-quote.ts';
+import { quoteAdapter, structuredQuoteAdapter } from './annotate-quote.ts';
 import { regionAdapter } from './annotate-region.ts';
 import { timeAdapter } from './annotate-time.ts';
 
@@ -62,6 +62,7 @@ export function registerBuiltInAnchorAdapters(): void {
   registerAnchorAdapter(cellAnchorAdapter);
   registerAnchorAdapter(pathAnchorAdapter);
   registerAnchorAdapter(quoteAdapter);
+  registerAnchorAdapter(structuredQuoteAdapter);
   registerAnchorAdapter(regionAdapter);
   registerAnchorAdapter(otioAdapter);
   registerAnchorAdapter(timeAdapter);

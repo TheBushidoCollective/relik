@@ -146,8 +146,14 @@ export interface StructuredViewHandle extends StructuredPart {
   readonly structured: boolean;
   /** Settles once the view is drawn or the source view is shown. Never rejects. */
   readonly ready: Promise<void>;
-  /** Replaces the structured view with the source view, and keeps it there. */
+  /** Replaces the structured view with the source view, until `showStructured`. */
   showSource(): void;
+  /** Returns to the structured view after `showSource`, when this view can draw the file. */
+  showStructured(): void;
+  /** True while the source view stands in for the structured view by the reader's choice. */
+  readonly showingSource: boolean;
+  /** False once this view has refused the file, so there is no structured view to return to. */
+  readonly structuredAvailable: boolean;
 }
 
 const loaders: Readonly<
@@ -205,6 +211,8 @@ export function mountStructuredView(
   let drawn = false;
   let disposed = false;
   let wantsSource = false;
+  let refused = false;
+  let loaded: StructuredViewModule | undefined;
   let unshownReason: string | undefined;
   const sourceWithNotice = (): HTMLElement => {
     const source = mount.sourceView();
@@ -228,6 +236,46 @@ export function mountStructuredView(
     drop();
     root.replaceChildren(mount.sourceView());
   };
+  /**
+   * Tells the page which view is on screen. The route's toggle follows it, and
+   * the marks are painted again, because a view drawn again starts with none.
+   */
+  const announce = (): void => {
+    root.dispatchEvent(
+      new CustomEvent('relic:structured-state', {
+        bubbles: true,
+        detail: drawn ? 'structured' : 'source',
+      })
+    );
+  };
+  /** Draws the loaded module into the root, or the source with the reason it cannot. */
+  const draw = (): void => {
+    if (loaded === undefined || disposed || wantsSource) return;
+    drop();
+    root.replaceChildren();
+    unshownReason = undefined;
+    try {
+      const mounted = loaded.mountView({
+        ...mount,
+        root,
+        reportUnshown: (reason) => {
+          unshownReason = reason;
+        },
+      });
+      if (mounted === undefined) {
+        refused = true;
+        root.replaceChildren(sourceWithNotice());
+      } else {
+        refused = false;
+        part = mounted;
+        drawn = true;
+      }
+    } catch {
+      // A view that throws leaves a partly drawn root. The source replaces it.
+      refused = true;
+      root.replaceChildren(mount.sourceView());
+    }
+  };
   const finish = (): void => {
     settle();
     root.dispatchEvent(
@@ -237,28 +285,10 @@ export function mountStructuredView(
 
   loaders[kind]().then(
     (module) => {
-      if (disposed || wantsSource) {
-        finish();
-        return;
-      }
-      root.replaceChildren();
-      try {
-        const mounted = module.mountView({
-          ...mount,
-          root,
-          reportUnshown: (reason) => {
-            unshownReason = reason;
-          },
-        });
-        if (mounted === undefined) {
-          root.replaceChildren(sourceWithNotice());
-        } else {
-          part = mounted;
-          drawn = true;
-        }
-      } catch {
-        // A view that throws leaves a partly drawn root. The source replaces it.
-        root.replaceChildren(mount.sourceView());
+      loaded = module;
+      if (!disposed && !wantsSource) {
+        draw();
+        announce();
       }
       finish();
     },
@@ -273,6 +303,12 @@ export function mountStructuredView(
     get structured() {
       return drawn;
     },
+    get showingSource() {
+      return wantsSource;
+    },
+    get structuredAvailable() {
+      return !refused;
+    },
     ready,
     paintMark: (anchor, commentId) =>
       part?.paintMark(anchor, commentId) ?? false,
@@ -282,6 +318,16 @@ export function mountStructuredView(
     showSource() {
       wantsSource = true;
       replaceWithSource();
+      announce();
+    },
+    showStructured() {
+      if (!wantsSource) return;
+      wantsSource = false;
+      // Before the module has loaded, the load draws the view itself.
+      if (loaded !== undefined && !disposed) {
+        draw();
+        announce();
+      }
     },
     dispose() {
       if (disposed) return;
