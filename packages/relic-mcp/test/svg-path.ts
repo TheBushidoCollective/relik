@@ -280,6 +280,34 @@ function appFor(dist: string): AppLike {
   });
 }
 
+// The shim's response carries `sandbox allow-scripts`, and a CSP sandbox directive
+// caps the frame's flags whatever the iframe attribute grants. With that directive,
+// a loosened iframe attribute flips nothing, so control A is blind. Control A serves
+// the loosened copy without that one directive, and only that one. The viewer rows
+// keep the production app. The wrapper fails if the directive is absent, so the
+// control cannot silently become a no-op.
+const SHIM_SANDBOX_DIRECTIVE = 'sandbox allow-scripts; ';
+function withoutShimSandboxDirective(inner: AppLike): AppLike {
+  return {
+    async fetch(request: Request): Promise<Response> {
+      const response = await inner.fetch(request);
+      if (new URL(request.url).pathname !== '/sandbox.html') return response;
+      const csp = response.headers.get('content-security-policy');
+      if (csp === null || !csp.includes(SHIM_SANDBOX_DIRECTIVE)) {
+        throw new Error(
+          'control A: sandbox.html no longer carries the sandbox directive it removes'
+        );
+      }
+      const headers = new Headers(response.headers);
+      headers.set(
+        'content-security-policy',
+        csp.replace(SHIM_SANDBOX_DIRECTIVE, '')
+      );
+      return new Response(response.body, { status: response.status, headers });
+    },
+  };
+}
+
 function check(label: string, ok: boolean, evidence: string): void {
   checks.push({ label, ok });
   console.log(`${ok ? 'PROVEN' : 'NOT_PROVEN'} ${label} | ${evidence}`);
@@ -1316,7 +1344,7 @@ async function runMode(
       browser,
       url,
       token,
-      appFor(loosenedDist),
+      withoutShimSandboxDirective(appFor(loosenedDist)),
       undefined
     );
     checkSandboxControl(m, sandboxControl);
