@@ -23,7 +23,7 @@ curl -fsS --retry 10 --retry-all-errors --retry-delay 3 \
   -D "$scratch/sh" -o/dev/null "$USERCONTENT/sandbox.html"
 
 echo "and names the service origin as the only page allowed to frame it"
-grep -qi "^content-security-policy:.*frame-ancestors $ORIGIN\(;\|\$\)" "$scratch/sh" || {
+grep -qi "^content-security-policy:.*frame-ancestors $ORIGIN\(;\|[[:space:]]*\$\)" "$scratch/sh" || {
   echo "usercontent frame-ancestors does not name $ORIGIN:"
   grep -i '^content-security-policy:' "$scratch/sh"
   exit 1
@@ -31,7 +31,7 @@ grep -qi "^content-security-policy:.*frame-ancestors $ORIGIN\(;\|\$\)" "$scratch
 
 echo "and the service allows exactly that usercontent origin as a frame source"
 curl -fsS -D "$scratch/vh" -o/dev/null "$SERVICE/aaaaaaaaaaaaaaaaaaaaaaaaaa"
-grep -qi "^content-security-policy:.*frame-src $USERCONTENT\(;\|\$\)" "$scratch/vh" || {
+grep -qi "^content-security-policy:.*frame-src $USERCONTENT\(;\|[[:space:]]*\$\)" "$scratch/vh" || {
   echo "service frame-src does not name $USERCONTENT:"
   grep -i '^content-security-policy:' "$scratch/vh"
   exit 1
