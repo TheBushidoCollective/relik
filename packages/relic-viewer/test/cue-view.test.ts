@@ -360,7 +360,9 @@ async function browserCases(
       'text/vtt'
     );
     await handle.ready;
-    root.querySelector<HTMLButtonElement>('.cues-action')?.click();
+    // The route's toggle offers View source; the view draws no second control.
+    eq(root.querySelector('.cues-action'), null, 'no duplicate control');
+    handle.showSource();
     eq(handle.structured, false, 'no longer drawn');
     truth(root.querySelector('pre.source'), 'source shown');
     root.remove();

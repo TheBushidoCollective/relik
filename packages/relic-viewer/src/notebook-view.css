@@ -5,8 +5,10 @@
  * view still reads when a page loads it without the main stylesheet.
  */
 
+/* In the notebook's own column, so the line reads as the notebook's header. */
 .nb-summary {
-  margin: 0 0 0.8rem;
+  max-width: 60rem;
+  margin: 0 auto 0.8rem;
   color: var(--ink-soft, #5a6163);
   font: 0.74rem/1.4 var(--mono, ui-monospace, monospace);
   letter-spacing: 0.02em;
@@ -70,11 +72,12 @@
 }
 
 .nb-box:hover,
-.nb-cell.is-selected > .nb-input > .nb-box:hover {
+.nb-box.is-selected:hover {
   border-color: var(--rule-strong, #b3b8b4);
 }
 
-.nb-cell.is-selected > .nb-input > .nb-box {
+/* The view marks the chosen box itself (`elements` holds the box, not the cell). */
+.nb-box.is-selected {
   border-color: var(--patina, #1f6b64);
   box-shadow: inset 3px 0 0 var(--patina, #1f6b64);
 }
@@ -99,11 +102,13 @@
   tab-size: 4;
 }
 
+/* Outputs sit just under their cell (mock N1), not over its bottom edge, so
+   the kind label never straddles the cell's border. */
 .nb-out-wrap {
   display: grid;
   grid-template-columns: 4.7rem minmax(0, 1fr);
   gap: 0 0.6rem;
-  margin: -0.6rem 0 0.9rem;
+  margin: 0.5rem 0 0;
 }
 
 .nb-out {
@@ -114,8 +119,12 @@
   font: 0.78rem/1.5 var(--mono, ui-monospace, monospace);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  overflow-x: auto;
   outline: none;
+}
+
+/* Text outputs wrap, so only rendered markdown can be wider than the column. */
+.nb-out.is-markdown > .prose {
+  overflow-x: auto;
 }
 
 .nb-out.is-stream {
@@ -215,10 +224,10 @@
   display: none;
 }
 
-/* An output block clips what it draws above its top edge (overflow-x: auto also
-   clips the y axis), so an output's toolbar sits inside the block, not above it. */
+/* An output's toolbar hangs from the output's bottom edge, as the mock hangs a
+   cell's (N3). Inside the block, at its top, it covered the first output line. */
 .nb-out > .nb-tools {
-  top: 0.2rem;
+  top: calc(100% - 0.3rem);
 }
 
 .nb-box:hover > .nb-tools,
@@ -245,7 +254,12 @@
 .nb-comment:focus-visible {
   border-color: var(--patina, #1f6b64);
   color: var(--patina-ink, #0f3b37);
-  outline: none;
+}
+
+/* A keyboard focus needs more than a 1 px border change to be seen. */
+.nb-comment:focus-visible {
+  outline: 2px solid var(--patina, #1f6b64);
+  outline-offset: 1px;
 }
 
 /* The corner mark: one remark is a patina corner, several a count in the same corner. */
@@ -277,31 +291,55 @@
   pointer-events: none;
 }
 
-/* Narrow screens (plan N6, 390 px): the gutter narrows so the cells keep their width. */
+/* Narrow screens (plan N6, 390 px): the In/Out label sits above its cell, so
+   the cells take the full width, and the kind label takes its own line. */
 @media (max-width: 40rem) {
   .nb-input,
   .nb-out-wrap {
-    grid-template-columns: 2.9rem minmax(0, 1fr);
-    gap: 0 0.4rem;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
   }
 
   .nb-gutter {
+    padding: 0 0 0.2rem;
     font-size: 0.64rem;
+    text-align: left;
   }
 
   .nb-src {
     font-size: 0.74rem;
   }
 
+  .nb-out-kind {
+    position: static;
+    display: block;
+    text-align: right;
+  }
+
+  /* Touch has no hover: the chosen cell or output shows its Comment control,
+     in the flow rather than over the text, at a size a finger can hit. */
   .nb-tools {
     position: static;
-    display: flex;
-    margin: 0.3rem 0.4rem 0 0;
+    display: none;
+    margin: 0.3rem 0.4rem 0.4rem 0;
     justify-content: flex-end;
   }
 
   .nb-box:hover > .nb-tools,
   .nb-out:hover > .nb-tools {
+    display: none;
+  }
+
+  .nb-box.is-selected > .nb-tools,
+  .nb-out.is-selected > .nb-tools,
+  .nb-box:focus-within > .nb-tools,
+  .nb-out:focus-within > .nb-tools {
     display: flex;
+  }
+
+  .nb-comment,
+  .nb-withheld button,
+  .nb-show-text {
+    min-height: 44px;
   }
 }

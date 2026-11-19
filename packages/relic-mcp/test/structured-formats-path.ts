@@ -35,6 +35,13 @@
  *   refusals   Negative control (a). Malformed cell and path anchors are refused by
  *              the MCP validators before anything is posted: the store row count
  *              does not change and every refusal names the anchor.
+ *   layout     The viewer's own stylesheet, measured. At 390 px with touch, no view
+ *              makes the page scroll sideways and every control it draws is at
+ *              least 44 px. At 1440 px the table inspector is on screen, ArrowUp
+ *              never leaves the active cell under the sticky head, a notebook
+ *              output's Comment control covers none of its text, the notebook
+ *              and tree composers open on screen, a cue list has one View
+ *              source, and a refused table's notice is styled and lines up.
  *
  * Negative control (b), run by hand and reverted afterwards (it changes product
  * code, so it is not part of the default run):
@@ -381,13 +388,29 @@ interface Page {
 
 interface ClickOptions {
   readonly index?: number;
+  /** Measure where the element is now, without scrolling it into view first. */
+  readonly noScroll?: boolean;
   /** Pixels from the element's left edge, for controls that sit at one side. */
   readonly fromLeft?: number;
   /** Pixels in from the element's right edge, for a drag that ends at a line's end. */
   readonly fromRight?: number;
 }
 
-async function openPage(url: string, token: string): Promise<Page> {
+interface Viewport {
+  readonly width: number;
+  readonly height: number;
+  /** A phone: mobile layout metrics and touch input. */
+  readonly phone: boolean;
+}
+
+const DESKTOP: Viewport = { width: 1440, height: 900, phone: false };
+const PHONE: Viewport = { width: 390, height: 844, phone: true };
+
+async function openPage(
+  url: string,
+  token: string,
+  view: Viewport = DESKTOP
+): Promise<Page> {
   const profile = await mkdtemp(join(tmpdir(), 'relic-structured-chrome-'));
   const shared = chromeArgs(chromeExecutable, profile);
   const launch = createBrowserHeadlessLaunch(
@@ -482,12 +505,17 @@ async function openPage(url: string, token: string): Promise<Page> {
       sameSite: 'Lax',
     });
     await send('Emulation.setDeviceMetricsOverride', {
-      width: 1440,
-      height: 900,
+      width: view.width,
+      height: view.height,
       deviceScaleFactor: 1,
-      mobile: false,
-      hasTouch: false,
+      mobile: view.phone,
     });
+    if (view.phone) {
+      await send('Emulation.setTouchEmulationEnabled', {
+        enabled: true,
+        maxTouchPoints: 5,
+      });
+    }
     await send('Emulation.setEmulatedMedia', {
       media: 'page',
       features: [{ name: 'prefers-color-scheme', value: 'light' }],
@@ -550,7 +578,7 @@ async function openPage(url: string, token: string): Promise<Page> {
       } | null>(`(() => {
         const el = document.querySelectorAll(${JSON.stringify(selector)})[${options.index ?? 0}];
         if (!(el instanceof HTMLElement)) return null;
-        el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
+        if (${options.noScroll === true ? 'false' : 'true'}) el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
         const r = el.getBoundingClientRect();
         if (r.width === 0 || r.height === 0) return null;
         const x = ${options.fromRight !== undefined ? `r.right - ${options.fromRight}` : options.fromLeft === undefined ? 'r.left + r.width / 2' : `r.left + ${options.fromLeft}`};
@@ -622,8 +650,11 @@ async function openPage(url: string, token: string): Promise<Page> {
       },
       async drag(from, to, fromOptions = {}, toOptions = {}) {
         currentStep = `drag ${from} to ${to}`;
-        const start = await point(from, fromOptions);
+        // Both ends into view, then the start measured again where it now is:
+        // bringing the end into view can scroll the page under the start.
+        await point(from, fromOptions);
         const end = await point(to, toOptions);
+        const start = await point(from, { ...fromOptions, noScroll: true });
         await mouse('mouseMoved', start, 0);
         await mouse('mousePressed', start, 1);
         for (let step = 1; step <= 4; step++) {
@@ -717,7 +748,7 @@ const cellSel = (record: number, column: number): string =>
 const stages = new Set(
   (
     process.env['RELIC_STRUCTURED_STAGES'] ??
-    'table,tree,cues,notebook,old-reader,versions,refusals'
+    'table,tree,cues,notebook,old-reader,versions,refusals,layout'
   )
     .split(',')
     .map((name) => name.trim())
@@ -1163,6 +1194,13 @@ await stage('notebook', async () => {
     await page.click('.nb-comment[data-pointer="/cells/1"]');
     await composeAndPost(page, 'Why print here');
     await awaitStored(nb.relicId, 1);
+    // The posted card opens beside its control now; close it, as a reader would,
+    // before reaching for the output's control next to it.
+    await page.escape();
+    await page.waitFor(
+      `document.querySelector('.popover-card[data-comment-id]') === null`,
+      'the posted notebook card is dismissed'
+    );
     await page.hover('.nb-cell[data-cell="1"] .nb-out.is-stream');
     await page.click('.nb-comment[data-pointer="/cells/1/outputs/0"]');
     await composeAndPost(page, 'Stream line');
@@ -1412,6 +1450,349 @@ await stage('refusals', async () => {
   assert.equal(after, before, 'no refused comment reached the service');
 });
 
+// --- Layout, measured on the real viewer stylesheet (UX review). ---
+
+/** In the page: the view's own controls a finger must hit, as rects. */
+const SMALL_TARGETS = `(() => {
+  const shown = (el) => {
+    const r = el.getBoundingClientRect();
+    const s = getComputedStyle(el);
+    return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && Number(s.opacity) > 0.05;
+  };
+  const scope = [...document.querySelectorAll('.structured-view, .toggle-row')];
+  const controls = scope.flatMap((root) => [...root.querySelectorAll('button, input, select, label')]);
+  return controls
+    .filter(shown)
+    .filter((el) => !(el.tagName === 'INPUT' && el.closest('label') !== null))
+    .filter((el) => !el.closest('.dt-grid'))
+    .map((el) => {
+      const r = el.getBoundingClientRect();
+      return { what: (el.className || el.tagName) + ' ' + (el.textContent || el.getAttribute('aria-label') || '').trim().slice(0, 24), w: Math.round(r.width), h: Math.round(r.height) };
+    })
+    .filter((t) => t.w < 44 || t.h < 44);
+})()`;
+
+/** In the page: the page itself scrolls sideways (a wide grid scrolls inside its own box). */
+const PAGE_OVERFLOW = `document.documentElement.scrollWidth - window.innerWidth`;
+
+/** In the page: a rect, as [left, top, right, bottom], or null. */
+const rectOf = (selector: string): string =>
+  `(() => { const r = document.querySelector(${JSON.stringify(selector)})?.getBoundingClientRect(); return r ? [r.left, r.top, r.right, r.bottom].map(Math.round) : null; })()`;
+
+const LONG_CSV = [
+  'part,qty',
+  ...Array.from({ length: 400 }, (_, i) => `part-${i},${i}`),
+  '',
+].join('\n');
+
+const LONG_STREAM = 'Loaded 1,284 rows from 8 sites; '.repeat(8).trim();
+const LAYOUT_IPYNB = `${JSON.stringify({
+  nbformat: 4,
+  nbformat_minor: 5,
+  metadata: {},
+  cells: [
+    { cell_type: 'markdown', metadata: {}, source: ['# Survey\n'] },
+    {
+      cell_type: 'code',
+      execution_count: 1,
+      metadata: {},
+      source: ['print(summary)'],
+      outputs: [{ output_type: 'stream', name: 'stdout', text: [LONG_STREAM] }],
+    },
+  ],
+})}\n`;
+
+await stage('layout', async () => {
+  // Every measurement is taken before any verdict, so one run names every
+  // layout rule that fails, not only the first.
+  const failures: string[] = [];
+  const check = (ok: unknown, label: string): void => {
+    if (!ok) failures.push(label);
+  };
+  const cases = [
+    { name: 'layout-table.csv', text: CSV_TEXT, ready: '.dt-cell' },
+    { name: 'layout-tree.json', text: ORDER_JSON, ready: '.jt-row' },
+    { name: 'layout-cues.vtt', text: VTT_TEXT, ready: '.cue-text' },
+    { name: 'layout-notebook.ipynb', text: LAYOUT_IPYNB, ready: '.nb-cell' },
+  ];
+  const published = new Map<string, Published>();
+  for (const item of cases) {
+    published.set(item.name, await publish(item.name, item.text));
+  }
+
+  // On a phone: the page never scrolls sideways, and every control the view
+  // draws is at least 44 by 44 px.
+  for (const item of cases) {
+    const page = await openPage(published.get(item.name)!.url, reader, PHONE);
+    try {
+      await page.waitFor(
+        `document.querySelector('${item.ready}') !== null`,
+        `${item.name} draws on a phone`
+      );
+      if (item.ready === '.dt-cell') {
+        await page.click(cellSel(2, 0));
+        await page.waitFor(
+          `document.querySelector('.dt-cellbar .dt-copy') !== null`,
+          'the inspector opens on a phone'
+        );
+      }
+      // A chosen node shows its breadcrumb; a chosen notebook cell its Comment.
+      if (item.ready === '.jt-row') {
+        await page.click('.jt-row', { index: 1 });
+      }
+      if (item.ready === '.nb-cell') {
+        await page.click('.nb-cell[data-cell="1"] .nb-box');
+        await page.waitFor(
+          `document.querySelector('.nb-comment[data-pointer="/cells/1"]')?.getBoundingClientRect().height > 0`,
+          'the chosen cell shows its Comment on a phone'
+        );
+      }
+      const overflow = await page.evaluate<number>(PAGE_OVERFLOW);
+      const small = await page.evaluate<unknown[]>(SMALL_TARGETS);
+      console.log(
+        `LAYOUT_PHONE ${item.name} overflow=${overflow} small=${JSON.stringify(small)}`
+      );
+      check(
+        overflow <= 0,
+        `${item.name}: the page scrolls ${overflow} px sideways at 390 px`
+      );
+      check(small.length === 0, `${item.name}: controls under 44 px at 390 px`);
+      assertNoPageErrors(page, `${item.name} on a phone`);
+    } finally {
+      await page.close();
+    }
+  }
+
+  // A table on a desktop: the inspector is on screen when a cell is chosen, and
+  // moving up past the top row never leaves the active cell under the sticky head.
+  const long = await publish('layout-long.csv', LONG_CSV);
+  const tablePage = await openPage(long.url, reader);
+  try {
+    await tablePage.waitFor(
+      `document.querySelector('.dt-cell') !== null`,
+      'the long table draws'
+    );
+    await tablePage.evaluate(
+      `(() => { const g = document.querySelector('.dt-grid'); g.scrollTop = 2000; g.dispatchEvent(new Event('scroll')); })()`
+    );
+    await Bun.sleep(200);
+    const first = await tablePage.evaluate<number>(`(() => {
+      const head = document.querySelector('.dt-head').getBoundingClientRect().bottom;
+      const cells = [...document.querySelectorAll('.dt-cell[data-c="0"]')];
+      const top = cells.filter((c) => c.getBoundingClientRect().top >= head).sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top)[0];
+      return Number(top?.dataset.r ?? -1);
+    })()`);
+    assert.ok(first > 2, 'a row below the head is drawn');
+    // A press where the cell already is: the shared click helper centres its
+    // target first, which would scroll the grid away from the head.
+    const at = await tablePage.evaluate<{ x: number; y: number }>(
+      `(() => { const r = document.querySelector(${JSON.stringify(cellSel(first, 0))}).getBoundingClientRect(); return { x: r.left + 10, y: r.top + r.height / 2 }; })()`
+    );
+    for (const type of ['mousePressed', 'mouseReleased'] as const) {
+      await tablePage.send('Input.dispatchMouseEvent', {
+        type,
+        x: at.x,
+        y: at.y,
+        button: 'left',
+        buttons: type === 'mousePressed' ? 1 : 0,
+        clickCount: 1,
+      });
+    }
+    for (const _ of [1, 2]) {
+      await tablePage.send('Input.dispatchKeyEvent', {
+        type: 'keyDown',
+        key: 'ArrowUp',
+        code: 'ArrowUp',
+        windowsVirtualKeyCode: 38,
+      });
+      await tablePage.send('Input.dispatchKeyEvent', {
+        type: 'keyUp',
+        key: 'ArrowUp',
+        code: 'ArrowUp',
+        windowsVirtualKeyCode: 38,
+      });
+      await Bun.sleep(100);
+    }
+    const active = await tablePage.evaluate<
+      [number, number, number, number] | null
+    >(rectOf('.dt-cell.is-active'));
+    const head = await tablePage.evaluate<
+      [number, number, number, number] | null
+    >(rectOf('.dt-head'));
+    const value = await tablePage.evaluate<
+      [number, number, number, number] | null
+    >(rectOf('.dt-cellbar'));
+    const height = await tablePage.evaluate<number>('window.innerHeight');
+    console.log(
+      `LAYOUT_TABLE active=${JSON.stringify(active)} head=${JSON.stringify(head)} value=${JSON.stringify(value)} viewport=${height}`
+    );
+    check(
+      active && head && active[1] >= head[3] - 1,
+      'the active cell is hidden under the sticky head after ArrowUp'
+    );
+    check(
+      value && value[1] >= 0 && value[3] <= height,
+      'the inspector is not wholly on screen'
+    );
+    assertNoPageErrors(tablePage, 'long table');
+  } finally {
+    await tablePage.close();
+  }
+
+  // A notebook on a desktop: an output's Comment control never covers the
+  // output's text, and the composer opens on screen beside its control.
+  const nbPage = await openPage(
+    published.get('layout-notebook.ipynb')!.url,
+    reader
+  );
+  try {
+    await nbPage.waitFor(
+      `document.querySelector('.nb-out.is-stream') !== null`,
+      'the notebook draws'
+    );
+    await nbPage.hover('.nb-cell[data-cell="1"] .nb-out.is-stream');
+    const covered = await nbPage.evaluate<{
+      tool: number[] | null;
+      hits: number;
+    }>(`(() => {
+      const out = document.querySelector('.nb-cell[data-cell="1"] .nb-out.is-stream');
+      const tool = out.querySelector('.nb-tools');
+      const t = tool?.getBoundingClientRect();
+      if (!t || t.width === 0) return { tool: null, hits: 0 };
+      const walker = document.createTreeWalker(out, NodeFilter.SHOW_TEXT);
+      let hits = 0;
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        if (tool.contains(node) || node.parentElement.closest('.nb-out-kind')) continue;
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        for (const r of range.getClientRects()) {
+          if (r.right > t.left && r.left < t.right && r.bottom > t.top && r.top < t.bottom) hits++;
+        }
+      }
+      return { tool: [t.left, t.top, t.right, t.bottom].map(Math.round), hits };
+    })()`);
+    console.log(`LAYOUT_NOTEBOOK_TOOL ${JSON.stringify(covered)}`);
+    check(covered.tool !== null, 'the output Comment control shows on hover');
+    check(covered.hits === 0, 'the output Comment control covers output text');
+
+    await nbPage.hover('.nb-cell[data-cell="1"] .nb-box');
+    await nbPage.click('.nb-comment[data-pointer="/cells/1"]');
+    await nbPage.waitFor(
+      `document.querySelector('.popover-composer .popover-field') !== null`,
+      'the notebook composer opens'
+    );
+    await Bun.sleep(300);
+    type Rect = [number, number, number, number];
+    const composer = await nbPage.evaluate<Rect | null>(
+      rectOf('.popover-composer')
+    );
+    const box = await nbPage.evaluate<Rect | null>(
+      rectOf('.nb-cell[data-cell="1"] .nb-box')
+    );
+    const height = await nbPage.evaluate<number>('window.innerHeight');
+    console.log(
+      `LAYOUT_NOTEBOOK_COMPOSER cell=${JSON.stringify(box)} composer=${JSON.stringify(composer)} viewport=${height}`
+    );
+    check(
+      composer && composer[1] >= 0 && composer[3] <= height,
+      'the notebook composer opens off screen'
+    );
+    // Beside its cell: the gap between the cell box and the composer, above or
+    // below, is at most 24 px.
+    check(
+      composer &&
+        box &&
+        Math.max(composer[1] - box[3], box[1] - composer[3]) <= 24,
+      'the notebook composer opens away from its cell'
+    );
+    assertNoPageErrors(nbPage, 'layout notebook');
+  } finally {
+    await nbPage.close();
+  }
+
+  // A tree on a desktop: the composer opens on screen; a cue list has one View source.
+  const treePage = await openPage(
+    published.get('layout-tree.json')!.url,
+    reader
+  );
+  try {
+    await treePage.waitFor(
+      `document.querySelector('.jt-row') !== null`,
+      'the tree draws'
+    );
+    await treePage.click('.jt-row', { index: 1 });
+    const index = await treePage.evaluate<number>(
+      `[...document.querySelectorAll('button')].findIndex((b) => b.textContent.trim() === 'Comment' && !b.disabled)`
+    );
+    await treePage.click('button', { index });
+    await treePage.waitFor(
+      `document.querySelector('.popover-composer .popover-tools .is-primary') !== null`,
+      'the tree composer opens'
+    );
+    await Bun.sleep(300);
+    const post = await treePage.evaluate<number[] | null>(
+      rectOf('.popover-composer .popover-tools .is-primary')
+    );
+    const field = await treePage.evaluate<number[] | null>(
+      rectOf('.popover-composer .popover-field')
+    );
+    const hit = await treePage.evaluate<boolean>(
+      `(() => { const p = document.querySelector('.popover-composer .popover-tools .is-primary').getBoundingClientRect(); const at = document.elementFromPoint(p.left + p.width / 2, p.top + p.height / 2); return at !== null && at.closest('.popover-composer') !== null; })()`
+    );
+    console.log(
+      `LAYOUT_TREE_COMPOSER field=${JSON.stringify(field)} post=${JSON.stringify(post)} hit=${hit}`
+    );
+    check(hit, 'the tree composer Post button is covered or off screen');
+    assertNoPageErrors(treePage, 'layout tree');
+  } finally {
+    await treePage.close();
+  }
+
+  const cuePage = await openPage(published.get('layout-cues.vtt')!.url, reader);
+  try {
+    await cuePage.waitFor(
+      `document.querySelector('.cue-text') !== null`,
+      'the cues draw'
+    );
+    const sources = await cuePage.evaluate<number>(
+      `[...document.querySelectorAll('button')].filter((b) => /View source/.test(b.textContent) || b.getAttribute('aria-label') === 'View source').length`
+    );
+    console.log(`LAYOUT_CUES view_source_controls=${sources}`);
+    check(sources === 1, 'a cue list shows one View source control');
+  } finally {
+    await cuePage.close();
+  }
+
+  // A refused table: the reason is styled and lines up with the source under it.
+  const broken = await publish('layout-broken.csv', 'part,qty\nbolt,"4\n');
+  const brokenPage = await openPage(broken.url, reader);
+  try {
+    await brokenPage.waitFor(
+      `document.querySelector('.structured-notice') !== null`,
+      'the refusal notice shows'
+    );
+    const notice = await brokenPage.evaluate<{
+      border: string;
+      noticeLeft: number;
+      sourceLeft: number | null;
+    }>(`(() => {
+      const n = document.querySelector('.structured-notice');
+      const s = n.nextElementSibling ?? n.parentElement.querySelector('pre');
+      return { border: getComputedStyle(n).borderLeftWidth, noticeLeft: Math.round(n.getBoundingClientRect().left), sourceLeft: s ? Math.round(s.getBoundingClientRect().left) : null };
+    })()`);
+    console.log(`LAYOUT_NOTICE ${JSON.stringify(notice)}`);
+    check(notice.border === '3px', 'the refusal notice is unstyled');
+    check(
+      notice.sourceLeft !== null &&
+        Math.abs(notice.noticeLeft - notice.sourceLeft) <= 1,
+      'the refusal notice does not line up with its source'
+    );
+  } finally {
+    await brokenPage.close();
+  }
+  assert.deepEqual(failures, [], 'layout rules that fail');
+});
+
 await rm(scratch, { recursive: true, force: true });
 delete process.env['RELIC_PUBLISH_STATE'];
 service.stop(true);
@@ -1423,6 +1804,7 @@ const allStages = [
   'notebook',
   'old-reader',
   'refusals',
+  'layout',
 ];
 if (allStages.every((name) => passed.includes(name))) {
   console.log('STRUCTURED_FORMATS_PATH_OK');

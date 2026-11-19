@@ -1,0 +1,55 @@
+STAGE layout ...
+LAYOUT_PHONE layout-table.csv overflow=0 small=[{"what":"action View source","w":38,"h":27},{"what":"dt-toggle First row is a header","w":150,"h":19},{"what":"dt-find Find in table","w":192,"h":29},{"what":"dt-copy Copy","w":54,"h":27}]
+LAYOUT_PHONE layout-tree.json overflow=0 small=[{"what":"action View source","w":38,"h":27},{"what":"jt-button Expand all","w":88,"h":40},{"what":"jt-button Collapse all","w":95,"h":40},{"what":"jt-button Copy path","w":88,"h":40},{"what":"jt-button Copy value","w":93,"h":40},{"what":"jt-button Comment","w":85,"h":40}]
+LAYOUT_PHONE layout-cues.vtt overflow=0 small=[{"what":"action View source","w":38,"h":27},{"what":"cues-find Find in subtitles","w":192,"h":27},{"what":"cues-action View source","w":92,"h":27},{"what":"cm-add Comment on cue 1","w":20,"h":20},{"what":"cm-add Comment on cue 2","w":20,"h":20}]
+LAYOUT_PHONE layout-notebook.ipynb overflow=0 small=[{"what":"action View source","w":38,"h":27},{"what":"nb-comment Comment on cell 1","w":127,"h":25},{"what":"nb-comment Comment on cell 2","w":128,"h":25},{"what":"nb-comment Comment on output 1 of c","w":193,"h":25}]
+LAYOUT_TABLE active=[77,207,165,235] head=[21,207,253,243] value=[20,842,1391,928] viewport=900
+LAYOUT_NOTEBOOK_TOOL {"tool":[984,308,1178,333],"hits":4}
+LAYOUT_NOTEBOOK_COMPOSER cell=[310,273,1186,315] composer=[530,385,882,625] viewport=900
+LAYOUT_TREE_COMPOSER field=[542,111,869,183] post=[542,199,588,227] hit=false
+LAYOUT_CUES view_source_controls=2
+LAYOUT_NOTICE {"border":"0px","noticeLeft":20,"sourceLeft":338}
+1662 |       'the refusal notice does not line up with its source'
+1663 |     );
+1664 |   } finally {
+1665 |     await brokenPage.close();
+1666 |   }
+1667 |   assert.deepEqual(failures, [], 'layout rules that fail');
+                ^
+AssertionError: layout rules that fail
++ actual - expected
+
++ [
++   'layout-table.csv: controls under 44 px at 390 px',
++   'layout-tree.json: controls under 44 px at 390 px',
++   'layout-cues.vtt: controls under 44 px at 390 px',
++   'layout-notebook.ipynb: controls under 44 px at 390 px',
++   'the active cell is hidden under the sticky head after ArrowUp',
++   'the inspector is not wholly on screen',
++   'the output Comment control covers output text',
++   'the notebook composer opens away from its cell',
++   'the tree composer Post button is covered or off screen',
++   'a cue list shows one View source control',
++   'the refusal notice is unstyled',
++   'the refusal notice does not line up with its source'
++ ]
+- []
+
+ generatedMessage: false,
+     actual: [
+  "layout-table.csv: controls under 44 px at 390 px", "layout-tree.json: controls under 44 px at 390 px",
+  "layout-cues.vtt: controls under 44 px at 390 px", "layout-notebook.ipynb: controls under 44 px at 390 px",
+  "the active cell is hidden under the sticky head after ArrowUp", "the inspector is not wholly on screen",
+  "the output Comment control covers output text", "the notebook composer opens away from its cell",
+  "the tree composer Post button is covered or off screen", "a cue list shows one View source control",
+  "the refusal notice is unstyled", "the refusal notice does not line up with its source"
+],
+   expected: [],
+   operator: "deepStrictEqual",
+       diff: "simple",
+       code: "ERR_ASSERTION"
+
+      at /Users/jwaldrip/.omp/wt/sf-ux/packages/relic-mcp/test/structured-formats-path.ts:1667:10
+      at stage (/Users/jwaldrip/.omp/wt/sf-ux/packages/relic-mcp/test/structured-formats-path.ts:754:9)
+
+Bun v1.4.3 (macOS arm64)

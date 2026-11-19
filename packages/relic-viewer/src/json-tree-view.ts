@@ -476,7 +476,8 @@ function drawTree(
     () => {
       const anchor = state.selectionAnchor();
       if (anchor === undefined) return;
-      mount.root.dispatchEvent(
+      // From the control, so the composer opens beside it, not the whole tree.
+      comment.dispatchEvent(
         new CustomEvent('relic:structured-comment', {
           bubbles: true,
           detail: { anchor },

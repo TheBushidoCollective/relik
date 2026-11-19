@@ -1,13 +1,5 @@
 /* The table view (plan A1). Loaded once, when a table or a table notice is drawn. */
 
-.structured-notice {
-  margin: 0 0 0.5rem;
-  padding: 0.4rem 0.6rem;
-  border-left: 3px solid var(--rule-strong, #888);
-  font: 0.84rem/1.45 var(--sans, system-ui, sans-serif);
-  color: var(--ink-soft, #555);
-}
-
 .dt {
   display: flex;
   flex-direction: column;
@@ -60,7 +52,9 @@
 
 .dt-grid {
   position: relative;
-  height: min(70vh, 48rem);
+  /* The inspector above it takes 5rem, so the table and its inspector together
+     still fit the window they fitted when the inspector sat below. */
+  height: min(calc(70vh - 5rem), 48rem);
   min-height: 12rem;
   overflow: auto;
   border: 1px solid var(--rule-strong, #888);
@@ -292,17 +286,33 @@
   outline-offset: -2px;
 }
 
+/* The inspector sits between the bar and the grid (mock T1, T3), so the cell a
+   reader chose is read in full without scrolling past the grid. Its height is
+   fixed so choosing a cell never moves the grid under the pointer; a long value
+   scrolls inside it. */
 .dt-cellbar {
+  order: 1;
+  box-sizing: border-box;
+  height: 5rem;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: minmax(4.5rem, auto) minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-areas:
+    'addr value copy'
+    'sub value copy';
   align-items: start;
-  gap: 0.25rem 0.75rem;
+  gap: 0.15rem 0.9rem;
   padding: 0.4rem 0.6rem;
   border: 1px solid var(--rule-strong, #888);
   background: var(--surface, #fff);
 }
 
+.dt-grid {
+  order: 2;
+}
+
 .dt-cellbar > .dt-addr {
+  grid-area: addr;
   margin: 0;
   font: 600 0.82rem/1.3 var(--mono, ui-monospace, monospace);
   color: var(--patina-ink, #1f4f43);
@@ -312,13 +322,23 @@
 .dt-cellbar > .dt-sub,
 .dt-cellbar > .dt-hint {
   margin: 0;
-  grid-column: 1 / -1;
   color: var(--ink-soft, #555);
 }
 
+.dt-cellbar > .dt-sub {
+  grid-area: sub;
+}
+
+.dt-cellbar > .dt-hint {
+  grid-column: 1 / -1;
+  grid-row: 1 / -1;
+  align-self: center;
+}
+
 .dt-cellbar > .dt-value {
+  grid-area: value;
   margin: 0;
-  max-height: 9rem;
+  max-height: 100%;
   overflow: auto;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -328,6 +348,7 @@
 }
 
 .dt-cellbar > .dt-copy {
+  grid-area: copy;
   justify-self: end;
   padding: 0.2rem 0.6rem;
   border: 1px solid var(--rule-strong, #888);
@@ -337,20 +358,72 @@
   cursor: pointer;
 }
 
+.dt-cellbar > .dt-copy:focus-visible,
+.dt-find:focus-visible {
+  outline: 2px solid var(--patina-ink, #1f4f43);
+  outline-offset: 1px;
+}
+
 @media (max-width: 480px) {
   .dt-grid {
     height: min(60vh, 32rem);
   }
 
+  /* A finger needs 44 px (WCAG 2.5.5). */
+  .dt-toggle,
+  .dt-find,
+  .dt-cellbar > .dt-copy {
+    box-sizing: border-box;
+    min-height: 44px;
+  }
+
+  .dt-cellbar > .dt-copy {
+    min-width: 44px;
+  }
+
+  .dt-toggle input {
+    width: 1.25rem;
+    height: 1.25rem;
+  }
+
+  /* With nothing chosen, the hint is one quiet line under the grid, so the
+     sheet that replaces it never moves the grid under the reader's finger. */
   .dt-cellbar {
+    order: 3;
+  }
+
+  .dt-cellbar:has(> .dt-hint) {
+    height: auto;
+  }
+
+  /* A chosen cell opens a bottom sheet (mock T9): the address, its column and
+     Copy on one line, the value in full under them. */
+  .dt-cellbar:has(> .dt-addr) {
     position: fixed;
     left: 0;
     right: 0;
     bottom: 0;
     z-index: 10;
+    height: auto;
     max-height: 45vh;
     overflow: auto;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-rows: auto auto;
+    grid-template-areas:
+      'addr sub copy'
+      'value value value';
+    align-items: center;
+    padding: 0.6rem 0.9rem 0.9rem;
     border-radius: 12px 12px 0 0;
     box-shadow: 0 -8px 24px rgb(0 0 0 / 0.18);
+  }
+
+  .dt-cellbar:has(> .dt-addr) > .dt-value {
+    max-height: none;
+  }
+
+  /* Room under the grid, so its last rows can be scrolled clear of the sheet. */
+  .dt:has(> .dt-cellbar > .dt-addr) {
+    padding-bottom: 45vh;
   }
 }

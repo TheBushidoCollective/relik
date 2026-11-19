@@ -1,0 +1,13 @@
+STAGE layout ...
+LAYOUT_PHONE layout-table.csv overflow=0 small=[]
+LAYOUT_PHONE layout-tree.json overflow=0 small=[]
+LAYOUT_PHONE layout-cues.vtt overflow=0 small=[]
+LAYOUT_PHONE layout-notebook.ipynb overflow=0 small=[]
+LAYOUT_TABLE active=[77,329,165,357] head=[21,293,253,329] value=[20,206,1391,286] viewport=900
+LAYOUT_NOTEBOOK_TOOL {"tool":[984,390,1178,415],"hits":0}
+LAYOUT_NOTEBOOK_COMPOSER cell=[310,273,1186,315] composer=[936,292,1288,531] viewport=900
+LAYOUT_TREE_COMPOSER field=[1063,392,1391,464] post=[1063,487,1109,516] hit=true
+LAYOUT_CUES view_source_controls=1
+LAYOUT_NOTICE {"border":"3px","noticeLeft":338,"sourceLeft":338}
+STAGE_LAYOUT_OK
+STRUCTURED_FORMATS_PATH_PARTIAL stages=layout
