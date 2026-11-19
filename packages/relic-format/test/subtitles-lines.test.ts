@@ -35,12 +35,19 @@ describe('subtitle lines are read one at a time, with the same numbers as before
 });
 
 describe('subtitle parsing: a 16 MiB file of line feeds costs no line array', () => {
-  test('it is read in under a second', () => {
+  test('it costs less than half of splitting the same text into lines', () => {
     // The whole-file split built a 16-million element array before the entry
-    // cap applied; that took about 1.8 s and 100 MB here.
+    // cap applied. Both timings are taken in this process, so the bound holds
+    // on a slow machine as well as a fast one.
     const text = '\n'.repeat(SUBTITLE_LIMIT_BYTES);
-    const started = performance.now();
+    expect('1\n2'.split(/\r\n|\r|\n/)).toHaveLength(2);
+    expect(parseSubtitles('\n\n', 'srt').ok).toBe(false);
+    const splitStarted = performance.now();
+    text.split(/\r\n|\r|\n/);
+    const split = performance.now() - splitStarted;
+    const parseStarted = performance.now();
     expect(parseSubtitles(text, 'srt').ok).toBe(false);
-    expect(performance.now() - started).toBeLessThan(1000);
+    const parse = performance.now() - parseStarted;
+    expect(parse).toBeLessThan(split / 2);
   });
 });

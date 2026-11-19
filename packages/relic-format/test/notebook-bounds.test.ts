@@ -273,16 +273,17 @@ describe('notebook images: pixel size is read from the header', () => {
 });
 
 describe('notebook text: a large raw source is cut before it is expanded', () => {
-  test('a 32 MB markdown cell of raw U+0080 is shown in under two seconds', () => {
-    // Sixteen million U+0080 are 32 MB of UTF-8. Escaping them before the cut
-    // expanded each to eight characters (128 million) and took about 8 s and
-    // 2 GB of heap before the cut applied.
-    const source = '\u0080'.repeat(16_000_000);
+  test('32 MB of raw DEL in a markdown cell is shown in under a second', () => {
+    // DEL is one byte in UTF-8, so 32 million of them fill the file cap. Escaping
+    // them before the cut expanded each to eight characters: about 3.5 s and
+    // 4.8 GB of RSS. Cutting first takes about 0.16 s and 300 MB.
+    const source = '\u007f'.repeat(32_000_000);
     const started = performance.now();
     const cell = firstCell(
       notebookOf([{ cell_type: 'markdown', metadata: {}, source }])
     );
-    expect(performance.now() - started).toBeLessThan(2000);
+    expect(performance.now() - started).toBeLessThan(1000);
     expect(cell.source.text.length).toBe(NOTEBOOK_TEXT_MAX_CHARS);
+    expect(cell.source.truncated).toBe(true);
   });
 });
