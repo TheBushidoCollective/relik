@@ -459,7 +459,7 @@ post({ type: 'probe:result', result: { id: 'write:case-f3-split-calls', outcome:
 setTimeout(function () { post({ type: 'probe:done' }); }, 3000);
 `;
 
-type RelicMode = 'main' | 'write' | 'nav';
+type RelicMode = 'main' | 'write' | 'nav' | 'static';
 
 interface Channel {
   readonly id: string;
@@ -627,6 +627,7 @@ function arrived(id: string): boolean {
 }
 
 function relicHtml(mode: RelicMode, ids: readonly string[]): string {
+  if (mode === 'static') return staticMarkups.get(ids[0] ?? '') ?? '';
   const config = {
     mode,
     order: ids,
@@ -765,8 +766,48 @@ async function callMcp(
 }
 
 // --- Channels and relics.
-const allIds = [...MAIN_IDS, ...WRITE_IDS, ...NAV_IDS];
+const STATIC_IDS = ['static:case-f2a-splice'] as const;
+const staticMarkups = new Map<string, string>();
+const allIds = [...MAIN_IDS, ...WRITE_IDS, ...NAV_IDS, ...STATIC_IDS];
 for (const id of allIds) await allocateChannel(id);
+// Static cases: the relic's content is the markup itself, with no runner of the
+// probe's own, so the first render is the only code path. The nested frame's
+// script is the only code that runs, and it reports to the top window.
+function nestedScriptFor(id: string): string {
+  const c = channels.get(id);
+  assert.ok(c !== undefined, `no channel for ${id}`);
+  const js = [
+    '(function () {',
+    '  var out = { id: ' +
+      JSON.stringify(id) +
+      ', created: false, error: null, rtcType: typeof RTCPeerConnection };',
+    '  try {',
+    '    var pc = new RTCPeerConnection({ iceServers: [{ urls: ' +
+      JSON.stringify(c.stun) +
+      ' }] });',
+    '    pc.createDataChannel("probe");',
+    '    pc.createOffer().then(function (o) { return pc.setLocalDescription(o); }).catch(function () {});',
+    '    out.created = true;',
+    '  } catch (e) { out.error = String(e); }',
+    '  try { top.postMessage({ type: "probe:nested", nested: out }, "*"); } catch (e) {}',
+    '})();',
+  ].join('\n');
+  return '<scr' + 'ipt>' + js + '</scr' + 'ipt>';
+}
+function staticMarkup(id: string): string {
+  const attr = nestedScriptFor(id)
+    .split('&')
+    .join('&amp;')
+    .split('"')
+    .join('&quot;');
+  if (id === 'static:case-f2a-splice')
+    return `<i<iframe>frame srcdoc="${attr}">`;
+  throw new Error(`no static markup for ${id}`);
+}
+for (const id of STATIC_IDS) staticMarkups.set(id, staticMarkup(id));
+const staticRelics = new Map<string, Relic>();
+for (const id of STATIC_IDS)
+  staticRelics.set(id, await publishRelic(id, 'static', [id]));
 
 async function publishRelic(
   key: string,
@@ -877,7 +918,7 @@ async function openAndCapture(
         : (JSON.parse(value) as Capture);
     };
 
-    const deadline = Date.now() + 60_000;
+    const deadline = Date.now() + (relic.mode === 'static' ? 4_000 : 60_000);
     let capture = await read();
     while ((capture === null || !capture.done) && Date.now() < deadline) {
       await sleep(200);
@@ -899,6 +940,33 @@ async function openAndCapture(
 
 // --- Variants.
 const variants: Variant[] = [
+  ...STATIC_IDS.flatMap((id) => [
+    {
+      name: `${id} · default process model`,
+      relic: id,
+      isolation: false,
+      harnessPolicy: false,
+      shim: 'production' as const,
+      negative: false,
+    },
+    {
+      name: `${id} · site-per-process + IsolateSandboxedIframes`,
+      relic: id,
+      isolation: true,
+      harnessPolicy: false,
+      shim: 'production' as const,
+      negative: false,
+    },
+    {
+      name: `POSITIVE CONTROL · no CSP, no containment · ${id}`,
+      relic: id,
+      isolation: false,
+      harnessPolicy: false,
+      shim: 'open' as const,
+      negative: false,
+      positive: true,
+    },
+  ]),
   {
     name: 'main · default WebRTC policy · default process model',
     relic: 'main',
@@ -1016,7 +1084,7 @@ function relicFor(key: string): Relic {
       ? mainRelic
       : key === 'write'
         ? writeRelic
-        : navRelics.get(key);
+        : (navRelics.get(key) ?? staticRelics.get(key));
   assert.ok(found !== undefined, `no relic for ${key}`);
   return found;
 }
@@ -1058,9 +1126,11 @@ for (const variant of variants) {
   } else {
     for (const result of capture.results) results.set(result.id, result);
     nested = capture.nested;
-    if (!capture.done) reasons.push('probe never finished');
+    if (!capture.done && relic.mode !== 'static')
+      reasons.push('probe never finished');
   }
-  const missing = relic.ids.filter((id) => !results.has(id));
+  const missing =
+    relic.mode === 'static' ? [] : relic.ids.filter((id) => !results.has(id));
   if (missing.length > 0) reasons.push(`no result for ${missing.join(', ')}`);
   for (const result of results.values()) {
     if (result.outcome === 'missing') {
@@ -1182,8 +1252,8 @@ for (const verdict of verdicts) {
 // and then opens WebRTC toward the case's own listener. REAL means production
 // egress was observed. NOT REAL means the no-policy control reached the listener
 // and production did not. CANNOT TEST means the control did not reach it either.
-const CASE_IDS = [...MAIN_IDS, ...WRITE_IDS, ...NAV_IDS].filter((id) =>
-  id.includes(':case-')
+const CASE_IDS = [...MAIN_IDS, ...WRITE_IDS, ...NAV_IDS, ...STATIC_IDS].filter(
+  (id) => id.includes(':case-')
 );
 console.log('\ncases:');
 for (const id of CASE_IDS) {
