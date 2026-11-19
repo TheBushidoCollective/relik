@@ -57,6 +57,15 @@ import { boxPosition, type CommentRecord, formatTimecode } from './comments.ts';
 import { privateVersionKey } from './private.ts';
 import type { PublishDeps } from './publish.ts';
 import { loadPrivatePublishState, loadPublishState } from './state.ts';
+import {
+  readerForVersion,
+  resolveStructuredComment,
+} from './resolve-structured-comment.ts';
+import type {
+  CellResolution,
+  PathResolution,
+  TimeCuesResolution,
+} from './resolve-structured.ts';
 
 const activeChildren = new Set<ChildProcess>();
 
@@ -205,6 +214,9 @@ export type ResolvedAnchor =
       readonly has_frames?: boolean | undefined;
       readonly downscaled?: boolean | undefined;
     }
+  | CellResolution
+  | PathResolution
+  | TimeCuesResolution
   | {
       readonly kind: 'page';
       readonly status: 'resolved' | 'unresolvable';
@@ -1449,9 +1461,9 @@ export async function resolveAnchors(
       continue;
     }
     if (anchor.kind === 'cell' || anchor.kind === 'path') {
-      // Resolving these kinds is not built yet. The comment stays in the
-      // thread with its location, rather than dropping out of the switch below.
-      updatedComments.push(comment);
+      updatedComments.push(
+        await resolveStructuredComment(comment, anchor, loadRevision)
+      );
       continue;
     }
 
@@ -1754,6 +1766,14 @@ export async function resolveAnchors(
       }
 
       case 'time': {
+        const reader = readerForVersion(opened);
+        if (reader.kind === 'subtitles') {
+          updatedComments.push({
+            ...comment,
+            resolved: reader.subtitleTime(anchor),
+          });
+          break;
+        }
         if (isAudio) {
           updatedComments.push({
             ...comment,
