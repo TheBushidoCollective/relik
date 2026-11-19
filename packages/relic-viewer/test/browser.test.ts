@@ -4,7 +4,6 @@ import { contentFromBytes } from '../src/content.ts';
 import {
   buildBar,
   markerLabelFor,
-  openFrameExternalLink,
   renderSandboxedHtml,
   renderSandboxedJsx,
   safeDownloadName,
@@ -439,30 +438,68 @@ describe('the usercontent frame the render routes build', () => {
     );
   });
 
-  test('opens only validated frame links without opener or referrer', () => {
-    const calls: string[][] = [];
-    const open = (url: string, target: string, features: string) => {
-      calls.push([url, target, features]);
-      return null;
+  test('a frame link request waits for the reader and opens nothing', () => {
+    // Regression: the host used to call window.open for every valid request a
+    // frame posted, so one click anywhere in the frame could open a tab. The
+    // request now reaches the confirmation bar, which opens nothing until the
+    // reader confirms it from host chrome.
+    const listeners: Array<(event: unknown) => void> = [];
+    const opened: string[] = [];
+    (globalThis as { window?: unknown }).window = {
+      addEventListener: (type: string, listener: (event: unknown) => void) => {
+        if (type === 'message') listeners.push(listener);
+      },
+      removeEventListener: () => {},
+      setTimeout: () => 0,
+      clearTimeout: () => {},
+      open: (url: string) => {
+        opened.push(url);
+        return null;
+      },
     };
+    const doc = globalThis.document as unknown as {
+      addEventListener: () => void;
+    };
+    doc.addEventListener = () => {};
 
-    expect(
-      openFrameExternalLink(
-        { type: 'relic:open-link', href: 'https://example.com/report' },
-        open
-      )
-    ).toBe(true);
-    expect(calls).toEqual([
-      ['https://example.com/report', '_blank', 'noopener,noreferrer'],
-    ]);
+    const wrapper: unknown = renderSandboxedHtml(
+      view('sandboxed-html', '<p>hi</p>'),
+      USERCONTENT_ORIGIN
+    );
+    for (const listener of listeners) {
+      listener({
+        source: undefined,
+        data: {
+          type: 'relic:open-link',
+          href: 'https://example.com/report',
+        },
+      });
+    }
 
+    expect(opened).toEqual([]);
+    const childrenOf = (node: unknown): unknown[] =>
+      typeof node === 'object' &&
+      node !== null &&
+      'children' in node &&
+      Array.isArray(node.children)
+        ? node.children
+        : [];
+    const textOf = (node: unknown): string => {
+      if (typeof node !== 'object' || node === null) return '';
+      const own =
+        'textContent' in node && typeof node.textContent === 'string'
+          ? node.textContent
+          : '';
+      return own + childrenOf(node).map(textOf).join('');
+    };
+    const bar = childrenOf(wrapper)[0];
+    expect(textOf(bar)).toContain('example.com');
+    expect(textOf(bar)).toContain('/report');
     expect(
-      openFrameExternalLink(
-        { type: 'relic:open-link', href: 'javascript:alert(1)' },
-        open
-      )
+      typeof bar === 'object' && bar !== null && 'hidden' in bar
+        ? bar.hidden
+        : undefined
     ).toBe(false);
-    expect(calls).toHaveLength(1);
   });
   test('the marker states what each route actually does with author code', () => {
     // One string for every relic is how a five-second mp4 came to tell its
