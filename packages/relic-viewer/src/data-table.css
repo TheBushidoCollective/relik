@@ -384,7 +384,12 @@
     height: 1.25rem;
   }
 
-  /* With nothing chosen, the hint is one quiet line above the grid. */
+  /* With nothing chosen, the hint is one quiet line under the grid, so the
+     sheet that replaces it never moves the grid under the reader's finger. */
+  .dt-cellbar {
+    order: 3;
+  }
+
   .dt-cellbar:has(> .dt-hint) {
     height: auto;
   }
