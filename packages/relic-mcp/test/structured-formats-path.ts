@@ -74,7 +74,11 @@ import { MemoryStore } from '@relic/server/src/store.ts';
 import { type CdpConnection, connectPipe } from '../src/cover/cdp.ts';
 import { chromeArgs, discoverChrome } from '../src/cover/chrome.ts';
 import { loadPublishState } from '../src/state.ts';
-import { COMMENT_TOOL_NAME, READ_COMMENTS_TOOL_NAME } from '../src/server.ts';
+import {
+  COMMENT_TOOL_NAME,
+  READ_COMMENTS_TOOL_NAME,
+  REPUBLISH_TOOL_NAME,
+} from '../src/server.ts';
 import {
   attestBrowserHeadless,
   cleanupOwnedBrowserStartup,
@@ -713,7 +717,7 @@ const cellSel = (record: number, column: number): string =>
 const stages = new Set(
   (
     process.env['RELIC_STRUCTURED_STAGES'] ??
-    'table,tree,cues,notebook,old-reader,refusals'
+    'table,tree,cues,notebook,old-reader,versions,refusals'
   )
     .split(',')
     .map((name) => name.trim())
@@ -1260,6 +1264,104 @@ await stage('old-reader', async () => {
       'the plan unplaceable note shows, and the body stays readable'
     );
     assertNoPageErrors(page, 'old reader');
+  } finally {
+    await page.close();
+  }
+});
+
+await stage('versions', async () => {
+  // Version one carries a comment on the rivet quantity (record 14, column 3).
+  // Version two inserts one record above it, so the same grid position now
+  // holds another record. A version one comment must not paint on version two.
+  const csv = await publish('versions.csv', CSV_TEXT);
+  const page = await openPage(csv.url, reader);
+  const path = join(scratch, 'versions.csv');
+  try {
+    await page.waitFor(
+      `document.querySelector('.dt-grid[role="grid"]') !== null && document.querySelectorAll('.dt-cell').length > 0`,
+      'the version one table draws'
+    );
+    await page.click(cellSel(13, 2));
+    await commentOnSelection(page);
+    await composeAndPost(page, 'Version one: rivet quantity');
+    await awaitStored(csv.relicId, 1);
+    await page.escape();
+    await page.waitFor(
+      `document.querySelector('.popover-card[data-comment-id]') === null`,
+      'the version one card is dismissed'
+    );
+    const v1Comment = await commentFor(
+      csv.relicId,
+      'Version one: rivet quantity'
+    );
+    assert.deepEqual(v1Comment.anchor, { kind: 'cell', row: 14, col: 3 });
+
+    const [header, ...records] = CSV_TEXT.split('\n');
+    await writeFile(
+      path,
+      [header, 'extra,north,0,each,added', ...records].join('\n')
+    );
+    const republished = await callTool(REPUBLISH_TOOL_NAME, {
+      relic_id: csv.relicId,
+      path,
+      cover: false,
+      notify: false,
+      addresses: [
+        {
+          comment_id: v1Comment.comment_id,
+          note: 'Record moved on version two.',
+        },
+      ],
+    });
+    assert.notEqual(republished.isError, true, JSON.stringify(republished));
+
+    // The share link opens the current version, which is now version two.
+    await page.reload();
+    await page.waitFor(
+      `document.querySelector('.dt-grid[role="grid"]') !== null && document.querySelectorAll('.dt-cell').length > 0`,
+      'the version two table draws'
+    );
+    // Positive control: a version two comment on a cell that exists on version
+    // two. Its mark proves the version two thread has loaded before the
+    // negative check below reads the grid.
+    await page.click(cellSel(1, 2));
+    await commentOnSelection(page);
+    await composeAndPost(page, 'Version two: added record quantity');
+    await awaitStored(csv.relicId, 3);
+    await page.escape();
+    await page.waitFor(
+      `document.querySelector('.popover-card[data-comment-id]') === null`,
+      'the version two card is dismissed'
+    );
+    await page.reload();
+    await page.waitFor(
+      `document.querySelector('${cellSel(1, 2)}.is-marked') !== null`,
+      'the version two comment paints on version two'
+    );
+    assert.equal(
+      await page.evaluate<boolean>(
+        `document.querySelector('${cellSel(13, 2)}.is-marked') !== null`
+      ),
+      false,
+      'the version one comment is not drawn on version two'
+    );
+
+    // Version one, from the version control: its comment paints on its own
+    // record, and the version two comment does not.
+    await page.click('.version-trigger');
+    await page.click('.version-option[data-version="1"]');
+    await page.waitFor(
+      `document.querySelector('${cellSel(13, 2)}.is-marked') !== null`,
+      'the version one comment paints on version one'
+    );
+    assert.equal(
+      await page.evaluate<boolean>(
+        `document.querySelector('${cellSel(1, 2)}.is-marked') !== null`
+      ),
+      false,
+      'the version two comment is not drawn on version one'
+    );
+    assertNoPageErrors(page, 'versions');
   } finally {
     await page.close();
   }

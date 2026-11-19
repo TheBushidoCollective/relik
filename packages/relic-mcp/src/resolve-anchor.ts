@@ -1467,6 +1467,21 @@ export async function resolveAnchors(
       );
       continue;
     }
+    // A time anchor with no recorded version is not found, as cell and path
+    // are. Fetching the latest revision here would read it against the
+    // current file, which is the fallback this rule forbids.
+    if (anchor.kind === 'time' && comment.version === null) {
+      updatedComments.push({
+        ...comment,
+        resolved: {
+          kind: 'time',
+          status: 'unresolvable',
+          explanation:
+            'The time is not found in this version: the comment records no version.',
+        } as ResolvedAnchor,
+      });
+      continue;
+    }
 
     const fetched = await loadRevision(
       comment.version ?? (anchor.kind === 'source' ? 1 : undefined)
@@ -1477,7 +1492,10 @@ export async function resolveAnchors(
         resolved: {
           kind: anchor.kind,
           status: 'unresolvable',
-          explanation: fetched.error,
+          explanation:
+            anchor.kind === 'time'
+              ? `The time is not found in this version: ${fetched.error}`
+              : fetched.error,
         } as ResolvedAnchor,
       });
       continue;
