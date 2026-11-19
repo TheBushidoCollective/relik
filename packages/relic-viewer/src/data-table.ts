@@ -62,6 +62,31 @@ function modelOf(
   };
 }
 
+/**
+ * Text as a reader sees it. Bidirectional controls and control characters
+ * become visible escapes, so a cell cannot reorder or hide the text around it.
+ */
+export function visibleText(value: string): string {
+  let out = '';
+  for (const char of value) {
+    const code = char.codePointAt(0) ?? 0;
+    out += isVisibleControl(code)
+      ? `\\u{${code.toString(16).toUpperCase()}}`
+      : char;
+  }
+  return out;
+}
+
+/** Whether a code point must be shown as an escape: controls and bidi formatting marks. */
+function isVisibleControl(code: number): boolean {
+  if (code < 0x20) return code !== 0x09 && code !== 0x0a && code !== 0x0d;
+  if (code >= 0x7f && code <= 0x9f) return true;
+  if (code === 0x061c || code === 0x200e || code === 0x200f) return true;
+  return (
+    (code >= 0x202a && code <= 0x202e) || (code >= 0x2066 && code <= 0x2069)
+  );
+}
+
 export type SortDirection = 'asc' | 'desc';
 
 export interface SortState {
@@ -567,7 +592,11 @@ export function mountDataTable(
     const value = cellText(table, record, column);
     if (role === 'head') {
       const letter = element('span', 'dt-letter', columnLetters(column + 1));
-      const name = element('span', 'dt-text', headerRow ? value : '');
+      const name = element(
+        'span',
+        'dt-text',
+        headerRow ? visibleText(value) : ''
+      );
       cell.append(letter, name);
       const sorted = sort !== undefined && sort.column === column;
       if (sorted) {
@@ -586,7 +615,7 @@ export function mountDataTable(
     } else if (value === '') {
       cell.append(element('span', 'dt-text dt-blank', 'blank'));
     } else {
-      cell.append(element('span', 'dt-text', value));
+      cell.append(element('span', 'dt-text', visibleText(value)));
     }
     paintCell(cell, record, column, role);
     return cell;
@@ -680,7 +709,11 @@ export function mountDataTable(
           )
         );
         cells.push(
-          element('pre', 'dt-value', value === '' ? '(blank)' : value)
+          element(
+            'pre',
+            'dt-value',
+            value === '' ? '(blank)' : visibleText(value)
+          )
         );
       } else {
         cells.push(

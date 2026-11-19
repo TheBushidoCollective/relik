@@ -13,6 +13,7 @@ import {
   isNumericColumn,
   markFits,
   rectText,
+  visibleText,
   sortOrder,
 } from '../src/data-table.ts';
 import { recordAt, rowWindow, type TableModel } from '../src/table-model.ts';
@@ -115,6 +116,14 @@ describe('anchors and marks', () => {
     expect(rectText(parsed(), { r0: 1, r1: 2, c0: 0, c1: 1 })).toBe(
       'item-1\t7\nitem-2\t3'
     );
+  });
+});
+
+describe('visible escapes', () => {
+  test('bidi overrides and control characters show as escapes, not raw', () => {
+    expect(visibleText('a\u202Eb')).toBe('a\\u{202E}b');
+    expect(visibleText('x\u0007y')).toBe('x\\u{7}y');
+    expect(visibleText('plain é')).toBe('plain é');
   });
 });
 
