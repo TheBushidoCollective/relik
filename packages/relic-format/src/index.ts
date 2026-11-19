@@ -17,6 +17,7 @@ export * from './errors.ts';
 export * from './fragment.ts';
 export * from './hosted.ts';
 export * from './id.ts';
+export * from './json-tree.ts';
 export * from './load-copy.ts';
 export * from './mnemonic.ts';
 export * from './model.ts';

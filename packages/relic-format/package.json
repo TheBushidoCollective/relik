@@ -8,6 +8,7 @@
     ".": "./src/index.ts",
     "./comments": "./src/comments.ts",
     "./cover": "./src/cover.ts",
+    "./json-tree": "./src/json-tree.ts",
     "./mnemonic": "./src/mnemonic.ts",
     "./presence": "./src/presence.ts",
     "./private": "./src/private.ts",
