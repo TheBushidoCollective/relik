@@ -70,6 +70,7 @@ async function browserCases(
       mimetype: 'application/json',
       source,
       sourceView,
+      reportUnshown: () => {},
     });
     return { root, part };
   }
