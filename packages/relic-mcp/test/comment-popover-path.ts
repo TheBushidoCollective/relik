@@ -1196,7 +1196,7 @@ console.log('Testing Class 1: Markdown...');
 
     // Post: card replaces composer, focus in card, sidebar closed
     await session.evaluate(
-      `document.querySelector('.popover-action.is-primary').click()`
+      `document.querySelector('.popover-card.popover-composer .popover-action.is-primary').click()`
     );
     await session.waitFor(
       "document.querySelector('.popover-card[data-comment-id]:not(.popover-composer)') !== null"
@@ -1576,7 +1576,7 @@ console.log('Testing Class 2: Code...');
       const field = document.querySelector('textarea.popover-field');
       field.value = 'Reviewing line 42 implementation';
       field.dispatchEvent(new Event('input', { bubbles: true }));
-      document.querySelector('.popover-action.is-primary').click();
+      document.querySelector('.popover-card.popover-composer .popover-action.is-primary').click();
     })()`);
     await session.waitFor(
       "document.querySelector('.popover-card[data-comment-id]:not(.popover-composer)') !== null"
@@ -1642,7 +1642,7 @@ console.log('Testing Class 3: Image...');
       const field = document.querySelector('textarea.popover-field');
       field.value = 'Pin note at 30%, 40%';
       field.dispatchEvent(new Event('input', { bubbles: true }));
-      document.querySelector('.popover-action.is-primary').click();
+      document.querySelector('.popover-card.popover-composer .popover-action.is-primary').click();
     })()`);
     await session.waitFor(
       "document.querySelector('.popover-card[data-comment-id]:not(.popover-composer)') !== null"
@@ -1758,7 +1758,7 @@ console.log('Testing Class 4: PDF...');
       const field = document.querySelector('textarea.popover-field');
       field.value = 'PDF Page 1 Region Feedback';
       field.dispatchEvent(new Event('input', { bubbles: true }));
-      document.querySelector('.popover-action.is-primary').click();
+      document.querySelector('.popover-card.popover-composer .popover-action.is-primary').click();
     })()`);
     await session.waitFor(
       "document.querySelector('.popover-card[data-comment-id]:not(.popover-composer)') !== null"
@@ -1864,12 +1864,26 @@ console.log('Testing Class 5: HTML...');
     await Bun.sleep(50);
 
     // Post card
-    await session.evaluate(`(() => {
-      const field = document.querySelector('textarea.popover-field');
-      field.value = 'HTML Frame Selection comment';
-      field.dispatchEvent(new Event('input', { bubbles: true }));
-      document.querySelector('.popover-action.is-primary').click();
+    // Real input: focus the field, type the text, and press Post with a trusted mouse event at its centre.
+    await session.evaluate(
+      `document.querySelector('textarea.popover-field').focus()`
+    );
+    await session.send('Input.insertText', {
+      text: 'HTML Frame Selection comment',
+    });
+    const postAt = await session.evaluate<{ x: number; y: number }>(`(() => {
+      const b = document.querySelector('.popover-card.popover-composer .popover-action.is-primary').getBoundingClientRect();
+      return { x: b.left + b.width / 2, y: b.top + b.height / 2 };
     })()`);
+    for (const type of ['mouseMoved', 'mousePressed', 'mouseReleased']) {
+      await session.send('Input.dispatchMouseEvent', {
+        type,
+        x: postAt.x,
+        y: postAt.y,
+        button: 'left',
+        clickCount: 1,
+      });
+    }
     await session.waitFor(
       "document.querySelector('.popover-card[data-comment-id]:not(.popover-composer)') !== null"
     );
@@ -1988,7 +2002,7 @@ console.log('Testing Class 6: SVG...');
       const field = document.querySelector('textarea.popover-field');
       field.value = 'SVG vector point comment';
       field.dispatchEvent(new Event('input', { bubbles: true }));
-      document.querySelector('.popover-action.is-primary').click();
+      document.querySelector('.popover-card.popover-composer .popover-action.is-primary').click();
     })()`);
     await session.waitFor(
       "document.querySelector('.popover-card[data-comment-id]:not(.popover-composer)') !== null"
@@ -2101,7 +2115,7 @@ console.log('Testing Class 7: Video...');
 
     // Post card
     await session.evaluate(
-      `document.querySelector('.popover-action.is-primary').click()`
+      `document.querySelector('.popover-card.popover-composer .popover-action.is-primary').click()`
     );
     await session.waitFor(
       "document.querySelector('.popover-card[data-comment-id]:not(.popover-composer)') !== null"
@@ -2265,7 +2279,7 @@ console.log('Testing Class 8: Audio...');
       const field = document.querySelector('textarea.popover-field');
       field.value = 'Audio wave comment at 0:03';
       field.dispatchEvent(new Event('input', { bubbles: true }));
-      document.querySelector('.popover-action.is-primary').click();
+      document.querySelector('.popover-card.popover-composer .popover-action.is-primary').click();
     })()`);
     await session.waitFor(
       "document.querySelector('.popover-card[data-comment-id]:not(.popover-composer)') !== null"
@@ -2341,7 +2355,7 @@ console.log('Testing Class 9: OTIO...');
       const field = document.querySelector('textarea.popover-field');
       field.value = 'OTIO timeline track note';
       field.dispatchEvent(new Event('input', { bubbles: true }));
-      document.querySelector('.popover-action.is-primary').click();
+      document.querySelector('.popover-card.popover-composer .popover-action.is-primary').click();
     })()`);
     await session.waitFor(
       "document.querySelector('.popover-card[data-comment-id]:not(.popover-composer)') !== null"
