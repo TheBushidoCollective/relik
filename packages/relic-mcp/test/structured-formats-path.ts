@@ -66,12 +66,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Readable, Writable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
-import {
-  type CommentAnchor,
-  decodeKey,
-  deriveCommentKey,
-  encryptComment,
-} from '@relic/format';
+import { decodeKey, deriveCommentKey } from '@relic/format';
 import { createApp } from '@relic/server/src/app.ts';
 import { diskAssets } from '@relic/server/src/assets.ts';
 import { MemoryStorage } from '@relic/server/src/storage.ts';
@@ -365,7 +360,17 @@ interface Page {
   evaluate<T>(expression: string): Promise<T>;
   waitFor(expression: string, label: string, timeoutMs?: number): Promise<void>;
   click(selector: string, options?: ClickOptions): Promise<void>;
-  drag(from: string, to: string): Promise<void>;
+  /** Three real presses in one place: selects the whole line or cue text, as a reader does. */
+  tripleClick(selector: string, options?: ClickOptions): Promise<void>;
+  /** A real pointer move over an element, for controls that appear on hover. */
+  hover(selector: string, options?: ClickOptions): Promise<void>;
+  drag(
+    from: string,
+    to: string,
+    fromOptions?: ClickOptions,
+    toOptions?: ClickOptions
+  ): Promise<void>;
+  escape(): Promise<void>;
   reload(): Promise<void>;
   close(): Promise<void>;
 }
@@ -374,9 +379,9 @@ interface ClickOptions {
   readonly index?: number;
   /** Pixels from the element's left edge, for controls that sit at one side. */
   readonly fromLeft?: number;
+  /** Pixels in from the element's right edge, for a drag that ends at a line's end. */
+  readonly fromRight?: number;
 }
-
-let cdpCalls = 0;
 
 async function openPage(url: string, token: string): Promise<Page> {
   const profile = await mkdtemp(join(tmpdir(), 'relic-structured-chrome-'));
@@ -416,7 +421,6 @@ async function openPage(url: string, token: string): Promise<Page> {
     })) as { sessionId: string };
     const sessionId = attached.sessionId;
     const send = (method: string, params?: Record<string, unknown>) => {
-      cdpCalls += 1;
       return cdp!.send(method, params, sessionId);
     };
 
@@ -534,19 +538,28 @@ async function openPage(url: string, token: string): Promise<Page> {
       selector: string,
       options: ClickOptions
     ): Promise<Point> => {
-      const found = await evaluate<Point | null>(`(() => {
+      const found = await evaluate<{
+        x: number;
+        y: number;
+        hit: boolean;
+        tag: string;
+      } | null>(`(() => {
         const el = document.querySelectorAll(${JSON.stringify(selector)})[${options.index ?? 0}];
         if (!(el instanceof HTMLElement)) return null;
-        el.scrollIntoView({ block: 'center', inline: 'nearest' });
+        el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
         const r = el.getBoundingClientRect();
         if (r.width === 0 || r.height === 0) return null;
-        return {
-          x: ${options.fromLeft === undefined ? 'r.left + r.width / 2' : `r.left + ${options.fromLeft}`},
-          y: r.top + r.height / 2,
-        };
+        const x = ${options.fromRight !== undefined ? `r.right - ${options.fromRight}` : options.fromLeft === undefined ? 'r.left + r.width / 2' : `r.left + ${options.fromLeft}`};
+        const y = r.top + r.height / 2;
+        const under = document.elementFromPoint(x, y);
+        return { x, y, hit: el.contains(under), tag: under ? under.outerHTML.slice(0, 160) : 'none' };
       })()`);
       if (found === null) throw new Error(`no visible element for ${selector}`);
-      return found;
+      if (!found.hit)
+        throw new Error(
+          `the pointer at ${found.x},${found.y} would land on ${found.tag}, not ${selector}`
+        );
+      return { x: found.x, y: found.y };
     };
 
     const mouse = async (
@@ -558,7 +571,7 @@ async function openPage(url: string, token: string): Promise<Page> {
         type,
         x: at.x,
         y: at.y,
-        button: buttons === 0 ? 'none' : 'left',
+        button: type === 'mouseMoved' && buttons === 0 ? 'none' : 'left',
         buttons,
         clickCount: type === 'mouseMoved' ? 0 : 1,
       });
@@ -576,10 +589,37 @@ async function openPage(url: string, token: string): Promise<Page> {
         await mouse('mousePressed', at, 1);
         await mouse('mouseReleased', at, 0);
       },
-      async drag(from, to) {
+      async tripleClick(selector, options = {}) {
+        currentStep = `triple-click ${selector}`;
+        const at = await point(selector, options);
+        await mouse('mouseMoved', at, 0);
+        for (let count = 1; count <= 3; count++) {
+          await send('Input.dispatchMouseEvent', {
+            type: 'mousePressed',
+            x: at.x,
+            y: at.y,
+            button: 'left',
+            buttons: 1,
+            clickCount: count,
+          });
+          await send('Input.dispatchMouseEvent', {
+            type: 'mouseReleased',
+            x: at.x,
+            y: at.y,
+            button: 'left',
+            buttons: 0,
+            clickCount: count,
+          });
+        }
+      },
+      async hover(selector, options = {}) {
+        currentStep = `hover ${selector}`;
+        await mouse('mouseMoved', await point(selector, options), 0);
+      },
+      async drag(from, to, fromOptions = {}, toOptions = {}) {
         currentStep = `drag ${from} to ${to}`;
-        const start = await point(from, {});
-        const end = await point(to, {});
+        const start = await point(from, fromOptions);
+        const end = await point(to, toOptions);
         await mouse('mouseMoved', start, 0);
         await mouse('mousePressed', start, 1);
         for (let step = 1; step <= 4; step++) {
@@ -593,6 +633,20 @@ async function openPage(url: string, token: string): Promise<Page> {
           );
         }
         await mouse('mouseReleased', end, 0);
+      },
+      async escape() {
+        await send('Input.dispatchKeyEvent', {
+          type: 'keyDown',
+          key: 'Escape',
+          code: 'Escape',
+          windowsVirtualKeyCode: 27,
+        });
+        await send('Input.dispatchKeyEvent', {
+          type: 'keyUp',
+          key: 'Escape',
+          code: 'Escape',
+          windowsVirtualKeyCode: 27,
+        });
       },
       async reload() {
         const reloaded = cdp!.waitForEvent('Page.loadEventFired', {
@@ -819,15 +873,14 @@ await stage('table', async () => {
 
     // C14 is the rivet quantity, record 13 in column 2 (zero based).
     await page.click(cellSel(13, 2));
-    console.log(
-      'DIAG',
-      await page.evaluate<string>(
-        `(async () => { await new Promise((r) => setTimeout(r, 200)); const live = document.getSelection(); return JSON.stringify({ collapsed: live?.isCollapsed, ranges: live?.rangeCount, anchorInTable: live?.anchorNode?.nodeName ?? null, offer: document.querySelector('.popover-offer') !== null, comment: document.querySelector('.popover-comment') !== null, popover: document.querySelector('.popover')?.className ?? null, cls: document.querySelector('${cellSel(13, 2)}')?.className ?? null }); })()`
-      )
-    );
     await commentOnSelection(page);
     await composeAndPost(page, 'C14 is the rivet quantity');
     await awaitStored(csv.relicId, 1);
+    await page.escape();
+    await page.waitFor(
+      `document.querySelector('.popover-card[data-comment-id]') === null`,
+      'the posted card is dismissed'
+    );
 
     // B4:D9 is a drag across real cells, from the washer site to the latch quantity.
     await page.drag(cellSel(3, 1), cellSel(8, 3));
@@ -943,7 +996,15 @@ await stage('tree', async () => {
       `document.querySelector('.jt-row') !== null`,
       'the tree draws'
     );
-    // The row that shows NUT-12 is the second line's sku.
+    const itemIndex = await page.evaluate<number>(
+      `[...document.querySelectorAll('.jt-row')].findIndex((row) => row.textContent.startsWith('1:'))`
+    );
+    assert.ok(itemIndex >= 0, 'the second line item is drawn');
+    await page.click('.jt-twist', { index: itemIndex });
+    await page.waitFor(
+      `[...document.querySelectorAll('.jt-row')].some((row) => row.textContent.includes('NUT-12'))`,
+      'the second line expands to its sku'
+    );
     const rowIndex = await page.evaluate<number>(
       `[...document.querySelectorAll('.jt-row')].findIndex((row) => row.textContent.includes('NUT-12'))`
     );
@@ -953,37 +1014,320 @@ await stage('tree', async () => {
       `[...document.querySelectorAll('button')].some((b) => b.textContent.trim() === 'Comment' && !b.disabled)`,
       'the Comment control enables for the node'
     );
-    await page.click('.jt-row, button', {}).catch(() => {});
-    throw new Error('tree stage not finished');
+    const commentIndex = await page.evaluate<number>(
+      `[...document.querySelectorAll('button')].findIndex((b) => b.textContent.trim() === 'Comment' && !b.disabled)`
+    );
+    await page.click('button', { index: commentIndex });
+    await composeAndPost(page, 'Check this node');
+    await awaitStored(order.relicId, 1);
+    const stored = await commentFor(order.relicId, 'Check this node');
+    assert.deepEqual(stored.anchor, {
+      kind: 'path',
+      pointer: '/order/lines/1/sku',
+    });
+    assert.equal(stored.resolved?.['status'], 'resolved');
+    assert.match(String(stored.resolved?.['excerpt']), /NUT-12/);
+
+    await page.reload();
+    await page.waitFor(
+      `document.querySelector('.jt-row') !== null`,
+      'the tree redraws after a reload'
+    );
+    const reopen = await page.evaluate<number>(
+      `[...document.querySelectorAll('.jt-row')].findIndex((row) => row.textContent.startsWith('1:'))`
+    );
+    assert.ok(reopen >= 0, 'the second line item is drawn after a reload');
+    await page.click('.jt-twist', { index: reopen });
+    await page.waitFor(
+      `document.querySelector('.jt-row .jt-mark') !== null`,
+      'the node mark paints after a reload'
+    );
+    const markedRows = await page.evaluate<string[]>(
+      `[...document.querySelectorAll('.jt-row')].filter((row) => row.querySelector('.jt-mark') !== null).map((row) => row.textContent)`
+    );
+    assert.equal(markedRows.length, 1, 'exactly one node is marked');
+    assert.match(markedRows[0] ?? '', /NUT-12/, 'the mark is on the sku row');
+    assertNoPageErrors(page, 'tree');
+  } finally {
+    await page.close();
+  }
+
+  // A key and a value that are HTML draw as text. No element is created and
+  // the attribute's script never runs.
+  const hostile = await publish('hostile.json', HOSTILE_JSON);
+  const hostilePage = await openPage(hostile.url, reader);
+  try {
+    await hostilePage.waitFor(
+      `document.querySelector('.jt-row') !== null`,
+      'the hostile tree draws'
+    );
+    const probe = await hostilePage.evaluate<{
+      elements: number;
+      ran: boolean;
+      shown: boolean;
+    }>(`({
+      elements: document.querySelectorAll('.jt-rows img, .jt-rows script, .jt-rows iframe').length,
+      ran: window.__relicTreePwned !== undefined,
+      shown: (document.querySelector('.jt-rows')?.textContent ?? '').includes('<img src=x'),
+    })`);
+    assert.deepEqual(
+      probe,
+      { elements: 0, ran: false, shown: true },
+      'hostile keys draw as text, not elements'
+    );
+    assertNoPageErrors(hostilePage, 'hostile tree');
+  } finally {
+    await hostilePage.close();
+  }
+});
+
+await stage('cues', async () => {
+  // The VTT cue 1 (1.2 to 4.8 seconds) and the SRT cue 2 (5.1 to 8.9 seconds).
+  const cueCases = [
+    {
+      file: 'talk.vtt',
+      text: VTT_TEXT,
+      index: 0,
+      body: 'Quote check',
+      anchor: { kind: 'time', t: 1.2, t_end: 4.8 },
+      cue: 'This is Larkspur Field 4.12.',
+    },
+    {
+      file: 'talk.srt',
+      text: SRT_TEXT,
+      index: 1,
+      body: 'Save note',
+      anchor: { kind: 'time', t: 5.1, t_end: 8.9 },
+      cue: 'The form saves to the device.',
+    },
+  ];
+  for (const item of cueCases) {
+    const cues = await publish(item.file, item.text);
+    const page = await openPage(cues.url, reader);
+    try {
+      await page.waitFor(
+        `document.querySelectorAll('.cue-text').length > ${item.index}`,
+        `the ${item.file} cue list draws`
+      );
+      await page.drag(
+        '.structured-cues .cue',
+        '.structured-cues .cue-text',
+        { index: item.index, fromLeft: 2 },
+        { index: item.index, fromRight: 1 }
+      );
+      await commentOnSelection(page);
+      await composeAndPost(page, item.body);
+      await awaitStored(cues.relicId, 1);
+
+      const stored = await commentFor(cues.relicId, item.body);
+      assert.deepEqual(stored.anchor, item.anchor, `${item.file} span`);
+      assert.equal(stored.resolved?.['kind'], 'time');
+      const resolvedCues = stored.resolved?.['cues'] as
+        | Array<{ text: string }>
+        | undefined;
+      assert.deepEqual(
+        resolvedCues?.map((c) => c.text),
+        [item.cue],
+        `${item.file} resolves to its one cue`
+      );
+
+      await page.reload();
+      await page.waitFor(
+        `document.querySelector('.cue.is-commented') !== null`,
+        `the ${item.file} cue mark paints after a reload`
+      );
+      const marked = await page.evaluate<string[]>(
+        `[...document.querySelectorAll('.cue.is-commented .cue-text')].map((el) => el.textContent)`
+      );
+      assert.deepEqual(marked, [item.cue], 'only the commented cue is marked');
+      assertNoPageErrors(page, item.file);
+    } finally {
+      await page.close();
+    }
+  }
+});
+
+await stage('notebook', async () => {
+  const nb = await publish('survey.ipynb', IPYNB_TEXT);
+  const page = await openPage(nb.url, reader);
+  try {
+    await page.waitFor(
+      `document.querySelector('.nb-comment[data-pointer="/cells/1"]') !== null`,
+      'the notebook draws'
+    );
+    await page.hover('.nb-cell[data-cell="1"] .nb-box');
+    await page.click('.nb-comment[data-pointer="/cells/1"]');
+    await composeAndPost(page, 'Why print here');
+    await awaitStored(nb.relicId, 1);
+    await page.hover('.nb-cell[data-cell="1"] .nb-out.is-stream');
+    await page.click('.nb-comment[data-pointer="/cells/1/outputs/0"]');
+    await composeAndPost(page, 'Stream line');
+    await awaitStored(nb.relicId, 2);
+
+    const cell = await commentFor(nb.relicId, 'Why print here');
+    assert.deepEqual(cell.anchor, { kind: 'path', pointer: '/cells/1' });
+    assert.equal(cell.resolved?.['type'], 'cell');
+    assert.equal(cell.resolved?.['cell_type'], 'code');
+    const output = await commentFor(nb.relicId, 'Stream line');
+    assert.deepEqual(output.anchor, {
+      kind: 'path',
+      pointer: '/cells/1/outputs/0',
+    });
+    assert.equal(output.resolved?.['type'], 'output');
+    assert.equal(output.resolved?.['cell_type'], 'code');
+    assert.equal(output.resolved?.['output_type'], 'stream');
+
+    // The HTML output shows its placeholder. Its markup never becomes an element
+    // and its onerror never runs. The PNG output draws as an image.
+    const probe = await page.evaluate<{
+      placeholder: boolean;
+      frames: number;
+      rogueImages: number;
+      ran: boolean;
+      png: boolean;
+    }>(`({
+      placeholder: document.body.textContent.includes('This output is HTML (or a widget) and is not run here.'),
+      frames: document.querySelectorAll('.nb iframe, .nb script').length,
+      rogueImages: document.querySelectorAll('.nb img[src="x"]').length,
+      ran: window.__nbPwned !== undefined,
+      png: document.querySelector('.nb img[alt="Image output, PNG"]') !== null,
+    })`);
+    assert.deepEqual(
+      probe,
+      { placeholder: true, frames: 0, rogueImages: 0, ran: false, png: true },
+      'HTML is never rendered; the PNG draws'
+    );
+    assertNoPageErrors(page, 'notebook');
   } finally {
     await page.close();
   }
 });
 
-// Remaining stages are added after the table stage is proven.
-if (passed.length === 0 && stages.size === 0) {
-  throw new Error('no stages selected');
-}
-await store.listComments('none').catch(() => []);
-void sha256Hex;
-void decodeKey;
-void deriveCommentKey;
-void encryptComment;
-void loadPublishState;
-void COMMENT_TOOL_NAME;
-void ORDER_JSON;
-void HOSTILE_JSON;
-void VTT_TEXT;
-void SRT_TEXT;
-void IPYNB_TEXT;
-void cdpCalls;
-type _UnusedAnchor = CommentAnchor;
+await stage('old-reader', async () => {
+  // A comment whose anchor kind this viewer does not register. Sealed with the
+  // relic's own key, as a newer writer would seal it, and posted with the
+  // publish token the way the MCP posts.
+  const csv = await publish('legacy.csv', CSV_TEXT);
+  const state = await loadPublishState(csv.relicId);
+  assert.ok(state, 'the publish state holds the relic');
+  const key = await deriveCommentKey(decodeKey(state.key));
+  // The format writer refuses an anchor it would read as unsupported, which is the
+  // right rule for writers. This seal skips that guard on purpose, to play the
+  // newer writer. The envelope is the one encryptComment builds: 12 random bytes,
+  // then AES-GCM over the JSON, base64url. The reader under test is the viewer's.
+  const nonce = crypto.getRandomValues(new Uint8Array(12));
+  const plaintext = new TextEncoder().encode(
+    JSON.stringify({
+      body: 'Written by a newer reader',
+      display_name: null,
+      anchor: { kind: 'cell-v2', row: 2, col: 1 },
+    })
+  );
+  const sealed = new Uint8Array(
+    await crypto.subtle.encrypt({ name: 'AES-GCM', iv: nonce }, key, plaintext)
+  );
+  const framed = new Uint8Array(nonce.length + sealed.length);
+  framed.set(nonce, 0);
+  framed.set(sealed, nonce.length);
+  const ciphertext = Buffer.from(framed).toString('base64url');
+  const seeded = await fetch(`${origin}/api/relics/${csv.relicId}/comments`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      publish_token: state.publish_token,
+      ciphertext,
+    }),
+  });
+  assert.equal(seeded.status, 200, `seeding the comment: ${seeded.status}`);
+
+  const page = await openPage(csv.url, reader);
+  try {
+    await page.waitFor(
+      `document.querySelector('.dt-grid[role="grid"]') !== null`,
+      'the table draws'
+    );
+    await page.waitFor(
+      `document.body.textContent.includes('Written by a newer reader')`,
+      'the newer comment is listed'
+    );
+    const copy = await page.evaluate<{
+      chip: boolean;
+      note: boolean;
+      body: boolean;
+    }>(`({
+      chip: document.body.textContent.includes('Commenting on something this page cannot show'),
+      note: document.body.textContent.includes('This comment points at part of the document that this page cannot show.'),
+      body: document.body.textContent.includes('Written by a newer reader'),
+    })`);
+    assert.deepEqual(
+      copy,
+      { chip: true, note: true, body: true },
+      'the plan fallback copy shows, and the body stays readable'
+    );
+    assertNoPageErrors(page, 'old reader');
+  } finally {
+    await page.close();
+  }
+});
+
+await stage('refusals', async () => {
+  // Negative control (a): every malformed anchor is refused by the MCP before
+  // anything reaches the service.
+  const csv = await publish('refusals.csv', CSV_TEXT);
+  const before = (await store.listComments(csv.relicId)).length;
+  const malformed: Array<{ label: string; anchor: Record<string, unknown> }> = [
+    { label: 'row zero', anchor: { kind: 'cell', row: 0, col: 1 } },
+    {
+      label: 'column past the Excel width',
+      anchor: { kind: 'cell', row: 2, col: 16385 },
+    },
+    {
+      label: 'unknown field',
+      anchor: { kind: 'cell', row: 2, col: 2, bogus: true },
+    },
+    {
+      label: 'range ending before it starts',
+      anchor: { kind: 'cell', row: 4, col: 2, row_end: 3, col_end: 4 },
+    },
+    {
+      label: 'pointer without a slash',
+      anchor: { kind: 'path', pointer: 'name' },
+    },
+    {
+      label: 'pointer with a bad escape',
+      anchor: { kind: 'path', pointer: '/a~2' },
+    },
+  ];
+  for (const { label, anchor } of malformed) {
+    const result = await callTool(COMMENT_TOOL_NAME, {
+      relic_id: csv.relicId,
+      body: `refused: ${label}`,
+      anchor,
+    });
+    assert.equal(result.isError, true, `${label} is refused`);
+    assert.equal(
+      result.structuredContent?.['code'],
+      'local_comment_anchor_invalid',
+      `${label} is refused by the anchor validator`
+    );
+  }
+  const after = (await store.listComments(csv.relicId)).length;
+  assert.equal(after, before, 'no refused comment reached the service');
+});
 
 await rm(scratch, { recursive: true, force: true });
 delete process.env['RELIC_PUBLISH_STATE'];
 service.stop(true);
 clearTimeout(watchdog);
-if (passed.length === stages.size && stages.size > 0) {
+const allStages = [
+  'table',
+  'tree',
+  'cues',
+  'notebook',
+  'old-reader',
+  'refusals',
+];
+if (allStages.every((name) => passed.includes(name))) {
   console.log('STRUCTURED_FORMATS_PATH_OK');
 } else {
   console.log(`STRUCTURED_FORMATS_PATH_PARTIAL stages=${passed.join(',')}`);
