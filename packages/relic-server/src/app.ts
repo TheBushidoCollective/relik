@@ -6412,7 +6412,9 @@ ${
         "media-src 'self' blob: data:",
         "manifest-src 'self'",
         `connect-src 'self' ${new URL(config.serviceOrigin).origin} wss://${new URL(config.serviceOrigin).host} https:`,
-        `frame-src ${new URL(config.usercontentOrigin).origin}`,
+        // The exact shim path, not the origin: an origin lets same-origin HTML
+        // through, and the frame's self-navigation is governed by this directive.
+        `frame-src ${new URL(config.usercontentOrigin).origin}/sandbox.html`,
         "base-uri 'none'",
         "form-action 'none'",
       ].join('; '),
