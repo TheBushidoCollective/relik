@@ -766,7 +766,10 @@ async function callMcp(
 }
 
 // --- Channels and relics.
-const STATIC_IDS = ['static:case-f2a-splice'] as const;
+const STATIC_IDS = [
+  'static:case-f2a-splice',
+  'static:case-f2b-stray-quote',
+] as const;
 const staticMarkups = new Map<string, string>();
 const allIds = [...MAIN_IDS, ...WRITE_IDS, ...NAV_IDS, ...STATIC_IDS];
 for (const id of allIds) await allocateChannel(id);
@@ -802,6 +805,8 @@ function staticMarkup(id: string): string {
     .join('&quot;');
   if (id === 'static:case-f2a-splice')
     return `<i<iframe>frame srcdoc="${attr}">`;
+  if (id === 'static:case-f2b-stray-quote')
+    return `<iframe name=a'b srcdoc="${attr}"></iframe>`;
   throw new Error(`no static markup for ${id}`);
 }
 for (const id of STATIC_IDS) staticMarkups.set(id, staticMarkup(id));
