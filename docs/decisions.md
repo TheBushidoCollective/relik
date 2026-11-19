@@ -1263,3 +1263,14 @@ What is not proven:
 - Speaker output. Every audio capture reads the renderer before the mixer and the device.
 - Program rendering on Linux. The publisher renders only inside its macOS jail in this version, so a Linux publisher writes a focus-only archive, and the program proofs run on a Mac and are not in CI.
 - `PATH.md` Check 8 as worded. The jail denies the network and confines writes to a private RAM volume, and its probe proves both. No probe inspects the profile for rendered bytes.
+
+## 2026-11-19: Structured formats contract (PR A, slice A0)
+
+- Cell and path anchors are new kinds in `spec/format.md` 3.13, with no format version bump. A cue comment uses the existing `time` kind, so no third kind is added.
+- CSV, TSV, JSON, SRT and VTT stay class `code`. The structured view is chosen inside the class from the declared name, then the declared type. The bytes never change the route, which keeps every existing comment and suggestion on these files working.
+- `notebook` is a renderable class at tier 2, routed only when the whole notebook parses as nbformat 4. Notebooks over 50 MiB are shown as text, with a notice.
+- Structured views draw into a root that already holds the source view, so a file is never blank while a view loads or when a view cannot show it.
+- A notebook's comparison uses its source text in code mode, because a comparison of rendered cells is not built yet.
+- The MCP resolver keeps a `cell` or `path` comment in the thread with its location. It does not invent a resolution until the resolver slice lands.
+- A notebook's cover is the generic title and format label, as a model's is. Its cells and outputs are the author's, and a cover is public.
+- `RENDERABLE_CLASSES` now includes `notebook`. This supersedes the earlier statement in this file that it stays `{markdown, code, html, jsx, image, pdf}`, because Jason decided on 2026-11-19 that notebooks, spreadsheets and documents join the renderable classes. The taxonomy is now twelve classes in `RENDERER_CLASSES`, and the agreement test in `class-behaviour.test.ts` is driven from that list, so it covers the notebook without a change to the test.
