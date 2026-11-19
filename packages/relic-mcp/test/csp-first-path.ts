@@ -1058,7 +1058,10 @@ async function drive(connection: CdpConnection, run: Run): Promise<Observed> {
       probe =
         value === undefined || value === 'null'
           ? null
-          : (JSON.parse(value) as typeof probe);
+          : (JSON.parse(value) as {
+              results: Record<string, unknown>[];
+              done: boolean;
+            });
       if (probe !== null && probe.done) break;
       await Bun.sleep(150);
     }
@@ -1263,7 +1266,7 @@ for (const table of tables) {
     const cell = (c: Cell) =>
       `${c.code} ${c.detail}`.trim().replace(/\|/g, '/');
     console.log(
-      `| ${def.id} | ${def.group} | ${COLUMNS.map((column) => cell(per[column])).join(' | ')} |`
+      `| ${def.id} | ${def.group} | ${COLUMNS.map((column) => cell(per[column] as Cell)).join(' | ')} |`
     );
   }
 }
