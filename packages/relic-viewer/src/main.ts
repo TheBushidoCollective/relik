@@ -141,6 +141,7 @@ import {
 } from './annotate-frame.ts';
 import { FrameHandshake } from './frame-handshake.ts';
 import { createLinkConfirmBar } from './link-confirm-bar.ts';
+import { type ConfirmPrefs, createConfirmPrefs } from './confirm-prefs.ts';
 import { describeLinkRequest, LinkConfirmGate } from './open-link-confirm.ts';
 import {
   type AddressedBy,
@@ -1448,9 +1449,20 @@ function sandboxFrame(
 
   // A link the frame asks to open is confirmed by the reader, in host chrome,
   // before any tab opens. See open-link-confirm.ts and link-confirm-bar.ts.
-  const linkBar = createLinkConfirmBar(new LinkConfirmGate(), (href) => {
-    window.open(href, '_blank', 'noopener,noreferrer');
-  });
+  const linkBar = createLinkConfirmBar(
+    new LinkConfirmGate(),
+    (href) => {
+      window.open(href, '_blank', 'noopener,noreferrer');
+    },
+    view.relicId === undefined
+      ? undefined
+      : {
+          relicId: view.relicId,
+          version: view.version,
+          prefs: confirmPrefs(),
+          activated: () => navigator.userActivation?.isActive === true,
+        }
+  );
 
   // The frame cannot see where it sits in the page, so the page says whether
   // the frame is in view. A mark inside a frame scrolled out of view is not
@@ -4180,6 +4192,12 @@ function preferenceStore(): Storage | undefined {
   } catch {
     return undefined;
   }
+}
+/** The confirmation store for this browser, shared by every relic on this origin. */
+let confirmPrefsStore: ConfirmPrefs | undefined;
+function confirmPrefs(): ConfirmPrefs {
+  confirmPrefsStore ??= createConfirmPrefs(preferenceStore());
+  return confirmPrefsStore;
 }
 
 /** The display name this reader last posted under, on any relic. */

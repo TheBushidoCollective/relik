@@ -137,6 +137,8 @@ export interface ReadyView {
    * run a ceremony when the service holds a different file for the version.
    */
   readonly versionDigest: string;
+  /** The relic this view was opened from. Absent where no relic id is known, and then the per-relic choices are not offered. */
+  readonly relicId?: string;
   /**
    * The transpiled component for the `sandboxed-jsx` route, compiled once by
    * routing. Undefined when the component does not compile, and always
@@ -669,6 +671,7 @@ export async function load(
         downgradeNotice: route.notice,
         componentModule: route.componentModule,
         shareUrl,
+        relicId,
         version: mintResponse.version,
         currentVersion: mintResponse.current_version,
         versionDigest: digest.hex(),
