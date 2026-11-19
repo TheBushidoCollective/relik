@@ -153,3 +153,62 @@ The question is what stops working, not what the probe measured on real relics. 
 - The `net:*` channels in the existing probe (WebTransport, WebSocket, EventSource, beacons, preloads, image and stylesheet loads and so on). They were not re-run under the candidate. Only `fetch` from the top realm and from workers appears here.
 - Chrome versions other than 149.
 - Whether the production header's `default-src` fallback behaves the same for other `frame-src`-governed routes. Only `vi4` and `vi5` were compared between `prodcsp` and `csp`.
+
+## Self-navigation
+
+Round 2 closes the open route from round 1 (finding 7): the render frame navigates itself to a document with no policy and gets WebRTC and unrestricted fetch. Four candidates were measured on the probe, with the same positive control and two process models, on loopback only.
+
+Run: `CSP_FIRST_ROUND=2 CSP_FIRST_ONLY=vi2-self-nav-href-leaf,vi4-self-nav-data-leaf,vi5-self-nav-blob-leaf,vi6-self-replace-leaf,vi7-self-nav-cross-origin-leaf bun packages/relic-mcp/test/csp-first-path.ts`. Column specs are in `packages/relic-mcp/test/csp-first-round2.ts`. Cases: `vi2` is `location.href` to a leaf on the frame origin (same origin, other path), `vi4` to a `data:` document, `vi5` to a `blob:` document, `vi6` is `location.replace` on the frame origin, and `vi7` is `location.href` to a leaf on the host origin (cross origin to the frame). The `control` column is the plain shim with no policy. It reaches a listener in every case in both models, so every other cell is a positive measurement. The two process models give identical verdicts on every cell.
+
+Verdicts: `EGRESS(channel)` means a listener was reached. `BLOCKED-NAV` means the navigation was attempted (the host saw a second frame load), and the target document never ran its code. `BLOCKED-PRE` means the shim never rendered, so no navigation was attempted and the cell says nothing about self-navigation.
+
+Column meanings. `hostPath`: the host page's `frame-src` names the shim's path prefix. `hostOrigin`: `frame-src` names the shim origin. `hostNone`: `frame-src 'none'`. `hostNoPolicy`: no host policy. `hostPathProd`: the production shim and headers, with the host path policy. `cspAttrLeafBlock`, `cspAttrLeafAllow` and `cspAttrNoAllowShim`: an iframe `csp` attribute requiring `default-src 'none'; script-src 'unsafe-inline' blob:; frame-src 'none'; connect-src 'none'; object-src 'none'`, with `Allow-CSP-From` on the shim and on the leaf, on the leaf only, or on neither. `sbForms`, `sbPopups`, `sbTopNav`, `sbCredless`, `sbSameOrigin`: the plain shim with other sandbox token sets, or `credentialless`. `sbForms-cand` and `sbCredless-cand`: the same two on the candidate shim and CSP.
+
+### Grid (default model; the isolated model is identical row by row)
+
+| case | control | hostPath | hostOrigin | hostNone | hostNoPolicy | hostPathProd | cspAttrLeafBlock | cspAttrLeafAllow | cspAttrNoAllowShim | sbForms | sbPopups | sbTopNav | sbCredless | sbSameOrigin | sbForms-cand | sbCredless-cand |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| vi2-self-nav-href-leaf | EGRESS(tcp2+udp5) | BLOCKED-NAV | EGRESS(tcp2+udp5) | BLOCKED-PRE | EGRESS(tcp2+udp5) | BLOCKED-NAV | BLOCKED-NAV | EGRESS(udp5) | BLOCKED-PRE | EGRESS(tcp2+udp5) | EGRESS(tcp2+udp5) | EGRESS(tcp2+udp5) | EGRESS(tcp2+udp5) | EGRESS(tcp2+udp5) | EGRESS(tcp2+udp5) | EGRESS(tcp2+udp5) |
+| vi4-self-nav-data-leaf | EGRESS(tcp2+udp5) | BLOCKED-NAV | BLOCKED-NAV | BLOCKED-PRE | BLOCKED-NAV | BLOCKED-NAV | BLOCKED-NAV | BLOCKED-NAV | BLOCKED-PRE | EGRESS(tcp2+udp5) | EGRESS(tcp2+udp5) | EGRESS(tcp2+udp5) | EGRESS(tcp2+udp5) | EGRESS(tcp2+udp5) | BLOCKED-NAV | BLOCKED-NAV |
+| vi5-self-nav-blob-leaf | EGRESS(tcp2+udp5) | BLOCKED-NAV | BLOCKED-NAV | BLOCKED-PRE | BLOCKED-NAV | BLOCKED-NAV | BLOCKED-NAV | BLOCKED-NAV | BLOCKED-PRE | EGRESS(tcp2+udp5) | EGRESS(tcp2+udp5) | EGRESS(tcp2+udp5) | EGRESS(tcp2+udp5) | EGRESS(tcp2+udp5) | BLOCKED-NAV | BLOCKED-NAV |
+| vi6-self-replace-leaf | EGRESS(tcp2+udp5) | BLOCKED-NAV | EGRESS(tcp2+udp5) | BLOCKED-PRE | EGRESS(tcp2+udp5) | BLOCKED-NAV | BLOCKED-NAV | EGRESS(udp5) | BLOCKED-PRE | EGRESS(tcp2+udp5) | EGRESS(tcp2+udp5) | EGRESS(tcp2+udp5) | EGRESS(tcp2+udp5) | EGRESS(tcp2+udp5) | EGRESS(tcp2+udp5) | EGRESS(tcp2+udp5) |
+| vi7-self-nav-cross-origin-leaf | EGRESS(tcp2+udp5) | BLOCKED-NAV | BLOCKED-NAV | BLOCKED-PRE | EGRESS(tcp2+udp5) | BLOCKED-NAV | BLOCKED-NAV | EGRESS(udp5) | BLOCKED-PRE | EGRESS(tcp2+udp5) | EGRESS(tcp2+udp5) | EGRESS(tcp2+udp5) | EGRESS(tcp2+udp5) | EGRESS(tcp2+udp5) | EGRESS(tcp2+udp5) | EGRESS(tcp2+udp5) |
+
+### Findings
+
+**A. The embedder's `frame-src` governs self-navigation.** `hostPath` refuses all five forms: same origin, cross origin, `data:`, `blob:`, and `replace`. `hostOrigin` lets the same-origin forms through (`vi2`, `vi6`), refuses the cross-origin one (`vi7`), and the `data:` and `blob:` forms are refused by the shim's own policy. So the same-origin question turns on the path, not the origin: the host must name an exact path, not the origin.
+
+**A2. The production shim is covered by a host policy alone.** Under `hostPathProd` (production shim and headers, host path policy), all five forms are refused, including `data:` and `blob:`, which the production header does not block by itself. A host policy closes the production gap without changing the shim.
+
+**A3. The shim's own `frame-src 'none'` does not stop `http:`.** In `hostNoPolicy` (candidate shim and CSP, no host policy), `vi4` is refused and `vi2`, `vi6` and `vi7` egress. So the shim's own `frame-src` covers `data:` and `blob:` but not `http:`, and the embedder's `frame-src` is what governs `http:`. The mechanism is inferred from the matrix, not separately measured.
+
+**B. Same-origin navigation: what the usercontent origin can serve.** In `app.ts` the usercontent origin's reserved routes are `/sandbox.html`, `/assets/*`, `/manifest.webmanifest`, `/favicon.ico` and `/sw.js`. In the built viewer dist, the only HTML file is `sandbox.html`. A cover build also writes `frame.html`, which carries its own meta CSP, and it is not in this checkout's dist. No route serves per-relic content. The host sends the author document once, by `postMessage`, and the shim's handshake is one-shot, so a navigated shim never receives author content. Same-origin navigation therefore reaches only first-party documents, which is not an author-content hole today. The probe's same-origin leaf is attacker content by construction, so `vi2` and `vi6` test the policy, not a production route. The `hostOrigin` policy would still let the frame navigate to any future HTML route on the origin, which is why the path restriction is the one to use.
+
+**C. The iframe `csp` attribute (embedded enforcement).**
+- `cspAttrNoAllowShim`: without `Allow-CSP-From` on the shim response, the shim never loads (`BLOCKED-PRE`, one load, the browser's refusal). Chrome 149 enforces the attribute on the framed response.
+- `cspAttrLeafBlock`: the shim loads and its author code runs, but a self-navigated leaf without `Allow-CSP-From` is refused (`BLOCKED-NAV`) in all five forms.
+- `cspAttrLeafAllow`: with `Allow-CSP-From` on the leaf, `http:` self-navigation is allowed, and the required policy applies to the navigated leaf. Its `connect-src 'none'` removed the leaf's TCP egress (the control's `tcp2` is absent). WebRTC still egressed over UDP (`udp5`). The required `frame-src 'none'` did not stop the navigation.
+- So the attribute is enforced on later navigations (observed through `connect-src`), refuses a navigated document that lacks `Allow-CSP-From`, and does not stop WebRTC.
+
+**D. Sandbox tokens and `credentialless` (C).** `sbForms`, `sbPopups`, `sbTopNav`, `sbCredless` and `sbSameOrigin` (plain shim, no CSP) egress for all five forms, the same as the control. `sbForms-cand` and `sbCredless-cand` egress for `http:` and are refused for `data:` and `blob:` by the candidate shim's own `frame-src`, the same as `candidate`. No sandbox token set and no `credentialless` changes self-navigation egress. The candidate CSP's `sandbox allow-scripts` directive caps the flags a document can have. That capping was not measured separately.
+
+**E. Host-side detection (D).** Every navigation attempt fires a second iframe `load`, whether the browser allowed it or refused it. An allowed control navigation shows `loads=2` with the leaf's marker. A refused one (`hostPath`) shows `loads=2` with no marker. A refused navigation shows the browser's error page, which also fires `load` (`hostPathProd`: `loads=3` across the refusal). So the host can observe that a navigation was attempted, after it happened. It cannot tell from `load` alone whether the navigation succeeded, and it did not read the frame's URL or origin (the cross-origin read is assumed to be refused by the origin model and was not measured directly). In the control, the leaf's egress marker reached the host after the second `load`. The leaf's network request happens during its parse, before its `load` event. So load-based detection cannot prevent egress from a navigated document. It can only blank the frame afterwards. Detection is not prevention.
+
+### Recommendation
+
+The minimal combination that closes the measured surface is three parts, all needed:
+
+1. **Host policy.** The viewer page's response carries `frame-src` naming the exact shim URL, `${usercontentOrigin}/sandbox.html`, and no other `frame-src` source. This is the control on the navigation itself. It closes every measured self-navigation form, including under the production shim (`A`, `A2`). Do not use the origin alone (`hostOrigin` lets same-origin HTML routes through).
+2. **Shim policy.** The candidate CSP: `script-src` by the shim's hash plus `blob:` only, `frame-src 'none'`, `worker-src 'none'`, no `connect-src`. This closes `data:` and `blob:` self-navigation even if the host policy is absent (`A3`).
+3. **RTC removal before author code** in the candidate shim. This closes WebRTC from a `blob:` author script, which CSP cannot stop (round 1, finding 2). It cannot close WebRTC in a navigated document, which is why part 1 matters: the navigation control is what prevents the new realm from existing.
+
+The iframe `csp` attribute and the sandbox tokens are not needed for this surface. The `csp` attribute, with `Allow-CSP-From` on every legitimate target, would add `connect-src 'none'` to a navigated document, but it does not stop WebRTC (`C`). Host-side detection (`E`) is a backstop only.
+
+### What remains unproven
+
+- **Production topology.** The host policy was measured with a loopback stand-in for the usercontent origin: same site, different port, and the path prefix `/frame/` rather than the exact `/sandbox.html`. Cross-site layouts (the usercontent origin on another registrable domain) and the exact-path source were not measured.
+- **The host page's own response.** The viewer page is served by the service origin with its own headers. The `frame-src` policy must be added to that response, and the viewer's own scripts must still run under it. Neither was measured.
+- **Other navigation routes.** Anchor clicks, form submissions and `window.open` to an external URL were not measured in round 2. Round 1's anchor and form cases are unproven, because their control stayed silent. Only script-driven `href`, `replace` and cross-origin `href` were measured. A form submit or anchor click to an external URL is expected to be covered by the host's `frame-src`, but that is not measured.
+- **Embedded enforcement details.** `Allow-CSP-From` was measured only with `*`. The effect of an origin-specific value was not measured. Chrome 149 only.
+- **Detection.** The host's read of the frame's URL or origin after a navigation was not measured. The host cannot distinguish a refused navigation from an allowed one from `load` alone.
+- **WebRTC.** No policy measured here governs WebRTC in a navigated document. Only the absence of a navigation to a new realm, or RTC removal in the shim realm, stops it.
