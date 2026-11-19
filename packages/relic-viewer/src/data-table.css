@@ -52,7 +52,9 @@
 
 .dt-grid {
   position: relative;
-  height: min(70vh, 48rem);
+  /* The inspector above it takes 5rem, so the table and its inspector together
+     still fit the window they fitted when the inspector sat below. */
+  height: min(calc(70vh - 5rem), 48rem);
   min-height: 12rem;
   overflow: auto;
   border: 1px solid var(--rule-strong, #888);

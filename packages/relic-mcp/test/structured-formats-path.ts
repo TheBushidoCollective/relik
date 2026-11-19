@@ -384,6 +384,8 @@ interface Page {
 
 interface ClickOptions {
   readonly index?: number;
+  /** Measure where the element is now, without scrolling it into view first. */
+  readonly noScroll?: boolean;
   /** Pixels from the element's left edge, for controls that sit at one side. */
   readonly fromLeft?: number;
   /** Pixels in from the element's right edge, for a drag that ends at a line's end. */
@@ -572,7 +574,7 @@ async function openPage(
       } | null>(`(() => {
         const el = document.querySelectorAll(${JSON.stringify(selector)})[${options.index ?? 0}];
         if (!(el instanceof HTMLElement)) return null;
-        el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
+        if (${options.noScroll === true ? 'false' : 'true'}) el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
         const r = el.getBoundingClientRect();
         if (r.width === 0 || r.height === 0) return null;
         const x = ${options.fromRight !== undefined ? `r.right - ${options.fromRight}` : options.fromLeft === undefined ? 'r.left + r.width / 2' : `r.left + ${options.fromLeft}`};
@@ -644,8 +646,11 @@ async function openPage(
       },
       async drag(from, to, fromOptions = {}, toOptions = {}) {
         currentStep = `drag ${from} to ${to}`;
-        const start = await point(from, fromOptions);
+        // Both ends into view, then the start measured again where it now is:
+        // bringing the end into view can scroll the page under the start.
+        await point(from, fromOptions);
         const end = await point(to, toOptions);
+        const start = await point(from, { ...fromOptions, noScroll: true });
         await mouse('mouseMoved', start, 0);
         await mouse('mousePressed', start, 1);
         for (let step = 1; step <= 4; step++) {
@@ -1185,6 +1190,13 @@ await stage('notebook', async () => {
     await page.click('.nb-comment[data-pointer="/cells/1"]');
     await composeAndPost(page, 'Why print here');
     await awaitStored(nb.relicId, 1);
+    // The posted card opens beside its control now; close it, as a reader would,
+    // before reaching for the output's control next to it.
+    await page.escape();
+    await page.waitFor(
+      `document.querySelector('.popover-card[data-comment-id]') === null`,
+      'the posted notebook card is dismissed'
+    );
     await page.hover('.nb-cell[data-cell="1"] .nb-out.is-stream');
     await page.click('.nb-comment[data-pointer="/cells/1/outputs/0"]');
     await composeAndPost(page, 'Stream line');
@@ -1568,10 +1580,11 @@ await stage('layout', async () => {
       'the notebook composer opens'
     );
     await Bun.sleep(300);
-    const composer = await nbPage.evaluate<number[] | null>(
+    type Rect = [number, number, number, number];
+    const composer = await nbPage.evaluate<Rect | null>(
       rectOf('.popover-composer')
     );
-    const box = await nbPage.evaluate<number[] | null>(
+    const box = await nbPage.evaluate<Rect | null>(
       rectOf('.nb-cell[data-cell="1"] .nb-box')
     );
     const height = await nbPage.evaluate<number>('window.innerHeight');
