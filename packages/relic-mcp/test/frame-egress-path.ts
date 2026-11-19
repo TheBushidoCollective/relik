@@ -155,6 +155,7 @@ const CAPTURE_JS = `(function () {
 
 const MECH_IDS = [
   'mech:createElement-iframe',
+  'mech:case-f0-tolowercase',
   'mech:case-f0-call-capture',
   'mech:createElement-coerced-after',
   'mech:createElementNS-iframe',
@@ -300,6 +301,17 @@ CH['rtc:shim-realm'] = function (id) {
   pc.createOffer().then(function (o) { return pc.setLocalDescription(o); }).catch(function () {});
 };
 CH['mech:createElement-iframe'] = function (id, box) { var el = document.createElement('iframe'); el.srcdoc = nestedHtml(id); box.appendChild(el); };
+CH['mech:case-f0-tolowercase'] = function (id, box) {
+  var realLower = String.prototype.toLowerCase;
+  String.prototype.toLowerCase = function () { return 'div'; };
+  try {
+    var el = document.createElement('iframe');
+    el.srcdoc = nestedHtml(id);
+    box.appendChild(el);
+  } finally {
+    String.prototype.toLowerCase = realLower;
+  }
+};
 CH['mech:case-f0-call-capture'] = function (id, box) {
   var realCall = Function.prototype.call, realApply = Function.prototype.apply, seen = {};
   function spy(fn) { if (typeof fn === 'function' && fn.name) seen[fn.name] = fn; }
