@@ -93,21 +93,22 @@ export function displayText(value: string): string {
   return `${visibleText(cut)}…`;
 }
 
-/** Controls and bidi characters a copy must not carry raw. Tab and LF are kept. */
-const CLIPBOARD_ESCAPE =
-  /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2028\u2029\u2066-\u2069]/g;
-
 /**
  * A selection as the clipboard receives it: the grid's escape form for every
  * control, CR and bidi character. Tab and LF stay, since they separate cells
  * and rows. Without this an ESC[201~ in a cell ends a terminal's paste early.
  */
 export function clipboardText(text: string): string {
-  return text.replace(
-    CLIPBOARD_ESCAPE,
-    (character) =>
-      `\\u{${(character.codePointAt(0) ?? 0).toString(16).toUpperCase()}}`
-  );
+  let out = '';
+  for (const character of text) {
+    const code = character.codePointAt(0) ?? 0;
+    const keep = code === 0x09 || code === 0x0a;
+    out +=
+      !keep && (code < 0x20 || isVisibleControl(code))
+        ? `\\u{${code.toString(16).toUpperCase()}}`
+        : character;
+  }
+  return out;
 }
 
 /** A label's text: the display text, cut to the label length. */

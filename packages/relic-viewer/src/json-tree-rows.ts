@@ -41,15 +41,11 @@ function needsEscape(code: number): boolean {
   );
 }
 
-/** Matches any character `needsEscape` would escape, so plain text skips the loop. */
-const NEEDS_ESCAPE =
-  /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2028\u2029\u2066-\u2069]/;
 /**
  * The text as the reader sees it: control, bidi and line-separator characters
  * become visible `\uXXXX` escapes. Everything else is kept as written.
  */
 export function visibleText(text: string): string {
-  if (!NEEDS_ESCAPE.test(text)) return text;
   let out = '';
   for (const character of text) {
     const code = character.codePointAt(0) ?? 0;

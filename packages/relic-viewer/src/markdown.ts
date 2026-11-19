@@ -55,7 +55,7 @@ function inline(source: string): string {
   });
 
   out = out.replace(
-    /!\[([^\[\]]*)\]\(([^)\[\]\s]+)\)/g,
+    /!\[([^[\]]*)\]\(([^)[\]\s]+)\)/g,
     (match, alt: string, src: string) => {
       // An image would be a cross-origin request issued by the origin holding
       // the fragment. The alt text renders instead, and no request is made.
@@ -66,7 +66,7 @@ function inline(source: string): string {
   );
 
   out = out.replace(
-    /\[([^\[\]]+)\]\(([^)\[\]\s]+)\)/g,
+    /\[([^[\]]+)\]\(([^)[\]\s]+)\)/g,
     (match, text: string, url: string) => {
       const href = safeHref(url);
       if (href === undefined) return match;
