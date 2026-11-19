@@ -492,7 +492,13 @@ describe('the usercontent frame the render routes build', () => {
           : '';
       return own + childrenOf(node).map(textOf).join('');
     };
-    const bar = childrenOf(wrapper)[0];
+    const bar = childrenOf(wrapper).find(
+      (node) =>
+        typeof node === 'object' &&
+        node !== null &&
+        'className' in node &&
+        node.className === 'link-confirm'
+    );
     expect(textOf(bar)).toContain('example.com');
     expect(textOf(bar)).toContain('/report');
     expect(

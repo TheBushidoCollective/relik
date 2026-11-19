@@ -347,7 +347,7 @@ function attackSvg(attack: Attack, delay: number): string {
       if (attack === 'anchor-top-gesture') {
         const a = document.createElement('a');
         a.textContent = 'go';
-        a.setAttribute('style', 'position:absolute;left:0;top:160px;width:120px;height:80px;background:#fff;font:40px sans-serif;color:#000');
+        a.setAttribute('style', 'position:absolute;left:0;top:0;width:120px;height:80px;background:#fff;font:40px sans-serif;color:#000');
         a.href = url;
         a.target = '_top';
         a.addEventListener('click', () => mark('top-nav-click'));
@@ -1030,7 +1030,7 @@ async function observe(
         Date.now() - attemptAt >= job.delay + 1000
       ) {
         clicked = true;
-        clickAt = await gestureClick(browser, page, F1_POINT_DY);
+        clickAt = await gestureClick(browser, page);
       }
       const ready = job.attack !== 'anchor-top-gesture' || clicked;
       if (ready && Date.now() - attemptAt >= SETTLE_MS) break;
@@ -1374,7 +1374,7 @@ const BAR_EXPR = `JSON.stringify((() => {
     return { x: r.x + r.width / 2, y: r.y + r.height / 2, w: r.width, h: r.height };
   };
   const pending = bar.querySelector('.link-confirm-pending');
-  const remembered = bar.querySelector('.link-confirm-remembered');
+  const remembered = document.querySelector('.link-confirm-remembered');
   const open = bar.querySelector('.link-confirm-actions .popover-action.is-primary');
   const label = bar.querySelector('label.link-confirm-remember');
   const box = label ? label.querySelector('input[type="checkbox"]') : null;
@@ -1461,7 +1461,7 @@ async function attackReady(
 }
 
 async function gestureBar(browser: Browser, page: Page): Promise<boolean> {
-  await gestureClick(browser, page, F1_POINT_DY);
+  await gestureClick(browser, page);
   return until(
     async () => (await barOf(browser, page))?.pending === true,
     4000
@@ -1559,16 +1559,9 @@ async function republish(relic: Published, svg: string): Promise<void> {
   await mcp('relic_republish', { relic_id: relic.id, path: relic.path });
 }
 
-// The F1 gesture relic: the link sits below the bar's overlay, which covers the
-// top of the frame whenever the bar is shown, including the remembered row.
-const F1_POINT_DY = 200;
-function f1GestureSvg(): string {
-  return attackSvg('anchor-top-gesture', 0);
-}
-
 // The gesture relic with changed content: a new version to the store.
 function gestureVariant(): string {
-  return f1GestureSvg()
+  return attackSvg('anchor-top-gesture', 0)
     .replace('fill="#e53935"', 'fill="#1e88e5"')
     .replace('</svg>', `<!-- ${randomUUID()} -->\n</svg>`);
 }
@@ -1586,7 +1579,10 @@ function forgeSvg(): string {
     for (const claim of claims) window.parent.postMessage(claim, '*');
     window.parent.postMessage({ kind: 'top-nav-forge-sent', type: 'forge', count: claims.length }, '*');
   })();`;
-  return f1GestureSvg().replace('</svg>', `<script>${claims}</script>\n</svg>`);
+  return attackSvg('anchor-top-gesture', 0).replace(
+    '</svg>',
+    `<script>${claims}</script>\n</svg>`
+  );
 }
 
 async function runF1(
@@ -1661,7 +1657,7 @@ async function runF1(
       try {
         await attackReady(browser, second, 'top-nav-attempt');
         const before = await pageIds(browser);
-        const under = await gestureClick(browser, second, F1_POINT_DY);
+        const under = await gestureClick(browser, second);
         const active = await pageRead(
           browser,
           second,
@@ -1734,7 +1730,7 @@ async function runF1(
         await attackReady(browser, last, 'top-nav-forge-sent');
         await attackReady(browser, last, 'top-nav-attempt');
         const before = await pageIds(browser);
-        const under = await gestureClick(browser, last, F1_POINT_DY);
+        const under = await gestureClick(browser, last);
         const active = await pageRead(
           browser,
           last,
@@ -1792,7 +1788,10 @@ async function main(): Promise<void> {
 
   // The F1 bar stages publish their own relics, so the stress rows keep theirs.
   const f1: F1Relics = {
-    gesture: await publishSvg('f1-gesture.svg', f1GestureSvg()),
+    gesture: await publishSvg(
+      'f1-gesture.svg',
+      attackSvg('anchor-top-gesture', 0)
+    ),
     forge: await publishSvg('f1-forge.svg', forgeSvg()),
   };
   let f1Failed = 0;
