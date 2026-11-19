@@ -75,10 +75,10 @@ export const RENDERABLE_CLASSES: readonly RendererClass[] = [
  * What a recipient actually gets when they open a relic of each class.
  *
  * Three outcomes, because the viewer has three: content on the page, a
- * player, or a file on the device. `html` and `jsx` render inside a frame
- * with no network reach, which is still content on the page from where the
- * reader sits, so the distinction this table draws is the one a recipient
- * experiences rather than the one the renderer stack is built from.
+ * player, or a file on the device. `html` and `jsx` render inside a frame whose
+ * policy blocks their web requests, which is still content on the page from
+ * where the reader sits, so the distinction this table draws is the one a
+ * recipient experiences rather than the one the renderer stack is built from.
  *
  * It lives here rather than in either end because two consumers must agree
  * on it and neither owns it: the viewer routes content, and the server

@@ -194,6 +194,12 @@ user agent, and open time could be learned that way. The owner reversed
 it: bundle those assets and never fetch them from a CDN, and nothing
 outside Relic's own host is allowed.
 
+**Narrowed later: the policy blocks the frame's HTTP requests, and no more.** The
+frame's WebRTC egress is not closed by the policy: Chrome does not enforce CSP
+`webrtc 'block'`, and the shim's containment is a backstop with measured open
+routes (`spec/viewer.md` section 4). "No network reach" overclaimed that, so the
+user-facing text now says the frame blocks its web requests.
+
 The mechanism is a CSP on the frame's served response that permits no
 remote source of any kind, an iframe carrying `allow-scripts` and nothing
 else, and React bundled into the frame's inlined bundle. Inlining is the

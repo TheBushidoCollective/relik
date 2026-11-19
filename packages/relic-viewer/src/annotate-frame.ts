@@ -4,8 +4,9 @@
  * Framed relics render inside an opaque-origin iframe (`sandbox="allow-scripts"`
  * without `allow-same-origin`) on the usercontent origin. The parent window
  * holds the decryption key and comment ciphertext but cannot read into the
- * frame's DOM directly. The frame renders author-controlled content and runs
- * without network access, but cannot read parent storage or location.
+ * frame's DOM directly. The frame renders author-controlled content, its policy
+ * blocks its web requests (WebRTC egress is a backstop, see the spec), and it
+ * cannot read parent storage or location.
  *
  * This module defines the bidirectional message protocol that connects them:
  *
