@@ -26,9 +26,19 @@
  *
  * KNOWN_EGRESS is the explicit list of channels allowed to egress. It is empty.
  * Any unlisted egress fails the proof, and a listed channel that stops egressing
- * also fails, so the list cannot go stale. Prints FRAME_EGRESS_PATH_OK only when
- * every production variant shows exactly KNOWN_EGRESS and the negative control
- * detects what it must.
+ * also fails, so the list cannot go stale.
+ *
+ * A channel is counted as blocked only when a listener would have seen it. The
+ * UNPROVEN_CHANNELS table names the ones this harness cannot observe in this
+ * build, with the measurement behind each. They print UNPROVEN, and an arrival
+ * on one still fails the proof. The marker is FRAME_EGRESS_PATH_OK when nothing
+ * is unproven, and FRAME_EGRESS_PATH_OK_WITH_UNPROVEN when no egress was observed
+ * but some channels are unobservable here. The probe exits 0 for both.
+ *
+ * Measured on loopback TCP and UDP listeners and on a LAN address for STUN.
+ * This probe reads those listeners only. It does not read Chrome's net log, so
+ * a DNS-only resolution is not observed by it, and dns-prefetch stays UNPROVEN.
+ * Nothing here is measured on the public internet.
  */
 
 import assert from 'node:assert/strict';
@@ -94,6 +104,30 @@ watchdog.unref?.();
  * An entry needs a measured reason and a spec change that names it.
  */
 const KNOWN_EGRESS: Readonly<Record<string, string>> = {};
+
+/**
+ * Channels this harness cannot observe in this build, and the measured reason.
+ * They print UNPROVEN and are never counted as blocked. An arrival on one still
+ * fails the proof, so the table cannot hide egress.
+ *
+ * Measured with loopback listeners in chrome-headless-shell 149 (2026-11-19):
+ * - dns-prefetch: a served page with no CSP and a dns-prefetch hint to a
+ *   hostname under relic-probe.test (mapped to loopback) produced no resolution
+ *   in Chrome's net log, and no connection. Net-log resolutions are visible
+ *   for navigations and prefetches, so this is the hint not being performed,
+ *   not a blind spot in the log. DNS resolution is therefore unproven here.
+ * - preconnect: a served page with no CSP and a preconnect hint to a plain
+ *   loopback listener produced no connection.
+ * - speculation-rule prerender: its positive control reached no listener.
+ */
+const UNPROVEN_CHANNELS: Readonly<Record<string, string>> = {
+  'net:link-dns-prefetch':
+    'DNS-only hint, not performed in this build: no resolution or connection in the net log even with no CSP',
+  'net:link-preconnect':
+    'preconnect hint, not performed in this build: no connection to a loopback listener even with no CSP',
+  'net:speculation-prerender':
+    'speculation-rule prerender, positive control reached no listener in this build',
+};
 
 /**
  * The throwaway shim for the negative control: the same handshake and render
@@ -198,6 +232,9 @@ const NET_IDS = [
   'net:link-icon',
   'net:base-href',
   'net:input-image',
+  'net:speculation-prefetch',
+  'net:speculation-prerender',
+  'net:fetchLater',
 ] as const;
 
 const WRITE_IDS = [
@@ -337,6 +374,9 @@ CH['net:link-modulepreload'] = function (id, box) { linkOf('modulepreload', id, 
 CH['net:link-icon'] = function (id, box) { linkOf('icon', id, box); };
 CH['net:base-href'] = function (id, box) { var b = document.createElement('base'); b.href = u(id); document.head.appendChild(b); var i = document.createElement('img'); i.src = 'probe-relative.png'; box.appendChild(i); };
 CH['net:input-image'] = function (id, box) { var i = document.createElement('input'); i.type = 'image'; i.src = u(id); box.appendChild(i); };
+CH['net:speculation-prefetch'] = function (id, box) { var s = document.createElement('script'); s.type = 'speculationrules'; s.textContent = JSON.stringify({ prefetch: [{ source: 'list', urls: [u(id)] }] }); box.appendChild(s); };
+CH['net:speculation-prerender'] = function (id, box) { var s = document.createElement('script'); s.type = 'speculationrules'; s.textContent = JSON.stringify({ prerender: [{ source: 'list', urls: [u(id)] }] }); box.appendChild(s); };
+CH['net:fetchLater'] = function (id) { if (typeof fetchLater !== 'function') unsupported('fetchLater'); fetchLater(u(id), { activateAfter: 0 }); };
 CH['nav:location.href'] = function (id) { setTimeout(function () { location.href = u(id); }, 200); };
 CH['nav:location.replace'] = function (id) { setTimeout(function () { location.replace(u(id)); }, 200); };
 CH['nav:meta-refresh'] = function (id) { var m = document.createElement('meta'); m.httpEquiv = 'refresh'; m.content = '0;url=' + u(id); document.head.appendChild(m); };
@@ -966,15 +1006,35 @@ const first = verdicts[0];
 assert.ok(first !== undefined, 'no variants ran');
 console.log(`chrome: ${first.version} (${chromeExecutable})`);
 console.log(`STUN address: ${lan}`);
+/** A channel is unproven when this harness cannot observe it in this build. */
+function unprovenReason(
+  id: string,
+  result: ProbeResult | undefined
+): string | undefined {
+  if (result?.outcome === 'threw' && result.error?.startsWith('unsupported:')) {
+    return `not available in this build (${result.error})`;
+  }
+  return UNPROVEN_CHANNELS[id];
+}
+
 console.log(`\nper-channel results, ${first.name}:`);
+const unproven: string[] = [];
 for (const id of MAIN_IDS) {
   const result = first.results.get(id);
   const outcome = result?.outcome ?? 'no result';
   const error = result?.error ? ` (${result.error})` : '';
   const counter = first.counts.get(id);
-  const state = first.egress.includes(id) ? 'EGRESS ' : 'blocked';
+  const reason = first.egress.includes(id)
+    ? undefined
+    : unprovenReason(id, result);
+  if (reason !== undefined) unproven.push(id);
+  const state = first.egress.includes(id)
+    ? 'EGRESS    '
+    : reason !== undefined
+      ? 'UNPROVEN  '
+      : 'blocked   ';
   console.log(
-    `  ${state} ${id}  ${outcome}${error}  tcp=${counter?.tcpOpens ?? 0}/${counter?.tcpData ?? 0} udp=${counter?.udpPackets ?? 0}`
+    `  ${state}${id}  ${outcome}${error}  tcp=${counter?.tcpOpens ?? 0}/${counter?.tcpData ?? 0} udp=${counter?.udpPackets ?? 0}${reason === undefined ? '' : `  [${reason}]`}`
   );
 }
 const nestedSeen = first.nested
@@ -992,8 +1052,13 @@ for (const verdict of verdicts) {
 }
 
 const failed = verdicts.filter((verdict) => !verdict.ok);
-if (failed.length === 0) {
+if (failed.length === 0 && unproven.length === 0) {
   console.log('\nFRAME_EGRESS_PATH_OK');
+} else if (failed.length === 0) {
+  console.log(
+    `\nNo egress observed. UNPROVEN, not observable by this harness and not counted as blocked: ${unproven.join(', ')}`
+  );
+  console.log('FRAME_EGRESS_PATH_OK_WITH_UNPROVEN');
 } else {
   console.log(`\nFRAME_EGRESS_PATH_FAILED: ${failed.length} variant(s)`);
 }
