@@ -293,8 +293,22 @@ function withDocument<T>(run: (flushFrames: () => void) => T): T {
     rafQueue = [];
     for (const f of due) f();
   };
+  // The shim announces itself by a data-free ready message. A rendered frame
+  // registers its message listener right after it is created, so the fake window
+  // delivers that ready message from the most recent frame at registration. The
+  // host then posts the payload once, as it does in the browser.
+  let lastIframe: ElementStub | undefined;
   const win = {
-    addEventListener: () => {},
+    addEventListener: (
+      type: string,
+      listener: (event: unknown) => void
+    ): void => {
+      if (type !== 'message' || lastIframe?.contentWindow === undefined) return;
+      listener({
+        source: lastIframe.contentWindow,
+        data: { type: 'relic:sandbox-ready' },
+      });
+    },
     removeEventListener: () => {},
     innerWidth: 1180,
     innerHeight: 773,
@@ -308,7 +322,11 @@ function withDocument<T>(run: (flushFrames: () => void) => T): T {
         getPropertyValue: () => '',
       },
     },
-    createElement: (tag: string) => new ElementStub(tag),
+    createElement: (tag: string) => {
+      const element = new ElementStub(tag);
+      if (element.tagName === 'IFRAME') lastIframe = element;
+      return element;
+    },
     createElementNS: (_namespace: string, tag: string) => new ElementStub(tag),
   };
   (globalThis as { window?: unknown }).window = win;
