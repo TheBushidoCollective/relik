@@ -308,16 +308,14 @@ interface Run {
   readonly csp: string | null;
   readonly channel: Channel;
   readonly settle: number;
+  readonly hostCsp: string | null;
+  readonly frameAttrs: string;
+  readonly shimAllowCsp: boolean;
+  readonly leafAllowCsp: boolean;
 }
 
-type Column =
-  | 'control'
-  | 'production'
-  | 'csp'
-  | 'candidate'
-  | 'navigate'
-  | 'prodcsp';
-const COLUMNS: readonly Column[] = [
+type Column = string;
+const ROUND1_COLUMNS: readonly Column[] = [
   'control',
   'production',
   'csp',
@@ -325,8 +323,45 @@ const COLUMNS: readonly Column[] = [
   'navigate',
   'prodcsp',
 ];
+// Round 2: embedder frame-src, iframe csp attribute, sandbox tokens, credentialless.
+const SN_COLUMNS: readonly Column[] = [
+  'control',
+  'hostPath',
+  'hostOrigin',
+  'hostNone',
+  'hostNoPolicy',
+  'hostPathProd',
+  'cspAttrLeafBlock',
+  'cspAttrLeafAllow',
+  'cspAttrNoAllowShim',
+  'sbForms',
+  'sbPopups',
+  'sbTopNav',
+  'sbCredless',
+  'sbSameOrigin',
+  'sbForms-cand',
+  'sbCredless-cand',
+];
+const COLUMNS: readonly Column[] =
+  process.env['CSP_FIRST_ROUND'] === '2' ? SN_COLUMNS : ROUND1_COLUMNS;
 
 const runs = new Map<string, Run>();
+/** Headers for leaf pages: HTML, plus Allow-CSP-From when the run's leaf must be allowed into an embedded-enforced frame. */
+function leafHeaders(run: Run): Record<string, string> {
+  const headers: Record<string, string> = {
+    'content-type': 'text/html; charset=utf-8',
+  };
+  if (run.leafAllowCsp) headers['allow-csp-from'] = '*';
+  return headers;
+}
+/** Headers for the host page: HTML, plus the embedder policy when the run sets one. */
+function hostHeaders(run: Run): Record<string, string> {
+  const headers: Record<string, string> = {
+    'content-type': 'text/html; charset=utf-8',
+  };
+  if (run.hostCsp !== null) headers['content-security-policy'] = run.hostCsp;
+  return headers;
+}
 const store = new MemoryStore();
 let hostOrigin = '';
 let frameOrigin = '';
@@ -340,7 +375,7 @@ const hostServer = Bun.serve({
       const run = runs.get(url.pathname.slice('/leaf/'.length));
       if (run === undefined) return new Response('Not found', { status: 404 });
       return new Response(leafDoc(run.cfg, 'leaf'), {
-        headers: { 'content-type': 'text/html; charset=utf-8' },
+        headers: leafHeaders(run),
       });
     }
     const run = runs.get(url.pathname.slice('/run/'.length));
@@ -348,7 +383,7 @@ const hostServer = Bun.serve({
       return new Response('Not found', { status: 404 });
     }
     return new Response(hostDocument(run), {
-      headers: { 'content-type': 'text/html; charset=utf-8' },
+      headers: hostHeaders(run),
     });
   },
 });
@@ -366,7 +401,7 @@ const frameServer = Bun.serve({
       const run = runs.get(url.pathname.slice('/leaf/'.length));
       if (run === undefined) return new Response('Not found', { status: 404 });
       return new Response(leafDoc(run.cfg, 'leaf'), {
-        headers: { 'content-type': 'text/html; charset=utf-8' },
+        headers: leafHeaders(run),
       });
     }
     if (url.pathname.startsWith('/frame/')) {
@@ -381,6 +416,7 @@ const frameServer = Bun.serve({
         'cache-control': 'no-store',
       };
       if (run.csp !== null) headers['content-security-policy'] = run.csp;
+      if (run.shimAllowCsp) headers['allow-csp-from'] = '*';
       return new Response(shimDocument(js), { headers });
     }
     return new Response('Not found', { status: 404 });
