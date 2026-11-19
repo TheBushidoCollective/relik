@@ -45,7 +45,10 @@ async function pageCases(
       root: HTMLElement,
       table: unknown,
       options: { filename: string }
-    ) => { dispose(): void };
+    ) => {
+      paintMark(anchor: unknown, id: string): boolean;
+      dispose(): void;
+    };
     mountJsonTree: (mount: unknown) => { dispose(): void } | undefined;
     mountCues: (mount: unknown) =>
       | {
