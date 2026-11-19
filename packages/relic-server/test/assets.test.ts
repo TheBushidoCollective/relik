@@ -150,14 +150,14 @@ describe('the sandbox page', () => {
       'content-security-policy'
     ) ?? '';
 
-  test('cuts the frame off from the network entirely', async () => {
+  test('denies the frame HTTP requests by policy', async () => {
     const csp = await sandboxPolicy();
     expect(csp).toContain("default-src 'none'");
     expect(csp).toContain("worker-src 'none'");
     expect(csp).toContain("form-action 'none'");
     expect(csp).toContain("base-uri 'none'");
     // WebRTC has no CSP directive that Chrome enforces, so none is pinned here.
-    // The containment in the shim is proven by the egress probe instead.
+    // The containment is a backstop, not a boundary: the egress probe records its open routes.
     expect(csp).toContain('sandbox allow-scripts');
   });
 

@@ -16,13 +16,14 @@
  * key, and there is deliberately no code in this bundle that could do
  * anything with one.
  *
- * Rendered content here cannot reach the network. The page's CSP names no
- * remote source, so nothing a relic's author writes can make a request
- * leave this frame. The JSX path carries its own dependencies for the same
- * reason: React and ReactDOM are bundled into this script, and the build
- * inlines that script into the page. An opaque origin cannot fetch even
- * its own origin's assets, so inlining is the only channel through which
- * the frame can receive code at all.
+ * Rendered content here cannot make HTTP requests. The page's CSP names no
+ * remote source, so fetch, image, script, style, font and media loads from
+ * author content are refused. WebRTC is not governed by CSP, so the in-realm
+ * containment is a backstop, not a boundary (docs/spec/viewer.md, section 4).
+ * The JSX path carries its own dependencies for the same reason: React and
+ * ReactDOM are bundled into this script, and the build inlines that script
+ * into the page. An opaque origin cannot fetch even its own origin's assets,
+ * so inlining is the only channel through which the frame can receive code.
  */
 // React and ReactDOM are bundled into this file rather than fetched: the
 // frame is not allowed to reach the network, and an opaque origin cannot
@@ -908,7 +909,7 @@ type ImageFrameMark = {
 /**
  * Font Awesome Pro 7.3.1 "comment" and "comment-plus" (solid).
  * Obtained from the configured bcb2ad36f1 Pro kit's v7.3.1/svgs/solid assets.
- * Inline because this frame has no network and a closed CSP.
+ * Inline because this frame makes no remote requests under its closed CSP.
  * https://fontawesome.com License https://fontawesome.com/license
  * (Commercial License) Copyright 2026 Fonticons, Inc.
  */
@@ -2534,14 +2535,16 @@ function scheduleReport(): void {
 }
 
 /**
- * Strip elements that create nested browsing contexts or external plugin realms.
+ * Known-weak backstop: a single-pass deletion of frame markup, not a parser. It
+ * can splice a frame start tag, since the text on either side of a removed tag
+ * joins and is never examined again (`<i<iframe>frame` becomes `<iframe`). A
+ * frame start tag with a stray quote survives, because the quote alternatives
+ * need a closing quote. It stays as defence in depth. It is not a boundary.
+ * See docs/spec/viewer.md, section 4.
  *
- * The argument is converted to a string once, here, and the string is what gets
- * checked and parsed. A value converted late could return markup from toString
- * that the check never saw. Chrome does not enforce CSP `webrtc 'block'`, and a
- * srcdoc or about:blank subframe can instantiate unpatched WebRTC constructors,
- * so frame, object, embed, portal and fencedframe markup is never parsed from
- * author text. Then no nested realm exists to be left unpatched.
+ * The argument is converted to a string once, here, and that string is the one
+ * checked and parsed, so a value converted late cannot return markup the check
+ * never saw.
  */
 export function sanitizeFrameHtml(rawHtml: unknown): string {
   return String(rawHtml).replace(
@@ -2551,24 +2554,21 @@ export function sanitizeFrameHtml(rawHtml: unknown): string {
 }
 
 /**
- * Contain WebRTC and worker egress channels in the sandboxed frame.
+ * Backstop, not a boundary. Author script shares this realm, so every guard
+ * here is ordinary JavaScript that the relic can reach and overwrite. The
+ * guards remove the WebRTC constructors and their prototype methods, neutralise
+ * Worker and SharedWorker, override contentWindow and contentDocument on frame
+ * and object elements, and wrap the DOM entry points that create frames.
  *
- * This is the only layer that stops WebRTC. Chrome ignores CSP `webrtc 'block'`,
- * so the constructors are removed from every realm the author can reach, and no
- * realm can be created from author input:
- * 1. Neutralizes WebRTC constructors and prototype methods on the frame's
- *    global and on whichever objects in its Window chain own them.
- * 2. Neutralizes Worker and SharedWorker constructors the same way.
- * 3. Overrides contentWindow and contentDocument on frame/object element prototypes.
- * 4. Refuses every path that creates or connects a frame element: element
- *    creation with coerced names, markup parsed from strings (innerHTML,
- *    outerHTML, insertAdjacentHTML, createContextualFragment, document.write,
- *    ShadowRoot.innerHTML, setHTML and setHTMLUnsafe, DOMParser,
- *    Document.parseHTMLUnsafe), and node insertion at any depth (appendChild,
- *    insertBefore, replaceChild, append, prepend, replaceChildren, before,
- *    after, replaceWith, insertAdjacentElement, moveBefore, Range.insertNode,
- *    Range.surroundContents, and fragments that hold a frame).
- * The probe in packages/relic-mcp/test/frame-egress-path.ts checks each entry.
+ * Routes these guards do not stop, each reproduced in
+ * packages/relic-mcp/test/frame-egress-path.ts as an open case: overwriting
+ * Function.prototype.call or apply exposes the native createElement and
+ * appendChild; overwriting String.prototype.toLowerCase defeats the name and
+ * tag checks; an x:iframe element in the XHTML namespace passes the
+ * qualified-name checks; and a frame tag split across document.write calls is
+ * checked one argument at a time. Each reaches a nested realm with
+ * RTCPeerConnection. Navigation to a javascript: URL is not covered, and was
+ * not measurable in the probe. See docs/spec/viewer.md, section 4.
  */
 export function installSandboxContainment(win: Window, _doc?: Document): void {
   const winRecord = win as unknown as Record<string, unknown>;

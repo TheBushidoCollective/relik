@@ -6024,7 +6024,7 @@ function visibleOtioEntryAtVersion(
  * The thread, in the service-origin chrome.
  *
  * It cannot live in the render frame and this is not a preference: the frame
- * is network denied, `default-src 'none'` with sandbox exactly
+ * is denied HTTP requests, `default-src 'none'` with sandbox exactly
  * `allow-scripts`, so it could not fetch a comment if it tried. The chrome
  * around it can, and it is also the only side of the boundary that holds the
  * key the bodies are sealed under.
