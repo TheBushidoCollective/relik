@@ -2536,14 +2536,16 @@ function scheduleReport(): void {
 /**
  * Strip elements that create nested browsing contexts or external plugin realms.
  *
- * Chrome does not enforce CSP webrtc 'block' or prevent about:blank or srcdoc
- * subframes from instantiating unpatched WebRTC constructors. Stripping frame,
- * object, and embed markup prevents author HTML from creating fresh realms.
+ * The argument is converted to a string once, here, and the string is what gets
+ * checked and parsed. A value converted late could return markup from toString
+ * that the check never saw. Chrome does not enforce CSP `webrtc 'block'`, and a
+ * srcdoc or about:blank subframe can instantiate unpatched WebRTC constructors,
+ * so frame, object, embed, portal and fencedframe markup is never parsed from
+ * author text. Then no nested realm exists to be left unpatched.
  */
-export function sanitizeFrameHtml(rawHtml: string): string {
-  if (typeof rawHtml !== 'string') return rawHtml;
-  return rawHtml.replace(
-    /<\s*\/?\s*(?:iframe|frame|object|embed|portal)\b(?:"[^"]*"|'[^']*'|[^'">])*(?:>|$)/gi,
+export function sanitizeFrameHtml(rawHtml: unknown): string {
+  return String(rawHtml).replace(
+    /<\s*\/?\s*(?:iframe|frame|object|embed|portal|fencedframe)\b(?:"[^"]*"|'[^']*'|[^'">])*(?:>|$)/gi,
     ''
   );
 }
@@ -2551,13 +2553,22 @@ export function sanitizeFrameHtml(rawHtml: string): string {
 /**
  * Contain WebRTC and worker egress channels in the sandboxed frame.
  *
- * Chrome ignores CSP webrtc 'block', allowing sandboxed frames to gather ICE
- * candidates and transmit STUN packets over UDP. This containment:
+ * This is the only layer that stops WebRTC. Chrome ignores CSP `webrtc 'block'`,
+ * so the constructors are removed from every realm the author can reach, and no
+ * realm can be created from author input:
  * 1. Neutralizes WebRTC constructors and prototype methods on the frame's
  *    global and on whichever objects in its Window chain own them.
  * 2. Neutralizes Worker and SharedWorker constructors the same way.
  * 3. Overrides contentWindow and contentDocument on frame/object element prototypes.
- * 4. Prevents programmatic creation and DOM insertion of nested frame/object elements.
+ * 4. Refuses every path that creates or connects a frame element: element
+ *    creation with coerced names, markup parsed from strings (innerHTML,
+ *    outerHTML, insertAdjacentHTML, createContextualFragment, document.write,
+ *    ShadowRoot.innerHTML, setHTML and setHTMLUnsafe, DOMParser,
+ *    Document.parseHTMLUnsafe), and node insertion at any depth (appendChild,
+ *    insertBefore, replaceChild, append, prepend, replaceChildren, before,
+ *    after, replaceWith, insertAdjacentElement, moveBefore, Range.insertNode,
+ *    Range.surroundContents, and fragments that hold a frame).
+ * The probe in packages/relic-mcp/test/frame-egress-path.ts checks each entry.
  */
 export function installSandboxContainment(win: Window, _doc?: Document): void {
   const winRecord = win as unknown as Record<string, unknown>;
@@ -2741,23 +2752,30 @@ export function installSandboxContainment(win: Window, _doc?: Document): void {
     object: true,
     embed: true,
     portal: true,
+    fencedframe: true,
   };
+  const BLOCKED_SELECTOR = 'iframe, frame, object, embed, portal, fencedframe';
 
   const nodeCtor = winRecord['Node'] as
-    | { prototype: Node; ELEMENT_NODE: number }
+    | { prototype: Node; ELEMENT_NODE: number; DOCUMENT_FRAGMENT_NODE?: number }
     | undefined;
   const elementNodeType = nodeCtor?.ELEMENT_NODE ?? 1;
+  const fragmentNodeType = nodeCtor?.DOCUMENT_FRAGMENT_NODE ?? 11;
 
+  // A frame element, or any node holding one below it. A fragment has no tag,
+  // so it is judged by its contents: inserting a fragment is how a frame
+  // slipped past a check that looked only at elements.
   const isBlockedNode = (node: Node | null): boolean => {
-    if (!node || node.nodeType !== elementNodeType) return false;
+    if (!node) return false;
+    if (node.nodeType === fragmentNodeType) {
+      return (
+        (node as DocumentFragment).querySelector?.(BLOCKED_SELECTOR) != null
+      );
+    }
+    if (node.nodeType !== elementNodeType) return false;
     const tag = ((node as Element).tagName || '').toLowerCase();
     if (BLOCKED_TAGS[tag]) return true;
-    if (
-      (node as Element).querySelector?.('iframe, frame, object, embed, portal')
-    ) {
-      return true;
-    }
-    return false;
+    return (node as Element).querySelector?.(BLOCKED_SELECTOR) != null;
   };
   const docCtor = winRecord['Document'] as { prototype: Document } | undefined;
   if (docCtor?.prototype) {
@@ -2767,13 +2785,16 @@ export function installSandboxContainment(win: Window, _doc?: Document): void {
       tagName: string,
       options?: ElementCreationOptions
     ): HTMLElement {
-      if (typeof tagName === 'string' && BLOCKED_TAGS[tagName.toLowerCase()]) {
+      // Coerced once and checked, so the name checked is the name created. An
+      // object whose toString returns "iframe" is refused like the string.
+      const name = String(tagName);
+      if (BLOCKED_TAGS[name.toLowerCase()]) {
         throw new DOMException(
-          `Frame creation is blocked: ${tagName}`,
+          `Frame creation is blocked: ${name}`,
           'SecurityError'
         );
       }
-      return origCreateElement.call(this, tagName, options);
+      return origCreateElement.call(this, name, options);
     };
 
     const origCreateElementNS = docCtor.prototype.createElementNS;
@@ -2783,16 +2804,17 @@ export function installSandboxContainment(win: Window, _doc?: Document): void {
       tagName: string,
       options?: ElementCreationOptions | string
     ): Element {
-      if (typeof tagName === 'string' && BLOCKED_TAGS[tagName.toLowerCase()]) {
+      const name = String(tagName);
+      if (BLOCKED_TAGS[name.toLowerCase()]) {
         throw new DOMException(
-          `Frame creation is blocked: ${tagName}`,
+          `Frame creation is blocked: ${name}`,
           'SecurityError'
         );
       }
       return origCreateElementNS.call(
         this,
         ns as unknown as 'http://www.w3.org/1999/xhtml',
-        tagName,
+        name,
         options
       );
     } as typeof docCtor.prototype.createElementNS;
@@ -2801,10 +2823,10 @@ export function installSandboxContainment(win: Window, _doc?: Document): void {
       this: Document,
       ...text: string[]
     ): void {
-      const sanitized = text.map((t) =>
-        typeof t === 'string' ? sanitizeFrameHtml(t) : t
+      origDocWrite.apply(
+        this,
+        text.map((t) => sanitizeFrameHtml(t)) as string[]
       );
-      origDocWrite.apply(this, sanitized as string[]);
     };
 
     const origDocWriteln = docCtor.prototype.writeln;
@@ -2812,10 +2834,10 @@ export function installSandboxContainment(win: Window, _doc?: Document): void {
       this: Document,
       ...text: string[]
     ): void {
-      const sanitized = text.map((t) =>
-        typeof t === 'string' ? sanitizeFrameHtml(t) : t
+      origDocWriteln.apply(
+        this,
+        text.map((t) => sanitizeFrameHtml(t)) as string[]
       );
-      origDocWriteln.apply(this, sanitized as string[]);
     };
 
     const origAdoptNode = docCtor.prototype.adoptNode;
@@ -3007,6 +3029,98 @@ export function installSandboxContainment(win: Window, _doc?: Document): void {
       return origReplaceChild.call(this, newChild, oldChild) as T;
     };
   }
+
+  // Entry points the patches above do not reach. Each one parses author markup,
+  // which is sanitized after coercion, or connects nodes, which are checked for
+  // frame elements at any depth. A method the browser lacks is skipped. The
+  // egress probe in packages/relic-mcp/test/frame-egress-path.ts runs one channel
+  // per entry point, so a path that gets past one of these fails there.
+  const wrapHtmlArgument = (target: object | undefined, name: string): void => {
+    const record = target as Record<string, unknown> | undefined;
+    const original = record?.[name];
+    if (record === undefined || typeof original !== 'function') return;
+    record[name] = function (this: unknown, html: unknown, ...rest: unknown[]) {
+      return original.call(this, sanitizeFrameHtml(html), ...rest);
+    };
+  };
+  const wrapNodeArguments = (
+    target: object | undefined,
+    name: string
+  ): void => {
+    const record = target as Record<string, unknown> | undefined;
+    const original = record?.[name];
+    if (record === undefined || typeof original !== 'function') return;
+    record[name] = function (this: unknown, ...nodes: unknown[]) {
+      for (const node of nodes) {
+        if (typeof node !== 'string' && isBlockedNode(node as Node)) {
+          throw new DOMException(
+            'Node insertion blocked: frame element',
+            'SecurityError'
+          );
+        }
+      }
+      return original.apply(this, nodes);
+    };
+  };
+  const wrapHtmlProperty = (target: object | undefined, name: string): void => {
+    if (target === undefined) return;
+    const descriptor = Object.getOwnPropertyDescriptor(target, name);
+    const set = descriptor?.set;
+    if (descriptor === undefined || set === undefined) return;
+    const replacement: PropertyDescriptor = {
+      set(this: unknown, value: unknown) {
+        set.call(this, sanitizeFrameHtml(value));
+      },
+      configurable: true,
+      enumerable: descriptor.enumerable === true,
+    };
+    if (descriptor.get !== undefined) replacement.get = descriptor.get;
+    Object.defineProperty(target, name, replacement);
+  };
+
+  const shadowCtor = winRecord['ShadowRoot'] as
+    | { prototype: object }
+    | undefined;
+  const fragmentCtor = winRecord['DocumentFragment'] as
+    | { prototype: object }
+    | undefined;
+  const charDataCtor = winRecord['CharacterData'] as
+    | { prototype: object }
+    | undefined;
+  const doctypeCtor = winRecord['DocumentType'] as
+    | { prototype: object }
+    | undefined;
+  const domParserCtor = winRecord['DOMParser'] as
+    | { prototype: object }
+    | undefined;
+
+  // Markup a browser parses from a string.
+  wrapHtmlProperty(shadowCtor?.prototype, 'innerHTML');
+  for (const target of [elCtor?.prototype, shadowCtor?.prototype]) {
+    wrapHtmlArgument(target, 'setHTMLUnsafe');
+    wrapHtmlArgument(target, 'setHTML');
+  }
+  wrapHtmlArgument(docCtor, 'parseHTMLUnsafe');
+  wrapHtmlArgument(domParserCtor?.prototype, 'parseFromString');
+
+  // Nodes connected by methods the patches above do not cover.
+  for (const target of [
+    elCtor?.prototype,
+    charDataCtor?.prototype,
+    doctypeCtor?.prototype,
+  ]) {
+    wrapNodeArguments(target, 'before');
+    wrapNodeArguments(target, 'after');
+    wrapNodeArguments(target, 'replaceWith');
+  }
+  for (const target of [fragmentCtor?.prototype, docCtor?.prototype]) {
+    wrapNodeArguments(target, 'append');
+    wrapNodeArguments(target, 'prepend');
+    wrapNodeArguments(target, 'replaceChildren');
+  }
+  wrapNodeArguments(elCtor?.prototype, 'moveBefore');
+  wrapNodeArguments(rangeCtor?.prototype, 'insertNode');
+  wrapNodeArguments(rangeCtor?.prototype, 'surroundContents');
 }
 
 if (typeof window !== 'undefined' && typeof document !== 'undefined') {
