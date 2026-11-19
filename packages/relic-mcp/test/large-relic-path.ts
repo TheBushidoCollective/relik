@@ -44,7 +44,7 @@ import {
   ProofBrowser,
   type MemoryGrowth,
   type Page,
-} from './large-relic-browser.ts';
+} from './large-relic-browser-probe.ts';
 import {
   CAP,
   MIB,
