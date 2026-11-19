@@ -55,6 +55,8 @@ The rule operates on privilege levels rather than on type names. Map each of the
 
 Three clauses, and they close the entire polyglot class for the first release.
 
+**Open: clause 1 and the code disagree.** Clause 1 says a disagreement is download-only. `routeFor` resolves it to the less privileged class (`leastPrivileged` in `packages/relic-viewer/src/viewer.ts`), and `viewer.test.ts` pins that behavior for `.jsx` names. Which one stands is not decided here. Until it is, `svg-routing.test.ts` and `svg-classification.test.ts` record what the viewer does.
+
 ### 1.4 Text without magic bytes, which is half the wedge
 
 Markdown, plain text, source code, CSV, and JSON have no magic numbers. The sniff returns nothing for `{markdown, code}`, the class can't be trusted, and this is the hardest question in the unit. The rule:
@@ -64,13 +66,17 @@ Markdown, plain text, source code, CSV, and JSON have no magic numbers. The snif
 3. **The declared mimetype and filename extension may select a renderer within a level, or request a downgrade, and nothing else.** A `.py` extension picks a highlighter grammar. That is an attacker-selected parser running on the viewing origin, and calling it a decoration would be wrong. It's permitted for two specific reasons: whichever grammar runs, the highlighter's output element and attribute set come from a fixed set the viewer controls (§3.3), and an unrecognized hint falls back to plain text rather than guessing. A `.md` extension requests the Markdown path, which runs on the **usercontent origin** (§3.1), and honoring it is safe precisely because it moves content to a *less* privileged origin. A publisher who lies about `.md` gets the usercontent origin, which is where HTML already goes, so the lie buys nothing. A publisher who lies the other way gets plain text, which is a downgrade and harmless.
 4. **An unrecognized hint falls back to plain text.** Never best-effort, never a guess.
 
-### 1.5 SVG is download-only in the first release
+### 1.5 SVG renders in the sandboxed frame
 
-SVG's execution is context-dependent. It's inert under `Content-Disposition: attachment` and inside `<img src>`, and it fully executes on direct navigation ([digi.ninja](https://digi.ninja/blog/svg_xss.php), which tests direct view as vulnerable and both `<img>` and attachment as not). Inline SVG is part of the host document's own DOM by definition, so it executes there too.
+**Decision (2026-11-19): SVG renders the way an HTML relic does, in the sandboxed frame.** It is not download-only. This section replaces the earlier rule that said it was.
 
-**A spec that says "still images render inline" without carving out SVG ships the CVE.** SVG is download-only in the first release. Usercontent-origin rendering for it is available later and isn't in scope now.
+SVG is a document. Its markup is built from the file's bytes, and its `<script>` executes. The framing at the top of this document keeps that off the viewing origin, which holds the fragment, the recipient's sessions, and their storage. Inline SVG is part of the host document's own DOM, so its script executes there too, and direct navigation to the file runs it on the origin that holds those sessions. The `<img src>` route is inert, but it never shows an SVG as an image: the image route types its blob from the magic bytes (`sniffImageType`), that function never returns an SVG type, and so an SVG never reaches `<img>` with an image type. The [digi.ninja](https://digi.ninja/blog/svg_xss.php) tests show the same split, with direct view vulnerable and `<img>` and attachment not.
 
-SVG has no magic number and sniffs as XML or text, so the sniff can't route it and the declaration has to. 1.4 rule 3 already permits that: **a declared `image/svg+xml` mimetype or a `.svg` extension is an explicit downgrade trigger to download-only**, legal because download-only is the least privileged path, so forging it gains nothing and declaring it honestly gets the safe outcome. Untyped bytes that happen to be SVG, carrying neither, are untyped bytes: plain text on the viewing origin under 1.4 rule 2, where nothing parses them and they display as XML source. No input reaches two different answers.
+An SVG sniffs as HTML, because a document opens with `<svg`, an XML prolog, a DOCTYPE, or a comment, and each of those is in `HTML_PREFIXES` (`renderer-class.ts`). A `.svg` declared `image/svg+xml`, or named `.svg` and declared `application/octet-stream`, takes the `html` route and renders in the frame HTML uses (§4): `sandbox="allow-scripts"`, with no `allow-same-origin`, no `allow-top-navigation`, and no `allow-popups`. The script runs in an opaque origin. It cannot read the parent's location or the top window's document, the viewing origin's cookies, or its storage, and the key never reaches the frame (§4). The frame's policy is `default-src 'none'`, so the script cannot fetch an external or service URL, and an external `<image>` in the drawing is refused. The markup it receives is the file's bytes, verbatim, except that `sanitizeFrameHtml` strips `iframe`, `frame`, `object`, `embed`, and `portal` elements. `packages/relic-mcp/test/svg-path.ts` proves these in a headless browser: the drawing shows in the frame, every attempt by a script to leave is refused, and a negative control with the sandbox loosened fails the isolation assertions.
+
+A `.svg` name is subject to the disagreement rule in 1.3 like any other name. Declared with no type, it downloads, because an empty declaration takes the least privileged class. Bytes that disagree with the name show as the class they resemble, with the mismatch notice: PNG bytes named `.svg` show as an image, and text named `.svg` shows as source. That is the implementation's less-privileged-class rule, and clause 1 of 1.3 states download-only for the same inputs. The note at the end of 1.3 records the open decision.
+
+The publisher sees the taxonomy class. `relic_publish` reports `renderer_class: image` for a `.svg`, because the taxonomy classifies the name (`format.md` 3.6). The class is metadata. It never routes, so the file renders in the frame whatever the card says.
 
 ### 1.6 Blob URLs inherit the creating origin
 
@@ -79,6 +85,7 @@ The File API describes the inheritance in a section it labels informative: "The 
 - **Never navigate to, and never open in a new tab, a blob URL built from untrusted plaintext on the viewing origin.**
 - **Download blobs are typed `application/octet-stream`** regardless of what the container declared, and they're triggered through an `a[download]` attribute. The container's declared mimetype never reaches `Blob`'s type argument.
 - **Images render only via `<img src=blob:>`**, where parsing is inert.
+- **Media blobs are typed from the bytes too.** The media player's blob takes its type from `sniffMediaType`, a fixed set of media types with `application/octet-stream` for anything else, never from the declared mimetype. A declared `video/svg+xml` therefore gives the viewing origin no SVG-typed blob URL.
 
 ### 1.7 Redirects, and the rule splits on where the redirect lands
 
