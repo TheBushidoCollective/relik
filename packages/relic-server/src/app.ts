@@ -453,14 +453,13 @@ export function createApp(options: AppOptions = {}): RelicApp {
    * but no user gesture preceded it, so CSP is not what stopped it; popups
    * are closed by the sandbox attribute in the viewer.
    *
-   * WebRTC egress: Chrome ignores CSP `webrtc 'block'`. Runtime containment
-   * in the sandboxed frame neutralizes `RTCPeerConnection` constructors across
-   * the global prototype chain and blocks nested frame creation so author code
-   * cannot reach an unpatched realm. This is a tested deny-list in the frame's
-   * JavaScript realm rather than an architectural impossibility, serving as
-   * defense in depth alongside the opaque sandbox. Future browser APIs or parser
-   * entry points could reopen egress channels before we patch them. Legitimate
-   * relics cannot use nested frames or workers.
+   * WebRTC is not a CSP matter. Chrome ignores CSP `webrtc 'block'`, so no such
+   * directive is sent. The shim removes the RTCPeerConnection constructors from
+   * its realm and refuses every path that could create a nested realm
+   * (installSandboxContainment in sandbox.ts). The egress probe in
+   * packages/relic-mcp/test/frame-egress-path.ts is the proof: one channel per
+   * entry point, and a negative control that must detect egress, so a regression
+   * fails there. Legitimate relics cannot use nested frames or workers.
    */
   async function serveSandbox(request: Request): Promise<Response> {
     const asset = await assets.get('sandbox.html');
@@ -486,8 +485,11 @@ export function createApp(options: AppOptions = {}): RelicApp {
         "worker-src 'none'",
         "form-action 'none'",
         "base-uri 'none'",
+        // Framed, the iframe attribute already makes this document opaque. This
+        // also covers a direct navigation to the shim, and a commit that somehow
+        // lacks the attribute: scripts only, no top navigation, no popups.
+        'sandbox allow-scripts',
         `frame-ancestors ${new URL(config.serviceOrigin).origin}`,
-        "webrtc 'block'",
       ].join('; '),
     });
   }
