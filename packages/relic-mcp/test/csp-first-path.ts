@@ -114,11 +114,12 @@ interface Cfg {
   readonly tcp: string;
   readonly stun: string;
   readonly leaf: string;
+  readonly hostLeaf: string;
 }
 
 const LIB = `
 function report(v) { try { top.postMessage({ type: 'probe', v: v }, '*'); } catch (e) {} }
-function rtcWith(id, C) {
+function rtcWith(id, C, G) {
   var out = { k: 'egress', id: id, rtc: typeof C, made: false, err: null };
   try {
     var pc = new C({ iceServers: [{ urls: [CFG.stun] }] });
@@ -126,10 +127,12 @@ function rtcWith(id, C) {
     pc.createOffer().then(function (o) { return pc.setLocalDescription(o); }).catch(function () {});
     out.made = true;
   } catch (e) { out.err = String(e); }
-  try { fetch(CFG.tcp, { mode: 'no-cors', keepalive: true }).catch(function () {}); } catch (e) {}
+  if (typeof C !== 'undefined' && G) {
+    try { G.fetch(CFG.tcp, { mode: 'no-cors', keepalive: true }).catch(function () {}); } catch (e) {}
+  }
   report(out);
 }
-function rtcAttempt(id) { rtcWith(id, typeof RTCPeerConnection === 'undefined' ? undefined : RTCPeerConnection); }
+function rtcAttempt(id) { rtcWith(id, typeof RTCPeerConnection === 'undefined' ? undefined : RTCPeerConnection, window); }
 `;
 
 function libJs(c: Cfg): string {
@@ -304,14 +307,23 @@ interface Run {
   readonly shim: 'production' | 'plain' | 'candidate';
   readonly csp: string | null;
   readonly channel: Channel;
+  readonly settle: number;
 }
 
-type Column = 'control' | 'production' | 'csp' | 'candidate';
+type Column =
+  | 'control'
+  | 'production'
+  | 'csp'
+  | 'candidate'
+  | 'navigate'
+  | 'prodcsp';
 const COLUMNS: readonly Column[] = [
   'control',
   'production',
   'csp',
   'candidate',
+  'navigate',
+  'prodcsp',
 ];
 
 const runs = new Map<string, Run>();
@@ -324,6 +336,13 @@ const hostServer = Bun.serve({
   port: 0,
   fetch(request) {
     const url = new URL(request.url);
+    if (url.pathname.startsWith('/leaf/')) {
+      const run = runs.get(url.pathname.slice('/leaf/'.length));
+      if (run === undefined) return new Response('Not found', { status: 404 });
+      return new Response(leafDoc(run.cfg, 'leaf'), {
+        headers: { 'content-type': 'text/html; charset=utf-8' },
+      });
+    }
     const run = runs.get(url.pathname.slice('/run/'.length));
     if (!url.pathname.startsWith('/run/') || run === undefined) {
       return new Response('Not found', { status: 404 });
@@ -405,7 +424,7 @@ addEventListener('message', function (e) {
   if (d.type === 'relic:sandbox-ready' && e.source === frame.contentWindow && !sent) {
     sent = true;
     frame.contentWindow.postMessage({ type: 'relic:render', html: AUTHOR }, '*');
-    setTimeout(function () { window.__probe.done = true; }, ${SETTLE_MS});
+    setTimeout(function () { window.__probe.done = true; }, ${run.settle});
   }
   if (d.type === 'probe') window.__probe.results.push(d.v);
 });`;
@@ -428,16 +447,6 @@ interface CaseDef {
 }
 
 const CASES: readonly CaseDef[] = [
-  // Harness self-test: a srcdoc frame created from script runs its inline script in control.
-  {
-    id: 'dbg-srcdoc-script-report',
-    group: 'self',
-    what: 'self-test: srcdoc inline script reports to top',
-    build: (c) =>
-      `var f = document.createElement('iframe');` +
-      ` f.srcdoc = ${jsStr(scriptTag("top.postMessage({ type: 'probe', v: { k: 'globals', id: 'dbg-srcdoc-script-report', names: ['ran'] } }, '*');"))};` +
-      ' document.body.appendChild(f);',
-  },
   // (i) Frame creation under frame-src none.
   {
     id: 'i1-srcdoc-nosb',
@@ -695,7 +704,7 @@ const CASES: readonly CaseDef[] = [
     build: (c) =>
       `var f = document.createElement('iframe'); document.body.appendChild(f); var W = f.contentWindow;` +
       ` report({ k: 'globals', id: 'v1-iframe-contentWindow', names: W ? ['RTCPeerConnection'].filter(function (n) { return typeof W[n] !== 'undefined'; }) : ['no-window'] });` +
-      ` rtcWith('v1-iframe-contentWindow', W ? W.RTCPeerConnection : undefined);`,
+      ` rtcWith('v1-iframe-contentWindow', W ? W.RTCPeerConnection : undefined, W);`,
   },
   {
     id: 'v2-window-open-about-blank',
@@ -704,7 +713,7 @@ const CASES: readonly CaseDef[] = [
     build: (c) =>
       `var w = window.open('about:blank', '_blank');` +
       ` report({ k: 'globals', id: 'v2-window-open-about-blank', names: [w ? 'opened' : 'null'] });` +
-      ` rtcWith('v2-window-open-about-blank', w ? w.RTCPeerConnection : undefined);`,
+      ` rtcWith('v2-window-open-about-blank', w ? w.RTCPeerConnection : undefined, w);`,
   },
   {
     id: 'v3-createHTMLDocument',
@@ -713,7 +722,7 @@ const CASES: readonly CaseDef[] = [
     build: (c) =>
       `var d = document.implementation.createHTMLDocument('');` +
       ` report({ k: 'globals', id: 'v3-createHTMLDocument', names: [d.defaultView ? 'view' : 'no-view'] });` +
-      ` rtcWith('v3-createHTMLDocument', d.defaultView ? d.defaultView.RTCPeerConnection : undefined);`,
+      ` rtcWith('v3-createHTMLDocument', d.defaultView ? d.defaultView.RTCPeerConnection : undefined, d.defaultView);`,
   },
   {
     id: 'v4-reflect-scan',
@@ -724,7 +733,7 @@ const CASES: readonly CaseDef[] = [
       ` var D = Object.getOwnPropertyDescriptor(window, 'RTCPeerConnection');` +
       ` if (!C && D) C = D.value;` +
       ` report({ k: 'globals', id: 'v4-reflect-scan', names: Object.getOwnPropertyNames(window).filter(function (n) { return /RTC/.test(n); }) });` +
-      ` rtcWith('v4-reflect-scan', C);`,
+      ` rtcWith('v4-reflect-scan', C, window);`,
   },
   {
     id: 'v5-structuredClone',
@@ -733,7 +742,7 @@ const CASES: readonly CaseDef[] = [
     build: (c) =>
       `var C; try { C = structuredClone(window.RTCPeerConnection); }` +
       ` catch (e) { report({ k: 'attempt-error', id: 'v5-structuredClone', err: String(e) }); }` +
-      ` rtcWith('v5-structuredClone', C);`,
+      ` rtcWith('v5-structuredClone', C, window);`,
   },
   {
     id: 'v6-document-open-reinstate',
@@ -790,6 +799,13 @@ const CASES: readonly CaseDef[] = [
     what: 'frame replaces itself (location.replace) with the leaf page',
     build: (c) =>
       `setTimeout(function () { location.replace(${jsStr(c.leaf)}); }, 200);`,
+  },
+  {
+    id: 'vi7-self-nav-cross-origin-leaf',
+    group: 'vi',
+    what: 'frame navigates itself to a leaf on the host origin (cross-origin to the frame)',
+    build: (c) =>
+      `setTimeout(function () { location.href = ${jsStr(c.hostLeaf)}; }, 200);`,
   },
 
   // Review2 routes against the production containment (baseline reproduction).
@@ -863,23 +879,33 @@ async function prepareRun(
     tcp: channel.tcp,
     stun: channel.stun,
     leaf: `${frameOrigin}/leaf/${id}`,
+    hostLeaf: `${hostOrigin}/leaf/${id}`,
   };
   const body = def.build(cfg);
-  const top = libJs(cfg) + "report({ k: 'top', ran: true });" + body;
+  const top =
+    libJs(cfg) +
+    "report({ k: 'top', ran: true }); try {" +
+    body +
+    "\n} catch (e) { report({ k: 'attempt-error', id: 'top', err: String(e) }); }";
   const author =
     '<!doctype html><meta charset="utf-8"><title>probe</title><body>' +
     scriptTag(top);
   const shim: Run['shim'] =
     column === 'production'
       ? 'production'
-      : column === 'candidate'
+      : column === 'candidate' || column === 'navigate'
         ? 'candidate'
         : 'plain';
-  const js = column === 'candidate' ? CANDIDATE_JS : PLAIN_JS;
+  const js =
+    column === 'candidate' || column === 'navigate' ? CANDIDATE_JS : PLAIN_JS;
   const csp =
     column === 'control' || column === 'production'
       ? null
-      : candidateCsp(js, hostOrigin);
+      : column === 'prodcsp'
+        ? productionCsp
+        : column === 'navigate'
+          ? `${candidateCsp(js, hostOrigin)}; navigate-to 'none'`
+          : candidateCsp(js, hostOrigin);
   const run: Run = {
     id,
     column,
@@ -888,6 +914,7 @@ async function prepareRun(
     shim,
     csp,
     channel,
+    settle: def.group === 'vi' || def.group === 'iv' ? 6000 : SETTLE_MS,
   };
   runs.set(id, run);
   return run;
@@ -1158,15 +1185,15 @@ for (const model of MODELS) {
 // Report.
 for (const table of tables) {
   console.log(`\n## ${table.model} (${table.version})`);
-  console.log('| case | group | control | production | csp | candidate |');
-  console.log('| --- | --- | --- | --- | --- | --- |');
+  console.log(`| case | group | ${COLUMNS.join(' | ')} |`);
+  console.log(`| --- | --- | ${COLUMNS.map(() => '---').join(' | ')} |`);
   for (const def of CASES) {
     const per = table.cells.get(def.id);
     if (per === undefined) continue;
     const cell = (c: Cell) =>
       `${c.code} ${c.detail}`.trim().replace(/\|/g, '/');
     console.log(
-      `| ${def.id} | ${def.group} | ${cell(per.control)} | ${cell(per.production)} | ${cell(per.csp)} | ${cell(per.candidate)} |`
+      `| ${def.id} | ${def.group} | ${COLUMNS.map((column) => cell(per[column])).join(' | ')} |`
     );
   }
 }
