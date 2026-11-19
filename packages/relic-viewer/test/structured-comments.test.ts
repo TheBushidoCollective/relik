@@ -442,6 +442,50 @@ async function browserCases(
   });
 
   await check(
+    'a cue selected to its last character posts the cue span, not a quote',
+    async () => {
+      const { host } = await mountRelic(
+        viewOf('talk.vtt', 'text/vtt', 'code', fixtures.vtt)
+      );
+      await until(
+        'the cue list draws',
+        () => host.querySelector('.cue-text') !== null
+      );
+      const cue = host.querySelector<HTMLElement>('.cue-text');
+      truth(cue, 'a cue text is drawn');
+      // A reader's selection from the cue's first character to the end of its
+      // last text node. The end is a text offset, not the element boundary.
+      const walker = document.createTreeWalker(cue, NodeFilter.SHOW_TEXT);
+      let firstText: Text | undefined;
+      let lastText: Text | undefined;
+      for (
+        let node = walker.nextNode();
+        node !== null;
+        node = walker.nextNode()
+      ) {
+        firstText ??= node as Text;
+        lastText = node as Text;
+      }
+      truth(firstText && lastText, 'the cue has text nodes');
+      const range = document.createRange();
+      range.setStart(firstText, 0);
+      range.setEnd(lastText, lastText.length);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+      cue.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+      await offerComment(host);
+      await openComposerWith(host, 'the cue');
+      await postFromComposer(host, 'Full cue');
+      eq(
+        await anchorPosted(),
+        { kind: 'time', t: 1.2, t_end: 4.8 },
+        'the posted cue span'
+      );
+    }
+  );
+
+  await check(
     'a notebook cell comment posts a path anchor for that cell',
     async () => {
       const { host } = await mountRelic(
@@ -729,7 +773,7 @@ describe('structured views: the comment path in the browser', () => {
           clearTimeout(stallTimer);
         }
         if (result.error) throw new Error(result.error);
-        expect(result.passed).toHaveLength(7);
+        expect(result.passed).toHaveLength(8);
       } finally {
         browser.kill('SIGKILL');
         if (browser.exitCode === null && browser.signalCode === null) {
