@@ -10,6 +10,7 @@ import {
   drawnStructuredView,
   type StructuredViewHandle,
 } from './structured-view-bridge.ts';
+import { visibleLabel } from './visible-label.ts';
 
 type PathAnchor = Extract<CommentAnchor, { kind: 'path' }>;
 
@@ -27,7 +28,7 @@ export const pathAnchorAdapter: AnchorAdapter<'path'> = {
   label(anchor: PathAnchor): string {
     return anchor.pointer === ''
       ? 'Commenting on the whole document'
-      : `Commenting on ${anchor.pointer}`;
+      : `Commenting on ${visibleLabel(anchor.pointer)}`;
   },
 
   supports(surface: AnchorSurface): boolean {

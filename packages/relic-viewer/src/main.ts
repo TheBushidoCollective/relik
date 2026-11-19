@@ -4563,6 +4563,8 @@ export interface MarkControls {
   target(): CommentAnchor | null;
   /** Back to the whole document, with the pin tool disarmed. */
   clear(): void;
+  /** Puts back a target a refused post had taken, unless the reader has chosen another. */
+  restore(anchor: CommentAnchor): void;
 }
 
 export interface MarkDeps {
@@ -5504,6 +5506,12 @@ export function buildMarkControls(deps: MarkDeps): MarkControls {
     tools,
     target: () => previewTarget ?? anchor,
     clear,
+    restore: (next) => {
+      if (anchor !== null || previewTarget !== null) return;
+      anchor = next;
+      paintChip();
+      deps.repaint();
+    },
     attach: (next) => {
       const stageChanged = host !== next;
       if (stageChanged) {
@@ -9162,6 +9170,7 @@ export function buildThread(
         );
         if (typeof document === 'undefined') return;
         if (result.kind === 'refused') {
+          if (draft.anchor !== null) marks.restore(draft.anchor);
           outcome.replaceChildren(threadRefusal(result.refusal, () => {}));
           if (result.refusal.code === 'invalid_session') {
             sessionGeneration++;

@@ -29,6 +29,7 @@ import {
 } from '@relic/format/csv';
 import { isInvisible } from '@relic/format/structured-text';
 import type { StructuredPart } from './structured-view-bridge.ts';
+import { LABEL_DISPLAY_LIMIT } from './visible-label.ts';
 import {
   anchorCoversCell,
   columnLetters,
@@ -76,6 +77,46 @@ export function visibleText(value: string): string {
   return out;
 }
 
+/** Cell, header and inspector text shows at most this many source characters. */
+export const DISPLAY_CUT_CHARS = 512;
+
+/**
+ * Text as the grid shows it: cut to `DISPLAY_CUT_CHARS` before it is escaped,
+ * so a long cell costs a bounded render. Copy takes the whole cell.
+ */
+export function displayText(value: string): string {
+  if (value.length <= DISPLAY_CUT_CHARS) return visibleText(value);
+  let cut = value.slice(0, DISPLAY_CUT_CHARS);
+  const last = cut.charCodeAt(cut.length - 1);
+  if (last >= 0xd800 && last <= 0xdbff) cut = cut.slice(0, -1);
+  return `${visibleText(cut)}…`;
+}
+
+/**
+ * A selection as the clipboard receives it: the grid's escape form for every
+ * control, CR and bidi character. Tab and LF stay, since they separate cells
+ * and rows. Without this an ESC[201~ in a cell ends a terminal's paste early.
+ */
+export function clipboardText(text: string): string {
+  let out = '';
+  for (const character of text) {
+    const code = character.codePointAt(0) ?? 0;
+    const keep = code === 0x09 || code === 0x0a;
+    out +=
+      !keep && isInvisible(code)
+        ? `\\u{${code.toString(16).toUpperCase()}}`
+        : character;
+  }
+  return out;
+}
+
+/** A label's text: the display text, cut to the label length. */
+function labelText(value: string): string {
+  const shown = displayText(value);
+  return shown.length > LABEL_DISPLAY_LIMIT
+    ? `${shown.slice(0, LABEL_DISPLAY_LIMIT).trimEnd()}…`
+    : shown;
+}
 export type SortDirection = 'asc' | 'desc';
 
 export interface SortState {
@@ -284,28 +325,84 @@ interface Coverage {
 
 const NO_EDGES: ReadonlySet<string> = new Set<string>();
 
-function coverageOf(
-  marks: readonly Mark[],
-  row: number,
-  col: number
-): Coverage {
-  let count = 0;
-  let ranged = false;
-  let edges: Set<string> | undefined;
-  for (const mark of marks) {
-    if (!anchorCoversCell(mark.anchor, row, col)) continue;
-    count++;
-    const rowEnd = mark.anchor.row_end ?? mark.anchor.row;
-    const colEnd = mark.anchor.col_end ?? mark.anchor.col;
-    if (rowEnd === mark.anchor.row && colEnd === mark.anchor.col) continue;
-    ranged = true;
-    edges ??= new Set<string>();
-    if (row === mark.anchor.row) edges.add('mk-t');
-    if (row === rowEnd) edges.add('mk-b');
-    if (col === mark.anchor.col) edges.add('mk-l');
-    if (col === colEnd) edges.add('mk-r');
+/** Whether a mark covers one cell and no other. */
+function isPointAnchor(anchor: CellCommentAnchor): boolean {
+  return (
+    (anchor.row_end ?? anchor.row) === anchor.row &&
+    (anchor.col_end ?? anchor.col) === anchor.col
+  );
+}
+
+/**
+ * The marks a table paints, indexed for the cells they cover. A single-cell
+ * mark is found by its row, and only ranges are scanned, so painting one cell
+ * costs the marks that can reach it rather than every mark on the table.
+ */
+class MarkIndex {
+  readonly #byId = new Map<string, Mark>();
+  readonly #points = new Map<number, Set<Mark>>();
+  readonly #ranges = new Set<Mark>();
+
+  /** Adds or replaces the mark with this id. Returns the anchor it replaced. */
+  put(id: string, anchor: CellCommentAnchor): CellCommentAnchor | undefined {
+    const replaced = this.remove(id);
+    const mark: Mark = { anchor, id };
+    this.#byId.set(id, mark);
+    if (isPointAnchor(anchor)) {
+      const row = this.#points.get(anchor.row) ?? new Set<Mark>();
+      row.add(mark);
+      this.#points.set(anchor.row, row);
+    } else {
+      this.#ranges.add(mark);
+    }
+    return replaced;
   }
-  return { count, ranged, edges: edges ?? NO_EDGES };
+
+  /** Removes the mark with this id. Returns the anchor it held. */
+  remove(id: string): CellCommentAnchor | undefined {
+    const mark = this.#byId.get(id);
+    if (mark === undefined) return undefined;
+    this.#byId.delete(id);
+    if (isPointAnchor(mark.anchor)) {
+      const row = this.#points.get(mark.anchor.row);
+      row?.delete(mark);
+      if (row !== undefined && row.size === 0) {
+        this.#points.delete(mark.anchor.row);
+      }
+    } else {
+      this.#ranges.delete(mark);
+    }
+    return mark.anchor;
+  }
+
+  clear(): void {
+    this.#byId.clear();
+    this.#points.clear();
+    this.#ranges.clear();
+  }
+
+  /** The marks covering one cell, 1-based as anchors are. */
+  coverage(row: number, col: number): Coverage {
+    let count = 0;
+    let ranged = false;
+    let edges: Set<string> | undefined;
+    const take = (mark: Mark): void => {
+      if (!anchorCoversCell(mark.anchor, row, col)) return;
+      count++;
+      const rowEnd = mark.anchor.row_end ?? mark.anchor.row;
+      const colEnd = mark.anchor.col_end ?? mark.anchor.col;
+      if (rowEnd === mark.anchor.row && colEnd === mark.anchor.col) return;
+      ranged = true;
+      edges ??= new Set<string>();
+      if (row === mark.anchor.row) edges.add('mk-t');
+      if (row === rowEnd) edges.add('mk-b');
+      if (col === mark.anchor.col) edges.add('mk-l');
+      if (col === colEnd) edges.add('mk-r');
+    };
+    for (const mark of this.#points.get(row) ?? []) take(mark);
+    for (const mark of this.#ranges) take(mark);
+    return { count, ranged, edges: edges ?? NO_EDGES };
+  }
 }
 
 /** Builds an element with a class and text set through `textContent`. */
@@ -366,7 +463,7 @@ export function mountDataTable(
     return numericCache[column] ?? false;
   };
 
-  const marks: Mark[] = [];
+  const marks = new MarkIndex();
   let selection: Selection | undefined;
   let findHits: CellRef[] = [];
   let findCurrent = -1;
@@ -375,6 +472,8 @@ export function mountDataTable(
   let disposed = false;
   let frame = 0;
   let findTimer = 0;
+  /** The `bodyKey` the rows on screen were drawn with. */
+  let drawnKey = '';
 
   const keyOf = (record: number, column: number): number =>
     record * TABLE_COLUMN_LIMIT + column;
@@ -425,7 +524,7 @@ export function mountDataTable(
   grid.setAttribute('role', 'grid');
   grid.setAttribute(
     'aria-label',
-    `${options.filename}, ${formatter.format(table.records)} records`
+    `${labelText(options.filename)}, ${formatter.format(table.records)} records`
   );
   grid.setAttribute('aria-rowcount', String(table.records));
   grid.setAttribute('aria-colcount', String(drawn + 1));
@@ -521,7 +620,7 @@ export function mountDataTable(
   ): void => {
     const row = record + 1;
     const col = column + 1;
-    const cover = coverageOf(marks, row, col);
+    const cover = marks.coverage(row, col);
     const isSelected =
       selection !== undefined &&
       inRect(selectionRect(selection), record, column);
@@ -584,7 +683,7 @@ export function mountDataTable(
       const name = element(
         'span',
         'dt-text',
-        headerRow ? visibleText(value) : ''
+        headerRow ? displayText(value) : ''
       );
       cell.append(letter, name);
       const sorted = sort !== undefined && sort.column === column;
@@ -604,7 +703,7 @@ export function mountDataTable(
     } else if (value === '') {
       cell.append(element('span', 'dt-text dt-blank', 'blank'));
     } else {
-      cell.append(element('span', 'dt-text', visibleText(value)));
+      cell.append(element('span', 'dt-text', displayText(value)));
     }
     paintCell(cell, record, column, role);
     return cell;
@@ -620,6 +719,27 @@ export function mountDataTable(
       cells.push(cell);
     }
     head.replaceChildren(...cells);
+  };
+
+  /**
+   * What a body render depends on from the scroll: the drawn window, the rows
+   * pinned by a selection, and the row count. Equal keys draw the same rows.
+   */
+  const bodyKey = (): string => {
+    const first = headerRow ? 1 : 0;
+    const bodyCount = model.records - first;
+    const window = rowWindow(
+      bodyCount,
+      Math.max(0, grid.scrollTop - HEAD_HEIGHT),
+      viewportHeight(),
+      ROW_HEIGHT,
+      OVERSCAN
+    );
+    const pins = selection ? [selection.anchor, selection.focus] : [];
+    const pinRows = pins.map(
+      (pin) => displayIndexOf(model, pin.record) - first
+    );
+    return [bodyCount, window.first, window.end, ...pinRows].join(':');
   };
 
   const renderBody = (): void => {
@@ -651,6 +771,7 @@ export function mountDataTable(
       rows.push(buildRow(first + i, i));
     }
     body.replaceChildren(...rows);
+    drawnKey = bodyKey();
   };
 
   const buildRow = (display: number, index: number): HTMLElement => {
@@ -694,14 +815,14 @@ export function mountDataTable(
             'dt-sub',
             columnName === ''
               ? `Row ${rect.r0 + 1}`
-              : `Row ${rect.r0 + 1}, ${columnName}`
+              : `Row ${rect.r0 + 1}, ${labelText(columnName)}`
           )
         );
         cells.push(
           element(
             'pre',
             'dt-value',
-            value === '' ? '(blank)' : visibleText(value)
+            value === '' ? '(blank)' : displayText(value)
           )
         );
       } else {
@@ -716,7 +837,7 @@ export function mountDataTable(
       const copy = element('button', 'dt-copy', 'Copy');
       copy.type = 'button';
       copy.addEventListener('click', () => {
-        const text = rectText(table, rect);
+        const text = clipboardText(rectText(table, rect));
         void navigator.clipboard?.writeText(text).catch(() => undefined);
       });
       cells.push(copy);
@@ -741,7 +862,8 @@ export function mountDataTable(
     if (frame !== 0 || disposed) return;
     frame = requestAnimationFrame(() => {
       frame = 0;
-      update(false);
+      // A scroll inside the drawn window puts the same rows on screen.
+      if (bodyKey() !== drawnKey) update(false);
     });
   };
 
@@ -992,18 +1114,55 @@ export function mountDataTable(
   // ---- first paint ----------------------------------------------------------
   update(false);
 
+  /**
+   * Repaints the drawn cells a mark covered before it changed and covers now.
+   * A single cell is found directly; a range visits the drawn cells only, so a
+   * comment costs its own cells rather than a rebuild of the window.
+   */
+  const repaintCovered = (
+    ...anchors: readonly (CellCommentAnchor | undefined)[]
+  ): void => {
+    for (const anchor of anchors) {
+      if (anchor === undefined) continue;
+      if (isPointAnchor(anchor)) {
+        const record = anchor.row - 1;
+        const column = anchor.col - 1;
+        const cell = elementAt(record, column);
+        if (cell !== undefined) {
+          paintCell(
+            cell,
+            record,
+            column,
+            cell.classList.contains('dt-hcell') ? 'head' : 'body'
+          );
+        }
+        continue;
+      }
+      for (const [key, cell] of bodyIndex) {
+        const record = Math.floor(key / TABLE_COLUMN_LIMIT);
+        const column = key % TABLE_COLUMN_LIMIT;
+        if (anchorCoversCell(anchor, record + 1, column + 1)) {
+          paintCell(cell, record, column, 'body');
+        }
+      }
+      for (const [column, cell] of headIndex) {
+        if (anchorCoversCell(anchor, 1, column + 1)) {
+          paintCell(cell, 0, column, 'head');
+        }
+      }
+    }
+  };
+
   return {
     paintMark(anchor: CommentAnchor, commentId: string): boolean {
       if (anchor.kind !== 'cell') return false;
       if (!markFits(anchor, table.records, drawn)) return false;
-      const existing = marks.findIndex((mark) => mark.id === commentId);
-      if (existing >= 0) marks.splice(existing, 1);
-      marks.push({ anchor, id: commentId });
-      update(false);
+      const replaced = marks.put(commentId, anchor);
+      repaintCovered(replaced, anchor);
       return true;
     },
     clearMarks(): void {
-      marks.length = 0;
+      marks.clear();
       update(false);
     },
     selectionAnchor(): CommentAnchor | undefined {

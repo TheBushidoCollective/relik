@@ -46,23 +46,41 @@ export function visibleText(text: string): string {
 }
 
 /**
- * A string value, cut at `TREE_VALUE_CUT_CHARS` code units and then escaped.
- * A cut that would split a surrogate pair drops the lone high half.
+ * Source text cut at `limit` code units and then escaped. A cut that would
+ * split a surrogate pair drops the lone high half. Values and keys use it, so
+ * a long key costs what a long value costs.
  */
-export function valuePreview(source: string): string {
-  if (source.length <= TREE_VALUE_CUT_CHARS) return visibleText(source);
-  let cut = source.slice(0, TREE_VALUE_CUT_CHARS);
+export function previewText(source: string, limit: number): string {
+  if (source.length <= limit) return visibleText(source);
+  let cut = source.slice(0, limit);
   const last = cut.charCodeAt(cut.length - 1);
   if (last >= 0xd800 && last <= 0xdbff) cut = cut.slice(0, -1);
   return `${visibleText(cut)}…`;
+}
+
+/**
+ * A string value, cut at `TREE_VALUE_CUT_CHARS` code units and then escaped.
+ */
+export function valuePreview(source: string): string {
+  return previewText(source, TREE_VALUE_CUT_CHARS);
 }
 
 /** The label for a node's key: the key as written, or the array index. */
 export function keyLabel(tree: JsonTree, node: number): string {
   if (tree.parent(node) === -1) return '$';
   const written = tree.keySource(node);
-  if (written !== undefined) return visibleText(written);
+  if (written !== undefined) return previewText(written, TREE_VALUE_CUT_CHARS);
   return String(tree.index(node));
+}
+
+/**
+ * Whether a comment can name this pointer. The writer refuses a NUL or a CR
+ * (`requirePointer` in relic-format), so the tree does not offer Comment for
+ * a key that decodes to one. A key such as "a\rb" is a real key; it cannot be
+ * commented on.
+ */
+export function pointerWritable(pointer: string): boolean {
+  return !pointer.includes('\u0000') && !pointer.includes('\r');
 }
 
 /** The label for a node's value: a count for a container, the source for anything else. */
@@ -312,7 +330,9 @@ export class JsonTreeState {
    */
   anchorFor(node: number): CommentAnchor | undefined {
     const pointer = this.tree.pointer(node);
-    return pointer === undefined ? undefined : { kind: 'path', pointer };
+    return pointer === undefined || !pointerWritable(pointer)
+      ? undefined
+      : { kind: 'path', pointer };
   }
 
   selectionAnchor(): CommentAnchor | undefined {
