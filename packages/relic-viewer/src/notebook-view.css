@@ -1,0 +1,301 @@
+/*
+ * The notebook view (plan A4; mock states N1 to N6). Classes are prefixed `nb-`
+ * so they never collide with the viewer's own comment marks in styles.css.
+ * Colours come from the viewer's custom properties, with fallbacks, so the
+ * view still reads when a page loads it without the main stylesheet.
+ */
+
+.nb-summary {
+  margin: 0 0 0.8rem;
+  color: var(--ink-soft, #5a6163);
+  font: 0.74rem/1.4 var(--mono, ui-monospace, monospace);
+  letter-spacing: 0.02em;
+}
+
+.nb {
+  max-width: 60rem;
+  margin: 0 auto;
+  padding: 0;
+  list-style: none;
+}
+
+.nb-cell {
+  position: relative;
+  margin: 0 0 0.9rem;
+}
+
+.nb-input {
+  display: grid;
+  grid-template-columns: 4.7rem minmax(0, 1fr);
+  gap: 0 0.6rem;
+}
+
+.nb-gutter {
+  padding-top: 0.6rem;
+  color: var(--ink-soft, #5a6163);
+  font: 0.72rem/1.5 var(--mono, ui-monospace, monospace);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.nb-gutter.is-out {
+  color: var(--oxide, #8c4a2f);
+}
+
+.nb-box {
+  position: relative;
+  min-width: 0;
+  border: 1px solid var(--rule, #d2d5d2);
+  background: var(--surface, #fbfbfa);
+  outline: none;
+}
+
+.nb-cell.is-markdown > .nb-input > .nb-box {
+  border-color: transparent;
+  background: transparent;
+}
+
+.nb-cell.is-markdown .prose {
+  padding: 0.2rem 0.9rem;
+  font-size: 1rem;
+}
+
+.nb-cell.is-markdown .prose h1 {
+  font-size: 1.45rem;
+  margin-top: 0.3rem;
+}
+
+.nb-cell.is-markdown .prose p {
+  margin-bottom: 0.6rem;
+}
+
+.nb-box:hover,
+.nb-cell.is-selected > .nb-input > .nb-box:hover {
+  border-color: var(--rule-strong, #b3b8b4);
+}
+
+.nb-cell.is-selected > .nb-input > .nb-box {
+  border-color: var(--patina, #1f6b64);
+  box-shadow: inset 3px 0 0 var(--patina, #1f6b64);
+}
+
+.nb-box:focus-visible {
+  outline: 2px solid var(--patina, #1f6b64);
+  outline-offset: 1px;
+}
+
+.nb-box.is-active,
+.nb-out.is-active {
+  outline: 2px solid var(--patina, #1f6b64);
+  outline-offset: 1px;
+}
+
+.nb-src {
+  margin: 0;
+  padding: 0.6rem 0.9rem;
+  overflow-x: auto;
+  font: 0.8rem/1.6 var(--mono, ui-monospace, monospace);
+  white-space: pre;
+  tab-size: 4;
+}
+
+.nb-out-wrap {
+  display: grid;
+  grid-template-columns: 4.7rem minmax(0, 1fr);
+  gap: 0 0.6rem;
+  margin: -0.6rem 0 0.9rem;
+}
+
+.nb-out {
+  position: relative;
+  min-width: 0;
+  padding: 0.5rem 0.9rem;
+  border-left: 1px solid var(--rule, #d2d5d2);
+  font: 0.78rem/1.5 var(--mono, ui-monospace, monospace);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  overflow-x: auto;
+  outline: none;
+}
+
+.nb-out.is-stream {
+  color: var(--ink, #16191a);
+}
+
+.nb-out.is-stderr {
+  background: color-mix(in srgb, var(--oxide, #8c4a2f) 6%, transparent);
+}
+
+.nb-out.is-error {
+  border-left: 3px solid var(--oxide, #8c4a2f);
+  background: var(--diff-removed, #f3e5df);
+  color: var(--ink, #16191a);
+}
+
+.nb-out.is-error .nb-err-name {
+  color: var(--oxide, #8c4a2f);
+  font-weight: 700;
+}
+
+.nb-out.is-markdown {
+  white-space: normal;
+  font: 1rem/1.5 var(--sans, system-ui, sans-serif);
+}
+
+.nb-out.is-markdown .prose p {
+  margin-bottom: 0.5rem;
+}
+
+.nb-out.is-image img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border: 1px solid var(--rule, #d2d5d2);
+  background: #fff;
+}
+
+.nb-out.is-placeholder {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  white-space: normal;
+  font: 0.84rem/1.45 var(--sans, system-ui, sans-serif);
+  background: var(--surface, #fbfbfa);
+  border-left: 3px solid var(--oxide, #8c4a2f);
+}
+
+.nb-out.is-placeholder p {
+  margin: 0;
+}
+
+.nb-withheld button,
+.nb-show-text {
+  align-self: flex-start;
+  padding: 0.2rem 0.55rem;
+  border: 1px solid var(--rule-strong, #b3b8b4);
+  background: none;
+  color: var(--ink, #16191a);
+  font: 0.78rem var(--sans, system-ui, sans-serif);
+  cursor: pointer;
+}
+
+.nb-out-kind {
+  position: absolute;
+  top: 0.35rem;
+  right: 0.5rem;
+  color: var(--ink-soft, #5a6163);
+  font: 0.58rem var(--mono, ui-monospace, monospace);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.nb-empty,
+.nb-note {
+  color: var(--ink-soft, #5a6163);
+  font-family: var(--sans, system-ui, sans-serif);
+  font-size: 0.76rem;
+  white-space: normal;
+}
+
+.nb-note {
+  margin: 0.3rem 0 0;
+}
+
+.nb-err-name {
+  color: var(--oxide, #8c4a2f);
+  font-weight: 700;
+}
+
+/* Hover and focus reveal the comment action; it is absent from the layout otherwise. */
+.nb-tools {
+  position: absolute;
+  top: -0.95rem;
+  right: 0.5rem;
+  z-index: 4;
+  display: none;
+}
+
+.nb-box:hover > .nb-tools,
+.nb-box:focus-within > .nb-tools,
+.nb-out:hover > .nb-tools,
+.nb-out:focus-within > .nb-tools {
+  display: flex;
+}
+
+.nb-comment {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.25rem 0.6rem;
+  border: 1px solid var(--rule-strong, #b3b8b4);
+  background: var(--surface, #fbfbfa);
+  color: var(--ink, #16191a);
+  font: 0.76rem var(--sans, system-ui, sans-serif);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.nb-comment:hover,
+.nb-comment:focus-visible {
+  border-color: var(--patina, #1f6b64);
+  color: var(--patina-ink, #0f3b37);
+  outline: none;
+}
+
+/* The corner mark: one remark is a patina corner, several a count in the same corner. */
+.nb-mark {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 1;
+  width: 0;
+  height: 0;
+  border-style: solid;
+  border-width: 0 10px 10px 0;
+  border-color: transparent var(--patina, #1f6b64) transparent transparent;
+  pointer-events: none;
+}
+
+.nb-mark-n {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 1;
+  min-width: 1rem;
+  height: 1rem;
+  padding: 0 0.22rem;
+  background: var(--patina, #1f6b64);
+  color: var(--surface, #fbfbfa);
+  font: 600 0.6rem/1rem var(--mono, ui-monospace, monospace);
+  text-align: center;
+  pointer-events: none;
+}
+
+/* Narrow screens (plan N6, 390 px): the gutter narrows so the cells keep their width. */
+@media (max-width: 40rem) {
+  .nb-input,
+  .nb-out-wrap {
+    grid-template-columns: 2.9rem minmax(0, 1fr);
+    gap: 0 0.4rem;
+  }
+
+  .nb-gutter {
+    font-size: 0.64rem;
+  }
+
+  .nb-src {
+    font-size: 0.74rem;
+  }
+
+  .nb-tools {
+    position: static;
+    display: flex;
+    margin: 0.3rem 0.4rem 0 0;
+    justify-content: flex-end;
+  }
+
+  .nb-box:hover > .nb-tools,
+  .nb-out:hover > .nb-tools {
+    display: flex;
+  }
+}
