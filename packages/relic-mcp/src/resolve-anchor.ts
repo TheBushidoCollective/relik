@@ -1448,6 +1448,12 @@ export async function resolveAnchors(
       });
       continue;
     }
+    if (anchor.kind === 'cell' || anchor.kind === 'path') {
+      // Resolving these kinds is not built yet. The comment stays in the
+      // thread with its location, rather than dropping out of the switch below.
+      updatedComments.push(comment);
+      continue;
+    }
 
     const fetched = await loadRevision(
       comment.version ?? (anchor.kind === 'source' ? 1 : undefined)

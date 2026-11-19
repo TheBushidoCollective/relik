@@ -45,6 +45,7 @@ import {
   encryptComment,
   isValidRelicId,
   parseImageCommentAnchor,
+  parseWritableCommentAnchor,
   type SuggestionOutcome,
   type SuggestionPayload,
 } from '@relic/format';
@@ -1447,10 +1448,38 @@ export function describeAnchor(anchor: CommentAnchor | null): string {
       return `on ${where} (${span}, relic version ${anchor.relic_version})`;
     }
 
+    case 'cell': {
+      const ranged =
+        anchor.row_end !== undefined || anchor.col_end !== undefined;
+      const from = cellName(anchor.row, anchor.col);
+      const to = cellName(
+        anchor.row_end ?? anchor.row,
+        anchor.col_end ?? anchor.col
+      );
+      const where = ranged ? `cells ${from} to ${to}` : `cell ${from}`;
+      return anchor.sheet === undefined
+        ? `on ${where}`
+        : `on ${where} of sheet "${anchor.sheet}"`;
+    }
+
+    case 'path':
+      return anchor.pointer === ''
+        ? 'on the whole document'
+        : `on the JSON path ${anchor.pointer}`;
+
     case 'source':
     case 'unsupported':
       return `carrying a mark this client does not understand (declared kind "${anchor.kind === 'source' ? 'source' : anchor.declared}")`;
   }
+}
+
+/** A1 notation for one cell: column letters, then the 1-based row. */
+function cellName(row: number, col: number): string {
+  let letters = '';
+  for (let n = col; n > 0; n = Math.floor((n - 1) / 26)) {
+    letters = String.fromCharCode(65 + ((n - 1) % 26)) + letters;
+  }
+  return `${letters}${row}`;
 }
 
 function parseRectInput(rect: unknown, kind: string): AnchorRect {
@@ -1921,13 +1950,24 @@ export function validateAndNormalizeAnchor(raw: unknown): CommentAnchor | null {
       };
     }
 
+    case 'cell':
+    case 'path':
+      try {
+        return parseWritableCommentAnchor(obj);
+      } catch (error) {
+        throw new PublishError(
+          'local_comment_anchor_invalid',
+          `invalid ${kind} anchor: ${(error as Error).message}`
+        );
+      }
+
     case 'otio':
       return normalizeOtioAnchor(obj);
 
     default:
       throw new PublishError(
         'local_comment_anchor_kind_unknown',
-        `unknown anchor kind "${kind}". Expected one of: quote, text, pin, region, time, page, otio.`
+        `unknown anchor kind "${kind}". Expected one of: quote, text, pin, region, time, page, otio, cell, path.`
       );
   }
 }
