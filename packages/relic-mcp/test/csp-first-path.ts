@@ -50,6 +50,11 @@ import { MemoryStore } from '@relic/server/src/store.ts';
 import { type CdpConnection, connectPipe } from '../src/cover/cdp.ts';
 import { chromeArgs, discoverChrome } from '../src/cover/chrome.ts';
 import {
+  detectionSummary,
+  hostPolicy,
+  round2Spec,
+} from './csp-first-round2.ts';
+import {
   attestBrowserHeadless,
   createBrowserHeadlessLaunch,
 } from './browser-headless.ts';
@@ -927,22 +932,34 @@ async function prepareRun(
   const author =
     '<!doctype html><meta charset="utf-8"><title>probe</title><body>' +
     scriptTag(top);
+  const r2 = round2Spec(column);
   const shim: Run['shim'] =
-    column === 'production'
-      ? 'production'
-      : column === 'candidate' || column === 'navigate'
-        ? 'candidate'
-        : 'plain';
+    r2 !== undefined
+      ? r2.shim
+      : column === 'production'
+        ? 'production'
+        : column === 'candidate' || column === 'navigate'
+          ? 'candidate'
+          : 'plain';
   const js =
     column === 'candidate' || column === 'navigate' ? CANDIDATE_JS : PLAIN_JS;
   const csp =
-    column === 'control' || column === 'production'
-      ? null
-      : column === 'prodcsp'
-        ? productionCsp
-        : column === 'navigate'
-          ? `${candidateCsp(js, hostOrigin)}; navigate-to 'none'`
-          : candidateCsp(js, hostOrigin);
+    r2 !== undefined
+      ? r2.cspKind === 'none'
+        ? null
+        : r2.cspKind === 'production'
+          ? productionCsp
+          : candidateCsp(
+              r2.shim === 'candidate' ? CANDIDATE_JS : PLAIN_JS,
+              hostOrigin
+            )
+      : column === 'control' || column === 'production'
+        ? null
+        : column === 'prodcsp'
+          ? productionCsp
+          : column === 'navigate'
+            ? `${candidateCsp(js, hostOrigin)}; navigate-to 'none'`
+            : candidateCsp(js, hostOrigin);
   const run: Run = {
     id,
     column,
@@ -952,6 +969,10 @@ async function prepareRun(
     csp,
     channel,
     settle: def.group === 'vi' || def.group === 'iv' ? 6000 : SETTLE_MS,
+    hostCsp: r2 !== undefined ? hostPolicy(r2.hostFrameSrc, frameOrigin) : null,
+    frameAttrs: r2 !== undefined ? r2.frameAttrs : 'sandbox="allow-scripts"',
+    shimAllowCsp: r2 !== undefined ? r2.shimAllowCsp : false,
+    leafAllowCsp: r2 !== undefined ? r2.leafAllowCsp : false,
   };
   runs.set(id, run);
   return run;
@@ -959,6 +980,7 @@ async function prepareRun(
 
 interface Observed {
   readonly markers: readonly Record<string, unknown>[];
+  readonly events: readonly string[];
   readonly done: boolean;
   readonly tcp: number;
   readonly udp: number;
@@ -1059,6 +1081,7 @@ async function drive(connection: CdpConnection, run: Run): Promise<Observed> {
           });
     return {
       markers: finalProbe?.results ?? [],
+      events: (finalProbe as { events?: string[] } | null)?.events ?? [],
       done: finalProbe?.done ?? false,
       tcp: run.channel.counters.tcpOpens + run.channel.counters.tcpData,
       udp: run.channel.counters.udpPackets,
@@ -1074,7 +1097,7 @@ async function drive(connection: CdpConnection, run: Run): Promise<Observed> {
 // Verdicts.
 // ---------------------------------------------------------------------------
 
-type Code = 'EGRESS' | 'BLOCKED' | 'BLOCKED-PRE' | 'UNPROVEN';
+type Code = 'EGRESS' | 'BLOCKED' | 'BLOCKED-PRE' | 'BLOCKED-NAV' | 'UNPROVEN';
 
 interface Cell {
   readonly code: Code;
@@ -1097,7 +1120,11 @@ function classify(obs: Observed): { label: string; detail: string } {
     .join(' ');
   if (attempts.length === 0) {
     return {
-      label: channel ? 'EGRESS-NO-ATTEMPT' : 'BLOCKED-PRE',
+      label: channel
+        ? 'EGRESS-NO-ATTEMPT'
+        : obs.events.filter((e) => e === 'load').length >= 2
+          ? 'BLOCKED-NAV'
+          : 'BLOCKED-PRE',
       detail:
         [channel, errors.join(' | ')].filter(Boolean).join(' ') ||
         'attempt never ran',
@@ -1154,6 +1181,7 @@ interface Table {
 }
 
 const tables: Table[] = [];
+const detections: string[] = [];
 const started = Date.now();
 
 for (const model of MODELS) {
@@ -1180,6 +1208,10 @@ for (const model of MODELS) {
         runs.delete(run.id);
       }
     });
+    for (const o of observed)
+      detections.push(
+        `${model.name} | ${o.job.def.id} | ${o.job.column} | ${detectionSummary(o.obs.events)}`
+      );
     const cells = new Map<string, Record<Column, Cell>>();
     for (const def of CASES.filter((d) =>
       observed.some((o) => o.job.def.id === d.id)
@@ -1235,6 +1267,8 @@ for (const table of tables) {
   }
 }
 
+console.log('\nhost-side detection (model | case | column | summary):');
+console.log(detections.join('\n'));
 console.log(`\nproduction CSP: ${productionCsp}`);
 console.log(
   `candidate CSP (plain shim): ${candidateCsp(PLAIN_JS, hostOrigin)}`

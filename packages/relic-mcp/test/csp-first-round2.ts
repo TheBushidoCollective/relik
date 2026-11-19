@@ -175,22 +175,34 @@ export function hostPolicy(
 
 /**
  * Detection summary from the host's ordered event log. The first load is the
- * shim's own document, so a second load means the frame navigated away.
- * "egressBeforeNav" is yes when an egress marker arrived before that second load.
+ * shim's own document, so a second load means the frame attempted a navigation,
+ * whether or not the browser allowed it (a refused navigation shows an error
+ * page, which also fires load). markerVsLoad2 says where the first egress marker
+ * falls in the log: before or after that second load, or n/a when there is none.
+ * The marker is posted by the navigated document, so its position in the log is
+ * a message-delivery order, not a proof of when the network request happened.
  */
 export function detectionSummary(events: readonly string[]): string {
-  let loads = 0;
-  let egressBeforeNav = 'no-egress';
-  for (const event of events) {
-    if (event === 'load') {
-      loads += 1;
-      if (loads === 2) break;
-      continue;
-    }
-    if (event.startsWith('probe:egress:') && egressBeforeNav === 'no-egress') {
-      egressBeforeNav = 'yes';
-    }
+  const loadIndexes: number[] = [];
+  events.forEach((event, index) => {
+    if (event === 'load') loadIndexes.push(index);
+  });
+  const marker = events.findIndex((event) => event.startsWith('probe:egress:'));
+  const second = loadIndexes.length >= 2 ? loadIndexes[1] : undefined;
+  let order = 'n/a';
+  if (marker >= 0 && second !== undefined) {
+    order = marker < second ? 'before' : 'after';
+  } else if (marker >= 0) {
+    order = 'no-second-load';
   }
-  const detected = loads >= 2 ? 'yes' : 'no';
-  return `loads=${loads} navDetected=${detected} egressBeforeNav=${egressBeforeNav}`;
+  return (
+    'loads=' +
+    loadIndexes.length +
+    ' navAttempted=' +
+    (second !== undefined ? 'yes' : 'no') +
+    ' egressMarker=' +
+    (marker >= 0 ? 'yes' : 'no') +
+    ' markerVsLoad2=' +
+    order
+  );
 }
