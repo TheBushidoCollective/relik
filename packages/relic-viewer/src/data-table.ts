@@ -27,6 +27,7 @@ import {
   TABLE_DRAWN_COLUMN_LIMIT,
   type CsvTable,
 } from '@relic/format/csv';
+import { isInvisible } from '@relic/format/structured-text';
 import type { StructuredPart } from './structured-view-bridge.ts';
 import {
   anchorCoversCell,
@@ -70,21 +71,9 @@ export function visibleText(value: string): string {
   let out = '';
   for (const char of value) {
     const code = char.codePointAt(0) ?? 0;
-    out += isVisibleControl(code)
-      ? `\\u{${code.toString(16).toUpperCase()}}`
-      : char;
+    out += isInvisible(code) ? `\\u{${code.toString(16).toUpperCase()}}` : char;
   }
   return out;
-}
-
-/** Whether a code point must be shown as an escape: controls and bidi formatting marks. */
-function isVisibleControl(code: number): boolean {
-  if (code < 0x20) return code !== 0x09 && code !== 0x0a && code !== 0x0d;
-  if (code >= 0x7f && code <= 0x9f) return true;
-  if (code === 0x061c || code === 0x200e || code === 0x200f) return true;
-  return (
-    (code >= 0x202a && code <= 0x202e) || (code >= 0x2066 && code <= 0x2069)
-  );
 }
 
 export type SortDirection = 'asc' | 'desc';

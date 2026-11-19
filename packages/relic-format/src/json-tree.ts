@@ -22,7 +22,10 @@
  * it, so an ignored duplicate has no pointer of its own.
  */
 
-import { COMMENT_ANCHOR_POINTER_LIMIT_BYTES } from './comments.ts';
+import {
+  COMMENT_ANCHOR_POINTER_LIMIT_BYTES,
+  pointerHasForbiddenCharacter,
+} from './comments.ts';
 
 /** A file larger than this, in UTF-8 bytes, is not parsed. */
 export const JSON_TREE_MAX_BYTES = 32 * 1024 * 1024;
@@ -265,17 +268,27 @@ export class JsonTree {
 
   /**
    * The RFC 6901 pointer that addresses this node, or `undefined` when no
-   * pointer does: an ignored duplicate, a node under one, or a pointer longer
-   * than the comment cap (512 bytes).
+   * pointer does: an ignored duplicate, a node under one, a key the anchor
+   * writer refuses (NUL or CR), or a pointer over the comment cap (512 bytes).
+   * The walk stops once the cap is passed, so a deep file with long keys costs
+   * no more than the cap.
    */
   pointer(node: number): string | undefined {
-    const tokens = this.#tokensOf(node);
-    if (tokens === undefined) return undefined;
-    const pointer = pointerFromTokens(tokens);
-    return new TextEncoder().encode(pointer).length <=
-      COMMENT_ANCHOR_POINTER_LIMIT_BYTES
-      ? pointer
-      : undefined;
+    let pointer = '';
+    let bytes = 0;
+    for (let at = node; this.parent(at) !== NONE; at = this.parent(at)) {
+      if (this.isShadowed(at)) return undefined;
+      const parent = this.parent(at);
+      const token =
+        this.kind(parent) === 'array' ? String(this.index(at)) : this.key(at);
+      if (token === undefined || pointerHasForbiddenCharacter(token))
+        return undefined;
+      const escaped = escapePointerToken(token);
+      bytes += 1 + utf8Length(escaped);
+      if (bytes > COMMENT_ANCHOR_POINTER_LIMIT_BYTES) return undefined;
+      pointer = `/${escaped}${pointer}`;
+    }
+    return pointer;
   }
 
   /** The node a pointer addresses, or `NONE` when it addresses nothing. */
@@ -342,22 +355,6 @@ export class JsonTree {
     }
     return NONE;
   }
-
-  #tokensOf(node: number): string[] | undefined {
-    const tokens: string[] = [];
-    for (let at = node; this.parent(at) !== NONE; at = this.parent(at)) {
-      if (this.isShadowed(at)) return undefined;
-      const parent = this.parent(at);
-      if (this.kind(parent) === 'array') {
-        tokens.push(String(this.index(at)));
-      } else {
-        const key = this.key(at);
-        if (key === undefined) return undefined;
-        tokens.push(key);
-      }
-    }
-    return tokens.reverse();
-  }
 }
 
 /** Decodes a JSON string literal, quotes included, to its value. */
@@ -386,7 +383,7 @@ export function pointerFromTokens(tokens: readonly string[]): string {
 export function parsePointerTokens(pointer: string): string[] | undefined {
   if (pointer === '') return [];
   if (!pointer.startsWith('/')) return undefined;
-  if (pointer.includes('\u0000') || pointer.includes('\r')) return undefined;
+  if (pointerHasForbiddenCharacter(pointer)) return undefined;
   const tokens: string[] = [];
   for (const part of pointer.slice(1).split('/')) {
     if (/~(?![01])/.test(part)) return undefined;
@@ -852,8 +849,9 @@ class Parser {
     const text = jsonStringValue(this.#source.slice(keyStart, keyEnd));
     const earlier = keys.get(text);
     keys.set(text, node);
-    this.#store.flags[node] = (this.#store.flags[node] ?? 0) | FLAG_DUPLICATED;
     if (earlier !== undefined) {
+      this.#store.flags[node] =
+        (this.#store.flags[node] ?? 0) | FLAG_DUPLICATED;
       this.#store.flags[earlier] =
         (this.#store.flags[earlier] ?? 0) | FLAG_SHADOWED | FLAG_DUPLICATED;
       this.#store.shadowed += 1;

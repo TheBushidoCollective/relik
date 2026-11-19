@@ -24,6 +24,12 @@ import {
   parsePointerTokens,
   utf8Length,
 } from './json-tree.ts';
+import {
+  cutChars,
+  escapeInvisible,
+  findQuote,
+  shortLabel,
+} from './structured-text.ts';
 
 /** Cells past this count refuse the notebook whole. */
 export const NOTEBOOK_MAX_CELLS = 5_000;
@@ -39,6 +45,12 @@ export const NOTEBOOK_IMAGE_MAX_BYTES = 16 * 1024 * 1024;
 export const NOTEBOOK_IMAGES_MAX_BYTES = 64 * 1024 * 1024;
 /** Decoded images across the notebook. */
 export const NOTEBOOK_IMAGES_MAX_COUNT = 500;
+/** A display label from the file (an error name or value, a MIME type, a format number) keeps this many characters. */
+export const NOTEBOOK_LABEL_MAX_CHARS = 256;
+/** One decoded image's width times height, in pixels. */
+export const NOTEBOOK_IMAGE_MAX_PIXELS = 50_000_000;
+/** All decoded images' pixels together. */
+export const NOTEBOOK_IMAGES_MAX_PIXELS = 200_000_000;
 
 export type NotebookRefusal =
   | { readonly kind: 'json'; readonly failure: JsonTreeFailure }
@@ -178,40 +190,17 @@ const RASTER_ORDER = [
 ] as const;
 
 /**
- * Invisible characters: C0 controls other than tab and line feed, DEL and the
- * C1 block, the bidi marks and embeddings, and the bidi isolates. Each one is
- * written out, so a reader sees what the file contains.
+ * Display text: line endings normalised and invisible characters escaped. The
+ * raw text is cut before escaping, since escaping expands each invisible
+ * character to eight, and cut again after, so the shown text stays in the cap.
  */
-const INVISIBLE =
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: the point is to match them
-  /[\x00-\x08\x0b-\x1f\x7f-\x9f\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
-
-/** Every invisible character as its code point, so it can be read. */
-export function escapeInvisible(text: string): string {
-  return text.replace(
-    INVISIBLE,
-    (character) =>
-      `[U+${character.charCodeAt(0).toString(16).toUpperCase().padStart(4, '0')}]`
-  );
-}
-
-/** Display text: line endings normalised, then invisible characters escaped. */
-function displayText(text: string): string {
-  return escapeInvisible(text.replace(/\r\n/g, '\n'));
-}
-
-/** Cuts a text to the cap, without splitting a surrogate pair. */
-function cutRaw(text: string): NotebookText {
-  if (text.length <= NOTEBOOK_TEXT_MAX_CHARS) return { text, truncated: false };
-  let cut = text.slice(0, NOTEBOOK_TEXT_MAX_CHARS);
-  const last = cut.charCodeAt(cut.length - 1);
-  if (last >= 0xd800 && last <= 0xdbff) cut = cut.slice(0, -1);
-  return { text: cut, truncated: true };
-}
-
 function display(text: string): NotebookText {
-  const shown = cutRaw(displayText(text));
-  return shown;
+  const raw = cutChars(text, NOTEBOOK_TEXT_MAX_CHARS);
+  const shown = cutChars(
+    escapeInvisible(raw.text.replace(/\r\n/g, '\n')),
+    NOTEBOOK_TEXT_MAX_CHARS
+  );
+  return { text: shown.text, truncated: raw.truncated || shown.truncated };
 }
 
 /** The member of an object a reader sees: the last one with this key, as `JSON.parse` keeps it. */
@@ -270,6 +259,7 @@ function countOf(tree: JsonTree, node: number | undefined): number | undefined {
 interface Reader {
   images: number;
   imageBytes: number;
+  pixels: number;
   outputs: number;
 }
 
@@ -292,7 +282,13 @@ export function parseNotebook(source: string): NotebookResult {
   if (Number(tree.valueSource(formatNode)) !== 4)
     return {
       ok: false,
-      refusal: { kind: 'nbformat', found: tree.valueSource(formatNode) },
+      refusal: {
+        kind: 'nbformat',
+        found: shortLabel(
+          tree.valueSource(formatNode),
+          NOTEBOOK_LABEL_MAX_CHARS
+        ),
+      },
     };
 
   const count = tree.childCount(cellsNode);
@@ -302,7 +298,7 @@ export function parseNotebook(source: string): NotebookResult {
       refusal: { kind: 'too-many-cells', count, limit: NOTEBOOK_MAX_CELLS },
     };
 
-  const reader: Reader = { images: 0, imageBytes: 0, outputs: 0 };
+  const reader: Reader = { images: 0, imageBytes: 0, pixels: 0, outputs: 0 };
   const cells: NotebookCell[] = [];
   let child = tree.firstChild(cellsNode);
   for (let index = 0; child !== NONE; index += 1) {
@@ -410,8 +406,9 @@ function readOutput(
           ? 'stderr'
           : 'stdout';
       const textNode = member(tree, node, 'text');
-      const raw = cutRaw(
-        textNode === undefined ? '' : (textOf(tree, textNode, '') ?? '')
+      const raw = cutChars(
+        textNode === undefined ? '' : (textOf(tree, textNode, '') ?? ''),
+        NOTEBOOK_TEXT_MAX_CHARS
       );
       return {
         index,
@@ -430,10 +427,11 @@ function readOutput(
       const nameNode = member(tree, node, 'ename');
       const valueNode = member(tree, node, 'evalue');
       const tracebackNode = member(tree, node, 'traceback');
-      const traceback = cutRaw(
+      const traceback = cutChars(
         tracebackNode === undefined
           ? ''
-          : (textOf(tree, tracebackNode, '\n') ?? '')
+          : (textOf(tree, tracebackNode, '\n') ?? ''),
+        NOTEBOOK_TEXT_MAX_CHARS
       );
       return {
         index,
@@ -442,11 +440,13 @@ function readOutput(
         end,
         body: {
           kind: 'error',
-          name: displayText(
-            nameNode === undefined ? '' : (textOf(tree, nameNode) ?? '')
+          name: shortLabel(
+            nameNode === undefined ? '' : (textOf(tree, nameNode) ?? ''),
+            NOTEBOOK_LABEL_MAX_CHARS
           ),
-          value: displayText(
-            valueNode === undefined ? '' : (textOf(tree, valueNode) ?? '')
+          value: shortLabel(
+            valueNode === undefined ? '' : (textOf(tree, valueNode) ?? ''),
+            NOTEBOOK_LABEL_MAX_CHARS
           ),
           spans: ansiSpans(traceback.text),
           truncated: traceback.truncated,
@@ -512,7 +512,7 @@ function readData(
     return {
       kind: 'withheld',
       withheld: withheld.kind,
-      label: displayText(withheld.mime),
+      label: shortLabel(withheld.mime, NOTEBOOK_LABEL_MAX_CHARS),
       plain:
         plainNode === undefined
           ? undefined
@@ -583,7 +583,137 @@ function readImage(
   reader.images += 1;
   reader.imageBytes += bytes.length;
   if (imageFormatOf(bytes) !== format) return refused('signature');
+  const size = imageSize(bytes, format);
+  if (size === undefined) return refused('signature');
+  const pixels = size.width * size.height;
+  if (
+    pixels > NOTEBOOK_IMAGE_MAX_PIXELS ||
+    reader.pixels + pixels > NOTEBOOK_IMAGES_MAX_PIXELS
+  )
+    return refused('size');
+  reader.pixels += pixels;
   return { kind: 'image', format, bytes };
+}
+
+/** A decoded image's width and height in pixels. */
+interface ImageSize {
+  readonly width: number;
+  readonly height: number;
+}
+
+/**
+ * The size an image declares in its header, or `undefined` when the header is
+ * malformed. Only the header is read: no pixel is decoded, so a small file that
+ * declares a huge canvas is refused before a browser is asked to draw it.
+ */
+function imageSize(
+  bytes: Uint8Array,
+  format: ImageFormat
+): ImageSize | undefined {
+  switch (format) {
+    case 'png':
+      return pngSize(bytes);
+    case 'gif':
+      return gifSize(bytes);
+    case 'jpeg':
+      return jpegSize(bytes);
+    case 'webp':
+      return webpSize(bytes);
+  }
+}
+
+function viewOf(bytes: Uint8Array): DataView {
+  return new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+}
+
+function sized(width: number, height: number): ImageSize | undefined {
+  return width > 0 && height > 0 ? { width, height } : undefined;
+}
+
+function pngSize(bytes: Uint8Array): ImageSize | undefined {
+  if (bytes.length < 24) return undefined;
+  const view = viewOf(bytes);
+  // The first chunk must be IHDR (the word 0x49484452), 13 bytes long.
+  if (view.getUint32(8) !== 13 || view.getUint32(12) !== 0x49484452)
+    return undefined;
+  return sized(view.getUint32(16), view.getUint32(20));
+}
+
+function gifSize(bytes: Uint8Array): ImageSize | undefined {
+  if (bytes.length < 10) return undefined;
+  // The logical screen is the canvas. A zero side is malformed.
+  const view = viewOf(bytes);
+  return sized(view.getUint16(6, true), view.getUint16(8, true));
+}
+
+function jpegSize(bytes: Uint8Array): ImageSize | undefined {
+  const view = viewOf(bytes);
+  let at = 2; // past the SOI marker
+  while (at < bytes.length) {
+    if (view.getUint8(at) !== 0xff) return undefined;
+    at += 1;
+    while (at < bytes.length && view.getUint8(at) === 0xff) at += 1;
+    if (at >= bytes.length) return undefined;
+    const marker = view.getUint8(at);
+    at += 1;
+    // Fill is 0xff; 0x00 is stuffing, not a marker; EOI or SOS ends the headers.
+    if (marker === 0x00 || marker === 0xd9 || marker === 0xda) return undefined;
+    if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) continue;
+    if (at + 2 > bytes.length) return undefined;
+    const length = view.getUint16(at);
+    if (length < 2) return undefined;
+    // SOF0 to SOF15, but not DHT (C4), JPG (C8) or DAC (CC).
+    const frame =
+      marker >= 0xc0 &&
+      marker <= 0xcf &&
+      marker !== 0xc4 &&
+      marker !== 0xc8 &&
+      marker !== 0xcc;
+    if (frame) {
+      if (length < 8 || at + 7 > bytes.length) return undefined;
+      return sized(view.getUint16(at + 5), view.getUint16(at + 3));
+    }
+    at += length;
+  }
+  return undefined;
+}
+
+function webpSize(bytes: Uint8Array): ImageSize | undefined {
+  if (bytes.length < 30) return undefined;
+  const view = viewOf(bytes);
+  const chunk = String.fromCharCode(
+    view.getUint8(12),
+    view.getUint8(13),
+    view.getUint8(14),
+    view.getUint8(15)
+  );
+  if (chunk === 'VP8 ') {
+    // Lossy: a 3-byte frame tag, the start code 9d 01 2a, then 14-bit width and height.
+    if (
+      view.getUint8(23) !== 0x9d ||
+      view.getUint8(24) !== 0x01 ||
+      view.getUint8(25) !== 0x2a
+    )
+      return undefined;
+    return sized(
+      view.getUint16(26, true) & 0x3fff,
+      view.getUint16(28, true) & 0x3fff
+    );
+  }
+  if (chunk === 'VP8L') {
+    // Lossless: a signature byte, then width-1 and height-1 as 14-bit fields.
+    if (view.getUint8(20) !== 0x2f) return undefined;
+    const bits = view.getUint32(21, true);
+    return sized((bits & 0x3fff) + 1, ((bits >>> 14) & 0x3fff) + 1);
+  }
+  if (chunk === 'VP8X') {
+    // Extended: the canvas is width-1 and height-1 as 24-bit little-endian values.
+    return sized(
+      1 + view.getUint16(24, true) + view.getUint8(26) * 0x10000,
+      1 + view.getUint16(27, true) + view.getUint8(29) * 0x10000
+    );
+  }
+  return undefined;
 }
 
 const BASE64 = /^[A-Za-z0-9+/]*={0,2}$/;
@@ -861,28 +991,4 @@ function containing<T extends { readonly start: number; readonly end: number }>(
   }
   const item = found === NONE ? undefined : items[found];
   return item !== undefined && at < item.end ? item : undefined;
-}
-
-/**
- * The index of a quote in the source. A quote with context must match its
- * context, so an occurrence the reader did not select is never chosen.
- */
-function findQuote(
-  source: string,
-  exact: string,
-  prefix = '',
-  suffix = ''
-): number | undefined {
-  if (exact.length === 0) return undefined;
-  for (
-    let at = source.indexOf(exact);
-    at !== NONE;
-    at = source.indexOf(exact, at + 1)
-  ) {
-    const beforeOk =
-      prefix.length === 0 ||
-      (at >= prefix.length && source.slice(at - prefix.length, at) === prefix);
-    if (beforeOk && source.startsWith(suffix, at + exact.length)) return at;
-  }
-  return undefined;
 }

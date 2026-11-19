@@ -21,6 +21,7 @@ import {
   parseSubtitles,
   subtitleFormatFor,
 } from '@relic/format/subtitles';
+import { isInvisible } from '@relic/format/structured-text';
 import { subtitleClock } from './annotate-cue.ts';
 import {
   type StructuredMount,
@@ -33,21 +34,6 @@ const SVG_NS = 'http://www.w3.org/2000/svg';
 const NOTICE_NOT_A_LIST =
   'This subtitle file is too large to show as a list of cues, so its text is shown.';
 const NOTICE_NO_CUES = 'This file has no readable cues, so its text is shown.';
-
-/**
- * Bidirectional formatting and control characters: the ones a reader could not
- * see. Tab and line feed are text, and everything else below U+0020 is not.
- */
-function isInvisible(code: number): boolean {
-  if (code < 0x20) return code !== 0x09 && code !== 0x0a;
-  return (
-    code === 0x7f ||
-    code === 0x200e ||
-    code === 0x200f ||
-    (code >= 0x202a && code <= 0x202e) ||
-    (code >= 0x2066 && code <= 0x2069)
-  );
-}
 
 /** Each invisible character is written out as its code point, so it can be read. */
 export function visibleText(text: string): string {

@@ -17,6 +17,7 @@
     "./renderer-class": "./src/renderer-class.ts",
     "./suggestions": "./src/suggestions.ts",
     "./subtitles": "./src/subtitles.ts",
+    "./structured-text": "./src/structured-text.ts",
     "./wordlist": "./src/wordlist.ts"
   },
   "scripts": {

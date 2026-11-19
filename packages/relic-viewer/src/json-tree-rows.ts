@@ -10,6 +10,9 @@
  */
 
 import type { CommentAnchor, JsonTree, JsonTreeFailure } from '@relic/format';
+import { findQuote, isInvisible } from '@relic/format/structured-text';
+
+export { findQuote };
 
 /** Above this many values, "Expand all" is off: opening everything would stall the page. */
 export const TREE_EXPAND_ALL_LIMIT = 10_000;
@@ -22,23 +25,9 @@ export const TREE_INSPECTOR_CUT_CHARS = 4096;
 
 const NONE = -1;
 
-/** Bidi embedding, isolate and mark controls, plus the line separators. */
-function isBidiOrLineBreak(code: number): boolean {
-  return (
-    code === 0x061c ||
-    code === 0x200e ||
-    code === 0x200f ||
-    (code >= 0x202a && code <= 0x202e) ||
-    (code >= 0x2066 && code <= 0x2069) ||
-    code === 0x2028 ||
-    code === 0x2029
-  );
-}
-
+/** Escapes C0 (tab and line feed too, as this view always did) and the shared invisible set. */
 function needsEscape(code: number): boolean {
-  return (
-    code <= 0x1f || (code >= 0x7f && code <= 0x9f) || isBidiOrLineBreak(code)
-  );
+  return code <= 0x1f || isInvisible(code);
 }
 
 /**
@@ -130,30 +119,6 @@ export function breadcrumbFor(tree: JsonTree, node: number): Crumb[] {
     });
   }
   return path.reverse();
-}
-
-/**
- * The index of a quote in the source. A quote with context must match its
- * context, so an occurrence the reader did not select is never chosen.
- */
-export function findQuote(
-  source: string,
-  exact: string,
-  prefix = '',
-  suffix = ''
-): number | undefined {
-  if (exact.length === 0) return undefined;
-  for (
-    let at = source.indexOf(exact);
-    at !== NONE;
-    at = source.indexOf(exact, at + 1)
-  ) {
-    const beforeOk =
-      prefix.length === 0 ||
-      (at >= prefix.length && source.slice(at - prefix.length, at) === prefix);
-    if (beforeOk && source.startsWith(suffix, at + exact.length)) return at;
-  }
-  return undefined;
 }
 
 /**

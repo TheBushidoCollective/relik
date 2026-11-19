@@ -60,6 +60,7 @@ import { loadPrivatePublishState, loadPublishState } from './state.ts';
 import {
   readerForVersion,
   resolveStructuredComment,
+  resolveSubtitleTime,
 } from './resolve-structured-comment.ts';
 import type {
   CellResolution,
@@ -1770,7 +1771,7 @@ export async function resolveAnchors(
         if (reader.kind === 'subtitles') {
           updatedComments.push({
             ...comment,
-            resolved: reader.subtitleTime(anchor),
+            resolved: resolveSubtitleTime(comment, anchor, reader),
           });
           break;
         }

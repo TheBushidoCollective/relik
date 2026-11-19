@@ -119,7 +119,6 @@ function isHighSurrogate(code: number): boolean {
   return code >= 0xd800 && code <= 0xdbff;
 }
 
-const LINE_BREAK = /\r\n|\r|\n/;
 const TIMESTAMP_HOURS = /^(\d{2,}):([0-5]\d):([0-5]\d)[.,](\d{3})$/;
 const TIMESTAMP_MINUTES = /^([0-5]\d):([0-5]\d)[.,](\d{3})$/;
 const TIMING = /^(\S+)[ \t]+-->[ \t]+(\S+)(?:[ \t].*)?$/;
@@ -412,6 +411,42 @@ function readCueBlock(
   };
 }
 
+/** One line of a subtitle file, with its 1-based number. */
+interface LineRead {
+  readonly text: string;
+  readonly number: number;
+}
+
+/**
+ * Returns a reader that yields the lines of a text one at a time. The text is
+ * never split whole, so a file of many short lines costs no line array. Breaks
+ * are CR LF, CR or LF, as `split` on `LINE_BREAK` read them. The reader returns
+ * `undefined` past the last line.
+ */
+function lineCursor(source: string): () => LineRead | undefined {
+  let start = 0;
+  let number = 0;
+  return () => {
+    if (start > source.length) return undefined;
+    number += 1;
+    let end = start;
+    while (end < source.length) {
+      const code = source.charCodeAt(end);
+      if (code === 0x0a || code === 0x0d) break;
+      end += 1;
+    }
+    const text = source.slice(start, end);
+    if (end === source.length) start = end + 1;
+    else if (
+      source.charCodeAt(end) === 0x0d &&
+      source.charCodeAt(end + 1) === 0x0a
+    )
+      start = end + 2;
+    else start = end + 1;
+    return { text, number };
+  };
+}
+
 /**
  * Reads a subtitle file. Limits are checked before the work they bound, and a
  * file past one is refused whole. Malformed blocks are skipped and counted.
@@ -424,31 +459,33 @@ export function parseSubtitles(
     return { ok: false, reason: 'too-large', skipped: 0 };
   }
   const source = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
-  const lines = source.split(LINE_BREAK);
   const entries: SubtitleEntry[] = [];
   let cueCount = 0;
   let skipped = 0;
   let firstSkipped: { line: number; reason: string } | undefined;
   let blocks = 0;
-  let i = 0;
+  const nextLine = lineCursor(source);
 
   const skip = (line: number, reason: string): void => {
     skipped += 1;
     firstSkipped ??= { line, reason };
   };
 
-  while (i < lines.length) {
-    if (lines[i] === '') {
-      i += 1;
+  let pending = nextLine();
+  while (pending !== undefined) {
+    if (pending.text === '') {
+      pending = nextLine();
       continue;
     }
-    const first = i;
-    while (i < lines.length && lines[i] !== '') i += 1;
-    const block = lines.slice(first, i);
+    const line = pending.number;
+    const block: string[] = [];
+    while (pending !== undefined && pending.text !== '') {
+      block.push(pending.text);
+      pending = nextLine();
+    }
     const isFirstBlock = blocks === 0;
     blocks += 1;
     const head = block[0] ?? '';
-    const line = first + 1;
 
     if (format === 'vtt' && isFirstBlock && WEBVTT_HEAD.test(head)) continue;
 
