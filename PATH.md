@@ -114,6 +114,22 @@ Success requires `COMMENT_POPOVER_PATH_OK classes=9`, attached composers and pos
 
 Saved comment cards and timeline cluster cards expose **Dismiss** (`.popover-dismiss`, accessible name `Dismiss comment overlay`). Exercise pointer and keyboard dismissal after Post and on an existing mark, then reopen from the mark and thread. Closing the overlay must preserve the stored comment, counts, sidebar, playback and fullscreen without a mutation request. New/edit composers have no Dismiss, and replying hides it to protect the draft. Keyboard focus restoration must not immediately reopen the card; asynchronous work from a dismissed card must not reopen it or replace a newer panel. The clickable interaction reference is `docs/plans/anchored-popover/mockup.html`.
 
+# Frame egress from the sandboxed render frame
+
+The sandboxed frame must not reach the network by any channel the author can reach. The proof publishes HTML relics through the real MCP bundle and the real app, serves them with the production policy, and lets each relic's own script try every channel. It runs in an isolated headless shell with a throwaway profile, and every channel has its own loopback listener and UDP socket.
+
+## Acceptance command
+
+Build the viewer and the MCP bundle first, then run the probe:
+
+```sh
+mise exec -- bun run --cwd packages/relic-viewer build
+mise exec -- bun run --cwd packages/relic-mcp build
+mise exec -- bun packages/relic-mcp/test/frame-egress-path.ts
+```
+
+Success requires exit 0 with `FRAME_EGRESS_PATH_OK` or `FRAME_EGRESS_PATH_OK_WITH_UNPROVEN`. The second marker means no egress was observed, but some channels had no positive control that reached a listener in this build. Those channels print UNPROVEN and are never counted as blocked. Any unexpected egress, a failing negative control, or reporting configured on the served shim fails the run. `RELIC_FRAME_EGRESS_CHROME_PATH` selects the browser (the default is the owned isolated headless shell; CI sets it to `google-chrome`).
+
 # Reader suggestions
 
 The MCP and browser paths publish fixtures to an in-process loopback service.

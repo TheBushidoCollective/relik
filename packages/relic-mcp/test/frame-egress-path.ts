@@ -14,7 +14,7 @@
  * TCP connection, a TCP chunk, or a UDP packet landing on a channel's socket is
  * egress on that channel. WebRTC is observed by pointing an RTCPeerConnection's
  * STUN server at a UDP socket the harness owns. A channel that fails inside the
- * page is not blocked by that fact alone: only nothing arriving counts as blocked.
+ * page is not blocked by that fact alone.
  *
  * Variants: two process models (default, and site-per-process with
  * IsolateSandboxedIframes), a run with the harness WebRTC policy that masks
@@ -24,21 +24,29 @@
  * WebRTC egress and must not show network egress. That is what proves the
  * probe can fail, and that CSP and containment are separate layers.
  *
+ * Positive controls run after the production runs: the main relic and each
+ * navigation channel, with no CSP and no containment, in the same sandboxed
+ * frame. An arrival there shows the listener can see the channel. A silent
+ * production channel is blocked only if its control arrived; otherwise it prints
+ * UNPROVEN with the reason. A DNS lookup opens no connection, so DNS-only
+ * channels are UNPROVEN by construction.
+ *
+ * The probe also reads the served shim's response. A CSP violation report or a
+ * network error report needs an endpoint that some response names, so the probe
+ * fails if that response carries Reporting-Endpoints, Report-To or NEL, or a CSP
+ * report-to or report-uri directive.
+ *
  * KNOWN_EGRESS is the explicit list of channels allowed to egress. It is empty.
  * Any unlisted egress fails the proof, and a listed channel that stops egressing
  * also fails, so the list cannot go stale.
  *
- * A channel is counted as blocked only when a listener would have seen it. The
- * UNPROVEN_CHANNELS table names the ones this harness cannot observe in this
- * build, with the measurement behind each. They print UNPROVEN, and an arrival
- * on one still fails the proof. The marker is FRAME_EGRESS_PATH_OK when nothing
- * is unproven, and FRAME_EGRESS_PATH_OK_WITH_UNPROVEN when no egress was observed
- * but some channels are unobservable here. The probe exits 0 for both.
+ * The marker is FRAME_EGRESS_PATH_OK when every channel is observable and blocked,
+ * and FRAME_EGRESS_PATH_OK_WITH_UNPROVEN when no egress was observed but some
+ * channels are unobservable here. The probe exits 0 for both.
  *
  * Measured on loopback TCP and UDP listeners and on a LAN address for STUN.
- * This probe reads those listeners only. It does not read Chrome's net log, so
- * a DNS-only resolution is not observed by it, and dns-prefetch stays UNPROVEN.
- * Nothing here is measured on the public internet.
+ * The probe reads those listeners only and never Chrome's net log, so DNS
+ * resolution is not observed. Nothing here is measured on the public internet.
  */
 
 import assert from 'node:assert/strict';
@@ -61,7 +69,7 @@ import {
   createBrowserHeadlessLaunch,
 } from './browser-headless.ts';
 
-const RUN_BUDGET_MS = 900_000;
+const RUN_BUDGET_MS = 1_800_000;
 const defaultOwnedShell =
   '/Users/jwaldrip/.omp/owned-shells/chromium_headless_shell-1228/chrome-headless-shell-mac-arm64/chrome-headless-shell';
 
@@ -106,27 +114,13 @@ watchdog.unref?.();
 const KNOWN_EGRESS: Readonly<Record<string, string>> = {};
 
 /**
- * Channels this harness cannot observe in this build, and the measured reason.
- * They print UNPROVEN and are never counted as blocked. An arrival on one still
- * fails the proof, so the table cannot hide egress.
- *
- * Measured with loopback listeners in chrome-headless-shell 149 (2026-11-19):
- * - dns-prefetch: a served page with no CSP and a dns-prefetch hint to a
- *   hostname under relic-probe.test (mapped to loopback) produced no resolution
- *   in Chrome's net log, and no connection. Net-log resolutions are visible
- *   for navigations and prefetches, so this is the hint not being performed,
- *   not a blind spot in the log. DNS resolution is therefore unproven here.
- * - preconnect: a served page with no CSP and a preconnect hint to a plain
- *   loopback listener produced no connection.
- * - speculation-rule prerender: its positive control reached no listener.
+ * Channels a loopback listener cannot see by construction. A DNS lookup opens no
+ * connection, so nothing arrives on a listener. These print UNPROVEN. Every other
+ * channel's observability comes from its positive control, measured in this run.
  */
-const UNPROVEN_CHANNELS: Readonly<Record<string, string>> = {
+const LISTENER_UNOBSERVABLE: Readonly<Record<string, string>> = {
   'net:link-dns-prefetch':
-    'DNS-only hint, not performed in this build: no resolution or connection in the net log even with no CSP',
-  'net:link-preconnect':
-    'preconnect hint, not performed in this build: no connection to a loopback listener even with no CSP',
-  'net:speculation-prerender':
-    'speculation-rule prerender, positive control reached no listener in this build',
+    'DNS-only hint: a loopback listener cannot see a DNS lookup',
 };
 
 /**
@@ -449,8 +443,9 @@ interface Variant {
   readonly relic: string;
   readonly isolation: boolean;
   readonly harnessPolicy: boolean;
-  readonly shim: 'production' | 'throwaway';
+  readonly shim: 'production' | 'throwaway' | 'open';
   readonly negative: boolean;
+  readonly positive?: boolean;
 }
 
 interface ProbeResult {
@@ -474,6 +469,11 @@ interface Capture {
 
 interface Verdict {
   readonly name: string;
+  readonly relic: string;
+  readonly ids: readonly string[];
+  readonly isolated: boolean;
+  readonly positive: boolean;
+  readonly negative: boolean;
   readonly ok: boolean;
   readonly egress: readonly string[];
   readonly reasons: readonly string[];
@@ -491,7 +491,7 @@ interface AppLike {
 const counters = new Map<string, ChannelCounter>();
 const listeners: Array<{ stop(): void }> = [];
 const channels = new Map<string, Channel>();
-let shimMode: 'production' | 'throwaway' = 'production';
+let shimMode: 'production' | 'throwaway' | 'open' = 'production';
 
 const scratch = await mkdtemp(
   join(await realpath(tmpdir()), 'relic-frame-egress-')
@@ -613,6 +613,14 @@ const usercontent = Bun.serve({
   async fetch(request) {
     if (!app) return new Response('Not ready', { status: 503 });
     const url = new URL(request.url);
+    if (shimMode === 'open' && url.pathname === '/sandbox.html') {
+      // Positive control: no policy at all, so only the channel's own behaviour is
+      // measured. The sandbox attribute on the frame still applies.
+      return new Response(THROWAWAY_SHIM, {
+        status: 200,
+        headers: { 'content-type': 'text/html; charset=utf-8' },
+      });
+    }
     if (shimMode === 'throwaway' && url.pathname === '/sandbox.html') {
       // Only the production CSP is copied. Copying every header would carry the
       // production content-length onto a shorter body, and the browser would
@@ -914,6 +922,38 @@ const variants: Variant[] = [
     shim: 'throwaway',
     negative: true,
   },
+  // Positive controls run after the production runs. Each one lifts the CSP and
+  // the containment and nothing else, so an arrival shows the listener can see the
+  // channel. A silent production channel counts as blocked only if its control
+  // arrived. The sandbox attribute stays on, so navigation controls are limited to
+  // what the frame itself may do.
+  {
+    name: 'POSITIVE CONTROL · no CSP, no containment · main relic',
+    relic: 'main',
+    isolation: false,
+    harnessPolicy: false,
+    shim: 'open',
+    negative: false,
+    positive: true,
+  },
+  {
+    name: 'POSITIVE CONTROL · no CSP, no containment · write relic',
+    relic: 'write',
+    isolation: false,
+    harnessPolicy: false,
+    shim: 'open',
+    negative: false,
+    positive: true,
+  },
+  ...NAV_IDS.map((id) => ({
+    name: `POSITIVE CONTROL · no CSP, no containment · ${id}`,
+    relic: id,
+    isolation: false,
+    harnessPolicy: false,
+    shim: 'open' as const,
+    negative: false,
+    positive: true,
+  })),
 ];
 
 /** The negative control must see these reach the network... */
@@ -939,6 +979,27 @@ function relicFor(key: string): Relic {
 }
 
 const verdicts: Verdict[] = [];
+const observable = new Set<string>();
+
+// The served shim's response must name no reporting endpoint. A CSP violation
+// report or a network error report goes only to an endpoint some response
+// names, so when none is named, nothing from the frame is sent to one.
+const shimResponse = await fetch(`${usercontentOrigin}/sandbox.html`);
+const shimDirectives = (
+  shimResponse.headers.get('content-security-policy') ?? ''
+)
+  .split(';')
+  .map((directive) => directive.trim().split(/\s+/)[0] ?? '');
+await shimResponse.text();
+const reportingFindings = [
+  ...['reporting-endpoints', 'report-to', 'nel']
+    .filter((name) => shimResponse.headers.has(name))
+    .map((name) => `${name} header`),
+  ...['report-to', 'report-uri']
+    .filter((name) => shimDirectives.includes(name))
+    .map((name) => `CSP ${name} directive`),
+];
+
 for (const variant of variants) {
   const relic = relicFor(variant.relic);
   resetCounters(relic.ids);
@@ -965,7 +1026,11 @@ for (const variant of variants) {
   }
 
   const egress = relic.ids.filter((id) => arrived(id));
-  if (variant.negative) {
+  if (variant.positive === true) {
+    // A control. An arrival shows the listener can see the channel, which is what
+    // lets a silent production run count as blocked. It is never a failure.
+    for (const id of egress) observable.add(id);
+  } else if (variant.negative) {
     for (const id of NEGATIVE_REQUIRED_EGRESS) {
       if (!egress.includes(id)) {
         reasons.push(`negative control did not detect egress on ${id}`);
@@ -991,7 +1056,12 @@ for (const variant of variants) {
   );
   verdicts.push({
     name: variant.name,
-    ok: reasons.length === 0,
+    relic: variant.relic,
+    ids: relic.ids,
+    isolated: variant.isolation,
+    positive: variant.positive === true,
+    negative: variant.negative,
+    ok: variant.positive === true || reasons.length === 0,
     egress,
     reasons,
     results,
@@ -1006,7 +1076,11 @@ const first = verdicts[0];
 assert.ok(first !== undefined, 'no variants ran');
 console.log(`chrome: ${first.version} (${chromeExecutable})`);
 console.log(`STUN address: ${lan}`);
-/** A channel is unproven when this harness cannot observe it in this build. */
+console.log(
+  `reporting on the served shim: ${reportingFindings.length === 0 ? 'none' : reportingFindings.join('; ')}`
+);
+
+/** A channel is unproven when no positive control could see it, or the build lacks it. */
 function unprovenReason(
   id: string,
   result: ProbeResult | undefined
@@ -1014,27 +1088,36 @@ function unprovenReason(
   if (result?.outcome === 'threw' && result.error?.startsWith('unsupported:')) {
     return `not available in this build (${result.error})`;
   }
-  return UNPROVEN_CHANNELS[id];
+  const fixed = LISTENER_UNOBSERVABLE[id];
+  if (fixed !== undefined) return fixed;
+  if (!observable.has(id)) {
+    return 'no positive control reached a listener, so this build does not let one see it';
+  }
+  return undefined;
 }
 
-console.log(`\nper-channel results, ${first.name}:`);
+const productionRuns = verdicts.filter((v) => !v.positive && !v.negative);
 const unproven: string[] = [];
-for (const id of MAIN_IDS) {
-  const result = first.results.get(id);
+console.log(
+  '\nper-channel results (production runs; blocked only where a positive control could see the channel):'
+);
+for (const id of [...MAIN_IDS, ...WRITE_IDS, ...NAV_IDS]) {
+  const runs = productionRuns.filter((v) => v.ids.includes(id));
+  const egressed = runs.some((v) => v.egress.includes(id));
+  const run = runs.find((v) => !v.isolated) ?? runs[0];
+  const result = run?.results.get(id);
+  const counter = run?.counts.get(id);
+  const reason = egressed ? undefined : unprovenReason(id, result);
+  if (reason !== undefined) unproven.push(id);
+  const state = egressed
+    ? 'EGRESS   '
+    : reason !== undefined
+      ? 'UNPROVEN '
+      : 'blocked  ';
   const outcome = result?.outcome ?? 'no result';
   const error = result?.error ? ` (${result.error})` : '';
-  const counter = first.counts.get(id);
-  const reason = first.egress.includes(id)
-    ? undefined
-    : unprovenReason(id, result);
-  if (reason !== undefined) unproven.push(id);
-  const state = first.egress.includes(id)
-    ? 'EGRESS    '
-    : reason !== undefined
-      ? 'UNPROVEN  '
-      : 'blocked   ';
   console.log(
-    `  ${state}${id}  ${outcome}${error}  tcp=${counter?.tcpOpens ?? 0}/${counter?.tcpData ?? 0} udp=${counter?.udpPackets ?? 0}${reason === undefined ? '' : `  [${reason}]`}`
+    `  ${state}${id}  ${outcome}${error}  tcp=${counter?.tcpOpens ?? 0}/${counter?.tcpData ?? 0} udp=${counter?.udpPackets ?? 0}  observable=${observable.has(id) ? 'yes' : 'no'}${reason === undefined ? '' : `  [${reason}]`}`
   );
 }
 const nestedSeen = first.nested
@@ -1046,25 +1129,29 @@ console.log('\nvariants:');
 for (const verdict of verdicts) {
   const egressList =
     verdict.egress.length === 0 ? 'none' : verdict.egress.join(', ');
-  console.log(`[${verdict.ok ? 'PASS' : 'FAIL'}] ${verdict.name}`);
+  const label = verdict.positive ? 'CONTROL' : verdict.ok ? 'PASS' : 'FAIL';
+  console.log(`[${label}] ${verdict.name}`);
   console.log(`       egress: ${egressList}`);
   for (const reason of verdict.reasons) console.log(`       reason: ${reason}`);
 }
 
 const failed = verdicts.filter((verdict) => !verdict.ok);
-if (failed.length === 0 && unproven.length === 0) {
+const reportingFailed = reportingFindings.length > 0;
+if (failed.length === 0 && !reportingFailed && unproven.length === 0) {
   console.log('\nFRAME_EGRESS_PATH_OK');
-} else if (failed.length === 0) {
+} else if (failed.length === 0 && !reportingFailed) {
   console.log(
     `\nNo egress observed. UNPROVEN, not observable by this harness and not counted as blocked: ${unproven.join(', ')}`
   );
   console.log('FRAME_EGRESS_PATH_OK_WITH_UNPROVEN');
 } else {
-  console.log(`\nFRAME_EGRESS_PATH_FAILED: ${failed.length} variant(s)`);
+  console.log(
+    `\nFRAME_EGRESS_PATH_FAILED: ${failed.length} variant(s)${reportingFailed ? '; reporting configured on the served shim' : ''}`
+  );
 }
 
 for (const listener of listeners) listener.stop();
 service.stop(true);
 usercontent.stop(true);
 await rm(scratch, { recursive: true, force: true }).catch(() => {});
-process.exit(failed.length === 0 ? 0 : 1);
+process.exit(failed.length === 0 && !reportingFailed ? 0 : 1);
