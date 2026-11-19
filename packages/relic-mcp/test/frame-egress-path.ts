@@ -155,6 +155,7 @@ const CAPTURE_JS = `(function () {
 
 const MECH_IDS = [
   'mech:createElement-iframe',
+  'mech:case-f1-prefixed-ns',
   'mech:case-f0-tolowercase',
   'mech:case-f0-call-capture',
   'mech:createElement-coerced-after',
@@ -301,6 +302,11 @@ CH['rtc:shim-realm'] = function (id) {
   pc.createOffer().then(function (o) { return pc.setLocalDescription(o); }).catch(function () {});
 };
 CH['mech:createElement-iframe'] = function (id, box) { var el = document.createElement('iframe'); el.srcdoc = nestedHtml(id); box.appendChild(el); };
+CH['mech:case-f1-prefixed-ns'] = function (id, box) {
+  var el = document.createElementNS('http://www.w3.org/1999/xhtml', 'x:iframe');
+  el.srcdoc = nestedHtml(id);
+  box.appendChild(el);
+};
 CH['mech:case-f0-tolowercase'] = function (id, box) {
   var realLower = String.prototype.toLowerCase;
   String.prototype.toLowerCase = function () { return 'div'; };
