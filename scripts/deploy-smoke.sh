@@ -97,12 +97,18 @@ import secrets
 import socket
 import ssl
 import struct
+import os
 import sys
+import time
 from urllib.parse import urlsplit
 
 
 def token(size):
     return base64.urlsafe_b64encode(secrets.token_bytes(size)).decode().rstrip("=")
+
+
+class RouteNotReady(RuntimeError):
+    pass
 
 
 class WebSocket:
@@ -143,6 +149,8 @@ class WebSocket:
         head, self.buffer = self.buffer.split(b"\r\n\r\n", 1)
         lines = head.decode("latin-1").split("\r\n")
         if len(lines[0].split()) < 2 or lines[0].split()[1] != "101":
+            if lines[0].split()[1:2] == ["404"]:
+                raise RouteNotReady(lines[0])
             raise RuntimeError(f"presence WebSocket upgrade rejected: {lines[0]}")
         headers = {}
         for line in lines[1:]:
@@ -212,34 +220,54 @@ class WebSocket:
         self.sock.close()
 
 
-sockets = []
-try:
-    room = token(16)
-    for _ in range(2):
-        sockets.append(WebSocket(sys.argv[1], room))
-    sender, receiver = sockets
-    sender_hello = sender.receive()
-    receiver_hello = receiver.receive()
-    sender_id = sender_hello.get("hello", {}).get("self")
-    if (
-        sender_hello.get("v") != 1
-        or receiver_hello.get("v") != 1
-        or not sender_id
-        or not receiver_hello.get("hello", {}).get("self")
-    ):
-        raise RuntimeError("presence sockets did not receive hello messages")
-    ciphertext = token(540)
-    sender.send(json.dumps({"v": 1, "c": ciphertext}, separators=(",", ":")))
-    forwarded = receiver.receive()
-    if forwarded != {"v": 1, "f": sender_id, "c": ciphertext}:
-        raise RuntimeError("presence relay did not forward the frame unchanged")
-    print("PRESENCE_RELAY_OK")
-except Exception as error:
-    print(f"PRESENCE_RELAY_FAILED: {error}", file=sys.stderr)
-    sys.exit(1)
-finally:
-    for ws in sockets:
-        ws.close()
+def check_once():
+    sockets = []
+    try:
+        room = token(16)
+        for _ in range(2):
+            sockets.append(WebSocket(sys.argv[1], room))
+        sender, receiver = sockets
+        sender_hello = sender.receive()
+        receiver_hello = receiver.receive()
+        sender_id = sender_hello.get("hello", {}).get("self")
+        if (
+            sender_hello.get("v") != 1
+            or receiver_hello.get("v") != 1
+            or not sender_id
+            or not receiver_hello.get("hello", {}).get("self")
+        ):
+            raise RuntimeError("presence sockets did not receive hello messages")
+        ciphertext = token(540)
+        sender.send(json.dumps({"v": 1, "c": ciphertext}, separators=(",", ":")))
+        forwarded = receiver.receive()
+        if forwarded != {"v": 1, "f": sender_id, "c": ciphertext}:
+            raise RuntimeError("presence relay did not forward the frame unchanged")
+    finally:
+        for ws in sockets:
+            ws.close()
+
+
+# A global load balancer takes minutes to apply a URL map change, and until it
+# does /api/presence/* falls through to the main service and answers 404. The
+# first deploy that added the route failed on exactly that, 11 s after the map
+# changed, while the route came up about three minutes later. Wait for that
+# one signal only: a 403, a bad frame or a closed socket still fail at once,
+# and a route that never appears still fails when the deadline passes.
+deadline = time.monotonic() + float(os.environ.get("PRESENCE_ROUTE_WAIT_SECONDS", "600"))
+while True:
+    try:
+        check_once()
+        print("PRESENCE_RELAY_OK")
+        break
+    except RouteNotReady as error:
+        if time.monotonic() >= deadline:
+            print(f"PRESENCE_RELAY_FAILED: route still not live at the deadline: {error}", file=sys.stderr)
+            sys.exit(1)
+        print(f"presence route not live yet ({error}); retrying", flush=True)
+        time.sleep(15)
+    except Exception as error:
+        print(f"PRESENCE_RELAY_FAILED: {error}", file=sys.stderr)
+        sys.exit(1)
 PY
     ;;
   *)
