@@ -261,6 +261,14 @@ Four things to know:
   On OpenTimelineIO timelines, comments bind to specific tracks and rational
   time ranges, preserved across republishes and mapped to original source
   intervals.
+- **Structured files anchor to the part they show.** A `.csv` or `.tsv` comment
+  carries a `cell` anchor (`{"kind": "cell", "row": 14, "col": 3}`, with
+  `row_end` and `col_end` for a range). A `.json` comment carries a `path`
+  pointer such as `/order/lines/1/sku`. An `.srt` or `.vtt` cue carries a `time`
+  span. An `.ipynb` comment carries a `path` to `/cells/N` or
+  `/cells/N/outputs/M`. `relic_read_comments` with `resolve_anchors` checks each
+  one against the version it was written on. A position the file does not have
+  is reported as not found, never guessed at.
 Comment bodies are encrypted on this machine, so the service stores ciphertext
 it cannot read. What it does learn is who commented on which relic and when,
 which for a human commenter is a verified email address. Worth saying plainly

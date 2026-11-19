@@ -148,6 +148,16 @@ authorized by the publish token and attributed as `publisher`; an optional
 does not decrypt is returned marked unreadable with a count, never dropped,
 because a quietly shortened list reads as agreement.
 
+Structured files take anchors on the part they show. A `.csv` or `.tsv` takes a
+`cell` anchor, such as `{"kind": "cell", "row": 14, "col": 3}` (add `row_end`
+and `col_end` for a range). A `.json` takes a `path` anchor, an RFC 6901 pointer
+such as `/order/lines/1/sku`. An `.srt` or `.vtt` cue takes a `time` span. An
+`.ipynb` takes a `path` anchor to `/cells/N` or `/cells/N/outputs/M`.
+`relic_read_comments` with `resolve_anchors` checks each one against the file as
+it was when the comment was written, and reports the text it names. A position
+the file does not have is reported as not found, not guessed at, and a malformed
+anchor is refused before anything is posted.
+
 What the service holds is comment ciphertext it cannot read. What it learns is
 who commented on which relic and when, which for a human commenter is a
 verified email address. The content stays private; the participation does not.
