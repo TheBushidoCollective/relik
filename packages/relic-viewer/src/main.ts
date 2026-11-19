@@ -4497,12 +4497,15 @@ export function anchorSurfaceFor(host: HTMLElement): AnchorSurface | undefined {
  * who had selected something by accident had no way to find out that the next
  * comment they wrote was about to land on it.
  */
-export function markTargetLabel(anchor: CommentAnchor | null): string {
+export function markTargetLabel(
+  anchor: CommentAnchor | null,
+  surface?: AnchorSurface
+): string {
   if (anchor === null) return 'Commenting on the whole document';
   if (anchor.kind === 'pin') return 'Commenting on a point';
   if (anchor.kind === 'image') return 'Commenting on an image.';
   if (anchor.kind === 'text') return quotedTargetLabel(anchor.quote);
-  return anchorLabel(anchor) ?? UNSUPPORTED_ANCHOR_LABEL;
+  return anchorLabel(anchor, surface) ?? UNSUPPORTED_ANCHOR_LABEL;
 }
 
 /** The aiming controls, and the one target they hold between them. */
@@ -4795,7 +4798,10 @@ export function buildMarkControls(deps: MarkDeps): MarkControls {
   const paintChip = (): void => {
     const label = document.createElement('span');
     label.className = 'compose-target-label';
-    label.textContent = markTargetLabel(anchor);
+    label.textContent = markTargetLabel(
+      anchor,
+      host === undefined ? undefined : anchorSurfaceFor(host)
+    );
     if (anchor === null) {
       chip.replaceChildren(label);
       return;
