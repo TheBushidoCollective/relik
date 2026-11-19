@@ -142,6 +142,8 @@ import {
 import { FrameHandshake } from './frame-handshake.ts';
 import { createLinkConfirmBar } from './link-confirm-bar.ts';
 import { type ConfirmPrefs, createConfirmPrefs } from './confirm-prefs.ts';
+import { deleteRememberedStrip, rememberControl } from './confirmation-ui.ts';
+import { installSkippedConfirmations } from './skipped-confirmations.ts';
 import { describeLinkRequest, LinkConfirmGate } from './open-link-confirm.ts';
 import {
   type AddressedBy,
@@ -566,8 +568,19 @@ function versionsFor(
 /** Authenticated metadata only; full-body fetching waits for Open. */
 export function confirmLargeOpen(
   size: number,
-  metadata?: { filename: string; mimetype: string }
+  metadata?: {
+    filename: string;
+    mimetype: string;
+    relicId?: string;
+    version?: number;
+  }
 ): Promise<boolean> {
+  if (
+    metadata?.relicId !== undefined &&
+    metadata.version !== undefined &&
+    confirmPrefs().has('large-open', metadata.relicId, metadata.version)
+  )
+    return Promise.resolve(true);
   const { promise, resolve } = Promise.withResolvers<boolean>();
   const opener = document.activeElement as HTMLElement | null;
   const dialog = document.createElement('dialog');
@@ -617,6 +630,19 @@ export function confirmLargeOpen(
     event.preventDefault();
     finish(false);
   });
+  if (metadata?.relicId !== undefined && metadata.version !== undefined)
+    actions.append(
+      rememberControl(
+        confirmPrefs(),
+        {
+          kind: 'large-open',
+          relicId: metadata.relicId,
+          version: metadata.version,
+        },
+        open,
+        "Don't ask again for this relic"
+      )
+    );
   actions.append(cancel, open);
   dialog.append(heading, detail, actions);
   document.body.appendChild(dialog);
@@ -6201,6 +6227,10 @@ export function buildThread(
   section.append(
     title,
     marks.tools,
+    deleteRememberedStrip(confirmPrefs(), relicId, () => {
+      showDeleteOutcome('Deleting my comments will ask again.');
+      toggle.focus();
+    }),
     status,
     deletionOutcome,
     list,
@@ -7433,7 +7463,13 @@ export function buildThread(
       remove.disabled = pendingDeletes.has(id) || unconfirmedDeletes.has(id);
       remove.addEventListener('click', (event) => {
         event.stopPropagation();
-        if (!remove.disabled) confirmDelete(entry, remove);
+        if (
+          !remove.disabled &&
+          event.isTrusted &&
+          confirmPrefs().has('delete-comment', relicId)
+        )
+          void performDelete(entry);
+        else if (!remove.disabled) confirmDelete(entry, remove);
       });
       head?.appendChild(remove);
     }
@@ -7634,6 +7670,14 @@ export function buildThread(
     remove.type = 'button';
     remove.className = 'action comment-delete-confirm';
     remove.textContent = 'Delete comment';
+    body.append(
+      rememberControl(
+        confirmPrefs(),
+        { kind: 'delete-comment', relicId },
+        remove,
+        "Don't ask again for my comments on this relic"
+      )
+    );
     const cleanUp = (): void => {
       if (deleteDialog !== dialog) return;
       deleteDialog = undefined;
@@ -10276,6 +10320,13 @@ export function renderReady(
     // control so focus and `aria-expanded` land on the one on screen.
     const decide = built.querySelector?.<HTMLElement>('[data-decision-open]');
     if (decisionPanel !== undefined && decide) decisionPanel.setOpener(decide);
+    installSkippedConfirmations(
+      built,
+      relicId,
+      activeView.version,
+      formatBytes(activeView.content.size),
+      confirmPrefs()
+    );
     return built;
   }
   let pinnedView: number | undefined;

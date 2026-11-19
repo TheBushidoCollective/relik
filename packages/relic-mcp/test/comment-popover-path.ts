@@ -42,6 +42,8 @@ import { MemoryStorage } from '@relic/server/src/storage.ts';
 import { MemoryStore } from '@relic/server/src/store.ts';
 import { type CdpConnection, connectPipe } from '../src/cover/cdp.ts';
 import { chromeArgs, discoverChrome } from '../src/cover/chrome.ts';
+import { proveCommentConfirmations } from './confirmation-comment-proof.ts';
+import { proveLargeConfirmations } from './confirmation-large-proof.ts';
 import {
   attestBrowserHeadless,
   cleanupOwnedBrowserStartup,
@@ -360,7 +362,12 @@ interface BrowserSession {
 async function openBrowser(
   url: string,
   sessionToken?: string,
-  viewport: { width?: number; height?: number; scheme?: 'light' | 'dark' } = {
+  viewport: {
+    width?: number;
+    height?: number;
+    scheme?: 'light' | 'dark';
+    waitForLarge?: boolean;
+  } = {
     width: 1440,
     height: 900,
     scheme: 'light',
@@ -674,6 +681,7 @@ async function openBrowser(
         } catch {}
       },
     };
+    if (viewport.waitForLarge) return session;
     if (sessionToken) {
       await session.waitFor(
         "document.querySelector('textarea.compose-textarea') !== null",
@@ -2686,11 +2694,36 @@ console.log('Testing comment deletion...');
       'freeform comment deletion'
     );
     assert.deepEqual(await store.listComments(relicId), [foreignReply]);
+    await proveCommentConfirmations({
+      session: owner,
+      relicId,
+      seed: async () => {
+        const row = { ...root, id: crypto.randomUUID() };
+        await store.putComment(row);
+        return row.id;
+      },
+      exists: async (id) => !!(await store.getComment(relicId, id)),
+    });
   } finally {
     await owner.close();
     await other.close();
   }
 }
+if (!handler) throw new Error('loopback handler unavailable');
+await proveLargeConfirmations({
+  url: getRelic('code'),
+  origin,
+  original: handler,
+  install: (next) => {
+    handler = next;
+  },
+  open: (url) =>
+    openBrowser(url, undefined, {
+      width: 390,
+      height: 844,
+      waitForLarge: true,
+    }),
+});
 
 // Save measurements JSON
 const measurementsPath = join(shotsDir, 'comment-popover-measurements.json');
