@@ -12,6 +12,7 @@ import { postComment, readComments } from '../src/comments.ts';
 import { nodeFiles } from '../src/files.ts';
 import { type PublishDeps, publish } from '../src/publish.ts';
 import { republish } from '../src/republish.ts';
+import { probeFfmpeg, runFfmpeg } from '../src/resolve-anchor.ts';
 import { handleMessage, READ_COMMENTS_TOOL_NAME } from '../src/server.ts';
 
 const SERVICE = 'https://relic.example';
@@ -90,8 +91,13 @@ interface Scenario {
   /** The anchor on version 2 content, and what it must resolve to there. */
   readonly v2Anchor: CommentAnchorInput;
   readonly v2Expect: Record<string, unknown>;
-  /** Text only version 2 holds. A version 1 or missing-version comment must never print it. */
+  /** Text only version 2 holds. A version 1 or versionless comment must never print it. */
   readonly v2Only: string;
+  /**
+   * What a comment that records no version resolves to: a time anchor belongs
+   * to version 1, and a cell or path anchor is not found.
+   */
+  readonly versionless: 'v1' | 'not-found';
 }
 
 const NOTEBOOK_V1 = JSON.stringify({
@@ -125,6 +131,32 @@ const NOTEBOOK_V2 = JSON.stringify({
   ],
 });
 
+const SRT_V1 = [
+  '1',
+  '00:00:00,000 --> 00:00:02,000',
+  'alpha',
+  '',
+  '2',
+  '00:00:02,000 --> 00:00:04,000',
+  'beta',
+  '',
+].join('\n');
+
+const SRT_V2 = [
+  '1',
+  '00:00:00,000 --> 00:00:01,000',
+  'intro',
+  '',
+  '2',
+  '00:00:01,000 --> 00:00:03,500',
+  'omega',
+  '',
+  '3',
+  '00:00:03,500 --> 00:00:05,000',
+  'close',
+  '',
+].join('\n');
+
 const SCENARIOS: readonly Scenario[] = [
   {
     name: 'a CSV cell',
@@ -149,6 +181,7 @@ const SCENARIOS: readonly Scenario[] = [
       line: 2,
     },
     v2Only: 'nut',
+    versionless: 'not-found',
   },
   {
     name: 'a JSON path',
@@ -172,40 +205,20 @@ const SCENARIOS: readonly Scenario[] = [
       excerpt: 'alpha',
     },
     v2Only: 'gamma',
+    versionless: 'not-found',
   },
   {
     name: 'an SRT cue',
     file: 'lines.srt',
-    version1: [
-      '1',
-      '00:00:00,000 --> 00:00:02,000',
-      'alpha',
-      '',
-      '2',
-      '00:00:02,000 --> 00:00:04,000',
-      'beta',
-      '',
-    ].join('\n'),
+    version1: SRT_V1,
     // The cue covering 1.5 s is replaced on version 2.
-    version2: [
-      '1',
-      '00:00:00,000 --> 00:00:01,000',
-      'intro',
-      '',
-      '2',
-      '00:00:01,000 --> 00:00:03,500',
-      'omega',
-      '',
-      '3',
-      '00:00:03,500 --> 00:00:05,000',
-      'close',
-      '',
-    ].join('\n'),
+    version2: SRT_V2,
     v1Anchor: { kind: 'time', t: 1.5 },
     v1Expect: { kind: 'time', status: 'resolved', cueTexts: ['alpha'] },
     v2Anchor: { kind: 'time', t: 1.5 },
     v2Expect: { kind: 'time', status: 'resolved', cueTexts: ['omega'] },
     v2Only: 'omega',
+    versionless: 'v1',
   },
   {
     name: 'a WebVTT cue',
@@ -219,6 +232,7 @@ const SCENARIOS: readonly Scenario[] = [
     v2Anchor: { kind: 'time', t: 1.5 },
     v2Expect: { kind: 'time', status: 'resolved', cueTexts: ['omega'] },
     v2Only: 'omega',
+    versionless: 'v1',
   },
   {
     name: 'a notebook cell',
@@ -243,6 +257,7 @@ const SCENARIOS: readonly Scenario[] = [
       excerpt: '# Intro',
     },
     v2Only: '# Intro',
+    versionless: 'not-found',
   },
 ];
 
@@ -384,6 +399,32 @@ async function firstCommentRow(relicId: string): Promise<CommentRow> {
   return first;
 }
 
+/** Every mint request that names no version, which is a read of the current revision. */
+function watchUnversionedMints(): {
+  readonly deps: PublishDeps;
+  readonly seen: string[];
+} {
+  const seen: string[] = [];
+  const watched: PublishDeps = {
+    ...deps,
+    fetch: Object.assign(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith('/mint')) {
+          const body = JSON.parse(String(init?.body ?? '{}')) as Record<
+            string,
+            unknown
+          >;
+          if (!('version' in body)) seen.push(url);
+        }
+        return deps.fetch(input, init);
+      },
+      { preconnect: globalThis.fetch.preconnect }
+    ),
+  };
+  return { deps: watched, seen };
+}
+
 describe('republished relics resolve each comment against its own version', () => {
   for (const scenario of SCENARIOS) {
     describe(scenario.name, () => {
@@ -437,7 +478,7 @@ describe('republished relics resolve each comment against its own version', () =
         }
       });
 
-      test('a comment recording no version is not found, and prints nothing from the current file', async () => {
+      test('a comment recording no version never reads the current revision', async () => {
         const { relicId } = await publishTwoVersions(scenario);
         const source = await firstCommentRow(relicId);
         await store.putComment({
@@ -446,56 +487,197 @@ describe('republished relics resolve each comment against its own version', () =
           version: undefined,
         });
 
-        const byId = await resolvedById(relicId);
-        const legacy = byId.get('legacy-no-version');
-        expect(legacy?.version).toBeNull();
-        const explanation = unresolvedExplanation(legacy);
-        expect(explanation).toContain(NOT_FOUND);
-        expect(explanation).toContain('records no version');
-        expect(JSON.stringify(legacy?.resolved)).not.toContain(scenario.v2Only);
+        const watched = watchUnversionedMints();
+        await resolvedById(relicId, watched.deps);
+        expect(watched.seen).toEqual([]);
+      });
 
-        const misses = (await transcript(relicId))
-          .split('\n\n')
-          .filter((b) => b.includes('records no version'));
-        expect(misses.length).toBeGreaterThan(0);
-        for (const block of misses) {
-          expect(block).not.toContain(scenario.v2Only);
+      test(
+        scenario.versionless === 'v1'
+          ? 'a comment recording no version belongs to version 1, and never prints version two'
+          : 'a comment recording no version is not found, and prints nothing from the current file',
+        async () => {
+          const { relicId } = await publishTwoVersions(scenario);
+          const source = await firstCommentRow(relicId);
+          await store.putComment({
+            ...source,
+            id: 'legacy-no-version',
+            version: undefined,
+          });
+
+          const byId = await resolvedById(relicId);
+          const legacy = byId.get('legacy-no-version');
+          expect(legacy?.version).toBeNull();
+          expect(JSON.stringify(legacy?.resolved)).not.toContain(
+            scenario.v2Only
+          );
+
+          if (scenario.versionless === 'v1') {
+            expectResolution(legacy, scenario.v1Expect);
+            // The versionless row prints without a version label, so its block is
+            // the one that carries the version one body and no label.
+            const unlabelled = (await transcript(relicId))
+              .split('\n\n')
+              .filter(
+                (b) =>
+                  b.includes('Remark made on version one.') &&
+                  !b.includes('[made on version')
+              );
+            expect(unlabelled.length).toBeGreaterThan(0);
+            for (const block of unlabelled) {
+              expect(block).not.toContain(scenario.v2Only);
+            }
+          } else {
+            const explanation = unresolvedExplanation(legacy);
+            expect(explanation).toContain(NOT_FOUND);
+            expect(explanation).toContain('records no version');
+            const misses = (await transcript(relicId))
+              .split('\n\n')
+              .filter((b) => b.includes('records no version'));
+            expect(misses.length).toBeGreaterThan(0);
+            for (const block of misses) {
+              expect(block).not.toContain(scenario.v2Only);
+            }
+          }
         }
-      });
-
-      test('a comment recording no version never requests the current revision', async () => {
-        const { relicId } = await publishTwoVersions(scenario);
-        const source = await firstCommentRow(relicId);
-        await store.putComment({
-          ...source,
-          id: 'legacy-no-version',
-          version: undefined,
-        });
-
-        // A mint with no version asks the service for the current revision.
-        // Only a comment without a version would send one, so any such request
-        // here is the current file being read on that comment's behalf.
-        const currentRevisionMints: string[] = [];
-        const watched: PublishDeps = {
-          ...deps,
-          fetch: Object.assign(
-            async (input: RequestInfo | URL, init?: RequestInit) => {
-              const url = String(input);
-              if (url.endsWith('/mint')) {
-                const body = JSON.parse(String(init?.body ?? '{}')) as Record<
-                  string,
-                  unknown
-                >;
-                if (!('version' in body)) currentRevisionMints.push(url);
-              }
-              return deps.fetch(input, init);
-            },
-            { preconnect: globalThis.fetch.preconnect }
-          ),
-        };
-        await resolvedById(relicId, watched);
-        expect(currentRevisionMints).toEqual([]);
-      });
+      );
     });
   }
+});
+
+describe('a versionless subtitle comment on a relic that was never republished', () => {
+  test('resolves against version 1, the only version it has', async () => {
+    const path = join(scratch, 'once.srt');
+    await writeFile(path, SRT_V1);
+    const published = await publish({ path, cover: false }, deps);
+    const relicId = published.relic_id;
+    const stamped = await postComment(
+      {
+        relic_id: relicId,
+        body: 'Remark on the only version.',
+        anchor: { kind: 'time', t: 1.5 },
+      },
+      deps
+    );
+    const source = await firstCommentRow(relicId);
+    await store.putComment({
+      ...source,
+      id: 'legacy-no-version',
+      version: undefined,
+    });
+
+    const byId = await resolvedById(relicId);
+    expectResolution(byId.get(stamped.comment_id), {
+      kind: 'time',
+      status: 'resolved',
+      cueTexts: ['alpha'],
+    });
+    expectResolution(byId.get('legacy-no-version'), {
+      kind: 'time',
+      status: 'resolved',
+      cueTexts: ['alpha'],
+    });
+  });
+});
+
+/** A small generated video, from ffmpeg's lavfi sources. */
+async function makeVideo(source: string): Promise<Uint8Array> {
+  const ffmpeg = await probeFfmpeg(deps);
+  if (!ffmpeg) throw new Error('ffmpeg is required for the video time case');
+  return runFfmpeg(
+    ffmpeg,
+    [
+      '-f',
+      'lavfi',
+      '-i',
+      source,
+      '-c:v',
+      'libx264',
+      '-pix_fmt',
+      'yuv420p',
+      '-movflags',
+      'frag_keyframe+empty_moov',
+      '-f',
+      'mp4',
+      'pipe:1',
+    ],
+    new Uint8Array(0)
+  );
+}
+
+/** The frames a read resolves for one version's comments, in list order. */
+async function framesAt(relicId: string, version: number): Promise<unknown[]> {
+  const read = await readComments(relicId, deps, {
+    version,
+    resolve_anchors: true,
+  });
+  return [...(read.content_blocks ?? [])];
+}
+
+describe('a versionless video time comment resolves to version 1 frames', () => {
+  test('its frames are version 1 frames, and differ from version 2 frames', async () => {
+    const path = join(scratch, 'clip.mp4');
+    await writeFile(
+      path,
+      await makeVideo('testsrc=duration=2:size=160x120:rate=1')
+    );
+    const published = await publish({ path, cover: false }, deps);
+    const relicId = published.relic_id;
+    const v1 = await postComment(
+      {
+        relic_id: relicId,
+        body: 'Remark made on version one.',
+        anchor: { kind: 'time', t: 0.5 },
+      },
+      deps
+    );
+
+    await writeFile(
+      path,
+      await makeVideo('color=c=red:size=160x120:duration=2')
+    );
+    await republish(
+      {
+        relic_id: relicId,
+        path,
+        cover: false,
+        notify: false,
+        addresses: [
+          { comment_id: v1.comment_id, note: 'Acknowledged on version two.' },
+        ],
+      },
+      deps
+    );
+    await postComment(
+      {
+        relic_id: relicId,
+        body: 'Remark made on version two.',
+        anchor: { kind: 'time', t: 0.5 },
+      },
+      deps
+    );
+
+    const v1Frames = await framesAt(relicId, 1);
+    const v2Frames = await framesAt(relicId, 2);
+    expect(v1Frames.length).toBeGreaterThan(0);
+    expect(v2Frames.length).toBeGreaterThan(0);
+    expect(v2Frames).not.toEqual(v1Frames);
+
+    // A versionless copy of the version 1 comment, in the same scope as it.
+    const source = await firstCommentRow(relicId);
+    await store.putComment({
+      ...source,
+      id: 'legacy-no-version',
+      version: undefined,
+    });
+    const withLegacy = await framesAt(relicId, 1);
+    expect(withLegacy).toEqual([...v1Frames, ...v1Frames]);
+    expect(withLegacy).not.toEqual([...v1Frames, ...v2Frames]);
+
+    const byId = await resolvedById(relicId);
+    expect(byId.get('legacy-no-version')?.resolved).toMatchObject({
+      kind: 'time',
+      status: 'resolved',
+    });
+  });
 });
