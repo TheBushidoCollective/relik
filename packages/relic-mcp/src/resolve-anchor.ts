@@ -52,9 +52,11 @@ import {
   resolveOtioAnchor,
   timeToSeconds,
 } from '@relic/format';
+import { locate, suggestionSource } from '@relic/format/suggestions';
 import { boxPosition, type CommentRecord, formatTimecode } from './comments.ts';
+import { privateVersionKey } from './private.ts';
 import type { PublishDeps } from './publish.ts';
-import { loadPublishState } from './state.ts';
+import { loadPrivatePublishState, loadPublishState } from './state.ts';
 
 const activeChildren = new Set<ChildProcess>();
 
@@ -134,6 +136,18 @@ export interface OtioCurrentProjection {
 }
 
 export type ResolvedAnchor =
+  | {
+      readonly kind: 'source';
+      readonly status: 'resolved';
+      readonly start: number;
+      readonly end: number;
+      readonly line: number;
+    }
+  | {
+      readonly kind: 'source';
+      readonly status: 'unresolvable';
+      readonly explanation: string;
+    }
   | {
       readonly kind: 'quote' | 'text';
       readonly status: 'resolved';
@@ -730,8 +744,10 @@ async function fetchAndDecryptRelic(
   deps: PublishDeps,
   requestedVersion?: number
 ): Promise<RelicFetch> {
-  const state = await loadPublishState(relicId);
-  if (!state || !state.key) {
+  const privateState = await loadPrivatePublishState(relicId);
+  const state =
+    privateState === undefined ? await loadPublishState(relicId) : undefined;
+  if (privateState === undefined && (!state || !state.key)) {
     return {
       ok: false,
       error:
@@ -751,9 +767,14 @@ async function fetchAndDecryptRelic(
       {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(
-          requestedVersion === undefined ? {} : { version: requestedVersion }
-        ),
+        body: JSON.stringify({
+          ...(requestedVersion === undefined
+            ? {}
+            : { version: requestedVersion }),
+          ...(privateState === undefined
+            ? {}
+            : { publish_token: privateState.publish_token }),
+        }),
       }
     );
     if (!mintResponse.ok) {
@@ -813,7 +834,14 @@ async function fetchAndDecryptRelic(
     if (containerResponse.body === null) {
       throw new Error('ciphertext response has no body');
     }
-    const key = decodeKey(state.key);
+    let key: Uint8Array;
+    if (privateState !== undefined) {
+      key = await privateVersionKey(deps, relicId, privateState, servedVersion);
+    } else if (state !== undefined) {
+      key = decodeKey(state.key);
+    } else {
+      throw new Error('No local publish state found for this relic.');
+    }
     const opened = await openRelicStream(containerResponse.body, key, {
       objectLength: mint.object_length,
       maxContentBytes: PLAINTEXT_CAP_BYTES,
@@ -1405,22 +1433,25 @@ export async function resolveAnchors(
       continue;
     }
     if (anchor.kind === 'unsupported') {
-      const futureOtio = anchor.declared.startsWith('otio-v');
+      const declared = anchor.declared;
+      const futureOtio = declared.startsWith('otio-v');
       updatedComments.push({
         ...comment,
         resolved: {
           kind: 'unsupported',
           status: 'unresolvable',
-          declared: anchor.declared,
+          declared,
           explanation: futureOtio
-            ? `Unsupported OTIO anchor version "${anchor.declared}". A newer anchor version is not evidence the comment was tampered with.`
-            : `Unsupported anchor kind "${anchor.declared}".`,
+            ? `Unsupported OTIO anchor version "${declared}". A newer anchor version is not evidence the comment was tampered with.`
+            : `Unsupported anchor kind "${declared}".`,
         },
       });
       continue;
     }
 
-    const fetched = await loadRevision(comment.version ?? undefined);
+    const fetched = await loadRevision(
+      comment.version ?? (anchor.kind === 'source' ? 1 : undefined)
+    );
     if (!fetched.ok) {
       updatedComments.push({
         ...comment,
@@ -1458,6 +1489,52 @@ export async function resolveAnchors(
         opened.content[3] === 0x46);
 
     switch (anchor.kind) {
+      case 'source': {
+        const decoded = suggestionSource(opened.content);
+        if (!decoded.ok) {
+          updatedComments.push({
+            ...comment,
+            resolved: {
+              kind: 'source',
+              status: 'unresolvable',
+              explanation: `The source cannot be used for suggestions: ${decoded.reason}.`,
+            },
+          });
+          break;
+        }
+        const match = locate(
+          decoded.source,
+          anchor.exact,
+          anchor.prefix,
+          anchor.suffix
+        );
+        if (match.status !== 'resolved') {
+          updatedComments.push({
+            ...comment,
+            resolved: {
+              kind: 'source',
+              status: 'unresolvable',
+              explanation: `The source anchor is ${match.status} on this version.`,
+            },
+          });
+          break;
+        }
+        let line = 1;
+        for (let index = 0; index < match.start; index++) {
+          if (decoded.source[index] === '\n') line++;
+        }
+        updatedComments.push({
+          ...comment,
+          resolved: {
+            kind: 'source',
+            status: 'resolved',
+            start: match.start,
+            end: match.end,
+            line,
+          },
+        });
+        break;
+      }
       case 'text':
       case 'quote': {
         const target = anchor.kind === 'text' ? anchor.quote : anchor.exact;

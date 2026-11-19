@@ -8,7 +8,9 @@
     ".": "./src/index.ts",
     "./cover": "./src/cover.ts",
     "./mnemonic": "./src/mnemonic.ts",
+    "./presence": "./src/presence.ts",
     "./private": "./src/private.ts",
+    "./suggestions": "./src/suggestions.ts",
     "./wordlist": "./src/wordlist.ts"
   },
   "scripts": {

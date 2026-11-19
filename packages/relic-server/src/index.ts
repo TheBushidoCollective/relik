@@ -1,7 +1,8 @@
 /** Entry point. Cloud Run supplies PORT. */
 
-import { createApp } from './app.ts';
+import { createApp, type RelicApp } from './app.ts';
 import { diskAssets } from './assets.ts';
+import { assertConfig, DEFAULT_CONFIG, type RelicConfig } from './config.ts';
 import {
   gcsStorage,
   metadataAccessToken,
@@ -10,6 +11,7 @@ import {
 } from './gcs.ts';
 import { gcsStore } from './gcsstore.ts';
 import { mailerFromEnv } from './mail.ts';
+import { createPresenceRelay, type PresenceSocketData } from './presence.ts';
 import { MemoryStorage, type ObjectStorage } from './storage.ts';
 import { MemoryStore, type RelicStore } from './store.ts';
 
@@ -121,10 +123,56 @@ function parseOperatorTokens(raw: string | undefined): Map<string, string> {
   return tokens;
 }
 
-const mailer = mailerFromEnv(process.env);
+export type RelicRole = 'service' | 'presence' | 'all';
 
-const app = createApp({
-  config: {
+function roleFromEnv(): RelicRole {
+  const role = process.env['RELIC_ROLE'] ?? 'service';
+  if (role !== 'service' && role !== 'presence' && role !== 'all') {
+    throw new Error(`Invalid RELIC_ROLE: ${role}`);
+  }
+  return role;
+}
+
+/** Shared by the entry point and loopback integration tests. */
+export function startRelicServer(options: {
+  readonly port: number;
+  readonly config: RelicConfig;
+  readonly app?: RelicApp;
+  readonly role?: RelicRole;
+}): Bun.Server<PresenceSocketData> {
+  const role = options.role ?? roleFromEnv();
+  if (role !== 'presence' && options.app === undefined) {
+    throw new Error('The service role requires an app');
+  }
+  const app = options.app;
+  if (role === 'service') {
+    if (app === undefined) throw new Error('The service role requires an app');
+    return Bun.serve<PresenceSocketData>({
+      port: options.port,
+      fetch: app.fetch,
+    });
+  }
+  const relay = createPresenceRelay(options.config);
+  return Bun.serve<PresenceSocketData>({
+    port: options.port,
+    fetch(request, server) {
+      const path = new URL(request.url).pathname;
+      if (path.startsWith('/api/presence/'))
+        return relay.fetch(request, server);
+      if (role === 'all' && app !== undefined) return app.fetch(request);
+      if (path === '/health' && request.method === 'GET') {
+        return Response.json({ status: 'ok' });
+      }
+      return new Response('Not found', { status: 404 });
+    },
+    websocket: relay.websocket,
+  });
+}
+
+if (import.meta.main) {
+  const role = roleFromEnv();
+  const config: RelicConfig = {
+    ...DEFAULT_CONFIG,
     serviceOrigin:
       process.env['RELIC_SERVICE_ORIGIN'] ?? 'http://localhost:8080',
     usercontentOrigin:
@@ -133,23 +181,31 @@ const app = createApp({
     ...(process.env['RELIC_TRUSTED_PROXY_HOPS'] !== undefined
       ? { trustedProxyHops: Number(process.env['RELIC_TRUSTED_PROXY_HOPS']) }
       : {}),
-  },
-  storage: await resolveStorage(),
-  store: await resolveStore(),
-  assets: diskAssets(
-    process.env['RELIC_ASSET_ROOT'] ??
-      new URL('../../relic-viewer/dist/', import.meta.url).pathname
-  ),
-  operatorTokens: parseOperatorTokens(process.env['RELIC_OPERATOR_TOKENS']),
-  // Omitted rather than passed as undefined when mail is unconfigured, so
-  // `createApp` falls back to the null mailer through its own default.
-  ...(mailer === undefined ? {} : { mailer }),
-});
-
-const port = Number(process.env['PORT'] ?? 8080);
-
-Bun.serve({ port, fetch: app.fetch });
-
-console.log(`relic server listening on :${port}`);
+  };
+  assertConfig(config);
+  let app: RelicApp | undefined;
+  if (role !== 'presence') {
+    const mailer = mailerFromEnv(process.env);
+    app = createApp({
+      config,
+      storage: await resolveStorage(),
+      store: await resolveStore(),
+      assets: diskAssets(
+        process.env['RELIC_ASSET_ROOT'] ??
+          new URL('../../relic-viewer/dist/', import.meta.url).pathname
+      ),
+      operatorTokens: parseOperatorTokens(process.env['RELIC_OPERATOR_TOKENS']),
+      ...(mailer === undefined ? {} : { mailer }),
+    });
+  }
+  const port = Number(process.env['PORT'] ?? 8080);
+  startRelicServer({
+    port,
+    config,
+    role,
+    ...(app === undefined ? {} : { app }),
+  });
+  console.log(`relic ${role} listening on :${port}`);
+}
 
 export { createApp };

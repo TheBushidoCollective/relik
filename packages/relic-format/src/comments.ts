@@ -115,6 +115,8 @@ export interface ImageCommentAnchor {
  * - `quote` is a quote plus the text immediately around it, so a phrase that
  *   appears more than once resolves to the occurrence the reader selected
  *   rather than the first one in the document.
+ * - `source` identifies text in a version's decoded source, not its rendered
+ *   text, so an older reader never mistakes it for a rendered quote.
  * - `region` is a box on the artifact's own content box, not the stage's.
  *   The distinction is the whole point: a stage-relative box drifts when the
  *   same image is letterboxed differently at another viewport width, so a
@@ -135,6 +137,12 @@ export type CommentAnchor =
   | { readonly kind: 'pin'; readonly x: number; readonly y: number }
   | {
       readonly kind: 'quote';
+      readonly exact: string;
+      readonly prefix?: string;
+      readonly suffix?: string;
+    }
+  | {
+      readonly kind: 'source';
       readonly exact: string;
       readonly prefix?: string;
       readonly suffix?: string;
@@ -199,6 +207,42 @@ export const COMMENT_ANCHOR_MAX_PAGE = 10_000;
 export const COMMENT_ANCHOR_MAX_SECONDS = 86_400;
 
 /**
+ * Longest replacement a suggestion may carry, in UTF-8 bytes.
+ *
+ * The sealed comment is capped at 8,192 base64url characters, which leaves
+ * about 6,116 bytes of plaintext JSON. A 2,048-byte replacement plus a
+ * 512-byte struck quote plus two 128-byte context runs and the fallback body
+ * fits with room for JSON escaping of ordinary text. A replacement made of
+ * characters JSON escapes can still overflow, and that is refused by the
+ * ciphertext cap rather than truncated.
+ */
+export const SUGGESTION_REPLACEMENT_LIMIT_BYTES = 2048;
+
+/**
+ * How a suggestion edits its anchor. `replace` swaps the anchored text, with an
+ * empty replacement meaning delete. `after` and `before` insert next to it and
+ * leave the anchored text in place.
+ */
+export type SuggestionMode = 'replace' | 'after' | 'before';
+
+/** The sealed `suggestion` field. `v` is the payload version. */
+export interface SuggestionPayload {
+  readonly v: 1;
+  readonly mode: SuggestionMode;
+  readonly replacement: string;
+}
+
+/**
+ * What the publisher did with a suggestion, sealed on the acknowledgement
+ * comment that addresses it. Only a comment authored by the publisher counts.
+ */
+export type SuggestionOutcome =
+  | 'accepted'
+  | 'superseded'
+  | 'declined'
+  | 'deferred';
+
+/**
  * What a comment carries.
  *
  * `display_name` aliases the commenter's identity for presentation and never
@@ -230,6 +274,10 @@ export interface CommentPlaintext {
    * may resolve this from anywhere but here.
    */
   readonly addresses?: string | null;
+  /** A proposed change against a source anchor, never an answer to a comment. */
+  readonly suggestion?: SuggestionPayload | null;
+  /** An acknowledgement's outcome for the suggestion it addresses. */
+  readonly suggestion_outcome?: SuggestionOutcome | null;
   /**
    * Field names this build found in the sealed JSON and does not understand.
    *
@@ -323,16 +371,25 @@ export async function encryptComment(
     );
   }
 
-  const encoded = new TextEncoder().encode(
-    JSON.stringify({
-      body: plaintext.body,
-      display_name: plaintext.display_name,
-      ...(plaintext.anchor == null ? {} : { anchor: plaintext.anchor }),
-      ...(plaintext.addresses == null
-        ? {}
-        : { addresses: plaintext.addresses }),
-    })
-  );
+  const json = JSON.stringify({
+    body: plaintext.body,
+    display_name: plaintext.display_name,
+    ...(plaintext.anchor == null ? {} : { anchor: plaintext.anchor }),
+    ...(plaintext.addresses == null ? {} : { addresses: plaintext.addresses }),
+    ...(plaintext.suggestion == null
+      ? {}
+      : { suggestion: plaintext.suggestion }),
+    ...(plaintext.suggestion_outcome == null
+      ? {}
+      : { suggestion_outcome: plaintext.suggestion_outcome }),
+  });
+  const validated = parseCommentFields(JSON.parse(json) as unknown);
+  if (validated.unsupported_fields !== undefined) {
+    throw new MalformedCommentError(
+      'a writer cannot seal fields this reader does not understand'
+    );
+  }
+  const encoded = new TextEncoder().encode(json);
   const nonce = crypto.getRandomValues(new Uint8Array(COMMENT_NONCE_BYTES));
   const sealed = new Uint8Array(
     await crypto.subtle.encrypt(
@@ -357,13 +414,8 @@ export async function encryptComment(
 }
 
 /**
- * Open one comment, parsing strictly.
- *
- * An unknown field is refused rather than ignored, so an extension to this
- * envelope has to be a deliberate change instead of something a shrugging
- * parser absorbed. A `display_name` that is present and neither a string nor
- * null is refused for the same reason: coercing it to null would silently
- * discard whatever the writer meant.
+ * Open one comment. Unknown fields and future versions are reported, while
+ * malformed fields known to this reader are refused.
  */
 export async function decryptComment(
   commentKey: CryptoKey,
@@ -403,13 +455,24 @@ export async function decryptComment(
   } catch {
     throw new MalformedCommentError('comment plaintext is not valid JSON');
   }
+  return parseCommentFields(parsed);
+}
 
+/** Parse the same serialized fields on read and before sealing on write. */
+function parseCommentFields(parsed: unknown): CommentPlaintext {
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
     throw new MalformedCommentError('comment plaintext is not a JSON object');
   }
 
   const fields = parsed as Record<string, unknown>;
-  const known = new Set(['body', 'display_name', 'anchor', 'addresses']);
+  const known: Record<string, true> = {
+    body: true,
+    display_name: true,
+    anchor: true,
+    addresses: true,
+    suggestion: true,
+    suggestion_outcome: true,
+  };
   // Reported rather than refused, reversing the rule this parser shipped with.
   //
   // Refusing the whole comment on an unknown field was written to catch
@@ -419,7 +482,9 @@ export async function decryptComment(
   // anchor kinds already names that as a lie about tampering told by a version
   // gap, and a top-level field is the same gap one level up. The AEAD tag is
   // what detects tampering; strictness here only detected age.
-  const unsupported = Object.keys(fields).filter((key) => !known.has(key));
+  const unsupported = Object.keys(fields).filter(
+    (key) => !Object.hasOwn(known, key)
+  );
 
   const body = fields['body'];
   if (typeof body !== 'string') {
@@ -444,13 +509,134 @@ export async function decryptComment(
     );
   }
 
+  const anchor = parseAnchor(fields['anchor']);
+  const suggestion = parseSuggestion(fields['suggestion']);
+  const outcome = parseSuggestionOutcome(fields['suggestion_outcome']);
+  if (fields['suggestion'] != null && suggestion !== 'unsupported') {
+    if (
+      (anchor?.kind !== 'source' && anchor?.kind !== 'unsupported') ||
+      addresses != null
+    ) {
+      throw new MalformedCommentError(
+        'a suggestion requires a source anchor and cannot address a comment'
+      );
+    }
+    if (
+      suggestion !== undefined &&
+      anchor.kind === 'source' &&
+      suggestion.mode === 'replace' &&
+      suggestion.replacement === anchor.exact
+    ) {
+      throw new MalformedCommentError('a replacement must change the source');
+    }
+  }
+  if (
+    fields['suggestion_outcome'] != null &&
+    (addresses == null || anchor !== null || fields['suggestion'] != null)
+  ) {
+    throw new MalformedCommentError(
+      'a suggestion outcome requires addresses and forbids anchor and suggestion'
+    );
+  }
+  if (suggestion === 'unsupported') unsupported.push('suggestion');
+  if (outcome === 'unsupported') unsupported.push('suggestion_outcome');
+
   return {
     body,
     display_name: displayName,
-    anchor: parseAnchor(fields['anchor']),
+    anchor,
     addresses: typeof addresses === 'string' ? addresses : null,
+    ...(suggestion === undefined || suggestion === 'unsupported'
+      ? {}
+      : { suggestion }),
+    ...(outcome === undefined || outcome === 'unsupported'
+      ? {}
+      : { suggestion_outcome: outcome }),
     ...(unsupported.length > 0 ? { unsupported_fields: unsupported } : {}),
   };
+}
+
+/** Return unsupported only for a future primitive payload version. */
+function parseSuggestion(
+  value: unknown
+): SuggestionPayload | 'unsupported' | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    throw new MalformedCommentError('suggestion is not an object');
+  }
+  const suggestion = value as Record<string, unknown>;
+  const version = suggestion['v'];
+  if (version !== 1) {
+    if (version === undefined || !isJsonPrimitive(version)) {
+      throw new MalformedCommentError('suggestion version is not a primitive');
+    }
+    return 'unsupported';
+  }
+  refuseExtra(suggestion, ['v', 'mode', 'replacement'], 'suggestion');
+  const mode = suggestion['mode'];
+  if (mode !== 'replace' && mode !== 'after' && mode !== 'before') {
+    throw new MalformedCommentError('suggestion mode is invalid');
+  }
+  const replacement = suggestion['replacement'];
+  if (typeof replacement !== 'string') {
+    throw new MalformedCommentError('suggestion replacement is not a string');
+  }
+  for (let index = 0; index < replacement.length; index += 1) {
+    const code = replacement.charCodeAt(index);
+    if (
+      code <= 0x08 ||
+      (code >= 0x0b && code <= 0x1f) ||
+      code === 0x7f ||
+      (code >= 0x202a && code <= 0x202e) ||
+      (code >= 0x2066 && code <= 0x2069)
+    ) {
+      throw new MalformedCommentError(
+        'suggestion replacement has forbidden characters'
+      );
+    }
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = replacement.charCodeAt(index + 1);
+      if (!(next >= 0xdc00 && next <= 0xdfff)) {
+        throw new MalformedCommentError(
+          'suggestion replacement has a lone surrogate'
+        );
+      }
+      index += 1;
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      throw new MalformedCommentError(
+        'suggestion replacement has a lone surrogate'
+      );
+    }
+  }
+  const bytes = new TextEncoder().encode(replacement).length;
+  if (bytes > SUGGESTION_REPLACEMENT_LIMIT_BYTES) {
+    throw new MalformedCommentError(
+      `suggestion replacement is ${bytes} bytes, over the ` +
+        `${SUGGESTION_REPLACEMENT_LIMIT_BYTES}-byte cap`
+    );
+  }
+  if (mode !== 'replace' && replacement.length === 0) {
+    throw new MalformedCommentError('an insertion cannot be empty');
+  }
+  return { v: 1, mode, replacement };
+}
+
+function parseSuggestionOutcome(
+  value: unknown
+): SuggestionOutcome | 'unsupported' | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string') {
+    throw new MalformedCommentError('suggestion outcome is not a string');
+  }
+  switch (value) {
+    case 'accepted':
+    case 'superseded':
+    case 'declined':
+    case 'deferred':
+      return value;
+    default:
+      return 'unsupported';
+  }
 }
 
 /**
@@ -488,13 +674,22 @@ function parseAnchor(value: unknown): CommentAnchor | null {
     return { kind: 'pin', x, y };
   }
 
-  if (kind === 'quote') {
-    const exact = requireQuote(anchor, 'exact', 'quote');
-    const prefix = optionalContext(anchor['prefix'], 'quote prefix');
-    const suffix = optionalContext(anchor['suffix'], 'quote suffix');
-    refuseExtra(anchor, ['kind', 'exact', 'prefix', 'suffix'], 'quote');
+  if (kind === 'quote' || kind === 'source') {
+    const exact = requireQuote(anchor, 'exact', kind);
+    const prefix = optionalContext(anchor['prefix'], `${kind} prefix`);
+    const suffix = optionalContext(anchor['suffix'], `${kind} suffix`);
+    refuseExtra(anchor, ['kind', 'exact', 'prefix', 'suffix'], kind);
+    if (
+      kind === 'source' &&
+      [exact, prefix, suffix].some(
+        (text) =>
+          text !== undefined && (text.includes('\u0000') || text.includes('\r'))
+      )
+    ) {
+      throw new MalformedCommentError('source anchor contains a NUL or CR');
+    }
     return {
-      kind: 'quote',
+      kind,
       exact,
       ...(prefix === undefined ? {} : { prefix }),
       ...(suffix === undefined ? {} : { suffix }),
@@ -744,7 +939,7 @@ function assertWritableAnchor(anchor: CommentAnchor): void {
     );
   }
   if (anchor.kind === 'text') capQuote(anchor.quote);
-  if (anchor.kind === 'quote') {
+  if (anchor.kind === 'quote' || anchor.kind === 'source') {
     capQuote(anchor.exact);
     capContext(anchor.prefix);
     capContext(anchor.suffix);
@@ -766,7 +961,10 @@ function assertWritableAnchor(anchor: CommentAnchor): void {
   // way back in by `parseAnchor`. Round-tripping a value this side accepted
   // and that side refuses would be the real defect, so the writer runs the
   // same predicates rather than a second, looser copy of them.
-  parseAnchor(JSON.parse(JSON.stringify(anchor)) as unknown);
+  const parsed = parseAnchor(JSON.parse(JSON.stringify(anchor)) as unknown);
+  if (parsed?.kind === 'unsupported') {
+    throw new MalformedCommentError('an unsupported anchor is never written');
+  }
 }
 
 function capQuote(quote: string): void {

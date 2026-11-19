@@ -12,6 +12,7 @@ import {
   COMMENT_BODY_LIMIT_BYTES,
   COMMENT_DISPLAY_NAME_LIMIT_BYTES,
   COMMENT_NONCE_BYTES,
+  SUGGESTION_REPLACEMENT_LIMIT_BYTES,
   decryptComment,
   deriveCommentKey,
   encryptComment,
@@ -390,6 +391,31 @@ describe('strict parsing', () => {
     const opened = await decryptComment(key, sealed);
     expect(opened.body).toBe('hi');
     expect(opened.unsupported_fields).toEqual(['extra']);
+  });
+
+  test('drops and reports a future-version suggestion whatever its anchor, rather than refusing the comment', async () => {
+    // The anchor and addresses rules describe a suggestion this reader
+    // understands. A newer writer's payload is a version gap, not tampering.
+    const key = await deriveCommentKey(generateKey());
+    for (const extra of [
+      {},
+      { anchor: { kind: 'quote', exact: 'x' } },
+      { anchor: { kind: 'page', page: 3 } },
+      { addresses: 'c_123' },
+    ]) {
+      const sealed = await sealRaw(
+        key,
+        JSON.stringify({
+          body: 'hi',
+          display_name: null,
+          suggestion: { v: 2 },
+          ...extra,
+        })
+      );
+      const opened = await decryptComment(key, sealed);
+      expect(opened.body).toBe('hi');
+      expect(opened.unsupported_fields).toEqual(['suggestion']);
+    }
   });
 
   test('round trips a text mark and a pin, and omits a null mark from the envelope', async () => {
@@ -1108,5 +1134,450 @@ describe('OTIO anchors', () => {
         MalformedCommentError
       );
     }
+  });
+});
+
+describe('suggestion wire format', () => {
+  const source = {
+    kind: 'source' as const,
+    exact: 'original',
+    prefix: '',
+    suffix: '',
+  };
+  const suggestion = {
+    v: 1 as const,
+    mode: 'replace' as const,
+    replacement: 'edited',
+  };
+  const base = {
+    body: 'Suggested edit.',
+    display_name: 'Reader',
+    anchor: source,
+    suggestion,
+  };
+  const sourceWith = (patch: Record<string, unknown>) => ({
+    ...base,
+    anchor: { ...source, ...patch },
+  });
+  const suggestionWith = (patch: Record<string, unknown>) => ({
+    ...base,
+    suggestion: { ...suggestion, ...patch },
+  });
+
+  async function sealRaw(key: CryptoKey, plaintext: unknown): Promise<string> {
+    const nonce = crypto.getRandomValues(new Uint8Array(COMMENT_NONCE_BYTES));
+    const data = new TextEncoder().encode(JSON.stringify(plaintext));
+    const sealed = new Uint8Array(
+      await crypto.subtle.encrypt(
+        { name: 'AES-GCM', iv: nonce.slice().buffer as ArrayBuffer },
+        key,
+        data.slice().buffer as ArrayBuffer
+      )
+    );
+    const framed = new Uint8Array(nonce.length + sealed.length);
+    framed.set(nonce);
+    framed.set(sealed, nonce.length);
+    return Buffer.from(framed).toString('base64url');
+  }
+
+  async function openRaw(key: CryptoKey, ciphertext: string): Promise<unknown> {
+    const framed = new Uint8Array(Buffer.from(ciphertext, 'base64url'));
+    const opened = await crypto.subtle.decrypt(
+      {
+        name: 'AES-GCM',
+        iv: framed.slice(0, COMMENT_NONCE_BYTES).buffer as ArrayBuffer,
+      },
+      key,
+      framed.slice(COMMENT_NONCE_BYTES).buffer as ArrayBuffer
+    );
+    return JSON.parse(new TextDecoder().decode(opened)) as unknown;
+  }
+
+  const invalid: [string, Record<string, unknown>][] = [
+    ['a missing source exact', sourceWith({ exact: undefined })],
+    ['an empty source exact', sourceWith({ exact: '' })],
+    ['a non-string source exact', sourceWith({ exact: 1 })],
+    ['an overlong source exact', sourceWith({ exact: 'x'.repeat(513) })],
+    [
+      'a multibyte source exact over the byte cap',
+      sourceWith({ exact: '😀'.repeat(129) }),
+    ],
+    ['an overlong source prefix', sourceWith({ prefix: 'x'.repeat(129) })],
+    ['an overlong source suffix', sourceWith({ suffix: '😀'.repeat(33) })],
+    ['a non-string source prefix', sourceWith({ prefix: null })],
+    ['a non-string source suffix', sourceWith({ suffix: 5 })],
+    ['an unknown source field', sourceWith({ occurrence: 1 })],
+    ['a missing suggestion version', suggestionWith({ v: undefined })],
+    ['an object suggestion version', suggestionWith({ v: {} })],
+    ['an array suggestion version', suggestionWith({ v: [] })],
+    ['an invalid suggestion mode', suggestionWith({ mode: 'append' })],
+    ['a missing suggestion mode', suggestionWith({ mode: undefined })],
+    ['a non-string suggestion mode', suggestionWith({ mode: 1 })],
+    ['a missing replacement', suggestionWith({ replacement: undefined })],
+    ['a non-string replacement', suggestionWith({ replacement: null })],
+    [
+      'a replacement over the byte cap',
+      suggestionWith({
+        replacement: '😀'.repeat(SUGGESTION_REPLACEMENT_LIMIT_BYTES / 4 + 1),
+      }),
+    ],
+    ['an isolated high surrogate', suggestionWith({ replacement: '\ud800' })],
+    ['an isolated low surrogate', suggestionWith({ replacement: '\udfff' })],
+    [
+      'a high surrogate before plain text',
+      suggestionWith({ replacement: '\ud800x' }),
+    ],
+    [
+      'a low surrogate after plain text',
+      suggestionWith({ replacement: 'x\udc00' }),
+    ],
+    [
+      'a replacement equal to the source',
+      suggestionWith({ replacement: source.exact }),
+    ],
+    [
+      'an empty after insertion',
+      suggestionWith({ mode: 'after', replacement: '' }),
+    ],
+    [
+      'an empty before insertion',
+      suggestionWith({ mode: 'before', replacement: '' }),
+    ],
+    ['an unknown version-one field', suggestionWith({ extra: true })],
+    ['a suggestion that is not an object', { ...base, suggestion: 'edit' }],
+    ['a suggestion that is an array', { ...base, suggestion: [] }],
+    ['a suggestion without an anchor', { ...base, anchor: undefined }],
+    ['a suggestion with a null anchor', { ...base, anchor: null }],
+    [
+      'a suggestion on a text anchor',
+      { ...base, anchor: { kind: 'text', quote: 'original' } },
+    ],
+    [
+      'a suggestion on a quote anchor',
+      { ...base, anchor: { kind: 'quote', exact: 'original' } },
+    ],
+    [
+      'a suggestion on a pin anchor',
+      { ...base, anchor: { kind: 'pin', x: 0.5, y: 0.5 } },
+    ],
+    [
+      'a suggestion on a region anchor',
+      { ...base, anchor: { kind: 'region', rect: { x: 0, y: 0, w: 1, h: 1 } } },
+    ],
+    [
+      'a suggestion on a time anchor',
+      { ...base, anchor: { kind: 'time', t: 1 } },
+    ],
+    [
+      'a suggestion on a page anchor',
+      { ...base, anchor: { kind: 'page', page: 1 } },
+    ],
+    [
+      'a suggestion on an image anchor',
+      {
+        ...base,
+        anchor: {
+          kind: 'image',
+          path: [{ tag: 'img', index: 0 }],
+          source_sha256: 'a'.repeat(64),
+        },
+      },
+    ],
+    [
+      'a suggestion on an OTIO anchor',
+      {
+        ...base,
+        anchor: {
+          kind: 'otio',
+          v: 1,
+          relic_version: 1,
+          document_sha256: 'a'.repeat(64),
+          timeline_id: 'timeline-1',
+          track_id: null,
+          range: {
+            start_time: { value: 0, rate: 24 },
+            duration: { value: 1, rate: 24 },
+          },
+          snapshot: { timeline: 'Main', track: null, item: null },
+        },
+      },
+    ],
+    ['a suggestion with addresses', { ...base, addresses: 'comment-1' }],
+    [
+      'an outcome without addresses',
+      { body: 'no', display_name: null, suggestion_outcome: 'accepted' },
+    ],
+    [
+      'an outcome with an anchor',
+      {
+        body: 'no',
+        display_name: null,
+        addresses: 'comment-1',
+        anchor: source,
+        suggestion_outcome: 'accepted',
+      },
+    ],
+    [
+      'an outcome with a suggestion',
+      { ...base, addresses: 'comment-1', suggestion_outcome: 'accepted' },
+    ],
+    [
+      'a numeric outcome',
+      {
+        body: 'no',
+        display_name: null,
+        addresses: 'comment-1',
+        suggestion_outcome: 1,
+      },
+    ],
+    [
+      'an object outcome',
+      {
+        body: 'no',
+        display_name: null,
+        addresses: 'comment-1',
+        suggestion_outcome: {},
+      },
+    ],
+    [
+      'an array outcome',
+      {
+        body: 'no',
+        display_name: null,
+        addresses: 'comment-1',
+        suggestion_outcome: [],
+      },
+    ],
+  ];
+
+  for (const field of ['exact', 'prefix', 'suffix']) {
+    for (const character of ['\u0000', '\r']) {
+      invalid.push([
+        `source ${field} with ${JSON.stringify(character)}`,
+        sourceWith({ [field]: `x${character}y` }),
+      ]);
+    }
+  }
+  const forbiddenCodes = [
+    ...Array.from({ length: 9 }, (_, index) => index),
+    ...Array.from({ length: 0x1f - 0x0b + 1 }, (_, index) => 0x0b + index),
+    0x7f,
+    ...Array.from({ length: 5 }, (_, index) => 0x202a + index),
+    ...Array.from({ length: 4 }, (_, index) => 0x2066 + index),
+  ];
+  for (const code of forbiddenCodes) {
+    invalid.push([
+      `replacement with U+${code.toString(16).padStart(4, '0')}`,
+      suggestionWith({ replacement: `x${String.fromCharCode(code)}y` }),
+    ]);
+  }
+
+  for (const [label, plaintext] of invalid) {
+    test(`writer and reader refuse ${label}`, async () => {
+      const key = await deriveCommentKey(generateKey());
+      await expect(
+        encryptComment(
+          key,
+          plaintext as unknown as Parameters<typeof encryptComment>[1]
+        )
+      ).rejects.toThrow();
+      await expect(
+        decryptComment(key, await sealRaw(key, plaintext))
+      ).rejects.toBeInstanceOf(MalformedCommentError);
+    });
+  }
+
+  test('round trips a source suggestion with identical fields', async () => {
+    const key = await deriveCommentKey(generateKey());
+    const plaintext = {
+      body: 'Suggested edit: replace the passage.',
+      display_name: 'Priya',
+      anchor: {
+        kind: 'source' as const,
+        exact: 'hours',
+        prefix: 'many ',
+        suffix: ' later',
+      },
+      addresses: null,
+      suggestion: {
+        v: 1 as const,
+        mode: 'replace' as const,
+        replacement: 'days',
+      },
+    };
+    expect(
+      await decryptComment(key, await encryptComment(key, plaintext))
+    ).toEqual(plaintext);
+  });
+
+  test('accepts source bounds, all modes, deletion, valid Unicode, LF and TAB', async () => {
+    const key = await deriveCommentKey(generateKey());
+    const anchor = {
+      kind: 'source' as const,
+      exact: '😀'.repeat(COMMENT_ANCHOR_QUOTE_LIMIT_BYTES / 4),
+      prefix: 'é'.repeat(COMMENT_ANCHOR_CONTEXT_LIMIT_BYTES / 2),
+      suffix: 'x'.repeat(COMMENT_ANCHOR_CONTEXT_LIMIT_BYTES),
+    };
+    for (const [mode, replacement] of [
+      ['replace', ''],
+      ['replace', '😀'.repeat(SUGGESTION_REPLACEMENT_LIMIT_BYTES / 4)],
+      ['after', '\n'],
+      ['before', '\t'],
+    ] as const) {
+      const plaintext = {
+        body: 'Edit',
+        display_name: null,
+        anchor,
+        addresses: null,
+        suggestion: { v: 1 as const, mode, replacement },
+      };
+      expect(
+        await decryptComment(key, await encryptComment(key, plaintext))
+      ).toEqual(plaintext);
+    }
+  });
+
+  test('round trips every acknowledgement outcome', async () => {
+    const key = await deriveCommentKey(generateKey());
+    for (const suggestion_outcome of [
+      'accepted',
+      'superseded',
+      'declined',
+      'deferred',
+    ] as const) {
+      const plaintext = {
+        body: 'Publisher response',
+        display_name: null,
+        anchor: null,
+        addresses: 'comment-1',
+        suggestion_outcome,
+      };
+      expect(
+        await decryptComment(key, await encryptComment(key, plaintext))
+      ).toEqual(plaintext);
+    }
+  });
+
+  test('omits null optional fields and opens the pre-change plaintext shape identically', async () => {
+    const key = await deriveCommentKey(generateKey());
+    const old = {
+      body: 'Existing comment',
+      display_name: null,
+      anchor: { kind: 'quote' as const, exact: 'a passage' },
+      addresses: 'comment-1',
+    };
+    expect(await decryptComment(key, await sealRaw(key, old))).toEqual(old);
+    const sealed = await encryptComment(key, {
+      body: 'Existing comment',
+      display_name: null,
+      anchor: null,
+      addresses: null,
+      suggestion: null,
+      suggestion_outcome: null,
+    });
+    expect(await openRaw(key, sealed)).toEqual({
+      body: 'Existing comment',
+      display_name: null,
+    });
+    expect(await decryptComment(key, sealed)).toEqual({
+      body: 'Existing comment',
+      display_name: null,
+      anchor: null,
+      addresses: null,
+    });
+    await expect(
+      decryptComment(
+        key,
+        await sealRaw(key, {
+          body: 'Response',
+          display_name: null,
+          addresses: 'comment-1',
+          suggestion_outcome: null,
+        })
+      )
+    ).rejects.toBeInstanceOf(MalformedCommentError);
+  });
+
+  test('future primitive suggestion versions are reported but a writer refuses them', async () => {
+    const key = await deriveCommentKey(generateKey());
+    for (const v of [2, 'two', false, null]) {
+      const plaintext = {
+        ...base,
+        suggestion: { v, mode: 'future', extra: true },
+      };
+      await expect(
+        encryptComment(
+          key,
+          plaintext as unknown as Parameters<typeof encryptComment>[1]
+        )
+      ).rejects.toBeInstanceOf(MalformedCommentError);
+      expect(await decryptComment(key, await sealRaw(key, plaintext))).toEqual({
+        body: base.body,
+        display_name: base.display_name,
+        anchor: source,
+        addresses: null,
+        unsupported_fields: ['suggestion'],
+      });
+    }
+  });
+
+  test('future outcome strings are reported but a writer refuses them', async () => {
+    const key = await deriveCommentKey(generateKey());
+    const plaintext = {
+      body: 'Response',
+      display_name: null,
+      addresses: 'comment-1',
+      suggestion_outcome: 'future-outcome',
+    };
+    await expect(
+      encryptComment(
+        key,
+        plaintext as unknown as Parameters<typeof encryptComment>[1]
+      )
+    ).rejects.toBeInstanceOf(MalformedCommentError);
+    expect(await decryptComment(key, await sealRaw(key, plaintext))).toEqual({
+      body: plaintext.body,
+      display_name: null,
+      anchor: null,
+      addresses: 'comment-1',
+      unsupported_fields: ['suggestion_outcome'],
+    });
+  });
+
+  test('a suggestion on a future anchor retains its payload but cannot be written', async () => {
+    const key = await deriveCommentKey(generateKey());
+    const plaintext = { ...base, anchor: { kind: 'table-cell', row: 4 } };
+    await expect(
+      encryptComment(
+        key,
+        plaintext as unknown as Parameters<typeof encryptComment>[1]
+      )
+    ).rejects.toBeInstanceOf(MalformedCommentError);
+    expect(await decryptComment(key, await sealRaw(key, plaintext))).toEqual({
+      body: base.body,
+      display_name: base.display_name,
+      anchor: { kind: 'unsupported', declared: 'table-cell' },
+      addresses: null,
+      suggestion,
+    });
+  });
+
+  test('JSON escaping still observes the ciphertext cap', async () => {
+    const key = await deriveCommentKey(generateKey());
+    await expect(
+      encryptComment(key, {
+        body: 'x'.repeat(COMMENT_BODY_LIMIT_BYTES),
+        display_name: null,
+        anchor: { kind: 'source', exact: 'x' },
+        suggestion: {
+          v: 1,
+          mode: 'after',
+          replacement: '\t'.repeat(SUGGESTION_REPLACEMENT_LIMIT_BYTES),
+        },
+      })
+    ).rejects.toMatchObject({
+      name: 'CommentTooLargeError',
+      field: 'ciphertext',
+    });
   });
 });

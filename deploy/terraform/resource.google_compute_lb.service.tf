@@ -46,6 +46,29 @@ resource "google_compute_backend_service" "service" {
   }
 }
 
+resource "google_compute_region_network_endpoint_group" "presence" {
+  project = var.project_id
+  region  = var.region
+  name    = "${local.service_name}-presence-neg"
+
+  network_endpoint_type = "SERVERLESS"
+
+  cloud_run {
+    service = module.presence.name
+  }
+}
+
+resource "google_compute_backend_service" "presence" {
+  project = var.project_id
+  name    = "${local.service_name}-presence-backend"
+
+  load_balancing_scheme = "EXTERNAL_MANAGED"
+
+  backend {
+    group = google_compute_region_network_endpoint_group.presence.id
+  }
+}
+
 # Reserved rather than ephemeral. The address is what the zone's A record
 # publishes and what the managed certificate is validated against, so losing
 # it on a rebuild would break every link and force a new certificate.
@@ -95,6 +118,21 @@ resource "google_compute_url_map" "service" {
   project         = var.project_id
   name            = local.service_name
   default_service = google_compute_backend_service.service.id
+
+  host_rule {
+    hosts        = [var.service_domain]
+    path_matcher = "service"
+  }
+
+  path_matcher {
+    name            = "service"
+    default_service = google_compute_backend_service.service.id
+
+    path_rule {
+      paths   = ["/api/presence/*"]
+      service = google_compute_backend_service.presence.id
+    }
+  }
 }
 
 resource "google_compute_target_https_proxy" "service" {

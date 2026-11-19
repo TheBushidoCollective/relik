@@ -20,6 +20,7 @@ import {
   modelFormatFromFilename,
   normalizeTitle,
   type RendererClass,
+  type SuggestionOutcome,
   shareVerifierFor,
 } from '@relic/format';
 import type { CoverOutcome, CoverReport } from '@relic/format/cover';
@@ -27,6 +28,7 @@ import { keyToMnemonic } from '@relic/format/mnemonic';
 import {
   type CommentResult,
   formatUnaddressedRefusal,
+  isOpenComment,
   postComment,
   readComments,
 } from './comments.ts';
@@ -53,6 +55,7 @@ import {
 export interface RepublishAddressEntry {
   readonly comment_id: string;
   readonly note: string;
+  readonly outcome?: SuggestionOutcome | undefined;
 }
 
 export interface RepublishInput {
@@ -197,6 +200,18 @@ export async function republish(
         throw new PublishError(
           'empty_acknowledgement_note',
           `acknowledgement note for comment ${entry.comment_id} cannot be empty or whitespace-only: it must say what was done to address the comment.`
+        );
+      }
+      if (
+        entry.outcome !== undefined &&
+        entry.outcome !== 'accepted' &&
+        entry.outcome !== 'superseded' &&
+        entry.outcome !== 'declined' &&
+        entry.outcome !== 'deferred'
+      ) {
+        throw new PublishError(
+          'invalid_suggestion_outcome',
+          'outcome must be accepted, superseded, declined, or deferred.'
         );
       }
       if (seen.has(entry.comment_id)) {
@@ -346,13 +361,7 @@ export async function republish(
     version: '*',
   });
   const unreadableComments = commentResult.comments.filter((c) => !c.readable);
-  const openComments = commentResult.comments.filter(
-    (c) =>
-      c.readable &&
-      !c.addressed &&
-      c.addresses === null &&
-      c.resolution === null
-  );
+  const openComments = commentResult.comments.filter(isOpenComment);
 
   if (addressesEntries && addressesEntries.length > 0) {
     for (const entry of addressesEntries) {
@@ -369,6 +378,20 @@ export async function republish(
         throw new PublishError(
           'unreadable_comment_cannot_be_addressed',
           `comment ${entry.comment_id} cannot be addressed because it could not be decrypted.`
+        );
+      }
+      // Classification requires the encrypted thread read above, but every
+      // mismatch is refused before any grant, upload, or comment write.
+      if (match.suggestion !== null && entry.outcome === undefined) {
+        throw new PublishError(
+          'suggestion_outcome_required',
+          `suggestion ${entry.comment_id} needs an explicit outcome.`
+        );
+      }
+      if (match.suggestion === null && entry.outcome !== undefined) {
+        throw new PublishError(
+          'outcome_not_applicable',
+          `comment ${entry.comment_id} is not a suggestion and cannot carry an outcome.`
         );
       }
     }
@@ -593,8 +616,10 @@ export async function republish(
           relic_id: input.relic_id,
           body: entry.note,
           addresses: entry.comment_id,
+          outcome: entry.outcome,
         },
-        deps
+        deps,
+        { fromRepublish: true }
       );
       acknowledgements.push(ack);
     }

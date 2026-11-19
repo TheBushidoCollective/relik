@@ -932,6 +932,7 @@ describe('the MCP surface', () => {
       'relic_enroll_device',
       'relic_confirm_device',
       'relic_bind_owner',
+      'relic_apply_suggestions',
     ]);
     for (const tool of tools) {
       expect(tool.name.startsWith('relic')).toBe(true);

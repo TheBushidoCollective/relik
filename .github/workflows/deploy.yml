@@ -181,6 +181,9 @@ jobs:
       - name: Smoke test the deployment
         env:
           SERVICE: ${{ steps.urls.outputs.service }}
+          # The presence module is applied unconditionally above, so the relay
+          # must answer through the load balancer or this deploy is red.
+          PRESENCE_DEPLOYED: "true"
         run: bash scripts/deploy-smoke.sh
 
       # The two origins have to agree about each other or HTML never renders,

@@ -106,6 +106,10 @@ jobs:
         run: RELIC_CHROME_PATH=none bun packages/relic-mcp/test/comment-path.ts
       - name: Comment popover path
         run: RELIC_POPOVER_CHROME_PATH="$(command -v google-chrome)" env -u DISPLAY -u WAYLAND_DISPLAY bun packages/relic-mcp/test/comment-popover-path.ts
+      - name: Suggestions MCP path
+        run: env -u RELIC_SUGGEST_MAIN_MCP RELIC_CHROME_PATH=none bun packages/relic-mcp/test/suggestions-mcp-path.ts
+      - name: Suggested edits browser path
+        run: env -u RELIC_SUGGEST_MAIN_DIST -u DISPLAY -u WAYLAND_DISPLAY RELIC_CHROME_PATH="$(command -v google-chrome)" bun packages/relic-mcp/test/suggested-edits-path.ts
       - name: Upload comment popover shots
         if: always()
         uses: actions/upload-artifact@v4

@@ -82,3 +82,168 @@ if grep -q 'enableLegacyTypeScriptModuleInterop' "$scratch/shell"; then
   echo "the jsx compiler is inlined in the app shell"
   exit 1
 fi
+
+case "${PRESENCE_DEPLOYED:-false}" in
+  false)
+    echo "presence smoke skipped: presence service is not enabled"
+    ;;
+  true)
+    echo "presence relay forwards a frame through the load balancer"
+    python3 - "$SERVICE" <<'PY'
+import base64
+import hashlib
+import json
+import secrets
+import socket
+import ssl
+import struct
+import sys
+from urllib.parse import urlsplit
+
+
+def token(size):
+    return base64.urlsafe_b64encode(secrets.token_bytes(size)).decode().rstrip("=")
+
+
+class WebSocket:
+    def __init__(self, service, room):
+        origin = urlsplit(service)
+        if (
+            origin.scheme not in ("http", "https")
+            or not origin.hostname
+            or origin.path not in ("", "/")
+            or origin.query
+            or origin.fragment
+            or origin.username
+            or origin.password
+        ):
+            raise ValueError("SERVICE must be an HTTP(S) origin")
+        port = origin.port or (443 if origin.scheme == "https" else 80)
+        self.sock = socket.create_connection((origin.hostname, port), timeout=15)
+        if origin.scheme == "https":
+            self.sock = ssl.create_default_context().wrap_socket(
+                self.sock, server_hostname=origin.hostname
+            )
+        self.buffer = b""
+        key = base64.b64encode(secrets.token_bytes(16)).decode()
+        request = (
+            f"GET /api/presence/{room} HTTP/1.1\r\n"
+            f"Host: {origin.netloc}\r\n"
+            f"Origin: {origin.scheme}://{origin.netloc}\r\n"
+            "Upgrade: websocket\r\n"
+            "Connection: Upgrade\r\n"
+            f"Sec-WebSocket-Key: {key}\r\n"
+            "Sec-WebSocket-Version: 13\r\n\r\n"
+        )
+        self.sock.sendall(request.encode("ascii"))
+        while b"\r\n\r\n" not in self.buffer:
+            if len(self.buffer) >= 16384:
+                raise RuntimeError("WebSocket response headers are too large")
+            self._read()
+        head, self.buffer = self.buffer.split(b"\r\n\r\n", 1)
+        lines = head.decode("latin-1").split("\r\n")
+        if len(lines[0].split()) < 2 or lines[0].split()[1] != "101":
+            raise RuntimeError(f"presence WebSocket upgrade rejected: {lines[0]}")
+        headers = {}
+        for line in lines[1:]:
+            name, value = line.split(":", 1)
+            headers[name.lower()] = value.strip()
+        expected = base64.b64encode(
+            hashlib.sha1(
+                (key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode("ascii")
+            ).digest()
+        ).decode()
+        if (
+            headers.get("sec-websocket-accept") != expected
+            or headers.get("upgrade", "").lower() != "websocket"
+            or "upgrade" not in {
+                value.strip() for value in headers.get("connection", "").lower().split(",")
+            }
+        ):
+            raise RuntimeError("invalid presence WebSocket upgrade response")
+
+    def _read(self):
+        data = self.sock.recv(4096)
+        if not data:
+            raise RuntimeError("presence WebSocket closed before the frame arrived")
+        self.buffer += data
+
+    def _take(self, length):
+        while len(self.buffer) < length:
+            self._read()
+        data, self.buffer = self.buffer[:length], self.buffer[length:]
+        return data
+
+    def send(self, payload, opcode=1):
+        payload = payload.encode("utf-8") if isinstance(payload, str) else payload
+        length = len(payload)
+        if length < 126:
+            header = bytes([0x80 | opcode, 0x80 | length])
+        else:
+            header = bytes([0x80 | opcode, 0x80 | 126]) + struct.pack("!H", length)
+        mask = secrets.token_bytes(4)
+        masked = bytes(byte ^ mask[index % 4] for index, byte in enumerate(payload))
+        self.sock.sendall(header + mask + masked)
+
+    def receive(self):
+        while True:
+            first, second = self._take(2)
+            if first & 0xF0 != 0x80 or second & 0x80:
+                raise RuntimeError("invalid presence WebSocket frame")
+            opcode = first & 0x0F
+            length = second & 0x7F
+            if length == 126:
+                length = struct.unpack("!H", self._take(2))[0]
+            elif length == 127:
+                length = struct.unpack("!Q", self._take(8))[0]
+            if length > 65536:
+                raise RuntimeError("presence WebSocket frame is too large")
+            payload = self._take(length)
+            if opcode == 0x8:
+                raise RuntimeError("presence WebSocket closed before forwarding")
+            if opcode == 0x9:
+                self.send(payload, opcode=0xA)
+                continue
+            if opcode == 0x1:
+                return json.loads(payload)
+            raise RuntimeError(f"unexpected presence WebSocket opcode {opcode}")
+
+    def close(self):
+        self.sock.close()
+
+
+sockets = []
+try:
+    room = token(16)
+    for _ in range(2):
+        sockets.append(WebSocket(sys.argv[1], room))
+    sender, receiver = sockets
+    sender_hello = sender.receive()
+    receiver_hello = receiver.receive()
+    sender_id = sender_hello.get("hello", {}).get("self")
+    if (
+        sender_hello.get("v") != 1
+        or receiver_hello.get("v") != 1
+        or not sender_id
+        or not receiver_hello.get("hello", {}).get("self")
+    ):
+        raise RuntimeError("presence sockets did not receive hello messages")
+    ciphertext = token(540)
+    sender.send(json.dumps({"v": 1, "c": ciphertext}, separators=(",", ":")))
+    forwarded = receiver.receive()
+    if forwarded != {"v": 1, "f": sender_id, "c": ciphertext}:
+        raise RuntimeError("presence relay did not forward the frame unchanged")
+    print("PRESENCE_RELAY_OK")
+except Exception as error:
+    print(f"PRESENCE_RELAY_FAILED: {error}", file=sys.stderr)
+    sys.exit(1)
+finally:
+    for ws in sockets:
+        ws.close()
+PY
+    ;;
+  *)
+    echo "PRESENCE_DEPLOYED must be true or false" >&2
+    exit 1
+    ;;
+esac

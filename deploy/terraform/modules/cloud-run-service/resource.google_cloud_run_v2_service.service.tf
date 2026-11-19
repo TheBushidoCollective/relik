@@ -11,7 +11,9 @@ resource "google_cloud_run_v2_service" "service" {
   deletion_protection = false
 
   template {
-    service_account = var.service_account_email
+    service_account                  = var.service_account_email
+    timeout                          = var.timeout_seconds == null ? null : "${var.timeout_seconds}s"
+    max_instance_request_concurrency = var.max_request_concurrency
 
     scaling {
       # Scales to zero. A relic service is idle most of the time and paying
