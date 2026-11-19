@@ -457,7 +457,7 @@ async function browserCases(
         onPresenceChange: () => live?.sync(),
         onPosted: (id) => {
           announced.push(id);
-          live?.announcePosted(id);
+          return live?.announcePosted(id);
         },
       });
       live = presence.mountPresenceController({
@@ -577,6 +577,11 @@ async function browserCases(
           'confirmed post not announced'
         );
         equal(sender.announced, ['comment-1'], 'confirmed post id');
+        equal(
+          sender.adapter.presenceState().suggesting,
+          true,
+          'the hold lasts until the announcement leaves'
+        );
         await clock.advance(1000);
         const keys = await format.derivePresenceKeys(key, 'shared-relic');
         const frames = await Promise.all(

@@ -33,7 +33,7 @@ export interface PresenceControllerOptions {
 export interface PresenceController {
   readonly ready: Promise<void>;
   sync(): void;
-  announcePosted(commentId: string): void;
+  announcePosted(commentId: string): Promise<void>;
   dispose(): void;
 }
 
@@ -137,11 +137,11 @@ export function mountPresenceController(
     ready,
     sync,
     announcePosted(commentId) {
-      if (disposed) return;
+      if (disposed) return Promise.resolve();
       client.setLocalState(
         options.suggestion()?.presenceState() ?? { suggesting: false }
       );
-      client.announcePosted(commentId);
+      return client.announcePosted(commentId);
     },
     dispose() {
       if (disposed) return;

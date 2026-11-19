@@ -196,6 +196,49 @@ async function forward(
   return c;
 }
 
+/** Holds every seal until the test releases it, as a slow WebCrypto would. */
+function slowSeals(env: FakeEnvironment): {
+  readonly pending: number;
+  release(): Promise<void>;
+} {
+  const releases: (() => Promise<void>)[] = [];
+  env.seal = (key, room, frame) => {
+    const { promise, resolve } = Promise.withResolvers<string>();
+    releases.push(async () => {
+      resolve(await sealPresence(key, room, frame));
+    });
+    return promise;
+  };
+  return {
+    get pending() {
+      return releases.length;
+    },
+    async release() {
+      const next = releases.shift();
+      if (next === undefined) throw new Error('no seal is waiting');
+      await next();
+      await env.settle();
+    },
+  };
+}
+
+async function clientOn(env: FakeEnvironment): Promise<PresenceClient> {
+  const client = new PresenceClient({
+    serviceOrigin: 'https://relik.test',
+    relicId: 'relic-one',
+    keyBytes,
+    version: 4,
+    name: 'Alice',
+    color: 2,
+    access,
+    environment: env,
+    onChange: () => {},
+    onPosted: () => {},
+  });
+  await client.start();
+  return client;
+}
+
 describe('presence client', () => {
   test('connects only for signed-in visible current markdown or code and derives the room from the raw key', async () => {
     const { client, env } = await makeClient({ ...access, signedIn: false });
@@ -424,6 +467,104 @@ describe('presence client', () => {
     await env.advance(1);
     expect(posted[2]!.id).toBe('fourth');
     client.dispose();
+  });
+
+  test('a sealed tick that Suggesting interrupts still sends its announcement once, and nothing follows', async () => {
+    const env = new FakeEnvironment();
+    const releases = slowSeals(env);
+    const client = await clientOn(env);
+    const socket = env.sockets[0]!;
+    socket.open();
+    client.setLocalState({ suggesting: true, caret: { s: 1, e: 2 } });
+    const announced = client.announcePosted('slow-1');
+    await env.advance(1000);
+    expect(releases.pending).toBe(1);
+    client.setLocalState({ suggesting: false });
+    await env.advance(5000);
+    expect(socket.sent).toHaveLength(0);
+    await releases.release();
+    await announced;
+    await env.advance(10_000);
+    expect(socket.sent).toHaveLength(1);
+    expect(releases.pending).toBe(0);
+    const keys = await derivePresenceKeys(keyBytes, 'relic-one');
+    const envelope = JSON.parse(socket.sent[0]!) as { c: string };
+    const frame = await openPresence(keys.seal, keys.room, envelope.c);
+    expect(frame?.posted).toBe('slow-1');
+    client.dispose();
+  });
+
+  test('a tick already sealing when Suggesting stops is the final frame, and no tick follows', async () => {
+    const env = new FakeEnvironment();
+    const releases = slowSeals(env);
+    const client = await clientOn(env);
+    const socket = env.sockets[0]!;
+    socket.open();
+    client.setLocalState({ suggesting: true, caret: { s: 1, e: 2 } });
+    await env.advance(1000);
+    expect(releases.pending).toBe(1);
+    client.setLocalState({ suggesting: false });
+    await releases.release();
+    await env.advance(10_000);
+    expect(socket.sent).toHaveLength(1);
+    client.dispose();
+  });
+
+  test('an announcement queued when Suggesting stops goes out in one final tick, then nothing', async () => {
+    const { client, env } = await makeClient();
+    const socket = env.sockets[0]!;
+    socket.open();
+    client.setLocalState({ suggesting: true, caret: { s: 1, e: 1 } });
+    const announced = client.announcePosted('queued-1');
+    client.setLocalState({ suggesting: false });
+    await env.advance(999);
+    expect(socket.sent).toHaveLength(0);
+    await env.advance(1);
+    await announced;
+    expect(socket.sent).toHaveLength(1);
+    await env.advance(10_000);
+    expect(socket.sent).toHaveLength(1);
+    const keys = await derivePresenceKeys(keyBytes, 'relic-one');
+    const envelope = JSON.parse(socket.sent[0]!) as { c: string };
+    const frame = await openPresence(keys.seal, keys.room, envelope.c);
+    expect(frame?.posted).toBe('queued-1');
+    expect(frame?.caret).toBeUndefined();
+    client.dispose();
+  });
+
+  test('an announcement made while not suggesting settles at once and sends nothing', async () => {
+    const { client, env } = await makeClient();
+    const socket = env.sockets[0]!;
+    socket.open();
+    await client.announcePosted('idle-1');
+    await env.advance(5000);
+    expect(socket.sent).toHaveLength(0);
+    client.dispose();
+  });
+
+  test('an announcement that cannot leave settles when its socket closes', async () => {
+    const { client, env } = await makeClient();
+    const socket = env.sockets[0]!;
+    socket.open();
+    client.setLocalState({ suggesting: true });
+    const announced = client.announcePosted('lost-1');
+    socket.fail();
+    await announced;
+    await env.advance(5000);
+    expect(socket.sent).toHaveLength(0);
+    client.dispose();
+  });
+
+  test('disposing settles an announcement still waiting for its tick', async () => {
+    const { client, env } = await makeClient();
+    const socket = env.sockets[0]!;
+    socket.open();
+    client.setLocalState({ suggesting: true });
+    const announced = client.announcePosted('gone-1');
+    client.dispose();
+    await announced;
+    await env.advance(5000);
+    expect(socket.sent).toHaveLength(0);
   });
 });
 

@@ -108,6 +108,14 @@ const PEER_ID = /^[A-Za-z0-9_-]{16}$/;
 type Keys = { readonly seal: CryptoKey; readonly room: string };
 type PeerRecord = { state: PresenceV1; receivedAt: number; timer: unknown };
 
+/** An announcement waiting for a frame, and the promises waiting on that frame. */
+type Outgoing = { readonly id: string; readonly settled: (() => void)[] };
+
+/** Settles the promises of announcements that have left, or can never leave. */
+function release(settled: readonly (() => void)[] | undefined): void {
+  for (const resolve of settled ?? []) resolve();
+}
+
 /** One instance belongs to one displayed version and its raw key. */
 export class PresenceClient {
   private readonly env: PresenceEnvironment;
@@ -124,11 +132,11 @@ export class PresenceClient {
   private idleTimer: unknown;
   private postedTimer: unknown;
   private pendingPosted: string | undefined;
-  private outgoingPosted: string | undefined;
+  /** Announced, and not yet carried by a frame. */
+  private outgoing: Outgoing | undefined;
   private lastPostedAt = -Infinity;
   private lastActivity: number;
   private attempt = 0;
-  private epoch = 0;
   private started = false;
   private disposed = false;
   private unsubscribe: (() => void)[] = [];
@@ -167,17 +175,36 @@ export class PresenceClient {
   }
 
   setLocalState(local: LocalPresence): void {
-    if (this.local.suggesting && !local.suggesting) {
-      this.epoch++;
-      this.outgoingPosted = undefined;
-    }
+    // An announcement needs an open socket to leave. When Suggesting stops
+    // with no socket open, it can never leave, so it settles now.
+    if (
+      this.local.suggesting &&
+      !local.suggesting &&
+      this.socket?.readyState !== SOCKET_OPEN
+    )
+      this.dropOutgoing();
     this.local = local;
     this.reconcile();
   }
 
-  /** Announce a saved, edited or deleted comment on the next suggesting tick. */
-  announcePosted(commentId: string): void {
-    if (this.local.suggesting) this.outgoingPosted = commentId;
+  /**
+   * Announce a saved, edited or deleted comment. The promise settles once a
+   * frame carrying it has left, or when it never can: this client is not
+   * suggesting, the socket closed, or the client was disposed.
+   */
+  announcePosted(commentId: string): Promise<void> {
+    const { promise, resolve } = Promise.withResolvers<void>();
+    if (this.disposed || !this.local.suggesting) {
+      resolve();
+      return promise;
+    }
+    // One frame carries one id. A newer id takes the place of an older one,
+    // and both promises settle with the frame that carries the newer id.
+    this.outgoing = {
+      id: commentId,
+      settled: [...(this.outgoing?.settled ?? []), () => resolve()],
+    };
+    return promise;
   }
 
   dispose(): void {
@@ -206,7 +233,9 @@ export class PresenceClient {
       (this.access.rendererClass === 'markdown' ||
         this.access.rendererClass === 'code') &&
       this.env.visible() &&
-      (this.local.suggesting || this.env.now() - this.lastActivity < IDLE_MS)
+      (this.local.suggesting ||
+        this.outgoing !== undefined ||
+        this.env.now() - this.lastActivity < IDLE_MS)
     );
   }
 
@@ -244,7 +273,10 @@ export class PresenceClient {
     if (this.keys === undefined) return;
     if (this.socket === undefined && this.retryTimer === undefined)
       this.connect();
-    if (this.socket?.readyState === SOCKET_OPEN && this.local.suggesting)
+    if (
+      this.socket?.readyState === SOCKET_OPEN &&
+      (this.local.suggesting || this.outgoing !== undefined)
+    )
       this.scheduleTick();
     else this.clear('tickTimer');
   }
@@ -302,7 +334,6 @@ export class PresenceClient {
   }
 
   private disconnectSocket(): void {
-    this.epoch++;
     this.clear('tickTimer');
     const socket = this.socket;
     this.socket = undefined;
@@ -315,6 +346,7 @@ export class PresenceClient {
     const changed = this.peers.size > 0;
     this.peers.clear();
     this.sequences.clear();
+    this.dropOutgoing();
     if (changed) this.emit();
   }
 
@@ -337,13 +369,13 @@ export class PresenceClient {
         socket === undefined ||
         keys === undefined ||
         socket.readyState !== SOCKET_OPEN ||
-        !this.local.suggesting ||
         !this.eligible()
       )
         return;
-      const epoch = this.epoch;
+      const batch = this.outgoing;
+      if (batch === undefined && !this.local.suggesting) return;
+      this.outgoing = undefined;
       const local = this.local;
-      const posted = this.outgoingPosted;
       const frame: PresenceV1 = {
         v: 1,
         t: this.env.now(),
@@ -352,31 +384,33 @@ export class PresenceClient {
         version: this.options.version,
         ...(local.caret === undefined ? {} : { caret: local.caret }),
         ...(local.typing === undefined ? {} : { typing: local.typing }),
-        ...(posted === undefined ? {} : { posted }),
+        ...(batch === undefined ? {} : { posted: batch.id }),
       };
-      this.scheduleTick();
-      void (this.env.seal ?? sealPresence)(keys.seal, keys.room, frame)
-        .then((ciphertext) => {
-          if (
-            this.socket !== socket ||
-            this.epoch !== epoch ||
-            !this.local.suggesting ||
-            !this.eligible() ||
-            socket.readyState !== SOCKET_OPEN
-          )
-            return;
+      // The cadence continues only while Suggesting. A tick already sealing when
+      // Suggesting stops is the final frame: it still sends, and no tick follows.
+      if (local.suggesting) this.scheduleTick();
+      void (this.env.seal ?? sealPresence)(keys.seal, keys.room, frame).then(
+        (ciphertext) => {
           try {
-            socket.send(JSON.stringify({ v: 1, c: ciphertext }));
-            if (posted !== undefined && this.outgoingPosted === posted)
-              this.outgoingPosted = undefined;
+            if (this.socket === socket && socket.readyState === SOCKET_OPEN)
+              socket.send(JSON.stringify({ v: 1, c: ciphertext }));
           } catch {
             this.lost(socket);
           }
-        })
-        .catch(() => {
+          release(batch?.settled);
+        },
+        () => {
           // Invalid local state must never leak into an unsealed frame.
-        });
+          release(batch?.settled);
+        }
+      );
     }, SECOND);
+  }
+
+  private dropOutgoing(): void {
+    const settled = this.outgoing?.settled;
+    this.outgoing = undefined;
+    release(settled);
   }
 
   private receive(socket: PresenceSocket, data: string): void {

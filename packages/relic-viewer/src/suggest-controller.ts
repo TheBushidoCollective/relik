@@ -39,7 +39,7 @@ export interface SuggestControllerOptions {
   readonly signIn: () => void;
   readonly open: (id: string, target?: HTMLElement) => void;
   readonly onPresenceChange?: () => void;
-  readonly onPosted?: (commentId: string) => void;
+  readonly onPosted?: (commentId: string) => void | Promise<void>;
 }
 
 export interface SuggestController {
@@ -239,26 +239,29 @@ export function mountSuggestionController(
   let activeCommit: WritableCommit | undefined;
   let previous: CommentPlaintext | undefined;
   let committingOnPageHide = false;
-  let modeOffPending = false;
-  let modeOffTimer: number | undefined;
+  // A mode-off with a post in flight holds presence on "suggesting" until that
+  // post's announcement has left the socket, or can never leave.
+  let modeOffHold: object | undefined;
+  // The hold that the commit now in flight answers, if Suggesting was turned
+  // off to make it.
+  let commitHold: object | undefined;
   let pendingPresenceRefresh = false;
   let presenceRefreshTimer: number | undefined;
   let awaitingPresenceRefresh: Promise<unknown> | undefined;
   const presenceChange = (): void => options.onPresenceChange?.();
-  const releaseModeOff = (): void => {
-    window.clearTimeout(modeOffTimer);
-    modeOffTimer = undefined;
-    if (!modeOffPending) return;
-    modeOffPending = false;
+  const releaseHold = (hold: object | undefined): void => {
+    if (hold === undefined || hold !== modeOffHold) return;
+    modeOffHold = undefined;
     presenceChange();
   };
   const setEditorSuggesting = (on: boolean): boolean => {
     if (!editor) return false;
-    if (on) releaseModeOff();
+    if (on) releaseHold(modeOffHold);
     else if (editor.suggesting && editor.draft && options.onPosted)
-      modeOffPending = true;
+      modeOffHold = {};
     const changed = editor.setSuggesting(on);
-    if (!changed || (!on && modeOffPending && !activeCommit)) releaseModeOff();
+    if (!changed || (!on && modeOffHold !== undefined && !activeCommit))
+      releaseHold(modeOffHold);
     presenceChange();
     return changed;
   };
@@ -419,23 +422,29 @@ export function mountSuggestionController(
     draft: SuggestDraft | null
   ): void => {
     if (destroyed) return;
+    const hold = commitHold;
+    commitHold = undefined;
     if (result.kind === 'not-posted') {
-      releaseModeOff();
+      releaseHold(hold);
       showFailure(result.reason);
       return;
     }
     if (result.kind !== 'posted') {
-      releaseModeOff();
+      releaseHold(hold);
       return;
     }
     if (!activeCommit) return;
-    if (result.commentId !== null) options.onPosted?.(result.commentId);
-    if (modeOffPending) {
-      // Keep the presence mode through the next one-second tick so the
-      // confirmed post leaves before the sender stops announcing itself.
-      if (result.commentId === null) releaseModeOff();
-      else modeOffTimer = window.setTimeout(releaseModeOff, 1000);
-    }
+    // Presence stays "suggesting" until the announcement has left the socket or
+    // can never leave, so the other readers hear about the post before it ends.
+    const announced =
+      result.commentId === null
+        ? undefined
+        : options.onPosted?.(result.commentId);
+    if (hold !== undefined)
+      void Promise.resolve(announced).then(
+        () => releaseHold(hold),
+        () => releaseHold(hold)
+      );
     failureHost.replaceChildren();
     const sent = activeCommit;
     const old = previous;
@@ -573,6 +582,7 @@ export function mountSuggestionController(
         previous =
           priorEntry?.kind === 'open' ? plaintext(priorEntry) : undefined;
         activeCommit = commit;
+        commitHold = modeOffHold;
         if (committingOnPageHide) {
           // The live draft was already prepared on its last edit. Reuse it so
           // a ready keepalive request starts inside the lifecycle event.
@@ -789,7 +799,7 @@ export function mountSuggestionController(
       return root ? { root, segments } : undefined;
     },
     presenceState() {
-      const suggesting = !!editor?.suggesting || modeOffPending;
+      const suggesting = !!editor?.suggesting || modeOffHold !== undefined;
       const draft = editor?.draft ?? null;
       const selection = suggesting ? doc.getSelection() : null;
       const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
@@ -904,7 +914,7 @@ export function mountSuggestionController(
         return false;
       }
       destroyed = true;
-      window.clearTimeout(modeOffTimer);
+      modeOffHold = undefined;
       window.clearTimeout(presenceRefreshTimer);
       editor?.destroy();
       root?.removeEventListener('beforeinput', stopInputDuringSend, true);
