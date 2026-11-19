@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   deriveRendererClass,
+  filenameExtension,
   isRenderable,
   isRendererClass,
   leastPrivileged,
@@ -79,6 +80,7 @@ describe('the extension fallback', () => {
     ['query.sql', 'code'],
     ['Dockerfile', 'code'],
     ['data.csv', 'code'],
+    ['analysis.ipynb', 'notebook'],
     ['clip.mp4', 'media'],
     ['song.flac', 'media'],
     ['bundle.zip', 'archive'],
@@ -272,5 +274,44 @@ describe('declared versus sniffed disagreement', () => {
     // to either, which the tests above hold.
     expect(['html', 'jsx']).toContain(leastPrivileged('jsx', 'html'));
     expect(['html', 'jsx']).toContain(leastPrivileged('html', 'jsx'));
+  });
+});
+
+describe('the notebook class', () => {
+  test('is renderable on the viewing origin at tier 2', () => {
+    expect(isRendererClass('notebook')).toBe(true);
+    expect(isRenderable('notebook')).toBe(true);
+    expect(privilegeTier('notebook')).toBe(2);
+  });
+
+  test('an .ipynb name is a notebook whatever its bytes are', () => {
+    expect(deriveRendererClass(utf8('{"nbformat": 4}'), 'analysis.ipynb')).toBe(
+      'notebook'
+    );
+    expect(deriveRendererClass(utf8('just words'), 'analysis.ipynb')).toBe(
+      'notebook'
+    );
+  });
+
+  test('a .json file holding a notebook stays code, because its name decides', () => {
+    expect(
+      deriveRendererClass(
+        utf8('{"nbformat": 4, "nbformat_minor": 5, "cells": []}'),
+        'analysis.json'
+      )
+    ).toBe('code');
+  });
+
+  test('a notebook loses a disagreement with code, image and html', () => {
+    // Later in the ranking is less privileged, and the viewer takes that side.
+    expect(leastPrivileged('notebook', 'code')).toBe('code');
+    expect(leastPrivileged('notebook', 'image')).toBe('notebook');
+    expect(leastPrivileged('notebook', 'html')).toBe('notebook');
+  });
+
+  test('the extension is the last dot-separated suffix, lower-cased', () => {
+    expect(filenameExtension('a/b/notes.IPYNB')).toBe('ipynb');
+    expect(filenameExtension('.hidden')).toBeUndefined();
+    expect(filenameExtension('trailing.')).toBeUndefined();
   });
 });

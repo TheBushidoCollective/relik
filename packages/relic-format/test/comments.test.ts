@@ -648,7 +648,7 @@ describe('the precise anchor kinds', () => {
       JSON.stringify({
         body: 'this bar is wrong',
         display_name: null,
-        anchor: { kind: 'cell', sheet: 'Q3', ref: 'B14' },
+        anchor: { kind: 'hologram', sheet: 'Q3', ref: 'B14' },
       })
     );
 
@@ -656,7 +656,10 @@ describe('the precise anchor kinds', () => {
     // The body survives, which is the whole point: a reader older than the
     // writer must not tell a person the comment was altered in storage.
     expect(opened.body).toBe('this bar is wrong');
-    expect(opened.anchor).toEqual({ kind: 'unsupported', declared: 'cell' });
+    expect(opened.anchor).toEqual({
+      kind: 'unsupported',
+      declared: 'hologram',
+    });
   });
 
   test('an unsupported anchor is never written back', async () => {
@@ -665,7 +668,7 @@ describe('the precise anchor kinds', () => {
       encryptComment(key, {
         body: 'hi',
         display_name: null,
-        anchor: { kind: 'unsupported', declared: 'cell' },
+        anchor: { kind: 'unsupported', declared: 'hologram' },
       })
     ).rejects.toBeInstanceOf(MalformedCommentError);
   });

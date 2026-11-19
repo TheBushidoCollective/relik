@@ -6,10 +6,12 @@
   "main": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
+    "./comments": "./src/comments.ts",
     "./cover": "./src/cover.ts",
     "./mnemonic": "./src/mnemonic.ts",
     "./presence": "./src/presence.ts",
     "./private": "./src/private.ts",
+    "./renderer-class": "./src/renderer-class.ts",
     "./suggestions": "./src/suggestions.ts",
     "./wordlist": "./src/wordlist.ts"
   },

@@ -95,6 +95,35 @@ export interface ImageCommentAnchor {
 }
 
 /**
+ * A cell, or an inclusive rectangle of cells, in a table: a CSV or TSV record
+ * and field, or one sheet of a workbook.
+ *
+ * Coordinates are A1 coordinates of the published file. CSV record 1 is row 1
+ * even when a reader shows it as the header, so a header cell is `row: 1`.
+ * `row_end` and `col_end` are inclusive, and an absent end means the same as
+ * its start. `sheet` belongs to a workbook; a CSV carries none.
+ */
+export interface CellCommentAnchor {
+  readonly kind: 'cell';
+  readonly row: number;
+  readonly col: number;
+  readonly row_end?: number;
+  readonly col_end?: number;
+  readonly sheet?: string;
+}
+
+/**
+ * A node in a JSON document or a notebook, as an RFC 6901 JSON pointer. The
+ * empty pointer is the whole document. A key that appears twice is addressed
+ * by its last occurrence, which is what `JSON.parse` keeps, so a writer never
+ * points at an earlier duplicate.
+ */
+export interface PathCommentAnchor {
+  readonly kind: 'path';
+  readonly pointer: string;
+}
+
+/**
  * Where a comment sits on the relic, encrypted with the body so the
  * operator cannot read the mark either.
  *
@@ -162,6 +191,8 @@ export type CommentAnchor =
     }
   | ImageCommentAnchor
   | OtioAnchorV1
+  | CellCommentAnchor
+  | PathCommentAnchor
   | { readonly kind: 'unsupported'; readonly declared: string };
 
 /** Cap on encoded OTIO anchor bytes (1,536 bytes). */
@@ -205,6 +236,20 @@ export const COMMENT_ANCHOR_MAX_PAGE = 10_000;
  * trusted there.
  */
 export const COMMENT_ANCHOR_MAX_SECONDS = 86_400;
+
+/**
+ * Bounds on a `cell` anchor. The row cap is a sanity bound well above any
+ * sheet Excel writes (1,048,576 rows), and the column cap is Excel's width. A
+ * table is never handed a coordinate past them.
+ */
+export const COMMENT_ANCHOR_CELL_MAX_ROW = 16_777_216;
+export const COMMENT_ANCHOR_CELL_MAX_COL = 16_384;
+
+/** Longest sheet name a `cell` anchor may carry, in UTF-8 bytes. */
+export const COMMENT_ANCHOR_SHEET_LIMIT_BYTES = 128;
+
+/** Longest JSON pointer a `path` anchor may carry, in UTF-8 bytes. */
+export const COMMENT_ANCHOR_POINTER_LIMIT_BYTES = 512;
 
 /**
  * Longest replacement a suggestion may carry, in UTF-8 bytes.
@@ -822,6 +867,68 @@ function parseAnchor(value: unknown): CommentAnchor | null {
     return { kind: 'image', path, source_sha256: sourceSha256 };
   }
 
+  if (kind === 'cell') {
+    const row = requireCellCoordinate(
+      anchor['row'],
+      'cell row',
+      COMMENT_ANCHOR_CELL_MAX_ROW
+    );
+    const col = requireCellCoordinate(
+      anchor['col'],
+      'cell col',
+      COMMENT_ANCHOR_CELL_MAX_COL
+    );
+    const rowEnd =
+      anchor['row_end'] === undefined
+        ? undefined
+        : requireCellCoordinate(
+            anchor['row_end'],
+            'cell row_end',
+            COMMENT_ANCHOR_CELL_MAX_ROW
+          );
+    const colEnd =
+      anchor['col_end'] === undefined
+        ? undefined
+        : requireCellCoordinate(
+            anchor['col_end'],
+            'cell col_end',
+            COMMENT_ANCHOR_CELL_MAX_COL
+          );
+    if (rowEnd !== undefined && rowEnd < row) {
+      throw new MalformedCommentError(
+        'cell anchor row_end is before row, so the range is reversed'
+      );
+    }
+    if (colEnd !== undefined && colEnd < col) {
+      throw new MalformedCommentError(
+        'cell anchor col_end is before col, so the range is reversed'
+      );
+    }
+    const sheet =
+      anchor['sheet'] === undefined
+        ? undefined
+        : requireSheetName(anchor['sheet']);
+    refuseExtra(
+      anchor,
+      ['kind', 'row', 'col', 'row_end', 'col_end', 'sheet'],
+      'cell'
+    );
+    return {
+      kind: 'cell',
+      row,
+      col,
+      ...(rowEnd === undefined ? {} : { row_end: rowEnd }),
+      ...(colEnd === undefined ? {} : { col_end: colEnd }),
+      ...(sheet === undefined ? {} : { sheet }),
+    };
+  }
+
+  if (kind === 'path') {
+    const pointer = requirePointer(anchor['pointer']);
+    refuseExtra(anchor, ['kind', 'pointer'], 'path');
+    return { kind: 'path', pointer };
+  }
+
   if (kind === 'otio') {
     const v = anchor['v'];
     if (v !== 1) {
@@ -922,6 +1029,22 @@ export function parseImageCommentAnchor(value: unknown): ImageCommentAnchor {
   if (anchor?.kind !== 'image') {
     throw new MalformedCommentError('expected an image anchor');
   }
+  return anchor;
+}
+
+/**
+ * Parse one anchor a writer supplies, and refuse it unless this package would
+ * seal it. A publishing client uses this rather than re-deriving the rules, so
+ * a kind is accepted there exactly when the reader would accept it.
+ */
+export function parseWritableCommentAnchor(value: unknown): CommentAnchor {
+  const anchor = parseAnchor(value);
+  if (anchor === null || anchor.kind === 'unsupported') {
+    throw new MalformedCommentError(
+      'an absent or unsupported anchor is never written'
+    );
+  }
+  assertWritableAnchor(anchor);
   return anchor;
 }
 
@@ -1084,6 +1207,95 @@ function refuseExtra(
       `${kind} anchor carries unknown field(s): ${extra.join(', ')}`
     );
   }
+}
+
+/** A 1-based table coordinate: an integer from 1 up to `max`, inclusive. */
+function requireCellCoordinate(
+  value: unknown,
+  label: string,
+  max: number
+): number {
+  if (
+    typeof value !== 'number' ||
+    !Number.isInteger(value) ||
+    value < 1 ||
+    value > max
+  ) {
+    throw new MalformedCommentError(
+      `${label} is not an integer in 1 to ${max}`
+    );
+  }
+  return value;
+}
+
+/**
+ * A sheet name: 1 to 128 UTF-8 bytes with no control or bidi characters. The
+ * name is drawn as a tab label, where a bidi override would reorder the
+ * reader's own text.
+ */
+function requireSheetName(value: unknown): string {
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new MalformedCommentError(
+      'cell anchor sheet is not a non-empty string'
+    );
+  }
+  const bytes = new TextEncoder().encode(value).length;
+  if (bytes > COMMENT_ANCHOR_SHEET_LIMIT_BYTES) {
+    throw new MalformedCommentError(
+      `cell anchor sheet is ${bytes} bytes, over the ` +
+        `${COMMENT_ANCHOR_SHEET_LIMIT_BYTES}-byte cap`
+    );
+  }
+  if (hasControlOrBidiCharacter(value)) {
+    throw new MalformedCommentError(
+      'cell anchor sheet contains a control or bidi character'
+    );
+  }
+  return value;
+}
+
+/** An RFC 6901 pointer: empty or rooted at `/`, with `~` only as `~0` or `~1`. */
+function requirePointer(value: unknown): string {
+  if (typeof value !== 'string') {
+    throw new MalformedCommentError(
+      'path anchor pointer is missing or not a string'
+    );
+  }
+  if (value.length > 0 && !value.startsWith('/')) {
+    throw new MalformedCommentError(
+      'path anchor pointer is neither empty nor rooted at "/"'
+    );
+  }
+  if (/~(?![01])/.test(value)) {
+    throw new MalformedCommentError(
+      'path anchor pointer has a "~" that is not "~0" or "~1"'
+    );
+  }
+  if (value.includes('\u0000') || value.includes('\r')) {
+    throw new MalformedCommentError('path anchor pointer contains a NUL or CR');
+  }
+  const bytes = new TextEncoder().encode(value).length;
+  if (bytes > COMMENT_ANCHOR_POINTER_LIMIT_BYTES) {
+    throw new MalformedCommentError(
+      `path anchor pointer is ${bytes} bytes, over the ` +
+        `${COMMENT_ANCHOR_POINTER_LIMIT_BYTES}-byte cap`
+    );
+  }
+  return value;
+}
+
+/** Control characters (C0 and DEL) and the bidi embedding and isolate controls. */
+function hasControlOrBidiCharacter(text: string): boolean {
+  for (const character of text) {
+    const code = character.codePointAt(0) ?? 0;
+    if (code <= 0x1f || code === 0x7f) return true;
+    if (
+      (code >= 0x202a && code <= 0x202e) ||
+      (code >= 0x2066 && code <= 0x2069)
+    )
+      return true;
+  }
+  return false;
 }
 
 /** Unpadded base64url (RFC 4648 section 5), the same encoding the key uses. */
