@@ -23,7 +23,7 @@ export interface TableModel {
   readonly columns: number;
   /** Whether record 1 is drawn as the header row. */
   readonly headerRow: boolean;
-  readonly order?: Uint32Array;
+  readonly order?: Uint32Array | undefined;
 }
 
 /** A1 column letters: 1 is A, 26 is Z, 27 is AA. */

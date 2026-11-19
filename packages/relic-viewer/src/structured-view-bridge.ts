@@ -113,6 +113,11 @@ export interface StructuredMount {
   readonly source: string;
   /** Draws the source view. Used while loading, on fallback, and for Source. */
   readonly sourceView: () => HTMLElement;
+  /**
+   * Returns the source view with a line saying why this view cannot show the
+   * file. A view calls it and then returns `undefined`.
+   */
+  readonly reportUnshown: (reason: string) => void;
 }
 
 /** What a mounted view answers. Marks and selections are anchors, never DOM. */
@@ -191,7 +196,7 @@ export function drawnStructuredView(
 export function mountStructuredView(
   root: HTMLElement,
   kind: StructuredKind,
-  mount: Omit<StructuredMount, 'root'>
+  mount: Omit<StructuredMount, 'root' | 'reportUnshown'>
 ): StructuredViewHandle {
   root.classList.add('structured-view', `structured-${kind}`);
   root.replaceChildren(mount.sourceView());
@@ -200,6 +205,18 @@ export function mountStructuredView(
   let drawn = false;
   let disposed = false;
   let wantsSource = false;
+  let unshownReason: string | undefined;
+  const sourceWithNotice = (): HTMLElement => {
+    const source = mount.sourceView();
+    if (unshownReason === undefined) return source;
+    const note = document.createElement('p');
+    note.className = 'structured-notice';
+    note.setAttribute('role', 'status');
+    note.textContent = unshownReason;
+    const wrap = document.createElement('div');
+    wrap.append(note, source);
+    return wrap;
+  };
   const { promise: ready, resolve: settle } = Promise.withResolvers<void>();
 
   const drop = (): void => {
@@ -226,9 +243,15 @@ export function mountStructuredView(
       }
       root.replaceChildren();
       try {
-        const mounted = module.mountView({ ...mount, root });
+        const mounted = module.mountView({
+          ...mount,
+          root,
+          reportUnshown: (reason) => {
+            unshownReason = reason;
+          },
+        });
         if (mounted === undefined) {
-          root.replaceChildren(mount.sourceView());
+          root.replaceChildren(sourceWithNotice());
         } else {
           part = mounted;
           drawn = true;
