@@ -1,0 +1,338 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Relic frame hardening: link confirmation (mock)</title>
+<style>
+/* Tokens copied from packages/relic-viewer/src/styles.css so the mock is the real chrome. */
+:root {
+  --ground: #f1f2f0;
+  --surface: #fbfbfa;
+  --ink: #16191a;
+  --ink-soft: #5a6163;
+  --rule: #d2d5d2;
+  --rule-strong: #b3b8b4;
+  --patina: #1f6b64;
+  --patina-ink: #0f3b37;
+  --oxide: #8c4a2f;
+  --serif: Charter, "Iowan Old Style", "Source Serif Pro", Palatino, "Palatino Linotype", Georgia, serif;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --bar-height: 3.25rem;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ground: #101314;
+    --surface: #171b1c;
+    --ink: #e6e9e7;
+    --ink-soft: #969e9d;
+    --rule: #2a3032;
+    --rule-strong: #3b4345;
+    --patina: #4fb3a6;
+    --patina-ink: #a7ded6;
+    --oxide: #c98058;
+  }
+}
+.theme-dark {
+  --ground: #101314;
+  --surface: #171b1c;
+  --ink: #e6e9e7;
+  --ink-soft: #969e9d;
+  --rule: #2a3032;
+  --rule-strong: #3b4345;
+  --patina: #4fb3a6;
+  --patina-ink: #a7ded6;
+  --oxide: #c98058;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 15px;
+  line-height: 1.5;
+}
+.mock-head { max-width: 58rem; margin: 0 auto; padding: 1.5rem 1rem 0.5rem; }
+.mock-kicker { margin: 0 0 0.25rem; font-family: var(--mono); font-size: 0.78rem; color: var(--ink-soft); }
+.mock-head h1 { margin: 0 0 0.4rem; font-size: 1.3rem; letter-spacing: -0.01em; }
+.mock-head p { margin: 0 0 0.6rem; color: var(--ink-soft); font-size: 0.9rem; max-width: 46rem; }
+.mock-controls { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.6rem 0 1rem; }
+.mock-controls button {
+  font: inherit; font-size: 0.8rem; padding: 0.3rem 0.6rem;
+  background: var(--surface); color: var(--ink); border: 1px solid var(--rule-strong); cursor: pointer;
+}
+.mock-controls button[aria-pressed="true"] { border-color: var(--patina); color: var(--patina-ink); box-shadow: inset 0 0 0 1px var(--patina); }
+.mock-controls button:focus-visible, .link-confirm button:focus-visible, .frame-link:focus-visible {
+  outline: 2px solid var(--patina); outline-offset: 2px;
+}
+
+/* The viewer: accession band, then the confirmation bar, then the frame. */
+.viewer-stage { max-width: 58rem; margin: 0 auto 2rem; padding: 0 1rem; }
+.viewer { background: var(--surface); border: 1px solid var(--rule); }
+.viewer.is-mobile { width: 390px; max-width: 100%; margin: 0 auto; }
+.bar {
+  display: flex; align-items: stretch; flex: none; min-height: var(--bar-height);
+  background: var(--surface); border-bottom: 1px solid var(--rule-strong);
+}
+.mark {
+  display: flex; align-items: center; padding: 0 1rem; font-family: var(--mono);
+  font-size: 0.78rem; font-weight: 600; letter-spacing: 0.01em; color: var(--ink);
+  border-right: 1px solid var(--rule); white-space: nowrap;
+}
+.identity { display: flex; flex-direction: column; justify-content: center; gap: 0.1rem; padding: 0.4rem 1rem; min-width: 0; flex: 1; }
+.filename { font-family: var(--mono); font-size: 0.82rem; color: var(--ink); }
+.identity .sub { font-size: 0.75rem; color: var(--ink-soft); }
+
+/* The bar reuses the notice's rule and the popover's action treatment. */
+.link-confirm {
+  display: flex; flex-wrap: wrap; gap: 0.6rem 1rem; align-items: flex-start;
+  margin: 0; padding: 0.7rem 0.9rem;
+  background: var(--surface); color: var(--ink);
+  border-left: 3px solid var(--patina); border-bottom: 1px solid var(--rule);
+  font-size: 0.86rem;
+}
+.link-confirm[hidden] { display: none; }
+.link-confirm-text { flex: 1 1 18rem; min-width: 0; }
+.link-confirm-title { margin: 0 0 0.3rem; font-weight: 600; }
+.link-confirm-dest {
+  margin: 0; padding-left: 0.55rem; border-left: 1px solid var(--rule);
+  font-family: var(--mono); font-size: 0.82rem; line-height: 1.45;
+  overflow-wrap: anywhere; word-break: break-word;
+}
+.link-confirm-dest .scheme,
+.link-confirm-dest .rest { color: var(--ink-soft); }
+.link-confirm-dest .host { color: var(--ink); font-weight: 700; }
+.link-confirm-note { margin: 0.35rem 0 0; color: var(--ink-soft); font-size: 0.8rem; }
+.link-confirm-status { margin: 0.25rem 0 0; color: var(--ink-soft); font-size: 0.78rem; min-height: 1.1em; }
+.link-confirm-actions { display: flex; gap: 0.4rem; align-items: center; margin-left: auto; flex-wrap: wrap; }
+.link-confirm-actions .action {
+  padding: 0.2rem 0.55rem; background: none; color: var(--ink);
+  border: 1px solid var(--rule-strong); font: inherit; font-size: 0.8rem; cursor: pointer; white-space: nowrap;
+}
+.link-confirm-actions .action:hover { background: color-mix(in srgb, var(--patina) 12%, transparent); }
+.link-confirm-actions .action.is-primary { background: var(--patina); border-color: var(--patina); color: var(--surface); }
+.link-confirm-actions .action.is-quiet { border-color: transparent; color: var(--ink-soft); }
+.link-confirm-actions .action:disabled { color: var(--ink-soft); background: none; border-color: var(--rule); cursor: default; }
+
+/* The frame: white ground, as the real .usercontent-frame has. */
+.usercontent-frame { background: #fff; color: #16191a; border-top: 0; }
+.doc { padding: 1.4rem 1.5rem 2rem; font-family: var(--serif); font-size: 1.02rem; line-height: 1.6; max-width: 46rem; }
+.doc h2 { font-family: var(--sans); font-size: 1.15rem; margin: 0 0 0.6rem; }
+.doc p { margin: 0 0 0.8rem; }
+.frame-link { color: #1f6b64; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+
+.toast {
+  margin: 0; padding: 0.55rem 0.9rem; font-size: 0.8rem; color: var(--ink);
+  background: var(--surface); border-top: 1px solid var(--rule);
+}
+.toast[hidden] { display: none; }
+
+/* Notes: the rules the implementation enforces, next to the picture of them. */
+.mock-notes { max-width: 58rem; margin: 0 auto; padding: 0 1rem 2.5rem; font-size: 0.86rem; color: var(--ink-soft); }
+.mock-notes h2 { font-size: 0.95rem; color: var(--ink); margin: 1.2rem 0 0.4rem; }
+.mock-notes ul { margin: 0; padding-left: 1.1rem; }
+.mock-notes li { margin: 0 0 0.3rem; }
+
+@media (max-width: 480px) {
+  .link-confirm { padding: 0.6rem 0.7rem; }
+  .link-confirm-actions { width: 100%; margin-left: 0; }
+  .link-confirm-actions .action { flex: 1 1 auto; padding: 0.45rem 0.6rem; }
+  .doc { padding: 1rem; }
+}
+</style>
+</head>
+<body>
+<header class="mock-head">
+  <p class="mock-kicker">Frame hardening, F1 · clickable mock · not shipped</p>
+  <h1>Link confirmation in Relic's own chrome</h1>
+  <p>A link inside the sandboxed frame asks the viewer to open it. The viewer shows where it goes, in its own chrome outside the frame. Nothing opens until the reader presses Open link on that bar. The frame's own click check is not trusted.</p>
+  <nav class="mock-controls" aria-label="Mock states">
+    <button type="button" data-state="request" aria-pressed="false">Link requested</button>
+    <button type="button" data-state="mailto" aria-pressed="false">mailto requested</button>
+    <button type="button" data-state="long" aria-pressed="false">Long host</button>
+    <button type="button" data-state="idn" aria-pressed="false">IDN host</button>
+    <button type="button" data-state="hostile" aria-pressed="false">Hostile URL</button>
+    <button type="button" data-state="dropped" aria-pressed="false">Pending, requests dropped</button>
+    <button type="button" data-state="mobile" aria-pressed="false">Mobile, 390 wide</button>
+    <button type="button" data-state="dark" aria-pressed="false">Dark</button>
+  </nav>
+</header>
+
+<main class="viewer-stage">
+  <div class="viewer" id="viewer">
+    <header class="bar">
+      <div class="mark">RLC 4F2A-9C18</div>
+      <div class="identity">
+        <span class="filename">viewer-spec.html</span>
+        <span class="sub">Sandboxed content. Scripts run. Links need your confirmation.</span>
+      </div>
+    </header>
+
+    <section class="link-confirm" id="confirm" role="alertdialog" aria-labelledby="confirm-title" aria-describedby="confirm-dest confirm-note" hidden>
+      <div class="link-confirm-text">
+        <p class="link-confirm-title" id="confirm-title">This page asks to open a link in a new tab.</p>
+        <p class="link-confirm-dest" id="confirm-dest"><span class="scheme"></span><span class="host"></span><span class="rest"></span></p>
+        <p class="link-confirm-note" id="confirm-note">The new tab gets no link to this page. Check the address before you open it.</p>
+        <p class="link-confirm-status" id="confirm-status" aria-live="polite"></p>
+      </div>
+      <div class="link-confirm-actions">
+        <button type="button" class="action is-quiet" id="confirm-cancel">Cancel</button>
+        <button type="button" class="action is-primary" id="confirm-open" disabled>Open link</button>
+      </div>
+    </section>
+
+    <div class="usercontent-frame" role="document" aria-label="Relic content, sandboxed">
+      <article class="doc">
+        <h2>Viewer specification, section 4 (excerpt)</h2>
+        <p>The viewer keeps the decrypted document in a frame that cannot reach the network or the top window. Read the <a class="frame-link" href="#" data-link="spec">full section on the viewer boundary</a> for the reasoning.</p>
+        <p>Questions about a relic go to the press office: <a class="frame-link" href="#" data-link="press">write to press</a>.</p>
+        <p>The institute keeps its series in one place: <a class="frame-link" href="#" data-link="long">the institute catalogue</a>.</p>
+        <p>A German publisher lists its titles here: <a class="frame-link" href="#" data-link="idn">Bücher catalogue</a>.</p>
+        <p>Docs with an odd path, as an author might write them: <a class="frame-link" href="#" data-link="hostile">documentation index</a>.</p>
+      </article>
+    </div>
+    <p class="toast" id="toast" role="status" hidden></p>
+  </div>
+</main>
+
+<section class="mock-notes">
+  <h2>What the bar enforces</h2>
+  <ul>
+    <li>The frame's request carries only a destination. The viewer parses it with <code>new URL</code> and accepts <code>http:</code>, <code>https:</code> and <code>mailto:</code>. Credentials in the URL, relative URLs, and anything over 8 KiB are refused, and a refused request shows nothing.</li>
+    <li>The destination shown is the normalised address that will open, as literal text. Markup in it is text. The host is emphasised. An internationalised host is shown in punycode, as the browser will open it.</li>
+    <li>Open link is enabled one second after the bar appears, and only by a click the host receives as trusted. Cancel, Escape, a 30 second timeout, and a new render of the relic all close the bar.</li>
+    <li>One request is pending at a time. Requests that arrive while one is pending, or within two seconds of a close, are dropped and counted. The bar says how many.</li>
+    <li>The new tab is opened by the viewer with <code>noopener,noreferrer</code>. The frame never opens a tab.</li>
+  </ul>
+</section>
+
+<script>
+(() => {
+  const LINKS = {
+    spec: 'https://www.example.org/relic/spec/viewer#section-4',
+    press: 'mailto:press@example.org?subject=Relic%20question',
+    long: 'https://collections.research.institute-of-applied-archival-studies.example.org/series/1892/volume-3/chapter-twelve/index.html?ref=relic&page=4',
+    idn: 'https://bücher.example/katalog?q=relic',
+    hostile: 'https://docs.example.org/<img src=x onerror=alert(1)>?q="x"',
+  };
+  const ENABLE_MS = 1000;
+  const TIMEOUT_MS = 30000;
+  const COOLDOWN_MS = 2000;
+
+  const viewer = document.getElementById('viewer');
+  const confirm = document.getElementById('confirm');
+  const schemeEl = confirm.querySelector('.scheme');
+  const hostEl = confirm.querySelector('.host');
+  const restEl = confirm.querySelector('.rest');
+  const statusEl = document.getElementById('confirm-status');
+  const openBtn = document.getElementById('confirm-open');
+  const cancelBtn = document.getElementById('confirm-cancel');
+  const toast = document.getElementById('toast');
+
+  let pending = null;
+  let dropped = 0;
+  let cooldownUntil = 0;
+  let enableTimer = 0;
+  let dismissTimer = 0;
+  let statusTimer = 0;
+
+  // Destination text is built with textContent only. Nothing from a link reaches innerHTML.
+  function describe(href) {
+    const url = new URL(href);
+    if (url.protocol === 'mailto:') {
+      return { scheme: 'mailto:', host: url.pathname, rest: url.search };
+    }
+    return {
+      scheme: url.protocol + '//',
+      host: url.hostname,
+      rest: url.pathname + url.search + url.hash,
+    };
+  }
+
+  function renderStatus() {
+    if (pending === null) { statusEl.textContent = ''; return; }
+    if (dropped === 1) { statusEl.textContent = '1 more link request was ignored while this one is open.'; return; }
+    if (dropped > 1) { statusEl.textContent = dropped + ' more link requests were ignored while this one is open.'; return; }
+    statusEl.textContent = openBtn.disabled ? 'Open link becomes available after a moment.' : '';
+  }
+
+  function close() {
+    clearTimeout(enableTimer);
+    clearTimeout(dismissTimer);
+    if (pending !== null) cooldownUntil = Date.now() + COOLDOWN_MS;
+    pending = null;
+    confirm.hidden = true;
+    openBtn.disabled = true;
+    renderStatus();
+  }
+
+  function request(key) {
+    if (pending !== null || Date.now() < cooldownUntil) {
+      dropped += 1;
+      renderStatus();
+      return false;
+    }
+    const href = LINKS[key];
+    const parts = describe(href);
+    pending = key;
+    dropped = 0;
+    schemeEl.textContent = parts.scheme;
+    hostEl.textContent = parts.host;
+    restEl.textContent = parts.rest;
+    confirm.hidden = false;
+    openBtn.disabled = true;
+    enableTimer = setTimeout(() => { if (pending !== null) { openBtn.disabled = false; renderStatus(); } }, ENABLE_MS);
+    dismissTimer = setTimeout(close, TIMEOUT_MS);
+    renderStatus();
+    return true;
+  }
+
+  function setTheme(dark) { document.body.classList.toggle('theme-dark', dark); }
+  function setMobile(on) { viewer.classList.toggle('is-mobile', on); }
+
+  document.querySelectorAll('.frame-link').forEach((link) => {
+    link.addEventListener('click', (event) => {
+      event.preventDefault();
+      request(link.dataset.link);
+    });
+  });
+  cancelBtn.addEventListener('click', close);
+  openBtn.addEventListener('click', (event) => {
+    if (!event.isTrusted || openBtn.disabled || pending === null) return;
+    const href = LINKS[pending];
+    close();
+    toast.hidden = false;
+    toast.textContent = 'In the viewer this opens a new tab with no opener or referrer: ' + href;
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && pending !== null) close();
+  });
+
+  const states = {
+    request: () => { setMobile(false); setTheme(false); close(); cooldownUntil = 0; request('spec'); },
+    mailto: () => { setMobile(false); setTheme(false); close(); cooldownUntil = 0; request('press'); },
+    long: () => { setMobile(false); setTheme(false); close(); cooldownUntil = 0; request('long'); },
+    idn: () => { setMobile(false); setTheme(false); close(); cooldownUntil = 0; request('idn'); },
+    hostile: () => { setMobile(false); setTheme(false); close(); cooldownUntil = 0; request('hostile'); },
+    dropped: () => { setMobile(false); setTheme(false); close(); cooldownUntil = 0; request('spec'); request('press'); request('long'); },
+    mobile: () => { setTheme(false); setMobile(true); close(); cooldownUntil = 0; request('spec'); },
+    dark: () => { setMobile(false); setTheme(true); close(); cooldownUntil = 0; request('spec'); },
+  };
+  const buttons = document.querySelectorAll('.mock-controls button');
+  buttons.forEach((button) => {
+    button.addEventListener('click', () => {
+      buttons.forEach((other) => other.setAttribute('aria-pressed', String(other === button)));
+      toast.hidden = true;
+      states[button.dataset.state]();
+    });
+  });
+  // Opens in the request state so the picture is there without a click.
+  const named = [...buttons].find((b) => b.dataset.state === location.hash.slice(1));
+  (named || buttons[0]).click();
+})();
+</script>
+</body>
+</html>
