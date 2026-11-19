@@ -46,10 +46,15 @@ function needsEscape(code: number): boolean {
  * become visible `\uXXXX` escapes. Everything else is kept as written.
  */
 export function visibleText(text: string): string {
+  if (!NEEDS_ESCAPE.test(text)) return text;
   let out = '';
   for (const character of text) {
     const code = character.codePointAt(0) ?? 0;
     out += needsEscape(code)
+      ? `\\u${code.toString(16).padStart(4, '0')}`
+      : character;
+  }
+EOF_PLACEHOLDER
       ? `\\u${code.toString(16).padStart(4, '0')}`
       : character;
   }
