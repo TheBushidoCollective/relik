@@ -95,6 +95,9 @@ body {
   font-size: 0.86rem;
 }
 .link-confirm[hidden] { display: none; }
+.link-confirm-remember { display: flex; align-items: center; gap: 0.4rem; margin: 0.4rem 0 0; font-size: 0.8rem; color: var(--ink-soft); }
+.link-confirm-remembered { display: flex; align-items: center; flex-wrap: wrap; gap: 0.6rem; margin: 0.4rem 0; font-size: 0.8rem; color: var(--ink-soft); }
+.link-confirm-remembered[hidden] { display: none; }
 .link-confirm-text { flex: 1 1 18rem; min-width: 0; }
 .link-confirm-title { margin: 0 0 0.3rem; font-weight: 600; }
 .link-confirm-dest {
@@ -148,7 +151,7 @@ body {
 <header class="mock-head">
   <p class="mock-kicker">Frame hardening, F1 · clickable mock · not shipped</p>
   <h1>Link confirmation in Relic's own chrome</h1>
-  <p>A link inside the sandboxed frame asks the viewer to open it. The viewer shows where it goes, in its own chrome outside the frame. Nothing opens until the reader presses Open link on that bar. The frame's own click check is not trusted.</p>
+  <p>A link inside the sandboxed frame asks the viewer to open it. The viewer shows where it goes, in its own chrome outside the frame. Nothing opens until the reader presses Open link on that bar, or, after the reader has chosen Don't ask again for this relic, until the reader's own gesture asks for a link from that relic. The frame's own click check is not trusted.</p>
   <nav class="mock-controls" aria-label="Mock states">
     <button type="button" data-state="request" aria-pressed="false">Link requested</button>
     <button type="button" data-state="mailto" aria-pressed="false">mailto requested</button>
@@ -158,6 +161,7 @@ body {
     <button type="button" data-state="dropped" aria-pressed="false">Pending, requests dropped</button>
     <button type="button" data-state="mobile" aria-pressed="false">Mobile, 390 wide</button>
     <button type="button" data-state="dark" aria-pressed="false">Dark</button>
+    <button type="button" data-state="remembered" aria-pressed="false">Remembered for this relic</button>
   </nav>
 </header>
 
@@ -176,6 +180,7 @@ body {
         <p class="link-confirm-title" id="confirm-title">This page asks to open a link in a new tab.</p>
         <p class="link-confirm-dest" id="confirm-dest"><span class="scheme"></span><span class="host"></span><span class="rest"></span></p>
         <p class="link-confirm-note" id="confirm-note">The new tab gets no link to this page. Check the address before you open it.</p>
+        <label class="link-confirm-remember"><input type="checkbox" id="confirm-remember"> Don't ask again for this relic</label>
         <p class="link-confirm-status" id="confirm-status" aria-live="polite"></p>
       </div>
       <div class="link-confirm-actions">
@@ -183,6 +188,8 @@ body {
         <button type="button" class="action is-primary" id="confirm-open" disabled>Open link</button>
       </div>
     </section>
+
+    <p class="link-confirm-remembered" id="remembered-row" hidden><span>Links from this relic open without asking.</span> <button type="button" class="action is-quiet" id="turn-back-on">Turn back on</button></p>
 
     <div class="usercontent-frame" role="document" aria-label="Relic content, sandboxed">
       <article class="doc">
@@ -206,6 +213,8 @@ body {
     <li>Open link is enabled one second after the bar appears, and only by a click the host receives as trusted. Cancel, Escape, a 30 second timeout, and a new render of the relic all close the bar.</li>
     <li>One request is pending at a time. Requests that arrive while one is pending, or within two seconds of a close, are dropped and counted. The bar says how many.</li>
     <li>The new tab is opened by the viewer with <code>noopener,noreferrer</code>. The frame never opens a tab.</li>
+    <li>The reader can tick Don't ask again for this relic before pressing Open link. The choice is recorded only by that trusted click, for this relic and this version, in the viewer's own storage, which the frame cannot read.</li>
+    <li>While the choice stands, a link requested during a reader gesture opens without the bar, its read delay and its cooldown. The row under the bar offers Turn back on. A new version of the relic asks again, and a frame message can raise the bar but never sets or clears the choice.</li>
   </ul>
 </section>
 
@@ -311,6 +320,9 @@ body {
     if (event.key === 'Escape' && pending !== null) close();
   });
 
+  const rememberedRow = document.getElementById('remembered-row');
+  const setRemembered = (on) => { rememberedRow.hidden = !on; };
+  document.getElementById('turn-back-on').addEventListener('click', () => setRemembered(false));
   const states = {
     request: () => { setMobile(false); setTheme(false); close(); cooldownUntil = 0; request('spec'); },
     mailto: () => { setMobile(false); setTheme(false); close(); cooldownUntil = 0; request('press'); },
@@ -320,12 +332,14 @@ body {
     dropped: () => { setMobile(false); setTheme(false); close(); cooldownUntil = 0; request('spec'); request('press'); request('long'); },
     mobile: () => { setTheme(false); setMobile(true); close(); cooldownUntil = 0; request('spec'); },
     dark: () => { setMobile(false); setTheme(true); close(); cooldownUntil = 0; request('spec'); },
+    remembered: () => { setMobile(false); setTheme(false); close(); cooldownUntil = 0; setRemembered(true); },
   };
   const buttons = document.querySelectorAll('.mock-controls button');
   buttons.forEach((button) => {
     button.addEventListener('click', () => {
       buttons.forEach((other) => other.setAttribute('aria-pressed', String(other === button)));
       toast.hidden = true;
+      setRemembered(false);
       states[button.dataset.state]();
     });
   });
