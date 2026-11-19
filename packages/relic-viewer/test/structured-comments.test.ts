@@ -515,6 +515,54 @@ async function browserCases(
       );
     }
   );
+  await check(
+    'an output comment control is not clipped by its own block',
+    async () => {
+      const withOutput = JSON.stringify({
+        nbformat: 4,
+        nbformat_minor: 5,
+        metadata: {},
+        cells: [
+          {
+            cell_type: 'code',
+            execution_count: 1,
+            metadata: {},
+            source: ['print(1)\n'],
+            outputs: [{ output_type: 'stream', name: 'stdout', text: ['1\n'] }],
+          },
+        ],
+      });
+      const { host } = await mountRelic(
+        viewOf(
+          'output.ipynb',
+          'application/x-ipynb+json',
+          'notebook',
+          withOutput
+        )
+      );
+      await until(
+        'the output control draws',
+        () => host.querySelector('.nb-out .nb-tools .nb-comment') !== null
+      );
+      // A reader's hover reveals the toolbar. The test has no pointer, so the
+      // reveal is set directly, as the hover rule sets it.
+      const tools = host.querySelector<HTMLElement>('.nb-out .nb-tools');
+      truth(tools, 'the output toolbar is drawn');
+      tools.style.display = 'flex';
+      const control = tools.querySelector<HTMLElement>('.nb-comment');
+      truth(control, 'the output comment control is drawn');
+      control.scrollIntoView({ block: 'center' });
+      const box = control.getBoundingClientRect();
+      const centre = document.elementFromPoint(
+        box.left + box.width / 2,
+        box.top + box.height / 2
+      );
+      truth(
+        centre !== null && control.contains(centre),
+        `the centre of the output control is the control, not ${centre?.className ?? 'nothing'}`
+      );
+    }
+  );
 
   await check(
     'a legacy quote is placed by the tree and never wrapped in its rows',
@@ -773,7 +821,7 @@ describe('structured views: the comment path in the browser', () => {
           clearTimeout(stallTimer);
         }
         if (result.error) throw new Error(result.error);
-        expect(result.passed).toHaveLength(8);
+        expect(result.passed).toHaveLength(9);
       } finally {
         browser.kill('SIGKILL');
         if (browser.exitCode === null && browser.signalCode === null) {

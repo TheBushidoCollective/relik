@@ -215,6 +215,12 @@
   display: none;
 }
 
+/* An output block clips what it draws above its top edge (overflow-x: auto also
+   clips the y axis), so an output's toolbar sits inside the block, not above it. */
+.nb-out > .nb-tools {
+  top: 0.2rem;
+}
+
 .nb-box:hover > .nb-tools,
 .nb-box:focus-within > .nb-tools,
 .nb-out:hover > .nb-tools,
