@@ -7,6 +7,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./comments": "./src/comments.ts",
+    "./csv": "./src/csv.ts",
     "./cover": "./src/cover.ts",
     "./mnemonic": "./src/mnemonic.ts",
     "./presence": "./src/presence.ts",

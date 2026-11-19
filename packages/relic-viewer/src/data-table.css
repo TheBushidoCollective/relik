@@ -1,0 +1,356 @@
+/* The table view (plan A1). Loaded once, when a table or a table notice is drawn. */
+
+.structured-notice {
+  margin: 0 0 0.5rem;
+  padding: 0.4rem 0.6rem;
+  border-left: 3px solid var(--rule-strong, #888);
+  font: 0.84rem/1.45 var(--sans, system-ui, sans-serif);
+  color: var(--ink-soft, #555);
+}
+
+.dt {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  min-width: 0;
+  font: 0.84rem/1.4 var(--sans, system-ui, sans-serif);
+  color: var(--ink, #111);
+}
+
+.dt-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.9rem;
+}
+
+.dt-summary {
+  margin: 0;
+  color: var(--ink-soft, #555);
+  font-variant-numeric: tabular-nums;
+}
+
+.dt-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  color: var(--ink-soft, #555);
+}
+
+.dt-find {
+  min-width: 12rem;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--rule-strong, #888);
+  font: inherit;
+  background: var(--surface, #fff);
+  color: inherit;
+}
+
+.dt-find-count {
+  color: var(--ink-soft, #555);
+  font-variant-numeric: tabular-nums;
+}
+
+.dt-notice {
+  margin: 0;
+  padding: 0.35rem 0.5rem;
+  border-left: 3px solid var(--rule-strong, #888);
+  color: var(--ink-soft, #555);
+}
+
+.dt-grid {
+  position: relative;
+  height: min(70vh, 48rem);
+  min-height: 12rem;
+  overflow: auto;
+  border: 1px solid var(--rule-strong, #888);
+  background: var(--surface, #fff);
+  overscroll-behavior: contain;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.dt-grid ::selection {
+  background: transparent;
+}
+
+.dt-head,
+.dt-row {
+  display: grid;
+  grid-template-columns: var(--dt-tracks);
+  box-sizing: border-box;
+}
+
+.dt-head {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  height: 36px;
+  background: var(--ground, #f6f6f3);
+  border-bottom: 1px solid var(--rule-strong, #888);
+}
+
+.dt-body {
+  position: relative;
+}
+
+.dt-row {
+  position: absolute;
+  left: 0;
+  height: 28px;
+}
+
+.dt-corner,
+.dt-rn {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0 0.4rem;
+  background: var(--ground, #f6f6f3);
+  color: var(--ink-soft, #555);
+  font: 0.7rem/1 var(--mono, ui-monospace, monospace);
+  border-right: 1px solid var(--rule, #ddd);
+}
+
+.dt-rn {
+  height: 28px;
+  box-sizing: border-box;
+}
+
+.dt-hcell,
+.dt-cell {
+  position: relative;
+  min-width: 0;
+  height: 28px;
+  box-sizing: border-box;
+  padding: 0 0.55rem;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  overflow: hidden;
+  border-right: 1px solid var(--rule, #ddd);
+  border-bottom: 1px solid var(--rule, #ddd);
+  white-space: nowrap;
+  cursor: cell;
+}
+
+.dt-hcell {
+  height: 36px;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 0.05rem;
+  font-weight: 600;
+  cursor: pointer;
+  background: var(--ground, #f6f6f3);
+}
+
+.dt-letter {
+  font: 400 0.6rem/1 var(--mono, ui-monospace, monospace);
+  color: var(--ink-soft, #555);
+  letter-spacing: 0.06em;
+}
+
+.dt-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dt-blank {
+  color: var(--ink-soft, #555);
+  font-style: italic;
+  opacity: 0.7;
+}
+
+.dt-cell.is-num {
+  justify-content: flex-end;
+  font-family: var(--mono, ui-monospace, monospace);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.78rem;
+}
+
+.dt-hcell.is-num {
+  align-items: flex-end;
+}
+
+.dt-sort {
+  position: absolute;
+  right: 0.5rem;
+  top: 50%;
+  width: 0;
+  height: 0;
+  transform: translateY(-50%);
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-bottom: 5px solid var(--ink, #111);
+}
+
+.dt-sort[data-dir='desc'] {
+  transform: translateY(-50%) rotate(180deg);
+}
+
+.dt-hc-comment {
+  position: absolute;
+  right: 1.1rem;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 1.1rem;
+  height: 1.1rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink-soft, #555);
+  opacity: 0;
+  cursor: pointer;
+}
+
+.dt-hcell:hover .dt-hc-comment,
+.dt-hcell:focus-within .dt-hc-comment,
+.dt-hcell.is-sel .dt-hc-comment {
+  opacity: 1;
+}
+
+.dt-hc-comment::before {
+  content: '';
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 1.5px solid currentColor;
+  border-radius: 3px;
+  box-sizing: border-box;
+}
+
+.dt-cell.is-marked {
+  background: color-mix(in srgb, var(--patina, #3a7d6b) 12%, var(--surface, #fff));
+}
+
+.dt-cell.is-range {
+  background: color-mix(in srgb, var(--patina, #3a7d6b) 7%, var(--surface, #fff));
+}
+
+.dt-cell.is-marked::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 6px;
+  height: 6px;
+  background: var(--patina, #3a7d6b);
+}
+
+.dt-cell[data-marks]::after {
+  width: auto;
+  height: auto;
+  padding: 0 0.2rem;
+  font: 600 0.6rem/1.2 var(--mono, ui-monospace, monospace);
+  color: var(--surface, #fff);
+  content: attr(data-marks);
+}
+
+.dt-cell.mk-t {
+  border-top: 2px solid var(--patina, #3a7d6b);
+}
+
+.dt-cell.mk-b {
+  border-bottom: 2px solid var(--patina, #3a7d6b);
+}
+
+.dt-cell.mk-l {
+  border-left: 2px solid var(--patina, #3a7d6b);
+}
+
+.dt-cell.mk-r {
+  border-right: 2px solid var(--patina, #3a7d6b);
+}
+
+.dt-cell.is-find {
+  background: color-mix(in srgb, var(--oxide, #b5562b) 14%, var(--surface, #fff));
+}
+
+.dt-cell.is-find-cur {
+  background: color-mix(in srgb, var(--oxide, #b5562b) 30%, var(--surface, #fff));
+}
+
+.dt-cell.is-sel {
+  background: color-mix(in srgb, var(--patina, #3a7d6b) 18%, var(--surface, #fff));
+}
+
+.dt-cell.is-active,
+.dt-hcell.is-active {
+  outline: 2px solid var(--patina-ink, #1f4f43);
+  outline-offset: -2px;
+}
+
+.dt-cell:focus-visible,
+.dt-hcell:focus-visible {
+  outline: 2px solid var(--patina-ink, #1f4f43);
+  outline-offset: -2px;
+}
+
+.dt-cellbar {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 0.25rem 0.75rem;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--rule-strong, #888);
+  background: var(--surface, #fff);
+}
+
+.dt-cellbar > .dt-addr {
+  margin: 0;
+  font: 600 0.82rem/1.3 var(--mono, ui-monospace, monospace);
+  color: var(--patina-ink, #1f4f43);
+  white-space: nowrap;
+}
+
+.dt-cellbar > .dt-sub,
+.dt-cellbar > .dt-hint {
+  margin: 0;
+  grid-column: 1 / -1;
+  color: var(--ink-soft, #555);
+}
+
+.dt-cellbar > .dt-value {
+  margin: 0;
+  max-height: 9rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: 0.8rem/1.4 var(--mono, ui-monospace, monospace);
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.dt-cellbar > .dt-copy {
+  justify-self: end;
+  padding: 0.2rem 0.6rem;
+  border: 1px solid var(--rule-strong, #888);
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+@media (max-width: 480px) {
+  .dt-grid {
+    height: min(60vh, 32rem);
+  }
+
+  .dt-cellbar {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 10;
+    max-height: 45vh;
+    overflow: auto;
+    border-radius: 12px 12px 0 0;
+    box-shadow: 0 -8px 24px rgb(0 0 0 / 0.18);
+  }
+}
