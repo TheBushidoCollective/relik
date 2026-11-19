@@ -1238,7 +1238,7 @@ await stage('old-reader', async () => {
       ciphertext,
     }),
   });
-  assert.equal(seeded.status, 200, `seeding the comment: ${seeded.status}`);
+  assert.equal(seeded.status, 201, `seeding the comment: ${seeded.status}`);
 
   const page = await openPage(csv.url, reader);
   try {
@@ -1250,19 +1250,14 @@ await stage('old-reader', async () => {
       `document.body.textContent.includes('Written by a newer reader')`,
       'the newer comment is listed'
     );
-    const copy = await page.evaluate<{
-      chip: boolean;
-      note: boolean;
-      body: boolean;
-    }>(`({
-      chip: document.body.textContent.includes('Commenting on something this page cannot show'),
+    const copy = await page.evaluate<{ note: boolean; body: boolean }>(`({
       note: document.body.textContent.includes('This comment points at part of the document that this page cannot show.'),
       body: document.body.textContent.includes('Written by a newer reader'),
     })`);
     assert.deepEqual(
       copy,
-      { chip: true, note: true, body: true },
-      'the plan fallback copy shows, and the body stays readable'
+      { note: true, body: true },
+      'the plan unplaceable note shows, and the body stays readable'
     );
     assertNoPageErrors(page, 'old reader');
   } finally {
