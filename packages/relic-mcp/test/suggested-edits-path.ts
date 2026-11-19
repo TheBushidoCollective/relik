@@ -1068,7 +1068,7 @@ try {
   await step(8, async () => {
     const fixture = await publish(
       join(scratch, 'lifecycle.md'),
-      '# Lifecycle\n\nClose target.\n\nRetry target.\n'
+      '# Lifecycle\n\nClose target.\n\nRetry target.\n\nHide target.\n'
     );
     const prior = writesFor(fixture.id, 'POST');
     const retry = await browserInstance.open(fixture.url, tokenA);
@@ -1103,24 +1103,62 @@ try {
     console.log(
       'STEP 8 RETRY PROVEN one blocked request, one stored comment after Retry'
     );
+    // The viewer's pagehide handler must send the pre-sealed draft as one
+    // keepalive POST. Dispatch the event in the live page so the fetch trace
+    // binding is still delivered; a page being torn down cannot report itself.
+    const hiding = await browserInstance.open(fixture.url, tokenA);
+    await suggesting(hiding);
+    await select(hiding, 'article.prose', 'Hide target');
+    await input(hiding, 'hide replacement');
+    await hiding.wait("document.querySelector('ins.is-draft')", 'hide draft');
+    await hiding.evaluate(
+      "window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: false })), true"
+    );
+    await until(
+      async () => writesFor(fixture.id, 'POST') === prior + 2,
+      'pagehide POST'
+    );
+    const hidden = hiding.trace.filter(
+      (entry) =>
+        entry.method === 'POST' &&
+        entry.url.includes(`/api/relics/${fixture.id}/comments`)
+    );
+    assert.equal(hidden.length, 1, 'pagehide sent more than one POST');
+    assert.equal(hidden[0]?.keepalive, true, 'pagehide POST was not keepalive');
+    console.log(
+      'STEP 8 PAGEHIDE PROVEN one keepalive POST from the pagehide handler, one stored comment'
+    );
+
+    // The real lifecycle. The harness pauses every request over the page's own
+    // DevTools session (Fetch.enable), and Page.close destroys that session, so
+    // a keepalive request sent while the page closes would sit paused and be
+    // dropped by a real Chrome. Turn interception off for this page first. The
+    // server is the witness: it must store exactly one comment.
     const closing = await browserInstance.open(fixture.url, tokenA);
     await suggesting(closing);
     await select(closing, 'article.prose', 'Close target');
     await input(closing, 'close replacement');
     await closing.wait("document.querySelector('ins.is-draft')", 'close draft');
+    await closing.send('Fetch.disable');
     await closing.send('Page.close');
     await until(
-      async () => writesFor(fixture.id, 'POST') === prior + 2,
+      async () => writesFor(fixture.id, 'POST') === prior + 3,
       'page-close POST'
     );
-    const sent = closing.trace.filter(
-      (entry) =>
-        entry.method === 'POST' &&
-        entry.url.includes(`/api/relics/${fixture.id}/comments`)
+    await Bun.sleep(1500);
+    assert.equal(
+      writesFor(fixture.id, 'POST'),
+      prior + 3,
+      'closing stored more than one comment'
     );
-    assert.equal(sent.length, 1, 'closing sent more than one POST');
-    assert.equal(sent[0]?.keepalive, true, 'close POST was not keepalive');
-    return 'Page.close sent one keepalive POST; an intercepted failure retried to exactly one stored comment';
+    const closed = await plaintextRows(fixture.id, fixture.key);
+    assert.equal(
+      closed.filter(
+        (entry) => entry.plain.suggestion?.replacement === 'close replacement'
+      ).length,
+      1
+    );
+    return 'pagehide sent one keepalive POST; a real Page.close stored exactly one comment; an intercepted failure retried to exactly one stored comment';
   });
 
   await step(9, async () => {
