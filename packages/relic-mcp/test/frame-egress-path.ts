@@ -254,6 +254,7 @@ const NAV_IDS = [
   'nav:parent-location',
   'nav:form-submit',
   'nav:form-requestSubmit',
+  'nav:case-f4-javascript-url',
 ] as const;
 
 const MAIN_IDS = ['rtc:shim-realm', ...MECH_IDS, ...NET_IDS] as const;
@@ -420,6 +421,7 @@ CH['nav:top-location'] = function (id) { setTimeout(function () { top.location.h
 CH['nav:parent-location'] = function (id) { setTimeout(function () { parent.location.href = u(id); }, 200); };
 CH['nav:form-submit'] = function (id, box) { var f = document.createElement('form'); f.method = 'post'; f.action = u(id); box.appendChild(f); setTimeout(function () { f.submit(); }, 200); };
 CH['nav:form-requestSubmit'] = function (id, box) { var f = document.createElement('form'); f.method = 'post'; f.action = u(id); box.appendChild(f); setTimeout(function () { f.requestSubmit(); }, 200); };
+CH['nav:case-f4-javascript-url'] = function (id) { setTimeout(function () { location.href = 'javascript:' + JSON.stringify(nestedHtml(id)); }, 200); };
 CH['write:markup'] = function () {};
 CH['write:coerced'] = function () {};
 CH['write:writeln-coerced'] = function () {};
