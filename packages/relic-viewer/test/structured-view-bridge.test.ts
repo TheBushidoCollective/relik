@@ -252,12 +252,12 @@ describe('the cell, path and cue adapters', () => {
     );
   });
 
-  test('a cue label gives the timecode, and a span gives both ends', () => {
+  test('a cue label gives the subtitle clock, and a span gives both ends', () => {
     expect(cueAnchorAdapter.label({ kind: 'time', t: 3725 } as never)).toBe(
-      'Commenting at 1:02:05'
+      'Commenting on the subtitle at 01:02:05.000'
     );
     expect(
       cueAnchorAdapter.label({ kind: 'time', t: 3, t_end: 9.5 } as never)
-    ).toBe('Commenting from 0:00:03 to 0:00:09');
+    ).toBe('Commenting on subtitles from 00:00:03.000 to 00:00:09.500');
   });
 });

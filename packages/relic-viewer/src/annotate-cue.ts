@@ -4,6 +4,8 @@
  *
  * The media `timeAdapter` accepts only a media element, so it refuses a cue
  * list, and this adapter is registered after it to take the case it refuses.
+ * Its chip says "subtitle", not "moment", because a cue is a line of text with
+ * its own start and end.
  */
 
 import type { CommentAnchor } from '@relic/format';
@@ -12,14 +14,16 @@ import { drawnStructuredView } from './structured-view-bridge.ts';
 
 type TimeAnchor = Extract<CommentAnchor, { kind: 'time' }>;
 
-/** `h:mm:ss`, for a label. Whole seconds: a cue list is read by its start. */
-function timecode(seconds: number): string {
-  const whole = Math.floor(seconds);
-  const hours = Math.floor(whole / 3600);
-  const minutes = Math.floor((whole % 3600) / 60);
-  const secs = whole % 60;
-  const pad = (value: number): string => String(value).padStart(2, '0');
-  return `${hours}:${pad(minutes)}:${pad(secs)}`;
+/** `hh:mm:ss.mmm`, the clock a subtitle file is read in. */
+export function subtitleClock(seconds: number): string {
+  const millis = Math.round(seconds * 1000);
+  const hours = Math.floor(millis / 3_600_000);
+  const minutes = Math.floor((millis % 3_600_000) / 60_000);
+  const secs = Math.floor((millis % 60_000) / 1000);
+  const ms = millis % 1000;
+  const pad = (value: number, width: number): string =>
+    String(value).padStart(width, '0');
+  return `${pad(hours, 2)}:${pad(minutes, 2)}:${pad(secs, 2)}.${pad(ms, 3)}`;
 }
 
 export const cueAnchorAdapter: AnchorAdapter<'time'> = {
@@ -27,8 +31,8 @@ export const cueAnchorAdapter: AnchorAdapter<'time'> = {
 
   label(anchor: TimeAnchor): string {
     return anchor.t_end === undefined
-      ? `Commenting at ${timecode(anchor.t)}`
-      : `Commenting from ${timecode(anchor.t)} to ${timecode(anchor.t_end)}`;
+      ? `Commenting on the subtitle at ${subtitleClock(anchor.t)}`
+      : `Commenting on subtitles from ${subtitleClock(anchor.t)} to ${subtitleClock(anchor.t_end)}`;
   },
 
   supports(surface: AnchorSurface): boolean {
