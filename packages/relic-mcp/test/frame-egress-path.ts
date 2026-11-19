@@ -238,6 +238,7 @@ const WRITE_IDS = [
   'write:markup',
   'write:coerced',
   'write:writeln-coerced',
+  'write:case-f3-split-calls',
 ] as const;
 
 const NAV_IDS = [
@@ -449,6 +450,10 @@ document.write(coerced(frameMarkup('write:coerced')));
 post({ type: 'probe:result', result: { id: 'write:coerced', outcome: 'started', error: null } });
 document.writeln(coerced(frameMarkup('write:writeln-coerced')));
 post({ type: 'probe:result', result: { id: 'write:writeln-coerced', outcome: 'started', error: null } });
+document.write('<ifr');
+document.write('ame srcdoc="' + esc(nestedHtml('write:case-f3-split-calls')) + '"></ifr');
+document.write('ame>');
+post({ type: 'probe:result', result: { id: 'write:case-f3-split-calls', outcome: 'started', error: null } });
 setTimeout(function () { post({ type: 'probe:done' }); }, 3000);
 `;
 
