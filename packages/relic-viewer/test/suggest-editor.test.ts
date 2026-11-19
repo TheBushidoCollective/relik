@@ -42,7 +42,8 @@ function findHeadlessShell(): string | undefined {
 // MutationObserver and the real adapter, not an approximation of those APIs.
 async function browserCases(
   editorModule: typeof EditorModule,
-  markdown: typeof MarkdownModule
+  markdown: typeof MarkdownModule,
+  progress: (name: string) => Promise<unknown>
 ): Promise<string[]> {
   const passed: string[] = [];
   const eq = (actual: unknown, expected: unknown, label: string): void => {
@@ -141,6 +142,7 @@ async function browserCases(
     run: () => void | Promise<void>
   ): Promise<void> {
     try {
+      await progress(name);
       await run();
       passed.push(name);
     } catch (error) {
@@ -627,6 +629,11 @@ describe('suggestion editor in the browser', () => {
       const modules = new Map<string, string>();
       for (const output of build.outputs)
         modules.set(`/${output.path.split('/').at(-1)}`, await output.text());
+      // What the server saw, what the page said it had started, and the end of
+      // the browser's own stderr: the evidence a hang needs to be explained.
+      const seen: string[] = [];
+      const started: string[] = [];
+      const stderr = { tail: '' };
       const { promise, resolve: report } = Promise.withResolvers<{
         passed?: string[];
         error?: string;
@@ -634,7 +641,7 @@ describe('suggestion editor in the browser', () => {
       const page = `<!doctype html><meta charset="utf-8"><script type="module">
       import * as editor from '/suggest-editor.js';
       import * as markdown from '/markdown-source.js';
-      try { const passed = await (${browserCases.toString()})(editor, markdown); await fetch('/result', {method: 'POST', body: JSON.stringify({passed})}); }
+      try { const passed = await (${browserCases.toString()})(editor, markdown, (name) => fetch('/progress', {method: 'POST', body: name}).catch(() => {})); await fetch('/result', {method: 'POST', body: JSON.stringify({passed})}); }
       catch (error) { await fetch('/result', {method: 'POST', body: JSON.stringify({error: error && (error.stack || error.message) || String(error)})}); }
     </script>`;
       const server = Bun.serve({
@@ -642,6 +649,11 @@ describe('suggestion editor in the browser', () => {
         port: 0,
         async fetch(request) {
           const url = new URL(request.url);
+          seen.push(`${request.method} ${url.pathname}`);
+          if (url.pathname === '/progress') {
+            started.push(await request.text());
+            return new Response('ok');
+          }
           if (url.pathname === '/result') {
             report(
               (await request.json()) as { passed?: string[]; error?: string }
@@ -689,8 +701,11 @@ describe('suggestion editor in the browser', () => {
           '--mute-audio',
           `http://127.0.0.1:${server.port}/`,
         ],
-        { stdio: 'ignore' }
+        { stdio: ['ignore', 'ignore', 'pipe'] }
       );
+      browser.stderr?.on('data', (chunk: Buffer) => {
+        stderr.tail = (stderr.tail + chunk.toString('utf8')).slice(-4096);
+      });
       try {
         const exited = Promise.withResolvers<never>();
         browser.once('error', exited.reject);
@@ -699,7 +714,28 @@ describe('suggestion editor in the browser', () => {
             new Error(`headless browser exited before reporting: ${code}`)
           )
         );
-        const result = await Promise.race([promise, exited.promise]);
+        // A real timer on purpose: this drives a real browser, and a hang has to
+        // fail with evidence before bun's own 90 s test limit hides it.
+        const stalled = Promise.withResolvers<never>();
+        const stallTimer = setTimeout(() => {
+          stalled.reject(
+            new Error(
+              `the page did not report within 60 s. requests seen by the server: ` +
+                `${JSON.stringify(seen)}; cases started: ${JSON.stringify(started)}; ` +
+                `browser stderr tail: ${JSON.stringify(stderr.tail)}`
+            )
+          );
+        }, 60_000);
+        let result: { passed?: string[]; error?: string };
+        try {
+          result = await Promise.race([
+            promise,
+            exited.promise,
+            stalled.promise,
+          ]);
+        } finally {
+          clearTimeout(stallTimer);
+        }
         if (result.error) throw new Error(result.error);
         expect(result.passed).toHaveLength(16);
       } finally {
