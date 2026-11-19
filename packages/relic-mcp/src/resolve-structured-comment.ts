@@ -10,7 +10,7 @@ import type { CommentRecord } from './comments.ts';
 import {
   type CellResolution,
   type PathResolution,
-  StructuredReader,
+  type StructuredReader,
   structuredReaderFor,
 } from './resolve-structured.ts';
 
