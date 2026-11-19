@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
-<title>Relic frame hardening: link confirmation (mock)</title>
+<title>Relic frame hardening: confirmations (mock)</title>
 <style>
 /* Tokens copied from packages/relic-viewer/src/styles.css so the mock is the real chrome. */
 :root {
@@ -148,6 +148,164 @@ body {
   .link-confirm-actions .action { flex: 1 1 auto; padding: 0.45rem 0.6rem; }
   .doc { padding: 1rem; }
 }
+
+/* ---------- F2: the same choice on the other confirmations ----------
+   Every new control is 2.75rem (44px) tall at every width. The stage is one
+   grid cell holding the view, the scrim and the dialog, so a tall dialog
+   grows the stage instead of being clipped by it. */
+.f2-rule { max-width: 58rem; margin: 0 auto; padding: 0 1rem; }
+.f2-rule hr { margin: 0.5rem 0 0; border: 0; border-top: 1px solid var(--rule-strong); }
+.cf-viewer { position: relative; container-type: inline-size; }
+.cf-viewer .bar { position: relative; }
+.cf-viewer .filename { overflow-wrap: anywhere; }
+.cf-icon { width: 14px; height: 14px; flex: none; fill: currentColor; }
+.cf-more-wrap { position: relative; display: flex; margin-left: auto; border-left: 1px solid var(--rule); }
+.cf-more {
+  display: inline-flex; align-items: center; justify-content: center; gap: 0.45rem; min-height: 2.75rem; min-width: 2.75rem; padding: 0 0.9rem;
+  background: transparent; color: var(--ink); border: 0; font: inherit; font-size: 0.82rem; cursor: pointer;
+}
+.cf-more:hover, .cf-more[aria-expanded="true"] { background: var(--ground); color: var(--patina-ink); }
+.cf-menu {
+  position: absolute; top: calc(100% + 0.3rem); right: 0.3rem; z-index: 20;
+  width: max-content; min-width: 15rem; max-width: calc(100cqi - 0.6rem);
+  background: var(--surface); border: 1px solid var(--rule-strong); box-shadow: 0 6px 18px rgb(0 0 0 / 18%);
+}
+.cf-menu[hidden] { display: none; }
+.cf-item {
+  display: flex; align-items: center; gap: 0.55rem; width: 100%; min-height: 2.75rem; padding: 0.6rem 0.85rem;
+  background: none; color: var(--ink); border: 0; font: inherit; font-size: 0.84rem; text-align: left; cursor: pointer;
+}
+.cf-item + .cf-item { border-top: 1px solid var(--rule); }
+.cf-item:hover { background: var(--ground); color: var(--patina-ink); }
+.cf-badge {
+  margin-left: auto; min-width: 1.6rem; padding: 0 0.4rem; text-align: center;
+  font: 600 0.72rem/1.35rem var(--mono); color: var(--patina-ink); border: 1px solid var(--patina);
+}
+.cf-badge[hidden] { display: none; }
+
+.cf-body { display: grid; min-height: 31rem; background: var(--ground); }
+.cf-body > * { grid-area: 1 / 1; min-width: 0; }
+.cf-scrim { z-index: 10; background: rgb(16 19 20 / 45%); }
+.cf-scrim[hidden], .cf-layer[hidden], .cf-dialog[hidden] { display: none; }
+.cf-dialog { position: relative; z-index: 11; color: var(--ink); background: var(--surface); }
+
+.cf-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 0.45rem;
+  min-height: 2.75rem; padding: 0.5rem 0.85rem;
+  background: none; color: var(--ink); border: 1px solid var(--rule-strong);
+  font: inherit; font-size: 0.82rem; cursor: pointer; white-space: nowrap;
+}
+.cf-btn:hover { background: var(--ground); color: var(--patina-ink); }
+.cf-btn.is-primary { background: var(--patina); border-color: var(--patina); color: var(--surface); }
+.cf-btn.is-primary:hover { background: var(--patina-ink); border-color: var(--patina-ink); }
+.cf-btn.is-danger { background: var(--oxide); border-color: var(--oxide); color: var(--surface); }
+.cf-btn.is-danger:hover { background: color-mix(in srgb, var(--oxide) 78%, var(--ink)); }
+.cf-btn.is-quiet { border-color: transparent; color: var(--ink-soft); }
+.cf-btn:disabled { color: var(--ink-soft); background: var(--ground); border-color: var(--rule); cursor: default; }
+.cf-remember { min-height: 2.75rem; margin: 0; cursor: pointer; }
+.cf-remember input, .cf-pick input { width: 1.05rem; height: 1.05rem; margin: 0; accent-color: var(--patina); }
+.cf-viewer :is(button, input, [tabindex="-1"]):focus-visible,
+#cf-states button:focus-visible { outline: 2px solid var(--patina); outline-offset: 2px; }
+.cf-item:focus-visible { outline-offset: -2px !important; }
+
+/* The load plate, as the viewer paints it while the large-open dialog waits. */
+.cf-plate { display: grid; place-items: start center; padding: 3rem 1rem; }
+.cf-card { width: min(30rem, 100%); padding: 1.4rem 1.5rem; background: var(--surface); border: 1px solid var(--rule); border-top: 3px solid var(--patina); }
+.cf-phase { margin: 0; font-size: 1.15rem; font-weight: 600; }
+.cf-meter { position: relative; height: 0.375rem; margin: 1rem 0 0.85rem; overflow: hidden; background: var(--ground); border: 1px solid var(--rule-strong); }
+.cf-meter::before { content: ""; position: absolute; inset: 0; background: var(--patina); transform: scaleX(var(--load-fraction, 0)); transform-origin: left center; transition: transform 300ms linear; }
+.cf-meter:not([aria-valuenow])::before { background: repeating-linear-gradient(135deg, var(--rule-strong) 0 1px, transparent 1px 5px); transform: none; }
+.cf-transfer { margin: 0; min-height: 1.25rem; font: 0.78rem/1.25rem var(--mono); letter-spacing: 0.02em; }
+
+/* main.ts confirmLargeOpen: dialog.large-open */
+.cf-large { justify-self: center; align-self: end; width: min(32rem, calc(100% - 2rem)); margin-bottom: 3rem; padding: 1.5rem; border: 1px solid var(--rule-strong); box-shadow: 0 10px 30px rgb(0 0 0 / 28%); }
+.cf-large h1 { margin: 0; font: 1.4rem/1.3 var(--serif); overflow-wrap: anywhere; }
+.cf-large .cf-detail { margin: 0.5rem 0 1.25rem; color: var(--ink-soft); font: 0.8rem/1.5 var(--mono); overflow-wrap: anywhere; }
+.cf-large-actions { display: flex; justify-content: flex-end; align-items: center; flex-wrap: wrap; gap: 0.5rem; }
+.cf-large-actions .cf-remember { margin-right: auto; }
+
+/* The ready view: the relic, and its comment thread. */
+.cf-ready { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr); align-items: start; }
+.cf-media { margin: 1.25rem; aspect-ratio: 16 / 9; display: flex; align-items: flex-end; padding: 0.75rem; background: radial-gradient(120% 90% at 70% 20%, #2b4247 0%, #16232a 55%, #0b1114 100%); color: #c9d4d1; font: 0.75rem var(--mono); }
+.cf-thread { align-self: stretch; padding: 1rem 1.25rem 1.5rem; background: var(--surface); border-left: 1px solid var(--rule); }
+.cf-thread-title { margin: 0 0 0.6rem; font-size: 0.95rem; }
+.cf-strip { display: flex; align-items: center; flex-wrap: wrap; gap: 0.2rem 0.6rem; margin: 0 0 0.6rem; padding: 0.35rem 0 0.35rem 0.7rem; border-left: 2px solid var(--oxide); background: var(--ground); font-size: 0.8rem; color: var(--ink-soft); }
+.cf-strip[hidden] { display: none; }
+.cf-strip span { flex: 1 1 12rem; }
+.cf-outcome { margin: 0 0 0.6rem; min-height: 1.2em; font-size: 0.8rem; color: var(--ink-soft); }
+.cf-c { padding: 0.75rem 0; border-top: 1px solid var(--rule); }
+.cf-c-head { margin: 0 0 0.25rem; font-size: 0.8rem; }
+.cf-c-author { font-weight: 600; }
+.cf-c-meta { color: var(--ink-soft); font-family: var(--mono); font-size: 0.72rem; margin-left: 0.4rem; }
+.cf-c-body { margin: 0; font-family: var(--serif); font-size: 0.95rem; line-height: 1.5; }
+.cf-c-tools { display: flex; justify-content: flex-end; margin-top: 0.3rem; }
+
+/* main.ts confirmDelete: dialog.share-panel.comment-delete-dialog */
+.cf-side { justify-self: end; align-self: start; width: min(28rem, 100%); border: 1px solid var(--rule-strong); border-top: 2px solid var(--patina); border-right: 0; box-shadow: 0 6px 18px rgb(0 0 0 / 18%); }
+.cf-head { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; min-height: 2.75rem; padding: 0 0.4rem 0 1.25rem; border-bottom: 1px solid var(--rule); }
+.cf-title { margin: 0; font-size: 0.95rem; font-weight: 600; }
+.cf-side-body { display: grid; gap: 0.6rem; padding: 1rem 1.25rem 1.25rem; }
+.cf-side-body p { margin: 0; }
+.cf-quote-author { font-size: 0.8rem; font-weight: 600; }
+.cf-quote { padding-left: 0.6rem; border-left: 1px solid var(--rule); font-family: var(--serif); }
+.cf-note { color: var(--ink-soft); font-size: 0.86rem; line-height: 1.55; }
+.cf-tools { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 0.5rem; padding-top: 0.2rem; }
+.cf-close { width: 2.75rem; height: 2.75rem; display: inline-grid; place-items: center; background: none; border: 0; color: var(--ink-soft); cursor: pointer; }
+.cf-close:hover { color: var(--patina-ink); background: var(--ground); }
+
+/* The Skipped confirmations list. */
+.cf-skip-list { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--rule); }
+.cf-skip-row { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 0.5rem 0.9rem; padding: 0.75rem 0; border-bottom: 1px solid var(--rule); }
+.cf-skip-text { flex: 1 1 14rem; min-width: 0; }
+.cf-skip-text p { margin: 0; }
+.cf-skip-kind { font-weight: 600; font-size: 0.9rem; }
+.cf-skip-scope { font-family: var(--mono); font-size: 0.74rem; color: var(--patina-ink); margin-top: 0.1rem !important; }
+.cf-skip-what { font-size: 0.82rem; color: var(--ink-soft); margin-top: 0.3rem !important; }
+.cf-skip-said { margin-top: 0.4rem !important; padding: 0.4rem 0.6rem; border-left: 2px solid var(--oxide); background: var(--ground); font-size: 0.82rem; color: var(--ink); }
+.cf-empty { padding: 0.9rem 0 0.2rem; color: var(--ink-soft); font-size: 0.86rem; }
+.cf-empty[hidden] { display: none; }
+.cf-status { min-height: 1.2em; font-size: 0.8rem; color: var(--ink-soft); }
+
+/* private/delete.ts and private/rekey.ts: dialog.sheet */
+.cf-sheet { justify-self: center; align-self: start; width: min(32rem, calc(100% - 1.5rem)); margin-top: 1.5rem; margin-bottom: 1.5rem; border: 1px solid var(--rule-strong); border-top: 3px solid var(--oxide); box-shadow: 0 10px 30px rgb(0 0 0 / 28%); }
+.cf-sheet-body { display: grid; gap: 0.9rem; padding: 1.4rem 1.5rem 1.5rem; }
+.cf-sheet-body h2 { margin: 0; font-size: 1.1rem; font-weight: 600; }
+.cf-sheet-body p { margin: 0; }
+.cf-choice { margin: 0; padding: 0.4rem 0.9rem 0.6rem; border: 1px solid var(--rule); }
+.cf-choice legend { padding: 0 0.3rem; font-size: 0.82rem; color: var(--ink-soft); }
+.cf-pick { display: flex; align-items: center; gap: 0.5rem; min-height: 2.75rem; font-size: 0.88rem; cursor: pointer; }
+.cf-picks { padding-left: 1.6rem; }
+.cf-picks .cf-pick { font-family: var(--mono); font-size: 0.82rem; }
+.cf-lock-note { font-family: var(--sans); font-size: 0.78rem; color: var(--ink-soft); }
+.cf-sheet-warning { padding: 0.75rem 0.9rem; background: var(--ground); border-left: 3px solid var(--oxide); font-size: 0.95rem; }
+.cf-sheet-fine { font-size: 0.8rem; color: var(--ink-soft); }
+.cf-always { padding-top: 0.7rem; border-top: 1px solid var(--rule); font-size: 0.86rem; font-weight: 600; }
+.cf-sheet-actions { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-top: 0.25rem; }
+
+.cf-maps { margin: 0.6rem 0 0; padding: 0.6rem 0.8rem; background: var(--surface); border: 1px solid var(--rule); border-left: 3px solid var(--rule-strong); font-size: 0.82rem; color: var(--ink-soft); }
+.cf-maps-label { display: block; margin-bottom: 0.15rem; font: 600 0.72rem var(--mono); letter-spacing: 0.04em; color: var(--ink); }
+.cf-maps code { color: var(--ink); }
+.cf-maps-tools { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.5rem; }
+.cf-maps-tools[hidden] { display: none; }
+
+@container (max-width: 480px) {
+  .cf-ready { grid-template-columns: minmax(0, 1fr); }
+  .cf-media { margin: 0.75rem; }
+  .cf-thread { border-left: 0; border-top: 1px solid var(--rule); padding: 0.9rem 0.9rem 1.2rem; }
+  .cf-large { width: calc(100% - 1rem); margin-bottom: 1.5rem; padding: 1.1rem; }
+  .cf-large-actions .cf-remember { flex: 1 1 100%; margin-right: 0; }
+  .cf-large-actions .cf-btn { flex: 1 1 auto; }
+  .cf-side { width: 100%; border-right: 1px solid var(--rule-strong); }
+  .cf-side-body { padding: 0.9rem; }
+  .cf-tools .cf-btn { flex: 1 1 auto; }
+  .cf-sheet { width: calc(100% - 1rem); margin-top: 0.5rem; }
+  .cf-sheet-body { padding: 1.1rem 0.9rem 1.1rem; }
+  .cf-sheet-actions .cf-btn { flex: 1 1 auto; }
+  .cf-skip-row .cf-btn { flex: 1 1 100%; }
+  .cf-more-label { display: none; }
+  .cf-viewer .mark { padding: 0 0.7rem; }
+  .cf-viewer .identity { padding: 0.4rem 0.7rem; }
+}
 </style>
 </head>
 <body>
@@ -155,7 +313,7 @@ body {
   <p class="mock-kicker">Frame hardening, F1 · clickable mock · not shipped</p>
   <h1>Link confirmation in Relic's own chrome</h1>
   <p>A link inside the sandboxed frame asks the viewer to open it. The viewer shows where it goes, in its own chrome outside the frame. Nothing opens until the reader presses Open link on that bar, or, after the reader has chosen Don't ask again for this relic, until the reader's own gesture asks for a link from that relic. The frame's own click check is not trusted.</p>
-  <nav class="mock-controls" aria-label="Mock states">
+  <nav class="mock-controls" id="link-states" aria-label="Mock states">
     <button type="button" data-state="request" aria-pressed="false">Link requested</button>
     <button type="button" data-state="mailto" aria-pressed="false">mailto requested</button>
     <button type="button" data-state="long" aria-pressed="false">Long host</button>
@@ -220,6 +378,171 @@ body {
     <li>The new tab is opened by the viewer with <code>noopener,noreferrer</code>. The frame never opens a tab.</li>
     <li>The reader can tick Don't ask again for this relic before pressing Open link. The choice is recorded only by that trusted click, for this relic and this version, in the viewer's own storage, which the frame cannot read.</li>
     <li>While the choice stands, a link requested during a reader gesture opens without the bar, its read delay and its cooldown. The strip above the frame offers Turn back on; it takes its own line of space and never covers the frame. A new version of the relic asks again, and a frame message can raise the bar but never sets or clears the choice.</li>
+  </ul>
+</section>
+
+<div class="f2-rule"><hr></div>
+
+<header class="mock-head" id="f2">
+  <p class="mock-kicker">Frame hardening, F2 · clickable mock · not shipped</p>
+  <h1>Don't ask again, on the other confirmations</h1>
+  <p>The same per-relic choice, offered on the large file open and on deleting your own comment. A Skipped confirmations list in the relic menu shows what this relic no longer asks and puts each question back. Private delete and private revoke always ask, and say why.</p>
+  <nav class="mock-controls" id="cf-states" aria-label="Confirmation states">
+    <button type="button" data-cf="large-ask" aria-pressed="false">Large file: asks</button>
+    <button type="button" data-cf="large-ticked" aria-pressed="false">Large file: ticked</button>
+    <button type="button" data-cf="large-opened" aria-pressed="false">Large file: opened</button>
+    <button type="button" data-cf="delete-ask" aria-pressed="false">Delete comment: asks</button>
+    <button type="button" data-cf="delete-ticked" aria-pressed="false">Delete comment: ticked</button>
+    <button type="button" data-cf="delete-skipped" aria-pressed="false">Delete comment: skipped</button>
+    <button type="button" data-cf="menu" aria-pressed="false">Relic menu, 3 skipped</button>
+    <button type="button" data-cf="skipped-1" aria-pressed="false">Skipped list: 1</button>
+    <button type="button" data-cf="skipped-3" aria-pressed="false">Skipped list: 3</button>
+    <button type="button" data-cf="skipped-after" aria-pressed="false">Skipped list: after Ask again</button>
+    <button type="button" data-cf="skipped-empty" aria-pressed="false">Skipped list: empty</button>
+    <button type="button" data-cf="private-delete" aria-pressed="false">Private delete</button>
+    <button type="button" data-cf="private-revoke" aria-pressed="false">Private revoke (rekey)</button>
+    <button type="button" data-cf-toggle="dark" aria-pressed="false">Dark</button>
+    <button type="button" data-cf-toggle="mobile" aria-pressed="false">Mobile, 390 wide</button>
+  </nav>
+</header>
+
+<main class="viewer-stage" aria-label="Confirmations mock">
+  <div class="viewer cf-viewer" id="cf-viewer">
+    <header class="bar" id="cf-bar">
+      <div class="mark">RLC 7D31-0B6E</div>
+      <div class="identity">
+        <span class="filename">harbour-survey-walkthrough.mp4</span>
+        <span class="sub">Plays in your browser, no author code</span>
+      </div>
+      <div class="cf-more-wrap" id="cf-more-wrap">
+        <button type="button" class="cf-more" id="cf-more" aria-expanded="false" aria-controls="cf-menu" title="More">
+          <svg class="cf-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 7h2.2v2.2H2.5zm4.4 0h2.2v2.2H6.9zm4.4 0h2.2v2.2h-2.2z"/></svg><span class="cf-more-label">More</span>
+        </button>
+        <div class="cf-menu" id="cf-menu" hidden>
+          <button type="button" class="cf-item" data-menu-note="In the viewer this opens what Relic knows, in a new tab."><svg class="cf-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M5.7 3.3 2 7l3.7 3.7.7-.7L3.4 7l3-3-.7-.7zm4.6 0-.7.7 3 3-3 3 .7.7L14 7l-3.7-3.7z"/></svg><span>Plays in your browser, no author code</span></button>
+          <button type="button" class="cf-item" data-menu-note="In the viewer this opens your Relics list in a new tab."><svg class="cf-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 2h4.5v4.5H2V2zm7.5 0H14v4.5H9.5V2zM2 9.5h4.5V14H2V9.5zm7.5 0H14V14H9.5V9.5z"/></svg><span>Relics</span></button>
+          <button type="button" class="cf-item" data-menu-note="In the viewer this downloads the file."><svg class="cf-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M7.5 1h1v7.3l2.6-2.6.7.7L8 10.2 4.2 6.4l.7-.7 2.6 2.6V1zM2 12h12v1H2v-1z"/></svg><span>Download</span></button>
+          <button type="button" class="cf-item" id="cf-skipped-item"><svg class="cf-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 3.3 6.7 8 2 12.7l.7.7L8.1 8 2.7 2.6zm6 0L12.7 8 8 12.7l.7.7L14.1 8 8.7 2.6z"/></svg><span>Skipped confirmations</span><span class="cf-badge" id="cf-badge" hidden>0</span></button>
+          <button type="button" class="cf-item" data-menu-note="In the viewer this opens the report form."><svg class="cf-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 1h1v14H3V1zm2 1h8l-2 3 2 3H5V2z"/></svg><span>Report</span></button>
+        </div>
+      </div>
+    </header>
+
+    <div class="cf-body" id="cf-body">
+      <div class="cf-layer cf-plate" id="cf-plate">
+        <div class="cf-card">
+          <p class="cf-phase" id="cf-phase" role="status" aria-live="polite">Opening…</p>
+          <div class="cf-meter" id="cf-meter" role="progressbar" aria-label="Opening harbour-survey-walkthrough.mp4" aria-valuemin="0" aria-valuemax="100"></div>
+          <p class="cf-transfer" id="cf-transfer"></p>
+        </div>
+      </div>
+
+      <div class="cf-layer cf-ready" id="cf-ready" hidden>
+        <div class="cf-media" role="img" aria-label="The video, paused on its first frame">harbour-survey-walkthrough.mp4 · version 3</div>
+        <section class="cf-thread" aria-labelledby="cf-thread-title">
+          <h2 class="cf-thread-title" id="cf-thread-title" tabindex="-1">Comments</h2>
+          <p class="cf-strip" id="cf-strip" hidden><span>Your comments on this relic delete without asking. Relik has no undo.</span><button type="button" class="cf-btn is-quiet" id="cf-strip-ask">Ask again</button></p>
+          <p class="cf-outcome" id="cf-outcome" role="status" aria-live="polite"></p>
+          <div id="cf-comments"></div>
+        </section>
+      </div>
+
+      <div class="cf-scrim" id="cf-scrim" hidden></div>
+
+      <section class="cf-dialog cf-large" id="cf-large" role="dialog" aria-modal="true" aria-labelledby="cf-large-heading" aria-describedby="cf-large-detail" hidden>
+        <h1 id="cf-large-heading">harbour-survey-walkthrough.mp4</h1>
+        <p class="cf-detail" id="cf-large-detail">video/mp4 · 312.4 MB</p>
+        <div class="cf-large-actions">
+          <label class="link-confirm-remember cf-remember"><input type="checkbox" id="cf-large-remember"> Don't ask again for this relic</label>
+          <button type="button" class="cf-btn" id="cf-large-cancel"><svg class="cf-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.2 3.5 8 7.3l3.8-3.8.7.7L8.7 8l3.8 3.8-.7.7L8 8.7l-3.8 3.8-.7-.7L7.3 8 3.5 4.2z"/></svg>Cancel</button>
+          <button type="button" class="cf-btn is-primary" id="cf-large-open"><svg class="cf-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 3h12v1H2V3zm0 3h12v1H2V6zm0 3h8v1H2V9zm0 3h10v1H2v-1z"/></svg>Open</button>
+        </div>
+      </section>
+
+      <section class="cf-dialog cf-side" id="cf-delete" role="dialog" aria-modal="true" aria-label="Delete comment?" aria-describedby="cf-delete-consequence" hidden>
+        <div class="cf-head"><p class="cf-title">Delete comment?</p></div>
+        <div class="cf-side-body">
+          <p class="cf-quote-author" id="cf-delete-author"></p>
+          <p class="cf-quote" id="cf-delete-excerpt"></p>
+          <p class="cf-note" id="cf-delete-consequence">This removes only your comment. Replies will stay. Relik has no undo.</p>
+          <label class="link-confirm-remember cf-remember"><input type="checkbox" id="cf-delete-remember"> Don't ask again for my comments on this relic</label>
+          <div class="cf-tools">
+            <button type="button" class="cf-btn" id="cf-delete-cancel">Cancel</button>
+            <button type="button" class="cf-btn" id="cf-delete-go">Delete comment</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="cf-dialog cf-side" id="cf-skipped" role="dialog" aria-modal="true" aria-labelledby="cf-skipped-title" hidden>
+        <div class="cf-head">
+          <h2 class="cf-title" id="cf-skipped-title" tabindex="-1">Skipped confirmations</h2>
+          <button type="button" class="cf-close" id="cf-skipped-close" aria-label="Close"><svg class="cf-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.2 3.5 8 7.3l3.8-3.8.7.7L8.7 8l3.8 3.8-.7.7L8 8.7l-3.8 3.8-.7-.7L7.3 8 3.5 4.2z"/></svg></button>
+        </div>
+        <div class="cf-side-body">
+          <p class="cf-note" id="cf-skip-intro">On this relic, the viewer no longer asks before these.</p>
+          <ul class="cf-skip-list" id="cf-skip-list"></ul>
+          <p class="cf-empty" id="cf-skip-empty" hidden>Nothing skipped. The viewer asks before opening links, large files and deleting comments.</p>
+          <p class="cf-status" id="cf-skip-status" role="status" aria-live="polite"></p>
+        </div>
+      </section>
+
+      <section class="cf-dialog cf-sheet" id="cf-pdelete" role="dialog" aria-modal="true" aria-labelledby="cf-pdelete-title" hidden>
+        <div class="cf-sheet-body">
+          <h2 id="cf-pdelete-title" tabindex="-1">Delete</h2>
+          <fieldset class="cf-choice">
+            <legend>What to delete</legend>
+            <label class="cf-pick"><input type="radio" name="cf-delete-scope" value="versions" id="cf-scope-versions" checked><span>Chosen versions</span></label>
+            <div class="cf-picks" id="cf-picks" role="group" aria-label="Versions to delete">
+              <label class="cf-pick"><input type="checkbox" data-version="1" checked>v1</label>
+              <label class="cf-pick"><input type="checkbox" data-version="2">v2</label>
+              <label class="cf-pick"><input type="checkbox" data-version="3" disabled aria-describedby="cf-current-note">v3 <span class="cf-lock-note" id="cf-current-note">current, goes only with the whole relic</span></label>
+            </div>
+            <label class="cf-pick"><input type="radio" name="cf-delete-scope" value="all" id="cf-scope-all"><span>The whole relic, every version</span></label>
+          </fieldset>
+          <p class="cf-sheet-warning">Deleting removes the encrypted content and every key, seal and comment for what you choose. Deleting the whole relic also removes its grants and requests. It can’t be undone.</p>
+          <p class="cf-sheet-fine">The access log keeps a record of the deletion for as long as your retention setting says. One passkey tap.</p>
+          <p class="cf-always">This can’t be undone, so it always asks.</p>
+          <div class="cf-sheet-actions">
+            <button type="button" class="cf-btn is-danger" id="cf-pdelete-go">Delete with passkey</button>
+            <button type="button" class="cf-btn" id="cf-pdelete-cancel">Cancel</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="cf-dialog cf-sheet" id="cf-revoke" role="dialog" aria-modal="true" aria-labelledby="cf-revoke-title" hidden>
+        <div class="cf-sheet-body">
+          <h2 id="cf-revoke-title" tabindex="-1">Revoke access</h2>
+          <p class="cf-sheet-warning">Revoke dev.patel@example.org? Relic stops serving them this relic now and deletes their keys for it. Anything they already opened may still be on their device. The current content is republished as version 4 under a new key that only the remaining readers can open.</p>
+          <p class="cf-sheet-fine">One passkey tap. This browser decrypts version 3, encrypts it again and uploads it; keep this tab open until it finishes.</p>
+          <p class="cf-always">This changes who can read this relic, so it always asks.</p>
+          <div class="cf-sheet-actions">
+            <button type="button" class="cf-btn is-danger" id="cf-revoke-go">Revoke and republish</button>
+            <button type="button" class="cf-btn" id="cf-revoke-cancel">Cancel</button>
+          </div>
+        </div>
+      </section>
+    </div>
+    <p class="toast" id="cf-toast" role="status" hidden></p>
+  </div>
+  <div class="cf-maps" id="cf-maps-box">
+    <span class="cf-maps-label">MAPS TO</span>
+    <span id="cf-maps"></span>
+    <div class="cf-maps-tools" id="cf-maps-tools" hidden>
+      <button type="button" class="cf-btn" id="cf-reopen">Open version 3 again</button>
+      <button type="button" class="cf-btn" id="cf-republish">Open version 4</button>
+    </div>
+  </div>
+</main>
+
+<section class="mock-notes">
+  <h2>What changes on the other confirmations</h2>
+  <ul>
+    <li>Large file open keeps its dialog: filename, type and size, Cancel and Open. Don't ask again for this relic sits beside Open. Ticking the box records nothing. The choice is recorded only by a trusted click on Open, through <code>confirm-prefs.ts</code> as <code>large-open</code>, for this relic and this version. Cancel and Escape record nothing, and a new version asks again.</li>
+    <li>Delete comment keeps its dialog and its sentence. Don't ask again for my comments on this relic sits under the sentence. The choice is recorded only by a trusted click on Delete comment, as <code>delete-comment</code>, for this relic across its versions, because comments span versions.</li>
+    <li>While that choice stands, Delete on your own comment sends the delete at once and the thread shows the existing outcome line. Relik has no undo for it, so the strip above the thread says so and offers Ask again, and the Skipped confirmations list repeats the sentence the dialog used to show.</li>
+    <li>Skipped confirmations is an item in the relic bar's More menu, with a count. Its panel lists only this relic's choices, each with its scope in plain words and an Ask again button. Ask again clears that one choice, says so, and moves focus to the next row. With nothing skipped it says what the viewer asks about.</li>
+    <li>Private delete and private revoke are not kinds in <code>confirm-prefs.ts</code>, so nothing can skip them. Their sheets carry no checkbox and one line saying why they always ask.</li>
+    <li>A frame message cannot set, clear or read any of these choices, as with links.</li>
   </ul>
 </section>
 
@@ -339,7 +662,7 @@ body {
     dark: () => { setMobile(false); setTheme(true); close(); cooldownUntil = 0; request('spec'); },
     remembered: () => { setMobile(false); setTheme(false); close(); cooldownUntil = 0; setRemembered(true); },
   };
-  const buttons = document.querySelectorAll('.mock-controls button');
+  const buttons = document.querySelectorAll('#link-states button');
   buttons.forEach((button) => {
     button.addEventListener('click', () => {
       buttons.forEach((other) => other.setAttribute('aria-pressed', String(other === button)));
@@ -351,6 +674,423 @@ body {
   // Opens in the request state so the picture is there without a click.
   const named = [...buttons].find((b) => b.dataset.state === location.hash.slice(1));
   (named || buttons[0]).click();
+})();
+</script>
+<script>
+// F2. Every string that reaches the page from data goes through textContent.
+(() => {
+  const FILE = { name: 'harbour-survey-walkthrough.mp4', type: 'video/mp4', bytes: 312400000 };
+  // viewer.ts formatBytes, so the sizes read as the viewer prints them.
+  const formatBytes = (b) => b < 1000 ? Math.round(b) + ' B'
+    : b < 1e6 ? (b / 1e3).toFixed(1) + ' KB'
+    : b < 1e9 ? (b / 1e6).toFixed(1) + ' MB'
+    : (b / 1e9).toFixed(1) + ' GB';
+  const ORDER = ['link', 'large-open', 'delete-comment'];
+  const KINDS = {
+    link: {
+      name: 'Links',
+      scope: 'This relic and this version (version 3)',
+      what: 'Links you click in the relic open in a new tab without the bar.',
+    },
+    'large-open': {
+      name: 'Large file open',
+      scope: 'This relic and this version (version 3)',
+      what: 'This ' + formatBytes(FILE.bytes) + ' file opens without asking first.',
+    },
+    'delete-comment': {
+      name: 'Deleting my comments',
+      scope: 'This relic, every version',
+      what: 'Your comments delete as soon as you press Delete. The question you turned off said:',
+      said: 'This removes only your comment. Replies will stay. Relik has no undo.',
+    },
+  };
+  const COMMENTS = [
+    { id: 'c1', author: 'Maria Ortega', mine: true, at: '03:12', body: 'The survey line crosses the old pier footing here. Can we mark it in the next cut?' },
+    { id: 'c2', author: 'Priya Nair', mine: false, at: '07:48', body: 'Depth readings on this stretch match the October soundings.' },
+    { id: 'c3', author: 'Maria Ortega', mine: true, at: '09:40', body: 'The audio drops out until 09:55. Is that the recorder or the upload?' },
+  ];
+  const MAPS = {
+    large: '<code>main.ts</code> <code>confirmLargeOpen</code>, <code>dialog.large-open</code>. New: the checkbox, recorded through <code>confirm-prefs.ts</code> as <code>large-open</code> for this relic and version 3, only by a trusted click on Open. The plate behind is the existing <code>stage-loading</code> card.',
+    opened: '<code>main.ts</code> <code>confirmLargeOpen</code> resolves true; the plate goes to Fetching. With the choice recorded, the next open of version 3 skips the dialog and goes straight to Fetching. Version 4 asks again. Try both buttons.',
+    del: '<code>main.ts</code> <code>confirmDelete</code>, <code>dialog.share-panel.comment-delete-dialog</code>. New: the checkbox, recorded as <code>delete-comment</code> for this relic, every version, only by a trusted click on Delete comment.',
+    skipped: '<code>main.ts</code> <code>confirmDelete</code> is skipped and the delete goes straight to the request; the outcome line is the existing <code>showDeleteOutcome</code> text. New: the strip above the thread. Press Delete on the 09:40 comment.',
+    menu: '<code>main.ts</code> relic bar More menu, <code>.band-more-list</code>. New: the Skipped confirmations item and its count, read from <code>confirm-prefs.ts</code> for this relic.',
+    list: 'New panel opened from the More menu item, styled as the viewer\'s side sheet (<code>.share-panel</code>). Ask again clears one choice in <code>confirm-prefs.ts</code>. Escape or Close returns focus to More.',
+    pdelete: '<code>private/delete.ts</code> <code>createDeleteDialog</code>, <code>dialog.sheet</code>. Not a kind in <code>confirm-prefs.ts</code>. New: the last line only.',
+    revoke: '<code>private/rekey.ts</code> <code>createRevokeDialog</code>, the revoke and republish (rekey) sheet. Not a kind in <code>confirm-prefs.ts</code>. New: the last line only.',
+  };
+
+  const $ = (id) => document.getElementById(id);
+  const cfViewer = $('cf-viewer');
+  const bar = $('cf-bar');
+  const plate = $('cf-plate');
+  const ready = $('cf-ready');
+  const scrim = $('cf-scrim');
+  const phase = $('cf-phase');
+  const meter = $('cf-meter');
+  const transfer = $('cf-transfer');
+  const moreBtn = $('cf-more');
+  const moreWrap = $('cf-more-wrap');
+  const menu = $('cf-menu');
+  const badge = $('cf-badge');
+  const toast = $('cf-toast');
+  const strip = $('cf-strip');
+  const outcome = $('cf-outcome');
+  const commentsEl = $('cf-comments');
+  const large = $('cf-large');
+  const largeRemember = $('cf-large-remember');
+  const del = $('cf-delete');
+  const delRemember = $('cf-delete-remember');
+  const skipped = $('cf-skipped');
+  const skipList = $('cf-skip-list');
+  const skipEmpty = $('cf-skip-empty');
+  const skipIntro = $('cf-skip-intro');
+  const skipStatus = $('cf-skip-status');
+  const pdelete = $('cf-pdelete');
+  const revoke = $('cf-revoke');
+  const mapsEl = $('cf-maps');
+  const mapsTools = $('cf-maps-tools');
+
+  const prefs = new Set();
+  let comments = [];
+  let modal = null;
+  let fetchTimer = 0;
+  let deleteTarget = null;
+  let version = 3;
+
+  const say = (text) => { toast.hidden = !text; toast.textContent = text || ''; };
+  const visible = (el) => el.getClientRects().length > 0;
+  const focusables = (root) => [...root.querySelectorAll('button, input, [tabindex]:not([tabindex="-1"])')]
+    .filter((el) => !el.disabled && visible(el));
+
+  // ---- modal layer: scrim, focus trap, Escape, focus return ----
+  function openModal(el, opts) {
+    closeModal(false);
+    closeMenu(false);
+    scrim.hidden = false;
+    el.hidden = false;
+    bar.inert = true; plate.inert = true; ready.inert = true;
+    modal = { el, opener: opts.opener || null, onCancel: opts.onCancel || (() => closeModal()), dismissOnScrim: !!opts.dismissOnScrim };
+    if (opts.focus) (opts.initial || focusables(el)[0]).focus();
+  }
+  function closeModal(restore = true) {
+    if (!modal) return;
+    const { el, opener } = modal;
+    modal = null;
+    el.hidden = true;
+    scrim.hidden = true;
+    bar.inert = false; plate.inert = false; ready.inert = false;
+    if (restore) {
+      if (opener && opener.isConnected) opener.focus();
+      else if (!ready.hidden) $('cf-thread-title').focus();
+      else moreBtn.focus();
+    }
+  }
+  scrim.addEventListener('click', () => { if (modal && modal.dismissOnScrim) modal.onCancel(); });
+  document.addEventListener('keydown', (event) => {
+    const inside = cfViewer.contains(document.activeElement);
+    if (event.key === 'Escape') {
+      if (modal && inside) { event.stopPropagation(); modal.onCancel(); }
+      else if (!menu.hidden) { closeMenu(true); }
+      return;
+    }
+    if (event.key === 'Tab' && modal && inside) {
+      const items = focusables(modal.el);
+      if (items.length === 0) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    }
+  });
+
+  // ---- relic menu ----
+  function openMenu() { menu.hidden = false; moreBtn.setAttribute('aria-expanded', 'true'); }
+  function closeMenu(restore) {
+    if (menu.hidden) return;
+    menu.hidden = true;
+    moreBtn.setAttribute('aria-expanded', 'false');
+    if (restore) moreBtn.focus();
+  }
+  moreBtn.addEventListener('click', () => (menu.hidden ? openMenu() : closeMenu(false)));
+  document.addEventListener('pointerdown', (event) => { if (!menu.hidden && !moreWrap.contains(event.target)) closeMenu(false); });
+  moreWrap.addEventListener('focusout', (event) => { if (event.relatedTarget && !moreWrap.contains(event.relatedTarget)) closeMenu(false); });
+  menu.querySelectorAll('[data-menu-note]').forEach((item) => {
+    item.addEventListener('click', () => { closeMenu(true); say(item.dataset.menuNote); });
+  });
+  $('cf-skipped-item').addEventListener('click', () => { closeMenu(false); openSkipped(true); });
+
+  function renderBadge() {
+    badge.hidden = prefs.size === 0;
+    badge.textContent = String(prefs.size);
+  }
+  function renderStrip() { strip.hidden = !prefs.has('delete-comment'); }
+  function syncPrefs() { renderBadge(); renderStrip(); if (!skipped.hidden) renderSkipped(); }
+
+  // ---- Skipped confirmations panel ----
+  function renderSkipped() {
+    skipList.replaceChildren();
+    for (const kind of ORDER) {
+      if (!prefs.has(kind)) continue;
+      const info = KINDS[kind];
+      const row = document.createElement('li');
+      row.className = 'cf-skip-row';
+      row.dataset.kind = kind;
+      const text = document.createElement('div');
+      text.className = 'cf-skip-text';
+      const add = (cls, value) => { const p = document.createElement('p'); p.className = cls; p.textContent = value; text.appendChild(p); return p; };
+      add('cf-skip-kind', info.name).id = 'cf-kind-' + kind;
+      add('cf-skip-scope', info.scope);
+      add('cf-skip-what', info.what);
+      if (info.said) add('cf-skip-said', info.said);
+      const ask = document.createElement('button');
+      ask.type = 'button';
+      ask.className = 'cf-btn';
+      ask.textContent = 'Ask again';
+      ask.setAttribute('aria-describedby', 'cf-kind-' + kind);
+      ask.addEventListener('click', () => askAgain(kind, true));
+      row.append(text, ask);
+      skipList.appendChild(row);
+    }
+    const none = prefs.size === 0;
+    skipList.hidden = none;
+    skipIntro.hidden = none;
+    skipEmpty.hidden = !none;
+  }
+  function askAgain(kind, moveFocus) {
+    const order = [...skipList.querySelectorAll('.cf-skip-row')].map((r) => r.dataset.kind);
+    const at = order.indexOf(kind);
+    prefs.delete(kind);
+    syncPrefs();
+    skipStatus.textContent = KINDS[kind].name + ' will ask again.';
+    if (!moveFocus) return;
+    const rows = [...skipList.querySelectorAll('.cf-skip-row .cf-btn')];
+    (rows[Math.min(at, rows.length - 1)] || $('cf-skipped-title')).focus();
+  }
+  function openSkipped(focus) {
+    skipStatus.textContent = '';
+    renderSkipped();
+    openModal(skipped, { opener: moreBtn, focus, dismissOnScrim: true, initial: $('cf-skipped-title') });
+  }
+  $('cf-skipped-close').addEventListener('click', () => closeModal());
+
+  // ---- large file open ----
+  function plateOpening() {
+    clearInterval(fetchTimer);
+    phase.textContent = 'Opening…';
+    meter.removeAttribute('aria-valuenow');
+    meter.style.removeProperty('--load-fraction');
+    meter.setAttribute('aria-label', 'Opening ' + FILE.name);
+    transfer.textContent = '';
+  }
+  function plateFetching() {
+    clearInterval(fetchTimer);
+    phase.textContent = 'Fetching';
+    transfer.textContent = 'TRANSFER ' + formatBytes(FILE.bytes);
+    meter.setAttribute('aria-label', 'Fetching ' + FILE.name);
+    let fraction = 0.04;
+    const paint = () => {
+      meter.setAttribute('aria-valuenow', String(Math.round(fraction * 100)));
+      meter.style.setProperty('--load-fraction', fraction.toFixed(3));
+    };
+    paint();
+    fetchTimer = setInterval(() => { fraction = Math.min(0.62, fraction + 0.035); paint(); if (fraction >= 0.62) clearInterval(fetchTimer); }, 300);
+  }
+  function askLargeOpen(focus, ticked) {
+    plateOpening();
+    if (prefs.has('large-open') && version === 3) { plateFetching(); return; }
+    $('cf-large-detail').textContent = FILE.type + ' · ' + formatBytes(FILE.bytes);
+    largeRemember.checked = !!ticked;
+    openModal(large, { focus, opener: document.activeElement, initial: $('cf-large-cancel'), onCancel: () => {
+      closeModal(true);
+      say('Cancelled. In the viewer nothing past the first record has been fetched, and nothing was recorded.');
+    } });
+  }
+  $('cf-large-cancel').addEventListener('click', () => modal && modal.onCancel());
+  $('cf-large-open').addEventListener('click', (event) => {
+    const remember = largeRemember.checked && event.isTrusted && version === 3;
+    if (remember) prefs.add('large-open');
+    syncPrefs();
+    closeModal(true);
+    plateFetching();
+    setMaps('opened');
+    mapsTools.hidden = false;
+    say(remember
+      ? 'Recorded for this relic and version 3. Opening it again goes straight to Fetching. More, Skipped confirmations puts the question back.'
+      : 'Opened. Nothing recorded, so the next open of this file asks again.');
+  });
+  $('cf-reopen').addEventListener('click', () => {
+    version = 3;
+    say(prefs.has('large-open') ? 'Version 3 again: the choice stands, so no dialog.' : 'Version 3 again: nothing recorded, so it asks.');
+    askLargeOpen(true, false);
+    if (!modal) $('cf-reopen').focus();
+  });
+  $('cf-republish').addEventListener('click', () => {
+    version = 4;
+    say('Version 4: a new version, so it asks again.');
+    askLargeOpen(true, false);
+  });
+
+  // ---- comments and delete ----
+  function renderComments() {
+    commentsEl.replaceChildren();
+    for (const c of comments) {
+      const card = document.createElement('article');
+      card.className = 'cf-c';
+      const head = document.createElement('p');
+      head.className = 'cf-c-head';
+      const who = document.createElement('span');
+      who.className = 'cf-c-author';
+      who.textContent = c.author;
+      const meta = document.createElement('span');
+      meta.className = 'cf-c-meta';
+      meta.textContent = c.at;
+      head.append(who, meta);
+      const body = document.createElement('p');
+      body.className = 'cf-c-body';
+      body.textContent = c.body;
+      card.append(head, body);
+      if (c.mine) {
+        const tools = document.createElement('div');
+        tools.className = 'cf-c-tools';
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'cf-btn is-quiet';
+        remove.textContent = 'Delete';
+        remove.setAttribute('aria-label', 'Delete your comment at ' + c.at);
+        remove.addEventListener('click', () => requestDelete(c, remove, true));
+        tools.appendChild(remove);
+        card.appendChild(tools);
+      }
+      commentsEl.appendChild(card);
+    }
+  }
+  function performDelete(id) {
+    outcome.textContent = 'Deleting comment...';
+    setTimeout(() => {
+      comments = comments.filter((c) => c.id !== id);
+      renderComments();
+      outcome.textContent = 'Comment deleted. Replies remain.';
+      $('cf-thread-title').focus({ preventScroll: true });
+    }, 350);
+  }
+  function requestDelete(c, opener, focus, ticked) {
+    if (prefs.has('delete-comment')) { performDelete(c.id); return; }
+    deleteTarget = c;
+    $('cf-delete-author').textContent = c.author;
+    $('cf-delete-excerpt').textContent = c.body;
+    delRemember.checked = !!ticked;
+    openModal(del, { opener, focus, initial: $('cf-delete-cancel') });
+  }
+  $('cf-delete-cancel').addEventListener('click', () => closeModal());
+  $('cf-delete-go').addEventListener('click', (event) => {
+    if (!deleteTarget) return;
+    if (delRemember.checked && event.isTrusted) prefs.add('delete-comment');
+    syncPrefs();
+    const id = deleteTarget.id;
+    deleteTarget = null;
+    closeModal(false);
+    performDelete(id);
+  });
+  $('cf-strip-ask').addEventListener('click', () => {
+    prefs.delete('delete-comment');
+    syncPrefs();
+    outcome.textContent = 'Deleting my comments will ask again.';
+    $('cf-thread-title').focus();
+  });
+
+  // ---- private sheets: no checkbox, ever ----
+  const pdeleteGo = $('cf-pdelete-go');
+  const scopeAll = $('cf-scope-all');
+  const picks = [...$('cf-picks').querySelectorAll('input')];
+  function syncPicks() {
+    const whole = scopeAll.checked;
+    picks.forEach((input) => {
+      const current = input.dataset.version === '3';
+      if (whole) { input.checked = true; input.disabled = true; }
+      else { input.disabled = current; if (current) input.checked = false; }
+    });
+    pdeleteGo.disabled = !(whole || picks.some((i) => i.checked && !i.disabled));
+  }
+  [$('cf-scope-versions'), scopeAll].forEach((r) => r.addEventListener('change', () => {
+    if (!scopeAll.checked) picks.forEach((i) => { if (i.dataset.version !== '3') i.checked = i.dataset.version === '1'; });
+    syncPicks();
+  }));
+  picks.forEach((i) => i.addEventListener('change', syncPicks));
+  pdeleteGo.addEventListener('click', () => {
+    const chosen = scopeAll.checked ? 'the whole relic' : picks.filter((i) => i.checked && !i.disabled).map((i) => 'v' + i.dataset.version).join(' and ');
+    closeModal();
+    say('In the viewer this asks for one passkey tap, then deletes ' + chosen + '. It asks every time.');
+  });
+  $('cf-pdelete-cancel').addEventListener('click', () => closeModal());
+  $('cf-revoke-go').addEventListener('click', () => {
+    closeModal();
+    say('In the viewer this asks for one passkey tap, then republishes as version 4. It asks every time.');
+  });
+  $('cf-revoke-cancel').addEventListener('click', () => closeModal());
+
+  // ---- states ----
+  function reset(view, kinds) {
+    closeModal(false);
+    closeMenu(false);
+    clearInterval(fetchTimer);
+    say('');
+    version = 3;
+    prefs.clear();
+    kinds.forEach((k) => prefs.add(k));
+    comments = COMMENTS.map((c) => ({ ...c }));
+    renderComments();
+    outcome.textContent = '';
+    plate.hidden = view !== 'plate';
+    ready.hidden = view !== 'ready';
+    plateOpening();
+    mapsTools.hidden = true;
+    syncPrefs();
+  }
+  const setMaps = (key) => { mapsEl.innerHTML = MAPS[key]; };
+  const STATES = {
+    'large-ask': (f) => { reset('plate', []); setMaps('large'); askLargeOpen(f, false); },
+    'large-ticked': (f) => { reset('plate', []); setMaps('large'); askLargeOpen(f, true); },
+    'large-opened': () => {
+      reset('plate', ['large-open']); setMaps('opened'); plateFetching(); mapsTools.hidden = false;
+      say('Recorded for this relic and version 3. Opening it again goes straight to Fetching. More, Skipped confirmations puts the question back.');
+    },
+    'delete-ask': (f) => { reset('ready', []); setMaps('del'); requestDelete(comments[0], null, f, false); },
+    'delete-ticked': (f) => { reset('ready', []); setMaps('del'); requestDelete(comments[0], null, f, true); },
+    'delete-skipped': () => { reset('ready', ['delete-comment']); setMaps('skipped'); },
+    menu: (f) => { reset('ready', ORDER); setMaps('menu'); openMenu(); if (f) $('cf-skipped-item').focus(); },
+    'skipped-1': (f) => { reset('ready', ['link']); setMaps('list'); openSkipped(f); },
+    'skipped-3': (f) => { reset('ready', ORDER); setMaps('list'); openSkipped(f); },
+    'skipped-after': (f) => { reset('ready', ORDER); setMaps('list'); openSkipped(false); askAgain('large-open', f); },
+    'skipped-empty': (f) => { reset('ready', []); setMaps('list'); openSkipped(f); },
+    'private-delete': (f) => {
+      reset('ready', []); setMaps('pdelete');
+      $('cf-scope-versions').checked = true; picks.forEach((i) => { i.checked = i.dataset.version === '1'; }); syncPicks();
+      openModal(pdelete, { focus: f, initial: $('cf-pdelete-title') });
+    },
+    'private-revoke': (f) => { reset('ready', []); setMaps('revoke'); openModal(revoke, { focus: f, initial: $('cf-revoke-title') }); },
+  };
+  const stateButtons = [...document.querySelectorAll('#cf-states [data-cf]')];
+  stateButtons.forEach((button) => {
+    button.addEventListener('click', () => {
+      stateButtons.forEach((b) => b.setAttribute('aria-pressed', String(b === button)));
+      STATES[button.dataset.cf](true);
+    });
+  });
+  document.querySelectorAll('#cf-states [data-cf-toggle]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const on = button.getAttribute('aria-pressed') !== 'true';
+      button.setAttribute('aria-pressed', String(on));
+      if (button.dataset.cfToggle === 'dark') document.body.classList.toggle('theme-dark', on);
+      else cfViewer.classList.toggle('is-mobile', on);
+    });
+  });
+  // #large-ask and friends open that state; the default is the first. No focus is taken on load.
+  const wanted = location.hash.slice(1);
+  const first = stateButtons.find((b) => b.dataset.cf === wanted) || stateButtons[0];
+  stateButtons.forEach((b) => b.setAttribute('aria-pressed', String(b === first)));
+  STATES[first.dataset.cf](false);
+  if (stateButtons.includes(first) && wanted === first.dataset.cf) document.getElementById('f2').scrollIntoView();
 })();
 </script>
 </body>
