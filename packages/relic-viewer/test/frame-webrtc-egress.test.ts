@@ -13,14 +13,18 @@ import {
   sanitizeFrameHtml,
 } from '../src/sandbox.ts';
 
+// The browser comes from the environment first, as the browser probes do, then
+// from the paths CI installs. The user's own Chrome is never a candidate: a test
+// run must not launch it. With no browser, the browser test is skipped.
 const CHROME_PATHS = [
-  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
   '/usr/bin/google-chrome',
   '/usr/bin/chromium',
   '/usr/bin/chromium-browser',
 ];
 
 const findChromeBinary = (): string | undefined => {
+  const fromEnv = process.env['RELIC_CHROME_PATH'];
+  if (fromEnv && fromEnv !== 'none' && existsSync(fromEnv)) return fromEnv;
   for (const path of CHROME_PATHS) {
     if (existsSync(path)) return path;
   }
@@ -255,6 +259,11 @@ describe('installSandboxContainment checks every argument', () => {
 
 describe('WebRTC STUN egress headless browser regression', () => {
   const chromeBinary = findChromeBinary();
+  if (chromeBinary === undefined) {
+    console.warn(
+      'SKIPPED frame-webrtc-egress browser test: no headless browser found. Set RELIC_CHROME_PATH to an isolated chrome-headless-shell.'
+    );
+  }
 
   test.skipIf(!chromeBinary)(
     'closed egress blocks STUN packet transmission across all bypass vectors',
