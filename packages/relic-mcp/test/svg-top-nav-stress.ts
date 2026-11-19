@@ -152,6 +152,7 @@ interface Page {
 interface Browser {
   send(method: string, params?: Json, sessionId?: string): Promise<Json>;
   open(url: string, token: string): Promise<Page>;
+  close(page: Page): Promise<void>;
   openIn(browserContextId: string, url: string, token: string): Promise<Page>;
   createContext(): Promise<string>;
   closePage(page: Page): Promise<void>;
@@ -708,11 +709,11 @@ async function launchBrowser(mode: Mode): Promise<Browser> {
         onPageEvent(connection, pages, page, sessionId, event);
       }
     });
-    return {
+    const browserApi: Browser = {
       send: (method, params, sessionId) =>
         connection.send(method, params, sessionId),
       async open(url, token) {
-        return this.openIn(await this.createContext(), url, token);
+        return browserApi.openIn(await browserApi.createContext(), url, token);
       },
       async createContext() {
         const created = await connection.send('Target.createBrowserContext', {
@@ -845,6 +846,7 @@ async function launchBrowser(mode: Mode): Promise<Browser> {
         });
       },
     };
+    return browserApi;
   } catch (error) {
     await cleanupOwnedBrowserStartup({
       child,

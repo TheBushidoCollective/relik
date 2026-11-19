@@ -1096,7 +1096,7 @@ describe('the MCP surface', () => {
       content: { text: string }[];
     };
     expect(result.structuredContent.renderer_class).toBe('html');
-    expect(result.content[0]?.text).toContain('no network access');
+    expect(result.content[0]?.text).toContain('blocks its web requests');
     expect(result.content[0]?.text).toContain('Inline whatever the page needs');
   });
 
@@ -1113,7 +1113,7 @@ describe('the MCP surface', () => {
     );
 
     const result = response?.result as { content: { text: string }[] };
-    expect(result.content[0]?.text).not.toContain('no network access');
+    expect(result.content[0]?.text).not.toContain('blocks its web requests');
   });
 
   test('a ttl_days publish reports the expiry date in the same breath', async () => {

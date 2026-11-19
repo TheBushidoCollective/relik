@@ -347,11 +347,12 @@ or `.otioz` archives) play in a native timeline player with multi-track
 inspection, trims, dissolves, and additive audio. HTML and JSX render in a
 sandboxed frame on a separate origin, so a published page cannot reach the key
 or the service. General archives and binaries offer a download.
-That frame has **no network access**: its policy permits no remote source at
-all, so a page cannot fetch, beacon, or load an external image, font, or
-script. Inline what a page needs when you generate it, because a CDN
-reference renders as nothing. The upside is that a relic cannot phone home or
-learn the recipient's IP address.
+That frame blocks the page's web requests: its policy permits no remote source at
+all, so a page cannot fetch or load an external image, font, or script. Inline what
+a page needs when you generate it, because a CDN reference renders as nothing. The
+frame is not a guarantee of network isolation. The spec's egress notes say which
+routes it does not close, so do not rely on it to keep a page from reaching the
+network, or from learning the recipient's IP address.
 
 They need the whole URL including the `#...` part. A link truncated at the `#`
 is a page that cannot decrypt anything, and that is the most common way sharing
