@@ -11,6 +11,7 @@ import {
   drawnStructuredView,
   isNbformat4Notebook,
   mountStructuredView,
+  type StructuredKind,
   NOTEBOOK_RENDER_LIMIT_BYTES,
   structuredKindFor,
   structuredViewFor,
@@ -59,7 +60,9 @@ const bareHost = {
 } as unknown as HTMLElement;
 
 describe('structuredKindFor: which view a code-route file opens in', () => {
-  const byName: ReadonlyArray<readonly [string, string, string | undefined]> = [
+  const byName: ReadonlyArray<
+    readonly [string, string, StructuredKind | undefined]
+  > = [
     ['data.csv', 'text/csv', 'table'],
     ['data.tsv', 'text/tab-separated-values', 'table'],
     ['data.json', 'application/json', 'tree'],
