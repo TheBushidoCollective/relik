@@ -563,6 +563,61 @@ const CASES: readonly CaseDef[] = [
       `new Function(${jsStr(libJs(ch) + 'rtcAttempt("ii-new-function"); fetchAttempt("ii-new-function"); done();')})();`
   ),
 
+  // (a2) A srcdoc child whose script is a blob: src. frame-src 'none' does not
+  // govern srcdoc frames (measured: the Review2 srcdoc frame is created under the
+  // production policy), and the child is a new realm that the shim never guarded.
+  scriptCase(
+    'a-r5-srcdoc-blob-src',
+    'a',
+    'srcdoc child frame, created through the captured native createElement, whose script is a src=blob: WebRTC attempt',
+    'egress',
+    (ch) => {
+      const code =
+        libJs(ch) +
+        'rtcAttempt("a-r5-srcdoc-blob-src"); fetchAttempt("a-r5-srcdoc-blob-src"); done();';
+      return (
+        'var realCall = Function.prototype.call, realApply = Function.prototype.apply, seen = {};' +
+        ' function spy(fn) { if (typeof fn === "function" && fn.name) seen[fn.name] = fn; }' +
+        ' Function.prototype.call = function () { spy(this); return Reflect.apply(realCall, this, arguments); };' +
+        ' Function.prototype.apply = function () { spy(this); return Reflect.apply(realApply, this, arguments); };' +
+        ' try { document.body.appendChild(document.createElement("p")); }' +
+        ' finally { Function.prototype.call = realCall; Function.prototype.apply = realApply; }' +
+        ` var u = URL.createObjectURL(new Blob([${jsStr(code)}], { type: 'text/javascript' }));` +
+        ' var create = seen.createElement || Document.prototype.createElement;' +
+        ' var append = seen.appendChild || Node.prototype.appendChild;' +
+        ` var el = create.call(document, '${IFRAME}'); el.srcdoc = '<!doctype html><meta charset="utf-8"><' + 'script src="' + u + '"></' + 'script>'; append.call(document.body, el);`
+      );
+    }
+  ),
+
+  // (a3) Positive control for the srcdoc child realm: a data: script in the child.
+  // It shows whether a script that runs in a srcdoc child can reach WebRTC in this
+  // build. Production refuses data: script, so the control decides what is measured.
+  scriptCase(
+    'a-r6-srcdoc-data-src',
+    'a',
+    'srcdoc child frame whose script is a data: WebRTC attempt (control for the child realm)',
+    'egress',
+    (ch) => {
+      const code =
+        libJs(ch) +
+        'rtcAttempt("a-r6-srcdoc-data-src"); fetchAttempt("a-r6-srcdoc-data-src"); done();';
+      return (
+        'var realCall = Function.prototype.call, realApply = Function.prototype.apply, seen = {};' +
+        ' function spy(fn) { if (typeof fn === "function" && fn.name) seen[fn.name] = fn; }' +
+        ' Function.prototype.call = function () { spy(this); return Reflect.apply(realCall, this, arguments); };' +
+        ' Function.prototype.apply = function () { spy(this); return Reflect.apply(realApply, this, arguments); };' +
+        ' try { document.body.appendChild(document.createElement("p")); }' +
+        ' finally { Function.prototype.call = realCall; Function.prototype.apply = realApply; }' +
+        ' var create = seen.createElement || Document.prototype.createElement;' +
+        ' var append = seen.appendChild || Node.prototype.appendChild;' +
+        ` var u = 'data:text/javascript,' + encodeURIComponent(${jsStr(code)});` +
+        ` var el = create.call(document, '${IFRAME}'); el.srcdoc = '<!doctype html><meta charset="utf-8"><' + 'script src="' + u + '"></' + 'script>'; append.call(document.body, el);`
+      );
+    }
+  ),
+
+  // (f) Real relic content: the scripts run, or the text is shown.
   // (f) Real relic content: the scripts run, or the text is shown.
   {
     id: 'f1-html-inline-script',
