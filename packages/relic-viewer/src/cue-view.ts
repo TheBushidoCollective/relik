@@ -433,8 +433,11 @@ function drawCues(mount: StructuredMount, file: SubtitleFile): StructuredPart {
     const last = touched[touched.length - 1];
     if (first === undefined || last === undefined) return undefined;
     if (first === last) {
-      const whole = doc.createRange();
-      whole.selectNodeContents(first.text);
+      // A selection ends at a text offset. The element's end boundary comes after
+      // the comment button, so it sorts after any selection that covers every
+      // character, and the covers check would refuse it. Compare with the text.
+      const whole = cueTextRange(first.text, doc);
+      if (whole === undefined) return undefined;
       const covers =
         range.compareBoundaryPoints(Range.START_TO_START, whole) <= 0 &&
         range.compareBoundaryPoints(Range.END_TO_END, whole) >= 0;
@@ -513,4 +516,23 @@ function blockRow(block: SubtitleBlock): HTMLLIElement {
     el('span', 'cue-text', visibleText(block.text))
   );
   return row;
+}
+
+/**
+ * A range from the first to the last character of a cue's text, leaving out the
+ * comment button that follows it. Undefined when the cue has no text at all.
+ */
+function cueTextRange(text: HTMLElement, doc: Document): Range | undefined {
+  const walker = doc.createTreeWalker(text, NodeFilter.SHOW_TEXT);
+  let first: Text | undefined;
+  let last: Text | undefined;
+  for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+    first ??= node as Text;
+    last = node as Text;
+  }
+  if (first === undefined || last === undefined) return undefined;
+  const range = doc.createRange();
+  range.setStart(first, 0);
+  range.setEnd(last, last.length);
+  return range;
 }
