@@ -851,3 +851,23 @@ PRIVATE_SHARES_PATH_OK
 ```
 
 A failed assertion exits non-zero after printing `PRIVATE_SHARES_PATH_FAILED` and the step it stopped at. A recorded product defect prints `PRIVATE_SHARES_PATH_BLOCKED` with the defect codes and exits non-zero.
+
+## SVG payloads in the sandboxed frame
+
+Build the viewer and the MCP bundle first, then run the proof from the repository root with an isolated headless shell:
+
+```bash
+mise exec -- bun run --cwd packages/relic-viewer build
+mise exec -- bun run --cwd packages/relic-mcp build
+RELIC_CHROME_PATH=/absolute/path/to/chrome-headless-shell mise exec -- bun packages/relic-mcp/test/svg-path.ts
+```
+
+The command publishes an SVG whose script tries to read its parent, read cookies and storage, fetch an external URL and the service, open a popup, and navigate the top window. It opens that relic as a signed-in reader in the production viewer, served with the production shim headers. The drawing must show in the frame, and every attempt must be refused.
+
+The negative control is a throwaway copy of the viewer whose frame grants `allow-same-origin` and `allow-top-navigation`. The same isolation assertions must fail there. Request interception is a harness aid: the script's recorded errors and the console's CSP refusals show what the sandbox refused. Both origins are loopback, so process isolation is not exercised.
+
+Success ends with:
+
+```text
+SVG_PATH_OK
+```
