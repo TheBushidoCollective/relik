@@ -116,7 +116,7 @@ Saved comment cards and timeline cluster cards expose **Dismiss** (`.popover-dis
 
 # Frame egress from the sandboxed render frame
 
-The sandboxed frame must not reach the network by any channel the author can reach. The proof publishes HTML relics through the real MCP bundle and the real app, serves them with the production policy, and lets each relic's own script try every channel. It runs in an isolated headless shell with a throwaway profile, and every channel has its own loopback listener and UDP socket.
+The probe measures which channels the sandboxed frame reaches, using the real MCP bundle, the real app and the production policy, with a relic whose own script tries every channel. It runs in an isolated headless shell with a throwaway profile, and every channel has its own loopback listener and UDP socket. It proves the blocked channels it measures and reports the open routes. It does not prove that no other channel exists.
 
 ## Acceptance command
 
@@ -128,7 +128,7 @@ mise exec -- bun run --cwd packages/relic-mcp build
 mise exec -- bun packages/relic-mcp/test/frame-egress-path.ts
 ```
 
-Success requires exit 0 with `FRAME_EGRESS_PATH_OK` or `FRAME_EGRESS_PATH_OK_WITH_UNPROVEN`. The second marker means no egress was observed, but some channels had no positive control that reached a listener in this build. Those channels print UNPROVEN and are never counted as blocked. Any unexpected egress, a failing negative control, or reporting configured on the served shim fails the run. `RELIC_FRAME_EGRESS_CHROME_PATH` selects the browser (the default is the owned isolated headless shell; CI sets it to `google-chrome`).
+Success is not yet reachable: cases 1, 1b, 2 and 4 are open routes and print REAL, so the probe exits nonzero by design (`FRAME_EGRESS_PATH_FAILED`). It is not a CI gate, and `verify.yml` does not run it. A clean run prints `FRAME_EGRESS_PATH_OK` when every channel is blocked and no case is open, or `FRAME_EGRESS_PATH_OK_WITH_UNPROVEN` when nothing egresses but some channels are unobservable. Cases 3a, 3b and 5 print CANNOT TEST. `RELIC_FRAME_EGRESS_CHROME_PATH` selects the browser (default: the owned isolated headless shell).
 
 # Reader suggestions
 
