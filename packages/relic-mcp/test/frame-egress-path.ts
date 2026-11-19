@@ -155,6 +155,7 @@ const CAPTURE_JS = `(function () {
 
 const MECH_IDS = [
   'mech:createElement-iframe',
+  'mech:case-f0-call-capture',
   'mech:createElement-coerced-after',
   'mech:createElementNS-iframe',
   'mech:innerHTML',
@@ -299,6 +300,23 @@ CH['rtc:shim-realm'] = function (id) {
   pc.createOffer().then(function (o) { return pc.setLocalDescription(o); }).catch(function () {});
 };
 CH['mech:createElement-iframe'] = function (id, box) { var el = document.createElement('iframe'); el.srcdoc = nestedHtml(id); box.appendChild(el); };
+CH['mech:case-f0-call-capture'] = function (id, box) {
+  var realCall = Function.prototype.call, realApply = Function.prototype.apply, seen = {};
+  function spy(fn) { if (typeof fn === 'function' && fn.name) seen[fn.name] = fn; }
+  Function.prototype.call = function () { spy(this); return Reflect.apply(realCall, this, arguments); };
+  Function.prototype.apply = function () { spy(this); return Reflect.apply(realApply, this, arguments); };
+  try {
+    box.appendChild(document.createElement('p'));
+  } finally {
+    Function.prototype.call = realCall;
+    Function.prototype.apply = realApply;
+  }
+  var create = seen.createElement || Document.prototype.createElement;
+  var append = seen.appendChild || Node.prototype.appendChild;
+  var el = create.call(document, 'iframe');
+  el.srcdoc = nestedHtml(id);
+  append.call(box, el);
+};
 CH['mech:createElement-coerced-after'] = function (id, box) { var el = document.createElement(coerced('iframe')); el.srcdoc = nestedHtml(id); box.after(el); };
 CH['mech:createElementNS-iframe'] = function (id, box) { var el = document.createElementNS('http://www.w3.org/1999/xhtml', 'iframe'); el.srcdoc = nestedHtml(id); box.appendChild(el); };
 CH['mech:innerHTML'] = function (id, box) { box.innerHTML = frameMarkup(id); };
@@ -1135,6 +1153,38 @@ for (const verdict of verdicts) {
   for (const reason of verdict.reasons) console.log(`       reason: ${reason}`);
 }
 
+// One CASE line per regression case: a relic attempts one route to a nested realm
+// and then opens WebRTC toward the case's own listener. REAL means production
+// egress was observed. NOT REAL means the no-policy control reached the listener
+// and production did not. CANNOT TEST means the control did not reach it either.
+const CASE_IDS = [...MAIN_IDS, ...WRITE_IDS, ...NAV_IDS].filter((id) =>
+  id.includes(':case-')
+);
+console.log('\ncases:');
+for (const id of CASE_IDS) {
+  const runs = productionRuns.filter((v) => v.ids.includes(id));
+  const modelState = (isolated: boolean): string => {
+    const match = runs.find((v) => v.isolated === isolated);
+    if (match === undefined) return 'not run';
+    return match.egress.includes(id) ? 'EGRESS' : 'none';
+  };
+  const egressed = runs.some((v) => v.egress.includes(id));
+  const positive = observable.has(id);
+  const first = runs.find((v) => !v.isolated) ?? runs[0];
+  const error = first?.results.get(id)?.error ?? '-';
+  const nested = (first?.nested ?? [])
+    .filter((n) => n.id === id)
+    .map((n) => `created=${n.created} rtc=${n.rtcType}`)
+    .join('; ');
+  const verdictText = egressed
+    ? 'REAL (egress observed)'
+    : positive
+      ? 'NOT REAL (blocked: the no-policy control reached the listener and production did not)'
+      : 'CANNOT TEST (the no-policy control did not reach the listener in this build)';
+  console.log(
+    `  ${id}\n    default=${modelState(false)} site-per-process=${modelState(true)} positive=${positive ? 'observed' : 'not observed'} nested=[${nested || '-'}] error=${error}\n    => ${verdictText}`
+  );
+}
 const failed = verdicts.filter((verdict) => !verdict.ok);
 const reportingFailed = reportingFindings.length > 0;
 if (failed.length === 0 && !reportingFailed && unproven.length === 0) {
