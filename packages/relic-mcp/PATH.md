@@ -851,3 +851,27 @@ PRIVATE_SHARES_PATH_OK
 ```
 
 A failed assertion exits non-zero after printing `PRIVATE_SHARES_PATH_FAILED` and the step it stopped at. A recorded product defect prints `PRIVATE_SHARES_PATH_BLOCKED` with the defect codes and exits non-zero.
+
+## SVG payloads in the sandboxed frame
+
+Build the viewer and the MCP bundle first, then run the proof from the repository root with an isolated headless shell:
+
+```bash
+mise exec -- bun run --cwd packages/relic-viewer build
+mise exec -- bun run --cwd packages/relic-mcp build
+RELIC_CHROME_PATH=/absolute/path/to/chrome-headless-shell mise exec -- bun packages/relic-mcp/test/svg-path.ts
+```
+
+The command runs the same checks in two process models, one browser each. In the default model the frame is whatever process the browser chooses. In the isolated model the browser runs with `--site-per-process --enable-features=IsolateSandboxedIframes`, and the proof asserts that the viewer's frame appears as its own out-of-process iframe target. The usercontent origin is `relic-usercontent.test`, which the host resolver maps to 127.0.0.1, so it is cross-site from the service as in production.
+
+Each run publishes an SVG whose script tries to read its parent, the top document, cookies and storage, fetch an external URL and the service, open a popup, and navigate the top window. It opens that relic as a signed-in reader in the production viewer, served with the production shim headers. The script reports its attempts from its own document. The drawing must show in the frame, and every attempt must be refused: the browser's refusal lines are printed as `INFO`, and the proof counts any request that reaches the network layer or the service.
+
+Three controls run in each model. Control A is a throwaway viewer copy whose frame grants `allow-same-origin` and `allow-top-navigation`; its origin, cookie, storage and top-navigation checks must flip. Control B loosens the shim's connection policy; its service and network checks must fire. Control C creates a user-gesture popup, which the popup check must count. Request interception is a harness aid. It covers the page and each out-of-process frame, and control B shows it reaches the frame.
+
+To keep the drawing screenshots, set `RELIC_SVG_PATH_SHOTS` to a directory. CI does this and uploads the directory on every run.
+
+Success ends with:
+
+```text
+SVG_PATH_OK
+```

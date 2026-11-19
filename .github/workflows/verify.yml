@@ -124,6 +124,16 @@ jobs:
         run: RELIC_CHROME_PATH="$(command -v google-chrome)" bun packages/relic-mcp/test/email-code-sign-in-path.ts
       - name: Private shares path
         run: RELIC_CHROME_PATH="$(command -v google-chrome)" bun packages/relic-mcp/test/private-shares-path.ts
+      - name: SVG sandbox browser path
+        run: RELIC_SVG_PATH_SHOTS=svg-path-shots RELIC_CHROME_PATH="$(command -v google-chrome)" bun packages/relic-mcp/test/svg-path.ts
+      - name: Upload SVG path shots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: svg-path-shots
+          path: svg-path-shots/
+          if-no-files-found: warn
+          retention-days: 7
 
       # Official OpenTimelineIO 0.18.1 conformance. The generator derives
       # expected ranges from the pinned library, not from this repo's
