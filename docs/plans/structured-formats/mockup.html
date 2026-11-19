@@ -697,6 +697,16 @@ button { font: inherit; }
   .ep-col p { text-align: left; }
   .dt-cellbar { display: none; }
 }
+@container viewer (max-width: 34rem) {
+  .sheet { max-height: 56%; }
+  .jt-crumb { flex-wrap: wrap; gap: .35rem; padding: .35rem .5rem; }
+  .jt-path { flex-basis: 100%; }
+  .jt-pointer { display: none; }
+  .ep-bar .ep-title, .ep-size { display: none; }
+  .ep-pos { margin-left: auto; font-size: .64rem; }
+  .nb-out .nb-out-kind { position: static; display: block; margin-bottom: .2rem; text-align: right; }
+}
+.raw-src { position: relative; }
 </style>
 </head>
 <body>
@@ -916,7 +926,7 @@ function buildInspections() {
     );
     const score = Math.max(
       2,
-      Math.min(100, Math.round(66 + (r() - 0.5) * 2 * 38))
+      Math.min(100, Math.round(66 + (r() - 0.5) * 2 * 33))
     );
     const asset = pick(r, ASSETS);
     const site = pick(r, SITES);
@@ -970,9 +980,9 @@ function buildInspections() {
   set(14, 2, 'North Ridge 2');
   set(14, 1, 'North Ridge');
   set(14, 3, 'Priya Raman');
-  set(14, 6, '62');
+  set(14, 6, '99');
   set(14, 5, 'Hydrant H-2207');
-  set(14, 11, 'Needs repair');
+  set(14, 11, 'Passed');
   set(14, 8, 'Outlet threads worn; cap held with tape.');
   set(14, 4, '2026-08-11 07:20');
   set(27, 5, 'Hydrant H-0915');
@@ -989,6 +999,7 @@ function buildInspections() {
   set(22, 7, '4');
   set(2, 11, 'Passed');
   set(2, 6, '88');
+  set(3, 6, '100');
   set(1201, 11, 'Passed');
   set(1201, 6, '97');
   set(1201, 5, 'Culvert C-15');
@@ -1122,14 +1133,14 @@ const SENSORS = {
 };
 /* fixture: voorraad_magazijn_2026-09.csv, a semicolon file from a Dutch depot */
 const VR_COLS = [
-  { name: 'artikelnummer', w: 120 },
+  { name: 'artikelnummer', w: 132 },
   { name: 'omschrijving', w: 250 },
   { name: 'locatie', w: 92 },
   { name: 'aantal', w: 80, num: true },
   { name: 'eenheid', w: 82 },
-  { name: 'prijs_per_stuk', w: 118, num: true },
+  { name: 'prijs_per_stuk', w: 132, num: true },
   { name: 'totaal', w: 110, num: true },
-  { name: 'laatst_geteld', w: 112, kind: 'date' },
+  { name: 'laatst_geteld', w: 130, kind: 'date' },
 ];
 const VR_ITEMS = [
   'Brandkraandop DN80',
@@ -1288,9 +1299,9 @@ const XL = (() => {
         { name: 'Line item', w: 210 },
         { name: 'Owner', w: 140 },
         { name: 'Due', w: 112, kind: 'date' },
-        { name: 'Budget', w: 112, num: true },
-        { name: 'Spent', w: 112, num: true },
-        { name: 'Remaining', w: 116, num: true },
+        { name: 'Budget', w: 132, num: true },
+        { name: 'Spent', w: 124, num: true },
+        { name: 'Remaining', w: 128, num: true },
         { name: '% used', w: 92, num: true },
       ],
       budget
@@ -2581,7 +2592,7 @@ function tableView() {
       ? `Sheet ${tb.book.sheets.indexOf(ds) + 1} of ${tb.book.sheets.length}, ${ds.name} \u00b7 ${nfmt(ds.n)} rows \u00b7 ${nfmt(ds.cols.length)} columns`
       : `${nfmt(ds.n)} rows \u00b7 ${nfmt(ds.cols.length)} columns \u00b7 ${ds.delim}`,
     sortCol
-      ? ` \u00b7 sorted by ${sortCol.name}, ${tb.sort.dir === 'desc' ? (sortCol.num ? 'high to low' : 'Z to A') : sortCol.num ? 'low to high' : 'A to Z'}`
+      ? ` \u00b7 sorted by ${sortCol.name}, ${tb.sort.dir === 'desc' ? (sortCol.num ? 'high to low' : sortCol.kind === 'date' ? 'newest first' : 'Z to A') : sortCol.num ? 'low to high' : sortCol.kind === 'date' ? 'oldest first' : 'A to Z'}`
       : ''
   );
   const fi = h('input', {
@@ -3233,7 +3244,7 @@ function renderCellbar() {
   }
   if (!tb.sel) {
     tb.cellbar.replaceChildren(
-      h('div', { class: 'dt-addr' }, '\u2014', h('small', null, 'no cell')),
+      h('div', { class: 'dt-addr' }, 'No cell', h('small', null, 'selected')),
       h(
         'div',
         { class: 'dt-value is-empty' },
@@ -3625,7 +3636,13 @@ function sourceStage(text, opts) {
   );
   V.stage.append(bar);
   if (o.notice) V.stage.append(o.notice);
-  V.stage.append(h('div', { class: 'raw-src' }, codeView(text, o)));
+  const raw = h('div', { class: 'raw-src' }, codeView(text, o));
+  V.stage.append(raw);
+  if (o.err)
+    raf2(() => {
+      const e = raw.querySelector('.err-line');
+      if (e) raw.scrollTop = Math.max(0, e.offsetTop - raw.clientHeight / 2);
+    });
 }
 function notice(text, info) {
   return h(
@@ -6432,12 +6449,20 @@ S(
   }
 );
 S('J3', TR, 'A large array (48,210 readings): windowed rows, Expand all off', {
-  setup: (V) =>
+  setup: (V) => {
     tree(V, {
       open: new Set(['', '/readings']),
       sel: '/readings/20417',
       scrollTo: 20417 * 27 - 200,
-    }),
+    });
+    V.mockNote = 'Mock: rows in the DOM are counted after load.';
+  },
+  after: (V) => {
+    const n = V.jt.sizer.children.length;
+    const note = $('.mk-note', V.stage);
+    if (note)
+      note.textContent = `Mock: rows in the DOM right now: ${n} of ${nfmt(V.jt.rows.length)} visible nodes. Scroll and the window moves.`;
+  },
 });
 S('J4', TR, 'Duplicate key: both marked, the one a parser keeps says so', {
   setup: (V) => {
@@ -6449,7 +6474,7 @@ S('J5', TR, 'Parse error: notice with line and column, then the source', {
   setup: (V) => {
     tree(V);
     V.view = 'source';
-    V.mockNote = 'Mock: the fixture source is cut after line 38.';
+    V.mockNote = 'Mock: the fixture source is cut after line 37.';
     V.comments = [];
     V.sidebar = false;
     V.source = {
@@ -6466,7 +6491,7 @@ S('J6', TR, 'Source mode: Suggesting switched the view to the source', {
   setup: (V) => {
     tree(V);
     V.view = 'source';
-    V.mockNote = 'Mock: the fixture source is cut after line 38.';
+    V.mockNote = 'Mock: the fixture source is cut after line 37.';
     V.mode = 'suggesting';
     V.stripNote =
       'JSON is suggested on as text. The tree comes back when you switch to Reading.';
