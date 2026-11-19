@@ -49,6 +49,7 @@ import {
 import { type AssetSource, memoryAssets, REGISTER_SW_JS } from './assets.ts';
 import { COVER_ALT, cardCopy } from './card.ts';
 import { assertConfig, DEFAULT_CONFIG, type RelicConfig } from './config.ts';
+import { sandboxPolicy } from './sandbox-policy.ts';
 import {
   changeNoticeMail,
   commentNoticeMail,
@@ -439,31 +440,32 @@ export function createApp(options: AppOptions = {}): RelicApp {
    *
    * The other half is that the frame cannot make HTTP requests. The iframe
    * sandbox omits `allow-same-origin`, so the document runs in an opaque
-   * origin where `'self'` matches nothing, which makes "only our host" mean
-   * "only what is inlined in this response": the frame's own scripts and the
-   * bundle it carries. Every fetch directive is closed.
-   * `blob:` remains in `script-src` for one reason: the JSX mount imports a
-   * module built from posted code, and that import is local.
+   * origin. `default-src 'none'` closes every fetch directive. `script-src`
+   * names the shell's one inline script by hash, and `blob:` admits the author
+   * scripts the shim re-emits and the JSX module (sandbox-policy.ts).
    *
-   * Measured against a collector server under this policy: `fetch`,
-   * `<img>`, `sendBeacon`, `WebSocket`, and `EventSource` produced zero
-   * arrivals. `sendBeacon` returned `true` while delivering nothing, so its
-   * return value is not evidence of delivery. A form with `target=_blank`
-   * submitted and never arrived. `window.open` was blocked in the probe,
-   * but no user gesture preceded it, so CSP is not what stopped it; popups
-   * are closed by the sandbox attribute in the viewer.
-   *
-   * WebRTC is not a CSP matter. Chrome ignores CSP `webrtc 'block'`, so no such
-   * directive is sent. The shim removes the RTCPeerConnection constructors from
-   * its realm and wraps the paths that create frames (installSandboxContainment
-   * in sandbox.ts). That is a backstop: the egress probe in
-   * packages/relic-mcp/test/frame-egress-path.ts reproduces four routes it does
-   * not stop, so WebRTC egress from author script is not prevented here.
+   * WebRTC is not a CSP matter: Chrome ignores `webrtc 'block'`. The shim
+   * removes the RTC constructors before author code runs (rtc-guard.ts), and
+   * `frame-src 'none'` stops child frames. Self-navigation of the frame is
+   * governed by the host page's frame-src, which names this exact document.
    * Legitimate relics cannot use nested frames or workers.
+   *
+   * What is measured, and what is not, is in docs/spec/viewer.md, section 4.
    */
   async function serveSandbox(request: Request): Promise<Response> {
     const asset = await assets.get('sandbox.html');
     if (asset === undefined) return new Response('Not found', { status: 404 });
+
+    let policy: string;
+    try {
+      policy = sandboxPolicy(
+        new URL(config.serviceOrigin).origin,
+        new TextDecoder().decode(asset.body)
+      );
+    } catch {
+      // Fail closed: a shell without its one inline script would never run.
+      return new Response('sandbox shell is malformed', { status: 500 });
+    }
 
     return textResponse(asset.body, request, {
       'content-type': 'text/html; charset=utf-8',
@@ -471,26 +473,8 @@ export function createApp(options: AppOptions = {}): RelicApp {
       'x-robots-tag': 'noindex',
       'cache-control': 'no-store',
       // The directive list and its order are the contract; the test suite
-      // asserts this exact string so a loosening fails instead of shipping.
-      'content-security-policy': [
-        "default-src 'none'",
-        // 'unsafe-inline' is the document.write path both render routes
-        // use; blob: is the module the JSX mount builds from posted code.
-        // No scheme source remains, so no CDN or remote module can load.
-        "script-src 'unsafe-inline' blob:",
-        "style-src 'unsafe-inline'",
-        'img-src data: blob:',
-        'font-src data:',
-        'media-src data: blob:',
-        "worker-src 'none'",
-        "form-action 'none'",
-        "base-uri 'none'",
-        // Framed, the iframe attribute already makes this document opaque. This
-        // also covers a direct navigation to the shim, and a commit that somehow
-        // lacks the attribute: scripts only, no top navigation, no popups.
-        'sandbox allow-scripts',
-        `frame-ancestors ${new URL(config.serviceOrigin).origin}`,
-      ].join('; '),
+      // asserts the exact string so a loosening fails instead of shipping.
+      'content-security-policy': policy,
     });
   }
 

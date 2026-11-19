@@ -1357,7 +1357,8 @@ async function main(): Promise<void> {
   await shim.arrayBuffer();
   const productionDirectives = [
     "default-src 'none'",
-    "script-src 'unsafe-inline' blob:",
+    "script-src 'sha256-",
+    "frame-src 'none'",
     `frame-ancestors ${origin}`,
   ];
   check(
