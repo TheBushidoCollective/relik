@@ -6,7 +6,7 @@ import {
   CONTENT_HEAD_BYTES,
   CONTENT_TAIL_BYTES,
   ContentStoreError,
-  createContentSink,
+  openContentStore,
   contentFromBlob,
   contentFromBytes,
   DOCUMENT_RENDER_LIMIT_BYTES,
@@ -73,11 +73,60 @@ async function checkNodeBlobMime(): Promise<void> {
 }
 
 describe('browser-backed content', () => {
+  test('waits for a one-byte streamed Blob before creating a sink', async () => {
+    const originalBlob = Response.prototype.blob;
+    const settled = Promise.withResolvers<Blob>();
+    let body: ReadableStream<Uint8Array> | null = null;
+    Response.prototype.blob = function () {
+      body = this.body;
+      return settled.promise;
+    };
+    try {
+      let opened = false;
+      const pending = openContentStore().then((store) => {
+        opened = true;
+        return store;
+      });
+      if (!body) throw new Error('initialization did not use a stream body');
+      const reader = (body as ReadableStream<Uint8Array>).getReader();
+      expect(await reader.read()).toEqual({
+        done: false,
+        value: new Uint8Array([0]),
+      });
+      expect((await reader.read()).done).toBe(true);
+      expect(opened).toBe(false);
+      settled.resolve(new Blob([new Uint8Array([0])]));
+      const store = await pending;
+      const sink = store.createSink(3);
+      sink.write(new Uint8Array([1, 2, 3]));
+      expect(await (await sink.finish()).read(0, 3)).toEqual(
+        new Uint8Array([1, 2, 3])
+      );
+    } finally {
+      Response.prototype.blob = originalBlob;
+    }
+  });
+
+  test('reports Blob initialization failure as a content storage failure', async () => {
+    const originalBlob = Response.prototype.blob;
+    const failure = new Error('initialization failed');
+    Response.prototype.blob = async () => {
+      throw failure;
+    };
+    try {
+      const result = openContentStore();
+      await expect(result).rejects.toBeInstanceOf(ContentStoreError);
+      await expect(result).rejects.toMatchObject({ cause: failure });
+    } finally {
+      Response.prototype.blob = originalBlob;
+    }
+  });
+
   for (const size of contentSizes) {
     test(`preserves bytes across record and batch boundaries: ${size}`, async () => {
       const bytes = new Uint8Array(size);
       for (let i = 0; i < size; i++) bytes[i] = (i * 37 + (i >>> 13)) & 255;
-      const sink = createContentSink(size);
+      const sink = (await openContentStore()).createSink(size);
       for (let offset = 0; offset < size; offset += 65_519) {
         sink.write(bytes.slice(offset, Math.min(size, offset + 65_519)));
       }
@@ -101,7 +150,7 @@ describe('browser-backed content', () => {
   }, 35_000);
 
   test('enforces bounded reads and exact sink length', async () => {
-    const sink = createContentSink(3);
+    const sink = (await openContentStore()).createSink(3);
     sink.write(new Uint8Array([1, 2]));
     await expect(sink.finish()).rejects.toThrow(RangeError);
     expect(() => sink.write(new Uint8Array([3, 4]))).toThrow(RangeError);

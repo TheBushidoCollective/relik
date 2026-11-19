@@ -9,7 +9,7 @@
  * except the public identity, the signatures and the wraps the service holds.
  */
 
-import { createContentSink } from '../content.ts';
+import { openContentStore } from '../content.ts';
 import { readSession, requestMagicLink } from '../comments.ts';
 import { keylessLink } from '../copy-link.ts';
 import { privateApi } from './fingerprint-input.ts';
@@ -658,7 +658,7 @@ class PrivateReader {
   ): Promise<ReadyView> {
     const entry = opened.envelope.entries[0];
     if (entry === undefined) throw new InvalidKeyResponseError('envelope');
-    const sink = createContentSink(opened.content.length);
+    const sink = (await openContentStore()).createSink(opened.content.length);
     sink.write(opened.content);
     const content = await sink.finish();
     const route = await routeContent(entry.filename, entry.mimetype, content);

@@ -50,7 +50,7 @@ import {
 } from '@relic/format';
 import {
   ContentStoreError,
-  createContentSink,
+  openContentStore,
   DOCUMENT_RENDER_LIMIT_BYTES,
   MAX_CONTENT_READ_BYTES,
   type ContentSink,
@@ -575,6 +575,7 @@ export async function load(
       },
       resume?.maxBytes
     );
+    const contentStore = await openContentStore();
     const { stream, digest } = digestStream(
       await fetchBody(mintResponse.url, deps)
     );
@@ -601,7 +602,7 @@ export async function load(
         const entry = env.entries[0];
         if (entry) {
           loadContents = { filename: entry.filename, length: entry.length };
-          state.sink = createContentSink(entry.length);
+          state.sink = contentStore.createSink(entry.length);
         }
       },
       onContent: (chunk) => {

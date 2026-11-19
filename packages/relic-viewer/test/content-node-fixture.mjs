@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 let source = '';
 for await (const chunk of process.stdin) source += chunk;
 assert.equal(process.versions.bun, undefined, 'the fixture requires Node');
-const { CONTENT_BATCH_BYTES, createContentSink } = await import(
+const { CONTENT_BATCH_BYTES, openContentStore } = await import(
   `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`
 );
 
@@ -24,7 +24,7 @@ let completed = 0;
 for (const size of sizes) {
   const bytes = new Uint8Array(size);
   for (let i = 0; i < size; i++) bytes[i] = (i * 37 + (i >>> 13)) & 255;
-  const sink = createContentSink(size);
+  const sink = (await openContentStore()).createSink(size);
   for (let offset = 0; offset < size; offset += 65_519) {
     sink.write(bytes.slice(offset, Math.min(size, offset + 65_519)));
   }
