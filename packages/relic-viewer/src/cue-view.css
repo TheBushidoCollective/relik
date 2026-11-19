@@ -39,17 +39,6 @@
   white-space: nowrap;
 }
 
-.structured-cues .cues-action {
-  padding: 0.25rem 0.6rem;
-  border: 1px solid var(--rule-strong, #b8b2a6);
-  background: none;
-  color: var(--ink, #1d1d1b);
-  font: inherit;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.structured-cues .cues-action:focus-visible,
 .structured-cues .cues-find:focus-visible,
 .structured-cues .cue:focus-visible {
   outline: 2px solid var(--patina, #2f6f63);
@@ -226,7 +215,12 @@
 .structured-cues .cm-add:focus-visible {
   border-color: var(--patina, #2f6f63);
   color: var(--patina-ink, #1f4f46);
-  outline: none;
+}
+
+/* A keyboard focus needs more than a 1 px border change to be seen. */
+.structured-cues .cm-add:focus-visible {
+  outline: 2px solid var(--patina, #2f6f63);
+  outline-offset: 1px;
 }
 
 .structured-cues .cue:hover .cm-add,
@@ -266,7 +260,25 @@
 
   .structured-cues .cue-text {
     grid-column: 1 / -1;
-    padding-right: 1.8rem;
+    padding-right: 3rem;
+  }
+
+  /* A finger needs 44 px (WCAG 2.5.5); the text keeps clear of the control. */
+  .structured-cues .cm-add {
+    width: 44px;
+    height: 44px;
+    right: 0;
+  }
+
+  .structured-cues .cm-add svg {
+    width: 14px;
+    height: 14px;
+  }
+
+  .structured-cues .cues-find {
+    box-sizing: border-box;
+    flex: 1 1 12rem;
+    min-height: 44px;
   }
 
   .structured-cues .cue-i {

@@ -23,10 +23,9 @@ import {
 } from '@relic/format/subtitles';
 import { isInvisible } from '@relic/format/structured-text';
 import { subtitleClock } from './annotate-cue.ts';
-import {
-  type StructuredMount,
-  type StructuredPart,
-  structuredViewFor,
+import type {
+  StructuredMount,
+  StructuredPart,
 } from './structured-view-bridge.ts';
 
 const STYLESHEET_ID = 'relic-cue-view-css';
@@ -265,10 +264,10 @@ function drawCues(mount: StructuredMount, file: SubtitleFile): StructuredPart {
   find.placeholder = 'Find in subtitles';
   find.setAttribute('aria-label', 'Find in subtitles');
   const findCount = el('span', 'cues-find-count');
-  const viewSource = el('button', 'cues-action', 'View source');
-  viewSource.type = 'button';
+  // No View source here: the route's own toggle above the view offers it and
+  // follows which view is on screen. A second control said the same thing twice.
   const bar = el('div', 'cues-bar');
-  bar.append(summary, find, findCount, viewSource);
+  bar.append(summary, find, findCount);
 
   const notices: HTMLElement[] = [];
   if (file.skipped > 0)
@@ -378,12 +377,6 @@ function drawCues(mount: StructuredMount, file: SubtitleFile): StructuredPart {
       const at = visible.indexOf(doc.activeElement as HTMLLIElement);
       focusRow(visible[(at + 1) % visible.length] as HTMLLIElement);
     },
-    { signal }
-  );
-
-  viewSource.addEventListener(
-    'click',
-    () => structuredViewFor(root)?.showSource(),
     { signal }
   );
 

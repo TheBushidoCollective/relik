@@ -444,7 +444,9 @@ function drawNotebook(
           kind: 'path',
           pointer: comment.dataset['pointer'] ?? '',
         };
-        root.dispatchEvent(
+        // From the control, so the page opens the composer beside it rather
+        // than beside the whole notebook.
+        comment.dispatchEvent(
           new CustomEvent('relic:structured-comment', {
             bubbles: true,
             detail: { anchor },

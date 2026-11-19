@@ -591,12 +591,14 @@ export function mountDataTable(
   const reveal = (display: number, column: number): void => {
     const first = headerRow ? 1 : 0;
     if (display >= first) {
+      // Rows sit in the body, which starts below the sticky head, so a row at
+      // `top` shows under the head once `scrollTop` equals `top`.
       const top = (display - first) * ROW_HEIGHT;
-      const shown = Math.max(0, grid.scrollTop - HEAD_HEIGHT);
+      const shown = grid.scrollTop;
       const viewport = viewportHeight();
-      if (top < shown) grid.scrollTop = HEAD_HEIGHT + top;
+      if (top < shown) grid.scrollTop = top;
       else if (top + ROW_HEIGHT > shown + viewport) {
-        grid.scrollTop = HEAD_HEIGHT + top + ROW_HEIGHT - viewport;
+        grid.scrollTop = top + ROW_HEIGHT - viewport;
       }
     }
     const left = columnLeft[column] ?? ROW_NUMBER_WIDTH;
@@ -1014,7 +1016,9 @@ export function mountDataTable(
       if (!Number.isInteger(column)) return;
       selectOne(0, column);
       update(false);
-      root.dispatchEvent(
+      // From the column's header cell, so the composer opens beside it rather
+      // than beside the whole table. The update above may have redrawn it.
+      (headIndex.get(column) ?? root).dispatchEvent(
         new CustomEvent('relic:structured-comment', {
           bubbles: true,
           detail: {
