@@ -257,6 +257,8 @@ export function diffModeForRoute(route: RenderRoute): DiffMode | undefined {
       return 'markdown';
     case 'code':
       return 'code';
+    case 'notebook':
+      return 'code';
     case 'sandboxed-html':
     case 'sandboxed-jsx':
       return 'rendered';

@@ -34,6 +34,13 @@ import {
 } from '@relic/format';
 import { registerBuiltInAnchorAdapters } from './anchor-adapters.ts';
 import {
+  drawnStructuredView,
+  mountStructuredView,
+  type StructuredKind,
+  structuredKindFor,
+  structuredViewFor,
+} from './structured-view-bridge.ts';
+import {
   type AnchorSurface,
   adapterFor,
   anchorLabel,
@@ -325,6 +332,7 @@ const MARKER_LABELS: Record<RenderRoute, string> = {
   otio: 'Plays its timeline in your browser, no author code',
   model: 'Shown as a 3D model, no author code',
   pdf: 'Rendered as a document, no author code',
+  notebook: 'Rendered as a notebook, no author code',
   'sandboxed-html': 'Runs author code, isolated',
   'sandboxed-jsx': 'Runs author code, isolated',
   download: 'Downloads to your device, no author code',
@@ -1350,6 +1358,25 @@ function renderCodeView(view: ReadyView): HTMLElement {
   return wrapper;
 }
 
+/**
+ * A file the structured views can show: a table, a tree or cues on the code
+ * route, and a notebook on the notebook route. The source view stands in the
+ * root until the view draws, and stays whenever the view cannot show the file.
+ */
+function renderStructuredView(
+  view: ReadyView,
+  kind: StructuredKind
+): HTMLElement {
+  const root = document.createElement('section');
+  mountStructuredView(root, kind, {
+    filename: view.filename,
+    mimetype: view.declaredMimetype,
+    source: decodeText(documentBytes(view)),
+    sourceView: () => renderCodeView(view),
+  });
+  return root;
+}
+
 function renderImageView(view: ReadyView): HTMLElement {
   const wrapper = document.createElement('div');
   wrapper.className = 'doc doc-image';
@@ -1906,8 +1933,17 @@ export function buildCurrentStage(
         renderMarkdownSource(decodeText(documentBytes(view)), view.filename)
       );
       break;
-    case 'code':
-      main.appendChild(renderCodeView(view));
+    case 'code': {
+      const kind = structuredKindFor(view.filename, view.declaredMimetype);
+      main.appendChild(
+        kind === undefined
+          ? renderCodeView(view)
+          : renderStructuredView(view, kind)
+      );
+      break;
+    }
+    case 'notebook':
+      main.appendChild(renderStructuredView(view, 'notebook'));
       break;
     case 'image':
       main.appendChild(renderImageView(view));
@@ -4998,7 +5034,9 @@ export function buildMarkControls(deps: MarkDeps): MarkControls {
     // it succeeded. A button that anchors to a position the reader did not
     // select is worse than no button: the chip names their words either way,
     // so the only place the difference shows is the mark, after posting.
-    const captured = captureSelectionQuote(surface, range, selection);
+    const captured =
+      structuredViewFor(surface)?.selectionAnchor() ??
+      captureSelectionQuote(surface, range, selection);
     if (captured === null && !suggestion?.applied) {
       dismiss();
       return;
@@ -6135,7 +6173,9 @@ export function buildThread(
     },
     suggestionSelection: (range) => {
       const selectedRoot = host?.querySelector(
-        view.route === 'code' ? 'pre.code-body' : 'article.prose'
+        view.route === 'code' || view.route === 'notebook'
+          ? 'pre.code-body'
+          : 'article.prose'
       );
       return {
         applied: suggestionController?.applied ?? false,
@@ -6151,6 +6191,7 @@ export function buildThread(
         setOpen(true);
         return;
       }
+      leaveStructuredView();
       void ensureSuggestion(range).then((controller) => {
         if (!controller) return;
         const selected = window.getSelection();
@@ -6207,10 +6248,18 @@ export function buildThread(
   let presenceReader: string | undefined;
   let presenceGeneration = 0;
   let presencePageHidden = false;
-  const textSuggestions = view.route === 'markdown' || view.route === 'code';
+  const textSuggestions =
+    view.route === 'markdown' ||
+    view.route === 'code' ||
+    view.route === 'notebook';
+  // Suggesting edits the source text, so a drawn structured view gives way to it.
+  const leaveStructuredView = (): void => {
+    const handle = host === undefined ? undefined : structuredViewFor(host);
+    if (handle?.structured) handle.showSource();
+  };
   const sourceIssue = (() => {
     if (!textSuggestions)
-      return 'Suggestions are available on markdown and code.';
+      return 'Suggestions are available on markdown, code and notebooks.';
     if (view.version !== view.currentVersion)
       return 'Suggestions can only be made on the current version.';
     const source = view.document;
@@ -6445,6 +6494,7 @@ export function buildThread(
     suggestionController?.setSuggesting(false)
   );
   suggestingMode.addEventListener('click', () => {
+    leaveStructuredView();
     void ensureSuggestion().then((controller) =>
       controller?.setSuggesting(true)
     );
@@ -6839,6 +6889,7 @@ export function buildThread(
     if (!textWindowFor(host)) unwrapTextQuotes(host);
     host.querySelector('.comment-pins')?.remove();
     markController?.clearMarks();
+    structuredViewFor(markHost)?.clearMarks();
     host
       .querySelector<HTMLIFrameElement>('iframe.usercontent-frame')
       ?.contentWindow?.postMessage({ type: 'relic:clear-marks' }, '*');
@@ -7044,7 +7095,13 @@ export function buildThread(
   }
 
   function familyOf(kind: string): 'time' | 'otio' | 'document' {
-    if (kind === 'time') return 'time';
+    // A time anchor on a drawn cue list marks a document, not media.
+    if (kind === 'time') {
+      return host !== undefined &&
+        drawnStructuredView(host, 'cues') !== undefined
+        ? 'document'
+        : 'time';
+    }
     if (kind === 'otio') return 'otio';
     return 'document';
   }
@@ -10745,6 +10802,7 @@ export function trackRenderState(
       }
       break;
     }
+    case 'notebook':
     case 'model': {
       stage.addEventListener('relic:render-state', (event: Event) => {
         const detail = (event as CustomEvent).detail;
