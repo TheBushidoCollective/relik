@@ -149,7 +149,9 @@ describe('presence keys and sealed frames', () => {
     expect(await openPresence(keys.seal, keys.room, stale)).toBeUndefined();
     const future = await sealPresence(keys.seal, keys.room, {
       ...frame(),
-      t: Date.now() + 30_001,
+      // Well past the window: time elapsing before the open call only shrinks
+      // the gap, so an edge-sized margin would pass or fail depending on load.
+      t: Date.now() + 60_000,
     });
     expect(await openPresence(keys.seal, keys.room, future)).toBeUndefined();
   });
