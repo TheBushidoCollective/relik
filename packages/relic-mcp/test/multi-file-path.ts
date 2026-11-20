@@ -78,4 +78,6 @@ await import('./multi-file-stages/private-rekey.ts');
 await import('./multi-file-stages/show.ts');
 await import('./multi-file-stages/comments-mcp.ts');
 await import('./multi-file-stages/apply.ts');
+await import('./multi-file-stages/compare.ts');
+await import('./multi-file-stages/shape-switch.ts');
 console.log('MULTI_FILE_PATH_OK');

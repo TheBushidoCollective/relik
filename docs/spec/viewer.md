@@ -407,9 +407,12 @@ This section's first four states describe a public relic, whose key is the fragm
 12. **No changes.** Every diffable mode detects byte-identical content before rendering an empty comparison and says **"No changes. These versions have identical content."** Text modes also arrive here when decoded source strings are identical. An empty result area is never used to mean no changes.
 13. **History present but comparison unavailable.** A class with no comparison mode does not get a broken control: the taskbar offers **Earlier versions**, which opens a chosen version on its own. Media, OpenTimelineIO and PDF relics play or render in the browser and nothing on their page offers a comparison, so the current page carries no comparison notice; opening an earlier version says why it is alone, in that class's words, for example **"Relik cannot show version 1 of this timeline beside version 2. It is open here on its own."** A download-only relic keeps its notice on the current page: **"This file is download-only, so Relik cannot show two versions side by side in the browser. Each version can still be opened on its own."** A current plaintext above the ceiling also keeps rendering normally, under **"This version is larger than the 16 MiB comparison limit, so Relik cannot show it beside another. Earlier versions can still be opened on their own."** for every comparable class. An earlier version shown on its own carries its own reason and never the current page's notice as well. A historical version above the ceiling is refused after its mint and before its ciphertext fetch, naming that version and confirming the current version remains open. Other historical fetch or decrypt failures stay inside the comparison panel.
 
-**The comparison ceiling is 16 MiB per version.** It is separate from the
-500 MiB publication cap and the 100 MiB threshold for windowed source.
-Versions too large to compare can still be opened individually.
+**The comparison ceiling is 16 MiB per file on each side.** Folder comparison
+lists files up to a 100 MiB whole-version limit. It compares entry bytes,
+labels added, removed and changed files, and puts unchanged files behind a
+toggle. Selecting a changed file uses its normal comparison route. A single
+file compared with a folder is treated as a one-entry folder named for the
+file. Oversized versions can still be opened individually.
 
 Version-store admission and eviction count a folder version's entire decrypted
 content, including its manifest, rather than the selected entry. Historical
@@ -557,6 +560,12 @@ Version moved into the taskbar, then Comments did, and the row had already overf
 **What must never be lost at 320px: the filename, the version, Copy link, Download, and Report.** That is the floor's completion criterion, and it is unchanged. Neither Comments nor Decisions is on it. A future addition has to displace something named rather than overflow the row, and the remaining candidates both have the price above attached to them.
 
 ### 6.6 The comment thread
+
+Folder comments are scoped to the open entry and its version; the sealed
+comment carries the entry path outside its anchor. Replies and edits preserve
+that path. Entry-less comments and comments whose entry is missing from the
+version appear in a Whole relic group beside each file, with unplaceable
+anchors identified. Tree rows show the count for their own file.
 
 `frame.md` reversed the no-identity non-goal and the reversal is what makes this section possible: accounts exist in exactly one form, a verified email address per commenter, and, for public relics, the address is the identity. It reversed nothing else at the time. (A separate `/dashboard` route was later added for key backup and listing opened and commented relics. On 2026-10-06 Jason Waldrip authorised rendering the browser's opened relics list on the homepage `/` as well, and on 2026-11-05 that list became a header link to `/dashboard`. Until 2026-11-11, nothing in either reversal granted sharing groups, team features, or server-side access permissions. On 2026-11-11 private shares changed that for private relics only: a passkey-bound identity holding a wrap for a version may read, comment on and decide that version (6.12). Public relics keep the address-only rule, and no sharing groups or team features were added.)
 
