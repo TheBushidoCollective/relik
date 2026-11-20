@@ -15,6 +15,7 @@ export * from './email.ts';
 export * from './envelope.ts';
 export * from './errors.ts';
 export * from './fragment.ts';
+export * from './folder-container.ts';
 export * from './hosted.ts';
 export * from './id.ts';
 export * from './json-tree.ts';
