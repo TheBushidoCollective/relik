@@ -1,7 +1,6 @@
 name: publish-mcp
 
-# Publishing is manual and versioned. The package can read local files, so a
-# release is an explicit decision rather than a merge side effect.
+# Releases are dispatched by the tag-triggered workflow on main.
 on:
   workflow_dispatch:
     inputs:
@@ -23,10 +22,27 @@ permissions:
   id-token: write
 
 jobs:
+  admit:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check release admission
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+        run: node scripts/release-admission.mjs
+
   verify:
+    needs: admit
     uses: ./.github/workflows/verify.yml
 
   native-build:
+    needs: admit
     name: native ${{ matrix.target }}
     strategy:
       fail-fast: false
