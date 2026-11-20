@@ -35,6 +35,51 @@ async function open(bytes: Uint8Array, objectLength = bytes.length) {
 }
 
 describe('dual-layout streaming', () => {
+  test.each([13, 16_384, 65_536, 200_000])(
+    'v1 preserves progress events and pull timing for %i-byte chunks',
+    async (chunkSize) => {
+      const bytes = await encryptRelic({
+        key,
+        filename: 'large.txt',
+        mimetype: 'text/plain',
+        content: new Uint8Array(200_000).fill(65),
+      });
+      async function capture(
+        openStream: typeof streamRelicContent | typeof streamAnyRelicContent
+      ) {
+        const events: unknown[] = [];
+        const beforePull: number[] = [];
+        let offset = 0;
+        const input = new ReadableStream<Uint8Array>(
+          {
+            pull(controller) {
+              if (offset === bytes.length) {
+                controller.close();
+                return;
+              }
+              beforePull.push(events.length);
+              const end = Math.min(offset + chunkSize, bytes.length);
+              controller.enqueue(bytes.subarray(offset, end));
+              offset = end;
+            },
+          },
+          { highWaterMark: 0 }
+        );
+        await openStream(input, key, {
+          objectLength: bytes.length,
+          onContent() {},
+          onProgress(progress) {
+            events.push({ ...progress });
+          },
+        });
+        return { events, beforePull };
+      }
+      const original = await capture(streamRelicContent);
+      const dual = await capture(streamAnyRelicContent);
+      expect(dual.events).toEqual(original.events);
+      expect(dual.beforePull).toEqual(original.beforePull);
+    }
+  );
   test('v1 matches the original streaming path', async () => {
     const bytes = await encryptRelic({
       key,
