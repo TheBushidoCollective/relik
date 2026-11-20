@@ -43,6 +43,8 @@ export function dashboardPreview(renderer: string | undefined): {
   switch (renderer) {
     case 'markdown':
       return { kind: 'document', label: 'Document' };
+    case 'notebook':
+      return { kind: 'document', label: 'Notebook' };
     case 'code':
       return { kind: 'code', label: 'Code' };
     case 'image':

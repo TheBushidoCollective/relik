@@ -1,0 +1,429 @@
+/* The table view (plan A1). Loaded once, when a table or a table notice is drawn. */
+
+.dt {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  min-width: 0;
+  font: 0.84rem/1.4 var(--sans, system-ui, sans-serif);
+  color: var(--ink, #111);
+}
+
+.dt-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.9rem;
+}
+
+.dt-summary {
+  margin: 0;
+  color: var(--ink-soft, #555);
+  font-variant-numeric: tabular-nums;
+}
+
+.dt-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  color: var(--ink-soft, #555);
+}
+
+.dt-find {
+  min-width: 12rem;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--rule-strong, #888);
+  font: inherit;
+  background: var(--surface, #fff);
+  color: inherit;
+}
+
+.dt-find-count {
+  color: var(--ink-soft, #555);
+  font-variant-numeric: tabular-nums;
+}
+
+.dt-notice {
+  margin: 0;
+  padding: 0.35rem 0.5rem;
+  border-left: 3px solid var(--rule-strong, #888);
+  color: var(--ink-soft, #555);
+}
+
+.dt-grid {
+  position: relative;
+  /* The inspector above it takes 5rem, so the table and its inspector together
+     still fit the window they fitted when the inspector sat below. */
+  height: min(calc(70vh - 5rem), 48rem);
+  min-height: 12rem;
+  overflow: auto;
+  border: 1px solid var(--rule-strong, #888);
+  background: var(--surface, #fff);
+  overscroll-behavior: contain;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.dt-grid ::selection {
+  background: transparent;
+}
+
+.dt-head,
+.dt-row {
+  display: grid;
+  grid-template-columns: var(--dt-tracks);
+  box-sizing: border-box;
+}
+
+.dt-head {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  height: 36px;
+  background: var(--ground, #f6f6f3);
+  border-bottom: 1px solid var(--rule-strong, #888);
+}
+
+.dt-body {
+  position: relative;
+}
+
+.dt-row {
+  position: absolute;
+  left: 0;
+  height: 28px;
+}
+
+.dt-corner,
+.dt-rn {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0 0.4rem;
+  background: var(--ground, #f6f6f3);
+  color: var(--ink-soft, #555);
+  font: 0.7rem/1 var(--mono, ui-monospace, monospace);
+  border-right: 1px solid var(--rule, #ddd);
+}
+
+.dt-rn {
+  height: 28px;
+  box-sizing: border-box;
+}
+
+.dt-hcell,
+.dt-cell {
+  position: relative;
+  min-width: 0;
+  height: 28px;
+  box-sizing: border-box;
+  padding: 0 0.55rem;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  overflow: hidden;
+  border-right: 1px solid var(--rule, #ddd);
+  border-bottom: 1px solid var(--rule, #ddd);
+  white-space: nowrap;
+  cursor: cell;
+}
+
+.dt-hcell {
+  height: 36px;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 0.05rem;
+  font-weight: 600;
+  cursor: pointer;
+  background: var(--ground, #f6f6f3);
+}
+
+.dt-letter {
+  font: 400 0.6rem/1 var(--mono, ui-monospace, monospace);
+  color: var(--ink-soft, #555);
+  letter-spacing: 0.06em;
+}
+
+.dt-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dt-blank {
+  color: var(--ink-soft, #555);
+  font-style: italic;
+  opacity: 0.7;
+}
+
+.dt-cell.is-num {
+  justify-content: flex-end;
+  font-family: var(--mono, ui-monospace, monospace);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.78rem;
+}
+
+.dt-hcell.is-num {
+  align-items: flex-end;
+}
+
+.dt-sort {
+  position: absolute;
+  right: 0.5rem;
+  top: 50%;
+  width: 0;
+  height: 0;
+  transform: translateY(-50%);
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-bottom: 5px solid var(--ink, #111);
+}
+
+.dt-sort[data-dir='desc'] {
+  transform: translateY(-50%) rotate(180deg);
+}
+
+.dt-hc-comment {
+  position: absolute;
+  right: 1.1rem;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 1.1rem;
+  height: 1.1rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink-soft, #555);
+  opacity: 0;
+  cursor: pointer;
+}
+
+.dt-hcell:hover .dt-hc-comment,
+.dt-hcell:focus-within .dt-hc-comment,
+.dt-hcell.is-sel .dt-hc-comment {
+  opacity: 1;
+}
+
+.dt-hc-comment::before {
+  content: '';
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 1.5px solid currentColor;
+  border-radius: 3px;
+  box-sizing: border-box;
+}
+
+.dt-cell.is-marked {
+  background: color-mix(in srgb, var(--patina, #3a7d6b) 12%, var(--surface, #fff));
+}
+
+.dt-cell.is-range {
+  background: color-mix(in srgb, var(--patina, #3a7d6b) 7%, var(--surface, #fff));
+}
+
+.dt-cell.is-marked::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 6px;
+  height: 6px;
+  background: var(--patina, #3a7d6b);
+}
+
+.dt-cell[data-marks]::after {
+  width: auto;
+  height: auto;
+  padding: 0 0.2rem;
+  font: 600 0.6rem/1.2 var(--mono, ui-monospace, monospace);
+  color: var(--surface, #fff);
+  content: attr(data-marks);
+}
+
+.dt-cell.mk-t {
+  border-top: 2px solid var(--patina, #3a7d6b);
+}
+
+.dt-cell.mk-b {
+  border-bottom: 2px solid var(--patina, #3a7d6b);
+}
+
+.dt-cell.mk-l {
+  border-left: 2px solid var(--patina, #3a7d6b);
+}
+
+.dt-cell.mk-r {
+  border-right: 2px solid var(--patina, #3a7d6b);
+}
+
+.dt-cell.is-find {
+  background: color-mix(in srgb, var(--oxide, #b5562b) 14%, var(--surface, #fff));
+}
+
+.dt-cell.is-find-cur {
+  background: color-mix(in srgb, var(--oxide, #b5562b) 30%, var(--surface, #fff));
+}
+
+.dt-cell.is-sel {
+  background: color-mix(in srgb, var(--patina, #3a7d6b) 18%, var(--surface, #fff));
+}
+
+.dt-cell.is-active,
+.dt-hcell.is-active {
+  outline: 2px solid var(--patina-ink, #1f4f43);
+  outline-offset: -2px;
+}
+
+.dt-cell:focus-visible,
+.dt-hcell:focus-visible {
+  outline: 2px solid var(--patina-ink, #1f4f43);
+  outline-offset: -2px;
+}
+
+/* The inspector sits between the bar and the grid (mock T1, T3), so the cell a
+   reader chose is read in full without scrolling past the grid. Its height is
+   fixed so choosing a cell never moves the grid under the pointer; a long value
+   scrolls inside it. */
+.dt-cellbar {
+  order: 1;
+  box-sizing: border-box;
+  height: 5rem;
+  display: grid;
+  grid-template-columns: minmax(4.5rem, auto) minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-areas:
+    'addr value copy'
+    'sub value copy';
+  align-items: start;
+  gap: 0.15rem 0.9rem;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--rule-strong, #888);
+  background: var(--surface, #fff);
+}
+
+.dt-grid {
+  order: 2;
+}
+
+.dt-cellbar > .dt-addr {
+  grid-area: addr;
+  margin: 0;
+  font: 600 0.82rem/1.3 var(--mono, ui-monospace, monospace);
+  color: var(--patina-ink, #1f4f43);
+  white-space: nowrap;
+}
+
+.dt-cellbar > .dt-sub,
+.dt-cellbar > .dt-hint {
+  margin: 0;
+  color: var(--ink-soft, #555);
+}
+
+.dt-cellbar > .dt-sub {
+  grid-area: sub;
+}
+
+.dt-cellbar > .dt-hint {
+  grid-column: 1 / -1;
+  grid-row: 1 / -1;
+  align-self: center;
+}
+
+.dt-cellbar > .dt-value {
+  grid-area: value;
+  margin: 0;
+  max-height: 100%;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: 0.8rem/1.4 var(--mono, ui-monospace, monospace);
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.dt-cellbar > .dt-copy {
+  grid-area: copy;
+  justify-self: end;
+  padding: 0.2rem 0.6rem;
+  border: 1px solid var(--rule-strong, #888);
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.dt-cellbar > .dt-copy:focus-visible,
+.dt-find:focus-visible {
+  outline: 2px solid var(--patina-ink, #1f4f43);
+  outline-offset: 1px;
+}
+
+@media (max-width: 480px) {
+  .dt-grid {
+    height: min(60vh, 32rem);
+  }
+
+  /* A finger needs 44 px (WCAG 2.5.5). */
+  .dt-toggle,
+  .dt-find,
+  .dt-cellbar > .dt-copy {
+    box-sizing: border-box;
+    min-height: 44px;
+  }
+
+  .dt-cellbar > .dt-copy {
+    min-width: 44px;
+  }
+
+  .dt-toggle input {
+    width: 1.25rem;
+    height: 1.25rem;
+  }
+
+  /* With nothing chosen, the hint is one quiet line under the grid, so the
+     sheet that replaces it never moves the grid under the reader's finger. */
+  .dt-cellbar {
+    order: 3;
+  }
+
+  .dt-cellbar:has(> .dt-hint) {
+    height: auto;
+  }
+
+  /* A chosen cell opens a bottom sheet (mock T9): the address, its column and
+     Copy on one line, the value in full under them. */
+  .dt-cellbar:has(> .dt-addr) {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 10;
+    height: auto;
+    max-height: 45vh;
+    overflow: auto;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-rows: auto auto;
+    grid-template-areas:
+      'addr sub copy'
+      'value value value';
+    align-items: center;
+    padding: 0.6rem 0.9rem 0.9rem;
+    border-radius: 12px 12px 0 0;
+    box-shadow: 0 -8px 24px rgb(0 0 0 / 0.18);
+  }
+
+  .dt-cellbar:has(> .dt-addr) > .dt-value {
+    max-height: none;
+  }
+
+  /* Room under the grid, so its last rows can be scrolled clear of the sheet. */
+  .dt:has(> .dt-cellbar > .dt-addr) {
+    padding-bottom: 45vh;
+  }
+}

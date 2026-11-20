@@ -1,4 +1,4 @@
-import { escapeHtml } from './markdown.ts';
+import { escapeHtml, MAX_QUOTE_DEPTH } from './markdown.ts';
 
 export interface SourceSegment {
   readonly text: string;
@@ -193,7 +193,7 @@ function joinWithSpaces(source: string, parts: readonly Mapped[]): Mapped {
 function isTableSeparator(line: string | undefined): boolean {
   return (
     line !== undefined &&
-    /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(line)
+    /^\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?$/.test(line.trim())
   );
 }
 
@@ -217,7 +217,7 @@ function splitRow(line: Mapped): Mapped[] {
 }
 
 // Mirrors parseMarkdown, retaining source positions through its line operations.
-function parse(source: string, value: Mapped): MappedBlock[] {
+function parse(source: string, value: Mapped, quoteDepth = 0): MappedBlock[] {
   const lines = splitLines(value);
   const out: MappedBlock[] = [];
   let index = 0;
@@ -271,7 +271,7 @@ function parse(source: string, value: Mapped): MappedBlock[] {
       continue;
     }
 
-    if (/^\s*>/.test(line.text)) {
+    if (quoteDepth < MAX_QUOTE_DEPTH && /^\s*>/.test(line.text)) {
       flush();
       const quoted: Line[] = [];
       while (
@@ -286,7 +286,10 @@ function parse(source: string, value: Mapped): MappedBlock[] {
         });
         index++;
       }
-      out.push({ kind: 'quote', blocks: parse(source, joinLines(quoted)) });
+      out.push({
+        kind: 'quote',
+        blocks: parse(source, joinLines(quoted), quoteDepth + 1),
+      });
       continue;
     }
 
@@ -495,7 +498,7 @@ function inline(value: Mapped, context: InlineContext): Mapped {
   });
 
   input = out;
-  out = replaceMapped(input, /!\[([^\]]*)\]\(([^)\s]+)\)/g, (match) => {
+  out = replaceMapped(input, /!\[([^[\]]*)\]\(([^)[\]\s]+)\)/g, (match) => {
     const start = match.index;
     const alt = match[1] as string;
     const src = match[2] as string;
@@ -511,7 +514,7 @@ function inline(value: Mapped, context: InlineContext): Mapped {
   });
 
   input = out;
-  out = replaceMapped(input, /\[([^\]]+)\]\(([^)\s]+)\)/g, (match) => {
+  out = replaceMapped(input, /\[([^[\]]+)\]\(([^)[\]\s]+)\)/g, (match) => {
     const start = match.index;
     const text = match[1] as string;
     const href = safeHref(match[2] as string);
@@ -588,7 +591,7 @@ function renderBlock(block: MappedBlock, context: RenderContext): Mapped {
       return concat([
         literal(`<h${block.level}>`),
         renderInline(block.text),
-        literal(`<\/h${block.level}>`),
+        literal(`</h${block.level}>`),
       ]);
     case 'paragraph':
       return concat([

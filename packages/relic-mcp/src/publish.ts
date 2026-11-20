@@ -1124,6 +1124,10 @@ const MIMETYPES: Readonly<Record<string, string>> = {
   txt: 'text/plain',
   json: 'application/json',
   csv: 'text/csv',
+  tsv: 'text/tab-separated-values',
+  srt: 'application/x-subrip',
+  vtt: 'text/vtt',
+  ipynb: 'application/x-ipynb+json',
   svg: 'image/svg+xml',
   png: 'image/png',
   jpg: 'image/jpeg',
@@ -1152,6 +1156,7 @@ const CLASS_FALLBACK: Readonly<Record<RendererClass, string>> = {
   code: 'text/plain',
   html: 'text/html',
   jsx: 'text/jsx',
+  notebook: 'application/x-ipynb+json',
   // Declared precisely rather than as octet-stream, unlike the other binary
   // formats below it. The viewer routes a pdf to a renderer, and the sniffed
   // and declared classes are reconciled by taking the least privileged of the

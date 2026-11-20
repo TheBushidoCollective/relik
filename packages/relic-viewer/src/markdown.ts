@@ -55,7 +55,7 @@ function inline(source: string): string {
   });
 
   out = out.replace(
-    /!\[([^\]]*)\]\(([^)\s]+)\)/g,
+    /!\[([^[\]]*)\]\(([^)[\]\s]+)\)/g,
     (match, alt: string, src: string) => {
       // An image would be a cross-origin request issued by the origin holding
       // the fragment. The alt text renders instead, and no request is made.
@@ -66,7 +66,7 @@ function inline(source: string): string {
   );
 
   out = out.replace(
-    /\[([^\]]+)\]\(([^)\s]+)\)/g,
+    /\[([^[\]]+)\]\(([^)[\]\s]+)\)/g,
     (match, text: string, url: string) => {
       const href = safeHref(url);
       if (href === undefined) return match;
@@ -204,7 +204,13 @@ export function inlineRuns(source: string): InlineRun[] {
   return runs;
 }
 
-export function parseMarkdown(source: string): Block[] {
+/**
+ * Blockquotes nest by recursion. Past this depth a '>' is ordinary text, so
+ * a hostile line of '>' costs bounded work and never overflows the stack.
+ */
+export const MAX_QUOTE_DEPTH = 32;
+
+export function parseMarkdown(source: string, quoteDepth = 0): Block[] {
   const lines = source.replace(/\r\n?/g, '\n').split('\n');
   const out: Block[] = [];
 
@@ -254,14 +260,17 @@ export function parseMarkdown(source: string): Block[] {
       continue;
     }
 
-    if (/^\s*>/.test(line)) {
+    if (quoteDepth < MAX_QUOTE_DEPTH && /^\s*>/.test(line)) {
       flushParagraph();
       const quoted: string[] = [];
       while (index < lines.length && /^\s*>/.test(lines[index] as string)) {
         quoted.push((lines[index] as string).replace(/^\s*>\s?/, ''));
         index++;
       }
-      out.push({ kind: 'quote', blocks: parseMarkdown(quoted.join('\n')) });
+      out.push({
+        kind: 'quote',
+        blocks: parseMarkdown(quoted.join('\n'), quoteDepth + 1),
+      });
       continue;
     }
 
@@ -362,7 +371,7 @@ export function renderMarkdown(source: string): string {
 
 function isTableSeparator(line: string | undefined): boolean {
   if (line === undefined) return false;
-  return /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(line);
+  return /^\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?$/.test(line.trim());
 }
 
 function splitRow(line: string): string[] {

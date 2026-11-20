@@ -49,6 +49,7 @@ export const CLASS_PHRASES: Record<RendererClass, string> = {
   archive: 'An archive.',
   binary: 'A binary file.',
   otio: 'An OpenTimelineIO timeline.',
+  notebook: 'A Jupyter notebook.',
 };
 
 export const CLASS_TITLES: Record<RendererClass, string> = {
@@ -61,6 +62,7 @@ export const CLASS_TITLES: Record<RendererClass, string> = {
   model: 'A 3D model relic',
   media: 'A media relic',
   archive: 'An archive relic',
+  notebook: 'A notebook relic',
   binary: 'A binary relic',
   otio: 'An OpenTimelineIO relic',
 };

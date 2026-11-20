@@ -25,7 +25,7 @@ curl -fsS -D "$scratch/h" -o/dev/null "$SERVICE/aaaaaaaaaaaaaaaaaaaaaaaaaa"
 grep -qi '^referrer-policy: no-referrer' "$scratch/h"
 
 echo "every asset the shell names resolves"
-for P in /assets/viewer.js /assets/landing-html.png /assets/landing-markdown.png /assets/landing-code-dark.png /assets/styles.css /assets/register-sw.js /manifest.webmanifest /sw.js /assets/icon.svg; do
+for P in /assets/viewer.js /assets/landing-html.png /assets/landing-markdown.png /assets/landing-code-dark.png /assets/styles.css /assets/cue-view.css /assets/json-tree-view.css /assets/data-table.css /assets/notebook-view.css /assets/register-sw.js /manifest.webmanifest /sw.js /assets/icon.svg; do
   curl -fsS -o/dev/null "$SERVICE$P" || { echo "MISSING $P"; exit 1; }
 done
 

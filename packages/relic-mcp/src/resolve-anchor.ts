@@ -57,6 +57,16 @@ import { boxPosition, type CommentRecord, formatTimecode } from './comments.ts';
 import { privateVersionKey } from './private.ts';
 import type { PublishDeps } from './publish.ts';
 import { loadPrivatePublishState, loadPublishState } from './state.ts';
+import {
+  readerForVersion,
+  resolveStructuredComment,
+  resolveSubtitleTime,
+} from './resolve-structured-comment.ts';
+import type {
+  CellResolution,
+  PathResolution,
+  TimeCuesResolution,
+} from './resolve-structured.ts';
 
 const activeChildren = new Set<ChildProcess>();
 
@@ -205,6 +215,9 @@ export type ResolvedAnchor =
       readonly has_frames?: boolean | undefined;
       readonly downscaled?: boolean | undefined;
     }
+  | CellResolution
+  | PathResolution
+  | TimeCuesResolution
   | {
       readonly kind: 'page';
       readonly status: 'resolved' | 'unresolvable';
@@ -1448,9 +1461,19 @@ export async function resolveAnchors(
       });
       continue;
     }
-
+    if (anchor.kind === 'cell' || anchor.kind === 'path') {
+      updatedComments.push(
+        await resolveStructuredComment(comment, anchor, loadRevision)
+      );
+      continue;
+    }
+    // A row carrying no version predates versioning and belongs to version 1,
+    // as the viewer places it. A time anchor on such a row resolves against
+    // version 1, never the current revision. Cell and path rows refuse null in
+    // resolveStructuredComment, because every structured kind writes a version.
     const fetched = await loadRevision(
-      comment.version ?? (anchor.kind === 'source' ? 1 : undefined)
+      comment.version ??
+        (anchor.kind === 'source' || anchor.kind === 'time' ? 1 : undefined)
     );
     if (!fetched.ok) {
       updatedComments.push({
@@ -1458,7 +1481,10 @@ export async function resolveAnchors(
         resolved: {
           kind: anchor.kind,
           status: 'unresolvable',
-          explanation: fetched.error,
+          explanation:
+            anchor.kind === 'time'
+              ? `The time is not found in this version: ${fetched.error}`
+              : fetched.error,
         } as ResolvedAnchor,
       });
       continue;
@@ -1748,6 +1774,14 @@ export async function resolveAnchors(
       }
 
       case 'time': {
+        const reader = readerForVersion(opened);
+        if (reader.kind === 'subtitles') {
+          updatedComments.push({
+            ...comment,
+            resolved: resolveSubtitleTime(anchor, reader),
+          });
+          break;
+        }
         if (isAudio) {
           updatedComments.push({
             ...comment,
