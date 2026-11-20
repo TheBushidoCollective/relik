@@ -284,6 +284,8 @@ import {
 import { folderTreeView } from './folder-tree-view.ts';
 import { entryView } from './folder-relic.ts';
 import { compareFolderFiles } from './folder-compare.ts';
+import { folderMarkdown, scrollToFolderFragment } from './folder-links.ts';
+import type { FolderRelic } from './folder-relic.ts';
 import { createLifecycle, healStaleShell } from './stale-shell.ts';
 import { buildCodeTable, buildProse } from './text-views.ts';
 import {
@@ -1348,11 +1350,24 @@ async function downloadDocx(
 }
 
 /** The markdown player: rendered prose with a toggle to the source. */
-function renderMarkdownSource(source: string, filename: string): HTMLElement {
+function renderMarkdownSource(
+  source: string,
+  filename: string,
+  folder?: FolderRelic
+): HTMLElement {
   const wrapper = document.createElement('div');
   wrapper.className = 'doc';
 
-  const prose = buildProse(source);
+  const links = folder ? folderMarkdown(folder) : undefined;
+  const prose = buildProse(source, links?.resolver);
+  links?.mount(prose, (index, fragment) => {
+    wrapper.dispatchEvent(
+      new CustomEvent('relic:open-entry', {
+        bubbles: true,
+        detail: { index, fragment },
+      })
+    );
+  });
 
   const raw = document.createElement('pre');
   raw.className = 'raw';
@@ -2029,7 +2044,11 @@ export function buildCurrentStage(
   switch (view.route) {
     case 'markdown':
       main.appendChild(
-        renderMarkdownSource(decodeText(documentBytes(view)), view.filename)
+        renderMarkdownSource(
+          decodeText(documentBytes(view)),
+          view.filename,
+          view.folder
+        )
       );
       break;
     case 'code': {
@@ -2110,9 +2129,21 @@ export function buildCurrentStage(
       break;
     }
     case 'sandboxed-html':
+      if (view.folder)
+        main.appendChild(
+          notice(
+            'Files this page links to are not loaded here. Each file in this folder opens on its own.'
+          )
+        );
       main.appendChild(renderSandboxedHtml(view, usercontentOrigin));
       break;
     case 'sandboxed-jsx':
+      if (view.folder)
+        main.appendChild(
+          notice(
+            'Files this page links to are not loaded here. Each file in this folder opens on its own.'
+          )
+        );
       main.appendChild(renderSandboxedJsx(view, usercontentOrigin));
       break;
     case 'pdf':
@@ -10815,31 +10846,39 @@ export function renderReady(
     );
     let toolbar: HTMLElement | undefined;
     if (viewToShow.folder) {
+      const openEntry = (index: number, fragment = ''): void => {
+        lifecycle.advance();
+        const selection = lifecycle.token();
+        void entryView(viewToShow, index)
+          .then((next) => {
+            if (!lifecycle.isCurrent(selection)) return;
+            history.pushState(
+              {
+                ...history.state,
+                relicEntry: next.folder?.manifest.entries[index]?.path,
+                relicId,
+                version: next.version,
+              },
+              ''
+            );
+            showSingle(next);
+            if (fragment) scrollToFolderFragment(document.body, fragment);
+          })
+          .catch(() => {
+            if (lifecycle.isCurrent(selection))
+              toast('This file could not be opened.');
+          });
+      };
+      wrap.addEventListener('relic:open-entry', (event) => {
+        const detail = (
+          event as CustomEvent<{ index: number; fragment: string }>
+        ).detail;
+        openEntry(detail.index, detail.fragment);
+      });
       const tree = folderTreeView(
         viewToShow.folder,
         viewToShow.folder.header.name || relicId,
-        (index) => {
-          lifecycle.advance();
-          const selection = lifecycle.token();
-          void entryView(viewToShow, index)
-            .then((next) => {
-              if (!lifecycle.isCurrent(selection)) return;
-              history.pushState(
-                {
-                  ...history.state,
-                  relicEntry: next.folder?.manifest.entries[index]?.path,
-                  relicId,
-                  version: next.version,
-                },
-                ''
-              );
-              showSingle(next);
-            })
-            .catch(() => {
-              if (lifecycle.isCurrent(selection))
-                toast('This file could not be opened.');
-            });
-        },
+        openEntry,
         (blob, filename) => saveBlob(blob, safeDownloadName(filename)),
         (path) => {
           const extension = path.slice(path.lastIndexOf('.') + 1).toLowerCase();
