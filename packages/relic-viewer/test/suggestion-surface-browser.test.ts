@@ -1,13 +1,15 @@
-import { expect, test } from 'bun:test';
+import { expect, test as bunTest } from 'bun:test';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { chromeRequired, findHeadlessShell } from './headless-shell.ts';
 
+const shell = findHeadlessShell();
+const test = bunTest.skipIf(!shell && !chromeRequired);
 test('controller uses the registered structured suggestion surface', async () => {
-  const shell = process.env['RELIC_CHROME_PATH'];
-  if (!shell) throw new Error('RELIC_CHROME_PATH is required');
+  if (!shell) throw new Error('A headless Chrome executable is required');
   const id = crypto.randomUUID();
   const entry = join(tmpdir(), `relic-surface-entry-${id}.ts`);
   const profile = join(tmpdir(), `relic-surface-profile-${id}`);

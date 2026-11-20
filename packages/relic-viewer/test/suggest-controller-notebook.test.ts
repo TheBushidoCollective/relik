@@ -1,4 +1,4 @@
-import { expect, test } from 'bun:test';
+import { expect, test as bunTest } from 'bun:test';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { rm } from 'node:fs/promises';
@@ -6,6 +6,10 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type * as Suggestion from '../src/suggest-controller.ts';
 import type { ReadyView, ViewerDeps } from '../src/viewer.ts';
+import { chromeRequired, findHeadlessShell } from './headless-shell.ts';
+
+const shell = findHeadlessShell();
+const test = bunTest.skipIf(!shell && !chromeRequired);
 
 async function notebookSourceCase(module: typeof Suggestion): Promise<void> {
   const source = '{"nbformat":4,"cells":[]}';
@@ -70,8 +74,7 @@ async function notebookSourceCase(module: typeof Suggestion): Promise<void> {
 }
 
 test('notebook Source enables suggestion drafts on its code root', async () => {
-  const shell = process.env['RELIC_CHROME_PATH'];
-  if (!shell) throw new Error('RELIC_CHROME_PATH is required');
+  if (!shell) throw new Error('A headless Chrome executable is required');
   const build = await Bun.build({
     entrypoints: [resolve(import.meta.dir, '../src/suggest-controller.ts')],
     target: 'browser',
