@@ -20,6 +20,7 @@ import {
   type PublishSource,
   publishFile,
 } from './publish.ts';
+import { pickFile } from './upload-button.ts';
 import { formatBytes } from './viewer.ts';
 
 const WORDMARK = 'relik.link';
@@ -124,7 +125,7 @@ function phaseText(phase: PublishPhase, name: string): string {
   }
 }
 
-function buildBar(): HTMLElement {
+function buildBar(onUpload: () => void): HTMLElement {
   const bar = el('header', 'bar');
   const mark = el('a', 'mark', WORDMARK);
   mark.href = '/';
@@ -140,7 +141,10 @@ function buildBar(): HTMLElement {
   const actions = el('div', 'actions');
   actions.append(
     link('What Relik knows', '/policy', ICONS.source),
-    link('Report', '/abuse', ICONS.flag)
+    link('Report', '/abuse', ICONS.flag),
+    // Last, like on every other bar. On this page it chooses the file for the
+    // publisher already here instead of opening a dialog over it.
+    action('Upload', ICONS.upload, onUpload)
   );
   bar.appendChild(actions);
   return bar;
@@ -491,17 +495,23 @@ function createPublisher(
 export async function mountPublish(body: HTMLElement): Promise<void> {
   await loadStylesheet();
 
-  const main = el('main', 'stage pub-stage');
   const panel = el('div', 'pub');
-  main.appendChild(panel);
-  body.replaceChildren(buildBar(), main);
-
   const status = el('div', 'pub-hidden');
   status.setAttribute('role', 'status');
   status.setAttribute('aria-live', 'polite');
+  const publisher = createPublisher(panel, status);
+
+  const main = el('main', 'stage pub-stage');
+  main.appendChild(panel);
+  body.replaceChildren(
+    buildBar(() =>
+      pickFile((dropped) => publisher.review(dropped.files, dropped.isFolder))
+    ),
+    main
+  );
   body.appendChild(status);
 
-  createPublisher(panel, status).idle();
+  publisher.idle();
 }
 
 /**

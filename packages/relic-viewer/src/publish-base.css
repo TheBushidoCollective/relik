@@ -1,0 +1,67 @@
+/*
+ * The rules the publish dialog borrows from the viewer's stylesheet.
+ *
+ * The homepage does not load styles.css, which would restyle the page, so the
+ * dialog opened there brings these instead. They are scoped to the dialog so
+ * they touch nothing else, and they define only what `publish-view.css` leaves
+ * to the viewer: the action, its icon and the accession label.
+ *
+ * Every colour is a token the homepage already defines. `--patina-ink` is the
+ * one it does not, so it has a fallback.
+ */
+
+.pub-dialog .action {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0 0.9rem;
+  border: 0;
+  border-right: 1px solid var(--rule);
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.82rem;
+  text-decoration: none;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.pub-dialog .action:hover {
+  background: var(--ground);
+  color: var(--patina-ink, var(--ink));
+}
+
+.pub-dialog .action:focus-visible {
+  outline: 2px solid var(--patina);
+  outline-offset: -2px;
+}
+
+.pub-dialog .action.primary {
+  background: var(--patina);
+  color: var(--surface);
+  border: 0;
+  padding: 0.55rem 1rem;
+  align-self: flex-start;
+}
+
+.pub-dialog .action.primary:hover {
+  background: var(--patina-ink, var(--patina));
+  color: var(--surface);
+  filter: brightness(1.12);
+}
+
+.pub-dialog .icon {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  fill: currentColor;
+}
+
+.pub-dialog .accession {
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.14em;
+  color: var(--ink-soft);
+  overflow-wrap: anywhere;
+  user-select: all;
+}
