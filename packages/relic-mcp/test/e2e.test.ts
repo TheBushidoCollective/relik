@@ -1007,6 +1007,7 @@ describe('the MCP surface', () => {
     expect(Object.keys(schema.properties)).toEqual([
       'path',
       'filename',
+      'expand',
       'open_first',
       'title',
       'ttl_days',
@@ -1300,6 +1301,7 @@ describe('republish', () => {
       'relic_id',
       'path',
       'filename',
+      'expand',
       'open_first',
       'title',
       'ttl_days',
