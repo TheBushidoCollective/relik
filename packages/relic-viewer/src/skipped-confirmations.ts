@@ -231,9 +231,11 @@ export function installSkippedConfirmations(
       const target =
         from.isConnected && from.getClientRects().length > 0 && !from.hidden
           ? from
-          : document.querySelector<HTMLElement>(
-              from === desktop ? '.bar .action-report' : '.bar .action-more'
-            );
+          : from === desktop && currentButton && !currentButton.hidden
+            ? currentButton
+            : document.querySelector<HTMLElement>(
+                from === desktop ? '.bar .action-report' : '.bar .action-more'
+              );
       target?.focus({ preventScroll: true });
     });
     document.body.appendChild(panel);

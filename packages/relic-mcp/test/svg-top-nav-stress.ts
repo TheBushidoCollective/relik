@@ -1757,13 +1757,19 @@ async function runF1(
           last,
           `JSON.stringify(JSON.parse(localStorage.getItem(${JSON.stringify(PREFS_KEY)}) || '[]').filter(x => x.relicId === ${JSON.stringify(relics.forge.id)}).map(x => x.kind).sort())`
         );
+        const badge = await pageRead(
+          browser,
+          last,
+          "document.querySelector('.skipped-bar-action .skipped-count')?.textContent"
+        );
         clearOk =
           rememberedRun.ticked &&
           rememberedRun.popups === 1 &&
           popups === 1 &&
           state?.pending !== true &&
-          preserved === '["delete-comment","large-open","link"]';
-        detail += `clear claims: preserved=${String(preserved)} popups=${popups} pending=${state?.pending ?? 'no-bar'} remembered-row=${state?.remembered ?? 'no-bar'} under=${under} active=${String(active)}`;
+          preserved === '["delete-comment","large-open","link"]' &&
+          badge === '3';
+        detail += `clear claims: preserved=${String(preserved)} badge=${String(badge)} popups=${popups} pending=${state?.pending ?? 'no-bar'} remembered-row=${state?.remembered ?? 'no-bar'} under=${under} active=${String(active)}`;
       } finally {
         await browser.closePage(last);
       }

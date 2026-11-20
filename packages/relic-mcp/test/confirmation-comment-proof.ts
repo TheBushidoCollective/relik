@@ -146,7 +146,14 @@ export async function proveCommentConfirmations(
   );
   const held = fixture.holdNextDelete(ids[2]!);
   await click(session, remove(ids[2]!));
-  await held.seen;
+  const sent = await Promise.race([
+    held.seen.then(() => true),
+    Bun.sleep(5000).then(() => false),
+  ]);
+  if (!sent) {
+    held.release();
+    throw new Error('remembered delete did not send DELETE');
+  }
   assert.equal(
     await session.evaluate<boolean>(
       "!!document.querySelector('dialog.comment-delete-dialog[open]')"
