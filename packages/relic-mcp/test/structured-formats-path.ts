@@ -412,6 +412,13 @@ const lastDrags = new WeakMap<
   [string, string, ClickOptions, ClickOptions]
 >();
 
+/**
+ * In the page: every stylesheet link has loaded. The views add their own
+ * stylesheet after they draw, so a measurement or a drag taken right after the
+ * first draw can land before the styles arrive and the rows move.
+ */
+const STYLES_LOADED = `Array.from(document.querySelectorAll('link[rel="stylesheet"]')).every((link) => link.sheet !== null)`;
+
 async function openPage(
   url: string,
   token: string,
@@ -576,6 +583,7 @@ async function openPage(
       selector: string,
       options: ClickOptions
     ): Promise<Point> => {
+      await waitFor(STYLES_LOADED, 'the view stylesheets are loaded');
       const found = await evaluate<{
         x: number;
         y: number;
@@ -1581,6 +1589,7 @@ await stage('layout', async () => {
           throw new Error(`${String(error)} | seen=${seen}`);
         }
       }
+      await page.waitFor(STYLES_LOADED, 'the view stylesheets are loaded');
       const overflow = await page.evaluate<number>(PAGE_OVERFLOW);
       const small = await page.evaluate<unknown[]>(SMALL_TARGETS);
       console.log(

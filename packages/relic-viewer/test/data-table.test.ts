@@ -17,6 +17,7 @@ import {
   sortOrder,
 } from '../src/data-table.ts';
 import { recordAt, rowWindow, type TableModel } from '../src/table-model.ts';
+import { csvTableSource } from '../src/table-source.ts';
 
 const csv = [
   'item,qty,site,note',
@@ -35,7 +36,7 @@ const hostile =
 function parsed() {
   const result = parseTable(csv);
   if (!result.ok) throw new Error(`fixture refused: ${result.reason}`);
-  return result.table;
+  return csvTableSource(result.table);
 }
 
 describe('sortOrder: numeric and text columns, header kept', () => {
@@ -44,12 +45,7 @@ describe('sortOrder: numeric and text columns, header kept', () => {
     const order = sortOrder(table, true, { column: 1, direction: 'asc' });
     expect(order[0]).toBe(0);
     const values = Array.from(order.slice(1), (record) =>
-      Number(
-        table.text.slice(
-          table.fieldStart[table.recordStart[record]! + 1]!,
-          table.fieldEnd[table.recordStart[record]! + 1]!
-        )
-      )
+      Number(table.text(record, 1))
     );
     for (let i = 1; i < values.length; i++) {
       expect(values[i]!).toBeGreaterThanOrEqual(values[i - 1]!);
@@ -69,7 +65,7 @@ describe('sortOrder: numeric and text columns, header kept', () => {
   test('empty values sort last in both directions', () => {
     const withBlanks = parseTable('n\n3\n\n1\n\n2\n');
     if (!withBlanks.ok) throw new Error('fixture refused');
-    const t = withBlanks.table;
+    const t = csvTableSource(withBlanks.table);
     for (const direction of ['asc', 'desc'] as const) {
       const order = sortOrder(t, true, { column: 0, direction });
       const tail = Array.from(order.slice(order.length - 2));
@@ -201,6 +197,7 @@ async function browserCases(
       reveal(anchor: unknown, id?: string): void;
       dispose(): void;
     };
+    csvTableSource: (table: unknown) => Record<string, unknown>;
     parseTable: (text: string) => {
       ok: boolean;
       table?: unknown;
@@ -237,16 +234,20 @@ async function browserCases(
       new MouseEvent(type, { bubbles: true, cancelable: true, button: 0 })
     );
   };
-  const mount = (text: string) => {
+  const mount = (text: string, sheet?: string) => {
     const root = document.createElement('section');
     document.body.append(root);
     const result = api.parseTable(text);
     if (!result.ok || result.table === undefined) {
       throw new Error(`refused: ${result.reason}`);
     }
-    const part = api.mountDataTable(root, result.table, {
-      filename: 'fixture.csv',
-    });
+    const part = api.mountDataTable(
+      root,
+      { ...api.csvTableSource(result.table), sheet },
+      {
+        filename: 'fixture.csv',
+      }
+    );
     const done = (): void => {
       part.dispose();
       root.remove();
@@ -352,6 +353,39 @@ async function browserCases(
         f.part.selectionAnchor(),
         { kind: 'cell', row: 5, col: 2, row_end: 8, col_end: 4 },
         'anchor'
+      );
+    } finally {
+      f.done();
+    }
+  });
+
+  await check('sheet selection and mark isolation', () => {
+    const f = mount(source, 'Q3');
+    try {
+      mouse(cell(f.root, 4, 1), 'mousedown');
+      mouse(cell(f.root, 4, 1), 'mouseup');
+      eq(
+        f.part.selectionAnchor(),
+        { kind: 'cell', sheet: 'Q3', row: 5, col: 2 },
+        'sheet selection'
+      );
+      eq(
+        f.part.paintMark({ kind: 'cell', row: 5, col: 2, sheet: 'Q3' }, 'same'),
+        true,
+        'same sheet'
+      );
+      eq(
+        f.part.paintMark(
+          { kind: 'cell', row: 5, col: 2, sheet: 'Q4' },
+          'other'
+        ),
+        false,
+        'other sheet'
+      );
+      eq(
+        f.part.paintMark({ kind: 'cell', row: 5, col: 2 }, 'absent'),
+        false,
+        'missing sheet'
       );
     } finally {
       f.done();
@@ -578,7 +612,7 @@ describe('table view in the browser', () => {
           clearTimeout(timer);
         }
         if (result.error) throw new Error(result.error);
-        expect(result.passed).toHaveLength(9);
+        expect(result.passed).toHaveLength(10);
       } finally {
         browser.kill('SIGKILL');
         if (browser.exitCode === null && browser.signalCode === null) {

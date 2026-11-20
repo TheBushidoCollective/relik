@@ -18,6 +18,7 @@
  */
 
 import { type ConfirmPrefs, readerConfirmed } from './confirm-prefs.ts';
+import { watchConfirmPrefs } from './confirmation-ui.ts';
 import {
   LINK_READ_DELAY_MS,
   LINK_TIMEOUT_MS,
@@ -180,6 +181,10 @@ export function createLinkConfirmBar(
   };
 
   applyIdle();
+  if (rem !== undefined)
+    watchConfirmPrefs(strip, rem.prefs, () => {
+      if (pending.hidden) applyIdle();
+    });
 
   cancel.addEventListener('click', close);
   openButton.addEventListener('click', (event) => {

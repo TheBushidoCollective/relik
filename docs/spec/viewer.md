@@ -340,7 +340,11 @@ Blob path does not establish a total process-memory bound.
 **Skipped confirmations.** Three kinds exist: `link` (keyed by relic and version), `large-open` (keyed by relic and version) and `delete-comment` (keyed by relic only, since comments span versions).
 Private delete can never be skipped: it is irreversible.
 Private rekey can never be skipped: it is security-sensitive.
-Wired now: `link`. Next wiring: `large-open` in the large-open confirmation and `delete-comment` in the comment delete confirmation, each with the same store and the same trusted-click rule. The "Skipped confirmations" list in the relic menu, with an "Ask again" control per kind, is not built yet.
+All three are wired through the same store and the same trusted-click rule. Large-file choices apply to the relic and version; comment deletion choices apply to the relic across versions. When comment deletion is skipped, a strip above the thread says so and offers Ask again.
+
+**Skipped confirmation controls.** The desktop bar shows Skipped with a count while this relic has remembered kinds. Below 34rem, More shows Skipped confirmations and the count while a choice is remembered. The panel lists each remembered choice and its scope, with Ask again for each. Removing the last choice leaves the panel on its empty state and keeps the control until closing it, when focus returns to Report on desktop or More on mobile. The link strip's Turn back on control clears the same stored choice.
+
+The large-open browser proof authenticates a real record-zero envelope and observes the full fetch start after acceptance or a remembered choice. Its version-2 mint response is emulated and its object stops after record zero. A real large-file republish and completed open are not proven by that fixture.
 
 ## 5. Platform ceilings and degradation
 

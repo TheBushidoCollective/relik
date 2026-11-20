@@ -111,6 +111,7 @@ mise exec -- bun packages/relic-mcp/test/comment-popover-path.ts
 ```
 
 Success requires `COMMENT_POPOVER_PATH_OK classes=9`, attached composers and posted comment cards on every class, verified §5.8 assertions (adjacency, horizontal alignment, no overlap, anchor exposure, usability, preference, capped scrolling, follow tracking), and negative control verification against origin/main 76269ed5.
+The same loopback path prints `CONFIRM_COMMENT_PATH_OK` for trusted comment deletion, Ask again and the 390px menu, and `CONFIRM_LARGE_PATH_OK` for an authenticated large-file envelope and remembered Open. The fixture emulates version 2 in the mint response and truncates the object after record zero. It proves the new version asks and the full fetch starts, but not actual republishing or a completed large-file open.
 
 Saved comment cards and timeline cluster cards expose **Dismiss** (`.popover-dismiss`, accessible name `Dismiss comment overlay`). Exercise pointer and keyboard dismissal after Post and on an existing mark, then reopen from the mark and thread. Closing the overlay must preserve the stored comment, counts, sidebar, playback and fullscreen without a mutation request. New/edit composers have no Dismiss, and replying hides it to protect the draft. Keyboard focus restoration must not immediately reopen the card; asynchronous work from a dismissed card must not reopen it or replace a newer panel. The clickable interaction reference is `docs/plans/anchored-popover/mockup.html`.
 
@@ -146,7 +147,7 @@ Last run on `fix/csp-build`, 2026-11-19: the four Review2 routes (cases 1, 1b, 2
 
 # Link bar stages and top-frame navigation (manual, not CI)
 
-The stress probe, `svg-top-nav-stress.ts`, runs the link bar stages with trusted CDP input: a gesture with no Open, a gesture with Open, a remembered choice on a later load, a republished version, and frame claims that try to set or clear the choice. It then runs the top-frame navigation attacks against the production viewer and a positive control. It is manual and is not a CI gate: `verify.yml` does not run it.
+The stress probe, `svg-top-nav-stress.ts`, runs the link bar stages with trusted CDP input: a gesture with no Open, a gesture with Open, a remembered choice on a later load, a republished version, and frame claims that try to set or clear all three confirmation kinds for the actual relic. It then runs the top-frame navigation attacks against the production viewer and a positive control. It is manual and is not a CI gate: `verify.yml` does not run it.
 
 ```sh
 mise exec -- bun run --cwd packages/relic-viewer build

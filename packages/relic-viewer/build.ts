@@ -311,7 +311,14 @@ export async function buildViewer(options?: {
   // `main.js` is served as `viewer.js`, because that is the name the shell and
   // the service worker's cache list both reference.
   await copyFile(`${out}main.js`, `${out}viewer.js`);
-  await copyFile(`${pkgDir}src/styles.css`, `${out}styles.css`);
+  await Bun.write(
+    `${out}styles.css`,
+    new Blob([
+      await Bun.file(`${pkgDir}src/styles.css`).text(),
+      '\n',
+      await Bun.file(`${pkgDir}src/confirmation-ui.css`).text(),
+    ])
+  );
 
   for (const name of await readdir(`${pkgDir}public`)) {
     await copyFile(`${pkgDir}public/${name}`, `${out}${name}`);
