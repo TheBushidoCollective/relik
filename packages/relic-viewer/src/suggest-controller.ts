@@ -1,4 +1,4 @@
-import { suggestionSource } from '@relic/format/suggestions';
+import { suggestionSourceFor } from '@relic/format/suggestions';
 import type { CommentPlaintext } from '@relic/format';
 import type { CommentCipher, CommentEntry, SessionState } from './comments.ts';
 import type { ReadyView, ViewerDeps } from './viewer.ts';
@@ -21,6 +21,7 @@ import type {
   SourceSegment,
 } from './markdown-source.ts';
 import type { LocalPresence } from './presence.ts';
+import { suggestionSurfaceFor } from './suggestion-surface.ts';
 
 export interface SuggestControllerOptions {
   readonly view: ReadyView;
@@ -194,7 +195,13 @@ function presencePoint(
       local = fragment.textContent?.length ?? 0;
     }
     if (local < 0 || local > segment.text.length) return undefined;
-    return segment.kind === 'join'
+    if (
+      segment.kind === 'escape' &&
+      local !== 0 &&
+      local !== segment.text.length
+    )
+      return undefined;
+    return segment.kind === 'join' || segment.kind === 'escape'
       ? local === 0
         ? segment.start
         : segment.end
@@ -209,18 +216,30 @@ export function mountSuggestionController(
   options: SuggestControllerOptions
 ): SuggestController {
   const { view, host, bar } = options;
-  const kind = view.route === 'code' ? 'code' : 'markdown';
+  const kind =
+    view.route === 'code' || view.route === 'notebook' ? 'code' : 'markdown';
   const doc = host.ownerDocument;
-  const root = host.querySelector<HTMLElement>(
-    kind === 'code' ? 'pre.code-body' : 'article.prose'
-  );
-  const original = kind === 'code' ? root?.closest<HTMLElement>('.code') : root;
+  const surface = suggestionSurfaceFor(host);
+  const root =
+    surface?.root ??
+    host.querySelector<HTMLElement>(
+      kind === 'code' ? 'pre.code-body' : 'article.prose'
+    );
+  const original = surface
+    ? root
+    : kind === 'code'
+      ? root?.closest<HTMLElement>('.code')
+      : root;
   const selection = root
     ? selectionOffsets(root, options.initialSelection)
     : null;
   const sourceResult =
     view.document && !view.document.truncated
-      ? suggestionSource(view.document.bytes)
+      ? suggestionSourceFor(
+          view.document.bytes,
+          view.filename ?? '',
+          view.declaredMimetype ?? ''
+        )
       : { ok: false as const, reason: 'too_large' as const };
   const source = sourceResult.ok ? sourceResult.source : '';
   let segments: readonly SourceSegment[] = [];
@@ -281,7 +300,9 @@ export function mountSuggestionController(
   const notice = bar.querySelector<HTMLElement>('[data-sg-notice]');
 
   if (sourceResult.ok && root) {
-    if (kind === 'markdown') {
+    if (surface) {
+      segments = surface.segments(source);
+    } else if (kind === 'markdown') {
       const mapped = renderMarkdownWithSource(source);
       segments = mapped.segments;
       delimiters = mapped.delimiters;
@@ -300,8 +321,12 @@ export function mountSuggestionController(
         return 'Suggesting is off: suggestions work on files up to 1 MiB.';
       if (sourceResult.reason === 'not_utf8')
         return 'Suggesting is off: this file is not valid UTF-8.';
+      if (sourceResult.reason === 'mixed_line_endings')
+        return 'Suggesting is off: this file mixes CRLF and LF line endings.';
       return 'Suggesting is off: this file contains carriage returns (CR) or NUL characters, which a suggestion can’t point at.';
     }
+    if (sourceResult.crlf && !surface)
+      return 'Suggesting is off in Source for files with CRLF line endings.';
     if (!root || !original || failed || editor?.unavailable)
       return (
         editor?.unavailable ??
@@ -526,6 +551,8 @@ export function mountSuggestionController(
       delimiters,
       version: view.version,
       reader: session.email,
+      crlf: sourceResult.crlf,
+      surface,
       displayName: options.displayName(),
       pending: views?.pending ?? [],
       chrome: editorChrome,
@@ -651,8 +678,14 @@ export function mountSuggestionController(
     }
     const draw = (): void => {
       clearSuggestionPaint(root);
+      surface?.repaint();
       ordinary();
-      const result = paintSuggestions(root, segments, views!, kind);
+      const result = paintSuggestions(
+        root,
+        segments,
+        views!,
+        surface ? 'markdown' : kind
+      );
       if (!result.ok) {
         failed = true;
         if (notice) notice.textContent = result.reason;

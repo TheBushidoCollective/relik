@@ -1,6 +1,12 @@
 import type { SuggestionOutcome, SuggestionPayload } from './comments.ts';
 
-export const SUGGESTION_SOURCE_LIMIT_BYTES = 1_048_576;
+import { SUGGESTION_SOURCE_LIMIT_BYTES } from './line-endings.ts';
+export {
+  SUGGESTION_SOURCE_LIMIT_BYTES,
+  suggestionSourceFor,
+  normalizeCrLf,
+  restoreCrLf,
+} from './line-endings.ts';
 export const SUGGESTION_RESOLVE_LIMIT = 200;
 
 export function suggestionSource(

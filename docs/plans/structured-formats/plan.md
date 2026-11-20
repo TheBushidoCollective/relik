@@ -233,19 +233,19 @@ A file whose name and contents disagree downloads through the container branch a
   - Adding or removing table rows and columns, cue timing, and notebook outputs and metadata.
   - Files over 1 MiB (`suggestions.ts:3`, and the abuse bound at `plan.md:285`).
 
-**Line-ending rule** (`suggestions.ts`). Add `suggestionSourceFor(bytes, filename) → {ok, source, bom, cr} | {ok:false, reason}`.
-- Carriage returns are allowed only in csv, tsv, srt and vtt files.
-- Anchors still never contain CR; writers cut the surrounding context at the nearest CR.
-- Code-view suggestions still require a file with no CR, because `codeSegments` strips CRs (`markdown-source.ts:756-765`).
-- In files that do use CR, inserting a line break is refused, since a replacement can't contain CR.
-- The viewer gate (`main.ts:6171`), the suggestion controller (222), the MCP resolver (1492) and the apply tool (273) all call this one function.
+**Line-ending rule** (`suggestions.ts`). `suggestionSourceFor(bytes, filename, mimetype?)` returns the LF-normalized source, `bom`, and `crlf`, or a refusal.
+- CRLF is accepted only for tables and cues, with extension taking precedence over mimetype. Lone CR, mixed CRLF and bare LF, NUL and invalid UTF-8 are refused.
+- Exact, prefix and suffix are located on normalized source; context may cross line breaks. S8 measured 1,728 more CR-cut refusals in 36,231 generated cells, so the nearest-CR design was dropped; see `c0-s8-notes.md`.
+- Source-mode suggestions remain off for original CRLF files. A registered structured surface can offer them.
+- Replacements cannot add line breaks in CRLF files. After merging, the apply tool restores all remaining LF to CRLF and preserves the BOM.
+- The viewer gate, suggestion controller, MCP resolver and apply tool all use `suggestionSourceFor`.
 
 **Mapping a CSV cell to the source.**
 - **Cell boundaries:** parse the source (with the BOM stripped, as `suggestions.ts:14-17` does). An unquoted cell's content is `[fieldStart, fieldEnd)`. A quoted cell's content is `[fieldStart+1, fieldEnd-1)`.
-- **Segments:** plain stretches are `text` segments. Each `""` is one new `escape` segment that displays as `"`; the painter treats it as one unit, like `join` (`suggestions.ts:84-92`). LF inside a quoted cell is plain text.
-- **Cells that can't be edited:** irregular quotes, a CR inside the cell, or a bidi character.
-- **Blocks:** one block per cell, of kind `csv-cell`.
-- **What the writer posts:** `exact` is the raw source text being replaced. The context is up to 128 bytes, cut at CR, and must be unique (the existing "repeats" refusal).
+- **Segments:** plain stretches are `text` segments. Each `""` is one indivisible `escape` segment that displays as `"`. LF inside a quoted cell is plain text.
+- **Cells that can't be edited:** irregular quotes or a bidi character.
+- **Blocks:** one block per cell, of kind `csv-quoted` or `csv-bare`.
+- **What the writer posts:** `exact` is the normalized source text being replaced. Context is up to 128 bytes on each side, may cross line breaks, and must be unique.
 - **Typed text:** in a quoted cell, `"` becomes `""`. In an unquoted cell, typing the delimiter, a quote or a line break is refused with "A comma would split this cell…". In TSV, Tab is refused (`suggest-draft.ts:392-395`).
 - **Empty cells:** an insertion is anchored on the neighbouring delimiter, using the existing before and after modes.
 

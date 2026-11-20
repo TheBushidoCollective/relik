@@ -5,7 +5,8 @@ export interface SourceSegment {
   readonly start: number;
   readonly end: number;
   readonly block: number;
-  readonly kind: 'text' | 'join' | 'code';
+  /** An escape's displayed text differs from its source and is indivisible. */
+  readonly kind: 'text' | 'join' | 'code' | 'escape';
 }
 
 export interface SourceRange {

@@ -1,0 +1,105 @@
+import { expect, test } from 'bun:test';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+
+test('controller uses the registered structured suggestion surface', async () => {
+  const shell = process.env['RELIC_CHROME_PATH'];
+  if (!shell) throw new Error('RELIC_CHROME_PATH is required');
+  const id = crypto.randomUUID();
+  const entry = join(tmpdir(), `relic-surface-entry-${id}.ts`);
+  const profile = join(tmpdir(), `relic-surface-profile-${id}`);
+  const controller = resolve(import.meta.dir, '../src/suggest-controller.ts');
+  const surface = resolve(import.meta.dir, '../src/suggestion-surface.ts');
+  await writeFile(
+    entry,
+    `export { mountSuggestionController } from ${JSON.stringify(controller)}; export { registerSuggestionSurface } from ${JSON.stringify(surface)};`
+  );
+  const build = await Bun.build({
+    entrypoints: [entry],
+    target: 'browser',
+    format: 'esm',
+  });
+  if (!build.success) throw new Error(build.logs.map(String).join('\n'));
+  const js = await build.outputs[0]!.text();
+  const result = Promise.withResolvers<string>();
+  const page = `<!doctype html><script type="module">
+    import { mountSuggestionController, registerSuggestionSurface } from '/entry.js';
+    try {
+      const host = document.createElement('div');
+      const owner = document.createElement('div'); owner.className = 'structured-view';
+      const root = document.createElement('div'); root.setAttribute('data-seg','0'); root.textContent = 'a';
+      owner.append(root); host.append(owner); document.body.append(host);
+      let allowed = false, paints = 0;
+      registerSuggestionSurface(owner, {
+        root, segments: source => {
+          if (source !== 'a\\n') throw Error('source was not normalized');
+          return [{text:'a', start:0, end:1, block:4, kind:'text'}];
+        }, blockKind: block => block === 4 ? 'csv-bare' : 'paragraph',
+        editable: () => allowed || {kind:'refused', code:'not-editable', message:'Not editable'},
+        repaint: () => paints++,
+      });
+      const view = {route:'code', filename:'data.csv', declaredMimetype:'text/csv', version:1, currentVersion:1, document:{bytes:new TextEncoder().encode('a\\r\\n'), truncated:false}};
+      const bar = document.createElement('div'); document.body.append(bar);
+      const editor = mountSuggestionController({view, host, bar, relicId:'fixture', deps:{serviceOrigin:location.origin,fetch},
+        session:()=>({kind:'verified',email:'reader@example.test'}), cipher:()=>({seal:async()=>'',open:async()=>({body:'',display_name:null,anchor:null})}),
+        entries:()=>[], displayName:()=>null, refresh:async()=>{}, readCurrentVersion:async()=>1, repaint(){}, signIn(){}, open(){} });
+      editor.setSuggesting(true);
+      if (!editor.suggesting) throw Error('surface could not enter suggesting');
+      editor.repaint(()=>{}); if (!paints) throw Error('surface repaint was not called');
+      const range = document.createRange(); range.setStart(root.firstChild,0); range.setEnd(root.firstChild,1);
+      const sel = document.getSelection(); sel.removeAllRanges(); sel.addRange(range);
+      const type = text => root.dispatchEvent(new InputEvent('beforeinput',{bubbles:true,cancelable:true,inputType:'insertText',data:text}));
+      type('b'); if (editor.draftOpen || !host.textContent.includes('Not editable')) throw Error('surface refusal ignored');
+      allowed = true; type('b'); if (!editor.draftOpen) throw Error('editable surface did not create a draft');
+      await fetch('/result',{method:'POST',body:'ok'});
+    } catch (e) { await fetch('/result',{method:'POST',body:e.stack || String(e)}); }
+  </script>`;
+  const server = Bun.serve({
+    hostname: '127.0.0.1',
+    port: 0,
+    async fetch(request) {
+      const path = new URL(request.url).pathname;
+      if (path === '/entry.js')
+        return new Response(js, {
+          headers: { 'content-type': 'text/javascript' },
+        });
+      if (path === '/result') {
+        result.resolve(await request.text());
+        return new Response('ok');
+      }
+      return new Response(page, { headers: { 'content-type': 'text/html' } });
+    },
+  });
+  const browser = spawn(
+    shell,
+    [
+      '--headless',
+      '--disable-gpu',
+      '--no-sandbox',
+      `--user-data-dir=${profile}`,
+      `http://127.0.0.1:${server.port}/`,
+    ],
+    {
+      stdio: 'ignore',
+      env: { ...process.env, DISPLAY: undefined, WAYLAND_DISPLAY: undefined },
+    }
+  );
+  try {
+    const exited = Promise.withResolvers<never>();
+    browser.once('error', exited.reject);
+    browser.once('exit', (code) =>
+      exited.reject(new Error(`headless browser exited: ${code}`))
+    );
+    expect(await Promise.race([result.promise, exited.promise])).toBe('ok');
+  } finally {
+    browser.kill('SIGKILL');
+    if (browser.exitCode === null && browser.signalCode === null)
+      await once(browser, 'exit');
+    server.stop(true);
+    await rm(profile, { recursive: true, force: true });
+    await rm(entry, { force: true });
+  }
+}, 60_000);
