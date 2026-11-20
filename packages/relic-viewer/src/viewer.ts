@@ -175,6 +175,11 @@ export interface ReadyView {
   openVersion?(version: number): Promise<HistoricalVersionState>;
 }
 
+/** Size of the decrypted version, not just its selected folder entry. */
+export function versionContentSize(view: ReadyView): number {
+  return view.folder?.whole.size ?? view.content.size;
+}
+
 /** Where content is allowed to render. Never derived from the server. */
 export type RenderRoute =
   | 'markdown'
@@ -1007,7 +1012,7 @@ export async function loadHistoricalVersion(
   if (current.version === requestedVersion) {
     if (
       options?.maxBytes !== undefined &&
-      current.content.size > options.maxBytes
+      versionContentSize(current) > options.maxBytes
     ) {
       return unavailable(
         'version_too_large',
@@ -1021,7 +1026,7 @@ export async function loadHistoricalVersion(
     if (
       opened.kind === 'ready' &&
       options?.maxBytes !== undefined &&
-      opened.view.content.size > options.maxBytes
+      versionContentSize(opened.view) > options.maxBytes
     ) {
       return unavailable(
         'version_too_large',
@@ -1081,7 +1086,7 @@ export async function loadHistoricalVersion(
     }
   );
   if (result.kind === 'ready') {
-    options?.onSize?.(result.view.content.size);
+    options?.onSize?.(versionContentSize(result.view));
     return result;
   }
   const code =

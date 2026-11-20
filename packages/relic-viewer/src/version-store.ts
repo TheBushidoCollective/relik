@@ -1,5 +1,6 @@
 import {
   loadHistoricalVersion,
+  versionContentSize,
   type HistoricalVersionState,
   type LoadProgress,
   type ReadyView,
@@ -63,7 +64,9 @@ export function createVersionStore(
     [boot.version, { kind: 'ready', view: boot }],
   ]);
   const pins = new Map<number, number>();
-  const sizes = new Map<number, number>([[boot.version, boot.content.size]]);
+  const sizes = new Map<number, number>([
+    [boot.version, versionContentSize(boot)],
+  ]);
   const pending = new Map<number, PendingVersion>();
 
   function pinned(version: number): boolean {
@@ -72,7 +75,8 @@ export function createVersionStore(
 
   function weight(state: HistoricalVersionState): number {
     return state.kind === 'ready'
-      ? state.view.content.size + (state.view.document?.bytes.length ?? 0)
+      ? versionContentSize(state.view) +
+          (state.view.document?.bytes.length ?? 0)
       : 0;
   }
 
@@ -110,7 +114,7 @@ export function createVersionStore(
       if (
         cached.kind === 'ready' &&
         limit !== undefined &&
-        cached.view.content.size > limit
+        versionContentSize(cached.view) > limit
       )
         return tooLarge(version);
       cache.delete(version);
@@ -163,7 +167,7 @@ export function createVersionStore(
     if (
       result.kind === 'ready' &&
       limit !== undefined &&
-      result.view.content.size > limit
+      versionContentSize(result.view) > limit
     )
       return tooLarge(version);
     if (result.kind === 'unavailable' && result.code === 'version_too_large') {
