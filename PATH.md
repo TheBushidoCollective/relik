@@ -304,3 +304,9 @@ The browser is an owned isolated headless Chrome with a throwaway profile, and a
 Steps 8 and 9 use the browser's own drag path (`Input.dispatchDragEvent` with a file on disk) over a relic whose frame is a real cross-origin document, so the drag is routed by the browser rather than dispatched by the script. The frame's origin is `127.0.0.1` against the service's `localhost`. With the shim's drag signal removed, step 8 fails at the curtain, which is the negative control that was run.
 
 Not proven here: the loopback upload is same-origin, so the browser's cross-origin preflight to the real bucket is not exercised. The bucket's CORS rule admits `PUT` from the service origin, and the private-share rekey already relies on it, but the first publish from the live page is the check. After a deploy, publish a small file from the live `/publish` in an owned headless Chrome and open the link; a CORS failure shows as "The upload was interrupted" with no `PUT` reaching storage. Not proven either: Safari and Firefox, a drag from the operating system's own file manager (the proof drives the browser's drag path, not the OS's), and files near the 100 MB ceiling. The landing page and the abuse form take no drop, by design.
+
+# Multi-file codec
+
+Run `mise exec -- bun packages/relic-mcp/test/multi-file-path.ts`. The `codec` stage opens the fixed encrypted folder vector, checks its entries and byte-identical re-encryption, and confirms that the unchanged v1 decoder refuses it. Success prints `MULTI_FILE_STAGE codec OK` and `MULTI_FILE_PATH_OK`.
+
+The two `MULTI_FILE_TIMING` lines report manifest decode and set-validation time for 1,000 and 5,000 entries in Bun. They are observations, not pass/fail thresholds or browser measurements.

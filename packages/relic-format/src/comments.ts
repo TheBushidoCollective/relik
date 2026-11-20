@@ -39,6 +39,7 @@ import {
   CommentTooLargeError,
   MalformedCommentError,
 } from './errors.ts';
+import { entryPathRule } from './multi.ts';
 import type { OtioAnchorV1, OtioRationalTime } from './otio-types.ts';
 import { isInvisible } from './structured-text.ts';
 
@@ -302,6 +303,8 @@ export type SuggestionOutcome =
 export interface CommentPlaintext {
   readonly body: string;
   readonly display_name: string | null;
+  /** Canonical path of the file this comment concerns. */
+  readonly entry?: string;
   /** Absent or null is a freeform comment, not a mark. */
   readonly anchor?: CommentAnchor | null;
   /**
@@ -421,6 +424,7 @@ export async function encryptComment(
     body: plaintext.body,
     display_name: plaintext.display_name,
     ...(plaintext.anchor == null ? {} : { anchor: plaintext.anchor }),
+    ...(plaintext.entry === undefined ? {} : { entry: plaintext.entry }),
     ...(plaintext.addresses == null ? {} : { addresses: plaintext.addresses }),
     ...(plaintext.suggestion == null
       ? {}
@@ -515,6 +519,7 @@ function parseCommentFields(parsed: unknown): CommentPlaintext {
     body: true,
     display_name: true,
     anchor: true,
+    entry: true,
     addresses: true,
     suggestion: true,
     suggestion_outcome: true,
@@ -542,6 +547,13 @@ function parseCommentFields(parsed: unknown): CommentPlaintext {
     throw new MalformedCommentError(
       'comment display_name is present and is neither a string nor null'
     );
+  }
+  const entry = fields['entry'];
+  if (
+    entry !== undefined &&
+    (typeof entry !== 'string' || entryPathRule(entry) !== undefined)
+  ) {
+    throw new MalformedCommentError('comment entry is not a canonical path');
   }
 
   const addresses = fields['addresses'];
@@ -590,6 +602,7 @@ function parseCommentFields(parsed: unknown): CommentPlaintext {
   return {
     body,
     display_name: displayName,
+    ...(typeof entry === 'string' ? { entry } : {}),
     anchor,
     addresses: typeof addresses === 'string' ? addresses : null,
     ...(suggestion === undefined || suggestion === 'unsupported'

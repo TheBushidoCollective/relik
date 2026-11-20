@@ -23,6 +23,18 @@ import {
   sanitizeOtioBundlePath,
 } from '@relic/format';
 import {
+  writeZipCentralRecord,
+  writeZipEnd,
+  writeZipLocalHeader,
+  type ZipEntryRecord,
+} from '@relic/format';
+export {
+  writeZipCentralRecord,
+  writeZipEnd,
+  writeZipLocalHeader,
+} from '@relic/format';
+export type { ZipEntryRecord } from '@relic/format';
+import {
   type ConfinedBundleDirectory,
   type ConfinedBundleFile,
   type FileReader,
@@ -54,13 +66,6 @@ export const ZIP_CENTRAL_HEADER_BYTES = 46;
 export const ZIP_END_BYTES = 22;
 const ZIP_ENTRY_HEADER_BYTES =
   ZIP_LOCAL_HEADER_BYTES + ZIP_CENTRAL_HEADER_BYTES;
-// Every entry name is encoded by TextEncoder, so both ZIP headers must mark it UTF-8.
-const ZIP_UTF8_FILENAME_FLAG = 0x0800;
-// Shared header values: version 20, made by 0x0014, time 0, date 1980-01-01.
-const ZIP_VERSION = 20;
-const ZIP_MADE_BY = 0x0014;
-const ZIP_DOS_TIME = 0x0000;
-const ZIP_DOS_DATE = 0x0021;
 const VERSION_BYTES = new TextEncoder().encode('1.0.0');
 const TEXT_ENCODER = new TextEncoder();
 const MAX_RAW_REFERENCE_CHARS = MAX_ZIP_FILENAME_BYTES * 3;
@@ -169,94 +174,6 @@ export interface ZipLayout {
   readonly directoryOffset: number;
   readonly directorySize: number;
   readonly totalSize: number;
-}
-
-/** One entry's header fields, as the writers below serialise them. */
-export interface ZipEntryRecord {
-  readonly nameBytes: Uint8Array;
-  readonly method: 0 | 8;
-  readonly crc32: number;
-  readonly compressedSize: number;
-  readonly uncompressedSize: number;
-  readonly localHeaderOffset: number;
-}
-
-function zipView(target: Uint8Array): DataView {
-  return new DataView(target.buffer, target.byteOffset, target.byteLength);
-}
-
-/** Writes a local file header and its name at `at`. Returns the bytes written. */
-export function writeZipLocalHeader(
-  target: Uint8Array,
-  at: number,
-  e: ZipEntryRecord
-): number {
-  const view = zipView(target);
-  view.setUint32(at + 0, 0x04034b50, true);
-  view.setUint16(at + 4, ZIP_VERSION, true);
-  view.setUint16(at + 6, ZIP_UTF8_FILENAME_FLAG, true);
-  view.setUint16(at + 8, e.method, true);
-  view.setUint16(at + 10, ZIP_DOS_TIME, true);
-  view.setUint16(at + 12, ZIP_DOS_DATE, true);
-  view.setUint32(at + 14, e.crc32, true);
-  view.setUint32(at + 18, e.compressedSize, true);
-  view.setUint32(at + 22, e.uncompressedSize, true);
-  view.setUint16(at + 26, e.nameBytes.length, true);
-  view.setUint16(at + 28, 0, true);
-  target.set(e.nameBytes, at + ZIP_LOCAL_HEADER_BYTES);
-  return ZIP_LOCAL_HEADER_BYTES + e.nameBytes.length;
-}
-
-/** Writes a central directory record at `at`. Returns the bytes written. */
-export function writeZipCentralRecord(
-  target: Uint8Array,
-  at: number,
-  e: ZipEntryRecord
-): number {
-  const view = zipView(target);
-  view.setUint32(at + 0, 0x02014b50, true);
-  view.setUint16(at + 4, ZIP_MADE_BY, true);
-  view.setUint16(at + 6, ZIP_VERSION, true);
-  view.setUint16(at + 8, ZIP_UTF8_FILENAME_FLAG, true);
-  view.setUint16(at + 10, e.method, true);
-  view.setUint16(at + 12, ZIP_DOS_TIME, true);
-  view.setUint16(at + 14, ZIP_DOS_DATE, true);
-  view.setUint32(at + 16, e.crc32, true);
-  view.setUint32(at + 20, e.compressedSize, true);
-  view.setUint32(at + 24, e.uncompressedSize, true);
-  view.setUint16(at + 28, e.nameBytes.length, true);
-  view.setUint16(at + 30, 0, true);
-  view.setUint16(at + 32, 0, true);
-  view.setUint16(at + 34, 0, true);
-  view.setUint16(at + 36, 0, true);
-  view.setUint32(at + 38, 0, true);
-  view.setUint32(at + 42, e.localHeaderOffset, true);
-  target.set(e.nameBytes, at + ZIP_CENTRAL_HEADER_BYTES);
-  return ZIP_CENTRAL_HEADER_BYTES + e.nameBytes.length;
-}
-
-/** Writes the end-of-central-directory record at `at`. Returns the bytes written. */
-export function writeZipEnd(
-  target: Uint8Array,
-  at: number,
-  end: {
-    readonly entryCount: number;
-    readonly directorySize: number;
-    readonly directoryOffset: number;
-    readonly comment: Uint8Array;
-  }
-): number {
-  const view = zipView(target);
-  view.setUint32(at + 0, 0x06054b50, true);
-  view.setUint16(at + 4, 0, true);
-  view.setUint16(at + 6, 0, true);
-  view.setUint16(at + 8, end.entryCount, true);
-  view.setUint16(at + 10, end.entryCount, true);
-  view.setUint32(at + 12, end.directorySize, true);
-  view.setUint32(at + 16, end.directoryOffset, true);
-  view.setUint16(at + 20, end.comment.length, true);
-  target.set(end.comment, at + ZIP_END_BYTES);
-  return ZIP_END_BYTES + end.comment.length;
 }
 
 function assertZipEntryCount(count: number): void {
