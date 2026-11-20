@@ -47,3 +47,13 @@ export function guardSurfaceSwap(
     ? 'Send or discard your suggestion first'
     : null;
 }
+
+/** Let the thread refuse a DOM replacement before a view discards its surface. */
+export function requestSurfaceSwap(root: HTMLElement): boolean {
+  return root.dispatchEvent(
+    new CustomEvent('relic:before-structured-swap', {
+      bubbles: true,
+      cancelable: true,
+    })
+  );
+}

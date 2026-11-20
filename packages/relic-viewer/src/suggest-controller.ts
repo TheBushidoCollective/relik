@@ -3,7 +3,12 @@ import type { CommentPlaintext } from '@relic/format';
 import type { CommentCipher, CommentEntry, SessionState } from './comments.ts';
 import type { ReadyView, ViewerDeps } from './viewer.ts';
 import type { SuggestCommit, SuggestDraft } from './suggest-draft.ts';
-import { mountSuggestEditor, type SuggestEditor } from './suggest-editor.ts';
+import {
+  mountSuggestEditor,
+  type SuggestEditor,
+  type SuggestReceipt,
+} from './suggest-editor.ts';
+import { suggestionReceipt } from './suggest-receipt.ts';
 import { SuggestTransport, type TransportResult } from './suggest-transport.ts';
 import {
   buildSuggestionViews,
@@ -41,6 +46,7 @@ export interface SuggestControllerOptions {
   readonly open: (id: string, target?: HTMLElement) => void;
   readonly onPresenceChange?: () => void;
   readonly onPosted?: (commentId: string) => void | Promise<void>;
+  readonly onSurfaceReleased?: () => void;
 }
 
 export interface SuggestController {
@@ -62,6 +68,7 @@ export interface SuggestController {
   setApplied(on: boolean): void;
   selectedSuggestion(range: Range): string | null;
   restoreSelection(): void;
+  retire(): void;
   destroy(): boolean;
 }
 
@@ -215,8 +222,9 @@ function presencePoint(
 
 /** This module is the only lazy entry point for the suggestion feature. */
 export function mountSuggestionController(
-  options: SuggestControllerOptions
+  input: SuggestControllerOptions
 ): SuggestController {
+  const { initialSelection, ...options } = input;
   const { view, host, bar } = options;
   const kind =
     view.route === 'code' || view.route === 'notebook' ? 'code' : 'markdown';
@@ -232,9 +240,7 @@ export function mountSuggestionController(
     : kind === 'code'
       ? root?.closest<HTMLElement>('.code')
       : root;
-  const selection = root
-    ? selectionOffsets(root, options.initialSelection)
-    : null;
+  const selection = root ? selectionOffsets(root, initialSelection) : null;
   const sourceResult =
     view.document && !view.document.truncated
       ? suggestionSourceFor(
@@ -256,6 +262,7 @@ export function mountSuggestionController(
   let failed = false;
   let destroyed = false;
   let releaseDetached = false;
+  let retired = false;
   let lastDraft: SuggestDraft | null = null;
   let draftSequence = 0;
   let activeCommit: WritableCommit | undefined;
@@ -389,6 +396,7 @@ export function mountSuggestionController(
     });
 
   const showFailure = (reason: string): void => {
+    if (retired && !failureHost.isConnected) host.append(failureHost);
     failureHost.replaceChildren();
     const panel = doc.createElement('section');
     panel.className = 'sg-dock sg-receipt is-failed';
@@ -425,7 +433,9 @@ export function mountSuggestionController(
       if (transport?.discard()) {
         failureHost.replaceChildren();
         activeCommit = undefined;
+        if (retired) window.removeEventListener('beforeunload', beforeunload);
         resumePresenceRefresh();
+        if (!root) options.onSurfaceReleased?.();
       }
     });
     panel.append(title);
@@ -451,6 +461,7 @@ export function mountSuggestionController(
   ): void => {
     if (destroyed) return;
     if (releaseDetached) queueMicrotask(releaseSurface);
+    else if (!root) queueMicrotask(() => options.onSurfaceReleased?.());
     const hold = commitHold;
     commitHold = undefined;
     if (result.kind === 'not-posted') {
@@ -478,10 +489,14 @@ export function mountSuggestionController(
     const sent = activeCommit;
     const old = previous;
     activeCommit = undefined;
+    if (retired) window.removeEventListener('beforeunload', beforeunload);
     resumePresenceRefresh();
     void options.refresh();
     if (!draft || !editor || !sent) return;
-    editor.showReceipt({
+    const showReceipt = releaseDetached
+      ? (value: SuggestReceipt) => host.append(suggestionReceipt(doc, value))
+      : editor.showReceipt;
+    showReceipt({
       struck: draft.struck,
       inserted: draft.inserted,
       undo: () => {
@@ -500,6 +515,7 @@ export function mountSuggestionController(
             existingId: sent.kind === 'delete' ? null : sent.existingId,
           };
         if (!undo) return;
+        if (retired) window.addEventListener('beforeunload', beforeunload);
         activeCommit = undo;
         previous = undefined;
         void transport
@@ -731,6 +747,7 @@ export function mountSuggestionController(
     root = null;
     original = undefined;
     surface = undefined;
+    options.onSurfaceReleased?.();
   };
   root?.addEventListener('beforeinput', stopInputDuringSend, true);
   root?.addEventListener('paste', stopInputDuringSend, true);
@@ -960,6 +977,18 @@ export function mountSuggestionController(
     restoreSelection() {
       if (root) restoreOffsets(root, selection);
     },
+    retire() {
+      if (root || editor?.draft || transport?.shouldWarnBeforeUnload) return;
+      retired = true;
+      window.clearTimeout(presenceRefreshTimer);
+      doc.removeEventListener('selectionchange', selectionChanged);
+      doc.removeEventListener('visibilitychange', hidden);
+      window.removeEventListener('focus', refreshVisible);
+      window.removeEventListener('pagehide', pagehide);
+      window.removeEventListener('beforeunload', beforeunload);
+      editorChrome.remove();
+      failureHost.remove();
+    },
     destroy() {
       if (destroyed) return true;
       if (editor?.draft && !editor.commit()) return false;
@@ -984,6 +1013,10 @@ export function mountSuggestionController(
       root?.removeEventListener('paste', stopInputDuringSend, true);
       root?.removeEventListener('drop', stopInputDuringSend, true);
       root?.removeEventListener('keydown', stopInputDuringSend, true);
+      root = null;
+      original = undefined;
+      surface = undefined;
+      editor = undefined;
       doc.removeEventListener('selectionchange', selectionChanged);
       doc.removeEventListener('visibilitychange', hidden);
       window.removeEventListener('focus', refreshVisible);

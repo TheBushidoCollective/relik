@@ -80,7 +80,10 @@ import type { LinkRequestOutcome } from './passkey-common.ts';
 import type { DecisionPanelHandle } from './decision-panel.ts';
 import type { SuggestController } from './suggest-controller.ts';
 import { suggestionIssueFor } from './suggestion-gate.ts';
-import { suggestionSurfaceFor } from './suggestion-surface.ts';
+import {
+  guardSurfaceSwap,
+  suggestionSurfaceFor,
+} from './suggestion-surface.ts';
 import type { PresenceController } from './presence-controller.ts';
 import {
   type DecisionAccess,
@@ -6425,6 +6428,7 @@ export function buildThread(
   const suggestionNotice = document.createElement('span');
   suggestionNotice.className = 'sg-strip-meta';
   suggestionNotice.dataset['sgNotice'] = '';
+  suggestionNotice.setAttribute('role', 'status');
   suggestionBar.append(
     modeGroup,
     appliedMode,
@@ -6483,6 +6487,15 @@ export function buildThread(
           signIn: () => setOpen(true),
           onPresenceChange: () => syncPresence(),
           onPosted: (id) => presence?.announcePosted(id),
+          onSurfaceReleased: () => {
+            if (suggestionController !== controller) return;
+            if (!controller.hasPendingDraft()) {
+              controller.retire();
+              suggestionController = undefined;
+            }
+            updateSuggestionStub();
+            paintMarks(lastEntries);
+          },
           open: (id, target) => {
             const box = target
               ? anchorFromClientRect(
@@ -6505,6 +6518,9 @@ export function buildThread(
         suggestionNotice.textContent =
           'Suggesting stopped because the page changed unexpectedly.';
         return undefined;
+      })
+      .finally(() => {
+        suggestionLoading = undefined;
       });
     return suggestionLoading;
   };
@@ -9420,6 +9436,14 @@ export function buildThread(
       // pointer crossing, which reads as the pairing not working at all.
       if (next.dataset.pairBind !== '1') {
         next.dataset.pairBind = '1';
+        next.addEventListener('relic:before-structured-swap', (event) => {
+          if (host !== next) return;
+          const reason = guardSurfaceSwap(suggestionController);
+          if (reason) {
+            event.preventDefault();
+            suggestionNotice.textContent = reason;
+          }
+        });
         next.addEventListener('relic:structured-state', () => {
           if (host !== next) return;
           if (suggestionController?.destroy()) suggestionController = undefined;
