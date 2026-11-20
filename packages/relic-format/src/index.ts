@@ -22,6 +22,7 @@ export * from './load-copy.ts';
 export * from './mnemonic.ts';
 export * from './mimetype.ts';
 export * from './model.ts';
+export * from './multi.ts';
 export * from './otio-identity.ts';
 export * from './otio-json.ts';
 export * from './otio-program.ts';
