@@ -94,6 +94,7 @@ test('structured toggle protects a draft and releases a surface after an in-flig
       '--headless',
       '--disable-gpu',
       '--no-sandbox',
+      '--window-size=1280,900',
       `--user-data-dir=${profile}`,
       `http://127.0.0.1:${server.port}/`,
     ],

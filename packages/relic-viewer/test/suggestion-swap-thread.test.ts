@@ -48,9 +48,11 @@ test('thread guards the actual structured-view toggle and recovers after a post'
       await thread.ready;thread.attach(host);
       const button=thread.suggestionBar.querySelector('[data-sg-suggesting]');
       check(button&&!button.disabled,'suggestion button unavailable');
+      button.scrollIntoView({block:'center'});
       const frame=()=>{const {promise,resolve}=Promise.withResolvers();requestAnimationFrame(resolve);return promise};await frame();await frame();
       const rect=button.getBoundingClientRect(), hit=document.elementFromPoint(rect.x+rect.width/2,rect.y+rect.height/2);
-      check(hit===button||button.contains(hit),'suggestion button is occluded');button.click();
+      const cover=hit?{tag:hit.tagName,class:hit.getAttribute('class'),rect:hit.getBoundingClientRect().toJSON()}:null;
+      check(hit===button||button.contains(hit),'suggestion button is occluded: '+JSON.stringify({cover,target:rect.toJSON(),viewport:{width:innerWidth,height:innerHeight}}));button.click();
       await eventually(()=>root.getAttribute('contenteditable')==='true','suggesting did not start');
       const selection=document.getSelection(),range=document.createRange();range.setStart(root.firstChild,0);range.setEnd(root.firstChild,1);selection.removeAllRanges();selection.addRange(range);
       root.dispatchEvent(new InputEvent('beforeinput',{bubbles:true,cancelable:true,inputType:'insertText',data:'b'}));
@@ -105,6 +107,7 @@ test('thread guards the actual structured-view toggle and recovers after a post'
       '--headless',
       '--disable-gpu',
       '--no-sandbox',
+      '--window-size=1280,900',
       `--user-data-dir=${profile}`,
       `http://127.0.0.1:${server.port}/`,
     ],

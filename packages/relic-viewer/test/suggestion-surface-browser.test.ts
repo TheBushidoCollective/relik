@@ -81,6 +81,7 @@ test('controller uses the registered structured suggestion surface', async () =>
       '--headless',
       '--disable-gpu',
       '--no-sandbox',
+      '--window-size=1280,900',
       `--user-data-dir=${profile}`,
       `http://127.0.0.1:${server.port}/`,
     ],
