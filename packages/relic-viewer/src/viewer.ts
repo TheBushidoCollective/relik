@@ -1023,6 +1023,8 @@ export async function loadHistoricalVersion(
   }
   if (current.openVersion !== undefined) {
     const opened = await current.openVersion(requestedVersion);
+    if (opened.kind === 'ready')
+      options?.onSize?.(versionContentSize(opened.view));
     if (
       opened.kind === 'ready' &&
       options?.maxBytes !== undefined &&

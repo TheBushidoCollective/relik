@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { contentFromBytes } from '../src/content.ts';
+import { contentFromBlob, contentFromBytes } from '../src/content.ts';
 import { compareFolderFiles } from '../src/folder-compare.ts';
 import {
   comparisonAvailability,
@@ -77,6 +77,29 @@ test('compares bytes and reports changed, added, removed, and unchanged files', 
   expect(result.find((item) => item.path === 'a.md')?.beforeIndex).toBe(0);
 });
 
+test('compares past the first 8 MiB chunk and stops at the first difference', async () => {
+  const size = 8 * 1024 * 1024 + 2;
+  const a = new Uint8Array(size);
+  const b = new Uint8Array(size);
+  b[size - 1] = 1;
+  const reads: number[] = [];
+  const tracked = (bytes: Uint8Array) => {
+    const content = contentFromBytes(bytes);
+    return {
+      ...content,
+      read: async (start: number, end: number) => {
+        reads.push(end - start);
+        return content.read(start, end);
+      },
+    };
+  };
+  const before = { ...file('large.txt', ''), content: tracked(a) };
+  const after = { ...file('large.txt', '', 2), content: tracked(b) };
+  const result = await compareFolderFiles(before, after, (name) => name);
+  expect(result[0]?.kind).toBe('changed');
+  expect(reads).toEqual([8 * 1024 * 1024, 8 * 1024 * 1024, 2, 2]);
+});
+
 test('compares single and folder shapes and refuses oversized whole folders', async () => {
   const single = file('a.md', 'same');
   const multiple = folder(
@@ -94,11 +117,13 @@ test('compares single and folder shapes and refuses oversized whole folders', as
     ['a.md', 'unchanged'],
     ['b.md', 'added'],
   ]);
+  const chunk = new Uint8Array(1024 * 1024);
+  const whole = await contentFromBlob(new Blob(Array(120).fill(chunk)));
   const large = {
     ...multiple,
     folder: {
       ...multiple.folder!,
-      whole: { ...multiple.folder!.whole, size: 120 * 1024 * 1024 },
+      whole,
     },
   };
   const availability = comparisonAvailability(large);

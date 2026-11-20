@@ -409,6 +409,7 @@ describe('version store', () => {
     const objects = new Map([
       [1, file],
       [2, folder],
+      [3, file],
     ]);
     const deps: ViewerDeps = {
       serviceOrigin: 'https://relik.example',
@@ -435,14 +436,19 @@ describe('version store', () => {
     const store = createVersionStore(generateRelicId(), f.boot, deps);
     const one = await store.get(1);
     const two = await store.get(2);
+    const three = await store.get(3);
     expect(one.kind).toBe('ready');
     expect(two.kind).toBe('ready');
+    expect(three.kind).toBe('ready');
     if (one.kind !== 'ready' || two.kind !== 'ready')
       throw new Error('version failed');
     expect(one.view.folder).toBeUndefined();
     expect(one.view.filename).toBe('single.txt');
     expect(two.view.folder?.manifest.entries[0]?.path).toBe('inside.txt');
     expect(two.view.filename).toBe('inside.txt');
+    if (three.kind !== 'ready') throw new Error('third version failed');
+    expect(three.view.folder).toBeUndefined();
+    expect(three.view.filename).toBe('single.txt');
     expect(await store.get(1)).toBe(one);
     expect(await store.get(2)).toBe(two);
   });

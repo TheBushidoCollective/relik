@@ -1,4 +1,5 @@
 import { type Change, diffLines, diffWordsWithSpace } from 'diff';
+import { AUTO_PROJECTION_MAX_BYTES } from './version-store.ts';
 import { versionContentSize } from './viewer.ts';
 import type { ReadyView, RenderRoute } from './viewer.ts';
 
@@ -14,7 +15,7 @@ import type { ReadyView, RenderRoute } from './viewer.ts';
  */
 export const MAX_DIFF_BYTES = 16 * 1024 * 1024;
 export const DIFF_LIMIT_LABEL = '16 MiB';
-export const FOLDER_COMPARE_MAX_BYTES = 100 * 1024 * 1024;
+export const FOLDER_COMPARE_MAX_BYTES = AUTO_PROJECTION_MAX_BYTES;
 export const FOLDER_COMPARE_LIMIT_COPY =
   'This version is larger than the 100 MiB folder comparison limit, so Relik cannot list what changed. Each version can still be opened on its own.';
 

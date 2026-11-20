@@ -3770,10 +3770,12 @@ export function renderComparison(
         if (thisRequest !== request) return;
         const container = document.createElement('div');
         const fileList = document.createElement('ul');
+        fileList.className = 'diff-change-list';
         const detail = document.createElement('div');
         const unchanged = document.createElement('details');
         const summary = document.createElement('summary');
         const unchangedList = document.createElement('ul');
+        unchangedList.className = 'diff-change-list';
         const unchangedCount = files.filter(
           (file) => file.kind === 'unchanged'
         ).length;
@@ -3782,8 +3784,10 @@ export function renderComparison(
         let selection = 0;
         for (const file of files) {
           const item = document.createElement('li');
+          item.className = `diff-change diff-change-${file.kind}`;
           const button = document.createElement('button');
           button.type = 'button';
+          button.disabled = file.kind !== 'changed';
           button.textContent = `${file.kind}: ${file.path}`;
           button.addEventListener('click', () => {
             if (file.kind !== 'changed') return;
@@ -3837,6 +3841,21 @@ export function renderComparison(
             notice('These files could not be compared.')
           );
       }
+      return;
+    }
+    if (
+      leftRes.view.content.size > MAX_DIFF_BYTES ||
+      rightRes.view.content.size > MAX_DIFF_BYTES
+    ) {
+      scaffold.result.replaceChildren(
+        renderLoadedVersion(
+          rightRes.view,
+          leftRes.view,
+          leftVersion,
+          usercontentOrigin
+        )
+      );
+      changesSidebar.setChanges(0, undefined);
       return;
     }
 
@@ -9205,9 +9224,11 @@ export function buildThread(
     );
     const selectedPath = view.folder?.manifest.entries[view.folder.index]?.path;
     const isWhole = (entry: CommentEntry): boolean =>
-      entry.kind !== 'open' ||
-      entry.entry === undefined ||
-      !paths.has(entry.entry);
+      view.folder
+        ? entry.kind !== 'open' ||
+          entry.entry === undefined ||
+          !paths.has(entry.entry)
+        : entry.kind === 'open' && entry.entry !== undefined;
     if (view.folder) {
       const counts = new Map<string, number>();
       for (const entry of filteredEntries) {
@@ -9261,7 +9282,7 @@ export function buildThread(
     }
 
     const renderRows = (): void => {
-      if (!view.folder) {
+      if (!view.folder && !tree.some((node) => isWhole(node.entry))) {
         list.replaceChildren(...tree.map((node) => renderCommentNode(node)));
         return;
       }
