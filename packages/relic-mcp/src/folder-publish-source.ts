@@ -114,16 +114,20 @@ export async function folderDefaultBytes(
 }
 
 export function folderReport(source: FolderPublishSource) {
-  const counts = new Map<string, number>();
+  const byReason: Partial<Record<FolderOmission['reason'], number>> = {};
   for (const entry of source.leftOut)
-    counts.set(entry.reason, (counts.get(entry.reason) ?? 0) + 1);
+    byReason[entry.reason] = (byReason[entry.reason] ?? 0) + 1;
   return {
+    source: 'directory' as const,
     file_count: source.folder.entries.length,
-    total_bytes: source.folder.filesTotalBytes,
+    files_total_bytes: source.folder.filesTotalBytes,
+    file_list_bytes: source.folder.manifest.length,
     default_entry: source.folder.entries[source.folder.defaultIndex]!.path,
-    omitted_sample: source.leftOut.slice(0, 5),
-    left_out: [...counts]
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([reason, count]) => ({ reason, count })),
+    sample: source.folder.entries.slice(0, 20).map((entry) => entry.path),
+    left_out: {
+      count: source.leftOut.length,
+      by_reason: byReason,
+      sample: source.leftOut.slice(0, 50),
+    },
   };
 }

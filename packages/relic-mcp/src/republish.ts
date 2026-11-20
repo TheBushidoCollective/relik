@@ -40,6 +40,7 @@ import {
   prepareFolderPublish,
 } from './folder-publish-source.ts';
 import { encryptPreparedFolder, FolderContentError } from './folder-content.ts';
+import type { FolderReport } from './folder-source.ts';
 import {
   contentDigest,
   type PublishDeps,
@@ -108,21 +109,7 @@ export interface RepublishInput {
 
 export interface RepublishResult {
   readonly shape: 'file' | 'folder';
-  readonly folder?:
-    | {
-        readonly file_count: number;
-        readonly total_bytes: number;
-        readonly default_entry: string;
-        readonly omitted_sample: readonly {
-          readonly path: string;
-          readonly reason: string;
-        }[];
-        readonly left_out: readonly {
-          readonly reason: string;
-          readonly count: number;
-        }[];
-      }
-    | undefined;
+  readonly folder?: FolderReport | undefined;
   readonly relic_id: string;
   /**
    * The version just published, counted from the local state file: the

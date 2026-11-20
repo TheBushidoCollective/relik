@@ -306,15 +306,62 @@ function folderParagraph(
   name: string
 ): string {
   if (!folder) return '';
-  const total = folder.left_out.reduce((sum, item) => sum + item.count, 0);
+  const total = folder.left_out.count;
   const summary = `It holds ${folder.file_count} files from ${jsonLine(name)} and opens at ${jsonLine(folder.default_entry)}.`;
   if (!total) return `${summary}\n\n`;
-  const sample = folder.omitted_sample
+  const sample = folder.left_out.sample
+    .slice(0, 5)
     .map((item) => `${jsonLine(item.path)} (${item.reason})`)
     .join(', ');
-  const remaining = total - folder.omitted_sample.length;
+  const remaining = total - Math.min(folder.left_out.sample.length, 5);
   return `${summary}\nLeft out ${total} paths: ${sample}${remaining > 0 ? `, and ${remaining} more` : ''}.\n\n`;
 }
+
+const FOLDER_REPORT_SCHEMA = {
+  type: 'object',
+  properties: {
+    source: { enum: ['directory', 'zip'] },
+    file_count: { type: 'integer' },
+    files_total_bytes: { type: 'integer' },
+    file_list_bytes: { type: 'integer' },
+    default_entry: { type: 'string' },
+    sample: { type: 'array', items: { type: 'string' } },
+    left_out: {
+      type: 'object',
+      properties: {
+        count: { type: 'integer' },
+        by_reason: {
+          type: 'object',
+          additionalProperties: { type: 'integer' },
+        },
+        sample: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              path: { type: 'string' },
+              reason: { type: 'string' },
+            },
+            required: ['path', 'reason'],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ['count', 'by_reason', 'sample'],
+      additionalProperties: false,
+    },
+  },
+  required: [
+    'source',
+    'file_count',
+    'files_total_bytes',
+    'file_list_bytes',
+    'default_entry',
+    'sample',
+    'left_out',
+  ],
+  additionalProperties: false,
+} as const;
 
 export const TOOL_DEFINITION = {
   name: TOOL_NAME,
@@ -417,37 +464,7 @@ export const TOOL_DEFINITION = {
     type: 'object',
     properties: {
       shape: { enum: ['file', 'folder'] },
-      folder: {
-        type: 'object',
-        properties: {
-          file_count: { type: 'integer' },
-          total_bytes: { type: 'integer' },
-          default_entry: { type: 'string' },
-          omitted_sample: {
-            type: 'array',
-            items: {
-              type: 'object',
-              properties: {
-                path: { type: 'string' },
-                reason: { type: 'string' },
-              },
-              required: ['path', 'reason'],
-            },
-          },
-          left_out: {
-            type: 'array',
-            items: {
-              type: 'object',
-              properties: {
-                reason: { type: 'string' },
-                count: { type: 'integer' },
-              },
-              required: ['reason', 'count'],
-            },
-          },
-        },
-        required: ['file_count', 'total_bytes', 'left_out'],
-      },
+      folder: FOLDER_REPORT_SCHEMA,
       url: { type: 'string' },
       relic_id: { type: 'string' },
       version: {
@@ -623,37 +640,7 @@ export const REPUBLISH_TOOL_DEFINITION = {
     type: 'object',
     properties: {
       shape: { enum: ['file', 'folder'] },
-      folder: {
-        type: 'object',
-        properties: {
-          file_count: { type: 'integer' },
-          total_bytes: { type: 'integer' },
-          default_entry: { type: 'string' },
-          omitted_sample: {
-            type: 'array',
-            items: {
-              type: 'object',
-              properties: {
-                path: { type: 'string' },
-                reason: { type: 'string' },
-              },
-              required: ['path', 'reason'],
-            },
-          },
-          left_out: {
-            type: 'array',
-            items: {
-              type: 'object',
-              properties: {
-                reason: { type: 'string' },
-                count: { type: 'integer' },
-              },
-              required: ['reason', 'count'],
-            },
-          },
-        },
-        required: ['file_count', 'total_bytes', 'left_out'],
-      },
+      folder: FOLDER_REPORT_SCHEMA,
       relic_id: { type: 'string' },
       version: {
         type: 'integer',

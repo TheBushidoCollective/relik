@@ -27,6 +27,19 @@ export interface FolderOmission {
   readonly path: string;
   readonly reason: FolderOmissionReason;
 }
+export interface FolderReport {
+  readonly source: 'directory' | 'zip';
+  readonly file_count: number;
+  readonly files_total_bytes: number;
+  readonly file_list_bytes: number;
+  readonly default_entry: string;
+  readonly sample: readonly string[];
+  readonly left_out: {
+    readonly count: number;
+    readonly by_reason: Readonly<Partial<Record<FolderOmissionReason, number>>>;
+    readonly sample: readonly FolderOmission[];
+  };
+}
 export interface FolderFile {
   readonly path: string;
   readonly sourcePath: string;

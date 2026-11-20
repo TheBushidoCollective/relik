@@ -96,15 +96,25 @@ try {
   const result = await publish({ path: root, cover: false }, deps);
   assert.equal(result.shape, 'folder');
   assert.equal(result.folder?.file_count, 3);
-  assert.deepEqual(result.folder?.left_out, [
-    { reason: 'git_metadata', count: 1 },
-    { reason: 'gitignore', count: 2 },
-    { reason: 'node_modules', count: 1 },
-    { reason: 'not_regular_file', count: 1 },
-    { reason: 'os_metadata', count: 1 },
-    { reason: 'symlink', count: 1 },
-    { reason: 'unpublishable_name', count: 1 },
+  assert.equal(result.folder?.source, 'directory');
+  assert.equal(result.folder?.files_total_bytes, 23);
+  assert.equal(result.folder?.default_entry, 'README.md');
+  assert.deepEqual(result.folder?.sample, [
+    '.gitignore',
+    'README.md',
+    'data/a.json',
   ]);
+  assert.equal(result.folder?.left_out.count, 8);
+  assert.deepEqual(result.folder?.left_out.by_reason, {
+    git_metadata: 1,
+    gitignore: 2,
+    node_modules: 1,
+    not_regular_file: 1,
+    os_metadata: 1,
+    symlink: 1,
+    unpublishable_name: 1,
+  });
+  assert.equal(result.folder?.left_out.sample.length, 8);
   assert.ok(uploaded);
   const fragment = parseFragment(new URL(result.url).hash);
   assert.ok(fragment);

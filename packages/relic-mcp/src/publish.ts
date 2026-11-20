@@ -47,6 +47,7 @@ import {
   prepareFolderPublish,
 } from './folder-publish-source.ts';
 import { encryptPreparedFolder, FolderContentError } from './folder-content.ts';
+import type { FolderReport } from './folder-source.ts';
 import type { ProgramPolicy } from './program/policy.ts';
 import type { ProgramRenderer } from './program/render.ts';
 import type { ProgramReport } from './program/report.ts';
@@ -273,21 +274,7 @@ export interface PublishInput {
 
 export interface PublishResult {
   readonly shape: 'file' | 'folder';
-  readonly folder?:
-    | {
-        readonly file_count: number;
-        readonly total_bytes: number;
-        readonly default_entry: string;
-        readonly omitted_sample: readonly {
-          readonly path: string;
-          readonly reason: string;
-        }[];
-        readonly left_out: readonly {
-          readonly reason: string;
-          readonly count: number;
-        }[];
-      }
-    | undefined;
+  readonly folder?: FolderReport | undefined;
   readonly url: string;
   readonly relic_id: string;
   /**

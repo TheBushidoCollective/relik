@@ -1023,6 +1023,26 @@ describe('the MCP surface', () => {
     // Inline content would put the plaintext in the transcript too,
     // compounding the leak from "the key leaks" to "the key and the file leak".
     expect(Object.keys(schema.properties)).not.toContain('content');
+    expect(
+      Object.keys(TOOL_DEFINITION.outputSchema.properties.folder.properties)
+    ).toEqual([
+      'source',
+      'file_count',
+      'files_total_bytes',
+      'file_list_bytes',
+      'default_entry',
+      'sample',
+      'left_out',
+    ]);
+    expect(
+      Object.keys(
+        TOOL_DEFINITION.outputSchema.properties.folder.properties.left_out
+          .properties
+      )
+    ).toEqual(['count', 'by_reason', 'sample']);
+    expect(REPUBLISH_TOOL_DEFINITION.outputSchema.properties.folder).toEqual(
+      TOOL_DEFINITION.outputSchema.properties.folder
+    );
   });
 
   test('the schema declares the lifetime bounds the contract fixes', () => {

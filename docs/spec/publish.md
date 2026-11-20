@@ -89,7 +89,7 @@ Success returns the following structured members, with `shape` required and `fol
 - **`relic_id`** the normalized canonical ID, separately. Every operator-facing workflow takes the ID with the fragment already stripped: abuse reports, takedown requests, support tickets. Making a caller slice it out of a URL means somebody eventually slices wrong.
 - **`relic_expires_at`** RFC 3339, UTC, or `null` when the relic has no publisher-set lifetime and never expires. Taken from the grant response and never computed locally, because `service.md` section 3 makes the app server's clock authoritative for every lifetime-bearing timestamp. A CI job reads it to know whether the link outlives the pipeline that mailed it; `null` says it does.
 - **`renderer_class`** the derived class, echoed as disclosure of what was reported.
-- **`shape`** is `file` or `folder`. A folder also returns `folder.file_count`, `folder.total_bytes`, and omission counts in `folder.left_out`.
+- **`shape`** is `file` or `folder`. A folder's `folder` report carries `source`, `file_count`, `files_total_bytes`, `file_list_bytes`, `default_entry`, the first 20 paths in `sample`, and `left_out` with `count`, `by_reason`, and the first 50 omitted paths and reasons in `sample`.
 - **`filename`** the string written into the envelope header, echoed because the caller may have overridden it.
 - **`title`** the normalized publisher-declared plaintext title stored on the relic row, or `null` if untitled.
 - **`resolved_path`** the absolute path the client actually read, echoed so a wrong working directory is diagnosable.
