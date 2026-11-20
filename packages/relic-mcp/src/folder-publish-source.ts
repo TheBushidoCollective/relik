@@ -113,6 +113,20 @@ export async function folderDefaultBytes(
   return output;
 }
 
+export interface FolderReport {
+  readonly source: 'directory';
+  readonly file_count: number;
+  readonly files_total_bytes: number;
+  readonly file_list_bytes: number;
+  readonly default_entry: string;
+  readonly sample: readonly string[];
+  readonly left_out: {
+    readonly count: number;
+    readonly by_reason: Partial<Record<FolderOmission['reason'], number>>;
+    readonly sample: readonly FolderOmission[];
+  };
+}
+
 export function folderReport(source: FolderPublishSource) {
   const byReason: Partial<Record<FolderOmission['reason'], number>> = {};
   for (const entry of source.leftOut)

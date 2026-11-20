@@ -386,12 +386,17 @@ try {
       error.code === 'local_size_precheck_failed'
   );
   assert.equal(calls.length, 0);
-  await assert.rejects(
-    publishPrivate({ path: root }, deps),
-    (error: unknown) =>
-      error instanceof PublishError &&
-      error.code === 'private_folder_unsupported'
-  );
+  for (const [path, code] of [
+    [empty, 'folder_empty'],
+    [collision, 'path_collision'],
+    [many, 'too_many_files'],
+  ] as const) {
+    await assert.rejects(
+      publishPrivate({ path }, deps),
+      (error: unknown) => error instanceof PublishError && error.code === code
+    );
+    assert.equal(calls.length, 0);
+  }
   await savePrivatePublishState(result.relic_id, {
     access: 'private',
     service_origin: deps.serviceOrigin,
@@ -403,13 +408,9 @@ try {
     shape: 'folder',
   });
   await assert.rejects(
-    republishPrivate(
-      { relic_id: result.relic_id, path: join(root, 'README.md') },
-      deps
-    ),
+    republishPrivate({ relic_id: result.relic_id, path: empty }, deps),
     (error: unknown) =>
-      error instanceof PublishError &&
-      error.code === 'private_folder_unsupported'
+      error instanceof PublishError && error.code === 'folder_empty'
   );
   assert.equal(calls.length, 0);
   const priorPath = process.env.PATH;
