@@ -1,4 +1,5 @@
 import {
+  guessMimetype,
   modelFormatFromFilename,
   modelFormatFromMime,
   sniffContentClass,
@@ -11,7 +12,6 @@ import {
   type CoverSource,
 } from '@relic/format/cover';
 import { routeFor } from '@relic/viewer';
-import { guessMimetype } from '../publish.ts';
 import { parseArchiveListing } from './archive.ts';
 import { extractMediaCover } from './media.ts';
 

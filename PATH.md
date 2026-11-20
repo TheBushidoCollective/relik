@@ -277,3 +277,25 @@ Success requires `STAGE_TABLE_OK`, `STAGE_TREE_OK`, `STAGE_CUES_OK`, `STAGE_NOTE
 The refusals stage is the negative control for the MCP validators: six malformed anchors are refused before anything is posted. Negative control for the table route was run by hand and is documented at the top of the script: with the csv and tsv routes removed, the table stage fails at "the table draws". A run that does not reach every stage prints `STRUCTURED_FORMATS_PATH_PARTIAL` and never the OK marker.
 
 All proof writes target the local in-memory service. The browser is an isolated headless Chrome. Not proven here: other browsers, a 390 px layout review, the OS clipboard and IME, xlsx and documents (their own paths), and suggesting inside cells.
+
+# Publish from the browser
+
+A visitor opens `/publish`, drops one file, reviews it and its link-preview title, and gets a link whose key never reached the service. The link opens to the file they dropped. A cleared title sends no title and no filename. A file over the page's ceiling, and a dropped folder, are refused before any grant.
+
+## Acceptance command
+
+```sh
+bun run --cwd packages/relic-viewer build
+RELIC_CHROME_PATH="$(command -v google-chrome)" bun packages/relic-mcp/test/browser-publish-path.ts
+```
+
+Success requires these lines in order, then `BROWSER_PUBLISH_PATH_OK`:
+`PUBLISH_STEP_1_PAGE terms=shown`,
+`PUBLISH_STEP_2_REVIEW title=filename api_requests=0`,
+`PUBLISH_STEP_3_PUBLISHED relic_id=<id> key_in_requests=false plaintext_at_rest=false`,
+`PUBLISH_STEP_4_OPENS content=decrypted`,
+`PUBLISH_STEP_5_CLEARED_TITLE filename_sent=false title_stored=false`,
+`PUBLISH_STEP_6_REFUSALS oversize=refused folder=refused grants=0`.
+The browser is an owned isolated headless Chrome with a throwaway profile, and all writes target the local in-memory service.
+
+Not proven here: the loopback upload is same-origin, so the browser's cross-origin preflight to the real bucket is not exercised. The bucket's CORS rule admits `PUT` from the service origin, and the private-share rekey already relies on it, but the first publish from the live page is the check. After a deploy, publish a small file from the live `/publish` in an owned headless Chrome and open the link; a CORS failure shows as "The upload was interrupted" with no `PUT` reaching storage. Not proven either: Safari and Firefox, a drop from the operating system's file manager (the proof dispatches the drop event), and files near the 100 MB ceiling.

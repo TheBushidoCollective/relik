@@ -22,6 +22,7 @@ import {
   encryptRelic,
   generateKey,
   generateRelicId,
+  guessMimetype,
   isValidRelicId,
   normalizeEmail,
   type RendererClass,
@@ -70,7 +71,6 @@ import {
 } from './device.ts';
 import {
   contentDigest,
-  guessMimetype,
   lookupPublishedSource,
   postJson,
   PublishError,

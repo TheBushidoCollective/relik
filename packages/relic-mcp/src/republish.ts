@@ -16,6 +16,7 @@ import {
   deriveRendererClass,
   deriveShareProof,
   encryptRelicParts,
+  guessMimetype,
   isValidRelicId,
   modelFormatFromFilename,
   normalizeTitle,
@@ -35,7 +36,6 @@ import {
 import { uploadCover } from './cover/upload.ts';
 import {
   contentDigest,
-  guessMimetype,
   type PublishDeps,
   PublishError,
   postJson,

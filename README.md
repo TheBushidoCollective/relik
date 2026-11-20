@@ -16,13 +16,16 @@ A private relic's link has no fragment: `https://relik.link/{id}`. Each version'
 
 ## What is honest about the claim
 
-The JavaScript that performs the decryption is served by the same party the
-zero-knowledge claim is made against, and that party could serve different
+The JavaScript that performs the decryption, and on `/publish` the encryption
+of a file you drop there, is served by the same party the zero-knowledge claim
+is made against, and that party could serve different
 JavaScript tomorrow. This is a statement about operator intent, not a property
 a recipient can verify. Anyone claiming otherwise for a service of this shape
 is overclaiming.
 
 For a public relic, the publish tool returns the full URL including the fragment, because handing you a usable link is the product. **The key therefore enters your model's context and your session transcript on every public publish.** Zero-knowledge holds against the Relic operator. It does not hold against your model provider or whoever stores your transcripts, and that is structural rather than a defect on a schedule. A private relic's publish output carries no key. Its device keys stay on this machine, in the Secure Enclave where it is available and in an owner-only file otherwise.
+
+`/publish` is the other door for a public relic. Drop a file and the page encrypts it in the browser and uploads the ciphertext. The key appears only in the link the page returns, and no model is in that path, so the transcript caveat above does not apply to it. The title crosses in the clear, as it does from the MCP client, and the page lets you change or clear it before anything is sent. A relic published there has no cover image and cannot be republished, because the page keeps no publish token.
 
 The browser holds decrypted content in a browser-managed Blob. The browser
 may keep that plaintext in memory or temporary disk, and the operating system
@@ -94,7 +97,7 @@ telemetry on that statement being readable before anybody publishes.
 | `@relic/format` | The wire format. RFC 8188 `aes128gcm` framing around an envelope that lives inside the encrypted stream. Imported by both ends so the encryptor and the decryptor cannot drift apart. The private-share statements and key wraps live in its `private` subpath. |
 | `@relic/server` | The app server. Grants, mints, the abuse surface, delete-by-id, private-share access checks and the access log, and the published disclosure. Never handles relic bytes on either leg. |
 | `relic-mcp` | The local MCP server, published to npm. Holds the key, encrypts in process, returns no script, and persists the key and publish token that republish needs. For private relics it also keeps a device key on this machine. |
-| `@relic/viewer` | The PWA. Decrypts in the browser and renders by type under a taskbar. Private relics open after a passkey check. |
+| `@relic/viewer` | The PWA. Decrypts in the browser and renders by type under a taskbar. Private relics open after a passkey check. `/publish` encrypts a dropped file in the page and uploads it. |
 
 ## Running it
 

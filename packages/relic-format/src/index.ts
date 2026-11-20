@@ -20,6 +20,7 @@ export * from './id.ts';
 export * from './json-tree.ts';
 export * from './load-copy.ts';
 export * from './mnemonic.ts';
+export * from './mimetype.ts';
 export * from './model.ts';
 export * from './otio-identity.ts';
 export * from './otio-json.ts';

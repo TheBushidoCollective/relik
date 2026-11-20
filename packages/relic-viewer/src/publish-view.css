@@ -1,0 +1,214 @@
+/*
+ * The publish page.
+ *
+ * Loaded by `publish-view.ts` when a visitor arrives at /publish, so a relic
+ * reader never downloads it. It borrows the tokens and the accession band
+ * from styles.css and adds only what the drop zone needs.
+ */
+
+.bar a.mark {
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.pub-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.pub {
+  max-width: 40rem;
+  margin: 1.5rem auto 0;
+}
+
+.pub .notice {
+  margin: 0 0 1.25rem;
+  max-width: none;
+}
+
+.pub-drop {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.4rem;
+  padding: 3rem 1.75rem;
+  background: var(--surface);
+  border: 1px dashed var(--rule-strong);
+  cursor: pointer;
+}
+
+.pub-drop:hover,
+.pub-drop.over {
+  border-color: var(--patina);
+  background: color-mix(in srgb, var(--patina) 7%, var(--surface));
+}
+
+.pub-drop.over {
+  border-style: solid;
+}
+
+.pub-drop:focus-visible {
+  outline: 2px solid var(--patina);
+  outline-offset: 2px;
+}
+
+.pub-drop-icon {
+  width: 28px;
+  height: 28px;
+  fill: var(--patina);
+}
+
+.pub-drop-title {
+  margin: 0.4rem 0 0;
+  font-family: var(--serif);
+  font-size: 1.6rem;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.pub-drop-note {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--ink-soft);
+}
+
+.pub-terms {
+  list-style: none;
+  margin: 2rem 0 0;
+  padding: 0;
+}
+
+.pub-term {
+  padding: 0.7rem 0;
+  border-top: 1px solid var(--rule);
+  font-size: 0.86rem;
+  color: var(--ink-soft);
+}
+
+.pub-card {
+  padding: 1.75rem;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-top: 3px solid var(--rule-strong);
+}
+
+.pub-card-title {
+  margin: 0 0 0.35rem;
+  font-size: 1.15rem;
+  font-weight: 600;
+  word-break: break-word;
+}
+
+.pub-meta {
+  margin: 0.25rem 0 0;
+  font-family: var(--mono);
+  font-size: 0.76rem;
+  color: var(--ink-soft);
+  word-break: break-word;
+}
+
+.pub-help {
+  margin: 0.6rem 0 0;
+  font-size: 0.86rem;
+  color: var(--ink-soft);
+}
+
+.pub-label {
+  display: block;
+  margin-top: 1.25rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.pub-title {
+  display: block;
+  width: 100%;
+  margin-top: 0.4rem;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--rule-strong);
+  background: var(--ground);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 400;
+}
+
+.pub-title:focus-visible {
+  outline: 2px solid var(--patina);
+  outline-offset: 1px;
+}
+
+.pub-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-top: 1.25rem;
+}
+
+/* The page's own actions keep their labels at every width, unlike the bar's,
+   which collapse to icons. */
+.pub .action span {
+  display: inline;
+}
+
+.pub .pub-row .action,
+.pub-card > .action {
+  padding: 0.55rem 0.9rem;
+  border: 1px solid var(--rule);
+}
+
+.pub .pub-row .action.primary {
+  border-color: var(--patina);
+}
+
+.pub-card > .action {
+  margin-top: 1.25rem;
+}
+
+.pub-meter {
+  display: block;
+  width: 100%;
+  height: 0.5rem;
+  margin-top: 1.25rem;
+  accent-color: var(--patina);
+}
+
+.pub-link-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  margin-top: 1.25rem;
+  border: 1px solid var(--rule-strong);
+}
+
+.pub-link {
+  flex: 1 1 14rem;
+  min-width: 0;
+  padding: 0.65rem 0.75rem;
+  border: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  line-height: 1.45;
+  word-break: break-all;
+  resize: none;
+}
+
+.pub-link-row .action,
+.pub-link-row .action.primary {
+  align-self: stretch;
+  padding: 0.55rem 0.9rem;
+  border: 0;
+  border-left: 1px solid var(--rule-strong);
+}
+
+.pub-card .accession {
+  margin-top: 1.25rem;
+}
