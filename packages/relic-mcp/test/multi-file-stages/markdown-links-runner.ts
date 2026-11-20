@@ -140,6 +140,9 @@ export async function runFolderStage(
       await wait(
         "document.querySelector('img[alt=Picture]')?.naturalWidth>0 && document.querySelector('img[alt=\\\"Root picture\\\"]')?.naturalWidth>0"
       );
+      await wait(
+        `[...document.querySelectorAll('.md-entry-link')].some(a=>a.textContent==='Decoded budget') && !document.querySelector('img[alt="Decoded budget"]')`
+      );
       const imageUrl = await evaluate(
         `document.querySelector('img[alt=Picture]').src`
       );
@@ -157,6 +160,17 @@ export async function runFolderStage(
       );
       await wait(
         "document.querySelector('.folder-breadcrumb')?.textContent.includes('docs') && document.querySelector('.prose')?.textContent.includes('Target document')"
+      );
+      assert.equal(
+        await evaluate(`document.querySelector('.stage-wrap').scrollTop > 0`),
+        true,
+        'fragment scrolls to the target heading'
+      );
+      assert.equal(
+        await evaluate(
+          `!location.href.includes('docs') && !location.href.includes('section')`
+        ),
+        true
       );
       assert.equal(
         await evaluate(

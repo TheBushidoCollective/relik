@@ -11,11 +11,21 @@ const png = Uint8Array.from(
 );
 const large = new Uint8Array(24 * 1024 * 1024);
 large.set(png);
+const canvas = document.createElement('canvas');
+canvas.width = 4097;
+canvas.height = 4097;
+const encodedCanvas = Promise.withResolvers<Blob | null>();
+canvas.toBlob(encodedCanvas.resolve, 'image/png');
+const bitmapBlob = await encodedCanvas.promise;
+if (!bitmapBlob) throw new Error('could not encode budget fixture');
+const bitmap = await bitmapBlob.arrayBuffer();
+canvas.width = 0;
+canvas.height = 0;
 const text = `# Folder readme
 
 [Relative](docs/a.md#section) [Root](/docs/a.md) [Outside](../outside.md) [Missing](/missing.md) [Protocol](//evil.example/x) [Case](docs/A.md) [Backslash](docs%5ca.md) [External](https://example.com/)
 
-![Picture](./img/p.png) ![Root picture](/img/p.png) ![Vector](./img/v.svg)
+![Picture](./img/p.png) ![Root picture](/img/p.png) ![Vector](./img/v.svg) ![Decoded budget](./img/decoded.png)
 
 ![Large one](img/large.png) ![Large two](img/large.png) ![Budget exceeded](img/large.png)`;
 const key = new Uint8Array(16).fill(17);
@@ -33,7 +43,14 @@ const encrypted = await encryptFolder({
     {
       path: 'docs/a.md',
       mimetype: 'text/markdown',
-      bytes: encoder.encode('# Section\n\nTarget document'),
+      bytes: encoder.encode(
+        `${'A paragraph before the section.\n\n'.repeat(80)}# Section\n\nTarget document`
+      ),
+    },
+    {
+      path: 'img/decoded.png',
+      mimetype: 'image/png',
+      bytes: new Uint8Array(bitmap),
     },
     { path: 'img/large.png', mimetype: 'image/png', bytes: large },
     { path: 'img/p.png', mimetype: 'image/png', bytes: png },
