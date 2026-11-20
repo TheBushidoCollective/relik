@@ -360,7 +360,7 @@ describe('version store', () => {
       keyVault: { remember() {}, recall: () => undefined, forget() {} },
       fetch: (async () => {
         throw new Error('unexpected fetch');
-      }) as typeof fetch,
+      }) as unknown as typeof fetch,
     });
     expect((await store.get(2)).kind).toBe('ready');
     expect((await store.get(3)).kind).toBe('ready');
@@ -376,7 +376,7 @@ describe('version store', () => {
         keyVault: { remember() {}, recall: () => undefined, forget() {} },
         fetch: (async () => {
           throw new Error('unexpected fetch');
-        }) as typeof fetch,
+        }) as unknown as typeof fetch,
       }
     );
     const refused = await pinned.get(boot.version, { maxBytes: 100 });

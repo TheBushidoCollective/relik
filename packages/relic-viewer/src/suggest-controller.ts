@@ -558,6 +558,9 @@ export function mountSuggestionController(
       serviceOrigin: options.deps.serviceOrigin,
       relicId: options.relicId,
       version: view.version,
+      ...(view.folder
+        ? { entry: view.folder.manifest.entries[view.folder.index]!.path }
+        : {}),
       reader: session.email,
       fetch: options.deps.fetch,
       now: options.deps.now ?? Date.now,
@@ -664,6 +667,9 @@ export function mountSuggestionController(
         serviceOrigin: options.deps.serviceOrigin,
         relicId: options.relicId,
         version: view.version,
+        ...(view.folder
+          ? { entry: view.folder.manifest.entries[view.folder.index]!.path }
+          : {}),
         reader: session.kind === 'verified' ? session.email : '',
         fetch: options.deps.fetch,
         now: options.deps.now ?? Date.now,

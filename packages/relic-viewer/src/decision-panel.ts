@@ -1188,6 +1188,15 @@ export function openDecisionPanel(
     const box = el('div', 'decision-body');
     box.append(...staleNotice());
     box.appendChild(el('p', 'decision-lead', DECISION_LEAD));
+    if (view.folder) {
+      box.appendChild(
+        el(
+          'p',
+          'decision-lead',
+          `A decision here applies to every file in version ${view.version}.`
+        )
+      );
+    }
     if (list.kind === 'refused' && list.code === 'decision_unavailable') {
       box.appendChild(unavailableBlock());
       return box;

@@ -55,7 +55,11 @@ export function folderTreeView(
   open: (index: number) => void,
   save: (blob: Blob, filename: string) => void,
   fileIcon: (path: string) => SVGSVGElement
-): { pane: HTMLElement; toolbar: HTMLElement } {
+): {
+  pane: HTMLElement;
+  toolbar: HTMLElement;
+  setCommentCounts(counts: ReadonlyMap<string, number>): void;
+} {
   if (!document.getElementById('folder-tree-styles')) {
     const style = document.createElement('style');
     style.id = 'folder-tree-styles';
@@ -63,6 +67,7 @@ export function folderTreeView(
     document.head.appendChild(style);
   }
   const roots = buildTree(folder);
+  let commentCounts: ReadonlyMap<string, number> = new Map();
   const current = folder.manifest.entries[folder.index]!;
   const expanded = new Set<string>();
   const expandAll = folder.manifest.entries.length <= 50;
@@ -258,10 +263,11 @@ export function folderTreeView(
       label.textContent = node.name;
       const meta = document.createElement('span');
       meta.className = 'folder-row-meta';
+      const count = commentCounts.get(node.path) ?? 0;
       meta.textContent =
         node.index === undefined
           ? String(node.children.length)
-          : `${node.size} B`;
+          : `${node.size} B${count ? ` · ${count} comment${count === 1 ? '' : 's'}` : ''}`;
       button.append(marker, label, meta);
       button.addEventListener('focus', () => {
         focused = i;
@@ -326,5 +332,12 @@ export function folderTreeView(
     rebuild();
   });
   rebuild();
-  return { pane, toolbar };
+  return {
+    pane,
+    toolbar,
+    setCommentCounts(counts) {
+      commentCounts = counts;
+      paint();
+    },
+  };
 }

@@ -25,6 +25,7 @@ export interface SuggestTransportOptions {
   readonly serviceOrigin: string;
   readonly relicId: string;
   readonly version: number;
+  readonly entry?: string;
   readonly reader: string;
   readonly fetch: (input: string, init?: RequestInit) => Promise<Response>;
   readonly now: () => number;
@@ -185,7 +186,12 @@ export class SuggestTransport {
     change: SaveCommit
   ): Promise<TransportResult> {
     try {
-      const ciphertext = await this.options.seal(change.plaintext);
+      const ciphertext = await this.options.seal({
+        ...change.plaintext,
+        ...(this.options.entry === undefined
+          ? {}
+          : { entry: this.options.entry }),
+      });
       if (this.active !== active) return { kind: 'superseded' };
       if (ciphertext.length > COMMENT_CIPHERTEXT_LIMIT_CHARS)
         throw new CommentTooLargeError(
@@ -426,7 +432,10 @@ export class SuggestTransport {
           } catch {
             return this.fail(active, 'malformed-thread');
           }
-          if (sameSuggestion(plaintext, change.plaintext))
+          if (
+            plaintext.entry === this.options.entry &&
+            sameSuggestion(plaintext, change.plaintext)
+          )
             return this.posted(active, row.comment_id);
         }
       }
