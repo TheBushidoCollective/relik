@@ -303,6 +303,10 @@ export async function buildViewer(options?: {
     }
   }
   await copyFile(`${pkgDir}src/model-view.css`, `${out}model-view.css`);
+  await copyFile(`${pkgDir}src/cue-view.css`, `${out}cue-view.css`);
+  await copyFile(`${pkgDir}src/json-tree-view.css`, `${out}json-tree-view.css`);
+  await copyFile(`${pkgDir}src/data-table.css`, `${out}data-table.css`);
+  await copyFile(`${pkgDir}src/notebook-view.css`, `${out}notebook-view.css`);
 
   // `main.js` is served as `viewer.js`, because that is the name the shell and
   // the service worker's cache list both reference.
@@ -370,7 +374,8 @@ export async function buildViewer(options?: {
   );
 
   // Compute the shell asset hash across viewer.js, every code-split chunk it
-  // can import, styles.css, and manifest.webmanifest. The chunks are part of
+  // can import, styles.css, the structured-view stylesheets, and
+  // manifest.webmanifest. The chunks are part of
   // the shell: viewer.js imports them by content-hashed name, so a cached
   // viewer.js without its chunks 404s on the first load after a deploy and
   // the page never leaves its static plate. This build identity is injected
@@ -387,6 +392,10 @@ export async function buildViewer(options?: {
       file: `${out}${path.slice('/assets/'.length)}`,
     })),
     { path: '/assets/styles.css', file: `${out}styles.css` },
+    { path: '/assets/cue-view.css', file: `${out}cue-view.css` },
+    { path: '/assets/json-tree-view.css', file: `${out}json-tree-view.css` },
+    { path: '/assets/data-table.css', file: `${out}data-table.css` },
+    { path: '/assets/notebook-view.css', file: `${out}notebook-view.css` },
     { path: '/manifest.webmanifest', file: `${out}manifest.webmanifest` },
   ];
 

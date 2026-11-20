@@ -10,6 +10,10 @@
 export const SHELL_ASSETS = [
   '/assets/viewer.js',
   '/assets/styles.css',
+  '/assets/cue-view.css',
+  '/assets/json-tree-view.css',
+  '/assets/data-table.css',
+  '/assets/notebook-view.css',
   '/manifest.webmanifest',
 ] as const;
 

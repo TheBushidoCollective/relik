@@ -27,6 +27,7 @@ const RENDER_ROUTES: readonly RenderRoute[] = [
   'sandboxed-jsx',
   'pdf',
   'model',
+  'notebook',
 ];
 
 describe('routeForClass and CLASS_BEHAVIOUR agreement', () => {

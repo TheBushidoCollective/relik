@@ -396,6 +396,16 @@ export function commentRefusal(code: string): Refusal {
           'decrypted and unaffected.',
         retryable: true,
       };
+    case 'unwritable_comment':
+      return {
+        code,
+        headline: 'This comment cannot be written',
+        detail:
+          'The place it is about cannot be recorded in a comment, for example ' +
+          'a key holding a carriage return or NUL. Nothing was sent. Choose ' +
+          'another target and post again.',
+        retryable: false,
+      };
     default:
       return {
         code,
@@ -756,7 +766,13 @@ export async function postComment(
   const invalid = draftRefusal(draft);
   if (invalid !== undefined) return { kind: 'refused', refusal: invalid };
 
-  const ciphertext = await cipher.seal(draft);
+  let ciphertext: string;
+  try {
+    ciphertext = await cipher.seal(draft);
+  } catch (error) {
+    if (!(error instanceof MalformedCommentError)) throw error;
+    return { kind: 'refused', refusal: commentRefusal('unwritable_comment') };
+  }
   let response: Response;
   try {
     response = await deps.fetch(commentsUrl(deps.serviceOrigin, relicId), {
@@ -862,7 +878,13 @@ export async function editComment(
   const invalid = draftRefusal(draft);
   if (invalid !== undefined) return { kind: 'refused', refusal: invalid };
 
-  const ciphertext = await cipher.seal(draft);
+  let ciphertext: string;
+  try {
+    ciphertext = await cipher.seal(draft);
+  } catch (error) {
+    if (!(error instanceof MalformedCommentError)) throw error;
+    return { kind: 'refused', refusal: commentRefusal('unwritable_comment') };
+  }
   let response: Response;
   try {
     response = await deps.fetch(

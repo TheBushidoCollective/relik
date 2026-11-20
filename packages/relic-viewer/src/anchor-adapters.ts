@@ -32,6 +32,8 @@
  */
 
 import { registerAnchorAdapter, resetAnchorAdapters } from './anchoring.ts';
+import { cellAnchorAdapter } from './annotate-cell.ts';
+import { cueAnchorAdapter } from './annotate-cue.ts';
 import {
   frameImageAdapter,
   framePinAdapter,
@@ -40,7 +42,8 @@ import {
 } from './annotate-frame.ts';
 import { otioAdapter } from './annotate-otio.ts';
 import { pageAnchorAdapter } from './annotate-page.ts';
-import { quoteAdapter } from './annotate-quote.ts';
+import { pathAnchorAdapter } from './annotate-path.ts';
+import { quoteAdapter, structuredQuoteAdapter } from './annotate-quote.ts';
 import { regionAdapter } from './annotate-region.ts';
 import { timeAdapter } from './annotate-time.ts';
 
@@ -56,9 +59,13 @@ export function registerBuiltInAnchorAdapters(): void {
   // The only adapter for a point. A point on the page's own DOM is drawn by
   // the stage over its own scroll and never asks the table.
   registerAnchorAdapter(framePinAdapter);
+  registerAnchorAdapter(cellAnchorAdapter);
+  registerAnchorAdapter(pathAnchorAdapter);
   registerAnchorAdapter(quoteAdapter);
+  registerAnchorAdapter(structuredQuoteAdapter);
   registerAnchorAdapter(regionAdapter);
   registerAnchorAdapter(otioAdapter);
   registerAnchorAdapter(timeAdapter);
+  registerAnchorAdapter(cueAnchorAdapter);
   registerAnchorAdapter(pageAnchorAdapter);
 }

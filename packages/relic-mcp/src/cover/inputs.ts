@@ -54,6 +54,22 @@ export async function planCover(
       },
     };
   }
+  // A notebook's cells and outputs are the author's code and data, and a cover
+  // is public. It gets the generic title-and-format cover, as a model does.
+  if (
+    source.rendererClass === 'notebook' ||
+    source.filename.toLowerCase().endsWith('.ipynb')
+  ) {
+    return {
+      kind: 'skip',
+      outcome: {
+        status: 'skipped',
+        reason: 'no_cover_for_class',
+        detail:
+          'Generic cover used for a notebook (public title and format label only)',
+      },
+    };
+  }
 
   if (
     source.bytes.length === 0 &&

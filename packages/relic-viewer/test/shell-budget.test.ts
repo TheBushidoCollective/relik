@@ -248,6 +248,27 @@ describe('the app shell', () => {
     expect(await precachedAssets()).toContain(`/assets/${carriers[0]}`);
   });
 
+  test('loads the structured views on demand, as precached chunks', async () => {
+    // Runs on the clean build above. A table, a tree, a subtitle list and a
+    // notebook are views a reader may never open, so no view belongs in viewer.js.
+    const shell = await Bun.file(`${pkgDir}dist/viewer.js`).text();
+    const markers = ['dt-grid', 'jt-row', 'cue-mark', 'nb-comment'];
+    expect(markers.filter((marker) => shell.includes(marker))).toEqual([]);
+
+    const precached = await precachedAssets();
+    for (const marker of markers) {
+      const carriers: string[] = [];
+      for (const chunk of new Bun.Glob('chunk-*.js').scanSync(
+        `${pkgDir}dist`
+      )) {
+        const content = await Bun.file(`${pkgDir}dist/${chunk}`).text();
+        if (content.includes(marker)) carriers.push(chunk);
+      }
+      expect(carriers.length).toBeGreaterThan(0);
+      expect(precached).toContain(`/assets/${carriers[0]}`);
+    }
+  });
+
   test('loads the Word exporter on demand, as a precached chunk', async () => {
     // Runs on the clean build above. The converter is the docx library, and
     // every reader of every relic would otherwise download it to open a page.
@@ -386,6 +407,29 @@ describe('the app shell', () => {
     expect(requests).not.toContain('/assets/otio-audio-pcm-worker.js');
     expect(requests).not.toContain('/assets/otio-transport-gate-worklet.js');
     expect(requests).not.toContain('/assets/mediabunny-license.txt');
+  });
+
+  test('precaches the structured-view stylesheets with the shell', async () => {
+    const built = Bun.spawnSync([process.execPath, 'build.ts'], {
+      cwd: pkgDir,
+    });
+    expect(built.exitCode).toBe(0);
+
+    const stylesheets = [
+      '/assets/cue-view.css',
+      '/assets/json-tree-view.css',
+      '/assets/data-table.css',
+      '/assets/notebook-view.css',
+    ];
+    const requests = await precachedAssets();
+    for (const stylesheet of stylesheets) {
+      expect(requests).toContain(stylesheet);
+      expect(
+        await Bun.file(
+          `${pkgDir}dist/${stylesheet.slice('/assets/'.length)}`
+        ).exists()
+      ).toBe(true);
+    }
   });
 
   test('keeps the private reader out of the shell, in exactly one lazy chunk', async () => {

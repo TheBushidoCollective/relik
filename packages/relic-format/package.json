@@ -6,11 +6,18 @@
   "main": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
+    "./comments": "./src/comments.ts",
+    "./csv": "./src/csv.ts",
     "./cover": "./src/cover.ts",
+    "./json-tree": "./src/json-tree.ts",
     "./mnemonic": "./src/mnemonic.ts",
+    "./notebook": "./src/notebook.ts",
     "./presence": "./src/presence.ts",
     "./private": "./src/private.ts",
+    "./renderer-class": "./src/renderer-class.ts",
     "./suggestions": "./src/suggestions.ts",
+    "./subtitles": "./src/subtitles.ts",
+    "./structured-text": "./src/structured-text.ts",
     "./wordlist": "./src/wordlist.ts"
   },
   "scripts": {

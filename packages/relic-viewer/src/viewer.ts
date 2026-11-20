@@ -19,6 +19,7 @@ import {
   DecryptFailedError,
   deriveRendererClass,
   encodeFragment,
+  filenameExtension,
   FORMAT_VERSION,
   INSECURE_ADVICE,
   INSECURE_DETAIL,
@@ -58,6 +59,11 @@ import {
 } from './content.ts';
 import type * as JsxModule from './jsx.ts';
 import { markJsxCompilerLoaded } from './stale-shell.ts';
+import {
+  isNbformat4Notebook,
+  NOTEBOOK_RENDER_LIMIT_BYTES,
+  NOTEBOOK_TOO_LARGE_NOTICE,
+} from './structured-view-bridge.ts';
 import type { VaultEntry } from './vault.ts';
 export type { VaultEntry };
 
@@ -171,6 +177,7 @@ export type RenderRoute =
   | 'otio'
   | 'model'
   | 'pdf'
+  | 'notebook'
   | 'download';
 
 export type DeadAction =
@@ -1182,6 +1189,8 @@ export interface RouteSample {
   readonly sniffed: RendererClass;
   readonly model: 'stl' | 'obj' | undefined;
   readonly component: boolean;
+  /** Set when the notebook's whole text parsed as nbformat 4. */
+  readonly notebook?: boolean;
   /** The transpiled component, when the caller has already compiled it. */
   readonly componentModule?: string | undefined;
 }
@@ -1222,6 +1231,18 @@ export async function routeContent(
     sniffed = isOtio ? 'otio' : 'archive';
   }
 
+  // A notebook is decided from its whole text, which is read once here the
+  // way a component is. Over the limit it is never read and shows as text.
+  const declaredNotebook =
+    sniffed === 'code' && classFromMimetype(mimetype, filename) === 'notebook';
+  const oversizedNotebook =
+    declaredNotebook && content.size > NOTEBOOK_RENDER_LIMIT_BYTES;
+  let notebook = false;
+  if (declaredNotebook && !oversizedNotebook) {
+    const whole = await content.readWhole(NOTEBOOK_RENDER_LIMIT_BYTES);
+    notebook = whole !== undefined && isNbformat4Notebook(whole);
+  }
+
   let model: 'stl' | 'obj' | undefined;
   if (sniffed === 'code' || sniffed === 'binary') {
     const size = Math.min(content.size, MAX_CONTENT_READ_BYTES);
@@ -1252,12 +1273,15 @@ export async function routeContent(
       }
     }
   }
-  let decision = await routeFor(filename, mimetype, {
-    sniffed,
-    model,
-    component,
-    componentModule,
-  });
+  let decision: RouteDecision = oversizedNotebook
+    ? { route: 'code', notice: NOTEBOOK_TOO_LARGE_NOTICE }
+    : await routeFor(filename, mimetype, {
+        sniffed,
+        model,
+        component,
+        componentModule,
+        notebook,
+      });
   if (
     !zip &&
     decision.route === 'otio' &&
@@ -1273,7 +1297,8 @@ export async function routeContent(
     decision.route === 'markdown' ||
     decision.route === 'code' ||
     decision.route === 'sandboxed-html' ||
-    decision.route === 'sandboxed-jsx'
+    decision.route === 'sandboxed-jsx' ||
+    decision.route === 'notebook'
   ) {
     documentBytes ??= await content.readWhole(DOCUMENT_RENDER_LIMIT_BYTES);
   } else {
@@ -1375,6 +1400,17 @@ export async function routeFor(
     if (component) sniffed = 'jsx';
   }
 
+  // A notebook is the declared class only when its whole text parses as
+  // nbformat 4. Anything else is text, and the disagreement rule below shows
+  // it as text with the notice that says why.
+  if (declared === 'notebook' && sniffed === 'code') {
+    const isNotebook =
+      content instanceof Uint8Array
+        ? isNbformat4Notebook(content)
+        : content.notebook === true;
+    if (isNotebook) sniffed = 'notebook';
+  }
+
   // Tiers, not classes. `markdown` and `code` are both escaped text and
   // carry identical privilege, and the sniffer cannot tell them apart, so
   // comparing classes would downgrade every Markdown relic ever published.
@@ -1424,6 +1460,8 @@ export function routeForClass(cls: RendererClass): RenderRoute {
       return 'sandboxed-jsx';
     case 'pdf':
       return 'pdf';
+    case 'notebook':
+      return 'notebook';
     default:
       // Archives and arbitrary binaries are download-only in the
       // first release. The framing keeps range decryption available so this
@@ -1443,6 +1481,14 @@ function classFromMimetype(mimetype: string, filename: string): RendererClass {
   if (type.startsWith('image/')) return 'image';
   if (type.startsWith('video/') || type.startsWith('audio/')) return 'media';
   if (type === 'application/pdf') return 'pdf';
+  if (type === 'application/x-ipynb+json') return 'notebook';
+  if (type === 'application/x-subrip') return 'code';
+  // relic-mcp before the notebook class declared a notebook as text/plain.
+  if (
+    (type === 'text/plain' || type === 'application/json') &&
+    filenameExtension(filename) === 'ipynb'
+  )
+    return 'notebook';
   if (type === 'application/x-otio' || type === 'application/x-otioz')
     return 'otio';
   if (
@@ -1477,6 +1523,8 @@ function describe(cls: RendererClass): string {
       return 'a React component';
     case 'pdf':
       return 'a PDF document';
+    case 'notebook':
+      return 'a Jupyter notebook';
     case 'image':
       return 'an image';
     case 'media':

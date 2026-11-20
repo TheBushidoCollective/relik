@@ -34,6 +34,7 @@ export type RendererClass =
   | 'media'
   | 'model'
   | 'otio'
+  | 'notebook'
   | 'archive'
   | 'binary';
 
@@ -47,6 +48,7 @@ export const RENDERER_CLASSES: readonly RendererClass[] = [
   'media',
   'model',
   'otio',
+  'notebook',
   'archive',
   'binary',
 ];
@@ -69,6 +71,7 @@ export const RENDERABLE_CLASSES: readonly RendererClass[] = [
   'jsx',
   'image',
   'pdf',
+  'notebook',
 ];
 
 /**
@@ -98,6 +101,7 @@ export const CLASS_BEHAVIOUR: Record<RendererClass, ClassBehaviour> = {
   image: 'renders',
   pdf: 'renders',
   model: 'renders',
+  notebook: 'renders',
   media: 'plays',
   otio: 'plays',
   archive: 'downloads',
@@ -189,6 +193,7 @@ const EXTENSIONS: Readonly<Record<string, RendererClass>> = {
   mjs: 'code',
   cjs: 'code',
   json: 'code',
+  ipynb: 'notebook',
   jsonc: 'code',
   yaml: 'code',
   yml: 'code',
@@ -244,7 +249,7 @@ const EXTENSIONS: Readonly<Record<string, RendererClass>> = {
   pdf: 'pdf',
 };
 
-function extensionOf(filename: string): string | undefined {
+export function filenameExtension(filename: string): string | undefined {
   const base = filename.slice(filename.lastIndexOf('/') + 1).toLowerCase();
   if (base === 'dockerfile') return 'dockerfile';
   const dot = base.lastIndexOf('.');
@@ -394,6 +399,7 @@ export function privilegeTier(cls: RendererClass): 0 | 1 | 2 | 3 {
     case 'image':
     case 'pdf':
     case 'model':
+    case 'notebook':
       return 2;
     case 'markdown':
     case 'code':
@@ -421,7 +427,7 @@ export function deriveRendererClass(
       return signature.cls;
     }
   }
-  const extension = extensionOf(filename);
+  const extension = filenameExtension(filename);
   const candidate = sniffModelFormat(content);
   const declaredModel = modelFormatFromFilename(filename);
   if (
@@ -479,6 +485,7 @@ export function leastPrivileged(
     'image',
     'pdf',
     'model',
+    'notebook',
     'markdown',
     'code',
     'media',

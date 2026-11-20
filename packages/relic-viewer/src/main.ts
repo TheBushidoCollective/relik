@@ -34,6 +34,13 @@ import {
 } from '@relic/format';
 import { registerBuiltInAnchorAdapters } from './anchor-adapters.ts';
 import {
+  drawnStructuredView,
+  mountStructuredView,
+  type StructuredKind,
+  structuredKindFor,
+  structuredViewFor,
+} from './structured-view-bridge.ts';
+import {
   type AnchorSurface,
   adapterFor,
   anchorLabel,
@@ -45,7 +52,7 @@ import {
   unitFromPointer,
   unitMinimumForPixels,
 } from './anchoring.ts';
-import { captureSelectionQuote } from './annotate-quote.ts';
+import { captureSelectionQuote, drawnTextView } from './annotate-quote.ts';
 import { isImageElement } from './annotate-region.ts';
 import { formatTimecode, formatTimecodeTenths } from './annotate-time.ts';
 import {
@@ -329,6 +336,7 @@ const MARKER_LABELS: Record<RenderRoute, string> = {
   otio: 'Plays its timeline in your browser, no author code',
   model: 'Shown as a 3D model, no author code',
   pdf: 'Rendered as a document, no author code',
+  notebook: 'Rendered as a notebook, no author code',
   'sandboxed-html': 'Runs author code, isolated',
   'sandboxed-jsx': 'Runs author code, isolated',
   download: 'Downloads to your device, no author code',
@@ -1354,6 +1362,64 @@ function renderCodeView(view: ReadyView): HTMLElement {
   return wrapper;
 }
 
+/** What the toggle offers when the reader is looking at the source. */
+const STRUCTURED_NAMES: Readonly<Record<StructuredKind, string>> = {
+  table: 'View table',
+  tree: 'View tree',
+  cues: 'View subtitles',
+  notebook: 'View notebook',
+};
+
+/**
+ * A file the structured views can show: a table, a tree or cues on the code
+ * route, and a notebook on the notebook route. The source view stands in the
+ * root until the view draws, and stays whenever the view cannot show the file.
+ * The "View source" toggle switches between the two, and back, so a reader can
+ * compare them without losing a comment's mark.
+ */
+function renderStructuredView(
+  view: ReadyView,
+  kind: StructuredKind
+): HTMLElement {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'structured-wrap';
+  const root = document.createElement('section');
+  const handle = mountStructuredView(root, kind, {
+    filename: view.filename,
+    mimetype: view.declaredMimetype,
+    source: decodeText(documentBytes(view)),
+    sourceView: () => renderCodeView(view),
+  });
+
+  const toggle = button('View source', ICONS.source, () => {
+    if (handle.showingSource) handle.showStructured();
+    else handle.showSource();
+  });
+  const setToggle = (text: string, path: string): void => {
+    toggle.replaceChildren(icon(path));
+    const label = document.createElement('span');
+    label.textContent = text;
+    toggle.append(label);
+  };
+  const toggleRow = document.createElement('div');
+  toggleRow.className = 'toggle-row';
+  toggleRow.hidden = true;
+  toggleRow.append(toggle);
+  // The row offers a switch only where there is one: a drawn view, or the
+  // source the reader chose. A file the view refused has nothing to return to.
+  const sync = (): void => {
+    const showing = handle.showingSource;
+    toggleRow.hidden = !showing && !handle.structuredAvailable;
+    if (showing) setToggle(STRUCTURED_NAMES[kind], ICONS.rendered);
+    else setToggle('View source', ICONS.source);
+  };
+  root.addEventListener('relic:structured-state', sync);
+  void handle.ready.then(sync);
+
+  wrapper.append(toggleRow, root);
+  return wrapper;
+}
+
 function renderImageView(view: ReadyView): HTMLElement {
   const wrapper = document.createElement('div');
   wrapper.className = 'doc doc-image';
@@ -1926,8 +1992,17 @@ export function buildCurrentStage(
         renderMarkdownSource(decodeText(documentBytes(view)), view.filename)
       );
       break;
-    case 'code':
-      main.appendChild(renderCodeView(view));
+    case 'code': {
+      const kind = structuredKindFor(view.filename, view.declaredMimetype);
+      main.appendChild(
+        kind === undefined
+          ? renderCodeView(view)
+          : renderStructuredView(view, kind)
+      );
+      break;
+    }
+    case 'notebook':
+      main.appendChild(renderStructuredView(view, 'notebook'));
       break;
     case 'image':
       main.appendChild(renderImageView(view));
@@ -4490,12 +4565,15 @@ export function anchorSurfaceFor(host: HTMLElement): AnchorSurface | undefined {
  * who had selected something by accident had no way to find out that the next
  * comment they wrote was about to land on it.
  */
-export function markTargetLabel(anchor: CommentAnchor | null): string {
+export function markTargetLabel(
+  anchor: CommentAnchor | null,
+  surface?: AnchorSurface
+): string {
   if (anchor === null) return 'Commenting on the whole document';
   if (anchor.kind === 'pin') return 'Commenting on a point';
   if (anchor.kind === 'image') return 'Commenting on an image.';
   if (anchor.kind === 'text') return quotedTargetLabel(anchor.quote);
-  return anchorLabel(anchor) ?? UNSUPPORTED_ANCHOR_LABEL;
+  return anchorLabel(anchor, surface) ?? UNSUPPORTED_ANCHOR_LABEL;
 }
 
 /** The aiming controls, and the one target they hold between them. */
@@ -4514,6 +4592,8 @@ export interface MarkControls {
   target(): CommentAnchor | null;
   /** Back to the whole document, with the pin tool disarmed. */
   clear(): void;
+  /** Puts back a target a refused post had taken, unless the reader has chosen another. */
+  restore(anchor: CommentAnchor): void;
 }
 
 export interface MarkDeps {
@@ -4788,7 +4868,10 @@ export function buildMarkControls(deps: MarkDeps): MarkControls {
   const paintChip = (): void => {
     const label = document.createElement('span');
     label.className = 'compose-target-label';
-    label.textContent = markTargetLabel(anchor);
+    label.textContent = markTargetLabel(
+      anchor,
+      host === undefined ? undefined : anchorSurfaceFor(host)
+    );
     if (anchor === null) {
       chip.replaceChildren(label);
       return;
@@ -5019,7 +5102,11 @@ export function buildMarkControls(deps: MarkDeps): MarkControls {
       return;
     }
     const quote = selection.toString().trim();
-    if (quote.length === 0) {
+    // A structured view names its own anchor for a selection it drew, such as a
+    // table cell. Cell text is not selectable (the grid is user-select: none), so
+    // the view is asked first, and empty text is refused only when it names nothing.
+    const viewAnchor = structuredViewFor(surface)?.selectionAnchor();
+    if (quote.length === 0 && viewAnchor === undefined) {
       dismiss();
       return;
     }
@@ -5027,7 +5114,8 @@ export function buildMarkControls(deps: MarkDeps): MarkControls {
     // it succeeded. A button that anchors to a position the reader did not
     // select is worse than no button: the chip names their words either way,
     // so the only place the difference shows is the mark, after posting.
-    const captured = captureSelectionQuote(surface, range, selection);
+    const captured =
+      viewAnchor ?? captureSelectionQuote(surface, range, selection);
     if (captured === null && !suggestion?.applied) {
       dismiss();
       return;
@@ -5043,8 +5131,16 @@ export function buildMarkControls(deps: MarkDeps): MarkControls {
     showOffer({
       target,
       anchorBox: anchorFromClientRect(rect, box, surface),
-      text: quote,
-      canCopy: true,
+      // A view's selection has no words, so the offer names what it is about,
+      // and Copy is offered only for the reader's own text.
+      text:
+        quote.length > 0
+          ? quote
+          : markTargetLabel(target, anchorSurfaceFor(surface)).replace(
+              /^Commenting on /,
+              ''
+            ),
+      canCopy: quote.length > 0,
       ...(suggestion?.canSuggest ? { range: range.cloneRange() } : {}),
       applied: suggestion?.applied ?? false,
       replyId: suggestion?.replyId ?? null,
@@ -5439,6 +5535,12 @@ export function buildMarkControls(deps: MarkDeps): MarkControls {
     tools,
     target: () => previewTarget ?? anchor,
     clear,
+    restore: (next) => {
+      if (anchor !== null || previewTarget !== null) return;
+      anchor = next;
+      paintChip();
+      deps.repaint();
+    },
     attach: (next) => {
       const stageChanged = host !== next;
       if (stageChanged) {
@@ -5930,6 +6032,31 @@ export function buildMarkControls(deps: MarkDeps): MarkControls {
       }) as EventListener;
       next.addEventListener('relic:time-aim', aimTemporal);
       next.addEventListener('relic:otio-aim', aimTemporal);
+      // A structured view's events, once per stage. A Comment control in a
+      // tree, a notebook or a table names its anchor, and the composer opens on
+      // it exactly as it does for a selection. A view swapped for its source, or
+      // back, repaints the marks, since a view drawn again starts with none.
+      if (next.dataset.structuredBind !== '1') {
+        next.dataset.structuredBind = '1';
+        next.addEventListener('relic:structured-comment', ((
+          event: CustomEvent<{ anchor?: CommentAnchor }>
+        ) => {
+          const anchor = event.detail?.anchor;
+          const control = event.target;
+          if (anchor === undefined || !(control instanceof Element)) return;
+          aimOnStage(
+            anchor,
+            anchorFromClientRect(
+              control.getBoundingClientRect(),
+              next.getBoundingClientRect(),
+              next
+            )
+          );
+        }) as EventListener);
+        next.addEventListener('relic:structured-state', () => {
+          deps.repaint();
+        });
+      }
 
       // A box on a rendered page. Self-guarding on a `canvas.relic-page`
       // target, so it costs nothing on the classes that have no pages.
@@ -6164,7 +6291,9 @@ export function buildThread(
     },
     suggestionSelection: (range) => {
       const selectedRoot = host?.querySelector(
-        view.route === 'code' ? 'pre.code-body' : 'article.prose'
+        view.route === 'code' || view.route === 'notebook'
+          ? 'pre.code-body'
+          : 'article.prose'
       );
       return {
         applied: suggestionController?.applied ?? false,
@@ -6180,6 +6309,7 @@ export function buildThread(
         setOpen(true);
         return;
       }
+      leaveStructuredView();
       void ensureSuggestion(range).then((controller) => {
         if (!controller) return;
         const selected = window.getSelection();
@@ -6236,10 +6366,18 @@ export function buildThread(
   let presenceReader: string | undefined;
   let presenceGeneration = 0;
   let presencePageHidden = false;
-  const textSuggestions = view.route === 'markdown' || view.route === 'code';
+  const textSuggestions =
+    view.route === 'markdown' ||
+    view.route === 'code' ||
+    view.route === 'notebook';
+  // Suggesting edits the source text, so a drawn structured view gives way to it.
+  const leaveStructuredView = (): void => {
+    const handle = host === undefined ? undefined : structuredViewFor(host);
+    if (handle?.structured) handle.showSource();
+  };
   const sourceIssue = (() => {
     if (!textSuggestions)
-      return 'Suggestions are available on markdown and code.';
+      return 'Suggestions are available on markdown, code and notebooks.';
     if (view.version !== view.currentVersion)
       return 'Suggestions can only be made on the current version.';
     const source = view.document;
@@ -6474,6 +6612,7 @@ export function buildThread(
     suggestionController?.setSuggesting(false)
   );
   suggestingMode.addEventListener('click', () => {
+    leaveStructuredView();
     void ensureSuggestion().then((controller) =>
       controller?.setSuggesting(true)
     );
@@ -6868,6 +7007,7 @@ export function buildThread(
     if (!textWindowFor(host)) unwrapTextQuotes(host);
     host.querySelector('.comment-pins')?.remove();
     markController?.clearMarks();
+    structuredViewFor(markHost)?.clearMarks();
     host
       .querySelector<HTMLIFrameElement>('iframe.usercontent-frame')
       ?.contentWindow?.postMessage({ type: 'relic:clear-marks' }, '*');
@@ -6908,7 +7048,15 @@ export function buildThread(
       )
         continue;
       if (entry.anchor.kind === 'text') {
-        wrapTextQuote(host, entry.anchor.quote, entry.id);
+        // A drawn tree, notebook or table places its own text comments.
+        const view = drawnTextView(host);
+        if (view !== undefined) {
+          if (!view.paintMark(entry.anchor, entry.id)) {
+            unplaceable.add(entry.id);
+          }
+        } else {
+          wrapTextQuote(host, entry.anchor.quote, entry.id);
+        }
         continue;
       }
       if (entry.anchor.kind === 'pin') {
@@ -7073,7 +7221,13 @@ export function buildThread(
   }
 
   function familyOf(kind: string): 'time' | 'otio' | 'document' {
-    if (kind === 'time') return 'time';
+    // A time anchor on a drawn cue list marks a document, not media.
+    if (kind === 'time') {
+      return host !== undefined &&
+        drawnStructuredView(host, 'cues') !== undefined
+        ? 'document'
+        : 'time';
+    }
     if (kind === 'otio') return 'otio';
     return 'document';
   }
@@ -7792,7 +7946,10 @@ export function buildThread(
             stickyId = id;
             const target = document.createElement('p');
             target.className = 'popover-target';
-            target.textContent = markTargetLabel(entry.anchor);
+            target.textContent = markTargetLabel(
+              entry.anchor,
+              host === undefined ? undefined : anchorSurfaceFor(host)
+            );
             const panel = popoverCard({
               content: target,
               actions: [],
@@ -8180,7 +8337,10 @@ export function buildThread(
       familyOf(held.anchor.kind) === familyOf(anchor.kind)
     ) {
       held.anchor = anchor;
-      held.target.textContent = markTargetLabel(anchor);
+      held.target.textContent = markTargetLabel(
+        anchor,
+        host === undefined ? undefined : anchorSurfaceFor(host)
+      );
       held.panel.classList.toggle(
         'is-focused-otio-composer',
         anchor.kind === 'otio' && focusedOtioViewport() !== undefined
@@ -8208,7 +8368,10 @@ export function buildThread(
 
     const target = document.createElement('p');
     target.className = 'popover-target';
-    target.textContent = markTargetLabel(anchor);
+    target.textContent = markTargetLabel(
+      anchor,
+      host === undefined ? undefined : anchorSurfaceFor(host)
+    );
     boundedBody.appendChild(target);
 
     const composer = inlineComposer({
@@ -9036,6 +9199,7 @@ export function buildThread(
         );
         if (typeof document === 'undefined') return;
         if (result.kind === 'refused') {
+          if (draft.anchor !== null) marks.restore(draft.anchor);
           outcome.replaceChildren(threadRefusal(result.refusal, () => {}));
           if (result.refusal.code === 'invalid_session') {
             sessionGeneration++;
@@ -10774,6 +10938,7 @@ export function trackRenderState(
       }
       break;
     }
+    case 'notebook':
     case 'model': {
       stage.addEventListener('relic:render-state', (event: Event) => {
         const detail = (event as CustomEvent).detail;

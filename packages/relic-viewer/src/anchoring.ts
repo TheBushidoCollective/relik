@@ -317,7 +317,12 @@ export function anchorKindIsKnown(anchor: CommentAnchor): boolean {
  * `undefined` only when nothing claims the kind, which is the newer-writer
  * case the caller has its own wording for.
  */
-export function anchorLabel(anchor: CommentAnchor): string | undefined {
+export function anchorLabel(
+  anchor: CommentAnchor,
+  surface?: AnchorSurface
+): string | undefined {
+  const own = surface === undefined ? undefined : adapterFor(anchor, surface);
+  if (own !== undefined) return own.label(anchor);
   return adapters.get(anchor.kind)?.[0]?.label(anchor);
 }
 
