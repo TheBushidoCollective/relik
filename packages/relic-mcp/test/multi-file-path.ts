@@ -70,4 +70,8 @@ for (const count of [1000, 5000]) {
     `MULTI_FILE_TIMING runtime=bun entries=${count} decode_and_check_ms=${(performance.now() - start).toFixed(3)}`
   );
 }
+// Stages share process environment; importing in sequence keeps their state isolated.
+await import('./multi-file-stages/show.ts');
+await import('./multi-file-stages/comments-mcp.ts');
+await import('./multi-file-stages/apply.ts');
 console.log('MULTI_FILE_PATH_OK');

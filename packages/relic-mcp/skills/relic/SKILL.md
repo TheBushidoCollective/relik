@@ -137,6 +137,10 @@ did not just write. Republishing replaces what the link serves outright, so
 without reading it first the edit is blind: you would be rewriting from memory
 for everyone already holding the URL.
 
+For a folder, `include_content: true` lists its files. Pass `entry` with a
+listed path to read one file. Comments on a folder file carry the same `entry`;
+replies inherit it and edits keep it.
+
 ## Republishing
 
 Call `relic_republish` with the relic id and a new file:
@@ -306,6 +310,10 @@ When handling suggestions:
    relic, republish first, then use `relic_comment` with `addresses` and
    `outcome` for each suggestion. Private republish refuses `addresses`;
    accepted or superseded requires a version newer than the suggestion.
+
+For a folder relic, pass the source directory to `relic_apply_suggestions`.
+Each selected suggestion applies to its own `entry`. Review the per-file
+results; ZIP sources cannot be written back.
 
 On public relics, `relic_comment` can record `declined` or `deferred` without
 republishing. Record `accepted` and `superseded` on republish. Do not attach an

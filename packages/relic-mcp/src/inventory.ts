@@ -43,7 +43,7 @@ import {
   envelopePrefixLength,
   HEADER_BYTES,
   isValidRelicId,
-  openRelic,
+  openAnyRelic,
   plaintextSizeUpperBound,
   type RendererClass,
   relicUrl,
@@ -545,6 +545,7 @@ export async function showRelic(
           : envelope.detail,
       mimetype: envelope.kind === 'read' ? envelope.mimetype : null,
       content_bytes: envelope.kind === 'read' ? envelope.contentBytes : null,
+      ...(envelope.kind === 'read' ? { shape: envelope.shape } : {}),
       renderer_class: null,
       content: null,
       content_omitted_reason:
@@ -575,6 +576,7 @@ export async function showRelic(
           : envelope.detail,
       mimetype: envelope.kind === 'read' ? envelope.mimetype : null,
       content_bytes: envelope.kind === 'read' ? envelope.contentBytes : null,
+      ...(envelope.kind === 'read' ? { shape: envelope.shape } : {}),
       renderer_class: null,
       content: null,
       content_omitted_reason:
@@ -591,8 +593,10 @@ export async function showRelic(
       throw new Error(`storage returned ${response.status}`);
     }
     const bytes = new Uint8Array(await response.arrayBuffer());
-    const relic = await openRelic(bytes, decodeKey(state.key));
-    const entry = relic.envelope.entries[0];
+    const relic = await openAnyRelic(bytes, decodeKey(state.key), {
+      admitted: ENVELOPE_VERSIONS,
+    });
+    const entry = (relic.envelope as Envelope).entries[0];
     if (entry === undefined) throw new Error('the envelope carried no entry');
     opened = {
       filename: entry.filename,
@@ -627,6 +631,7 @@ export async function showRelic(
     filename_unrecovered_reason: null,
     mimetype: opened.mimetype,
     content_bytes: opened.content.length,
+    shape: 'file',
     renderer_class: rendererClass,
     content: text,
     content_omitted_reason:
@@ -889,6 +894,7 @@ interface RecoveredEnvelope {
   readonly filename: string;
   readonly mimetype: string;
   readonly contentBytes: number;
+  readonly shape: 'file' | 'folder';
 }
 
 interface FailedEnvelope {
@@ -941,6 +947,7 @@ async function recoverEnvelope(
       const folder = envelope as FolderHeader;
       return {
         kind: 'read',
+        shape: 'folder',
         filename: folder.name,
         mimetype: '',
         contentBytes: folder.contentLength - folder.manifestLength,
@@ -952,6 +959,7 @@ async function recoverEnvelope(
     }
     return {
       kind: 'read',
+      shape: 'file',
       filename: entry.filename,
       mimetype: entry.mimetype,
       contentBytes: entry.length,

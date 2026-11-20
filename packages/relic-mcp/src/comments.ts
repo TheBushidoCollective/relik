@@ -837,6 +837,7 @@ export async function postComment(
       'Republish the private relic to a newer version before accepting or superseding this suggestion.'
     );
   }
+  const commentEntry = target === undefined ? input.entry : target.entry;
   const commentKey = await commentKeyFor(
     deps,
     input.relic_id,
@@ -848,9 +849,7 @@ export async function postComment(
     body: input.body,
     display_name: displayName,
     anchor,
-    ...((target?.entry ?? input.entry) == null
-      ? {}
-      : { entry: (target?.entry ?? input.entry)! }),
+    ...(commentEntry == null ? {} : { entry: commentEntry }),
     ...(addresses == null ? {} : { addresses }),
     ...(outcome === undefined ? {} : { suggestion_outcome: outcome }),
   });
