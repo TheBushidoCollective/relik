@@ -19,7 +19,7 @@ import { describe, expect, test } from 'bun:test';
 import { CLASS_BEHAVIOUR, RENDERER_CLASSES } from '@relic/format';
 import { type RenderRoute, routeForClass } from '../src/viewer.ts';
 
-const RENDER_ROUTES: readonly RenderRoute[] = [
+const RENDER_ROUTES: readonly (RenderRoute | 'folder')[] = [
   'markdown',
   'code',
   'image',
@@ -28,6 +28,7 @@ const RENDER_ROUTES: readonly RenderRoute[] = [
   'pdf',
   'model',
   'notebook',
+  'folder',
 ];
 
 describe('routeForClass and CLASS_BEHAVIOUR agreement', () => {
