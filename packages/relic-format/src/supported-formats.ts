@@ -100,6 +100,14 @@ export const HOMEPAGE_FORMATS: readonly HomepageFormat[] = [
     extensions: [],
   },
   {
+    id: 'folder',
+    label: 'Folders and .zip files',
+    description: 'A file tree. Each file opens as it would on its own.',
+    classes: ['folder'],
+    structuredKinds: [],
+    extensions: [],
+  },
+  {
     id: 'download',
     label: 'Anything else',
     description: 'Archives and unrecognized binary files download.',

@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  CLASS_BEHAVIOUR,
+  EXTENSIONS,
   deriveRendererClass,
   filenameExtension,
   isRenderable,
@@ -14,6 +16,17 @@ import {
 const utf8 = (text: string): Uint8Array => new TextEncoder().encode(text);
 
 describe('the taxonomy', () => {
+  test('folder is renderable telemetry, not a file sniff or extension', () => {
+    expect(isRendererClass('folder')).toBe(true);
+    expect(isRenderable('folder')).toBe(true);
+    expect(CLASS_BEHAVIOUR.folder).toBe('renders');
+    expect(privilegeTier('folder')).toBe(0);
+    expect(Object.values(EXTENSIONS)).not.toContain('folder');
+    expect(deriveRendererClass(utf8('content'), 'folder')).not.toBe('folder');
+    expect(sniffContentClass(utf8('content'))).not.toBe('folder');
+    expect(leastPrivileged('folder', 'folder')).toBe('folder');
+  });
+
   test('keeps OTIO outside the telemetry renderable wedge', () => {
     expect(isRenderable('otio')).toBe(false);
   });

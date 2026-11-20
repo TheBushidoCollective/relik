@@ -11,6 +11,7 @@ import {
   generateRelicId,
   HOMEPAGE_FORMATS,
   PLAINTEXT_CAP_BYTES,
+  RENDERER_CLASSES,
   RESERVED_SEGMENTS,
 } from '@relic/format';
 import {
@@ -725,7 +726,7 @@ describe('reserved segments beat ids at the router', () => {
     expect(body).toContain('renders without them');
     expect(body).toContain('not safety');
     expect(body).toContain('markdown, code, html, jsx, image');
-    expect(body).toContain('archive, binary, otio');
+    expect(body).toContain(RENDERER_CLASSES.join(', '));
     expect(body).toContain(
       "Anyone holding a relic's link can fetch every version it has ever held"
     );
@@ -1091,7 +1092,7 @@ describe('the grant', () => {
     expect(await app.store.getRelic(id)).toBeUndefined();
   });
 
-  test('refuses a renderer class outside the seven', async () => {
+  test('refuses an unknown renderer class', async () => {
     const challenge = (await app
       .fetch(req('/api/challenge', { method: 'POST' }))
       .then((r) => r.json())) as { challenge_nonce: string };
@@ -1111,6 +1112,13 @@ describe('the grant', () => {
     );
     expect(response.status).toBe(400);
     expect((await response.json()).code).toBe('invalid_publish_metadata');
+  });
+
+  test('accepts a folder renderer class at the grant', async () => {
+    const id = generateRelicId();
+    const response = await grantFor({ relic_id: id, renderer_class: 'folder' });
+    expect(response.status).toBe(200);
+    expect((await app.store.getRelic(id))?.rendererClass).toBe('folder');
   });
 
   test('grant title validation and storage', async () => {

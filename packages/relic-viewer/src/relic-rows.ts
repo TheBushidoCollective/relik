@@ -63,6 +63,8 @@ export function dashboardPreview(renderer: string | undefined): {
       return { kind: 'pdf', label: 'PDF' };
     case 'model':
       return { kind: 'file', label: '3D model' };
+    case 'folder':
+      return { kind: 'archive', label: 'Folder' };
     case 'archive':
       return { kind: 'archive', label: 'Archive' };
     case 'binary':
