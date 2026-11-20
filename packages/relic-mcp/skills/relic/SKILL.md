@@ -34,7 +34,11 @@ that beneath-root resolution refuses parent and absolute escapes from a held
 directory and that the no-symlink flag is accepted. Symlink refusal,
 held-descriptor behavior, and replacement behavior are verified by the CI probe
 on the listed versions. A failed requirement refuses conversion rather than
-falling back to pathname checks. Arbitrary directories are refused.
+falling back to pathname checks. Other directories publish as one public folder relic.
+The folder follows `.gitignore`, skips `.git`, `node_modules`, symlinks and
+non-regular files, and reports what was left out. Use `open_first` to select
+an included file to open first. Private folders currently refuse with
+`private_folder_unsupported`; private folder support is planned before release.
 
 When the task is to update the same source, call `relic_lookup_source` first:
 

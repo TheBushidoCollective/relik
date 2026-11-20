@@ -87,6 +87,7 @@ export type ClientCode =
   | 'file_changed_during_publish'
   | 'path_escapes_root'
   | 'folder_publish_unsupported_platform'
+  | 'private_folder_unsupported'
   | 'file_list_too_large'
   | 'open_first_not_found'
   | 'folder_stream_size_mismatch'
@@ -502,7 +503,9 @@ export async function publish(
       firstFolderContainer = await encryptPreparedFolder(
         folderSource.folder,
         folderSource.filename,
-        firstFolderKey
+        firstFolderKey,
+        folderSource.title,
+        folderSource.digest
       );
       source = { ...source, bytes: await folderDefaultBytes(folderSource) };
     } catch (error) {

@@ -414,7 +414,9 @@ export async function republish(
       folderContainer = await encryptPreparedFolder(
         folderSource.folder,
         filename,
-        decodeKey(state.key)
+        decodeKey(state.key),
+        normalizedTitle,
+        digest
       );
     } catch (error) {
       if (error instanceof FolderContentError)

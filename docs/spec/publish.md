@@ -59,8 +59,11 @@ A private entry (`private_relics`, described in the private block at the end of 
 
 **The renderer class is not a tool input.** The frame locks it as client-declared, meaning declared by the local binary that holds the plaintext. Exposing it as a parameter makes the taxonomy model-attested, and the metric's second clause then has an unreliable narrator reporting its only input. The binary derives the class from the decrypted-side bytes it already holds: magic-byte sniffing first, the extension as a fallback when sniffing is inconclusive, and `binary` when both are. `format.md` 3.9 overrides all of it in one case, unconditionally: zero-byte content declares `binary` regardless of filename, extension, or sniffed type. The derived class is echoed in the result (1.3) because a publisher with no dashboard has no other way to see what was reported about them.
 
-**A directory is refused, with one authorized exception for standard OpenTimelineIO bundles.** `format.md` 3.1 fixes entry count at exactly 1 in version 1, so an arbitrary directory can't be represented as a multi-entry relic at all; publishing one means silently tarring it into a single opaque blob that takes class `archive` and is download-only in the first release. "Publish my report folder" would then produce an unrenderable relic and no error. The tool refuses general directories with `source_is_directory` (2.2) and names the fix, so a publisher who genuinely wants the archive creates it themselves and owns the download-only outcome. This is a purely local refusal with no HTTP anywhere in it.
-**The OpenTimelineIO directory exception:** Authorised by Jason Waldrip on 2026-10-20. When a publisher supplies a standards-compliant `.otiod` directory bundle, `relic-mcp` automatically packages it into a deterministic standard `.otioz` archive (`content.otio` with DEFLATE, `version.txt` set to `1.0.0` with DEFLATE, and referenced media under `media/` STORED) and publishes it with renderer class `otio`. Preserves `resolved_path` and logical source identity as the original `.otiod` directory path so republishing and source lookup recognize the original directory across sessions. Only referenced media is packaged; absolute paths, parent directory traversals (`..`), symlinks, and remote URLs are rejected. Any other directory remains refused.
+**A public directory becomes a folder relic.** Git ignore rules apply, including tracked-file behavior and global exclusions. The publisher skips `.git`, `node_modules`, symlinks, non-regular files, operating-system metadata and names that cannot be represented, and reports the omission counts. The folder's files and manifest must fit within 500 MiB and the folder may contain at most 5,000 files. `open_first` selects an included entry; otherwise the publisher chooses the default entry. A local process with write access to the folder can make a publish fail, but cannot make it include files outside the held root; strict race-free enumeration would need a native directory API and is later hardening.
+
+The existing uploader accepts one ciphertext buffer, so the encrypted output is collected in memory while plaintext entries are read one file at a time. A streaming uploader or encrypted temporary-file spool is a later improvement.
+
+**The OpenTimelineIO directory exception:** A standard `.otiod` directory is packaged into a standard `.otioz` archive and published as `otio`, with the original directory retained as its source identity. Only referenced media is packaged; unsafe paths and symlinks are rejected.
 **Bundle path resolution follows `format.md` §3.15 for every reference and image-sequence frame; absent sequence frames are omitted, and zero-image sequences contribute no media entries.**
 
 **A non-regular file is refused** with `source_not_regular_file`. A FIFO, socket, or device node is readable and has no stable size, which breaks the declared-size contract in section 3 before it starts.
@@ -70,6 +73,7 @@ A private entry (`private_relics`, described in the private block at the end of 
 **A separate cover image exists for link previews, defaulting on.** `relic_publish` and `relic_republish` accept an optional `cover` boolean, defaulting to `true`. When enabled, the client renders a 1200x630 image of the first screen in local headless Chrome and uploads it via `POST /api/relics/{id}/cover` after ciphertext upload completes. Passing `cover: false` declines cover generation, leaving link unfurls to display `/assets/card.v1.png`. The cover is plaintext pixels of the first screen, stored server-side and served to anyone holding the link without its fragment, including unfurl services and their caches. Republishing with `cover: false` clears and deletes any stored cover server-side. For `otio` (OpenTimelineIO) timelines, unencrypted first-screen media rendering is skipped by default, and link unfurls use a generic card carrying the publisher-declared title and format label to prevent referenced media frames and track metadata from leaking into unencrypted preview cards.
 
 **Private relics.** A private publish (`private: true`) follows the regulated profile in plan section 4.13. Its link carries no fragment, so the content key never appears in it. It differs from the public rules above in these ways:
+- Private folder publish and republish refuse `private_folder_unsupported` before any network request. Private folder support is assigned to M4, which lands before the relic-mcp release.
 - It has no `title` and no `cover`. The filename default for `title` does not apply, so a private publish sends no title. A `title` the caller supplies is refused with `private_policy_violation` (`policy_check` `title`), and `cover: true` with `private_policy_violation` (`policy_check` `cover`). Both are refused locally before any network call, and the cover renderer never runs.
 - `ttl_days` defaults to the server's private default. A value outside 1 to the server's maximum is refused locally with `private_ttl_out_of_range` (`policy_check` `ttl`), before any upload. The server refuses a value above its maximum the same way. The configured values come from the challenge's `private_shares` member (3.1). The recommended values, settled in plan section 10, are 30 days and 365 days.
 - The version keys and the publish token live in the private entry in `publish-state.json`. The device key lives in `device-keys.json` (4.8).
@@ -79,12 +83,13 @@ A private entry (`private_relics`, described in the private block at the end of 
 
 ### 1.3 The result shape
 
-Success returns `structuredContent` with twelve members, all required:
+Success returns the following structured members, with `shape` required and `folder` present for a folder:
 
 - **`url`** for a public relic, the full URL including the fragment. Without the fragment the model can't produce a usable link, which is the product. A private relic's `url` has no fragment, because it carries no key (see the private output below).
 - **`relic_id`** the normalized canonical ID, separately. Every operator-facing workflow takes the ID with the fragment already stripped: abuse reports, takedown requests, support tickets. Making a caller slice it out of a URL means somebody eventually slices wrong.
 - **`relic_expires_at`** RFC 3339, UTC, or `null` when the relic has no publisher-set lifetime and never expires. Taken from the grant response and never computed locally, because `service.md` section 3 makes the app server's clock authoritative for every lifetime-bearing timestamp. A CI job reads it to know whether the link outlives the pipeline that mailed it; `null` says it does.
 - **`renderer_class`** the derived class, echoed as disclosure of what was reported.
+- **`shape`** is `file` or `folder`. A folder also returns `folder.file_count`, `folder.total_bytes`, and omission counts in `folder.left_out`.
 - **`filename`** the string written into the envelope header, echoed because the caller may have overridden it.
 - **`title`** the normalized publisher-declared plaintext title stored on the relic row, or `null` if untitled.
 - **`resolved_path`** the absolute path the client actually read, echoed so a wrong working directory is diagnosable.
@@ -313,7 +318,10 @@ Every code names its leg in its prefix. `source_*` is the local read path with n
 |---|---|---|
 | `source_not_found` | `path` doesn't resolve to an existing file | `path` |
 | `source_unreadable` | Exists, can't be opened or read | `path` |
-| `source_is_directory` | `path` is a directory (1.2) | `path` |
+| `folder_empty`, `all-excluded` | No file remains to publish | `left_out` |
+| `path_collision`, `too_many_files`, `gitignore_unavailable` | Folder names collide, exceed the file limit, or Git could not apply ignore rules | rule or limit details |
+| `file_changed_during_publish`, `path_escapes_root` | A file changed or could not be opened beneath the held root | `path` |
+| `folder_publish_unsupported_platform`, `private_folder_unsupported` | The native opener is unavailable, or a private folder was requested | native code when available |
 | `source_not_regular_file` | FIFO, socket, or device node (1.2) | `path` |
 | `source_already_published` | Source identity maps to a local relic and `force_new` is false | `relic_id`, `version`, `source_identity`, `source_description`, `cost`, `republish_call` |
 | `source_changed_during_read` | Size or mtime moved between the stat and the end of the read | `path`, `declared_size_bytes` |

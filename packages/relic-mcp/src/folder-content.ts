@@ -211,15 +211,32 @@ export async function folderContentDigest(
 export async function encryptPreparedFolder(
   folder: PreparedFolder,
   name: string,
-  key: Uint8Array
+  key: Uint8Array,
+  title: string,
+  expectedDigest: string
 ): Promise<Uint8Array> {
   const length = encryptedSize(folder.contentLength);
   const output = new Uint8Array(length);
+  const hash = createHash('sha256')
+    .update(`${JSON.stringify([name, title])}\0`, 'utf8')
+    .update(folder.manifest);
+  const entries = folder.entries.map((entry) => ({
+    ...entry,
+    bytes: {
+      size: entry.bytes.size,
+      async *chunks() {
+        for await (const chunk of entry.bytes.chunks()) {
+          hash.update(chunk);
+          yield chunk;
+        }
+      },
+    },
+  }));
   const stream = encryptFolderStream({
     name,
     key,
     defaultIndex: folder.defaultIndex,
-    entries: folder.entries,
+    entries,
   });
   const reader = stream.getReader();
   let offset = 0;
@@ -240,6 +257,8 @@ export async function encryptPreparedFolder(
         expected: length,
         actual: offset,
       });
+    if (hash.digest('hex') !== expectedDigest)
+      throw new FolderContentError('file_changed_during_publish', {});
     return output;
   } finally {
     reader.releaseLock();
