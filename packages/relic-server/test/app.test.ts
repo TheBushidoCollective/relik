@@ -9,6 +9,7 @@ import {
   encryptRelic,
   generateKey,
   generateRelicId,
+  HOMEPAGE_FORMATS,
   PLAINTEXT_CAP_BYTES,
   RESERVED_SEGMENTS,
 } from '@relic/format';
@@ -849,6 +850,17 @@ describe('the landing page', () => {
     // installed app landed there too.
     expect(body).not.toContain('id="relic-root"');
     expect(body).not.toContain('/assets/viewer.js');
+  });
+
+  test('the landing page lists the supported formats registry', async () => {
+    const body = await app.fetch(req('/')).then((r) => r.text());
+    const list = body.slice(
+      body.indexOf('<dl class="types">'),
+      body.indexOf('</dl>', body.indexOf('<dl class="types">'))
+    );
+    for (const { label, description } of HOMEPAGE_FORMATS) {
+      expect(list).toContain(`<dt>${label}</dt><dd>${description}</dd>`);
+    }
   });
 
   test('/ and /install serve the same bytes, so install copy cannot drift', async () => {

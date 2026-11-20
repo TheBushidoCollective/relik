@@ -81,6 +81,13 @@ export function memoryAssets(
       contentType: contentTypeFor(pathname),
     });
   }
+  // Unit-test asset sources still produce a versioned shell.
+  if (!table.has('shell-build.txt')) {
+    table.set('shell-build.txt', {
+      body: encoder.encode('dev'),
+      contentType: 'text/plain; charset=utf-8',
+    });
+  }
 
   return {
     async get(pathname: string): Promise<Asset | undefined> {
@@ -119,7 +126,7 @@ export const REGISTER_SW_JS = `if ('serviceWorker' in navigator) {
       } catch {}
       return;
     }
-    if (!document.querySelector('script[src="/assets/viewer.js"]')) return;
+    if (!document.querySelector('script[src^="/assets/viewer.js?"]')) return;
     try {
       if (sessionStorage.getItem('relic:shell-heal') !== null) return;
       sessionStorage.setItem('relic:shell-heal', '1');

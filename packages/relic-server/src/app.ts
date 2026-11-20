@@ -21,6 +21,7 @@ import { inflateSync } from 'node:zlib';
 import {
   COMMENT_ADDRESSES_LIMIT_BYTES,
   encryptedSize,
+  HOMEPAGE_FORMATS,
   InvalidRelicIdError,
   isHostedService,
   isRendererClass,
@@ -249,7 +250,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
         decodedHead = decodeURIComponent(head);
       } catch {}
       // The shell only. No mint, no counter, no cap.
-      return shell(config, decodedHead, store, now);
+      return shell(config, decodedHead, store, now, assets);
     }
     if (
       segments.length === 3 &&
@@ -295,13 +296,19 @@ export function createApp(options: AppOptions = {}): RelicApp {
         !url.searchParams.has('raw') &&
         (request.headers.get('accept') ?? '').includes('text/html');
       if (wantsPage) {
-        return shell(config, {
-          view: 'document',
-          path: '/policy',
-          title: DISCLOSURE_TITLE,
-          description:
-            'What Relic stores, what it can see, and what it never receives.',
-        });
+        return shell(
+          config,
+          {
+            view: 'document',
+            path: '/policy',
+            title: DISCLOSURE_TITLE,
+            description:
+              'What Relic stores, what it can see, and what it never receives.',
+          },
+          store,
+          now,
+          assets
+        );
       }
       return new Response(disclosureStatement(config), {
         headers: {
@@ -315,7 +322,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
     if (head === 'install') return landingPage(config);
     if (head === 'dashboard' || head === 'dashb0ard') {
       if (segments.length === 1 && request.method === 'GET') {
-        return shell(config, { view: 'dashboard' }, store, now);
+        return shell(config, { view: 'dashboard' }, store, now, assets);
       }
       if (segments.length === 1) {
         return new Response('Method not allowed', { status: 405 });
@@ -325,7 +332,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
 
     if (head === 'publish') {
       if (segments.length === 1 && request.method === 'GET') {
-        return shell(config, { view: 'publish' }, store, now);
+        return shell(config, { view: 'publish' }, store, now, assets);
       }
       if (segments.length === 1) {
         return new Response('Method not allowed', { status: 405 });
@@ -6222,9 +6229,15 @@ async function shell(
         readonly title: string;
         readonly description: string;
       },
-  store?: RelicStore,
-  now = Date.now()
+  store: RelicStore | undefined,
+  now: number,
+  assets: AssetSource
 ): Promise<Response> {
+  const buildAsset = await assets.get('shell-build.txt');
+  const build = buildAsset && new TextDecoder().decode(buildAsset.body).trim();
+  if (!build || !/^[a-zA-Z0-9_-]+$/.test(build)) {
+    throw new Error('Missing or invalid shell-build.txt in viewer assets');
+  }
   // A static shell. No mint happens here, which is what keeps non-executing
   // link fetchers off the open counter and the download cap.
   let storedTitle: string | undefined;
@@ -6354,9 +6367,9 @@ async function shell(
 <title>${escapeHtml(documentTitle)}</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#1f6b64">
-<link rel="manifest" href="/manifest.webmanifest">
-<link rel="icon" href="/assets/icon.svg" type="image/svg+xml">
-<link rel="stylesheet" href="/assets/styles.css">${
+<link rel="manifest" href="/manifest.webmanifest?v=${build}">
+<link rel="icon" href="/assets/icon.svg?v=${build}" type="image/svg+xml">
+<link rel="stylesheet" href="/assets/styles.css?v=${build}">${
     typeof target === 'string'
       ? '\n<noscript><style>.stage-loading,[data-load-custody]{display:none}</style></noscript>'
       : ''
@@ -6403,8 +6416,8 @@ ${
       ? '<noscript><main class="stage"><div class="card"><p class="card-note">Publishing needs JavaScript: your file is encrypted in this page before it leaves your device.</p></div></main></noscript>\n'
       : ''
 }<div id="relic-root" ${rootAttributes}></div>
-<script type="module" src="/assets/viewer.js"></script>
-<script type="module" src="/assets/register-sw.js"></script>
+<script type="module" src="/assets/viewer.js?v=${build}"></script>
+<script type="module" src="/assets/register-sw.js?v=${build}"></script>
 `;
 
   return new Response(body, {
@@ -6779,12 +6792,10 @@ claude plugin install relic@relic</code></pre>
       </div>
       <div class="notes">
         <dl class="types">
-          <div><dt>Markdown, code, text, images</dt><dd>Rendered inline.</dd></div>
-          <div><dt>PDF</dt><dd>An in-browser document viewer.</dd></div>
-          <div><dt>Audio, video</dt><dd>An in-browser player.</dd></div>
-          <div><dt>OpenTimelineIO</dt><dd>A timeline player with tracks, trims and dissolves.</dd></div>
-          <div><dt>HTML, JSX</dt><dd>A sandboxed frame on a separate origin, which blocks its web requests. Inline what the page needs.</dd></div>
-          <div><dt>Anything else</dt><dd>A download.</dd></div>
+          ${HOMEPAGE_FORMATS.map(
+            ({ label, description }) =>
+              `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(description)}</dd></div>`
+          ).join('\n          ')}
         </dl>
         <div>
           <h3>They can answer, and you can update</h3>

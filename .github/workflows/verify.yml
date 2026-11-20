@@ -114,6 +114,10 @@ jobs:
         run: env -u DISPLAY -u WAYLAND_DISPLAY RELIC_CHROME_PATH="$(command -v google-chrome)" bun packages/relic-mcp/test/structured-formats-path.ts
       - name: Multi-file path
         run: env -u DISPLAY -u WAYLAND_DISPLAY RELIC_CHROME_PATH="$(command -v google-chrome)" bun packages/relic-mcp/test/multi-file-path.ts
+      - name: Stale service worker path
+        run: |
+          test -x "$(command -v google-chrome)"
+          env -u DISPLAY -u WAYLAND_DISPLAY RELIC_CHROME_PATH="$(command -v google-chrome)" bun test packages/relic-viewer/test/stale-worker.test.ts
       - name: Upload comment popover shots
         if: always()
         uses: actions/upload-artifact@v4

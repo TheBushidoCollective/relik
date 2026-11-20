@@ -56,18 +56,35 @@ await writeFile(sentinel, 'untouched');
 for (const name of legacyNames) await symlink(sentinel, join(scratch, name));
 const requests: string[] = [];
 let missingAsset = false;
+let unversionedShell = false;
+let mismatchedWorker = false;
 let app: RelicApp;
 const service = Bun.serve({
   hostname: '127.0.0.1',
   port: 0,
-  fetch(request) {
+  async fetch(request) {
     const path = new URL(request.url).pathname;
     requests.push(`${request.method} ${path}`);
     if (request.method !== 'GET')
       return new Response('Forbidden', { status: 403 });
     if (missingAsset && path === '/assets/viewer.js')
       return new Response('Missing', { status: 404 });
-    return app.fetch(request);
+    const response = await app.fetch(request);
+    if (unversionedShell && path === '/aaaaaaaaaaaaaaaaaaaaaaaaaa') {
+      return new Response(
+        (await response.text()).replace(
+          /\/assets\/viewer\.js\?v=[a-zA-Z0-9_-]+/g,
+          '/assets/viewer.js'
+        ),
+        { headers: response.headers }
+      );
+    }
+    if (mismatchedWorker && path === '/sw.js') {
+      return new Response('/* worker without the current viewer */', {
+        headers: response.headers,
+      });
+    }
+    return response;
   },
 });
 const origin = `http://127.0.0.1:${service.port}`;
@@ -144,6 +161,7 @@ try {
   const expected = [
     '/health',
     `/${id}`,
+    '/sw.js',
     '/assets/viewer.js',
     '/assets/landing-html.png',
     '/assets/landing-markdown.png',
@@ -233,6 +251,13 @@ try {
   missingAsset = true;
   assert.notEqual(await run('scripts/deploy-smoke.sh'), 0);
   console.log('SMOKE_MISSING_ASSET_REJECTED');
+  missingAsset = false;
+  unversionedShell = true;
+  assert.notEqual(await run('scripts/deploy-smoke.sh'), 0);
+  unversionedShell = false;
+  mismatchedWorker = true;
+  assert.notEqual(await run('scripts/deploy-smoke.sh'), 0);
+  console.log('SMOKE_UNVERSIONED_AND_MISMATCHED_WORKER_REJECTED');
   console.log('DEPLOY_SMOKE_PATH_OK');
 } finally {
   service.stop(true);
