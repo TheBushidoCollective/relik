@@ -11,7 +11,8 @@
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 
-import { encryptRelic } from '@relic/format';
+import { encryptFolder, encryptRelic } from '@relic/format';
+import { openFolderRelic } from '../src/folder-relic.ts';
 import {
   decodeBase64url,
   deriveKek,
@@ -209,6 +210,7 @@ interface WorldOptions {
   /** The seal predates the grant: it lists the owner, and the wrap is still the reader's. */
   readonly sealPredatesGrant?: boolean;
   /** The version the seal and wrap are for. Defaults to 1. */
+  readonly folder?: boolean;
   readonly version?: number;
   /** The wrap is addressed to a key other than the reader's. */
   readonly wrapToOtherKey?: boolean;
@@ -299,12 +301,30 @@ async function sealedWorld(
 
   const plaintext = bytesOf('Intake form changes for January.');
   const key = randomBytes(KEY_BYTES);
-  const ciphertext = await encryptRelic({
-    content: plaintext,
-    filename: 'intake.md',
-    mimetype: 'text/markdown',
-    key,
-  });
+  const ciphertext = options.folder
+    ? await encryptFolder({
+        key,
+        name: 'folder',
+        defaultIndex: 0,
+        entries: [
+          {
+            path: 'README.md',
+            mimetype: 'text/markdown',
+            bytes: bytesOf('# Private folder'),
+          },
+          {
+            path: 'data/a.json',
+            mimetype: 'application/json',
+            bytes: bytesOf('{"ok":true}'),
+          },
+        ],
+      })
+    : await encryptRelic({
+        content: plaintext,
+        filename: 'intake.md',
+        mimetype: 'text/markdown',
+        key,
+      });
   const served = options.tamperCiphertext
     ? Uint8Array.from(ciphertext, (byte, index) =>
         index === ciphertext.length - 1 ? byte ^ 1 : byte
@@ -1064,11 +1084,52 @@ describe('the private reader opens a sealed version', () => {
       1,
       identity
     );
+    if (!('content' in opened)) throw new Error('expected a single-file relic');
 
     expect(Array.from(opened.content)).toEqual(Array.from(world.plaintext));
     expect(opened.digest).toBe(world.digest);
   });
 
+  test('opens a sealed private folder and preserves every file', async () => {
+    const world = await sealedWorld(freshRelicId(), { folder: true });
+    const { deps } = readerDeps(world);
+    const identity = await unlock(deps, await loadIdentityState(deps));
+    const opened = await fetchAndDecryptVersion(
+      deps,
+      world.relicId,
+      1,
+      identity
+    );
+    if (!('folderContent' in opened)) throw new Error('expected folder');
+    const folder = await openFolderRelic(opened.envelope, opened.folderContent);
+    expect(folder.manifest.entries.map((entry) => entry.path)).toEqual([
+      'README.md',
+      'data/a.json',
+    ]);
+    const whole = opened.folderContent.blob('application/octet-stream');
+    const actual = await Promise.all(
+      folder.manifest.entries.map(async (entry) =>
+        new TextDecoder().decode(
+          await whole
+            .slice(entry.offset, entry.offset + entry.length)
+            .arrayBuffer()
+        )
+      )
+    );
+    expect(actual).toEqual(['# Private folder', '{"ok":true}']);
+    expect(opened.digest).toBe(world.digest);
+  });
+  test('refuses a tampered private folder by its seal mismatch name', async () => {
+    const world = await sealedWorld(freshRelicId(), {
+      folder: true,
+      tamperCiphertext: true,
+    });
+    const { deps } = readerDeps(world);
+    const identity = await unlock(deps, await loadIdentityState(deps));
+    await expect(
+      fetchAndDecryptVersion(deps, world.relicId, 1, identity)
+    ).rejects.toBeInstanceOf(SealMismatchError);
+  });
   test('the key fetched for the reader is the one that sealed the version', async () => {
     const world = await sealedWorld(freshRelicId());
     const { deps } = readerDeps(world);
@@ -1171,6 +1232,7 @@ describe('a version that does not verify is refused', () => {
     const identity = await unlock(deps, await loadIdentityState(deps));
 
     const opened = await fetchAndDecryptVersion(deps, relicId, 2, identity);
+    if (!('content' in opened)) throw new Error('expected a single-file relic');
     expect(opened.content).toEqual(world.plaintext);
   });
 

@@ -70,7 +70,12 @@ for (const count of [1000, 5000]) {
 }
 // Stages mutate process env and must not run concurrently.
 await import('./multi-file-stages/open-entries.ts');
+await import('./multi-file-stages/downloads.ts');
 await import('./multi-file-stages/folder-publish.ts');
 await import('./multi-file-stages/zip-publish.ts');
 await import('./multi-file-stages/private-publish.ts');
+await import('./multi-file-stages/private-rekey.ts');
+await import('./multi-file-stages/show.ts');
+await import('./multi-file-stages/comments-mcp.ts');
+await import('./multi-file-stages/apply.ts');
 console.log('MULTI_FILE_PATH_OK');

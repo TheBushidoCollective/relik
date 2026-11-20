@@ -27,6 +27,7 @@ import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { inflateRaw } from 'node:zlib';
+import { basename } from 'node:path';
 import {
   type AnchorRect,
   decodeKey,
@@ -36,6 +37,10 @@ import {
   isOtioz,
   isRawOtio,
   type OpenedRelic,
+  type OpenedAnyRelic,
+  openFolder,
+  contentLengthOf,
+  streamAnyRelicContent,
   type OtioAnchorResolution,
   type OtioAnchorV1,
   type OtioDocumentV1,
@@ -44,7 +49,6 @@ import {
   type OtioRationalTime,
   type OtioSourceSpan,
   type OtioTimeRange,
-  openRelicStream,
   PLAINTEXT_CAP_BYTES,
   otioBundleMediaIndex,
   type RendererClass,
@@ -733,10 +737,10 @@ export async function probeMediaDimensionsWithFfmpeg(
   }
 }
 
-type RelicFetch =
+type RawRelicFetch =
   | {
       readonly ok: true;
-      readonly opened: OpenedRelic;
+      readonly opened: OpenedAnyRelic;
       readonly version: number;
       readonly currentVersion: number;
     }
@@ -744,6 +748,50 @@ type RelicFetch =
       readonly ok: false;
       readonly error: string;
     };
+type RelicFetch =
+  | {
+      readonly ok: true;
+      readonly opened: OpenedRelic;
+      readonly version: number;
+      readonly currentVersion: number;
+    }
+  | { readonly ok: false; readonly error: string };
+
+function selectEntry(
+  result: RawRelicFetch,
+  entry: string | null | undefined
+): RelicFetch {
+  if (!result.ok) return result;
+  if (result.opened.envelope.version !== 2) {
+    if (entry != null) return { ok: false, error: 'file_not_in_version' };
+    return { ...result, opened: result.opened as OpenedRelic };
+  }
+  if (entry == null) return { ok: false, error: 'not_tied_to_a_file' };
+  const folder = openFolder(result.opened);
+  const index = folder.manifest.entries.findIndex(
+    (item) => item.path === entry
+  );
+  if (index < 0) return { ok: false, error: 'file_not_in_version' };
+  const file = folder.manifest.entries[index]!;
+  const content = folder.entryBytes(index);
+  return {
+    ...result,
+    opened: {
+      envelope: {
+        version: 1,
+        entries: [
+          {
+            filename: basename(file.path),
+            mimetype: file.mimetype,
+            offset: 0,
+            length: file.length,
+          },
+        ],
+      },
+      content,
+    },
+  };
+}
 
 /**
  * Fetch and decrypt one relic revision.
@@ -756,7 +804,7 @@ async function fetchAndDecryptRelic(
   relicId: string,
   deps: PublishDeps,
   requestedVersion?: number
-): Promise<RelicFetch> {
+): Promise<RawRelicFetch> {
   const privateState = await loadPrivatePublishState(relicId);
   const state =
     privateState === undefined ? await loadPublishState(relicId) : undefined;
@@ -855,10 +903,20 @@ async function fetchAndDecryptRelic(
     } else {
       throw new Error('No local publish state found for this relic.');
     }
-    const opened = await openRelicStream(containerResponse.body, key, {
+    let content = new Uint8Array(0);
+    let offset = 0;
+    const envelope = await streamAnyRelicContent(containerResponse.body, key, {
       objectLength: mint.object_length,
       maxContentBytes: PLAINTEXT_CAP_BYTES,
+      onEnvelope(value) {
+        content = new Uint8Array(contentLengthOf(value));
+      },
+      onContent(chunk) {
+        content.set(chunk, offset);
+        offset += chunk.length;
+      },
     });
+    const opened = { envelope, content };
     return {
       ok: true,
       opened,
@@ -1398,8 +1456,10 @@ export async function resolveAnchors(
 
   // OTIO version and digest gates decide whether their revisions may be read.
   // Eagerly loading the batch would fetch a latest revision for a rejected seal.
-  const loads = new Map<string, Promise<RelicFetch>>();
-  const loadRevision = (version: number | undefined): Promise<RelicFetch> => {
+  const loads = new Map<string, Promise<RawRelicFetch>>();
+  const loadRawRevision = (
+    version: number | undefined
+  ): Promise<RawRelicFetch> => {
     const key = version === undefined ? 'latest' : String(version);
     let pending = loads.get(key);
     if (!pending) {
@@ -1408,7 +1468,11 @@ export async function resolveAnchors(
     }
     return pending;
   };
-  const documents = new Map<number, Promise<OtioParse>>();
+  const selected = new Map<string, Promise<RelicFetch>>();
+  const documentsByEntry = new Map<string, Map<number, Promise<OtioParse>>>();
+  const localShape =
+    (await loadPrivatePublishState(relicId))?.shape ??
+    (await loadPublishState(relicId))?.shape;
 
   const updatedComments: CommentRecord[] = [];
   const imageBlocks: ResolvedImageBlock[] = [];
@@ -1427,7 +1491,50 @@ export async function resolveAnchors(
     }
 
     const { anchor } = comment;
+    const loadRevision = (version: number | undefined): Promise<RelicFetch> => {
+      const key = JSON.stringify([version ?? null, comment.entry ?? null]);
+      let pending = selected.get(key);
+      if (pending === undefined) {
+        pending = loadRawRevision(version).then((result) =>
+          selectEntry(result, comment.entry)
+        );
+        selected.set(key, pending);
+      }
+      return pending;
+    };
+    // Known single-file comments retain their existing no-fetch behavior.
+    if (localShape === 'folder' || comment.entry != null) {
+      const version =
+        comment.version ??
+        (anchor.kind === 'otio'
+          ? anchor.relic_version
+          : anchor.kind === 'source' || anchor.kind === 'time'
+            ? 1
+            : undefined);
+      const selection = await loadRevision(version);
+      if (
+        !selection.ok &&
+        (selection.error === 'not_tied_to_a_file' ||
+          selection.error === 'file_not_in_version')
+      ) {
+        updatedComments.push({
+          ...comment,
+          resolved: {
+            kind: anchor.kind,
+            status: 'unresolvable',
+            explanation: selection.error,
+          } as ResolvedAnchor,
+        });
+        continue;
+      }
+    }
     if (anchor.kind === 'otio') {
+      const entryKey = comment.entry ?? '';
+      let documents = documentsByEntry.get(entryKey);
+      if (documents === undefined) {
+        documents = new Map<number, Promise<OtioParse>>();
+        documentsByEntry.set(entryKey, documents);
+      }
       updatedComments.push(
         await resolveOtioComment(comment, anchor, loadRevision, documents)
       );

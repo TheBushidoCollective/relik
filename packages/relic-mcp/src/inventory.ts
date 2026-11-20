@@ -31,18 +31,24 @@
  */
 
 import {
+  decodeAnyEnvelope,
+  decryptRecord,
+  deriveKeys,
+  ENVELOPE_VERSIONS,
+  type FolderHeader,
+  type Envelope,
   decodeHeader,
   decodeKey,
   deriveRendererClass,
   envelopePrefixLength,
   HEADER_BYTES,
   isValidRelicId,
-  openEnvelope,
-  openRelic,
+  openAnyRelic,
   plaintextSizeUpperBound,
   type RendererClass,
   relicUrl,
 } from '@relic/format';
+import { FolderReadError, readFolderIndex } from './folder-reader.ts';
 import { keyToMnemonic } from '@relic/format/mnemonic';
 import {
   loadCachedMetadata,
@@ -159,6 +165,7 @@ export interface ListResult {
 export interface ShowInput {
   readonly relic_id: string;
   readonly include_content?: boolean | undefined;
+  readonly entry?: string | undefined;
 }
 
 export interface ShowResult extends RelicRow {
@@ -167,6 +174,15 @@ export interface ShowResult extends RelicRow {
   /** Plaintext length from the envelope, when one was read. */
   readonly content_bytes: number | null;
   readonly renderer_class: RendererClass | null;
+  readonly shape?: 'file' | 'folder';
+  readonly files?: readonly {
+    path: string;
+    mimetype: string;
+    bytes: number;
+    renderer_class: RendererClass;
+  }[];
+  readonly files_omitted?: number;
+  readonly entry?: string | null;
   /** The current content, when asked for and readable as text. */
   readonly content: string | null;
   /** Null exactly when `content` is not null. */
@@ -455,6 +471,61 @@ export async function showRelic(
     versions: minted.currentVersion,
   };
 
+  if (input.include_content === true) {
+    const folder = await readFolderIndex(
+      minted.url,
+      decodeKey(state.key),
+      minted.objectLength,
+      deps
+    );
+    if (folder !== null) {
+      const selected =
+        input.entry === undefined
+          ? undefined
+          : folder.manifest.entries.find((file) => file.path === input.entry);
+      if (input.entry !== undefined && selected === undefined) {
+        throw new FolderReadError(
+          'file_not_in_version',
+          'The requested file is not in this version.',
+          { entry: input.entry }
+        );
+      }
+      const content =
+        selected && selected.length <= MAX_INLINE_CONTENT_BYTES
+          ? await folder.read(selected.offset, selected.length)
+          : undefined;
+      const text = content === undefined ? null : asText(content);
+      return {
+        ...row,
+        filename: folder.header.name,
+        filename_basis: 'envelope',
+        filename_unrecovered_reason: null,
+        mimetype: null,
+        content_bytes:
+          folder.header.contentLength - folder.header.manifestLength,
+        renderer_class: 'folder',
+        shape: 'folder',
+        files: folder.manifest.entries.slice(0, 200).map((file) => ({
+          path: file.path,
+          mimetype: file.mimetype,
+          bytes: file.length,
+          renderer_class: deriveRendererClass(new Uint8Array(), file.path),
+        })),
+        files_omitted: Math.max(0, folder.manifest.entries.length - 200),
+        entry: selected?.path ?? null,
+        content: text,
+        content_omitted_reason:
+          selected === undefined
+            ? 'entry_not_requested'
+            : content === undefined
+              ? 'entry_too_large'
+              : text === null
+                ? 'entry_not_text'
+                : null,
+      };
+    }
+  }
+
   if (input.include_content !== true) {
     const envelope = await recoverEnvelope(minted.url, state.key, deps);
     const recorded = optionalText(state.filename);
@@ -474,6 +545,7 @@ export async function showRelic(
           : envelope.detail,
       mimetype: envelope.kind === 'read' ? envelope.mimetype : null,
       content_bytes: envelope.kind === 'read' ? envelope.contentBytes : null,
+      ...(envelope.kind === 'read' ? { shape: envelope.shape } : {}),
       renderer_class: null,
       content: null,
       content_omitted_reason:
@@ -504,6 +576,7 @@ export async function showRelic(
           : envelope.detail,
       mimetype: envelope.kind === 'read' ? envelope.mimetype : null,
       content_bytes: envelope.kind === 'read' ? envelope.contentBytes : null,
+      ...(envelope.kind === 'read' ? { shape: envelope.shape } : {}),
       renderer_class: null,
       content: null,
       content_omitted_reason:
@@ -520,8 +593,10 @@ export async function showRelic(
       throw new Error(`storage returned ${response.status}`);
     }
     const bytes = new Uint8Array(await response.arrayBuffer());
-    const relic = await openRelic(bytes, decodeKey(state.key));
-    const entry = relic.envelope.entries[0];
+    const relic = await openAnyRelic(bytes, decodeKey(state.key), {
+      admitted: ENVELOPE_VERSIONS,
+    });
+    const entry = (relic.envelope as Envelope).entries[0];
     if (entry === undefined) throw new Error('the envelope carried no entry');
     opened = {
       filename: entry.filename,
@@ -556,6 +631,7 @@ export async function showRelic(
     filename_unrecovered_reason: null,
     mimetype: opened.mimetype,
     content_bytes: opened.content.length,
+    shape: 'file',
     renderer_class: rendererClass,
     content: text,
     content_omitted_reason:
@@ -818,6 +894,7 @@ interface RecoveredEnvelope {
   readonly filename: string;
   readonly mimetype: string;
   readonly contentBytes: number;
+  readonly shape: 'file' | 'folder';
 }
 
 interface FailedEnvelope {
@@ -857,13 +934,32 @@ async function recoverEnvelope(
       prefix = await fetchRange(url, wanted, deps);
     }
 
-    const envelope = await openEnvelope(prefix, key);
-    const entry = envelope.entries[0];
+    const framing = decodeHeader(prefix);
+    const record = await decryptRecord(
+      await deriveKeys(key, framing.salt),
+      0,
+      prefix.subarray(HEADER_BYTES)
+    );
+    const envelope = decodeAnyEnvelope(record.data, {
+      admitted: ENVELOPE_VERSIONS,
+    });
+    if (envelope.version === 2) {
+      const folder = envelope as FolderHeader;
+      return {
+        kind: 'read',
+        shape: 'folder',
+        filename: folder.name,
+        mimetype: '',
+        contentBytes: folder.contentLength - folder.manifestLength,
+      };
+    }
+    const entry = (envelope as Envelope).entries[0];
     if (entry === undefined) {
       return { kind: 'failed', detail: 'the envelope carried no entry.' };
     }
     return {
       kind: 'read',
+      shape: 'file',
       filename: entry.filename,
       mimetype: entry.mimetype,
       contentBytes: entry.length,

@@ -10,6 +10,8 @@ import {
   streamFolderContent,
 } from '../src/folder-stream.ts';
 import { DecryptFailedError, TransferIncompleteError } from '../src/errors.ts';
+import { decodeManifest } from '../src/multi.ts';
+import { MalformedContainerError } from '../src/errors.ts';
 
 const input = {
   name: 'test',
@@ -48,6 +50,40 @@ test('stream output is identical and decryption receives authenticated content',
   });
   expect(length).toBe(header.contentLength);
   expect(header.entryCount).toBe(1);
+});
+
+test('preserves original manifest bytes including non-UTF-8 MIME octets', async () => {
+  const original = folderPlaintext(input);
+  const manifest = (original.parts[0] as Uint8Array).slice();
+  const mimeStart = 4 + 2 + new TextEncoder().encode('large.bin').length + 2;
+  manifest[mimeStart] = 0xff;
+  const parsed = decodeManifest(manifest, original.header);
+  const output = new Uint8Array(
+    await new Response(
+      encryptFolderStream({
+        ...input,
+        originalManifest: manifest,
+        entries: [
+          { ...input.entries[0]!, mimetype: parsed.entries[0]!.mimetype },
+        ],
+      })
+    ).arrayBuffer()
+  );
+  const chunks: Uint8Array[] = [];
+  await streamFolderContent(source(output), input.key, {
+    objectLength: output.length,
+    onContent(chunk) {
+      chunks.push(chunk);
+    },
+  });
+  const plaintext = new Uint8Array(
+    await new Blob(chunks as BlobPart[]).arrayBuffer()
+  );
+  expect(plaintext.subarray(0, manifest.length)).toEqual(manifest);
+  expect(plaintext.subarray(manifest.length)).toEqual(input.entries[0]!.bytes);
+  expect(() =>
+    encryptFolderStream({ ...input, originalManifest: manifest })
+  ).toThrow(MalformedContainerError);
 });
 test('refuses truncated and tampered mid-stream records by error type', async () => {
   const bytes = await encryptFolder(input);

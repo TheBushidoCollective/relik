@@ -29,7 +29,16 @@ import {
   deviceFingerprint,
   deviceIdOf,
 } from '@relic/format/private';
-import { openRelic, sha256Hex } from '@relic/format';
+import {
+  encryptFolder,
+  openAnyRelic,
+  openFolder,
+  openRelic,
+  sha256Hex,
+  DecryptFailedError,
+} from '@relic/format';
+import { contentFromBytes } from '../src/content.ts';
+import type { OpenedVersion } from '../src/private/open.ts';
 
 // ---------------------------------------------------------------------------
 // A minimal DOM stub: elements, attributes, text, listeners and the compound
@@ -271,6 +280,7 @@ function unlockedFrom(
 interface Attest {
   identity: UnlockedIdentity | undefined;
   content: Uint8Array;
+  opened?: OpenedVersion;
 }
 const fixture: Attest = { identity: undefined, content: new Uint8Array() };
 
@@ -288,21 +298,22 @@ const stubKeys = {
   fetchVersionKey: async () => {
     throw new Error('not used in the rekey test');
   },
-  fetchAndDecryptVersion: async () => ({
-    envelope: {
-      version: 1,
-      entries: [
-        {
-          filename: 'notes.md',
-          mimetype: 'text/markdown',
-          offset: 0,
-          length: fixture.content.length,
-        },
-      ],
+  fetchAndDecryptVersion: async () =>
+    fixture.opened ?? {
+      envelope: {
+        version: 1,
+        entries: [
+          {
+            filename: 'notes.md',
+            mimetype: 'text/markdown',
+            offset: 0,
+            length: fixture.content.length,
+          },
+        ],
+      },
+      content: fixture.content,
+      digest: '',
     },
-    content: fixture.content,
-    digest: '',
-  }),
 } as unknown as PrivateKeyOps;
 
 interface Captured {
@@ -325,7 +336,10 @@ function fakeService(answers: {
     const url = String(input);
     const method = init?.method ?? 'GET';
     if (method === 'PUT') {
-      const bytes = new Uint8Array(init?.body as Uint8Array);
+      const bytes =
+        init?.body instanceof Blob
+          ? new Uint8Array(await init.body.arrayBuffer())
+          : new Uint8Array(init?.body as Uint8Array);
       captured.push({ method, url, body: null, bytes });
       return new Response(null, { status: 200 });
     }
@@ -617,6 +631,125 @@ describe('rekey after revocation', () => {
       const text = JSON.stringify(captured.body ?? '');
       expect(text).not.toContain(encodeBase64url(key));
       expect(text).not.toContain(Buffer.from(key).toString('hex'));
+    }
+  });
+  test('rekeys every folder entry for the remaining reader', async () => {
+    fixture.identity = OWNER_UNLOCKED;
+    const oldKey = new Uint8Array(16).fill(41);
+    const entries = [
+      {
+        path: 'README.md',
+        mimetype: 'text/markdown',
+        bytes: new TextEncoder().encode('# Hello'),
+      },
+      {
+        path: 'data/a.json',
+        mimetype: 'application/json',
+        bytes: new TextEncoder().encode('{"ok":true}'),
+      },
+    ];
+    const input = await encryptFolder({
+      name: 'folder',
+      defaultIndex: 1,
+      entries,
+      key: oldKey,
+    });
+    const old = await openAnyRelic(input, oldKey, { admitted: [1, 2] });
+    if ('entries' in old.envelope) throw new Error('expected folder');
+    fixture.opened = {
+      envelope: old.envelope,
+      folderContent: contentFromBytes(old.content),
+      digest: sha256Hex(input),
+    };
+    try {
+      const service = fakeService({
+        recipients: {
+          access_epoch: 4,
+          owner_epoch: 2,
+          devices: [],
+          grants: [grantA],
+          recovery: null,
+        },
+      });
+      const dialog = createRevokeDialog({
+        relicId: RELIC_ID,
+        deps: service.deps,
+        onSettled() {},
+      });
+      dialog.open(
+        { identityId: REVOKED.id, email: 'ben@example.org' },
+        accessAt(2)
+      );
+      const confirm = stubOf(dialog.element).querySelector(
+        '[data-action="confirm-revoke"]'
+      );
+      if (!confirm) throw new Error('no confirm button');
+      confirm.dispatch('click');
+      const panel = stubOf(dialog.element).querySelector('#rekey');
+      if (!panel) throw new Error('no rekey panel');
+      await waitUntil(() =>
+        ['done', 'failed'].includes(
+          panel.getAttribute('data-rekey-state') ?? ''
+        )
+      );
+      expect(panel.getAttribute('data-rekey-state')).toBe('done');
+      const grant = service.captured.find((record) =>
+        record.url.endsWith('/revocations')
+      );
+      const upload = service.captured.find((record) => record.method === 'PUT');
+      const complete = service.captured.find((record) =>
+        record.url.endsWith('/complete')
+      );
+      if (!grant || !upload?.bytes || !complete)
+        throw new Error('missing upload or seal');
+      const request = grant.body as Record<string, unknown>;
+      expect(request.renderer_class).toBe('folder');
+      expect(request.declared_size_bytes).toBe(old.content.length);
+      expect(request.declared_ciphertext_bytes).toBe(upload.bytes.length);
+      const body = complete.body as {
+        seal: { statement: { ciphertext_sha256: string } };
+        wraps: Array<{ recipient_key_id: string; enc: string; ct: string }>;
+      };
+      expect(body.seal.statement.ciphertext_sha256).toBe(
+        sha256Hex(upload.bytes)
+      );
+      const keptId = Buffer.from(await kemKeyIdOf(KEPT.kem)).toString('hex');
+      const keptWrap = body.wraps.find(
+        (wrap) => wrap.recipient_key_id === keptId
+      );
+      if (!keptWrap) throw new Error('remaining reader lacks wrap');
+      const revokedId = Buffer.from(await kemKeyIdOf(REVOKED.kem)).toString(
+        'hex'
+      );
+      expect(
+        body.wraps.some((wrap) => wrap.recipient_key_id === revokedId)
+      ).toBe(false);
+      const kept = unlockedFrom(
+        KEPT,
+        'ada@example.com',
+        await kemKeyIdOf(KEPT.kem)
+      );
+      const freshKey = await unwrapVersionKey({
+        recipient: { publicKey: KEPT.kem, dh: kept.dh },
+        relicId: RELIC_ID,
+        version: 3,
+        enc: keptWrap.enc,
+        ct: keptWrap.ct,
+      });
+      const restored = openFolder(
+        await openAnyRelic(upload.bytes, freshKey, { admitted: [1, 2] })
+      );
+      expect(restored.manifest.defaultIndex).toBe(1);
+      expect(restored.manifest.entries.map((entry) => entry.path)).toEqual(
+        entries.map((entry) => entry.path)
+      );
+      for (let i = 0; i < entries.length; i++)
+        expect(restored.entryBytes(i)).toEqual(entries[i]!.bytes);
+      await expect(
+        openAnyRelic(upload.bytes, oldKey, { admitted: [1, 2] })
+      ).rejects.toBeInstanceOf(DecryptFailedError);
+    } finally {
+      delete fixture.opened;
     }
   });
 });
