@@ -47,6 +47,16 @@ describe('browser folder preflight', () => {
       prepareBrowserDirectory([], [picked('a.txt', 'a'), picked('A.txt', 'b')])
     ).rejects.toThrow('collide');
   });
+  test('refuses unsafe file names and names the rule', async () => {
+    await expect(
+      prepareBrowserDirectory([], [picked('bad\u202ename.txt', 'x')])
+    ).rejects.toThrow('forbidden_character');
+  });
+  test('reports when all files were excluded', async () => {
+    await expect(
+      prepareBrowserDirectory([], [picked('.DS_Store', 'noise')])
+    ).rejects.toThrow('All files were excluded');
+  });
   test('refuses an empty folder', async () => {
     await expect(prepareBrowserDirectory([], [])).rejects.toThrow('empty');
   });

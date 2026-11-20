@@ -46,7 +46,9 @@ export async function prepareBrowserFolder(
   const normalized = files.map((file) => {
     const result = normaliseEntryPath(file.path);
     if (!result.ok)
-      throw new Error(`Invalid file path ${file.path} (${result.rule}).${fix}`);
+      throw new Error(
+        `Invalid file path ${file.path}: ${result.rule.replaceAll('_', ' ')} (${result.rule}).${fix}`
+      );
     return { ...file, path: result.path };
   });
   normalized.sort((a, b) => compareEntryPaths(a.path, b.path));

@@ -495,6 +495,7 @@ function createPublisher(
     list.setAttribute('aria-label', 'Files to publish');
     list.tabIndex = 0;
     const rowHeight = 32;
+    list.style.height = `min(14rem, ${folder.entries.length * rowHeight}px)`;
     const paint = (): void => {
       const first = Math.max(0, Math.floor(list.scrollTop / rowHeight) - 2);
       const last = Math.min(folder.entries.length, first + 14);
