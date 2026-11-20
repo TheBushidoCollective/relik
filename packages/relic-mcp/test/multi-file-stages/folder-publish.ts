@@ -47,6 +47,7 @@ try {
   execFileSync('mkfifo', [join(root, 'pipe')]);
   const calls: string[] = [];
   let uploaded: Uint8Array | undefined;
+  let republishing = false;
   const deps: PublishDeps = {
     serviceOrigin: 'https://service.invalid',
     relicOrigin: 'https://service.invalid',
@@ -73,7 +74,18 @@ try {
           report_url: 'https://service.invalid/report',
           disclosure_url: 'https://service.invalid/disclosure',
         });
-      if (path.endsWith('/complete')) return Response.json({ version: 1 });
+      if (path.endsWith('/comments')) return Response.json([]);
+      if (path.endsWith('/republish')) {
+        republishing = true;
+        return Response.json({
+          version: 2,
+          upload_url: 'https://storage.invalid/object',
+          report_url: 'https://service.invalid/report',
+          disclosure_url: 'https://service.invalid/disclosure',
+        });
+      }
+      if (path.endsWith('/complete'))
+        return Response.json({ version: republishing ? 2 : 1 });
       throw new Error(`unexpected fake request ${path}`);
     }) as typeof globalThis.fetch,
     upload: async (_url, _headers, bytes) => {
@@ -135,6 +147,19 @@ try {
       error instanceof PublishError && error.code === 'duplicate_version'
   );
   assert.equal(calls.length, 0);
+  await writeFile(join(root, 'README.md'), 'updated');
+  const next = await republish(
+    { relic_id: result.relic_id, path: root, cover: false, notify: false },
+    deps
+  );
+  assert.equal(next.shape, 'folder');
+  assert.equal(next.version, 2);
+  assert.ok(uploaded);
+  const reopened = await openAnyRelic(uploaded, fragment.key, {
+    admitted: [1, 2],
+  });
+  assert.equal(openFolder(reopened).header.version, 2);
+  calls.length = 0;
   const swapRoot = join(tmp, 'swap');
   const outside = join(tmp, 'outside');
   await mkdir(swapRoot);
