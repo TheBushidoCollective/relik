@@ -8,6 +8,27 @@ type Rule = {
 function literal(char: string): string {
   return /[\\^$.*+?()[\]{}|]/.test(char) ? `\\${char}` : char;
 }
+function bytes(text: string): string {
+  let result = '';
+  for (const byte of new TextEncoder().encode(text))
+    result += String.fromCharCode(byte);
+  return result;
+}
+
+const classes: Record<string, string> = {
+  alnum: 'A-Za-z0-9',
+  alpha: 'A-Za-z',
+  blank: ' \\t',
+  cntrl: '\\x00-\\x1f\\x7f',
+  digit: '0-9',
+  graph: '\\x21-\\x7e',
+  lower: 'a-z',
+  print: '\\x20-\\x7e',
+  punct: '!-/:-@\\[-`{-~',
+  space: '\\t-\\r ',
+  upper: 'A-Z',
+  xdigit: 'A-Fa-f0-9',
+};
 
 function glob(pattern: string): string {
   let result = '';
@@ -36,21 +57,32 @@ function glob(pattern: string): string {
       if (pattern[end] === ']') end++;
       while (end < pattern.length && pattern[end] !== ']') {
         if (pattern[end] === '\\' && end + 1 < pattern.length) end++;
+        else if (pattern[end] === '[' && pattern[end + 1] === ':') {
+          const close = pattern.indexOf(':]', end + 2);
+          if (close !== -1) end = close + 1;
+        }
         end++;
       }
-      if (end === pattern.length) result += '\\[';
-      else {
-        let content = pattern.slice(i + 1, end);
-        if (content[0] === '!') content = `^${content.slice(1)}`;
-        else if (content[0] === '^') content = `\\${content}`;
-        result += `(?!/)[${content}]`;
-        i = end;
-      }
+      if (end === pattern.length) return '(?!)';
+      let content = pattern.slice(i + 1, end);
+      if (content[0] === '!') content = `^${content.slice(1)}`;
+      else if (content[0] === '^') content = `\\${content}`;
+      let invalidClass = false;
+      content = content.replace(/\[:([a-z]+):\]/g, (_, name: string) => {
+        if (!(name in classes)) invalidClass = true;
+        return classes[name] ?? '';
+      });
+      if (invalidClass) return '(?!)';
+      content = content.replace(
+        /([A-Za-z0-9])-([A-Za-z0-9])/g,
+        (range, start: string, end: string) => (start > end ? start : range)
+      );
+      result += `(?!/)[${content}]`;
+      i = end;
     } else result += literal(char);
   }
   return result;
 }
-
 function trimTrailingSpaces(line: string): string {
   let end = line.length;
   while (end > 0 && line[end - 1] === ' ') {
@@ -72,7 +104,9 @@ export function createIgnoreMatcher(
 ): (path: string, isDirectory: boolean) => boolean {
   const rules: Rule[] = [];
   const ordered = [...files].sort(
-    (a, b) => a.dir.split('/').length - b.dir.split('/').length
+    (a, b) =>
+      (a.dir ? a.dir.split('/').length : 0) -
+      (b.dir ? b.dir.split('/').length : 0)
   );
   for (const file of ordered) {
     for (const raw of file.text.split('\n')) {
@@ -89,12 +123,15 @@ export function createIgnoreMatcher(
       if (anchored) line = line.slice(1);
       if (!line) continue;
       const scoped = anchored || line.includes('/');
-      rules.push({
-        dir: file.dir,
-        pattern: new RegExp(`^${scoped ? '' : '(?:.*/)?'}${glob(line)}$`),
-        directoryOnly,
-        negate,
-      });
+      let pattern: RegExp;
+      try {
+        pattern = new RegExp(
+          `^${scoped ? '' : '(?:.*/)?'}${glob(bytes(line))}$`
+        );
+      } catch {
+        continue;
+      }
+      rules.push({ dir: file.dir, pattern, directoryOnly, negate });
     }
   }
   return (path, isDirectory) => {
@@ -109,7 +146,7 @@ export function createIgnoreMatcher(
         const relative = rule.dir
           ? candidate.slice(rule.dir.length + 1)
           : candidate;
-        if (rule.pattern.test(relative)) ignored = !rule.negate;
+        if (rule.pattern.test(bytes(relative))) ignored = !rule.negate;
       }
       if (ignored) return true;
     }
