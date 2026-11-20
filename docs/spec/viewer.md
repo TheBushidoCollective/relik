@@ -415,6 +415,8 @@ Version-store admission and eviction count a folder version's entire decrypted
 content, including its manifest, rather than the selected entry. Historical
 versions are decoded according to their own envelope, so a single-file version
 and a folder version can coexist in the same cache.
+Version shape labels appear after a version has been opened, because identifying
+an unopened version would otherwise require minting and decrypting it.
 
 **Version history does not change the trust boundary.** The viewer mints each selected ciphertext through the existing service path, decrypts both versions with the one fragment key, and computes the result client-side. No plaintext and no diff result reaches the service. **An earlier version of this paragraph said the frame receives neither historical source nor diff output, and that no comparison message type is added to its `postMessage` protocol. Both of those are reversed.** Each frame receives only its own version's payload. Two comparison message types exist, `relic:tree` and `relic:annotate`, and they are safe because of what they cannot carry: the tree is tags, an attribute allowlist, and normalised text, never markup, and the annotate channel carries no content. The diff runs client side, in the service-origin bundle.
 

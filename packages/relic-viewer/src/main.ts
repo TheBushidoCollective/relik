@@ -739,6 +739,7 @@ export interface BarOptions {
   readonly commentCount?: number;
   /** Offered only when there is more than one historical version to pick. */
   readonly onSelectVersion?: (version: number) => void;
+  readonly versionShape?: (version: number) => 'file' | 'folder' | undefined;
   /**
    * Opens the share panel, handed the control that opened it so focus can go
    * back there when the panel closes. Offered on every view that holds the
@@ -846,6 +847,8 @@ function buildVersionControl(
       version === view.currentVersion
         ? `Version ${version}, current`
         : `Version ${version}`;
+    const shape = options.versionShape?.(version);
+    if (shape) option.textContent += `, ${shape}`;
     option.addEventListener('click', () => {
       close();
       onSelect(version);
@@ -3714,6 +3717,13 @@ export function renderComparison(
       if (loaded.kind === 'ready') {
         store.pin(loaded.view.version);
         pinned.add(loaded.view.version);
+      }
+    }
+    for (const picker of [scaffold.picker.left, scaffold.picker.right]) {
+      for (const option of picker.options) {
+        const version = Number(option.dataset['version']);
+        const shape = store.shapeOf(version);
+        option.textContent = `Version ${version}${version === current.currentVersion ? ', current' : ''}${shape ? `, ${shape}` : ''}`;
       }
     }
 
@@ -10682,6 +10692,7 @@ export function renderReady(
     const built = buildBar(activeView, relicId, {
       comparisonOpen,
       selectedVersion: activeView.version,
+      versionShape: (version) => versionStore.shapeOf(version),
       onSelectVersion: (version: number) => {
         void showVersion(version);
       },

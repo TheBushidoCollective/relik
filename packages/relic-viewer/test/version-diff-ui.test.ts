@@ -3,6 +3,7 @@ import { contentFromBytes } from '../src/content.ts';
 import {
   deriveCommentKey,
   encodeFragment,
+  encryptFolder,
   encryptRelic,
   generateKey,
   generateRelicId,
@@ -11,6 +12,7 @@ import {
 } from '@relic/format';
 import { commentCipher } from '../src/comments.ts';
 import { MAX_DIFF_BYTES } from '../src/diff.ts';
+import { createVersionStore } from '../src/version-store.ts';
 import {
   buildBar,
   buildChangesSidebar,
@@ -279,6 +281,69 @@ describe('version comparison affordance', () => {
   afterEach(() => {
     delete (globalThis as { document?: unknown }).document;
     delete (globalThis as { window?: unknown }).window;
+  });
+
+  test('version shapes appear only after opening, without minting to render the list', async () => {
+    const key = generateKey();
+    const id = generateRelicId();
+    const current = view(
+      'code',
+      3,
+      encoder.encode('current'),
+      3,
+      `https://relik.example/${id}#${encodeFragment(key)}`
+    );
+    const object = await encryptFolder({
+      key,
+      name: 'folder',
+      defaultIndex: 0,
+      entries: [
+        {
+          path: 'a.txt',
+          mimetype: 'text/plain',
+          bytes: encoder.encode('inside'),
+        },
+      ],
+    });
+    const requests: string[] = [];
+    const deps = dummyDeps((async (input: RequestInfo | URL) => {
+      const url = String(input);
+      requests.push(url);
+      if (url.endsWith('/mint'))
+        return Response.json({
+          url: 'https://storage.example/v2',
+          url_expires_at: '2099-01-01T00:00:00Z',
+          relic_expires_at: null,
+          object_length: object.length,
+          object_crc32c: 'AAAAAA==',
+          mints_remaining: 199,
+          version: 2,
+          current_version: 3,
+        });
+      return new Response(object as unknown as BodyInit);
+    }) as typeof fetch);
+    const store = createVersionStore(id, current, deps);
+    const makeBar = () =>
+      buildBar(current, id, {
+        onSelectVersion: () => {},
+        versionShape: (version) => store.shapeOf(version),
+      }) as unknown as ElementStub;
+    const before = withClass(makeBar(), 'version-option');
+    expect(
+      before.find((option) => option.dataset['version'] === '2')?.textContent
+    ).toBe('Version 2');
+    expect(requests).toHaveLength(0);
+    expect((await store.get(2)).kind).toBe('ready');
+    const count = requests.length;
+    const after = withClass(makeBar(), 'version-option');
+    expect(
+      after.find((option) => option.dataset['version'] === '2')?.textContent
+    ).toBe('Version 2, folder');
+    expect(
+      after.find((option) => option.dataset['version'] === '1')?.textContent
+    ).toBe('Version 1');
+    expect(requests).toHaveLength(count);
+    expect(requests.filter((url) => url.endsWith('/mint'))).toHaveLength(1);
   });
 
   test('version 1 shows no comparison affordance at all', () => {

@@ -20,6 +20,7 @@ export interface VersionStore {
     version: number,
     options?: VersionGetOptions
   ): Promise<HistoricalVersionState>;
+  shapeOf(version: number): 'file' | 'folder' | undefined;
   pin(version: number): void;
   unpin(version: number): void;
 }
@@ -62,6 +63,9 @@ export function createVersionStore(
 ): VersionStore {
   const cache = new Map<number, HistoricalVersionState>([
     [boot.version, { kind: 'ready', view: boot }],
+  ]);
+  const shapes = new Map<number, 'file' | 'folder'>([
+    [boot.version, boot.folder ? 'folder' : 'file'],
   ]);
   const pins = new Map<number, number>();
   const sizes = new Map<number, number>([
@@ -145,6 +149,8 @@ export function createVersionStore(
         }
       )
         .then((result) => {
+          if (result.kind === 'ready')
+            shapes.set(version, result.view.folder ? 'folder' : 'file');
           if (result.kind === 'ready' || cacheableFailure(result.code)) {
             cache.set(version, result);
             evict();
@@ -180,6 +186,9 @@ export function createVersionStore(
 
   return {
     get,
+    shapeOf(version) {
+      return shapes.get(version);
+    },
     pin(version) {
       if (version !== boot.version)
         pins.set(version, (pins.get(version) ?? 0) + 1);
