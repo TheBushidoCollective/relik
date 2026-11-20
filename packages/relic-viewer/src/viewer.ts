@@ -1589,8 +1589,10 @@ function classFromMimetype(mimetype: string, filename: string): RendererClass {
   return 'binary';
 }
 
-function describe(cls: RendererClass): string {
+function describe(cls: RendererClass | 'folder'): string {
   switch (cls) {
+    case 'folder':
+      return 'a folder';
     case 'markdown':
       return 'a Markdown document';
     case 'code':
