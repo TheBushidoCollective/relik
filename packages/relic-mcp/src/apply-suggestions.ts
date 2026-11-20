@@ -676,13 +676,39 @@ async function applyFolderSuggestions(
     }
   }
   const first = results[0]!;
+  const proposedAddresses = results.flatMap(
+    (result) => result.proposed_addresses
+  );
+  const addressed = new Set(proposedAddresses.map((item) => item.comment_id));
+  const currentVersion = entries.reduce(
+    (version, entry) => Math.max(version, entry.fact.version),
+    local.state.version
+  );
+  const states = suggestionStates(
+    entries.map((entry) => entry.fact),
+    currentVersion
+  );
   return {
     ...first,
     path: root,
     source_identity: sourceIdentity,
     diff: results.map((result) => result.diff).join(''),
     applied: results.flatMap((result) => result.applied),
-    proposed_addresses: results.flatMap((result) => result.proposed_addresses),
+    proposed_addresses: proposedAddresses,
+    remaining_open: entries
+      .filter(
+        (entry) =>
+          isOpen(states.get(entry.fact.id)?.state) &&
+          !addressed.has(entry.fact.id)
+      )
+      .map((entry) => entry.fact.id),
+    unreadable_comment_ids: entries
+      .filter(
+        (entry) =>
+          entry.plaintext === null ||
+          entry.plaintext.unsupported_fields?.includes('suggestion')
+      )
+      .map((entry) => entry.fact.id),
     files: results.map((result, index) => ({
       entry: plans[index]!.entry,
       path: result.path,

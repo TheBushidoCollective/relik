@@ -100,6 +100,7 @@ async function applyStage(): Promise<void> {
     assert.ok('files' in result);
     assert.ok(Array.isArray(result.files));
     assert.equal(result.files.length, 2);
+    assert.deepEqual(result.remaining_open, [noEntry]);
     assert.equal(await readFile(a, 'utf8'), 'first changed text\n');
     assert.equal(await readFile(b, 'utf8'), 'second changed text\n');
     console.log('MULTI_FILE_STAGE apply OK');

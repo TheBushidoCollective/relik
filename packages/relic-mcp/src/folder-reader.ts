@@ -35,6 +35,26 @@ async function range(
   const response = await deps.fetch(url, {
     headers: { range: `bytes=${start}-${boundedEnd}` },
   });
+  if (response.status === 200 && start === 0 && boundedEnd < objectLength - 1) {
+    if (response.body === null)
+      throw new Error('storage returned no response body');
+    const reader = response.body.getReader();
+    const prefix = new Uint8Array(boundedEnd + 1);
+    let offset = 0;
+    try {
+      while (offset < prefix.length) {
+        const next = await reader.read();
+        if (next.done) throw new Error('storage returned an incomplete range');
+        const length = Math.min(next.value.length, prefix.length - offset);
+        prefix.set(next.value.subarray(0, length), offset);
+        offset += length;
+      }
+    } finally {
+      await reader.cancel().catch(() => undefined);
+      reader.releaseLock();
+    }
+    return prefix;
+  }
   if (
     response.status !== 206 &&
     !(response.status === 200 && start === 0 && boundedEnd === objectLength - 1)

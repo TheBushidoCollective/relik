@@ -1468,7 +1468,8 @@ export async function resolveAnchors(
     }
     return pending;
   };
-  const documents = new Map<number, Promise<OtioParse>>();
+  const selected = new Map<string, Promise<RelicFetch>>();
+  const documentsByEntry = new Map<string, Map<number, Promise<OtioParse>>>();
 
   const updatedComments: CommentRecord[] = [];
   const imageBlocks: ResolvedImageBlock[] = [];
@@ -1487,11 +1488,24 @@ export async function resolveAnchors(
     }
 
     const { anchor } = comment;
-    const loadRevision = async (
-      version: number | undefined
-    ): Promise<RelicFetch> =>
-      selectEntry(await loadRawRevision(version), comment.entry);
+    const loadRevision = (version: number | undefined): Promise<RelicFetch> => {
+      const key = JSON.stringify([version ?? null, comment.entry ?? null]);
+      let pending = selected.get(key);
+      if (pending === undefined) {
+        pending = loadRawRevision(version).then((result) =>
+          selectEntry(result, comment.entry)
+        );
+        selected.set(key, pending);
+      }
+      return pending;
+    };
     if (anchor.kind === 'otio') {
+      const entryKey = comment.entry ?? '';
+      let documents = documentsByEntry.get(entryKey);
+      if (documents === undefined) {
+        documents = new Map<number, Promise<OtioParse>>();
+        documentsByEntry.set(entryKey, documents);
+      }
       updatedComments.push(
         await resolveOtioComment(comment, anchor, loadRevision, documents)
       );
