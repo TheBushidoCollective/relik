@@ -14,8 +14,10 @@
  *    key.
  */
 
+import { button, ICONS, icon, toast, WORDMARK } from './chrome.ts';
 import { transpileJsx } from './jsx.ts';
 import { highlightCode, renderMarkdown } from './markdown.ts';
+import { mountPublish } from './publish-view.ts';
 import {
   type DeadView,
   formatBytes,
@@ -29,63 +31,12 @@ const SERVICE_ORIGIN =
   typeof window === 'undefined' ? '' : window.location.origin;
 
 /**
- * The wordmark in the accession band.
- *
- * The recipient is deciding whether to trust an unfamiliar domain, so the
- * wordmark is the domain itself rather than a product name they have no way to
- * connect to the address bar. It is a brand fact and belongs in code: deriving
- * it from the serving origin would print whatever host the deployment happens
- * to answer on.
- */
-const WORDMARK = 'relik.link';
-
-/**
  * The marker beside the actions, in one place.
  *
  * It is the visible label, the accessible name, and the stem of the tooltip,
  * and it was three separate strings until two of them disagreed.
  */
 const MARKER_LABEL = 'Runs author code, isolated';
-
-const ICONS = {
-  copy: 'M5 2h7a1 1 0 0 1 1 1v8h-1V3H5V2zM3 4h7a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zm0 1v8h7V5H3z',
-  download:
-    'M7.5 1h1v7.3l2.6-2.6.7.7L8 10.2 4.2 6.4l.7-.7 2.6 2.6V1zM2 12h12v1H2v-1z',
-  source:
-    'M5.7 3.3 2 7l3.7 3.7.7-.7L3.4 7l3-3-.7-.7zm4.6 0-.7.7 3 3-3 3 .7.7L14 7l-3.7-3.7z',
-  rendered: 'M2 3h12v1H2V3zm0 3h12v1H2V6zm0 3h8v1H2V9zm0 3h10v1H2v-1z',
-  flag: 'M3 1h1v14H3V1zm2 1h8l-2 3 2 3H5V2z',
-} as const;
-
-function icon(path: string): SVGSVGElement {
-  // Inline SVG rather than an emoji or a webfont: the CSP blocks external
-  // anything, and an emoji is not an icon system.
-  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  svg.setAttribute('viewBox', '0 0 16 16');
-  svg.setAttribute('aria-hidden', 'true');
-  svg.setAttribute('focusable', 'false');
-  svg.classList.add('icon');
-  const node = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-  node.setAttribute('d', path);
-  svg.appendChild(node);
-  return svg;
-}
-
-function button(
-  label: string,
-  iconPath: string,
-  onClick: () => void
-): HTMLButtonElement {
-  const element = document.createElement('button');
-  element.type = 'button';
-  element.className = 'action';
-  element.appendChild(icon(iconPath));
-  const text = document.createElement('span');
-  text.textContent = label;
-  element.appendChild(text);
-  element.addEventListener('click', onClick);
-  return element;
-}
 
 /**
  * The filename is untrusted and is used here as a lookup key, which is the
@@ -123,16 +74,6 @@ export function sniffImageType(content: Uint8Array): string {
 
 function decodeText(content: Uint8Array): string {
   return new TextDecoder('utf-8', { fatal: false }).decode(content);
-}
-
-function toast(message: string): void {
-  document.querySelector('.toast')?.remove();
-  const element = document.createElement('div');
-  element.className = 'toast';
-  element.setAttribute('role', 'status');
-  element.textContent = message;
-  document.body.appendChild(element);
-  window.setTimeout(() => element.remove(), 4000);
 }
 
 /**
@@ -723,9 +664,16 @@ export function makeBrowserDeps(): ViewerDeps {
 
 async function main(): Promise<void> {
   const root = document.getElementById('relic-root');
-  const relicId = root?.dataset['relicId'] ?? '';
   const usercontentOrigin = root?.dataset['usercontentOrigin'] ?? '';
 
+  // The root path has no relic in it. The server marks that shell so this
+  // page offers publishing instead of trying to open an id called "Relic".
+  if (root?.dataset['mode'] === 'publish') {
+    mountPublish(document.body);
+    return;
+  }
+
+  const relicId = root?.dataset['relicId'] ?? '';
   const state = await load(relicId, makeBrowserDeps());
 
   if (state.kind === 'ready')

@@ -27,6 +27,11 @@ against the Relic operator. It does not hold against your model provider or
 whoever stores your transcripts, and that is structural rather than a defect
 on a schedule.
 
+Publishing from the web page at `/` is the other door. The page encrypts your
+file in the browser with JavaScript this service serves, so the caveat above
+applies at publish time as well as at open time. The key never enters a model
+transcript on that path, because no model is involved.
+
 Rendered content is not inert. A relic that renders as HTML or JSX runs its
 author's code in a sandboxed frame whose policy permits no remote source, so
 the code cannot reach the network or contact its author, and a page that
@@ -47,7 +52,7 @@ that statement being readable before anybody publishes.
 | `@relic/format` | The wire format. RFC 8188 `aes128gcm` framing around an envelope that lives inside the encrypted stream. Imported by both ends so the encryptor and the decryptor cannot drift apart. |
 | `@relic/server` | The app server. Grants, mints, the abuse surface, delete-by-id, and the published disclosure. Never handles relic bytes on either leg. |
 | `relic-mcp` | The local MCP server, published to npm. Holds the key, encrypts in process, returns no script, and persists the key and publish token that republish needs. |
-| `@relic/viewer` | The PWA. Decrypts in the browser and renders by type under a taskbar. |
+| `@relic/viewer` | The PWA. Decrypts in the browser and renders by type under a taskbar. The front page is also a publisher: drop a file and the page encrypts and uploads it. |
 
 ## Running it
 

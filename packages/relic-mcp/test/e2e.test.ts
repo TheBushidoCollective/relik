@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   encodeKey,
+  guessMimetype,
   openRelic,
   parseFragment,
   parseRelicId,
@@ -19,7 +20,6 @@ import { MemoryStorage } from '@relic/server/src/storage.ts';
 import { MemoryStore } from '@relic/server/src/store.ts';
 import {
   type FileReader,
-  guessMimetype,
   type PublishDeps,
   PublishError,
   publish,

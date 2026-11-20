@@ -46,15 +46,17 @@ resource "google_storage_bucket" "relics" {
     retention_duration_seconds = var.soft_delete_retention_days * 86400
   }
 
-  # The viewer's download leg is a cross-origin fetch from the service origin
-  # straight to GCS. Content-Range has to be exposed or the browser cannot see
-  # range responses, which is what progressive decryption runs on.
+  # Both legs are cross-origin fetches from the service origin straight to
+  # GCS. Download first: Content-Range has to be exposed or the browser
+  # cannot see range responses, which is what progressive decryption runs on.
   #
-  # The upload leg needs nothing here: it runs from the publisher's machine,
-  # not a browser, so there is no preflight.
+  # The upload leg is the front page's drop zone. The local MCP client has no
+  # origin and never preflights, but a browser PUT does, so PUT is allowed
+  # here. The page sets no request headers: the grant signs Content-Length,
+  # which the browser derives from the body, so nothing else needs listing.
   cors {
     origin          = [var.service_url]
-    method          = ["GET", "HEAD"]
+    method          = ["GET", "HEAD", "PUT"]
     response_header = ["Content-Type", "Content-Length", "Content-Range", "ETag", "x-goog-hash"]
     max_age_seconds = 3600
   }

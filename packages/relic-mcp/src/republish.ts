@@ -14,11 +14,11 @@ import {
   decodeKey,
   deriveRendererClass,
   encryptRelic,
+  guessMimetype,
   isValidRelicId,
   type RendererClass,
 } from '@relic/format';
 import {
-  guessMimetype,
   type PublishDeps,
   PublishError,
   postJson,

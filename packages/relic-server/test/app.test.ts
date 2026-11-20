@@ -191,6 +191,16 @@ describe('the shell', () => {
       .then((r) => r.headers.get('content-security-policy'));
     expect(csp).toContain("manifest-src 'self'");
   });
+
+  test('the root serves the publish page, and no relic path does', async () => {
+    const root = await app.fetch(req('/')).then((r) => r.text());
+    expect(root).toContain('data-mode="publish"');
+
+    const { id } = await publish();
+    const relic = await app.fetch(req(`/${id}`)).then((r) => r.text());
+    expect(relic).not.toContain('data-mode');
+    expect(relic).toContain(`data-relic-id="${id}"`);
+  });
 });
 
 describe('reserved segments beat ids at the router', () => {

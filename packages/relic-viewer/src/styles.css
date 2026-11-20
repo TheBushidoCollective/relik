@@ -542,3 +542,149 @@ body {
     }
   }
 }
+
+/* ---------- publishing ---------- */
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.publish {
+  max-width: 40rem;
+  margin: 1.5rem auto 0;
+}
+
+.publish .notice {
+  margin: 0 0 1.25rem;
+  max-width: none;
+}
+
+.drop {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.4rem;
+  padding: 3rem 1.75rem;
+  background: var(--surface);
+  border: 1px dashed var(--rule-strong);
+  cursor: pointer;
+}
+
+.drop:hover,
+.drop.over {
+  border-color: var(--patina);
+  background: color-mix(in srgb, var(--patina) 7%, var(--surface));
+}
+
+.drop.over {
+  border-style: solid;
+}
+
+.drop:focus-visible {
+  outline: 2px solid var(--patina);
+  outline-offset: 2px;
+}
+
+.drop-icon {
+  width: 28px;
+  height: 28px;
+  fill: var(--patina);
+}
+
+.drop-title {
+  margin: 0.4rem 0 0;
+  font-family: var(--serif);
+  font-size: 1.6rem;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.drop-note {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--ink-soft);
+}
+
+.terms {
+  list-style: none;
+  margin: 2rem 0 0;
+  padding: 0;
+}
+
+.term {
+  padding: 0.7rem 0;
+  border-top: 1px solid var(--rule);
+  font-size: 0.86rem;
+  color: var(--ink-soft);
+}
+
+.publish .card {
+  max-width: none;
+  margin: 0;
+}
+
+.meter {
+  display: block;
+  width: 100%;
+  height: 0.5rem;
+  margin-top: 1.25rem;
+  accent-color: var(--patina);
+}
+
+.link-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  margin-top: 1.25rem;
+  border: 1px solid var(--rule-strong);
+}
+
+.link-field {
+  flex: 1 1 14rem;
+  min-width: 0;
+  padding: 0.65rem 0.75rem;
+  border: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 0.78rem;
+}
+
+.link-row .action,
+.link-row .action.primary {
+  align-self: stretch;
+  padding: 0.55rem 0.9rem;
+  border: 0;
+  border-left: 1px solid var(--rule-strong);
+}
+
+/* These two carry the page's only actions, so their labels stay at every
+   width instead of collapsing to an icon like the bar's. */
+.link-row .action span,
+.publish .card > .action span {
+  display: inline;
+}
+
+.publish .card > .action {
+  margin-top: 1.25rem;
+  padding: 0.5rem 0.9rem;
+  border: 1px solid var(--rule);
+}
+
+.publish .card .accession {
+  margin-top: 1.25rem;
+}
+
+.link-field {
+  resize: none;
+  word-break: break-all;
+  line-height: 1.45;
+}

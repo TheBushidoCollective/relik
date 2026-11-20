@@ -78,7 +78,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
     const ip = clientIp(request);
     const now = clock();
 
-    if (segments.length === 0) return shell(config, 'Relic');
+    if (segments.length === 0) return shell(config, '', 'publish');
 
     // Reserved segments win at the router, before anything is read as an ID.
     if (head !== undefined && RESERVED.has(head)) {
@@ -1230,7 +1230,7 @@ function relicExpiryIso(epochMillis: number | undefined): string | null {
   return epochMillis === undefined ? null : iso(epochMillis);
 }
 
-function shell(config: RelicConfig, title: string): Response {
+function shell(config: RelicConfig, title: string, mode?: 'publish'): Response {
   // A static shell. No mint happens here, which is what keeps non-executing
   // link fetchers off the open counter and the download cap.
   const body = `<!doctype html>
@@ -1243,7 +1243,7 @@ function shell(config: RelicConfig, title: string): Response {
 <link rel="stylesheet" href="/assets/styles.css">
 <div id="relic-root" data-relic-id="${escapeHtml(title)}" data-usercontent-origin="${escapeHtml(
     new URL(config.usercontentOrigin).origin
-  )}"></div>
+  )}"${mode === undefined ? '' : ` data-mode="${mode}"`}></div>
 <script type="module" src="/assets/viewer.js"></script>
 <script type="module" src="/assets/register-sw.js"></script>
 `;
@@ -1580,11 +1580,25 @@ context and your session transcript on every publish.** Zero-knowledge holds
 against us. It does not hold against your model provider or whoever stores
 your transcripts. This is structural, not a defect we plan to fix.
 
+## Publishing from the web page
+
+The front page can encrypt and upload a file you drop on it. The key is drawn
+and the file encrypted by JavaScript in your browser, and the link it hands
+back is the only place the key exists: the page does not store it, and we
+cannot recover it. Nothing sent to us carries the key or the filename; the
+coarse class and the publishing tool's name are reported, as above. The key
+does not enter a model transcript on this path.
+
+A relic published this way cannot be updated later, because the credential
+that allows an update is not kept in your browser. Publishing again makes a
+new link.
+
 ## The JavaScript caveat
 
-The code that decrypts your relic in the browser is served by us, the same
-party this promise is made against, and we could serve different code
-tomorrow. This is a statement about our intent, not a property you can verify.
+The code that decrypts a relic in your browser, and the code that encrypts a
+file you publish from the web page, is served by us, the same party this
+promise is made against, and we could serve different code tomorrow. This is
+a statement about our intent, not a property you can verify.
 Anyone claiming otherwise about a service of this shape is overclaiming.
 
 ## What rendered content can do
