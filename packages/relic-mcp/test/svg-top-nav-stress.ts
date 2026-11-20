@@ -1570,14 +1570,14 @@ function gestureVariant(): string {
 
 // The gesture relic, plus claims to set and to clear the reader's choice, posted on
 // load. The host must ignore every one of them. The mark says they were sent.
-function forgeSvg(): string {
+function forgeSvg(relicId = 'forged'): string {
   const claims = `(() => {
-    const claims = [
-      { type: 'relic:remember-confirm', kind: 'link', relicId: 'forged', version: 1, remember: true },
-      { type: 'relic:forget-confirm', kind: 'link', relicId: 'forged', version: 1 },
-      { type: 'relic:confirm-pref', kind: 'link', relicId: 'forged', version: 1, value: true },
-      { type: 'relic:confirm-pref', kind: 'link', relicId: 'forged', version: 1, value: false },
-    ];
+    const claims = ['link', 'large-open', 'delete-comment'].flatMap((kind) => [
+      { type: 'relic:remember-confirm', kind, relicId: ${JSON.stringify(relicId)}, version: 2, remember: true },
+      { type: 'relic:forget-confirm', kind, relicId: ${JSON.stringify(relicId)}, version: 2 },
+      { type: 'relic:confirm-pref', kind, relicId: ${JSON.stringify(relicId)}, version: 2, value: true },
+      { type: 'relic:confirm-pref', kind, relicId: ${JSON.stringify(relicId)}, version: 2, value: false },
+    ]);
     for (const claim of claims) window.parent.postMessage(claim, '*');
     window.parent.postMessage({ kind: 'top-nav-forge-sent', type: 'forge', count: claims.length }, '*');
   })();`;
@@ -1710,8 +1710,14 @@ async function runF1(
         const shown = await gestureBar(browser, first);
         const popups = await popupsSince(browser, before, 1500);
         const stored = await storedLinkPrefs(browser, first);
-        setOk = sent && shown && popups === 0 && stored === 0;
-        detail = `set claims: sent=${sent} bar=${shown} popups=${popups} stored=${stored}; `;
+        const allStored = await pageRead(
+          browser,
+          first,
+          `JSON.parse(localStorage.getItem(${JSON.stringify(PREFS_KEY)}) || '[]').length`
+        );
+        setOk =
+          sent && shown && popups === 0 && stored === 0 && allStored === 0;
+        detail = `set claims: sent=${sent} bar=${shown} popups=${popups} all-stored=${allStored}; `;
       } finally {
         await browser.closePage(first);
       }
@@ -1722,6 +1728,12 @@ async function runF1(
         await attackReady(browser, remembered, 'top-nav-forge-sent');
         await attackReady(browser, remembered, 'top-nav-attempt');
         rememberedRun = await rememberAndOpen(browser, remembered);
+        // Fixture setup for clear attacks: the browser already owns the link choice.
+        await pageRead(
+          browser,
+          remembered,
+          `(() => { const key = ${JSON.stringify(PREFS_KEY)}; const entries = JSON.parse(localStorage.getItem(key) || '[]'); entries.push({kind:'large-open',relicId:${JSON.stringify(relics.forge.id)},version:2},{kind:'delete-comment',relicId:${JSON.stringify(relics.forge.id)}}); localStorage.setItem(key, JSON.stringify(entries)); return true; })()`
+        );
       } finally {
         await browser.closePage(remembered);
       }
@@ -1740,12 +1752,24 @@ async function runF1(
         );
         const popups = await popupsSince(browser, before, 1500);
         const state = await barOf(browser, last);
+        const preserved = await pageRead(
+          browser,
+          last,
+          `JSON.stringify(JSON.parse(localStorage.getItem(${JSON.stringify(PREFS_KEY)}) || '[]').filter(x => x.relicId === ${JSON.stringify(relics.forge.id)}).map(x => x.kind).sort())`
+        );
+        const badge = await pageRead(
+          browser,
+          last,
+          "document.querySelector('.skipped-bar-action .skipped-count')?.textContent"
+        );
         clearOk =
           rememberedRun.ticked &&
           rememberedRun.popups === 1 &&
           popups === 1 &&
-          state?.pending !== true;
-        detail += `clear claims after a remembered choice: popups=${popups} pending=${state?.pending ?? 'no-bar'} remembered-row=${state?.remembered ?? 'no-bar'} under=${under} active=${String(active)}`;
+          state?.pending !== true &&
+          preserved === '["delete-comment","large-open","link"]' &&
+          badge === '3';
+        detail += `clear claims: preserved=${String(preserved)} badge=${String(badge)} popups=${popups} pending=${state?.pending ?? 'no-bar'} remembered-row=${state?.remembered ?? 'no-bar'} under=${under} active=${String(active)}`;
       } finally {
         await browser.closePage(last);
       }
@@ -1796,6 +1820,7 @@ async function main(): Promise<void> {
     ),
     forge: await publishSvg('f1-forge.svg', forgeSvg()),
   };
+  await republish(f1.forge, forgeSvg(f1.forge.id));
   let f1Failed = 0;
   const outcomes: Outcome[] = [];
   let topEscape: Outcome | undefined;

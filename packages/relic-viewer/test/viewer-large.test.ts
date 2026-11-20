@@ -63,6 +63,7 @@ function fixture(
   let bodyFetches = 0;
   let cancelled = false;
   let confirmed = 0;
+  let confirmationMeta: unknown;
   let confirmation:
     | {
         size: number;
@@ -76,6 +77,7 @@ function fixture(
     takeFragment: () => fragment,
     keyVault: { remember() {}, recall: () => undefined, forget() {} },
     onLargeOpen: async (size, metadata) => {
+      confirmationMeta = metadata;
       confirmed++;
       confirmation = {
         size,
@@ -127,6 +129,9 @@ function fixture(
     get confirmed() {
       return confirmed;
     },
+    get confirmationMeta() {
+      return confirmationMeta;
+    },
     get confirmation() {
       return confirmation;
     },
@@ -145,6 +150,7 @@ describe('large file opening', () => {
     expect(f.cancelled).toBe(true);
     expect(f.bodyFetches).toBe(1);
     expect(f.confirmed).toBe(1);
+    expect(f.confirmationMeta).toMatchObject({ relicId: f.id, version: 1 });
     expect(f.confirmation).toEqual({
       size: length,
       filename: 'large.txt',
@@ -285,6 +291,7 @@ describe('large file opening', () => {
       'large_open_cancelled'
     );
     expect(f.confirmed).toBe(1);
+    expect(f.confirmationMeta).toMatchObject({ relicId: f.id, version: 2 });
     expect(f.bodyFetches).toBe(1);
   });
 

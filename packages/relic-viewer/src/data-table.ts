@@ -19,16 +19,13 @@
 
 import type { CellCommentAnchor, CommentAnchor } from '@relic/format';
 import {
-  cellText,
-  delimiterName,
   isNumericText,
-  numericValue,
   TABLE_COLUMN_LIMIT,
   TABLE_DRAWN_COLUMN_LIMIT,
-  type CsvTable,
 } from '@relic/format/csv';
 import { isInvisible } from '@relic/format/structured-text';
 import type { StructuredPart } from './structured-view-bridge.ts';
+import type { TableSource } from './table-source.ts';
 import { LABEL_DISPLAY_LIMIT } from './visible-label.ts';
 import {
   anchorCoversCell,
@@ -52,7 +49,7 @@ const STYLESHEET_HREF = '/assets/data-table.css';
 
 /** A table model. An absent order stays absent, so file order is the default. */
 function modelOf(
-  table: CsvTable,
+  table: TableSource,
   headerRow: boolean,
   order: Uint32Array | undefined
 ): TableModel {
@@ -149,15 +146,15 @@ export interface SelectionRect {
  * A column with no values at all is not numeric, so it sorts as text.
  */
 export function isNumericColumn(
-  table: CsvTable,
+  table: TableSource,
   column: number,
   headerRow: boolean
 ): boolean {
   let seen = false;
   for (let record = headerRow ? 1 : 0; record < table.records; record++) {
-    const value = cellText(table, record, column);
+    const value = table.text(record, column);
     if (value === '') continue;
-    if (!isNumericText(value)) return false;
+    if (table.numeric(record, column) === undefined) return false;
     seen = true;
   }
   return seen;
@@ -169,7 +166,7 @@ export function isNumericColumn(
  * directions. A tie keeps file order, because the sort is stable.
  */
 export function sortOrder(
-  table: CsvTable,
+  table: TableSource,
   headerRow: boolean,
   sort: SortState
 ): Uint32Array {
@@ -179,9 +176,10 @@ export function sortOrder(
   const texts: string[] = new Array<string>(count);
   const numbers = new Float64Array(count);
   for (let i = 0; i < count; i++) {
-    const text = cellText(table, first + i, sort.column);
+    const text = table.text(first + i, sort.column);
     texts[i] = text;
-    numbers[i] = numeric && text !== '' ? numericValue(text) : 0;
+    numbers[i] =
+      numeric && text !== '' ? table.numeric(first + i, sort.column)! : 0;
   }
   const collator = new Intl.Collator(undefined, {
     numeric: true,
@@ -205,7 +203,7 @@ export function sortOrder(
 }
 
 /** Columns drawn: the first `TABLE_DRAWN_COLUMN_LIMIT` of the table. */
-export function drawnColumnCount(table: CsvTable): number {
+export function drawnColumnCount(table: TableSource): number {
   return Math.min(table.columns, TABLE_DRAWN_COLUMN_LIMIT);
 }
 
@@ -213,13 +211,13 @@ export function drawnColumnCount(table: CsvTable): number {
  * Pixel widths for the drawn columns, from the longest of the first records. A
  * width is never narrower than a header or wider than a screen column.
  */
-export function columnWidths(table: CsvTable, drawn: number): number[] {
+export function columnWidths(table: TableSource, drawn: number): number[] {
   const widths: number[] = [];
   const sample = Math.min(table.records, SAMPLE_RECORDS);
   for (let column = 0; column < drawn; column++) {
     let longest = 0;
     for (let record = 0; record < sample; record++) {
-      longest = Math.max(longest, cellText(table, record, column).length);
+      longest = Math.max(longest, table.text(record, column).length);
     }
     const width = Math.round(Math.min(longest, 40) * 7.4) + 24;
     widths.push(Math.min(MAX_COLUMN_WIDTH, Math.max(MIN_COLUMN_WIDTH, width)));
@@ -241,10 +239,14 @@ export function selectionRect(selection: Selection): SelectionRect {
  * The cell comment anchor for a rectangle, in A1 coordinates. A single cell
  * carries no end, which the contract reads as the same cell.
  */
-export function anchorForRect(rect: SelectionRect): CellCommentAnchor {
+export function anchorForRect(
+  rect: SelectionRect,
+  sheet?: string
+): CellCommentAnchor {
   const single = rect.r0 === rect.r1 && rect.c0 === rect.c1;
   return {
     kind: 'cell',
+    ...(sheet === undefined ? {} : { sheet }),
     row: rect.r0 + 1,
     col: rect.c0 + 1,
     ...(single ? {} : { row_end: rect.r1 + 1, col_end: rect.c1 + 1 }),
@@ -253,15 +255,16 @@ export function anchorForRect(rect: SelectionRect): CellCommentAnchor {
 
 /**
  * Whether a cell anchor lies inside a table with `records` records and `drawn`
- * drawn columns. A table has no sheets, so an anchor that names one never fits.
+ * drawn columns, on the same sheet as the source.
  * A cell past the drawn columns is refused, because it could not be shown.
  */
 export function markFits(
   anchor: CellCommentAnchor,
   records: number,
-  drawn: number
+  drawn: number,
+  sheet?: string
 ): boolean {
-  if (anchor.sheet !== undefined) return false;
+  if (anchor.sheet !== sheet) return false;
   const rowEnd = anchor.row_end ?? anchor.row;
   const colEnd = anchor.col_end ?? anchor.col;
   return (
@@ -279,7 +282,7 @@ export function markFits(
  * drawn columns are searched, so every hit can be shown.
  */
 export function findCells(
-  table: CsvTable,
+  table: TableSource,
   model: TableModel,
   drawn: number,
   query: string
@@ -290,7 +293,7 @@ export function findCells(
   for (let display = 0; display < model.records; display++) {
     const record = recordAt(model, display);
     for (let column = 0; column < drawn; column++) {
-      if (cellText(table, record, column).toLowerCase().includes(needle)) {
+      if (table.text(record, column).toLowerCase().includes(needle)) {
         hits.push({ record, column });
         if (hits.length >= FIND_LIMIT) return hits;
       }
@@ -300,12 +303,18 @@ export function findCells(
 }
 
 /** The text a copy puts on the clipboard for a rectangle: tabs between cells, newlines between rows. */
-export function rectText(table: CsvTable, rect: SelectionRect): string {
+export function rectText(table: TableSource, rect: SelectionRect): string {
   const rows: string[] = [];
+  const range = rect.r0 !== rect.r1 || rect.c0 !== rect.c1;
   for (let record = rect.r0; record <= rect.r1; record++) {
     const cells: string[] = [];
     for (let column = rect.c0; column <= rect.c1; column++) {
-      cells.push(cellText(table, record, column));
+      const text = table.text(record, column);
+      cells.push(
+        range && /^[=+\-@]/.test(text) && !isNumericText(text)
+          ? `'${text}`
+          : text
+      );
     }
     rows.push(cells.join('\t'));
   }
@@ -439,7 +448,7 @@ export function ensureDataTableStyles(): void {
  */
 export function mountDataTable(
   root: HTMLElement,
-  table: CsvTable,
+  table: TableSource,
   options: { readonly filename: string }
 ): StructuredPart {
   ensureDataTableStyles();
@@ -489,7 +498,7 @@ export function mountDataTable(
     'dt-summary',
     `${formatter.format(table.records - (headerRow ? 1 : 0))} rows · ` +
       `${formatter.format(table.columns)} columns · ` +
-      delimiterName(table.delimiter)
+      table.summary
   );
   summary.setAttribute('aria-live', 'polite');
   const headerToggle = element('label', 'dt-toggle');
@@ -633,10 +642,7 @@ export function mountDataTable(
     const key = keyOf(record, column);
     const classes = ['dt-cell'];
     if (role === 'head') classes.push('dt-hcell');
-    if (
-      numericColumn(column) &&
-      isNumericText(cellText(table, record, column))
-    ) {
+    if (numericColumn(column) && table.numeric(record, column) !== undefined) {
       classes.push('is-num');
     }
     if (cover.count > 0) classes.push('is-marked');
@@ -679,7 +685,7 @@ export function mountDataTable(
     const cell = element('div');
     cell.setAttribute('role', role === 'head' ? 'columnheader' : 'gridcell');
     cell.setAttribute('aria-colindex', String(column + 2));
-    const value = cellText(table, record, column);
+    const value = table.text(record, column);
     if (role === 'head') {
       const letter = element('span', 'dt-letter', columnLetters(column + 1));
       const name = element(
@@ -809,8 +815,8 @@ export function mountDataTable(
       const addressEl = element('p', 'dt-addr', address);
       cells.push(addressEl);
       if (single) {
-        const value = cellText(table, rect.r0, rect.c0);
-        const columnName = headerRow ? cellText(table, 0, rect.c0) : '';
+        const value = table.text(rect.r0, rect.c0);
+        const columnName = headerRow ? table.text(0, rect.c0) : '';
         cells.push(
           element(
             'p',
@@ -880,7 +886,7 @@ export function mountDataTable(
     summary.textContent =
       `${formatter.format(table.records - (headerRow ? 1 : 0))} rows · ` +
       `${formatter.format(table.columns)} columns · ` +
-      delimiterName(table.delimiter);
+      table.summary;
     update(false);
   };
 
@@ -1022,7 +1028,10 @@ export function mountDataTable(
         new CustomEvent('relic:structured-comment', {
           bubbles: true,
           detail: {
-            anchor: anchorForRect({ r0: 0, r1: 0, c0: column, c1: column }),
+            anchor: anchorForRect(
+              { r0: 0, r1: 0, c0: column, c1: column },
+              table.sheet
+            ),
           },
         })
       );
@@ -1160,7 +1169,7 @@ export function mountDataTable(
   return {
     paintMark(anchor: CommentAnchor, commentId: string): boolean {
       if (anchor.kind !== 'cell') return false;
-      if (!markFits(anchor, table.records, drawn)) return false;
+      if (!markFits(anchor, table.records, drawn, table.sheet)) return false;
       const replaced = marks.put(commentId, anchor);
       repaintCovered(replaced, anchor);
       return true;
@@ -1176,10 +1185,13 @@ export function mountDataTable(
       if (live === null || live.isCollapsed || live.anchorNode === null)
         return undefined;
       if (!root.contains(live.anchorNode)) return undefined;
-      return anchorForRect(selectionRect(selection));
+      return anchorForRect(selectionRect(selection), table.sheet);
     },
     reveal(anchor: CommentAnchor): void {
-      if (anchor.kind !== 'cell' || !markFits(anchor, table.records, drawn))
+      if (
+        anchor.kind !== 'cell' ||
+        !markFits(anchor, table.records, drawn, table.sheet)
+      )
         return;
       const top = anchor.row - 1;
       const left = anchor.col - 1;

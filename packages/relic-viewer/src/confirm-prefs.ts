@@ -152,6 +152,8 @@ export interface ConfirmPrefs {
   forget(pref: ConfirmPref): void;
   /** Clears every choice for one relic. */
   clearRelic(relicId: string): void;
+  /** Observe changes made through this shared store. */
+  subscribe(listener: () => void): () => void;
 }
 
 function canWrite(storage: Storage): boolean {
@@ -182,13 +184,16 @@ export function createConfirmPrefs(storage: Storage | undefined): ConfirmPrefs {
   let persistent = writable;
   let entries: ConfirmPref[] =
     storage !== undefined && writable ? readStored(storage) : [];
+  const listeners = new Set<() => void>();
 
   const save = (): void => {
-    if (!persistent || storage === undefined) return;
     try {
-      storage.setItem(CONFIRM_PREFS_KEY, JSON.stringify(entries));
+      if (persistent && storage !== undefined)
+        storage.setItem(CONFIRM_PREFS_KEY, JSON.stringify(entries));
     } catch {
       persistent = false;
+    } finally {
+      for (const listener of listeners) listener();
     }
   };
 
@@ -225,6 +230,12 @@ export function createConfirmPrefs(storage: Storage | undefined): ConfirmPrefs {
     clearRelic(relicId) {
       entries = entries.filter((entry) => entry.relicId !== relicId);
       save();
+    },
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
     },
   };
 }

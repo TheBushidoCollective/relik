@@ -153,6 +153,12 @@ class ElementStub {
     this.children.push(child);
     return child;
   }
+  insertBefore(child: ElementStub, reference: ElementStub | null): ElementStub {
+    child.parent = this;
+    const index = reference ? this.children.indexOf(reference) : -1;
+    this.children.splice(index < 0 ? this.children.length : index, 0, child);
+    return child;
+  }
 
   append(...kids: Array<ElementStub | string>): void {
     for (const k of kids) {

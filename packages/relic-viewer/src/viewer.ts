@@ -270,7 +270,12 @@ export interface ViewerDeps {
   /** Called only after record zero authenticates the exact plaintext length. */
   readonly onLargeOpen?: (
     size: number,
-    metadata?: { readonly filename: string; readonly mimetype: string }
+    metadata?: {
+      readonly filename: string;
+      readonly mimetype: string;
+      readonly relicId: string;
+      readonly version: number;
+    }
   ) => Promise<boolean>;
   /** The WebAuthn seam. Defaults to `navigator.credentials` when absent. */
   readonly credentials?: CredentialsLike;
@@ -368,6 +373,8 @@ async function confirmLargeOpen(
     !(await deps.onLargeOpen(entry.length, {
       filename: entry.filename,
       mimetype: entry.mimetype,
+      relicId,
+      version: signed.version,
     }))
   ) {
     throw new LargeOpenCancelled();

@@ -10,6 +10,7 @@ import {
   type TableParseFailure,
 } from '@relic/format/csv';
 import { mountDataTable } from './data-table.ts';
+import { csvTableSource } from './table-source.ts';
 import type {
   StructuredMount,
   StructuredPart,
@@ -45,5 +46,7 @@ export function mountView(mount: StructuredMount): StructuredPart | undefined {
     mount.reportUnshown(unreadableTableNotice(parsed));
     return undefined;
   }
-  return mountDataTable(mount.root, parsed.table, { filename: mount.filename });
+  return mountDataTable(mount.root, csvTableSource(parsed.table), {
+    filename: mount.filename,
+  });
 }
