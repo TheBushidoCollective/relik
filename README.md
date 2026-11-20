@@ -50,10 +50,12 @@ about network reach, not safety: the code runs in your browser, can use your
 CPU, and can render whatever it wants. The viewer says so on the page before the
 content renders, and so does `/policy`.
 
-The viewer renders Markdown, code, HTML, JSX, still images, PDFs, and 3D
-geometry from STL and OBJ files. It also plays audio, video, and
-OpenTimelineIO timelines (`.otiod` directories packaged as `.otioz`, or
-`.otioz` archives). OBJ materials and external resources are not loaded.
+The viewer renders Markdown, code, text, images including SVG, PDFs, and 3D
+geometry from STL and OBJ files. CSV and TSV open as sortable tables, JSON as
+a collapsible tree, SRT and VTT as cue lists, and Jupyter notebooks with their
+outputs. It also plays audio, video, and OpenTimelineIO timelines (`.otiod`
+directories packaged as `.otioz`, or `.otioz` archives). HTML and JSX render
+in a sandboxed frame. OBJ materials and external resources are not loaded.
 General archives and other binaries remain download-only. Unencrypted
 first-screen previews are skipped for models and OpenTimelineIO timelines.
 
