@@ -41,6 +41,12 @@ import type {
 import { keyToMnemonic } from '@relic/format/mnemonic';
 import { uploadCover } from './cover/upload.ts';
 import { bundleOtiod } from './otio-bundle.ts';
+import {
+  folderDefaultBytes,
+  folderReport,
+  prepareFolderPublish,
+} from './folder-publish-source.ts';
+import { encryptPreparedFolder, FolderContentError } from './folder-content.ts';
 import type { ProgramPolicy } from './program/policy.ts';
 import type { ProgramRenderer } from './program/render.ts';
 import type { ProgramReport } from './program/report.ts';
@@ -73,6 +79,17 @@ export type ClientCode =
   | 'source_not_found'
   | 'source_is_directory'
   | 'source_not_regular_file'
+  | 'folder_empty'
+  | 'all-excluded'
+  | 'path_collision'
+  | 'too_many_files'
+  | 'gitignore_unavailable'
+  | 'file_changed_during_publish'
+  | 'path_escapes_root'
+  | 'folder_publish_unsupported_platform'
+  | 'file_list_too_large'
+  | 'open_first_not_found'
+  | 'folder_stream_size_mismatch'
   | 'source_unreadable'
   | 'source_already_published'
   | 'local_size_precheck_failed'
@@ -221,6 +238,7 @@ export interface FileReader {
 export interface PublishInput {
   readonly path: string;
   readonly filename?: string | undefined;
+  readonly open_first?: string | undefined;
   /**
    * Optional plaintext title shown in link previews and the browser tab.
    * Defaults to the filename. Stored by the service in the clear so unfurlers
@@ -253,6 +271,17 @@ export interface PublishInput {
 }
 
 export interface PublishResult {
+  readonly shape: 'file' | 'folder';
+  readonly folder?:
+    | {
+        readonly file_count: number;
+        readonly total_bytes: number;
+        readonly left_out: readonly {
+          readonly reason: string;
+          readonly count: number;
+        }[];
+      }
+    | undefined;
   readonly url: string;
   readonly relic_id: string;
   /**
@@ -320,6 +349,7 @@ export interface PriorPublish {
   readonly relic_id: string;
   readonly version: number;
   readonly source: SourceIdentity;
+  readonly shape: 'file' | 'folder';
 }
 
 export interface PublishedSourceLookup {
@@ -367,6 +397,7 @@ async function lookupResolvedSource(
             match: {
               relic_id: published.relic_id,
               version: published.version,
+              shape: published.shape,
               source: published.source,
             },
           }),
@@ -412,9 +443,36 @@ export async function publish(
   input: PublishInput,
   deps: PublishDeps
 ): Promise<PublishResult> {
-  const source = await readSource(input.path, deps.files);
-  const sourceLookup = await lookupResolvedSource(source.resolvedPath, deps);
+  const resolved = deps.files.resolve(input.path);
+  const sourceStat = await deps.files.stat(resolved);
+  const isFolder =
+    sourceStat.kind === 'directory' &&
+    !deps.files.basename(resolved).toLowerCase().endsWith('.otiod');
+  const folderSource = isFolder
+    ? await prepareFolderPublish(
+        resolved,
+        deps.files,
+        input.filename,
+        input.title,
+        input.open_first
+      )
+    : undefined;
+  let source: SourceFile = folderSource
+    ? {
+        basename: folderSource.basename,
+        resolvedPath: folderSource.resolvedPath,
+        bytes: new Uint8Array(),
+      }
+    : await readSource(input.path, deps.files);
+  let sourceLookup: PublishedSourceLookup;
+  try {
+    sourceLookup = await lookupResolvedSource(source.resolvedPath, deps);
+  } catch (error) {
+    await folderSource?.close();
+    throw error;
+  }
   if (sourceLookup.match !== undefined && input.force_new !== true) {
+    await folderSource?.close();
     const match = sourceLookup.match;
     const republishCall = republishToolCall(
       match.relic_id,
@@ -437,6 +495,24 @@ export async function publish(
       }
     );
   }
+  const firstFolderKey = folderSource ? generateKey() : undefined;
+  let firstFolderContainer: Uint8Array | undefined;
+  if (folderSource && firstFolderKey) {
+    try {
+      firstFolderContainer = await encryptPreparedFolder(
+        folderSource.folder,
+        folderSource.filename,
+        firstFolderKey
+      );
+      source = { ...source, bytes: await folderDefaultBytes(folderSource) };
+    } catch (error) {
+      if (error instanceof FolderContentError)
+        throw new PublishError(error.code, error.code, error.details);
+      throw error;
+    } finally {
+      await folderSource.close();
+    }
+  }
 
   // 1. Challenge. This returns the cap before a grant is requested, so the
   //    precheck below uses a number that came from the server moments ago
@@ -451,14 +527,16 @@ export async function publish(
   const sizeLimit = challengeSizeLimit(challenge);
   const sizeBasis = String(challenge['size_basis']);
 
-  if (source.bytes.length > sizeLimit) {
+  const declaredSize =
+    folderSource?.folder.contentLength ?? source.bytes.length;
+  if (declaredSize > sizeLimit) {
     throw new PublishError(
       'local_size_precheck_failed',
-      `${source.basename} is ${source.bytes.length} bytes, over the ` +
+      `${source.basename} is ${declaredSize} bytes, over the ` +
         `${sizeLimit}-byte cap`,
       {
         size_limit_bytes: sizeLimit,
-        declared_size_bytes: source.bytes.length,
+        declared_size_bytes: declaredSize,
         size_basis: sizeBasis,
       }
     );
@@ -467,8 +545,11 @@ export async function publish(
   const filename = input.filename ?? source.basename;
   // A display-name override must not hide the source's model extension from
   // the public-cover guard.
-  const coverFilename =
-    modelFormatFromFilename(source.basename) === undefined
+  const coverFilename = folderSource
+    ? folderSource.folder.entries[folderSource.folder.defaultIndex]!.path.split(
+        '/'
+      ).pop()!
+    : modelFormatFromFilename(source.basename) === undefined
       ? filename
       : source.basename;
   const normalizedTitle = normalizeTitle(input.title ?? filename);
@@ -476,14 +557,17 @@ export async function publish(
   // a tool input. Exposing it as a parameter would make the taxonomy
   // model-attested, and the metric's second clause would then have an
   // unreliable narrator reporting its only input.
-  const rendererClass = deriveRendererClass(source.bytes, filename);
+  const coverClass = deriveRendererClass(source.bytes, coverFilename);
+  const rendererClass = folderSource ? ('folder' as RendererClass) : coverClass;
   // What this version's plaintext is, recorded so the next republish from
   // this machine can tell a change from a re-upload of the same thing.
-  const digest = await contentDigest({
-    content: source.bytes,
-    filename,
-    title: normalizedTitle,
-  });
+  const digest =
+    folderSource?.digest ??
+    (await contentDigest({
+      content: source.bytes,
+      filename,
+      title: normalizedTitle,
+    }));
 
   const requested = input.cover !== false;
   let coverOutcome: CoverOutcome;
@@ -493,13 +577,19 @@ export async function publish(
       reason: 'browser_disabled',
       detail: 'declined by publisher',
     };
+  } else if (folderSource && coverClass === 'archive') {
+    coverOutcome = {
+      status: 'skipped',
+      reason: 'no_cover_for_class',
+      detail: 'default_entry_has_no_preview',
+    };
   } else {
     try {
       coverOutcome = await deps.renderCover({
         bytes: source.bytes,
         filename: coverFilename,
-        mimetype: guessMimetype(filename, rendererClass),
-        rendererClass,
+        mimetype: guessMimetype(coverFilename, coverClass),
+        rendererClass: coverClass,
       });
     } catch (error) {
       coverOutcome = {
@@ -513,14 +603,21 @@ export async function publish(
   // The program goes into the archive before encryption, so the grant pins the
   // exact bytes that get encrypted. Whatever cannot be delivered is focus-only,
   // and the result says why; nothing here is skipped silently.
-  const programBuild = await buildProgramArchive({
-    archive: source.bytes,
-    sourceName: source.basename,
-    sizeLimit,
-    policy: deps.programPolicy ?? { forceEncoderAbsent: false },
-    renderer: deps.renderProgram,
-    clientName: deps.clientName,
-  });
+  if (folderSource) source = { ...source, bytes: new Uint8Array() };
+  const programBuild = folderSource
+    ? {
+        parts: [],
+        length: folderSource.folder.contentLength,
+        report: { status: 'not_applicable' as const, timelines: [] },
+      }
+    : await buildProgramArchive({
+        archive: source.bytes,
+        sourceName: source.basename,
+        sizeLimit,
+        policy: deps.programPolicy ?? { forceEncoderAbsent: false },
+        renderer: deps.renderProgram,
+        clientName: deps.clientName,
+      });
   if (programBuild.length > sizeLimit) {
     throw new PublishError(
       'local_size_precheck_failed',
@@ -543,17 +640,19 @@ export async function publish(
     //    derives from the other: deriving the key from the ID would put the
     //    key in the operator's hands, since the operator has every ID.
     const relicId = generateRelicId();
-    const key = generateKey();
+    const key = firstFolderKey ?? generateKey();
 
     // Encrypt before requesting the grant, so the grant can pin the object's
     // exact byte length. A fresh salt is drawn per attempt, so this has to sit
     // inside the retry loop alongside the id and the key.
-    const container = await encryptRelicParts({
-      parts: programBuild.parts,
-      filename,
-      mimetype: guessMimetype(filename, rendererClass),
-      key,
-    });
+    const container = folderSource
+      ? firstFolderContainer!
+      : await encryptRelicParts({
+          parts: programBuild.parts,
+          filename,
+          mimetype: guessMimetype(filename, rendererClass),
+          key,
+        });
 
     let grant: Record<string, unknown>;
     try {
@@ -653,6 +752,7 @@ export async function publish(
         key: encodeKey(key),
         publish_token: publishToken,
         version: 1,
+        shape: folderSource ? 'folder' : 'file',
         source: sourceLookup.source,
         filename,
         content_sha256: digest,
@@ -698,6 +798,7 @@ export async function publish(
             key: encodeKey(key),
             publish_token: publishToken,
             version: 1,
+            shape: folderSource ? 'folder' : 'file',
             source: sourceLookup.source,
             filename,
             content_sha256: digest,
@@ -712,6 +813,8 @@ export async function publish(
     }
 
     return {
+      shape: folderSource ? 'folder' : 'file',
+      ...(folderSource ? { folder: folderReport(folderSource) } : {}),
       url,
       relic_id: relicId,
       version: 1,

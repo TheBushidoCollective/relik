@@ -1,8 +1,11 @@
+import { createHash } from 'node:crypto';
 import { basename } from 'node:path';
 import {
   chooseDefaultEntry,
   deriveRendererClass,
   encodeManifest,
+  encryptFolderStream,
+  encryptedSize,
   guessMimetype,
   MAX_MANIFEST_BYTES,
   PLAINTEXT_CAP_BYTES,
@@ -16,8 +19,10 @@ export class FolderContentError extends Error {
   constructor(
     readonly code:
       | 'file_changed_during_publish'
+      | 'path_escapes_root'
       | 'file_list_too_large'
       | 'local_size_precheck_failed'
+      | 'folder_stream_size_mismatch'
       | 'open_first_not_found',
     readonly details: Readonly<Record<string, unknown>>
   ) {
@@ -47,8 +52,18 @@ export async function prepareFolderContent(
   const entries: PreparedFolderEntry[] = [];
   const renderable: { path: string; renderable: boolean }[] = [];
   let filesTotalBytes = 0;
+  async function openFile(file: FolderFile) {
+    try {
+      return await root.openRegular(file.sourcePath);
+    } catch (cause) {
+      throw new FolderContentError('path_escapes_root', {
+        path: file.path,
+        cause: String(cause),
+      });
+    }
+  }
   for (const file of files) {
-    const held = await root.openRegular(file.sourcePath);
+    const held = await openFile(file);
     try {
       if (held.size !== file.size)
         throw new FolderContentError('file_changed_during_publish', {
@@ -75,7 +90,7 @@ export async function prepareFolderContent(
       size_basis: 'plaintext',
     });
   for (const file of files) {
-    const held = await root.openRegular(file.sourcePath);
+    const held = await openFile(file);
     let sample: Uint8Array;
     try {
       if (held.size !== file.size)
@@ -101,7 +116,7 @@ export async function prepareFolderContent(
       bytes: {
         size: file.size,
         async *chunks() {
-          const opened = await root.openRegular(file.sourcePath);
+          const opened = await openFile(file);
           try {
             if (opened.size !== file.size)
               throw new FolderContentError('file_changed_during_publish', {
@@ -175,4 +190,58 @@ export async function prepareFolderContent(
     filesTotalBytes,
     contentLength,
   };
+}
+
+/** Hash the manifest and file bytes without holding more than one file at once. */
+export async function folderContentDigest(
+  folder: PreparedFolder,
+  filename: string,
+  title: string
+): Promise<string> {
+  const hash = createHash('sha256')
+    .update(`${JSON.stringify([filename, title])}\0`, 'utf8')
+    .update(folder.manifest);
+  for (const entry of folder.entries) {
+    for await (const chunk of entry.bytes.chunks()) hash.update(chunk);
+  }
+  return hash.digest('hex');
+}
+
+/** Collect the encrypted stream into the exact buffer required by the existing uploader. */
+export async function encryptPreparedFolder(
+  folder: PreparedFolder,
+  name: string,
+  key: Uint8Array
+): Promise<Uint8Array> {
+  const length = encryptedSize(folder.contentLength);
+  const output = new Uint8Array(length);
+  const stream = encryptFolderStream({
+    name,
+    key,
+    defaultIndex: folder.defaultIndex,
+    entries: folder.entries,
+  });
+  const reader = stream.getReader();
+  let offset = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value.length > length - offset)
+        throw new FolderContentError('folder_stream_size_mismatch', {
+          expected: length,
+          actual: offset + value.length,
+        });
+      output.set(value, offset);
+      offset += value.length;
+    }
+    if (offset !== length)
+      throw new FolderContentError('folder_stream_size_mismatch', {
+        expected: length,
+        actual: offset,
+      });
+    return output;
+  } finally {
+    reader.releaseLock();
+  }
 }

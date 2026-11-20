@@ -337,13 +337,18 @@ export const TOOL_DEFINITION = {
       path: {
         type: 'string',
         description:
-          'Filesystem path to a file or, on a supported packaged native target, an .otiod bundle directory.',
+          'Filesystem path to a file or directory. Directories follow .gitignore and skip .git, node_modules, and symlinks.',
       },
       filename: {
         type: 'string',
         description:
           'Optional. Overrides the name written into the encrypted envelope ' +
           'header. Defaults to the basename of `path`.',
+      },
+      open_first: {
+        type: 'string',
+        description:
+          'Optional relative path of the folder entry to open first.',
       },
       title: {
         type: 'string',
@@ -395,6 +400,26 @@ export const TOOL_DEFINITION = {
   outputSchema: {
     type: 'object',
     properties: {
+      shape: { enum: ['file', 'folder'] },
+      folder: {
+        type: 'object',
+        properties: {
+          file_count: { type: 'integer' },
+          total_bytes: { type: 'integer' },
+          left_out: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                reason: { type: 'string' },
+                count: { type: 'integer' },
+              },
+              required: ['reason', 'count'],
+            },
+          },
+        },
+        required: ['file_count', 'total_bytes', 'left_out'],
+      },
       url: { type: 'string' },
       relic_id: { type: 'string' },
       version: {
@@ -487,13 +512,18 @@ export const REPUBLISH_TOOL_DEFINITION = {
       path: {
         type: 'string',
         description:
-          'Filesystem path to a file or, on a supported packaged native target, an .otiod bundle directory that becomes the new version.',
+          'Filesystem path to the file or directory that becomes the new version.',
       },
       filename: {
         type: 'string',
         description:
           'Optional. Overrides the name written into the encrypted envelope ' +
           'header of the new version. Defaults to the basename of `path`.',
+      },
+      open_first: {
+        type: 'string',
+        description:
+          'Optional relative path of the folder entry to open first.',
       },
       title: {
         type: 'string',
@@ -564,6 +594,26 @@ export const REPUBLISH_TOOL_DEFINITION = {
   outputSchema: {
     type: 'object',
     properties: {
+      shape: { enum: ['file', 'folder'] },
+      folder: {
+        type: 'object',
+        properties: {
+          file_count: { type: 'integer' },
+          total_bytes: { type: 'integer' },
+          left_out: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                reason: { type: 'string' },
+                count: { type: 'integer' },
+              },
+              required: ['reason', 'count'],
+            },
+          },
+        },
+        required: ['file_count', 'total_bytes', 'left_out'],
+      },
       relic_id: { type: 'string' },
       version: {
         type: 'integer',
@@ -725,6 +775,7 @@ export const LOOKUP_TOOL_DEFINITION = {
       found: { type: 'boolean' },
       relic_id: { type: ['string', 'null'] },
       version: { type: ['integer', 'null'], minimum: 1 },
+      shape: { enum: ['file', 'folder', null] },
       resolved_path: { type: 'string' },
       source_identity: { type: 'string' },
       source_description: { type: 'string' },
@@ -2402,6 +2453,10 @@ async function callTool(
         path,
         filename,
         title,
+        open_first:
+          typeof args['open_first'] === 'string'
+            ? args['open_first']
+            : undefined,
         ttl_days: ttlDays.days,
         force_new: forceNew === true,
         cover,
@@ -2754,6 +2809,7 @@ async function callLookup(
       found: match !== undefined,
       relic_id: match?.relic_id ?? null,
       version: match?.version ?? null,
+      shape: match?.shape ?? null,
       resolved_path: lookup.resolved_path,
       source_identity: lookup.source.identity,
       source_description: lookup.source.description,
@@ -3178,6 +3234,10 @@ async function callRepublish(
         relic_id: relicId,
         path,
         filename,
+        open_first:
+          typeof args['open_first'] === 'string'
+            ? args['open_first']
+            : undefined,
         title,
         ttl_days: ttlDays.days,
         addresses,
