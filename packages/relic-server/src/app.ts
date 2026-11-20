@@ -21,7 +21,7 @@ import { inflateSync } from 'node:zlib';
 import {
   COMMENT_ADDRESSES_LIMIT_BYTES,
   encryptedSize,
-  HOMEPAGE_FORMATS,
+  RELEASED_HOMEPAGE_FORMATS,
   InvalidRelicIdError,
   isHostedService,
   isRendererClass,
@@ -6793,7 +6793,7 @@ claude plugin install relic@relic</code></pre>
       </div>
       <div class="notes">
         <dl class="types">
-          ${HOMEPAGE_FORMATS.map(
+          ${RELEASED_HOMEPAGE_FORMATS.map(
             ({ label, description }) =>
               `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(description)}</dd></div>`
           ).join('\n          ')}

@@ -10,6 +10,7 @@ import {
   generateKey,
   generateRelicId,
   HOMEPAGE_FORMATS,
+  RELEASED_HOMEPAGE_FORMATS,
   PLAINTEXT_CAP_BYTES,
   RENDERER_CLASSES,
   RESERVED_SEGMENTS,
@@ -859,8 +860,23 @@ describe('the landing page', () => {
       body.indexOf('<dl class="types">'),
       body.indexOf('</dl>', body.indexOf('<dl class="types">'))
     );
-    for (const { label, description } of HOMEPAGE_FORMATS) {
+    for (const { label, description } of RELEASED_HOMEPAGE_FORMATS) {
       expect(list).toContain(`<dt>${label}</dt><dd>${description}</dd>`);
+    }
+  });
+
+  test('the landing page does not list a format no reader can receive yet', async () => {
+    const body = await app.fetch(req('/')).then((r) => r.text());
+    const list = body.slice(
+      body.indexOf('<dl class="types">'),
+      body.indexOf('</dl>', body.indexOf('<dl class="types">'))
+    );
+    const pending = HOMEPAGE_FORMATS.filter(
+      (row) => row.availability === 'pending'
+    );
+    expect(pending.length).toBeGreaterThan(0);
+    for (const { label } of pending) {
+      expect(list).not.toContain(label);
     }
   });
 
