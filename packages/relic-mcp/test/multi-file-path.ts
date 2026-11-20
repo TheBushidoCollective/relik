@@ -13,6 +13,7 @@ import {
   VersionMismatchError,
 } from '@relic/format';
 import golden from '../../relic-format/test/folder-golden.json';
+import './multi-file-stages/open-entries.ts';
 
 const key = Uint8Array.from(Buffer.from(golden.key, 'hex'));
 const salt = Uint8Array.from(Buffer.from(golden.salt, 'hex'));

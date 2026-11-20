@@ -279,6 +279,8 @@ import {
   sharedSummary,
   shareRefusal,
 } from './share.ts';
+import { folderEntryList } from './folder-entry-list.ts';
+import { entryView } from './folder-relic.ts';
 import { createLifecycle, healStaleShell } from './stale-shell.ts';
 import { buildCodeTable, buildProse } from './text-views.ts';
 import {
@@ -10558,6 +10560,22 @@ export function renderReady(
     disposeOtioViews(document.body);
     document.body.replaceChildren(
       bar,
+      ...(viewToShow.folder
+        ? [
+            folderEntryList(viewToShow.folder, (index) => {
+              lifecycle.advance();
+              const selection = lifecycle.token();
+              void entryView(viewToShow, index)
+                .then((next) => {
+                  if (lifecycle.isCurrent(selection)) showSingle(next);
+                })
+                .catch(() => {
+                  if (lifecycle.isCurrent(selection))
+                    toast('This file could not be opened.');
+                });
+            }),
+          ]
+        : []),
       ...(thread?.suggestionBar ? [thread.suggestionBar] : []),
       buildRelicRow(wrap, thread?.element, thread?.resizer, thread?.tab)
     );
@@ -12015,7 +12033,11 @@ export async function boot(
     // repaint over it.
     if (thisOpen !== openGeneration) return;
 
-    if (state.kind === 'dead' && state.jsxCompilerUnavailable === true) {
+    if (
+      state.kind === 'dead' &&
+      (state.jsxCompilerUnavailable === true ||
+        state.dead.code === 'unsupported_format')
+    ) {
       const reloading = await healForRelic(
         relicId,
         deps,

@@ -37,6 +37,7 @@ export * from './renderer-class.ts';
 export * from './rfc8188.ts';
 export * from './sha256.ts';
 export * from './stream.ts';
+export * from './stream-any.ts';
 export * from './supported-formats.ts';
 export * from './share.ts';
 export * from './zip-write.ts';

@@ -63,6 +63,14 @@ describe('cardCopy', () => {
     expect(copy.description).not.toContain('downloads to your device');
   });
 
+  test('folder card describes the browser view', () => {
+    expect(cardCopy('folder')).toEqual({
+      title: 'A folder relic',
+      description:
+        'A folder of files. It opens in your browser, and only someone holding the whole link, including the part after the #, can read it.',
+    });
+  });
+
   test('otio relic description plays in browser and does not download to device', () => {
     const copy = cardCopy('otio');
     expect(copy.title).toBe('An OpenTimelineIO relic');
