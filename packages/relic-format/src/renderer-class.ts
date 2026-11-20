@@ -141,7 +141,7 @@ const MAGIC: readonly MagicSignature[] = [
   { bytes: [0x66, 0x74, 0x79, 0x70], offset: 4, cls: 'media' }, // MP4 family
 ];
 
-const EXTENSIONS: Readonly<Record<string, RendererClass>> = {
+export const EXTENSIONS: Readonly<Record<string, RendererClass>> = {
   md: 'markdown',
   markdown: 'markdown',
   mdown: 'markdown',

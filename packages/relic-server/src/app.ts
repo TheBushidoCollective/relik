@@ -21,6 +21,7 @@ import { inflateSync } from 'node:zlib';
 import {
   COMMENT_ADDRESSES_LIMIT_BYTES,
   encryptedSize,
+  HOMEPAGE_FORMATS,
   InvalidRelicIdError,
   isHostedService,
   isRendererClass,
@@ -6791,12 +6792,10 @@ claude plugin install relic@relic</code></pre>
       </div>
       <div class="notes">
         <dl class="types">
-          <div><dt>Markdown, code, text, images</dt><dd>Rendered inline.</dd></div>
-          <div><dt>PDF</dt><dd>An in-browser document viewer.</dd></div>
-          <div><dt>Audio, video</dt><dd>An in-browser player.</dd></div>
-          <div><dt>OpenTimelineIO</dt><dd>A timeline player with tracks, trims and dissolves.</dd></div>
-          <div><dt>HTML, JSX</dt><dd>A sandboxed frame on a separate origin, which blocks its web requests. Inline what the page needs.</dd></div>
-          <div><dt>Anything else</dt><dd>A download.</dd></div>
+          ${HOMEPAGE_FORMATS.map(
+            ({ label, description }) =>
+              `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(description)}</dd></div>`
+          ).join('\n          ')}
         </dl>
         <div>
           <h3>They can answer, and you can update</h3>
