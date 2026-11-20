@@ -17,12 +17,14 @@ const enc = new TextEncoder();
 async function fixture(
   names: string[],
   short = false,
-  version = 2
+  version = 2,
+  defaultIndex = 0
 ): Promise<Uint8Array> {
   const paths = names.map((name) => enc.encode(name));
   const size = 4 + paths.reduce((n, path) => n + 12 + path.length, 0);
   const manifest = new Uint8Array(size);
   const view = new DataView(manifest.buffer);
+  view.setUint32(0, defaultIndex);
   let at = 4;
   for (const path of paths) {
     view.setUint16(at, path.length);
@@ -105,6 +107,14 @@ for (const [label, names, short] of [
     }
   });
 }
+test('rejects an out-of-range default index', async () => {
+  const result = await inspect(await fixture(['README.md'], false, 2, 1));
+  expect(result.kind).toBe('dead');
+  if (result.kind === 'dead') {
+    expect(result.dead.code).toBe('malformed_container');
+    expect(result.dead.headline).toBe('This relic could not be read');
+  }
+});
 test('shows newer format copy for version 3', async () => {
   const result = await inspect(await fixture(['a'], false, 3));
   expect(result.kind).toBe('dead');

@@ -12,3 +12,7 @@ The single-open observations were below the one-second threshold. They do not es
 ## Stream admission
 
 F1's existing `streamRelicContent` and `readRelicEnvelope` admit only version 1. V1b adds a bounded record-zero probe and replays its buffered ciphertext to the existing v1 stream or F1's folder stream. The original functions remain unchanged.
+
+## Initial entry
+
+The authenticated manifest's valid default index controls the initial file, including a publisher's `open_first` choice. An out-of-range default is malformed and is refused. The writer chooses a default before publishing; the viewer does not override that choice.

@@ -25,10 +25,7 @@ export async function openFolderRelic(
     await whole.read(0, header.manifestLength),
     header
   );
-  const readme = manifest.entries.findIndex(
-    (entry) => entry.path.toLowerCase() === 'readme.md'
-  );
-  return { header, manifest, whole, index: readme < 0 ? 0 : readme };
+  return { header, manifest, whole, index: manifest.defaultIndex };
 }
 
 export async function entryView(

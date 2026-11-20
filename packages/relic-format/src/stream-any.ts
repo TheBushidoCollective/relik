@@ -34,7 +34,7 @@ async function probe(
   let buffered = 0;
   async function ensure(size: number): Promise<void> {
     while (buffered < size) {
-      let result: ReadableStreamReadResult<Uint8Array>;
+      let result: { done: boolean; value?: Uint8Array | undefined };
       try {
         result = await reader.read();
       } catch {
@@ -42,7 +42,7 @@ async function probe(
       }
       if (result.done)
         throw new TransferIncompleteError(buffered, objectLength);
-      if (result.value.length) {
+      if (result.value?.length) {
         chunks.push(result.value);
         buffered += result.value.length;
       }

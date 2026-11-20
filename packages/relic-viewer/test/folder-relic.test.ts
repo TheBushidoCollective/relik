@@ -6,6 +6,43 @@ import type { ReadyView } from '../src/viewer.ts';
 
 const encode = new TextEncoder();
 describe('folder entry views', () => {
+  test.each([
+    { paths: ['README.md', 'data/a.json'], index: 1, selected: 'data/a.json' },
+    { paths: ['README.md', 'data/a.json'], index: 0, selected: 'README.md' },
+    { paths: ['a.txt', 'b.txt'], index: 0, selected: 'a.txt' },
+  ])(
+    'opens publisher default $selected',
+    async ({ paths, index, selected }) => {
+      const key = new Uint8Array(16).fill(3);
+      const encrypted = await encryptFolder({
+        key,
+        name: 'folder',
+        defaultIndex: index,
+        entries: paths.map((path) => ({
+          path,
+          mimetype: 'text/plain',
+          bytes: encode.encode(path),
+        })),
+      });
+      const parts: Uint8Array[] = [];
+      const header = await streamAnyRelicContent(
+        new Blob([encrypted as BlobPart]).stream(),
+        key,
+        {
+          objectLength: encrypted.length,
+          onContent: (chunk) => {
+            parts.push(chunk);
+          },
+        }
+      );
+      if ('entries' in header) throw new Error('expected folder');
+      const whole = contentFromBytes(
+        new Uint8Array(await new Blob(parts as BlobPart[]).arrayBuffer())
+      );
+      const folder = await openFolderRelic(header, whole);
+      expect(folder.manifest.entries[folder.index]?.path).toBe(selected);
+    }
+  );
   test('opens and routes authenticated entry slices without changing the shared content', async () => {
     const png = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0]);
     const entries = [
