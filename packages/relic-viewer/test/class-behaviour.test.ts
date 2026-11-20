@@ -17,9 +17,10 @@
 
 import { describe, expect, test } from 'bun:test';
 import { CLASS_BEHAVIOUR, RENDERER_CLASSES } from '@relic/format';
+import { dashboardPreview } from '../src/relic-rows.ts';
 import { type RenderRoute, routeForClass } from '../src/viewer.ts';
 
-const RENDER_ROUTES: readonly RenderRoute[] = [
+const RENDER_ROUTES: readonly (RenderRoute | 'folder')[] = [
   'markdown',
   'code',
   'image',
@@ -28,9 +29,18 @@ const RENDER_ROUTES: readonly RenderRoute[] = [
   'pdf',
   'model',
   'notebook',
+  'folder',
 ];
 
 describe('routeForClass and CLASS_BEHAVIOUR agreement', () => {
+  test('every renderer class has a dashboard label', () => {
+    for (const cls of RENDERER_CLASSES) {
+      expect(dashboardPreview(cls).kind).not.toBe('relic');
+      expect(dashboardPreview(cls).label.length).toBeGreaterThan(0);
+    }
+    expect(dashboardPreview('unknown-class').kind).toBe('relic');
+  });
+
   test('renderer classes agree between viewer routing and class behaviour in both directions', () => {
     for (const cls of RENDERER_CLASSES) {
       const behaviour = CLASS_BEHAVIOUR[cls];

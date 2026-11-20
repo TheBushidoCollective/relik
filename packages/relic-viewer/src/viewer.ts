@@ -16,6 +16,7 @@
 
 import {
   ContentTooLargeError,
+  contentLengthOf,
   DecryptFailedError,
   deriveRendererClass,
   encodeFragment,
@@ -31,6 +32,7 @@ import {
   MalformedFragmentError,
   modelFormatFromFilename,
   modelFormatFromMime,
+  readAnyRelicEnvelope,
   openEnvelope,
   parseFragment,
   parseRelicId,
@@ -39,12 +41,13 @@ import {
   PLAINTEXT_CAP_BYTES,
   plaintextSizeUpperBound,
   privilegeTier,
-  readRelicEnvelope,
   type RendererClass,
   Sha256,
   sniffContentClass,
   sniffModelFormat,
-  streamRelicContent,
+  streamAnyRelicContent,
+  StrictParseError,
+  UnsupportedEnvelopeVersionError,
   TransferIncompleteError,
   UnknownVersionError,
   VersionMismatchError,
@@ -57,6 +60,11 @@ import {
   type ContentSink,
   type RelicContent,
 } from './content.ts';
+import {
+  entryView,
+  openFolderRelic,
+  type FolderRelic,
+} from './folder-relic.ts';
 import type * as JsxModule from './jsx.ts';
 import { markJsxCompilerLoaded } from './stale-shell.ts';
 import {
@@ -118,6 +126,7 @@ export type ViewerState =
 
 export interface ReadyView {
   readonly filename: string;
+  readonly folder?: FolderRelic | undefined;
   readonly declaredMimetype: string;
   readonly content: RelicContent;
   /** Present only when the entire text fits the document rendering limit. */
@@ -350,7 +359,7 @@ async function confirmLargeOpen(
   signed: MintResponse,
   deps: ViewerDeps,
   key: Uint8Array,
-  version: number,
+  _version: number,
   onPrefix?: (prefix: Uint8Array) => void,
   maxBytes = PLAINTEXT_CAP_BYTES
 ): Promise<MintResponse> {
@@ -358,13 +367,18 @@ async function confirmLargeOpen(
   // authenticated container uses a different record size or padding.
   if (signed.object_length <= LARGE_OPEN_CONFIRM_BYTES) return signed;
   const body = await fetchBody(signed.url, deps);
-  const { envelope } = await readRelicEnvelope(body, key, {
+  const { envelope } = await readAnyRelicEnvelope(body, key, {
     objectLength: signed.object_length,
-    fragmentVersion: version,
     onPrefix: (prefix) => onPrefix?.(prefix),
   });
-  const entry = envelope.entries[0];
-  if (!entry) throw new Error('Empty envelope');
+  const entry =
+    'entries' in envelope
+      ? envelope.entries[0]!
+      : {
+          filename: envelope.name,
+          mimetype: 'application/octet-stream',
+          length: envelope.contentLength,
+        };
   const limit = Math.min(maxBytes, PLAINTEXT_CAP_BYTES);
   if (entry.length > limit) throw new ContentTooLargeError(entry.length, limit);
   if (entry.length <= LARGE_OPEN_CONFIRM_BYTES) return signed;
@@ -594,7 +608,7 @@ export async function load(
       await fetchBody(mintResponse.url, deps)
     );
     const state: { sink?: ContentSink } = {};
-    const envelope = await streamRelicContent(stream, key, {
+    const envelope = await streamAnyRelicContent(stream, key, {
       objectLength: mintResponse.object_length,
       fragmentVersion: version,
       maxContentBytes: Math.min(
@@ -613,11 +627,10 @@ export async function load(
       },
       onEnvelope: (env) => {
         envelopeFired = true;
-        const entry = env.entries[0];
-        if (entry) {
-          loadContents = { filename: entry.filename, length: entry.length };
-          state.sink = contentStore.createSink(entry.length);
-        }
+        const length = contentLengthOf(env);
+        const filename = 'entries' in env ? env.entries[0]!.filename : env.name;
+        loadContents = { filename, length };
+        state.sink = contentStore.createSink(length);
       },
       onContent: (chunk) => {
         if (!state.sink) throw new Error('Content before envelope');
@@ -650,7 +663,14 @@ export async function load(
         }
       },
     });
-    const entry = envelope.entries[0];
+    const entry =
+      'entries' in envelope
+        ? envelope.entries[0]
+        : {
+            filename: envelope.name,
+            mimetype: 'application/octet-stream',
+            length: envelope.contentLength,
+          };
     if (!entry || !state.sink) {
       return dead(
         'This relic is empty',
@@ -668,6 +688,29 @@ export async function load(
     });
 
     const content = await state.sink.finish();
+    if (!('entries' in envelope)) {
+      const folder = await openFolderRelic(envelope, content);
+      const base: ReadyView = {
+        filename: envelope.name,
+        declaredMimetype: '',
+        content,
+        document: undefined,
+        route: 'download',
+        downgradeNotice: undefined,
+        shareUrl,
+        relicId,
+        version: mintResponse.version,
+        currentVersion: mintResponse.current_version,
+        versionDigest: digest.hex(),
+        folder,
+      };
+      const view = await entryView(base, folder.index);
+      deps.keyVault.remember(relicId, fragment, keyExpiry(mintResponse), {
+        title: envelope.name,
+        renderer: view.route,
+      });
+      return { kind: 'ready', view };
+    }
     const route = await routeContent(entry.filename, entry.mimetype, content);
 
     deps.keyVault.remember(relicId, fragment, keyExpiry(mintResponse), {
@@ -829,6 +872,24 @@ export async function load(
         'It sets a header field this format forbids.',
         'none',
         'keyid_present'
+      );
+    }
+
+    if (error instanceof UnsupportedEnvelopeVersionError) {
+      deps.keyVault.remember(relicId, fragment, keyExpiry(mintResponse), {});
+      return dead(
+        'This relic uses a newer format',
+        'Reload this page to get the current viewer.',
+        'none',
+        'unsupported_format'
+      );
+    }
+    if (error instanceof StrictParseError && envelopeFired) {
+      return dead(
+        'This relic could not be read',
+        'Its file list is damaged or names a file in a way Relik does not accept.',
+        'none',
+        'malformed_container'
       );
     }
 
@@ -1425,7 +1486,8 @@ export async function routeFor(
   if (privilegeTier(declared) === privilegeTier(sniffed)) {
     // Routing is the one place a component compiles, so the frame receives
     // exactly the text that was checked here and never recompiles it.
-    const route = routeForClass(declared);
+    const route = routeForClass(declared) as RenderRoute | 'folder';
+    if (route === 'folder') return { route: 'download', notice: undefined };
     if (route !== 'sandboxed-jsx') return { route, notice: undefined };
     return {
       route,
@@ -1438,16 +1500,24 @@ export async function routeFor(
   }
 
   const resolved = leastPrivileged(declared, sniffed);
+  const resolvedRoute = routeForClass(resolved) as RenderRoute | 'folder';
   return {
-    route: routeForClass(resolved),
+    route: resolvedRoute === 'folder' ? 'download' : resolvedRoute,
     notice:
       `This file is named like ${describe(declared)} but its contents look ` +
       `like ${describe(sniffed)}. It is being shown the safer way.`,
   };
 }
 
-export function routeForClass(cls: RendererClass): RenderRoute {
+export function routeForClass<T extends RendererClass | 'folder'>(
+  cls: T
+): T extends 'folder' ? 'folder' : RenderRoute;
+export function routeForClass(
+  cls: RendererClass | 'folder'
+): RenderRoute | 'folder' {
   switch (cls) {
+    case 'folder':
+      return 'folder';
     case 'markdown':
       return 'markdown';
     case 'code':
@@ -1519,8 +1589,10 @@ function classFromMimetype(mimetype: string, filename: string): RendererClass {
   return 'binary';
 }
 
-function describe(cls: RendererClass): string {
+function describe(cls: RendererClass | 'folder'): string {
   switch (cls) {
+    case 'folder':
+      return 'a folder';
     case 'markdown':
       return 'a Markdown document';
     case 'code':

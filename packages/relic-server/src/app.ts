@@ -35,6 +35,7 @@ import {
   parseRelicId,
   POLICY_LINK_LABEL,
   REPORT_LINK_LABEL,
+  RENDERER_CLASSES,
   RESERVED_SEGMENTS,
   type PasskeyDescriptorJSON,
   type RendererClass,
@@ -7195,8 +7196,7 @@ site data for this origin removes every remembered key.
 
 ## What we do know
 
-- **A coarse renderer class**, one of: markdown, code, html, jsx, image, pdf, model,
-  media, archive, binary, otio. Nothing finer. It is now also on the relic's card, so the kind
+- **A coarse renderer class**, one of: ${RENDERER_CLASSES.join(', ')}. Nothing finer. It is now also on the relic's card, so the kind
   of thing that was published is readable by anyone who fetches the link, not
   only by the operator.
 - **The name of the tool that published it**, so we can tell whether Relic
