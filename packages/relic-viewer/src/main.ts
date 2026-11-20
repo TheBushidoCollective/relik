@@ -10590,7 +10590,18 @@ export function renderReady(
                 toast('This file could not be opened.');
             });
         },
-        (blob, filename) => saveBlob(blob, safeDownloadName(filename))
+        (blob, filename) => saveBlob(blob, safeDownloadName(filename)),
+        (path) => {
+          const extension = path.slice(path.lastIndexOf('.') + 1).toLowerCase();
+          const shape = /^(json|js|jsx|ts|tsx|html|css|xml|svg)$/.test(
+            extension
+          )
+            ? ICONS.source
+            : /^(png|jpe?g|gif|webp)$/.test(extension)
+              ? ICONS.grid
+              : ICONS.rendered;
+          return icon(shape);
+        }
       );
       toolbar = tree.toolbar;
       row.prepend(tree.pane);

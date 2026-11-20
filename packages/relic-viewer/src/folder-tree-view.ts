@@ -53,7 +53,8 @@ export function folderTreeView(
   folder: FolderRelic,
   name: string,
   open: (index: number) => void,
-  save: (blob: Blob, filename: string) => void
+  save: (blob: Blob, filename: string) => void,
+  fileIcon: (path: string) => SVGSVGElement
 ): { pane: HTMLElement; toolbar: HTMLElement } {
   if (!document.getElementById('folder-tree-styles')) {
     const style = document.createElement('style');
@@ -244,12 +245,12 @@ export function folderTreeView(
       else if (node.index === folder.index)
         button.setAttribute('aria-current', 'true');
       const marker = document.createElement('span');
-      marker.textContent =
-        node.index === undefined
-          ? expanded.has(node.path) || filter.value
-            ? '▾'
-            : '▸'
-          : '·';
+      if (node.index === undefined) {
+        marker.textContent =
+          expanded.has(node.path) || filter.value ? '▾' : '▸';
+      } else {
+        marker.appendChild(fileIcon(node.path));
+      }
       const label = document.createElement('span');
       label.className = 'folder-row-name';
       label.textContent = node.name;

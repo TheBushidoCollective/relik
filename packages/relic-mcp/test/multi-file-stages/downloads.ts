@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { indexZip } from '@relic/format';
+import { indexZip, type ZipRefusal } from '@relic/format';
 import { contentFromBlob } from '../../../relic-viewer/src/content.ts';
 import { folderZip } from '../../../relic-viewer/src/folder-downloads.ts';
 import type { FolderRelic } from '../../../relic-viewer/src/folder-relic.ts';
@@ -51,12 +51,11 @@ for (const [count, size] of [
       maxTotalBytes: count * size,
     }
   );
-  assert.equal(indexed.ok, true);
   if (!indexed.ok) throw new Error(indexed.reason);
   assert.equal(indexed.index.entries.size, count);
   for (let i = 0; i < count; i++) {
-    const read = await indexed.index.read(entries[i]!.path);
-    assert.equal(read.ok, true);
+    const read: { readonly ok: true; readonly bytes: Uint8Array } | ZipRefusal =
+      await indexed.index.read(entries[i]!.path);
     if (!read.ok) throw new Error(read.reason);
     assert.deepEqual(read.bytes, bodies[i]);
   }

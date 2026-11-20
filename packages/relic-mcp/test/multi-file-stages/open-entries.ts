@@ -155,7 +155,6 @@ if (!chrome) {
       maxEntryBytes: 1000,
       maxTotalBytes: 3000,
     });
-    assert.equal(zip.ok, true);
     if (!zip.ok) throw new Error(zip.reason);
     const expected = new Map([
       ['README.md', Buffer.from('# Folder readme')],
@@ -171,7 +170,6 @@ if (!chrome) {
     assert.equal(zip.index.entries.size, expected.size);
     for (const [name, content] of expected) {
       const result = await zip.index.read(name);
-      assert.equal(result.ok, true);
       if (!result.ok) throw new Error(result.reason);
       assert.deepEqual(Buffer.from(result.bytes), content);
     }
