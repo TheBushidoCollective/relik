@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, open, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Readable, Writable } from 'node:stream';
@@ -162,6 +162,51 @@ if (!chrome) {
       await evaluate(`document.querySelector('.diff-result details').open`),
       false,
       'unchanged files begin collapsed'
+    );
+    const largeRoot = join(temp, 'large-files');
+    await mkdir(largeRoot);
+    await writeFile(join(largeRoot, 'a.md'), '# Small entry\n');
+    const bulk = await open(join(largeRoot, 'bulk.bin'), 'w');
+    const chunk = new Uint8Array(1024 * 1024);
+    try {
+      for (let i = 0; i < 99; i++) await bulk.write(chunk);
+    } finally {
+      await bulk.close();
+    }
+    const large = await publish(
+      { path: largeRoot, cover: false, open_first: 'a.md' },
+      deps
+    );
+    const extra = await open(join(largeRoot, 'bulk.bin'), 'a');
+    try {
+      for (let i = 0; i < 21; i++) await extra.write(chunk);
+    } finally {
+      await extra.close();
+    }
+    await republish(
+      {
+        relic_id: large.relic_id,
+        path: largeRoot,
+        cover: false,
+        notify: false,
+        open_first: 'a.md',
+      },
+      deps
+    );
+    await cdp.send('Page.navigate', { url: large.url }, session);
+    assert.equal(
+      await evaluate(
+        `(async()=>{for(let i=0;i<3000;i++){document.querySelector('[data-large-open-accept]')?.click();if(document.body?.innerText.includes('100 MiB folder comparison limit'))return true;await new Promise(r=>setTimeout(r,20))}return false})()`
+      ),
+      true,
+      '120 MiB folder shows the limit'
+    );
+    assert.equal(
+      await evaluate(
+        `(async()=>{document.querySelector('.version-trigger')?.click();document.querySelector('.version-option[data-version="1"]')?.click();for(let i=0;i<3000;i++){document.querySelector('[data-large-open-accept]')?.click();if(document.querySelector('.folder-row') && document.querySelector('.version-long')?.textContent.includes('Version 1'))return !document.body.innerText.includes('100 MiB folder comparison limit');await new Promise(r=>setTimeout(r,20))}return false})()`
+      ),
+      true,
+      '99 MiB folder has no limit notice'
     );
     console.log('MULTI_FILE_STAGE compare OK');
   } finally {
