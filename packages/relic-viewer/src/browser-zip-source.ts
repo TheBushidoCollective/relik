@@ -14,7 +14,13 @@ export async function prepareBrowserZip(file: File): Promise<BrowserFolder> {
     {
       size: file.size,
       async read(start, end) {
-        return new Uint8Array(await file.slice(start, end).arrayBuffer());
+        try {
+          return new Uint8Array(await file.slice(start, end).arrayBuffer());
+        } catch {
+          throw new Error(
+            `Could not read ${file.name}. Check that it is available on this device.`
+          );
+        }
       },
     },
     {
