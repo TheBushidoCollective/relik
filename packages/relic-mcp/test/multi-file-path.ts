@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import './multi-file-stages/folder-publish.ts';
 import {
   decryptRecord,
   deriveKeys,
@@ -14,9 +13,6 @@ import {
   VersionMismatchError,
 } from '@relic/format';
 import golden from '../../relic-format/test/folder-golden.json';
-import './multi-file-stages/open-entries.ts';
-// Stages use process-wide state paths and must not overlap.
-await import('./multi-file-stages/private-publish.ts');
 
 const key = Uint8Array.from(Buffer.from(golden.key, 'hex'));
 const salt = Uint8Array.from(Buffer.from(golden.salt, 'hex'));
@@ -72,4 +68,9 @@ for (const count of [1000, 5000]) {
     `MULTI_FILE_TIMING runtime=bun entries=${count} decode_and_check_ms=${(performance.now() - start).toFixed(3)}`
   );
 }
+// Stages mutate process env and must not run concurrently.
+await import('./multi-file-stages/open-entries.ts');
+await import('./multi-file-stages/folder-publish.ts');
+await import('./multi-file-stages/zip-publish.ts');
+await import('./multi-file-stages/private-publish.ts');
 console.log('MULTI_FILE_PATH_OK');

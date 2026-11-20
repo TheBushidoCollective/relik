@@ -408,6 +408,11 @@ export const TOOL_DEFINITION = {
           'Optional. Overrides the name written into the encrypted envelope ' +
           'header. Defaults to the basename of `path`.',
       },
+      expand: {
+        type: 'boolean',
+        description:
+          'Expand .zip files into folders by default. Pass false to publish the zip as one file. ZIP .gitignore files are not applied.',
+      },
       open_first: {
         type: 'string',
         description:
@@ -564,6 +569,11 @@ export const REPUBLISH_TOOL_DEFINITION = {
         description:
           'Optional. Overrides the name written into the encrypted envelope ' +
           'header of the new version. Defaults to the basename of `path`.',
+      },
+      expand: {
+        type: 'boolean',
+        description:
+          'For .zip files, override the existing relic shape. Omitted keeps its recorded shape.',
       },
       open_first: {
         type: 'string',
@@ -2441,6 +2451,13 @@ async function callTool(
     );
   }
   const cover = typeof rawCover === 'boolean' ? rawCover : undefined;
+  const rawExpand = args['expand'];
+  if (rawExpand !== undefined && typeof rawExpand !== 'boolean')
+    return errorResponse(
+      id,
+      ERROR_CODES.invalidParams,
+      '`expand` must be a boolean or omitted'
+    );
   const rawDecisions = args['decisions'];
   if (rawDecisions !== undefined && typeof rawDecisions !== 'boolean') {
     return errorResponse(
@@ -2484,6 +2501,7 @@ async function callTool(
         path,
         filename,
         title,
+        expand: rawExpand,
         open_first:
           typeof args['open_first'] === 'string'
             ? args['open_first']
@@ -3256,6 +3274,13 @@ async function callRepublish(
     );
   }
   const notify = typeof rawNotify === 'boolean' ? rawNotify : undefined;
+  const rawExpand = args['expand'];
+  if (rawExpand !== undefined && typeof rawExpand !== 'boolean')
+    return errorResponse(
+      id,
+      ERROR_CODES.invalidParams,
+      '`expand` must be a boolean or omitted'
+    );
   const rawDecisions = args['decisions'];
   if (rawDecisions !== undefined && typeof rawDecisions !== 'boolean') {
     return errorResponse(
@@ -3270,6 +3295,7 @@ async function callRepublish(
         relic_id: relicId,
         path,
         filename,
+        expand: rawExpand,
         open_first:
           typeof args['open_first'] === 'string'
             ? args['open_first']

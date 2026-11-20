@@ -300,6 +300,11 @@ const fixtures: FixturePlan[] = [
     expectedKind: 'archive',
   },
   {
+    filename: 'expanded.zip',
+    expectedStatus: 'uploaded',
+    expectedKind: 'markdown',
+  },
+  {
     filename: 'bundle.tar.gz',
     expectedStatus: 'uploaded',
     expectedKind: 'archive',
@@ -488,6 +493,9 @@ startxref
   await execFileAsync('zip', ['-q', '-r', join(scratch, 'bundle.zip'), '.'], {
     cwd: zipDir,
   });
+  await execFileAsync('zip', ['-q', '-r', join(scratch, 'expanded.zip'), '.'], {
+    cwd: zipDir,
+  });
 
   // 12. bundle.tar.gz
   const tarDir = join(scratch, 'tar-project');
@@ -525,6 +533,7 @@ startxref
   for (const fixture of fixtures) {
     const pubResult = await callMcp('relic_publish', {
       path: join(scratch, fixture.filename),
+      ...(fixture.filename === 'bundle.zip' ? { expand: false } : {}),
       title: '',
     });
 
@@ -536,6 +545,13 @@ startxref
 
     const cover = pubResult['cover'] as Record<string, unknown> | undefined;
     assert.ok(cover !== undefined, `missing cover for ${fixture.filename}`);
+    if (fixture.filename === 'expanded.zip') {
+      assert.equal(pubResult['shape'], 'folder');
+      assert.equal(
+        (pubResult['folder'] as Record<string, unknown>)['default_entry'],
+        'README.md'
+      );
+    }
 
     const shellHtml = await fetch(`${origin}/${relicId}`).then((r) => r.text());
 

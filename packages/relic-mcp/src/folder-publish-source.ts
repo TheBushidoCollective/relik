@@ -20,6 +20,7 @@ export interface FolderPublishSource {
   readonly title: string;
   readonly digest: string;
   readonly folder: PreparedFolder;
+  readonly source?: 'directory' | 'zip';
   readonly leftOut: readonly FolderOmission[];
   close(): Promise<void>;
 }
@@ -114,7 +115,7 @@ export async function folderDefaultBytes(
 }
 
 export interface FolderReport {
-  readonly source: 'directory';
+  readonly source: 'directory' | 'zip';
   readonly file_count: number;
   readonly files_total_bytes: number;
   readonly file_list_bytes: number;
@@ -132,7 +133,7 @@ export function folderReport(source: FolderPublishSource) {
   for (const entry of source.leftOut)
     byReason[entry.reason] = (byReason[entry.reason] ?? 0) + 1;
   return {
-    source: 'directory' as const,
+    source: source.source ?? 'directory',
     file_count: source.folder.entries.length,
     files_total_bytes: source.folder.filesTotalBytes,
     file_list_bytes: source.folder.manifest.length,
