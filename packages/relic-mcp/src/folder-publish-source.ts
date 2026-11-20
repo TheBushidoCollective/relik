@@ -115,7 +115,7 @@ export async function folderDefaultBytes(
 }
 
 export interface FolderReport {
-  readonly source: 'directory';
+  readonly source: 'directory' | 'zip';
   readonly file_count: number;
   readonly files_total_bytes: number;
   readonly file_list_bytes: number;
