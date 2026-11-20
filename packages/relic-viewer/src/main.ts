@@ -10670,7 +10670,44 @@ export function renderReady(
       return;
     }
     if (res.kind === 'ready') {
-      showSingle(res.view, true);
+      let next = res.view;
+      const previous =
+        activeView.folder?.manifest.entries[activeView.folder.index]?.path;
+      if (previous && next.folder) {
+        const index = next.folder.manifest.entries.findIndex(
+          (entry) => entry.path === previous
+        );
+        if (index >= 0 && index !== next.folder.index) {
+          try {
+            next = await entryView(next, index);
+          } catch {
+            versionStore.unpin(v);
+            if (lifecycle.isCurrent(selection))
+              toast('This file could not be opened.');
+            return;
+          }
+          if (!lifecycle.isCurrent(selection)) {
+            versionStore.unpin(v);
+            return;
+          }
+        } else if (index < 0) {
+          toast(
+            `${previous} is not in version ${v}. Showing ${next.folder.manifest.entries[next.folder.index]?.path}.`
+          );
+        }
+      }
+      if (next.folder && typeof window !== 'undefined') {
+        history.replaceState(
+          {
+            ...history.state,
+            relicEntry: next.folder.manifest.entries[next.folder.index]?.path,
+            relicId,
+            version: next.version,
+          },
+          ''
+        );
+      }
+      showSingle(next, true);
     } else {
       versionStore.unpin(v);
       toast(failureText(res, vaultHoldsKey(relicId, deps)));

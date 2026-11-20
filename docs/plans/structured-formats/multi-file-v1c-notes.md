@@ -1,0 +1,7 @@
+# Multi-file V1c observations
+
+The owned headless shell opened an F1-built folder and rendered its README, JSON and image entries. At 390 by 844 pixels, the Files sheet opened and closed after a selection, and the document width did not exceed 390 pixels. A 2,000-file F1 fixture displayed at most 120 tree rows and its filter found a path eight directories deep. Browser Back and reload were exercised; reload returned to README. The browser downloaded the JSON entry and its bytes matched the source.
+
+The owned Chromium headless shell assembled and indexed ZIPs from F1-built fixtures, verifying every extracted entry byte-for-byte. Three 1 MiB entries produced a 3,146,056-byte archive in 32.6 ms; 200 entries of 37 bytes produced a 27,822-byte archive in 39.6 ms. A separate local Bun run produced 3,146,062 bytes in 44.74 ms and 28,222 bytes in 1.30 ms, respectively, with different entry names. These are single observations, not performance guarantees. The largest body volume verified was 3 MiB; no process-memory measurement or larger folder download has been made.
+
+Desktop light and dark screenshots showed the file tree beside the viewer, with the selected image highlighted and the breadcrumb above the stage. Mobile light and dark screenshots showed the README and Files control with the sheet closed. The open mobile sheet showed the selected JSON file in teal and separated 44-pixel rows. The fixture image is one pixel, so the image itself appears as a small dot. The screenshots are local proof artifacts, not production captures.

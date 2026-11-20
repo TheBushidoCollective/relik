@@ -123,6 +123,7 @@ export function folderTreeView(
     pane.dataset['open'] = 'true';
     pane.setAttribute('role', 'dialog');
     pane.setAttribute('aria-modal', 'true');
+    rebuild();
     close.focus();
   };
   const hide = (): void => {
@@ -233,7 +234,7 @@ export function folderTreeView(
       button.setAttribute('aria-level', String(depth + 1));
       button.tabIndex = i === focused ? 0 : -1;
       button.style.top = `${i * height}px`;
-      button.style.paddingLeft = `${8 + depth * 14}px`;
+      button.style.paddingLeft = `${Math.min(8 + depth * 14, 180)}px`;
       button.setAttribute('title', node.path);
       if (node.index === undefined)
         button.setAttribute(
