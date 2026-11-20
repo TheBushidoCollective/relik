@@ -1,4 +1,7 @@
 import { describe, expect, test } from 'bun:test';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createApp } from '../src/app.ts';
 import { contentTypeFor, diskAssets, memoryAssets } from '../src/assets.ts';
 
@@ -109,6 +112,44 @@ describe('asset serving', () => {
 });
 
 describe('the shell references what is actually served', () => {
+  test('the shell and worker name the same build for every shell asset', async () => {
+    const server = app();
+    const build = (
+      await Bun.file(`${VIEWER_DIST}/shell-build.txt`).text()
+    ).trim();
+    const html = await (
+      await server.fetch(get('/aaaaaaaaaaaaaaaaaaaaaaaaaa'))
+    ).text();
+    const worker = await (await server.fetch(get('/sw.js'))).text();
+    for (const path of [
+      '/assets/viewer.js',
+      '/assets/styles.css',
+      '/assets/icon.svg',
+      '/assets/register-sw.js',
+      '/manifest.webmanifest',
+    ]) {
+      const url = `${path}?v=${build}`;
+      expect(html).toContain(`"${url}"`);
+      expect(worker).toContain(url);
+      expect((await server.fetch(get(url))).status).toBe(200);
+    }
+  });
+
+  test('a disk source without valid build metadata refuses the shell', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'relic-shell-test-'));
+    try {
+      const server = app(diskAssets(dir));
+      await expect(
+        server.fetch(get('/aaaaaaaaaaaaaaaaaaaaaaaaaa'))
+      ).rejects.toThrow('Missing or invalid shell-build.txt');
+      await writeFile(join(dir, 'shell-build.txt'), '');
+      await expect(
+        server.fetch(get('/aaaaaaaaaaaaaaaaaaaaaaaaaa'))
+      ).rejects.toThrow('Missing or invalid shell-build.txt');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
   test('every asset the shell names resolves', async () => {
     const server = app();
     const html = await server
