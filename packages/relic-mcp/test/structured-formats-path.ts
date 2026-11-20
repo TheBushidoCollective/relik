@@ -406,6 +406,12 @@ interface Viewport {
 const DESKTOP: Viewport = { width: 1440, height: 900, phone: false };
 const PHONE: Viewport = { width: 390, height: 844, phone: true };
 
+/** The last real drag on each page, so a selection that was lost can be redone. */
+const lastDrags = new WeakMap<
+  object,
+  [string, string, ClickOptions, ClickOptions]
+>();
+
 async function openPage(
   url: string,
   token: string,
@@ -650,6 +656,7 @@ async function openPage(
       },
       async drag(from, to, fromOptions = {}, toOptions = {}) {
         currentStep = `drag ${from} to ${to}`;
+        lastDrags.set(page, [from, to, fromOptions, toOptions]);
         // Both ends into view, then the start measured again where it now is:
         // bringing the end into view can scroll the page under the start.
         await point(from, fromOptions);
@@ -733,12 +740,32 @@ async function composeAndPost(page: Page, body: string): Promise<void> {
   await page.click('.popover-composer .popover-tools .is-primary');
 }
 
-/** A selection's own Comment control, once the offer has appeared. */
+/**
+ * A selection's own Comment control, once the offer has appeared. A real drag
+ * can be lost while a page is still settling (fonts, layout), so the page's
+ * last drag is redone up to twice before the wait gives up. A product that
+ * never offers a Comment still fails after the third attempt.
+ */
 async function commentOnSelection(page: Page): Promise<void> {
-  await page.waitFor(
-    `document.querySelector('.popover-comment') !== null`,
-    'the selection offer opens'
-  );
+  const offer = `document.querySelector('.popover-comment') !== null`;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const redo = lastDrags.get(page);
+    const last = attempt === 2 || redo === undefined;
+    try {
+      await page.waitFor(
+        offer,
+        'the selection offer opens',
+        last ? 15_000 : 4_000
+      );
+      break;
+    } catch (error) {
+      if (last || redo === undefined) throw error;
+      console.log(
+        `RETRY the selection offer did not open (attempt ${attempt + 1}); drag again`
+      );
+      await page.drag(redo[0], redo[1], redo[2], redo[3]);
+    }
+  }
   await page.click('.popover-comment');
 }
 
