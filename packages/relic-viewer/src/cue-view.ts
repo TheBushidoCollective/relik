@@ -412,9 +412,18 @@ function drawCues(mount: StructuredMount, file: SubtitleFile): StructuredPart {
     if (selection === null || selection.rangeCount === 0) return undefined;
     if (selection.isCollapsed) return undefined;
     const range = selection.getRangeAt(0);
-    const touched = cueRows.filter((cueRow) =>
-      range.intersectsNode(cueRow.row)
-    );
+    // `intersectsNode` also answers true for a range that only touches the
+    // node's edge, which would take in a neighbouring cue the reader did not
+    // select. A cue counts when the range holds at least one of its characters.
+    const takesIn = (cueRow: CueRow): boolean => {
+      const text = cueTextRange(cueRow.text, doc);
+      return (
+        text !== undefined &&
+        range.compareBoundaryPoints(Range.END_TO_START, text) < 0 &&
+        range.compareBoundaryPoints(Range.START_TO_END, text) > 0
+      );
+    };
+    const touched = cueRows.filter(takesIn);
     const first = touched[0];
     const last = touched[touched.length - 1];
     if (first === undefined || last === undefined) return undefined;

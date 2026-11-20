@@ -485,6 +485,68 @@ async function browserCases(
     }
   );
 
+  // A drag that begins in a row's margin can put the selection's start at the
+  // very end of the previous cue's text, and one that stops short can end at the
+  // very start of the next cue's. Touching an edge selects none of that cue.
+  const touching = async (
+    label: string,
+    ends: {
+      from: 'end-of-first' | 'start-of-first';
+      to: 'end-of-second' | 'start-of-second';
+    },
+    expected: { kind: 'time'; t: number; t_end: number }
+  ): Promise<void> => {
+    await check(label, async () => {
+      const { host } = await mountRelic(
+        viewOf('talk.vtt', 'text/vtt', 'code', fixtures.vtt)
+      );
+      await until(
+        'two cues draw',
+        () => host.querySelectorAll('.cue-text').length > 1
+      );
+      const texts = Array.from(host.querySelectorAll<HTMLElement>('.cue-text'));
+      const first = texts[0];
+      const second = texts[1];
+      truth(first && second, 'two cue texts are drawn');
+      const edge = (cue: HTMLElement, atEnd: boolean): [Text, number] => {
+        const walker = document.createTreeWalker(cue, NodeFilter.SHOW_TEXT);
+        let found: Text | undefined;
+        for (
+          let node = walker.nextNode();
+          node !== null;
+          node = walker.nextNode()
+        ) {
+          if (atEnd || found === undefined) found = node as Text;
+        }
+        truth(found, 'the cue has text nodes');
+        return [found, atEnd ? found.length : 0];
+      };
+      const [fromNode, fromOffset] = edge(first, ends.from === 'end-of-first');
+      const [toNode, toOffset] = edge(second, ends.to === 'end-of-second');
+      const range = document.createRange();
+      range.setStart(fromNode, fromOffset);
+      range.setEnd(toNode, toOffset);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+      second.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+      await offerComment(host);
+      await openComposerWith(host, 'the cue');
+      await postFromComposer(host, 'Edge');
+      eq(await anchorPosted(), expected, 'the posted cue span');
+    });
+  };
+  await touching(
+    'a selection starting at the end of one cue does not take that cue in',
+    { from: 'end-of-first', to: 'end-of-second' },
+    { kind: 'time', t: 5.1, t_end: 8.9 }
+  );
+  await touching(
+    'a selection ending at the start of the next cue does not take it in',
+    { from: 'start-of-first', to: 'start-of-second' },
+    { kind: 'time', t: 1.2, t_end: 4.8 }
+  );
+
   await check(
     'a notebook cell comment posts a path anchor for that cell',
     async () => {
@@ -821,7 +883,7 @@ describe('structured views: the comment path in the browser', () => {
           clearTimeout(stallTimer);
         }
         if (result.error) throw new Error(result.error);
-        expect(result.passed).toHaveLength(9);
+        expect(result.passed).toHaveLength(11);
       } finally {
         browser.kill('SIGKILL');
         if (browser.exitCode === null && browser.signalCode === null) {

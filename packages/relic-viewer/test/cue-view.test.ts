@@ -264,7 +264,13 @@ async function browserCases(
     await handle.ready;
     const range = document.createRange();
     range.setStart(rowAt(root, 2).querySelector('.cue-text') as Node, 0);
-    range.setEnd(rowAt(root, 4).querySelector('.cue-text') as Node, 0);
+    const lastRow = rowAt(root, 4).querySelector('.cue-text') as Node;
+    const walker = document.createTreeWalker(lastRow, NodeFilter.SHOW_TEXT);
+    let endText: Text | undefined;
+    for (let n = walker.nextNode(); n !== null; n = walker.nextNode()) {
+      endText = n as Text;
+    }
+    range.setEnd(endText as Text, (endText as Text).length);
     selectText(range);
     eq(
       handle.selectionAnchor(),
@@ -274,6 +280,29 @@ async function browserCases(
     handle.dispose();
     root.remove();
   });
+
+  await check(
+    'a selection that ends at the start of a cue does not take it in',
+    async () => {
+      const { root, handle } = mountCues(
+        fixtures.s1,
+        'field-app-demo.vtt',
+        'text/vtt'
+      );
+      await handle.ready;
+      const range = document.createRange();
+      range.setStart(rowAt(root, 2).querySelector('.cue-text') as Node, 0);
+      range.setEnd(rowAt(root, 4).querySelector('.cue-text') as Node, 0);
+      selectText(range);
+      eq(
+        handle.selectionAnchor(),
+        { kind: 'time', t: 5.1, t_end: 12.6 },
+        'cues 2 and 3 only'
+      );
+      handle.dispose();
+      root.remove();
+    }
+  );
 
   await check(
     'a part of one cue stays a quote, not a time anchor',
@@ -534,7 +563,7 @@ describe('the cue list in the browser', () => {
           clearTimeout(stallTimer);
         }
         if (result.error) throw new Error(result.error);
-        expect(result.passed).toHaveLength(12);
+        expect(result.passed).toHaveLength(13);
       } finally {
         browser.kill('SIGKILL');
         if (browser.exitCode === null && browser.signalCode === null) {
