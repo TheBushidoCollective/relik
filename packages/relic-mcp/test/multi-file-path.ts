@@ -72,4 +72,5 @@ for (const count of [1000, 5000]) {
 await import('./multi-file-stages/open-entries.ts');
 await import('./multi-file-stages/folder-publish.ts');
 await import('./multi-file-stages/zip-publish.ts');
+await import('./multi-file-stages/private-publish.ts');
 console.log('MULTI_FILE_PATH_OK');

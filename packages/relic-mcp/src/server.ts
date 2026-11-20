@@ -2486,6 +2486,10 @@ async function callTool(
         force_new: forceNew === true,
         cover,
         decisions: rawDecisions,
+        open_first:
+          typeof args['open_first'] === 'string'
+            ? args['open_first']
+            : undefined,
       },
       deps
     );
@@ -2683,6 +2687,10 @@ async function callRepublishPrivate(
         filename:
           typeof args['filename'] === 'string' ? args['filename'] : undefined,
         title: typeof args['title'] === 'string' ? args['title'] : undefined,
+        open_first:
+          typeof args['open_first'] === 'string'
+            ? args['open_first']
+            : undefined,
         ttl_days: ttlDays.days,
         cover: typeof args['cover'] === 'boolean' ? args['cover'] : undefined,
         notify: args['notify'] === false ? false : undefined,
