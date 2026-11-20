@@ -49,6 +49,7 @@ async function pageCases(
       paintMark(anchor: unknown, id: string): boolean;
       dispose(): void;
     };
+    csvTableSource: (table: unknown) => unknown;
     mountJsonTree: (mount: unknown) => { dispose(): void } | undefined;
     mountCues: (mount: unknown) =>
       | {
@@ -114,7 +115,9 @@ async function pageCases(
     }
     const root = document.createElement('section');
     document.body.append(root);
-    const part = api.mountDataTable(root, parsed.table, { filename });
+    const part = api.mountDataTable(root, api.csvTableSource(parsed.table), {
+      filename,
+    });
     const grid = root.querySelector<HTMLElement>('.dt-grid');
     if (grid === null) throw new Error('no grid');
     grid.style.height = '200px';
@@ -244,6 +247,42 @@ async function pageCases(
       }
     }
   );
+
+  await check('range copy guards formulas', async () => {
+    const f = mountTable('a,b\n=1,-5\n', 'formula.csv');
+    try {
+      await frames();
+      for (const [column, type] of [
+        [0, 'mousedown'],
+        [1, 'mousemove'],
+        [1, 'mouseup'],
+      ] as const) {
+        const target = f.grid.querySelector<HTMLElement>(
+          `[data-r="1"][data-c="${column}"]`
+        )!;
+        target.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+        await frames();
+        const box = target.getBoundingClientRect();
+        truth(
+          document
+            .elementFromPoint(
+              box.left + box.width / 2,
+              box.top + box.height / 2
+            )
+            ?.closest('.dt-cell') === target,
+          'selection target hit test'
+        );
+        target.dispatchEvent(
+          new MouseEvent(type, { bubbles: true, button: 0 })
+        );
+      }
+      click(f.root.querySelector('.dt-copy'), 'range copy');
+      eq(copied[0], "'=1\t-5", 'guarded clipboard');
+    } finally {
+      f.part.dispose();
+      f.root.remove();
+    }
+  });
 
   await check('a decoded U+202E key shows escaped in the pointer', async () => {
     const f = mountTree('{"\\u202Eabc":1}');
@@ -483,6 +522,12 @@ describe('structured views in the browser', () => {
         async fetch(request) {
           const url = new URL(request.url);
           seen.push(`${request.method} ${url.pathname}`);
+          if (url.pathname === '/assets/data-table.css') {
+            return new Response(
+              Bun.file(resolve(import.meta.dir, '../src/data-table.css')),
+              { headers: { 'content-type': 'text/css' } }
+            );
+          }
           if (url.pathname === '/progress') {
             started.push(await request.text());
             return new Response('ok');
@@ -560,7 +605,7 @@ describe('structured views in the browser', () => {
           clearTimeout(timer);
         }
         if (result.error) throw new Error(result.error);
-        expect(result.passed).toHaveLength(10);
+        expect(result.passed).toHaveLength(11);
       } finally {
         browser.kill('SIGKILL');
         if (browser.exitCode === null && browser.signalCode === null) {
