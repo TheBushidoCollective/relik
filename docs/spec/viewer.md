@@ -336,6 +336,8 @@ All three are wired through the same store and the same trusted-click rule. Larg
 
 **Skipped confirmations.** The desktop bar shows Skipped with a count while this relic has remembered kinds. Below 34rem, More contains Skipped confirmations, with its count when nonzero. The panel lists each remembered choice and its scope, with Ask again for each. Removing the last choice leaves the panel on its empty state; closing it removes the desktop button and returns focus to Report. The link strip's Turn back on control clears the same stored choice.
 
+The large-open browser proof authenticates a real record-zero envelope and observes the full fetch start after acceptance or a remembered choice. Its version-2 mint response is emulated and its object stops after record zero. A real large-file republish and completed open are not proven by that fixture.
+
 ## 5. Platform ceilings and degradation
 
 **Secure context first.** `crypto.subtle` is restricted to secure contexts ([MDN](https://developer.mozilla.org/en-US/docs/Web/API/Crypto/subtle)), so the viewer checks `window.isSecureContext` and the presence of `crypto.subtle` before anything else and shows a specific named error. This isn't only a development concern: a recipient behind a TLS-terminating proxy that serves plain HTTP hits it in production, and a generic failure there is unresolvable by the person seeing it.
