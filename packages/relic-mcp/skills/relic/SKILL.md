@@ -348,8 +348,10 @@ Also worth one line, unprompted, the first time in a session:
 ## What the recipient gets
 
 A page that fetches the ciphertext, decrypts it in their browser, and renders
-by type. Markdown, code, images, and plain text render inline. PDF renders
-in an in-browser document viewer. Audio and video files play in an in-browser
+by type. Markdown, code, images, and plain text render inline; SVG opens in a
+sandboxed frame. CSV and TSV open as sortable tables, JSON as a collapsible
+tree, SRT and VTT as cue lists, Jupyter notebooks with outputs, and STL and OBJ
+as rotatable 3D views. PDF renders in an in-browser document viewer. Audio and video files play in an in-browser
 player. OpenTimelineIO timelines (`.otiod` directories packaged as `.otioz`,
 or `.otioz` archives) play in a native timeline player with multi-track
 inspection, trims, dissolves, and additive audio. HTML and JSX render in a

@@ -42,7 +42,7 @@ export const STRUCTURED_MARKER_LABELS: Readonly<
  * Looked up with `Object.hasOwn`, never by bare indexing: an inherited name
  * such as `constructor` must not match a file called `report.constructor`.
  */
-const EXTENSION_KINDS: Readonly<Record<string, StructuredKind>> = {
+export const EXTENSION_KINDS: Readonly<Record<string, StructuredKind>> = {
   csv: 'table',
   tsv: 'table',
   json: 'tree',
