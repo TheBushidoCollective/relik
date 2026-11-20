@@ -26,7 +26,7 @@ For any client that takes a JSON config:
 
 1. Reads it from disk, in this process. It is never sent anywhere in plaintext.
    A standard OpenTimelineIO directory (`.otiod`) is automatically packaged into
-   a deterministic standard `.otioz` archive; arbitrary directories are refused.
+   a deterministic standard `.otioz` archive. Other directories publish as folder relics.
 2. Draws a 128-bit key and a 26-character relic id independently from your
    machine's CSPRNG. Neither derives from the other.
 3. Encrypts locally with AES-128-GCM under RFC 8188 `aes128gcm` framing.

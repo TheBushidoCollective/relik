@@ -39,6 +39,9 @@ The folder follows `.gitignore`, skips `.git`, `node_modules`, symlinks and
 non-regular files, and reports what was left out. Use `open_first` to select
 an included file to open first. Private folders use the same inclusion rules;
 their file list and contents remain encrypted.
+If a path classified as a file becomes a directory before it is read, the
+client returns `source_is_directory`. A directory passed initially follows
+the folder publishing path.
 The `folder` result reports `source`, `file_count`, `files_total_bytes`,
 `file_list_bytes`, `default_entry`, a `sample` of up to 20 included paths, and
 `left_out` with `count`, `by_reason` and a sample of up to 50 omitted paths.

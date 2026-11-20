@@ -2170,3 +2170,19 @@ export async function runPrivateFolderRekey(
       await actor.browser.close().catch(() => {});
   }
 }
+
+export {
+  callMcpRaw,
+  click,
+  currentVersion,
+  goto,
+  launchActor,
+  localPrivateState,
+  openPanel,
+  pageStatus,
+  poll,
+  stepsFourAndFive,
+  stepsOneToThree,
+  stepSeven,
+  waitForState,
+};
