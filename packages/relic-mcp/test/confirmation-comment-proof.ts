@@ -98,6 +98,23 @@ export async function proveCommentConfirmations(
     session.evaluate<Array<{ kind: string; relicId: string }>>(
       `JSON.parse(localStorage.getItem(${JSON.stringify(key)}) || '[]')`
     );
+  await session.setViewport(390, 844, 'light');
+  await click(session, '.action-more');
+  assert.equal(
+    await session.evaluate<number>(
+      "document.querySelectorAll('.band-more-list .action').length"
+    ),
+    4,
+    'zero-choice More menu must have four baseline entries'
+  );
+  assert.equal(
+    await session.evaluate<boolean>(
+      "!!document.querySelector('.skipped-menu-action')"
+    ),
+    false
+  );
+  await click(session, '.action-more');
+  await session.setViewport(1440, 900, 'light');
 
   assert.equal(
     await session.evaluate<boolean>(
@@ -240,6 +257,13 @@ export async function proveCommentConfirmations(
   await click(session, '.action-more');
   await checkTarget(session, '.skipped-menu-action');
   assert.equal(
+    await session.evaluate<number>(
+      "document.querySelectorAll('.band-more-list .action').length"
+    ),
+    5,
+    'remembering adds exactly one More item'
+  );
+  assert.equal(
     await session.evaluate<string>(
       "document.querySelector('.skipped-menu-action .skipped-count').textContent"
     ),
@@ -273,9 +297,16 @@ export async function proveCommentConfirmations(
   await click(session, '.action-more');
   assert.equal(
     await session.evaluate<boolean>(
-      "document.querySelector('.skipped-menu-action .skipped-count').hidden"
+      "!!document.querySelector('.skipped-menu-action')"
     ),
-    true
+    false,
+    'last Ask again removes the More item after closing'
+  );
+  assert.equal(
+    await session.evaluate<number>(
+      "document.querySelectorAll('.band-more-list .action').length"
+    ),
+    4
   );
   console.log(
     'CONFIRM_COMMENT_PATH_OK trusted=1 synthetic=refused mobile=390x844'

@@ -342,7 +342,7 @@ Private delete can never be skipped: it is irreversible.
 Private rekey can never be skipped: it is security-sensitive.
 All three are wired through the same store and the same trusted-click rule. Large-file choices apply to the relic and version; comment deletion choices apply to the relic across versions. When comment deletion is skipped, a strip above the thread says so and offers Ask again.
 
-**Skipped confirmations.** The desktop bar shows Skipped with a count while this relic has remembered kinds. Below 34rem, More contains Skipped confirmations, with its count when nonzero. The panel lists each remembered choice and its scope, with Ask again for each. Removing the last choice leaves the panel on its empty state; closing it removes the desktop button and returns focus to Report. The link strip's Turn back on control clears the same stored choice.
+**Skipped confirmation controls.** The desktop bar shows Skipped with a count while this relic has remembered kinds. Below 34rem, More shows Skipped confirmations and the count while a choice is remembered. The panel lists each remembered choice and its scope, with Ask again for each. Removing the last choice leaves the panel on its empty state and keeps the control until closing it, when focus returns to Report on desktop or More on mobile. The link strip's Turn back on control clears the same stored choice.
 
 The large-open browser proof authenticates a real record-zero envelope and observes the full fetch start after acceptance or a remembered choice. Its version-2 mint response is emulated and its object stops after record zero. A real large-file republish and completed open are not proven by that fixture.
 

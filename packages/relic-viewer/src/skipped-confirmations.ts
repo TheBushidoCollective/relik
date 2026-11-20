@@ -75,7 +75,6 @@ export function installSkippedConfirmations(
   const menuCount = document.createElement('span');
   menuCount.className = 'skipped-count';
   menuItem.append(skipIcon(), menuLabel, menuCount);
-  menu.insertBefore(menuItem, menu.lastElementChild);
 
   let dialog: HTMLDialogElement | undefined;
   let title: HTMLElement | undefined;
@@ -99,6 +98,9 @@ export function installSkippedConfirmations(
     );
     desktop.hidden =
       count === 0 && dialog === undefined && activePanel === null;
+    if (desktop.hidden) menuItem.remove();
+    else if (menuItem.parentElement !== menu)
+      menu.insertBefore(menuItem, menu.lastElementChild);
     desktopCount.hidden = count === 0;
     desktopCount.textContent = String(count);
     desktop.setAttribute('aria-label', `Skipped confirmations, ${count}`);
@@ -228,6 +230,8 @@ export function installSkippedConfirmations(
         currentButton.hidden = prefs.list(relicId).length === 0;
         currentButton.setAttribute('aria-expanded', 'false');
       }
+      if (prefs.list(relicId).length === 0)
+        document.querySelector('.bar .skipped-menu-action')?.remove();
       const target =
         from.isConnected && from.getClientRects().length > 0 && !from.hidden
           ? from
