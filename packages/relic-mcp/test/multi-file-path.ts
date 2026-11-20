@@ -15,7 +15,9 @@ import {
 } from '@relic/format';
 import golden from '../../relic-format/test/folder-golden.json';
 import './multi-file-stages/open-entries.ts';
-import './multi-file-stages/private-rekey.ts';
+// Stages use process-wide state paths and must not overlap.
+await import('./multi-file-stages/private-publish.ts');
+await import('./multi-file-stages/private-rekey.ts');
 
 const key = Uint8Array.from(Buffer.from(golden.key, 'hex'));
 const salt = Uint8Array.from(Buffer.from(golden.salt, 'hex'));
