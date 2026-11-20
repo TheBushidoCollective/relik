@@ -225,6 +225,7 @@ export function folderTreeView(
       rows.length,
       start + Math.min(120, Math.ceil((tree.clientHeight || 700) / height) + 40)
     );
+    const restoreFocus = tree.contains(document.activeElement);
     spacer.replaceChildren();
     for (let i = start; i < end; i++) {
       const { node, depth } = rows[i]!;
@@ -304,6 +305,10 @@ export function folderTreeView(
       });
       spacer.appendChild(button);
     }
+    if (restoreFocus)
+      spacer
+        .querySelector<HTMLElement>('[tabindex="0"]')
+        ?.focus({ preventScroll: true });
   }
   function focusRow(index: number): void {
     focused = index;

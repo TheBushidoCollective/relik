@@ -58,6 +58,12 @@ export async function checkTree(
   );
   assert.equal(
     await evaluate(
+      `(async()=>{document.querySelector('.folder-toggle').click();document.querySelector('.folder-row').focus();for(let i=0;i<90;i++)document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowDown',bubbles:true}));await new Promise(r=>setTimeout(r,50));return document.activeElement.classList.contains('folder-row') && document.activeElement.getAttribute('title').endsWith('file-0082.txt')})()`
+    ),
+    true
+  );
+  assert.equal(
+    await evaluate(
       `(()=>{const input=document.querySelector('.folder-filter');input.value='file-1999';input.dispatchEvent(new Event('input',{bubbles:true}));return !!document.querySelector('.folder-row[title="a/b/c/d/e/f/g/h/file-1999.txt"]') && document.querySelectorAll('.folder-row').length <= 120})()`
     ),
     true
