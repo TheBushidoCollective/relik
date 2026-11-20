@@ -2513,6 +2513,7 @@ async function callTool(
         ttl_days: ttlDays.days,
         force_new: forceNew === true,
         cover,
+        expand: rawExpand,
         decisions: rawDecisions,
         open_first:
           typeof args['open_first'] === 'string'
@@ -2697,6 +2698,13 @@ async function callRepublishPrivate(
       '`notify` must be a boolean or omitted'
     );
   }
+  if (args['expand'] !== undefined && typeof args['expand'] !== 'boolean') {
+    return errorResponse(
+      id,
+      ERROR_CODES.invalidParams,
+      '`expand` must be a boolean or omitted'
+    );
+  }
   if (
     args['decisions'] !== undefined &&
     typeof args['decisions'] !== 'boolean'
@@ -2719,6 +2727,8 @@ async function callRepublishPrivate(
           typeof args['open_first'] === 'string'
             ? args['open_first']
             : undefined,
+        expand:
+          typeof args['expand'] === 'boolean' ? args['expand'] : undefined,
         ttl_days: ttlDays.days,
         cover: typeof args['cover'] === 'boolean' ? args['cover'] : undefined,
         notify: args['notify'] === false ? false : undefined,
