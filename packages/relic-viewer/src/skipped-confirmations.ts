@@ -94,13 +94,20 @@ export function installSkippedConfirmations(
   const update = (): void => {
     const selected = choices();
     const count = new Set(selected.map((choice) => choice.kind)).size;
-    desktop.hidden = count === 0 && dialog === undefined;
+    const activePanel = document.querySelector<HTMLDialogElement>(
+      '.skipped-panel[open]'
+    );
+    desktop.hidden =
+      count === 0 && dialog === undefined && activePanel === null;
     desktopCount.hidden = count === 0;
     desktopCount.textContent = String(count);
     desktop.setAttribute('aria-label', `Skipped confirmations, ${count}`);
     desktop.setAttribute(
       'aria-expanded',
-      String(dialog !== undefined && opener === desktop)
+      String(
+        (dialog !== undefined && opener === desktop) ||
+          activePanel?.dataset['openedFrom'] === 'desktop'
+      )
     );
     menuCount.hidden = count === 0;
     menuCount.textContent = String(count);
@@ -156,11 +163,14 @@ export function installSkippedConfirmations(
   };
 
   const open = (from: HTMLElement): void => {
-    if (dialog !== undefined) return;
+    if (dialog !== undefined || document.querySelector('.skipped-panel[open]'))
+      return;
     opener = from;
     const panel = document.createElement('dialog');
     dialog = panel;
     panel.className = 'share-panel skipped-panel';
+    panel.dataset['openedFrom'] = from === desktop ? 'desktop' : 'more';
+    const stopPanelUpdates = prefs.subscribe(() => update());
     panel.id = 'skipped-confirmations';
     panel.setAttribute('aria-labelledby', 'skipped-title');
     const head = document.createElement('div');
@@ -207,9 +217,17 @@ export function installSkippedConfirmations(
         panel.close();
     });
     panel.addEventListener('close', () => {
+      stopPanelUpdates();
       dialog = undefined;
       panel.remove();
       update();
+      const currentButton = document.querySelector<HTMLButtonElement>(
+        '.bar .skipped-bar-action'
+      );
+      if (currentButton) {
+        currentButton.hidden = prefs.list(relicId).length === 0;
+        currentButton.setAttribute('aria-expanded', 'false');
+      }
       const target =
         from.isConnected && from.getClientRects().length > 0 && !from.hidden
           ? from

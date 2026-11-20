@@ -19,6 +19,7 @@ interface Fixture {
   readonly relicId: string;
   seed(): Promise<string>;
   exists(id: string): Promise<boolean>;
+  holdNextDelete(id: string): { seen: Promise<void>; release(): void };
 }
 
 async function click(session: Session, selector: string): Promise<void> {
@@ -143,8 +144,9 @@ export async function proveCommentConfirmations(
     ),
     '1'
   );
+  const held = fixture.holdNextDelete(ids[2]!);
   await click(session, remove(ids[2]!));
-  await absent(fixture, ids[2]!);
+  await held.seen;
   assert.equal(
     await session.evaluate<boolean>(
       "!!document.querySelector('dialog.comment-delete-dialog[open]')"
@@ -152,13 +154,27 @@ export async function proveCommentConfirmations(
     false,
     'remembered delete still asked'
   );
-  await session.waitFor(
-    "document.querySelector('.comment-delete-outcome').textContent.includes('Comment deleted')"
-  );
 
   await click(session, '.skipped-bar-action');
   await session.waitFor(
     "!!document.querySelector('dialog.skipped-panel[open]')"
+  );
+  await session.evaluate(
+    "globalThis.__confirmOldBar = document.querySelector('.bar')"
+  );
+  held.release();
+  await session.waitFor(
+    "document.querySelector('.bar') !== globalThis.__confirmOldBar"
+  );
+  await absent(fixture, ids[2]!);
+  await session.waitFor(
+    "document.querySelector('.comment-delete-outcome').textContent.includes('Comment deleted')"
+  );
+  assert.equal(
+    await session.evaluate<string>(
+      "document.querySelector('.skipped-bar-action .skipped-count').textContent"
+    ),
+    '1'
   );
   assert.match(
     await session.evaluate<string>(

@@ -44,6 +44,7 @@ import { type CdpConnection, connectPipe } from '../src/cover/cdp.ts';
 import { chromeArgs, discoverChrome } from '../src/cover/chrome.ts';
 import { proveCommentConfirmations } from './confirmation-comment-proof.ts';
 import { proveLargeConfirmations } from './confirmation-large-proof.ts';
+import { holdDeleteResponse } from './confirmation-held-delete.ts';
 import {
   attestBrowserHeadless,
   cleanupOwnedBrowserStartup,
@@ -2703,6 +2704,12 @@ console.log('Testing comment deletion...');
         return row.id;
       },
       exists: async (id) => !!(await store.getComment(relicId, id)),
+      holdNextDelete: (id) => {
+        if (!handler) throw new Error('loopback handler unavailable');
+        return holdDeleteResponse(relicId, id, handler, (next) => {
+          handler = next;
+        });
+      },
     });
   } finally {
     await owner.close();
