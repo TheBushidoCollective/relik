@@ -1,0 +1,5 @@
+# Multi-file M1 Git listing spike
+
+On macOS, a temporary Git work tree was built with nested ignore rules and negation, a configured global excludes file, a tracked file later ignored, a tracked file deleted from disk, a submodule, an embedded repository, an NFD filename, and a symlink. The commands in section 3.2 returned the tracked ignored file and deleted tracked file in the cached listing, the submodule as a path and the embedded repository as a directory ending in `/`. The symlink and decomposed filename appeared in the candidate listing. The ignored listing collapsed `dist/` and included the global exclusion and the nested ignored file. The negated nested file was included.
+
+A separate non-work-tree directory with the same nested ignore rules was listed using a temporary bare repository and `--git-dir` / `--work-tree`. It returned the negated file, excluded the nested ignored file and honored the configured global excludes file. The bare repository was outside the source directory and removed after the experiment. No Linux run was available, so Linux behavior is unverified.
