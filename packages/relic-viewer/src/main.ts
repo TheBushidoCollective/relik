@@ -10503,6 +10503,15 @@ export function renderReady(
             ...(commentCount === undefined ? {} : { commentCount }),
           }),
     });
+    if (activeView.folder) {
+      const more = built.querySelector<HTMLElement>('.band-more-list');
+      const downloadAll = button('Download all', ICONS.download, () => {
+        built.querySelector<HTMLButtonElement>('.action-more')?.click();
+        document.querySelector<HTMLButtonElement>('.folder-toggle')?.click();
+        document.querySelector<HTMLButtonElement>('.folder-download')?.click();
+      });
+      more?.appendChild(downloadAll);
+    }
     // The band is rebuilt whenever a count lands; an open sheet follows its
     // control so focus and `aria-expanded` land on the one on screen.
     const decide = built.querySelector?.<HTMLElement>('[data-decision-open]');

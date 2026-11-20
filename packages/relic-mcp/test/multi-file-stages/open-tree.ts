@@ -30,7 +30,7 @@ export async function checkTree(
   );
   assert.equal(
     await evaluate(
-      `(()=>{document.querySelector('.folder-toggle').click();return document.querySelector('.folder-pane').getAttribute('role')==='dialog'})()`
+      `(()=>{document.querySelector('.action-more').click();const action=[...document.querySelectorAll('.band-more-list button')].find(x=>x.textContent.includes('Download all'));if(!action)return false;action.click();return document.querySelector('.folder-pane').getAttribute('role')==='dialog'})()`
     ),
     true
   );

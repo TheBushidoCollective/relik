@@ -84,6 +84,7 @@ export function folderTreeView(
   title.textContent = 'Files';
   const download = document.createElement('button');
   download.type = 'button';
+  download.className = 'folder-download';
   download.textContent = 'Download all';
   const close = document.createElement('button');
   close.type = 'button';
