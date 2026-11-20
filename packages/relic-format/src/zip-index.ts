@@ -55,7 +55,7 @@ export type ZipIndexResult =
   | ZipRefusal;
 
 const DIRECTORY_LIMIT = 16 * 1024 * 1024;
-class ZipFailure extends Error {
+export class ZipFailure extends Error {
   constructor(
     readonly reason: ZipRefusalReason,
     message: string
@@ -71,10 +71,24 @@ for (let i = 0; i < CRC_TABLE.length; i++) {
     value = (value >>> 1) ^ (value & 1 ? 0xedb88320 : 0);
   CRC_TABLE[i] = value >>> 0;
 }
-function crc32(bytes: Uint8Array): number {
-  let crc = 0xffffffff;
-  for (const byte of bytes) crc = CRC_TABLE[(crc ^ byte) & 255]! ^ (crc >>> 8);
-  return (crc ^ 0xffffffff) >>> 0;
+export class Crc32 {
+  private crc = 0xffffffff;
+
+  update(bytes: Uint8Array): this {
+    let crc = this.crc;
+    for (const byte of bytes)
+      crc = CRC_TABLE[(crc ^ byte) & 255]! ^ (crc >>> 8);
+    this.crc = crc;
+    return this;
+  }
+
+  value(): number {
+    return (this.crc ^ 0xffffffff) >>> 0;
+  }
+}
+
+export function crc32(bytes: Uint8Array): number {
+  return new Crc32().update(bytes).value();
 }
 function fail(reason: ZipRefusalReason, message: string): never {
   throw new ZipFailure(reason, message);
@@ -95,15 +109,16 @@ function decodeName(bytes: Uint8Array): string {
     return fail('bad-name-encoding', 'ZIP entry name is not valid UTF-8');
   }
 }
-function safeName(raw: string): string {
+function safeName(raw: string, legacyNames: boolean): string {
   if (
     raw.includes('\0') ||
-    raw.includes('\\') ||
+    (!legacyNames && raw.includes('\\')) ||
     raw.startsWith('/') ||
+    raw.startsWith('\\') ||
     /^[A-Za-z]:/.test(raw)
   )
     return fail('unsafe-name', `Unsafe ZIP entry name: ${raw}`);
-  const parts = raw.split('/');
+  const parts = raw.split(legacyNames ? /[/\\]/ : /\//);
   if (parts.includes('..'))
     return fail('unsafe-name', `Unsafe ZIP entry name: ${raw}`);
   const name = parts.filter((p) => p !== '' && p !== '.').join('/');
@@ -171,9 +186,23 @@ async function inflate(
     throw error;
   }
 }
-interface InternalEntry extends ZipEntryInfo {
+export interface OtioIndexedEntry extends ZipEntryInfo {
+  readonly rawName: string;
   readonly crc: number;
   readonly dataOffset: number;
+  readonly isDirectory: boolean;
+}
+interface InternalEntry extends OtioIndexedEntry {}
+
+export interface OtioCompatibleZipIndex extends ZipIndex {
+  readonly entries: ReadonlyMap<string, OtioIndexedEntry>;
+  readonly directory: {
+    readonly offset: number;
+    readonly size: number;
+    readonly entryCount: number;
+    readonly commentLength: number;
+  };
+  readOtio(name: string, inflater?: InflaterFn): Promise<Uint8Array>;
 }
 
 export async function indexZip(
@@ -181,6 +210,27 @@ export async function indexZip(
   limits: ZipLimits,
   inflater?: InflaterFn
 ): Promise<ZipIndexResult> {
+  return indexZipInternal(archive, limits, inflater, false);
+}
+
+export async function indexZipForOtio(
+  archive: Uint8Array | ZipSource,
+  limits: ZipLimits,
+  inflater?: InflaterFn
+): Promise<
+  { readonly ok: true; readonly index: OtioCompatibleZipIndex } | ZipRefusal
+> {
+  return indexZipInternal(archive, limits, inflater, true);
+}
+
+async function indexZipInternal(
+  archive: Uint8Array | ZipSource,
+  limits: ZipLimits,
+  inflater: InflaterFn | undefined,
+  legacyNames: boolean
+): Promise<
+  { readonly ok: true; readonly index: OtioCompatibleZipIndex } | ZipRefusal
+> {
   if (
     ![
       limits.maxArchiveBytes,
@@ -316,7 +366,7 @@ export async function indexZip(
           cursor + 46 + nameLength + extraLength
         )
       );
-      const name = safeName(rawName);
+      const name = safeName(rawName, legacyNames);
       if (entries.has(name))
         return fail('duplicate', `Duplicate ZIP entry: ${name}`);
       const mode = attrs >>> 16,
@@ -373,6 +423,8 @@ export async function indexZip(
       extents.push({ start: localOffset, end: dataOffset + compressedSize });
       entries.set(name, {
         name,
+        rawName,
+        isDirectory: rawName.endsWith('/') || rawName.endsWith('\\'),
         kind,
         method,
         compressedSize,
@@ -389,26 +441,62 @@ export async function indexZip(
     for (let i = 1; i < extents.length; i++)
       if (extents[i]!.start < extents[i - 1]!.end)
         return fail('corrupt', 'ZIP entries overlap');
-    const index: ZipIndex = {
+    async function load(
+      name: string,
+      customInflater?: InflaterFn
+    ): Promise<Uint8Array> {
+      const entry = entries.get(name);
+      if (!entry || (!legacyNames && entry.kind !== 'file'))
+        return fail('not-a-file', `Not a regular ZIP file: ${name}`);
+      const chunkSize = 8 * 1024 * 1024;
+      let data: Uint8Array;
+      if (archive instanceof Uint8Array || entry.compressedSize <= chunkSize) {
+        data = await range(
+          entry.dataOffset,
+          entry.dataOffset + entry.compressedSize
+        );
+      } else {
+        data = new Uint8Array(entry.compressedSize);
+        for (let offset = 0; offset < data.length; offset += chunkSize) {
+          const start = entry.dataOffset + offset;
+          data.set(
+            await range(
+              start,
+              entry.dataOffset + Math.min(offset + chunkSize, data.length)
+            ),
+            offset
+          );
+        }
+      }
+      const bytes =
+        entry.method === 0
+          ? data
+          : await (customInflater ?? inflater ?? inflate)(
+              data,
+              entry.size,
+              entry.size
+            );
+      if (!(bytes instanceof Uint8Array) || bytes.length !== entry.size)
+        return fail('size-mismatch', `ZIP entry length mismatch: ${name}`);
+      if (crc32(bytes) !== entry.crc)
+        return fail('crc-mismatch', `ZIP entry CRC mismatch: ${name}`);
+      return bytes;
+    }
+    const index: OtioCompatibleZipIndex = {
       entries,
+      directory: {
+        offset: cdOffset,
+        size: cdSize,
+        entryCount: count,
+        commentLength: tv.getUint16(eocd + 20, true),
+      },
+      readOtio: load,
       async read(name) {
         try {
           const entry = entries.get(name);
           if (!entry || entry.kind !== 'file')
             return fail('not-a-file', `Not a regular ZIP file: ${name}`);
-          const data = await range(
-            entry.dataOffset,
-            entry.dataOffset + entry.compressedSize
-          );
-          const bytes =
-            entry.method === 0
-              ? data
-              : await (inflater ?? inflate)(data, entry.size, entry.size);
-          if (!(bytes instanceof Uint8Array) || bytes.length !== entry.size)
-            return fail('size-mismatch', `ZIP entry length mismatch: ${name}`);
-          if (crc32(bytes) !== entry.crc)
-            return fail('crc-mismatch', `ZIP entry CRC mismatch: ${name}`);
-          return { ok: true, bytes };
+          return { ok: true, bytes: await load(name) };
         } catch (error) {
           return failure(error);
         }
