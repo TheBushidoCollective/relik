@@ -39,6 +39,7 @@ import {
   readComments,
   resolveComment,
 } from './comments.ts';
+import { FolderReadError } from './folder-reader.ts';
 import {
   type ListResult,
   listRelics,
@@ -1041,6 +1042,10 @@ export const SHOW_TOOL_DEFINITION = {
           'body, because a truncated one would read as the whole file and ' +
           'get republished as one.',
       },
+      entry: {
+        type: 'string',
+        description: 'File path to read from a folder relic.',
+      },
     },
     required: ['relic_id'],
     additionalProperties: false,
@@ -1048,6 +1053,23 @@ export const SHOW_TOOL_DEFINITION = {
   outputSchema: {
     type: 'object',
     properties: {
+      shape: { type: 'string', enum: ['file', 'folder'] },
+      files: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            path: { type: 'string' },
+            mimetype: { type: 'string' },
+            bytes: { type: 'integer' },
+            renderer_class: { type: 'string' },
+          },
+          required: ['path', 'mimetype', 'bytes', 'renderer_class'],
+          additionalProperties: false,
+        },
+      },
+      files_omitted: { type: 'integer' },
+      entry: { type: ['string', 'null'] },
       relic_id: { type: 'string' },
       version: {
         type: 'integer',
@@ -1274,6 +1296,7 @@ export const READ_COMMENTS_TOOL_DEFINITION = {
             created_at: { type: 'string' },
             display_name: { type: ['string', 'null'] },
             body: { type: ['string', 'null'] },
+            entry: { type: ['string', 'null'] },
             version: {
               type: ['integer', 'null'],
               description:
@@ -1464,6 +1487,7 @@ export const READ_COMMENTS_TOOL_DEFINITION = {
             'version',
             'edited_at',
             'anchor',
+            'entry',
             'readable',
             'unreadable_reason',
             'addresses',
@@ -1536,6 +1560,10 @@ export const COMMENT_TOOL_DEFINITION = {
           'Optional. A name shown beside the comment, up to 64 bytes of ' +
           'UTF-8. It aliases the attribution for presentation and never ' +
           'replaces it.',
+      },
+      entry: {
+        type: 'string',
+        description: 'Canonical path of the file this comment concerns.',
       },
       addresses: {
         type: 'string',
@@ -2968,10 +2996,18 @@ async function callShow(
       '`include_content` must be a boolean or omitted'
     );
   }
+  const entry = args['entry'];
+  if (entry !== undefined && typeof entry !== 'string') {
+    return errorResponse(
+      id,
+      ERROR_CODES.invalidParams,
+      '`entry` must be a string or omitted'
+    );
+  }
 
   try {
     const result = await showRelic(
-      { relic_id: relicId, include_content: includeContent },
+      { relic_id: relicId, include_content: includeContent, entry },
       deps
     );
     return {
@@ -3515,6 +3551,14 @@ async function callComment(
     );
   }
   const addresses = typeof rawAddresses === 'string' ? rawAddresses : undefined;
+  const entry = args['entry'];
+  if (entry !== undefined && typeof entry !== 'string') {
+    return errorResponse(
+      id,
+      ERROR_CODES.invalidParams,
+      '`entry` must be a string or omitted'
+    );
+  }
 
   try {
     const result = await postComment(
@@ -3522,6 +3566,7 @@ async function callComment(
         relic_id: relicId,
         body,
         display_name: displayName,
+        entry,
         anchor: rawAnchor as CommentAnchorInput | null | undefined,
         addresses,
         outcome: args['outcome'] as SuggestionOutcome | undefined,
@@ -4026,7 +4071,7 @@ const REFUSAL_GUIDANCE: Readonly<Record<string, string>> = {
  * tell the user what went wrong or act on it.
  */
 function toolError(error: unknown): Record<string, unknown> {
-  if (error instanceof PublishError) {
+  if (error instanceof PublishError || error instanceof FolderReadError) {
     return {
       content: [{ type: 'text', text: `${error.code}: ${error.message}` }],
       structuredContent: { code: error.code, ...error.details },
