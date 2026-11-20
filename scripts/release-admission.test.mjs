@@ -12,6 +12,8 @@ const valid = {
   packageVersion: '1.2.3',
   tagName: 'relic-mcp-v1.2.3',
   tagIsOnMain: true,
+  tagCommit: 'tagged-commit',
+  headCommit: 'tagged-commit',
   dryRun: false,
 };
 
@@ -27,6 +29,8 @@ for (const [name, changes, code] of [
   ['missing tag', { tagIsOnMain: false }, 'tag_mismatch'],
   ['wrong tag name', { tagName: 'relic-mcp-v1.2.4' }, 'tag_mismatch'],
   ['dry run requires dry-run tag', { dryRun: true }, 'tag_mismatch'],
+  ['tag is an ancestor of the commit being built', { headCommit: 'later-commit' }, 'tag_not_head'],
+  ['missing checked-out commit', { headCommit: null }, 'tag_not_head'],
 ]) {
   test(`refuses ${name}`, () => {
     const result = admitRelease({ ...valid, ...changes });

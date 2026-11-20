@@ -2,13 +2,14 @@ import { execFileSync } from 'node:child_process';
 import { appendFileSync, readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
-export function admitRelease({ eventName, triggeringActor, actorId, ref, refType, inputVersion, packageVersion, tagName, tagIsOnMain, dryRun }) {
+export function admitRelease({ eventName, triggeringActor, actorId, ref, refType, inputVersion, packageVersion, tagName, tagIsOnMain, tagCommit, headCommit, dryRun }) {
   if (eventName !== 'workflow_dispatch') return { ok: false, code: 'not_dispatch', message: 'Release must be started by workflow_dispatch.' };
   if (triggeringActor !== 'github-actions[bot]' || String(actorId) !== '41898282') return { ok: false, code: 'actor_not_bot', message: 'Release must be started by the GitHub Actions bot.' };
   if (ref !== 'refs/heads/main' || refType !== 'branch') return { ok: false, code: 'ref_not_main', message: 'Release must run on main.' };
   if (typeof inputVersion !== 'string' || !/^\d+\.\d+\.\d+$/.test(inputVersion)) return { ok: false, code: 'version_malformed', message: 'Version must be a numeric major.minor.patch.' };
   if (inputVersion !== packageVersion) return { ok: false, code: 'version_mismatch', message: 'Version does not match the checked-out package.' };
   if (tagName !== `relic-mcp-v${inputVersion}${dryRun ? '-dryrun' : ''}` || tagIsOnMain !== true) return { ok: false, code: 'tag_mismatch', message: 'Release tag is missing or its commit is not on main.' };
+  if (!tagCommit || !headCommit || tagCommit !== headCommit) return { ok: false, code: 'tag_not_head', message: 'The tagged commit is not the commit being built.' };
   return { ok: true };
 }
 
@@ -26,7 +27,7 @@ function main() {
   const tagName = dispatcher ? env.GITHUB_REF_NAME : `relic-mcp-v${env.INPUT_VERSION}${env.INPUT_DRY_RUN === 'true' ? '-dryrun' : ''}`;
   const tagCommit = git('rev-parse', '--verify', `refs/tags/${tagName}^{commit}`);
   const onMain = tagCommit !== null && git('merge-base', '--is-ancestor', tagCommit, 'refs/remotes/origin/main') !== null;
-  const headMatches = !dispatcher || (tagCommit !== null && tagCommit === git('rev-parse', 'HEAD'));
+  const headCommit = git('rev-parse', 'HEAD');
   const packageVersion = JSON.parse(readFileSync('packages/relic-mcp/package.json', 'utf8')).version;
   const decision = admitRelease({
     eventName: dispatcher ? 'workflow_dispatch' : env.GITHUB_EVENT_NAME,
@@ -37,7 +38,9 @@ function main() {
     inputVersion: env.INPUT_VERSION,
     packageVersion,
     tagName,
-    tagIsOnMain: onMain && headMatches,
+    tagIsOnMain: onMain,
+    tagCommit,
+    headCommit,
     dryRun: env.INPUT_DRY_RUN === 'true',
   });
   const actor = env.GITHUB_TRIGGERING_ACTOR || 'unknown';
