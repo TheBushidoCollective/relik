@@ -1,5 +1,6 @@
 import type { SourceSegment } from './markdown-source.ts';
 import type { SuggestBlockKind, SuggestRefusal } from './suggest-draft.ts';
+import type { SuggestController } from './suggest-controller.ts';
 
 /** Source offsets and editable blocks owned by one currently drawn view. */
 export interface SuggestionSurface {
@@ -33,4 +34,16 @@ export function suggestionSurfaceFor(
   if (!owner) return undefined;
   const surface = surfaces.get(owner);
   return surface && owner.contains(surface.root) ? surface : undefined;
+}
+
+/** An unsent or failed suggestion must remain visible; an in-flight post may finish after a swap. */
+export function guardSurfaceSwap(
+  controller:
+    | Pick<SuggestController, 'draftOpen' | 'postInFlight' | 'hasPendingDraft'>
+    | undefined
+): string | null {
+  return controller?.hasPendingDraft() &&
+    (controller.draftOpen || !controller.postInFlight)
+    ? 'Send or discard your suggestion first'
+    : null;
 }

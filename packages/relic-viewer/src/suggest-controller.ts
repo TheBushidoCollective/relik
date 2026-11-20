@@ -47,6 +47,7 @@ export interface SuggestController {
   readonly suggesting: boolean;
   readonly draftOpen: boolean;
   hasPendingDraft(): boolean;
+  readonly postInFlight: boolean;
   readonly applied: boolean;
   readonly currentVersion: boolean;
   presenceDocument():
@@ -840,6 +841,9 @@ export function mountSuggestionController(
     },
     hasPendingDraft() {
       return !!editor?.draft || !!transport?.shouldWarnBeforeUnload;
+    },
+    get postInFlight() {
+      return !!activeCommit && transport?.state.status !== 'not-posted';
     },
     get applied() {
       return applied;
