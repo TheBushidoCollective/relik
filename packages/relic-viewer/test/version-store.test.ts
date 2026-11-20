@@ -9,6 +9,7 @@ import {
   HEADER_BYTES,
   SALT_BYTES,
 } from '@relic/format';
+import { compareFolderFiles } from '../src/folder-compare.ts';
 import { contentFromBytes } from '../src/content.ts';
 import { createVersionStore } from '../src/version-store.ts';
 import { type ReadyView, type ViewerDeps } from '../src/viewer.ts';
@@ -449,6 +450,22 @@ describe('version store', () => {
     if (three.kind !== 'ready') throw new Error('third version failed');
     expect(three.view.folder).toBeUndefined();
     expect(three.view.filename).toBe('single.txt');
+    expect(
+      (await compareFolderFiles(one.view, two.view, (name) => name)).map(
+        ({ path, kind }) => [path, kind]
+      )
+    ).toEqual([
+      ['inside.txt', 'added'],
+      ['single.txt', 'removed'],
+    ]);
+    expect(
+      (await compareFolderFiles(two.view, three.view, (name) => name)).map(
+        ({ path, kind }) => [path, kind]
+      )
+    ).toEqual([
+      ['inside.txt', 'removed'],
+      ['single.txt', 'added'],
+    ]);
     expect(await store.get(1)).toBe(one);
     expect(await store.get(2)).toBe(two);
   });

@@ -1288,6 +1288,8 @@ describe('reply threading under target', () => {
         { id: 'a', body: 'A only', entry: 'a.md' },
         { id: 'b', body: 'B only', entry: 'b.md' },
         { id: 'whole', body: 'Whole note', entry: undefined },
+        { id: 'missing', body: 'Missing file note', entry: 'missing.md' },
+        { id: 'other-version', body: 'Other version note', entry: 'a.md' },
       ].map(async ({ id, body, entry }) => ({
         comment_id: id,
         author: 'alice@example.com',
@@ -1297,10 +1299,10 @@ describe('reply threading under target', () => {
           display_name: null,
           ...(entry ? { entry } : {}),
         }),
-        version: 1,
+        version: id === 'other-version' ? 2 : 1,
       }))
     );
-    const base = view();
+    const base = view({ currentVersion: 2 });
     const folder = {
       header: {
         version: 2 as const,
@@ -1351,6 +1353,9 @@ describe('reply threading under target', () => {
       expect(text).not.toContain(index === 0 ? 'B only' : 'A only');
       expect(text).toContain('Whole relic');
       expect(text).toContain('Whole note');
+      expect(text).toContain('Missing file note');
+      expect(text).toContain('This file is not in version 1');
+      expect(text).not.toContain('Other version note');
       expect(counts.get('a.md')).toBe(1);
       expect(counts.get('b.md')).toBe(1);
     }
