@@ -1,4 +1,6 @@
 import { type Change, diffLines, diffWordsWithSpace } from 'diff';
+import { AUTO_PROJECTION_MAX_BYTES } from './version-store.ts';
+import { versionContentSize } from './viewer.ts';
 import type { ReadyView, RenderRoute } from './viewer.ts';
 
 /**
@@ -13,6 +15,9 @@ import type { ReadyView, RenderRoute } from './viewer.ts';
  */
 export const MAX_DIFF_BYTES = 16 * 1024 * 1024;
 export const DIFF_LIMIT_LABEL = '16 MiB';
+export const FOLDER_COMPARE_MAX_BYTES = AUTO_PROJECTION_MAX_BYTES;
+export const FOLDER_COMPARE_LIMIT_COPY =
+  'This version is larger than the 100 MiB folder comparison limit, so Relik cannot list what changed. Each version can still be opened on its own.';
 
 /** Same ceiling. Kept so existing imports keep compiling. */
 export const MAX_RENDERED_DIFF_BYTES = MAX_DIFF_BYTES;
@@ -77,7 +82,7 @@ export interface ImageDiff {
 
 export type ComparisonAvailability =
   | { readonly kind: 'none' }
-  | { readonly kind: 'available'; readonly mode: DiffMode }
+  | { readonly kind: 'available'; readonly mode: DiffMode | 'files' }
   | {
       readonly kind: 'unavailable';
       readonly code:
@@ -360,6 +365,16 @@ export function comparisonAvailability(
 ): ComparisonAvailability {
   if (!Number.isInteger(view.currentVersion) || view.currentVersion <= 1) {
     return { kind: 'none' };
+  }
+
+  if (view.folder) {
+    return versionContentSize(view) > FOLDER_COMPARE_MAX_BYTES
+      ? {
+          kind: 'unavailable',
+          code: 'comparison_too_large',
+          detail: FOLDER_COMPARE_LIMIT_COPY,
+        }
+      : { kind: 'available', mode: 'files' };
   }
 
   const noun = uncomparableClassNoun(view.route);

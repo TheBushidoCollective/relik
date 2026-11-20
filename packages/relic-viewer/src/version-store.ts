@@ -1,5 +1,6 @@
 import {
   loadHistoricalVersion,
+  versionContentSize,
   type HistoricalVersionState,
   type LoadProgress,
   type ReadyView,
@@ -19,6 +20,7 @@ export interface VersionStore {
     version: number,
     options?: VersionGetOptions
   ): Promise<HistoricalVersionState>;
+  shapeOf(version: number): 'file' | 'folder' | undefined;
   pin(version: number): void;
   unpin(version: number): void;
 }
@@ -62,8 +64,13 @@ export function createVersionStore(
   const cache = new Map<number, HistoricalVersionState>([
     [boot.version, { kind: 'ready', view: boot }],
   ]);
+  const shapes = new Map<number, 'file' | 'folder'>([
+    [boot.version, boot.folder ? 'folder' : 'file'],
+  ]);
   const pins = new Map<number, number>();
-  const sizes = new Map<number, number>([[boot.version, boot.content.size]]);
+  const sizes = new Map<number, number>([
+    [boot.version, versionContentSize(boot)],
+  ]);
   const pending = new Map<number, PendingVersion>();
 
   function pinned(version: number): boolean {
@@ -72,7 +79,8 @@ export function createVersionStore(
 
   function weight(state: HistoricalVersionState): number {
     return state.kind === 'ready'
-      ? state.view.content.size + (state.view.document?.bytes.length ?? 0)
+      ? versionContentSize(state.view) +
+          (state.view.document?.bytes.length ?? 0)
       : 0;
   }
 
@@ -110,7 +118,7 @@ export function createVersionStore(
       if (
         cached.kind === 'ready' &&
         limit !== undefined &&
-        cached.view.content.size > limit
+        versionContentSize(cached.view) > limit
       )
         return tooLarge(version);
       cache.delete(version);
@@ -141,6 +149,8 @@ export function createVersionStore(
         }
       )
         .then((result) => {
+          if (result.kind === 'ready')
+            shapes.set(version, result.view.folder ? 'folder' : 'file');
           if (result.kind === 'ready' || cacheableFailure(result.code)) {
             cache.set(version, result);
             evict();
@@ -163,7 +173,7 @@ export function createVersionStore(
     if (
       result.kind === 'ready' &&
       limit !== undefined &&
-      result.view.content.size > limit
+      versionContentSize(result.view) > limit
     )
       return tooLarge(version);
     if (result.kind === 'unavailable' && result.code === 'version_too_large') {
@@ -176,6 +186,9 @@ export function createVersionStore(
 
   return {
     get,
+    shapeOf(version) {
+      return shapes.get(version);
+    },
     pin(version) {
       if (version !== boot.version)
         pins.set(version, (pins.get(version) ?? 0) + 1);

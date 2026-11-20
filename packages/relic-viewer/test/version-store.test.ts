@@ -2,12 +2,14 @@ import { describe, expect, test } from 'bun:test';
 import {
   encodeFragment,
   encryptedSize,
+  encryptFolder,
   encryptRelic,
   generateKey,
   generateRelicId,
   HEADER_BYTES,
   SALT_BYTES,
 } from '@relic/format';
+import { compareFolderFiles } from '../src/folder-compare.ts';
 import { contentFromBytes } from '../src/content.ts';
 import { createVersionStore } from '../src/version-store.ts';
 import { type ReadyView, type ViewerDeps } from '../src/viewer.ts';
@@ -325,6 +327,147 @@ describe('version store', () => {
     expect((await f.store.get(2)).kind).toBe('ready');
     expect(f.fetched).toBe(1);
     expect(f.minted.get(2)).toBe(2);
+  });
+
+  test('counts the whole folder when enforcing limits and evicting mixed versions', async () => {
+    const f = harness(new Uint8Array(), generateKey());
+    const calls = new Map<number, number>();
+    const tiny = f.boot.content;
+    const folder = {
+      header: {
+        version: 2,
+        name: 'folder',
+        entryCount: 1,
+        manifestLength: 0,
+        contentLength: 65 * 1024 * 1024,
+      },
+      manifest: { defaultIndex: 0, entries: [] },
+      whole: { ...tiny, size: 65 * 1024 * 1024 },
+      index: 0,
+    } as NonNullable<ReadyView['folder']>;
+    const boot: ReadyView = {
+      ...f.boot,
+      openVersion: async (version) => {
+        calls.set(version, (calls.get(version) ?? 0) + 1);
+        return {
+          kind: 'ready',
+          view: { ...f.boot, version, ...(version === 2 ? { folder } : {}) },
+        };
+      },
+    };
+    const store = createVersionStore(generateRelicId(), boot, {
+      serviceOrigin: 'https://relik.example',
+      locationHref: boot.shareUrl,
+      keyVault: { remember() {}, recall: () => undefined, forget() {} },
+      fetch: (async () => {
+        throw new Error('unexpected fetch');
+      }) as unknown as typeof fetch,
+    });
+    expect((await store.get(2)).kind).toBe('ready');
+    expect((await store.get(3)).kind).toBe('ready');
+    expect((await store.get(2)).kind).toBe('ready');
+    expect(calls.get(2)).toBe(2);
+
+    const pinned = createVersionStore(
+      generateRelicId(),
+      { ...boot, folder },
+      {
+        serviceOrigin: 'https://relik.example',
+        locationHref: boot.shareUrl,
+        keyVault: { remember() {}, recall: () => undefined, forget() {} },
+        fetch: (async () => {
+          throw new Error('unexpected fetch');
+        }) as unknown as typeof fetch,
+      }
+    );
+    const refused = await pinned.get(boot.version, { maxBytes: 100 });
+    expect(refused.kind === 'unavailable' && refused.code).toBe(
+      'version_too_large'
+    );
+  });
+
+  test('opens each historical envelope by its own shape', async () => {
+    const key = generateKey();
+    const file = await encryptRelic({
+      content: new TextEncoder().encode('single file'),
+      filename: 'single.txt',
+      mimetype: 'text/plain',
+      key,
+    });
+    const folder = await encryptFolder({
+      key,
+      name: 'folder',
+      defaultIndex: 0,
+      entries: [
+        {
+          path: 'inside.txt',
+          mimetype: 'text/plain',
+          bytes: new TextEncoder().encode('folder file'),
+        },
+      ],
+    });
+    const f = harness(file, key);
+    const objects = new Map([
+      [1, file],
+      [2, folder],
+      [3, file],
+    ]);
+    const deps: ViewerDeps = {
+      serviceOrigin: 'https://relik.example',
+      locationHref: f.boot.shareUrl,
+      keyVault: { remember() {}, recall: () => undefined, forget() {} },
+      fetch: (async (input, init) => {
+        if (String(input).endsWith('/mint')) {
+          const version = JSON.parse(String(init?.body)).version as number;
+          return Response.json({
+            url: `https://storage.example/v${version}`,
+            url_expires_at: '2099-01-01T00:00:00Z',
+            relic_expires_at: null,
+            object_length: objects.get(version)!.length,
+            object_crc32c: 'AAAAAA==',
+            mints_remaining: 199,
+            version,
+            current_version: 4,
+          });
+        }
+        const version = Number(String(input).split('/v').pop());
+        return new Response(objects.get(version)! as unknown as BodyInit);
+      }) as typeof fetch,
+    };
+    const store = createVersionStore(generateRelicId(), f.boot, deps);
+    const one = await store.get(1);
+    const two = await store.get(2);
+    const three = await store.get(3);
+    expect(one.kind).toBe('ready');
+    expect(two.kind).toBe('ready');
+    expect(three.kind).toBe('ready');
+    if (one.kind !== 'ready' || two.kind !== 'ready')
+      throw new Error('version failed');
+    expect(one.view.folder).toBeUndefined();
+    expect(one.view.filename).toBe('single.txt');
+    expect(two.view.folder?.manifest.entries[0]?.path).toBe('inside.txt');
+    expect(two.view.filename).toBe('inside.txt');
+    if (three.kind !== 'ready') throw new Error('third version failed');
+    expect(three.view.folder).toBeUndefined();
+    expect(three.view.filename).toBe('single.txt');
+    expect(
+      (await compareFolderFiles(one.view, two.view, (name) => name)).map(
+        ({ path, kind }) => [path, kind]
+      )
+    ).toEqual([
+      ['inside.txt', 'added'],
+      ['single.txt', 'removed'],
+    ]);
+    expect(
+      (await compareFolderFiles(two.view, three.view, (name) => name)).map(
+        ({ path, kind }) => [path, kind]
+      )
+    ).toEqual([
+      ['inside.txt', 'removed'],
+      ['single.txt', 'added'],
+    ]);
+    expect(await store.get(1)).toBe(one);
+    expect(await store.get(2)).toBe(two);
   });
 
   test('evicts least recently used unpinned versions and preserves pinned versions', async () => {

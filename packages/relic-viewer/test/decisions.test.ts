@@ -852,6 +852,44 @@ describe('the decisions sheet', () => {
     expect(withAttr(panel, 'data-decision-stale')).toHaveLength(0);
   });
 
+  test('a folder decision applies to every file, for either verdict', async () => {
+    const { deps } = service({ '/decisions/list': listReply([]) });
+    const base = view();
+    const folder = {
+      header: {
+        version: 2 as const,
+        name: 'folder',
+        entryCount: 1,
+        manifestLength: 0,
+        contentLength: base.content.size,
+      },
+      manifest: {
+        defaultIndex: 0,
+        entries: [
+          {
+            path: 'cut.md',
+            mimetype: 'text/markdown',
+            offset: 0,
+            length: base.content.size,
+          },
+        ],
+      },
+      whole: base.content,
+      index: 0,
+    };
+    const folderPanel = await openPanel(deps, { view: view({ folder }) });
+    expect(textOf(folderPanel.panel)).toContain(
+      'A decision here applies to every file in version 3.'
+    );
+    expect(withAttr(folderPanel.panel, 'data-decision-verdict')).toHaveLength(
+      2
+    );
+    const singlePanel = await openPanel(deps);
+    expect(textOf(singlePanel.panel)).not.toContain(
+      'A decision here applies to every file'
+    );
+  });
+
   test('an anonymous reader is handed the comment sign-in, not a verdict', async () => {
     const { deps } = service({ '/decisions/list': listReply(RECORDS) });
     const { panel, signInHosts } = await openPanel(deps, {

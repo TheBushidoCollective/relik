@@ -123,6 +123,10 @@ class ElementStub {
     this.children.push(...children);
   }
 
+  prepend(...children: ElementStub[]): void {
+    this.children.unshift(...children);
+  }
+
   replaceChildren(...children: ElementStub[]): void {
     this.children.splice(0, this.children.length, ...children);
   }
@@ -1276,6 +1280,86 @@ describe('hostile input in comment body is neutralized', () => {
 describe('reply threading under target', () => {
   beforeEach(installDom);
   afterEach(clearDom);
+
+  test('folder thread shows its own file and whole relic comments, with per-file counts', async () => {
+    const cipher = commentCipher(await deriveCommentKey(KEY_BYTES));
+    const records = await Promise.all(
+      [
+        { id: 'a', body: 'A only', entry: 'a.md' },
+        { id: 'b', body: 'B only', entry: 'b.md' },
+        { id: 'whole', body: 'Whole note', entry: undefined },
+        { id: 'missing', body: 'Missing file note', entry: 'missing.md' },
+        { id: 'other-version', body: 'Other version note', entry: 'a.md' },
+      ].map(async ({ id, body, entry }) => ({
+        comment_id: id,
+        author: 'alice@example.com',
+        created_at: '2026-08-20T09:15:00.000Z',
+        ciphertext: await cipher.seal({
+          body,
+          display_name: null,
+          ...(entry ? { entry } : {}),
+        }),
+        version: id === 'other-version' ? 2 : 1,
+      }))
+    );
+    const base = view({ currentVersion: 2 });
+    const folder = {
+      header: {
+        version: 2 as const,
+        name: 'folder',
+        entryCount: 2,
+        manifestLength: 0,
+        contentLength: base.content.size,
+      },
+      manifest: {
+        defaultIndex: 0,
+        entries: [
+          {
+            path: 'a.md',
+            mimetype: 'text/markdown',
+            offset: 0,
+            length: base.content.size,
+          },
+          {
+            path: 'b.md',
+            mimetype: 'text/markdown',
+            offset: 0,
+            length: base.content.size,
+          },
+        ],
+      },
+      whole: base.content,
+      index: 0,
+    };
+    for (const index of [0, 1]) {
+      let counts: ReadonlyMap<string, number> = new Map();
+      const thread = buildThread(
+        { ...base, folder: { ...folder, index } },
+        RELIC_ID,
+        stubDeps(() => json(records)),
+        () => {},
+        undefined,
+        (next) => {
+          counts = next;
+        }
+      );
+      await thread.ready;
+      const list = withClass(
+        thread.element as unknown as ElementStub,
+        'thread-list'
+      )[0]!;
+      const text = textOf(list);
+      expect(text).toContain(index === 0 ? 'A only' : 'B only');
+      expect(text).not.toContain(index === 0 ? 'B only' : 'A only');
+      expect(text).toContain('Whole relic');
+      expect(text).toContain('Whole note');
+      expect(text).toContain('Missing file note');
+      expect(text).toContain('This file is not in version 1');
+      expect(text).not.toContain('Other version note');
+      expect(counts.get('a.md')).toBe(1);
+      expect(counts.get('b.md')).toBe(1);
+    }
+  });
 
   test('a reply renders under its target comment inside comment-replies', async () => {
     const targetCiphertext = await sealedWithAddresses('Target comment', null);

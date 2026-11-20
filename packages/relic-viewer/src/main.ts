@@ -225,6 +225,8 @@ export { quotedTargetLabel } from './comments.ts';
 import {
   MAX_DIFF_BYTES,
   DIFF_LIMIT_LABEL,
+  FOLDER_COMPARE_MAX_BYTES,
+  FOLDER_COMPARE_LIMIT_COPY,
   bytesEqual,
   comparisonAvailability,
   createImageDiff,
@@ -281,6 +283,7 @@ import {
 } from './share.ts';
 import { folderTreeView } from './folder-tree-view.ts';
 import { entryView } from './folder-relic.ts';
+import { compareFolderFiles } from './folder-compare.ts';
 import { folderMarkdown, scrollToFolderFragment } from './folder-links.ts';
 import type { FolderRelic } from './folder-relic.ts';
 import { createLifecycle, healStaleShell } from './stale-shell.ts';
@@ -738,6 +741,7 @@ export interface BarOptions {
   readonly commentCount?: number;
   /** Offered only when there is more than one historical version to pick. */
   readonly onSelectVersion?: (version: number) => void;
+  readonly versionShape?: (version: number) => 'file' | 'folder' | undefined;
   /**
    * Opens the share panel, handed the control that opened it so focus can go
    * back there when the panel closes. Offered on every view that holds the
@@ -845,6 +849,8 @@ function buildVersionControl(
       version === view.currentVersion
         ? `Version ${version}, current`
         : `Version ${version}`;
+    const shape = options.versionShape?.(version);
+    if (shape) option.textContent += `, ${shape}`;
     option.addEventListener('click', () => {
       close();
       onSelect(version);
@@ -3685,7 +3691,10 @@ export function renderComparison(
     version: number,
     onProg?: (p: LoadProgress) => void
   ): Promise<HistoricalVersionState> => {
-    return store.get(version, { onProgress: onProg, maxBytes: MAX_DIFF_BYTES });
+    return store.get(version, {
+      onProgress: onProg,
+      maxBytes: FOLDER_COMPARE_MAX_BYTES,
+    });
   };
 
   const updateSelected = async (): Promise<void> => {
@@ -3741,17 +3750,141 @@ export function renderComparison(
         pinned.add(loaded.view.version);
       }
     }
+    for (const picker of [scaffold.picker.left, scaffold.picker.right]) {
+      for (const option of picker.options) {
+        const version = Number(option.dataset['version']);
+        const shape = store.shapeOf(version);
+        option.textContent = `Version ${version}${version === current.currentVersion ? ', current' : ''}${shape ? `, ${shape}` : ''}`;
+      }
+    }
 
     if (leftRes.kind === 'unavailable') {
       scaffold.result.replaceChildren(
-        notice(failureText(leftRes, vaultHoldsKey(relicId, deps)))
+        notice(
+          current.folder && leftRes.code === 'version_too_large'
+            ? FOLDER_COMPARE_LIMIT_COPY
+            : failureText(leftRes, vaultHoldsKey(relicId, deps))
+        )
       );
       changesSidebar.setChanges(0, undefined);
       return;
     }
     if (rightRes.kind === 'unavailable') {
       scaffold.result.replaceChildren(
-        notice(failureText(rightRes, vaultHoldsKey(relicId, deps)))
+        notice(
+          current.folder && rightRes.code === 'version_too_large'
+            ? FOLDER_COMPARE_LIMIT_COPY
+            : failureText(rightRes, vaultHoldsKey(relicId, deps))
+        )
+      );
+      changesSidebar.setChanges(0, undefined);
+      return;
+    }
+
+    if (leftRes.view.folder || rightRes.view.folder) {
+      if (
+        (leftRes.view.folder?.whole.size ?? leftRes.view.content.size) >
+          FOLDER_COMPARE_MAX_BYTES ||
+        (rightRes.view.folder?.whole.size ?? rightRes.view.content.size) >
+          FOLDER_COMPARE_MAX_BYTES
+      ) {
+        scaffold.result.replaceChildren(notice(FOLDER_COMPARE_LIMIT_COPY));
+        changesSidebar.setChanges(0, undefined);
+        return;
+      }
+      try {
+        const files = await compareFolderFiles(
+          leftRes.view,
+          rightRes.view,
+          safeDownloadName
+        );
+        if (thisRequest !== request) return;
+        const container = document.createElement('div');
+        const fileList = document.createElement('ul');
+        fileList.className = 'diff-change-list';
+        const detail = document.createElement('div');
+        const unchanged = document.createElement('details');
+        const summary = document.createElement('summary');
+        const unchangedList = document.createElement('ul');
+        unchangedList.className = 'diff-change-list';
+        const unchangedCount = files.filter(
+          (file) => file.kind === 'unchanged'
+        ).length;
+        summary.textContent = `${unchangedCount} unchanged file${unchangedCount === 1 ? '' : 's'}`;
+        unchanged.append(summary, unchangedList);
+        let selection = 0;
+        for (const file of files) {
+          const item = document.createElement('li');
+          item.className = `diff-change diff-change-${file.kind}`;
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.disabled = file.kind !== 'changed';
+          button.textContent = `${file.kind}: ${file.path}`;
+          button.addEventListener('click', () => {
+            if (file.kind !== 'changed') return;
+            const selected = ++selection;
+            void Promise.all([
+              file.beforeIndex === undefined
+                ? leftRes.view
+                : entryView(leftRes.view, file.beforeIndex),
+              file.afterIndex === undefined
+                ? rightRes.view
+                : entryView(rightRes.view, file.afterIndex),
+            ])
+              .then(([before, after]) => {
+                if (thisRequest !== request || selected !== selection) return;
+                detail.replaceChildren(
+                  renderLoadedVersion(
+                    after,
+                    before,
+                    before.version,
+                    usercontentOrigin
+                  )
+                );
+              })
+              .catch(() => {
+                if (thisRequest === request && selected === selection)
+                  detail.replaceChildren(
+                    notice('This file could not be compared.')
+                  );
+              });
+          });
+          item.appendChild(button);
+          (file.kind === 'unchanged' ? unchangedList : fileList).appendChild(
+            item
+          );
+        }
+        container.append(fileList);
+        if (unchangedCount) container.append(unchanged);
+        if (!files.some((file) => file.kind !== 'unchanged'))
+          container.appendChild(
+            noChanges('No changes. These versions have identical content.')
+          );
+        container.appendChild(detail);
+        scaffold.result.replaceChildren(container);
+        changesSidebar.setChanges(
+          files.filter((file) => file.kind !== 'unchanged').length,
+          notice('Select a changed file to compare it.')
+        );
+      } catch {
+        if (thisRequest === request)
+          scaffold.result.replaceChildren(
+            notice('These files could not be compared.')
+          );
+      }
+      return;
+    }
+    if (
+      leftRes.view.content.size > MAX_DIFF_BYTES ||
+      rightRes.view.content.size > MAX_DIFF_BYTES
+    ) {
+      scaffold.result.replaceChildren(
+        renderLoadedVersion(
+          rightRes.view,
+          leftRes.view,
+          leftVersion,
+          usercontentOrigin
+        )
       );
       changesSidebar.setChanges(0, undefined);
       return;
@@ -6246,7 +6379,8 @@ export function buildThread(
   relicId: string,
   deps: ViewerDeps,
   onCount: (count: number) => void,
-  onViewOriginal?: (version: number) => void
+  onViewOriginal?: (version: number) => void,
+  onFileCounts?: (counts: ReadonlyMap<string, number>) => void
 ): ThreadHandle {
   const section = document.createElement('aside');
   section.className = 'thread';
@@ -6532,7 +6666,17 @@ export function buildThread(
           ...(initialSelection ? { initialSelection } : {}),
           session: () => session,
           cipher: () => cipher,
-          entries: () => allEntries,
+          entries: () =>
+            view.folder
+              ? allEntries.filter(
+                  (entry) =>
+                    entry.kind === 'open' &&
+                    entry.entry ===
+                      view.folder?.manifest.entries[view.folder.index]?.path
+                )
+              : allEntries.filter(
+                  (entry) => entry.kind !== 'open' || entry.entry === undefined
+                ),
           displayName: () => readDisplayName() || null,
           refresh,
           readCurrentVersion: async () => {
@@ -7992,6 +8136,9 @@ export function buildThread(
                   // under what it answers.
                   anchor: null,
                   addresses: id,
+                  ...(entry.kind === 'open' && entry.entry !== undefined
+                    ? { entry: entry.entry }
+                    : {}),
                 },
                 deps,
                 opener,
@@ -8063,6 +8210,9 @@ export function buildThread(
                       // something the reader can no longer see.
                       anchor: entry.anchor,
                       addresses: entry.addresses ?? null,
+                      ...(entry.entry !== undefined
+                        ? { entry: entry.entry }
+                        : {}),
                     },
                     deps,
                     opener
@@ -8493,6 +8643,12 @@ export function buildThread(
               body,
               display_name: readDisplayName() || null,
               anchor: aimed,
+              ...(view.folder
+                ? {
+                    entry:
+                      view.folder.manifest.entries[view.folder.index]!.path,
+                  }
+                : {}),
             },
             deps,
             opener,
@@ -9094,8 +9250,39 @@ export function buildThread(
       return viewedVersion === 1;
     });
 
+    const paths = new Set(
+      view.folder?.manifest.entries.map((item) => item.path) ?? []
+    );
+    const selectedPath = view.folder?.manifest.entries[view.folder.index]?.path;
+    const isWhole = (entry: CommentEntry): boolean =>
+      view.folder
+        ? entry.kind !== 'open' ||
+          entry.entry === undefined ||
+          !paths.has(entry.entry)
+        : entry.kind === 'open' && entry.entry !== undefined;
+    if (view.folder) {
+      const counts = new Map<string, number>();
+      for (const entry of filteredEntries) {
+        if (
+          entry.kind === 'open' &&
+          entry.entry !== undefined &&
+          paths.has(entry.entry)
+        ) {
+          counts.set(entry.entry, (counts.get(entry.entry) ?? 0) + 1);
+        }
+      }
+      onFileCounts?.(counts);
+    }
+    const visibleEntries = view.folder
+      ? filteredEntries.filter(
+          (entry) =>
+            isWhole(entry) ||
+            (entry.kind === 'open' && entry.entry === selectedPath)
+        )
+      : filteredEntries;
+
     addressedById = resolveAddressedMap(allEntries);
-    const tree = threadEntries(filteredEntries, allEntries);
+    const tree = threadEntries(visibleEntries, allEntries);
     const displayedEntries = collectDisplayedEntries(tree);
     suggestionController?.sync();
     if (
@@ -9106,10 +9293,56 @@ export function buildThread(
     )
       void ensureSuggestion();
 
-    paintMarks(displayedEntries);
+    paintMarks(
+      displayedEntries.filter((entry) =>
+        view.folder
+          ? !isWhole(entry)
+          : entry.kind !== 'open' || entry.entry === undefined
+      )
+    );
+    lastEntries = displayedEntries;
+    for (const entry of displayedEntries) {
+      if (
+        entry.kind === 'open' &&
+        entry.anchor !== null &&
+        ((view.folder && isWhole(entry)) ||
+          (!view.folder && entry.entry !== undefined))
+      ) {
+        unplaceable.add(entry.id);
+      }
+    }
 
     const renderRows = (): void => {
-      list.replaceChildren(...tree.map((node) => renderCommentNode(node)));
+      if (!view.folder && !tree.some((node) => isWhole(node.entry))) {
+        list.replaceChildren(...tree.map((node) => renderCommentNode(node)));
+        return;
+      }
+      const whole = tree.filter((node) => isWhole(node.entry));
+      const file = tree.filter((node) => !isWhole(node.entry));
+      const rows: HTMLElement[] = [];
+      if (whole.length) {
+        const heading = document.createElement('li');
+        heading.textContent = 'Whole relic';
+        rows.push(
+          heading,
+          ...whole.map((node) => {
+            const row = renderCommentNode(node);
+            if (node.entry.kind === 'open') {
+              row.prepend(
+                line(
+                  'thread-note',
+                  node.entry.entry === undefined
+                    ? 'Not tied to a file'
+                    : `This file is not in version ${viewedVersion}`
+                )
+              );
+            }
+            return row;
+          })
+        );
+      }
+      rows.push(...file.map((node) => renderCommentNode(node)));
+      list.replaceChildren(...rows);
     };
     rerenderRows = renderRows;
     repaintDeleteControls();
@@ -9271,6 +9504,9 @@ export function buildThread(
           body: submitted.body,
           display_name: name.value.trim().length > 0 ? name.value.trim() : null,
           anchor: marks.target(),
+          ...(view.folder
+            ? { entry: view.folder.manifest.entries[view.folder.index]!.path }
+            : {}),
         };
         // The target belongs to this captured submission, not the next draft.
         marks.clear();
@@ -10508,6 +10744,7 @@ export function renderReady(
     const built = buildBar(activeView, relicId, {
       comparisonOpen,
       selectedVersion: activeView.version,
+      versionShape: (version) => versionStore.shapeOf(version),
       onSelectVersion: (version: number) => {
         void showVersion(version);
       },
@@ -10575,7 +10812,10 @@ export function renderReady(
       versionStore.unpin(viewToShow.version);
     }
     activeView = viewToShow;
-    if (viewToShow.route !== 'download') {
+    let setFolderCounts:
+      | ((counts: ReadonlyMap<string, number>) => void)
+      | undefined;
+    if (viewToShow.route !== 'download' || viewToShow.folder) {
       thread = buildThread(
         viewToShow,
         relicId,
@@ -10589,7 +10829,8 @@ export function renderReady(
         },
         (version) => {
           void showVersion(version);
-        }
+        },
+        (counts) => setFolderCounts?.(counts)
       );
     } else {
       thread = undefined;
@@ -10651,6 +10892,7 @@ export function renderReady(
           return icon(shape);
         }
       );
+      setFolderCounts = tree.setCommentCounts;
       toolbar = tree.toolbar;
       row.prepend(tree.pane);
     }

@@ -111,6 +111,7 @@ export type CommentEntry =
       readonly body: string;
       readonly displayName: string | null;
       readonly anchor: CommentAnchor | null;
+      readonly entry?: string;
       readonly version?: number | null;
       /** The comment id this one answers, decrypted from the sealed copy only. */
       readonly addresses?: string | null;
@@ -651,6 +652,7 @@ export async function openEntry(
           ? plaintext.display_name
           : null,
       anchor: plaintext.anchor ?? null,
+      ...(plaintext.entry !== undefined ? { entry: plaintext.entry } : {}),
       version,
       addresses: plaintext.addresses ?? null,
       ...(plaintext.suggestion ? { suggestion: plaintext.suggestion } : {}),
