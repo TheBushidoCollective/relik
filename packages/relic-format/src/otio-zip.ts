@@ -503,6 +503,7 @@ export async function indexOtioZip(
   if (source.size > maxArchive) {
     throw new ContentTooLargeError(source.size, maxArchive);
   }
+  let aggregateInflated = 0;
   const indexed = await indexZipForOtio(
     archive,
     {
@@ -511,7 +512,25 @@ export async function indexOtioZip(
       maxEntryBytes: maxLimit,
       maxTotalBytes: maxLimit,
     },
-    inflater
+    inflater,
+    (name, method, size) => {
+      if (method === 8) {
+        aggregateInflated += size;
+        if (aggregateInflated > maxInflated)
+          return {
+            ok: false,
+            reason: 'entry-too-large',
+            message: `Aggregate DEFLATE size ${aggregateInflated} exceeds cap of ${maxInflated} bytes`,
+          };
+      }
+      if (name === 'content.otio' && size > OTIO_DOCUMENT_MAX_BYTES)
+        return {
+          ok: false,
+          reason: 'entry-too-large',
+          message: `content.otio exceeds ${OTIO_DOCUMENT_MAX_BYTES} bytes`,
+        };
+      return undefined;
+    }
   );
   if (!indexed.ok) {
     const unsupported: ZipRefusal['reason'][] = [
@@ -537,29 +556,7 @@ export async function indexOtioZip(
   }
   const sharedIndex = indexed.index;
   const entries = new Map<string, OtioZipEntryInfo>();
-  let aggregateInflated = 0;
   for (const entry of indexed.index.entries.values()) {
-    if (entry.kind === 'symlink') {
-      throw new OtioZipError(
-        'corrupt-archive',
-        `Non-regular file type in ZIP entry prohibited: ${entry.rawName}`
-      );
-    }
-    if (entry.method === 8) {
-      aggregateInflated += entry.size;
-      if (aggregateInflated > maxInflated) {
-        throw new OtioZipError(
-          'decompression-limit',
-          `Aggregate DEFLATE size ${aggregateInflated} exceeds cap of ${maxInflated} bytes`
-        );
-      }
-    }
-    if (entry.name === 'content.otio' && entry.size > OTIO_DOCUMENT_MAX_BYTES) {
-      throw new OtioZipError(
-        'decompression-limit',
-        `content.otio exceeds ${OTIO_DOCUMENT_MAX_BYTES} bytes`
-      );
-    }
     entries.set(entry.name, {
       name: entry.name,
       rawName: entry.rawName,

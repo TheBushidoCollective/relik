@@ -102,38 +102,44 @@ function failure(error: unknown): ZipRefusal {
         message: error instanceof Error ? error.message : String(error),
       };
 }
-function decodeName(bytes: Uint8Array): string {
+function decodeName(bytes: Uint8Array, where: string): string {
   try {
     return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
   } catch {
-    return fail('bad-name-encoding', 'ZIP entry name is not valid UTF-8');
+    return fail(
+      'bad-name-encoding',
+      `ZIP entry name is not valid UTF-8 in ${where}`
+    );
   }
 }
 function safeName(raw: string, legacyNames: boolean): string {
+  if (raw.includes('\0'))
+    return fail('unsafe-name', 'NUL in ZIP entry name prohibited');
   if (
-    raw.includes('\0') ||
     (!legacyNames && raw.includes('\\')) ||
     raw.startsWith('/') ||
     raw.startsWith('\\') ||
     /^[A-Za-z]:/.test(raw)
   )
-    return fail('unsafe-name', `Unsafe ZIP entry name: ${raw}`);
+    return fail('unsafe-name', `Absolute paths in archive prohibited: ${raw}`);
   const parts = raw.split(legacyNames ? /[/\\]/ : /\//);
   if (parts.includes('..'))
-    return fail('unsafe-name', `Unsafe ZIP entry name: ${raw}`);
+    return fail('unsafe-name', `Path traversal (..) prohibited: ${raw}`);
   const name = parts.filter((p) => p !== '' && p !== '.').join('/');
-  if (!name) return fail('unsafe-name', 'Empty ZIP entry name');
+  if (!name) return fail('unsafe-name', `Invalid ZIP entry path: ${raw}`);
   return name;
 }
-function checkExtra(bytes: Uint8Array): void {
+function checkExtra(bytes: Uint8Array, label: string): void {
   let pos = 0;
   while (pos < bytes.length) {
-    if (pos + 4 > bytes.length) fail('corrupt', 'Truncated ZIP extra field');
+    if (pos + 4 > bytes.length)
+      fail('corrupt', `Truncated extra field: ${label}`);
     const id = bytes[pos]! | (bytes[pos + 1]! << 8);
     const size = bytes[pos + 2]! | (bytes[pos + 3]! << 8);
     if (pos + 4 + size > bytes.length)
-      fail('corrupt', 'Truncated ZIP extra field');
-    if (id === 1) fail('zip64', 'ZIP64 extra fields are not supported');
+      fail('corrupt', `Truncated extra field: ${label}`);
+    if (id === 1)
+      fail('zip64', `ZIP64 extended information is not supported: ${label}`);
     pos += 4 + size;
   }
 }
@@ -216,18 +222,28 @@ export async function indexZip(
 export async function indexZipForOtio(
   archive: Uint8Array | ZipSource,
   limits: ZipLimits,
-  inflater?: InflaterFn
+  inflater?: InflaterFn,
+  checkEntry?: (
+    name: string,
+    method: number,
+    size: number
+  ) => ZipRefusal | undefined
 ): Promise<
   { readonly ok: true; readonly index: OtioCompatibleZipIndex } | ZipRefusal
 > {
-  return indexZipInternal(archive, limits, inflater, true);
+  return indexZipInternal(archive, limits, inflater, true, checkEntry);
 }
 
 async function indexZipInternal(
   archive: Uint8Array | ZipSource,
   limits: ZipLimits,
   inflater: InflaterFn | undefined,
-  legacyNames: boolean
+  legacyNames: boolean,
+  checkEntry?: (
+    name: string,
+    method: number,
+    size: number
+  ) => ZipRefusal | undefined
 ): Promise<
   { readonly ok: true; readonly index: OtioCompatibleZipIndex } | ZipRefusal
 > {
@@ -281,7 +297,8 @@ async function indexZipInternal(
         break;
       }
     }
-    if (eocd < 0) return fail('corrupt', 'End of central directory not found');
+    if (eocd < 0)
+      return fail('corrupt', 'End of Central Directory record not found');
     const disk = tv.getUint16(eocd + 4, true),
       cdDisk = tv.getUint16(eocd + 6, true);
     const diskCount = tv.getUint16(eocd + 8, true),
@@ -297,18 +314,21 @@ async function indexZipInternal(
       cdSize === 0xffffffff ||
       cdOffset === 0xffffffff
     )
-      return fail('zip64', 'ZIP64 end record is not supported');
+      return fail(
+        'zip64',
+        'ZIP64 sentinel in the end of central directory is not supported'
+      );
     if (disk !== 0 || cdDisk !== 0 || diskCount !== count)
-      return fail('multi-disk', 'Multi-disk ZIP is not supported');
+      return fail('multi-disk', 'Multi-disk ZIP archives are not supported');
     if (count > limits.maxEntries)
       return fail('too-many-entries', 'ZIP entry count exceeds its limit');
-    if (cdSize > DIRECTORY_LIMIT)
+    if (!legacyNames && cdSize > DIRECTORY_LIMIT)
       return fail(
         'directory-too-large',
-        'ZIP central directory exceeds its limit'
+        'Central directory exceeds the size limit'
       );
     if (cdOffset > source.size || cdSize > source.size - cdOffset)
-      return fail('corrupt', 'Central directory is outside the archive');
+      return fail('corrupt', 'Central directory points beyond end of archive');
     if (endOffset >= 20 && cdOffset + cdSize === endOffset - 20) {
       const locator = await range(endOffset - 20, endOffset);
       if (
@@ -318,10 +338,21 @@ async function indexZipInternal(
           locator.byteLength
         ).getUint32(0, true) === 0x07064b50
       )
-        return fail('zip64', 'ZIP64 locator is not supported');
+        return fail(
+          'zip64',
+          'ZIP64 end of central directory locator is not supported'
+        );
     }
     if (cdOffset + cdSize !== endOffset)
-      return fail('corrupt', 'Central directory does not end at EOCD');
+      return fail(
+        'corrupt',
+        'Central directory extent does not end at the end of central directory record'
+      );
+    if (legacyNames && cdSize > DIRECTORY_LIMIT)
+      return fail(
+        'directory-too-large',
+        'Central directory exceeds the size limit'
+      );
     const directory = await range(cdOffset, endOffset);
     const view = new DataView(
       directory.buffer,
@@ -329,12 +360,17 @@ async function indexZipInternal(
       directory.byteLength
     );
     const entries = new Map<string, InternalEntry>();
-    const extents: { start: number; end: number }[] = [];
+    const extents: { start: number; end: number; name: string }[] = [];
     let cursor = 0,
       total = 0;
     for (let i = 0; i < count; i++) {
-      if (cursor + 46 > cdSize || view.getUint32(cursor, true) !== 0x02014b50)
-        return fail('corrupt', 'Invalid central directory entry');
+      if (cursor + 46 > cdSize)
+        return fail('corrupt', 'Truncated central directory entry');
+      if (view.getUint32(cursor, true) !== 0x02014b50)
+        return fail(
+          'corrupt',
+          `Invalid central directory signature at ${cursor}`
+        );
       const flags = view.getUint16(cursor + 8, true),
         method = view.getUint16(cursor + 10, true);
       const crc = view.getUint32(cursor + 16, true),
@@ -346,29 +382,44 @@ async function indexZipInternal(
       const attrs = view.getUint32(cursor + 38, true),
         localOffset = view.getUint32(cursor + 42, true);
       const end = cursor + 46 + nameLength + extraLength + commentLength;
-      if (end > cdSize)
-        return fail('corrupt', 'Truncated central directory entry');
-      if (flags & 1) return fail('encrypted', 'Encrypted ZIP entry');
+      if (flags & 1)
+        return fail(
+          'encrypted',
+          'Encrypted ZIP entries are strictly prohibited'
+        );
       if (method !== 0 && method !== 8)
-        return fail('unsupported-method', `Unsupported ZIP method ${method}`);
-      if (
-        compressedSize === 0xffffffff ||
-        size === 0xffffffff ||
-        localOffset === 0xffffffff
-      )
-        return fail('zip64', 'ZIP64 entry is not supported');
+        return fail(
+          'unsupported-method',
+          `Unsupported compression method: ${method} (only 0 STORED and 8 DEFLATE allowed)`
+        );
+      if (end > cdSize)
+        return fail(
+          'corrupt',
+          'Central directory entry extends past declared extent'
+        );
+      if (compressedSize === 0xffffffff)
+        return fail('zip64', 'ZIP64 sentinel compressed size is not supported');
+      if (size === 0xffffffff)
+        return fail(
+          'zip64',
+          'ZIP64 sentinel uncompressed size is not supported'
+        );
+      if (localOffset === 0xffffffff)
+        return fail(
+          'zip64',
+          'ZIP64 sentinel local header offset is not supported'
+        );
       const rawName = decodeName(
-        directory.subarray(cursor + 46, cursor + 46 + nameLength)
+        directory.subarray(cursor + 46, cursor + 46 + nameLength),
+        'central directory'
       );
       checkExtra(
         directory.subarray(
           cursor + 46 + nameLength,
           cursor + 46 + nameLength + extraLength
-        )
+        ),
+        rawName
       );
-      const name = safeName(rawName, legacyNames);
-      if (entries.has(name))
-        return fail('duplicate', `Duplicate ZIP entry: ${name}`);
       const mode = attrs >>> 16,
         fileType = mode & 0o170000;
       if (
@@ -377,26 +428,47 @@ async function indexZipInternal(
         fileType !== 0o040000 &&
         fileType !== 0o120000
       )
-        return fail('corrupt', `Unsupported ZIP file type: ${name}`);
+        return fail(
+          'corrupt',
+          `Non-regular file type in ZIP entry prohibited: ${rawName}`
+        );
       const kind =
         fileType === 0o120000
           ? 'symlink'
           : rawName.endsWith('/') || fileType === 0o040000
             ? 'directory'
             : 'file';
-      if (size > limits.maxEntryBytes)
-        return fail('entry-too-large', `ZIP entry exceeds limit: ${name}`);
-      if (total > limits.maxTotalBytes - size)
-        return fail('total-too-large', 'ZIP expanded size exceeds its limit');
-      total += size;
+      if (legacyNames && kind === 'symlink')
+        return fail(
+          'corrupt',
+          `Non-regular file type in ZIP entry prohibited: ${rawName}`
+        );
+      const name = safeName(rawName, legacyNames);
+      if (entries.has(name))
+        return fail('duplicate', `Duplicate entry name: ${name}`);
       if (method === 0 && compressedSize !== size)
-        return fail('size-mismatch', `Stored entry sizes disagree: ${name}`);
-      if (localOffset + 30 > cdOffset)
-        return fail('corrupt', 'Invalid local header offset');
+        return fail('size-mismatch', `STORED entry sizes disagree: ${rawName}`);
+      if (size > limits.maxEntryBytes)
+        return fail(
+          'entry-too-large',
+          legacyNames
+            ? `Aggregate uncompressed size ${total + size} exceeds cap of ${limits.maxTotalBytes} bytes`
+            : `ZIP entry exceeds limit: ${name}`
+        );
+      if (total > limits.maxTotalBytes - size)
+        return fail(
+          'total-too-large',
+          `Aggregate uncompressed size ${total + size} exceeds cap of ${limits.maxTotalBytes} bytes`
+        );
+      total += size;
+      const refused = checkEntry?.(name, method, size);
+      if (refused) return refused;
+      if (localOffset + 30 > source.size || localOffset >= cdOffset)
+        return fail('corrupt', 'Local header offset beyond archive');
       const local = await range(localOffset, localOffset + 30);
       const lv = new DataView(local.buffer, local.byteOffset, local.byteLength);
       if (lv.getUint32(0, true) !== 0x04034b50)
-        return fail('corrupt', 'Invalid local header');
+        return fail('corrupt', 'Invalid local header signature');
       const lf = lv.getUint16(6, true),
         lm = lv.getUint16(8, true),
         lc = lv.getUint32(14, true),
@@ -404,23 +476,67 @@ async function indexZipInternal(
         ls = lv.getUint32(22, true);
       const ln = lv.getUint16(26, true),
         le = lv.getUint16(28, true);
-      if (lcs === 0xffffffff || ls === 0xffffffff)
-        return fail('zip64', 'ZIP64 local header is not supported');
-      if (lf !== flags || lm !== method)
-        return fail('corrupt', 'Local and central headers disagree');
-      if (!(flags & 8) && (lc !== crc || lcs !== compressedSize || ls !== size))
+      if (lcs === 0xffffffff)
         return fail(
-          'size-mismatch',
-          'Local and central entry metadata disagree'
+          'zip64',
+          'ZIP64 sentinel local compressed size is not supported'
+        );
+      if (ls === 0xffffffff)
+        return fail(
+          'zip64',
+          'ZIP64 sentinel local uncompressed size is not supported'
+        );
+      if (lf !== flags)
+        return fail('corrupt', `Mismatched flags in local header: ${rawName}`);
+      if (lm !== method)
+        return fail(
+          'corrupt',
+          `Mismatched compression method in local header: ${rawName}`
+        );
+      if (!(flags & 8)) {
+        if (lc !== crc)
+          return fail('corrupt', `Mismatched CRC in local header: ${rawName}`);
+        if (lcs !== compressedSize)
+          return fail(
+            'size-mismatch',
+            `Mismatched compressed size in local header: ${rawName}`
+          );
+        if (ls !== size)
+          return fail(
+            'size-mismatch',
+            `Mismatched uncompressed size in local header: ${rawName}`
+          );
+      }
+      if (localOffset + 30 + ln > source.size)
+        return fail(
+          'corrupt',
+          `Local header name extends beyond archive: ${rawName}`
         );
       const dataOffset = localOffset + 30 + ln + le;
-      if (dataOffset > cdOffset || compressedSize > cdOffset - dataOffset)
-        return fail('corrupt', 'Entry data exceeds local area');
+      if (dataOffset > source.size || dataOffset > cdOffset)
+        return fail(
+          'corrupt',
+          `Local header extends beyond archive: ${rawName}`
+        );
       const variable = await range(localOffset + 30, dataOffset);
-      if (decodeName(variable.subarray(0, ln)) !== rawName)
-        return fail('corrupt', 'Local and central names disagree');
-      checkExtra(variable.subarray(ln));
-      extents.push({ start: localOffset, end: dataOffset + compressedSize });
+      if (decodeName(variable.subarray(0, ln), 'local header') !== rawName)
+        return fail(
+          'corrupt',
+          `Local and central directory filenames disagree: ${rawName}`
+        );
+      if (compressedSize > source.size - dataOffset)
+        return fail('corrupt', `File data extends beyond archive: ${rawName}`);
+      checkExtra(variable.subarray(ln), rawName);
+      if (compressedSize > cdOffset - dataOffset)
+        return fail(
+          'corrupt',
+          `File data overlaps central directory: ${rawName}`
+        );
+      extents.push({
+        start: localOffset,
+        end: dataOffset + compressedSize,
+        name: rawName,
+      });
       entries.set(name, {
         name,
         rawName,
@@ -436,11 +552,14 @@ async function indexZipInternal(
       cursor = end;
     }
     if (cursor !== cdSize)
-      return fail('corrupt', 'Central directory census mismatch');
+      return fail(
+        'corrupt',
+        'Central directory census did not consume the declared extent'
+      );
     extents.sort((a, b) => a.start - b.start || a.end - b.end);
     for (let i = 1; i < extents.length; i++)
       if (extents[i]!.start < extents[i - 1]!.end)
-        return fail('corrupt', 'ZIP entries overlap');
+        return fail('corrupt', `ZIP entries overlap: ${extents[i]!.name}`);
     async function load(
       name: string,
       customInflater?: InflaterFn
@@ -477,9 +596,16 @@ async function indexZipInternal(
               entry.size
             );
       if (!(bytes instanceof Uint8Array) || bytes.length !== entry.size)
-        return fail('size-mismatch', `ZIP entry length mismatch: ${name}`);
-      if (crc32(bytes) !== entry.crc)
-        return fail('crc-mismatch', `ZIP entry CRC mismatch: ${name}`);
+        return fail(
+          'size-mismatch',
+          `Decompressed length ${bytes.length} does not match expected ${entry.size}`
+        );
+      const computedCrc = crc32(bytes);
+      if (computedCrc !== entry.crc)
+        return fail(
+          'crc-mismatch',
+          `CRC32 mismatch on ${entry.name}: expected ${entry.crc.toString(16)}, got ${computedCrc.toString(16)}`
+        );
       return bytes;
     }
     const index: OtioCompatibleZipIndex = {
