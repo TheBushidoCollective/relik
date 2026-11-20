@@ -649,6 +649,11 @@ export function createRevokeDialog(ctx: RevokeContext): RevokeDialog {
       h('h2', { id: 'revoke-title', tabindex: '-1' }, 'Revoke access'),
       warning,
       fine,
+      h(
+        'p',
+        { class: 'sheet-always' },
+        'This changes who can read this relic, so it always asks.'
+      ),
       rekey,
       revokeActions,
       rekeyActions

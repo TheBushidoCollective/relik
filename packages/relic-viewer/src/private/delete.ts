@@ -107,6 +107,11 @@ export function createDeleteDialog(ctx: DeleteContext): DeleteDialog {
         { class: 'sheet-fine' },
         'The access log keeps a record of the deletion for as long as your retention setting says. One passkey tap.'
       ),
+      h(
+        'p',
+        { class: 'sheet-always' },
+        "This can't be undone, so it always asks."
+      ),
       outcome,
       h('div', { class: 'sheet-actions' }, confirm, cancel)
     )

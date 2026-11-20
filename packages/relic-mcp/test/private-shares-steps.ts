@@ -50,6 +50,10 @@ import {
   launchProofBrowser,
   type RunningProofBrowser,
 } from './decision-proof-steps.ts';
+import {
+  assertPrivateConfirmation,
+  clickPrivateControl,
+} from './confirmation-private-proof.ts';
 
 /** One captured mail. Sign-in codes carry `code` and `link`; other mail has a subject and text. */
 export interface CapturedMail {
@@ -1624,11 +1628,16 @@ async function stepEight(
 ): Promise<number> {
   const previous = await currentVersion(owner.browser, relicId);
   await openPanel(owner, relicUrl);
-  await click(
+  await clickPrivateControl(
     owner.browser,
     `button[data-action="revoke"][aria-label="Revoke ${env.reader}"]`
   );
   await owner.browser.waitForSelector('#revoke-dialog[open]', 25000);
+  await assertPrivateConfirmation(
+    owner.browser,
+    '#revoke-dialog',
+    'This changes who can read this relic, so it always asks.'
+  );
   await click(owner.browser, '[data-action="confirm-revoke"]');
   await owner.browser.waitForSelector('#rekey[data-rekey-state="done"]', 90000);
   const version = await currentVersion(owner.browser, relicId);
@@ -1808,8 +1817,13 @@ async function stepEleven(
 ): Promise<void> {
   // Step 11. Owner hard delete of the whole relic, from the access panel.
   await openPanel(owner, relicUrl);
-  await click(owner.browser, '[data-action="delete-relic"]');
+  await clickPrivateControl(owner.browser, '[data-action="delete-relic"]');
   await owner.browser.waitForSelector('#delete-dialog[open]', 25000);
+  await assertPrivateConfirmation(
+    owner.browser,
+    '#delete-dialog',
+    "This can't be undone, so it always asks."
+  );
   await owner.browser.evaluate<void>(
     `document.querySelector('input[name="delete-scope"][value="all"]').click()`
   );
