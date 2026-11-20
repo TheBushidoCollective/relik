@@ -41,7 +41,14 @@ function safeHref(raw: string): string | undefined {
   return undefined;
 }
 
-function inline(source: string): string {
+export interface MarkdownResolver {
+  resolve(
+    target: string,
+    image: boolean
+  ): { id: number; image: boolean } | undefined;
+}
+
+function inline(source: string, resolver?: MarkdownResolver): string {
   // Escaped up front, with source NULs stripped first. Every replacement
   // below inserts markup around text that is already inert.
   let out = escapeHtml(source.split(SENTINEL).join(''));
@@ -57,6 +64,12 @@ function inline(source: string): string {
   out = out.replace(
     /!\[([^[\]]*)\]\(([^)[\]\s]+)\)/g,
     (match, alt: string, src: string) => {
+      const resolved = resolver?.resolve(unescapeHtml(src), true);
+      if (resolved) {
+        return resolved.image
+          ? `<span class="md-entry-image" data-relic-reference="${resolved.id}">${alt}</span>`
+          : `<span class="md-image">${alt}</span> <a href="#" class="md-entry-link" data-relic-reference="${resolved.id}">${alt}</a>`;
+      }
       // An image would be a cross-origin request issued by the origin holding
       // the fragment. The alt text renders instead, and no request is made.
       return safeHref(src) === undefined
@@ -68,6 +81,9 @@ function inline(source: string): string {
   out = out.replace(
     /\[([^[\]]+)\]\(([^)[\]\s]+)\)/g,
     (match, text: string, url: string) => {
+      const resolved = resolver?.resolve(unescapeHtml(url), false);
+      if (resolved)
+        return `<a href="#" class="md-entry-link" data-relic-reference="${resolved.id}">${text}</a>`;
       const href = safeHref(url);
       if (href === undefined) return match;
       return (
@@ -325,12 +341,12 @@ export function parseMarkdown(source: string, quoteDepth = 0): Block[] {
   return out;
 }
 
-function renderBlock(block: Block): string {
+function renderBlock(block: Block, resolver?: MarkdownResolver): string {
   switch (block.kind) {
     case 'heading':
-      return `<h${block.level}>${inline(block.text)}</h${block.level}>`;
+      return `<h${block.level}>${inline(block.text, resolver)}</h${block.level}>`;
     case 'paragraph':
-      return `<p>${inline(block.text)}</p>`;
+      return `<p>${inline(block.text, resolver)}</p>`;
     case 'code': {
       const attribute =
         block.language.length > 0
@@ -341,10 +357,12 @@ function renderBlock(block: Block): string {
     case 'rule':
       return '<hr>';
     case 'quote':
-      return `<blockquote>${block.blocks.map(renderBlock).join('\n')}</blockquote>`;
+      return `<blockquote>${block.blocks.map((child) => renderBlock(child, resolver)).join('\n')}</blockquote>`;
     case 'list': {
       const tag = block.ordered ? 'ol' : 'ul';
-      const body = block.items.map((item) => `<li>${inline(item)}</li>`);
+      const body = block.items.map(
+        (item) => `<li>${inline(item, resolver)}</li>`
+      );
       return `<${tag}>${body.join('')}</${tag}>`;
     }
     case 'table':
@@ -352,12 +370,14 @@ function renderBlock(block: Block): string {
       // scrolls horizontally.
       return (
         '<div class="md-scroll"><table><thead><tr>' +
-        block.header.map((cell) => `<th>${inline(cell)}</th>`).join('') +
+        block.header
+          .map((cell) => `<th>${inline(cell, resolver)}</th>`)
+          .join('') +
         '</tr></thead><tbody>' +
         block.rows
           .map(
             (row) =>
-              `<tr>${row.map((cell) => `<td>${inline(cell)}</td>`).join('')}</tr>`
+              `<tr>${row.map((cell) => `<td>${inline(cell, resolver)}</td>`).join('')}</tr>`
           )
           .join('') +
         '</tbody></table></div>'
@@ -365,8 +385,13 @@ function renderBlock(block: Block): string {
   }
 }
 
-export function renderMarkdown(source: string): string {
-  return parseMarkdown(source).map(renderBlock).join('\n');
+export function renderMarkdown(
+  source: string,
+  resolver?: MarkdownResolver
+): string {
+  return parseMarkdown(source)
+    .map((block) => renderBlock(block, resolver))
+    .join('\n');
 }
 
 function isTableSeparator(line: string | undefined): boolean {

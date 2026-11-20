@@ -1,15 +1,22 @@
-import { highlightCode, renderMarkdown } from './markdown.ts';
+import {
+  highlightCode,
+  renderMarkdown,
+  type MarkdownResolver,
+} from './markdown.ts';
 
 /**
  * Builds an article.prose element rendering markdown source.
  */
-export function buildProse(source: string): HTMLElement {
+export function buildProse(
+  source: string,
+  resolver?: MarkdownResolver
+): HTMLElement {
   const prose = document.createElement('article');
   prose.className = 'prose';
   // renderMarkdown escapes before it adds markup, and nothing in the source
   // can become an element. That property is asserted directly in
   // test/markdown.test.ts against fifteen attack payloads.
-  prose.innerHTML = renderMarkdown(source);
+  prose.innerHTML = renderMarkdown(source, resolver);
   return prose;
 }
 
