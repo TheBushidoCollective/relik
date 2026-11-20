@@ -7249,10 +7249,13 @@ your transcripts. This is structural, not a defect we plan to fix.
 
 ## Publishing from the web page
 
-The page at \`/publish\` encrypts and uploads a file you drop on it. The key is
-drawn and the file encrypted by JavaScript in your browser, and the link it
-hands back is the only place the key exists: the page does not store it, and
-we cannot recover it. The key does not enter a model transcript on this path.
+The page at \`/publish\` encrypts and uploads a file you drop on it, and so does
+any relic, dashboard or policy page: a file dropped there opens the same
+publisher in a dialog and starts a new relic, and nothing is sent until you
+confirm it. The key is drawn and the file encrypted by JavaScript in your
+browser, and the link it hands back is the only place the key exists: the page
+does not store it, and we cannot recover it. The key does not enter a model
+transcript on this path.
 
 What crosses to us is what the publishing tool would send: the coarse class,
 the tool's name (\`relik-web\`), the sizes, and a title, which the page fills in

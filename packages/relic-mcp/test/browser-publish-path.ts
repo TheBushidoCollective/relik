@@ -14,6 +14,9 @@
  */
 
 import assert from 'node:assert/strict';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createApp } from '@relic/server/src/app.ts';
 import { diskAssets } from '@relic/server/src/assets.ts';
@@ -26,6 +29,7 @@ const viewerDist = fileURLToPath(
   new URL('../../relic-viewer/dist/', import.meta.url)
 );
 
+const scratch = await mkdtemp(join(tmpdir(), 'relic-publish-path-'));
 async function resolveChrome(): Promise<string> {
   const fromEnv = process.env['RELIC_CHROME_PATH'];
   if (fromEnv && fromEnv !== 'none') return fromEnv;
@@ -52,7 +56,12 @@ const service = Bun.serve({
 const serviceOrigin = `http://localhost:${service.port}`;
 const storage = new MemoryStorage(`${serviceOrigin}/__storage`);
 const app = createApp({
-  config: { serviceOrigin },
+  // A different host from the service, as in production, so the frame is a
+  // real cross-origin document that loopback can still reach.
+  config: {
+    serviceOrigin,
+    usercontentOrigin: `http://127.0.0.1:${service.port}`,
+  },
   store,
   storage,
   now: () => Date.now(),
@@ -283,8 +292,230 @@ try {
     'PUBLISH_STEP_6_REFUSALS oversize=refused folder=refused grants=0'
   );
 
+  // 7. A file dropped on any other page opens the same publisher over it.
+  await goto(link);
+  await waitForText('Encrypted in the page, then uploaded.');
+  seen.length = 0;
+  const curtainFor = (file: boolean): Promise<boolean> =>
+    browser.evaluate<boolean>(`(() => {
+      const dt = new DataTransfer();
+      ${file ? "dt.items.add(new File(['x'], 'dragged.md'));" : "dt.setData('text/plain', 'just text');"}
+      window.dispatchEvent(new DragEvent('dragenter', { dataTransfer: dt, bubbles: true, cancelable: true }));
+      return Boolean(document.querySelector('[data-file-curtain]'));
+    })()`);
+  assert.equal(
+    await curtainFor(false),
+    false,
+    'a text drag raised the curtain'
+  );
+  assert.equal(
+    await curtainFor(true),
+    true,
+    'a file drag did not raise the curtain'
+  );
+  await browser.evaluate<void>(`(() => {
+    const dt = new DataTransfer();
+    dt.items.add(new File(['# From a relic page\\n\\nDropped over another relic.\\n'], 'second.md'));
+    document.body.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
+  })()`);
+  await browser.waitForSelector('dialog.pub-dialog .pub-title');
+  const shotsDir = process.env['RELIC_PUBLISH_SHOTS_DIR'];
+  if (shotsDir !== undefined) {
+    const shot = (await browser.cdp.send(
+      'Page.captureScreenshot',
+      { format: 'png' },
+      browser.sessionId
+    )) as { data: string };
+    await Bun.write(
+      join(shotsDir, 'dialog-over-relic.png'),
+      Buffer.from(shot.data, 'base64')
+    );
+  }
+  assert.equal(
+    await browser.evaluate<boolean>(
+      `!document.querySelector('[data-file-curtain]')`
+    ),
+    true,
+    'the curtain outlived the drop'
+  );
+  assert.equal(
+    apiRequests().length,
+    0,
+    'a drop over a relic must not contact the service'
+  );
+  await browser.clickSelector('dialog.pub-dialog .pub-row .action.primary');
+  await browser.waitForSelector('dialog.pub-dialog .pub-link');
+  const second = new URL(
+    await browser.evaluate<string>(
+      `document.querySelector('dialog.pub-dialog .pub-link').value`
+    )
+  );
+  assert.notEqual(
+    second.pathname.slice(1),
+    relicId,
+    'the drop did not make a new relic'
+  );
+  await browser.clickSelector('dialog.pub-dialog .pub-card > .action');
+  await Bun.sleep(150);
+  assert.equal(
+    await browser.evaluate<boolean>(
+      `!document.querySelector('dialog.pub-dialog')`
+    ),
+    true,
+    'the dialog did not close'
+  );
+  await waitForText('Encrypted in the page, then uploaded.');
+  console.log(
+    `PUBLISH_STEP_7_DROP_ANYWHERE text_drag=ignored file_drag=curtain dialog=opened new_relic=${second.pathname.slice(1)} page_behind=kept`
+  );
+
+  // 8. A real drag over a relic that fills the page with a sandboxed frame,
+  //    which the page cannot see on its own.
+  const openHtmlRelic = async (name: string, html: string): Promise<void> => {
+    await goto(`${serviceOrigin}/publish`);
+    await browser.waitForSelector('.pub-drop');
+    await dropFile(name, html);
+    await browser.waitForSelector('.pub-title');
+    await browser.clickSelector('.pub-row .action.primary');
+    await browser.waitForSelector('.pub-link');
+    await goto(
+      await browser.evaluate<string>(
+        `document.querySelector('.pub-link').value`
+      )
+    );
+    await browser.waitForSelector('iframe');
+  };
+  const frameCentre = (): Promise<{ x: number; y: number }> =>
+    browser.evaluate<{ x: number; y: number }>(`(() => {
+      const r = document.querySelector('iframe').getBoundingClientRect();
+      return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
+    })()`);
+  const sendDrag = async (
+    type: string,
+    x: number,
+    y: number,
+    path: string
+  ): Promise<void> => {
+    await browser.cdp.send(
+      'Input.dispatchDragEvent',
+      {
+        type,
+        x,
+        y,
+        data: { items: [], files: [path], dragOperationsMask: 1 },
+      },
+      browser.sessionId
+    );
+  };
+  const waitInPage = (selector: string): Promise<void> =>
+    browser.evaluate<void>(`new Promise((resolve, reject) => {
+      const deadline = Date.now() + 15000;
+      const look = () => {
+        if (document.querySelector(${JSON.stringify(selector)})) return resolve();
+        if (Date.now() > deadline) return reject(new Error('timed out waiting for ' + ${JSON.stringify(selector)}));
+        setTimeout(look, 50);
+      };
+      look();
+    })`);
+  const draggedFile = async (name: string): Promise<string> => {
+    const path = join(scratch, name);
+    await Bun.write(path, '# A real drag\n\nFrom the operating system.\n');
+    return path;
+  };
+  /** Drops a real file, waiting for the curtain between moves as a hand would. */
+  const realDrag = async (
+    name: string,
+    x: number,
+    y: number
+  ): Promise<void> => {
+    const path = await draggedFile(name);
+    await sendDrag('dragEnter', x, y, path);
+    await sendDrag('dragOver', x, y, path);
+    await waitInPage('[data-file-curtain]');
+    await sendDrag('dragOver', x, y, path);
+    await sendDrag('drop', x, y, path);
+  };
+  const dialogTitle = (): Promise<string | undefined> =>
+    browser.evaluate<string | undefined>(
+      `document.querySelector('dialog.pub-dialog .pub-title')?.value`
+    );
+  const dialogClosed = async (): Promise<void> => {
+    await browser.clickSelector(
+      'dialog.pub-dialog .pub-row .action:not(.primary)'
+    );
+    // Real time: the dialog removes itself on its close event.
+    await Bun.sleep(150);
+  };
+
+  await openHtmlRelic(
+    'framed.html',
+    '<!doctype html><title>Framed</title><body style="margin:0"><h1>Framed page</h1></body>'
+  );
+  const frame = await frameCentre();
+
+  // The control: a real drag over the page's own bar. If this does not open
+  // the dialog the drag mechanism is what failed, not the frame.
+  await realDrag('over-the-bar.md', 300, 20);
+  await waitInPage('dialog.pub-dialog .pub-title');
+  assert.equal(await dialogTitle(), 'over-the-bar.md');
+  await dialogClosed();
+
+  await realDrag('over-the-frame.md', frame.x, frame.y);
+  await waitInPage('dialog.pub-dialog .pub-title');
+  assert.equal(await dialogTitle(), 'over-the-frame.md');
+  console.log(
+    'PUBLISH_STEP_8_REAL_DRAG over_bar=caught over_sandboxed_frame=caught'
+  );
+
+  // 9. A relic that takes file drops itself keeps them: the page does not
+  //    raise its curtain over a drag the relic claimed.
+  await openHtmlRelic(
+    'claims-drops.html',
+    `<!doctype html><title>Claims</title><body style="margin:0"><h1>Drop a file here</h1><script>
+      window.addEventListener('dragover', (e) => e.preventDefault());
+      window.addEventListener('drop', (e) => { e.preventDefault(); parent.postMessage({ type: 'relic-got-file' }, '*'); });
+    </script></body>`
+  );
+  const claimed = await frameCentre();
+  await browser.evaluate<void>(
+    `window.__got = []; window.addEventListener('message', (e) => window.__got.push(e.data && e.data.type));`
+  );
+  const claimedPath = await draggedFile('claimed.md');
+  await sendDrag('dragEnter', claimed.x, claimed.y, claimedPath);
+  await sendDrag('dragOver', claimed.x, claimed.y, claimedPath);
+  // Real time: the shim decides after the relic's listeners have run, so the
+  // absence of a curtain can only be shown by letting that moment pass.
+  await Bun.sleep(1500);
+  assert.equal(
+    await browser.evaluate<boolean>(
+      `!document.querySelector('[data-file-curtain]')`
+    ),
+    true,
+    'the page took a drag the relic had claimed'
+  );
+  await sendDrag('dragOver', claimed.x, claimed.y, claimedPath);
+  await sendDrag('drop', claimed.x, claimed.y, claimedPath);
+  await Bun.sleep(300);
+  assert.ok(
+    (await browser.evaluate<string[]>(`window.__got`)).includes(
+      'relic-got-file'
+    ),
+    'the relic did not receive its own drop'
+  );
+  assert.equal(
+    await browser.evaluate<boolean>(
+      `!document.querySelector('dialog.pub-dialog')`
+    ),
+    true,
+    'a publish dialog opened over a relic that took the file'
+  );
+  console.log(
+    'PUBLISH_STEP_9_RELIC_CLAIMS curtain=none relic_got_drop=true dialog=none'
+  );
+
   console.log('BROWSER_PUBLISH_PATH_OK');
 } finally {
   await browser.close().catch(() => {});
   service.stop();
+  await rm(scratch, { recursive: true, force: true }).catch(() => {});
 }
