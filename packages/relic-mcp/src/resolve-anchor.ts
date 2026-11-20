@@ -1470,6 +1470,9 @@ export async function resolveAnchors(
   };
   const selected = new Map<string, Promise<RelicFetch>>();
   const documentsByEntry = new Map<string, Map<number, Promise<OtioParse>>>();
+  const localShape =
+    (await loadPrivatePublishState(relicId))?.shape ??
+    (await loadPublishState(relicId))?.shape;
 
   const updatedComments: CommentRecord[] = [];
   const imageBlocks: ResolvedImageBlock[] = [];
@@ -1499,6 +1502,32 @@ export async function resolveAnchors(
       }
       return pending;
     };
+    // Known single-file comments retain their existing no-fetch behavior.
+    if (localShape === 'folder' || comment.entry != null) {
+      const version =
+        comment.version ??
+        (anchor.kind === 'otio'
+          ? anchor.relic_version
+          : anchor.kind === 'source' || anchor.kind === 'time'
+            ? 1
+            : undefined);
+      const selection = await loadRevision(version);
+      if (
+        !selection.ok &&
+        (selection.error === 'not_tied_to_a_file' ||
+          selection.error === 'file_not_in_version')
+      ) {
+        updatedComments.push({
+          ...comment,
+          resolved: {
+            kind: anchor.kind,
+            status: 'unresolvable',
+            explanation: selection.error,
+          } as ResolvedAnchor,
+        });
+        continue;
+      }
+    }
     if (anchor.kind === 'otio') {
       const entryKey = comment.entry ?? '';
       let documents = documentsByEntry.get(entryKey);
