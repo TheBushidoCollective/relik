@@ -71,7 +71,12 @@ function sourceLeaves(
   kind: 'markdown' | 'code'
 ): Leaf[] | null {
   const holders: Element[] =
-    kind === 'code' ? [root] : Array.from(root.querySelectorAll('[data-seg]'));
+    kind === 'code'
+      ? [root]
+      : [
+          ...(root.getAttribute('data-seg') !== null ? [root] : []),
+          ...Array.from(root.querySelectorAll('[data-seg]')),
+        ];
   if (holders.length !== segments.length) return null;
   const leaves: Leaf[] = [];
   for (let i = 0; i < holders.length; i++) {
@@ -87,10 +92,10 @@ function sourceLeaves(
     let offset = 0;
     for (const node of textNodes(holder)) {
       const length = node.data.length;
-      const start =
-        segment.kind === 'join' ? segment.start : segment.start + offset;
-      const end = segment.kind === 'join' ? segment.end : start + length;
-      leaves.push({ node, start, end, join: segment.kind === 'join' });
+      const join = segment.kind === 'join' || segment.kind === 'escape';
+      const start = join ? segment.start : segment.start + offset;
+      const end = join ? segment.end : start + length;
+      leaves.push({ node, start, end, join });
       offset += length;
     }
   }

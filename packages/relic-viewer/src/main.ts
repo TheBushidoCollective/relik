@@ -79,6 +79,11 @@ import {
 import type { LinkRequestOutcome } from './passkey-common.ts';
 import type { DecisionPanelHandle } from './decision-panel.ts';
 import type { SuggestController } from './suggest-controller.ts';
+import { suggestionIssueFor } from './suggestion-gate.ts';
+import {
+  guardSurfaceSwap,
+  suggestionSurfaceFor,
+} from './suggestion-surface.ts';
 import type { PresenceController } from './presence-controller.ts';
 import {
   type DecisionAccess,
@@ -6317,16 +6322,18 @@ export function buildThread(
       return true;
     },
     suggestionSelection: (range) => {
-      const selectedRoot = host?.querySelector(
-        view.route === 'code' || view.route === 'notebook'
-          ? 'pre.code-body'
-          : 'article.prose'
-      );
+      const selectedRoot =
+        (host && suggestionSurfaceFor(host)?.root) ??
+        host?.querySelector(
+          view.route === 'code' || view.route === 'notebook'
+            ? 'pre.code-body'
+            : 'article.prose'
+        );
       return {
         applied: suggestionController?.applied ?? false,
         suggesting: suggestionController?.suggesting ?? false,
         canSuggest:
-          sourceIssue === null &&
+          sourceIssue() === null &&
           !!selectedRoot?.contains(range.commonAncestorContainer),
         replyId: suggestionController?.selectedSuggestion(range) ?? null,
       };
@@ -6401,30 +6408,17 @@ export function buildThread(
     view.route === 'markdown' ||
     view.route === 'code' ||
     view.route === 'notebook';
-  // Suggesting edits the source text, so a drawn structured view gives way to it.
+  // A view with no suggestion surface hands editing off to Source.
   const leaveStructuredView = (): void => {
     const handle = host === undefined ? undefined : structuredViewFor(host);
-    if (handle?.structured) handle.showSource();
+    if (handle?.structured && host && !suggestionSurfaceFor(host))
+      handle.showSource();
   };
-  const sourceIssue = (() => {
-    if (!textSuggestions)
-      return 'Suggestions are available on markdown, code and notebooks.';
-    if (view.version !== view.currentVersion)
-      return 'Suggestions can only be made on the current version.';
-    const source = view.document;
-    if (!source || source.truncated || source.bytes.length > 1_048_576)
-      return 'Suggesting is off: suggestions work on files up to 1 MiB.';
-    try {
-      const text = new TextDecoder('utf-8', { fatal: true }).decode(
-        source.bytes
-      );
-      if (/[\r\0]/.test(text))
-        return 'Suggesting is off: this file contains carriage returns (CR) or NUL characters, which a suggestion can’t point at.';
-    } catch {
-      return 'Suggesting is off: this file is not valid UTF-8.';
-    }
-    return null;
-  })();
+  const sourceIssue = (): string | null =>
+    suggestionIssueFor(
+      view,
+      host !== undefined && suggestionSurfaceFor(host) !== undefined
+    );
   const suggestionBar = document.createElement('div');
   suggestionBar.className = 'sg-strip';
   const modeGroup = document.createElement('div');
@@ -6465,6 +6459,7 @@ export function buildThread(
   const suggestionNotice = document.createElement('span');
   suggestionNotice.className = 'sg-strip-meta';
   suggestionNotice.dataset['sgNotice'] = '';
+  suggestionNotice.setAttribute('role', 'status');
   suggestionBar.append(
     modeGroup,
     appliedMode,
@@ -6479,7 +6474,7 @@ export function buildThread(
       return;
     }
     const reason =
-      sourceIssue ??
+      sourceIssue() ??
       (session.kind === 'verified' ? null : 'Sign in to suggest edits.');
     suggestingMode.disabled = reason !== null;
     suggestingMode.title = reason ?? '';
@@ -6523,6 +6518,15 @@ export function buildThread(
           signIn: () => setOpen(true),
           onPresenceChange: () => syncPresence(),
           onPosted: (id) => presence?.announcePosted(id),
+          onSurfaceReleased: () => {
+            if (suggestionController !== controller) return;
+            if (!controller.hasPendingDraft()) {
+              controller.retire();
+              suggestionController = undefined;
+            }
+            updateSuggestionStub();
+            paintMarks(lastEntries);
+          },
           open: (id, target) => {
             const box = target
               ? anchorFromClientRect(
@@ -6545,6 +6549,9 @@ export function buildThread(
         suggestionNotice.textContent =
           'Suggesting stopped because the page changed unexpectedly.';
         return undefined;
+      })
+      .finally(() => {
+        suggestionLoading = undefined;
       });
     return suggestionLoading;
   };
@@ -9474,6 +9481,19 @@ export function buildThread(
       // pointer crossing, which reads as the pairing not working at all.
       if (next.dataset.pairBind !== '1') {
         next.dataset.pairBind = '1';
+        next.addEventListener('relic:before-structured-swap', (event) => {
+          if (host !== next) return;
+          const reason = guardSurfaceSwap(suggestionController);
+          if (reason) {
+            event.preventDefault();
+            suggestionNotice.textContent = reason;
+          }
+        });
+        next.addEventListener('relic:structured-state', () => {
+          if (host !== next) return;
+          if (suggestionController?.destroy()) suggestionController = undefined;
+          updateSuggestionStub();
+        });
         bindHostConcealment(next);
         bindPairing(next);
         bindMarkPointing(next);
@@ -9514,7 +9534,7 @@ export function buildThread(
       }
       paintMarks(lastEntries);
       marks.attach(next);
-      syncPresence();
+      updateSuggestionStub();
       if (
         lastEntries.some((entry) => entry.kind === 'open' && entry.suggestion)
       )

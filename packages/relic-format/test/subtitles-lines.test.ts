@@ -35,19 +35,28 @@ describe('subtitle lines are read one at a time, with the same numbers as before
 });
 
 describe('subtitle parsing: a 16 MiB file of line feeds costs no line array', () => {
-  test('it costs less than half of splitting the same text into lines', () => {
+  test('it never splits the text into a line array', () => {
     // The whole-file split built a 16-million element array before the entry
-    // cap applied. Both timings are taken in this process, so the bound holds
-    // on a slow machine as well as a fast one.
+    // cap applied. Count what the parse asks String.prototype.split to build
+    // instead of timing it, so a slow or busy machine cannot change the answer.
     const text = '\n'.repeat(SUBTITLE_LIMIT_BYTES);
-    expect('1\n2'.split(/\r\n|\r|\n/)).toHaveLength(2);
-    expect(parseSubtitles('\n\n', 'srt').ok).toBe(false);
-    const splitStarted = performance.now();
-    text.split(/\r\n|\r|\n/);
-    const split = performance.now() - splitStarted;
-    const parseStarted = performance.now();
-    expect(parseSubtitles(text, 'srt').ok).toBe(false);
-    const parse = performance.now() - parseStarted;
-    expect(parse).toBeLessThan(split / 2);
+    const realSplit = String.prototype.split;
+    let largest = 0;
+    String.prototype.split = function (this: string, ...args: unknown[]) {
+      const out = (realSplit as (...a: unknown[]) => string[]).apply(
+        this,
+        args
+      );
+      largest = Math.max(largest, out.length);
+      return out;
+    } as typeof String.prototype.split;
+    try {
+      expect(parseSubtitles(text, 'srt').ok).toBe(false);
+    } finally {
+      String.prototype.split = realSplit;
+    }
+    expect(largest).toBeLessThan(1000);
+    // The same text split the old way is the array the parse must not build.
+    expect(text.split(/\r\n|\r|\n/).length).toBeGreaterThan(1_000_000);
   });
 });

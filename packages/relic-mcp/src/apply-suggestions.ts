@@ -13,7 +13,8 @@ import {
   resolveSuggestions,
   type ResolvedSuggestion,
   type SuggestionInput,
-  suggestionSource,
+  restoreCrLf,
+  suggestionSourceFor,
   suggestionStates,
   type ThreadFact,
 } from '@relic/format/suggestions';
@@ -270,7 +271,7 @@ export async function applySuggestions(input: ApplyInput, deps: PublishDeps) {
       { renderer_class: rendererClass }
     );
   }
-  const decoded = suggestionSource(source.bytes);
+  const decoded = suggestionSourceFor(source.bytes, source.basename);
   if (!decoded.ok) {
     throw new ApplyError(
       'source_not_suggestible',
@@ -336,6 +337,13 @@ export async function applySuggestions(input: ApplyInput, deps: PublishDeps) {
       throw new ApplyError(
         'not_a_suggestion',
         'the selected comment is not a suggestion',
+        { comment_id: id }
+      );
+    }
+    if (decoded.crlf && /[\r\n]/.test(entry.plaintext.suggestion.replacement)) {
+      throw new ApplyError(
+        'line-break-in-crlf-file',
+        'a suggestion cannot insert a line break in a CRLF file',
         { comment_id: id }
       );
     }
@@ -453,7 +461,8 @@ export async function applySuggestions(input: ApplyInput, deps: PublishDeps) {
   }
   const starts = lineStarts(decoded.source);
   const afterBytes = new TextEncoder().encode(
-    (decoded.bom ? '\uFEFF' : '') + merged.text
+    (decoded.bom ? '\uFEFF' : '') +
+      (decoded.crlf ? restoreCrLf(merged.text) : merged.text)
   );
   const beforeHash = sha256(source.bytes);
   const afterHash = sha256(afterBytes);

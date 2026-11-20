@@ -10,6 +10,7 @@ import {
   type SuggestCommit,
   type SuggestDraft,
 } from './suggest-draft.ts';
+import type { SuggestionSurface } from './suggestion-surface.ts';
 
 export type SuggestUnavailable =
   | 'older'
@@ -26,6 +27,8 @@ export interface SuggestEditorOptions {
   readonly delimiters: readonly MarkdownDelimiterPair[];
   readonly version: number;
   readonly reader: string;
+  readonly crlf?: boolean;
+  readonly surface?: SuggestionSurface | undefined;
   readonly displayName?: string | null;
   readonly pending?: readonly PendingSuggestion[];
   /** Viewer chrome, outside the editable root. */
@@ -105,6 +108,7 @@ type Point =
   | {
       kind: 'insertion';
       offset: number;
+      block: number;
       id: string | null;
       blockKind: SuggestBlockKind;
     };
@@ -171,13 +175,13 @@ function blockKind(node: Node, root: HTMLElement): SuggestBlockKind {
 }
 
 function localOffset(segment: SourceSegment, offset: number): number {
-  if (segment.kind === 'join')
+  if (segment.kind === 'join' || segment.kind === 'escape')
     return offset <= segment.start ? 0 : segment.text.length;
   return Math.max(0, Math.min(segment.text.length, offset - segment.start));
 }
 
 function sourceOffset(segment: SourceSegment, offset: number): number {
-  if (segment.kind === 'join')
+  if (segment.kind === 'join' || segment.kind === 'escape')
     return offset === 0 ? segment.start : segment.end;
   return segment.start + offset;
 }
@@ -210,7 +214,8 @@ function pointAt(
   segments: readonly SourceSegment[],
   node: Node,
   offset: number,
-  side: 'start' | 'end'
+  side: 'start' | 'end',
+  surface?: SuggestionSurface
 ): Point | null {
   if (!root.contains(node)) return null;
   const element = parentElement(node);
@@ -218,13 +223,19 @@ function pointAt(
   if (insertion && root.contains(insertion)) {
     const inside = offsetWithin(insertion, node, offset, false);
     if (inside === null) return null;
+    const holder = insertion.closest<HTMLElement>('[data-seg]');
+    const segment =
+      segments[holder ? segmentElements(root).indexOf(holder) : -1];
+    if (!segment) return null;
     return {
       kind: 'insertion',
       offset: inside,
+      block: segment.block,
       id: insertion.hasAttribute('data-sg-draft')
         ? null
         : insertion.getAttribute('data-sg'),
-      blockKind: blockKind(insertion, root),
+      blockKind:
+        surface?.blockKind(segment.block) ?? blockKind(insertion, root),
     };
   }
   const all = segmentElements(root);
@@ -266,17 +277,21 @@ function pointAt(
   const index = all.indexOf(segmentElement);
   const segment = segments[index];
   if (!segment || local < 0 || local > segment.text.length) return null;
+  if (segment.kind === 'escape' && local !== 0 && local !== segment.text.length)
+    return null;
   return {
     kind: 'source',
     offset: sourceOffset(segment, local),
     block: segment.block,
-    blockKind: blockKind(segmentElement, root),
+    blockKind:
+      surface?.blockKind(segment.block) ?? blockKind(segmentElement, root),
   };
 }
 
 function selectionPoints(
   root: HTMLElement,
-  segments: readonly SourceSegment[]
+  segments: readonly SourceSegment[],
+  surface?: SuggestionSurface
 ): [Point, Point] | null {
   const selection = root.ownerDocument.getSelection();
   if (!selection || selection.rangeCount === 0) return null;
@@ -286,14 +301,16 @@ function selectionPoints(
     segments,
     range.startContainer,
     range.startOffset,
-    'start'
+    'start',
+    surface
   );
   const end = pointAt(
     root,
     segments,
     range.endContainer,
     range.endOffset,
-    'end'
+    'end',
+    surface
   );
   return start && end ? [start, end] : null;
 }
@@ -415,6 +432,7 @@ export function mountSuggestEditor(
     delimiters,
     version,
     reader,
+    crlf: options.crlf ?? false,
     pending,
   });
   let on = false;
@@ -792,12 +810,19 @@ export function mountSuggestEditor(
   }
 
   function applyInput(type: string, text: string): void {
-    const points = selectionPoints(root, segments);
+    const points = selectionPoints(root, segments, options.surface);
     if (!points) {
       displayRefusal(INVALID_SELECTION, 'invalid-range');
       return;
     }
     const [start, end] = points;
+    for (const point of points) {
+      const allowed = options.surface?.editable(point.block);
+      if (allowed && allowed !== true) {
+        displayRefusal(allowed.message, allowed.code);
+        return;
+      }
+    }
     if (
       start.kind === 'insertion' &&
       end.kind === 'insertion' &&
@@ -882,7 +907,7 @@ export function mountSuggestEditor(
       );
       if (!segment) return;
       const adjacent =
-        segment.kind === 'join'
+        segment.kind === 'join' || segment.kind === 'escape'
           ? direction === 'left'
             ? segment.start
             : segment.end
@@ -984,7 +1009,7 @@ export function mountSuggestEditor(
       event.preventDefault();
       commitDraft();
     } else if (event.key === 'Tab' && !event.shiftKey) {
-      const points = selectionPoints(root, segments);
+      const points = selectionPoints(root, segments, options.surface);
       if (
         points &&
         (points[0].blockKind === 'code' ||
@@ -1005,7 +1030,8 @@ export function mountSuggestEditor(
       segments,
       selection.focusNode,
       selection.focusOffset,
-      'start'
+      'start',
+      options.surface
     );
     if (point?.kind === 'source' && point.block !== model.draft.block)
       commitDraft();
@@ -1027,9 +1053,16 @@ export function mountSuggestEditor(
 
   function compositionStart(): void {
     if (!on) return;
-    const points = selectionPoints(root, segments);
+    const points = selectionPoints(root, segments, options.surface);
     if (!points) return;
     const [start, end] = points;
+    for (const point of points) {
+      const allowed = options.surface?.editable(point.block);
+      if (allowed && allowed !== true) {
+        displayRefusal(allowed.message, allowed.code);
+        return;
+      }
+    }
     if (start.kind === 'source' && end.kind === 'source') {
       const result = model.replace(
         start.offset,
@@ -1168,6 +1201,7 @@ export function mountSuggestEditor(
           delimiters,
           version,
           reader,
+          crlf: options.crlf ?? false,
           pending,
         });
       };

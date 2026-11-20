@@ -52,7 +52,7 @@ import {
   resolveOtioAnchor,
   timeToSeconds,
 } from '@relic/format';
-import { locate, suggestionSource } from '@relic/format/suggestions';
+import { locate, suggestionSourceFor } from '@relic/format/suggestions';
 import { boxPosition, type CommentRecord, formatTimecode } from './comments.ts';
 import { privateVersionKey } from './private.ts';
 import type { PublishDeps } from './publish.ts';
@@ -1516,7 +1516,7 @@ export async function resolveAnchors(
 
     switch (anchor.kind) {
       case 'source': {
-        const decoded = suggestionSource(opened.content);
+        const decoded = suggestionSourceFor(opened.content, filename, mimetype);
         if (!decoded.ok) {
           updatedComments.push({
             ...comment,
