@@ -112,6 +112,12 @@ jobs:
         run: env -u RELIC_SUGGEST_MAIN_DIST -u DISPLAY -u WAYLAND_DISPLAY RELIC_CHROME_PATH="$(command -v google-chrome)" bun packages/relic-mcp/test/suggested-edits-path.ts
       - name: Structured formats path
         run: env -u DISPLAY -u WAYLAND_DISPLAY RELIC_CHROME_PATH="$(command -v google-chrome)" bun packages/relic-mcp/test/structured-formats-path.ts
+      - name: Suggestion surface browser tests
+        run: |
+          RELIC_REQUIRE_CHROME=1 RELIC_CHROME_PATH="$(command -v google-chrome)" env -u DISPLAY -u WAYLAND_DISPLAY bun test \
+            packages/relic-viewer/test/suggest-controller-notebook.test.ts packages/relic-viewer/test/suggestion-lifecycle.test.ts \
+            packages/relic-viewer/test/suggestion-surface-browser.test.ts packages/relic-viewer/test/suggestion-swap-browser.test.ts \
+            packages/relic-viewer/test/suggestion-swap-thread.test.ts
       - name: Stale service worker path
         run: |
           test -x "$(command -v google-chrome)"

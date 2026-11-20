@@ -1,9 +1,14 @@
-import { suggestionSource } from '@relic/format/suggestions';
+import { suggestionSourceFor } from '@relic/format/suggestions';
 import type { CommentPlaintext } from '@relic/format';
 import type { CommentCipher, CommentEntry, SessionState } from './comments.ts';
 import type { ReadyView, ViewerDeps } from './viewer.ts';
 import type { SuggestCommit, SuggestDraft } from './suggest-draft.ts';
-import { mountSuggestEditor, type SuggestEditor } from './suggest-editor.ts';
+import {
+  mountSuggestEditor,
+  type SuggestEditor,
+  type SuggestReceipt,
+} from './suggest-editor.ts';
+import { suggestionReceipt } from './suggest-receipt.ts';
 import { SuggestTransport, type TransportResult } from './suggest-transport.ts';
 import {
   buildSuggestionViews,
@@ -21,6 +26,7 @@ import type {
   SourceSegment,
 } from './markdown-source.ts';
 import type { LocalPresence } from './presence.ts';
+import { suggestionSurfaceFor } from './suggestion-surface.ts';
 
 export interface SuggestControllerOptions {
   readonly view: ReadyView;
@@ -40,11 +46,14 @@ export interface SuggestControllerOptions {
   readonly open: (id: string, target?: HTMLElement) => void;
   readonly onPresenceChange?: () => void;
   readonly onPosted?: (commentId: string) => void | Promise<void>;
+  readonly onSurfaceReleased?: () => void;
 }
 
 export interface SuggestController {
   readonly suggesting: boolean;
   readonly draftOpen: boolean;
+  hasPendingDraft(): boolean;
+  readonly postInFlight: boolean;
   readonly applied: boolean;
   readonly currentVersion: boolean;
   presenceDocument():
@@ -59,6 +68,7 @@ export interface SuggestController {
   setApplied(on: boolean): void;
   selectedSuggestion(range: Range): string | null;
   restoreSelection(): void;
+  retire(): void;
   destroy(): boolean;
 }
 
@@ -194,7 +204,13 @@ function presencePoint(
       local = fragment.textContent?.length ?? 0;
     }
     if (local < 0 || local > segment.text.length) return undefined;
-    return segment.kind === 'join'
+    if (
+      segment.kind === 'escape' &&
+      local !== 0 &&
+      local !== segment.text.length
+    )
+      return undefined;
+    return segment.kind === 'join' || segment.kind === 'escape'
       ? local === 0
         ? segment.start
         : segment.end
@@ -206,21 +222,32 @@ function presencePoint(
 
 /** This module is the only lazy entry point for the suggestion feature. */
 export function mountSuggestionController(
-  options: SuggestControllerOptions
+  input: SuggestControllerOptions
 ): SuggestController {
+  const { initialSelection, ...options } = input;
   const { view, host, bar } = options;
-  const kind = view.route === 'code' ? 'code' : 'markdown';
+  const kind =
+    view.route === 'code' || view.route === 'notebook' ? 'code' : 'markdown';
   const doc = host.ownerDocument;
-  const root = host.querySelector<HTMLElement>(
-    kind === 'code' ? 'pre.code-body' : 'article.prose'
-  );
-  const original = kind === 'code' ? root?.closest<HTMLElement>('.code') : root;
-  const selection = root
-    ? selectionOffsets(root, options.initialSelection)
-    : null;
+  let surface = suggestionSurfaceFor(host);
+  let root =
+    surface?.root ??
+    host.querySelector<HTMLElement>(
+      kind === 'code' ? 'pre.code-body' : 'article.prose'
+    );
+  let original = surface
+    ? root
+    : kind === 'code'
+      ? root?.closest<HTMLElement>('.code')
+      : root;
+  const selection = root ? selectionOffsets(root, initialSelection) : null;
   const sourceResult =
     view.document && !view.document.truncated
-      ? suggestionSource(view.document.bytes)
+      ? suggestionSourceFor(
+          view.document.bytes,
+          view.filename ?? '',
+          view.declaredMimetype ?? ''
+        )
       : { ok: false as const, reason: 'too_large' as const };
   const source = sourceResult.ok ? sourceResult.source : '';
   let segments: readonly SourceSegment[] = [];
@@ -234,6 +261,8 @@ export function mountSuggestionController(
   let applied = false;
   let failed = false;
   let destroyed = false;
+  let releaseDetached = false;
+  let retired = false;
   let lastDraft: SuggestDraft | null = null;
   let draftSequence = 0;
   let activeCommit: WritableCommit | undefined;
@@ -281,7 +310,9 @@ export function mountSuggestionController(
   const notice = bar.querySelector<HTMLElement>('[data-sg-notice]');
 
   if (sourceResult.ok && root) {
-    if (kind === 'markdown') {
+    if (surface) {
+      segments = surface.segments(source);
+    } else if (kind === 'markdown') {
       const mapped = renderMarkdownWithSource(source);
       segments = mapped.segments;
       delimiters = mapped.delimiters;
@@ -300,8 +331,12 @@ export function mountSuggestionController(
         return 'Suggesting is off: suggestions work on files up to 1 MiB.';
       if (sourceResult.reason === 'not_utf8')
         return 'Suggesting is off: this file is not valid UTF-8.';
+      if (sourceResult.reason === 'mixed_line_endings')
+        return 'Suggesting is off: this file mixes CRLF and LF line endings.';
       return 'Suggesting is off: this file contains carriage returns (CR) or NUL characters, which a suggestion can’t point at.';
     }
+    if (sourceResult.crlf && !surface)
+      return 'Suggesting is off in Source for files with CRLF line endings.';
     if (!root || !original || failed || editor?.unavailable)
       return (
         editor?.unavailable ??
@@ -361,6 +396,7 @@ export function mountSuggestionController(
     });
 
   const showFailure = (reason: string): void => {
+    if (retired && !failureHost.isConnected) host.append(failureHost);
     failureHost.replaceChildren();
     const panel = doc.createElement('section');
     panel.className = 'sg-dock sg-receipt is-failed';
@@ -397,7 +433,9 @@ export function mountSuggestionController(
       if (transport?.discard()) {
         failureHost.replaceChildren();
         activeCommit = undefined;
+        if (retired) window.removeEventListener('beforeunload', beforeunload);
         resumePresenceRefresh();
+        if (!root) options.onSurfaceReleased?.();
       }
     });
     panel.append(title);
@@ -422,6 +460,8 @@ export function mountSuggestionController(
     draft: SuggestDraft | null
   ): void => {
     if (destroyed) return;
+    if (releaseDetached) queueMicrotask(releaseSurface);
+    else if (!root) queueMicrotask(() => options.onSurfaceReleased?.());
     const hold = commitHold;
     commitHold = undefined;
     if (result.kind === 'not-posted') {
@@ -449,10 +489,14 @@ export function mountSuggestionController(
     const sent = activeCommit;
     const old = previous;
     activeCommit = undefined;
+    if (retired) window.removeEventListener('beforeunload', beforeunload);
     resumePresenceRefresh();
     void options.refresh();
     if (!draft || !editor || !sent) return;
-    editor.showReceipt({
+    const showReceipt = releaseDetached
+      ? (value: SuggestReceipt) => host.append(suggestionReceipt(doc, value))
+      : editor.showReceipt;
+    showReceipt({
       struck: draft.struck,
       inserted: draft.inserted,
       undo: () => {
@@ -471,6 +515,7 @@ export function mountSuggestionController(
             existingId: sent.kind === 'delete' ? null : sent.existingId,
           };
         if (!undo) return;
+        if (retired) window.addEventListener('beforeunload', beforeunload);
         activeCommit = undo;
         previous = undefined;
         void transport
@@ -526,6 +571,8 @@ export function mountSuggestionController(
       delimiters,
       version: view.version,
       reader: session.email,
+      crlf: sourceResult.crlf,
+      surface,
       displayName: options.displayName(),
       pending: views?.pending ?? [],
       chrome: editorChrome,
@@ -650,15 +697,23 @@ export function mountSuggestionController(
       return;
     }
     const draw = (): void => {
-      clearSuggestionPaint(root);
+      const target = root;
+      if (!target) return;
+      clearSuggestionPaint(target);
+      surface?.repaint();
       ordinary();
-      const result = paintSuggestions(root, segments, views!, kind);
+      const result = paintSuggestions(
+        target,
+        segments,
+        views!,
+        surface ? 'markdown' : kind
+      );
       if (!result.ok) {
         failed = true;
         if (notice) notice.textContent = result.reason;
         return;
       }
-      for (const item of root.querySelectorAll<HTMLElement>('[data-sg-id]')) {
+      for (const item of target.querySelectorAll<HTMLElement>('[data-sg-id]')) {
         const id = item.getAttribute('data-sg-id');
         if (id) item.dataset['commentId'] = id;
       }
@@ -681,6 +736,18 @@ export function mountSuggestionController(
       event.preventDefault();
       event.stopImmediatePropagation();
     }
+  };
+  const releaseSurface = (): void => {
+    if (!releaseDetached) return;
+    releaseDetached = false;
+    editor?.destroy();
+    editor = undefined;
+    for (const type of ['beforeinput', 'paste', 'drop', 'keydown'])
+      root?.removeEventListener(type, stopInputDuringSend, true);
+    root = null;
+    original = undefined;
+    surface = undefined;
+    options.onSurfaceReleased?.();
   };
   root?.addEventListener('beforeinput', stopInputDuringSend, true);
   root?.addEventListener('paste', stopInputDuringSend, true);
@@ -788,6 +855,12 @@ export function mountSuggestionController(
     },
     get draftOpen() {
       return !!editor?.draft;
+    },
+    hasPendingDraft() {
+      return !!editor?.draft || !!transport?.shouldWarnBeforeUnload;
+    },
+    get postInFlight() {
+      return !!activeCommit && transport?.state.status !== 'not-posted';
     },
     get applied() {
       return applied;
@@ -904,10 +977,29 @@ export function mountSuggestionController(
     restoreSelection() {
       if (root) restoreOffsets(root, selection);
     },
+    retire() {
+      if (root || editor?.draft || transport?.shouldWarnBeforeUnload) return;
+      retired = true;
+      window.clearTimeout(presenceRefreshTimer);
+      doc.removeEventListener('selectionchange', selectionChanged);
+      doc.removeEventListener('visibilitychange', hidden);
+      window.removeEventListener('focus', refreshVisible);
+      window.removeEventListener('pagehide', pagehide);
+      window.removeEventListener('beforeunload', beforeunload);
+      editorChrome.remove();
+      failureHost.remove();
+    },
     destroy() {
       if (destroyed) return true;
       if (editor?.draft && !editor.commit()) return false;
       if (transport?.shouldWarnBeforeUnload) {
+        if (
+          root &&
+          !host.contains(root) &&
+          activeCommit &&
+          transport.state.status !== 'not-posted'
+        )
+          releaseDetached = true;
         if (notice)
           notice.textContent =
             'Post or discard the suggestion before leaving this version.';
@@ -921,6 +1013,10 @@ export function mountSuggestionController(
       root?.removeEventListener('paste', stopInputDuringSend, true);
       root?.removeEventListener('drop', stopInputDuringSend, true);
       root?.removeEventListener('keydown', stopInputDuringSend, true);
+      root = null;
+      original = undefined;
+      surface = undefined;
+      editor = undefined;
       doc.removeEventListener('selectionchange', selectionChanged);
       doc.removeEventListener('visibilitychange', hidden);
       window.removeEventListener('focus', refreshVisible);

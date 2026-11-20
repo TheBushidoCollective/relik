@@ -20,6 +20,12 @@ export type SuggestBlockKind =
   | 'quote'
   | 'table-cell'
   | 'fenced-code'
+  | 'csv-quoted'
+  | 'csv-bare'
+  | 'cue'
+  | 'nb-markdown'
+  | 'nb-code'
+  | 'nb-raw'
   | 'code';
 
 /** Positions are UTF-16 source offsets, except positions inside an insertion. */
@@ -40,6 +46,7 @@ export interface SuggestDraftOptions {
   readonly delimiters: readonly MarkdownDelimiterPair[];
   readonly version: number;
   readonly reader: string;
+  readonly crlf?: boolean;
   readonly pending?: readonly PendingSuggestion[];
 }
 
@@ -63,6 +70,12 @@ export type SuggestRefusalCode =
   | 'too-long'
   | 'newline-here'
   | 'pipe-in-cell'
+  | 'delimiter-in-cell'
+  | 'quote-in-cell'
+  | 'markup-in-cue'
+  | 'ends-cue'
+  | 'not-editable'
+  | 'line-break-in-crlf-file'
   | 'repeats'
   | 'tab-here'
   | 'invalid-range'
@@ -106,6 +119,11 @@ const number = (n: number): string => n.toLocaleString('en-US');
 function refused(code: SuggestRefusalCode, message: string): SuggestRefusal {
   return { kind: 'refused', code, message };
 }
+const crlfLineBreak = (): SuggestRefusal =>
+  refused(
+    'line-break-in-crlf-file',
+    'A suggestion cannot insert a line break in a CRLF file.'
+  );
 
 const formatting = (): SuggestRefusal =>
   refused(
@@ -293,7 +311,7 @@ export class SuggestDraftModel {
         );
       if (!segment) return invalidRange();
       if (
-        segment.kind === 'join' &&
+        (segment.kind === 'join' || segment.kind === 'escape') &&
         start !== segment.start &&
         start !== segment.end
       )
@@ -314,8 +332,9 @@ export class SuggestDraftModel {
     )
       return blocks();
     if (
-      (first.kind === 'join' && start !== first.start) ||
-      (last.kind === 'join' && end !== last.end)
+      ((first.kind === 'join' || first.kind === 'escape') &&
+        start !== first.start) ||
+      ((last.kind === 'join' || last.kind === 'escape') && end !== last.end)
     )
       return formatting();
     const coverage: { start: number; end: number }[] = segments
@@ -375,6 +394,8 @@ export class SuggestDraftModel {
       return quoteLimit(candidate.struckBytes);
     if (candidate.insertedBytes > SUGGESTION_REPLACEMENT_LIMIT_BYTES)
       return insertionLimit(candidate.insertedBytes);
+    if (this.options.crlf && /[\r\n]/.test(candidate.inserted))
+      return crlfLineBreak();
     if (!validReplacement(candidate.inserted))
       return refused(
         'invalid-character',
@@ -533,6 +554,7 @@ export class SuggestDraftModel {
   }
 
   enter(start: number, end: number, blockKind: SuggestBlockKind): DraftChange {
+    if (this.options.crlf) return crlfLineBreak();
     if (
       blockKind !== 'paragraph' &&
       blockKind !== 'code' &&
@@ -572,7 +594,7 @@ export class SuggestDraftModel {
       return hasTextBeyond ? formatting() : { kind: 'unchanged' };
     }
     let adjacent: number | null;
-    if (segment.kind === 'join')
+    if (segment.kind === 'join' || segment.kind === 'escape')
       adjacent = direction === 'left' ? segment.start : segment.end;
     else
       adjacent =
@@ -610,7 +632,7 @@ export class SuggestDraftModel {
       const next = this.segmentAt(start, 'start', draft.block);
       if (previous) {
         const found =
-          previous.kind === 'join'
+          previous.kind === 'join' || previous.kind === 'escape'
             ? previous.start
             : graphemeBefore(source, start);
         if (found === null) return invalidRange();
@@ -618,7 +640,9 @@ export class SuggestDraftModel {
         mode = 'after';
       } else if (next) {
         const found =
-          next.kind === 'join' ? next.end : graphemeAfter(source, end);
+          next.kind === 'join' || next.kind === 'escape'
+            ? next.end
+            : graphemeAfter(source, end);
         if (found === null) return invalidRange();
         end = found;
         mode = 'before';

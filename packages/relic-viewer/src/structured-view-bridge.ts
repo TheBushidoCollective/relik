@@ -18,6 +18,7 @@
  */
 
 import { type CommentAnchor, filenameExtension } from '@relic/format';
+import { requestSurfaceSwap } from './suggestion-surface.ts';
 
 /** A notebook whose whole text is larger than this is shown as text. */
 export const NOTEBOOK_RENDER_LIMIT_BYTES = 50 * 1024 * 1024;
@@ -249,8 +250,12 @@ export function mountStructuredView(
     );
   };
   /** Draws the loaded module into the root, or the source with the reason it cannot. */
-  const draw = (): void => {
-    if (loaded === undefined || disposed || wantsSource) return;
+  const draw = (): boolean => {
+    if (loaded === undefined || disposed || wantsSource) return false;
+    if (!requestSurfaceSwap(root)) {
+      wantsSource = true;
+      return false;
+    }
     drop();
     root.replaceChildren();
     unshownReason = undefined;
@@ -275,6 +280,7 @@ export function mountStructuredView(
       refused = true;
       root.replaceChildren(mount.sourceView());
     }
+    return true;
   };
   const finish = (): void => {
     settle();
@@ -286,10 +292,7 @@ export function mountStructuredView(
   loaders[kind]().then(
     (module) => {
       loaded = module;
-      if (!disposed && !wantsSource) {
-        draw();
-        announce();
-      }
+      if (!disposed && !wantsSource && draw()) announce();
       finish();
     },
     () => {
@@ -316,6 +319,7 @@ export function mountStructuredView(
     selectionAnchor: () => part?.selectionAnchor(),
     reveal: (anchor, commentId) => part?.reveal(anchor, commentId),
     showSource() {
+      if (!requestSurfaceSwap(root)) return;
       wantsSource = true;
       replaceWithSource();
       announce();
@@ -324,10 +328,7 @@ export function mountStructuredView(
       if (!wantsSource) return;
       wantsSource = false;
       // Before the module has loaded, the load draws the view itself.
-      if (loaded !== undefined && !disposed) {
-        draw();
-        announce();
-      }
+      if (loaded !== undefined && !disposed && draw()) announce();
     },
     dispose() {
       if (disposed) return;
