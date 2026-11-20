@@ -699,9 +699,9 @@ describe('what the server never learns', () => {
 });
 
 describe('local refusals, before any HTTP', () => {
-  test('refuses a directory and names the fix', async () => {
-    await expect(publish({ path: 'a-directory' }, deps)).rejects.toMatchObject({
-      code: 'source_is_directory',
+  test('refuses a non-regular source before HTTP', async () => {
+    await expect(publish({ path: 'a-fifo' }, deps)).rejects.toMatchObject({
+      code: 'source_not_regular_file',
     });
   });
 
@@ -1007,6 +1007,7 @@ describe('the MCP surface', () => {
     expect(Object.keys(schema.properties)).toEqual([
       'path',
       'filename',
+      'open_first',
       'title',
       'ttl_days',
       'force_new',
@@ -1022,6 +1023,26 @@ describe('the MCP surface', () => {
     // Inline content would put the plaintext in the transcript too,
     // compounding the leak from "the key leaks" to "the key and the file leak".
     expect(Object.keys(schema.properties)).not.toContain('content');
+    expect(
+      Object.keys(TOOL_DEFINITION.outputSchema.properties.folder.properties)
+    ).toEqual([
+      'source',
+      'file_count',
+      'files_total_bytes',
+      'file_list_bytes',
+      'default_entry',
+      'sample',
+      'left_out',
+    ]);
+    expect(
+      Object.keys(
+        TOOL_DEFINITION.outputSchema.properties.folder.properties.left_out
+          .properties
+      )
+    ).toEqual(['count', 'by_reason', 'sample']);
+    expect(REPUBLISH_TOOL_DEFINITION.outputSchema.properties.folder).toEqual(
+      TOOL_DEFINITION.outputSchema.properties.folder
+    );
   });
 
   test('the schema declares the lifetime bounds the contract fixes', () => {
@@ -1208,6 +1229,7 @@ describe('the MCP surface', () => {
       'renderer_class',
       'report_url',
       'resolved_path',
+      'shape',
       'title',
       'url',
       'version',
@@ -1222,7 +1244,7 @@ describe('the MCP surface', () => {
         jsonrpc: '2.0',
         id: 5,
         method: 'tools/call',
-        params: { name: TOOL_NAME, arguments: { path: 'a-directory' } },
+        params: { name: TOOL_NAME, arguments: { path: 'a-fifo' } },
       },
       deps
     );
@@ -1233,7 +1255,7 @@ describe('the MCP surface', () => {
       structuredContent: { code: string };
     };
     expect(result.isError).toBe(true);
-    expect(result.structuredContent.code).toBe('source_is_directory');
+    expect(result.structuredContent.code).toBe('source_not_regular_file');
   });
 
   test('a missing path is a protocol error, because the call cannot be made', async () => {
@@ -1278,6 +1300,7 @@ describe('republish', () => {
       'relic_id',
       'path',
       'filename',
+      'open_first',
       'title',
       'ttl_days',
       'addresses',
@@ -1344,6 +1367,7 @@ describe('republish', () => {
       'renderer_class',
       'report_url',
       'resolved_path',
+      'shape',
       'title',
       'version',
       'version_digest',

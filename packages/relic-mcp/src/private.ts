@@ -69,6 +69,9 @@ import {
   verifyDesignationAnswer,
   type VerifiedReader,
 } from './device.ts';
+import { encryptPreparedFolder, FolderContentError } from './folder-content.ts';
+import { prepareFolderPublish, folderReport } from './folder-publish-source.ts';
+import type { FolderReport } from './folder-publish-source.ts';
 import {
   contentDigest,
   lookupPublishedSource,
@@ -98,6 +101,7 @@ export interface PrivatePublishInput {
   readonly cover?: boolean | undefined;
   readonly force_new?: boolean | undefined;
   readonly decisions?: boolean | undefined;
+  readonly open_first?: string | undefined;
 }
 
 export interface PrivateRepublishInput {
@@ -109,6 +113,7 @@ export interface PrivateRepublishInput {
   readonly cover?: boolean | undefined;
   readonly notify?: boolean | undefined;
   readonly decisions?: boolean | undefined;
+  readonly open_first?: string | undefined;
 }
 
 /** A recipient as the output shows it: public facts only. */
@@ -134,6 +139,8 @@ export interface PrivatePublishResult {
   readonly disclosure_url: string;
   readonly owner: { readonly email: string; readonly fingerprint: string };
   readonly recipients: readonly PrivateRecipientOutput[];
+  readonly shape: 'file' | 'folder';
+  readonly folder?: FolderReport | undefined;
 }
 
 export interface PrivateRepublishResult {
@@ -149,6 +156,8 @@ export interface PrivateRepublishResult {
   readonly disclosure_url: string;
   readonly notify: boolean;
   readonly recipients: readonly PrivateRecipientOutput[];
+  readonly shape: 'file' | 'folder';
+  readonly folder?: FolderReport | undefined;
 }
 
 /** The device, its signer and the owner it is certified by, after the enrollment check. */
@@ -634,6 +643,71 @@ function recipientOutput(
     fingerprint: reader.fingerprint,
   }));
 }
+async function preparePrivateSource(
+  input: PrivatePublishInput | PrivateRepublishInput,
+  deps: PublishDeps,
+  key: Uint8Array
+) {
+  const resolved = deps.files.resolve(input.path);
+  const kind = await deps.files.stat(resolved);
+  if (
+    kind.kind === 'directory' &&
+    !deps.files.basename(resolved).toLowerCase().endsWith('.otiod')
+  ) {
+    const source = await prepareFolderPublish(
+      input.path,
+      deps.files,
+      input.filename,
+      '',
+      input.open_first
+    );
+    try {
+      const container = await encryptPreparedFolder(
+        source.folder,
+        source.filename,
+        key,
+        source.title,
+        source.digest
+      );
+      return {
+        basename: source.basename,
+        resolvedPath: source.resolvedPath,
+        filename: source.filename,
+        rendererClass: 'folder' as const,
+        size: source.folder.contentLength,
+        digest: source.digest,
+        container,
+        shape: 'folder' as const,
+        folder: folderReport(source),
+      };
+    } catch (error) {
+      if (error instanceof FolderContentError)
+        throw new PublishError(error.code, error.code, error.details);
+      throw error;
+    } finally {
+      await source.close();
+    }
+  }
+  const source = await readSource(input.path, deps.files);
+  const filename = input.filename ?? source.basename;
+  const rendererClass = deriveRendererClass(source.bytes, filename);
+  return {
+    basename: source.basename,
+    resolvedPath: source.resolvedPath,
+    filename,
+    rendererClass,
+    size: source.bytes.length,
+    digest: await contentDigest({ content: source.bytes, filename, title: '' }),
+    container: await encryptRelic({
+      content: source.bytes,
+      filename,
+      mimetype: guessMimetype(filename, rendererClass),
+      key,
+    }),
+    shape: 'file' as const,
+    folder: undefined,
+  };
+}
 
 /**
  * Publish a private relic. No passkey is involved: the device signs the grant
@@ -644,12 +718,14 @@ export async function publishPrivate(
   deps: PublishDeps
 ): Promise<PrivatePublishResult> {
   refuseRegulatedOptions(input.title, input.cover);
+  const key = generateKey();
+  const source = await preparePrivateSource(input, deps, key);
+  const { filename, rendererClass, digest, container } = source;
   const session = await deviceSession(deps);
   const capability = await privateCapability(deps);
   const ttl = input.ttl_days ?? capability.defaultTtlDays;
   checkTtl(ttl, capability);
 
-  const source = await readSource(input.path, deps.files);
   const lookup = await lookupPublishedSource(source.resolvedPath, deps);
   if (lookup.match !== undefined && input.force_new !== true) {
     throw new PublishError(
@@ -668,26 +744,17 @@ export async function publishPrivate(
     'challenge'
   );
   const sizeLimit = Number(challenge['size_limit_bytes']);
-  if (source.bytes.length > sizeLimit) {
+  if (source.size > sizeLimit) {
     throw new PublishError(
       'local_size_precheck_failed',
-      `${source.basename} is ${source.bytes.length} bytes, over the ${sizeLimit}-byte cap`,
-      { size_limit_bytes: sizeLimit, declared_size_bytes: source.bytes.length }
+      `${source.basename} is ${source.size} bytes, over the ${sizeLimit}-byte cap`,
+      { size_limit_bytes: sizeLimit, declared_size_bytes: source.size }
     );
   }
   const challengeNonce = expectString(
     challenge['challenge_nonce'],
     'challenge nonce'
   );
-
-  const filename = input.filename ?? source.basename;
-  const rendererClass = deriveRendererClass(source.bytes, filename);
-  const mimetype = guessMimetype(filename, rendererClass);
-  const digest = await contentDigest({
-    content: source.bytes,
-    filename,
-    title: '',
-  });
 
   const first = await fetchDeviceContext(
     deps,
@@ -703,24 +770,10 @@ export async function publishPrivate(
   ];
 
   let relicId = generateRelicId();
-  let key = generateKey();
-  let container = await encryptRelic({
-    content: source.bytes,
-    filename,
-    mimetype,
-    key,
-  });
   let grant: Record<string, unknown> | undefined;
   for (let attempt = 0; attempt <= 3 && grant === undefined; attempt++) {
     if (attempt > 0) {
       relicId = generateRelicId();
-      key = generateKey();
-      container = await encryptRelic({
-        content: source.bytes,
-        filename,
-        mimetype,
-        key,
-      });
     }
     const at = Date.now();
     const statement: StatementMap['private_publish'] = {
@@ -742,7 +795,7 @@ export async function publishPrivate(
           relic_id: relicId,
           renderer_class: rendererClass,
           publishing_client: deps.clientName,
-          declared_size_bytes: source.bytes.length,
+          declared_size_bytes: source.size,
           declared_ciphertext_bytes: container.length,
           access: 'private',
           ttl_days: ttl,
@@ -794,6 +847,7 @@ export async function publishPrivate(
     owner_identity_id: session.pin.identity_id,
     device_id: session.entry.device_id,
     source: lookup.source,
+    shape: source.shape,
     filename,
     published_at: new Date().toISOString(),
     content_sha256: digest,
@@ -860,6 +914,8 @@ export async function publishPrivate(
     disclosure_url: String(grant['disclosure_url']),
     owner: await ownerDisplay(session.pin),
     recipients: recipientOutput(readers),
+    shape: source.shape,
+    folder: source.folder,
   };
 }
 
@@ -909,6 +965,9 @@ export async function republishPrivate(
       `relic ${input.relic_id} was published to a different service than ${deps.serviceOrigin}.`
     );
   }
+  const key = generateKey();
+  const source = await preparePrivateSource(input, deps, key);
+  const { filename, rendererClass, digest, container } = source;
   const session = await deviceSession(deps);
   if (session.pin.identity_id !== state.owner_identity_id) {
     throw new PublishError(
@@ -920,14 +979,6 @@ export async function republishPrivate(
     checkTtl(input.ttl_days, await privateCapability(deps));
   }
 
-  const source = await readSource(input.path, deps.files);
-  const filename = input.filename ?? source.basename;
-  const rendererClass = deriveRendererClass(source.bytes, filename);
-  const digest = await contentDigest({
-    content: source.bytes,
-    filename,
-    title: '',
-  });
   if (state.content_sha256 === digest) {
     throw new PublishError(
       'duplicate_version',
@@ -940,13 +991,6 @@ export async function republishPrivate(
     );
   }
 
-  const key = generateKey();
-  const container = await encryptRelic({
-    content: source.bytes,
-    filename,
-    mimetype: guessMimetype(filename, rendererClass),
-    key,
-  });
   const grant = expectRecord(
     await postJson(
       deps,
@@ -954,7 +998,7 @@ export async function republishPrivate(
       {
         publish_token: state.publish_token,
         renderer_class: rendererClass,
-        declared_size_bytes: source.bytes.length,
+        declared_size_bytes: source.size,
         declared_ciphertext_bytes: container.length,
         ...(input.ttl_days === undefined ? {} : { ttl_days: input.ttl_days }),
         ...(input.decisions === undefined
@@ -977,6 +1021,7 @@ export async function republishPrivate(
   );
   await writeState(input.relic_id, {
     ...state,
+    shape: source.shape,
     version: first.version,
     version_keys: {
       ...state.version_keys,
@@ -1032,6 +1077,8 @@ export async function republishPrivate(
     disclosure_url: String(grant['disclosure_url']),
     notify: input.notify !== false,
     recipients: recipientOutput(first.readers),
+    shape: source.shape,
+    folder: source.folder,
   };
 }
 

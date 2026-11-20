@@ -63,6 +63,8 @@ export interface PublishState {
   readonly publish_token: string;
   /** How many versions this machine has published; 1 after the first. */
   readonly version: number;
+  /** Absent in legacy state, where the relic contains one file. */
+  readonly shape?: 'file' | 'folder' | undefined;
   /**
    * Absent on state written before source lookup shipped. Absence is valid
    * legacy state and means this entry cannot take part in prior-publish
@@ -145,6 +147,7 @@ export interface PrivatePublishState {
   readonly publish_token: string;
   /** The newest version this machine published. */
   readonly version: number;
+  readonly shape?: 'file' | 'folder' | undefined;
   /** Version number to base64url 16-byte key, for the versions created here. */
   readonly version_keys: Readonly<Record<string, string>>;
   readonly owner_identity_id: string;
@@ -168,6 +171,7 @@ export interface PublishedSource {
   readonly relic_id: string;
   readonly access: 'public' | 'private';
   readonly version: number;
+  readonly shape: 'file' | 'folder';
   readonly source: SourceIdentity;
 }
 
@@ -263,7 +267,8 @@ export async function resolveSourceIdentity(
   path: string
 ): Promise<SourceIdentity> {
   const absolutePath = resolve(path);
-  const sourceDirectory = dirname(absolutePath);
+  const isDirectory = (await stat(absolutePath)).isDirectory();
+  const sourceDirectory = isDirectory ? absolutePath : dirname(absolutePath);
   const repositoryRoot = await gitOutput(sourceDirectory, [
     'rev-parse',
     '--show-toplevel',
@@ -274,11 +279,12 @@ export async function resolveSourceIdentity(
       'rev-parse',
       '--show-prefix',
     ]);
-    const repositoryPath =
-      `${repositoryPrefix ?? ''}${basename(absolutePath)}`.replaceAll(
-        '\\',
-        '/'
-      );
+    const repositoryPath = isDirectory
+      ? (repositoryPrefix?.replace(/\/$/, '') || '.').replaceAll('\\', '/')
+      : `${repositoryPrefix ?? ''}${basename(absolutePath)}`.replaceAll(
+          '\\',
+          '/'
+        );
     const remoteNames = ((await gitOutput(repositoryRoot, ['remote'])) ?? '')
       .split(/\r?\n/)
       .filter((name) => name.length > 0)
@@ -416,6 +422,9 @@ function validatePrivateStateEntry(
     entry['version'] < 1 ||
     !isPlainObject(versionKeys) ||
     !Object.values(versionKeys).every((key) => typeof key === 'string') ||
+    (entry['shape'] !== undefined &&
+      entry['shape'] !== 'file' &&
+      entry['shape'] !== 'folder') ||
     (entry['source'] !== undefined && !isSourceIdentity(entry['source'])) ||
     (entry['content_sha256'] !== undefined &&
       (typeof entry['content_sha256'] !== 'string' ||
@@ -463,6 +472,9 @@ function validatePublishStateEntry(
     candidate['version'] < 1 ||
     (candidate['source'] !== undefined &&
       !isSourceIdentity(candidate['source'])) ||
+    (candidate['shape'] !== undefined &&
+      candidate['shape'] !== 'file' &&
+      candidate['shape'] !== 'folder') ||
     // Checked rather than trusted, because the duplicate-version refusal
     // compares against it: a digest of the wrong shape would match nothing,
     // and that refusal would then fail open on every republish, with no
@@ -522,6 +534,7 @@ export async function loadPublishedSource(
       relic_id: relicId,
       access: 'public',
       version: published.version,
+      shape: published.shape ?? 'file',
       source: published.source,
     };
   }
@@ -540,6 +553,7 @@ export async function loadPublishedSource(
     relic_id: relicId,
     access: 'private',
     version: priv.version,
+    shape: priv.shape ?? 'file',
     source: priv.source,
   };
 }

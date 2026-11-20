@@ -63,6 +63,7 @@ import {
   isPrivateRelic,
   lookupPublishedSource,
   type PublishDeps,
+  type PublishResult,
   PublishError,
   publish,
   republishToolCall,
@@ -300,6 +301,68 @@ export function programParagraph(report: ProgramReport | undefined): string {
   return text === '' ? '' : `${text}\n\n`;
 }
 
+function folderParagraph(
+  folder: PublishResult['folder'],
+  name: string
+): string {
+  if (!folder) return '';
+  const total = folder.left_out.count;
+  const summary = `It holds ${folder.file_count} files from ${jsonLine(name)} and opens at ${jsonLine(folder.default_entry)}.`;
+  if (!total) return `${summary}\n\n`;
+  const sample = folder.left_out.sample
+    .slice(0, 5)
+    .map((item) => `${jsonLine(item.path)} (${item.reason})`)
+    .join(', ');
+  const remaining = total - Math.min(folder.left_out.sample.length, 5);
+  return `${summary}\nLeft out ${total} paths: ${sample}${remaining > 0 ? `, and ${remaining} more` : ''}.\n\n`;
+}
+
+const FOLDER_REPORT_SCHEMA = {
+  type: 'object',
+  properties: {
+    source: { enum: ['directory', 'zip'] },
+    file_count: { type: 'integer' },
+    files_total_bytes: { type: 'integer' },
+    file_list_bytes: { type: 'integer' },
+    default_entry: { type: 'string' },
+    sample: { type: 'array', items: { type: 'string' } },
+    left_out: {
+      type: 'object',
+      properties: {
+        count: { type: 'integer' },
+        by_reason: {
+          type: 'object',
+          additionalProperties: { type: 'integer' },
+        },
+        sample: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              path: { type: 'string' },
+              reason: { type: 'string' },
+            },
+            required: ['path', 'reason'],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ['count', 'by_reason', 'sample'],
+      additionalProperties: false,
+    },
+  },
+  required: [
+    'source',
+    'file_count',
+    'files_total_bytes',
+    'file_list_bytes',
+    'default_entry',
+    'sample',
+    'left_out',
+  ],
+  additionalProperties: false,
+} as const;
+
 export const TOOL_DEFINITION = {
   name: TOOL_NAME,
   title: 'Publish a relic',
@@ -337,13 +400,18 @@ export const TOOL_DEFINITION = {
       path: {
         type: 'string',
         description:
-          'Filesystem path to a file or, on a supported packaged native target, an .otiod bundle directory.',
+          'Filesystem path to a file or directory. Directories follow .gitignore and skip .git, node_modules, and symlinks.',
       },
       filename: {
         type: 'string',
         description:
           'Optional. Overrides the name written into the encrypted envelope ' +
           'header. Defaults to the basename of `path`.',
+      },
+      open_first: {
+        type: 'string',
+        description:
+          'Optional relative path of the folder entry to open first.',
       },
       title: {
         type: 'string',
@@ -395,6 +463,8 @@ export const TOOL_DEFINITION = {
   outputSchema: {
     type: 'object',
     properties: {
+      shape: { enum: ['file', 'folder'] },
+      folder: FOLDER_REPORT_SCHEMA,
       url: { type: 'string' },
       relic_id: { type: 'string' },
       version: {
@@ -487,13 +557,18 @@ export const REPUBLISH_TOOL_DEFINITION = {
       path: {
         type: 'string',
         description:
-          'Filesystem path to a file or, on a supported packaged native target, an .otiod bundle directory that becomes the new version.',
+          'Filesystem path to the file or directory that becomes the new version.',
       },
       filename: {
         type: 'string',
         description:
           'Optional. Overrides the name written into the encrypted envelope ' +
           'header of the new version. Defaults to the basename of `path`.',
+      },
+      open_first: {
+        type: 'string',
+        description:
+          'Optional relative path of the folder entry to open first.',
       },
       title: {
         type: 'string',
@@ -564,6 +639,8 @@ export const REPUBLISH_TOOL_DEFINITION = {
   outputSchema: {
     type: 'object',
     properties: {
+      shape: { enum: ['file', 'folder'] },
+      folder: FOLDER_REPORT_SCHEMA,
       relic_id: { type: 'string' },
       version: {
         type: 'integer',
@@ -725,6 +802,7 @@ export const LOOKUP_TOOL_DEFINITION = {
       found: { type: 'boolean' },
       relic_id: { type: ['string', 'null'] },
       version: { type: ['integer', 'null'], minimum: 1 },
+      shape: { enum: ['file', 'folder', null] },
       resolved_path: { type: 'string' },
       source_identity: { type: 'string' },
       source_description: { type: 'string' },
@@ -2391,6 +2469,10 @@ async function callTool(
         force_new: forceNew === true,
         cover,
         decisions: rawDecisions,
+        open_first:
+          typeof args['open_first'] === 'string'
+            ? args['open_first']
+            : undefined,
       },
       deps
     );
@@ -2402,6 +2484,10 @@ async function callTool(
         path,
         filename,
         title,
+        open_first:
+          typeof args['open_first'] === 'string'
+            ? args['open_first']
+            : undefined,
         ttl_days: ttlDays.days,
         force_new: forceNew === true,
         cover,
@@ -2421,7 +2507,8 @@ async function callTool(
           {
             type: 'text',
             text:
-              `Published ${result.filename} as version 1 of a new relic.\n\n` +
+              `Published ${result.folder ? jsonLine(result.filename) : result.filename} as version 1 of a new relic.\n\n` +
+              folderParagraph(result.folder, result.filename) +
               `${result.url}\n\n` +
               `${
                 result.title !== null
@@ -2582,6 +2669,10 @@ async function callRepublishPrivate(
         filename:
           typeof args['filename'] === 'string' ? args['filename'] : undefined,
         title: typeof args['title'] === 'string' ? args['title'] : undefined,
+        open_first:
+          typeof args['open_first'] === 'string'
+            ? args['open_first']
+            : undefined,
         ttl_days: ttlDays.days,
         cover: typeof args['cover'] === 'boolean' ? args['cover'] : undefined,
         notify: args['notify'] === false ? false : undefined,
@@ -2754,6 +2845,7 @@ async function callLookup(
       found: match !== undefined,
       relic_id: match?.relic_id ?? null,
       version: match?.version ?? null,
+      shape: match?.shape ?? null,
       resolved_path: lookup.resolved_path,
       source_identity: lookup.source.identity,
       source_description: lookup.source.description,
@@ -3178,6 +3270,10 @@ async function callRepublish(
         relic_id: relicId,
         path,
         filename,
+        open_first:
+          typeof args['open_first'] === 'string'
+            ? args['open_first']
+            : undefined,
         title,
         ttl_days: ttlDays.days,
         addresses,
@@ -3198,8 +3294,9 @@ async function callRepublish(
           {
             type: 'text',
             text:
-              `Republished ${result.filename} as version ${result.version} ` +
+              `Republished ${result.folder ? jsonLine(result.filename) : result.filename} as version ${result.version} ` +
               `of relic ${result.relic_id}.\n\n` +
+              folderParagraph(result.folder, result.filename) +
               'The share URL is unchanged: everyone holding the existing ' +
               'link, including its fragment, now sees this content. There ' +
               'is no new link to hand out.\n\n' +
