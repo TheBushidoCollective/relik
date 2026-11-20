@@ -34,7 +34,12 @@ async function probe(
   let buffered = 0;
   async function ensure(size: number): Promise<void> {
     while (buffered < size) {
-      const result = await reader.read();
+      let result: ReadableStreamReadResult<Uint8Array>;
+      try {
+        result = await reader.read();
+      } catch {
+        throw new TransferIncompleteError(buffered, objectLength);
+      }
       if (result.done)
         throw new TransferIncompleteError(buffered, objectLength);
       if (result.value.length) {
