@@ -224,11 +224,19 @@ export async function runFolderStage(
         ),
         true
       );
-      const tree = await cdp.send('Page.getFrameTree', {}, session);
-      const children = (
-        tree.frameTree as { childFrames?: { frame: { id: string } }[] }
-      ).childFrames;
-      assert.equal(children?.length, 1);
+      type FrameTree = { childFrames?: { frame: { id: string } }[] };
+      let children: FrameTree['childFrames'];
+      for (let attempt = 0; attempt < 250; attempt++) {
+        const tree = await cdp.send('Page.getFrameTree', {}, session);
+        children = (tree.frameTree as FrameTree).childFrames;
+        if (children?.length === 1) break;
+        await Bun.sleep(20);
+      }
+      assert.equal(
+        children?.length,
+        1,
+        'the sandboxed frame attaches to the page'
+      );
       const world = await cdp.send(
         'Page.createIsolatedWorld',
         { frameId: children?.[0]?.frame.id, worldName: 'v2-proof' },
