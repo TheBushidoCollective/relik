@@ -166,6 +166,7 @@ try {
     '/assets/landing-html.png',
     '/assets/landing-markdown.png',
     '/assets/landing-code-dark.png',
+    '/assets/landing.js',
     '/assets/styles.css',
     '/assets/cue-view.css',
     '/assets/json-tree-view.css',

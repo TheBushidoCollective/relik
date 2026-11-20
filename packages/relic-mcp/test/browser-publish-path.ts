@@ -125,6 +125,18 @@ browser.cdp.onEvent((event) => {
   });
 });
 
+/** Keeps a screenshot when RELIC_PUBLISH_SHOTS_DIR is set, as the other proofs do. */
+const shot = async (name: string): Promise<void> => {
+  const dir = process.env['RELIC_PUBLISH_SHOTS_DIR'];
+  if (dir === undefined) return;
+  const taken = (await browser.cdp.send(
+    'Page.captureScreenshot',
+    { format: 'png' },
+    browser.sessionId
+  )) as { data: string };
+  await Bun.write(join(dir, `${name}.png`), Buffer.from(taken.data, 'base64'));
+};
+
 const goto = async (url: string): Promise<void> => {
   await browser.cdp.send('Page.navigate', { url }, browser.sessionId);
 };
@@ -319,18 +331,7 @@ try {
     document.body.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
   })()`);
   await browser.waitForSelector('dialog.pub-dialog .pub-title');
-  const shotsDir = process.env['RELIC_PUBLISH_SHOTS_DIR'];
-  if (shotsDir !== undefined) {
-    const shot = (await browser.cdp.send(
-      'Page.captureScreenshot',
-      { format: 'png' },
-      browser.sessionId
-    )) as { data: string };
-    await Bun.write(
-      join(shotsDir, 'dialog-over-relic.png'),
-      Buffer.from(shot.data, 'base64')
-    );
-  }
+  await shot('dialog-over-relic');
   assert.equal(
     await browser.evaluate<boolean>(
       `!document.querySelector('[data-file-curtain]')`
@@ -407,6 +408,17 @@ try {
       browser.sessionId
     );
   };
+  /**
+   * Resolves once the page has finished loading, which is after every module
+   * script has run. The homepage and the relic's loading bar draw their Upload
+   * link in the HTML, so the link is on screen before the script that arms it,
+   * and a drop or a click in that gap goes to nothing.
+   */
+  const waitLoaded = (): Promise<void> =>
+    browser.evaluate<void>(`new Promise((resolve) => {
+      if (document.readyState === 'complete') resolve();
+      else window.addEventListener('load', () => resolve(), { once: true });
+    })`);
   const waitInPage = (selector: string): Promise<void> =>
     browser.evaluate<void>(`new Promise((resolve, reject) => {
       const deadline = Date.now() + 15000;
@@ -511,6 +523,194 @@ try {
   );
   console.log(
     'PUBLISH_STEP_9_RELIC_CLAIMS curtain=none relic_got_drop=true dialog=none'
+  );
+
+  // 10. The homepage, which loads no viewer, takes a drop and shows a styled dialog.
+  await goto(`${serviceOrigin}/`);
+  await waitForText('Share a file we can');
+  await waitLoaded();
+  const homeScripts = await browser.evaluate<string[]>(
+    `[...document.querySelectorAll('script')].map((s) => s.getAttribute('src'))`
+  );
+  assert.deepEqual(homeScripts, ['/assets/landing.js']);
+  seen.length = 0;
+  await browser.evaluate<void>(`(() => {
+    const dt = new DataTransfer();
+    dt.items.add(new File(['# From the homepage\\n\\nDropped on /.\\n'], 'home-drop.md'));
+    document.body.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
+  })()`);
+  await waitInPage('dialog.pub-dialog .pub-title');
+  assert.equal(await dialogTitle(), 'home-drop.md');
+  await shot('dialog-on-homepage');
+  assert.equal(
+    apiRequests().length,
+    0,
+    'a drop on the homepage sent something'
+  );
+  // The homepage has none of the viewer's stylesheet, so a dialog that looks
+  // like a button only does because the base sheet came with it.
+  const homeButton = await browser.evaluate<{
+    background: string;
+    padding: string;
+  }>(`(() => {
+    const s = getComputedStyle(document.querySelector('dialog.pub-dialog .pub-row .action.primary'));
+    return { background: s.backgroundColor, padding: s.paddingLeft };
+  })()`);
+  assert.notEqual(
+    homeButton.background,
+    'rgba(0, 0, 0, 0)',
+    'the dialog button has no fill'
+  );
+  assert.notEqual(
+    homeButton.padding,
+    '0px',
+    'the dialog button has no padding'
+  );
+  await browser.clickSelector('dialog.pub-dialog .pub-row .action.primary');
+  await waitInPage('dialog.pub-dialog .pub-link');
+  const homeLink = new URL(
+    await browser.evaluate<string>(
+      `document.querySelector('dialog.pub-dialog .pub-link').value`
+    )
+  );
+  assert.equal(homeLink.origin, serviceOrigin);
+  const homeKey = homeLink.hash.slice(1 + 'r1'.length);
+  assert.ok(
+    seen.every((r) => !r.body.includes(homeKey) && !r.url.includes(homeKey)),
+    'the key reached the service from the homepage'
+  );
+  console.log(
+    `PUBLISH_STEP_10_HOMEPAGE scripts=1 dialog=styled published=${homeLink.pathname.slice(1)} key_in_requests=false`
+  );
+
+  // 11. The Upload button opens a real file chooser, from a real click.
+  const chooserNodes: number[] = [];
+  browser.cdp.onEvent((event) => {
+    if (
+      event.method === 'Page.fileChooserOpened' &&
+      event.sessionId === browser.sessionId
+    ) {
+      const node = event.params['backendNodeId'];
+      if (typeof node === 'number') chooserNodes.push(node);
+    }
+  });
+  await browser.cdp.send(
+    'Page.setInterceptFileChooserDialog',
+    { enabled: true },
+    browser.sessionId
+  );
+  /** A click the browser treats as the visitor's own, which a chooser requires. */
+  const trustedClick = async (selector: string): Promise<void> => {
+    const at = await browser.evaluate<{ x: number; y: number }>(`(() => {
+      const r = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();
+      return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
+    })()`);
+    for (const type of ['mousePressed', 'mouseReleased']) {
+      await browser.cdp.send(
+        'Input.dispatchMouseEvent',
+        { type, x: at.x, y: at.y, button: 'left', clickCount: 1 },
+        browser.sessionId
+      );
+    }
+  };
+  const chooseViaUpload = async (
+    selector: string,
+    name: string
+  ): Promise<void> => {
+    const before = chooserNodes.length;
+    await trustedClick(selector);
+    const deadline = Date.now() + 10000;
+    while (chooserNodes.length === before && Date.now() < deadline) {
+      await Bun.sleep(50);
+    }
+    assert.ok(
+      chooserNodes.length > before,
+      `no file chooser opened from ${selector}`
+    );
+    await browser.cdp.send(
+      'DOM.setFileInputFiles',
+      {
+        files: [await draggedFile(name)],
+        backendNodeId: chooserNodes[chooserNodes.length - 1],
+      },
+      browser.sessionId
+    );
+  };
+  await goto(`${serviceOrigin}/`);
+  await waitForText('Share a file we can');
+  await waitLoaded();
+  await chooseViaUpload('header a[data-upload]', 'chosen-on-home.md');
+  await waitInPage('dialog.pub-dialog .pub-title');
+  assert.equal(await dialogTitle(), 'chosen-on-home.md');
+  await dialogClosed();
+
+  await goto(link);
+  await waitForText('Encrypted in the page, then uploaded.');
+  await waitInPage('header.bar .action-upload');
+  await waitLoaded();
+  await chooseViaUpload('header.bar .action-upload', 'chosen-on-relic.md');
+  await waitInPage('dialog.pub-dialog .pub-title');
+  assert.equal(await dialogTitle(), 'chosen-on-relic.md');
+  await dialogClosed();
+  console.log(
+    'PUBLISH_STEP_11_UPLOAD_BUTTON chooser=opened homepage=dialog relic_page=dialog'
+  );
+
+  // 12. Every page's bar ends in Upload, and it stays on the row down to 320px.
+  const lastAction = (): Promise<string | null> =>
+    browser.evaluate<string | null>(`(() => {
+      const row = document.querySelector('header.bar .actions');
+      return row && row.lastElementChild ? (row.lastElementChild.getAttribute('aria-label') || row.lastElementChild.textContent.trim()) : null;
+    })()`);
+  const pages: ReadonlyArray<readonly [string, string, string]> = [
+    ['relic', link, 'header.bar .action-upload'],
+    ['dashboard', `${serviceOrigin}/dashboard`, 'header.bar .action-upload'],
+    ['policy', `${serviceOrigin}/policy`, 'header.bar .action-upload'],
+    ['publish', `${serviceOrigin}/publish`, 'header.bar .actions .action'],
+    ['unopenable', `${serviceOrigin}/${relicId}`, 'header.bar .action-upload'],
+  ];
+  const fit: string[] = [];
+  for (const width of [1280, 390, 320]) {
+    await browser.cdp.send(
+      'Emulation.setDeviceMetricsOverride',
+      { width, height: 800, deviceScaleFactor: 1, mobile: false },
+      browser.sessionId
+    );
+    for (const [name, url, selector] of pages) {
+      await goto(url);
+      await waitInPage(selector);
+      assert.match(
+        (await lastAction()) ?? '',
+        /Upload/,
+        `${name} at ${width}px does not end its bar with Upload`
+      );
+      const box = await browser.evaluate<{
+        right: number;
+        width: number;
+        scroll: number;
+      }>(`(() => {
+        const r = document.querySelector('header.bar .actions').lastElementChild.getBoundingClientRect();
+        return { right: Math.round(r.right), width: window.innerWidth, scroll: document.documentElement.scrollWidth };
+      })()`);
+      assert.ok(
+        box.right <= box.width,
+        `${name} at ${width}px: the Upload button is off the right edge (${box.right} > ${box.width})`
+      );
+      assert.ok(
+        box.scroll <= box.width,
+        `${name} at ${width}px scrolls sideways (${box.scroll} > ${box.width})`
+      );
+      await shot(`${name}-${width}`);
+    }
+    fit.push(String(width));
+  }
+  await browser.cdp.send(
+    'Emulation.clearDeviceMetricsOverride',
+    {},
+    browser.sessionId
+  );
+  console.log(
+    `PUBLISH_STEP_12_EVERY_BAR pages=${pages.map(([n]) => n).join(',')} last_action=Upload widths=${fit.join(',')} overflow=none`
   );
 
   console.log('BROWSER_PUBLISH_PATH_OK');

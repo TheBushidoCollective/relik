@@ -280,7 +280,7 @@ All proof writes target the local in-memory service. The browser is an isolated 
 
 # Publish from the browser
 
-A visitor opens `/publish`, drops one file, reviews it and its link-preview title, and gets a link whose key never reached the service. The link opens to the file they dropped. A cleared title sends no title and no filename. A file over the page's ceiling, and a dropped folder, are refused before any grant. A file dropped on any relic page, including one that fills the window with a sandboxed frame, opens the same publisher in a dialog over it and makes a new relic, and a relic that takes file drops itself keeps them.
+A visitor opens `/publish`, drops one file, reviews it and its link-preview title, and gets a link whose key never reached the service. The link opens to the file they dropped. A cleared title sends no title and no filename. A file over the page's ceiling, and a dropped folder, are refused before any grant. A file dropped on any relic page, including one that fills the window with a sandboxed frame, opens the same publisher in a dialog over it and makes a new relic, and a relic that takes file drops itself keeps them. The homepage takes a drop the same way, and every page's top bar ends in an Upload button that opens a file chooser and the same dialog.
 
 ## Acceptance command
 
@@ -298,12 +298,17 @@ Success requires these lines in order, then `BROWSER_PUBLISH_PATH_OK`:
 `PUBLISH_STEP_6_REFUSALS oversize=refused folder=refused grants=0`,
 `PUBLISH_STEP_7_DROP_ANYWHERE text_drag=ignored file_drag=curtain dialog=opened new_relic=<id> page_behind=kept`,
 `PUBLISH_STEP_8_REAL_DRAG over_bar=caught over_sandboxed_frame=caught`,
-`PUBLISH_STEP_9_RELIC_CLAIMS curtain=none relic_got_drop=true dialog=none`.
+`PUBLISH_STEP_9_RELIC_CLAIMS curtain=none relic_got_drop=true dialog=none`,
+`PUBLISH_STEP_10_HOMEPAGE scripts=1 dialog=styled published=<id> key_in_requests=false`,
+`PUBLISH_STEP_11_UPLOAD_BUTTON chooser=opened homepage=dialog relic_page=dialog`,
+`PUBLISH_STEP_12_EVERY_BAR pages=relic,dashboard,policy,publish,unopenable last_action=Upload widths=1280,390,320 overflow=none`.
 The browser is an owned isolated headless Chrome with a throwaway profile, and all writes target the local in-memory service.
 
 Steps 8 and 9 use the browser's own drag path (`Input.dispatchDragEvent` with a file on disk) over a relic whose frame is a real cross-origin document, so the drag is routed by the browser rather than dispatched by the script. The frame's origin is `127.0.0.1` against the service's `localhost`. With the shim's drag signal removed, step 8 fails at the curtain, which is the negative control that was run.
 
-Not proven here: the loopback upload is same-origin, so the browser's cross-origin preflight to the real bucket is not exercised. The bucket's CORS rule admits `PUT` from the service origin, and the private-share rekey already relies on it, but the first publish from the live page is the check. After a deploy, publish a small file from the live `/publish` in an owned headless Chrome and open the link; a CORS failure shows as "The upload was interrupted" with no `PUT` reaching storage. Not proven either: Safari and Firefox, a drag from the operating system's own file manager (the proof drives the browser's drag path, not the OS's), and files near the 100 MB ceiling. The landing page and the abuse form take no drop, by design.
+Step 10 asserts the homepage names exactly `/assets/landing.js`, and that the dialog it opens is styled although the homepage has none of the viewer's stylesheet (a button with no fill or padding fails). Step 11 uses a real trusted click and Chrome's file-chooser interception (`Page.setInterceptFileChooserDialog`, then `DOM.setFileInputFiles`), because a chooser only opens for a click the browser treats as the visitor's. Step 12 checks the last action of every bar and that its right edge and the page's scroll width fit at 1280, 390 and 320px. The negative control that was run removed the Upload button from the policy page's bar, and step 12 failed there. Steps 10 and 11 wait for the page's `load` event first: the Upload link is in the HTML before the script that arms it, and a drop or click in that gap goes nowhere. The proof raced there until it waited, and passes eight runs in eight with the wait.
+
+Not proven here: the loopback upload is same-origin, so the browser's cross-origin preflight to the real bucket is not exercised. The bucket's CORS rule admits `PUT` from the service origin, and the private-share rekey already relies on it, but the first publish from the live page is the check. After a deploy, publish a small file from the live `/publish` in an owned headless Chrome and open the link; a CORS failure shows as "The upload was interrupted" with no `PUT` reaching storage. Not proven either: Safari and Firefox, a drag from the operating system's own file manager (the proof drives the browser's drag path, not the OS's), a real native file-chooser dialog (the proof intercepts it), and files near the 100 MB ceiling. The abuse form carries no script and takes no drop, by design.
 
 # Multi-file codec
 

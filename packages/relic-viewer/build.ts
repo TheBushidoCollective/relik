@@ -206,7 +206,9 @@ export async function buildViewer(options?: {
   // cannot make; `sw.ts` is a service worker, which cannot import a sibling
   // chunk either.
   const built = await Bun.build({
-    entrypoints: [`${pkgDir}src/main.ts`],
+    // `landing.ts` is the homepage's own entry. It shares the chunks it has in
+    // common with the viewer rather than carrying a second copy of them.
+    entrypoints: [`${pkgDir}src/main.ts`, `${pkgDir}src/landing.ts`],
     outdir: out,
     target: 'browser',
     format: 'esm',
@@ -309,6 +311,7 @@ export async function buildViewer(options?: {
   await copyFile(`${pkgDir}src/data-table.css`, `${out}data-table.css`);
   await copyFile(`${pkgDir}src/notebook-view.css`, `${out}notebook-view.css`);
   await copyFile(`${pkgDir}src/publish-view.css`, `${out}publish-view.css`);
+  await copyFile(`${pkgDir}src/publish-base.css`, `${out}publish-base.css`);
 
   // `main.js` is served as `viewer.js`, because that is the name the shell and
   // the service worker's cache list both reference.
@@ -416,8 +419,21 @@ export async function buildViewer(options?: {
     }))
   );
 
+  // The homepage's script and the publisher's stylesheets are not precached by
+  // the service worker, so they are not in `shellAssetFiles`. They are still
+  // part of what a deploy ships, so a change to one changes the build id.
+  const homepageBuffers = await Promise.all(
+    ['landing.js', 'publish-view.css', 'publish-base.css'].map(
+      async (name) => ({
+        path: `/assets/${name}`,
+        content: new Uint8Array(await Bun.file(`${out}${name}`).arrayBuffer()),
+      })
+    )
+  );
+
   const buildHash = computeShellHash([
     ...assetBuffers,
+    ...homepageBuffers,
     { path: '/assets/register-sw.js', content: REGISTER_SW_JS },
   ]);
   await Bun.write(`${out}shell-build.txt`, buildHash);

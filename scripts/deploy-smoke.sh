@@ -30,20 +30,21 @@ curl -fsS -o "$scratch/sw" "$SERVICE/sw.js"
 grep -Fq "$viewer_url" "$scratch/sw"
 
 echo "every asset the shell names resolves"
-for P in /assets/viewer.js /assets/landing-html.png /assets/landing-markdown.png /assets/landing-code-dark.png /assets/styles.css /assets/cue-view.css /assets/json-tree-view.css /assets/data-table.css /assets/notebook-view.css /assets/register-sw.js /manifest.webmanifest /sw.js /assets/icon.svg; do
+for P in /assets/viewer.js /assets/landing-html.png /assets/landing-markdown.png /assets/landing-code-dark.png /assets/landing.js /assets/styles.css /assets/cue-view.css /assets/json-tree-view.css /assets/data-table.css /assets/notebook-view.css /assets/register-sw.js /manifest.webmanifest /sw.js /assets/icon.svg; do
   curl -fsS -o/dev/null "$SERVICE$P" || { echo "MISSING $P"; exit 1; }
 done
 
-echo "the homepage links the reader's relics and, like /install, carries no script"
+echo "the homepage links the reader's relics and, like /install, names exactly one script, its own"
 curl -fsS -o "$scratch/root" "$SERVICE/"
 grep -q 'href="/dashboard"' "$scratch/root"
-if grep -q '<script' "$scratch/root"; then
-  echo "/ carries a script tag"
+grep -q 'href="/publish" data-upload' "$scratch/root"
+if [ "$(grep -o '<script' "$scratch/root" | wc -l | tr -d ' ')" != 1 ] || ! grep -q '<script type="module" src="/assets/landing.js">' "$scratch/root"; then
+  echo "/ does not name exactly the landing script"
   exit 1
 fi
 curl -fsS -o "$scratch/install" "$SERVICE/install"
-if grep -q '<script' "$scratch/install"; then
-  echo "/install carries a script tag"
+if [ "$(grep -o '<script' "$scratch/install" | wc -l | tr -d ' ')" != 1 ] || ! grep -q '<script type="module" src="/assets/landing.js">' "$scratch/install"; then
+  echo "/install does not name exactly the landing script"
   exit 1
 fi
 
