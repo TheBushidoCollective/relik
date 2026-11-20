@@ -87,9 +87,9 @@ The fork is fragment versus the container's plaintext header, where RFC 8188 off
 
 **It goes in the fragment.** The viewer then knows the format before fetching anything, so an unknown version is refused without minting a signed URL, without consuming a per-object download cap, and without a byte of egress. The marker is visible only to people who already hold the key, so it adds nothing to the operator's metadata set, whereas `keyid` is plaintext and operator-visible by construction. The cost is two characters of URL and telling every channel the link crosses which Relic format version was used, which says nothing about the content.
 
-One version number governs the whole envelope, fragment and container together. There's no second, independent container version. It versions the *format*, which is a different axis from the relic's own version: republish-to-same-URL now exists and a relic's version counts its publishes (3.12), while this marker counts revisions of the container. A relic at version 7 and a relic at version 1 can both carry format version 1, and bumping the format version changes nothing about relic versioning.
+The `r1` marker identifies the framing and key encoding. The authenticated envelope byte independently identifies its layout: version 1 holds one file and version 2 holds a folder (3.20). Both use the same marker and key, so a public republish can switch shapes without changing its link. A relic's publication version remains a separate counter.
 
-This is a public-relic rule. A private relic has no fragment, so no marker is read for it. The viewer learns that a relic is private from the server before any mint: `data-relic-access="private"` on the shell root, and `access` on `GET /api/relics/{id}/access` (plan 4.7 and 4.15). Private shares add no second container version. Their key delivery is versioned by labels (3.17), as plan correction 1 records.
+A private relic has no fragment marker. Its reader checks the authenticated envelope version after opening the object; private key delivery remains versioned by its own labels (3.17).
 
 ### 2.3 Key encoding and the terminal-character rule
 
@@ -128,13 +128,13 @@ For a private relic there is nothing to strip. Its URL has no fragment, and the 
 
 **Layer 1, the transport framing.** RFC 8188 `aes128gcm` is presumptive: a plaintext header of `salt (16) | rs (4) | idlen (1) | keyid (idlen)`, then records of `rs` octets, each with its own 16-octet authentication tag and a padding delimiter, the last record using value 2 and all others value 1 ([RFC 8188](https://www.rfc-editor.org/rfc/rfc8188.html)). Presumptive rather than fixed because the framing is `shape`'s (section 4), and the presumption because `frame.md`'s wedge-boundary section already establishes it as the off-the-shelf framing with working range decryption over GCS byte ranges ([wormhole-crypto](https://github.com/SocketDev/wormhole-crypto), [unzipit](https://github.com/greggman/unzipit)). That argument isn't re-run here. Any substitute inherits the same reversibility constraint.
 
-**Layer 2, the Relic envelope, entirely inside the encrypted stream.** Record 0 is the envelope header: the version (mirroring the fragment marker on a public relic), an entry count, and per entry a filename, a declared mimetype, and an offset and length into the content stream. Content bytes follow. Nothing else is in there.
+**Layer 2, the Relic envelope, entirely inside the encrypted stream.** Record 0 contains a versioned envelope header. Version 1 carries one filename, mimetype, offset and length; version 2 carries a folder name, entry count and manifest and content lengths. The version 2 manifest begins the content stream (3.20).
 
 Three rules on that structure:
 
 - **The envelope header occupies record 0 alone and never spans records.** One record fetched, one decrypted, and the viewer holds the whole header. That's what makes the refuse-before-allocating check in 3.3 possible and range decryption useful. It also means `rs` must be at least the maximum envelope header size, which is what bounds the filename and mimetype field caps. `rs` is `shape`'s, so those caps follow from it.
-- **Entry count is exactly 1 in version 1.** That's the multi-file room: a future manifest adds entries to a structure that already carries offsets, rather than needing a new container. It's the frame's reversibility argument applied to structure, and it costs a handful of bytes.
-- **The parser is strict.** Unknown fields are refused rather than ignored. Extensions arrive with a version bump, which is what the fragment marker exists to make possible.
+- **Entry count is exactly 1 in version 1.** Version 2 stores its entry table in the manifest at the start of the content stream.
+- **The parser is strict.** Unknown fields and malformed structures are refused rather than ignored.
 
 The filename is **untrusted display text**. It reaches the DOM as a label and gets used as a lookup key, the same defect class as archive entry names ([Zip Slip](https://security.snyk.io/research/zip-slip-vulnerability)). The container carries it as a bounded UTF-8 byte string and asserts nothing about it. An empty filename is legal and means the viewer names the download from the ID.
 
@@ -205,9 +205,9 @@ The residual: a publisher can declare a class that doesn't match their own conte
 
 **The viewer refuses. Never best-effort, never a fallback.**
 
-Two distinct refusals, because the version appears twice. An unknown fragment marker is refused **before the fetch**, costing no mint and no egress. A container whose envelope version disagrees with the fragment marker is refused **after the fetch**. That pairing is deliberate: the outer copy enables early refusal, the inner copy sits inside the AEAD and is tamper-evident, and disagreement means a mangled fragment prefix or a substituted object.
+An unknown fragment marker is refused before the fetch. A reader that supports the current layouts admits envelope versions 1 and 2 for `r1`, and private readers use the same admitted versions. A version above the admitted maximum is reported as an unsupported newer envelope; another version outside the admitted set is a version mismatch.
 
-A private relic has no fragment marker, so neither refusal above is a marker check for it. The viewer refuses a private relic by the access mode the server declares (`data-relic-access="private"` on the shell root and `access: 'private'` on `GET /api/relics/{id}/access`), and a private mint is refused unless the caller's identity holds a wrap for a sealed, undeleted version (`POST /api/relics/{id}/mint`, plan 4.7 and 4.15). After the fetch, the envelope version check still applies: an envelope version other than 1, the version this format defines, is refused (plan correction 1).
+The unchanged v1-only decoder compares the authenticated envelope byte to version 1 and throws `VersionMismatchError` for a v2 object. It never interprets a folder as a v1 file.
 
 ### 3.8 Length leakage
 
@@ -218,6 +218,8 @@ Ciphertext length reveals plaintext length to within a record. With the class al
 ### 3.9 Degenerate inputs
 
 **A zero-byte file is legal.** The container emits record 0 carrying the envelope header, zero content bytes follow, and record 0 is therefore also the final record and uses padding delimiter 2. The object is never zero bytes on the wire, so "the object exists and is non-empty" stays a valid sanity check.
+
+An envelope v2 folder can contain only empty files. Its content is still nonempty because it includes the manifest, and record 0 is followed by content records.
 
 **A zero-byte relic carries class `binary`.** It isn't renderable, and the renderable side of the taxonomy is exactly what the metric counts, so calling an empty file `code` because its name ends in `.py` would inflate the renderable share with something that renders as nothing. The rule is unconditional: zero-byte content declares `binary` regardless of filename, extension, or sniffed type. No implementation-defined hole in the taxonomy.
 
@@ -267,13 +269,15 @@ Comments are content, and a comment about content the operator cannot read, stor
 
 **For a public relic, the fragment does not change, and neither does the container.** 2.1 fixes the fragment at the marker and the key, and says a third field takes a version bump, so there is no room for a separate comment secret and none is invented. What there is room for is another HKDF label. **The comment key is `HKDF-SHA256(ikm = the 16 raw fragment key bytes, salt = zero-length, info = "relic/comments/v1", L = 16)`.**
 
-**This derivation needs no format version bump, and that has to be stated rather than left to a reader's inference, because a new key looks like a new format.** It is not one. 3.1's two layers are untouched: no header field is added, no record layout changes, no envelope field appears, and the fragment keeps exactly the two things 2.1 allows it. Every relic written before comments existed decodes byte for byte the same way after, and a viewer that never derives a comment key is not a viewer speaking an older format. The version marker in 2.2 counts container revisions, and nothing in this section is a container revision. What a comment key is instead, for a public relic, is a second use of key material the URL already carries, which is precisely what RFC 8188 does when it expands the same input keying material under `Content-Encoding: aes128gcm\0` for the content key and `Content-Encoding: nonce\0` for the base nonce. A third distinct label yields a third key independent of both by construction rather than by assertion, and independence by construction is what makes this safe without a bump: the comment key cannot be used to reach the content key, and vice versa, whatever either one leaks.
+The comment derivation uses a separate HKDF label and leaves the fragment, framing and envelope unchanged. It derives an independent key from the same input material, like RFC 8188's distinct content-key and nonce labels. Existing relics remain readable without deriving a comment key.
 
 **For a private relic the comment key comes from the version, not the link.** It is `HKDF-SHA256(ikm = that version's 16-byte content key, salt = zero-length, info = "relic/comments/v1", L = 16)`, derived per version (plan 4.1). A comment on version 3 can be read only by a reader who can unwrap version 3's key (3.17). The label, the envelope and the caps are unchanged, so this is not a format version bump.
 
 **The salt is zero-length, unlike the container's.** A comment is not a container and has no plaintext header to carry a salt in. RFC 5869 permits the omission, and what separates one comment from another is the per-comment nonce rather than a salt.
 
 **The envelope is deliberately not RFC 8188 framing.** The plaintext is UTF-8 JSON with `body` (a string), `display_name` (a string or `null`), and an optional `anchor`. A missing `anchor` is a freeform comment. The sealed value is **`nonce(12) || AES-128-GCM(commentKey, nonce, plaintext)`, transported unpadded base64url.** A comment is small, read whole, and never range-decrypted, so records, padding delimiters, and a 21-byte header would all be overhead spent on properties comments do not have. The nonce is drawn fresh from the platform CSPRNG per comment and never from a counter, because comments have no ordering the format can see and nonce reuse under a reused key loses the plaintext outright.
+
+An optional top-level sealed `entry` names the canonical path of the file a comment concerns (3.20). A malformed path is refused on write and reported as malformed on read. Readers that predate this field retain the comment body and report `entry` as unsupported.
 
 **The caps are 4096 bytes of UTF-8 for `body` and 64 for `display_name`, enforced by this package before encryption.** Bytes rather than characters, so a body of four-byte characters cannot slip past a length check. They are enforced here rather than left to each caller for the reason 3.11 gives about the content cap: a limit that exists only as a documented number is not a limit. Over-cap is refused rather than truncated, because truncating changes what a comment says, which is worse than declining to store it.
 
@@ -493,6 +497,16 @@ These definitions are frozen once any production private relic is sealed. Changi
 **Never approximate, and never composite.** A timeline is rendered exactly or not at all. No partial, lower-fidelity, or substituted program is stored. A timeline with no valid program is focus-only: the viewer does not composite it from original media, and it offers focus on tracks and clips only.
 
 **Privacy.** The manifest and MP4s sit inside the ciphertext. No program field enters object metadata, the grant request, or the relic row (section 3.2). The length leak in `service.md` section 5 covers the larger total, and no new field reaches the server. Rendered program output is plaintext and is held in memory only, within the program bound. It is never written to disk. This constraint is shared with `publish.md` 4.8, which is unchanged.
+
+### 3.20 Folder envelope and manifest
+
+Version 2 record 0 holds big-endian fields: version `u8` equal to 2, folder name length `u16`, UTF-8 name bytes, entry count `u32`, manifest length `u32`, and content length `u64`. The name is untrusted display text and may be empty. Its encoded length is at most 1,024 bytes. The entry count is 1 to 5,000, the manifest is 17 bytes to 4 MiB, and content length is a safe integer no larger than 500 MiB. It includes the manifest and all file bytes.
+
+The manifest starts at content offset zero. It contains a `u32` default index, followed by one record per entry: `u16` path byte length and UTF-8 path, `u16` MIME byte length and UTF-8 MIME, and `u64` file length. The default index is below the entry count. Paths are 1 to 1,024 bytes and decode as UTF-8 without replacement; MIME is at most 255 bytes and is untrusted display metadata. Entry offsets are implicit: the first follows the manifest, and every later entry follows the previous one. The lengths must sum exactly to the declared content length, with no trailing manifest bytes.
+
+Paths are NFC strings with 1 to 32 nonempty `/`-separated segments. No segment is `.` or `..`, or exceeds 255 UTF-8 bytes. A path excludes U+0000 through U+001F, U+007F through U+009F, backslash, U+061C, U+200B through U+200F, U+202A through U+202E, U+2060 through U+2064, U+2066 through U+2069, and U+FEFF. Its first segment cannot start with an ASCII drive prefix.
+
+Entries appear in strictly ascending UTF-8 byte order. Exact duplicates, case-folded collisions across any path prefix, and a file also used as a directory are refused. Folding applies NFC, uppercase, lowercase, then NFC. The writer normalizes paths before checking; the reader refuses a noncanonical path rather than changing it.
 
 ## 4. Routed to `shape`
 
