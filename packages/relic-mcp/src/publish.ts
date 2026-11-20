@@ -921,15 +921,10 @@ export async function readSource(
         resolvedPath: bundled.resolvedPath,
       };
     }
-    // format.md 3.1 fixes entry count at exactly 1 in version 1, so a
-    // directory cannot be represented as a multi-entry relic at all.
-    // Publishing one would mean silently tarring it into an opaque blob that
-    // takes class `archive` and is download-only, producing an unrenderable
-    // relic and no error.
+    // The caller classified a file before this read; its path may have changed.
     throw new PublishError(
       'source_is_directory',
-      `${resolvedPath} is a directory. Create an archive yourself and ` +
-        'publish that, so the download-only outcome is yours to choose.'
+      `${resolvedPath} is now a directory. Retry the operation to publish it as a folder.`
     );
   }
 

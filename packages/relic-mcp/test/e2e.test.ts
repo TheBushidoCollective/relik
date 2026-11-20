@@ -799,8 +799,27 @@ describe('local refusals, before any HTTP', () => {
     expect(reads).toBe(0);
   });
 
-  test('a local refusal costs no grant', async () => {
-    await publish({ path: 'a-directory' }, deps).catch(() => undefined);
+  test('a file replaced by a directory before reading is refused without a grant', async () => {
+    let stats = 0;
+    let reads = 0;
+    const files: FileReader = {
+      ...fakeFiles(),
+      async stat() {
+        stats += 1;
+        return stats === 1 ? { kind: 'file', size: 1 } : { kind: 'directory' };
+      },
+      async read() {
+        reads += 1;
+        return new Uint8Array();
+      },
+    };
+    await expect(
+      publish({ path: 'changed.md' }, { ...deps, files })
+    ).rejects.toMatchObject({
+      code: 'source_is_directory',
+    });
+    expect(stats).toBe(2);
+    expect(reads).toBe(0);
     expect(await app.store.readMintLog()).toHaveLength(0);
   });
 });
