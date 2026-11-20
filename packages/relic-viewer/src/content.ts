@@ -96,8 +96,27 @@ export interface ContentSink {
   finish(): Promise<RelicContent>;
 }
 
+// Chromium starts with a 500 MiB in-memory Blob limit and no disk quota.
+// A streamed Blob waits for its real limits before we build any content parts.
+export async function openContentStore(): Promise<{
+  createSink: (length: number) => ContentSink;
+}> {
+  try {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(1));
+        controller.close();
+      },
+    });
+    await new Response(stream).blob();
+  } catch (cause) {
+    throw new ContentStoreError(cause);
+  }
+  return { createSink: createContentSink };
+}
+
 /** Owns chunks passed to write; callers must not mutate them afterwards. */
-export function createContentSink(length: number): ContentSink {
+function createContentSink(length: number): ContentSink {
   if (!Number.isSafeInteger(length) || length < 0)
     throw new RangeError('Invalid content length');
   const head = new Uint8Array(Math.min(length, CONTENT_HEAD_BYTES));
