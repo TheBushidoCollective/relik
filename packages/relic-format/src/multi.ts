@@ -44,6 +44,7 @@ const encoder = new TextEncoder();
 const decoder = new TextDecoder('utf-8', { ignoreBOM: true });
 const fatalDecoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
 const forbidden =
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: these code points are forbidden in entry paths.
   /[\u0000-\u001f\u007f-\u009f\\\u061c\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/u;
 
 export function entryPathRule(path: string): PathRule | undefined {
