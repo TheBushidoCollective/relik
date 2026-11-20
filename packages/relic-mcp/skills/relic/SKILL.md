@@ -37,8 +37,8 @@ on the listed versions. A failed requirement refuses conversion rather than
 falling back to pathname checks. Other directories publish as one public folder relic.
 The folder follows `.gitignore`, skips `.git`, `node_modules`, symlinks and
 non-regular files, and reports what was left out. Use `open_first` to select
-an included file to open first. Private folders currently refuse with
-`private_folder_unsupported`; private folder support is planned before release.
+an included file to open first. Private folders use the same inclusion rules;
+their file list and contents remain encrypted.
 The `folder` result reports `source`, `file_count`, `files_total_bytes`,
 `file_list_bytes`, `default_entry`, a `sample` of up to 20 included paths, and
 `left_out` with `count`, `by_reason` and a sample of up to 50 omitted paths.
