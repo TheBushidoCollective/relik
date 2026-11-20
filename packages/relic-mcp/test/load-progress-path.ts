@@ -969,6 +969,7 @@ console.log('Publishing 15 fixtures through stdio relic-mcp...');
 for (const fix of fixtures) {
   const res = await callMcp('relic_publish', {
     path: fix.path,
+    ...(fix.classKey === 'zip' ? { expand: false } : {}),
     cover: false,
     title: '',
   });
