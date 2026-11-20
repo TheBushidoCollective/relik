@@ -865,18 +865,17 @@ describe('the landing page', () => {
     }
   });
 
-  test('the landing page does not list a format no reader can receive yet', async () => {
+  test('the landing page lists exactly the released formats, no more', async () => {
     const body = await app.fetch(req('/')).then((r) => r.text());
     const list = body.slice(
       body.indexOf('<dl class="types">'),
       body.indexOf('</dl>', body.indexOf('<dl class="types">'))
     );
-    const pending = HOMEPAGE_FORMATS.filter(
-      (row) => row.availability === 'pending'
+    expect((list.match(/<dt>/g) ?? []).length).toBe(
+      RELEASED_HOMEPAGE_FORMATS.length
     );
-    expect(pending.length).toBeGreaterThan(0);
-    for (const { label } of pending) {
-      expect(list).not.toContain(label);
+    for (const { label, availability } of HOMEPAGE_FORMATS) {
+      if (availability === 'pending') expect(list).not.toContain(label);
     }
   });
 

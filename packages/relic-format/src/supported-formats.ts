@@ -113,7 +113,6 @@ export const HOMEPAGE_FORMATS: readonly HomepageFormat[] = [
     classes: ['folder'],
     structuredKinds: [],
     extensions: [],
-    availability: 'pending',
   },
   {
     id: 'download',
@@ -125,6 +124,13 @@ export const HOMEPAGE_FORMATS: readonly HomepageFormat[] = [
   },
 ];
 
+/** The rows of a registry that readers can receive today (pending rows are not). */
+export function releasedFormats(
+  rows: readonly HomepageFormat[]
+): readonly HomepageFormat[] {
+  return rows.filter((row) => row.availability !== 'pending');
+}
+
 /** The rows the homepage lists: every format a reader can receive today. */
 export const RELEASED_HOMEPAGE_FORMATS: readonly HomepageFormat[] =
-  HOMEPAGE_FORMATS.filter((row) => row.availability !== 'pending');
+  releasedFormats(HOMEPAGE_FORMATS);
