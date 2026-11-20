@@ -279,7 +279,7 @@ import {
   sharedSummary,
   shareRefusal,
 } from './share.ts';
-import { folderEntryList } from './folder-entry-list.ts';
+import { folderTreeView } from './folder-tree-view.ts';
 import { entryView } from './folder-relic.ts';
 import { createLifecycle, healStaleShell } from './stale-shell.ts';
 import { buildCodeTable, buildProse } from './text-views.ts';
@@ -10557,27 +10557,50 @@ export function renderReady(
     bar = barFor(false);
     const wrap = buildStageWrap(viewToShow, usercontentOrigin);
     const stage = (wrap.firstElementChild as HTMLElement) ?? wrap;
+    const row = buildRelicRow(
+      wrap,
+      thread?.element,
+      thread?.resizer,
+      thread?.tab
+    );
+    let toolbar: HTMLElement | undefined;
+    if (viewToShow.folder) {
+      const tree = folderTreeView(
+        viewToShow.folder,
+        viewToShow.folder.header.name || relicId,
+        (index) => {
+          lifecycle.advance();
+          const selection = lifecycle.token();
+          void entryView(viewToShow, index)
+            .then((next) => {
+              if (!lifecycle.isCurrent(selection)) return;
+              history.pushState(
+                {
+                  ...history.state,
+                  relicEntry: next.folder?.manifest.entries[index]?.path,
+                  relicId,
+                  version: next.version,
+                },
+                ''
+              );
+              showSingle(next);
+            })
+            .catch(() => {
+              if (lifecycle.isCurrent(selection))
+                toast('This file could not be opened.');
+            });
+        },
+        (blob, filename) => saveBlob(blob, safeDownloadName(filename))
+      );
+      toolbar = tree.toolbar;
+      row.prepend(tree.pane);
+    }
     disposeOtioViews(document.body);
     document.body.replaceChildren(
       bar,
-      ...(viewToShow.folder
-        ? [
-            folderEntryList(viewToShow.folder, (index) => {
-              lifecycle.advance();
-              const selection = lifecycle.token();
-              void entryView(viewToShow, index)
-                .then((next) => {
-                  if (lifecycle.isCurrent(selection)) showSingle(next);
-                })
-                .catch(() => {
-                  if (lifecycle.isCurrent(selection))
-                    toast('This file could not be opened.');
-                });
-            }),
-          ]
-        : []),
+      ...(toolbar ? [toolbar] : []),
       ...(thread?.suggestionBar ? [thread.suggestionBar] : []),
-      buildRelicRow(wrap, thread?.element, thread?.resizer, thread?.tab)
+      row
     );
     thread?.attach(wrap);
     afterRender?.(document.body);
@@ -10672,6 +10695,41 @@ export function renderReady(
     );
   };
 
+  if (activeView.folder && typeof window !== 'undefined') {
+    history.replaceState(
+      {
+        ...history.state,
+        relicEntry:
+          activeView.folder.manifest.entries[activeView.folder.index]?.path,
+        relicId,
+        version: activeView.version,
+      },
+      ''
+    );
+    window.onpopstate = (event: PopStateEvent) => {
+      const folder = activeView.folder;
+      if (
+        !folder ||
+        event.state?.relicId !== relicId ||
+        event.state?.version !== activeView.version
+      )
+        return;
+      const index = folder.manifest.entries.findIndex(
+        (entry) => entry.path === event.state.relicEntry
+      );
+      if (index < 0 || index === folder.index) return;
+      lifecycle.advance();
+      const selection = lifecycle.token();
+      void entryView(activeView, index)
+        .then((next) => {
+          if (lifecycle.isCurrent(selection)) showSingle(next);
+        })
+        .catch(() => {
+          if (lifecycle.isCurrent(selection))
+            toast('This file could not be opened.');
+        });
+    };
+  }
   showSingle(activeView);
 }
 

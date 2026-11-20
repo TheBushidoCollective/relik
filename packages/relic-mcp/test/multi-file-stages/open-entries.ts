@@ -73,6 +73,11 @@ if (!chrome) {
     await cdp.send('Page.enable', {}, session);
     await cdp.send('Runtime.enable', {}, session);
     await cdp.send(
+      'Emulation.setDeviceMetricsOverride',
+      { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false },
+      session
+    );
+    await cdp.send(
       'Page.navigate',
       { url: `http://127.0.0.1:${server.port}/` },
       session
@@ -102,13 +107,13 @@ if (!chrome) {
     );
     assert.equal(
       await evaluate(
-        `(async()=>{[...document.querySelectorAll('nav button')].find(x=>x.textContent==='data/a.json').click();for(let i=0;i<500;i++){if(document.querySelector('.stage-code .structured-tree'))return true;await new Promise(r=>setTimeout(r,20))}return false})()`
+        `(async()=>{document.querySelector('.folder-row[title="data/a.json"]').click();for(let i=0;i<500;i++){if(document.querySelector('.stage-code .structured-tree'))return true;await new Promise(r=>setTimeout(r,20))}return false})()`
       ),
       true
     );
     assert.equal(
       await evaluate(
-        `(async()=>{[...document.querySelectorAll('nav button')].find(x=>x.textContent==='img/p.png').click();for(let i=0;i<500;i++){if(document.querySelector('.stage-image img.relic-image'))return true;await new Promise(r=>setTimeout(r,20))}return false})()`
+        `(async()=>{document.querySelector('.folder-row[title="img/p.png"]').click();for(let i=0;i<500;i++){if(document.querySelector('.stage-image img.relic-image'))return true;await new Promise(r=>setTimeout(r,20))}return false})()`
       ),
       true
     );
