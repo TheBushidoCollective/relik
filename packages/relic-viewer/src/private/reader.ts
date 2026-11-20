@@ -747,6 +747,21 @@ class PrivateReader {
           detail: COPY_SEAL_DETAIL,
         };
       }
+      if (error instanceof UnsupportedEnvelopeVersionError) {
+        return {
+          kind: 'unavailable',
+          code: 'unsupported_format',
+          detail: 'Reload this page to get the current viewer.',
+        };
+      }
+      if (error instanceof MalformedContainerError) {
+        return {
+          kind: 'unavailable',
+          code: 'malformed_container',
+          detail:
+            'Its file list is damaged or names a file in a way Relik does not accept.',
+        };
+      }
       if (error instanceof VersionUnavailableError) {
         const dead = deadFromProblem(error.code);
         return { kind: 'unavailable', code: dead.code, detail: dead.detail };
