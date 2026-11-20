@@ -15,7 +15,7 @@
     },
     "packages/relic-mcp": {
       "name": "relic-mcp",
-      "version": "0.15.0",
+      "version": "0.17.0",
       "bin": {
         "relic-mcp": "dist/relic-mcp.js",
       },
