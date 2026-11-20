@@ -18,3 +18,7 @@ The codec path prints non-gating runner timings with `runtime=bun`; V1 owns the 
 ## OTIO proof
 
 `otio-path` is not provable locally: the scheduled PCM gate failed with a missing causal audio epoch and underflow. Main reports the same failure on clean origin/main on this machine. The CI job `otio-headless-smoke-macos` is the proof once the PR exists. The unchanged OTIO bundling and ZIP tests passed locally.
+
+## Streaming sources
+
+The streaming writer accepts known-size asynchronous chunk sources as well as byte arrays. It checks each entry's actual byte count and aborts with `entry-size-mismatch` when it differs from the declaration. The caller must discard any output from a failed stream. A test passes three 3 MiB sources in 1 MiB chunks through the encrypting and decrypting streams, checks every file byte, and observes that no output chunk is as large as the folder. This is a chunk-size check, not a process-memory measurement.

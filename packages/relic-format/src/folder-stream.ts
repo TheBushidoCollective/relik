@@ -6,13 +6,13 @@ import {
 } from './errors.ts';
 import {
   decodeAnyEnvelope,
+  EntrySizeMismatchError,
   folderPlaintext,
   type EncryptFolderInput,
 } from './folder-container.ts';
 import { PLAINTEXT_CAP_BYTES } from './limits.ts';
 import { decodeManifest, type FolderHeader } from './multi.ts';
 import {
-  type DerivedKeys,
   decodeHeader,
   decryptRecord,
   deriveKeys,
@@ -33,54 +33,66 @@ export function encryptFolderStream(
   if (capacity < headerBytes.length)
     throw new MalformedContainerError('folder header exceeds record capacity');
   const salt = input.salt ?? crypto.getRandomValues(new Uint8Array(16));
-  const total = parts.reduce((sum, part) => sum + part.length, 0);
-  let part = 0,
-    within = 0,
-    consumed = 0,
-    seq = 0;
-  let keys: DerivedKeys;
+
+  async function* plaintext(): AsyncGenerator<Uint8Array> {
+    yield parts[0] as Uint8Array;
+    for (const entry of input.entries) {
+      if (entry.bytes instanceof Uint8Array) {
+        yield entry.bytes;
+        continue;
+      }
+      let seen = 0;
+      for await (const chunk of entry.bytes.chunks()) {
+        if (!(chunk instanceof Uint8Array))
+          throw new MalformedContainerError(
+            'entry source yielded a non-byte chunk'
+          );
+        seen += chunk.length;
+        if (seen > entry.bytes.size)
+          throw new EntrySizeMismatchError(entry.path, entry.bytes.size, seen);
+        yield chunk;
+      }
+      if (seen !== entry.bytes.size)
+        throw new EntrySizeMismatchError(entry.path, entry.bytes.size, seen);
+    }
+  }
+
+  async function* records(): AsyncGenerator<Uint8Array> {
+    const keys = await deriveKeys(input.key, salt);
+    yield encodeHeader(salt, rs);
+    yield await encryptRecord(keys, 0, headerBytes, false, capacity);
+    let buffer = new Uint8Array(capacity),
+      filled = 0,
+      sequence = 1;
+    for await (const chunk of plaintext()) {
+      let offset = 0;
+      while (offset < chunk.length) {
+        if (filled === capacity) {
+          yield await encryptRecord(keys, sequence++, buffer, false);
+          buffer = new Uint8Array(capacity);
+          filled = 0;
+        }
+        const length = Math.min(capacity - filled, chunk.length - offset);
+        buffer.set(chunk.subarray(offset, offset + length), filled);
+        offset += length;
+        filled += length;
+      }
+    }
+    yield await encryptRecord(keys, sequence, buffer.subarray(0, filled), true);
+  }
+  const iterator = records();
   return new ReadableStream<Uint8Array>({
-    async start(controller) {
+    async pull(controller) {
       try {
-        keys = await deriveKeys(input.key, salt);
-        controller.enqueue(encodeHeader(salt, rs));
+        const next = await iterator.next();
+        if (next.done) controller.close();
+        else controller.enqueue(next.value);
       } catch (error) {
         controller.error(error);
       }
     },
-    async pull(controller) {
-      try {
-        if (seq === 0) {
-          controller.enqueue(
-            await encryptRecord(keys, seq++, headerBytes, false, capacity)
-          );
-          return;
-        }
-        if (consumed === total) {
-          controller.close();
-          return;
-        }
-        const length = Math.min(capacity, total - consumed),
-          data = new Uint8Array(length);
-        let written = 0;
-        while (written < length) {
-          const current = parts[part]!;
-          const n = Math.min(length - written, current.length - within);
-          data.set(current.subarray(within, within + n), written);
-          within += n;
-          written += n;
-          if (within === current.length) {
-            part++;
-            within = 0;
-          }
-        }
-        consumed += length;
-        controller.enqueue(
-          await encryptRecord(keys, seq++, data, consumed === total)
-        );
-      } catch (error) {
-        controller.error(error);
-      }
+    async cancel() {
+      await iterator.return(undefined);
     },
   });
 }

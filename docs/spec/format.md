@@ -508,6 +508,8 @@ Paths are NFC strings with 1 to 32 nonempty `/`-separated segments. No segment i
 
 Entries appear in strictly ascending UTF-8 byte order. Exact duplicates, case-folded collisions across any path prefix, and a file also used as a directory are refused. Folding applies NFC, uppercase, lowercase, then NFC. The writer normalizes paths before checking; the reader refuses a noncanonical path rather than changing it.
 
+An entry source may be an in-memory byte array or an asynchronous chunk source with its byte size known before encryption. The writer checks each source against that declared size. A source yielding too many or too few bytes aborts with `entry-size-mismatch`; a sink must discard any ciphertext already written. Record encryption holds bounded record buffers rather than the complete folder.
+
 ## 4. Routed to `shape`
 
 Six items, and only these six. Each names what `shape` picks and what becomes specifiable once it does. Constraints established above are cited here rather than restated.

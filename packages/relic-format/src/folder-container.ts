@@ -83,13 +83,32 @@ export function contentLengthOf(envelope: AnyEnvelope): number {
     ? (envelope as EnvelopeV2).contentLength
     : (envelope as Envelope).entries[0]!.length;
 }
+export interface FolderByteSource {
+  readonly size: number;
+  chunks(): AsyncIterable<Uint8Array>;
+}
+export type FolderEntryBytes = Uint8Array | FolderByteSource;
+
+export class EntrySizeMismatchError extends MalformedContainerError {
+  override readonly name = 'EntrySizeMismatchError';
+  readonly code = 'entry-size-mismatch';
+  constructor(
+    readonly path: string,
+    readonly expected: number,
+    readonly actual: number
+  ) {
+    super(
+      `entry-size-mismatch: ${path} declared ${expected} bytes, received ${actual}`
+    );
+  }
+}
 export interface EncryptFolderInput {
   readonly name: string;
   readonly defaultIndex: number;
   readonly entries: readonly {
     readonly path: string;
     readonly mimetype: string;
-    readonly bytes: Uint8Array;
+    readonly bytes: FolderEntryBytes;
   }[];
   readonly key: Uint8Array;
   readonly rs?: number;
@@ -100,18 +119,21 @@ export function folderPlaintext(
 ): {
   header: FolderHeader;
   headerBytes: Uint8Array;
-  parts: readonly Uint8Array[];
+  parts: readonly FolderEntryBytes[];
 } {
   const manifest = encodeManifest(
     input.defaultIndex,
     input.entries.map((e) => ({
       path: e.path,
       mimetype: e.mimetype,
-      length: e.bytes.length,
+      length: e.bytes instanceof Uint8Array ? e.bytes.length : e.bytes.size,
     }))
   );
   const parts = [manifest, ...input.entries.map((e) => e.bytes)];
-  const contentLength = parts.reduce((sum, part) => sum + part.length, 0);
+  const contentLength = parts.reduce(
+    (sum, part) => sum + (part instanceof Uint8Array ? part.length : part.size),
+    0
+  );
   if (
     !Number.isSafeInteger(contentLength) ||
     contentLength > PLAINTEXT_CAP_BYTES
@@ -130,9 +152,36 @@ export async function encryptFolder(
   input: EncryptFolderInput
 ): Promise<Uint8Array> {
   const { header, parts } = folderPlaintext(input);
+  const materialized: Uint8Array[] = [];
+  for (let index = 0; index < parts.length; index++) {
+    const part = parts[index]!;
+    if (part instanceof Uint8Array) {
+      materialized.push(part);
+      continue;
+    }
+    const bytes = new Uint8Array(part.size);
+    let written = 0;
+    for await (const chunk of part.chunks()) {
+      written += chunk.length;
+      if (written > part.size)
+        throw new EntrySizeMismatchError(
+          input.entries[index - 1]!.path,
+          part.size,
+          written
+        );
+      bytes.set(chunk, written - chunk.length);
+    }
+    if (written !== part.size)
+      throw new EntrySizeMismatchError(
+        input.entries[index - 1]!.path,
+        part.size,
+        written
+      );
+    materialized.push(bytes);
+  }
   return reencryptFolder({
     header,
-    parts,
+    parts: materialized,
     key: input.key,
     rs: input.rs,
     salt: input.salt,
