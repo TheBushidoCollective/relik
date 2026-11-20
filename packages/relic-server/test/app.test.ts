@@ -881,6 +881,18 @@ describe('the landing page', () => {
     );
   });
 
+  test('the header and the hero both lead to the publish page', async () => {
+    const body = await app.fetch(req('/')).then((r) => r.text());
+    const header = body.slice(
+      body.indexOf('<header'),
+      body.indexOf('</header>')
+    );
+    expect(header).toContain(
+      '<a class="mine" href="/publish">Publish a file</a>'
+    );
+    expect(body.slice(body.indexOf('</header>'))).toContain('href="/publish"');
+  });
+
   test('every screenshot the page shows exists in the viewer public directory', async () => {
     const body = await app.fetch(req('/')).then((r) => r.text());
     const sources = [
@@ -3702,6 +3714,38 @@ describe('GET /dashboard', () => {
   test('non-GET methods on /dashboard return 405 Method Not Allowed', async () => {
     const response = await app.fetch(req('/dashboard', { method: 'POST' }));
     expect(response.status).toBe(405);
+  });
+});
+
+describe('GET /publish', () => {
+  test('serves the publish view of the shell, with no relic id', async () => {
+    const response = await app.fetch(req('/publish'));
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toContain('text/html');
+    expect(response.headers.get('x-robots-tag')).toBe('noindex');
+    expect(response.headers.get('cache-control')).toBe('no-store');
+    expect(response.headers.get('referrer-policy')).toBe('no-referrer');
+
+    const body = await response.text();
+    expect(body).toContain('data-view="publish"');
+    expect(body).not.toContain('data-relic-id');
+    expect(body).toContain('<title>Publish a file · Relic</title>');
+    expect(body).toContain('/assets/viewer.js');
+  });
+
+  test('lets the page reach storage for the upload, and runs only its own scripts', async () => {
+    const csp = await app
+      .fetch(req('/publish'))
+      .then((r) => r.headers.get('content-security-policy') ?? '');
+    expect(csp).toContain("script-src 'self'");
+    expect(csp).toMatch(/connect-src [^;]*https:/);
+  });
+
+  test('only GET is served, and nothing nests under it', async () => {
+    expect((await app.fetch(req('/publish', { method: 'POST' }))).status).toBe(
+      405
+    );
+    expect((await app.fetch(req('/publish/anything'))).status).toBe(404);
   });
 });
 

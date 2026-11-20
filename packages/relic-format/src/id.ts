@@ -49,6 +49,9 @@ export const RESERVED_SEGMENTS: readonly string[] = [
   // routers matching raw URL segments reserve both spellings.
   'dashboard',
   'dashb0ard',
+  // The browser publisher's page. A word this short cannot collide with a
+  // 26-character id, and it is reserved so the router can never read it as one.
+  'publish',
 ];
 
 const RESERVED_NORMALIZED = new Set(

@@ -64,6 +64,7 @@ import {
   takeTailUtf8,
 } from './annotate-frame.ts';
 import { isSetScrollMessage } from './frame-scroll.ts';
+import { scrubFrameHtml } from './frame-html-scrub.ts';
 import { reemitAuthorScripts } from './frame-scripts.ts';
 import {
   CONCEALMENT_CSS,
@@ -2540,9 +2541,8 @@ function scheduleReport(): void {
 /**
  * Known-weak backstop: a single-pass deletion of frame markup, not a parser. It
  * can splice a frame start tag, since the text on either side of a removed tag
- * joins and is never examined again (`<i<iframe>frame` becomes `<iframe`). A
- * frame start tag with a stray quote survives, because the quote alternatives
- * need a closing quote. It stays as defence in depth. It is not a boundary.
+ * joins and is never examined again (`<i<iframe>frame` becomes `<iframe`).
+ * An unterminated quote removes the rest of the input. It is not a boundary.
  * See docs/spec/viewer.md, section 4.
  *
  * The argument is converted to a string once, here, and that string is the one
@@ -2550,10 +2550,7 @@ function scheduleReport(): void {
  * never saw.
  */
 export function sanitizeFrameHtml(rawHtml: unknown): string {
-  return String(rawHtml).replace(
-    /<\s*\/?\s*(?:iframe|frame|object|embed|portal|fencedframe)\b(?:"[^"]*"|'[^']*'|[^'">])*(?:>|$)/gi,
-    ''
-  );
+  return scrubFrameHtml(String(rawHtml));
 }
 
 /**

@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   encodeKey,
+  guessMimetype,
   OTIO_DOCUMENT_MAX_BYTES,
   MAX_TITLE_CHARS,
   openRelic,
@@ -25,7 +26,6 @@ import { MemoryStore } from '@relic/server/src/store.ts';
 import { chromeCoverRenderer } from '../src/cover/render.ts';
 import {
   type FileReader,
-  guessMimetype,
   type PublishDeps,
   PublishError,
   publish,

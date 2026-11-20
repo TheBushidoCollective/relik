@@ -71,6 +71,7 @@ import {
   evaluateOtioAt,
   generateKey,
   generateRelicId,
+  guessMimetype,
   indexOtioZip,
   OTIO_PROGRAM_MANIFEST_ENTRY,
   openRelic,
@@ -91,7 +92,6 @@ import { nodeUploader } from '../src/upload.ts';
 import { loadPublishState, savePublishState } from '../src/state.ts';
 import { nodeFiles } from '../src/files.ts';
 import {
-  guessMimetype,
   postJson,
   type PublishDeps,
   putContainer,
