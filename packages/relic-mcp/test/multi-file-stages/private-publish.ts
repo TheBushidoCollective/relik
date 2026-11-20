@@ -1,6 +1,4 @@
 import assert from 'node:assert/strict';
-// Serialize stages that temporarily set the same local state paths.
-import './folder-publish.ts';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

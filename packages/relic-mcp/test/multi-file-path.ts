@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import './multi-file-stages/folder-publish.ts';
-import './multi-file-stages/private-publish.ts';
 import {
   decryptRecord,
   deriveKeys,
@@ -16,6 +15,8 @@ import {
 } from '@relic/format';
 import golden from '../../relic-format/test/folder-golden.json';
 import './multi-file-stages/open-entries.ts';
+// Stages use process-wide state paths and must not overlap.
+await import('./multi-file-stages/private-publish.ts');
 
 const key = Uint8Array.from(Buffer.from(golden.key, 'hex'));
 const salt = Uint8Array.from(Buffer.from(golden.salt, 'hex'));
