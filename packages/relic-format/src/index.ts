@@ -37,3 +37,12 @@ export * from './stream.ts';
 export * from './supported-formats.ts';
 export * from './share.ts';
 export * from './title.ts';
+export { indexZip } from './zip-index.ts';
+export type {
+  ZipEntryInfo,
+  ZipIndex,
+  ZipIndexResult,
+  ZipLimits,
+  ZipRefusal,
+  ZipRefusalReason,
+} from './zip-index.ts';

@@ -18,7 +18,8 @@
     "./suggestions": "./src/suggestions.ts",
     "./subtitles": "./src/subtitles.ts",
     "./structured-text": "./src/structured-text.ts",
-    "./wordlist": "./src/wordlist.ts"
+    "./wordlist": "./src/wordlist.ts",
+    "./zip-index": "./src/zip-index.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

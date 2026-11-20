@@ -21,6 +21,13 @@ import type {
   OtioZipIndex,
 } from './otio-types.ts';
 import { Sha256, sha256Hex } from './sha256.ts';
+import {
+  Crc32,
+  indexZipForOtio,
+  ZipFailure,
+  type ZipRefusal,
+} from './zip-index.ts';
+export { Crc32, crc32 } from './zip-index.ts';
 
 export const MAX_EXPANDED_ZIP_BYTES = PLAINTEXT_CAP_BYTES;
 export const MAX_INFLATED_ZIP_BYTES = 100 * 1024 * 1024;
@@ -134,11 +141,7 @@ export function otioBundleEntryFor(
 
 const ZIP64_U16 = 0xffff;
 const ZIP64_U32 = 0xffffffff;
-const ZIP64_EXTRA_ID = 0x0001;
-const ZIP64_EOCD_LOCATOR = 0x07064b50;
-const EOCD_SIG = 0x06054b50;
 const CD_SIG = 0x02014b50;
-const LOCAL_SIG = 0x04034b50;
 
 export class OtioZipError extends RelicFormatError {
   override readonly name = 'OtioZipError';
@@ -151,36 +154,6 @@ export class OtioZipError extends RelicFormatError {
   ) {
     super(message);
   }
-}
-
-/** Standard CRC32 table and computation. */
-const CRC_TABLE = new Uint32Array(256);
-for (let i = 0; i < 256; i++) {
-  let c = i;
-  for (let k = 0; k < 8; k++) {
-    c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
-  }
-  CRC_TABLE[i] = c >>> 0;
-}
-
-export class Crc32 {
-  private crc = 0xffffffff;
-
-  update(bytes: Uint8Array): this {
-    let crc = this.crc;
-    for (const byte of bytes)
-      crc = CRC_TABLE[(crc ^ byte) & 0xff]! ^ (crc >>> 8);
-    this.crc = crc;
-    return this;
-  }
-
-  value(): number {
-    return (this.crc ^ 0xffffffff) >>> 0;
-  }
-}
-
-export function crc32(bytes: Uint8Array): number {
-  return new Crc32().update(bytes).value();
 }
 
 /**
@@ -366,92 +339,6 @@ export async function isOtiozSource(source: ZipSource): Promise<boolean> {
   }
 }
 
-function decodeZipName(bytes: Uint8Array, where: string): string {
-  try {
-    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
-  } catch {
-    throw new OtioZipError(
-      'corrupt-archive',
-      `ZIP entry name is not valid UTF-8 in ${where}`
-    );
-  }
-}
-
-function assertNoZip64Extra(extra: Uint8Array, label: string): void {
-  let i = 0;
-  while (i + 4 <= extra.length) {
-    const id = (extra[i] as number) | ((extra[i + 1] as number) << 8);
-    const size = (extra[i + 2] as number) | ((extra[i + 3] as number) << 8);
-    const next = i + 4 + size;
-    if (next > extra.length) {
-      throw new OtioZipError(
-        'corrupt-archive',
-        `Truncated extra field: ${label}`
-      );
-    }
-    if (id === ZIP64_EXTRA_ID) {
-      throw new OtioZipError(
-        'unsupported-zip',
-        `ZIP64 extended information is not supported: ${label}`
-      );
-    }
-    i = next;
-  }
-  if (i !== extra.length) {
-    throw new OtioZipError(
-      'corrupt-archive',
-      `Truncated extra field: ${label}`
-    );
-  }
-}
-
-function assertSafeZipPath(rawName: string): string {
-  if (rawName.includes('\0')) {
-    throw new OtioZipError(
-      'corrupt-archive',
-      'NUL in ZIP entry name prohibited'
-    );
-  }
-  if (
-    rawName.startsWith('/') ||
-    rawName.startsWith('\\') ||
-    /^[a-zA-Z]:/.test(rawName)
-  ) {
-    throw new OtioZipError(
-      'corrupt-archive',
-      `Absolute paths in archive prohibited: ${rawName}`
-    );
-  }
-  const parts = rawName.split(/[/\\]/);
-  if (parts.includes('..')) {
-    throw new OtioZipError(
-      'corrupt-archive',
-      `Path traversal (..) prohibited: ${rawName}`
-    );
-  }
-  const normName = parts.filter((p) => p !== '' && p !== '.').join('/');
-  if (normName === '') {
-    throw new OtioZipError(
-      'corrupt-archive',
-      `Invalid ZIP entry path: ${rawName}`
-    );
-  }
-  return normName;
-}
-
-function rejectZip64Sentinel(
-  value: number,
-  sentinel: number,
-  field: string
-): void {
-  if (value === sentinel) {
-    throw new OtioZipError(
-      'unsupported-zip',
-      `ZIP64 sentinel ${field} is not supported`
-    );
-  }
-}
-
 function isArrayBufferBacked(
   bytes: Uint8Array
 ): bytes is Uint8Array<ArrayBuffer> {
@@ -616,373 +503,70 @@ export async function indexOtioZip(
   if (source.size > maxArchive) {
     throw new ContentTooLargeError(source.size, maxArchive);
   }
-  const tailStart = Math.max(0, source.size - 65557);
-  const tail = await readZipRange(source, tailStart, source.size);
-  const tailEocd = findEocdOffset(tail);
-  if (tailEocd < 0) {
-    throw new OtioZipError(
-      'corrupt-archive',
-      'End of Central Directory record not found'
-    );
-  }
-  const eocdOffset = tailStart + tailEocd;
-  const endView = new DataView(tail.buffer, tail.byteOffset, tail.byteLength);
-  const diskNumber = endView.getUint16(tailEocd + 4, true);
-  const cdDisk = endView.getUint16(tailEocd + 6, true);
-  const cdRecordsOnDisk = endView.getUint16(tailEocd + 8, true);
-  const cdTotalRecords = endView.getUint16(tailEocd + 10, true);
-  const cdSize = endView.getUint32(tailEocd + 12, true);
-  const cdOffset = endView.getUint32(tailEocd + 16, true);
-  const commentLength = endView.getUint16(tailEocd + 20, true);
-  const eocdSig = endView.getUint32(tailEocd, true);
-  if (eocdSig !== EOCD_SIG) {
-    throw new OtioZipError(
-      'corrupt-archive',
-      'End of Central Directory record not found'
-    );
-  }
-
-  // 0xFFFF / 0xFFFFFFFF are ZIP64 sentinels, not limits. Reject before any
-  // count, size, or offset is used as a bound. A uint16 entry count of 65535
-  // is the sentinel; the publisher owns any lower entry-count policy.
-  if (
-    diskNumber === ZIP64_U16 ||
-    cdDisk === ZIP64_U16 ||
-    cdRecordsOnDisk === ZIP64_U16 ||
-    cdTotalRecords === ZIP64_U16 ||
-    cdSize === ZIP64_U32 ||
-    cdOffset === ZIP64_U32
-  ) {
-    throw new OtioZipError(
-      'unsupported-zip',
-      'ZIP64 sentinel in the end of central directory is not supported'
-    );
-  }
-
-  if (diskNumber !== 0 || cdDisk !== 0 || cdRecordsOnDisk !== cdTotalRecords) {
-    throw new OtioZipError(
-      'unsupported-zip',
-      'Multi-disk ZIP archives are not supported'
-    );
-  }
-
-  if (cdOffset > source.size || cdSize > source.size - cdOffset) {
-    throw new OtioZipError(
-      'corrupt-archive',
-      'Central directory points beyond end of archive'
-    );
-  }
-  if (eocdOffset >= 20 && cdOffset + cdSize === eocdOffset - 20) {
-    const locator = await readZipRange(source, eocdOffset - 20, eocdOffset);
-    if (
-      new DataView(
-        locator.buffer,
-        locator.byteOffset,
-        locator.byteLength
-      ).getUint32(0, true) === ZIP64_EOCD_LOCATOR
-    ) {
-      throw new OtioZipError(
-        'unsupported-zip',
-        'ZIP64 end of central directory locator is not supported'
-      );
-    }
-  }
-  if (cdOffset + cdSize !== eocdOffset) {
-    throw new OtioZipError(
-      'corrupt-archive',
-      'Central directory extent does not end at the end of central directory record'
-    );
-  }
-  if (cdSize > MAX_ZIP_DIRECTORY_BYTES) {
-    throw new OtioZipError(
-      'unsupported-zip',
-      'Central directory exceeds the size limit'
-    );
-  }
-  const directory = await readZipRange(source, cdOffset, cdOffset + cdSize);
-  const view = new DataView(
-    directory.buffer,
-    directory.byteOffset,
-    directory.byteLength
-  );
-
-  const entries = new Map<string, OtioZipEntryInfo>();
-  const normalizedNames = new Set<string>();
-  const extents: Array<{ start: number; end: number; name: string }> = [];
-  let aggregateUncompressed = 0;
   let aggregateInflated = 0;
-  let cursor = 0;
-  const cdEnd = cdSize;
-
-  for (let i = 0; i < cdTotalRecords; i++) {
-    if (cursor + 46 > cdEnd) {
-      throw new OtioZipError(
-        'corrupt-archive',
-        'Truncated central directory entry'
-      );
-    }
-
-    const sig = view.getUint32(cursor, true);
-    if (sig !== CD_SIG) {
-      throw new OtioZipError(
-        'corrupt-archive',
-        `Invalid central directory signature at ${cursor}`
-      );
-    }
-
-    const flags = view.getUint16(cursor + 8, true);
-    if (flags & 0x0001) {
-      throw new OtioZipError(
-        'unsupported-zip',
-        'Encrypted ZIP entries are strictly prohibited'
-      );
-    }
-
-    const method = view.getUint16(cursor + 10, true);
-    if (method !== 0 && method !== 8) {
-      throw new OtioZipError(
-        'unsupported-zip',
-        `Unsupported compression method: ${method} (only 0 STORED and 8 DEFLATE allowed)`
-      );
-    }
-
-    const crcVal = view.getUint32(cursor + 16, true);
-    const compSize = view.getUint32(cursor + 20, true);
-    const uncompSize = view.getUint32(cursor + 24, true);
-    const nameLen = view.getUint16(cursor + 28, true);
-    const extraLen = view.getUint16(cursor + 30, true);
-    const commentLen = view.getUint16(cursor + 32, true);
-    const localHeaderOffset = view.getUint32(cursor + 42, true);
-    const extAttr = view.getUint32(cursor + 38, true);
-    const entryEnd = cursor + 46 + nameLen + extraLen + commentLen;
-    if (entryEnd > cdEnd) {
-      throw new OtioZipError(
-        'corrupt-archive',
-        'Central directory entry extends past declared extent'
-      );
-    }
-
-    rejectZip64Sentinel(compSize, ZIP64_U32, 'compressed size');
-    rejectZip64Sentinel(uncompSize, ZIP64_U32, 'uncompressed size');
-    rejectZip64Sentinel(localHeaderOffset, ZIP64_U32, 'local header offset');
-
-    const rawNameBytes = directory.subarray(cursor + 46, cursor + 46 + nameLen);
-    const rawName = decodeZipName(rawNameBytes, 'central directory');
-    const extraStart = cursor + 46 + nameLen;
-    assertNoZip64Extra(
-      directory.subarray(extraStart, extraStart + extraLen),
-      rawName
-    );
-
-    // Filename is decoded before this check. A symlink must be OtioZipError,
-    // never a ReferenceError from using the name too early.
-    const unixMode = extAttr >>> 16;
-    if (unixMode !== 0) {
-      const fileType = unixMode & 0o170000;
-      if (fileType !== 0o100000 && fileType !== 0o040000) {
-        throw new OtioZipError(
-          'corrupt-archive',
-          `Non-regular file type in ZIP entry prohibited: ${rawName}`
-        );
+  const indexed = await indexZipForOtio(
+    archive,
+    {
+      maxArchiveBytes: maxArchive,
+      maxEntries: 0xffff - 1,
+      maxEntryBytes: maxLimit,
+      maxTotalBytes: maxLimit,
+    },
+    inflater,
+    (name, method, size) => {
+      if (method === 8) {
+        aggregateInflated += size;
+        if (aggregateInflated > maxInflated)
+          return {
+            ok: false,
+            reason: 'entry-too-large',
+            message: `Aggregate DEFLATE size ${aggregateInflated} exceeds cap of ${maxInflated} bytes`,
+          };
       }
+      if (name === 'content.otio' && size > OTIO_DOCUMENT_MAX_BYTES)
+        return {
+          ok: false,
+          reason: 'entry-too-large',
+          message: `content.otio exceeds ${OTIO_DOCUMENT_MAX_BYTES} bytes`,
+        };
+      return undefined;
     }
-
-    const normName = assertSafeZipPath(rawName);
-    if (normalizedNames.has(normName)) {
-      throw new OtioZipError(
-        'corrupt-archive',
-        `Duplicate entry name: ${normName}`
-      );
-    }
-    normalizedNames.add(normName);
-
-    if (method === 0 && compSize !== uncompSize) {
-      throw new OtioZipError(
-        'corrupt-archive',
-        `STORED entry sizes disagree: ${rawName}`
-      );
-    }
-
-    aggregateUncompressed += uncompSize;
-    if (aggregateUncompressed > maxLimit) {
-      throw new OtioZipError(
-        'decompression-limit',
-        `Aggregate uncompressed size ${aggregateUncompressed} exceeds cap of ${maxLimit} bytes`
-      );
-    }
-    if (method === 8) {
-      aggregateInflated += uncompSize;
-      if (aggregateInflated > maxInflated) {
-        throw new OtioZipError(
-          'decompression-limit',
-          `Aggregate DEFLATE size ${aggregateInflated} exceeds cap of ${maxInflated} bytes`
-        );
-      }
-    }
-    if (normName === 'content.otio' && uncompSize > OTIO_DOCUMENT_MAX_BYTES) {
-      throw new OtioZipError(
-        'decompression-limit',
-        `content.otio exceeds ${OTIO_DOCUMENT_MAX_BYTES} bytes`
-      );
-    }
-
-    if (localHeaderOffset + 30 > source.size || localHeaderOffset >= cdOffset) {
-      throw new OtioZipError(
-        'corrupt-archive',
-        'Local header offset beyond archive'
-      );
-    }
-    const localHeader = await readZipRange(
-      source,
-      localHeaderOffset,
-      localHeaderOffset + 30
-    );
-    const localView = new DataView(
-      localHeader.buffer,
-      localHeader.byteOffset,
-      localHeader.byteLength
-    );
-    const localSig = localView.getUint32(0, true);
-    if (localSig !== LOCAL_SIG) {
-      throw new OtioZipError(
-        'corrupt-archive',
-        'Invalid local header signature'
-      );
-    }
-
-    const localFlags = localView.getUint16(6, true);
-    const localMethod = localView.getUint16(8, true);
-    const localCrc = localView.getUint32(14, true);
-    const localCompSize = localView.getUint32(18, true);
-    const localUncompSize = localView.getUint32(22, true);
-    const localNameLen = localView.getUint16(26, true);
-    const localExtraLen = localView.getUint16(28, true);
-    if (localFlags !== flags) {
-      throw new OtioZipError(
-        'corrupt-archive',
-        `Mismatched flags in local header: ${rawName}`
-      );
-    }
-
-    rejectZip64Sentinel(localCompSize, ZIP64_U32, 'local compressed size');
-    rejectZip64Sentinel(localUncompSize, ZIP64_U32, 'local uncompressed size');
-
-    if (localMethod !== method) {
-      throw new OtioZipError(
-        'corrupt-archive',
-        `Mismatched compression method in local header: ${rawName}`
-      );
-    }
-    if ((localFlags & 0x0008) === 0) {
-      if (localCrc !== crcVal) {
-        throw new OtioZipError(
-          'corrupt-archive',
-          `Mismatched CRC in local header: ${rawName}`
-        );
-      }
-      if (localCompSize !== compSize) {
-        throw new OtioZipError(
-          'corrupt-archive',
-          `Mismatched compressed size in local header: ${rawName}`
-        );
-      }
-      if (localUncompSize !== uncompSize) {
-        throw new OtioZipError(
-          'corrupt-archive',
-          `Mismatched uncompressed size in local header: ${rawName}`
-        );
-      }
-    }
-
-    if (localHeaderOffset + 30 + localNameLen > source.size) {
-      throw new OtioZipError(
-        'corrupt-archive',
-        `Local header name extends beyond archive: ${rawName}`
-      );
-    }
-    const variableEnd = localHeaderOffset + 30 + localNameLen + localExtraLen;
-    if (variableEnd > source.size || variableEnd > cdOffset) {
-      throw new OtioZipError(
-        'corrupt-archive',
-        `Local header extends beyond archive: ${rawName}`
-      );
-    }
-    const variable = await readZipRange(
-      source,
-      localHeaderOffset + 30,
-      variableEnd
-    );
-    const localNameBytes = variable.subarray(0, localNameLen);
-    const localName = decodeZipName(localNameBytes, 'local header');
-    if (localName !== rawName) {
-      throw new OtioZipError(
-        'corrupt-archive',
-        `Local and central directory filenames disagree: ${rawName}`
-      );
-    }
-
-    const dataOffset = localHeaderOffset + 30 + localNameLen + localExtraLen;
-    if (
-      dataOffset < localHeaderOffset + 30 ||
-      dataOffset > source.size ||
-      compSize > source.size - dataOffset
-    ) {
-      throw new OtioZipError(
-        'corrupt-archive',
-        `File data extends beyond archive: ${rawName}`
-      );
-    }
-    const localExtra = variable.subarray(localNameLen);
-    assertNoZip64Extra(localExtra, rawName);
-
-    const dataEnd = dataOffset + compSize;
-    if (dataEnd > cdOffset) {
-      throw new OtioZipError(
-        'corrupt-archive',
-        `File data overlaps central directory: ${rawName}`
-      );
-    }
-    extents.push({ start: localHeaderOffset, end: dataEnd, name: rawName });
-
-    const isDir = rawName.endsWith('/') || rawName.endsWith('\\');
-
-    const entryInfo: OtioZipEntryInfo = {
-      name: normName,
-      rawName,
-      method,
-      compressedSize: compSize,
-      uncompressedSize: uncompSize,
-      crc32: crcVal,
-      dataOffset,
-      isDirectory: isDir,
-    };
-
-    entries.set(normName, entryInfo);
-    cursor = entryEnd;
-  }
-
-  // A wrapped uint16 count (65538 entries stored as 2) leaves the rest of
-  // the central directory unconsumed. The declared extent must be exactly
-  // the entries the EOCD counted. No second runtime byte counter lives here.
-  if (cursor !== cdEnd) {
+  );
+  if (!indexed.ok) {
+    const unsupported: ZipRefusal['reason'][] = [
+      'encrypted',
+      'zip64',
+      'multi-disk',
+      'directory-too-large',
+      'unsupported-method',
+    ];
+    const limited: ZipRefusal['reason'][] = [
+      'too-many-entries',
+      'entry-too-large',
+      'total-too-large',
+    ];
     throw new OtioZipError(
-      'corrupt-archive',
-      'Central directory census did not consume the declared extent'
+      unsupported.includes(indexed.reason)
+        ? 'unsupported-zip'
+        : limited.includes(indexed.reason)
+          ? 'decompression-limit'
+          : 'corrupt-archive',
+      indexed.message
     );
   }
-
-  // A single sort keeps extent validation bounded for every accepted
-  // non-ZIP64 entry count, including a 65,534-entry archive.
-  extents.sort((a, b) => a.start - b.start || a.end - b.end);
-  for (let i = 1; i < extents.length; i++) {
-    const previous = extents[i - 1]!;
-    const current = extents[i]!;
-    if (current.start < previous.end) {
-      throw new OtioZipError(
-        'corrupt-archive',
-        `ZIP entries overlap: ${current.name}`
-      );
-    }
+  const sharedIndex = indexed.index;
+  const entries = new Map<string, OtioZipEntryInfo>();
+  for (const entry of indexed.index.entries.values()) {
+    entries.set(entry.name, {
+      name: entry.name,
+      rawName: entry.rawName,
+      method: entry.method,
+      compressedSize: entry.compressedSize,
+      uncompressedSize: entry.size,
+      crc32: entry.crc,
+      dataOffset: entry.dataOffset,
+      isDirectory: entry.isDirectory,
+    });
   }
 
   const successByEntry = new Map<string, Uint8Array>();
@@ -1006,66 +590,19 @@ export async function indexOtioZip(
         `Entry ${entry.name} is too large to materialize`
       );
     }
-    let slice: Uint8Array;
-    if (!isRangeSource || entry.compressedSize <= ZIP_READ_CHUNK_BYTES) {
-      slice = await readZipRange(
-        source,
-        entry.dataOffset,
-        entry.dataOffset + entry.compressedSize
-      );
-    } else {
-      slice = new Uint8Array(entry.compressedSize);
-      for (
-        let offset = 0;
-        offset < entry.compressedSize;
-        offset += ZIP_READ_CHUNK_BYTES
-      ) {
-        const start = entry.dataOffset + offset;
-        const end =
-          entry.dataOffset +
-          Math.min(offset + ZIP_READ_CHUNK_BYTES, entry.compressedSize);
-        slice.set(await readZipRange(source, start, end), offset);
-      }
-    }
-
-    let decompressed: Uint8Array;
-    if (entry.method === 0) {
-      if (slice.length !== entry.uncompressedSize) {
+    try {
+      return await sharedIndex.readOtio(entry.name, customInflater);
+    } catch (error) {
+      if (error instanceof ZipFailure) {
         throw new OtioZipError(
-          'corrupt-archive',
-          `STORED length ${slice.length} does not match expected ${entry.uncompressedSize}`
+          error.reason === 'entry-too-large'
+            ? 'decompression-limit'
+            : 'corrupt-archive',
+          error.message
         );
       }
-      decompressed = slice;
-    } else {
-      const inf = customInflater ?? inflater;
-      // Declared expanded size is the inflater cap. The index already
-      // bounded the sum of declarations, so no second aggregate counter
-      // is kept on the read path.
-      const produced = await inf(
-        slice,
-        entry.uncompressedSize,
-        entry.uncompressedSize
-      );
-      decompressed = produced;
+      throw error;
     }
-
-    if (decompressed.length !== entry.uncompressedSize) {
-      throw new OtioZipError(
-        'corrupt-archive',
-        `Decompressed length ${decompressed.length} does not match expected ${entry.uncompressedSize}`
-      );
-    }
-
-    const computedCrc = crc32(decompressed);
-    if (computedCrc !== entry.crc32) {
-      throw new OtioZipError(
-        'corrupt-archive',
-        `CRC32 mismatch on ${entry.name}: expected ${entry.crc32.toString(16)}, got ${computedCrc.toString(16)}`
-      );
-    }
-
-    return decompressed;
   }
 
   async function readEntryData(
@@ -1190,12 +727,7 @@ export async function indexOtioZip(
 
   return {
     entries,
-    directory: {
-      offset: cdOffset,
-      size: cdSize,
-      entryCount: cdTotalRecords,
-      commentLength,
-    },
+    directory: sharedIndex.directory,
     versionText,
     contentOtioBytes,
     contentSha256,
