@@ -7,6 +7,13 @@ export interface HomepageFormat {
   readonly classes: readonly RendererClass[];
   readonly structuredKinds: readonly string[];
   readonly extensions: readonly string[];
+  /**
+   * A `pending` row names a format the viewer already handles but that readers
+   * cannot yet receive end to end (nothing can publish it). The homepage omits
+   * it, and the coverage guard still requires it, so it cannot be forgotten.
+   * Removing the flag is the release step for the format.
+   */
+  readonly availability?: 'pending';
 }
 
 export const HOMEPAGE_FORMATS: readonly HomepageFormat[] = [
@@ -106,6 +113,7 @@ export const HOMEPAGE_FORMATS: readonly HomepageFormat[] = [
     classes: ['folder'],
     structuredKinds: [],
     extensions: [],
+    availability: 'pending',
   },
   {
     id: 'download',
@@ -116,3 +124,7 @@ export const HOMEPAGE_FORMATS: readonly HomepageFormat[] = [
     extensions: [],
   },
 ];
+
+/** The rows the homepage lists: every format a reader can receive today. */
+export const RELEASED_HOMEPAGE_FORMATS: readonly HomepageFormat[] =
+  HOMEPAGE_FORMATS.filter((row) => row.availability !== 'pending');
