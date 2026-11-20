@@ -9,7 +9,11 @@ import {
   HEADER_BYTES,
   RECORD_SIZE,
 } from './rfc8188.ts';
-import { streamRelicContent, type StreamContentOptions } from './stream.ts';
+import {
+  streamRelicContent,
+  type StreamContentOptions,
+  type StreamOpenProgress,
+} from './stream.ts';
 
 export interface AnyStreamContentOptions
   extends Omit<StreamContentOptions, 'onEnvelope'> {
@@ -21,17 +25,29 @@ async function probe(
   source: ReadableStream<Uint8Array>,
   key: Uint8Array,
   objectLength: number,
-  onPrefix?: (prefix: Uint8Array) => void
+  onPrefix?: (prefix: Uint8Array) => void,
+  onProgress?: (progress: StreamOpenProgress) => void
 ): Promise<{
   envelope: AnyEnvelope;
   prefix: Uint8Array;
   replay: ReadableStream<Uint8Array>;
+  earlyProgress: number;
 }> {
   if (!Number.isSafeInteger(objectLength) || objectLength < HEADER_BYTES)
     throw new MalformedContainerError('invalid stream length');
   const reader = source.getReader();
   const chunks: Uint8Array[] = [];
   let buffered = 0;
+  let earlyProgress = 0;
+  const report = (): void => {
+    onProgress?.({
+      receivedBytes: buffered,
+      objectLength,
+      openedContentBytes: 0,
+      contentLength: undefined,
+    });
+    if (onProgress) earlyProgress++;
+  };
   async function ensure(size: number): Promise<void> {
     while (buffered < size) {
       let result: { done: boolean; value?: Uint8Array | undefined };
@@ -45,6 +61,11 @@ async function probe(
       if (result.value?.length) {
         chunks.push(result.value);
         buffered += result.value.length;
+        if (buffered > objectLength)
+          throw new MalformedContainerError(
+            'stream exceeds declared object length'
+          );
+        if (buffered < size) report();
       }
     }
   }
@@ -66,6 +87,7 @@ async function probe(
       throw new MalformedContainerError('record size exceeds stream limit');
     const prefixLength =
       HEADER_BYTES + Math.min(framing.rs, objectLength - HEADER_BYTES);
+    if (buffered < prefixLength) report();
     await ensure(prefixLength);
     const prefix = prefixOf(prefixLength);
     onPrefix?.(prefix);
@@ -78,28 +100,31 @@ async function probe(
       admitted: ENVELOPE_VERSIONS,
     });
     let index = 0;
-    const replay = new ReadableStream<Uint8Array>({
-      async pull(controller) {
-        try {
-          if (index < chunks.length) {
-            controller.enqueue(chunks[index++]!);
-            return;
+    const replay = new ReadableStream<Uint8Array>(
+      {
+        async pull(controller) {
+          try {
+            if (index < chunks.length) {
+              controller.enqueue(chunks[index++]!);
+              return;
+            }
+            const result = await reader.read();
+            if (result.done) {
+              reader.releaseLock();
+              controller.close();
+            } else controller.enqueue(result.value);
+          } catch (error) {
+            controller.error(error);
           }
-          const result = await reader.read();
-          if (result.done) {
-            reader.releaseLock();
-            controller.close();
-          } else controller.enqueue(result.value);
-        } catch (error) {
-          controller.error(error);
-        }
+        },
+        async cancel(reason) {
+          await reader.cancel(reason);
+          reader.releaseLock();
+        },
       },
-      async cancel(reason) {
-        await reader.cancel(reason);
-        reader.releaseLock();
-      },
-    });
-    return { envelope, prefix, replay };
+      { highWaterMark: 0 }
+    );
+    return { envelope, prefix, replay, earlyProgress };
   } catch (error) {
     await reader.cancel().catch(() => undefined);
     reader.releaseLock();
@@ -136,11 +161,22 @@ export async function streamAnyRelicContent(
     source,
     key,
     options.objectLength,
-    options.onPrefix
+    options.onPrefix,
+    options.onProgress
   );
   if (opened.envelope.version !== 2) {
-    const { onPrefix: _onPrefix, ...remaining } = options;
-    return streamRelicContent(opened.replay, key, remaining);
+    const { onPrefix: _onPrefix, onProgress, ...remaining } = options;
+    let replayed = 0;
+    return streamRelicContent(opened.replay, key, {
+      ...remaining,
+      ...(onProgress === undefined
+        ? {}
+        : {
+            onProgress(progress) {
+              if (replayed++ >= opened.earlyProgress) onProgress(progress);
+            },
+          }),
+    });
   }
   return streamFolderContent(opened.replay, key, {
     objectLength: options.objectLength,
