@@ -35,4 +35,4 @@ Twenty locally generated archives were examined by reading their central directo
 
 `ditto` emitted the data descriptor flags and `__MACOSX` entries. The Python archives did not preserve the one symlink presented to that producer as a symlink entry. The other four symlinks were preserved by `zip` or `ditto`.
 
-Finder, Windows Explorer, 7-Zip, GitHub Download ZIP, and Google Drive archives were not produced or sampled. This local set cannot establish the spec's cross-producer refusal rate. The counts above are a central-directory inspection, not a result from the new indexer.
+Finder, Windows Explorer, 7-Zip, GitHub Download ZIP, and Google Drive archives were not produced or sampled. This local set cannot establish the spec's cross-producer refusal rate. The counts above came from central-directory inspection. The new indexer accepted all 20 archives with the same entry counts, and read and CRC-verified all 64 regular entries.
