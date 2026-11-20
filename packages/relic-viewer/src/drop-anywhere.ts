@@ -27,6 +27,7 @@ import { isFrameFileDragMessage } from './frame-file-drag.ts';
 export interface DroppedFiles {
   readonly files: File[];
   readonly isFolder: boolean;
+  readonly entries: FileSystemEntry[];
 }
 
 /**
@@ -35,8 +36,14 @@ export interface DroppedFiles {
  * event and has to be read synchronously.
  */
 export function droppedFrom(transfer: DataTransfer): DroppedFiles {
-  const entry = transfer.items?.[0]?.webkitGetAsEntry?.();
-  return { files: [...transfer.files], isFolder: entry?.isDirectory === true };
+  const entries = [...(transfer.items ?? [])]
+    .map((item) => item.webkitGetAsEntry?.())
+    .filter((entry): entry is FileSystemEntry => entry != null);
+  return {
+    files: [...transfer.files],
+    isFolder: entries.some((entry) => entry.isDirectory),
+    entries,
+  };
 }
 
 /** How long a curtain outlives the last sign of a drag, in case the drag was cancelled. */
@@ -77,7 +84,7 @@ function buildCurtain(): HTMLElement {
   title.textContent = 'Drop to publish as a new relic';
   Object.assign(title.style, { fontSize: '1.6rem', fontWeight: '600' });
   const note = document.createElement('div');
-  note.textContent = 'One file. You review it before anything is sent.';
+  note.textContent = 'A file or folder. Review it before anything is sent.';
   Object.assign(note.style, {
     fontFamily: 'var(--sans)',
     fontSize: '0.95rem',

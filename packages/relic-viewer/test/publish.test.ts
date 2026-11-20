@@ -233,7 +233,7 @@ describe('publishing from the page', () => {
     expect(failure.message).not.toContain('coding agent');
   });
 
-  test('an unreadable source, such as a dropped folder, is refused before any grant', async () => {
+  test('an unreadable source is refused before any grant', async () => {
     const folder: PublishSource = {
       name: 'reports',
       size: 0,
@@ -247,7 +247,7 @@ describe('publishing from the page', () => {
     );
 
     expect(failure.code).toBe('source_unreadable');
-    expect(failure.message).toContain('folder');
+    expect(failure.message).toContain('reports could not be read');
     expect(sent.map((r) => r.path)).not.toContain('/api/grant');
   });
 

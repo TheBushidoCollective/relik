@@ -275,21 +275,26 @@ try {
 
   seen.length = 0;
   await browser.evaluate<void>(`(() => {
-    const file = new File(['x'], 'reports');
+    const file = new File(['# Report'], 'README.md');
+    const child = { name: 'README.md', isFile: true, isDirectory: false, file: done => done(file) };
+    const entry = { name: 'reports', isDirectory: true, isFile: false, createReader() {
+      let read = false;
+      return { readEntries(done) { done(read ? [] : [child]); read = true; } };
+    } };
     const event = new DragEvent('drop', { bubbles: true, cancelable: true });
     Object.defineProperty(event, 'dataTransfer', {
-      value: { files: [file], items: [{ webkitGetAsEntry: () => ({ isDirectory: true }) }] },
+      value: { files: [file], items: [{ webkitGetAsEntry: () => entry }] },
     });
     document.querySelector('.pub-drop').dispatchEvent(event);
   })()`);
-  await waitForText('A folder cannot be published');
+  await waitForText('Opens first: README.md');
   assert.equal(
     apiRequests().length,
     0,
-    'a folder drop must not contact the service'
+    'a folder review must not contact the service'
   );
   console.log(
-    'PUBLISH_STEP_6_REFUSALS oversize=refused folder=refused grants=0'
+    'PUBLISH_STEP_6_REFUSALS oversize=refused folder=reviewed grants=0'
   );
 
   // 7. A file dropped on any other page opens the same publisher over it.

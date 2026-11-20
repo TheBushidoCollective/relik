@@ -12490,7 +12490,7 @@ if (typeof document !== 'undefined') {
       // The publisher is a lazy chunk, so a reader who never drops a file
       // never downloads it.
       void import('./publish-view.ts').then((view) =>
-        view.openPublishDialog(dropped.files, dropped.isFolder)
+        view.openPublishDialog(dropped.files, dropped.isFolder, dropped.entries)
       );
     });
   }

@@ -45,12 +45,27 @@ describe('what a drop carried', () => {
     expect(dropped.files.map((f) => f.name)).toEqual(['a.md', 'b.md']);
   });
 
+  test('captures every entry synchronously, including a folder after a file', () => {
+    const entries = [{ isDirectory: false }, { isDirectory: true }];
+    const transfer = {
+      files: [file('a.md'), file('reports')],
+      items: entries.map((entry) => ({ webkitGetAsEntry: () => entry })),
+    } as unknown as DataTransfer;
+    const dropped = droppedFrom(transfer);
+    expect(dropped.isFolder).toBe(true);
+    expect(dropped.entries.map((entry) => entry.isDirectory)).toEqual([
+      false,
+      true,
+    ]);
+  });
+
   test('copes with a browser that has no entry API', () => {
     const transfer = { files: [file('a.md')] } as unknown as DataTransfer;
 
     expect(droppedFrom(transfer)).toEqual({
       files: [transfer.files[0] as File],
       isFolder: false,
+      entries: [],
     });
   });
 });

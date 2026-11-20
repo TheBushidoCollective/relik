@@ -120,6 +120,23 @@
   color: var(--ink-soft);
 }
 
+.pub-file-list {
+  height: 14rem;
+  overflow: auto;
+  margin: 1rem 0 0;
+  padding: 0 0.75rem;
+  background: var(--ground);
+  border: 1px solid var(--rule);
+  font-family: var(--mono);
+  font-size: 0.76rem;
+}
+
+.pub-file-row {
+  height: 32px;
+  line-height: 32px;
+  white-space: nowrap;
+}
+
 .pub-label {
   display: block;
   margin-top: 1.25rem;

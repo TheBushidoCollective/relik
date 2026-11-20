@@ -24,6 +24,9 @@
 import {
   deriveRendererClass,
   deriveShareProof,
+  encryptFolderStream,
+  encryptedSize,
+  folderPlaintext,
   encryptRelic,
   generateKey,
   generateRelicId,
@@ -33,6 +36,7 @@ import {
   relicUrl,
   shareVerifierFor,
 } from '@relic/format';
+import type { BrowserFolder } from './browser-folder-preflight.ts';
 import { formatBytes } from './viewer.ts';
 
 /** Reported to the server as the publishing client, like `relic-mcp` does. */
@@ -171,12 +175,9 @@ export async function publishFile(
   try {
     bytes = await source.read();
   } catch {
-    // A dropped folder arrives as a file that cannot be read, which is the
-    // common way to land here.
     throw new PublishFailure(
       'source_unreadable',
-      `${source.name} could not be read. A folder cannot be published; ` +
-        'make an archive and publish that.'
+      `${source.name} could not be read. Check that the file is available on this device.`
     );
   }
 
@@ -291,6 +292,130 @@ export async function publishFile(
   throw new PublishFailure(
     'grant_refused',
     'Could not reserve an id for this file. Try again.'
+  );
+}
+
+/** Publish an already reviewed folder without sending any paths outside ciphertext. */
+export async function publishFolder(
+  folder: BrowserFolder,
+  options: PublishOptions,
+  deps: PublishDeps,
+  onPhase: (phase: PublishPhase) => void = () => undefined
+): Promise<PublishResult> {
+  onPhase({ kind: 'preparing' });
+  let challenge = await post(deps, '/api/challenge', {});
+  const serverLimit = challenge['size_limit_bytes'];
+  if (
+    typeof serverLimit !== 'number' ||
+    !Number.isSafeInteger(serverLimit) ||
+    serverLimit <= 0
+  )
+    throw new PublishFailure(
+      'service_response_unusable',
+      'The service sent a challenge with no usable size limit. Try again later.'
+    );
+  const limit = Math.min(serverLimit, BROWSER_PUBLISH_LIMIT_BYTES);
+  if (folder.contentLength > limit)
+    throw new PublishFailure(
+      'size_over_cap',
+      `The files and their list exceed this page's ${formatBytes(limit)} limit.`
+    );
+  const prepared = folderPlaintext(folder);
+  const title = normalizeTitle(options.title);
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    if (attempt > 0) challenge = await post(deps, '/api/challenge', {});
+    const relicId = generateRelicId();
+    const key = generateKey();
+    onPhase({ kind: 'encrypting' });
+    const container = new Uint8Array(
+      encryptedSize(
+        prepared.header.contentLength,
+        undefined,
+        prepared.headerBytes.length
+      )
+    );
+    let offset = 0;
+    const reader = encryptFolderStream({ ...folder, key }).getReader();
+    for (;;) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      container.set(chunk.value, offset);
+      offset += chunk.value.length;
+    }
+    if (offset !== container.length)
+      throw new PublishFailure(
+        'source_unreadable',
+        'The folder changed while it was being read. Nothing was published.'
+      );
+    let grant: Record<string, unknown>;
+    try {
+      grant = await post(deps, '/api/grant', {
+        challenge_nonce: challenge['challenge_nonce'],
+        relic_id: relicId,
+        renderer_class: 'folder',
+        publishing_client: PUBLISHING_CLIENT,
+        declared_size_bytes: prepared.header.contentLength,
+        declared_ciphertext_bytes: container.length,
+        ...(title.length > 0 ? { title } : {}),
+        share_verifier: await shareVerifierFor(await deriveShareProof(key)),
+      });
+    } catch (error) {
+      if (
+        error instanceof PublishFailure &&
+        error.code === 'grant_refused' &&
+        (error.details['app_code'] === 'relic_id_collision' ||
+          error.details['app_code'] === 'invalid_challenge_nonce')
+      )
+        continue;
+      throw error;
+    }
+    let status: number;
+    try {
+      status = await deps.upload(
+        String(grant['upload_url']),
+        container,
+        (sent, total) => onPhase({ kind: 'uploading', sent, total })
+      );
+    } catch {
+      throw new PublishFailure(
+        'upload_failed',
+        'The upload was interrupted. Nothing was published; try again.'
+      );
+    }
+    if (status < 200 || status >= 300)
+      throw new PublishFailure(
+        'upload_failed',
+        `Storage refused the upload (${status}). Nothing was published.`,
+        { storage_status: status }
+      );
+    onPhase({ kind: 'finishing' });
+    const completion = await post(
+      deps,
+      `/api/relics/${relicId}/complete`,
+      {}
+    ).catch(() => undefined);
+    const digest = completion?.['version_digest'];
+    if (typeof digest === 'string' && (await sha256Hex(container)) !== digest)
+      throw new PublishFailure(
+        'digest_mismatch',
+        'The stored copy did not match. Publish the folder again.',
+        { relic_id: relicId }
+      );
+    return {
+      url: relicUrl(deps.serviceOrigin, relicId, key),
+      relicId,
+      filename: folder.name,
+      rendererClass: 'folder',
+      title: title.length > 0 ? title : undefined,
+      relicExpiresAt:
+        grant['relic_expires_at'] == null
+          ? null
+          : String(grant['relic_expires_at']),
+    };
+  }
+  throw new PublishFailure(
+    'grant_refused',
+    'Could not reserve an id for this folder. Try again.'
   );
 }
 
