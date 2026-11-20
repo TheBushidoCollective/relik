@@ -12,9 +12,9 @@
 
 import {
   type Envelope,
-  FORMAT_VERSION,
+  type FolderHeader,
   PLAINTEXT_CAP_BYTES,
-  streamRelicContent,
+  streamAnyRelicContent,
 } from '@relic/format';
 import {
   type DevicePublicJSON,
@@ -35,6 +35,12 @@ import {
   verifyStatement,
   WrapOpenError,
 } from '@relic/format/private';
+import {
+  openContentStore,
+  type ContentSink,
+  type RelicContent,
+} from '../content.ts';
+import { ciphertextBlob } from './ciphertext-blob.ts';
 import { mint, type MintResponse, type ViewerDeps } from '../viewer.ts';
 import {
   postJson,
@@ -87,11 +93,17 @@ export interface VerifiedKey {
 }
 
 /** One decrypted version, its digest checked against the seal. */
-export interface OpenedVersion {
-  readonly envelope: Envelope;
-  readonly content: Uint8Array;
-  readonly digest: string;
-}
+export type OpenedVersion =
+  | {
+      readonly envelope: Envelope;
+      readonly content: Uint8Array;
+      readonly digest: string;
+    }
+  | {
+      readonly envelope: FolderHeader;
+      readonly folderContent: RelicContent;
+      readonly digest: string;
+    };
 
 const PIN_STORAGE_KEY = 'relic:owner-pins';
 
@@ -437,15 +449,6 @@ export async function fetchVersionKey(
   return { key: verified.key, keyJson: verified.keyJson };
 }
 
-function bytesStream(bytes: Uint8Array): ReadableStream<Uint8Array> {
-  return new ReadableStream<Uint8Array>({
-    start(controller) {
-      controller.enqueue(bytes);
-      controller.close();
-    },
-  });
-}
-
 function concat(chunks: readonly Uint8Array[], total: number): Uint8Array {
   const out = new Uint8Array(total);
   let offset = 0;
@@ -478,32 +481,50 @@ export async function fetchAndDecryptVersion(
     throw new TransferError('service_unreachable');
   }
   if (!response.ok) throw new TransferError('removed_after_mint');
-  const ciphertext = new Uint8Array(await response.arrayBuffer());
-  if (ciphertext.length !== signed.object_length) {
+  if (!response.body) throw new TransferError('truncated_transfer');
+  let ciphertext: Blob;
+  let digest: string;
+  try {
+    ({ blob: ciphertext, digest } = await ciphertextBlob(
+      response.body,
+      signed.object_length
+    ));
+  } catch {
     throw new TransferError('truncated_transfer');
   }
-
-  const digest = hex(
-    new Uint8Array(await crypto.subtle.digest('SHA-256', ciphertext))
-  );
+  if (ciphertext.size !== signed.object_length) {
+    throw new TransferError('truncated_transfer');
+  }
   if (digest !== verified.seal.ciphertext_sha256) {
     throw new SealMismatchError('ciphertext_digest');
   }
 
   const chunks: Uint8Array[] = [];
   let received = 0;
-  const envelope = await streamRelicContent(
-    bytesStream(ciphertext),
+  let folderSink: ContentSink | undefined;
+  const store = await openContentStore();
+  const envelope = await streamAnyRelicContent(
+    ciphertext.stream(),
     verified.key,
     {
-      objectLength: ciphertext.length,
-      fragmentVersion: FORMAT_VERSION,
+      objectLength: ciphertext.size,
       maxContentBytes: PLAINTEXT_CAP_BYTES,
+      onEnvelope: (opened) => {
+        if (!('entries' in opened))
+          folderSink = store.createSink(opened.contentLength);
+      },
       onContent: (chunk) => {
-        chunks.push(chunk);
-        received += chunk.length;
+        if (folderSink) folderSink.write(chunk);
+        else {
+          chunks.push(chunk);
+          received += chunk.length;
+        }
       },
     }
   );
+  if (!('entries' in envelope)) {
+    if (!folderSink) throw new Error('folder sink missing');
+    return { envelope, folderContent: await folderSink.finish(), digest };
+  }
   return { envelope, content: concat(chunks, received), digest };
 }

@@ -46,6 +46,7 @@ import {
 } from '@relic/format';
 import type { ViewerDeps } from '../viewer.ts';
 import type { UnlockedIdentity } from './keys.ts';
+import { rekeyFolder } from './rekey-folder.ts';
 import { privateKeysOf } from './ops.ts';
 import { VerificationRefusedError } from './refusal.ts';
 import { observeRosterFloor } from './roster-floor.ts';
@@ -557,7 +558,8 @@ interface RekeyState {
   identity?: UnlockedIdentity;
   bundle?: unknown;
   key?: Uint8Array;
-  container?: Uint8Array;
+  container?: Uint8Array | Blob;
+  digest?: string;
   upload?: {
     readonly url: string;
     readonly method: string;
@@ -702,8 +704,8 @@ export function createRevokeDialog(ctx: RevokeContext): RevokeDialog {
 
   /** Decrypt the current version and encrypt it under a fresh key. Nothing leaves the browser. */
   async function prepare(identity: UnlockedIdentity): Promise<{
-    content: Uint8Array;
-    container: Uint8Array;
+    contentLength: number;
+    container: Uint8Array | Blob;
     rendererClass: string;
   }> {
     paint('decrypting');
@@ -713,6 +715,23 @@ export function createRevokeDialog(ctx: RevokeContext): RevokeDialog {
       previous,
       identity
     );
+    if ('folderContent' in opened) {
+      paint('encrypting');
+      const key = generateKey();
+      const encrypted = await rekeyFolder(
+        opened.envelope,
+        opened.folderContent,
+        key
+      );
+      state.key = key;
+      state.container = encrypted.blob;
+      state.digest = encrypted.digest;
+      return {
+        contentLength: opened.folderContent.size,
+        container: encrypted.blob,
+        rendererClass: 'folder',
+      };
+    }
     const [entry] = opened.envelope.entries;
     if (!entry || opened.envelope.entries.length !== 1)
       throw new Error('unexpected envelope');
@@ -726,8 +745,9 @@ export function createRevokeDialog(ctx: RevokeContext): RevokeDialog {
     });
     state.key = key;
     state.container = container;
+    state.digest = sha256Hex(container);
     return {
-      content: opened.content,
+      contentLength: opened.content.length,
       container,
       rendererClass: deriveRendererClass(opened.content, entry.filename),
     };
@@ -735,8 +755,8 @@ export function createRevokeDialog(ctx: RevokeContext): RevokeDialog {
 
   /** Send the revocation and republish. Returns the signed upload, or undefined after a refusal. */
   async function revoke(
-    content: Uint8Array,
-    container: Uint8Array,
+    contentLength: number,
+    container: Uint8Array | Blob,
     rendererClass: string
   ): Promise<void> {
     paint('uploading');
@@ -752,8 +772,9 @@ export function createRevokeDialog(ctx: RevokeContext): RevokeDialog {
     }>(ctx.deps, 'POST', `/api/relics/${ctx.relicId}/revocations`, {
       attestation: state.bundle,
       renderer_class: rendererClass,
-      declared_size_bytes: content.length,
-      declared_ciphertext_bytes: container.length,
+      declared_size_bytes: contentLength,
+      declared_ciphertext_bytes:
+        container instanceof Blob ? container.size : container.length,
     });
     if (
       !target ||
@@ -781,7 +802,10 @@ export function createRevokeDialog(ctx: RevokeContext): RevokeDialog {
     const response = await ctx.deps.fetch(signed.url, {
       method: signed.method,
       headers: signed.headers,
-      body: container as Uint8Array<ArrayBuffer>,
+      body:
+        container instanceof Blob
+          ? container
+          : (container as Uint8Array<ArrayBuffer>),
     });
     if (!response.ok) throw new Error(`upload returned ${response.status}`);
   }
@@ -792,7 +816,8 @@ export function createRevokeDialog(ctx: RevokeContext): RevokeDialog {
     const container = state.container;
     const key = state.key;
     const signed = state.upload;
-    if (!identity || !container || !key || !signed || !target) {
+    const digest = state.digest;
+    if (!identity || !container || !key || !signed || !target || !digest) {
       throw new Error('republish state is missing');
     }
     paint('sealing');
@@ -829,7 +854,7 @@ export function createRevokeDialog(ctx: RevokeContext): RevokeDialog {
     const statement = {
       access_epoch: body.access_epoch,
       at: Date.now(),
-      ciphertext_sha256: sha256Hex(container),
+      ciphertext_sha256: digest,
       key_commitment: await keyCommitment({
         relicId: ctx.relicId,
         version: signed.version,
@@ -932,8 +957,8 @@ export function createRevokeDialog(ctx: RevokeContext): RevokeDialog {
     if (!identity) throw new Error('no passkey tap yet');
     running = true;
     let prepared: {
-      content: Uint8Array;
-      container: Uint8Array;
+      contentLength: number;
+      container: Uint8Array | Blob;
       rendererClass: string;
     };
     try {
@@ -948,7 +973,7 @@ export function createRevokeDialog(ctx: RevokeContext): RevokeDialog {
     }
     try {
       await revoke(
-        prepared.content,
+        prepared.contentLength,
         prepared.container,
         prepared.rendererClass
       );

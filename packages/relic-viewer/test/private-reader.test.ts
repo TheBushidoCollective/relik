@@ -1064,6 +1064,7 @@ describe('the private reader opens a sealed version', () => {
       1,
       identity
     );
+    if (!('content' in opened)) throw new Error('expected a single-file relic');
 
     expect(Array.from(opened.content)).toEqual(Array.from(world.plaintext));
     expect(opened.digest).toBe(world.digest);
@@ -1171,6 +1172,7 @@ describe('a version that does not verify is refused', () => {
     const identity = await unlock(deps, await loadIdentityState(deps));
 
     const opened = await fetchAndDecryptVersion(deps, relicId, 2, identity);
+    if (!('content' in opened)) throw new Error('expected a single-file relic');
     expect(opened.content).toEqual(world.plaintext);
   });
 

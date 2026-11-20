@@ -9,7 +9,12 @@
  * except the public identity, the signatures and the wraps the service holds.
  */
 
+import {
+  MalformedContainerError,
+  UnsupportedEnvelopeVersionError,
+} from '@relic/format';
 import { openContentStore } from '../content.ts';
+import { entryView, openFolderRelic } from '../folder-relic.ts';
 import { readSession, requestMagicLink } from '../comments.ts';
 import { keylessLink } from '../copy-link.ts';
 import { privateApi } from './fingerprint-input.ts';
@@ -656,6 +661,29 @@ class PrivateReader {
     version: number,
     identity: UnlockedIdentity
   ): Promise<ReadyView> {
+    if ('folderContent' in opened) {
+      const folder = await openFolderRelic(
+        opened.envelope,
+        opened.folderContent
+      );
+      const base: ReadyView = {
+        filename: opened.envelope.name,
+        declaredMimetype: '',
+        content: opened.folderContent,
+        document: undefined,
+        route: 'download',
+        downgradeNotice: undefined,
+        shareUrl: keylessLink(this.mount.deps.locationHref),
+        version,
+        currentVersion: this.access?.currentVersion ?? version,
+        versionDigest: opened.digest,
+        access: 'private',
+        keyFor: (wanted: number) => this.keyFor(wanted, identity),
+        openVersion: (wanted: number) => this.openVersion(wanted, identity),
+        folder,
+      };
+      return entryView(base, folder.index);
+    }
     const entry = opened.envelope.entries[0];
     if (entry === undefined) throw new InvalidKeyResponseError('envelope');
     const sink = (await openContentStore()).createSink(opened.content.length);
@@ -928,6 +956,31 @@ class PrivateReader {
         this.show('denied');
         return;
       }
+    }
+    if (error instanceof MalformedContainerError) {
+      const newer = error instanceof UnsupportedEnvelopeVersionError;
+      this.mount.renderDead(
+        newer
+          ? {
+              headline: 'This relic uses a newer format',
+              detail: 'Reload this page to get the current viewer.',
+              action: 'none',
+              code: 'unsupported_format',
+            }
+          : {
+              headline: 'This relic could not be read',
+              detail:
+                'Its file list is damaged or names a file in a way Relik does not accept.',
+              action: 'none',
+              code: 'malformed_container',
+            },
+        this.mount.relicId,
+        this.mount.usercontentOrigin,
+        this.mount.deps,
+        undefined,
+        () => void this.route()
+      );
+      return;
     }
     const dead =
       error instanceof VersionUnavailableError
