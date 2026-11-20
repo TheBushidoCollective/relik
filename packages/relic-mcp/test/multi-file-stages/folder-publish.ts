@@ -17,8 +17,15 @@ import {
   openAnyRelic,
   openFolder,
   parseFragment,
+  decodeManifest,
+  generateRelicId,
+  isRenderable,
+  streamFolderContent,
   PLAINTEXT_CAP_BYTES,
 } from '@relic/format';
+import { createApp } from '@relic/server/src/app.ts';
+import { MemoryStorage } from '@relic/server/src/storage.ts';
+import { MemoryStore } from '@relic/server/src/store.ts';
 import { nodeFiles } from '../../src/files.ts';
 import { publish, PublishError, type PublishDeps } from '../../src/publish.ts';
 import { republish } from '../../src/republish.ts';
@@ -46,11 +53,28 @@ try {
   await symlink('/etc/passwd', join(root, 'link'));
   execFileSync('mkfifo', [join(root, 'pipe')]);
   const calls: string[] = [];
+  const signedLengths = new Map<string, number>();
+  class PinnedMemoryStorage extends MemoryStorage {
+    override async signUpload(
+      key: string,
+      size: number,
+      validity: number,
+      now: number
+    ) {
+      const signed = await super.signUpload(key, size, validity, now);
+      signedLengths.set(signed.url, size);
+      return signed;
+    }
+  }
+  const storage = new PinnedMemoryStorage();
+  const store = new MemoryStore();
+  const app = createApp({ store, storage });
+  const origin = 'https://relic.example';
+  let grantBody: Record<string, unknown> | undefined;
   let uploaded: Uint8Array | undefined;
-  let republishing = false;
   const deps: PublishDeps = {
-    serviceOrigin: 'https://service.invalid',
-    relicOrigin: 'https://service.invalid',
+    serviceOrigin: origin,
+    relicOrigin: origin,
     files: nodeFiles,
     clientName: 'folder-test',
     renderCover: async () => ({
@@ -58,37 +82,40 @@ try {
       reason: 'browser_disabled',
       detail: 'test',
     }),
-    fetch: (async (input: RequestInfo | URL) => {
-      const path = new URL(String(input)).pathname;
-      calls.push(path);
-      if (path === '/api/challenge')
-        return Response.json({
-          challenge_nonce: 'n',
-          size_limit_bytes: PLAINTEXT_CAP_BYTES,
-          size_basis: 'plaintext',
-        });
-      if (path === '/api/grant')
-        return Response.json({
-          publish_token: 'token',
-          upload_url: 'https://storage.invalid/object',
-          report_url: 'https://service.invalid/report',
-          disclosure_url: 'https://service.invalid/disclosure',
-        });
-      if (path.endsWith('/comments')) return Response.json([]);
-      if (path.endsWith('/republish')) {
-        republishing = true;
-        return Response.json({
-          version: 2,
-          upload_url: 'https://storage.invalid/object',
-          report_url: 'https://service.invalid/report',
-          disclosure_url: 'https://service.invalid/disclosure',
-        });
+    fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input));
+      calls.push(`${init?.method ?? 'GET'} ${url.pathname}`);
+      if (url.origin === origin) {
+        if (url.pathname === '/api/grant')
+          grantBody = JSON.parse(String(init?.body));
+        const headers = new Headers(init?.headers);
+        headers.set('x-forwarded-for', '198.51.100.10');
+        const response = await app.fetch(
+          new Request(url, { ...init, headers })
+        );
+        if (!response.ok)
+          console.error(
+            `real app ${init?.method ?? 'GET'} ${url.pathname}: ${response.status} ${await response.clone().text()}`
+          );
+        return response;
       }
-      if (path.endsWith('/complete'))
-        return Response.json({ version: republishing ? 2 : 1 });
-      throw new Error(`unexpected fake request ${path}`);
+      if (
+        url.hostname === 'storage.invalid' &&
+        url.pathname.startsWith('/o/')
+      ) {
+        const bytes = await storage.read(url.pathname.slice(3));
+        return bytes
+          ? new Response(bytes as unknown as BodyInit)
+          : new Response(null, { status: 404 });
+      }
+      throw new Error('unexpected fixture request');
     }) as typeof globalThis.fetch,
-    upload: async (_url, _headers, bytes) => {
+    upload: async (url, headers, bytes) => {
+      calls.push(`PUT ${new URL(url).pathname}`);
+      const pinned = signedLengths.get(url);
+      assert.equal(Number(headers['content-length']), pinned);
+      assert.equal(bytes.length, pinned);
+      storage.put(new URL(url).pathname.replace(/^\/upload\//, ''), bytes);
       uploaded = bytes;
       return { status: 200 };
     },
@@ -116,8 +143,89 @@ try {
   });
   assert.equal(result.folder?.left_out.sample.length, 8);
   assert.ok(uploaded);
+  assert.equal(grantBody?.['renderer_class'], 'folder');
+  assert.equal(
+    grantBody?.['declared_size_bytes'],
+    result.folder!.files_total_bytes + result.folder!.file_list_bytes
+  );
+  assert.equal(grantBody?.['declared_ciphertext_bytes'], uploaded.length);
+  const freshChallenge = await deps.fetch(`${origin}/api/challenge`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: '{}',
+  });
+  assert.equal(freshChallenge.status, 200);
+  const challenge = (await freshChallenge.json()) as {
+    challenge_nonce: string;
+  };
+  const wrongLength = await app.fetch(
+    new Request(`${origin}/api/grant`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-forwarded-for': '198.51.100.10',
+      },
+      body: JSON.stringify({
+        ...grantBody,
+        challenge_nonce: challenge.challenge_nonce,
+        relic_id: generateRelicId(),
+        declared_ciphertext_bytes: uploaded.length + 1,
+      }),
+    })
+  );
+  assert.equal(wrongLength.status, 400);
+  assert.equal(
+    ((await wrongLength.json()) as { code: string }).code,
+    'invalid_publish_metadata'
+  );
+  assert.equal(
+    (await store.getRelic(result.relic_id))?.rendererClass,
+    'folder'
+  );
+  assert.equal(isRenderable('folder'), true);
+  const card = await app.fetch(new Request(`${origin}/${result.relic_id}`));
+  assert.equal(card.status, 200);
+  assert.match(await card.text(), /A folder of files\./);
   const fragment = parseFragment(new URL(result.url).hash);
   assert.ok(fragment);
+  const mintResponse = await deps.fetch(
+    `${origin}/api/relics/${result.relic_id}/mint`,
+    { method: 'POST' }
+  );
+  assert.equal(mintResponse.status, 200);
+  const mint = (await mintResponse.json()) as {
+    url: string;
+    object_length: number;
+  };
+  const downloaded = await deps.fetch(mint.url);
+  assert.equal(downloaded.status, 200);
+  assert.ok(downloaded.body);
+  const contentChunks: Uint8Array[] = [];
+  const header = await streamFolderContent(downloaded.body, fragment.key, {
+    objectLength: mint.object_length,
+    onContent(chunk) {
+      contentChunks.push(chunk);
+    },
+  });
+  const content = Buffer.concat(contentChunks);
+  const manifest = decodeManifest(
+    content.subarray(0, header.manifestLength),
+    header
+  );
+  const expected = new Map([
+    ['.gitignore', Buffer.from('.env\ndist/\n')],
+    ['README.md', Buffer.from('hello')],
+    ['data/a.json', Buffer.from('{"a":1}')],
+  ]);
+  assert.equal(manifest.entries.length, expected.size);
+  for (const entry of manifest.entries) {
+    const bytes = expected.get(entry.path);
+    assert.ok(bytes);
+    assert.deepEqual(
+      content.subarray(entry.offset, entry.offset + entry.length),
+      bytes
+    );
+  }
   const opened = await openAnyRelic(uploaded, fragment.key, {
     admitted: [1, 2],
   });
