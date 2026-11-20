@@ -36,4 +36,5 @@ export * from './rfc8188.ts';
 export * from './sha256.ts';
 export * from './stream.ts';
 export * from './share.ts';
+export * from './zip-write.ts';
 export * from './title.ts';
