@@ -33,6 +33,9 @@ describe('folder paths and manifests', () => {
     [['b', 'a'], 'out_of_order'],
     [['A/x', 'a/y'], 'fold_collision'],
     [['a', 'a/b'], 'file_and_directory'],
+    [['A', 'a/b'], 'file_and_directory'],
+    [['É/a', 'é/b'], 'fold_collision'],
+    [['Σ', 'ς'], 'fold_collision'],
     [['SS', 'ß'], 'fold_collision'],
     [['é/a', 'é/b'], undefined],
   ])('checks entry set %j', (paths, rule) => {
@@ -49,6 +52,8 @@ describe('folder paths and manifests', () => {
       path: 'é/file',
     });
     expect(entryPathRule('e\u0301/file')).toBe('not_nfc');
+    expect(entryPathRule('é/file')).toBeUndefined();
+    expect(normaliseEntryPath('é/file')).toEqual({ ok: true, path: 'é/file' });
   });
   test('resolves root and relative links without escaping the folder', () => {
     const manifest = {
