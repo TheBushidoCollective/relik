@@ -59,14 +59,20 @@ async function commentsStage(): Promise<void> {
     assert.equal(comments.get(first.comment_id)?.resolved?.status, 'resolved');
     assert.equal(comments.get(second.comment_id)?.resolved?.status, 'resolved');
     assert.equal(comments.get(reply.comment_id)?.entry, 'b.md');
-    assert.match(
-      comments.get(missing.comment_id)?.resolved?.explanation ?? '',
-      /file_not_in_version/
+    const missingResolution = comments.get(missing.comment_id)?.resolved;
+    const wholeResolution = comments.get(whole.comment_id)?.resolved;
+    assert.ok(
+      missingResolution &&
+        'explanation' in missingResolution &&
+        typeof missingResolution.explanation === 'string'
     );
-    assert.match(
-      comments.get(whole.comment_id)?.resolved?.explanation ?? '',
-      /not_tied_to_a_file/
+    assert.ok(
+      wholeResolution &&
+        'explanation' in wholeResolution &&
+        typeof wholeResolution.explanation === 'string'
     );
+    assert.match(missingResolution.explanation, /file_not_in_version/);
+    assert.match(wholeResolution.explanation, /not_tied_to_a_file/);
     console.log('MULTI_FILE_STAGE comments-mcp OK');
   });
 }
