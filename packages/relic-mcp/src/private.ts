@@ -89,6 +89,7 @@ import {
   type PrivatePublishState,
   savePrivatePublishState,
 } from './state.ts';
+import { prepareZipPublish } from './zip-source.ts';
 
 /** Attempts at a seal before a recipients change is reported rather than retried forever. */
 const SEAL_ATTEMPTS = 3;
@@ -102,6 +103,7 @@ export interface PrivatePublishInput {
   readonly force_new?: boolean | undefined;
   readonly decisions?: boolean | undefined;
   readonly open_first?: string | undefined;
+  readonly expand?: boolean | undefined;
 }
 
 export interface PrivateRepublishInput {
@@ -114,6 +116,7 @@ export interface PrivateRepublishInput {
   readonly notify?: boolean | undefined;
   readonly decisions?: boolean | undefined;
   readonly open_first?: string | undefined;
+  readonly expand?: boolean | undefined;
 }
 
 /** A recipient as the output shows it: public facts only. */
@@ -646,46 +649,58 @@ function recipientOutput(
 async function preparePrivateSource(
   input: PrivatePublishInput | PrivateRepublishInput,
   deps: PublishDeps,
-  key: Uint8Array
+  key: Uint8Array,
+  expand: boolean
 ) {
   const resolved = deps.files.resolve(input.path);
   const kind = await deps.files.stat(resolved);
-  if (
+  const folderSource =
     kind.kind === 'directory' &&
     !deps.files.basename(resolved).toLowerCase().endsWith('.otiod')
-  ) {
-    const source = await prepareFolderPublish(
-      input.path,
-      deps.files,
-      input.filename,
-      '',
-      input.open_first
-    );
+      ? await prepareFolderPublish(
+          input.path,
+          deps.files,
+          input.filename,
+          '',
+          input.open_first
+        )
+      : kind.kind === 'file' &&
+          deps.files.basename(resolved).toLowerCase().endsWith('.zip') &&
+          expand
+        ? await prepareZipPublish(
+            input.path,
+            deps.files,
+            input.filename,
+            '',
+            input.open_first
+          )
+        : undefined;
+  if (folderSource) {
     try {
       const container = await encryptPreparedFolder(
-        source.folder,
-        source.filename,
+        folderSource.folder,
+        folderSource.filename,
         key,
-        source.title,
-        source.digest
+        folderSource.title,
+        folderSource.digest
       );
       return {
-        basename: source.basename,
-        resolvedPath: source.resolvedPath,
-        filename: source.filename,
+        basename: folderSource.basename,
+        resolvedPath: folderSource.resolvedPath,
+        filename: folderSource.filename,
         rendererClass: 'folder' as const,
-        size: source.folder.contentLength,
-        digest: source.digest,
+        size: folderSource.folder.contentLength,
+        digest: folderSource.digest,
         container,
         shape: 'folder' as const,
-        folder: folderReport(source),
+        folder: folderReport(folderSource),
       };
     } catch (error) {
       if (error instanceof FolderContentError)
         throw new PublishError(error.code, error.code, error.details);
       throw error;
     } finally {
-      await source.close();
+      await folderSource.close();
     }
   }
   const source = await readSource(input.path, deps.files);
@@ -719,7 +734,12 @@ export async function publishPrivate(
 ): Promise<PrivatePublishResult> {
   refuseRegulatedOptions(input.title, input.cover);
   const key = generateKey();
-  const source = await preparePrivateSource(input, deps, key);
+  const source = await preparePrivateSource(
+    input,
+    deps,
+    key,
+    input.expand !== false
+  );
   const { filename, rendererClass, digest, container } = source;
   const session = await deviceSession(deps);
   const capability = await privateCapability(deps);
@@ -966,7 +986,12 @@ export async function republishPrivate(
     );
   }
   const key = generateKey();
-  const source = await preparePrivateSource(input, deps, key);
+  const source = await preparePrivateSource(
+    input,
+    deps,
+    key,
+    input.expand ?? state.shape === 'folder'
+  );
   const { filename, rendererClass, digest, container } = source;
   const session = await deviceSession(deps);
   if (session.pin.identity_id !== state.owner_identity_id) {
