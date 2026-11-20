@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Readable, Writable } from 'node:stream';
 import { sandboxPolicy } from '../../../relic-server/src/sandbox-policy.ts';
+import { isRecord } from '../../../relic-format/src/guards.ts';
 import { connectPipe } from '../../src/cover/cdp.ts';
 import {
   chromeRequired,
@@ -224,39 +225,80 @@ export async function runFolderStage(
         ),
         true
       );
-      type FrameTree = { childFrames?: { frame: { id: string } }[] };
-      let children: FrameTree['childFrames'];
-      for (let attempt = 0; attempt < 250; attempt++) {
-        const tree = await cdp.send('Page.getFrameTree', {}, session);
-        children = (tree.frameTree as FrameTree).childFrames;
-        if (children?.length === 1) break;
-        await Bun.sleep(20);
-      }
-      assert.equal(
-        children?.length,
-        1,
-        'the sandboxed frame attaches to the page'
-      );
-      const world = await cdp.send(
-        'Page.createIsolatedWorld',
-        { frameId: children?.[0]?.frame.id, worldName: 'v2-proof' },
+      // A sandboxed frame is in the page's frame tree when it shares the
+      // page's process, and is its own target when the browser isolates it
+      // (full Chrome does, headless shell does not). Accept either.
+      const evaluatedTrue = (response: Record<string, unknown>): boolean => {
+        const inner = response['result'];
+        return isRecord(inner) && inner['value'] === true;
+      };
+      const firstChildFrameId = (
+        tree: Record<string, unknown>
+      ): string | undefined => {
+        const root = tree['frameTree'];
+        const children = isRecord(root) ? root['childFrames'] : undefined;
+        const child: unknown = Array.isArray(children)
+          ? children[0]
+          : undefined;
+        const frame = isRecord(child) ? child['frame'] : undefined;
+        const id = isRecord(frame) ? frame['id'] : undefined;
+        return typeof id === 'string' ? id : undefined;
+      };
+      const frameSessions: string[] = [];
+      const stopEvents = cdp.onEvent((event) => {
+        if (event.method !== 'Target.attachedToTarget') return;
+        const info = event.params['targetInfo'];
+        const id = event.params['sessionId'];
+        if (
+          isRecord(info) &&
+          info['type'] === 'iframe' &&
+          typeof id === 'string'
+        )
+          frameSessions.push(id);
+      });
+      await cdp.send(
+        'Target.setAutoAttach',
+        { autoAttach: true, waitForDebuggerOnStart: false, flatten: true },
         session
       );
-      const contextId = world.executionContextId;
-      let rendered = false;
-      for (let attempt = 0; attempt < 200 && !rendered; attempt++) {
-        const result = await cdp.send(
-          'Runtime.evaluate',
-          {
-            contextId,
-            expression: "document.body.textContent.includes('HTML entry')",
-            returnByValue: true,
-          },
+      const probe = "document.body?.textContent.includes('HTML entry')===true";
+      const rendersInFrame = async (): Promise<boolean> => {
+        const own = frameSessions[0];
+        if (own !== undefined)
+          return evaluatedTrue(
+            await cdp.send(
+              'Runtime.evaluate',
+              { expression: probe, returnByValue: true },
+              own
+            )
+          );
+        const frameId = firstChildFrameId(
+          await cdp.send('Page.getFrameTree', {}, session)
+        );
+        if (frameId === undefined) return false;
+        const world = await cdp.send(
+          'Page.createIsolatedWorld',
+          { frameId, worldName: 'v2-proof' },
           session
         );
-        rendered = Boolean((result.result as { value?: boolean })?.value);
+        return evaluatedTrue(
+          await cdp.send(
+            'Runtime.evaluate',
+            {
+              contextId: world['executionContextId'],
+              expression: probe,
+              returnByValue: true,
+            },
+            session
+          )
+        );
+      };
+      let rendered = false;
+      for (let attempt = 0; attempt < 500 && !rendered; attempt++) {
+        rendered = await rendersInFrame();
         if (!rendered) await Bun.sleep(20);
       }
+      stopEvents();
       assert.equal(rendered, true, 'HTML entry renders in the sandbox');
       assert.equal(
         requests.filter(
