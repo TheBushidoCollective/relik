@@ -5,6 +5,7 @@ import {
   encodeManifest,
   entryPathRule,
   normaliseEntryPath,
+  resolveEntryReference,
 } from '../src/multi.ts';
 import {
   decryptComment,
@@ -48,6 +49,28 @@ describe('folder paths and manifests', () => {
       path: 'é/file',
     });
     expect(entryPathRule('e\u0301/file')).toBe('not_nfc');
+  });
+  test('resolves root and relative links without escaping the folder', () => {
+    const manifest = {
+      defaultIndex: 0,
+      entries: [{ path: 'image.png', mimetype: '', offset: 0, length: 0 }],
+    };
+    expect(
+      resolveEntryReference(manifest, 'docs/readme.md', '/image.png')
+    ).toBe(0);
+    expect(
+      resolveEntryReference(manifest, 'docs/readme.md', '../image.png')
+    ).toBe(0);
+    expect(
+      resolveEntryReference(manifest, 'docs/readme.md', '../../image.png')
+    ).toBeUndefined();
+    expect(
+      resolveEntryReference(
+        manifest,
+        'docs/readme.md',
+        '//example.com/image.png'
+      )
+    ).toBeUndefined();
   });
   test.each([1, 5000])('round trips a manifest with %i entries', (count) => {
     const entries = Array.from({ length: count }, (_, i) => ({

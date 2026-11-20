@@ -299,7 +299,7 @@ export function resolveEntryReference(
 ): number | undefined {
   if (
     !target ||
-    target.startsWith('/') ||
+    target.startsWith('//') ||
     /^[A-Za-z][A-Za-z0-9+.-]*:/.test(target) ||
     target.includes('\\')
   )
@@ -310,8 +310,7 @@ export function resolveEntryReference(
   } catch {
     return undefined;
   }
-  const parts = fromPath.split('/');
-  parts.pop();
+  const parts = decoded.startsWith('/') ? [] : fromPath.split('/').slice(0, -1);
   for (const part of decoded.split('/')) {
     if (!part || part === '.') continue;
     if (part === '..') {
