@@ -46,6 +46,7 @@ export interface SuggestControllerOptions {
 export interface SuggestController {
   readonly suggesting: boolean;
   readonly draftOpen: boolean;
+  hasPendingDraft(): boolean;
   readonly applied: boolean;
   readonly currentVersion: boolean;
   presenceDocument():
@@ -219,13 +220,13 @@ export function mountSuggestionController(
   const kind =
     view.route === 'code' || view.route === 'notebook' ? 'code' : 'markdown';
   const doc = host.ownerDocument;
-  const surface = suggestionSurfaceFor(host);
-  const root =
+  let surface = suggestionSurfaceFor(host);
+  let root =
     surface?.root ??
     host.querySelector<HTMLElement>(
       kind === 'code' ? 'pre.code-body' : 'article.prose'
     );
-  const original = surface
+  let original = surface
     ? root
     : kind === 'code'
       ? root?.closest<HTMLElement>('.code')
@@ -253,6 +254,7 @@ export function mountSuggestionController(
   let applied = false;
   let failed = false;
   let destroyed = false;
+  let releaseDetached = false;
   let lastDraft: SuggestDraft | null = null;
   let draftSequence = 0;
   let activeCommit: WritableCommit | undefined;
@@ -447,6 +449,7 @@ export function mountSuggestionController(
     draft: SuggestDraft | null
   ): void => {
     if (destroyed) return;
+    if (releaseDetached) queueMicrotask(releaseSurface);
     const hold = commitHold;
     commitHold = undefined;
     if (result.kind === 'not-posted') {
@@ -677,11 +680,13 @@ export function mountSuggestionController(
       return;
     }
     const draw = (): void => {
-      clearSuggestionPaint(root);
+      const target = root;
+      if (!target) return;
+      clearSuggestionPaint(target);
       surface?.repaint();
       ordinary();
       const result = paintSuggestions(
-        root,
+        target,
         segments,
         views!,
         surface ? 'markdown' : kind
@@ -691,7 +696,7 @@ export function mountSuggestionController(
         if (notice) notice.textContent = result.reason;
         return;
       }
-      for (const item of root.querySelectorAll<HTMLElement>('[data-sg-id]')) {
+      for (const item of target.querySelectorAll<HTMLElement>('[data-sg-id]')) {
         const id = item.getAttribute('data-sg-id');
         if (id) item.dataset['commentId'] = id;
       }
@@ -714,6 +719,17 @@ export function mountSuggestionController(
       event.preventDefault();
       event.stopImmediatePropagation();
     }
+  };
+  const releaseSurface = (): void => {
+    if (!releaseDetached) return;
+    releaseDetached = false;
+    editor?.destroy();
+    editor = undefined;
+    for (const type of ['beforeinput', 'paste', 'drop', 'keydown'])
+      root?.removeEventListener(type, stopInputDuringSend, true);
+    root = null;
+    original = undefined;
+    surface = undefined;
   };
   root?.addEventListener('beforeinput', stopInputDuringSend, true);
   root?.addEventListener('paste', stopInputDuringSend, true);
@@ -821,6 +837,9 @@ export function mountSuggestionController(
     },
     get draftOpen() {
       return !!editor?.draft;
+    },
+    hasPendingDraft() {
+      return !!editor?.draft || !!transport?.shouldWarnBeforeUnload;
     },
     get applied() {
       return applied;
@@ -941,6 +960,13 @@ export function mountSuggestionController(
       if (destroyed) return true;
       if (editor?.draft && !editor.commit()) return false;
       if (transport?.shouldWarnBeforeUnload) {
+        if (
+          root &&
+          !host.contains(root) &&
+          activeCommit &&
+          transport.state.status !== 'not-posted'
+        )
+          releaseDetached = true;
         if (notice)
           notice.textContent =
             'Post or discard the suggestion before leaving this version.';
