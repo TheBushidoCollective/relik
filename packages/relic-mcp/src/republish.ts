@@ -112,6 +112,11 @@ export interface RepublishResult {
     | {
         readonly file_count: number;
         readonly total_bytes: number;
+        readonly default_entry: string;
+        readonly omitted_sample: readonly {
+          readonly path: string;
+          readonly reason: string;
+        }[];
         readonly left_out: readonly {
           readonly reason: string;
           readonly count: number;

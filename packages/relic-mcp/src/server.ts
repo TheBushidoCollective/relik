@@ -63,6 +63,7 @@ import {
   isPrivateRelic,
   lookupPublishedSource,
   type PublishDeps,
+  type PublishResult,
   PublishError,
   publish,
   republishToolCall,
@@ -300,6 +301,21 @@ export function programParagraph(report: ProgramReport | undefined): string {
   return text === '' ? '' : `${text}\n\n`;
 }
 
+function folderParagraph(
+  folder: PublishResult['folder'],
+  name: string
+): string {
+  if (!folder) return '';
+  const total = folder.left_out.reduce((sum, item) => sum + item.count, 0);
+  const summary = `It holds ${folder.file_count} files from ${jsonLine(name)} and opens at ${jsonLine(folder.default_entry)}.`;
+  if (!total) return `${summary}\n\n`;
+  const sample = folder.omitted_sample
+    .map((item) => `${jsonLine(item.path)} (${item.reason})`)
+    .join(', ');
+  const remaining = total - folder.omitted_sample.length;
+  return `${summary}\nLeft out ${total} paths: ${sample}${remaining > 0 ? `, and ${remaining} more` : ''}.\n\n`;
+}
+
 export const TOOL_DEFINITION = {
   name: TOOL_NAME,
   title: 'Publish a relic',
@@ -406,6 +422,18 @@ export const TOOL_DEFINITION = {
         properties: {
           file_count: { type: 'integer' },
           total_bytes: { type: 'integer' },
+          default_entry: { type: 'string' },
+          omitted_sample: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                path: { type: 'string' },
+                reason: { type: 'string' },
+              },
+              required: ['path', 'reason'],
+            },
+          },
           left_out: {
             type: 'array',
             items: {
@@ -600,6 +628,18 @@ export const REPUBLISH_TOOL_DEFINITION = {
         properties: {
           file_count: { type: 'integer' },
           total_bytes: { type: 'integer' },
+          default_entry: { type: 'string' },
+          omitted_sample: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                path: { type: 'string' },
+                reason: { type: 'string' },
+              },
+              required: ['path', 'reason'],
+            },
+          },
           left_out: {
             type: 'array',
             items: {
@@ -2476,7 +2516,8 @@ async function callTool(
           {
             type: 'text',
             text:
-              `Published ${result.filename} as version 1 of a new relic.\n\n` +
+              `Published ${result.folder ? jsonLine(result.filename) : result.filename} as version 1 of a new relic.\n\n` +
+              folderParagraph(result.folder, result.filename) +
               `${result.url}\n\n` +
               `${
                 result.title !== null
@@ -3258,8 +3299,9 @@ async function callRepublish(
           {
             type: 'text',
             text:
-              `Republished ${result.filename} as version ${result.version} ` +
+              `Republished ${result.folder ? jsonLine(result.filename) : result.filename} as version ${result.version} ` +
               `of relic ${result.relic_id}.\n\n` +
+              folderParagraph(result.folder, result.filename) +
               'The share URL is unchanged: everyone holding the existing ' +
               'link, including its fragment, now sees this content. There ' +
               'is no new link to hand out.\n\n' +

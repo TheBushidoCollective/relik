@@ -120,6 +120,8 @@ export function folderReport(source: FolderPublishSource) {
   return {
     file_count: source.folder.entries.length,
     total_bytes: source.folder.filesTotalBytes,
+    default_entry: source.folder.entries[source.folder.defaultIndex]!.path,
+    omitted_sample: source.leftOut.slice(0, 5),
     left_out: [...counts]
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([reason, count]) => ({ reason, count })),

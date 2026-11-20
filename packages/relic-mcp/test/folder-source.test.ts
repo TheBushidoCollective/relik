@@ -89,6 +89,22 @@ describe('folder source walk', () => {
       }
     });
   });
+  test('fails closed without git in a repository even with no local ignore file', async () => {
+    await fixture(async (root) => {
+      execFileSync('git', ['init', '-q', root]);
+      await writeFile(join(root, 'file'), 'x');
+      const previous = process.env.PATH;
+      try {
+        process.env.PATH = root;
+        expect(await walkFolder(root)).toMatchObject({
+          ok: false,
+          code: 'gitignore_unavailable',
+        });
+      } finally {
+        process.env.PATH = previous;
+      }
+    });
+  });
   test('keeps tracked files ignored after being added', async () => {
     await fixture(async (root) => {
       execFileSync('git', ['init', '-q', root]);

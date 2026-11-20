@@ -7,6 +7,7 @@ import {
   rename,
   rm,
   symlink,
+  truncate,
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -204,6 +205,42 @@ try {
     publish({ path: empty, cover: false }, deps),
     (error: unknown) =>
       error instanceof PublishError && error.code === 'folder_empty'
+  );
+  assert.equal(calls.length, 0);
+  const excluded = join(tmp, 'excluded');
+  await mkdir(excluded);
+  await symlink('/etc/passwd', join(excluded, 'link'));
+  await assert.rejects(
+    publish({ path: excluded, cover: false }, deps),
+    (error: unknown) =>
+      error instanceof PublishError && error.code === 'all-excluded'
+  );
+  const collision = join(tmp, 'collision');
+  await mkdir(collision);
+  await writeFile(join(collision, 'ı'), 'a');
+  await writeFile(join(collision, 'I'), 'b');
+  await assert.rejects(
+    publish({ path: collision, cover: false }, deps),
+    (error: unknown) =>
+      error instanceof PublishError && error.code === 'path_collision'
+  );
+  const many = join(tmp, 'many');
+  await mkdir(many);
+  for (let i = 0; i < 5001; i++) await writeFile(join(many, `f${i}`), '');
+  await assert.rejects(
+    publish({ path: many, cover: false }, deps),
+    (error: unknown) =>
+      error instanceof PublishError && error.code === 'too_many_files'
+  );
+  const oversized = join(tmp, 'oversized');
+  await mkdir(oversized);
+  await writeFile(join(oversized, 'sparse'), '');
+  await truncate(join(oversized, 'sparse'), PLAINTEXT_CAP_BYTES);
+  await assert.rejects(
+    publish({ path: oversized, cover: false }, deps),
+    (error: unknown) =>
+      error instanceof PublishError &&
+      error.code === 'local_size_precheck_failed'
   );
   assert.equal(calls.length, 0);
   await assert.rejects(

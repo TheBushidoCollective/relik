@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { lstat, mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import {
   checkEntrySet,
@@ -159,8 +159,22 @@ export async function walkFolder(root: string): Promise<FolderWalkResult> {
       (await git(['-C', root, 'rev-parse', '--is-inside-work-tree']))
         .toString()
         .trim() === 'true';
-  } catch {
-    /* A plain folder needs no Git unless it has rules. */
+  } catch (error) {
+    let directory = root;
+    while (true) {
+      const marker = await lstat(join(directory, '.git')).catch(
+        () => undefined
+      );
+      if (marker)
+        return {
+          ok: false,
+          code: 'gitignore_unavailable',
+          details: { error: String(error) },
+        };
+      const parent = dirname(directory);
+      if (parent === directory) break;
+      directory = parent;
+    }
   }
   let candidate: Set<string> | undefined;
   let ignored: string[] = [];
