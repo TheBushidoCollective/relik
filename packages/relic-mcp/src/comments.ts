@@ -49,6 +49,7 @@ import {
   type SuggestionOutcome,
   type SuggestionPayload,
 } from '@relic/format';
+import { entryPathRule } from '@relic/format';
 import {
   suggestionStates,
   type SuggestionStateInfo,
@@ -121,6 +122,7 @@ export interface CommentRecord {
    * the encrypted envelope, so it arrives with the body or not at all.
    */
   readonly anchor: CommentAnchor | null;
+  readonly entry?: string | null;
   /**
    * The comment this one answers or acknowledges, by service-minted id.
    * Taken from the sealed copy only.
@@ -355,6 +357,7 @@ export interface CommentInput {
   readonly body: string;
   readonly display_name?: string | undefined;
   readonly anchor?: CommentAnchorInput | null | undefined;
+  readonly entry?: string | undefined;
   /**
    * Optional service-minted id of the comment this one answers or acknowledges.
    * Sealed into the ciphertext and passed in the clear to the service for notification routing.
@@ -435,6 +438,7 @@ export async function readComments(
     display_name: string | null;
     body: string | null;
     anchor: CommentAnchor | null;
+    entry?: string | null;
     addresses: string | null;
     suggestion?: SuggestionPayload | null;
     suggestion_outcome?: SuggestionOutcome | null;
@@ -512,6 +516,7 @@ export async function readComments(
         // Absent and null both mean freeform. One shape crosses to the agent,
         // so a caller never has to distinguish two ways of saying no mark.
         anchor: plaintext.anchor ?? null,
+        entry: plaintext.entry ?? null,
         addresses: plaintext.addresses ?? null,
         suggestion: plaintext.suggestion ?? null,
         suggestion_outcome: plaintext.suggestion_outcome ?? null,
@@ -635,6 +640,7 @@ export async function readComments(
         display_name: entry.display_name,
         body: entry.body,
         anchor: entry.anchor,
+        entry: entry.entry ?? null,
         addresses: entry.addresses,
         suggestion: entry.suggestion ?? null,
         suggestion_outcome: entry.suggestion_outcome ?? null,
@@ -702,6 +708,12 @@ export async function postComment(
 ): Promise<CommentResult> {
   const local = await localRelic(input.relic_id);
   const state = local.state;
+  if (input.entry !== undefined && entryPathRule(input.entry) !== undefined) {
+    throw new PublishError(
+      'local_comment_anchor_invalid',
+      'entry must be a canonical file path.'
+    );
+  }
 
   // The caps belong to the envelope, so they are enforced against its numbers
   // rather than a second copy of them, and enforced before encryption so the
@@ -794,7 +806,7 @@ export async function postComment(
     );
   }
   const target =
-    outcome === undefined
+    addresses === null
       ? undefined
       : (
           await readComments(input.relic_id, deps, { version: '*' })
@@ -825,6 +837,7 @@ export async function postComment(
       'Republish the private relic to a newer version before accepting or superseding this suggestion.'
     );
   }
+  const commentEntry = target === undefined ? input.entry : target.entry;
   const commentKey = await commentKeyFor(
     deps,
     input.relic_id,
@@ -836,6 +849,7 @@ export async function postComment(
     body: input.body,
     display_name: displayName,
     anchor,
+    ...(commentEntry == null ? {} : { entry: commentEntry }),
     ...(addresses == null ? {} : { addresses }),
     ...(outcome === undefined ? {} : { suggestion_outcome: outcome }),
   });
@@ -997,6 +1011,7 @@ export async function editComment(
     body: input.body,
     display_name: existing.display_name,
     anchor: existing.anchor,
+    ...(existing.entry == null ? {} : { entry: existing.entry }),
     ...(existing.addresses == null ? {} : { addresses: existing.addresses }),
     ...(existing.suggestion == null ? {} : { suggestion: existing.suggestion }),
     ...(existing.suggestion_outcome == null

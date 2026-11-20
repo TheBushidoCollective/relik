@@ -74,4 +74,7 @@ await import('./multi-file-stages/downloads.ts');
 await import('./multi-file-stages/folder-publish.ts');
 await import('./multi-file-stages/zip-publish.ts');
 await import('./multi-file-stages/private-publish.ts');
+await import('./multi-file-stages/show.ts');
+await import('./multi-file-stages/comments-mcp.ts');
+await import('./multi-file-stages/apply.ts');
 console.log('MULTI_FILE_PATH_OK');
