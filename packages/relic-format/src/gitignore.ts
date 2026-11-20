@@ -33,10 +33,10 @@ const classes: Record<string, string> = {
 function glob(pattern: string): string {
   let result = '';
   for (let i = 0; i < pattern.length; i++) {
-    const char = pattern[i];
+    const char = pattern.charAt(i);
     if (char === '\\') {
-      if (++i < pattern.length) result += literal(pattern[i]);
-      else result += '\\\\';
+      if (++i < pattern.length) result += literal(pattern.charAt(i));
+      else return '(?!)';
     } else if (char === '*') {
       let end = i;
       while (pattern[end + 1] === '*') end++;
@@ -47,7 +47,7 @@ function glob(pattern: string): string {
         if (pattern[end + 1] === '/') {
           result += '(?:[^/]+/)*';
           end++;
-        } else result += '.*';
+        } else result += '[\\s\\S]*';
       } else result += '[^/]*';
       i = end;
     } else if (char === '?') result += '[^/]';
@@ -126,7 +126,7 @@ export function createIgnoreMatcher(
       let pattern: RegExp;
       try {
         pattern = new RegExp(
-          `^${scoped ? '' : '(?:.*/)?'}${glob(bytes(line))}$`
+          `^${scoped ? '' : '(?:[\\s\\S]*/)?'}${glob(bytes(line))}(?![\\s\\S])`
         );
       } catch {
         continue;

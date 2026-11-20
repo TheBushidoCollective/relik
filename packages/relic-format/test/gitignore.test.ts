@@ -33,6 +33,9 @@ describe('gitignore', () => {
     ['[[:digit:]].txt\n', '1.txt', false, true],
     ['[z-a]\n', 'z', false, true],
     ['foo[\n', 'foo[', false, false],
+    ['foo\n', 'foo\n', false, false],
+    ['**/foo\n', 'a\nb/foo', false, true],
+    ['back\\\n', 'back\\', false, false],
   ];
   test.each(cases)(
     '%p matches %p (directory %p) as %p',
@@ -67,6 +70,16 @@ describe('gitignore', () => {
         return state % n;
       };
       const dirs = ['a', 'a/b', 'a/x', 'foo', 'foo/bar', 'secret', 'z'];
+      for (let i = 0; i < 5; i++) {
+        const parent = `generated-${i}-${random(1000)}`;
+        dirs.push(parent);
+        let current = parent;
+        const depth = 1 + random(3);
+        for (let level = 0; level < depth; level++) {
+          current += `/d${random(1000)}`;
+          dirs.push(current);
+        }
+      }
       const names = [
         'foo',
         'b',
@@ -178,10 +191,9 @@ describe('gitignore', () => {
           if (git.status !== 0 && git.status !== 1)
             throw new Error(`git check-ignore failed: ${git.stderr}`);
           const fields = git.stdout.split('\0');
-          for (let i = 0; i < paths.length; i++) {
+          for (const [i, item] of paths.entries()) {
             const pattern = fields[i * 4 + 2];
             const expected = !!pattern && !pattern.startsWith('!');
-            const item = paths[i];
             const actual = match(item.path, item.directory);
             if (actual !== expected) {
               throw new Error(
