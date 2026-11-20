@@ -21,8 +21,13 @@ cat "$scratch/health"
 grep -q '"ok"' "$scratch/health"
 
 echo "the shell serves and does not leak a referrer"
-curl -fsS -D "$scratch/h" -o/dev/null "$SERVICE/aaaaaaaaaaaaaaaaaaaaaaaaaa"
+curl -fsS -D "$scratch/h" -o "$scratch/relic-shell" "$SERVICE/aaaaaaaaaaaaaaaaaaaaaaaaaa"
 grep -qi '^referrer-policy: no-referrer' "$scratch/h"
+viewer_url=$(grep -Eo '/assets/viewer\.js\?v=[a-zA-Z0-9_-]+' "$scratch/relic-shell" | head -n 1)
+test -n "$viewer_url"
+echo "shell viewer: $viewer_url"
+curl -fsS -o "$scratch/sw" "$SERVICE/sw.js"
+grep -Fq "$viewer_url" "$scratch/sw"
 
 echo "every asset the shell names resolves"
 for P in /assets/viewer.js /assets/landing-html.png /assets/landing-markdown.png /assets/landing-code-dark.png /assets/styles.css /assets/cue-view.css /assets/json-tree-view.css /assets/data-table.css /assets/notebook-view.css /assets/register-sw.js /manifest.webmanifest /sw.js /assets/icon.svg; do

@@ -11,6 +11,7 @@
  */
 
 import { copyFile, mkdir, readdir } from 'node:fs/promises';
+import { REGISTER_SW_JS } from '../relic-server/src/assets.ts';
 
 const pkgDir = new URL('.', import.meta.url).pathname;
 
@@ -404,6 +405,7 @@ export async function buildViewer(options?: {
     { path: '/assets/json-tree-view.css', file: `${out}json-tree-view.css` },
     { path: '/assets/data-table.css', file: `${out}data-table.css` },
     { path: '/assets/notebook-view.css', file: `${out}notebook-view.css` },
+    { path: '/assets/icon.svg', file: `${out}icon.svg` },
     { path: '/manifest.webmanifest', file: `${out}manifest.webmanifest` },
   ];
 
@@ -414,7 +416,21 @@ export async function buildViewer(options?: {
     }))
   );
 
-  const buildHash = computeShellHash(assetBuffers);
+  const buildHash = computeShellHash([
+    ...assetBuffers,
+    { path: '/assets/register-sw.js', content: REGISTER_SW_JS },
+  ]);
+  await Bun.write(`${out}shell-build.txt`, buildHash);
+  const versioned = [
+    '/assets/viewer.js',
+    '/assets/styles.css',
+    '/assets/icon.svg',
+    '/manifest.webmanifest',
+  ];
+  const shellPaths = shellAssetFiles.map(({ path }) =>
+    versioned.includes(path) ? `${path}?v=${buildHash}` : path
+  );
+  shellPaths.push(`/assets/register-sw.js?v=${buildHash}`);
 
   // sw.ts is bundled as an IIFE classic script so it runs in every browser
   // without module support requirements (Firefox lacks module service workers).
@@ -431,7 +447,7 @@ export async function buildViewer(options?: {
       'process.env.NODE_ENV': '"production"',
       __BUILD_HASH__: JSON.stringify(buildHash),
       __SHELL_CACHE__: JSON.stringify(`relic-shell-${buildHash}`),
-      __SHELL_ASSETS__: JSON.stringify(shellAssetFiles.map((a) => a.path)),
+      __SHELL_ASSETS__: JSON.stringify(shellPaths),
     },
   });
 

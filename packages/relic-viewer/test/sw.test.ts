@@ -247,6 +247,20 @@ describe('classic service worker script guards', () => {
       expect(swText).toContain(`/assets/${chunk}`);
     }
   });
+  test('versioned shell cache admits only the exact build URL', () => {
+    const shell = ['/assets/viewer.js?v=build1'];
+    const at = (path: string) => new URL(`https://relic.example${path}`);
+    expect(isCacheable(at('/assets/viewer.js?v=build1'), true, shell)).toBe(
+      true
+    );
+    expect(isCacheable(at('/assets/viewer.js?v=build2'), true, shell)).toBe(
+      false
+    );
+    expect(isCacheable(at('/assets/viewer.js'), true, shell)).toBe(false);
+    expect(
+      isCacheable(at('/assets/viewer.js?v=build1&other=1'), true, shell)
+    ).toBe(false);
+  });
 
   test('isCacheable follows the shell list the build injects', () => {
     const shell = ['/assets/viewer.js', '/assets/chunk-abc123.js'];
