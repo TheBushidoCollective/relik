@@ -36,3 +36,9 @@ Twenty locally generated archives were examined by reading their central directo
 `ditto` emitted the data descriptor flags and `__MACOSX` entries. The Python archives did not preserve the one symlink presented to that producer as a symlink entry. The other four symlinks were preserved by `zip` or `ditto`.
 
 Finder, Windows Explorer, 7-Zip, GitHub Download ZIP, and Google Drive archives were not produced or sampled. This local set cannot establish the spec's cross-producer refusal rate. The counts above came from central-directory inspection. The new indexer accepted all 20 archives with the same entry counts, and read and CRC-verified all 64 regular entries.
+
+## OTIO path observation
+
+The unchanged OTIO and ZIP unit suites passed 54 tests with 239 assertions. The owned headless `otio-path` failed twice on this branch at `scheduled-pcm-48000`, with four interrupted attempts per run. Reported failures included `audio output clock not ready before ring sizing (cancel underflow)` and `no causal audio epoch inside the certified video phase intersection`.
+
+A fresh, separately built origin/main `c1a2ae62` using the identical command, owned shell and environment also failed at `scheduled-pcm-48000` on all four attempts with the same audio-clock and causal-epoch errors. The baseline worktree was removed. The OTIO path is not proven locally; the `otio-headless-smoke-macos` CI job must prove it on the integration PR. That CI job has not run for this branch.
