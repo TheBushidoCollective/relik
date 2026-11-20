@@ -280,7 +280,7 @@ All proof writes target the local in-memory service. The browser is an isolated 
 
 # Publish from the browser
 
-A visitor opens `/publish`, drops one file, reviews it and its link-preview title, and gets a link whose key never reached the service. The link opens to the file they dropped. A cleared title sends no title and no filename. A file over the page's ceiling, and a dropped folder, are refused before any grant.
+A visitor opens `/publish`, drops one file, reviews it and its link-preview title, and gets a link whose key never reached the service. The link opens to the file they dropped. A cleared title sends no title and no filename. A file over the page's ceiling, and a dropped folder, are refused before any grant. A file dropped on any relic page, including one that fills the window with a sandboxed frame, opens the same publisher in a dialog over it and makes a new relic, and a relic that takes file drops itself keeps them.
 
 ## Acceptance command
 
@@ -295,7 +295,12 @@ Success requires these lines in order, then `BROWSER_PUBLISH_PATH_OK`:
 `PUBLISH_STEP_3_PUBLISHED relic_id=<id> key_in_requests=false plaintext_at_rest=false`,
 `PUBLISH_STEP_4_OPENS content=decrypted`,
 `PUBLISH_STEP_5_CLEARED_TITLE filename_sent=false title_stored=false`,
-`PUBLISH_STEP_6_REFUSALS oversize=refused folder=refused grants=0`.
+`PUBLISH_STEP_6_REFUSALS oversize=refused folder=refused grants=0`,
+`PUBLISH_STEP_7_DROP_ANYWHERE text_drag=ignored file_drag=curtain dialog=opened new_relic=<id> page_behind=kept`,
+`PUBLISH_STEP_8_REAL_DRAG over_bar=caught over_sandboxed_frame=caught`,
+`PUBLISH_STEP_9_RELIC_CLAIMS curtain=none relic_got_drop=true dialog=none`.
 The browser is an owned isolated headless Chrome with a throwaway profile, and all writes target the local in-memory service.
 
-Not proven here: the loopback upload is same-origin, so the browser's cross-origin preflight to the real bucket is not exercised. The bucket's CORS rule admits `PUT` from the service origin, and the private-share rekey already relies on it, but the first publish from the live page is the check. After a deploy, publish a small file from the live `/publish` in an owned headless Chrome and open the link; a CORS failure shows as "The upload was interrupted" with no `PUT` reaching storage. Not proven either: Safari and Firefox, a drop from the operating system's file manager (the proof dispatches the drop event), and files near the 100 MB ceiling.
+Steps 8 and 9 use the browser's own drag path (`Input.dispatchDragEvent` with a file on disk) over a relic whose frame is a real cross-origin document, so the drag is routed by the browser rather than dispatched by the script. The frame's origin is `127.0.0.1` against the service's `localhost`. With the shim's drag signal removed, step 8 fails at the curtain, which is the negative control that was run.
+
+Not proven here: the loopback upload is same-origin, so the browser's cross-origin preflight to the real bucket is not exercised. The bucket's CORS rule admits `PUT` from the service origin, and the private-share rekey already relies on it, but the first publish from the live page is the check. After a deploy, publish a small file from the live `/publish` in an owned headless Chrome and open the link; a CORS failure shows as "The upload was interrupted" with no `PUT` reaching storage. Not proven either: Safari and Firefox, a drag from the operating system's own file manager (the proof drives the browser's drag path, not the OS's), and files near the 100 MB ceiling. The landing page and the abuse form take no drop, by design.

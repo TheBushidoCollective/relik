@@ -212,3 +212,23 @@
 .pub-card .accession {
   margin-top: 1.25rem;
 }
+
+/* The dialog opened by a file dropped on any other page. */
+.pub-dialog {
+  width: min(40rem, calc(100vw - 2rem));
+  max-height: calc(100vh - 2rem);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  overflow: auto;
+}
+
+.pub-dialog::backdrop {
+  background: rgb(0 0 0 / 55%);
+}
+
+.pub-dialog .pub {
+  margin: 0;
+}

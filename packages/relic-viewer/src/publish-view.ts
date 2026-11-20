@@ -10,6 +10,7 @@
  */
 
 import { MAX_TITLE_CHARS, normalizeTitle } from '@relic/format';
+import { droppedFrom } from './drop-anywhere.ts';
 import {
   BROWSER_PUBLISH_LIMIT_BYTES,
   type PublishDeps,
@@ -163,9 +164,15 @@ function terms(): HTMLElement {
 /** Loads the page's own stylesheet and resolves once it has applied. */
 function loadStylesheet(): Promise<void> {
   const { promise, resolve } = Promise.withResolvers<void>();
+  const existing = document.querySelector('link[data-publish-view]');
+  if (existing !== null) {
+    resolve();
+    return promise;
+  }
   const sheet = document.createElement('link');
   sheet.rel = 'stylesheet';
   sheet.href = '/assets/publish-view.css';
+  sheet.dataset['publishView'] = '';
   // A failed stylesheet must not strand the page on a blank screen: unstyled
   // controls still publish.
   sheet.onload = () => resolve();
@@ -174,23 +181,30 @@ function loadStylesheet(): Promise<void> {
   return promise;
 }
 
-export async function mountPublish(body: HTMLElement): Promise<void> {
-  await loadStylesheet();
+interface Publisher {
+  readonly idle: (problem?: string) => void;
+  readonly review: (files: File[], isFolder: boolean) => void;
+  readonly isBusy: () => boolean;
+}
 
+/**
+ * The publisher, drawn into `panel`.
+ *
+ * On its own page it ends where it began, at the drop zone, so a visitor can
+ * publish another file. In a dialog opened by a drop elsewhere it has a place
+ * to go back to, and `onClose` is that: every step that would return to the
+ * drop zone closes the dialog instead.
+ */
+function createPublisher(
+  panel: HTMLElement,
+  status: HTMLElement,
+  onClose?: () => void
+): Publisher {
   const deps: PublishDeps = {
     serviceOrigin: window.location.origin,
     fetch: globalThis.fetch.bind(globalThis),
     upload: xhrUpload,
   };
-  const main = el('main', 'stage pub-stage');
-  const panel = el('div', 'pub');
-  main.appendChild(panel);
-  body.replaceChildren(buildBar(), main);
-
-  const status = el('div', 'pub-hidden');
-  status.setAttribute('role', 'status');
-  status.setAttribute('aria-live', 'polite');
-  body.appendChild(status);
 
   let busy = false;
 
@@ -199,6 +213,17 @@ export async function mountPublish(body: HTMLElement): Promise<void> {
   const idle = (problem?: string): void => {
     busy = false;
     status.textContent = problem ?? '';
+
+    if (onClose !== undefined) {
+      // There is no drop zone here to return to: the file came from a drop
+      // on another page, so a refusal is a message and a way out.
+      const card = el('div', 'pub-card');
+      card.appendChild(el('h1', 'pub-card-title', 'Nothing was published'));
+      card.appendChild(el('p', 'pub-help', problem ?? ''));
+      card.appendChild(action('Close', ICONS.back, onClose));
+      show(card);
+      return;
+    }
 
     const input = document.createElement('input');
     input.type = 'file';
@@ -253,10 +278,9 @@ export async function mountPublish(body: HTMLElement): Promise<void> {
       event.preventDefault();
       depth = 0;
       zone.classList.remove('over');
-      const transfer = event.dataTransfer;
-      if (transfer === null) return;
-      const entry = transfer.items?.[0]?.webkitGetAsEntry?.();
-      review([...transfer.files], entry?.isDirectory === true);
+      if (event.dataTransfer === null) return;
+      const dropped = droppedFrom(event.dataTransfer);
+      review(dropped.files, dropped.isFolder);
     });
 
     const nodes: Node[] = [];
@@ -306,6 +330,16 @@ export async function mountPublish(body: HTMLElement): Promise<void> {
         'Stored in the clear. Relik, and anything that previews the link, can read it. Clear it to publish without one.'
       )
     );
+    if (onClose !== undefined) {
+      // The page behind may itself be a relic, so say what this is not.
+      card.appendChild(
+        el(
+          'p',
+          'pub-help',
+          'This makes a new relic. The page behind this is not changed.'
+        )
+      );
+    }
 
     const row = el('div', 'pub-row');
     const go = action(
@@ -316,9 +350,14 @@ export async function mountPublish(body: HTMLElement): Promise<void> {
     go.classList.add('primary');
     row.append(
       go,
-      action('Choose a different file', ICONS.back, () => idle())
+      onClose === undefined
+        ? action('Choose a different file', ICONS.back, () => idle())
+        : action('Cancel', ICONS.back, onClose)
     );
     card.appendChild(row);
+    // On its own page the terms sit under the drop zone, before a file is
+    // chosen. A dialog has no such moment, so they go with the review.
+    if (onClose !== undefined) card.appendChild(terms());
 
     field.addEventListener('keydown', (event) => {
       if (event.key === 'Enter') {
@@ -392,7 +431,11 @@ export async function mountPublish(body: HTMLElement): Promise<void> {
       )
     );
     card.appendChild(el('div', 'accession', result.relicId));
-    card.appendChild(action('Publish another', ICONS.upload, () => idle()));
+    card.appendChild(
+      onClose === undefined
+        ? action('Publish another', ICONS.upload, () => idle())
+        : action('Close', ICONS.back, onClose)
+    );
     show(card);
     field.select();
   };
@@ -442,5 +485,57 @@ export async function mountPublish(body: HTMLElement): Promise<void> {
     }
   };
 
-  idle();
+  return { idle, review, isBusy: () => busy };
+}
+
+export async function mountPublish(body: HTMLElement): Promise<void> {
+  await loadStylesheet();
+
+  const main = el('main', 'stage pub-stage');
+  const panel = el('div', 'pub');
+  main.appendChild(panel);
+  body.replaceChildren(buildBar(), main);
+
+  const status = el('div', 'pub-hidden');
+  status.setAttribute('role', 'status');
+  status.setAttribute('aria-live', 'polite');
+  body.appendChild(status);
+
+  createPublisher(panel, status).idle();
+}
+
+/**
+ * Opens the publisher over whatever page the visitor is on, for a file they
+ * dropped there. A modal dialog, so the page behind it cannot be clicked and
+ * focus stays inside until it is closed.
+ */
+export async function openPublishDialog(
+  files: File[],
+  isFolder: boolean
+): Promise<void> {
+  if (document.querySelector('dialog.pub-dialog') !== null) return;
+
+  const dialog = el('dialog', 'pub-dialog');
+  dialog.setAttribute('aria-label', 'Publish a file');
+  const panel = el('div', 'pub');
+  const status = el('div', 'pub-hidden');
+  status.setAttribute('role', 'status');
+  status.setAttribute('aria-live', 'polite');
+  dialog.append(panel, status);
+
+  const publisher = createPublisher(panel, status, () => dialog.close());
+  // Escape would abandon an upload half-way and leave the visitor not knowing
+  // whether anything was published, so it waits until the step has ended.
+  dialog.addEventListener('cancel', (event) => {
+    if (publisher.isBusy()) event.preventDefault();
+  });
+  dialog.addEventListener('close', () => dialog.remove());
+
+  // In the document before anything is awaited: a second drop a moment later
+  // finds it there and does nothing, rather than opening a second dialog. A
+  // closed dialog is not displayed, so nothing shows until `showModal`.
+  document.body.appendChild(dialog);
+  await loadStylesheet();
+  dialog.showModal();
+  publisher.review(files, isFolder);
 }
