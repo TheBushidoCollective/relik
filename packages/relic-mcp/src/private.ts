@@ -643,6 +643,17 @@ export async function publishPrivate(
   input: PrivatePublishInput,
   deps: PublishDeps
 ): Promise<PrivatePublishResult> {
+  const resolved = deps.files.resolve(input.path);
+  const sourceKind = await deps.files.stat(resolved);
+  if (
+    sourceKind.kind === 'directory' &&
+    !deps.files.basename(resolved).toLowerCase().endsWith('.otiod')
+  ) {
+    throw new PublishError(
+      'private_folder_unsupported',
+      'Private folder publishing is not yet available.'
+    );
+  }
   refuseRegulatedOptions(input.title, input.cover);
   const session = await deviceSession(deps);
   const capability = await privateCapability(deps);
@@ -901,6 +912,18 @@ export async function republishPrivate(
     throw new PublishError(
       'no_local_publish_state',
       `relic ${input.relic_id} was not published privately from this machine, so it cannot be republished here.`
+    );
+  }
+  const resolved = deps.files.resolve(input.path);
+  const sourceKind = await deps.files.stat(resolved);
+  if (
+    state.shape === 'folder' ||
+    (sourceKind.kind === 'directory' &&
+      !deps.files.basename(resolved).toLowerCase().endsWith('.otiod'))
+  ) {
+    throw new PublishError(
+      'private_folder_unsupported',
+      'Private folder republishing is not yet available.'
     );
   }
   if (state.service_origin !== deps.serviceOrigin) {

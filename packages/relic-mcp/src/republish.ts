@@ -35,6 +35,13 @@ import {
 } from './comments.ts';
 import { uploadCover } from './cover/upload.ts';
 import {
+  folderDefaultBytes,
+  folderReport,
+  prepareFolderPublish,
+} from './folder-publish-source.ts';
+import { encryptPreparedFolder, FolderContentError } from './folder-content.ts';
+import type { FolderReport } from './folder-source.ts';
+import {
   contentDigest,
   type PublishDeps,
   PublishError,
@@ -62,6 +69,7 @@ export interface RepublishInput {
   readonly relic_id: string;
   readonly path: string;
   readonly filename?: string | undefined;
+  readonly open_first?: string | undefined;
   /**
    * Optional plaintext title for the new version. Defaults to the new
    * version's filename. Pass "" to clear the relic's title.
@@ -100,6 +108,8 @@ export interface RepublishInput {
 }
 
 export interface RepublishResult {
+  readonly shape: 'file' | 'folder';
+  readonly folder?: FolderReport | undefined;
   readonly relic_id: string;
   /**
    * The version just published, counted from the local state file: the
@@ -238,25 +248,61 @@ export async function republish(
   // Before the comment read, which is the first thing here that touches the
   // network. An identical file is also the likeliest reason comments are
   // still open, so naming the duplicate first names the cause.
-  const source = await readSource(input.path, deps.files);
+  const resolved = deps.files.resolve(input.path);
+  const sourceStat = await deps.files.stat(resolved);
+  const isFolder =
+    sourceStat.kind === 'directory' &&
+    !deps.files.basename(resolved).toLowerCase().endsWith('.otiod');
+  const folderSource = isFolder
+    ? await prepareFolderPublish(
+        resolved,
+        deps.files,
+        input.filename,
+        input.title,
+        input.open_first
+      )
+    : undefined;
+  let source = folderSource
+    ? {
+        basename: folderSource.basename,
+        resolvedPath: folderSource.resolvedPath,
+        bytes: await folderDefaultBytes(folderSource).catch(async (error) => {
+          await folderSource.close();
+          throw error;
+        }),
+      }
+    : await readSource(input.path, deps.files);
   const filename = input.filename ?? source.basename;
-  const coverFilename =
-    modelFormatFromFilename(source.basename) === undefined
+  const coverFilename = folderSource
+    ? folderSource.folder.entries[folderSource.folder.defaultIndex]!.path.split(
+        '/'
+      ).pop()!
+    : modelFormatFromFilename(source.basename) === undefined
       ? filename
       : source.basename;
   const normalizedTitle = normalizeTitle(input.title ?? filename);
   // Same rule as a first publish: the class comes from bytes in hand, never
   // from a tool input, so the taxonomy stays machine-attested.
-  const rendererClass = deriveRendererClass(source.bytes, filename);
-  const digest = await contentDigest({
-    content: source.bytes,
-    filename,
-    title: normalizedTitle,
-  });
+  const coverClass = deriveRendererClass(source.bytes, coverFilename);
+  const rendererClass = folderSource ? ('folder' as RendererClass) : coverClass;
+  const digest =
+    folderSource?.digest ??
+    (await contentDigest({
+      content: source.bytes,
+      filename,
+      title: normalizedTitle,
+    }));
   const same =
     state.content_sha256 !== undefined && state.content_sha256 === digest;
   const requested = input.cover !== false;
   const previous = state.cover_uploaded === true;
+  if (same && folderSource) {
+    await folderSource.close();
+    throw new PublishError('duplicate_version', 'This folder is unchanged.', {
+      relic_id: input.relic_id,
+      version: state.version,
+    });
+  }
 
   let renderedOutcome: CoverOutcome | undefined;
 
@@ -296,8 +342,8 @@ export async function republish(
       const outcome = await deps.renderCover({
         bytes: source.bytes,
         filename: coverFilename,
-        mimetype: guessMimetype(filename, rendererClass),
-        rendererClass,
+        mimetype: guessMimetype(coverFilename, coverClass),
+        rendererClass: coverClass,
       });
       if (outcome.status === 'rendered') {
         renderedOutcome = outcome;
@@ -329,6 +375,12 @@ export async function republish(
       reason: 'browser_disabled',
       detail: 'declined by publisher',
     };
+  } else if (folderSource && coverClass === 'archive') {
+    coverOutcome = {
+      status: 'skipped',
+      reason: 'no_cover_for_class',
+      detail: 'default_entry_has_no_preview',
+    };
   } else if (renderedOutcome !== undefined) {
     coverOutcome = renderedOutcome;
   } else {
@@ -336,8 +388,8 @@ export async function republish(
       coverOutcome = await deps.renderCover({
         bytes: source.bytes,
         filename: coverFilename,
-        mimetype: guessMimetype(filename, rendererClass),
-        rendererClass,
+        mimetype: guessMimetype(coverFilename, coverClass),
+        rendererClass: coverClass,
       });
     } catch (error) {
       coverOutcome = {
@@ -345,6 +397,25 @@ export async function republish(
         reason: 'render_failed',
         detail: (error as Error).message,
       };
+    }
+  }
+  if (folderSource) source = { ...source, bytes: new Uint8Array() };
+  let folderContainer: Uint8Array | undefined;
+  if (folderSource) {
+    try {
+      folderContainer = await encryptPreparedFolder(
+        folderSource.folder,
+        filename,
+        decodeKey(state.key),
+        normalizedTitle,
+        digest
+      );
+    } catch (error) {
+      if (error instanceof FolderContentError)
+        throw new PublishError(error.code, error.code, error.details);
+      throw error;
+    } finally {
+      await folderSource.close();
     }
   }
 
@@ -437,7 +508,7 @@ export async function republish(
   // checks the source against the cap before any render, exactly as publish
   // does, so both refuse the same file with the same reason. A non-OTIO
   // republish makes no cap request.
-  const otio = isOtioBundleName(source.basename);
+  const otio = !folderSource && isOtioBundleName(source.basename);
   const challenge = otio
     ? await postJson(deps, `${deps.serviceOrigin}/api/challenge`, {})
     : undefined;
@@ -458,14 +529,20 @@ export async function republish(
       }
     );
   }
-  const programBuild = await buildProgramArchive({
-    archive: source.bytes,
-    sourceName: source.basename,
-    sizeLimit,
-    policy: deps.programPolicy ?? { forceEncoderAbsent: false },
-    renderer: deps.renderProgram,
-    clientName: deps.clientName,
-  });
+  const programBuild = folderSource
+    ? {
+        parts: [],
+        length: folderSource.folder.contentLength,
+        report: { status: 'not_applicable' as const, timelines: [] },
+      }
+    : await buildProgramArchive({
+        archive: source.bytes,
+        sourceName: source.basename,
+        sizeLimit,
+        policy: deps.programPolicy ?? { forceEncoderAbsent: false },
+        renderer: deps.renderProgram,
+        clientName: deps.clientName,
+      });
   if (otio && programBuild.length > sizeLimit) {
     throw new PublishError(
       'local_size_precheck_failed',
@@ -483,12 +560,14 @@ export async function republish(
   // existing share URL decrypting the new version; a fresh key here would
   // silently cut every recipient off from content they were told this link
   // carries.
-  const container = await encryptRelicParts({
-    parts: programBuild.parts,
-    filename,
-    mimetype: guessMimetype(filename, rendererClass),
-    key: decodeKey(state.key),
-  });
+  const container =
+    folderContainer ??
+    (await encryptRelicParts({
+      parts: programBuild.parts,
+      filename,
+      mimetype: guessMimetype(filename, rendererClass),
+      key: decodeKey(state.key),
+    }));
   const localVersionDigest = createHash('sha256')
     .update(container)
     .digest('hex');
@@ -557,6 +636,7 @@ export async function republish(
     await savePublishState(input.relic_id, {
       ...state,
       version,
+      shape: folderSource ? 'folder' : 'file',
       filename,
       content_sha256: digest,
       updated_at: new Date().toISOString(),
@@ -595,6 +675,7 @@ export async function republish(
         await savePublishState(input.relic_id, {
           ...state,
           version,
+          shape: folderSource ? 'folder' : 'file',
           filename,
           content_sha256: digest,
           updated_at: new Date().toISOString(),
@@ -626,6 +707,8 @@ export async function republish(
   }
 
   return {
+    shape: folderSource ? 'folder' : 'file',
+    ...(folderSource ? { folder: folderReport(folderSource) } : {}),
     relic_id: input.relic_id,
     version,
     version_digest: resolvedVersionDigest,
