@@ -120,6 +120,14 @@
   color: var(--ink-soft);
 }
 
+.pub-first-path {
+  overflow-wrap: anywhere;
+}
+
+.pub-first-path p {
+  margin: 0.5rem 0 0;
+}
+
 .pub-file-list {
   height: 14rem;
   overflow: auto;
@@ -135,6 +143,16 @@
   height: 32px;
   line-height: 32px;
   white-space: nowrap;
+}
+
+@media (max-width: 34rem) {
+  .pub-card {
+    padding: 1rem;
+  }
+
+  .pub-file-list {
+    max-height: 9rem;
+  }
 }
 
 .pub-label {

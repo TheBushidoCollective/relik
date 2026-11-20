@@ -456,13 +456,25 @@ function createPublisher(
         'pub-meta',
         `Folder: ${folder.entries.length} files, ${formatBytes(folder.totalBytes)}.`
       ),
-      el(
-        'p',
-        'pub-help',
-        `Opens first: ${folder.entries[folder.defaultIndex]!.path}`
-      ),
       el('p', 'pub-help', omissionText(folder))
     );
+    const firstPath = folder.entries[folder.defaultIndex]!.path;
+    if (firstPath.length > 90) {
+      const first = el('details', 'pub-help pub-first-path');
+      const summary = el(
+        'summary',
+        '',
+        `Opens first: ${firstPath.slice(0, 42)}…${firstPath.slice(-32)}`
+      );
+      summary.title = firstPath;
+      first.append(summary, el('p', '', firstPath));
+      card.insertBefore(first, card.children[2] ?? null);
+    } else {
+      card.insertBefore(
+        el('p', 'pub-help', `Opens first: ${firstPath}`),
+        card.children[2] ?? null
+      );
+    }
     if (folder.leftOut.length) {
       const omitted = el('details', 'pub-help');
       omitted.appendChild(el('summary', '', 'See what was left out'));
@@ -509,6 +521,7 @@ function createPublisher(
           'pub-file-row',
           `${entry.path} (${formatBytes(entry.bytes.size)})`
         );
+        row.title = entry.path;
         row.setAttribute('role', 'listitem');
         row.setAttribute('aria-setsize', String(folder.entries.length));
         row.setAttribute('aria-posinset', String(first + index + 1));
