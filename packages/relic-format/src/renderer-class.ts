@@ -23,22 +23,7 @@
 import { isOtioz, isRawOtio } from './otio-zip.ts';
 import { modelFormatFromFilename, sniffModelFormat } from './model.ts';
 
-/** The values stored against the relic ID and exposed in link-card metadata. */
-export type RendererClass =
-  | 'markdown'
-  | 'code'
-  | 'html'
-  | 'jsx'
-  | 'image'
-  | 'pdf'
-  | 'media'
-  | 'model'
-  | 'otio'
-  | 'notebook'
-  | 'archive'
-  | 'binary';
-
-export const RENDERER_CLASSES: readonly RendererClass[] = [
+export const RENDERER_CLASSES = [
   'markdown',
   'code',
   'html',
@@ -49,9 +34,12 @@ export const RENDERER_CLASSES: readonly RendererClass[] = [
   'model',
   'otio',
   'notebook',
+  'folder',
   'archive',
   'binary',
-];
+] as const;
+
+export type RendererClass = (typeof RENDERER_CLASSES)[number];
 
 /**
  * The side of the taxonomy the success metric counts as rendered.
@@ -72,6 +60,7 @@ export const RENDERABLE_CLASSES: readonly RendererClass[] = [
   'image',
   'pdf',
   'notebook',
+  'folder',
 ];
 
 /**
@@ -102,6 +91,7 @@ export const CLASS_BEHAVIOUR: Record<RendererClass, ClassBehaviour> = {
   pdf: 'renders',
   model: 'renders',
   notebook: 'renders',
+  folder: 'renders',
   media: 'plays',
   otio: 'plays',
   archive: 'downloads',
@@ -490,6 +480,7 @@ export function leastPrivileged(
     'code',
     'media',
     'otio',
+    'folder',
     'archive',
     'binary',
   ];

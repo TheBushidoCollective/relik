@@ -50,6 +50,7 @@ export const CLASS_PHRASES: Record<RendererClass, string> = {
   binary: 'A binary file.',
   otio: 'An OpenTimelineIO timeline.',
   notebook: 'A Jupyter notebook.',
+  folder: 'A folder of files.',
 };
 
 export const CLASS_TITLES: Record<RendererClass, string> = {
@@ -65,6 +66,7 @@ export const CLASS_TITLES: Record<RendererClass, string> = {
   notebook: 'A notebook relic',
   binary: 'A binary relic',
   otio: 'An OpenTimelineIO relic',
+  folder: 'A folder relic',
 };
 
 export const BEHAVIOUR_TAILS: Record<ClassBehaviour, string> = {

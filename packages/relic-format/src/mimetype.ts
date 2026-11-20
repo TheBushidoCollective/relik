@@ -62,6 +62,7 @@ const CLASS_FALLBACK: Readonly<Record<RendererClass, string>> = {
   media: 'application/octet-stream',
   model: 'application/octet-stream',
   otio: 'application/x-otioz',
+  folder: 'application/octet-stream',
   archive: 'application/octet-stream',
   binary: 'application/octet-stream',
 };

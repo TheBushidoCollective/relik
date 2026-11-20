@@ -813,8 +813,11 @@ Authorised by Jason Waldrip on 2026-10-20.
 
 **What stays true.**
 1. *Arbitrary directories remain strictly refused:* Only a directory with the `.otiod` extension conforming to the OpenTimelineIO bundle specification is accepted for automated packaging. Any other directory refuses with `source_is_directory` before any network activity or encryption.
+   **Superseded by Multi-file relics:** Arbitrary folders are accepted subject to the folder publishing rules.
 2. *General archives remain download-only:* ZIP, TAR, GZ, and arbitrary archive formats continue to take class `archive` and download to the recipient's device (`CLASS_BEHAVIOUR.archive: 'downloads'`).
+   **Superseded for ZIP input:** Publishing expands ZIP files by default; an explicit opaque publish remains an archive download.
 3. *Single-entry container invariant:* Packaging `.otiod` into `.otioz` occurs before container encryption. The ciphertext container envelope continues to hold exactly one entry (the `.otioz` bundle), maintaining container version 1 invariants without a format bump.
+   **Superseded for folders:** Multi-file relics use the folder container in `format.md` 3.20. The single-entry invariant remains true for version 1 and `.otioz` bundles, not for folder relics.
 4. *Strict local bundle containment:* Relative media references resolve strictly against the bundle root. Absolute paths, parent traversals (`..`), symlinks, device files, FIFOs, sockets, and remote network schemes (HTTP, HTTPS, FTP) are rejected.
 5. *Bundle and decompression limits:* The original 100 MiB archive and
    aggregate-expanded limits were raised to 500 MiB by the 2026-11-10
