@@ -11,7 +11,11 @@ import {
   type EncryptFolderInput,
 } from './folder-container.ts';
 import { PLAINTEXT_CAP_BYTES } from './limits.ts';
-import { decodeManifest, type FolderHeader } from './multi.ts';
+import {
+  decodeManifest,
+  encodeFolderHeader,
+  type FolderHeader,
+} from './multi.ts';
 import {
   decodeHeader,
   decryptRecord,
@@ -25,9 +29,53 @@ import {
 
 /** Encrypt a folder as records without assembling its ciphertext in memory. */
 export function encryptFolderStream(
-  input: EncryptFolderInput
+  input: EncryptFolderInput & { readonly originalManifest?: Uint8Array }
 ): ReadableStream<Uint8Array> {
-  const { headerBytes, parts } = folderPlaintext(input);
+  let headerBytes: Uint8Array;
+  let manifest: Uint8Array;
+  if (input.originalManifest !== undefined) {
+    const header: FolderHeader = {
+      version: 2,
+      name: input.name,
+      entryCount: input.entries.length,
+      manifestLength: input.originalManifest.length,
+      contentLength:
+        input.originalManifest.length +
+        input.entries.reduce(
+          (sum, entry) =>
+            sum +
+            (entry.bytes instanceof Uint8Array
+              ? entry.bytes.length
+              : entry.bytes.size),
+          0
+        ),
+    };
+    const original = decodeManifest(input.originalManifest, header);
+    if (
+      original.defaultIndex !== input.defaultIndex ||
+      original.entries.some((entry, index) => {
+        const source = input.entries[index];
+        return (
+          !source ||
+          entry.path !== source.path ||
+          entry.mimetype !== source.mimetype ||
+          entry.length !==
+            (source.bytes instanceof Uint8Array
+              ? source.bytes.length
+              : source.bytes.size)
+        );
+      })
+    )
+      throw new MalformedContainerError(
+        'original manifest does not match folder entries'
+      );
+    headerBytes = encodeFolderHeader(header);
+    manifest = input.originalManifest;
+  } else {
+    const prepared = folderPlaintext(input);
+    headerBytes = prepared.headerBytes;
+    manifest = prepared.parts[0] as Uint8Array;
+  }
   const rs = input.rs ?? RECORD_SIZE;
   const capacity = recordCapacity(rs);
   if (capacity < headerBytes.length)
@@ -35,7 +83,7 @@ export function encryptFolderStream(
   const salt = input.salt ?? crypto.getRandomValues(new Uint8Array(16));
 
   async function* plaintext(): AsyncGenerator<Uint8Array> {
-    yield parts[0] as Uint8Array;
+    yield manifest;
     for (const entry of input.entries) {
       if (entry.bytes instanceof Uint8Array) {
         yield entry.bytes;

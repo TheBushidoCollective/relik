@@ -25,7 +25,15 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { harnessEnv } from './harness-env.ts';
-import { normalizeEmail } from '@relic/format';
+import {
+  encryptFolderStream,
+  folderPlaintext,
+  generateKey,
+  normalizeEmail,
+  openAnyRelic,
+  openFolder,
+  sha256Hex,
+} from '@relic/format';
 import {
   attestationChallenge,
   decodeBase64url,
@@ -37,6 +45,9 @@ import {
   identityFingerprint,
   identityIdOf,
   kemKeyIdOf,
+  keyCommitment,
+  wrapVersionKey,
+  unwrapVersionKey,
   PRF_SALT,
   parseStatement,
   parseTypedFingerprint,
@@ -1863,4 +1874,299 @@ async function stepEleven(
   );
   assert.equal(row, undefined, 'the relic row survived the delete');
   assert.equal(stone?.kind, 'owner', 'the tombstone is not an owner tombstone');
+}
+
+/** Loopback-only private folder fixture and real browser revocation. */
+export async function runPrivateFolderRekey(
+  env: PrivateShareEnv
+): Promise<void> {
+  if (!env.store || !env.storage)
+    throw new Error('folder proof requires loopback storage');
+  const docPath = join(env.scratchDir, FILE_NAME);
+  await Bun.write(docPath, DOCUMENT_TEXT);
+  const owner = await launchActor(env, 'owner-folder', env.owner, true);
+  const revoked = await launchActor(env, 'revoked-folder', env.reader, true);
+  const survivor = await launchActor(env, 'survivor-folder', env.third, true);
+  try {
+    const first = await stepsOneToThree(env, owner, docPath);
+    const revokedIdentity = await stepsFourAndFive(
+      env,
+      owner,
+      revoked,
+      first.relicId,
+      first.relicUrl,
+      first.ownerKeys
+    );
+    await stepSeven(
+      env,
+      owner,
+      revoked,
+      first.relicId,
+      first.relicUrl,
+      revokedIdentity
+    );
+    const survivorEnv = { ...env, reader: env.third };
+    const survivorIdentity = await stepsFourAndFive(
+      survivorEnv,
+      owner,
+      survivor,
+      first.relicId,
+      first.relicUrl,
+      first.ownerKeys
+    );
+    await stepSeven(
+      survivorEnv,
+      owner,
+      survivor,
+      first.relicId,
+      first.relicUrl,
+      survivorIdentity
+    );
+
+    const key = generateKey();
+    const encoder = new TextEncoder();
+    const entries = [
+      {
+        path: 'README.md',
+        mimetype: 'text/markdown',
+        bytes: encoder.encode('# Private folder fixture'),
+      },
+      {
+        path: 'data/a.json',
+        mimetype: 'application/json',
+        bytes: encoder.encode('{"private":true}'),
+      },
+    ];
+    const input = { key, name: 'private folder', defaultIndex: 0, entries };
+    const header = folderPlaintext(input).header;
+    const container = new Uint8Array(
+      await new Response(encryptFolderStream(input)).arrayBuffer()
+    );
+    const local = await localPrivateState(env, first.relicId);
+    const grant = await api(
+      env,
+      'POST',
+      `/api/relics/${first.relicId}/republish`,
+      {
+        body: {
+          publish_token: local.publishToken,
+          renderer_class: 'folder',
+          declared_size_bytes: header.contentLength,
+          declared_ciphertext_bytes: container.length,
+          notify: false,
+        },
+      }
+    );
+    assert.equal(
+      grant.status,
+      200,
+      `folder grant: ${JSON.stringify(grant.json)}`
+    );
+    const version = numberAt(grant.json, 'version', 'folder grant');
+    const put = await fetch(
+      stringAt(grant.json, 'upload_url', 'folder grant'),
+      {
+        method: stringAt(grant.json, 'upload_method', 'folder grant'),
+        headers: asObject(
+          grant.json['upload_headers'],
+          'upload headers'
+        ) as Record<string, string>,
+        body: container as Uint8Array<ArrayBuffer>,
+      }
+    );
+    assert.equal(put.status, 200, 'folder ciphertext upload');
+    const snapshot = await api(
+      env,
+      'POST',
+      `/api/relics/${first.relicId}/recipients`,
+      { body: { publish_token: local.publishToken } }
+    );
+    assert.equal(snapshot.status, 200, 'folder recipients');
+    const devices = snapshot.json['devices'];
+    if (!Array.isArray(devices)) throw new Error('missing devices');
+    const keys = [
+      first.ownerKeys.keys.kemPublicKey,
+      await readerKeyOf(env, revoked),
+      await readerKeyOf(env, survivor),
+      ...devices.map((device) =>
+        decodeBase64url(
+          stringAt(asObject(device, 'device'), 'kem_public_key', 'device')
+        )
+      ),
+    ];
+    const wraps = [];
+    for (const publicKey of keys) {
+      const wrapped = await wrapVersionKey({
+        recipientPublicKey: publicKey,
+        relicId: first.relicId,
+        version,
+        key,
+      });
+      wraps.push({
+        recipient_key_id: wrapped.recipientKeyId,
+        version,
+        enc: wrapped.enc,
+        ct: wrapped.ct,
+      });
+    }
+    const recipientIds = [
+      ...new Set(wraps.map((wrap) => wrap.recipient_key_id)),
+    ].sort();
+    assert.deepEqual(
+      recipientIds,
+      (snapshot.json['recipient_key_ids'] as string[]).slice().sort()
+    );
+    const statement = {
+      access_epoch: numberAt(snapshot.json, 'access_epoch', 'recipients'),
+      owner_epoch: numberAt(snapshot.json, 'owner_epoch', 'recipients'),
+      at: Date.now(),
+      ciphertext_sha256: sha256Hex(container),
+      key_commitment: await keyCommitment({
+        relicId: first.relicId,
+        version,
+        key,
+      }),
+      recipient_key_ids: recipientIds,
+      relic_id: first.relicId,
+      signer_id: first.ownerKeys.identityId,
+      version,
+    };
+    const signature = await signStatement(
+      async (message) =>
+        new Uint8Array(
+          await crypto.subtle.sign(
+            { name: 'ECDSA', hash: 'SHA-256' },
+            first.ownerKeys.keys.sig.privateKey,
+            new Uint8Array(message)
+          )
+        ),
+      statementBytes('seal', parseStatement('seal', statement))
+    );
+    const complete = await api(
+      env,
+      'POST',
+      `/api/relics/${first.relicId}/complete`,
+      {
+        body: {
+          publish_token: local.publishToken,
+          seal: { statement, signature, signer_kind: 'identity' },
+          wraps,
+        },
+      }
+    );
+    assert.equal(
+      complete.status,
+      200,
+      `folder seal: ${JSON.stringify(complete.json)}`
+    );
+    for (const actor of [owner, revoked, survivor]) {
+      await goto(actor.browser, first.relicUrl);
+      await waitForState(
+        actor.browser,
+        ['unlock'],
+        `${actor.name} folder unlock`
+      );
+      await click(actor.browser, '[data-action="private-unlock"]');
+      await poll(`${actor.name} folder opened`, 25000, async () =>
+        (await actor.browser.evaluate<boolean>(
+          `document.body.innerText.includes('Private folder fixture')`
+        ))
+          ? true
+          : undefined
+      );
+    }
+    await openPanel(owner, first.relicUrl);
+    await clickPrivateControl(
+      owner.browser,
+      `button[data-action="revoke"][aria-label="Revoke ${env.reader}"]`
+    );
+    await owner.browser.waitForSelector('#revoke-dialog[open]', 25000);
+    await click(owner.browser, '[data-action="confirm-revoke"]');
+    await owner.browser.waitForSelector(
+      '#rekey[data-rekey-state="done"]',
+      90000
+    );
+    const next = await currentVersion(owner.browser, first.relicId);
+    assert.equal(next, version + 1);
+    await goto(survivor.browser, first.relicUrl);
+    await waitForState(survivor.browser, ['unlock'], 'survivor folder unlock');
+    await click(survivor.browser, '[data-action="private-unlock"]');
+    await poll('survivor opens rekeyed folder', 25000, async () =>
+      (await survivor.browser.evaluate<boolean>(
+        `document.body.innerText.includes('Private folder fixture')`
+      ))
+        ? true
+        : undefined
+    );
+    const wrapsAfter = await env.store.listWraps(first.relicId, next);
+    const ownerId = hexOf(await kemKeyIdOf(first.ownerKeys.keys.kemPublicKey));
+    const ownerWrap = wrapsAfter.find(
+      (wrap) => wrap.recipientKeyId === ownerId
+    );
+    if (!ownerWrap) throw new Error('owner wrap missing');
+    const newKey = await unwrapVersionKey({
+      recipient: {
+        publicKey: first.ownerKeys.keys.kemPublicKey,
+        dh: async (peer) => {
+          const publicKey = await crypto.subtle.importKey(
+            'raw',
+            new Uint8Array(peer),
+            { name: 'ECDH', namedCurve: 'P-256' },
+            false,
+            []
+          );
+          return new Uint8Array(
+            await crypto.subtle.deriveBits(
+              { name: 'ECDH', public: publicKey },
+              first.ownerKeys.keys.kem.privateKey,
+              256
+            )
+          );
+        },
+      },
+      relicId: first.relicId,
+      version: next,
+      enc: ownerWrap.enc,
+      ct: ownerWrap.ct,
+    });
+    const download = await env.storage.signDownload(
+      `${first.relicId}/v${next}`,
+      60,
+      Date.now()
+    );
+    const response = await fetch(download.url);
+    if (!response.ok) throw new Error('rekeyed object missing');
+    const stored = new Uint8Array(await response.arrayBuffer());
+    const folder = openFolder(
+      await openAnyRelic(stored, newKey, { admitted: [1, 2] })
+    );
+    assert.deepEqual(
+      folder.manifest.entries.map((entry) => entry.path),
+      entries.map((entry) => entry.path)
+    );
+    for (let i = 0; i < entries.length; i++)
+      assert.deepEqual(folder.entryBytes(i), entries[i]!.bytes);
+    await assert.rejects(
+      () => openAnyRelic(stored, key, { admitted: [1, 2] }),
+      { name: 'DecryptFailedError' }
+    );
+    const revokedId = hexOf(await kemKeyIdOf(await readerKeyOf(env, revoked)));
+    assert.equal(
+      wrapsAfter.some((wrap) => wrap.recipientKeyId === revokedId),
+      false
+    );
+    assert.equal(
+      await pageStatus(
+        revoked.browser,
+        'POST',
+        `/api/relics/${first.relicId}/mint`,
+        '{}'
+      ),
+      403
+    );
+    console.log('MULTI_FILE_STAGE private-rekey OK');
+  } finally {
+    for (const actor of [owner, revoked, survivor])
+      await actor.browser.close().catch(() => {});
+  }
 }
