@@ -402,7 +402,10 @@ describe('the app shell', () => {
     expect(shellText).not.toContain('Mediabunny 1.62.0 by Vanilagy');
 
     const requests = await precachedAssets();
-    expect(requests).toContain('/assets/viewer.js');
+    const build = (
+      await Bun.file(`${pkgDir}dist/shell-build.txt`).text()
+    ).trim();
+    expect(requests).toContain(`/assets/viewer.js?v=${build}`);
     expect(requests).not.toContain('/assets/otio-video-timing-worker.js');
     expect(requests).not.toContain('/assets/otio-audio-pcm-worker.js');
     expect(requests).not.toContain('/assets/otio-transport-gate-worklet.js');

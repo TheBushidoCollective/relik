@@ -118,6 +118,10 @@ jobs:
             packages/relic-viewer/test/suggest-controller-notebook.test.ts packages/relic-viewer/test/suggestion-lifecycle.test.ts \
             packages/relic-viewer/test/suggestion-surface-browser.test.ts packages/relic-viewer/test/suggestion-swap-browser.test.ts \
             packages/relic-viewer/test/suggestion-swap-thread.test.ts
+      - name: Stale service worker path
+        run: |
+          test -x "$(command -v google-chrome)"
+          env -u DISPLAY -u WAYLAND_DISPLAY RELIC_CHROME_PATH="$(command -v google-chrome)" bun test packages/relic-viewer/test/stale-worker.test.ts
       - name: Upload comment popover shots
         if: always()
         uses: actions/upload-artifact@v4
