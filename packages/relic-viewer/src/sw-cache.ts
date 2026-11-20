@@ -36,7 +36,7 @@ export function isCacheable(
 ): boolean {
   if (!sameOrigin) return false; // storage lives elsewhere; never cache it
   if (url.pathname.startsWith('/api/')) return false;
-  return shell.includes(url.pathname);
+  return shell.includes(url.pathname + url.search);
 }
 
 export interface MinimalCache {
