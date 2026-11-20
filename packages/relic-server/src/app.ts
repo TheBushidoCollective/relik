@@ -323,6 +323,16 @@ export function createApp(options: AppOptions = {}): RelicApp {
       return new Response('Not found', { status: 404 });
     }
 
+    if (head === 'publish') {
+      if (segments.length === 1 && request.method === 'GET') {
+        return shell(config, { view: 'publish' }, store, now);
+      }
+      if (segments.length === 1) {
+        return new Response('Method not allowed', { status: 405 });
+      }
+      return new Response('Not found', { status: 404 });
+    }
+
     if (head === 'abuse') {
       if (request.method === 'GET') return abuseForm(config);
       if (request.method === 'POST') return abuseSubmit(request, now);
@@ -6196,11 +6206,16 @@ function relicExpiryIso(epochMillis: number | undefined): string | null {
 const CARD_IMAGE_ALT =
   "Relic's accession label with an empty field stack: a relic's record with nothing filled in.";
 
+const PUBLISH_TITLE = 'Publish a file';
+const PUBLISH_DESCRIPTION =
+  'Encrypt a file in your browser and get a link the service cannot read.';
+
 async function shell(
   config: RelicConfig,
   target:
     | string
     | { readonly view: 'dashboard' }
+    | { readonly view: 'publish' }
     | {
         readonly view: 'document';
         readonly path: string;
@@ -6271,7 +6286,9 @@ async function shell(
         : `${serviceOrigin}/`
       : doc !== undefined
         ? `${serviceOrigin}${doc.path}`
-        : `${serviceOrigin}/dashboard`;
+        : target.view === 'publish'
+          ? `${serviceOrigin}/publish`
+          : `${serviceOrigin}/dashboard`;
   const ogImage =
     storedCover !== undefined && canonicalId !== undefined
       ? `${serviceOrigin}/${canonicalId}/cover/${storedCover.sha256}.${coverExtension(storedCover.type)}`
@@ -6280,11 +6297,17 @@ async function shell(
     storedCover !== undefined ? storedCover.type : 'image/png';
   const ogImageAlt =
     storedCover !== undefined ? COVER_ALT[storedCover.kind] : CARD_IMAGE_ALT;
+  const publishView = typeof target !== 'string' && target.view === 'publish';
   const card = storedPrivate ? PRIVATE_CARD : cardCopy(storedRendererClass);
-  const cardTitle = doc?.title ?? storedTitle ?? card.title;
-  const cardDescription = doc?.description ?? card.description;
-  const documentTitle =
-    doc !== undefined
+  const cardTitle = publishView
+    ? PUBLISH_TITLE
+    : (doc?.title ?? storedTitle ?? card.title);
+  const cardDescription = publishView
+    ? PUBLISH_DESCRIPTION
+    : (doc?.description ?? card.description);
+  const documentTitle = publishView
+    ? `${PUBLISH_TITLE} · Relic`
+    : doc !== undefined
       ? `${doc.title} · Relic`
       : storedTitle !== undefined
         ? `${storedTitle} · Relic`
@@ -6305,7 +6328,7 @@ async function shell(
         ? `data-view="document" data-document="${escapeHtml(doc.path)}" data-usercontent-origin="${escapeHtml(
             new URL(config.usercontentOrigin).origin
           )}"`
-        : `data-view="dashboard" data-usercontent-origin="${escapeHtml(
+        : `data-view="${publishView ? 'publish' : 'dashboard'}" data-usercontent-origin="${escapeHtml(
             new URL(config.usercontentOrigin).origin
           )}"`;
   const rootAttributes = storedPrivate
@@ -6376,7 +6399,9 @@ async function shell(
 ${
   doc !== undefined
     ? `<noscript><main class="stage"><div class="card"><p class="card-note">This page needs JavaScript to render. <a href="${escapeHtml(doc.path)}?raw=1">Read it as plain markdown</a>.</p></div></main></noscript>\n`
-    : ''
+    : publishView
+      ? '<noscript><main class="stage"><div class="card"><p class="card-note">Publishing needs JavaScript: your file is encrypted in this page before it leaves your device.</p></div></main></noscript>\n'
+      : ''
 }<div id="relic-root" ${rootAttributes}></div>
 <script type="module" src="/assets/viewer.js"></script>
 <script type="module" src="/assets/register-sw.js"></script>
@@ -6523,6 +6548,7 @@ export function landingPage(config: RelicConfig): Response {
   }
   .mine:hover,
   .mine:focus-visible { background: var(--ground); color: var(--patina); }
+  .mine + .mine { margin-left: 0; }
   .wrap { max-width: 72rem; margin: 0 auto; padding: 0 1.5rem; }
   .hero {
     display: grid;
@@ -6673,6 +6699,7 @@ export function landingPage(config: RelicConfig): Response {
     <a href="#recipient">What they see</a>
     <a href="#limits">What we hold</a>
   </nav>
+  <a class="mine" href="/publish">Publish a file</a>
   <a class="mine" href="/dashboard">Your relics</a>
 </header>
 <main>
@@ -6695,6 +6722,8 @@ claude plugin install relic@relic</code></pre>
       The plugin includes a skill that teaches it when sharing a file is the
       right move and what to tell you about the link. Using another client?
       <a href="#elsewhere">It installs there too</a>.</p>
+      <p class="after">No agent handy? <a href="/publish">Drop a file on the
+      publish page</a> and your browser does the encrypting.</p>
     </div>
     <figure class="tag" aria-label="The two halves of a relic link">
       <div class="tag-part">
@@ -7218,6 +7247,20 @@ context and your session transcript on every publish.** Zero-knowledge holds
 against us. It does not hold against your model provider or whoever stores
 your transcripts. This is structural, not a defect we plan to fix.
 
+## Publishing from the web page
+
+The page at \`/publish\` encrypts and uploads a file you drop on it. The key is
+drawn and the file encrypted by JavaScript in your browser, and the link it
+hands back is the only place the key exists: the page does not store it, and
+we cannot recover it. The key does not enter a model transcript on this path.
+
+What crosses to us is what the publishing tool would send: the coarse class,
+the tool's name (\`relik-web\`), the sizes, and a title, which the page fills in
+from your filename and lets you change or clear. The page publishes without a
+cover image. A relic published this way cannot be updated later, because the
+credential that allows an update is not kept in your browser; publishing again
+makes a new link.
+
 ## Republishing keeps the earlier versions
 
 **Anyone holding a relic's link can fetch every version it has ever held, so
@@ -7280,9 +7323,10 @@ What we do see: that a browser at your IP address joined a room, when it connect
 
 ## The JavaScript caveat
 
-The code that decrypts your relic in the browser is served by us, the same
-party this promise is made against, and we could serve different code
-tomorrow. This is a statement about our intent, not a property you can verify.
+The code that decrypts a relic in your browser, and the code that encrypts a
+file you publish from the web page, is served by us, the same party this
+promise is made against, and we could serve different code tomorrow. This is
+a statement about our intent, not a property you can verify.
 Anyone claiming otherwise about a service of this shape is overclaiming.
 
 ## What rendered content can do

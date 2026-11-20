@@ -11954,6 +11954,13 @@ export async function boot(
     return;
   }
 
+  if (viewMarker === 'publish') {
+    // A lazy chunk: only a visitor who came to publish loads it.
+    const { mountPublish } = await import('./publish-view.ts');
+    await mountPublish(document.body);
+    return;
+  }
+
   if (viewMarker === 'document') {
     await renderDocument(deps, root?.dataset['document'] ?? '');
     return;
