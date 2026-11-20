@@ -1,0 +1,47 @@
+name: dispatch-mcp-release
+
+on:
+  push:
+    tags:
+      - 'relic-mcp-v*'
+
+concurrency:
+  group: dispatch-mcp-release
+  cancel-in-progress: false
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Admit tagged release
+        id: admission
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="${TAG_NAME#relic-mcp-v}"
+          dry_run=false
+          if [[ "$version" == *-dryrun ]]; then
+            version="${version%-dryrun}"
+            dry_run=true
+          fi
+          export INPUT_VERSION="$version" INPUT_DRY_RUN="$dry_run"
+          node scripts/release-admission.mjs --dispatcher
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "dry_run=$dry_run" >> "$GITHUB_OUTPUT"
+
+      - name: Dispatch publish workflow on main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.admission.outputs.version }}
+          DRY_RUN: ${{ steps.admission.outputs.dry_run }}
+        run: gh workflow run publish-mcp.yml --ref main -f "version=$VERSION" -f "dry_run=$DRY_RUN"
