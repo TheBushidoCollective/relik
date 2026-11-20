@@ -21,6 +21,7 @@ import { inflateSync } from 'node:zlib';
 import {
   COMMENT_ADDRESSES_LIMIT_BYTES,
   encryptedSize,
+  HOMEPAGE_FORMATS,
   InvalidRelicIdError,
   isHostedService,
   isRendererClass,
@@ -6779,12 +6780,10 @@ claude plugin install relic@relic</code></pre>
       </div>
       <div class="notes">
         <dl class="types">
-          <div><dt>Markdown, code, text, images</dt><dd>Rendered inline.</dd></div>
-          <div><dt>PDF</dt><dd>An in-browser document viewer.</dd></div>
-          <div><dt>Audio, video</dt><dd>An in-browser player.</dd></div>
-          <div><dt>OpenTimelineIO</dt><dd>A timeline player with tracks, trims and dissolves.</dd></div>
-          <div><dt>HTML, JSX</dt><dd>A sandboxed frame on a separate origin, which blocks its web requests. Inline what the page needs.</dd></div>
-          <div><dt>Anything else</dt><dd>A download.</dd></div>
+          ${HOMEPAGE_FORMATS.map(
+            ({ label, description }) =>
+              `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(description)}</dd></div>`
+          ).join('\n          ')}
         </dl>
         <div>
           <h3>They can answer, and you can update</h3>
@@ -7249,10 +7248,13 @@ your transcripts. This is structural, not a defect we plan to fix.
 
 ## Publishing from the web page
 
-The page at \`/publish\` encrypts and uploads a file you drop on it. The key is
-drawn and the file encrypted by JavaScript in your browser, and the link it
-hands back is the only place the key exists: the page does not store it, and
-we cannot recover it. The key does not enter a model transcript on this path.
+The page at \`/publish\` encrypts and uploads a file you drop on it, and so does
+any relic, dashboard or policy page: a file dropped there opens the same
+publisher in a dialog and starts a new relic, and nothing is sent until you
+confirm it. The key is drawn and the file encrypted by JavaScript in your
+browser, and the link it hands back is the only place the key exists: the page
+does not store it, and we cannot recover it. The key does not enter a model
+transcript on this path.
 
 What crosses to us is what the publishing tool would send: the coarse class,
 the tool's name (\`relik-web\`), the sizes, and a title, which the page fills in

@@ -157,6 +157,7 @@ import { type ConfirmPrefs, createConfirmPrefs } from './confirm-prefs.ts';
 import { deleteRememberedStrip, rememberControl } from './confirmation-ui.ts';
 import { installSkippedConfirmations } from './skipped-confirmations.ts';
 import { describeLinkRequest, LinkConfirmGate } from './open-link-confirm.ts';
+import { armFileDrop } from './drop-anywhere.ts';
 import {
   type AddressedBy,
   addressedBadgeLabel,
@@ -12064,4 +12065,15 @@ if (typeof document !== 'undefined') {
   // graph failed to fetch never reaches this line.
   document.documentElement.dataset['viewerBooted'] = '1';
   void boot();
+  // Any page that runs this bundle takes a dropped file as a new relic. The
+  // publish page is left out because its own drop zone is the target there.
+  if (document.getElementById('relic-root')?.dataset['view'] !== 'publish') {
+    armFileDrop((dropped) => {
+      // The publisher is a lazy chunk, so a reader who never drops a file
+      // never downloads it.
+      void import('./publish-view.ts').then((view) =>
+        view.openPublishDialog(dropped.files, dropped.isFolder)
+      );
+    });
+  }
 }

@@ -25,7 +25,7 @@ is overclaiming.
 
 For a public relic, the publish tool returns the full URL including the fragment, because handing you a usable link is the product. **The key therefore enters your model's context and your session transcript on every public publish.** Zero-knowledge holds against the Relic operator. It does not hold against your model provider or whoever stores your transcripts, and that is structural rather than a defect on a schedule. A private relic's publish output carries no key. Its device keys stay on this machine, in the Secure Enclave where it is available and in an owner-only file otherwise.
 
-`/publish` is the other door for a public relic. Drop a file and the page encrypts it in the browser and uploads the ciphertext. The key appears only in the link the page returns, and no model is in that path, so the transcript caveat above does not apply to it. The title crosses in the clear, as it does from the MCP client, and the page lets you change or clear it before anything is sent. A relic published there has no cover image and cannot be republished, because the page keeps no publish token.
+`/publish` is the other door for a public relic. Drop a file there, or on any relic or dashboard page, and the page encrypts it in the browser and uploads the ciphertext. The key appears only in the link the page returns, and no model is in that path, so the transcript caveat above does not apply to it. The title crosses in the clear, as it does from the MCP client, and the page lets you change or clear it before anything is sent. A relic published there has no cover image and cannot be republished, because the page keeps no publish token.
 
 The browser holds decrypted content in a browser-managed Blob. The browser
 may keep that plaintext in memory or temporary disk, and the operating system
@@ -50,10 +50,12 @@ about network reach, not safety: the code runs in your browser, can use your
 CPU, and can render whatever it wants. The viewer says so on the page before the
 content renders, and so does `/policy`.
 
-The viewer renders Markdown, code, HTML, JSX, still images, PDFs, and 3D
-geometry from STL and OBJ files. It also plays audio, video, and
-OpenTimelineIO timelines (`.otiod` directories packaged as `.otioz`, or
-`.otioz` archives). OBJ materials and external resources are not loaded.
+The viewer renders Markdown, code, text, images including SVG, PDFs, and 3D
+geometry from STL and OBJ files. CSV and TSV open as sortable tables, JSON as
+a collapsible tree, SRT and VTT as cue lists, and Jupyter notebooks with their
+outputs. It also plays audio, video, and OpenTimelineIO timelines (`.otiod`
+directories packaged as `.otioz`, or `.otioz` archives). HTML and JSX render
+in a sandboxed frame. OBJ materials and external resources are not loaded.
 General archives and other binaries remain download-only. Unencrypted
 first-screen previews are skipped for models and OpenTimelineIO timelines.
 

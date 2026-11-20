@@ -300,6 +300,7 @@ A file whose name and contents disagree downloads through the container branch a
 - **Why items 1 and 2 share a PR:** ipynb needs item 1's JSON tokenizer and the `path` kind, and SRT/VTT is the same kind of code view. Splitting them would create a PR whose only job is to wait.
 - **Order:** A goes first. B starts at the same time on its own branch; B1's view part merges after A. C starts after A merges, alongside B.
 - Each slice is one or more commits on its PR's branch.
+- **Homepage:** Every future format slice, including B1 XLSX, B2 DOCX, B3 EPUB, and later formats, adds its homepage registry row in the same PR. The registry guard test enforces coverage.
 
 | Slice | Owns | Depends on | Acceptance you can observe | Independent security review |
 |---|---|---|---|---|

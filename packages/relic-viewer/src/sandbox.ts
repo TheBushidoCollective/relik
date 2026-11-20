@@ -63,6 +63,7 @@ import {
   takeHeadUtf8,
   takeTailUtf8,
 } from './annotate-frame.ts';
+import { announceUnclaimedFileDrags } from './frame-file-drag.ts';
 import { isSetScrollMessage } from './frame-scroll.ts';
 import { scrubFrameHtml } from './frame-html-scrub.ts';
 import { reemitAuthorScripts } from './frame-scripts.ts';
@@ -3146,6 +3147,10 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       const markup = reemitAuthorScripts(sanitizeFrameHtml(html));
       document.open();
       installSandboxContainment(window, document);
+      // `document.open()` erased every listener on the window, this one
+      // included. It goes back before the author's markup is written, so it is
+      // still first on the window when the relic's own scripts run.
+      announceUnclaimedFileDrags(window);
       // Install the capture listener before authored inline scripts execute
       // during document.write. A script-triggered anchor click must never win
       // the race and replace the rendered relic before interaction is wired.
@@ -3200,6 +3205,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     window.addEventListener('message', onMessage);
   }
   listen();
+  // Registered before the relic's own script exists, so the shim is first on
+  // the window and the relic's listeners run after it.
+  announceUnclaimedFileDrags(window);
 
   window.parent.postMessage({ type: 'relic:sandbox-ready' }, '*');
 }

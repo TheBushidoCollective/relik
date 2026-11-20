@@ -933,6 +933,14 @@ The pin is set at first open and never changes. A pin mismatch is a hard refusal
 - **The terms sit under the drop zone and the policy is one click from it,** so what a publisher agrees to is readable before anything is dropped.
 - **The publishing client is reported as `relik-web`,** so the metric's client breakdown can tell this door from `relic-mcp`.
 
+**A file dropped anywhere else on this origin starts the same publish.** Every page that runs the viewer bundle listens at the window for a drag that carries files (`drop-anywhere.ts`, which is eager and small), and a drop opens the publisher over the page in a modal `dialog` (`openPublishDialog`, in the same lazy chunk). The page behind is left as it was, and nothing is sent until the visitor confirms the review step. The pages without the bundle's script take no drop: the landing page, because it carries none (§6.7), and the abuse form.
+
+- **Only a drag that carries files is touched.** A text selection, a link or the divider has no `Files` type. A file dropped where no curtain appeared is still cancelled at the window, because a browser answers a dropped file by navigating the tab to it and discarding what the reader had open.
+- **A drag over the render frame is asked about, not assumed.** The frame is a separate document, so a drag over it is delivered to the frame and the page never sees it. The shim reports a file drag the relic did not claim (`frame-file-drag.ts`: a trusted `dragover` left uncancelled once the relic's own listeners have run) and the page raises a curtain over the frame, which the drag then lands on. A relic that cancels `dragover` takes file drops itself and keeps them. `document.open()` erases the window's listeners, so the shim registers again after it and before the author's markup is written.
+- **The frame's report is the same low-trust message as every other.** The page accepts it only from its own frame, and ignores further reports for ten seconds after one that raised a curtain no drag ever reached, so a relic cannot hold a curtain over the viewer. A forged report gets a relic nothing beyond that curtain.
+- **One dialog at a time.** The dialog is in the document before anything is awaited, so two drops in quick succession cannot open two.
+- **The publish page itself does not arm it,** since its own drop zone is the target there.
+
 ## 7. Routed to `shape`
 
 Five items, and only these five.
