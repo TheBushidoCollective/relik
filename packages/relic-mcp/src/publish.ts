@@ -48,6 +48,7 @@ import {
 } from './folder-publish-source.ts';
 import { encryptPreparedFolder, FolderContentError } from './folder-content.ts';
 import type { FolderReport } from './folder-source.ts';
+import { prepareZipPublish } from './zip-source.ts';
 import type { ProgramPolicy } from './program/policy.ts';
 import type { ProgramRenderer } from './program/render.ts';
 import type { ProgramReport } from './program/report.ts';
@@ -82,6 +83,14 @@ export type ClientCode =
   | 'source_not_regular_file'
   | 'folder_empty'
   | 'all-excluded'
+  | 'zip_encrypted'
+  | 'zip_unsupported'
+  | 'zip_duplicate'
+  | 'zip_unsafe_name'
+  | 'zip_name_not_utf8'
+  | 'zip_too_many_entries'
+  | 'zip_expands_too_large'
+  | 'zip_corrupt'
   | 'path_collision'
   | 'too_many_files'
   | 'gitignore_unavailable'
@@ -240,6 +249,7 @@ export interface FileReader {
 export interface PublishInput {
   readonly path: string;
   readonly filename?: string | undefined;
+  readonly expand?: boolean | undefined;
   readonly open_first?: string | undefined;
   /**
    * Optional plaintext title shown in link previews and the browser tab.
@@ -449,7 +459,17 @@ export async function publish(
         input.title,
         input.open_first
       )
-    : undefined;
+    : sourceStat.kind === 'file' &&
+        deps.files.basename(resolved).toLowerCase().endsWith('.zip') &&
+        input.expand !== false
+      ? await prepareZipPublish(
+          resolved,
+          deps.files,
+          input.filename,
+          input.title,
+          input.open_first
+        )
+      : undefined;
   let source: SourceFile = folderSource
     ? {
         basename: folderSource.basename,

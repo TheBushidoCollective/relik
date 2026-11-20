@@ -41,6 +41,7 @@ import {
 } from './folder-publish-source.ts';
 import { encryptPreparedFolder, FolderContentError } from './folder-content.ts';
 import type { FolderReport } from './folder-source.ts';
+import { prepareZipPublish } from './zip-source.ts';
 import {
   contentDigest,
   type PublishDeps,
@@ -69,6 +70,7 @@ export interface RepublishInput {
   readonly relic_id: string;
   readonly path: string;
   readonly filename?: string | undefined;
+  readonly expand?: boolean | undefined;
   readonly open_first?: string | undefined;
   /**
    * Optional plaintext title for the new version. Defaults to the new
@@ -261,7 +263,17 @@ export async function republish(
         input.title,
         input.open_first
       )
-    : undefined;
+    : sourceStat.kind === 'file' &&
+        deps.files.basename(resolved).toLowerCase().endsWith('.zip') &&
+        (input.expand ?? state.shape === 'folder')
+      ? await prepareZipPublish(
+          resolved,
+          deps.files,
+          input.filename,
+          input.title,
+          input.open_first
+        )
+      : undefined;
   let source = folderSource
     ? {
         basename: folderSource.basename,

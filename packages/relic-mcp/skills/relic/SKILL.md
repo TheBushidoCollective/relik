@@ -43,6 +43,10 @@ The `folder` result reports `source`, `file_count`, `files_total_bytes`,
 `file_list_bytes`, `default_entry`, a `sample` of up to 20 included paths, and
 `left_out` with `count`, `by_reason` and a sample of up to 50 omitted paths.
 
+Public `.zip` files expand into a folder relic by default. Pass `expand: false`
+to publish the original ZIP as one archive. ZIP `.gitignore` files do not filter
+its contents. Republish preserves the existing shape unless `expand` is set.
+
 When the task is to update the same source, call `relic_lookup_source` first:
 
 ```

@@ -61,6 +61,10 @@ A private entry (`private_relics`, described in the private block at the end of 
 
 **A public directory becomes a folder relic.** Git ignore rules apply, including tracked-file behavior and global exclusions. The publisher skips `.git`, `node_modules`, symlinks, non-regular files, operating-system metadata and names that cannot be represented, and reports the omission counts. The folder's files and manifest must fit within 500 MiB and the folder may contain at most 5,000 files. `open_first` selects an included entry; otherwise the publisher chooses the default entry. A local process with write access to the folder can make a publish fail, but cannot make it include files outside the held root; strict race-free enumeration would need a native directory API and is later hardening.
 
+Public `.zip` inputs expand into folder relics by default. Pass `expand: false` to publish the ZIP as one archive file. Republish keeps the recorded shape unless `expand` is supplied. ZIP `.gitignore` files are included as ordinary files and do not filter entries. Empty and `.` path segments are normalized away before validation; traversal, absolute paths, backslashes and collisions are refused.
+
+A ZIP is checked and then read like any other single file, so a local process that swaps it between those operations could cause a different file to be read. Entries are held in memory and never extracted to disk.
+
 The existing uploader accepts one ciphertext buffer, so the encrypted output is collected in memory while plaintext entries are read one file at a time. A streaming uploader or encrypted temporary-file spool is a later improvement.
 
 **The OpenTimelineIO directory exception:** A standard `.otiod` directory is packaged into a standard `.otioz` archive and published as `otio`, with the original directory retained as its source identity. Only referenced media is packaged; unsafe paths and symlinks are rejected.
@@ -322,6 +326,7 @@ Every code names its leg in its prefix. `source_*` is the local read path with n
 | `path_collision`, `too_many_files`, `gitignore_unavailable` | Folder names collide, exceed the file limit, or Git could not apply ignore rules | rule or limit details |
 | `file_changed_during_publish`, `path_escapes_root` | A file changed or could not be opened beneath the held root | `path` |
 | `folder_publish_unsupported_platform`, `private_folder_unsupported` | The native opener is unavailable, or a private folder was requested | native code when available |
+| `zip_encrypted`, `zip_unsupported`, `zip_duplicate`, `zip_unsafe_name`, `zip_name_not_utf8`, `zip_too_many_entries`, `zip_expands_too_large`, `zip_corrupt` | The ZIP cannot safely be expanded | `reason` when supplied by the ZIP index |
 | `source_not_regular_file` | FIFO, socket, or device node (1.2) | `path` |
 | `source_already_published` | Source identity maps to a local relic and `force_new` is false | `relic_id`, `version`, `source_identity`, `source_description`, `cost`, `republish_call` |
 | `source_changed_during_read` | Size or mtime moved between the stat and the end of the read | `path`, `declared_size_bytes` |

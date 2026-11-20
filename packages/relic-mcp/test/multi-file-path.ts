@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import './multi-file-stages/folder-publish.ts';
+import './multi-file-stages/zip-publish.ts';
 import {
   decryptRecord,
   deriveKeys,
