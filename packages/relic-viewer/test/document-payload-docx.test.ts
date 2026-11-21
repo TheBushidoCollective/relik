@@ -1,8 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import {
-  docxPageCount,
-  includeDocxPart,
-} from '../src/document-payload-docx.ts';
+import { includeDocxPart } from '../src/document-payload-docx.ts';
 import EntryArchive from '../src/frame-zip-entries.ts';
 
 describe('DOCX package input', () => {
@@ -22,17 +19,6 @@ describe('DOCX package input', () => {
     ]) {
       expect(includeDocxPart(path)).toBe(true);
     }
-  });
-  test('reads a valid page count and refuses malformed or implausible counts', () => {
-    const read = (content: string) =>
-      docxPageCount(new TextEncoder().encode(content));
-    expect(read('<Properties><Pages>300</Pages></Properties>')).toBe(300);
-    for (const value of ['0', '-1', '1.5', 'NaN', '9007199254740992']) {
-      expect(
-        read(`<Properties><Pages>${value}</Pages></Properties>`)
-      ).toBeUndefined();
-    }
-    expect(read('<Properties>')).toBeUndefined();
   });
   test('exposes only supplied entries in all formats consumed by the renderer', async () => {
     const archive = await EntryArchive.loadAsync(

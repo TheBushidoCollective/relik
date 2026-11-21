@@ -43,6 +43,9 @@ describe('DOCX image source guard', () => {
       value: TestSvgImage,
     });
     const svgAttribute = TestSvgImage.prototype.setAttribute;
+    const control = new TestImage();
+    control.src = 'https://example.invalid/image.png';
+    expect(control.attributes.has('src')).toBe(true);
     const priorSrc = Object.getOwnPropertyDescriptor(
       TestImage.prototype,
       'src'
