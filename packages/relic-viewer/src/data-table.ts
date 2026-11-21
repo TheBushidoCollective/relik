@@ -979,12 +979,14 @@ export function mountDataTable(
     update(false);
   };
 
-  const runFind = (query: string): void => {
+  const runFind = (
+    query: string,
+    searchNavigation = navigationGeneration
+  ): void => {
     const generation = ++findGeneration;
     window.clearTimeout(findTimer);
     const needle = query.trim().toLowerCase();
     const searchModel = model;
-    const searchNavigation = navigationGeneration;
     const finish = (hits: CellRef[]): void => {
       if (disposed || generation !== findGeneration || searchModel !== model)
         return;
@@ -1222,7 +1224,11 @@ export function mountDataTable(
     findCurrent = -1;
     findCount.textContent = '';
     update(false);
-    findTimer = window.setTimeout(() => runFind(find.value), FIND_DELAY_MS);
+    const searchNavigation = navigationGeneration;
+    findTimer = window.setTimeout(
+      () => runFind(find.value, searchNavigation),
+      FIND_DELAY_MS
+    );
   });
   find.addEventListener('keydown', (event) => {
     if (event.key === 'Enter') {

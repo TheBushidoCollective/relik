@@ -451,6 +451,25 @@ async function browserCases(
           'A10',
           'comment remains selected'
         );
+        find.value = 'next';
+        find.dispatchEvent(new Event('input', { bubbles: true }));
+        part.reveal({ kind: 'cell', sheet: 'Sheet', row: 20, col: 1 });
+        const nextDeadline = Date.now() + 5000;
+        while (
+          root.querySelector('.dt-find-count')?.textContent !== '1 match' &&
+          Date.now() < nextDeadline
+        )
+          await new Promise<void>((resolve) => setTimeout(resolve, 10));
+        eq(
+          root.querySelector('.dt-find-count')?.textContent,
+          '1 match',
+          'debounced search results retained'
+        );
+        eq(
+          root.querySelector('.dt-addr')?.textContent,
+          'A20',
+          'reveal during debounce remains selected'
+        );
       } finally {
         part.dispose();
         root.remove();
