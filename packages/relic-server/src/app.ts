@@ -113,6 +113,7 @@ import {
   requireRead,
 } from './private/access.ts';
 import {
+  checkOwnerPublish,
   checkPrivatePublish,
   refusePrivatePolicy,
   refusePrivateTtl,
@@ -745,6 +746,19 @@ export function createApp(options: AppOptions = {}): RelicApp {
     return parsed as Record<string, unknown>;
   }
 
+  function requireOwnerOrigin(request: Request): void {
+    if (
+      request.headers.get('origin') !== new URL(config.serviceOrigin).origin ||
+      !/^application\/json(?:\s*;|$)/i.test(
+        request.headers.get('content-type') ?? ''
+      )
+    ) {
+      throw new ProblemError('invalid_statement', {
+        statement_check: 'origin',
+      });
+    }
+  }
+
   /** Turns a private-share refusal into its problem response. */
   async function guarded(run: () => Promise<Response>): Promise<Response> {
     try {
@@ -786,9 +800,24 @@ export function createApp(options: AppOptions = {}): RelicApp {
       return guarded(async () => {
         const session = await sessionOf(request, now);
         if (session === undefined) return refuse('sign_in_required');
-        const body = await privateBody(request, 'invalid_statement');
+        const type = request.headers.get('content-type') ?? '';
+        if (!/^application\/json(?:\s*;|$)/i.test(type)) {
+          throw new ProblemError('invalid_statement');
+        }
+        const parsed = await readBoundedJson(request, 'invalid_statement');
+        if (
+          typeof parsed !== 'object' ||
+          parsed === null ||
+          Array.isArray(parsed)
+        ) {
+          throw new ProblemError('invalid_statement');
+        }
+        const body = parsed as Record<string, unknown>;
         const purpose = body['purpose'];
-        if (typeof purpose !== 'string' || !(purpose in PURPOSE_KINDS)) {
+        if (
+          typeof purpose !== 'string' ||
+          !Object.hasOwn(PURPOSE_KINDS, purpose)
+        ) {
           throw new ProblemError('invalid_statement', {
             statement_check: 'purpose',
           });
@@ -797,9 +826,24 @@ export function createApp(options: AppOptions = {}): RelicApp {
         const email = normalizeEmail(session.email);
         const relicId =
           typeof body['relic_id'] === 'string' ? body['relic_id'] : undefined;
+        let allowedCredentialIds: readonly string[] | undefined;
         if (purpose !== 'identity_register') {
           const identity = await currentIdentity(env, email);
           if (identity === undefined) return refuse('identity_required');
+          if (purpose === 'owner_publish') {
+            requireOwnerOrigin(request);
+            try {
+              if (relicId === undefined || parseRelicId(relicId) !== relicId)
+                throw new Error();
+            } catch {
+              throw new ProblemError('invalid_statement', {
+                statement_check: 'relic',
+              });
+            }
+            allowedCredentialIds = identity.credentials.map(
+              (binding) => binding.credentialId
+            );
+          }
           if (OWNER_PURPOSES.has(purpose)) {
             if (relicId === undefined) {
               throw new ProblemError('invalid_statement', {
@@ -820,6 +864,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
             purpose: purpose as AttestPurpose,
             passkeys: await store.getPasskeys(email),
             relicId,
+            allowedCredentialIds,
             credentialId:
               typeof body['credential_id'] === 'string'
                 ? body['credential_id']
@@ -1240,6 +1285,12 @@ export function createApp(options: AppOptions = {}): RelicApp {
           version
         );
       }
+      if (version > (row.sealedVersion ?? 0)) {
+        return refuse('relic_not_yet_published', {
+          relic_id: relicId,
+          retry_after_seconds: 5,
+        });
+      }
       const object = await storage.stat(objectKey(relicId, version));
       if (object === undefined) {
         return refuse('relic_not_yet_published', {
@@ -1374,6 +1425,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
       report_url: `${config.serviceOrigin}/abuse`,
       challenge_expires_at: iso(now + config.challengeTtlSeconds * 1000),
       private_shares: {
+        browser_owner_publish: true,
         default_ttl_days: config.privateDefaultTtlDays,
         max_ttl_days: config.privateMaxTtlDays,
       },
@@ -1400,7 +1452,15 @@ export function createApp(options: AppOptions = {}): RelicApp {
       });
     }
 
-    const body = (await readJson(request)) as Record<string, unknown>;
+    const parsed = await readBoundedJson(request, 'invalid_publish_metadata');
+    if (
+      typeof parsed !== 'object' ||
+      parsed === null ||
+      Array.isArray(parsed)
+    ) {
+      return refuse('invalid_publish_metadata');
+    }
+    const body = parsed as Record<string, unknown>;
 
     const nonce = body['challenge_nonce'];
     if (typeof nonce !== 'string') {
@@ -1408,7 +1468,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
     }
     const live = await store.consumeChallenge(
       nonce,
-      now,
+      clock(),
       config.challengeTtlSeconds
     );
     if (!live) return refuse('invalid_challenge_nonce');
@@ -1440,6 +1500,10 @@ export function createApp(options: AppOptions = {}): RelicApp {
       return refuse('invalid_publish_metadata', { relic_id: relicId });
     }
     const isPrivate = access === 'private';
+    const isOwnerPublish = Object.hasOwn(body, 'owner_attestation');
+    if (isOwnerPublish && (!isPrivate || body['relic_id'] !== relicId)) {
+      return refuse('invalid_publish_metadata', { relic_id: relicId });
+    }
     let privateOwner: IdentityRecord | undefined;
     if (isPrivate) refusePrivatePolicy(body);
 
@@ -1585,9 +1649,22 @@ export function createApp(options: AppOptions = {}): RelicApp {
     // the only way to ever republish this id. It is minted here, returned
     // exactly once below, and stored only as a hash, so the store's JSON
     // documents can never leak a replayable bearer token.
-    // A private relic takes its lifetime and owner from the signing device.
-    if (isPrivate) {
-      const verdict = await checkPrivatePublish(privateEnv(now), {
+    if (isPrivate && isOwnerPublish) {
+      requireOwnerOrigin(request);
+      const currentTime = clock();
+      const session = await sessionOf(request, currentTime);
+      if (session === undefined) return refuse('sign_in_required');
+      const verdict = await checkOwnerPublish(privateEnv(currentTime), {
+        body,
+        relicId,
+        declaredSizeBytes: declared,
+        email: session.email,
+        passkeys: await store.getPasskeys(normalizeEmail(session.email)),
+      });
+      privateOwner = verdict.owner;
+      expiresAt = verdict.expiresAt;
+    } else if (isPrivate) {
+      const verdict = await checkPrivatePublish(privateEnv(clock()), {
         body,
         relicId,
         declaredSizeBytes: declared,
@@ -1597,7 +1674,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
     }
     const publishToken = mintPublishToken();
 
-    await store.putRelic({
+    const created = await store.createRelic({
       id: relicId,
       publishIp: ip,
       grantedAt: now,
@@ -1620,6 +1697,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
         : {}),
       decisionsOpen,
     });
+    if (!created) return refuse('relic_id_collision', { relic_id: relicId });
     if (privateOwner !== undefined) {
       await store.putOwnedRelic({
         relicId,
@@ -1633,14 +1711,13 @@ export function createApp(options: AppOptions = {}): RelicApp {
       objectKey(relicId, 1),
       declaredCiphertext,
       config.uploadUrlValiditySeconds,
-      now
+      now,
+      isOwnerPublish ? expiresAt : undefined
     );
 
     return Response.json({
       relic_id: relicId,
-      // The only time the token ever appears. A client that loses it can
-      // never republish; the server cannot recover it by construction.
-      publish_token: publishToken,
+      ...(!isOwnerPublish ? { publish_token: publishToken } : {}),
       upload_url: upload.url,
       upload_method: upload.method,
       upload_headers: upload.headers,
@@ -6933,7 +7010,7 @@ npx -y relic-mcp@latest install --client cursor${hosted ? '' : ` --origin ${orig
         // The ciphertext goes straight to storage, which is another https
         // origin, so the dialog's upload needs https as well as this origin.
         "connect-src 'self' https:",
-        "img-src 'self'",
+        "img-src 'self' blob:",
         // The page links the manifest so a browser can offer to install it,
         // and a manifest fetch falls back to default-src when manifest-src is
         // absent, which silently refused it on the shell for weeks.
@@ -7277,20 +7354,24 @@ Every page has an Upload button at the top right, and the page at \`/publish\`
 encrypts and uploads a file you drop on it. So does any other page of this
 site, the homepage included: a file dropped there, or chosen with Upload, opens
 the same publisher in a dialog and starts a new relic, and nothing is sent
-until you confirm it. The key is drawn and the file encrypted by JavaScript in
-your browser, and the link it hands back is the only place the key exists: the
-page does not store it, and we cannot recover it. The key does not enter a
-model transcript on this path.
+until you confirm it. The file is encrypted by JavaScript in your browser.
+For public relics, the link holds the key; we cannot recover it. A private
+relic's link has no key, and access requires an authorized passkey. No model
+receives the key through this publishing path.
 
 The homepage runs one small script of ours for this. It reads no key and no
 relic, and the publisher it opens is the same code the other pages use.
 
-What crosses to us is what the publishing tool would send: the coarse class,
-the tool's name (\`relik-web\`), the sizes, and a title, which the page fills in
-from your filename and lets you change or clear. The page publishes without a
-cover image. A relic published this way cannot be updated later, because the
-credential that allows an update is not kept in your browser; publishing again
-makes a new link.
+For public relics, we receive the coarse class, the tool's name
+(\`relik-web\`), sizes, and an optional title, which defaults to the filename
+and can be changed or cleared. If you choose a public preview image, the
+image shown before publishing is uploaded unencrypted and can be seen without
+the key. Public relics published here cannot be updated at the same link,
+because the browser does not keep the publish token.
+
+Private publishing requires sign-in and a passkey-bound identity. The service
+stores identity and access metadata and encrypted key wraps, but no plaintext
+title or cover. A private relic always expires.
 
 ## Republishing keeps the earlier versions
 

@@ -591,6 +591,8 @@ export interface DedupEntry {
 export interface RelicStore {
   getRelic(id: string): Promise<RelicRow | undefined>;
   putRelic(row: RelicRow): Promise<void>;
+  /** Atomically reserve a relic ID without replacing an existing row. */
+  createRelic(row: RelicRow): Promise<boolean>;
   markPublished(
     id: string,
     at: number,
@@ -1069,6 +1071,12 @@ export class MemoryStore implements RelicStore {
 
   async putRelic(row: RelicRow): Promise<void> {
     this.relics.set(row.id, row);
+  }
+
+  async createRelic(row: RelicRow): Promise<boolean> {
+    if (this.relics.has(row.id) || this.tombstones.has(row.id)) return false;
+    this.relics.set(row.id, row);
+    return true;
   }
 
   async markPublished(

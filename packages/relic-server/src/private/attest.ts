@@ -44,6 +44,7 @@ export const PURPOSE_KINDS: Readonly<
   device_approve: ['device_cert'],
   device_revoke: ['device_revocation'],
   recovery_designate: ['recovery_designation'],
+  owner_publish: ['owner_publish'],
 };
 
 /** A statement as it was verified: its kind, its parsed fields and its signature. */
@@ -87,6 +88,7 @@ export async function issueAttestNonce(
     readonly passkeys: PasskeyRecord | undefined;
     readonly relicId?: string | undefined;
     readonly credentialId?: string | undefined;
+    readonly allowedCredentialIds?: readonly string[] | undefined;
   }
 ): Promise<{
   nonce: string;
@@ -119,6 +121,13 @@ export async function issueAttestNonce(
         passkey_check: 'credential',
       });
     }
+  }
+  if (input.purpose === 'owner_publish') {
+    const bound = new Set(input.allowedCredentialIds ?? []);
+    allowed = allowed.filter((credential) =>
+      bound.has(credential.credentialId)
+    );
+    if (allowed.length === 0) throw new ProblemError('passkey_required');
   }
 
   const nonce = encodeBase64url(randomBytes(NONCE_BYTES));

@@ -56,6 +56,7 @@ describe('the challenge advertises the private-share lifetime bounds', () => {
     const response = await app.fetch(req('/api/challenge', { method: 'POST' }));
     expect(response.status).toBe(200);
     expect((await body(response))['private_shares']).toEqual({
+      browser_owner_publish: true,
       default_ttl_days: 30,
       max_ttl_days: 365,
     });

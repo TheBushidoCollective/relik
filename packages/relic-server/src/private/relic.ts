@@ -119,15 +119,21 @@ async function uploadFor(
   env: PrivateEnv,
   relicId: string,
   version: number,
-  declaredPlaintextBytes: number
+  declaredPlaintextBytes: number,
+  expiresAt: number | undefined
 ) {
   const signed = await env.storage.signUpload(
     env.objectKey(relicId, version),
     encryptedSize(declaredPlaintextBytes),
     env.config.uploadUrlValiditySeconds,
-    env.now
+    env.now,
+    expiresAt
   );
   return {
+    relic_id: relicId,
+    version,
+    access: 'private' as const,
+    relic_expires_at: expiresAt === undefined ? null : iso(expiresAt),
     upload_url: signed.url,
     upload_method: signed.method,
     upload_headers: signed.headers,
@@ -624,10 +630,16 @@ export async function revokeAccess(
     version: row.version,
     subjectIdentityId: grantee.identityId,
   });
-  const upload = await uploadFor(env, row.id, newVersion, declared);
+  const upload = await uploadFor(
+    env,
+    row.id,
+    newVersion,
+    declared,
+    row.expiresAt
+  );
   return {
     revoked_identity_id: grantee.identityId,
-    republish: { version: newVersion, ...upload },
+    republish: upload,
     access_epoch: updated?.accessEpoch ?? 0,
     owner_epoch: owner.recipientsEpoch,
   };
@@ -644,11 +656,18 @@ export async function reissueUpload(
   relicId: string,
   version: number
 ): Promise<Record<string, unknown>> {
-  const { row } = await ownedPrivate(env, email, relicId);
+  const { row, owner } = await ownedPrivate(env, email, relicId);
   if (version !== row.version || version <= (row.sealedVersion ?? 0)) {
     throw new ProblemError('version_conflict');
   }
-  return uploadFor(env, row.id, version, row.declaredSizeBytes);
+  // A failed initial index write must be repaired before any retry gets a PUT.
+  await env.store.putOwnedRelic({
+    relicId: row.id,
+    ownerIdentityId: owner.identityId,
+    access: 'private',
+    at: row.grantedAt,
+  });
+  return uploadFor(env, row.id, version, row.declaredSizeBytes, row.expiresAt);
 }
 
 // ---------------------------------------------------------------- recipients
@@ -797,7 +816,7 @@ export async function deliverKey(
     if (isDeleted(row, version))
       throw new ProblemError('version_deleted', { version });
     const seal = await env.store.getSeal(row.id, version);
-    if (seal === undefined) {
+    if (version > (row.sealedVersion ?? 0) || seal === undefined) {
       throw new ProblemError('relic_not_yet_published', {
         relic_id: row.id,
         retry_after_seconds: 5,

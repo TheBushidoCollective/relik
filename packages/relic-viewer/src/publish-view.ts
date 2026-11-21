@@ -9,8 +9,25 @@
  * It is a lazy chunk: only a visitor who came to publish loads it.
  */
 
-import { MAX_TITLE_CHARS, normalizeTitle } from '@relic/format';
+import { MAX_FILENAME_BYTES, normalizeTitle } from '@relic/format';
 import { droppedFrom } from './drop-anywhere.ts';
+import {
+  createPrivatePublisher,
+  type PrivatePublisher,
+} from './private/publish.ts';
+import { mountPrivatePublishSetup } from './private/publish-setup.ts';
+import {
+  generateCoverPreview,
+  type CoverPreviewResult,
+} from './publish-cover.ts';
+import {
+  canExpandZip,
+  type PreparePublishSourceOptions,
+  PublishSourceFailure,
+  type ReviewedFolderSource,
+  preparePublishSource,
+  type ReviewedPublishSource,
+} from './publish-source.ts';
 import {
   BROWSER_PUBLISH_LIMIT_BYTES,
   type PublishDeps,
@@ -21,6 +38,7 @@ import {
   publishFile,
 } from './publish.ts';
 import { pickFile } from './upload-button.ts';
+import { localStorageKeyVault } from './vault.ts';
 import { formatBytes } from './viewer.ts';
 
 const WORDMARK = 'relik.link';
@@ -93,7 +111,7 @@ function action(
 /** PUT with progress, which `fetch` cannot report for an upload body. */
 function xhrUpload(
   url: string,
-  body: Uint8Array,
+  body: Uint8Array | Blob,
   onProgress: (sent: number, total: number) => void
 ): Promise<number> {
   const { promise, resolve, reject } = Promise.withResolvers<number>();
@@ -154,11 +172,10 @@ function buildBar(onUpload: () => void): HTMLElement {
 function terms(): HTMLElement {
   const list = el('ul', 'pub-terms');
   for (const line of [
-    'The link contains the decryption key. Anyone who has it can read the file, and nobody else can, including us.',
-    'We never receive the key. The code that encrypts your file is served by us, which is a trust you are extending; the policy page says so in full.',
-    'The title is the one thing we store in the clear. It defaults to the filename, and you can change or clear it before you publish.',
-    'A relic is kept until it is deleted, and you cannot delete it yourself. To take one down, report it with its id.',
-    'A relic published here cannot be updated later. Publishing again makes a new link.',
+    'This page encrypts your file before it leaves your device. Relik serves the code that encrypts it.',
+    'A public link contains the decryption key. Its title and any preview image you choose can be read without the key.',
+    'To remove a public relic you published here, report it with its ID.',
+    'A public relic published here cannot be updated later. Publishing makes a new link; existing relics stay as they are.',
   ]) {
     list.appendChild(el('li', 'pub-term', line));
   }
@@ -185,10 +202,193 @@ function loadStylesheet(): Promise<void> {
   return promise;
 }
 
+export interface PublishReviewDraft {
+  readonly filename: string;
+  readonly title: string;
+  readonly ttlDays?: number;
+  readonly decisions: boolean;
+  readonly expand: boolean;
+  readonly openFirst?: string;
+  readonly cover: boolean;
+  readonly private: boolean;
+}
+
+type ApprovedCover = Extract<
+  CoverPreviewResult,
+  { status: 'ready' }
+>['preview'];
+
+export type PublishReviewSubmission = Omit<
+  PublishReviewDraft,
+  'title' | 'cover' | 'private'
+> & {
+  readonly file: File;
+  readonly source?: ReviewedPublishSource;
+} & (
+    | {
+        readonly private: false;
+        readonly title: string;
+        readonly cover?: ApprovedCover;
+      }
+    | { readonly private: true; readonly title?: never; readonly cover?: never }
+  );
+
+export type PublishPrivateSetup =
+  | {
+      readonly kind: 'ready';
+      readonly defaultTtlDays: number;
+      readonly maxTtlDays: number;
+    }
+  | {
+      readonly kind: 'blocked';
+      readonly message: string;
+      readonly retryable?: boolean;
+    };
+
+export type PublishReviewResult = PublishResult;
+
+export interface PublishReviewAdapter {
+  /** Prepare locally, without asking the service for a publish grant. */
+  readonly prepareSource?: (
+    file: File,
+    options: PreparePublishSourceOptions
+  ) => Promise<ReviewedPublishSource>;
+  readonly generateCover?: (
+    source: ReviewedPublishSource['preview']
+  ) => Promise<CoverPreviewResult>;
+  /** Mount the sign-in and passkey flow; abort when the review relinquishes its slot. */
+  readonly setupPrivate?: (
+    slot: HTMLElement,
+    signal: AbortSignal
+  ) => Promise<PublishPrivateSetup>;
+  /** Forget any retained incomplete private publication. */
+  readonly dispose?: () => void;
+  readonly submit: (
+    submission: PublishReviewSubmission,
+    onPhase: (phase: PublishPhase) => void
+  ) => Promise<PublishReviewResult>;
+}
+
+function browserReviewAdapter(deps: PublishDeps): PublishReviewAdapter {
+  const privateDeps = {
+    serviceOrigin: deps.serviceOrigin,
+    fetch: deps.fetch,
+    locationHref: window.location.href,
+    keyVault: localStorageKeyVault(),
+  };
+  let pending:
+    | { publisher: PrivatePublisher; file: File; fingerprint: string }
+    | undefined;
+  let reportPhase: (phase: PublishPhase) => void = () => {};
+  const dispose = (): void => {
+    pending?.publisher.dispose();
+    pending = undefined;
+  };
+  return {
+    prepareSource: preparePublishSource,
+    generateCover: generateCoverPreview,
+    setupPrivate: (slot, signal) =>
+      mountPrivatePublishSetup(slot, privateDeps, signal),
+    dispose,
+    async submit(submission, onPhase) {
+      if (submission.private) {
+        reportPhase = onPhase;
+        const fingerprint = JSON.stringify([
+          submission.filename,
+          submission.expand,
+          submission.openFirst,
+          submission.ttlDays,
+          submission.decisions,
+        ]);
+        if (
+          pending?.file !== submission.file ||
+          pending.fingerprint !== fingerprint
+        ) {
+          dispose();
+          const reviewed =
+            submission.source ??
+            (await preparePublishSource(submission.file, {
+              filename: submission.filename,
+              expand: submission.expand,
+              ...(submission.openFirst === undefined
+                ? {}
+                : { openFirst: submission.openFirst }),
+            }));
+          const publisher = createPrivatePublisher({
+            deps: privateDeps,
+            source: reviewed,
+            decisions: submission.decisions,
+            ...(submission.ttlDays === undefined
+              ? {}
+              : { ttlDays: submission.ttlDays }),
+            onPhase: (phase) => reportPhase(phase),
+          });
+          pending = { publisher, file: submission.file, fingerprint };
+        }
+        const result = await pending.publisher.publish();
+        dispose();
+        return { ...result, filename: submission.filename, title: undefined };
+      }
+      dispose();
+      const { file, filename, title, ttlDays, decisions } = submission;
+      const source: PublishSource = {
+        name: file.name,
+        size: file.size,
+        read: async () => new Uint8Array(await file.arrayBuffer()),
+      };
+      return publishFile(
+        source,
+        {
+          filename,
+          title,
+          decisions,
+          ...(submission.source === undefined
+            ? {}
+            : { prepared: submission.source }),
+          ...(submission.cover === undefined
+            ? {}
+            : { cover: submission.cover }),
+          ...(ttlDays === undefined ? {} : { ttlDays }),
+        },
+        deps,
+        onPhase
+      );
+    },
+  };
+}
+
+const MAX_PUBLIC_TTL_DAYS = 3650;
+const FILENAME_ENCODER = new TextEncoder();
+let reviewSequence = 0;
+
+function reviewField(
+  id: string,
+  labelText: string,
+  input: HTMLInputElement | HTMLSelectElement,
+  helpText = ''
+): { row: HTMLElement; label: HTMLLabelElement; help: HTMLElement } {
+  const row = el('div', 'pub-field-row');
+  const label = el('label', 'pub-label', labelText);
+  label.htmlFor = id;
+  input.id = id;
+  const help = el('p', 'pub-help', helpText);
+  help.id = `${id}-help`;
+  input.setAttribute('aria-describedby', help.id);
+  row.append(label, input, help);
+  return { row, label, help };
+}
+
+function reviewChoice(input: HTMLInputElement, text: string): HTMLLabelElement {
+  const label = el('label', 'pub-choice');
+  label.append(input, el('span', '', text));
+  return label;
+}
+
 interface Publisher {
   readonly idle: (problem?: string) => void;
   readonly review: (files: File[], isFolder: boolean) => void;
   readonly isBusy: () => boolean;
+  readonly dispose: () => void;
 }
 
 /**
@@ -202,6 +402,7 @@ interface Publisher {
 function createPublisher(
   panel: HTMLElement,
   status: HTMLElement,
+  suppliedAdapter?: PublishReviewAdapter,
   onClose?: () => void
 ): Publisher {
   const deps: PublishDeps = {
@@ -209,12 +410,20 @@ function createPublisher(
     fetch: globalThis.fetch.bind(globalThis),
     upload: xhrUpload,
   };
+  const adapter = suppliedAdapter ?? browserReviewAdapter(deps);
+  let releaseReview: (() => void) | undefined;
+  const dispose = (): void => {
+    releaseReview?.();
+    releaseReview = undefined;
+    adapter.dispose?.();
+  };
 
   let busy = false;
 
   const show = (...nodes: Node[]): void => panel.replaceChildren(...nodes);
 
   const idle = (problem?: string): void => {
+    dispose();
     busy = false;
     status.textContent = problem ?? '';
 
@@ -297,84 +506,619 @@ function createPublisher(
     show(...nodes);
   };
 
-  /** The step between choosing a file and sending anything: what will cross, and the title. */
   const review = (files: File[], isFolder: boolean): void => {
     if (busy) return;
     if (isFolder) {
-      idle('A folder cannot be published. Make an archive and publish that.');
-      return;
-    }
-    if (files.length !== 1) {
       idle(
-        files.length === 0
-          ? 'No file was received. Try again.'
-          : 'A relic holds one file. Drop them one at a time, or archive them first.'
+        'A folder cannot be published directly here. Choose a ZIP or use relic_publish.'
       );
       return;
     }
-    const file = files[0] as File;
-
-    const card = el('div', 'pub-card');
-    card.appendChild(el('h1', 'pub-card-title', file.name));
-    card.appendChild(el('p', 'pub-meta', formatBytes(file.size)));
-
-    const label = el('label', 'pub-label', 'Link preview title');
-    const field = el('input', 'pub-title');
-    field.type = 'text';
-    field.maxLength = MAX_TITLE_CHARS;
-    field.value = normalizeTitle(file.name);
-    field.spellcheck = false;
-    field.autocomplete = 'off';
-    label.appendChild(field);
-    card.appendChild(label);
-    card.appendChild(
-      el(
-        'p',
-        'pub-help',
-        'Stored in the clear. Relik, and anything that previews the link, can read it. Clear it to publish without one.'
-      )
-    );
-    if (onClose !== undefined) {
-      // The page behind may itself be a relic, so say what this is not.
-      card.appendChild(
-        el(
-          'p',
-          'pub-help',
-          'This makes a new relic. The page behind this is not changed.'
-        )
+    const file = files[0];
+    if (file === undefined || files.length !== 1) {
+      idle(
+        file === undefined
+          ? 'No file was received. Try again.'
+          : 'Choose one file, or put the files in a ZIP first.'
       );
+      return;
     }
+    dispose();
+    status.textContent = '';
 
-    const row = el('div', 'pub-row');
-    const go = action(
-      'Encrypt and publish',
-      ICONS.upload,
-      () => void start(file, field.value)
+    const id = `pub-review-${++reviewSequence}`;
+    const card = el('form', 'pub-card pub-review');
+    card.noValidate = true;
+    const heading = el('h1', 'pub-card-title', file.name);
+    heading.id = id;
+    heading.tabIndex = -1;
+    card.setAttribute('aria-labelledby', id);
+
+    const prepare = adapter.prepareSource;
+    const eligible = canExpandZip(file);
+    const expand = el('input', 'pub-expand');
+    expand.type = 'checkbox';
+    expand.checked = eligible && prepare !== undefined;
+    expand.disabled = prepare === undefined;
+    const defaultName = (): string =>
+      expand.checked ? file.name.replace(/\.zip$/i, '') : file.name;
+    const filename = el('input', 'pub-input pub-filename');
+    filename.value = defaultName();
+    filename.spellcheck = false;
+    filename.autocomplete = 'off';
+    const nameField = reviewField(
+      `${id}-name`,
+      'Encrypted filename',
+      filename,
+      'Stored inside the encrypted relic.'
     );
-    go.classList.add('primary');
+    const expansion = el('div', 'pub-option');
+    expansion.hidden = !eligible;
+    const zipHelp = el(
+      'p',
+      'pub-help',
+      prepare === undefined
+        ? 'ZIP expansion is unavailable here. The original archive will be published as one file.'
+        : 'Uncheck to publish the original ZIP as one file.'
+    );
+    zipHelp.id = `${id}-zip-help`;
+    expand.setAttribute('aria-describedby', zipHelp.id);
+    const zipStatus = el('p', 'pub-review-status');
+    zipStatus.setAttribute('role', 'status');
+    expansion.append(
+      reviewChoice(expand, 'Expand ZIP as a folder'),
+      zipHelp,
+      zipStatus
+    );
+
+    const openFirst = el('select', 'pub-input pub-open-first');
+    const entryField = reviewField(`${id}-entry`, 'Open first', openFirst);
+    entryField.row.hidden = true;
+    const sourceGroup = el('fieldset', 'pub-group');
+    sourceGroup.append(
+      el('legend', '', 'Source'),
+      expansion,
+      nameField.row,
+      entryField.row
+    );
+
+    const publicMode = el('input', 'pub-public');
+    const privateMode = el('input', 'pub-private');
+    publicMode.type = privateMode.type = 'radio';
+    publicMode.name = privateMode.name = 'publish-access';
+    publicMode.checked = true;
+    privateMode.disabled = adapter.setupPrivate === undefined;
+    const choices = el('div', 'pub-choices');
+    choices.append(
+      reviewChoice(publicMode, 'Anyone with the link'),
+      reviewChoice(privateMode, 'Private')
+    );
+    const accessHelp = el('p', 'pub-help');
+    accessHelp.id = `${id}-access-help`;
+    accessHelp.setAttribute('role', 'status');
+    const setupStatus = el('p', 'pub-review-status');
+    setupStatus.setAttribute('role', 'status');
+    const setupSlot = el('div', 'pub-setup-slot');
+    const retrySetup = action(
+      'Retry private setup',
+      ICONS.open,
+      () => void preparePrivate()
+    );
+    retrySetup.hidden = true;
+    const setup = el('div', 'pub-setup');
+    setup.hidden = true;
+    setup.append(setupStatus, setupSlot, retrySetup);
+
+    const ttl = el('input', 'pub-input pub-ttl');
+    ttl.inputMode = 'numeric';
+    ttl.autocomplete = 'off';
+    const ttlField = reviewField(`${id}-ttl`, 'Expires after (days)', ttl);
+    const decisions = el('input', 'pub-decisions');
+    decisions.type = 'checkbox';
+    const decisionsHelp = el(
+      'p',
+      'pub-help',
+      'Readers confirm approvals and rejections with their own passkey.'
+    );
+    decisionsHelp.id = `${id}-decisions-help`;
+    decisions.setAttribute('aria-describedby', decisionsHelp.id);
+    const decisionOption = el('div', 'pub-option');
+    decisionOption.append(
+      reviewChoice(decisions, 'Allow decisions'),
+      decisionsHelp
+    );
+    const accessGroup = el('fieldset', 'pub-group');
+    accessGroup.setAttribute('aria-describedby', accessHelp.id);
+    accessGroup.append(
+      el('legend', '', 'Access'),
+      choices,
+      accessHelp,
+      setup,
+      ttlField.row,
+      decisionOption
+    );
+
+    const title = el('input', 'pub-input pub-title');
+    title.value = normalizeTitle(defaultName());
+    title.spellcheck = false;
+    title.autocomplete = 'off';
+    const titleField = reviewField(
+      `${id}-title`,
+      'Public title',
+      title,
+      'Defaults to the encrypted name. Relik and link preview services can read it without the key. Clear the field to omit it.'
+    );
+    const cover = el('input', 'pub-cover');
+    cover.type = 'checkbox';
+    const makeCover = prepare === undefined ? undefined : adapter.generateCover;
+    cover.disabled = makeCover === undefined;
+    const coverStatus = el('p', 'pub-help');
+    coverStatus.id = `${id}-cover-help`;
+    coverStatus.setAttribute('role', 'status');
+    cover.setAttribute('aria-describedby', coverStatus.id);
+    const preview = el('div', 'pub-preview');
+    preview.hidden = true;
+    const coverOption = el('div', 'pub-option');
+    coverOption.append(
+      reviewChoice(cover, 'Include a public preview image'),
+      coverStatus,
+      preview
+    );
+    const publicGroup = el('fieldset', 'pub-group');
+    publicGroup.append(
+      el('legend', '', 'Link preview'),
+      titleField.row,
+      coverOption
+    );
+
+    const notice = el('div', 'notice pub-review-notice');
+    notice.id = `${id}-problem`;
+    notice.setAttribute('role', 'alert');
+    notice.hidden = true;
+    notice.tabIndex = -1;
+    const row = el('div', 'pub-row');
+    const go = labelled(
+      el('button', 'action primary'),
+      'Encrypt and publish',
+      ICONS.upload
+    );
+    go.type = 'submit';
     row.append(
       go,
       onClose === undefined
         ? action('Choose a different file', ICONS.back, () => idle())
         : action('Cancel', ICONS.back, onClose)
     );
-    card.appendChild(row);
-    // On its own page the terms sit under the drop zone, before a file is
-    // chosen. A dialog has no such moment, so they go with the review.
-    if (onClose !== undefined) card.appendChild(terms());
+    card.append(
+      heading,
+      el('p', 'pub-meta', formatBytes(file.size)),
+      sourceGroup,
+      accessGroup,
+      publicGroup,
+      el(
+        'p',
+        'pub-help pub-new-link',
+        'Publishing makes a new link and leaves existing relics unchanged. This page encrypts your file with code served by Relik.'
+      ),
+      notice,
+      row
+    );
 
-    field.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter') {
-        event.preventDefault();
-        void start(file, field.value);
+    let live = true;
+    let editedName = false;
+    let editedTitle = false;
+    let invalidField: HTMLInputElement | undefined;
+    let folder: ReviewedFolderSource | undefined;
+    let loadingFolder = false;
+    let setupScope: AbortController | undefined;
+    let privateSettings:
+      | Extract<PublishPrivateSetup, { kind: 'ready' }>
+      | undefined;
+    let coverRevision = 0;
+    let coverUrl: string | undefined;
+    let approved:
+      | {
+          cover: ApprovedCover;
+          source: ReviewedPublishSource;
+          openFirst: string | undefined;
+        }
+      | undefined;
+
+    const effectiveName = (): string =>
+      editedName ? filename.value : defaultName();
+    const entry = (): string | undefined =>
+      expand.checked && openFirst.value !== '' ? openFirst.value : undefined;
+    const currentCover = () =>
+      approved !== undefined &&
+      approved.source.filename === effectiveName() &&
+      (approved.source.shape === 'folder') === expand.checked &&
+      approved.openFirst === entry()
+        ? approved
+        : undefined;
+    const blocked = (): boolean =>
+      (expand.checked && folder === undefined) ||
+      (privateMode.checked
+        ? privateSettings === undefined
+        : cover.checked && currentCover() === undefined);
+    const syncSubmit = (): void => {
+      go.disabled = blocked();
+    };
+
+    const clearProblem = (): void => {
+      notice.hidden = true;
+      invalidField?.removeAttribute('aria-invalid');
+      invalidField?.removeAttribute('aria-errormessage');
+      invalidField = undefined;
+    };
+    const showProblem = (message: string, input?: HTMLInputElement): void => {
+      clearProblem();
+      notice.textContent = message;
+      notice.hidden = false;
+      invalidField = input;
+      if (input === undefined) {
+        notice.focus();
+      } else {
+        input.setAttribute('aria-invalid', 'true');
+        input.setAttribute('aria-errormessage', notice.id);
+        input.focus();
+      }
+    };
+
+    const disposeCover = (): void => {
+      coverRevision += 1;
+      approved = undefined;
+      preview.hidden = true;
+      preview.replaceChildren();
+      if (coverUrl !== undefined) URL.revokeObjectURL(coverUrl);
+      coverUrl = undefined;
+    };
+    const noCoverLabel =
+      makeCover === undefined
+        ? 'Custom images are unavailable here. Link previews use the generic Relik image.'
+        : 'Anyone can read a public preview image without the key. Leave it off to use the generic Relik image.';
+    const reviewFolder = (
+      name: string,
+      chosen: string | undefined
+    ): ReviewedFolderSource => {
+      if (folder === undefined)
+        throw new Error('The ZIP needs to be reviewed first.');
+      return folder.withSelection(name, chosen);
+    };
+    const refreshCover = async (): Promise<void> => {
+      disposeCover();
+      syncSubmit();
+      coverStatus.textContent = noCoverLabel;
+      if (
+        privateMode.checked ||
+        !cover.checked ||
+        prepare === undefined ||
+        makeCover === undefined
+      )
+        return;
+      if (expand.checked && folder === undefined) {
+        coverStatus.textContent = 'A preview needs the reviewed ZIP entries.';
+        return;
+      }
+      const revision = coverRevision;
+      const name = effectiveName();
+      const chosen = entry();
+      const active = (): boolean => live && revision === coverRevision;
+      const useGeneric = 'Uncheck to use the generic Relik image.';
+      coverStatus.textContent = 'Preparing the preview on this device.';
+      try {
+        const source = expand.checked
+          ? reviewFolder(name, chosen)
+          : await prepare(file, { filename: name, expand: false });
+        if (!active()) return;
+        const result = await makeCover(source.preview);
+        if (!active()) return;
+        if (result.status !== 'ready') {
+          coverStatus.textContent =
+            result.status === 'unsupported'
+              ? `A public preview is unavailable: ${result.reason} ${useGeneric}`
+              : `Could not prepare the preview: ${result.reason} ${useGeneric}`;
+          return;
+        }
+        const image = el('img', '');
+        image.alt = 'Public link preview';
+        image.width = 1200;
+        image.height = 630;
+        image.addEventListener(
+          'load',
+          () => {
+            if (!active()) return;
+            approved = { cover: result.preview, source, openFirst: chosen };
+            preview.hidden = false;
+            coverStatus.textContent =
+              'Anyone with the link can see this image without the key. Publishing uploads the image as shown.';
+            syncSubmit();
+          },
+          { once: true }
+        );
+        image.addEventListener(
+          'error',
+          () => {
+            if (!active()) return;
+            disposeCover();
+            coverStatus.textContent = `Could not show the preview. ${useGeneric}`;
+            syncSubmit();
+          },
+          { once: true }
+        );
+        coverUrl = URL.createObjectURL(result.preview.blob);
+        preview.replaceChildren(image);
+        image.src = coverUrl;
+      } catch {
+        if (active())
+          coverStatus.textContent = `Could not prepare the preview. ${useGeneric}`;
+      }
+    };
+
+    const syncFolder = (): void => {
+      nameField.label.textContent = expand.checked
+        ? 'Encrypted folder name'
+        : 'Encrypted filename';
+      entryField.row.hidden = !expand.checked || folder === undefined;
+      zipStatus.hidden = !expand.checked || zipStatus.textContent === '';
+      if (folder !== undefined) {
+        const count = folder.entries.length;
+        const omitted = folder.omissions.length;
+        entryField.help.textContent = `${count} ${count === 1 ? 'file' : 'files'} included.${omitted === 0 ? '' : ` ${omitted} omitted.`} Opens first: ${entry() ?? folder.defaultEntry}`;
+      }
+      syncSubmit();
+    };
+    const checkFolder = async (): Promise<void> => {
+      if (
+        prepare === undefined ||
+        !expand.checked ||
+        folder !== undefined ||
+        loadingFolder
+      )
+        return;
+      loadingFolder = true;
+      zipStatus.textContent = 'Checking ZIP entries on this device.';
+      syncFolder();
+      try {
+        const source = await prepare(file, { expand: true });
+        if (!live) return;
+        if (source.shape !== 'folder')
+          throw new Error('Could not read this ZIP as a folder.');
+        folder = source;
+        const automatic = el('option', '', 'Automatic');
+        automatic.value = '';
+        const list = document.createDocumentFragment();
+        list.append(automatic);
+        for (const item of source.entries) {
+          const option = el('option', '', item.path);
+          option.value = item.path;
+          list.append(option);
+        }
+        openFirst.replaceChildren(list);
+        zipStatus.textContent = '';
+      } catch (error) {
+        if (!live) return;
+        const message =
+          error instanceof Error ? error.message : 'Could not expand this ZIP.';
+        zipStatus.textContent = `${message} You can publish the ZIP as one file instead.`;
+      } finally {
+        loadingFolder = false;
+        if (live) {
+          syncFolder();
+          if (expand.checked && cover.checked) void refreshCover();
+        }
+      }
+    };
+
+    const updateExpiry = (): void => {
+      ttl.placeholder = privateMode.checked
+        ? 'Service default'
+        : 'Until removed';
+      ttlField.help.textContent = !privateMode.checked
+        ? `Leave blank for no expiry, or enter 1 to ${MAX_PUBLIC_TTL_DAYS} days.`
+        : privateSettings === undefined
+          ? 'Private relics always expire. Set up private access to see the available lifetime.'
+          : `Leave blank for the service default of ${privateSettings.defaultTtlDays} days, or enter 1 to ${privateSettings.maxTtlDays}.`;
+    };
+    const disposeSetup = (): void => {
+      setupScope?.abort();
+      setupScope = undefined;
+      privateSettings = undefined;
+      setupSlot.replaceChildren();
+    };
+    const preparePrivate = async (): Promise<void> => {
+      if (!privateMode.checked || adapter.setupPrivate === undefined) return;
+      disposeSetup();
+      retrySetup.hidden = true;
+      setupStatus.textContent = 'Checking private publishing.';
+      const scope = new AbortController();
+      setupScope = scope;
+      const slot = el('div', 'pub-private-controls');
+      setupSlot.append(slot);
+      updateExpiry();
+      syncSubmit();
+      let result: PublishPrivateSetup;
+      try {
+        result = await adapter.setupPrivate(slot, scope.signal);
+      } catch {
+        result = {
+          kind: 'blocked',
+          message: 'Could not prepare private publishing. Try again.',
+          retryable: true,
+        };
+      }
+      if (!live || scope.signal.aborted) return;
+      setupSlot.replaceChildren();
+      if (result.kind === 'blocked') {
+        setupStatus.textContent = result.message;
+        retrySetup.hidden = result.retryable !== true;
+      } else if (
+        Number.isSafeInteger(result.defaultTtlDays) &&
+        Number.isSafeInteger(result.maxTtlDays) &&
+        result.defaultTtlDays >= 1 &&
+        result.defaultTtlDays <= result.maxTtlDays
+      ) {
+        privateSettings = result;
+        setupStatus.textContent =
+          'Private access is set up. Review your options, then publish.';
+      } else {
+        setupStatus.textContent =
+          'The service did not provide a usable private expiration policy.';
+      }
+      updateExpiry();
+      syncSubmit();
+    };
+    const syncMode = (): void => {
+      const isPrivate = privateMode.checked;
+      publicGroup.hidden = isPrivate;
+      publicGroup.disabled = isPrivate;
+      setup.hidden = !isPrivate;
+      accessHelp.textContent = isPrivate
+        ? 'The link contains no key. Readers need a passkey and your permission to open it. Private relics have no public title or preview image.'
+        : 'The link contains the key. Anyone who has it can read the file.';
+      if (adapter.setupPrivate === undefined)
+        accessHelp.textContent += ' Private publishing is unavailable here.';
+      if (isPrivate) cover.checked = false;
+      if (!isPrivate) disposeSetup();
+      updateExpiry();
+      void refreshCover();
+      if (isPrivate) void preparePrivate();
+    };
+
+    filename.addEventListener('input', () => {
+      editedName = true;
+      if (!editedTitle) title.value = normalizeTitle(filename.value);
+      if (cover.checked) {
+        disposeCover();
+        coverStatus.textContent =
+          'Leave the encrypted name field to refresh the preview.';
+        syncSubmit();
       }
     });
+    filename.addEventListener('change', () => {
+      if (cover.checked) void refreshCover();
+    });
+    title.addEventListener('input', () => {
+      editedTitle = true;
+    });
+    title.addEventListener('change', () => {
+      title.value = normalizeTitle(title.value);
+    });
+    expand.addEventListener('change', () => {
+      if (!editedName) filename.value = defaultName();
+      if (!editedTitle) title.value = normalizeTitle(effectiveName());
+      syncFolder();
+      void refreshCover();
+      void checkFolder();
+    });
+    openFirst.addEventListener('change', () => {
+      syncFolder();
+      void refreshCover();
+    });
+    cover.addEventListener('change', () => void refreshCover());
+    publicMode.addEventListener('change', syncMode);
+    privateMode.addEventListener('change', syncMode);
+    card.addEventListener('input', () => {
+      clearProblem();
+      adapter.dispose?.();
+    });
+    card.addEventListener('submit', (event) => {
+      event.preventDefault();
+      if (busy || blocked()) return;
+      if (file.size > BROWSER_PUBLISH_LIMIT_BYTES) {
+        showProblem(
+          `This page publishes files up to ${formatBytes(BROWSER_PUBLISH_LIMIT_BYTES)}. Choose a smaller file.`
+        );
+        return;
+      }
+      const name = effectiveName();
+      if (FILENAME_ENCODER.encode(name).length > MAX_FILENAME_BYTES) {
+        showProblem(
+          `Use an encrypted name no longer than ${MAX_FILENAME_BYTES} UTF-8 bytes.`,
+          filename
+        );
+        return;
+      }
+      const max = privateSettings?.maxTtlDays ?? MAX_PUBLIC_TTL_DAYS;
+      const days = ttl.value.trim();
+      const ttlDays = days === '' ? undefined : Number(days);
+      if (
+        ttlDays !== undefined &&
+        (!/^[0-9]+$/.test(days) ||
+          !Number.isSafeInteger(ttlDays) ||
+          ttlDays < 1 ||
+          ttlDays > max)
+      ) {
+        showProblem(
+          `Enter a whole number of days from 1 to ${max}, or leave it blank.`,
+          ttl
+        );
+        return;
+      }
+      const chosen = entry();
+      const draft: PublishReviewDraft = {
+        filename: name,
+        title: privateMode.checked ? '' : normalizeTitle(title.value),
+        ...(ttlDays === undefined ? {} : { ttlDays }),
+        decisions: decisions.checked,
+        expand: expand.checked,
+        ...(chosen === undefined ? {} : { openFirst: chosen }),
+        cover: !privateMode.checked && cover.checked,
+        private: privateMode.checked,
+      };
+      try {
+        const raster = draft.cover ? currentCover() : undefined;
+        if (draft.cover && raster === undefined) return;
+        const source =
+          raster?.source ??
+          (draft.expand
+            ? reviewFolder(draft.filename, draft.openFirst)
+            : undefined);
+        const base = {
+          file,
+          filename: draft.filename,
+          ...(draft.ttlDays === undefined ? {} : { ttlDays: draft.ttlDays }),
+          decisions: draft.decisions,
+          expand: draft.expand,
+          ...(draft.openFirst === undefined
+            ? {}
+            : { openFirst: draft.openFirst }),
+          ...(source === undefined ? {} : { source }),
+        };
+        const submission: PublishReviewSubmission = draft.private
+          ? { ...base, private: true }
+          : {
+              ...base,
+              private: false,
+              title: draft.title,
+              ...(raster === undefined ? {} : { cover: raster.cover }),
+            };
+        void start(submission, card, showProblem);
+      } catch (error) {
+        showProblem(
+          error instanceof Error
+            ? error.message
+            : 'Could not review the chosen file.'
+        );
+      }
+    });
+
+    releaseReview = () => {
+      live = false;
+      disposeCover();
+      disposeSetup();
+    };
     show(card);
-    field.focus();
-    field.select();
+    heading.focus({ preventScroll: true });
+    syncMode();
+    syncFolder();
+    void checkFolder();
   };
 
-  const done = (result: PublishResult): void => {
+  const done = (
+    result: PublishReviewResult,
+    submission: PublishReviewSubmission
+  ): void => {
+    dispose();
     busy = false;
     status.textContent = 'Published. Your link is ready.';
 
@@ -384,7 +1128,9 @@ function createPublisher(
       el(
         'p',
         'pub-help',
-        'This link holds the key. Copy it now: this page does not keep it, and we cannot recover it for you.'
+        submission.private
+          ? 'This link contains no key. Open the relic with your passkey to manage who can read it.'
+          : 'This link holds the key. Copy it now: this page does not keep it, and we cannot recover it for you.'
       )
     );
 
@@ -392,7 +1138,12 @@ function createPublisher(
     field.rows = 3;
     field.readOnly = true;
     field.value = result.url;
-    field.setAttribute('aria-label', 'Link, including the decryption key');
+    field.setAttribute(
+      'aria-label',
+      submission.private
+        ? 'Private relic link'
+        : 'Link, including the decryption key'
+    );
     field.addEventListener('focus', () => field.select());
 
     const row = el('div', 'pub-link-row');
@@ -409,7 +1160,13 @@ function createPublisher(
         }, 2000);
       };
       void navigator.clipboard.writeText(result.url).then(
-        () => said('Link copied. It contains the decryption key.', 'Copied'),
+        () =>
+          said(
+            submission.private
+              ? 'Private link copied.'
+              : 'Link copied. It contains the decryption key.',
+            'Copied'
+          ),
         () => {
           field.select();
           said(
@@ -425,15 +1182,47 @@ function createPublisher(
     row.append(field, copy, open);
     card.appendChild(row);
 
-    card.appendChild(
-      el(
-        'p',
-        'pub-meta',
-        result.title === undefined
-          ? 'Published without a title.'
-          : `Title stored with the relic: ${result.title}`
-      )
-    );
+    if (!submission.private) {
+      card.appendChild(
+        el(
+          'p',
+          'pub-meta',
+          result.title === undefined
+            ? 'Published without a public title.'
+            : `Public title: ${result.title}`
+        )
+      );
+      if (submission.cover !== undefined) {
+        card.appendChild(
+          el(
+            'p',
+            'pub-help',
+            result.cover?.status === 'uploaded'
+              ? 'The public preview image was published.'
+              : result.cover?.status === 'refused'
+                ? 'The preview image could not be published. The file link is ready.'
+                : 'The preview upload could not be confirmed. The file link is ready.'
+          )
+        );
+      }
+    }
+    if (result.relicExpiresAt !== null) {
+      const expiry = el('p', 'pub-meta', 'Expires: ');
+      const when = el('time', '', result.relicExpiresAt);
+      when.dateTime = result.relicExpiresAt;
+      const date = new Date(result.relicExpiresAt);
+      if (!Number.isNaN(date.valueOf())) {
+        when.textContent = `${new Intl.DateTimeFormat(undefined, {
+          dateStyle: 'medium',
+          timeStyle: 'short',
+          timeZone: 'UTC',
+        }).format(date)} UTC`;
+      }
+      expiry.append(when);
+      card.appendChild(expiry);
+    } else {
+      card.appendChild(el('p', 'pub-meta', 'Expiry: until removed.'));
+    }
     card.appendChild(el('div', 'accession', result.relicId));
     card.appendChild(
       onClose === undefined
@@ -441,65 +1230,81 @@ function createPublisher(
         : action('Close', ICONS.back, onClose)
     );
     show(card);
-    field.select();
+    field.focus();
   };
 
-  const start = async (file: File, rawTitle: string): Promise<void> => {
+  const start = async (
+    submission: PublishReviewSubmission,
+    reviewCard: HTMLFormElement,
+    showProblem: (message: string) => void
+  ): Promise<void> => {
     if (busy) return;
     busy = true;
 
+    const name = submission.filename || submission.file.name;
+    const heading = el('h1', 'pub-card-title', name);
+    heading.tabIndex = -1;
     const label = el('p', 'pub-meta');
     const meter = el('progress', 'pub-meter');
+    meter.setAttribute('aria-label', 'Upload progress');
     const card = el('div', 'pub-card');
-    card.append(el('h1', 'pub-card-title', file.name), label, meter);
+    card.append(heading, label, meter);
     show(card);
-
-    const source: PublishSource = {
-      name: file.name,
-      size: file.size,
-      read: async () => new Uint8Array(await file.arrayBuffer()),
-    };
+    heading.focus({ preventScroll: true });
 
     try {
-      const result = await publishFile(
-        source,
-        { title: rawTitle },
-        deps,
-        (phase) => {
-          const text = phaseText(phase, file.name);
-          label.textContent = text;
-          status.textContent = text;
-          if (phase.kind === 'uploading' && phase.total > 0) {
-            meter.max = phase.total;
-            meter.value = phase.sent;
-          } else {
-            // No value is an indeterminate bar, which is honest for steps
-            // with no measurable progress.
-            meter.removeAttribute('value');
-          }
+      const result = await adapter.submit(submission, (phase) => {
+        const text = phaseText(phase, name);
+        label.textContent = text;
+        status.textContent = text;
+        if (phase.kind === 'uploading' && phase.total > 0) {
+          meter.max = phase.total;
+          meter.value = phase.sent;
+        } else {
+          meter.removeAttribute('value');
         }
-      );
-      done(result);
+      });
+      if (submission.private) {
+        if (new URL(result.url).hash !== '') {
+          throw new PublishFailure(
+            'service_response_unusable',
+            'A private link came back with a fragment. The link was not shown.'
+          );
+        }
+        if (result.relicExpiresAt === null) {
+          throw new PublishFailure(
+            'service_response_unusable',
+            'Private publishing returned no expiration. The link was not shown.'
+          );
+        }
+      }
+      done(result, submission);
     } catch (error) {
-      idle(
-        error instanceof PublishFailure
+      busy = false;
+      status.textContent = '';
+      show(reviewCard);
+      showProblem(
+        error instanceof PublishFailure || error instanceof PublishSourceFailure
           ? error.message
-          : 'Something went wrong while publishing. Nothing was published; try again.'
+          : 'Could not finish publishing. No link was shown.'
       );
     }
   };
 
-  return { idle, review, isBusy: () => busy };
+  return { idle, review, isBusy: () => busy, dispose };
 }
 
-export async function mountPublish(body: HTMLElement): Promise<void> {
+export async function mountPublish(
+  body: HTMLElement,
+  adapter?: PublishReviewAdapter
+): Promise<void> {
   await loadStylesheet();
 
   const panel = el('div', 'pub');
   const status = el('div', 'pub-hidden');
   status.setAttribute('role', 'status');
   status.setAttribute('aria-live', 'polite');
-  const publisher = createPublisher(panel, status);
+  const publisher = createPublisher(panel, status, adapter);
 
   const main = el('main', 'stage pub-stage');
   main.appendChild(panel);
@@ -521,7 +1326,8 @@ export async function mountPublish(body: HTMLElement): Promise<void> {
  */
 export async function openPublishDialog(
   files: File[],
-  isFolder: boolean
+  isFolder: boolean,
+  adapter?: PublishReviewAdapter
 ): Promise<void> {
   if (document.querySelector('dialog.pub-dialog') !== null) return;
 
@@ -533,13 +1339,18 @@ export async function openPublishDialog(
   status.setAttribute('aria-live', 'polite');
   dialog.append(panel, status);
 
-  const publisher = createPublisher(panel, status, () => dialog.close());
+  const publisher = createPublisher(panel, status, adapter, () =>
+    dialog.close()
+  );
   // Escape would abandon an upload half-way and leave the visitor not knowing
   // whether anything was published, so it waits until the step has ended.
   dialog.addEventListener('cancel', (event) => {
     if (publisher.isBusy()) event.preventDefault();
   });
-  dialog.addEventListener('close', () => dialog.remove());
+  dialog.addEventListener('close', () => {
+    publisher.dispose();
+    dialog.remove();
+  });
 
   // In the document before anything is awaited: a second drop a moment later
   // finds it there and does nothing, rather than opening a second dialog. A
