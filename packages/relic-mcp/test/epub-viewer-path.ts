@@ -97,7 +97,7 @@ function epub(version: 2 | 3): Uint8Array {
     ],
     [
       'OPS/third',
-      `<html xmlns="http://www.w3.org/1999/xhtml"><body id="start"><h1>Chapter Three</h1>${'<p>Following chapter text.</p>'.repeat(90)}</body></html>`,
+      `<html xmlns="http://www.w3.org/1999/xhtml"><body id="start"><h1 id="heading">The Northern Approach</h1>${'<p>Following chapter text.</p>'.repeat(90)}</body></html>`,
     ],
     [
       'OPS/cover',
@@ -554,9 +554,34 @@ async function prove(
       assert.equal(typeof result.result.value, 'number');
       return result.result.value!;
     };
+    const headingNode = await byId('ep-2-heading');
+    const headingObject = (await send('DOM.resolveNode', {
+      backendNodeId: headingNode,
+    })) as { object: { objectId: string } };
+    const headingGeometry = async () => {
+      const result = (await send('Runtime.callFunctionOn', {
+        objectId: headingObject.object.objectId,
+        functionDeclaration:
+          'function(){const text=this.firstChild;const whole=this.ownerDocument.createRange();whole.selectNodeContents(this);const first=this.ownerDocument.createRange();first.setStart(text,0);first.setEnd(text,3);return {top:this.getBoundingClientRect().top,firstTop:first.getBoundingClientRect().top,lines:whole.getClientRects().length}}',
+        returnByValue: true,
+      })) as {
+        result: { value?: { top: number; firstTop: number; lines: number } };
+      };
+      assert.ok(result.result.value);
+      return result.result.value;
+    };
+    const headingBefore = await headingGeometry();
     const textBefore = await textTop();
     for (let i = 0; i < 5; i++) await clickButton('A+');
     const textAfter = await textTop();
+    const headingAfter = await headingGeometry();
+    assert.ok(
+      headingAfter.firstTop >= -1 &&
+        Math.abs(headingAfter.top - headingBefore.top) < 4,
+      `zoom clipped the chapter heading: ${JSON.stringify({ headingBefore, headingAfter })}`
+    );
+    if (width < 600)
+      assert.ok(headingAfter.lines >= 2, 'mobile heading fixture did not wrap');
     assert.ok(
       Math.abs(textAfter - textBefore) < 40,
       `zoom moved the text chapter from ${textBefore} to ${textAfter}`

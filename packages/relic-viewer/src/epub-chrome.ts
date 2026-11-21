@@ -45,8 +45,8 @@ export function mountEpubChrome(
     const next = Math.min(1.5, Math.max(0.9, Math.round(value * 10) / 10));
     if (next === zoom) return;
 
-    // Anchor a visible text position before reflow, with an element fallback
-    // for image and SVG chapters where the browser cannot place a caret.
+    // Keep a heading already at the reading edge whole as it wraps. Otherwise
+    // anchor visible text, or the viewport of an image or SVG chapter.
     const bounds = root.getBoundingClientRect();
     const x = Math.min(
       Math.max(0, innerWidth - 1),
@@ -54,8 +54,23 @@ export function mountEpubChrome(
     );
     const y = Math.min(32, Math.max(0, innerHeight - 1));
     const hit = document.elementFromPoint(x, y);
+    const topHit = document.elementFromPoint(x, Math.min(1, y));
+    const heading =
+      hit?.closest('h1, h2, h3, h4, h5, h6') ??
+      topHit?.closest('h1, h2, h3, h4, h5, h6');
+    const headingRect = heading?.getBoundingClientRect();
+    const headingAnchor =
+      heading &&
+      root.contains(heading) &&
+      headingRect &&
+      headingRect.top >= -4 &&
+      headingRect.top <= y &&
+      headingRect.bottom > 0
+        ? heading
+        : undefined;
     const visual = hit?.closest('svg, img, video');
     const visualAnchor = visual && root.contains(visual) ? visual : undefined;
+    const blockAnchor = headingAnchor ?? visualAnchor;
     const caretDocument = document as Document & {
       caretPositionFromPoint?: (
         x: number,
@@ -63,7 +78,7 @@ export function mountEpubChrome(
       ) => { offsetNode: Node; offset: number } | null;
       caretRangeFromPoint?: (x: number, y: number) => Range | null;
     };
-    const caret = visualAnchor
+    const caret = blockAnchor
       ? null
       : caretDocument.caretPositionFromPoint?.(x, y);
     let range: Range | null = null;
@@ -71,7 +86,7 @@ export function mountEpubChrome(
       range = document.createRange();
       range.setStart(caret.offsetNode, caret.offset);
       range.collapse(true);
-    } else if (!visualAnchor) {
+    } else if (!blockAnchor) {
       range = caretDocument.caretRangeFromPoint?.(x, y) ?? null;
     }
     const rect = range?.getBoundingClientRect();
@@ -90,12 +105,14 @@ export function mountEpubChrome(
       before = rect.top;
       measure = () => anchor.getBoundingClientRect().top;
     } else {
-      const anchor = visualAnchor ?? (hit && root.contains(hit) ? hit : root);
+      const anchor = blockAnchor ?? (hit && root.contains(hit) ? hit : root);
       const start = anchor.getBoundingClientRect();
       const fraction =
-        start.height > 0
-          ? Math.min(1, Math.max(0, (y - start.top) / start.height))
-          : 0;
+        anchor === headingAnchor
+          ? 0
+          : start.height > 0
+            ? Math.min(1, Math.max(0, (y - start.top) / start.height))
+            : 0;
       before = start.top + fraction * start.height;
       measure = () => {
         const current = anchor.getBoundingClientRect();
