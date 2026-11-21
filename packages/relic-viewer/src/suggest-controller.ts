@@ -128,11 +128,12 @@ function restoreOffsets(
     const element = node.parentElement;
     if (element?.closest('ins[data-sg], [data-sg-decoration]')) continue;
     const length = node.textContent?.length ?? 0;
-    if (!start && offsets[0] <= count + length)
+    if (!start && offsets[0] < count + length)
       start = [node, offsets[0] - count];
     if (!end && offsets[1] <= count + length) end = [node, offsets[1] - count];
     count += length;
   }
+  if (!start && offsets[0] === count && end) start = end;
   if (!start || !end) return;
   const range = root.ownerDocument.createRange();
   range.setStart(...start);
@@ -708,10 +709,21 @@ export function mountSuggestionController(
       clearSuggestionPaint(target);
       surface?.repaint();
       ordinary();
+      const paintedViews = surface?.covers
+        ? {
+            ...views!,
+            paint: views!.paint.filter(
+              (item) =>
+                item.location.status !== 'resolved' ||
+                surface?.covers?.(item.location.start, item.location.end) ===
+                  true
+            ),
+          }
+        : views!;
       const result = paintSuggestions(
         target,
         segments,
-        views!,
+        paintedViews,
         surface ? 'markdown' : kind,
         surface?.decode?.bind(surface)
       );

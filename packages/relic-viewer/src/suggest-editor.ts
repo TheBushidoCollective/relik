@@ -1042,7 +1042,8 @@ export function mountSuggestEditor(
       if (
         points &&
         (points[0].blockKind === 'code' ||
-          points[0].blockKind === 'fenced-code')
+          points[0].blockKind === 'fenced-code' ||
+          points[0].blockKind === 'nb-code')
       ) {
         event.preventDefault();
         applyInput('insertTab', '\t');
@@ -1137,6 +1138,16 @@ export function mountSuggestEditor(
     if (queued.length) handleMutations(queued);
     composing = false;
   }
+  function surfaceMutation(event: Event): void {
+    if (
+      !on ||
+      !(event instanceof CustomEvent) ||
+      typeof event.detail !== 'function'
+    )
+      return;
+    event.preventDefault();
+    mutate(event.detail as () => void);
+  }
 
   reading.addEventListener('click', () => setSuggesting(false));
   suggesting.addEventListener('click', () => setSuggesting(true));
@@ -1147,6 +1158,7 @@ export function mountSuggestEditor(
   root.addEventListener('focusout', focusOut);
   root.addEventListener('compositionstart', compositionStart);
   root.addEventListener('compositionend', compositionEnd);
+  root.addEventListener('relic:surface-ui-mutation', surfaceMutation);
   doc.addEventListener('selectionchange', selectionChange);
   updateControls();
   if (unavailable === LAYOUT) options.onRefusal(LAYOUT);
@@ -1273,6 +1285,7 @@ export function mountSuggestEditor(
       root.removeEventListener('focusout', focusOut);
       root.removeEventListener('compositionstart', compositionStart);
       root.removeEventListener('compositionend', compositionEnd);
+      root.removeEventListener('relic:surface-ui-mutation', surfaceMutation);
       doc.removeEventListener('selectionchange', selectionChange);
       controls.remove();
       hint.remove();

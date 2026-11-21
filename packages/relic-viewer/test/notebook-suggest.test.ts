@@ -18,15 +18,19 @@ describe('notebook suggestion source', () => {
       const units = notebookSourceUnits(notebookSuggestionFixture, cell);
       expect(units.map((unit) => unit.text).join('')).toBe(cell.source.text);
       for (const unit of units) {
+        const token = cell.sourceTokens[unit.token]!;
+        const tokenEnd = Math.min(unit.end, token.end - 1);
         expect(
           JSON.parse(
-            `"${notebookSuggestionFixture.slice(unit.start, unit.end)}"`
+            `"${notebookSuggestionFixture.slice(unit.start, tokenEnd)}"`
           )
         ).toBe(unit.text);
-        expect(unit.start).toBeGreaterThanOrEqual(
-          cell.sourceTokens[unit.token]!.start + 1
-        );
-        expect(unit.end).toBeLessThan(cell.sourceTokens[unit.token]!.end);
+        expect(unit.start).toBeGreaterThanOrEqual(token.start + 1);
+        if (unit.end > token.end - 1) {
+          const next = cell.sourceTokens[unit.token + 1]!;
+          expect(unit.text).toBe('\n');
+          expect(unit.end).toBe(next.start + 1);
+        }
       }
     }
     const code = parsed.notebook.cells[1]!;

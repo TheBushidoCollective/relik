@@ -50,11 +50,13 @@ export function notebookAcceptsSelection(
   node: Node
 ): true | SuggestRefusal {
   const element = node.nodeType === 1 ? (node as Element) : node.parentElement;
-  const segment = element?.closest('[data-seg]');
-  const target = segment?.closest(
+  const target = element?.closest(
     '.nb-box > article.prose, .nb-box > pre.nb-src'
   );
-  return target && root.contains(target) ? true : notebookNotEditable();
+  if (!target || !root.contains(target)) return notebookNotEditable();
+  if (target.querySelector('[data-seg]') && !element?.closest('[data-seg]'))
+    return notebookNotEditable();
+  return true;
 }
 
 /** Decode source strings while retaining their exact UTF-16 offsets. */
@@ -86,7 +88,36 @@ export function notebookSourceUnits(
       offset += text.length;
     }
   }
-  return units;
+  const normalized: Unit[] = [];
+  let shown = 0;
+  for (let i = 0; i < units.length; i++) {
+    const unit = units[i]!;
+    const next = units[i + 1];
+    if (
+      unit.text === '\r' &&
+      next?.text === '\n' &&
+      unit.token === next.token &&
+      unit.end === next.start
+    ) {
+      normalized.push({ ...unit, text: '\n', end: next.end, offset: shown++ });
+      i++;
+    } else {
+      normalized.push({ ...unit, offset: shown });
+      shown += unit.text.length;
+    }
+  }
+  for (let i = 0; i + 1 < normalized.length; i++) {
+    const unit = normalized[i]!;
+    const next = normalized[i + 1]!;
+    if (unit.text !== '\n' || next.token !== unit.token + 1) continue;
+    const currentToken = cell.sourceTokens[unit.token]!;
+    const nextToken = cell.sourceTokens[next.token]!;
+    if (unit.end !== currentToken.end - 1 || next.start !== nextToken.start + 1)
+      continue;
+    if (!/^"\s*,\s*"$/.test(source.slice(unit.end, next.start))) continue;
+    normalized[i] = { ...unit, end: next.start };
+  }
+  return normalized;
 }
 
 export function notebookSuggestionSurface(
@@ -99,6 +130,7 @@ export function notebookSuggestionSurface(
     number,
     { readonly start: number; readonly end: number }
   >();
+  let mapped: readonly SourceSegment[] = [];
   let nextBlock = 0;
   return {
     root,
@@ -119,15 +151,33 @@ export function notebookSuggestionSurface(
         const units = notebookSourceUnits(source, cell);
         const decoded = units.map((unit) => unit.text).join('');
         if (decoded !== cell.source.text || cell.source.truncated) continue;
+        const joins = new Set(
+          units
+            .filter((unit) => unit.end > cell.sourceTokens[unit.token]!.end - 1)
+            .map((unit) => unit.token)
+        );
+        const groups: number[] = [];
+        const groupRanges = new Map<number, { start: number; end: number }>();
+        for (const [index, range] of cell.sourceTokens.entries()) {
+          const group =
+            index > 0 && joins.has(index - 1) ? groups[index - 1]! : index;
+          groups.push(group);
+          const prior = groupRanges.get(group);
+          groupRanges.set(group, {
+            start: prior?.start ?? range.start,
+            end: range.end,
+          });
+        }
         const tokenBlocks = new Map<string, number>();
         const blockFor = (token: number, markdownBlock: number): number => {
-          const key = `${token}:${markdownBlock}`;
+          const group = groups[token]!;
+          const key = `${group}:${markdownBlock}`;
           let block = tokenBlocks.get(key);
           if (block === undefined) {
             block = nextBlock++;
             tokenBlocks.set(key, block);
             kinds.set(block, `nb-${cell.kind}` as SuggestBlockKind);
-            const range = cell.sourceTokens[token];
+            const range = groupRanges.get(group);
             if (range) tokens.set(block, range);
             allowed.add(block);
           }
@@ -196,6 +246,13 @@ export function notebookSuggestionSurface(
                   : unit
               );
             }
+            if (
+              segment.kind === 'join' &&
+              subset.length === 1 &&
+              subset[0]!.text === '\n' &&
+              segment.text === ' '
+            )
+              subset[0] = { ...subset[0]!, text: ' ' };
             if (subset.map((unit) => unit.text).join('') !== segment.text) {
               span.removeAttribute('data-seg');
               continue;
@@ -207,6 +264,7 @@ export function notebookSuggestionSurface(
           }
         }
       }
+      mapped = result;
       return result;
     },
     blockKind(block) {
@@ -220,6 +278,29 @@ export function notebookSuggestionSurface(
             code: 'not-editable',
             message: 'Only notebook cell source can be edited.',
           };
+    },
+    covers(start, end) {
+      const first = mapped.find(
+        (part) =>
+          part.start <= start &&
+          (start === end ? start <= part.end : start < part.end)
+      );
+      if (!first) return false;
+      if (start === end)
+        return (
+          first.kind !== 'escape' ||
+          start === first.start ||
+          start === first.end
+        );
+      let covered = start;
+      for (const part of mapped) {
+        if (part.end <= covered) continue;
+        if (part.start > covered || part.block !== first.block) return false;
+        if (part.kind === 'escape' && covered !== part.start) return false;
+        if (part.end >= end) return part.kind !== 'escape' || end === part.end;
+        covered = part.end;
+      }
+      return false;
     },
     encode(block, text, start, end) {
       return encodeNotebookDraft(text, start, end, tokens.get(block));

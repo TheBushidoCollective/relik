@@ -36,7 +36,10 @@ import type {
 } from './structured-view-bridge.ts';
 import { buildProse } from './text-views.ts';
 import { notebookSuggestionSurface } from './notebook-suggest.ts';
-import { registerSuggestionSurface } from './suggestion-surface.ts';
+import {
+  mutateSurfaceUI,
+  registerSuggestionSurface,
+} from './suggestion-surface.ts';
 
 const STYLESHEET_ID = 'relic-notebook-view-css';
 const STYLESHEET_HREF = '/assets/notebook-view.css';
@@ -383,7 +386,7 @@ function drawNotebook(
   for (const cell of notebook.cells) list.append(cellItem(cell));
   const unregisterSurface = registerSuggestionSurface(
     root,
-    notebookSuggestionSurface(root, notebook)
+    notebookSuggestionSurface(list, notebook)
   );
 
   /** Puts the badge for one element's marks on it, dropping its stale badge. */
@@ -430,14 +433,16 @@ function drawNotebook(
       target.output === undefined
     )
       return;
-    revealed.add(key);
-    const cell = notebook.cells[target.cell];
-    const output = cell?.outputs[target.output];
-    if (cell === undefined || output === undefined) return;
-    const wrap = block.parentElement;
-    const next = outputWrap(cell, output);
-    if (wrap !== null) wrap.replaceWith(next);
-    refreshMarks();
+    mutateSurfaceUI(list, () => {
+      revealed.add(key);
+      const cell = notebook.cells[target.cell];
+      const output = cell?.outputs[target.output!];
+      if (cell === undefined || output === undefined) return;
+      const wrap = block.parentElement;
+      const next = outputWrap(cell, output);
+      if (wrap !== null) wrap.replaceWith(next);
+      refreshMarks();
+    });
   };
 
   list.addEventListener(

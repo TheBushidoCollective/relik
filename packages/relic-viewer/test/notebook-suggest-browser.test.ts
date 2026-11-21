@@ -16,13 +16,17 @@ test('notebook source maps rendered cells but refuses output selections', async 
   const profile = join(tmpdir(), `relic-nb-profile-${id}`);
   const suggest = resolve(import.meta.dir, '../src/notebook-suggest.ts');
   const editorModule = resolve(import.meta.dir, '../src/suggest-editor.ts');
+  const surfaceModule = resolve(
+    import.meta.dir,
+    '../src/suggestion-surface.ts'
+  );
   const notebook = resolve(
     import.meta.dir,
     '../../relic-format/src/notebook.ts'
   );
   await writeFile(
     entry,
-    `export { notebookSuggestionSurface, notebookAcceptsSelection } from ${JSON.stringify(suggest)}; export { parseNotebook } from ${JSON.stringify(notebook)}; export { mountSuggestEditor } from ${JSON.stringify(editorModule)};`
+    `export { notebookSuggestionSurface, notebookAcceptsSelection } from ${JSON.stringify(suggest)}; export { parseNotebook } from ${JSON.stringify(notebook)}; export { mountSuggestEditor } from ${JSON.stringify(editorModule)}; export { mutateSurfaceUI } from ${JSON.stringify(surfaceModule)};`
   );
   const build = await Bun.build({
     entrypoints: [entry],
@@ -33,7 +37,7 @@ test('notebook source maps rendered cells but refuses output selections', async 
   const js = await build.outputs[0]!.text();
   const result = Promise.withResolvers<string>();
   const page = `<!doctype html><script type="module">
-    import {notebookSuggestionSurface, notebookAcceptsSelection, parseNotebook, mountSuggestEditor} from '/entry.js';
+    import {notebookSuggestionSurface, notebookAcceptsSelection, parseNotebook, mountSuggestEditor, mutateSurfaceUI} from '/entry.js';
     try {
       const source = ${JSON.stringify(notebookSuggestionFixture)};
       const parsed = parseNotebook(source); if (!parsed.ok) throw Error('fixture refused');
@@ -53,13 +57,20 @@ test('notebook source maps rendered cells but refuses output selections', async 
       const changed = source.slice(0, smile.start) + insertion.source + source.slice(smile.end);
       if (JSON.parse(changed).cells[0].source[0] !== 'Hello ' + typed + String.fromCharCode(10)) throw Error('replacement was not JSON escaped');
       const next = segments.find(s => s.text === 'next line');
-      if (!next || surface.encode(smile.block, 'x', smile.start, next.end).ok) throw Error('cross-string edit accepted');
+      if (!next || !surface.covers(smile.start, next.end)) throw Error('cross-string selection not mapped');
+      const cross = surface.encode(smile.block, 'x', smile.start, next.end);
+      if (!cross.ok || JSON.parse(source.slice(0,smile.start)+cross.source+source.slice(next.end)).cells[0].source.join('') !== 'Hello x') throw Error('cross-string replacement corrupts JSON');
+      const outputPos = source.indexOf('output');
+      if (surface.covers(outputPos, outputPos+6) || surface.covers(2,3)) throw Error('output or metadata mapped to a cell');
       if (notebookAcceptsSelection(root, root.querySelector('.nb-out').firstChild) === true) throw Error('output accepted');
       if (notebookAcceptsSelection(root, root.querySelector('[data-seg]').firstChild) !== true) throw Error('source refused');
       let refusal = '';
       const chrome = document.createElement('div'); document.body.append(chrome);
       const editor = mountSuggestEditor({root,source,segments,delimiters:[],version:1,reader:'reader@example.test',chrome,surface,onCommit(){},onDraftChange(){},onRefusal(message){refusal=message;}});
       if (!editor.setSuggesting(true)) throw Error('could not start editor');
+      mutateSurfaceUI(root, () => { root.querySelector('.nb-out').textContent = 'revealed output'; });
+      await Promise.resolve();
+      if (root.querySelector('.nb-out').textContent !== 'revealed output' || !editor.suggesting) throw Error('output control reverted');
       const select = node => { const range=document.createRange(); range.selectNodeContents(node); const selection=document.getSelection(); selection.removeAllRanges(); selection.addRange(range); };
       select(root.querySelector('.nb-out'));
       root.dispatchEvent(new InputEvent('beforeinput',{bubbles:true,cancelable:true,inputType:'insertText',data:'x'}));
@@ -68,6 +79,20 @@ test('notebook source maps rendered cells but refuses output selections', async 
       root.dispatchEvent(new InputEvent('beforeinput',{bubbles:true,cancelable:true,inputType:'insertText',data:typed}));
       const prepared=editor.prepare();
       if (prepared.kind !== 'save' || prepared.plaintext.suggestion.replacement !== insertion.source) throw Error('editor did not commit escaped text');
+      editor.cancel();
+      const crossRange = document.createRange();
+      crossRange.setStart(root.querySelector('[data-seg=\"' + segments.indexOf(smile) + '\"]').firstChild,0);
+      crossRange.setEnd(root.querySelector('[data-seg=\"' + segments.indexOf(next) + '\"]').firstChild,next.text.length);
+      const selection=document.getSelection(); selection.removeAllRanges(); selection.addRange(crossRange);
+      root.dispatchEvent(new InputEvent('beforeinput',{bubbles:true,cancelable:true,inputType:'insertText',data:'x'}));
+      if (editor.prepare().kind !== 'save') throw Error('cross-line edit refused');
+      editor.cancel();
+      const codeSegment = segments.find(s => s.text === 'print(');
+      const textNode = root.querySelector('[data-seg=\"' + segments.indexOf(codeSegment) + '\"]').firstChild;
+      const caret = document.createRange(); caret.setStart(textNode, 1); caret.collapse(true); selection.removeAllRanges(); selection.addRange(caret);
+      const tab = new KeyboardEvent('keydown',{key:'Tab',bubbles:true,cancelable:true}); root.dispatchEvent(tab);
+      if (!tab.defaultPrevented || editor.draft?.inserted !== String.fromCharCode(9)) throw Error('code Tab did not insert');
+      editor.cancel();
       editor.destroy();
       await fetch('/result',{method:'POST',body:'ok'});
     } catch (error) { await fetch('/result',{method:'POST',body:error.stack || String(error)}); }

@@ -6508,8 +6508,9 @@ export function buildThread(
       return true;
     },
     suggestionSelection: (range) => {
+      const selectedSurface = host ? suggestionSurfaceFor(host) : undefined;
       const selectedRoot =
-        (host && suggestionSurfaceFor(host)?.root) ??
+        selectedSurface?.root ??
         host?.querySelector(
           view.route === 'code' || view.route === 'notebook'
             ? 'pre.code-body'
@@ -6520,7 +6521,11 @@ export function buildThread(
         suggesting: suggestionController?.suggesting ?? false,
         canSuggest:
           sourceIssue() === null &&
-          !!selectedRoot?.contains(range.commonAncestorContainer),
+          !!selectedRoot?.contains(range.commonAncestorContainer) &&
+          (selectedSurface?.acceptsSelection?.(range.startContainer) ??
+            true) === true &&
+          (selectedSurface?.acceptsSelection?.(range.endContainer) ?? true) ===
+            true,
         replyId: suggestionController?.selectedSuggestion(range) ?? null,
       };
     },
