@@ -547,7 +547,7 @@ async function indexZipInternal(
       entries.set(name, {
         name,
         rawName,
-        isDirectory: rawName.endsWith('/') || rawName.endsWith('\\'),
+        isDirectory: kind === 'directory' || rawName.endsWith('\\'),
         kind,
         method,
         compressedSize,
