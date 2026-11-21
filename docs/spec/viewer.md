@@ -131,9 +131,9 @@ Redirects and rewrites performed by third parties, including link shorteners and
 
 `ipynb` is class `notebook`, at privilege tier 2, and it renders on the viewing origin. A notebook takes the `notebook` route only when its whole text parses as nbformat 4: an object whose `nbformat` is 4 and whose `cells` is an array. Any other `.ipynb` is text, and the disagreement rule in 1.3 shows it as text with a notice that says why. A notebook's whole text is read up to 50 MiB. Over that it is never read, and it is shown as text with the notice "This notebook is too large to show as a notebook, so its text is shown."
 
-DOCX and EPUB use the `document` class, and XLSX uses `spreadsheet`. Their container routes currently offer a download with a notice until their renderers land. A DOCX or EPUB above 64 MiB, or XLSX above 100 MiB, downloads rather than rendering.
+DOCX and EPUB use the `document` class and currently offer a download with a notice until their renderers land. XLSX uses the `spreadsheet` class and opens in the spreadsheet viewer. A DOCX or EPUB above 64 MiB, or XLSX above 100 MiB, downloads rather than rendering.
 
-The views mount into a root the route creates. The source view is drawn into that root first, so the file is never blank. It stays in place while the view loads, when the view cannot show the file, and when Suggesting switches the reader to Source. A view reports its marks and selections as the anchors in `spec/format.md` 3.13. A mark a view cannot place is reported as unplaceable on the thread, and is never painted on something else.
+The text-based structured views mount into a root the route creates. The source view is drawn into that root first, so the file is never blank. It stays in place while the view loads, when the view cannot show the file, and when Suggesting switches the reader to Source. A view reports its marks and selections as the anchors in `spec/format.md` 3.13. A mark a view cannot place is reported as unplaceable on the thread, and is never painted on something else.
 
 ## 2. The usercontent origin's shape
 
@@ -273,6 +273,35 @@ The interactive parser admits at most 16 MiB, 250,000 triangles, 500,000 source 
 Word and EPUB files currently offer an immediate download. Their renderer modules are placeholders, and opening a document does not extract its entries or create a render frame.
 
 The inactive document-frame plumbing accepts a format-specific selector that identifies the required parts and every XML part independently of file names. The selector must scan package metadata before parsing it. The route checks the ZIP and scans each selected XML part before transferring it, together with first-party renderer text, to the opaque frame. A failed render, timeout, or stage replacement disposes the frame and its pending payload. Enabling a renderer requires its real selector, renderer, and affected-path proof.
+
+### 3.9 Spreadsheet inspection
+
+XLSX files are parsed in a same-origin worker without executing formulas or
+loading external relationships. The viewer shows worksheet cells as text in a
+table, with sheet tabs and a menu for hidden sheets. Charts and images are not
+shown. Cell comments carry the sheet name; sheets whose names cannot be written
+as anchors remain visible but cannot receive cell comments.
+
+Archives are limited to 100 MiB, 10,000 entries, 100 MiB per entry and 200 MiB
+expanded. A workbook is limited to 256 sheets, 5,000,000 cells and 2,000,000
+shared strings. A sheet exceeding 600,000 rows is refused individually.
+Invalid or oversized files can be downloaded.
+
+Rows are indexed sparsely. A formula is limited to 65,536 characters, and
+distinct formula detail is limited to 16 MiB per workbook. Shared-formula
+followers identify their master formula rather than presenting an inferred
+formula as the follower's own. Unsupported time-only and elapsed-time formats
+show their saved numbers instead of calendar dates.
+
+Style tables admit up to 65,536 cell styles and format strings up to 65,536
+characters. Find checks each distinct cell text once per query and scans the
+sheet in cancellable batches.
+
+Copying a range quotes fields with tabs, line breaks, or quotes and prefixes
+formula-like values. Range Copy refuses selections over 100,000 cells or
+8 Mi characters of clipboard output. Single-cell Copy deliberately remains raw
+and is not subject to those range limits. Pasting that text into another
+spreadsheet can cause the receiving application to interpret it as a formula.
 
 ## 4. The sandbox boundary
 
