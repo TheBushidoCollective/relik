@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import {
   chmod,
   lstat,
+  mkdir,
   mkdtemp,
   readFile,
   rm,
@@ -19,11 +20,14 @@ import {
   generateKey,
   generateRelicId,
 } from '@relic/format';
+import { parseTable, recordWidth } from '@relic/format/csv';
+import { parseSubtitles } from '@relic/format/subtitles';
 import { APPLY_SUGGESTIONS_TOOL_NAME } from '../src/apply-suggestions.ts';
 import { nodeFiles } from '../src/files.ts';
 import type { PublishDeps } from '../src/publish.ts';
 import { handleMessage } from '../src/server.ts';
 import {
+  loadPublishState,
   resolveSourceIdentity,
   savePrivatePublishState,
   savePublishState,
@@ -340,6 +344,1094 @@ describe('relic_apply_suggestions', () => {
     expect(allowed.isError).toBe(false);
     expect(await readFile(other, 'utf8')).toBe('# Report\nALPHA beta\nomega\n');
   });
+
+  test.each([
+    [
+      'CSV with BOM and CRLF',
+      'data.csv',
+      '\uFEFFname,value\r\nalpha,1\r\nomega,2\r\n',
+      'BETA',
+    ],
+    ['semicolon CSV', 'data.csv', 'name;value\nalpha;1\nomega;2\n', 'BETA'],
+    [
+      'quoted CSV with escaped quotes',
+      'data.csv',
+      'name,value\n"alpha",1\nomega,2\n',
+      'BETA ""new""',
+    ],
+    ['TSV', 'data.tsv', 'name\tvalue\nalpha\t1\nomega\t2\n', 'BETA'],
+    ['JSON', 'data.json', '{"message":"alpha","number":1}\n', 'BETA'],
+    ['JSON with BOM', 'data.json', '\uFEFF{"message":"alpha"}\n', 'BETA'],
+    [
+      'notebook',
+      'data.ipynb',
+      '{"nbformat":4,"cells":[{"cell_type":"markdown","source":["alpha"]},{"cell_type":"code","source":["x"],"outputs":[{"output_type":"stream","name":"stdout","text":"ok"}]}]}\n',
+      'BETA\\nsecond line',
+    ],
+    [
+      'SRT',
+      'data.srt',
+      '1\n00:00:01,000 --> 00:00:02,000\nalpha\n\n2\n00:00:03,000 --> 00:00:04,000\nomega\n',
+      'BETA',
+    ],
+    [
+      'VTT with CRLF',
+      'data.vtt',
+      'WEBVTT\r\n\r\n00:00:01.000 --> 00:00:02.000\r\nalpha\r\n',
+      'BETA',
+    ],
+  ])(
+    'previews and writes a safe %s suggestion',
+    async (_, filename, original, replacement) => {
+      const target = join(scratch, filename);
+      await writeFile(target, original);
+      await addSuggestion('chosen', 'alpha', replacement);
+      const args = {
+        path: target,
+        accept: ['chosen'],
+        allow_source_mismatch: true,
+      };
+      const preview = await call(args);
+      expect(preview.isError).toBe(false);
+      expect(preview.structuredContent['written']).toBe(false);
+      expect(await readFile(target, 'utf8')).toBe(original);
+      const result = await call({ ...args, write: true });
+      expect(result.isError).toBe(false);
+      expect(result.structuredContent['written']).toBe(true);
+      expect(await readFile(target, 'utf8')).toBe(
+        original.replace('alpha', replacement)
+      );
+    }
+  );
+
+  test('accepts valid multiline JSON Source edits', async () => {
+    const target = join(scratch, 'data.json');
+    const original = '{}';
+    const replacement = '{\n  "message": "hello"\n}';
+    await writeFile(target, original);
+    await addSuggestion('chosen', original, replacement);
+    const args = {
+      path: target,
+      accept: ['chosen'],
+      allow_source_mismatch: true,
+    };
+    const preview = await call(args);
+    expect(preview.isError).toBe(false);
+    expect(await readFile(target, 'utf8')).toBe(original);
+    const result = await call({ ...args, write: true });
+    expect(result.isError).toBe(false);
+    expect(await readFile(target, 'utf8')).toBe(replacement);
+  });
+
+  test('accepts multiline notebook Source edits without changing other tokens', async () => {
+    const target = join(scratch, 'data.ipynb');
+    const original =
+      '{"nbformat":4,"cells":[{"cell_type":"code","id":"cell-1","source":["alpha","beta"],"metadata":{"tag":"keep"},"outputs":[{"output_type":"display_data","data":{"application/json":9007199254740993}}]}],"metadata":{"owner":"keep"}}';
+    const replacement = '[\n    "ALPHA",\n    "beta"\n  ]';
+    await writeFile(target, original);
+    await addSuggestion('chosen', '["alpha","beta"]', replacement);
+    const args = {
+      path: target,
+      accept: ['chosen'],
+      allow_source_mismatch: true,
+    };
+    const preview = await call(args);
+    expect(preview.isError).toBe(false);
+    expect(await readFile(target, 'utf8')).toBe(original);
+    const result = await call({ ...args, write: true });
+    expect(result.isError).toBe(false);
+    expect(await readFile(target, 'utf8')).toBe(
+      original.replace('["alpha","beta"]', replacement)
+    );
+  });
+
+  test.each([
+    [
+      'a final bare CSV row',
+      'data.csv',
+      'name,value\nalpha,1\norphan',
+      'orphan',
+      '',
+      'table_records',
+    ],
+    [
+      'a final bare CSV row with BOM and CRLF',
+      'data.csv',
+      '\uFEFFname,value\r\nalpha,1\r\norphan',
+      'orphan',
+      '',
+      'table_records',
+    ],
+    [
+      'an extra CSV field',
+      'data.csv',
+      'name,value\nalpha,1\nomega,2\n',
+      'alpha,1',
+      'alpha,1,extra',
+      'table_fields',
+    ],
+    [
+      'a missing TSV field',
+      'data.tsv',
+      'name\tvalue\nalpha\t1\nomega\t2\n',
+      'alpha\t1',
+      'alpha1',
+      'table_fields',
+    ],
+    [
+      'an unclosed CSV quote',
+      'data.csv',
+      'name,value\nalpha,1\nomega,2\n',
+      'alpha',
+      '"alpha',
+      'table_parse',
+    ],
+    [
+      'a stray CSV quote',
+      'data.csv',
+      'name,value\nalpha,1\nomega,2\n',
+      'alpha',
+      'al"pha',
+      'table_quotes',
+    ],
+    [
+      'a removed CRLF',
+      'data.csv',
+      'name,value\r\nalpha,1\r\nomega,2',
+      '\nalpha',
+      'alpha',
+      'line_endings',
+    ],
+    [
+      'a newly added BOM',
+      'data.csv',
+      'HEADER,value\nalpha,1\n',
+      'HEADER',
+      '\uFEFFHEADER',
+      'bom',
+    ],
+    [
+      'a second BOM added to a BOM-bearing file',
+      'data.csv',
+      '\uFEFFHEADER,value\nalpha,1\n',
+      'HEADER',
+      '\uFEFFHEADER',
+      'bom',
+    ],
+    [
+      'invalid JSON',
+      'data.json',
+      '{"message":"alpha"}\n',
+      'alpha',
+      'alpha"',
+      'json_parse',
+    ],
+    [
+      'invalid notebook JSON',
+      'data.ipynb',
+      '{"nbformat":4,"cells":[{"cell_type":"raw","source":["alpha"]}]}',
+      'alpha',
+      'alpha"',
+      'notebook_parse',
+    ],
+    [
+      'a deleted notebook cell',
+      'data.ipynb',
+      '{"nbformat":4,"cells":[{"cell_type":"markdown","source":["alpha"]}]}',
+      '{"cell_type":"markdown","source":["alpha"]}',
+      '',
+      'notebook_cells',
+    ],
+    [
+      'a changed notebook cell type',
+      'data.ipynb',
+      '{"nbformat":4,"cells":[{"cell_type":"markdown","source":["alpha"]}]}',
+      'markdown',
+      'raw',
+      'notebook_cell_type',
+    ],
+    [
+      'an unrecognized notebook cell type hidden by the display parser',
+      'data.ipynb',
+      '{"nbformat":4,"cells":[{"cell_type":"raw","source":["alpha"]}]}',
+      'raw',
+      'unknown',
+      'notebook_cell_type',
+    ],
+    [
+      'a null notebook source',
+      'data.ipynb',
+      '{"nbformat":4,"cells":[{"cell_type":"markdown","source":["alpha"]}]}',
+      '["alpha"]',
+      'null',
+      'notebook_source',
+    ],
+    [
+      'a non-string notebook source array element',
+      'data.ipynb',
+      '{"nbformat":4,"cells":[{"cell_type":"raw","source":["alpha"]}]}',
+      '["alpha"]',
+      '["alpha",1]',
+      'notebook_source',
+    ],
+    [
+      'a split escaped surrogate in a notebook source',
+      'data.ipynb',
+      '{"nbformat":4,"cells":[{"cell_type":"raw","source":["\\ud83d\\ude00"]}]}',
+      '\\ude00',
+      '',
+      'notebook_source',
+    ],
+    [
+      'a removed notebook output',
+      'data.ipynb',
+      '{"nbformat":4,"cells":[{"cell_type":"code","source":["alpha"],"outputs":[{},{}]}]}',
+      '"outputs":[{},{}]',
+      '"outputs":[{}]',
+      'notebook_outputs',
+    ],
+    [
+      'a replaced notebook output with the same output count',
+      'data.ipynb',
+      '{"nbformat":4,"cells":[{"cell_type":"code","source":["alpha"],"outputs":[{"output_type":"stream","text":"result"}]}]}',
+      '{"output_type":"stream","text":"result"}',
+      'null',
+      'notebook_outputs',
+    ],
+    [
+      'an invalid notebook outputs field',
+      'data.ipynb',
+      '{"nbformat":4,"cells":[{"cell_type":"code","source":["alpha"],"outputs":[]}]}',
+      '"outputs":[]',
+      '"outputs":null',
+      'notebook_outputs',
+    ],
+    [
+      'a large notebook output number changed without changing its rounded JS value',
+      'data.ipynb',
+      '{"nbformat":4,"cells":[{"cell_type":"code","source":["alpha"],"outputs":[{"output_type":"display_data","data":{"application/json":9007199254740992}}]}]}',
+      '9007199254740992',
+      '9007199254740993',
+      'notebook_outputs',
+    ],
+    [
+      'notebook root metadata',
+      'data.ipynb',
+      '{"nbformat":4,"metadata":{"tag":"root"},"cells":[{"cell_type":"raw","source":["alpha"]}]}',
+      '{"tag":"root"}',
+      'null',
+      'notebook_structure',
+    ],
+    [
+      'notebook cell metadata',
+      'data.ipynb',
+      '{"nbformat":4,"cells":[{"cell_type":"raw","source":["alpha"],"metadata":{"tag":"cell"}}]}',
+      '{"tag":"cell"}',
+      'null',
+      'notebook_structure',
+    ],
+    [
+      'a notebook cell id',
+      'data.ipynb',
+      '{"nbformat":4,"cells":[{"cell_type":"raw","id":"cell-1","source":["alpha"]}]}',
+      'cell-1',
+      'cell-2',
+      'notebook_structure',
+    ],
+    [
+      'notebook cell attachments',
+      'data.ipynb',
+      '{"nbformat":4,"cells":[{"cell_type":"markdown","source":["alpha"],"attachments":{"file":{"text/plain":"before"}}}]}',
+      'before',
+      'after',
+      'notebook_structure',
+    ],
+    [
+      'a shadowed notebook source value',
+      'data.ipynb',
+      '{"nbformat":4,"cells":[{"cell_type":"raw","source":["hidden"],"source":["alpha"]}]}',
+      'hidden',
+      'changed',
+      'notebook_structure',
+    ],
+    [
+      'notebook formatting outside cell sources',
+      'data.ipynb',
+      '{"nbformat":4,"cells":[{"cell_type":"raw","source":["alpha"],"metadata":{}}]}',
+      '"metadata":{}',
+      '"metadata": {}',
+      'notebook_structure',
+    ],
+    [
+      'a changed SRT timing',
+      'data.srt',
+      '1\n00:00:01,000 --> 00:00:02,000\nalpha\n',
+      '00:00:01,000',
+      '00:00:01,001',
+      'subtitle_timings',
+    ],
+    [
+      'a deleted SRT cue',
+      'data.srt',
+      '1\n00:00:01,000 --> 00:00:02,000\nalpha\n\n2\n00:00:03,000 --> 00:00:04,000\nomega\n',
+      'alpha',
+      '',
+      'subtitle_cues',
+    ],
+    [
+      'a deleted VTT cue',
+      'data.vtt',
+      'WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nalpha\n\n00:00:03.000 --> 00:00:04.000\nomega\n',
+      'alpha',
+      '',
+      'subtitle_cues',
+    ],
+    [
+      'a deleted VTT header',
+      'data.vtt',
+      'WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nalpha\n',
+      'WEBVTT',
+      '',
+      'subtitle_header',
+    ],
+    [
+      'a changed VTT timing',
+      'data.vtt',
+      'WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nalpha\n',
+      '00:00:02.000',
+      '00:00:02.500',
+      'subtitle_timings',
+    ],
+    [
+      'a VTT timestamp with unchanged numeric value but invalid punctuation',
+      'data.vtt',
+      'WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nalpha\n',
+      '00:00:01.000',
+      '00:00:01,000',
+      'subtitle_timings',
+    ],
+    [
+      'a new raw VTT cue-text timing separator',
+      'data.vtt',
+      'WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nalpha\nomega\n',
+      'alpha',
+      'alpha --> extra',
+      'subtitle_cues',
+    ],
+    [
+      'a changed inline VTT timestamp',
+      'data.vtt',
+      'WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nalpha<00:00:01.500>beta\n',
+      '00:00:01.500',
+      '00:00:02.500',
+      'subtitle_timings',
+    ],
+    [
+      'a removed inline VTT timestamp',
+      'data.vtt',
+      'WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nalpha<00:00:01.500>beta\n',
+      '<00:00:01.500>',
+      '',
+      'subtitle_timings',
+    ],
+    [
+      'an added inline VTT timestamp',
+      'data.vtt',
+      'WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nalpha beta\n',
+      'alpha',
+      'alpha<00:00:01.500>',
+      'subtitle_timings',
+    ],
+    [
+      'a changed shorthand inline VTT timestamp',
+      'data.vtt',
+      'WEBVTT\n\n00:01.000 --> 00:03.000\nalpha<00:01.500>beta\n',
+      '00:01.500',
+      '00:02.500',
+      'subtitle_timings',
+    ],
+    [
+      'a changed inline VTT timestamp with a single-digit hour',
+      'data.vtt',
+      'WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nalpha<0:00:01.500>beta\n',
+      '0:00:01.500',
+      '0:00:02.500',
+      'subtitle_timings',
+    ],
+    [
+      'a single-digit-hour VTT timestamp consumed by a voice annotation',
+      'data.vtt',
+      'WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nalpha<0:00:01.500>beta\n',
+      'alpha',
+      'alpha<v Speaker ',
+      'subtitle_timings',
+    ],
+    [
+      'a Chromium timestamp prefix with trailing text consumed by an annotation',
+      'data.vtt',
+      'WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nalpha<0:00:01.500suffix>beta\n',
+      'alpha',
+      'alpha<v Speaker ',
+      'subtitle_timings',
+    ],
+    [
+      'an inline timestamp consumed by a new voice annotation',
+      'data.vtt',
+      'WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nalpha<00:00:01.500>beta\n',
+      'alpha',
+      'alpha<v Speaker ',
+      'subtitle_timings',
+    ],
+    [
+      'an inline timestamp consumed by an annotation on the preceding line',
+      'data.vtt',
+      'WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nalpha\n<00:00:01.500>beta\n',
+      'alpha',
+      'alpha<v Speaker ',
+      'subtitle_timings',
+    ],
+    [
+      'an inline timestamp consumed by a new class annotation',
+      'data.vtt',
+      'WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nalpha<00:00:01.500>beta\n',
+      'alpha',
+      'alpha<c.caption ',
+      'subtitle_timings',
+    ],
+    [
+      'an inline timestamp exposed from an annotation',
+      'data.vtt',
+      'WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nalpha<v Speaker <00:00:01.500>beta\n',
+      '<v Speaker ',
+      '<v Speaker>',
+      'subtitle_timings',
+    ],
+    [
+      'an EOF-terminated inline timestamp consumed by an annotation',
+      'data.vtt',
+      'WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nalpha<00:00:01.500\n',
+      'alpha',
+      'alpha<v Speaker ',
+      'subtitle_timings',
+    ],
+    [
+      'changed VTT region settings',
+      'data.vtt',
+      'WEBVTT\n\nREGION\nid:captions\nlines:3\n\n00:00:01.000 --> 00:00:03.000 region:captions\nalpha\n',
+      'lines:3',
+      'lines:1',
+      'subtitle_blocks',
+    ],
+    [
+      'changed VTT NOTE content',
+      'data.vtt',
+      'WEBVTT\n\nNOTE author\nprivate note\n\n00:00:01.000 --> 00:00:03.000\nalpha\n',
+      'private note',
+      'other note',
+      'subtitle_blocks',
+    ],
+    [
+      'changed VTT STYLE content',
+      'data.vtt',
+      'WEBVTT\n\nSTYLE\n::cue { color: red; }\n\n00:00:01.000 --> 00:00:03.000\nalpha\n',
+      'red',
+      'blue',
+      'subtitle_blocks',
+    ],
+    [
+      'changed VTT header content',
+      'data.vtt',
+      'WEBVTT original\n\n00:00:01.000 --> 00:00:03.000\nalpha\n',
+      'original',
+      'changed',
+      'subtitle_blocks',
+    ],
+    [
+      'changed skipped VTT block',
+      'data.vtt',
+      'WEBVTT\n\ninvalid block\nignored text\n\n00:00:01.000 --> 00:00:03.000\nalpha\n',
+      'ignored text',
+      'different text',
+      'subtitle_blocks',
+    ],
+  ])(
+    'refuses %s before both preview and write',
+    async (_, filename, original, exact, replacement, check) => {
+      const target = join(scratch, filename);
+      await writeFile(target, original);
+      await addSuggestion('damage', exact, replacement);
+      for (const write of [false, true]) {
+        const result = await call({
+          path: target,
+          accept: ['damage'],
+          write,
+          allow_source_mismatch: true,
+        });
+        expect(result.isError).toBe(true);
+        expect(result.structuredContent).toMatchObject({
+          code: 'suggestion_breaks_structure',
+          check,
+        });
+        expect(await readFile(target, 'utf8')).toBe(original);
+      }
+    }
+  );
+
+  test.each([
+    ['LF', '\n', '\uFEFF'],
+    ['CRLF', '\r\n', '\uFEFF'],
+    ['CRLF with two existing BOMs', '\r\n', '\uFEFF\uFEFF'],
+  ])(
+    'preserves VTT timing tags and other blocks during %s cue edits',
+    async (_, eol, bom) => {
+      const target = join(scratch, 'data.vtt');
+      const original =
+        bom +
+        [
+          'WEBVTT',
+          '',
+          'REGION',
+          'id:captions',
+          'lines:3',
+          '',
+          'NOTE speaker',
+          'keep this note',
+          '',
+          '00:00:01.000 --> 00:00:03.000 region:captions',
+          'alpha<00:00:01.500>middle<00:00:02.000>omega',
+          '',
+        ].join(eol);
+      await writeFile(target, original);
+      await addSuggestion('first', 'alpha', 'A');
+      await addSuggestion('second', 'middle', 'MID');
+      const args = {
+        path: target,
+        accept: ['first', 'second'],
+        allow_source_mismatch: true,
+      };
+      const preview = await call(args);
+      expect(preview.isError).toBe(false);
+      expect(await readFile(target, 'utf8')).toBe(original);
+      const result = await call({ ...args, write: true });
+      expect(result.isError).toBe(false);
+      expect(await readFile(target, 'utf8')).toBe(
+        original.replace('alpha', 'A').replace('middle', 'MID')
+      );
+    }
+  );
+
+  test.each([
+    [
+      'cue text beside a one-digit-hour timestamp',
+      'alpha<0:00:01.500>beta',
+      'alpha',
+      'BETA',
+    ],
+    [
+      'a one-digit first field without hours',
+      'alpha<0:00.100>beta',
+      '0:00.100',
+      '0:00.200',
+    ],
+    [
+      'a timestamp-shaped token with four fractional digits',
+      'alpha<00:01.1234>beta',
+      '00:01.1234',
+      '00:01.5678',
+    ],
+  ])('permits %s', async (_, cue, exact, replacement) => {
+    const target = join(scratch, 'data.vtt');
+    const original = `WEBVTT\n\n00:00:01.000 --> 00:00:03.000\n${cue}\n`;
+    await writeFile(target, original);
+    await addSuggestion('safe', exact, replacement);
+    const args = {
+      path: target,
+      accept: ['safe'],
+      allow_source_mismatch: true,
+    };
+    const preview = await call(args);
+    expect(preview.isError).toBe(false);
+    expect(await readFile(target, 'utf8')).toBe(original);
+    const result = await call({ ...args, write: true });
+    expect(result.isError).toBe(false);
+    expect(await readFile(target, 'utf8')).toBe(
+      original.replace(exact, replacement)
+    );
+  });
+
+  test('permits text edits beside timestamp-shaped text inside a VTT annotation', async () => {
+    const target = join(scratch, 'data.vtt');
+    const original =
+      'WEBVTT\n\n00:00:01.000 --> 00:00:03.000\n<v Speaker <00:00:01.500>alpha\n';
+    await writeFile(target, original);
+    await addSuggestion('safe', 'alpha', 'BETA &lt;clear&gt;');
+    const args = {
+      path: target,
+      accept: ['safe'],
+      allow_source_mismatch: true,
+    };
+    const preview = await call(args);
+    expect(preview.isError).toBe(false);
+    const result = await call({ ...args, write: true });
+    expect(result.isError).toBe(false);
+    expect(await readFile(target, 'utf8')).toBe(
+      original.replace('alpha', 'BETA &lt;clear&gt;')
+    );
+  });
+
+  test('refuses moving an unchanged inline VTT timestamp to another word', async () => {
+    const target = join(scratch, 'data.vtt');
+    const tag = '<00:00:01.500>';
+    const original = `WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nalpha${tag}beta\n`;
+    await writeFile(target, original);
+    await addSuggestion('remove', tag, '');
+    await addRow('move', {
+      body: 'move the timestamp',
+      display_name: null,
+      anchor: { kind: 'source', exact: 'beta' },
+      suggestion: { v: 1, mode: 'after', replacement: tag },
+    });
+    for (const write of [false, true]) {
+      const result = await call({
+        path: target,
+        accept: ['remove', 'move'],
+        write,
+        allow_source_mismatch: true,
+      });
+      expect(result.structuredContent).toMatchObject({
+        code: 'suggestion_breaks_structure',
+        check: 'subtitle_timings',
+      });
+      expect(result.isError).toBe(true);
+      expect(await readFile(target, 'utf8')).toBe(original);
+    }
+  });
+
+  test('protects VTT non-cue content beyond the parser display cap', async () => {
+    const target = join(scratch, 'data.vtt');
+    const original =
+      `WEBVTT\n\nNOTE ${'x'.repeat(33_000)}GUARD\n\n` +
+      '00:00:01.000 --> 00:00:03.000\nalpha\n';
+    await writeFile(target, original);
+    await addSuggestion('damage', 'GUARD', 'OTHER');
+    for (const write of [false, true]) {
+      const result = await call({
+        path: target,
+        accept: ['damage'],
+        write,
+        allow_source_mismatch: true,
+      });
+      expect(result.structuredContent).toMatchObject({
+        code: 'suggestion_breaks_structure',
+        check: 'subtitle_blocks',
+      });
+      expect(result.isError).toBe(true);
+      expect(await readFile(target, 'utf8')).toBe(original);
+    }
+  });
+
+  test('allows existing VTT cue arrows but refuses moving one into new text', async () => {
+    const target = join(scratch, 'data.vtt');
+    const original = 'WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nx-->y\nbeta\n';
+    await writeFile(target, original);
+    await addSuggestion('safe', 'beta', 'BETA');
+    await addSuggestion('remove', 'x-->y', 'xy');
+    await addSuggestion('add', 'beta', 'be-->ta');
+    const args = { path: target, allow_source_mismatch: true };
+    const safe = await call({ ...args, accept: ['safe'] });
+    expect(safe.isError).toBe(false);
+    const removed = await call({ ...args, accept: ['remove'] });
+    expect(removed.isError).toBe(false);
+    for (const write of [false, true]) {
+      const result = await call({
+        ...args,
+        accept: ['remove', 'add'],
+        write,
+      });
+      expect(result.structuredContent).toMatchObject({
+        code: 'suggestion_breaks_structure',
+        check: 'subtitle_cues',
+      });
+      expect(result.isError).toBe(true);
+      expect(await readFile(target, 'utf8')).toBe(original);
+    }
+  });
+
+  test('refuses a delimiter change caused only by the combined suggestions', async () => {
+    const target = join(scratch, 'data.csv');
+    const header = 'head;name,value\n';
+    const markers = 'Q1Q2';
+    // The table sniffer samples 64 KiB. The semicolon begins just outside its
+    // sample until both one-character deletions move it inside.
+    const padding = 'x'.repeat(65_537 - header.length - markers.length);
+    const original = `${header}${markers}${padding};y,z\n`;
+    const before = parseTable(original);
+    const after = parseTable(original.replace('Q1', 'Q').replace('Q2', 'Q'));
+    if (!before.ok || !after.ok)
+      throw new Error('fixture must parse as a table');
+    expect(before.table.delimiter).toBe(',');
+    expect(after.table.delimiter).toBe(';');
+    expect(before.table.records).toBe(after.table.records);
+    for (let record = 0; record < before.table.records; record += 1)
+      expect(recordWidth(before.table, record)).toBe(
+        recordWidth(after.table, record)
+      );
+    await writeFile(target, original);
+    await addSuggestion('first', 'Q1', 'Q');
+    await addSuggestion('second', 'Q2', 'Q');
+    for (const id of ['first', 'second']) {
+      const preview = await call({
+        path: target,
+        accept: [id],
+        allow_source_mismatch: true,
+      });
+      expect(preview.isError).toBe(false);
+    }
+    for (const write of [false, true]) {
+      const refused = await call({
+        path: target,
+        accept: ['first', 'second'],
+        write,
+        allow_source_mismatch: true,
+      });
+      expect(refused.structuredContent).toMatchObject({
+        code: 'suggestion_breaks_structure',
+        check: 'table_delimiter',
+      });
+      expect(refused.isError).toBe(true);
+      expect(await readFile(target, 'utf8')).toBe(original);
+    }
+  });
+
+  test('detects a CSV delimiter switch at the CRLF viewer sample boundary', async () => {
+    const target = join(scratch, 'data.csv');
+    const header = 'head;name,value\r\n';
+    const marker = 'Q1';
+    const padding = 'x'.repeat(65_536 - header.length - marker.length);
+    const original = `${header}${marker}${padding};y,z\r\n`;
+    const edited = original.replace('Q1', 'Q');
+    const rawBefore = parseTable(original);
+    const rawAfter = parseTable(edited);
+    const normalizedBefore = parseTable(original.replaceAll('\r\n', '\n'));
+    const normalizedAfter = parseTable(edited.replaceAll('\r\n', '\n'));
+    if (
+      !rawBefore.ok ||
+      !rawAfter.ok ||
+      !normalizedBefore.ok ||
+      !normalizedAfter.ok
+    )
+      throw new Error('fixture must parse as a table');
+    expect(rawBefore.table.delimiter).toBe(',');
+    expect(rawAfter.table.delimiter).toBe(';');
+    expect(normalizedBefore.table.delimiter).toBe(';');
+    expect(normalizedAfter.table.delimiter).toBe(';');
+    await writeFile(target, original);
+    await addSuggestion('damage', 'Q1', 'Q');
+    for (const write of [false, true]) {
+      const result = await call({
+        path: target,
+        accept: ['damage'],
+        write,
+        allow_source_mismatch: true,
+      });
+      expect(result.structuredContent).toMatchObject({
+        code: 'suggestion_breaks_structure',
+        check: 'table_delimiter',
+      });
+      expect(result.isError).toBe(true);
+      expect(await readFile(target, 'utf8')).toBe(original);
+    }
+  });
+
+  test('refuses combined CSV edits that move an unchanged cell across a separator', async () => {
+    const target = join(scratch, 'data.csv');
+    const original = 'name,value\nfoo,bar\nomega,2\n';
+    const changed = 'name,value\n"foo,bar",x\nomega,2\n';
+    const before = parseTable(original);
+    const after = parseTable(changed);
+    if (!before.ok || !after.ok)
+      throw new Error('fixture must parse as a table');
+    expect(before.table.delimiter).toBe(after.table.delimiter);
+    expect(before.table.records).toBe(after.table.records);
+    for (let record = 0; record < before.table.records; record += 1)
+      expect(recordWidth(before.table, record)).toBe(
+        recordWidth(after.table, record)
+      );
+    await writeFile(target, original);
+    await addSuggestion('first', 'foo', '"foo');
+    await addRow('second', {
+      body: 'insert after the neighboring value',
+      display_name: null,
+      anchor: { kind: 'source', exact: 'bar' },
+      suggestion: { v: 1, mode: 'after', replacement: '",x' },
+    });
+    for (const write of [false, true]) {
+      const result = await call({
+        path: target,
+        accept: ['first', 'second'],
+        write,
+        allow_source_mismatch: true,
+      });
+      expect(result.structuredContent).toMatchObject({
+        code: 'suggestion_breaks_structure',
+        check: 'table_boundaries',
+      });
+      expect(result.isError).toBe(true);
+      expect(await readFile(target, 'utf8')).toBe(original);
+    }
+  });
+
+  test('maps duplicate selected CSV suggestions only once', async () => {
+    const target = join(scratch, 'data.csv');
+    const original = 'name,value\nalpha,1\n';
+    await writeFile(target, original);
+    await addSuggestion('first', 'alpha', 'BETA');
+    await addSuggestion('duplicate', 'alpha', 'BETA');
+    const result = await call({
+      path: target,
+      accept: ['first', 'duplicate'],
+      write: true,
+      allow_source_mismatch: true,
+    });
+    expect(result.isError).toBe(false);
+    expect(await readFile(target, 'utf8')).toBe('name,value\nBETA,1\n');
+  });
+
+  test('does not let a recovered subtitle block mask a lost cue', async () => {
+    const target = join(scratch, 'data.srt');
+    const original =
+      '1\n00:00:01,000 ~~> 00:00:02,000\nghost\n\n' +
+      '1\n00:00:01,000 --> 00:00:02,000\nalpha\n';
+    const changed =
+      '1\n00:00:01,000 --> 00:00:02,000\nghost\n\n' +
+      '1\n00:00:01,000 ~~> 00:00:02,000\nalpha\n';
+    const before = parseSubtitles(original, 'srt');
+    const after = parseSubtitles(changed, 'srt');
+    if (!before.ok || !after.ok) throw new Error('fixture must contain a cue');
+    expect(before.file.cueCount).toBe(after.file.cueCount);
+    expect(before.file.skipped).toBe(after.file.skipped);
+    const oldCue = before.file.entries[0];
+    const newCue = after.file.entries[0];
+    if (oldCue?.kind !== 'cue' || newCue?.kind !== 'cue')
+      throw new Error('fixture entries must be cues');
+    expect([oldCue.start, oldCue.end]).toEqual([newCue.start, newCue.end]);
+    await writeFile(target, original);
+    await addSuggestion('recover', '~~>', '-->');
+    await addSuggestion('damage', '-->', '~~>');
+    for (const write of [false, true]) {
+      const result = await call({
+        path: target,
+        accept: ['recover', 'damage'],
+        write,
+        allow_source_mismatch: true,
+      });
+      expect(result.structuredContent).toMatchObject({
+        code: 'suggestion_breaks_structure',
+        check: 'subtitle_cues',
+      });
+      expect(result.isError).toBe(true);
+      expect(await readFile(target, 'utf8')).toBe(original);
+    }
+  });
+
+  test('refuses a split Unicode character but accepts a whole-character notebook edit', async () => {
+    const target = join(scratch, 'data.ipynb');
+    const original =
+      '{"nbformat":4,"cells":[{"cell_type":"markdown","source":["Hi 😀 there"]}]}';
+    await writeFile(target, original);
+    await addSuggestion('damage', '\ud83d', '');
+    await addSuggestion('safe', '😀', '🤝');
+    const args = { path: target, allow_source_mismatch: true };
+    for (const write of [false, true]) {
+      const result = await call({ ...args, accept: ['damage'], write });
+      expect(result.structuredContent).toMatchObject({
+        code: 'suggestion_breaks_structure',
+        check: 'unicode',
+      });
+      expect(result.isError).toBe(true);
+      expect(await readFile(target, 'utf8')).toBe(original);
+    }
+    const safe = await call({ ...args, accept: ['safe'], write: true });
+    expect(safe.isError).toBe(false);
+    expect(await readFile(target, 'utf8')).toBe(original.replace('😀', '🤝'));
+  });
+
+  test('uses the published structured filename for a differently named local source', async () => {
+    const target = join(scratch, 'data.json');
+    const original = '\uFEFFname,value\r\nalpha,1\r\nomega,2\r\n';
+    await writeFile(target, original);
+    const state = await loadPublishState(relicId);
+    if (state === undefined) throw new Error('missing fixture state');
+    await savePublishState(relicId, {
+      ...state,
+      source: await resolveSourceIdentity(target),
+      filename: 'data.csv',
+    });
+    await addSuggestion('safe', 'alpha', 'BETA');
+    await addSuggestion('damage', 'alpha', 'alpha,extra');
+    const args = { path: target };
+    const refused = await call({ ...args, accept: ['damage'], write: true });
+    expect(refused.structuredContent).toMatchObject({
+      code: 'suggestion_breaks_structure',
+      check: 'table_fields',
+    });
+    expect(await readFile(target, 'utf8')).toBe(original);
+    const result = await call({ ...args, accept: ['safe'], write: true });
+    expect(result.isError).toBe(false);
+    expect(await readFile(target, 'utf8')).toBe(
+      original.replace('alpha', 'BETA')
+    );
+  });
+
+  test.each([
+    ['CSV', 'data.json', 'published.csv', 'name,value\nalpha,1\n'],
+    ['JSON', 'data.csv', 'published.json', '{"message":"alpha"}\n'],
+    [
+      'notebook',
+      'data.json',
+      'published.ipynb',
+      '{"nbformat":4,"cells":[{"cell_type":"markdown","source":["alpha"]}]}',
+    ],
+  ])(
+    'uses the published %s format instead of a conflicting local suffix',
+    async (_, localName, publishedName, original) => {
+      const target = join(scratch, localName);
+      await writeFile(target, original);
+      const state = await loadPublishState(relicId);
+      if (state === undefined) throw new Error('missing fixture state');
+      await savePublishState(relicId, {
+        ...state,
+        source: await resolveSourceIdentity(target),
+        filename: publishedName,
+      });
+      await addSuggestion('safe', 'alpha', 'BETA');
+      const preview = await call({ path: target, accept: ['safe'] });
+      expect(preview.isError).toBe(false);
+      const result = await call({
+        path: target,
+        accept: ['safe'],
+        write: true,
+      });
+      expect(result.isError).toBe(false);
+      expect(await readFile(target, 'utf8')).toBe(
+        original.replace('alpha', 'BETA')
+      );
+    }
+  );
+
+  test('preflights all folder entries before writing any structured file', async () => {
+    const folder = join(scratch, 'folder');
+    await mkdir(folder);
+    const csv = join(folder, 'good.csv');
+    const json = join(folder, 'bad.json');
+    const originalCsv = 'name,value\nalpha,1\n';
+    const originalJson = '{"message":"omega"}\n';
+    await writeFile(csv, originalCsv);
+    await writeFile(json, originalJson);
+    await addRow('safe', {
+      body: 'safe',
+      display_name: null,
+      entry: 'good.csv',
+      anchor: { kind: 'source', exact: 'alpha' },
+      suggestion: { v: 1, mode: 'replace', replacement: 'BETA' },
+    });
+    await addRow('damage', {
+      body: 'damage',
+      display_name: null,
+      entry: 'bad.json',
+      anchor: { kind: 'source', exact: 'omega' },
+      suggestion: { v: 1, mode: 'replace', replacement: 'omega"' },
+    });
+    const result = await call({
+      path: folder,
+      accept: ['safe', 'damage'],
+      write: true,
+      allow_source_mismatch: true,
+    });
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      code: 'suggestion_breaks_structure',
+      check: 'json_parse',
+    });
+    expect(await readFile(csv, 'utf8')).toBe(originalCsv);
+    expect(await readFile(json, 'utf8')).toBe(originalJson);
+  });
+
+  test('requires a valid source for touched notebook cells without rejecting untouched ones', async () => {
+    const target = join(scratch, 'data.ipynb');
+    const original =
+      '{"nbformat":4,"cells":[{"cell_type":"raw","source":null,"metadata":{"tag":"old"}},{"cell_type":"markdown","source":["alpha"]}]}';
+    await writeFile(target, original);
+    await addSuggestion('invalid', '"old"', '"new"');
+    await addSuggestion('safe', 'alpha', 'BETA');
+    const args = { path: target, allow_source_mismatch: true };
+    const refused = await call({ ...args, accept: ['invalid'], write: true });
+    expect(refused.structuredContent).toMatchObject({
+      code: 'suggestion_breaks_structure',
+      check: 'notebook_source',
+    });
+    expect(await readFile(target, 'utf8')).toBe(original);
+    const safe = await call({ ...args, accept: ['safe'], write: true });
+    expect(safe.isError).toBe(false);
+    expect(await readFile(target, 'utf8')).toBe(
+      original.replace('alpha', 'BETA')
+    );
+  });
+
+  test('counts notebook outputs beyond the viewer output cap', async () => {
+    const target = join(scratch, 'data.ipynb');
+    const tail = ',{"output_type":"stream","name":"stderr","text":"last"}';
+    const outputs = `${Array(200).fill('{}').join(',')}${tail}`;
+    const original = `{"nbformat":4,"cells":[{"cell_type":"code","source":["alpha"],"outputs":[${outputs}]}]}`;
+    await writeFile(target, original);
+    await addSuggestion('damage', tail, '');
+    const result = await call({
+      path: target,
+      accept: ['damage'],
+      write: true,
+      allow_source_mismatch: true,
+    });
+    expect(result.structuredContent).toMatchObject({
+      code: 'suggestion_breaks_structure',
+      check: 'notebook_outputs',
+    });
+    expect(result.isError).toBe(true);
+    expect(await readFile(target, 'utf8')).toBe(original);
+  });
+
+  test.each([
+    [
+      'mixed table endings',
+      'data.csv',
+      'name,value\r\nalpha,1\n',
+      'mixed_line_endings',
+    ],
+    ['a lone table CR', 'data.csv', 'name,value\ralpha,1', 'has_cr'],
+    ['CRLF JSON', 'data.json', '{\r\n"message":"alpha"\r\n}', 'has_cr'],
+    [
+      'CRLF notebook',
+      'data.ipynb',
+      '{\r\n"nbformat":4,"cells":[{"cell_type":"raw","source":["alpha"]}]\r\n}',
+      'has_cr',
+    ],
+  ])(
+    'refuses %s using the shared source convention',
+    async (_, filename, source, reason) => {
+      const target = join(scratch, filename);
+      await writeFile(target, source);
+      const result = await call({
+        path: target,
+        accept: ['chosen'],
+        write: true,
+        allow_source_mismatch: true,
+      });
+      expect(result.structuredContent).toMatchObject({
+        code: 'source_not_suggestible',
+        reason,
+      });
+      expect(await readFile(target, 'utf8')).toBe(source);
+    }
+  );
 
   test('reports unrecorded identity without inventing a mismatch', async () => {
     const legacy = generateRelicId();

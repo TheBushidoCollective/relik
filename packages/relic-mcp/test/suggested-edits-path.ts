@@ -12,12 +12,17 @@
 import assert from 'node:assert/strict';
 import { type ChildProcess, spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Readable, Writable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
-import { decryptComment, deriveCommentKey, parseFragment } from '@relic/format';
+import {
+  decryptComment,
+  deriveCommentKey,
+  encryptComment,
+  parseFragment,
+} from '@relic/format';
 import {
   type SuggestionInput,
   mergeSuggestions,
@@ -105,7 +110,8 @@ interface ToolResult {
 }
 async function mcp(
   name: string,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  expectedError?: string
 ): Promise<Record<string, unknown>> {
   const child = Bun.spawn(['node', bundle], {
     cwd: scratch,
@@ -176,12 +182,17 @@ async function mcp(
     const exit = await child.exited;
     const errors = await stderr;
     assert.equal(exit, 0, `${name}: MCP exit ${exit}: ${errors}`);
-    assert.equal(
-      result.isError,
-      false,
-      `${name}: ${JSON.stringify(result.structuredContent)}`
-    );
     assert.ok(result.structuredContent, `${name}: no structured response`);
+    if (expectedError === undefined) {
+      assert.equal(
+        result.isError,
+        false,
+        `${name}: ${JSON.stringify(result.structuredContent)}`
+      );
+    } else {
+      assert.equal(result.isError, true, `${name}: expected ${expectedError}`);
+      assert.equal(result.structuredContent['code'], expectedError);
+    }
     return result.structuredContent;
   } finally {
     clearTimeout(timer);
@@ -426,7 +437,7 @@ async function browser(): Promise<Browser> {
         );
         await loaded;
         await page.wait(
-          "document.querySelector('article.prose, pre.code-body') && document.querySelector('textarea.compose-textarea')",
+          "document.querySelector('article.prose, pre.code-body, .structured-wrap') && document.querySelector('textarea.compose-textarea')",
           'document and authenticated session'
         );
         return page;
@@ -1211,6 +1222,132 @@ try {
     assert.equal(rows.length, 1);
     assert.equal(rows[0]?.plain.suggestion?.replacement, 'draft\n\tnext');
     return `Enter and Tab posted once; gutter rows matched code and top offset was ${state.topDelta}px`;
+  });
+
+  await step(14, async () => {
+    const cuePath = join(scratch, 'caption-apply.srt');
+    const source =
+      '\uFEFF1\r\n00:00:01,000 --> 00:00:02,000\r\nChange this line\r\n\r\n' +
+      '2\r\n00:00:03,000 --> 00:00:04,000\r\nLeave this line\r\n';
+    const fixture = await publish(cuePath, source);
+    const page = await browserInstance.open(fixture.url, tokenA);
+    const cueSelector = '.cue[data-cue-index="1"] .cue-content';
+    await page.wait(
+      `document.querySelector(${JSON.stringify(cueSelector)})`,
+      'cue view'
+    );
+    await writeSuggestion(
+      page,
+      fixture.id,
+      cueSelector,
+      'Change this line',
+      'Updated caption'
+    );
+    const rows = await plaintextRows(fixture.id, fixture.key);
+    assert.equal(rows.length, 1, 'expected one viewer-authored cue suggestion');
+    const saved = rows[0]!;
+    assert.equal(saved.row.author, 'reader-a@example.test');
+    assert.equal(saved.plain.anchor?.kind, 'source');
+    if (saved.plain.anchor?.kind !== 'source')
+      throw new Error('cue suggestion lacks its source anchor');
+    assert.equal(saved.plain.anchor.exact, 'Change this line');
+    for (const part of [
+      saved.plain.anchor.exact,
+      saved.plain.anchor.prefix,
+      saved.plain.anchor.suffix,
+    ])
+      assert.ok(!part?.includes('\r'), 'cue anchor contains a CR');
+    assert.equal(saved.plain.suggestion?.replacement, 'Updated caption');
+    const originalBytes = Buffer.from(source);
+    const preview = await mcp('relic_apply_suggestions', {
+      relic_id: fixture.id,
+      path: cuePath,
+      accept: [saved.row.id],
+    });
+    assert.equal(preview['written'], false);
+    assert.match(String(preview['diff']), /\+Updated caption/);
+    assert.deepEqual(
+      await readFile(cuePath),
+      originalBytes,
+      'cue preview changed bytes'
+    );
+
+    // These are deliberately forged controls, not viewer-authored edits. The
+    // loopback in-memory service stores them so the built MCP reads real rows.
+    for (const [exact, replacement, check] of [
+      ['00:00:01,000', '00:00:01,500', 'subtitle_timings'],
+      ['Leave this line', '', 'subtitle_cues'],
+    ] as const) {
+      const ciphertext = await encryptComment(fixture.key, {
+        body: 'Structural refusal control',
+        display_name: null,
+        anchor: { kind: 'source', exact },
+        suggestion: { v: 1, mode: 'replace', replacement },
+      });
+      const response = await fetch(
+        `${origin}/api/relics/${fixture.id}/comments`,
+        {
+          method: 'POST',
+          headers: {
+            cookie: `relic_session=${tokenA}`,
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({ ciphertext }),
+        }
+      );
+      const responseText = await response.text();
+      assert.equal(
+        response.status,
+        201,
+        `control POST failed: ${responseText}`
+      );
+      const posted: unknown = JSON.parse(responseText);
+      if (
+        typeof posted !== 'object' ||
+        posted === null ||
+        !('comment_id' in posted) ||
+        typeof posted.comment_id !== 'string' ||
+        !('author' in posted) ||
+        posted.author !== 'reader-a@example.test'
+      )
+        throw new Error(
+          'control POST did not return the expected reader comment'
+        );
+      for (const write of [false, true]) {
+        const refused = await mcp(
+          'relic_apply_suggestions',
+          {
+            relic_id: fixture.id,
+            path: cuePath,
+            accept: [posted.comment_id],
+            write,
+          },
+          'suggestion_breaks_structure'
+        );
+        assert.equal(refused['check'], check);
+        assert.deepEqual(
+          await readFile(cuePath),
+          originalBytes,
+          'refused cue edit changed bytes'
+        );
+      }
+    }
+    const written = await mcp('relic_apply_suggestions', {
+      relic_id: fixture.id,
+      path: cuePath,
+      accept: [saved.row.id],
+      write: true,
+    });
+    assert.equal(written['written'], true);
+    assert.deepEqual(
+      await readFile(cuePath),
+      Buffer.from(source.replace('Change this line', 'Updated caption')),
+      'applied cue bytes differ, including the BOM'
+    );
+    console.log(
+      'C4_CUE_APPLY_PATH_OK viewer=posted mcp=preview-write controls=2'
+    );
+    return 'viewer-authored SRT suggestion previewed and applied with exact BOM and CRLF bytes; timing and cue-loss controls refused';
   });
 
   if (!legacyDist) console.log('STEP 12 SKIPPED no RELIC_SUGGEST_MAIN_DIST');
