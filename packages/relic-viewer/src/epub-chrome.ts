@@ -122,6 +122,10 @@ export function mountEpubChrome(
     zoom = next;
     root.style.zoom = String(zoom);
     window.scrollBy(0, measure() - before);
+    if (headingAnchor) {
+      const top = headingAnchor.getBoundingClientRect().top;
+      if (top < 0) window.scrollBy(0, Math.floor(top));
+    }
     update();
   };
   smaller.addEventListener('click', () => setZoom(zoom - 0.1));

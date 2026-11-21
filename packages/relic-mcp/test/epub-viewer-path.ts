@@ -176,6 +176,7 @@ async function publish(version: 2 | 3): Promise<string> {
 type DomNode = {
   nodeId: number;
   backendNodeId: number;
+  frameId?: string;
   parentId?: number;
   nodeName: string;
   nodeValue: string;
@@ -207,6 +208,7 @@ async function prove(
     child.stdio[3] as Writable,
     child.stdio[4] as Readable
   );
+  let stopEvents = () => {};
   try {
     await attestBrowserHeadless(cdp, launch);
     const target = await cdp.send('Target.createTarget', {
@@ -230,14 +232,65 @@ async function prove(
       mobile: width < 600,
     });
     const requests: string[] = [];
-    cdp.onEvent((event) => {
+    const frameSessions = new Map<
+      string,
+      { session: string; ready: Promise<void> }
+    >();
+    stopEvents = cdp.onEvent((event) => {
+      if (event.method === 'Target.attachedToTarget') {
+        const info = event.params['targetInfo'] as
+          | { type?: unknown; targetId?: unknown }
+          | undefined;
+        const child = event.params['sessionId'];
+        if (
+          info?.type === 'iframe' &&
+          typeof info.targetId === 'string' &&
+          typeof child === 'string'
+        ) {
+          const ready = (async () => {
+            try {
+              await Promise.all([
+                cdp.send('DOM.enable', {}, child),
+                cdp.send('Runtime.enable', {}, child),
+                cdp.send('Network.enable', {}, child),
+              ]);
+            } finally {
+              if (event.params['waitingForDebugger'] === true)
+                await cdp.send('Runtime.runIfWaitingForDebugger', {}, child);
+            }
+          })();
+          // A frame can detach before it is selected; selected failures still
+          // propagate when its readiness promise is awaited below.
+          void ready.catch(() => {});
+          frameSessions.set(info.targetId, { session: child, ready });
+        } else if (
+          typeof child === 'string' &&
+          event.params['waitingForDebugger'] === true
+        ) {
+          void cdp
+            .send('Runtime.runIfWaitingForDebugger', {}, child)
+            .catch(() => {});
+        }
+      } else if (event.method === 'Target.detachedFromTarget') {
+        const detached = event.params['sessionId'];
+        for (const [id, child] of frameSessions)
+          if (child.session === detached) frameSessions.delete(id);
+      }
       if (
-        event.sessionId === session &&
-        event.method === 'Network.requestWillBeSent'
+        event.method === 'Network.requestWillBeSent' &&
+        (event.sessionId === session ||
+          [...frameSessions.values()].some(
+            (child) => child.session === event.sessionId
+          ))
       ) {
         const request = event.params['request'] as { url?: string };
         if (request.url) requests.push(request.url);
       }
+    });
+    await send('Target.setAutoAttach', {
+      autoAttach: true,
+      waitForDebuggerOnStart: true,
+      flatten: true,
     });
     const loaded = cdp.waitForEvent('Page.loadEventFired', {
       sessionId: session,
@@ -246,18 +299,42 @@ async function prove(
     const navigation = await send('Page.navigate', { url });
     assert.equal(navigation['errorText'], undefined);
     await loaded;
-    const nodes = async () =>
-      (await send('DOM.getFlattenedDocument', { depth: -1, pierce: true }))[
-        'nodes'
-      ] as DomNode[];
+    const nodesIn = async (targetSession: string) =>
+      (
+        await cdp.send(
+          'DOM.getFlattenedDocument',
+          { depth: -1, pierce: true },
+          targetSession
+        )
+      )['nodes'] as DomNode[];
     const attr = (node: DomNode, name: string) => {
       const attrs = node.attributes ?? [];
       const i = attrs.indexOf(name);
       return i < 0 ? undefined : attrs[i + 1];
     };
     let all: DomNode[] = [];
+    let frame: DomNode | undefined;
+    let frameSession = session;
     for (let i = 0; i < 200; i++) {
-      all = await nodes();
+      const pageNodes = await nodesIn(session);
+      frame = pageNodes.find(
+        (node) =>
+          node.nodeName === 'IFRAME' &&
+          (attr(node, 'class') ?? '').includes('usercontent-frame')
+      );
+      const child =
+        (frame?.frameId && frameSessions.get(frame.frameId)) ||
+        (frame && frameSessions.size === 1
+          ? [...frameSessions.values()][0]
+          : undefined);
+      if (child) {
+        await child.ready;
+        frameSession = child.session;
+        all = await nodesIn(frameSession);
+      } else {
+        frameSession = session;
+        all = pageNodes;
+      }
       if (all.some((node) => node.nodeValue === 'Readable EPUB chapter')) break;
       await Bun.sleep(50);
     }
@@ -265,14 +342,37 @@ async function prove(
       all.some((node) => node.nodeValue === 'Readable EPUB chapter'),
       'EPUB did not render through viewer'
     );
-    const frame = all.find(
-      (node) =>
-        node.nodeName === 'IFRAME' &&
-        (attr(node, 'class') ?? '').includes('usercontent-frame')
-    );
     assert.ok(frame, 'viewer did not mount a usercontent frame');
-    const box = (await send('DOM.getBoxModel', { nodeId: frame.nodeId })) as {
-      model: { width: number; height: number };
+    const readerFrame = frame;
+    const sendFrame = (method: string, params: Record<string, unknown> = {}) =>
+      cdp.send(method, params, frameSession);
+    const nodes = () => nodesIn(frameSession);
+    const waitForNodes = async (
+      predicate: (current: DomNode[]) => boolean,
+      label: string
+    ): Promise<DomNode[]> => {
+      for (let attempt = 0; attempt < 200; attempt++) {
+        const current = await nodes();
+        if (predicate(current)) return current;
+        await Bun.sleep(10);
+      }
+      throw new Error(`Timed out waiting for ${label}`);
+    };
+    const waitForParent = async (expression: string, label: string) => {
+      for (let attempt = 0; attempt < 200; attempt++) {
+        const response = (await send('Runtime.evaluate', {
+          expression,
+          returnByValue: true,
+        })) as { result?: { value?: unknown } };
+        if (response.result?.value === true) return;
+        await Bun.sleep(10);
+      }
+      throw new Error(`Timed out waiting for ${label}`);
+    };
+    const box = (await send('DOM.getBoxModel', {
+      backendNodeId: readerFrame.backendNodeId,
+    })) as {
+      model: { width: number; height: number; content: number[] };
     };
     assert.ok(
       box.model.width > width * 0.7 && box.model.height > height * 0.4,
@@ -286,12 +386,12 @@ async function prove(
       'SVG cover missing'
     );
     assert.ok(art);
-    const artObject = (await send('DOM.resolveNode', {
-      nodeId: art.nodeId,
+    const artObject = (await sendFrame('DOM.resolveNode', {
+      backendNodeId: art.backendNodeId,
     })) as { object: { objectId: string } };
     let decoded = false;
     for (let i = 0; i < 100; i++) {
-      const status = (await send('Runtime.callFunctionOn', {
+      const status = (await sendFrame('Runtime.callFunctionOn', {
         objectId: artObject.object.objectId,
         functionDeclaration:
           'function(){return this.complete && this.naturalWidth > 0 && this.naturalHeight > 0}',
@@ -315,10 +415,10 @@ async function prove(
     if (fixed) {
       const svg = all.find((node) => attr(node, 'id') === 'ep-1-target');
       assert.ok(svg);
-      const svgObject = (await send('DOM.resolveNode', {
+      const svgObject = (await sendFrame('DOM.resolveNode', {
         backendNodeId: svg.backendNodeId,
       })) as { object: { objectId: string } };
-      const geometry = (await send('Runtime.callFunctionOn', {
+      const geometry = (await sendFrame('Runtime.callFunctionOn', {
         objectId: svgObject.object.objectId,
         functionDeclaration:
           "function(){const rect=this.getBoundingClientRect();const page=this.closest('article[data-epub-chapter]');return {left:rect.left,right:rect.right,width:rect.width,height:rect.height,viewport:this.ownerDocument.documentElement.clientWidth,zoom:Number.parseFloat(getComputedStyle(page).zoom),intrinsic:this.getAttribute('width')}}",
@@ -358,15 +458,15 @@ async function prove(
     }
     const targetNode = all.find((node) => attr(node, 'id') === 'ep-0-start');
     assert.ok(targetNode, 'body fragment missing');
-    const resolved = (await send('DOM.resolveNode', {
-      nodeId: targetNode.nodeId,
+    const resolved = (await sendFrame('DOM.resolveNode', {
+      backendNodeId: targetNode.backendNodeId,
     })) as { object: { objectId: string } };
-    const color = (await send('Runtime.callFunctionOn', {
+    const color = (await sendFrame('Runtime.callFunctionOn', {
       objectId: resolved.object.objectId,
       functionDeclaration: 'function(){return getComputedStyle(this).color}',
       returnByValue: true,
     })) as { result: { value?: string } };
-    const shellBackgrounds = (await send('Runtime.callFunctionOn', {
+    const shellBackgrounds = (await sendFrame('Runtime.callFunctionOn', {
       objectId: resolved.object.objectId,
       functionDeclaration:
         'function(){return [getComputedStyle(this.ownerDocument.documentElement).backgroundColor,getComputedStyle(this.ownerDocument.body).backgroundColor]}',
@@ -382,7 +482,7 @@ async function prove(
       'rgb(1, 2, 3)',
       'chapter-root/ID CSS did not apply'
     );
-    const background = (await send('Runtime.callFunctionOn', {
+    const background = (await sendFrame('Runtime.callFunctionOn', {
       objectId: resolved.object.objectId,
       functionDeclaration:
         'function(){return getComputedStyle(this).backgroundColor}',
@@ -433,8 +533,8 @@ async function prove(
     };
     const click = async (backendNodeId: number, label: string) => {
       try {
-        await send('DOM.scrollIntoViewIfNeeded', { backendNodeId });
-        const buttonBox = (await send('DOM.getBoxModel', {
+        await sendFrame('DOM.scrollIntoViewIfNeeded', { backendNodeId });
+        const buttonBox = (await sendFrame('DOM.getBoxModel', {
           backendNodeId,
         })) as {
           model: { content: number[] };
@@ -443,7 +543,7 @@ async function prove(
         const x = (q[0]! + q[2]!) / 2;
         const y = (q[1]! + q[5]!) / 2;
         for (const type of ['mousePressed', 'mouseReleased'])
-          await send('Input.dispatchMouseEvent', {
+          await sendFrame('Input.dispatchMouseEvent', {
             type,
             x,
             y,
@@ -454,12 +554,67 @@ async function prove(
         throw new Error(`Could not click ${label}`, { cause: error });
       }
     };
-    const clickButton = async (label: string) =>
-      click(await button(label), `button ${label}`);
-    const clickId = async (id: string) =>
-      click(await byId(id), `element ${id}`);
-    const clickNoteLink = async (label: string) =>
-      click(await noteLink(label), `footnote link ${label}`);
+    const hasChapter = (current: DomNode[], chapter: number) =>
+      current.some(
+        (node) =>
+          node.nodeName === '#text' &&
+          node.nodeValue.startsWith(`Chapter ${chapter} of 3 ·`)
+      );
+    const noteIsOpen = (current: DomNode[]) =>
+      current.some(
+        (node) =>
+          node.nodeName === 'ASIDE' &&
+          attr(node, 'class') === 'panel' &&
+          attr(node, 'hidden') === undefined
+      );
+    let expectedZoom = 1;
+    const clickButton = async (label: string) => {
+      await click(await button(label), `button ${label}`);
+      if (label === 'Contents') {
+        await waitForNodes(
+          (current) =>
+            current.some(
+              (node) =>
+                node.nodeName === 'DIV' &&
+                attr(node, 'class') === 'panel' &&
+                attr(node, 'hidden') === undefined
+            ),
+          'the contents panel'
+        );
+      } else if (label === 'Chapter Two' || label === 'Chapter Three') {
+        const chapter = label === 'Chapter Two' ? 2 : 3;
+        await waitForNodes((current) => hasChapter(current, chapter), label);
+      } else if (label === 'A+' || label === 'A−') {
+        expectedZoom = Math.min(
+          1.5,
+          Math.max(
+            0.9,
+            Math.round((expectedZoom + (label === 'A+' ? 0.1 : -0.1)) * 10) / 10
+          )
+        );
+        await waitForNodes((current) => {
+          const root = current.find(
+            (node) => attr(node, 'id') === 'relic-document'
+          );
+          const match = /(?:^|;)\s*zoom:\s*([\d.]+)/.exec(
+            root ? (attr(root, 'style') ?? '') : ''
+          );
+          return Math.abs(Number(match?.[1] ?? '1') - expectedZoom) < 0.001;
+        }, `text size ${expectedZoom}`);
+      }
+    };
+    const clickId = async (id: string) => {
+      await click(await byId(id), `element ${id}`);
+      if (id === 'ep-0-noteref')
+        await waitForNodes(noteIsOpen, 'the open footnote');
+      if (id === 'ep-0-jump')
+        await waitForNodes((current) => hasChapter(current, 2), 'chapter two');
+    };
+    const clickNoteLink = async (label: string) => {
+      await click(await noteLink(label), `footnote link ${label}`);
+      if (label === 'Return to chapter')
+        await waitForNodes((current) => hasChapter(current, 1), 'chapter one');
+    };
     await clickId('ep-0-noteref');
     all = await nodes();
     assert.ok(
@@ -475,10 +630,10 @@ async function prove(
       (node) => attr(node, 'class') === 'note-content'
     );
     assert.ok(noteContent);
-    const noteObject = (await send('DOM.resolveNode', {
-      nodeId: noteContent.nodeId,
+    const noteObject = (await sendFrame('DOM.resolveNode', {
+      backendNodeId: noteContent.backendNodeId,
     })) as { object: { objectId: string } };
-    const noteContainment = (await send('Runtime.callFunctionOn', {
+    const noteContainment = (await sendFrame('Runtime.callFunctionOn', {
       objectId: noteObject.object.objectId,
       functionDeclaration: 'function(){return getComputedStyle(this).contain}',
       returnByValue: true,
@@ -486,7 +641,6 @@ async function prove(
     assert.ok(noteContainment.result.value?.includes('paint'));
     await clickButton('Contents');
     await clickButton('Chapter Two');
-    await Bun.sleep(100);
     all = await nodes();
     assert.ok(
       all.some(
@@ -506,11 +660,11 @@ async function prove(
       'footnote remained visible after chapter navigation'
     );
     const chapterNode = await byId('ep-1-target');
-    const chapterObject = (await send('DOM.resolveNode', {
+    const chapterObject = (await sendFrame('DOM.resolveNode', {
       backendNodeId: chapterNode,
     })) as { object: { objectId: string } };
     const chapterTop = async (): Promise<number> => {
-      const result = (await send('Runtime.callFunctionOn', {
+      const result = (await sendFrame('Runtime.callFunctionOn', {
         objectId: chapterObject.object.objectId,
         functionDeclaration:
           'function(){return this.getBoundingClientRect().top}',
@@ -544,11 +698,11 @@ async function prove(
     await clickButton('Contents');
     await clickButton('Chapter Three');
     const textChapter = await byId('ep-2-start');
-    const textObject = (await send('DOM.resolveNode', {
+    const textObject = (await sendFrame('DOM.resolveNode', {
       backendNodeId: textChapter,
     })) as { object: { objectId: string } };
     const textTop = async (): Promise<number> => {
-      const result = (await send('Runtime.callFunctionOn', {
+      const result = (await sendFrame('Runtime.callFunctionOn', {
         objectId: textObject.object.objectId,
         functionDeclaration:
           'function(){return this.getBoundingClientRect().top}',
@@ -558,11 +712,11 @@ async function prove(
       return result.result.value!;
     };
     const headingNode = await byId('ep-2-heading');
-    const headingObject = (await send('DOM.resolveNode', {
+    const headingObject = (await sendFrame('DOM.resolveNode', {
       backendNodeId: headingNode,
     })) as { object: { objectId: string } };
     const headingGeometry = async () => {
-      const result = (await send('Runtime.callFunctionOn', {
+      const result = (await sendFrame('Runtime.callFunctionOn', {
         objectId: headingObject.object.objectId,
         functionDeclaration:
           'function(){const text=this.firstChild;const whole=this.ownerDocument.createRange();whole.selectNodeContents(this);const first=this.ownerDocument.createRange();first.setStart(text,0);first.setEnd(text,3);return {top:this.getBoundingClientRect().top,firstTop:first.getBoundingClientRect().top,lines:whole.getClientRects().length}}',
@@ -610,10 +764,10 @@ async function prove(
       (node) => attr(node, 'id') === 'relic-document'
     );
     assert.ok(documentRoot);
-    const rootObject = (await send('DOM.resolveNode', {
-      nodeId: documentRoot.nodeId,
+    const rootObject = (await sendFrame('DOM.resolveNode', {
+      backendNodeId: documentRoot.backendNodeId,
     })) as { object: { objectId: string } };
-    const rootIsolation = (await send('Runtime.callFunctionOn', {
+    const rootIsolation = (await sendFrame('Runtime.callFunctionOn', {
       objectId: rootObject.object.objectId,
       functionDeclaration:
         'function(){return getComputedStyle(this).isolation}',
@@ -626,7 +780,6 @@ async function prove(
       'text size did not change'
     );
     await clickId('ep-0-jump');
-    await Bun.sleep(100);
     all = await nodes();
     assert.ok(
       all.some(
@@ -645,7 +798,6 @@ async function prove(
       'footnote did not open'
     );
     await clickNoteLink('Return to chapter');
-    await Bun.sleep(100);
     all = await nodes();
     assert.ok(
       all.some(
@@ -658,7 +810,7 @@ async function prove(
     await clickId('ep-0-noteref');
     await send('Runtime.evaluate', {
       expression:
-        "window.__epubLinks=[];window.addEventListener('message',e=>{if(e.data?.type==='relic:open-link')window.__epubLinks.push(e.data.href)})",
+        "window.__epubLinks=[];window.__epubPoints=0;window.addEventListener('message',e=>{if(e.data?.type==='relic:open-link')window.__epubLinks.push(e.data.href);if(e.data?.type==='relic:frame-point')window.__epubPoints++})",
     });
     const setPointing = async (armed: boolean) => {
       await send('Runtime.evaluate', {
@@ -680,11 +832,7 @@ async function prove(
     };
     await setPointing(true);
     await clickNoteLink('Read more');
-    await send('Runtime.evaluate', {
-      expression:
-        'new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))',
-      awaitPromise: true,
-    });
+    await waitForParent('window.__epubPoints > 0', 'the pointing event');
     const whilePointing = (await send('Runtime.evaluate', {
       expression: 'window.__epubLinks',
       returnByValue: true,
@@ -692,7 +840,10 @@ async function prove(
     assert.deepEqual(whilePointing.result.value, []);
     await setPointing(false);
     await clickNoteLink('Read more');
-    await Bun.sleep(100);
+    await waitForParent(
+      'window.__epubLinks.length === 1',
+      'the external link request'
+    );
     const observed = (await send('Runtime.evaluate', {
       expression: 'window.__epubLinks',
       returnByValue: true,
@@ -710,9 +861,10 @@ async function prove(
       []
     );
     console.log(
-      `EPUB_VIEWER ${width}x${height} frame=${box.model.width}x${box.model.height}`
+      `EPUB_VIEWER ${width}x${height} frame=${box.model.width}x${box.model.height} target=${frameSession === session ? 'in-process' : 'oopif'}`
     );
   } finally {
+    stopEvents();
     cdp.dispose();
     child.kill();
     await rm(profile, { recursive: true, force: true });
