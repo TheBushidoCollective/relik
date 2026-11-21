@@ -258,6 +258,60 @@ function mappedRoot(source: string): {
 }
 
 describe('suggestion views', () => {
+  test('paints an insertion in an empty mapped segment', () => {
+    const source = 'a,,b';
+    const base = textRow('one', ',', 'x', { mode: 'after' });
+    const row = {
+      ...base,
+      plaintext: {
+        ...base.plaintext,
+        anchor: {
+          kind: 'source' as const,
+          exact: ',',
+          prefix: 'a',
+          suffix: ',b',
+        },
+      },
+    };
+    const views = buildSuggestionViews(source, [row], 1, 1);
+    const root = testDocument.createElement('div');
+    const holder = testDocument.createElement('span');
+    holder.setAttribute('data-seg', '0');
+    root.appendChild(holder);
+    const segments: SourceSegment[] = [
+      { text: '', start: 2, end: 2, block: 4, kind: 'text' },
+    ];
+    expect(
+      paintSuggestions(asElement(root), segments, views, 'markdown')
+    ).toEqual({ ok: true });
+    expect(holder.querySelector('ins')?.textContent).toBe('x');
+  });
+
+  test('paints decoded text while retaining source replacement', () => {
+    const views = buildSuggestionViews(
+      'abc',
+      [textRow('one', 'b', 'x""y')],
+      1,
+      1
+    );
+    const { root, segments } = mappedRoot('abc');
+    expect(
+      paintSuggestions(asElement(root), segments, views, 'markdown')
+    ).toEqual({ ok: true });
+    expect(root.querySelector('ins')?.textContent).not.toBe('x"y');
+    expect(
+      paintSuggestions(
+        asElement(root),
+        segments,
+        views,
+        'markdown',
+        (_block, text) => text.replaceAll('""', '"')
+      )
+    ).toEqual({ ok: true });
+    expect(root.querySelector('ins')?.textContent).toBe('x"y');
+    expect(views.pending[0]?.inserted).toBe('x""y');
+  });
+
   test('uses publisher outcomes before resolution and replies, and ignores reader outcomes', () => {
     const source = 'one two three four five six seven eight nine ten';
     const rows: SuggestionThreadRow[] = [

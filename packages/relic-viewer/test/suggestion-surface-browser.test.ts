@@ -16,9 +16,10 @@ test('controller uses the registered structured suggestion surface', async () =>
   const controller = resolve(import.meta.dir, '../src/suggest-controller.ts');
   const surface = resolve(import.meta.dir, '../src/suggestion-surface.ts');
   const cues = resolve(import.meta.dir, '../src/cue-view.ts');
+  const editorModule = resolve(import.meta.dir, '../src/suggest-editor.ts');
   await writeFile(
     entry,
-    `export { mountSuggestionController } from ${JSON.stringify(controller)}; export { registerSuggestionSurface } from ${JSON.stringify(surface)}; export { mountView as mountCues } from ${JSON.stringify(cues)};`
+    `export { mountSuggestionController } from ${JSON.stringify(controller)}; export { registerSuggestionSurface } from ${JSON.stringify(surface)}; export { mountView as mountCues } from ${JSON.stringify(cues)}; export { mountSuggestEditor } from ${JSON.stringify(editorModule)};`
   );
   const build = await Bun.build({
     entrypoints: [entry],
@@ -29,12 +30,14 @@ test('controller uses the registered structured suggestion surface', async () =>
   const js = await build.outputs[0]!.text();
   const result = Promise.withResolvers<string>();
   const page = `<!doctype html><script type="module">
-    import { mountSuggestionController, registerSuggestionSurface, mountCues } from '/entry.js';
+    import { mountSuggestionController, registerSuggestionSurface, mountCues, mountSuggestEditor } from '/entry.js';
     try {
       const host = document.createElement('div');
       const owner = document.createElement('div'); owner.className = 'structured-view';
-      const root = document.createElement('div'); root.setAttribute('data-seg','0'); root.textContent = 'a';
-      owner.append(root); host.append(owner); document.body.append(host);
+      const root = document.createElement('div');
+      const segment = document.createElement('span'); segment.setAttribute('data-seg','0'); segment.textContent = 'a';
+      const output = document.createElement('span'); output.textContent = 'output';
+      root.append(segment, output); owner.append(root); host.append(owner); document.body.append(host);
       let allowed = false, paints = 0;
       registerSuggestionSurface(owner, {
         root, segments: source => {
@@ -42,6 +45,7 @@ test('controller uses the registered structured suggestion surface', async () =>
           return [{text:'a', start:0, end:1, block:4, kind:'text'}];
         }, blockKind: block => block === 4 ? 'csv-bare' : 'paragraph',
         editable: () => allowed || {kind:'refused', code:'not-editable', message:'Not editable'},
+        acceptsSelection: node => output.contains(node) ? {kind:'refused',code:'not-editable',message:'Output is not editable'} : true,
         repaint: () => paints++,
       });
       const view = {route:'code', filename:'data.csv', declaredMimetype:'text/csv', version:1, currentVersion:1, document:{bytes:new TextEncoder().encode('a\\r\\n'), truncated:false}};
@@ -52,9 +56,13 @@ test('controller uses the registered structured suggestion surface', async () =>
       editor.setSuggesting(true);
       if (!editor.suggesting) throw Error('surface could not enter suggesting');
       editor.repaint(()=>{}); if (!paints) throw Error('surface repaint was not called');
-      const range = document.createRange(); range.setStart(root.firstChild,0); range.setEnd(root.firstChild,1);
+      const range = document.createRange(); range.setStart(output.firstChild,0); range.collapse(true);
       const sel = document.getSelection(); sel.removeAllRanges(); sel.addRange(range);
       const type = text => root.dispatchEvent(new InputEvent('beforeinput',{bubbles:true,cancelable:true,inputType:'insertText',data:text}));
+      type('b'); if (editor.draftOpen || !host.textContent.includes('Output is not editable')) throw Error('output selection snapped into source');
+      root.dispatchEvent(new CompositionEvent('compositionstart',{bubbles:true}));
+      if (editor.draftOpen) throw Error('composition started in output');
+      range.setStart(segment.firstChild,0); range.setEnd(segment.firstChild,1); sel.removeAllRanges(); sel.addRange(range);
       type('b'); if (editor.draftOpen || !host.textContent.includes('Not editable')) throw Error('surface refusal ignored');
       allowed = true; type('b'); if (!editor.draftOpen) throw Error('editable surface did not create a draft');
       const cueSource = 'WEBVTT\\r\\n\\r\\n00:00:01.000 --> 00:00:02.000\\r\\nA &amp; <b>B</b>\\r\\n';
@@ -81,6 +89,22 @@ test('controller uses the registered structured suggestion surface', async () =>
       cueText.parentElement.dispatchEvent(new InputEvent('beforeinput',{bubbles:true,cancelable:true,inputType:'insertText',data:'<C>'}));
       if (!cueEditor.draftOpen) throw Error('cue edit did not create a draft');
       cuePart.dispose();
+      editor.destroy();
+      for (const [source, crlf, hasSurface, shouldEnable] of [
+        ['a\\r\\nb', true, true, true],
+        ['a\\rb', true, true, false],
+        ['a\\r\\nb', false, true, false],
+        ['a\\r\\nb', true, false, false],
+      ]) {
+        const r = document.createElement('div');
+        const seg = document.createElement('span'); seg.setAttribute('data-seg', '0'); seg.textContent = 'a'; r.append(seg);
+        const c = document.createElement('div'); document.body.append(r, c);
+        const segments = [{text:'a', start:0, end:1, block:0, kind:'text'}];
+        const s = {root:r,segments:()=>segments,blockKind:()=>'cue',editable:()=>true,repaint:()=>{}};
+        const e = mountSuggestEditor({root:r,chrome:c,source,segments,delimiters:[],version:1,reader:'x',crlf,surface:hasSurface?s:undefined,onCommit(){},onRefusal(){},onDraftChange(){}});
+        if (e.setSuggesting(true) !== shouldEnable) throw Error('CRLF availability incorrect');
+        e.destroy(); r.remove(); c.remove();
+      }
       await fetch('/result',{method:'POST',body:'ok'});
     } catch (e) { await fetch('/result',{method:'POST',body:e.stack || String(e)}); }
   </script>`;
