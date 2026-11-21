@@ -1,6 +1,7 @@
 import { resolveEpubPath } from '../../relic-format/src/epub-package.ts';
 
 const MAX_CSS = 4 * 1024 * 1024;
+const MAX_CSS_REWRITE_BYTES = 256 * 1024 * 1024;
 const MAX_IMAGE_PIXELS = 32 * 1024 * 1024;
 const MAX_BOOK_IMAGE_PIXELS = 128 * 1024 * 1024;
 export interface EpubResources {
@@ -16,6 +17,7 @@ export interface EpubResources {
   svgDataUrl?: (path: string) => string | undefined;
   encodedBytes: number;
   referencedBytes: number;
+  cssRewriteBytes?: number;
   cssBytes: number;
 }
 const IMAGE_TYPES = new Set([
@@ -208,6 +210,18 @@ export function scopeEpubCss(
   if (resources) {
     resources.cssBytes += bytes;
     if (resources.cssBytes > MAX_CSS) throw new Error('CSS limit exceeded');
+    for (const match of result.matchAll(
+      /url\(\s*(?:"(data:[^"]*)"|'(data:[^']*)'|(data:[^)\s]*))\s*\)/gi
+    )) {
+      resources.referencedBytes += (
+        match[1] ??
+        match[2] ??
+        match[3] ??
+        ''
+      ).length;
+      if (resources.referencedBytes > 64 * 1024 * 1024)
+        throw new Error('EPUB resource limit exceeded');
+    }
   }
   return result;
 }
@@ -326,13 +340,12 @@ function importQualifiers(input: string): ImportQualifiers {
   };
 }
 
-/** Read common raster headers without forcing the browser to decode pixels. */
-function rasterPixels(bytes: Uint8Array, mime: string): number | undefined {
+/** Read recognizable raster headers independently of the manifest label. */
+function rasterPixels(bytes: Uint8Array): number | undefined {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   let width = 0;
   let height = 0;
   if (
-    mime === 'image/png' &&
     bytes.length >= 24 &&
     [137, 80, 78, 71, 13, 10, 26, 10].every((value, i) => bytes[i] === value) &&
     String.fromCharCode(...bytes.subarray(12, 16)) === 'IHDR'
@@ -340,14 +353,12 @@ function rasterPixels(bytes: Uint8Array, mime: string): number | undefined {
     width = view.getUint32(16);
     height = view.getUint32(20);
   } else if (
-    mime === 'image/gif' &&
     bytes.length >= 10 &&
     ['GIF87a', 'GIF89a'].includes(String.fromCharCode(...bytes.subarray(0, 6)))
   ) {
     width = view.getUint16(6, true);
     height = view.getUint16(8, true);
   } else if (
-    mime === 'image/webp' &&
     bytes.length >= 25 &&
     String.fromCharCode(...bytes.subarray(0, 4)) === 'RIFF' &&
     String.fromCharCode(...bytes.subarray(8, 12)) === 'WEBP'
@@ -370,12 +381,7 @@ function rasterPixels(bytes: Uint8Array, mime: string): number | undefined {
       width = view.getUint16(26, true) & 0x3fff;
       height = view.getUint16(28, true) & 0x3fff;
     }
-  } else if (
-    mime === 'image/jpeg' &&
-    bytes.length >= 4 &&
-    bytes[0] === 0xff &&
-    bytes[1] === 0xd8
-  ) {
+  } else if (bytes.length >= 4 && bytes[0] === 0xff && bytes[1] === 0xd8) {
     let at = 2;
     while (at < bytes.length) {
       if (bytes[at++] !== 0xff) return undefined;
@@ -408,7 +414,8 @@ export function epubDataUrl(
   resources: EpubResources,
   base: string,
   href: string,
-  kind: 'image' | 'any' = 'any'
+  kind: 'image' | 'any' = 'any',
+  deferReferenceAccounting = false
 ): string | undefined {
   const target = resolveEpubPath(base, decodeCss(href.trim()));
   if (!target) return undefined;
@@ -424,11 +431,11 @@ export function epubDataUrl(
   const limit = FONT_TYPES.has(mime) ? 4 * 1024 * 1024 : 16 * 1024 * 1024;
   if (bytes.length > limit) throw new Error('EPUB resource limit exceeded');
   if (resources.omittedImagePaths?.has(target.path)) return undefined;
-  if (IMAGE_TYPES.has(mime) && mime !== 'image/svg+xml') {
+  if (IMAGE_TYPES.has(mime)) {
     resources.imagePixels ??= new Map();
     const images = resources.imagePixels;
     if (!images.has(target.path)) {
-      const pixels = rasterPixels(bytes, mime);
+      const pixels = rasterPixels(bytes);
       const total = resources.decodedImagePixels ?? 0;
       if (
         pixels !== undefined &&
@@ -463,9 +470,15 @@ export function epubDataUrl(
     resources.dataUrls.set(target.path, url);
     resources.encodedBytes += encodedLength;
   }
-  resources.referencedBytes += url.length;
-  if (resources.referencedBytes > 64 * 1024 * 1024)
-    throw new Error('EPUB resource limit exceeded');
+  if (deferReferenceAccounting) {
+    resources.cssRewriteBytes = (resources.cssRewriteBytes ?? 0) + url.length;
+    if (resources.cssRewriteBytes > MAX_CSS_REWRITE_BYTES)
+      throw new Error('CSS limit exceeded');
+  } else {
+    resources.referencedBytes += url.length;
+    if (resources.referencedBytes > 64 * 1024 * 1024)
+      throw new Error('EPUB resource limit exceeded');
+  }
   return `${url}${target.fragment ? `#${encodeURIComponent(target.fragment)}` : ''}`;
 }
 
@@ -485,8 +498,15 @@ export function epubCss(
     depth: number,
     fragment = false
   ): string => {
-    size += new TextEncoder().encode(css).byteLength;
-    if (size > MAX_CSS || depth > 4) throw new Error('CSS limit exceeded');
+    const inputBytes = new TextEncoder().encode(css).byteLength;
+    size += inputBytes;
+    resources.cssRewriteBytes = (resources.cssRewriteBytes ?? 0) + inputBytes;
+    if (
+      size > MAX_CSS ||
+      depth > 4 ||
+      resources.cssRewriteBytes > MAX_CSS_REWRITE_BYTES
+    )
+      throw new Error('CSS limit exceeded');
     if (!fragment && active.has(file)) throw new Error('CSS import loop');
     if (!fragment) active.add(file);
     let result = '';
@@ -624,7 +644,7 @@ export function epubCss(
             decoded.startsWith('#') &&
             decoded.length > 1
               ? `#ep-${chapter}-${encodeURIComponent(decoded.slice(1))}`
-              : epubDataUrl(resources, file, value);
+              : epubDataUrl(resources, file, value, 'any', deferAccounting);
           const replacement = safe ? `url("${safe}")` : 'url("")';
           if (result.length + replacement.length > MAX_CSS)
             throw new Error('CSS limit exceeded');

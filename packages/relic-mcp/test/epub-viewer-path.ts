@@ -167,7 +167,10 @@ async function publish(version: 2 | 3): Promise<string> {
   assert.equal(response.error, undefined);
   assert.notEqual(response.result?.isError, true);
   const url = response.result?.structuredContent?.url;
-  assert.ok(url?.includes('#'), 'missing encrypted viewer URL');
+  assert.ok(
+    url !== undefined && url.includes('#'),
+    'missing encrypted viewer URL'
+  );
   return url;
 }
 type DomNode = {

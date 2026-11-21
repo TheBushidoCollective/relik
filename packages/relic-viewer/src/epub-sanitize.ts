@@ -260,6 +260,40 @@ export function sanitizeEpubChapter(
           (name === 'stop-opacity' && CSS.supports('opacity', attr.value)))
       ) {
         el.setAttribute(attr.name, attr.value);
+      } else if (
+        svg &&
+        (tag === 'lineargradient' || tag === 'radialgradient') &&
+        name === 'gradientunits'
+      ) {
+        if (/^(?:userSpaceOnUse|objectBoundingBox)$/.test(attr.value))
+          el.setAttribute(attr.name, attr.value);
+      } else if (
+        svg &&
+        (tag === 'lineargradient' || tag === 'radialgradient') &&
+        name === 'spreadmethod'
+      ) {
+        if (/^(?:pad|reflect|repeat)$/.test(attr.value))
+          el.setAttribute(attr.name, attr.value);
+      } else if (
+        svg &&
+        (tag === 'lineargradient' || tag === 'radialgradient') &&
+        name === 'gradienttransform'
+      ) {
+        const transform = attr.value.trim();
+        if (
+          transform === 'none' ||
+          /^(?:\s*(?:matrix|translate|scale|rotate|skewX|skewY)\s*\([\s,0-9.eE+-]*\)\s*,?)+$/i.test(
+            transform
+          )
+        )
+          el.setAttribute(attr.name, transform);
+      } else if (
+        svg &&
+        tag === 'radialgradient' &&
+        ['fx', 'fy', 'fr'].includes(name) &&
+        !/url\s*\(/i.test(attr.value)
+      ) {
+        el.setAttribute(attr.name, attr.value);
       } else if (SAFE_ATTR.has(name) && !/url\s*\(/i.test(attr.value))
         el.setAttribute(attr.name, attr.value);
     }
@@ -278,7 +312,10 @@ export function sanitizeEpubChapter(
           el.setAttribute('data-epub-noteref', '');
       } else if (/^(?:https?:|mailto:)/i.test(href))
         el.setAttribute('href', href);
-    } else if (tag === 'use') {
+    } else if (
+      svg &&
+      (tag === 'use' || tag === 'lineargradient' || tag === 'radialgradient')
+    ) {
       const href =
         input.getAttribute('href') ?? input.getAttribute('xlink:href') ?? '';
       if (href.startsWith('#'))

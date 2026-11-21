@@ -20,6 +20,7 @@ function resources(entries: Map<string, Uint8Array>) {
     omittedImagePaths: new Set<string>(),
     encodedBytes: 0,
     referencedBytes: 0,
+    cssRewriteBytes: 0,
     cssBytes: 0,
   };
 }
@@ -125,10 +126,14 @@ test('bounds measured raster area without rejecting an unmeasurable image', () =
   const entries = new Map([
     ['OPS/ordinary', png(64, 64)],
     ['OPS/large', png(10000, 10000)],
+    ['OPS/mislabeled-large', png(10000, 10000)],
+    ['OPS/mislabeled-small', png(32, 32)],
     ['OPS/unknown', new Uint8Array([1, 2, 3])],
   ]);
   const context = resources(entries);
   for (const path of entries.keys()) context.mediaTypes.set(path, 'image/png');
+  context.mediaTypes.set('OPS/mislabeled-large', 'image/jpeg');
+  context.mediaTypes.set('OPS/mislabeled-small', 'image/gif');
   expect(
     epubDataUrl(context, 'OPS/book.xhtml', 'ordinary', 'image')
   ).toBeDefined();
@@ -142,6 +147,13 @@ test('bounds measured raster area without rejecting an unmeasurable image', () =
   expect(context.omittedImages).toBe(true);
   expect(context.omittedImagePaths.has('OPS/large')).toBe(true);
   expect(context.omittedImagePaths.has('OPS/ordinary')).toBe(false);
+  expect(
+    epubDataUrl(context, 'OPS/book.xhtml', 'mislabeled-large', 'image')
+  ).toBeUndefined();
+  expect(context.omittedImagePaths.has('OPS/mislabeled-large')).toBe(true);
+  expect(
+    epubDataUrl(context, 'OPS/book.xhtml', 'mislabeled-small', 'image')
+  ).toBeDefined();
   expect(
     epubDataUrl(context, 'OPS/book.xhtml', 'unknown', 'image')
   ).toBeDefined();
@@ -202,4 +214,16 @@ test('bounds stylesheet expansion and rejects incomplete CSS scopes', () => {
       `p{background:${'url(img.png) '.repeat(4)}}`
     )
   ).toThrow();
+  const exhausted = resources(new Map());
+  exhausted.cssRewriteBytes = 256 * 1024 * 1024 - 1;
+  expect(() => epubCss(exhausted, 'OPS/main.css', 'p{}', 0, true)).toThrow(
+    'CSS limit exceeded'
+  );
+  const references = resources(
+    new Map([['OPS/img.png', new Uint8Array([1, 2, 3])]])
+  );
+  references.referencedBytes = 64 * 1024 * 1024 - 1;
+  expect(() =>
+    epubDataUrl(references, 'OPS/book.xhtml', 'img.png', 'image')
+  ).toThrow('EPUB resource limit exceeded');
 });
