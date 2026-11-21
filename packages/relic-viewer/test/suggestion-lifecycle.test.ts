@@ -15,9 +15,10 @@ test('controller holds pending work and releases a detached surface after either
   const profile = join(tmpdir(), `relic-lifecycle-profile-${id}`);
   const controller = resolve(import.meta.dir, '../src/suggest-controller.ts');
   const surface = resolve(import.meta.dir, '../src/suggestion-surface.ts');
+  const notebook = resolve(import.meta.dir, '../src/notebook-view.ts');
   await writeFile(
     entry,
-    `export { mountSuggestionController } from ${JSON.stringify(controller)}; export { registerSuggestionSurface } from ${JSON.stringify(surface)};`
+    `export { mountSuggestionController } from ${JSON.stringify(controller)}; export { registerSuggestionSurface, suggestionSurfaceFor } from ${JSON.stringify(surface)}; export { mountView as mountNotebook } from ${JSON.stringify(notebook)};`
   );
   const build = await Bun.build({
     entrypoints: [entry],
@@ -28,7 +29,7 @@ test('controller holds pending work and releases a detached surface after either
   const js = await build.outputs[0]!.text();
   const result = Promise.withResolvers<string>();
   const page = `<!doctype html><script type="module">
-    import {mountSuggestionController,registerSuggestionSurface} from '/entry.js';
+    import {mountSuggestionController,registerSuggestionSurface,suggestionSurfaceFor,mountNotebook} from '/entry.js';
     const check = (v, message) => { if (!v) throw Error(message); };
     const eventually = async (condition, message) => {
       for (let i=0; i<100 && !condition(); i++) await Promise.resolve();
@@ -67,7 +68,34 @@ test('controller holds pending work and releases a detached surface after either
       }
       host.remove(); bar.remove();
     }
-    try { await exercise(true); await exercise(false); await fetch('/result',{method:'POST',body:'ok'}); }
+    async function notebookSwitch(ok) {
+      const host=document.createElement('div'), owner=document.createElement('div'), bar=document.createElement('div');
+      owner.className='structured-view'; host.append(owner); document.body.append(host,bar);
+      const source=JSON.stringify({nbformat:4,cells:[{cell_type:'code',execution_count:7,source:'alpha',outputs:[{output_type:'display_data',data:{'text/html':'<b>unsafe</b>'},metadata:{}}]}]});
+      const part=mountNotebook({root:owner,source,filename:'x.ipynb',mimetype:'application/x-ipynb+json',sourceView:()=>document.createElement('pre'),reportUnshown(){}});
+      const surface=suggestionSurfaceFor(host); check(surface && surface.root!==owner,'notebook editor root not disposable');
+      const response=Promise.withResolvers(); let calls=0;
+      const fetcher=async (_url,init)=>{ if(init?.method==='POST'){calls++;return response.promise;} return Response.json([]); };
+      const view={route:'notebook',filename:'x.ipynb',version:1,currentVersion:1,document:{bytes:new TextEncoder().encode(source),truncated:false}};
+      const editor=mountSuggestionController({view,host,bar,relicId:'fixture',deps:{serviceOrigin:location.origin,fetch:fetcher},session:()=>({kind:'verified',email:'reader@example.test'}),cipher:()=>({seal:async()=> 'sealed',open:async()=>({})}),entries:()=>[],displayName:()=>null,refresh:async()=>{},readCurrentVersion:async()=>1,repaint(){},signIn(){},open(){}});
+      const text=surface.root.querySelector('[data-seg]').firstChild, range=document.createRange(), selection=document.getSelection();
+      range.setStart(text,0); range.setEnd(text,1); selection.removeAllRanges(); selection.addRange(range);
+      editor.setSuggesting(true,range);
+      check(selection.anchorNode.parentElement.closest('.nb-src'),'first source character restored into gutter');
+      const show=surface.root.querySelector('.nb-show-text'); check(show,'withheld output control missing'); show.click();
+      await Promise.resolve(); check(surface.root.querySelector('.nb-text')?.textContent==='<b>unsafe</b>' && editor.suggesting,'output control reverted during suggesting');
+      surface.root.dispatchEvent(new InputEvent('beforeinput',{bubbles:true,cancelable:true,inputType:'insertText',data:'b'}));
+      check(editor.draftOpen,'notebook draft missing'); editor.setSuggesting(false);
+      await eventually(()=>calls===1,'notebook post did not start');
+      part.dispose(); const pre=document.createElement('pre'); pre.textContent=source; owner.replaceChildren(pre);
+      check(editor.destroy()===false,'notebook post disposed early');
+      response.resolve(ok ? {ok:true,json:async()=>({comment_id:'saved'})} : {ok:false,status:500});
+      await eventually(()=>editor.presenceDocument()===undefined,'notebook surface held after post');
+      await Promise.resolve(); check(owner.firstChild===pre && pre.textContent===source,'notebook editor restored over Source');
+      if(!ok) [...host.querySelectorAll('button')].find(b=>b.textContent==='Discard')?.click();
+      host.remove();bar.remove();
+    }
+    try { await exercise(true); await exercise(false); await notebookSwitch(true); await notebookSwitch(false); await fetch('/result',{method:'POST',body:'ok'}); }
     catch(e) { await fetch('/result',{method:'POST',body:e.stack || String(e)}); }
   </script>`;
   const server = Bun.serve({

@@ -163,17 +163,24 @@ Both drive the built MCP bundle over stdio. The browser path uses separate
 authenticated browser contexts for the two readers.
 
 ```sh
+RELIC_REQUIRE_CHROME=1 RELIC_CHROME_PATH=<isolated-headless-shell> mise run verify
 mise exec -- bun run --cwd packages/relic-viewer build
 mise exec -- bun run --cwd packages/relic-mcp build
 RELIC_SUGGEST_MAIN_MCP=<efa3afee-mcp-bundle> mise exec -- bun packages/relic-mcp/test/suggestions-mcp-path.ts
 RELIC_CHROME_PATH=<isolated-headless-shell> RELIC_SUGGEST_MAIN_DIST=<efa3afee-viewer-dist> mise exec -- bun packages/relic-mcp/test/suggested-edits-path.ts
+RELIC_CHROME_PATH=<isolated-headless-shell> mise exec -- bun packages/relic-mcp/test/structured-formats-path.ts
 ```
 
 The expected markers are `SUGGESTIONS_MCP_PATH_OK legacy=ran` and
-`SUGGESTED_EDITS_PATH_OK classes=2 negative=ran`. CI omits the old bundles and
-may report `legacy=skipped` and `negative=skipped` instead. The browser path
-does not establish operating-system IME, real clipboard or drag-and-drop
-behavior.
+`SUGGESTED_EDITS_PATH_OK classes=2 negative=ran cue=applied csv=applied notebook=applied`.
+CI omits the old bundles and may report `legacy=skipped` and `negative=skipped`
+instead. The browser path requires the SRT, CSV and notebook application stages.
+It previews and applies viewer-posted suggestions with the built MCP, checks
+whole-file bytes, and refuses structural changes to cells, cues and notebook
+outputs. The CSV check also refuses a write to a same-basename wrong path. Source
+identity identifies the path, not the version; matching preview and write hashes
+are checked for these fixtures. The browser path does not establish
+operating-system IME, real clipboard or drag-and-drop behavior.
 
 # Comments on images inside HTML
 

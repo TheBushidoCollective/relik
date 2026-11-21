@@ -241,9 +241,28 @@ function pointAt(
   const all = segmentElements(root);
   let segmentElement = element?.closest<HTMLElement>('[data-seg]') ?? null;
   let local: number | null = null;
-  if (segmentElement && root.contains(segmentElement)) {
+  if (
+    !segmentElement &&
+    node.nodeType === 1 &&
+    node.childNodes.length === 1 &&
+    offset >= 0 &&
+    offset <= 1
+  ) {
+    const child = (node as Element).firstElementChild;
+    const candidate = child ? all.indexOf(child as HTMLElement) : -1;
+    const segment = segments[candidate];
+    if (
+      candidate >= 0 &&
+      segment?.start === segment?.end &&
+      segment?.text === ''
+    ) {
+      segmentElement = child as HTMLElement;
+      local = 0;
+    }
+  }
+  if (segmentElement && root.contains(segmentElement) && local === null) {
     local = offsetWithin(segmentElement, node, offset, true);
-  } else {
+  } else if (!segmentElement) {
     let before: HTMLElement | null = null;
     let after: HTMLElement | null = null;
     for (const candidate of all) {
@@ -439,6 +458,9 @@ export function mountSuggestEditor(
     ...(options.surface?.decode
       ? { decode: options.surface.decode.bind(options.surface) }
       : {}),
+    ...(options.surface?.decodeRange
+      ? { decodeRange: options.surface.decodeRange.bind(options.surface) }
+      : {}),
     ...(options.surface?.emptyAnchor
       ? { emptyAnchor: options.surface.emptyAnchor.bind(options.surface) }
       : {}),
@@ -449,7 +471,6 @@ export function mountSuggestEditor(
   let composing = false;
   let compositionOffset = 0;
   let compositionLength = 0;
-  let compositionBaseLength = 0;
   let draftIns: HTMLElement | null = null;
   let hiddenInsertions: { element: HTMLElement; hidden: boolean }[] = [];
   let snapshot: Node | null = null;
@@ -640,24 +661,35 @@ export function mountSuggestEditor(
       ) &&
       Array.from(draftIns.childNodes).every((node) => node.nodeType === 3);
     if (insideComposition && draftIns && model.draft) {
-      const change = model.editInsertion(
-        0,
-        model.draft.inserted.length,
-        draftIns.textContent ?? '',
-        model.draft.blockKind
-      );
-      if (change.kind === 'changed') {
-        compositionLength = Math.max(
-          0,
-          change.draft.inserted.length - compositionBaseLength
-        );
+      const old = model.draft.inserted;
+      const value = draftIns.textContent ?? '';
+      const prefix = old.slice(0, compositionOffset);
+      const suffix = old.slice(compositionOffset + compositionLength);
+      const withinComposition =
+        value.length >= prefix.length + suffix.length &&
+        value.startsWith(prefix) &&
+        value.endsWith(suffix);
+      const text = withinComposition
+        ? value.slice(prefix.length, value.length - suffix.length)
+        : null;
+      const change =
+        text === null
+          ? null
+          : model.editInsertion(
+              compositionOffset,
+              compositionOffset + compositionLength,
+              text,
+              model.draft.blockKind
+            );
+      if (change?.kind === 'changed') {
+        compositionLength = text!.length;
         snapshot = root.cloneNode(true);
         updateHint();
         options.onDraftChange(change.draft);
         observe();
         return;
       }
-      if (change.kind === 'refused')
+      if (change?.kind === 'refused')
         displayRefusal(change.message, change.code);
     }
     if (!reverse(records)) {
@@ -863,9 +895,13 @@ export function mountSuggestEditor(
         start.offset === end.offset
       ) {
         const direction = type === 'deleteContentBackward' ? 'left' : 'right';
-        const value = start.id
+        const encoded = start.id
           ? (pending.find((item) => item.id === start.id)?.inserted ?? '')
-          : (draft?.inserted ?? '');
+          : null;
+        const value =
+          encoded === null
+            ? (draft?.inserted ?? '')
+            : (options.surface?.decode?.(start.block, encoded) ?? encoded);
         if (
           (direction === 'left' && start.offset === 0) ||
           (direction === 'right' && start.offset === value.length)
@@ -948,7 +984,15 @@ export function mountSuggestEditor(
     const prior = model.draft;
     const base =
       prior && a >= prior.end
-        ? prior.inserted.length + source.slice(prior.end, a).length
+        ? prior.inserted.length +
+          (
+            options.surface?.decodeRange?.(start.block, prior.end, a) ??
+            options.surface?.decode?.(
+              start.block,
+              source.slice(prior.end, a)
+            ) ??
+            source.slice(prior.end, a)
+          ).length
         : 0;
     if (type === 'insertParagraph' || type === 'insertLineBreak') {
       const value = start.blockKind === 'paragraph' ? '\n\n' : '\n';
@@ -1042,7 +1086,8 @@ export function mountSuggestEditor(
       if (
         points &&
         (points[0].blockKind === 'code' ||
-          points[0].blockKind === 'fenced-code')
+          points[0].blockKind === 'fenced-code' ||
+          points[0].blockKind === 'nb-code')
       ) {
         event.preventDefault();
         applyInput('insertTab', '\t');
@@ -1128,7 +1173,6 @@ export function mountSuggestEditor(
     }
     compositionOffset = start.kind === 'insertion' ? start.offset : 0;
     compositionLength = 0;
-    compositionBaseLength = model.draft?.inserted.length ?? 0;
     composing = draftIns !== null;
   }
 
@@ -1136,6 +1180,16 @@ export function mountSuggestEditor(
     const queued = observer.takeRecords();
     if (queued.length) handleMutations(queued);
     composing = false;
+  }
+  function surfaceMutation(event: Event): void {
+    if (
+      !on ||
+      !(event instanceof CustomEvent) ||
+      typeof event.detail !== 'function'
+    )
+      return;
+    event.preventDefault();
+    mutate(event.detail as () => void);
   }
 
   reading.addEventListener('click', () => setSuggesting(false));
@@ -1147,6 +1201,7 @@ export function mountSuggestEditor(
   root.addEventListener('focusout', focusOut);
   root.addEventListener('compositionstart', compositionStart);
   root.addEventListener('compositionend', compositionEnd);
+  root.addEventListener('relic:surface-ui-mutation', surfaceMutation);
   doc.addEventListener('selectionchange', selectionChange);
   updateControls();
   if (unavailable === LAYOUT) options.onRefusal(LAYOUT);
@@ -1238,6 +1293,9 @@ export function mountSuggestEditor(
           ...(options.surface?.decode
             ? { decode: options.surface.decode.bind(options.surface) }
             : {}),
+          ...(options.surface?.decodeRange
+            ? { decodeRange: options.surface.decodeRange.bind(options.surface) }
+            : {}),
           ...(options.surface?.emptyAnchor
             ? { emptyAnchor: options.surface.emptyAnchor.bind(options.surface) }
             : {}),
@@ -1273,6 +1331,7 @@ export function mountSuggestEditor(
       root.removeEventListener('focusout', focusOut);
       root.removeEventListener('compositionstart', compositionStart);
       root.removeEventListener('compositionend', compositionEnd);
+      root.removeEventListener('relic:surface-ui-mutation', surfaceMutation);
       doc.removeEventListener('selectionchange', selectionChange);
       controls.remove();
       hint.remove();

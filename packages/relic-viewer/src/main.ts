@@ -101,6 +101,7 @@ import { isFrameScrollMessage } from './frame-scroll.ts';
 import {
   type Concealment,
   concealMarks,
+  isRendered,
   createScrollportWatch,
   type ScrollportWatch,
 } from './mark-visibility.ts';
@@ -6546,8 +6547,9 @@ export function buildThread(
       return true;
     },
     suggestionSelection: (range) => {
+      const selectedSurface = host ? suggestionSurfaceFor(host) : undefined;
       const selectedRoot =
-        (host && suggestionSurfaceFor(host)?.root) ??
+        selectedSurface?.root ??
         host?.querySelector(
           view.route === 'code' || view.route === 'notebook'
             ? 'pre.code-body'
@@ -6558,7 +6560,11 @@ export function buildThread(
         suggesting: suggestionController?.suggesting ?? false,
         canSuggest:
           sourceIssue() === null &&
-          !!selectedRoot?.contains(range.commonAncestorContainer),
+          !!selectedRoot?.contains(range.commonAncestorContainer) &&
+          (selectedSurface?.acceptsSelection?.(range.startContainer) ??
+            true) === true &&
+          (selectedSurface?.acceptsSelection?.(range.endContainer) ?? true) ===
+            true,
         replyId: suggestionController?.selectedSuggestion(range) ?? null,
       };
     },
@@ -6697,6 +6703,10 @@ export function buildThread(
       suggestionController.sync();
       return;
     }
+    readingMode.setAttribute('aria-pressed', 'true');
+    suggestingMode.setAttribute('aria-pressed', 'false');
+    appliedMode.hidden = false;
+    appliedMode.setAttribute('aria-checked', 'false');
     const reason =
       sourceIssue() ??
       (session.kind === 'verified' ? null : 'Sign in to suggest edits.');
@@ -7166,6 +7176,61 @@ export function buildThread(
   let hostWatch: ScrollportWatch | undefined;
   let hostObserver: MutationObserver | undefined;
   let hostConcealScheduled = false;
+  // A virtualized table may unmount the indicator while its card is open.
+  let tableCardMembers: readonly string[] | undefined;
+  let inertTableCard: { node: HTMLElement; wasInert: boolean } | undefined;
+
+  function setMissingTableCardInert(missing: boolean): void {
+    const current = missing ? popover?.current() : undefined;
+    if (inertTableCard && inertTableCard.node !== current) {
+      if (!inertTableCard.wasInert)
+        inertTableCard.node.removeAttribute('inert');
+      inertTableCard = undefined;
+    }
+    if (current && !inertTableCard) {
+      inertTableCard = {
+        node: current,
+        wasInert: current.hasAttribute('inert'),
+      };
+      current.setAttribute('inert', '');
+    }
+  }
+
+  function tableIndicatorFor(
+    id: string,
+    visibleOnly = false
+  ): HTMLElement | undefined {
+    if (!host) return undefined;
+    for (const indicator of host.querySelectorAll<HTMLElement>(
+      '.dt-suggestion-indicator[data-comment-id]'
+    )) {
+      const members = (indicator.dataset['clusterMembers'] ?? '').split(/\s+/);
+      if (
+        indicator.closest('.popover') ||
+        (indicator.dataset['commentId'] !== id && !members.includes(id))
+      )
+        continue;
+      if (
+        visibleOnly &&
+        (indicator.hasAttribute('data-concealed') ||
+          !isRendered(indicator) ||
+          hostWatch?.inView(indicator) === false)
+      )
+        continue;
+      return indicator;
+    }
+    return undefined;
+  }
+
+  function rememberTableCard(id: string): void {
+    const indicator = tableIndicatorFor(id);
+    if (indicator) {
+      const members = indicator.dataset['clusterMembers'];
+      tableCardMembers = members ? members.split(/\s+/).filter(Boolean) : [id];
+    } else if (!tableCardMembers?.includes(id)) {
+      tableCardMembers = undefined;
+    }
+  }
 
   // A pin or a box is drawn on the surface it sits over, so the surface being
   // hidden hides it. A text highlight is its own subject: it is the thing.
@@ -7181,12 +7246,29 @@ export function buildThread(
     const nodes = Array.from(
       host.querySelectorAll<HTMLElement>('[data-comment-id]')
     ).filter((node) => node.closest('.popover') === null);
-    hostConcealed = concealMarks(
+    const concealed = concealMarks(
       nodes.map((node) => ({ node, subject: hostSubject(node) })),
       hostWatch,
       true
     );
+    const id = cardId;
+    const missingTableMark =
+      id !== undefined &&
+      tableCardMembers?.includes(id) &&
+      !nodes.some(
+        (node) =>
+          node.dataset['commentId'] === id ||
+          (node.dataset['clusterMembers'] ?? '').split(/\s+/).includes(id)
+      );
+    if (missingTableMark && id) {
+      const withMissing = new Map(concealed);
+      withMissing.set(id, 'offscreen');
+      hostConcealed = withMissing;
+    } else {
+      hostConcealed = concealed;
+    }
     applyCardConcealment();
+    setMissingTableCardInert(!!missingTableMark);
   };
 
   const scheduleHostConceal = (): void => {
@@ -7248,6 +7330,8 @@ export function buildThread(
       });
       window.removeEventListener('resize', scheduleHostConceal);
     }
+    setMissingTableCardInert(false);
+    tableCardMembers = undefined;
     hostConcealed = new Map();
   };
 
@@ -7646,6 +7730,8 @@ export function buildThread(
   const closeCard = (): void => {
     cardGeneration++;
     cardId = undefined;
+    tableCardMembers = undefined;
+    setMissingTableCardInert(false);
     clearTimeout(hoverTimer);
     clearTimeout(leaveTimer);
     popover?.hide();
@@ -7740,6 +7826,15 @@ export function buildThread(
         }
       }
     }
+    // Prefer the visible table indicator over a potentially clipped inline mark.
+    const tableIndicator = tableIndicatorFor(id, true);
+    if (tableIndicator) {
+      return anchorFromClientRect(
+        tableIndicator.getBoundingClientRect(),
+        host.getBoundingClientRect(),
+        host
+      );
+    }
 
     const candidates: HTMLElement[] = [];
     for (const node of host.querySelectorAll<HTMLElement>(
@@ -7750,6 +7845,18 @@ export function buildThread(
           node.closest<HTMLElement>('[data-cluster-members]') ?? node;
         candidates.push(painted);
       }
+    }
+    for (const cluster of host.querySelectorAll<HTMLElement>(
+      '[data-cluster-members]'
+    )) {
+      if (
+        cluster.closest('.popover') ||
+        !(cluster.dataset['clusterMembers'] ?? '').split(/\s+/).includes(id) ||
+        candidates.includes(cluster)
+      )
+        continue;
+      if (!cluster.hasAttribute('data-concealed')) candidates.unshift(cluster);
+      else if (candidates.length === 0) candidates.push(cluster);
     }
     if (candidates.length === 0 && id === PENDING_MARK_ID) {
       for (const node of host.querySelectorAll<HTMLElement>(
@@ -8126,8 +8233,10 @@ export function buildThread(
     if (host === undefined || entry.id === null) return;
     const layer = popover;
     if (layer === undefined) return;
+    setMissingTableCardInert(false);
     cardGeneration++;
     cardId = entry.id ?? undefined;
+    rememberTableCard(entry.id);
     clearTimeout(leaveTimer);
     // The card takes the panel, so a composer that held it is over.
     dropComposing();
@@ -8457,8 +8566,10 @@ export function buildThread(
     if (first === undefined || firstId === null || firstId === undefined) {
       return;
     }
+    setMissingTableCardInert(false);
     cardGeneration++;
     cardId = firstId;
+    rememberTableCard(firstId);
     clearTimeout(leaveTimer);
     dropComposing();
 
@@ -9809,16 +9920,36 @@ export function buildThread(
         next.dataset.pairBind = '1';
         next.addEventListener('relic:before-structured-swap', (event) => {
           if (host !== next) return;
-          const reason = guardSurfaceSwap(suggestionController);
+          const reason =
+            guardSurfaceSwap(suggestionController) ??
+            (suggestionController?.postInFlight &&
+            event instanceof CustomEvent &&
+            event.detail === 'table-cell'
+              ? 'Wait for the suggestion to finish sending.'
+              : null);
           if (reason) {
             event.preventDefault();
             suggestionNotice.textContent = reason;
           }
         });
-        next.addEventListener('relic:structured-state', () => {
+        next.addEventListener('relic:structured-state', (event) => {
           if (host !== next) return;
           if (suggestionController?.destroy()) suggestionController = undefined;
           updateSuggestionStub();
+          if (
+            event instanceof CustomEvent &&
+            event.detail === 'structured' &&
+            allEntries.some(
+              (entry) => entry.kind === 'open' && entry.suggestion
+            )
+          )
+            void ensureSuggestion();
+        });
+        next.addEventListener('relic:table-suggest', () => {
+          if (host !== next) return;
+          void ensureSuggestion().then((controller) =>
+            controller?.setSuggesting(true)
+          );
         });
         bindHostConcealment(next);
         bindPairing(next);

@@ -50,5 +50,6 @@ export function mountView(mount: StructuredMount): StructuredPart | undefined {
   }
   return mountDataTable(mount.root, csvTableSource(parsed.table), {
     filename: mount.filename,
+    autoDelimiter: !forcedTab,
   });
 }

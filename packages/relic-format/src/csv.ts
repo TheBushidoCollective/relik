@@ -218,6 +218,14 @@ function sniffDelimiter(text: string, start: number): TableDelimiter {
   return best;
 }
 
+/** The delimiter an auto-detected table would use for this source. */
+export function detectTableDelimiter(
+  text: string,
+  skipBom = true
+): TableDelimiter {
+  return sniffDelimiter(text, skipBom && text.charCodeAt(0) === 0xfeff ? 1 : 0);
+}
+
 type ScanOutcome =
   | {
       readonly ok: true;
