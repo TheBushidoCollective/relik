@@ -21,6 +21,7 @@
  */
 
 import { isOtioz, isRawOtio } from './otio-zip.ts';
+import { zipContainerKindSync } from './containers.ts';
 import { modelFormatFromFilename, sniffModelFormat } from './model.ts';
 
 export const RENDERER_CLASSES = [
@@ -34,6 +35,8 @@ export const RENDERER_CLASSES = [
   'model',
   'otio',
   'notebook',
+  'spreadsheet',
+  'document',
   'folder',
   'archive',
   'binary',
@@ -60,6 +63,8 @@ export const RENDERABLE_CLASSES: readonly RendererClass[] = [
   'image',
   'pdf',
   'notebook',
+  'spreadsheet',
+  'document',
   'folder',
 ];
 
@@ -91,6 +96,8 @@ export const CLASS_BEHAVIOUR: Record<RendererClass, ClassBehaviour> = {
   pdf: 'renders',
   model: 'renders',
   notebook: 'renders',
+  spreadsheet: 'renders',
+  document: 'renders',
   folder: 'renders',
   media: 'plays',
   otio: 'plays',
@@ -143,6 +150,9 @@ export const EXTENSIONS: Readonly<Record<string, RendererClass>> = {
 
   otio: 'otio',
   otioz: 'otio',
+  docx: 'document',
+  epub: 'document',
+  xlsx: 'spreadsheet',
   svg: 'image',
   png: 'image',
   jpg: 'image',
@@ -352,7 +362,10 @@ export function sniffContentClass(content: Uint8Array): RendererClass {
   for (const signature of MAGIC) {
     if (matchesMagic(content, signature)) {
       if (signature.cls === 'archive') {
-        if (isOtioz(content)) return 'otio';
+        const kind = zipContainerKindSync(content);
+        if (kind === 'otio') return 'otio';
+        if (kind === 'docx' || kind === 'epub') return 'document';
+        if (kind === 'xlsx') return 'spreadsheet';
       }
       return signature.cls;
     }
@@ -385,10 +398,12 @@ export function privilegeTier(cls: RendererClass): 0 | 1 | 2 | 3 {
   switch (cls) {
     case 'html':
     case 'jsx':
+    case 'document':
       return 3;
     case 'image':
     case 'pdf':
     case 'model':
+    case 'spreadsheet':
     case 'notebook':
       return 2;
     case 'markdown':
@@ -412,7 +427,10 @@ export function deriveRendererClass(
   for (const signature of MAGIC) {
     if (matchesMagic(content, signature)) {
       if (signature.cls === 'archive') {
-        if (isOtioz(content)) return 'otio';
+        const kind = zipContainerKindSync(content);
+        if (kind === 'otio') return 'otio';
+        if (kind === 'docx' || kind === 'epub') return 'document';
+        if (kind === 'xlsx') return 'spreadsheet';
       }
       return signature.cls;
     }
@@ -472,9 +490,11 @@ export function leastPrivileged(
   const ranking: readonly RendererClass[] = [
     'html',
     'jsx',
+    'document',
     'image',
     'pdf',
     'model',
+    'spreadsheet',
     'notebook',
     'markdown',
     'code',

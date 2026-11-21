@@ -4,6 +4,8 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { deflateSync } from 'node:zlib';
+import { planStoredZip } from '@relic/format';
+import { planCover } from '../src/cover/inputs.ts';
 import {
   COVER_HEIGHT,
   COVER_WIDTH,
@@ -355,6 +357,45 @@ describe('publish flow with cover options', () => {
   afterEach(async () => {
     delete process.env['RELIC_PUBLISH_STATE'];
     await rm(scratch, { recursive: true, force: true });
+  });
+
+  test('publishes a DOCX with its MIME and no public cover', async () => {
+    const entries = ['[Content_Types].xml', 'word/document.xml'];
+    const layout = planStoredZip(
+      entries.map((name) => ({ name, size: 0, crc32: 0 }))
+    );
+    const bytes = new Uint8Array(layout.totalBytes);
+    let at = 0;
+    for (const header of layout.localHeaders) {
+      bytes.set(header, at);
+      at += header.length;
+    }
+    bytes.set(layout.centralDirectory, at);
+    at += layout.centralDirectory.length;
+    bytes.set(layout.end, at);
+    const path = join(scratch, 'private.docx');
+    await writeFile(path, bytes);
+    let observedMime = '';
+    const deps = makeTestDeps(fakeFetch());
+    const result = await publish(
+      { path },
+      {
+        ...deps,
+        renderCover: async (source) => {
+          observedMime = source.mimetype;
+          const plan = await planCover(source);
+          if (plan.kind !== 'skip')
+            throw new Error('document cover must be skipped');
+          return plan.outcome;
+        },
+      }
+    );
+    expect(result.renderer_class).toBe('document');
+    expect(observedMime).toBe(
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    );
+    expect(result.cover.status).toBe('skipped');
+    expect(coverRequests).toHaveLength(0);
   });
 
   test('cover: false makes zero renderCover calls and zero /cover requests', async () => {

@@ -9,7 +9,7 @@
  *
  * What it never carries: the contents, the envelope header's authoritative
  * filename and declared mimetype, which stay inside the AEAD, and anything
- * finer than the ten-value class.
+ * finer than the renderer class.
  * Why the class is allowed here at all. It is the coarse category the frame
  * already concedes to the operator on the grant, so the card is a new
  * audience for a field the service has always held rather than a new field.
@@ -50,6 +50,8 @@ export const CLASS_PHRASES: Record<RendererClass, string> = {
   binary: 'A binary file.',
   otio: 'An OpenTimelineIO timeline.',
   notebook: 'A Jupyter notebook.',
+  document: 'A document.',
+  spreadsheet: 'A spreadsheet.',
   folder: 'A folder of files.',
 };
 
@@ -64,6 +66,8 @@ export const CLASS_TITLES: Record<RendererClass, string> = {
   media: 'A media relic',
   archive: 'An archive relic',
   notebook: 'A notebook relic',
+  document: 'A document relic',
+  spreadsheet: 'A spreadsheet relic',
   binary: 'A binary relic',
   otio: 'An OpenTimelineIO relic',
   folder: 'A folder relic',

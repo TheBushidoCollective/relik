@@ -70,6 +70,26 @@ export async function planCover(
       },
     };
   }
+  // Container member names are private and must not appear on public covers.
+  if (
+    source.rendererClass === 'document' ||
+    source.rendererClass === 'spreadsheet' ||
+    /\.(?:docx|xlsx|epub)$/i.test(source.filename) ||
+    source.mimetype === 'application/epub+zip' ||
+    source.mimetype ===
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+    source.mimetype ===
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  ) {
+    return {
+      kind: 'skip',
+      outcome: {
+        status: 'skipped',
+        reason: 'no_cover_for_class',
+        detail: 'Generic cover used for a document or spreadsheet',
+      },
+    };
+  }
 
   if (
     source.bytes.length === 0 &&

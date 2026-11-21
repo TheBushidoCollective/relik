@@ -16,6 +16,7 @@ import type {
   StructuredMount,
   StructuredPart,
 } from './structured-view-bridge.ts';
+import { structuredViewFor } from './structured-view-bridge.ts';
 import {
   breadcrumbFor,
   JsonTreeState,
@@ -167,8 +168,9 @@ function drawTree(
   const copyPath = button(doc, 'Copy path');
   const copyValue = button(doc, 'Copy value');
   const comment = button(doc, 'Comment');
+  const suggest = button(doc, 'Suggest edit');
   const actions = el(doc, 'div', 'jt-actions');
-  actions.append(pointer, copyPath, copyValue, comment);
+  actions.append(pointer, copyPath, copyValue, comment, suggest);
   const bar = el(doc, 'div', 'jt-bar');
   bar.append(crumbs, actions);
 
@@ -468,6 +470,41 @@ function drawTree(
         visibleText(tree.valueSource(state.selected)),
         'Copied the value.'
       );
+    },
+    { signal }
+  );
+  suggest.addEventListener(
+    'click',
+    () => {
+      const start = tree.valueStart(state.selected);
+      const end = tree.valueEnd(state.selected);
+      const handle = structuredViewFor(mount.root);
+      handle?.showSource();
+      if (!handle?.showingSource) return;
+      const body = mount.root.querySelector<HTMLElement>('pre.code-body');
+      if (!body || body.textContent !== tree.source) return;
+      const walker = doc.createTreeWalker(body, NodeFilter.SHOW_TEXT);
+      let offset = 0;
+      let first: [Node, number] | undefined;
+      let last: [Node, number] | undefined;
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        const length = node.textContent?.length ?? 0;
+        if (!first && start >= offset && start <= offset + length)
+          first = [node, start - offset];
+        if (end >= offset && end <= offset + length) {
+          last = [node, end - offset];
+          break;
+        }
+        offset += length;
+      }
+      if (!first || !last) return;
+      const range = doc.createRange();
+      range.setStart(...first);
+      range.setEnd(...last);
+      const selection = doc.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+      body.scrollIntoView({ block: 'nearest' });
     },
     { signal }
   );

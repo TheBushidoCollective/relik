@@ -7,6 +7,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./comments": "./src/comments.ts",
+    "./containers": "./src/containers.ts",
     "./csv": "./src/csv.ts",
     "./cover": "./src/cover.ts",
     "./json-tree": "./src/json-tree.ts",
@@ -19,6 +20,7 @@
     "./subtitles": "./src/subtitles.ts",
     "./structured-text": "./src/structured-text.ts",
     "./wordlist": "./src/wordlist.ts",
+    "./xml": "./src/xml.ts",
     "./zip-index": "./src/zip-index.ts"
   },
   "scripts": {

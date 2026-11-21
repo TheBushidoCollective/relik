@@ -49,7 +49,7 @@ The declared type is the **filename and declared mimetype in the encrypted envel
 
 The rule operates on privilege levels rather than on type names. Map each of the two types to the level it would reach, then:
 
-1. **If the two levels differ, the viewer renders the less privileged of the two classes and says so.** The level is the renderer's privilege tier: `html` and `jsx` execute script in the frame (the top), `image`, `pdf` and `model` decode a binary format, `markdown` and `code` are escaped text, and everything else is not rendered in the page. The class ranking `leastPrivileged` applies runs from `html` and `jsx` (loses every disagreement) down through `image`, `pdf`, `model`, `markdown`, `code`, `media`, `otio`, `archive` and `binary` (wins every one). A disagreement proves one input is lying and the viewer can't tell which, so it takes neither input's word for more than the lower of the two: the route can never do more than either input claimed. A file named `chart.png` that sniffs as HTML shows as an image, which is inert, and never reaches the frame, because sending it there would be trusting the sniff over a declaration it just contradicted. PNG bytes named `chart.svg` show as an image for the same reason. The one exception is a 3D model: a disagreement about a `model` is download-only, because the model viewer parses a binary format the other classes cannot stand in for.
+1. **If the two levels differ, the viewer renders the less privileged of the two classes and says so.** HTML and JSX execute script in the frame; documents share their tier without executing author code. Image, PDF, model, spreadsheet and notebook use tier 2, and Markdown and code are escaped text. The class ranking from most to least privileged is `html`, `jsx`, `document`, `image`, `pdf`, `model`, `spreadsheet`, `notebook`, `markdown`, `code`, `media`, `otio`, `folder`, `archive`, `binary`. A mismatch involving a model, document or spreadsheet downloads instead, because none has a safe substitute renderer.
 2. **If the two levels are the same, there is no privilege disagreement and the declared class picks the renderer, with no notice.** `markdown` and `code` are both escaped text and carry identical privilege, and the sniffer cannot tell them apart, so comparing classes would downgrade every Markdown relic ever published. A component declared `jsx` is the one class the sniffer cannot see: the viewer asks the compiler, and prose that fails to parse is shown as source, which is the least privileged telling of the lie.
 3. **When the levels differ, the taskbar tells the recipient the contents don't match the name:** "This file is named like X but its contents look like Y. It is being shown the safer way." A same-level match shows no notice, because nothing disagreed about privilege.
 
@@ -130,6 +130,8 @@ Redirects and rewrites performed by third parties, including link shorteners and
 `csv`, `tsv`, `json`, `srt` and `vtt` stay class `code`. The route is `code`, and the view inside is chosen from the declared extension, then from the declared type (`structuredKindFor` in `structured-view-bridge.ts`). The bytes never change the route. A file a view cannot show is drawn as its source, as it always was.
 
 `ipynb` is class `notebook`, at privilege tier 2, and it renders on the viewing origin. A notebook takes the `notebook` route only when its whole text parses as nbformat 4: an object whose `nbformat` is 4 and whose `cells` is an array. Any other `.ipynb` is text, and the disagreement rule in 1.3 shows it as text with a notice that says why. A notebook's whole text is read up to 50 MiB. Over that it is never read, and it is shown as text with the notice "This notebook is too large to show as a notebook, so its text is shown."
+
+DOCX and EPUB use the `document` class, and XLSX uses `spreadsheet`. Their container routes currently offer a download with a notice until their renderers land. A DOCX or EPUB above 64 MiB, or XLSX above 100 MiB, downloads rather than rendering.
 
 The views mount into a root the route creates. The source view is drawn into that root first, so the file is never blank. It stays in place while the view loads, when the view cannot show the file, and when Suggesting switches the reader to Source. A view reports its marks and selections as the anchors in `spec/format.md` 3.13. A mark a view cannot place is reported as unplaceable on the thread, and is never painted on something else.
 
@@ -355,6 +357,8 @@ decrypts records into a browser-managed Blob and reads bounded slices for
 renderers instead of allocating a whole-file plaintext buffer. Images, PDF,
 audio, video, and OTIO can use the Blob path, subject to their format,
 decoder, and parser limits. Download-only content retains its full bytes.
+
+Document and spreadsheet ZIP indexes cap the directory at 16 MiB and 10,000 entries, each expanded entry at 100 MiB, and the total expanded size at 200 MiB. ZIP64, multi-disk and encrypted entries are refused.
 
 The Blob's backing storage is controlled by the browser. It may reside in
 memory or on temporary disk, and OS swap may write memory to disk. Explicit

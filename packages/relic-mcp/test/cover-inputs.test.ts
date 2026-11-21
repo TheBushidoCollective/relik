@@ -3,6 +3,48 @@ import { COVER_INPUT_PART_BYTES, type CoverSource } from '@relic/format/cover';
 import { planCover, TEXT_PREFIX_BYTES } from '../src/cover/inputs.ts';
 
 describe('cover-inputs', () => {
+  test('never produces public covers for documents or spreadsheets', async () => {
+    const bytes = new Uint8Array([0x50, 0x4b, 0x03, 0x04]);
+    for (const source of [
+      {
+        filename: 'private.docx',
+        mimetype: 'application/octet-stream',
+        rendererClass: 'archive' as const,
+        bytes,
+      },
+      {
+        filename: 'private.xlsx',
+        mimetype: 'application/octet-stream',
+        rendererClass: 'archive' as const,
+        bytes,
+      },
+      {
+        filename: 'private.epub',
+        mimetype: 'application/octet-stream',
+        rendererClass: 'archive' as const,
+        bytes,
+      },
+      {
+        filename: 'unnamed',
+        mimetype: 'application/octet-stream',
+        rendererClass: 'document' as const,
+        bytes,
+      },
+      {
+        filename: 'unnamed',
+        mimetype: 'application/octet-stream',
+        rendererClass: 'spreadsheet' as const,
+        bytes,
+      },
+    ]) {
+      const plan = await planCover(source);
+      expect(plan.kind).toBe('skip');
+      if (plan.kind === 'skip') {
+        expect(plan.outcome.status).toBe('skipped');
+      }
+    }
+  });
+
   test('routes markdown to markdown kind with text prefix', async () => {
     const content = new TextEncoder().encode('# Heading\nParagraph text\n');
     const source: CoverSource = {

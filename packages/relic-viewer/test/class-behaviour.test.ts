@@ -29,6 +29,9 @@ const RENDER_ROUTES: readonly (RenderRoute | 'folder')[] = [
   'pdf',
   'model',
   'notebook',
+  // These routes currently show a download placeholder until renderers land.
+  'sandboxed-document',
+  'spreadsheet',
   'folder',
 ];
 
