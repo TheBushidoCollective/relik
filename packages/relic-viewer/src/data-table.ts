@@ -584,7 +584,7 @@ export function mountDataTable(
       unsafeSuggestions(cell.field)
     )
       return;
-    if (closeCellEditor && !requestSurfaceSwap(root, 'table-cell')) return;
+    if (!requestSurfaceSwap(root, 'table-cell')) return;
     closeCellEditor?.();
     const panel = element('div', 'dt-suggest-editor');
     const title = element(
@@ -815,19 +815,26 @@ export function mountDataTable(
       }
     }
     if (changes?.length && mapped && text && (role !== 'head' || headerRow)) {
-      const first = changes[0]!;
-      const count = changes.reduce(
-        (total, change) => total + (change.conflict?.members.length ?? 1),
-        0
-      );
+      const ids = new Set<string>();
+      for (const change of changes) {
+        for (const id of change.conflict?.members ?? [change.row.id]) {
+          ids.add(id);
+          for (const duplicate of suggestionViews?.byId.get(id)?.also ?? [])
+            ids.add(duplicate);
+        }
+      }
+      const members = [...ids];
+      const first = members[0]!;
+      const count = members.length;
       const indicator = element(
         'button',
         'dt-suggestion-indicator',
         count > 1 ? String(count) : 'Edit'
       );
       indicator.type = 'button';
-      indicator.dataset['sgId'] = first.row.id;
-      indicator.dataset['commentId'] = first.row.id;
+      indicator.dataset['sgId'] = first;
+      indicator.dataset['commentId'] = first;
+      if (count > 1) indicator.dataset['clusterMembers'] = members.join(' ');
       indicator.setAttribute(
         'aria-label',
         count > 1

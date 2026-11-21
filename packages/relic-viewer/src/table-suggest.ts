@@ -292,6 +292,11 @@ export function tableCellSurface(
   return {
     root,
     clipPaint: true,
+    covers: (start, end, replacement) =>
+      end >= start &&
+      start >= cell.segments[0]!.start &&
+      end <= cell.segments[cell.segments.length - 1]!.end &&
+      (replacement === undefined || !hasTableInvisible(replacement)),
     segments: () => cell.segments,
     blockKind: () => cell.kind,
     editable: () => cell.editable,

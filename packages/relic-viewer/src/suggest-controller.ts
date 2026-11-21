@@ -545,6 +545,15 @@ export function mountSuggestionController(
     }
     gutter.textContent = lines.join('\n');
   };
+  const editablePending = () => {
+    const pending = views?.pending ?? [];
+    return surface?.covers
+      ? pending.filter(
+          (item) =>
+            surface?.covers?.(item.start, item.end, item.inserted) === true
+        )
+      : pending;
+  };
 
   const ensureEditor = (): void => {
     const session = options.session();
@@ -578,7 +587,7 @@ export function mountSuggestionController(
       crlf: sourceResult.crlf,
       surface,
       displayName: options.displayName(),
-      pending: views?.pending ?? [],
+      pending: editablePending(),
       chrome: editorChrome,
       receiptHost: host,
       unavailable: view.version !== currentVersion ? 'older' : null,
@@ -714,20 +723,20 @@ export function mountSuggestionController(
       clearSuggestionPaint(target);
       surface?.repaint();
       ordinary();
-      const first = segments[0];
-      const last = segments[segments.length - 1];
-      const visibleViews =
-        surface?.clipPaint && first && last
-          ? {
-              ...views!,
-              paint: views!.paint.filter(
-                (view) =>
-                  view.location.status === 'resolved' &&
-                  view.location.start >= first.start &&
-                  view.location.end <= last.end
-              ),
-            }
-          : views!;
+      const visibleViews = surface?.covers
+        ? {
+            ...views!,
+            paint: views!.paint.filter(
+              (item) =>
+                item.location.status !== 'resolved' ||
+                surface?.covers?.(
+                  item.location.start,
+                  item.location.end,
+                  item.input?.suggestion.replacement
+                ) === true
+            ),
+          }
+        : views!;
       const result = paintSuggestions(
         target,
         segments,
@@ -746,7 +755,7 @@ export function mountSuggestionController(
       }
       updateGutter();
     };
-    if (editor) editor.updatePending(views.pending, draw);
+    if (editor) editor.updatePending(editablePending(), draw);
     else draw();
     if (failed && editor?.suggesting) setEditorSuggesting(false);
     updateControls();

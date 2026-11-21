@@ -1454,6 +1454,29 @@ try {
         "document.querySelector('.structured-wrap .toggle-row button')?.textContent.includes('View table')",
         'View source remains available while posting'
       );
+      await click(page, '.structured-wrap .toggle-row button');
+      await page.wait(
+        "document.querySelector('.structured-table .dt-grid')",
+        'table remounted while posting'
+      );
+      await click(page, '.structured-table [data-r="1"][data-c="1"]');
+      await click(page, '.dt-cellbar .dt-suggest');
+      assert.equal(
+        await page.evaluate<boolean>(
+          "!!document.querySelector('.dt-suggest-editor')"
+        ),
+        false,
+        'a new editor opened while another table post was in flight'
+      );
+      await page.wait(
+        "document.querySelector('[data-sg-notice]')?.textContent.includes('finish sending')",
+        'remounted table swap refusal'
+      );
+      await click(page, '.structured-wrap .toggle-row button');
+      await page.wait(
+        "document.querySelector('.structured-wrap .toggle-row button')?.textContent.includes('View table')",
+        'return to source during held post'
+      );
     } finally {
       heldComment = undefined;
       resume.resolve();
@@ -1508,6 +1531,35 @@ try {
       located.end,
       normalized.lastIndexOf('repeat') + 'repeat'.length
     );
+    const otherReader = await browserInstance.open(fixture.url, tokenB);
+    for (const [writer, selected, replacement, count] of [
+      [page, 'FIRST', 'first replacement', 2],
+      [otherReader, 'SECOND', 'second replacement', 3],
+    ] as const) {
+      await click(writer, '.structured-table [data-r="3"][data-c="1"]');
+      await click(writer, '.dt-cellbar .dt-suggest');
+      await writer.wait(
+        "document.querySelector('.dt-suggest-text[contenteditable=true]')",
+        'clipped cell editor'
+      );
+      await select(writer, '.dt-suggest-text', selected);
+      await input(writer, replacement);
+      await leave(writer);
+      await until(
+        async () => writesFor(fixture.id, 'POST') === count,
+        'clipped cell suggestion posted'
+      );
+      await writer.wait(
+        `Number.parseInt(document.querySelector('[data-sg-count]')?.textContent, 10) >= ${count}`,
+        'clipped suggestion refresh'
+      );
+    }
+    const mediumRows = (await plaintextRows(fixture.id, fixture.key)).filter(
+      (row) =>
+        row.plain.suggestion?.replacement === 'first replacement' ||
+        row.plain.suggestion?.replacement === 'second replacement'
+    );
+    assert.equal(mediumRows.length, 2);
 
     const reopened = await browserInstance.open(fixture.url, tokenA);
     const mark = `.structured-table [data-r="2"][data-c="1"] [data-comment-id="${saved.row.id}"]`;
@@ -1567,6 +1619,32 @@ try {
     await reopened.wait(
       `document.querySelector(${JSON.stringify(mark)})`,
       'CSV mark after table remount'
+    );
+    const indicator =
+      '.structured-table [data-r="3"][data-c="1"] .dt-suggestion-indicator';
+    await reopened.wait(
+      `(() => {
+        const button = document.querySelector(${JSON.stringify(indicator)});
+        if (!button) return false;
+        const rect = button.getBoundingClientRect();
+        return button.contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2));
+      })()`,
+      'clipped cell indicator is visible'
+    );
+    await click(reopened, indicator, false);
+    for (const row of mediumRows) {
+      await reopened.wait(
+        `document.querySelector(${JSON.stringify(`.popover-member[data-member-id="${row.row.id}"]`)})`,
+        'clipped cell suggestion offered in cluster'
+      );
+    }
+    await click(
+      reopened,
+      `.popover-member[data-member-id="${mediumRows[1]!.row.id}"]`
+    );
+    await reopened.wait(
+      `document.querySelector(${JSON.stringify(`.popover-card[data-comment-id="${mediumRows[1]!.row.id}"]`)})`,
+      'second clipped suggestion opened'
     );
     const sniff = await publish(
       join(scratch, 'sniff.csv'),

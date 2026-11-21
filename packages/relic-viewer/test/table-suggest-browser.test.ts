@@ -30,7 +30,7 @@ async function exercise(
     'm'.repeat(270) +
     'FIRSTSECOND' +
     '\r\nUnsafe,invisible target' +
-    '\r\n' +
+    '\r\nFresh,peer target\r\n' +
     Array.from({ length: 80 }, (_, i) => `User ${i},item ${i}\r\n`).join('');
   const parsed = module.parseTable(source, { delimiter: ',' });
   if (!parsed.ok) throw new Error('parse failed');
@@ -216,6 +216,62 @@ async function exercise(
     throw new Error(
       'a cell with an invisible pending insertion remained editable'
     );
+  const fresh = tableRoot.querySelector<HTMLElement>(
+    '[data-r="6"][data-c="1"]'
+  )!;
+  fresh.dispatchEvent(
+    new MouseEvent('mousedown', { bubbles: true, button: 0 })
+  );
+  document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+  (tableRoot.querySelector('.dt-suggest') as HTMLButtonElement).click();
+  controller.setSuggesting(true);
+  const freshEditor = tableRoot.querySelector<HTMLElement>('.dt-suggest-text')!;
+  if (!controller.suggesting)
+    throw new Error('fresh cell did not start editing');
+  entries.push({
+    kind: 'open',
+    id: 'late-unsafe',
+    author: 'reader@example.test',
+    version: 1,
+    createdAt: '2026-01-07T00:00:00Z',
+    body: '',
+    displayName: null,
+    anchor: { kind: 'source', exact: 'peer target' },
+    suggestion: { v: 1, mode: 'replace', replacement: 'late\u200fcontrol' },
+  });
+  controller.sync();
+  controller.repaint(() => {});
+  if (
+    freshEditor.textContent?.includes('\u200f') ||
+    freshEditor.querySelector('[data-sg="late-unsafe"]')
+  )
+    throw new Error('late invisible peer suggestion entered the active editor');
+  const safeNode = freshEditor.querySelector('[data-seg]')!.firstChild!;
+  const safeRange = document.createRange();
+  safeRange.selectNodeContents(safeNode);
+  document.getSelection()!.removeAllRanges();
+  document.getSelection()!.addRange(safeRange);
+  freshEditor.dispatchEvent(
+    new InputEvent('beforeinput', {
+      bubbles: true,
+      cancelable: true,
+      inputType: 'insertText',
+      data: 'safe replacement',
+    })
+  );
+  if (
+    !controller.draftOpen ||
+    host.textContent?.includes('Editing your suggestion')
+  )
+    throw new Error(
+      'hidden unsafe pending suggestion became an editable draft'
+    );
+  freshEditor.dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })
+  );
+  await Promise.resolve();
+  controller.setSuggesting(false);
+  (tableRoot.querySelector('.dt-suggest-close') as HTMLButtonElement).click();
   cell().dispatchEvent(
     new MouseEvent('mousedown', { bubbles: true, button: 0 })
   );
@@ -229,7 +285,9 @@ async function exercise(
     !editor.textContent?.includes('fox') ||
     !editor.querySelector('.sg-chip')
   )
-    throw new Error('editor did not open on selected cell');
+    throw new Error(
+      `editor did not open on selected cell: ${controller.suggesting} ${editor?.outerHTML}`
+    );
   if (editor.textContent?.includes('wrong-cell'))
     throw new Error('another cell painted inside the editor');
   const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
