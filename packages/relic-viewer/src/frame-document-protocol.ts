@@ -6,6 +6,10 @@ export interface EpubBook {
   readonly language?: string;
   readonly progression: 'ltr' | 'rtl' | 'default';
   readonly layout: 'reflowable' | 'pre-paginated';
+  readonly resources: readonly {
+    readonly path: string;
+    readonly mediaType: string;
+  }[];
   readonly spine: readonly {
     readonly path: string;
     readonly linear: boolean;
@@ -26,6 +30,10 @@ export interface EpubBook {
 export interface DocumentInput {
   readonly entries: ReadonlyMap<string, Uint8Array>;
   readonly book?: EpubBook;
+  readonly requestExternalLink?: (
+    event: MouseEvent,
+    href: string | null
+  ) => void;
 }
 export type DocumentOutcome =
   | { readonly state: 'ready' }
@@ -56,11 +64,20 @@ function isBook(value: unknown): value is EpubBook {
     !['reflowable', 'pre-paginated'].includes(value['layout'] as string) ||
     !Array.isArray(value['spine']) ||
     value['spine'].length > 2000 ||
+    !Array.isArray(value['resources']) ||
+    value['resources'].length > 10000 ||
     !Array.isArray(value['toc']) ||
-    !Array.isArray(value['pageList'])
+    !Array.isArray(value['pageList']) ||
+    value['toc'].length + value['pageList'].length > 5000
   )
     return false;
   return (
+    value['resources'].every(
+      (item: unknown) =>
+        isRecord(item) &&
+        typeof item['path'] === 'string' &&
+        typeof item['mediaType'] === 'string'
+    ) &&
     value['spine'].every(
       (item: unknown) =>
         isRecord(item) &&

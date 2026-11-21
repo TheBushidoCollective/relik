@@ -1,3 +1,5 @@
+import { decodeHTMLStrict } from 'entities/decode';
+
 export interface XmlElement {
   readonly name: string;
   readonly attrs: ReadonlyMap<string, string>;
@@ -8,6 +10,7 @@ export type XmlFailure =
   | 'entity'
   | 'depth'
   | 'attributes'
+  | 'size'
   | 'malformed';
 export type XmlResult =
   | { readonly ok: true; readonly root: XmlElement }
@@ -16,28 +19,27 @@ export type XmlResult =
 export function localName(name: string): string {
   return name.slice(name.lastIndexOf(':') + 1);
 }
+/** Decode XML using the same UTF-8 or UTF-16 detection as the DTD scanner. */
+export function decodeXmlBytes(input: Uint8Array): string {
+  if (
+    (input[0] === 0xff && input[1] === 0xfe) ||
+    (input[0] === 0x3c && input[1] === 0)
+  )
+    return new TextDecoder('utf-16le').decode(input);
+  if (
+    (input[0] === 0xfe && input[1] === 0xff) ||
+    (input[0] === 0 && input[1] === 0x3c)
+  )
+    return new TextDecoder('utf-16be').decode(input);
+  return new TextDecoder('utf-8').decode(input);
+}
 
 /** True when the input contains a DTD or entity declaration forbidden for this format. */
 export function scanForbiddenDtd(
   input: Uint8Array | string,
   kind: 'docx' | 'epub'
 ): boolean {
-  let text: string;
-  if (typeof input === 'string') {
-    text = input;
-  } else if (
-    (input[0] === 0xff && input[1] === 0xfe) ||
-    (input[0] === 0x3c && input[1] === 0)
-  ) {
-    text = new TextDecoder('utf-16le').decode(input);
-  } else if (
-    (input[0] === 0xfe && input[1] === 0xff) ||
-    (input[0] === 0 && input[1] === 0x3c)
-  ) {
-    text = new TextDecoder('utf-16be').decode(input);
-  } else {
-    text = new TextDecoder().decode(input);
-  }
+  const text = typeof input === 'string' ? input : decodeXmlBytes(input);
   if (text.includes('\0')) return true;
   if (/<!ENTITY\b/i.test(text)) return true;
   if (kind === 'docx') return /<!DOCTYPE\b/i.test(text);
@@ -74,7 +76,11 @@ class ParseFailure extends Error {
 /** Parse a single XML root without evaluating DTDs or fetching external data. */
 export function parseXml(
   text: string,
-  opts?: { readonly lenient?: boolean }
+  opts?: {
+    readonly lenient?: boolean;
+    readonly maxNodes?: number;
+    readonly maxTextChars?: number;
+  }
 ): XmlResult {
   try {
     if (/<!ENTITY\b/i.test(text)) throw new ParseFailure('entity');
@@ -87,6 +93,8 @@ export function parseXml(
     const stack: MutableElement[] = [];
     let root: MutableElement | undefined;
     let at = 0;
+    let nodes = 0;
+    let textChars = 0;
     const namePattern = /^[A-Za-z_:][A-Za-z0-9_.:-]*/;
     const fail = (): never => {
       throw new ParseFailure('malformed');
@@ -121,10 +129,13 @@ export function parseXml(
           return String.fromCodePoint(n);
         }
         if (opts?.lenient && /^[A-Za-z_:][A-Za-z0-9_.:-]*$/.test(entity))
-          return match;
+          return decodeHTMLStrict(match);
         throw new ParseFailure('entity');
       });
     const appendText = (value: string) => {
+      textChars += value.length;
+      if (textChars > (opts?.maxTextChars ?? Number.POSITIVE_INFINITY))
+        throw new ParseFailure('size');
       if (!stack.length) {
         if (value.trim()) fail();
         return;
@@ -184,6 +195,8 @@ export function parseXml(
       if (!match) fail();
       const name = match![0];
       at += name.length + 1;
+      if (++nodes > (opts?.maxNodes ?? Number.POSITIVE_INFINITY))
+        throw new ParseFailure('size');
       const element: MutableElement = { name, attrs: new Map(), children: [] };
       if (stack.length) stack[stack.length - 1]!.children.push(element);
       else {
