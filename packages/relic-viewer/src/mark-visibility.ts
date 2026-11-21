@@ -217,16 +217,20 @@ export function concealMarks(
   for (const { node, subject } of marks) {
     const id = node.getAttribute('data-comment-id');
     if (id === null || id === '') continue;
-    measured.push({
-      node,
-      id,
-      concealment:
-        !live || !isRendered(subject)
-          ? 'hidden'
-          : !watch.inView(node)
-            ? 'offscreen'
-            : 'shown',
-    });
+    const concealment =
+      !live || !isRendered(subject)
+        ? 'hidden'
+        : !watch.inView(node)
+          ? 'offscreen'
+          : 'shown';
+    measured.push({ node, id, concealment });
+    const members = node.getAttribute('data-cluster-members');
+    if (members) {
+      for (const member of members.split(/\s+/)) {
+        if (member && member !== id)
+          measured.push({ node, id: member, concealment });
+      }
+    }
   }
   // 'shown' marks a comment with at least one mark drawn, which conceals
   // nothing however many of its marks are hidden.

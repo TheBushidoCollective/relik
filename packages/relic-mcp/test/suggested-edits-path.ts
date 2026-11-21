@@ -1646,6 +1646,35 @@ try {
       `document.querySelector(${JSON.stringify(`.popover-card[data-comment-id="${mediumRows[1]!.row.id}"]`)})`,
       'second clipped suggestion opened'
     );
+    await reopened.evaluate(`new Promise((resolve) => {
+      const indicator = document.querySelector(${JSON.stringify(indicator)});
+      const observer = new IntersectionObserver(() => {
+        observer.disconnect();
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve(true)));
+      });
+      observer.observe(indicator);
+    })`);
+    const secondCard = await reopened.evaluate<{
+      visible: boolean;
+      hit: boolean;
+      concealment: string | null;
+    }>(`(() => {
+      const card = document.querySelector(${JSON.stringify(`.popover-card[data-comment-id="${mediumRows[1]!.row.id}"]`)});
+      if (!card) return { visible: false, hit: false, concealment: 'missing' };
+      const rect = card.getBoundingClientRect();
+      const style = getComputedStyle(card);
+      const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+      return {
+        visible: style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity) > 0 && rect.width > 0 && rect.height > 0,
+        hit: !!hit && card.contains(hit),
+        concealment: card.getAttribute('data-concealed'),
+      };
+    })()`);
+    assert.deepEqual(
+      secondCard,
+      { visible: true, hit: true, concealment: null },
+      'second cluster card was concealed after observation'
+    );
     const sniff = await publish(
       join(scratch, 'sniff.csv'),
       'a,b;c\r\nrow;target\r\n'

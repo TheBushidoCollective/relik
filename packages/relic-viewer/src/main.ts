@@ -7706,6 +7706,18 @@ export function buildThread(
         candidates.push(painted);
       }
     }
+    for (const cluster of host.querySelectorAll<HTMLElement>(
+      '[data-cluster-members]'
+    )) {
+      if (
+        cluster.closest('.popover') ||
+        !(cluster.dataset['clusterMembers'] ?? '').split(/\s+/).includes(id) ||
+        candidates.includes(cluster)
+      )
+        continue;
+      if (!cluster.hasAttribute('data-concealed')) candidates.unshift(cluster);
+      else if (candidates.length === 0) candidates.push(cluster);
+    }
     if (candidates.length === 0 && id === PENDING_MARK_ID) {
       for (const node of host.querySelectorAll<HTMLElement>(
         '.relic-text-mark.is-pending, .comment-pin.is-pending, .comment-region.is-pending, .relic-page-selection, .mark-page.is-pending'
