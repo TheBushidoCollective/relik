@@ -354,6 +354,40 @@ function cueArrows(source: string, cue: SubtitleCue): number[] {
   return arrows;
 }
 
+/** The full editable payload, excluding timing, identifiers and other blocks. */
+function cuePayload(
+  source: string,
+  cue: SubtitleCue
+): { start: number; end: number } {
+  const offset = source.charCodeAt(0) === 0xfeff ? 1 : 0;
+  return {
+    start: cue.textSpans[0]!.start + offset,
+    end: cue.textSpans[cue.textSpans.length - 1]!.end + offset,
+  };
+}
+
+/** Match the inline timestamp syntax recognized by the subtitle reader. */
+function cueTimestampTags(
+  source: string,
+  cue: SubtitleCue
+): { start: number; end: number; text: string }[] {
+  const offset = source.charCodeAt(0) === 0xfeff ? 1 : 0;
+  const tags: { start: number; end: number; text: string }[] = [];
+  for (const span of cue.textSpans) {
+    const start = span.start + offset;
+    const line = source.slice(start, span.end + offset);
+    for (const match of line.matchAll(/<(?:\d{2,}:)?\d{2}:\d{2}\.\d{3}>/g)) {
+      const tagStart = start + match.index!;
+      tags.push({
+        start: tagStart,
+        end: tagStart + match[0].length,
+        text: match[0],
+      });
+    }
+  }
+  return tags;
+}
+
 function validateSubtitles(
   before: string,
   after: string,
@@ -390,12 +424,25 @@ function validateSubtitles(
   const newStarts = lineStarts(after);
   const mapBoundary = boundaryMapper(edits);
   const mapArrow = boundaryMapper(edits);
+  const mapTimestamp = boundaryMapper(edits);
+  let oldPayloadEnd = 0;
+  let newPayloadEnd = 0;
+  let outsideCueChanged = false;
   for (let index = 0; index < oldFile.entries.length; index += 1) {
     const oldEntry = oldFile.entries[index]!;
     const newEntry = newFile.entries[index]!;
     if (oldEntry.kind !== newEntry.kind)
       refuseStructure('subtitle_cues', 'the subtitle block types would change');
     if (oldEntry.kind === 'cue' && newEntry.kind === 'cue') {
+      const oldPayload = cuePayload(before, oldEntry);
+      const newPayload = cuePayload(after, newEntry);
+      if (
+        before.slice(oldPayloadEnd, oldPayload.start) !==
+        after.slice(newPayloadEnd, newPayload.start)
+      )
+        outsideCueChanged = true;
+      oldPayloadEnd = oldPayload.end;
+      newPayloadEnd = newPayload.end;
       const oldFirst = oldLines[oldEntry.line - 1] ?? '';
       const newFirst = newLines[newEntry.line - 1] ?? '';
       const oldTiming = oldFirst.includes('-->')
@@ -419,6 +466,29 @@ function validateSubtitles(
           'a subtitle cue identifier would change'
         );
       if (format === 'vtt') {
+        const oldTags = cueTimestampTags(before, oldEntry);
+        const newTags = cueTimestampTags(after, newEntry);
+        if (oldTags.length !== newTags.length)
+          refuseStructure(
+            'subtitle_timings',
+            'inline WebVTT timestamps would change'
+          );
+        for (let tag = 0; tag < oldTags.length; tag += 1) {
+          const oldTag = oldTags[tag]!;
+          const newTag = newTags[tag]!;
+          const start = mapTimestamp(oldTag.start);
+          const last = mapTimestamp(oldTag.end - 1);
+          if (
+            start === undefined ||
+            last !== start + oldTag.text.length - 1 ||
+            newTag.start !== start ||
+            newTag.text !== oldTag.text
+          )
+            refuseStructure(
+              'subtitle_timings',
+              'inline WebVTT timestamps would change'
+            );
+        }
         const retained = new Set<number>();
         for (const oldArrow of cueArrows(before, oldEntry)) {
           const start = mapArrow(oldArrow);
@@ -448,6 +518,14 @@ function validateSubtitles(
         'a subtitle block would be replaced or moved'
       );
   }
+  if (
+    outsideCueChanged ||
+    before.slice(oldPayloadEnd) !== after.slice(newPayloadEnd)
+  )
+    refuseStructure(
+      'subtitle_blocks',
+      'subtitle content outside cue text would change'
+    );
 }
 
 /** Validate the merged result, before returning a preview or touching the file. */

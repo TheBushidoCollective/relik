@@ -718,6 +718,78 @@ describe('relic_apply_suggestions', () => {
       'alpha --> extra',
       'subtitle_cues',
     ],
+    [
+      'a changed inline VTT timestamp',
+      'data.vtt',
+      'WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nalpha<00:00:01.500>beta\n',
+      '00:00:01.500',
+      '00:00:02.500',
+      'subtitle_timings',
+    ],
+    [
+      'a removed inline VTT timestamp',
+      'data.vtt',
+      'WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nalpha<00:00:01.500>beta\n',
+      '<00:00:01.500>',
+      '',
+      'subtitle_timings',
+    ],
+    [
+      'an added inline VTT timestamp',
+      'data.vtt',
+      'WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nalpha beta\n',
+      'alpha',
+      'alpha<00:00:01.500>',
+      'subtitle_timings',
+    ],
+    [
+      'a changed shorthand inline VTT timestamp',
+      'data.vtt',
+      'WEBVTT\n\n00:01.000 --> 00:03.000\nalpha<00:01.500>beta\n',
+      '00:01.500',
+      '00:02.500',
+      'subtitle_timings',
+    ],
+    [
+      'changed VTT region settings',
+      'data.vtt',
+      'WEBVTT\n\nREGION\nid:captions\nlines:3\n\n00:00:01.000 --> 00:00:03.000 region:captions\nalpha\n',
+      'lines:3',
+      'lines:1',
+      'subtitle_blocks',
+    ],
+    [
+      'changed VTT NOTE content',
+      'data.vtt',
+      'WEBVTT\n\nNOTE author\nprivate note\n\n00:00:01.000 --> 00:00:03.000\nalpha\n',
+      'private note',
+      'other note',
+      'subtitle_blocks',
+    ],
+    [
+      'changed VTT STYLE content',
+      'data.vtt',
+      'WEBVTT\n\nSTYLE\n::cue { color: red; }\n\n00:00:01.000 --> 00:00:03.000\nalpha\n',
+      'red',
+      'blue',
+      'subtitle_blocks',
+    ],
+    [
+      'changed VTT header content',
+      'data.vtt',
+      'WEBVTT original\n\n00:00:01.000 --> 00:00:03.000\nalpha\n',
+      'original',
+      'changed',
+      'subtitle_blocks',
+    ],
+    [
+      'changed skipped VTT block',
+      'data.vtt',
+      'WEBVTT\n\ninvalid block\nignored text\n\n00:00:01.000 --> 00:00:03.000\nalpha\n',
+      'ignored text',
+      'different text',
+      'subtitle_blocks',
+    ],
   ])(
     'refuses %s before both preview and write',
     async (_, filename, original, exact, replacement, check) => {
@@ -740,6 +812,100 @@ describe('relic_apply_suggestions', () => {
       }
     }
   );
+
+  test.each([
+    ['LF', '\n', '\uFEFF'],
+    ['CRLF', '\r\n', '\uFEFF'],
+    ['CRLF with two existing BOMs', '\r\n', '\uFEFF\uFEFF'],
+  ])(
+    'preserves VTT timing tags and other blocks during %s cue edits',
+    async (_, eol, bom) => {
+      const target = join(scratch, 'data.vtt');
+      const original =
+        bom +
+        [
+          'WEBVTT',
+          '',
+          'REGION',
+          'id:captions',
+          'lines:3',
+          '',
+          'NOTE speaker',
+          'keep this note',
+          '',
+          '00:00:01.000 --> 00:00:03.000 region:captions',
+          'alpha<00:00:01.500>middle<00:00:02.000>omega',
+          '',
+        ].join(eol);
+      await writeFile(target, original);
+      await addSuggestion('first', 'alpha', 'A');
+      await addSuggestion('second', 'middle', 'MID');
+      const args = {
+        path: target,
+        accept: ['first', 'second'],
+        allow_source_mismatch: true,
+      };
+      const preview = await call(args);
+      expect(preview.isError).toBe(false);
+      expect(await readFile(target, 'utf8')).toBe(original);
+      const result = await call({ ...args, write: true });
+      expect(result.isError).toBe(false);
+      expect(await readFile(target, 'utf8')).toBe(
+        original.replace('alpha', 'A').replace('middle', 'MID')
+      );
+    }
+  );
+
+  test('refuses moving an unchanged inline VTT timestamp to another word', async () => {
+    const target = join(scratch, 'data.vtt');
+    const tag = '<00:00:01.500>';
+    const original = `WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nalpha${tag}beta\n`;
+    await writeFile(target, original);
+    await addSuggestion('remove', tag, '');
+    await addRow('move', {
+      body: 'move the timestamp',
+      display_name: null,
+      anchor: { kind: 'source', exact: 'beta' },
+      suggestion: { v: 1, mode: 'after', replacement: tag },
+    });
+    for (const write of [false, true]) {
+      const result = await call({
+        path: target,
+        accept: ['remove', 'move'],
+        write,
+        allow_source_mismatch: true,
+      });
+      expect(result.structuredContent).toMatchObject({
+        code: 'suggestion_breaks_structure',
+        check: 'subtitle_timings',
+      });
+      expect(result.isError).toBe(true);
+      expect(await readFile(target, 'utf8')).toBe(original);
+    }
+  });
+
+  test('protects VTT non-cue content beyond the parser display cap', async () => {
+    const target = join(scratch, 'data.vtt');
+    const original =
+      `WEBVTT\n\nNOTE ${'x'.repeat(33_000)}GUARD\n\n` +
+      '00:00:01.000 --> 00:00:03.000\nalpha\n';
+    await writeFile(target, original);
+    await addSuggestion('damage', 'GUARD', 'OTHER');
+    for (const write of [false, true]) {
+      const result = await call({
+        path: target,
+        accept: ['damage'],
+        write,
+        allow_source_mismatch: true,
+      });
+      expect(result.structuredContent).toMatchObject({
+        code: 'suggestion_breaks_structure',
+        check: 'subtitle_blocks',
+      });
+      expect(result.isError).toBe(true);
+      expect(await readFile(target, 'utf8')).toBe(original);
+    }
+  });
 
   test('allows existing VTT cue arrows but refuses moving one into new text', async () => {
     const target = join(scratch, 'data.vtt');
