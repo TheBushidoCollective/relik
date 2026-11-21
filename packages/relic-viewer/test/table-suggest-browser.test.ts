@@ -24,7 +24,9 @@ async function exercise(
     typeof Views
 ): Promise<void> {
   const source =
-    'name,note\r\nZoe,quick fox\r\nAda,other\r\n' +
+    'name,note\r\nZoe,quick fox\r\nAda,other\r\nLong,long target ' +
+    'x'.repeat(600) +
+    '\r\n' +
     Array.from({ length: 80 }, (_, i) => `User ${i},item ${i}\r\n`).join('');
   const parsed = module.parseTable(source, { delimiter: ',' });
   if (!parsed.ok) throw new Error('parse failed');
@@ -101,6 +103,17 @@ async function exercise(
     anchor: { kind: 'source', exact: 'other' },
     suggestion: { v: 1, mode: 'replace', replacement: 'wrong-cell' },
   });
+  entries.push({
+    kind: 'open',
+    id: 'long-cell',
+    author: 'other@example.test',
+    version: 1,
+    createdAt: '2026-01-04T00:00:00Z',
+    body: '',
+    displayName: null,
+    anchor: { kind: 'source', exact: 'long target' },
+    suggestion: { v: 1, mode: 'replace', replacement: 'short' },
+  });
   let observed = '';
   tableRoot.addEventListener('relic:table-suggestion-views', (event) => {
     observed = JSON.stringify((event as CustomEvent).detail?.paint);
@@ -111,6 +124,21 @@ async function exercise(
     tableRoot.querySelector('[data-r="1"][data-c="1"]') as HTMLElement;
   if (!cell()?.querySelector('.sg-chip'))
     throw new Error(`conflict badge missing: ${observed}`);
+  const marked = cell().querySelector<HTMLElement>(
+    '[data-comment-id="change-0"]'
+  );
+  if (!marked) throw new Error('inline suggestion cannot open its thread');
+  marked.dispatchEvent(
+    new MouseEvent('mousedown', { bubbles: true, button: 0 })
+  );
+  if (!marked.isConnected)
+    throw new Error('grid replaced the mark before click');
+  if (
+    !tableRoot.querySelector(
+      '[data-r="3"][data-c="1"] .dt-suggestion-indicator[data-comment-id="long-cell"]'
+    )
+  )
+    throw new Error('long cell has no suggestion indicator');
   cell().dispatchEvent(
     new MouseEvent('mousedown', { bubbles: true, button: 0 })
   );
@@ -196,6 +224,22 @@ async function exercise(
     nextEditor === editor
   )
     throw new Error('controller did not adopt the next cell surface');
+  controller.setSuggesting(false);
+  const gridCell = tableRoot.querySelector(
+    '[data-r="2"][data-c="0"]'
+  ) as HTMLElement;
+  gridCell.dispatchEvent(
+    new MouseEvent('mousedown', { bubbles: true, button: 0 })
+  );
+  document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+  const editorText = nextEditor!.querySelector('[data-seg]')?.firstChild;
+  if (!editorText) throw new Error('editor selection fixture missing');
+  const editorRange = document.createRange();
+  editorRange.selectNodeContents(editorText);
+  document.getSelection()!.removeAllRanges();
+  document.getSelection()!.addRange(editorRange);
+  if (part.selectionAnchor())
+    throw new Error('editor selection used a grid cell anchor');
   part.dispose();
   controller.destroy();
 }

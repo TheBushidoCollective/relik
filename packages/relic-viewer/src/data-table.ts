@@ -795,6 +795,35 @@ export function mountDataTable(
         'markdown',
         surface.decode?.bind(surface)
       );
+      for (const mark of text.querySelectorAll<HTMLElement>('[data-sg-id]')) {
+        const id = mark.dataset['sgId'];
+        if (id) mark.dataset['commentId'] = id;
+      }
+    } else if (
+      changes &&
+      mapped &&
+      suggestionViews &&
+      text &&
+      mapped.editable === true &&
+      (role !== 'head' || headerRow)
+    ) {
+      for (const change of changes) {
+        const indicator = element(
+          'button',
+          'dt-suggestion-indicator',
+          change.conflict ? String(change.conflict.members.length) : 'Edit'
+        );
+        indicator.type = 'button';
+        indicator.dataset['sgId'] = change.row.id;
+        indicator.dataset['commentId'] = change.row.id;
+        indicator.setAttribute(
+          'aria-label',
+          change.conflict
+            ? `${change.conflict.members.length} conflicting suggestions`
+            : 'Open suggestion'
+        );
+        cell.append(indicator);
+      }
     }
     paintCell(cell, record, column, role);
     return cell;
@@ -1068,6 +1097,7 @@ export function mountDataTable(
     if (event.button !== 0) return;
     const target = event.target;
     if (!(target instanceof Element)) return;
+    if (target.closest('[data-comment-id]')) return;
     const cell = cellOf(target);
     if (cell === undefined) return;
     event.preventDefault();
@@ -1105,6 +1135,11 @@ export function mountDataTable(
   });
 
   head.addEventListener('click', (event) => {
+    if (
+      event.target instanceof Element &&
+      event.target.closest('[data-comment-id]')
+    )
+      return;
     const cell =
       event.target instanceof Element
         ? event.target.closest<HTMLElement>('.dt-hcell')
@@ -1299,7 +1334,12 @@ export function mountDataTable(
       const live = document.getSelection();
       if (live === null || live.isCollapsed || live.anchorNode === null)
         return undefined;
-      if (!root.contains(live.anchorNode)) return undefined;
+      if (
+        !grid.contains(live.anchorNode) ||
+        !live.focusNode ||
+        !grid.contains(live.focusNode)
+      )
+        return undefined;
       return anchorForRect(selectionRect(selection), table.sheet);
     },
     reveal(anchor: CommentAnchor): void {

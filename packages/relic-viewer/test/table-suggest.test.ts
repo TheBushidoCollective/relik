@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { parseTable } from '@relic/format/csv';
+import { SuggestDraftModel } from '../src/suggest-draft.ts';
 import {
   emptyTableCellAnchor,
   encodeTableSuggestion,
@@ -12,8 +13,63 @@ function parse(text: string, delimiter: ',' | '\t' = ',') {
   if (!result.ok) throw new Error(result.reason);
   return result.table;
 }
+function cellModel(text: string, record: number, column: number) {
+  const table = parse(text);
+  const cell = tableSuggestionCell(table, record, column);
+  if (!cell) throw new Error('missing fixture cell');
+  const source = table.text.replace(/^\ufeff/, '').replaceAll('\r\n', '\n');
+  return {
+    table,
+    cell,
+    model: new SuggestDraftModel({
+      source,
+      segments: cell.segments,
+      delimiters: [],
+      version: 1,
+      reader: 'reader@example.test',
+      encode: (_block, value, start, end) =>
+        encodeTableSuggestion(table, cell, value, start, end),
+    }),
+  };
+}
 
 describe('table suggestion source mapping', () => {
+  test('refuses to edit a blank row without an insertion anchor', () => {
+    const table = parse('name\r\n\r\nlast\r\n');
+    const blank = tableSuggestionCell(table, 1, 0)!;
+    expect(blank.editable).toMatchObject({ code: 'not-editable' });
+    const withDelimiter = parse('a,b\r\n,\r\n');
+    expect(tableSuggestionCell(withDelimiter, 1, 0)!.editable).toBe(true);
+  });
+
+  test('whole-cell deletion cannot remove the final bare single-field row', () => {
+    for (const source of ['id\r\n42', '\ufeffid\r\n42', '42']) {
+      const record = source.includes('\n') ? 1 : 0;
+      const { cell, model } = cellModel(source, record, 0);
+      const start = cell.segments[0]!.start;
+      const end = cell.segments[cell.segments.length - 1]!.end;
+      expect(model.replace(start, end, '', 'csv-bare')).toMatchObject({
+        kind: 'refused',
+        code: 'not-editable',
+      });
+      expect(model.draft).toBeNull();
+    }
+    for (const source of ['id\r\n42\r\n', 'id,value\r\nx,42']) {
+      const { cell, model } = cellModel(
+        source,
+        1,
+        source.includes(',') ? 1 : 0
+      );
+      expect(
+        model.replace(
+          cell.segments[0]!.start,
+          cell.segments[0]!.end,
+          '',
+          'csv-bare'
+        ).kind
+      ).toBe('changed');
+    }
+  });
   test('maps BOM, CRLF and doubled quotes to source offsets', () => {
     const table = parse(TABLE_SUGGEST_CRLF);
     const cell = tableSuggestionCell(table, 1, 1)!;
@@ -31,7 +87,15 @@ describe('table suggestion source mapping', () => {
         segment.kind === 'escape' ? '""' : segment.text
       );
     }
-    expect(encodeTableSuggestion(table, cell, 'say "hi"')).toEqual({
+    expect(
+      encodeTableSuggestion(
+        table,
+        cell,
+        'say "hi"',
+        cell.segments[0]!.start,
+        cell.segments[0]!.start
+      )
+    ).toEqual({
       ok: true,
       source: 'say ""hi""',
     });
@@ -60,7 +124,15 @@ describe('table suggestion source mapping', () => {
     for (let column = 0; column < 3; column++) {
       const cell = tableSuggestionCell(table, 1, column)!;
       expect(cell.editable).not.toBe(true);
-      expect(encodeTableSuggestion(table, cell, 'x').ok).toBe(false);
+      expect(
+        encodeTableSuggestion(
+          table,
+          cell,
+          'x',
+          cell.segments[0]!.start,
+          cell.segments[0]!.start
+        ).ok
+      ).toBe(false);
     }
   });
 
@@ -68,12 +140,35 @@ describe('table suggestion source mapping', () => {
     const table = parse('a,b\r\nx,y\r\n');
     const bare = tableSuggestionCell(table, 1, 0)!;
     for (const text of [',', '"', '\n', '\r'])
-      expect(encodeTableSuggestion(table, bare, text).ok).toBe(false);
+      expect(
+        encodeTableSuggestion(
+          table,
+          bare,
+          text,
+          bare.segments[0]!.start,
+          bare.segments[0]!.start
+        ).ok
+      ).toBe(false);
     const tsv = parse('a\tb\n"x"\ty\n', '\t');
+    const quoted = tableSuggestionCell(tsv, 1, 0)!;
     expect(
-      encodeTableSuggestion(tsv, tableSuggestionCell(tsv, 1, 0)!, '\t').ok
+      encodeTableSuggestion(
+        tsv,
+        quoted,
+        '\t',
+        quoted.segments[0]!.start,
+        quoted.segments[0]!.start
+      ).ok
     ).toBe(false);
-    expect(encodeTableSuggestion(table, bare, 'safe')).toEqual({
+    expect(
+      encodeTableSuggestion(
+        table,
+        bare,
+        'safe',
+        bare.segments[0]!.start,
+        bare.segments[0]!.start
+      )
+    ).toEqual({
       ok: true,
       source: 'safe',
     });

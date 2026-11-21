@@ -6648,6 +6648,10 @@ export function buildThread(
       suggestionController.sync();
       return;
     }
+    readingMode.setAttribute('aria-pressed', 'true');
+    suggestingMode.setAttribute('aria-pressed', 'false');
+    appliedMode.hidden = false;
+    appliedMode.setAttribute('aria-checked', 'false');
     const reason =
       sourceIssue() ??
       (session.kind === 'verified' ? null : 'Sign in to suggest edits.');
@@ -9760,16 +9764,30 @@ export function buildThread(
         next.dataset.pairBind = '1';
         next.addEventListener('relic:before-structured-swap', (event) => {
           if (host !== next) return;
-          const reason = guardSurfaceSwap(suggestionController);
+          const reason =
+            guardSurfaceSwap(suggestionController) ??
+            (suggestionController?.postInFlight &&
+            event.target instanceof Element &&
+            event.target.closest('.structured-table')
+              ? 'Wait for the suggestion to finish sending.'
+              : null);
           if (reason) {
             event.preventDefault();
             suggestionNotice.textContent = reason;
           }
         });
-        next.addEventListener('relic:structured-state', () => {
+        next.addEventListener('relic:structured-state', (event) => {
           if (host !== next) return;
           if (suggestionController?.destroy()) suggestionController = undefined;
           updateSuggestionStub();
+          if (
+            event instanceof CustomEvent &&
+            event.detail === 'structured' &&
+            allEntries.some(
+              (entry) => entry.kind === 'open' && entry.suggestion
+            )
+          )
+            void ensureSuggestion();
         });
         next.addEventListener('relic:table-suggest', () => {
           if (host !== next) return;

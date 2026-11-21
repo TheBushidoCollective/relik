@@ -66,6 +66,12 @@ export function tableSuggestionCell(
   const start = table.fieldStart[field]! + (quoted ? 1 : 0);
   const end = table.fieldEnd[field]! - (quoted ? 1 : 0);
   const raw = table.text.slice(start, end);
+  const unanchorable =
+    !quoted &&
+    start === end &&
+    table.text[start] !== table.delimiter &&
+    (start === (table.bom ? 1 : 0) ||
+      table.text[start - 1] !== table.delimiter);
   const segments: SourceSegment[] = [];
   const add = (
     from: number,
@@ -97,7 +103,10 @@ export function tableSuggestionCell(
     segments,
     kind: quoted ? 'csv-quoted' : 'csv-bare',
     editable:
-      flags & FIELD_STRAY || raw.includes('\r') || bidi.test(raw)
+      flags & FIELD_STRAY ||
+      raw.includes('\r') ||
+      bidi.test(raw) ||
+      unanchorable
         ? notEditable
         : true,
     field,
@@ -164,7 +173,9 @@ export function emptyTableCellAnchor(
 export function encodeTableSuggestion(
   table: CsvTable,
   cell: TableSuggestionCell,
-  text: string
+  text: string,
+  start: number,
+  end: number
 ):
   | { readonly ok: true; readonly source: string }
   | { readonly ok: false; readonly refusal: SuggestRefusal } {
@@ -180,6 +191,27 @@ export function encodeTableSuggestion(
     return refuse('delimiter-in-cell', 'A tab would split this cell.');
   if (cell.kind === 'csv-quoted')
     return { ok: true, source: text.replaceAll('"', '""') };
+  const rawStart = table.fieldStart[cell.field]!;
+  const rawEnd = table.fieldEnd[cell.field]!;
+  if (
+    text === '' &&
+    rawStart < rawEnd &&
+    rawEnd === table.text.length &&
+    (rawStart === (table.bom ? 1 : 0) ||
+      table.text[rawStart - 1] === '\n' ||
+      table.text[rawStart - 1] === '\r') &&
+    start === suggestionOffset(table, rawStart) &&
+    end === suggestionOffset(table, rawEnd)
+  ) {
+    return {
+      ok: false,
+      refusal: {
+        kind: 'refused',
+        code: 'not-editable',
+        message: 'Deleting this entire cell would remove its row.',
+      },
+    };
+  }
   if (text.includes(table.delimiter) || /[\r\n]/.test(text))
     return refuse(
       'delimiter-in-cell',
@@ -217,7 +249,8 @@ export function tableCellSurface(
     editable: () => cell.editable,
     acceptsSelection: (node) =>
       root.contains(node) ? cell.editable : notEditable,
-    encode: (_block, text) => encodeTableSuggestion(table, cell, text),
+    encode: (_block, text, start, end) =>
+      encodeTableSuggestion(table, cell, text, start, end),
     decode: (_block, source) =>
       cell.kind === 'csv-quoted' ? source.replaceAll('""', '"') : source,
     emptyAnchor: (_block, position) =>

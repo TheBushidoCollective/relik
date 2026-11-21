@@ -28,6 +28,7 @@ import { diskAssets } from '@relic/server/src/assets.ts';
 import { MemoryStorage } from '@relic/server/src/storage.ts';
 import { MemoryStore } from '@relic/server/src/store.ts';
 import { renderMarkdown } from '../../relic-viewer/src/markdown.ts';
+import { TABLE_SUGGEST_PATH_CRLF } from '../../relic-viewer/test/table-suggest-fixture.ts';
 import { type CdpConnection, connectPipe } from '../src/cover/cdp.ts';
 import { chromeArgs, discoverChrome } from '../src/cover/chrome.ts';
 import {
@@ -45,6 +46,13 @@ const statePath = join(scratch, 'state.json');
 const store = new MemoryStore();
 const writes: Array<{ method: string; path: string; status: number }> = [];
 let handler: ((request: Request) => Promise<Response>) | undefined;
+let heldComment:
+  | {
+      id: string;
+      entered: () => void;
+      resume: Promise<void>;
+    }
+  | undefined;
 const service = Bun.serve({
   hostname: '127.0.0.1',
   port: 0,
@@ -84,6 +92,14 @@ handler = async (request) => {
       : new Response(Buffer.from(bytes), {
           headers: { 'content-type': 'application/octet-stream' },
         });
+  }
+  if (
+    heldComment &&
+    request.method === 'POST' &&
+    url.pathname === `/api/relics/${heldComment.id}/comments`
+  ) {
+    heldComment.entered();
+    await heldComment.resume;
   }
   const response = await app.fetch(request);
   if (
@@ -426,7 +442,7 @@ async function browser(): Promise<Browser> {
         );
         await loaded;
         await page.wait(
-          "document.querySelector('article.prose, pre.code-body') && document.querySelector('textarea.compose-textarea')",
+          "document.querySelector('article.prose, pre.code-body, .structured-table .dt-grid') && document.querySelector('textarea.compose-textarea')",
           'document and authenticated session'
         );
         return page;
@@ -454,11 +470,15 @@ async function browser(): Promise<Browser> {
   }
 }
 
-async function click(page: Page, selector: string): Promise<void> {
+async function click(
+  page: Page,
+  selector: string,
+  scroll = true
+): Promise<void> {
   const box = await page.evaluate<{ x: number; y: number }>(`(() => {
     const element = document.querySelector(${JSON.stringify(selector)});
     if (!(element instanceof HTMLElement)) throw new Error('missing element ' + ${JSON.stringify(selector)});
-    element.scrollIntoView({ block: 'center', inline: 'center' });
+    if (${scroll}) element.scrollIntoView({ block: 'center', inline: 'center' });
     const r = element.getBoundingClientRect();
     if (!r.width || !r.height) throw new Error('element is not visible: ' + ${JSON.stringify(selector)});
     return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
@@ -1379,6 +1399,154 @@ try {
       );
     }
     return 'v1 displayed Accepted in v2, Superseded, Not taken and Seen by the publisher; v2 had no suggestion marks';
+  });
+
+  await step(13, async () => {
+    const fixture = await publish(
+      join(scratch, 'cell-crlf.csv'),
+      TABLE_SUGGEST_PATH_CRLF
+    );
+    const page = await browserInstance.open(fixture.url, tokenA);
+    await page.wait(
+      'document.querySelector(\'.structured-table [data-r="2"][data-c="1"]\')',
+      'second repeated CSV cell'
+    );
+    await click(page, '.structured-table [data-r="2"][data-c="1"]');
+    await click(page, '.dt-cellbar .dt-suggest');
+    await page.wait(
+      "document.querySelector('.dt-suggest-text[contenteditable=true]')",
+      'table editor activated through inspector'
+    );
+    await select(page, '.dt-suggest-text', 'repeat');
+    await input(page, 'nice "one"');
+    await page.wait(
+      "document.querySelector('.dt-suggest-text ins[data-sg-draft]')",
+      'CSV draft'
+    );
+
+    let entered = false;
+    const resume = Promise.withResolvers<void>();
+    heldComment = {
+      id: fixture.id,
+      entered: () => {
+        entered = true;
+      },
+      resume: resume.promise,
+    };
+    try {
+      await leave(page);
+      await until(async () => entered, 'CSV POST entered hold');
+      await click(page, '.structured-table [data-r="1"][data-c="1"]');
+      await click(page, '.dt-cellbar .dt-suggest');
+      assert.equal(
+        await page.evaluate<boolean>(
+          "document.querySelector('.dt-suggest-title')?.textContent.includes('B3') === true"
+        ),
+        true,
+        'switching cells while posting removed the active editor'
+      );
+      await page.wait(
+        "document.querySelector('[data-sg-notice]')?.textContent.includes('finish sending')",
+        'in-flight swap refusal'
+      );
+    } finally {
+      heldComment = undefined;
+      resume.resolve();
+    }
+    await until(
+      async () => writesFor(fixture.id, 'POST') === 1,
+      'CSV suggestion posted'
+    );
+    await page.wait(
+      "document.querySelector('[data-sg-count]')?.textContent.includes('1 suggestion')",
+      'CSV post reflected in viewer'
+    );
+    await click(page, '.structured-table [data-r="1"][data-c="1"]');
+    await click(page, '.dt-cellbar .dt-suggest');
+    await page.wait(
+      "document.querySelector('.dt-suggest-title')?.textContent.includes('B2') && document.querySelector('.dt-suggest-text[contenteditable=true]')",
+      'second cell editable after in-flight post settles'
+    );
+    const stored = await plaintextRows(fixture.id, fixture.key);
+    assert.equal(stored.length, 1);
+    const saved = stored[0]!;
+    const anchor = saved.plain.anchor;
+    const suggestion = saved.plain.suggestion;
+    assert.ok(anchor && anchor.kind === 'source' && suggestion);
+    assert.equal(anchor.exact, 'repeat');
+    assert.equal(suggestion.replacement, 'nice ""one""');
+    const normalized = TABLE_SUGGEST_PATH_CRLF.slice(1).replaceAll(
+      '\r\n',
+      '\n'
+    );
+    const located = resolveSuggestions(normalized, [
+      {
+        id: saved.row.id,
+        created_at: '2026-01-01T00:00:00Z',
+        exact: anchor.exact,
+        ...(anchor.prefix === undefined ? {} : { prefix: anchor.prefix }),
+        ...(anchor.suffix === undefined ? {} : { suffix: anchor.suffix }),
+        suggestion,
+      },
+    ])[0];
+    assert.equal(located?.status, 'resolved');
+    if (located?.status !== 'resolved')
+      throw new Error('CSV anchor did not resolve');
+    assert.equal(located.start, normalized.lastIndexOf('repeat'));
+
+    const reopened = await browserInstance.open(fixture.url, tokenA);
+    const mark = `.structured-table [data-r="2"][data-c="1"] [data-comment-id="${saved.row.id}"]`;
+    await reopened.wait(
+      `document.querySelector(${JSON.stringify(mark)})`,
+      'reopened CSV mark on original cell'
+    );
+    await click(reopened, '.structured-table .dt-hcell[data-c="0"]');
+    await click(reopened, '.structured-table .dt-hcell[data-c="0"]');
+    await reopened.evaluate(
+      `(() => { const grid = document.querySelector('.dt-grid'); grid.scrollTop = grid.scrollHeight; grid.dispatchEvent(new Event('scroll')); })()`
+    );
+    await reopened.evaluate(
+      'new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))'
+    );
+    await reopened.wait(
+      `document.querySelector(${JSON.stringify(mark)})`,
+      'CSV mark after sort and scroll'
+    );
+    await reopened.evaluate(`(() => {
+      const mark = document.querySelector(${JSON.stringify(mark)});
+      const grid = document.querySelector('.dt-grid');
+      const item = mark.getBoundingClientRect();
+      const viewport = grid.getBoundingClientRect();
+      grid.scrollTop += item.top - (viewport.top + viewport.height / 2);
+    })()`);
+    await reopened.evaluate(
+      'new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))'
+    );
+    await reopened.wait(
+      `(() => {
+        const mark = document.querySelector(${JSON.stringify(mark)});
+        if (!mark) return false;
+        const rect = mark.getBoundingClientRect();
+        return mark.contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2));
+      })()`,
+      'visible, unobstructed CSV suggestion'
+    );
+    await click(reopened, mark, false);
+    await reopened.wait(
+      "document.querySelector('.popover-card')",
+      'CSV suggestion thread opened'
+    );
+    await click(reopened, '.structured-wrap .toggle-row button');
+    await reopened.wait(
+      "document.querySelector('.structured-wrap .toggle-row button')?.textContent.includes('View table')",
+      'CSV source view'
+    );
+    await click(reopened, '.structured-wrap .toggle-row button');
+    await reopened.wait(
+      `document.querySelector(${JSON.stringify(mark)})`,
+      'CSV mark after table remount'
+    );
+    return 'CSV BOM/CRLF edit posted with escaped quotes on the second repeated cell, blocked an in-flight switch, reopened its thread, and survived sorting, scrolling and remount';
   });
 } finally {
   await ownedBrowser?.close();

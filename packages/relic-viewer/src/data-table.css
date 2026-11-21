@@ -155,6 +155,21 @@
   white-space: nowrap;
 }
 
+.dt-text .sg-del,
+.dt-text .sg-ins {
+  white-space: nowrap;
+}
+
+.dt-suggestion-indicator {
+  flex: none;
+  padding: 0.1rem 0.3rem;
+  border: 1px solid currentColor;
+  background: var(--surface, #fff);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
 .dt-blank {
   color: var(--ink-soft, #555);
   font-style: italic;
