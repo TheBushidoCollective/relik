@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { guardImageSources } from '../src/frame-docx.ts';
+import { boundedRenderFactory, guardImageSources } from '../src/frame-docx.ts';
 
 class TestImage {
   attributes = new Map<string, string>();
@@ -89,4 +89,17 @@ describe('DOCX image source guard', () => {
     expect(TestImage.prototype.setAttribute).toBe(priorAttribute);
     expect(TestSvgImage.prototype.setAttribute).toBe(svgAttribute);
   });
+});
+
+test('bounds document nodes and pages before constructing them', () => {
+  const create = () => ({}) as Node;
+  const boundedNodes = boundedRenderFactory(create, 3, 10);
+  boundedNodes({ tagName: 'p', children: ['First'] });
+  expect(() => boundedNodes({ tagName: 'p', children: ['Second'] })).toThrow();
+
+  const boundedPages = boundedRenderFactory(create, 10, 1);
+  boundedPages({ tagName: 'section', className: 'docx' });
+  expect(() =>
+    boundedPages({ tagName: 'section', className: 'docx' })
+  ).toThrow();
 });

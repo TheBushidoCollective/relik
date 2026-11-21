@@ -7,8 +7,9 @@ import { createApp } from '@relic/server/src/app.ts';
 import { diskAssets } from '@relic/server/src/assets.ts';
 import { MemoryStorage } from '@relic/server/src/storage.ts';
 import { MemoryStore } from '@relic/server/src/store.ts';
-import { Document, Packer, Paragraph, ImageRun, Table, TableRow, TableCell } from '../../relic-viewer/node_modules/docx/dist/index.mjs';
+import { Document, Packer, Paragraph, TextRun, ImageRun, Header, FootnoteReferenceRun, EndnoteReferenceRun, Table, TableRow, TableCell } from '../../relic-viewer/node_modules/docx/dist/index.mjs';
 import JSZip from '../../relic-viewer/node_modules/jszip/lib/index.js';
+import { LINK_COOLDOWN_MS } from '../../relic-viewer/src/open-link-confirm.ts';
 import { connectPipe } from '../src/cover/cdp.ts';
 import { chromeArgs } from '../src/cover/chrome.ts';
 import { attestBrowserHeadless, createBrowserHeadlessLaunch } from './browser-headless.ts';
@@ -21,21 +22,75 @@ const hostBuild = await Bun.build({ entrypoints: [`${root}packages/relic-viewer/
 if (!hostBuild.success) throw new Error('DOCX proof host build failed');
 const hostScript = await hostBuild.outputs[0].text();
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64');
-async function packageEntries(children) {
-  const zip = await JSZip.loadAsync(await Packer.toBuffer(new Document({ sections: [{ children }] })));
+const notePng = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAIAAAABAQMAAADO7O3JAAAAA1BMVEUAAP+KeNJXAAAACklEQVQI12NgAAAAAgAB4iG8MwAAAABJRU5ErkJggg==', 'base64');
+const image = (data) => new ImageRun({ data, type: 'png', transformation: { width: 20, height: 20 } });
+async function packageEntries(children, options = {}) {
+  const zip = await JSZip.loadAsync(await Packer.toBuffer(new Document({
+    footnotes: options.footnotes,
+    endnotes: options.endnotes,
+    sections: [{ children, headers: options.headers }],
+  })));
   return Promise.all(Object.values(zip.files).filter((entry) => !entry.dir).map(async (entry) => [entry.name, Array.from(await entry.async('uint8array'))]));
 }
-const imageEntries = await packageEntries([new Paragraph({ children: [new ImageRun({ data: png, type: 'png', transformation: { width: 20, height: 20 } })] }), new Table({ rows: [new TableRow({ children: [new TableCell({ children: [new Paragraph('DOCX table cell')] })] })] })]);
-const largeEntries = await packageEntries(Array.from({ length: 300 }, (_, i) => new Paragraph({ text: `Page ${i + 1}`, pageBreakBefore: i > 0 })));
+const imageEntries = await packageEntries([new Paragraph({ children: [image(png)] }), new Table({ rows: [new TableRow({ children: [new TableCell({ children: [new Paragraph('DOCX table cell')] })] })] })]);
+const largeEntries = await packageEntries(
+  Array.from({ length: 300 }, (_, i) => new Paragraph({
+    children: i === 0
+      ? [new TextRun('Page 1'), new FootnoteReferenceRun(1), new EndnoteReferenceRun(1)]
+      : [new TextRun(`Page ${i + 1}`)],
+    pageBreakBefore: i > 0,
+  })),
+  {
+    headers: { default: new Header({ children: [new Paragraph({ children: [image(png)] })] }) },
+    footnotes: { 1: { children: [new Paragraph({ children: [image(notePng)] })] } },
+    endnotes: { 1: { children: [new Paragraph({ children: [image(notePng)] })] } },
+  }
+);
 const decode = new TextDecoder();
 const encode = new TextEncoder();
+function metafile(kind) {
+  if (kind === 'wmf') {
+    const bytes = Buffer.alloc(24);
+    bytes.writeUInt16LE(1, 0);
+    bytes.writeUInt16LE(9, 2);
+    bytes.writeUInt16LE(0x300, 4);
+    bytes.writeUInt32LE(12, 6);
+    bytes.writeUInt32LE(3, 12);
+    bytes.writeUInt32LE(3, 18);
+    return bytes;
+  }
+  const bytes = Buffer.alloc(108);
+  bytes.writeUInt32LE(1, 0);
+  bytes.writeUInt32LE(88, 4);
+  bytes.writeUInt32LE(0x464d4520, 40);
+  bytes.writeUInt32LE(0x10000, 44);
+  bytes.writeUInt32LE(108, 48);
+  bytes.writeUInt32LE(2, 52);
+  bytes.writeUInt16LE(1, 56);
+  for (const offset of [72, 76, 80, 84]) bytes.writeUInt32LE(1, offset);
+  bytes.writeUInt32LE(14, 88);
+  bytes.writeUInt32LE(20, 92);
+  bytes.writeUInt32LE(20, 104);
+  return bytes;
+}
 function entriesFor(kind) {
   if (kind === 'large') return largeEntries;
+  const mediaPath = imageEntries.find(([name]) => name.startsWith('word/media/') && name.endsWith('.png'))?.[0];
   return (kind === 'links' ? largeEntries : imageEntries).map(([name, bytes]) => {
-    if (name !== 'word/document.xml' && name !== 'word/_rels/document.xml.rels' && name !== '[Content_Types].xml') return [name, bytes];
+    if (name === mediaPath && ['emf', 'wmf'].includes(kind)) return [name, Array.from(metafile(kind))];
+    if (!['word/document.xml', 'word/_rels/document.xml.rels', 'word/header1.xml', 'word/_rels/header1.xml.rels', '[Content_Types].xml'].includes(name)) return [name, bytes];
     let text = decode.decode(new Uint8Array(bytes));
-    if (['emf', 'wmf'].includes(kind) && name === '[Content_Types].xml') text = text.replace('ContentType="image/png" Extension="png"', `ContentType="image/x-${kind}" Extension="png"`);
-    if (kind === 'links' && name.endsWith('.rels')) text = text.replace('</Relationships>', '<Relationship Id="rIdSafe" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://example.invalid/document" TargetMode="External"/></Relationships>');
+    if (['emf', 'wmf'].includes(kind) && name === '[Content_Types].xml') {
+      assert.ok(mediaPath);
+      text = text.replace('</Types>', `<Override PartName="/${mediaPath}" ContentType="image/x-${kind}"/></Types>`);
+    }
+    if (kind === 'links' && name.endsWith('.rels')) {
+      const destination = name.includes('header1') ? 'header' : 'document';
+      text = text.replace('</Relationships>', `<Relationship Id="rIdSafe" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://example.invalid/${destination}" TargetMode="External"/></Relationships>`);
+    }
+    if (kind === 'links' && name === 'word/header1.xml') {
+      text = text.replace(/(<w:hdr\b[^>]*>)/, '$1<w:p><w:hyperlink r:id="rIdSafe"><w:r><w:t>Header link</w:t></w:r></w:hyperlink></w:p>');
+    }
     if (kind === 'links' && name === 'word/document.xml') {
       text = text.replace('<w:body>', '<w:body><w:p><w:hyperlink r:id="rIdSafe"><w:r><w:t>External link</w:t></w:r></w:hyperlink><w:hyperlink w:anchor="target"><w:r><w:t>Go to bookmark</w:t></w:r></w:hyperlink></w:p>');
       text = text.replace('</w:body>', '<w:p><w:bookmarkStart w:id="42" w:name="target"/><w:r><w:t>Bookmark destination</w:t></w:r><w:bookmarkEnd w:id="42"/></w:p></w:body>');
@@ -103,10 +158,20 @@ try {
       assert.equal(imageComment?.anchor?.kind, 'image');
     }
     if (kind === 'embedded') assert.match(frame.text, /DOCX table cell/);
-    if (kind === 'embedded') assert.match(frame.images[0], /^data:image\/png/);
+    if (kind === 'embedded') {
+      assert.match(frame.images[0], /^blob:/);
+      const decoded = await evaluate(`(async()=>{const image=document.querySelector('#relic-document img');await image.decode();return [image.naturalWidth,image.naturalHeight]})()`, executionContextId);
+      assert.deepEqual(decoded, [1, 1]);
+    }
     if (kind === 'emf' || kind === 'wmf') assert.match(frame.text, /Unsupported EMF or WMF image/);
     if (kind === 'large') {
       assert.equal(frame.pages, 300);
+      const scopedImages = await evaluate(`(async()=>{const headers=[...document.querySelectorAll('#relic-document header img')];const notes=[...document.querySelectorAll('#relic-document ol img')];await Promise.all([...headers,...notes].map(image=>image.decode()));return {headers:headers.map(image=>image.src),notes:notes.map(image=>({src:image.src,width:image.naturalWidth,height:image.naturalHeight}))}})()`, executionContextId);
+      assert.equal(scopedImages.headers.length, 300);
+      assert.equal(new Set(scopedImages.headers).size, 1);
+      assert.equal(scopedImages.notes.length, 2);
+      assert.ok(scopedImages.notes.every((image) => image.width === 2 && image.height === 1));
+      assert.notEqual(scopedImages.notes[0].src, scopedImages.headers[0]);
       for (const width of [390, 1440]) {
         await cdp.send('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: false }, sessionId);
         await evaluate(`new Promise(r=>setTimeout(r,100))`);
@@ -118,6 +183,8 @@ try {
     }
     if (kind === 'links') {
       const links = await evaluate(`[...document.querySelectorAll('#relic-document a')].map(a=>({text:a.textContent,href:a.getAttribute('href')}))`, executionContextId);
+      assert.equal(links.find((x) => x.text === 'External link')?.href, 'https://example.invalid/document');
+      assert.equal(links.find((x) => x.text === 'Header link')?.href, 'https://example.invalid/header');
       assert.equal(links.find((x) => x.text === 'Go to bookmark')?.href, '#target');
       async function clickLink(text) {
         const point = await evaluate(`(()=>{const a=[...document.querySelectorAll('#relic-document a')].find(x=>x.textContent===${JSON.stringify(text)});a.scrollIntoView({block:'center'});const r=a.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()`, executionContextId);
@@ -130,6 +197,14 @@ try {
       const bar = await evaluate(`(async()=>{for(let i=0;i<100;i++){const el=document.querySelector('.link-confirm');if(el&&!el.hidden)return {text:el.textContent,hidden:el.hidden};await new Promise(r=>setTimeout(r,10))}return null})()`);
       assert.ok(bar && !bar.hidden && bar.text.includes('example.invalid'), 'link confirmation bar did not open');
       const cancel = await evaluate(`(()=>{const b=[...document.querySelectorAll('.link-confirm button')].find(x=>x.textContent==='Cancel');const r=b.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()`);
+      await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: cancel.x, y: cancel.y, button: 'left', clickCount: 1 }, sessionId);
+      await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: cancel.x, y: cancel.y, button: 'left', clickCount: 1 }, sessionId);
+      await new Promise((resolve) => setTimeout(resolve, LINK_COOLDOWN_MS));
+      await clickLink('Header link');
+      const headerRequest = await evaluate(`(async()=>{for(let i=0;i<100;i++){let x=window.results.find(x=>x.type==='relic:open-link'&&x.href==='https://example.invalid/header');if(x)return x;await new Promise(r=>setTimeout(r,10))}return null})()`);
+      assert.equal(headerRequest?.href, 'https://example.invalid/header');
+      const headerBar = await evaluate(`(async()=>{for(let i=0;i<100;i++){const el=document.querySelector('.link-confirm');if(el&&!el.hidden&&el.textContent.includes('/header'))return el.textContent;await new Promise(r=>setTimeout(r,10))}return null})()`);
+      assert.ok(headerBar?.includes('example.invalid'), 'header confirmation bar did not show its destination');
       await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: cancel.x, y: cancel.y, button: 'left', clickCount: 1 }, sessionId);
       await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: cancel.x, y: cancel.y, button: 'left', clickCount: 1 }, sessionId);
       await clickLink('Go to bookmark');

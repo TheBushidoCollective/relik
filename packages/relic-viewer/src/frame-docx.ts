@@ -1,10 +1,43 @@
-import { renderAsync } from 'docx-preview';
+import { defaultOptions, type HElement, renderAsync } from 'docx-preview';
 import type {
   DocumentInput,
   DocumentOutcome,
 } from './frame-document-protocol.ts';
 
-const MAX_ELEMENTS = 1_500_000;
+const MAX_ELEMENTS = 250_000;
+const MAX_PAGES = 2_000;
+
+class DocumentTooLarge extends Error {}
+
+/** Bound allocations while docx-preview constructs its detached page tree. */
+export function boundedRenderFactory(
+  create: typeof defaultOptions.h = defaultOptions.h,
+  maxNodes = MAX_ELEMENTS,
+  maxPages = MAX_PAGES
+): typeof defaultOptions.h {
+  let nodes = 0;
+  let pages = 0;
+  const count = (value: HElement | Node | string): void => {
+    if (typeof value !== 'string') {
+      if (typeof Node !== 'undefined' && value instanceof Node) return;
+      const element = value as HElement;
+      if (
+        element.tagName === 'section' &&
+        element.className?.split(/\s+/).includes('docx')
+      ) {
+        pages++;
+      }
+      if (++nodes > maxNodes || pages > maxPages) throw new DocumentTooLarge();
+      for (const child of element.children ?? []) count(child);
+    } else if (++nodes > maxNodes) {
+      throw new DocumentTooLarge();
+    }
+  };
+  return (value) => {
+    count(value);
+    return create(value);
+  };
+}
 
 /** Prevent a missing or externally linked image from starting a request. */
 export function guardImageSources(): () => void {
@@ -82,7 +115,8 @@ export async function render(
     try {
       await renderAsync(input.entries as unknown as Blob, root, styles, {
         renderAltChunks: false,
-        useBase64URL: true,
+        useBase64URL: false,
+        h: boundedRenderFactory(),
         renderComments: false,
         renderChanges: false,
         experimental: false,
@@ -168,7 +202,10 @@ export async function render(
     fit();
     window.addEventListener('resize', fit, { passive: true });
     return { state: 'ready' };
-  } catch {
-    return { state: 'failed', reason: 'corrupt' };
+  } catch (error) {
+    return {
+      state: 'failed',
+      reason: error instanceof DocumentTooLarge ? 'too-large' : 'corrupt',
+    };
   }
 }

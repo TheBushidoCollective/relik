@@ -1,0 +1,108 @@
+diff --git a/dist/docx-preview.mjs b/dist/docx-preview.mjs
+--- a/dist/docx-preview.mjs
++++ b/dist/docx-preview.mjs
+@@ -1114,8 +1114,9 @@
+     constructor() {
+         this.parts = [];
+         this.partsMap = {};
+         this.contentTypes = [];
++        this.imageUrls = new Map();
+     }
+     static async load(blob, parser, options) {
+         var d = new WordDocument();
+         d._options = options;
+@@ -1195,15 +1196,23 @@
+             await Promise.all(part.rels.map(rel => this.loadRelationshipPart(resolvePath(rel.target, folder), rel.type)));
+         }
+         return part;
+     }
++    async loadImage(path) {
++        if (!path)
++            return null;
++        let image = this.imageUrls.get(path);
++        if (!image) {
++            image = this._package.load(path, "blob").then(blob => this.blobToURL(blob, path));
++            this.imageUrls.set(path, image);
++        }
++        return image;
++    }
+     async loadDocumentImage(id, part) {
+-        const path = this.getPathById(part ?? this.documentPart, id);
+-        return path ? this.blobToURL(await this._package.load(path, "blob"), path) : null;
++        return this.loadImage(this.getPathById(part ?? this.documentPart, id));
+     }
+     async loadNumberingImage(id) {
+-        const path = this.getPathById(this.numberingPart, id);
+-        return path ? this.blobToURL(await this._package.load(path, "blob"), path) : null;
++        return this.loadImage(this.getPathById(this.numberingPart, id));
+     }
+     async loadFont(id, key) {
+         const path = this.getPathById(this.fontTablePart, id);
+         if (!path)
+@@ -1218,9 +1227,13 @@
+     blobToURL(blob, path) {
+         if (!blob)
+             return null;
+         if (path) {
+-            const ct = this.contentTypes.find(x => x.partName === path || (x.extension && path.endsWith(`.${x.extension}`)));
++            const normalized = path.replace(/^\/+/, '');
++            const ct = this.contentTypes.find(x => x.partName && x.partName.replace(/^\/+/, '') === normalized)
++                ?? this.contentTypes.find(x => x.extension && normalized.toLowerCase().endsWith(`.${x.extension.toLowerCase()}`));
++            if (ct && /^image\/(?:x-)?(?:emf|wmf)$/i.test(ct.contentType))
++                return `data:${ct.contentType};base64,`;
+             blob = ct ? new Blob([blob], { type: ct.contentType }) : blob;
+         }
+         if (this._options.useBase64URL) {
+             return blobToBase64(blob);
+@@ -3143,13 +3156,13 @@
+                 pageElement.appendChild(contentElement);
+                 props = sect.sectProps;
+             }
+             if (this.options.renderFootnotes) {
+-                const notes = this.renderNotes(this.currentFootnoteIds, this.footnoteMap);
++                const notes = this.renderNotes(this.currentFootnoteIds, this.footnoteMap, this.document.footnotesPart);
+                 notes && pageElement.appendChild(notes);
+             }
+             if (this.options.renderEndnotes && i == l - 1) {
+-                const notes = this.renderNotes(this.currentEndnoteIds, this.endnoteMap);
++                const notes = this.renderNotes(this.currentEndnoteIds, this.endnoteMap, this.document.endnotesPart);
+                 notes && pageElement.appendChild(notes);
+             }
+             this.options.renderFooters && this.renderHeaderFooter(props.footerRefs, props, result.length, prevProps != props, pageElement);
+             result.push(pageElement);
+@@ -3393,13 +3406,20 @@
+             this.h({ tagName: "#comment", children: ["docxjs document styles"] }),
+             this.h({ tagName: "style", children: [styleText] })
+         ];
+     }
+-    renderNotes(noteIds, notesMap) {
+-        var notes = noteIds.map(id => notesMap[id]).filter(x => x);
+-        if (notes.length > 0) {
+-            return this.h({ tagName: "ol", children: this.renderElements(notes) });
++    renderNotes(noteIds, notesMap, part) {
++        const previousPart = this.currentPart;
++        this.currentPart = part;
++        try {
++            var notes = noteIds.map(id => notesMap[id]).filter(x => x);
++            if (notes.length > 0) {
++                return this.h({ tagName: "ol", children: this.renderElements(notes) });
++            }
+         }
++        finally {
++            this.currentPart = previousPart;
++        }
+     }
+     renderElement(elem) {
+         switch (elem.type) {
+             case DomType.Paragraph:
+@@ -3541,9 +3561,9 @@
+     renderHyperlink(elem) {
+         const res = this.toH(elem, ns.html, "a");
+         res.href = '';
+         if (elem.id) {
+-            const rel = this.document.documentPart.rels.find(it => it.id == elem.id && it.targetMode === "External");
++            const rel = (this.currentPart ?? this.document.documentPart).rels.find(it => it.id == elem.id && it.targetMode === "External");
+             res.href = rel?.target ?? res.href;
+         }
+         if (elem.anchor) {
+             res.href += `#${elem.anchor}`;
