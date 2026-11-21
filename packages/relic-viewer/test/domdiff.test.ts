@@ -7,13 +7,20 @@ import {
 import {
   applyAnchors,
   applyMarks,
-  captureTree,
+  captureTree as captureBoundedTree,
   isAnnotateMessage,
   isTreeMessage,
+  MAX_TREE_BYTES,
   MAX_TREE_NODES,
   type Mark,
   type TreeNode,
 } from '../src/rendered-tree.ts';
+
+function captureTree(root: unknown): TreeNode {
+  const tree = captureBoundedTree(root);
+  if (tree === null) throw new Error('fixture exceeds the tree budget');
+  return tree;
+}
 
 function element(tag: string, ...children: TreeNode[]): TreeNode {
   return { tag, text: '', attrs: [], children };
@@ -116,19 +123,36 @@ describe('capturing what a document rendered', () => {
     ]);
   });
 
-  test('stops at the node budget rather than walking a hostile document', () => {
-    let deepest = new NodeStub('span');
-    for (let depth = 0; depth < MAX_TREE_NODES + 50; depth++) {
-      deepest = new NodeStub('span', [deepest]);
-    }
+  test('reports an unavailable snapshot when the node budget is exceeded', () => {
+    const root = new NodeStub(
+      'div',
+      Array.from({ length: MAX_TREE_NODES - 1 }, () => new NodeStub('p'))
+    );
+    expect(captureBoundedTree(root)?.children).toHaveLength(MAX_TREE_NODES - 1);
+    root.childNodes.push(new NodeStub('p'));
+    expect(captureBoundedTree(root)).toBeNull();
+  });
 
-    let counted = 0;
-    let walk: TreeNode | undefined = captureTree(deepest);
-    while (walk !== undefined) {
-      counted += 1;
-      walk = walk.children[0];
-    }
-    expect(counted).toBe(MAX_TREE_NODES);
+  test('uses one UTF-8 budget for tags, text and attributes without clipping', () => {
+    // The fields consume 14 bytes; the final three characters use nine.
+    const value = 'a'.repeat(MAX_TREE_BYTES - 23) + 'é記😀';
+    const root = new NodeStub('p', [new TextStub(value)] as never);
+    root.attrs['alt'] = 'Cover';
+    const tree = captureBoundedTree(root);
+    expect(tree).not.toBeNull();
+    expect(tree?.children[0]?.text).toBe(value);
+    expect(isTreeMessage({ type: 'relic:tree', tree })).toBe(true);
+
+    root.attrs['alt'] = 'Cover!';
+    expect(captureBoundedTree(root)).toBeNull();
+    const tooLarge = {
+      tag: 'p',
+      text: '',
+      attrs: [['alt', 'Cover!']],
+      children: [{ tag: '#text', text: value, attrs: [], children: [] }],
+    };
+    expect(isTreeMessage({ type: 'relic:tree', tree: tooLarge })).toBe(false);
+    expect(isTreeMessage({ type: 'relic:tree', tree: null })).toBe(true);
   });
 });
 

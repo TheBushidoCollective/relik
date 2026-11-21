@@ -7,6 +7,83 @@ import {
 } from '../src/xml.ts';
 
 describe('bounded XML parser', () => {
+  test('decodes UTF-8 and UTF-16 XML byte signatures strictly', () => {
+    const xml = '<root>Résumé 😀</root>';
+    expect(decodeXmlBytes(new TextEncoder().encode(xml), { fatal: true })).toBe(
+      xml
+    );
+    for (const littleEndian of [true, false]) {
+      for (const bom of [true, false]) {
+        const offset = bom ? 2 : 0;
+        const bytes = new Uint8Array(offset + xml.length * 2);
+        if (bom) {
+          bytes[0] = littleEndian ? 0xff : 0xfe;
+          bytes[1] = littleEndian ? 0xfe : 0xff;
+        }
+        for (let i = 0; i < xml.length; i++) {
+          const code = xml.charCodeAt(i);
+          bytes[offset + i * 2 + (littleEndian ? 0 : 1)] = code & 0xff;
+          bytes[offset + i * 2 + (littleEndian ? 1 : 0)] = code >>> 8;
+        }
+        expect(decodeXmlBytes(bytes, { fatal: true })).toBe(xml);
+      }
+    }
+    expect(() =>
+      decodeXmlBytes(new Uint8Array([0xc3, 0x28]), { fatal: true })
+    ).toThrow();
+    expect(() =>
+      decodeXmlBytes(new Uint8Array([0xff, 0xfe, 0x3c]), { fatal: true })
+    ).toThrow();
+  });
+
+  test('defaults to lenient decoding for malformed UTF-8 and UTF-16', () => {
+    const cases = [
+      { bytes: new Uint8Array([0xc3, 0x28]), decoded: '\ufffd(' },
+      { bytes: new Uint8Array([0xff, 0xfe, 0x3c]), decoded: '\ufffd' },
+      { bytes: new Uint8Array([0xfe, 0xff, 0x00]), decoded: '\ufffd' },
+    ];
+    for (const { bytes, decoded } of cases) {
+      expect(decodeXmlBytes(bytes)).toBe(decoded);
+      expect(decodeXmlBytes(bytes, { fatal: false })).toBe(decoded);
+      expect(() => decodeXmlBytes(bytes, { fatal: true })).toThrow();
+    }
+  });
+
+  test('asks for element admission with zero-based depth before allocation', () => {
+    const admitted: [string, number][] = [];
+    const result = parseXml('<root><leaf/><group><deep/></group></root>', {
+      admitElement: (name, depth) => {
+        admitted.push([name, depth]);
+        return admitted.length <= 3;
+      },
+    });
+    expect(result).toEqual({ ok: false, reason: 'elements' });
+    expect(admitted).toEqual([
+      ['root', 0],
+      ['leaf', 1],
+      ['group', 1],
+      ['deep', 2],
+    ]);
+    const lenient = parseXml('<root>&nbsp;</root>', {
+      lenient: true,
+      admitElement: () => true,
+    });
+    expect(lenient.ok && lenient.root.children).toEqual(['\u00a0']);
+  });
+
+  test('checks the node limit before requesting element admission', () => {
+    const admitted: string[] = [];
+    const result = parseXml('<root><leaf/></root>', {
+      maxNodes: 1,
+      admitElement: (name) => {
+        admitted.push(name);
+        return name === 'root';
+      },
+    });
+    expect(result).toEqual({ ok: false, reason: 'size' });
+    expect(admitted).toEqual(['root']);
+  });
+
   test('parses element structure, namespaces and safe entities', () => {
     const result = parseXml(
       '<r:root a="one &amp; two"><child>&lt;&#65;&#x1F600;</child></r:root>'
@@ -19,6 +96,15 @@ describe('bounded XML parser', () => {
       expect(typeof child).toBe('object');
       if (typeof child === 'object') expect(child.children).toEqual(['<A😀']);
     }
+  });
+  test('normalizes literal attribute whitespace before decoding references', () => {
+    const result = parseXml(
+      `<root double="a\r\nb\rc\nd\te &#9;&#10;&#13; &amp;#xA;" single=' \t\r\n&#x9;&#xA;&#xD; '/>`
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.root.attrs.get('double')).toBe('a b c d e \t\n\r &#xA;');
+    expect(result.root.attrs.get('single')).toBe('   \t\n\r ');
   });
   test('decodes known ebook entities and preserves unknown entities in lenient mode', () => {
     expect(parseXml('<x>&nbsp;</x>')).toEqual({ ok: false, reason: 'entity' });

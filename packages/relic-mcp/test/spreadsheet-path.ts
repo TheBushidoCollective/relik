@@ -325,13 +325,39 @@ try {
         await wait(
           `document.querySelector('.dt-value')?.textContent?.includes('Formula: 1+1')`
         );
+        await wait(
+          `document.querySelector('.popover-comment')?.getAttribute('aria-label') === 'Comment on "cell B2 of Second"'`
+        );
+        // Check the interval before the new selection's deferred offer runs.
+        // A real click below still exercises the full user path.
+        assert.equal(
+          await evaluate(`(() => {
+            const cell = document.querySelector('.dt-cell[data-r="1"][data-c="0"]');
+            cell.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }));
+            const dismissed = !document.querySelector('.popover-offer');
+            document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, button: 0 }));
+            return dismissed;
+          })()`),
+          true,
+          'a new selection must dismiss the previous cell offer immediately'
+        );
       }
       if (width === 1440) {
         await click('.dt-cell[data-r="1"][data-c="0"]');
-        await click('.popover-comment');
+        await click(
+          `.popover-comment[aria-label='Comment on "cell A2 of Second"']`
+        );
+        await wait(
+          `document.querySelector('.popover-composer .popover-target')?.textContent === 'Commenting on cell A2 of Second'`
+        );
         await click('.popover-composer .popover-field');
         await send('Input.insertText', { text: 'Second sheet note' });
         await click('.popover-composer .popover-tools .is-primary');
+        // The pending target is marked too. Wait for the saved comment's
+        // card before treating the mark as a persisted one.
+        await wait(
+          `document.querySelector('.popover-card:not(.popover-composer) .comment-body')?.textContent?.includes('Second sheet note')`
+        );
         await wait(
           `document.querySelector('.dt-cell[data-r="1"][data-c="0"].is-marked')`
         );

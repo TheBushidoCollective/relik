@@ -67,7 +67,8 @@ export interface Anchor {
 /** Frame to parent: what this frame actually rendered. */
 export interface TreeMessage {
   readonly type: 'relic:tree';
-  readonly tree: TreeNode;
+  /** Null means the rendered structure exceeded the snapshot budget. */
+  readonly tree: TreeNode | null;
 }
 
 /**
@@ -111,14 +112,11 @@ export interface AnnotateMessage {
 }
 
 /**
- * A bound on how much of a rendered document is captured.
- *
- * A page can hold far more nodes than a reader will ever look at, and the
- * capture runs inside a frame that must stay responsive. Past this the tree is
- * truncated rather than refused, because the two live renders are the evidence
- * and the marks are only the annotation.
+ * A snapshot must fit both limits in full. A partial tree could claim that
+ * versions match when their differences were omitted.
  */
 export const MAX_TREE_NODES = 5000;
+export const MAX_TREE_BYTES = 8 * 1024 * 1024;
 
 /**
  * Attributes a reader can see the effect of.
@@ -294,6 +292,32 @@ function attrsOf(node: NodeLike): readonly (readonly [string, string])[] {
   return found;
 }
 
+/** Count UTF-8 without allocating another copy of a potentially large string. */
+function remainingUtf8Bytes(value: string, remaining: number): number {
+  if (value.length > remaining) return -1;
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i);
+    if (code < 0x80) {
+      remaining -= 1;
+    } else if (code < 0x800) {
+      remaining -= 2;
+    } else if (
+      code >= 0xd800 &&
+      code <= 0xdbff &&
+      i + 1 < value.length &&
+      value.charCodeAt(i + 1) >= 0xdc00 &&
+      value.charCodeAt(i + 1) <= 0xdfff
+    ) {
+      remaining -= 4;
+      i++;
+    } else {
+      remaining -= 3;
+    }
+    if (remaining < 0) return -1;
+  }
+  return remaining;
+}
+
 /**
  * Snapshot what a document actually rendered.
  *
@@ -308,18 +332,30 @@ function attrsOf(node: NodeLike): readonly (readonly [string, string])[] {
  * no change. That is the same trade in both directions, and reflow noise is
  * the far more common case.
  */
-export function captureTree(root: unknown): TreeNode {
-  let budget = MAX_TREE_NODES;
+export function captureTree(root: unknown): TreeNode | null {
+  let nodes = MAX_TREE_NODES;
+  let bytes = MAX_TREE_BYTES;
+  let unavailable = false;
+
+  const account = (value: string): boolean => {
+    bytes = remainingUtf8Bytes(value, bytes);
+    if (bytes >= 0) return true;
+    unavailable = true;
+    return false;
+  };
 
   const walk = (value: unknown): TreeNode | undefined => {
-    if (budget <= 0) return undefined;
     const node = asNode(value);
     if (node === undefined) return undefined;
 
     if (node.nodeType === TEXT_NODE) {
       const text = textOfNode(node);
       if (text === undefined) return undefined;
-      budget -= 1;
+      if (nodes === 0 || !account('#text') || !account(text)) {
+        unavailable = true;
+        return undefined;
+      }
+      nodes--;
       return { tag: '#text', text, attrs: [], children: [] };
     }
 
@@ -327,17 +363,28 @@ export function captureTree(root: unknown): TreeNode {
     const tag =
       typeof node.tagName === 'string' ? node.tagName.toLowerCase() : '';
     if (UNRENDERED_TAGS[tag] === true) return undefined;
+    if (nodes === 0 || !account(tag)) {
+      unavailable = true;
+      return undefined;
+    }
+    nodes--;
+    const attrs = attrsOf(node);
+    for (const [name, value] of attrs) {
+      if (!account(name) || !account(value)) return undefined;
+    }
 
-    budget -= 1;
     const children: TreeNode[] = [];
     for (const child of keptChildren(node)) {
       const captured = walk(child);
+      if (unavailable) return undefined;
       if (captured !== undefined) children.push(captured);
     }
-    return { tag, text: '', attrs: attrsOf(node), children };
+    return { tag, text: '', attrs, children };
   };
 
-  return walk(root) ?? { tag: '#root', text: '', attrs: [], children: [] };
+  const tree = walk(root);
+  if (unavailable) return null;
+  return tree ?? { tag: '#root', text: '', attrs: [], children: [] };
 }
 
 /**
@@ -426,24 +473,73 @@ export function applyAnchors(
 }
 
 function isTreeNode(value: unknown): value is TreeNode {
-  if (typeof value !== 'object' || value === null) return false;
-  const node = value as Record<string, unknown>;
-  if (typeof node['tag'] !== 'string') return false;
-  if (typeof node['text'] !== 'string') return false;
-  if (!Array.isArray(node['attrs'])) return false;
-  for (const attr of node['attrs']) {
-    if (!Array.isArray(attr) || attr.length !== 2) return false;
-    if (typeof attr[0] !== 'string' || typeof attr[1] !== 'string')
+  const pending: unknown[] = [value];
+  let nodes = 0;
+  let bytes = MAX_TREE_BYTES;
+  const account = (text: string): boolean => {
+    bytes = remainingUtf8Bytes(text, bytes);
+    return bytes >= 0;
+  };
+
+  while (pending.length > 0) {
+    const item = pending.pop();
+    if (typeof item !== 'object' || item === null) return false;
+    const node = item as Record<string, unknown>;
+    const keys = Object.keys(node);
+    if (
+      keys.length !== 4 ||
+      keys.some(
+        (key) =>
+          key !== 'tag' &&
+          key !== 'text' &&
+          key !== 'attrs' &&
+          key !== 'children'
+      )
+    )
       return false;
+    if (typeof node['tag'] !== 'string' || !account(node['tag'])) return false;
+    if (typeof node['text'] !== 'string' || !account(node['text']))
+      return false;
+    if (
+      !Array.isArray(node['attrs']) ||
+      node['attrs'].length > VISIBLE_ATTRS.length ||
+      Object.keys(node['attrs']).length !== node['attrs'].length
+    )
+      return false;
+    for (const attr of node['attrs']) {
+      if (
+        !Array.isArray(attr) ||
+        attr.length !== 2 ||
+        Object.keys(attr).length !== 2
+      )
+        return false;
+      if (
+        typeof attr[0] !== 'string' ||
+        typeof attr[1] !== 'string' ||
+        !account(attr[0]) ||
+        !account(attr[1])
+      )
+        return false;
+    }
+    if (
+      !Array.isArray(node['children']) ||
+      nodes + 1 + pending.length + node['children'].length > MAX_TREE_NODES ||
+      Object.keys(node['children']).length !== node['children'].length
+    )
+      return false;
+    nodes++;
+    for (const child of node['children']) pending.push(child);
   }
-  if (!Array.isArray(node['children'])) return false;
-  return node['children'].every(isTreeNode);
+  return true;
 }
 
 export function isTreeMessage(data: unknown): data is TreeMessage {
   if (typeof data !== 'object' || data === null) return false;
   const message = data as Record<string, unknown>;
-  return message['type'] === 'relic:tree' && isTreeNode(message['tree']);
+  return (
+    message['type'] === 'relic:tree' &&
+    (message['tree'] === null || isTreeNode(message['tree']))
+  );
 }
 
 const MARK_KINDS: Record<string, true> = {

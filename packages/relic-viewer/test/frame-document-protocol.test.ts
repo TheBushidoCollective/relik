@@ -100,6 +100,13 @@ describe('document frame protocol', () => {
         reason: 'corrupt',
       })
     ).toBe(true);
+    expect(
+      isDocumentStateMessage({
+        type: 'relic:document-state',
+        state: 'failed',
+        reason: 'image-dimensions-unknown',
+      })
+    ).toBe(true);
     for (const bad of [
       { type: 'relic:document-state', state: 'ready', reason: 'corrupt' },
       { type: 'relic:document-state', state: 'failed', reason: 'protected' },
