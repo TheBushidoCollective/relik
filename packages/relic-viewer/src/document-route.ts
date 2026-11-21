@@ -1,6 +1,7 @@
 import { indexZip } from '@relic/format/zip-index';
 import { scanForbiddenDtd } from '@relic/format/xml';
 import type { RelicContent } from './content.ts';
+import { epubPayload } from './document-payload-epub.ts';
 import type {
   DocumentStateMessage,
   RenderDocumentMessage,
@@ -57,12 +58,14 @@ export async function mountDocumentRoute(
   createFrame: CreateDocumentFrame,
   download: () => void
 ): Promise<void> {
-  const fail = () => {
+  const fail = (protectedBook = false) => {
     const card = document.createElement('div');
     card.className = 'card';
     const title = document.createElement('div');
     title.className = 'card-title';
-    title.textContent = 'This document could not be shown.';
+    title.textContent = protectedBook
+      ? 'This ebook is protected by DRM and cannot be shown.'
+      : 'This document could not be shown.';
     const button = document.createElement('button');
     button.className = 'primary';
     button.type = 'button';
@@ -78,18 +81,21 @@ export async function mountDocumentRoute(
     const result = await indexZip(content, LIMITS);
     if (!result.ok) throw new Error(result.reason);
     const index = result.index;
-    if (
-      format === 'epub' &&
-      (index.entries.has('META-INF/rights.xml') ||
-        index.entries.has('META-INF/license.lcpl') ||
-        index.entries.has('META-INF/encryption.xml'))
-    )
-      throw new Error('Protected ebook');
-    const entries: [string, Uint8Array][] = [];
+    const epub = format === 'epub' ? await epubPayload(index) : undefined;
+    if (epub && !epub.ok) {
+      fail(epub.reason === 'protected');
+      return;
+    }
+    const entries: [string, Uint8Array][] = epub?.ok ? epub.entries : [];
     const buffers: Transferable[] = [];
+    for (const [, bytes] of entries) {
+      if (!(bytes.buffer instanceof ArrayBuffer))
+        throw new Error('Invalid entry buffer');
+      buffers.push(bytes.buffer);
+    }
     const decoder = new TextDecoder();
     for (const [name, info] of index.entries) {
-      if (info.kind !== 'file') continue;
+      if (format === 'epub' || info.kind !== 'file') continue;
       const read = await index.read(name);
       if (!read.ok) throw new Error(read.reason);
       // EPUB manifests may name XHTML without an extension.
@@ -118,6 +124,7 @@ export async function mountDocumentRoute(
       format,
       module,
       entries,
+      ...(epub?.ok ? { book: epub.book } : {}),
     };
     let handle: DocumentFrame;
     const finish = documentWatchdog((state) => {
