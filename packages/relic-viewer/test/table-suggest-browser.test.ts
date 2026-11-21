@@ -5,7 +5,7 @@ import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type { ReadyView, ViewerDeps } from '../src/viewer.ts';
-import type { SuggestionThreadRow } from '../src/suggestion-views.ts';
+import type { CommentEntry } from '../src/comments.ts';
 import type * as Csv from '@relic/format/csv';
 import type * as Table from '../src/data-table.ts';
 import type * as Source from '../src/table-source.ts';
@@ -47,6 +47,7 @@ async function exercise(
     currentVersion: 1,
     document: { bytes: new TextEncoder().encode(source), truncated: false },
   } as unknown as ReadyView;
+  let entries: CommentEntry[] = [];
   const controller = module.mountSuggestionController({
     view,
     host,
@@ -58,7 +59,7 @@ async function exercise(
       seal: async () => 'sealed',
       open: async () => ({ body: '', display_name: null, anchor: null }),
     }),
-    entries: () => [],
+    entries: () => entries,
     displayName: () => null,
     refresh: async () => undefined,
     readCurrentVersion: async () => 1,
@@ -66,29 +67,27 @@ async function exercise(
     signIn() {},
     open() {},
   });
-  const rows: SuggestionThreadRow[] = ['rapid', 'fast'].map(
-    (replacement, index) => ({
-      id: `change-${index}`,
-      author: `person-${index}@example.test`,
-      version: 1,
-      created_at: `2026-01-0${index + 1}T00:00:00Z`,
-      plaintext: {
-        body: '',
-        display_name: null,
-        anchor: { kind: 'source', exact: 'quick' },
-        suggestion: { v: 1, mode: 'replace', replacement },
-      },
-    })
-  );
-  const views = module.buildSuggestionViews(source, rows, 1, 1);
-  tableRoot.dispatchEvent(
-    new CustomEvent('relic:table-suggestion-views', { detail: views })
-  );
+  entries = ['rapid', 'fast'].map((replacement, index) => ({
+    kind: 'open',
+    id: `change-${index}`,
+    author: `person-${index}@example.test`,
+    version: 1,
+    createdAt: `2026-01-0${index + 1}T00:00:00Z`,
+    body: '',
+    displayName: null,
+    anchor: { kind: 'source', exact: 'quick' },
+    suggestion: { v: 1, mode: 'replace', replacement },
+  }));
+  let observed = '';
+  tableRoot.addEventListener('relic:table-suggestion-views', (event) => {
+    observed = JSON.stringify((event as CustomEvent).detail?.paint);
+  });
+  controller.sync();
   const grid = tableRoot.querySelector('.dt-grid') as HTMLElement;
   const cell = () =>
     tableRoot.querySelector('[data-r="1"][data-c="1"]') as HTMLElement;
   if (!cell()?.querySelector('.sg-chip'))
-    throw new Error('conflict badge missing');
+    throw new Error(`conflict badge missing: ${observed}`);
   cell().dispatchEvent(
     new MouseEvent('mousedown', { bubbles: true, button: 0 })
   );

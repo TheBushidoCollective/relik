@@ -16,7 +16,7 @@ describe('table suggestion source mapping', () => {
   test('maps BOM, CRLF and doubled quotes to source offsets', () => {
     const table = parse('\ufeffname,note\r\nAda,"a ""quote"""\r\n');
     const cell = tableSuggestionCell(table, 1, 1)!;
-    const source = table.text.slice(1);
+    const source = table.text.slice(1).replaceAll('\r\n', '\n');
     expect(cell.kind).toBe('csv-quoted');
     expect(cell.editable).toBe(true);
     expect(cell.segments.map((segment) => segment.text).join('')).toBe(

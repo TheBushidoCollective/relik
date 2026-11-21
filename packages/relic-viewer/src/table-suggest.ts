@@ -18,6 +18,33 @@ const notEditable: SuggestRefusal = {
 };
 const bidi = /[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/u;
 
+const carriageReturns = new WeakMap<CsvTable, readonly number[]>();
+
+/** Translate a parser offset into the BOM-free, LF-normalized suggestion source. */
+function suggestionOffset(table: CsvTable, offset: number): number {
+  let positions = carriageReturns.get(table);
+  if (!positions) {
+    const found: number[] = [];
+    for (
+      let index = table.text.indexOf('\r');
+      index >= 0;
+      index = table.text.indexOf('\r', index + 1)
+    ) {
+      if (table.text[index + 1] === '\n') found.push(index);
+    }
+    positions = found;
+    carriageReturns.set(table, positions);
+  }
+  let lo = 0;
+  let hi = positions.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (positions[mid]! < offset) lo = mid + 1;
+    else hi = mid;
+  }
+  return offset - (table.bom ? 1 : 0) - lo;
+}
+
 /** Map a physical record and column, independent of display sort order. */
 export function tableSuggestionCell(
   table: CsvTable,
@@ -36,7 +63,6 @@ export function tableSuggestionCell(
   if (field >= table.recordStart[record + 1]!) return undefined;
   const flags = table.fieldFlags[field]!;
   const quoted = (flags & FIELD_QUOTED) !== 0;
-  const shift = table.bom ? 1 : 0;
   const start = table.fieldStart[field]! + (quoted ? 1 : 0);
   const end = table.fieldEnd[field]! - (quoted ? 1 : 0);
   const raw = table.text.slice(start, end);
@@ -49,8 +75,8 @@ export function tableSuggestionCell(
   ): void => {
     segments.push({
       text,
-      start: from - shift,
-      end: to - shift,
+      start: suggestionOffset(table, from),
+      end: suggestionOffset(table, to),
       block: field,
       kind,
     });
@@ -84,19 +110,21 @@ export function tableFieldAtRange(
   start: number,
   end: number
 ): number | undefined {
-  const shift = table.bom ? 1 : 0;
   let lo = 0;
   let hi = table.fieldStart.length;
   while (lo < hi) {
     const mid = (lo + hi) >>> 1;
-    if (table.fieldStart[mid]! - shift <= start) lo = mid + 1;
+    if (suggestionOffset(table, table.fieldStart[mid]!) <= start) lo = mid + 1;
     else hi = mid;
   }
   const field = lo - 1;
   if (field < 0) return undefined;
   const quoted = (table.fieldFlags[field]! & FIELD_QUOTED) !== 0;
-  const from = table.fieldStart[field]! - shift + (quoted ? 1 : 0);
-  const to = table.fieldEnd[field]! - shift - (quoted ? 1 : 0);
+  const from = suggestionOffset(
+    table,
+    table.fieldStart[field]! + (quoted ? 1 : 0)
+  );
+  const to = suggestionOffset(table, table.fieldEnd[field]! - (quoted ? 1 : 0));
   return start >= from && end >= start && end <= to ? field : undefined;
 }
 
@@ -121,7 +149,7 @@ export function emptyTableCellAnchor(
   )
     return undefined;
   const shift = table.bom ? 1 : 0;
-  const rawPosition = position + shift;
+  const rawPosition = table.fieldStart[cell.field]!;
   if (cell.kind === 'csv-quoted') {
     return { start: position - 1, end: position, mode: 'after' };
   }
