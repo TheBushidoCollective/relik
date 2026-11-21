@@ -1,5 +1,6 @@
 import { afterEach, expect, jest, test } from 'bun:test';
 import { crc32, planStoredZip } from '@relic/format';
+import type { ZipIndex } from '@relic/format/zip-index';
 import { contentFromBytes } from '../src/content.ts';
 import {
   type CreateDocumentFrame,
@@ -84,6 +85,24 @@ class ElementStub extends EventTarget {
 
 test('archive checks precede frame creation and timeout removes the frame', async () => {
   const previous = Object.getOwnPropertyDescriptor(globalThis, 'document');
+  const previousObserver = Object.getOwnPropertyDescriptor(
+    globalThis,
+    'MutationObserver'
+  );
+  const observerState: { onMutation?: () => void } = {};
+  let disconnects = 0;
+  Object.defineProperty(globalThis, 'MutationObserver', {
+    configurable: true,
+    value: class {
+      constructor(callback: () => void) {
+        observerState.onMutation = callback;
+      }
+      observe() {}
+      disconnect() {
+        disconnects++;
+      }
+    },
+  });
   Object.defineProperty(globalThis, 'document', {
     configurable: true,
     value: { createElement: () => new ElementStub() },
@@ -92,7 +111,14 @@ test('archive checks precede frame creation and timeout removes the frame', asyn
     const root = new ElementStub();
     let frameCount = 0;
     let frame = new ElementStub();
-    const createFrame: CreateDocumentFrame = (payload, transfers) => {
+    let frameDisposals = 0;
+    const frameState: { respond?: (state: DocumentStateMessage) => void } = {};
+    const select = async (index: ZipIndex) => {
+      const parts = [...index.entries.keys()];
+      return { parts, xmlParts: new Set(parts) };
+    };
+    const createFrame: CreateDocumentFrame = (payload, transfers, onState) => {
+      frameState.respond = onState;
       frameCount++;
       expect(payload.entries.map(([name]) => name)).toEqual([
         'word/document.xml',
@@ -105,6 +131,9 @@ test('archive checks precede frame creation and timeout removes the frame', asyn
         frame,
         linkConfirm: new ElementStub(),
         linkRemembered: new ElementStub(),
+        dispose: () => {
+          frameDisposals++;
+        },
       } as unknown as DocumentFrame;
     };
     const malformed = contentFromBytes(
@@ -114,6 +143,7 @@ test('archive checks precede frame creation and timeout removes the frame', asyn
       root as unknown as HTMLElement,
       malformed,
       'docx',
+      select,
       createFrame,
       () => {}
     );
@@ -122,12 +152,35 @@ test('archive checks precede frame creation and timeout removes the frame', asyn
       'This document could not be shown.'
     );
     const extensionless = contentFromBytes(
-      zip([['chapter', '<!DOCTYPE html [<!ENTITY x \"z\">]><html/>']])
+      zip([
+        [
+          'chapter',
+          ' '.repeat(1024) + '<!DOCTYPE html [<!ENTITY x \"z\">]><html/>',
+        ],
+      ])
     );
     await mountDocumentRoute(
       root as unknown as HTMLElement,
       extensionless,
       'epub',
+      select,
+      createFrame,
+      () => {}
+    );
+    expect(frameCount).toBe(0);
+    await mountDocumentRoute(
+      root as unknown as HTMLElement,
+      extensionless,
+      'epub',
+      async () => ({ ok: false, reason: 'protected' }),
+      createFrame,
+      () => {}
+    );
+    await mountDocumentRoute(
+      root as unknown as HTMLElement,
+      extensionless,
+      'epub',
+      async () => ({ parts: [], xmlParts: new Set(['chapter']) }),
       createFrame,
       () => {}
     );
@@ -138,6 +191,7 @@ test('archive checks precede frame creation and timeout removes the frame', asyn
       root as unknown as HTMLElement,
       valid,
       'docx',
+      select,
       createFrame,
       () => {}
     );
@@ -145,11 +199,69 @@ test('archive checks precede frame creation and timeout removes the frame', asyn
     expect(frame.removed).toBe(false);
     jest.advanceTimersByTime(30000);
     expect(frame.removed).toBe(true);
+    expect(frameDisposals).toBe(1);
     expect(root.children[0]?.children[0]?.textContent).toBe(
       'This document could not be shown.'
     );
+    await mountDocumentRoute(
+      root as unknown as HTMLElement,
+      valid,
+      'docx',
+      select,
+      createFrame,
+      () => {}
+    );
+    frameState.respond?.({ type: 'relic:document-state', state: 'ready' });
+    root.isConnected = false;
+    observerState.onMutation?.();
+    expect(frameDisposals).toBe(2);
+    expect(disconnects).toBeGreaterThanOrEqual(4);
+    jest.advanceTimersByTime(30000);
+    expect(frameDisposals).toBe(2);
+    const failedRoot = new ElementStub();
+    await mountDocumentRoute(
+      failedRoot as unknown as HTMLElement,
+      valid,
+      'docx',
+      select,
+      createFrame,
+      () => {}
+    );
+    frameState.respond?.({
+      type: 'relic:document-state',
+      state: 'failed',
+      reason: 'unsupported',
+    });
+    expect(frame.removed).toBe(true);
+    expect(frameDisposals).toBe(3);
+    jest.advanceTimersByTime(30000);
+    expect(frameDisposals).toBe(3);
+    const pendingRoot = new ElementStub();
+    const started = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const pending = mountDocumentRoute(
+      pendingRoot as unknown as HTMLElement,
+      valid,
+      'docx',
+      async (index) => {
+        started.resolve();
+        await release.promise;
+        return select(index);
+      },
+      createFrame,
+      () => {}
+    );
+    await started.promise;
+    pendingRoot.isConnected = false;
+    observerState.onMutation?.();
+    release.resolve();
+    await pending;
+    expect(frameCount).toBe(3);
   } finally {
     if (previous) Object.defineProperty(globalThis, 'document', previous);
     else Reflect.deleteProperty(globalThis, 'document');
+    if (previousObserver)
+      Object.defineProperty(globalThis, 'MutationObserver', previousObserver);
+    else Reflect.deleteProperty(globalThis, 'MutationObserver');
   }
 });

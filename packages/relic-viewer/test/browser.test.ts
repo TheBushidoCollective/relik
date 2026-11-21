@@ -6,6 +6,7 @@ import {
   markerLabelFor,
   renderSandboxedHtml,
   renderSandboxedJsx,
+  sandboxFrame,
   safeDownloadName,
   sniffImageType,
 } from '../src/main.ts';
@@ -340,6 +341,10 @@ describe('the usercontent frame the render routes build', () => {
     }
 
     addEventListener(): void {}
+    removeEventListener(): void {}
+    dispatchEvent(): boolean {
+      return true;
+    }
   }
 
   /** Bun tests run without a DOM; the render routes only need createElement
@@ -438,6 +443,66 @@ describe('the usercontent frame the render routes build', () => {
     );
   });
 
+  test('document frame accepts one state only after handshake and disposes pending posts', () => {
+    let listener: ((event: unknown) => void) | undefined;
+    let removed = false;
+    const messages: unknown[] = [];
+    const states: unknown[] = [];
+    const source = { postMessage: (...args: unknown[]) => messages.push(args) };
+    (globalThis as { window?: unknown }).window = {
+      addEventListener: (type: string, callback: (event: unknown) => void) => {
+        if (type === 'message') listener = callback;
+      },
+      removeEventListener: (_type: string, callback: unknown) => {
+        removed = callback === listener;
+      },
+    };
+    const payload = {
+      type: 'relic:render-document',
+      format: 'docx',
+      module: 'x',
+      entries: [['x', new Uint8Array([1])]],
+    } as const;
+    const handle = sandboxFrame(
+      view('sandboxed-html', ''),
+      USERCONTENT_ORIGIN,
+      payload,
+      undefined,
+      [payload.entries[0][1].buffer],
+      (state) => states.push(state)
+    );
+    Object.assign(handle.frame, { contentWindow: source });
+    const send = (data: unknown, sender: unknown = source) =>
+      listener?.({ source: sender, data });
+    const ready = { type: 'relic:document-state', state: 'ready' };
+    send(ready);
+    send(ready, {});
+    expect(states).toEqual([]);
+    send({ type: 'relic:sandbox-ready' });
+    expect(messages[0]).toEqual([payload, '*', [payload.entries[0][1].buffer]]);
+    send({ ...ready, extra: true });
+    send(ready);
+    send({ type: 'relic:document-state', state: 'failed', reason: 'corrupt' });
+    expect(states).toEqual([ready]);
+    handle.dispose();
+    expect(removed).toBe(true);
+    const count = messages.length;
+    send({ type: 'relic:sandbox-ready' });
+    handle.post({ type: 'another' });
+    expect(messages).toHaveLength(count);
+    const pending = sandboxFrame(
+      view('sandboxed-html', ''),
+      USERCONTENT_ORIGIN,
+      payload,
+      undefined,
+      [payload.entries[0][1].buffer]
+    );
+    Object.assign(pending.frame, { contentWindow: source });
+    pending.dispose();
+    send({ type: 'relic:sandbox-ready' });
+    expect(messages).toHaveLength(count);
+  });
+
   test('a frame link request waits for the reader and opens nothing', () => {
     // Regression: the host used to call window.open for every valid request a
     // frame posted, so one click anywhere in the frame could open a tab. The
@@ -520,6 +585,9 @@ describe('the usercontent frame the render routes build', () => {
       'pdf',
       'download',
     ];
+    expect(markerLabelFor('sandboxed-document')).toBe(
+      'Downloads to your device, no author code'
+    );
 
     for (const route of [...executes, ...inert]) {
       const label = markerLabelFor(route);

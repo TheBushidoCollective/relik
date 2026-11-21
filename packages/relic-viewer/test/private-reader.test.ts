@@ -11,7 +11,12 @@
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 
-import { encryptFolder, encryptRelic } from '@relic/format';
+import {
+  crc32,
+  encryptFolder,
+  encryptRelic,
+  planStoredZip,
+} from '@relic/format';
 import { openFolderRelic } from '../src/folder-relic.ts';
 import {
   decodeBase64url,
@@ -73,6 +78,32 @@ function json(value: unknown, status = 200): Response {
 
 function bytesOf(text: string): Uint8Array {
   return new TextEncoder().encode(text);
+}
+
+function storedZip(
+  entries: readonly (readonly [string, string])[]
+): Uint8Array {
+  const files = entries.map(([name, text]) => ({ name, bytes: bytesOf(text) }));
+  const layout = planStoredZip(
+    files.map(({ name, bytes }) => ({
+      name,
+      size: bytes.length,
+      crc32: crc32(bytes),
+    }))
+  );
+  const output = new Uint8Array(layout.totalBytes);
+  let offset = 0;
+  for (let i = 0; i < files.length; i++) {
+    const header = layout.localHeaders[i]!;
+    output.set(header, offset);
+    offset += header.length;
+    output.set(files[i]!.bytes, offset);
+    offset += files[i]!.bytes.length;
+  }
+  output.set(layout.centralDirectory, offset);
+  offset += layout.centralDirectory.length;
+  output.set(layout.end, offset);
+  return output;
 }
 
 function buffer(bytes: Uint8Array): ArrayBuffer {
@@ -206,6 +237,11 @@ interface Sealed {
 }
 
 interface WorldOptions {
+  readonly file?: {
+    readonly bytes: Uint8Array;
+    readonly filename: string;
+    readonly mimetype: string;
+  };
   readonly owner?: IdentityKeys;
   /** The seal predates the grant: it lists the owner, and the wrap is still the reader's. */
   readonly sealPredatesGrant?: boolean;
@@ -299,7 +335,8 @@ async function sealedWorld(
   const ownerKeyId = hex(await kemKeyIdOf(owner.kemPublicKey));
   const readerPasskey = { rawId: randomBytes(32), prf: randomBytes(32) };
 
-  const plaintext = bytesOf('Intake form changes for January.');
+  const plaintext =
+    options.file?.bytes ?? bytesOf('Intake form changes for January.');
   const key = randomBytes(KEY_BYTES);
   const ciphertext = options.folder
     ? await encryptFolder({
@@ -321,8 +358,8 @@ async function sealedWorld(
       })
     : await encryptRelic({
         content: plaintext,
-        filename: 'intake.md',
-        mimetype: 'text/markdown',
+        filename: options.file?.filename ?? 'intake.md',
+        mimetype: options.file?.mimetype ?? 'text/markdown',
         key,
       });
   const served = options.tamperCiphertext
@@ -1088,6 +1125,63 @@ describe('the private reader opens a sealed version', () => {
 
     expect(Array.from(opened.content)).toEqual(Array.from(world.plaintext));
     expect(opened.digest).toBe(world.digest);
+  });
+
+  test('private current and historical document views retain their sniffed kind', async () => {
+    const cases = [
+      {
+        filename: 'named.epub',
+        kind: 'docx',
+        bytes: storedZip([
+          ['[Content_Types].xml', ''],
+          ['word/document.xml', ''],
+        ]),
+      },
+      {
+        filename: 'book.epub',
+        kind: 'epub',
+        bytes: storedZip([
+          ['mimetype', 'application/epub+zip'],
+          ['META-INF/container.xml', ''],
+        ]),
+      },
+    ] as const;
+    for (const item of cases) {
+      const relicId = freshRelicId();
+      const world = await sealedWorld(relicId, {
+        file: {
+          bytes: item.bytes,
+          filename: item.filename,
+          mimetype: 'application/octet-stream',
+        },
+      });
+      const mounted = await mountReader(readerDeps(world).deps, relicId);
+      press(mounted.root, '[data-action="private-unlock"]');
+      await until(() => mounted.views.length === 1, 'private document');
+      const current = mounted.views[0]!;
+      expect(current.route).toBe('sandboxed-document');
+      expect(current.documentKind).toBe(item.kind);
+      world.routes[`GET /api/relics/${relicId}/access`] = () =>
+        json({
+          ...accessBody(relicId, 'grantee', ownerDigest(world.owner), 1),
+          current_version: 2,
+        });
+      const reopened = await mountReader(readerDeps(world).deps, relicId);
+      press(reopened.root, '[data-action="private-unlock"]');
+      await until(
+        () => reopened.views.length === 1,
+        'private historical document'
+      );
+      const prior = reopened.views[0]!;
+      expect(prior.currentVersion).toBe(2);
+      expect(prior.openVersion).toBeDefined();
+      const historical = await prior.openVersion!(1);
+      expect(historical.kind).toBe('ready');
+      if (historical.kind === 'ready') {
+        expect(historical.view.version).toBe(1);
+        expect(historical.view.documentKind).toBe(item.kind);
+      }
+    }
   });
 
   test('opens a sealed private folder and preserves every file', async () => {

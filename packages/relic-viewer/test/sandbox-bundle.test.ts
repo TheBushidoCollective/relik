@@ -57,22 +57,18 @@ describe('the built sandbox.html', () => {
     expect(html).toContain('relic:annotate');
     expect(html).toContain('relic:tree');
   });
-  test('renderer module text stays in one lazy chunk per format', async () => {
+  test('disabled renderer modules stay outside the sandbox and shell', async () => {
     const html = await Bun.file(`${pkgDir}dist/sandbox.html`).text();
     const shell = await Bun.file(`${pkgDir}dist/viewer.js`).text();
-    for (const marker of [
-      'Word document renderer is not available yet.',
-      'EPUB document renderer is not available yet.',
+    for (const [name, marker] of [
+      ['frame-docx', 'Word document renderer is not available yet.'],
+      ['frame-epub', 'EPUB document renderer is not available yet.'],
     ]) {
+      expect(
+        await Bun.file(`${pkgDir}dist-frame/${name}.frame.js`).text()
+      ).toContain(marker);
       expect(html).not.toContain(marker);
       expect(shell).not.toContain(marker);
-      const chunks = [...new Bun.Glob('chunk-*.js').scanSync(`${pkgDir}dist`)];
-      const carriers: string[] = [];
-      for (const chunk of chunks) {
-        if ((await Bun.file(`${pkgDir}dist/${chunk}`).text()).includes(marker))
-          carriers.push(chunk);
-      }
-      expect(carriers).toHaveLength(1);
     }
   });
 });

@@ -363,7 +363,7 @@ const MARKER_LABELS: Record<RenderRoute, string> = {
   model: 'Shown as a 3D model, no author code',
   pdf: 'Rendered as a document, no author code',
   notebook: 'Rendered as a notebook, no author code',
-  'sandboxed-document': 'Rendered as a document, no author code',
+  'sandboxed-document': 'Downloads to your device, no author code',
   spreadsheet: 'Shown as a table, no author code',
   'sandboxed-html': 'Runs author code, isolated',
   'sandboxed-jsx': 'Runs author code, isolated',
@@ -1527,6 +1527,7 @@ interface FrameHandle {
   readonly linkConfirm: HTMLElement;
   readonly linkRemembered: HTMLElement;
   post(message: object, transfer?: Transferable[]): void;
+  dispose(): void;
   /**
    * Mark this frame's own rendered nodes, once the parent holds a diff.
    *
@@ -1563,7 +1564,7 @@ interface FrameHandle {
  * recipient has decided to trust what they are looking at, and a second
  * render is exactly that swap.
  */
-function sandboxFrame(
+export function sandboxFrame(
   view: ReadyView,
   usercontentOrigin: string,
   payload: RenderPayload,
@@ -1583,8 +1584,11 @@ function sandboxFrame(
   // payload goes once, to the document that announced itself, and nothing goes
   // to a frame whose document changed after its first load.
   const handshake = new FrameHandshake();
+  let pendingPayload: RenderPayload | undefined = payload;
+  let pendingTransfer = transfer;
+  let disposed = false;
   const post = (message: object, transferList: Transferable[] = []): void => {
-    if (!handshake.canPost()) return;
+    if (disposed || !handshake.canPost()) return;
     frame.contentWindow?.postMessage(message, '*', transferList);
   };
 
@@ -1631,11 +1635,13 @@ function sandboxFrame(
   // after the first, post nothing: see FrameHandshake.
   let documentStateReceived = false;
   const onMessage = (event: MessageEvent): void => {
-    if (event.source !== frame.contentWindow) return;
+    if (disposed || event.source !== frame.contentWindow) return;
     const type = (event.data as { type?: unknown } | null)?.type;
     if (type === 'relic:sandbox-ready') {
       if (!handshake.onReady()) return;
-      post(payload, transfer);
+      if (pendingPayload !== undefined) post(pendingPayload, pendingTransfer);
+      pendingPayload = undefined;
+      pendingTransfer = [];
       reportVisibility();
       // Announced on this origin too, because marks are posted into the
       // frame and a post that arrives before the frame is listening is
@@ -1762,20 +1768,30 @@ function sandboxFrame(
   if (typeof window !== 'undefined') {
     window.addEventListener('message', onMessage);
   }
-  frame.addEventListener('load', () => {
+  const onLoad = (): void => {
     // No payload here. The payload waits for the frame's own ready message, and
     // a later load means the document changed, which FrameHandshake records.
     handshake.onLoad();
     frame.dispatchEvent(
       new CustomEvent('relic:frame-navigation', { bubbles: true })
     );
-  });
+  };
+  frame.addEventListener('load', onLoad);
 
   return {
     frame,
     linkConfirm: linkBar.element,
     linkRemembered: linkBar.remembered,
     post,
+    dispose: () => {
+      if (disposed) return;
+      disposed = true;
+      pendingPayload = undefined;
+      pendingTransfer = [];
+      visibility?.disconnect();
+      window.removeEventListener('message', onMessage);
+      frame.removeEventListener('load', onLoad);
+    },
     annotate: (marks, anchors) =>
       post({ type: 'relic:annotate', marks, anchors }),
     setScroll: (position: ScrollPosition) =>
@@ -2181,57 +2197,7 @@ export function buildCurrentStage(
     case 'pdf':
       main.appendChild(renderPdfView(view));
       break;
-    case 'sandboxed-document': {
-      const root = document.createElement('div');
-      root.className = 'doc doc-document';
-      root.textContent = 'Loading document';
-      main.appendChild(root);
-      void import('./document-route.ts')
-        .then(({ mountDocumentRoute }) => {
-          if (!view.documentKind) throw new Error('Missing document kind');
-          return mountDocumentRoute(
-            root,
-            view.content,
-            view.documentKind,
-            (payload, transfer, onState) => {
-              let ready = false;
-              return sandboxFrame(
-                view,
-                usercontentOrigin,
-                payload,
-                () => {
-                  if (ready)
-                    root.dispatchEvent(
-                      new CustomEvent('relic:render-state', {
-                        detail: 'ready',
-                        bubbles: true,
-                      })
-                    );
-                },
-                transfer,
-                (state) => {
-                  if (state.state === 'ready') ready = true;
-                  onState(state);
-                }
-              );
-            },
-            () => downloadContent(view)
-          );
-        })
-        .catch(() => {
-          root.replaceChildren(
-            notice('This document could not be shown.'),
-            renderDownloadView(view)
-          );
-          root.dispatchEvent(
-            new CustomEvent('relic:render-state', {
-              detail: 'error',
-              bubbles: true,
-            })
-          );
-        });
-      break;
-    }
+    case 'sandboxed-document':
     case 'spreadsheet':
       main.appendChild(
         notice(
@@ -11517,7 +11483,6 @@ export function trackRenderState(
       break;
     }
     case 'notebook':
-    case 'sandboxed-document':
     case 'model': {
       stage.addEventListener('relic:render-state', (event: Event) => {
         const detail = (event as CustomEvent).detail;

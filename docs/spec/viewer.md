@@ -270,9 +270,9 @@ The interactive parser admits at most 16 MiB, 250,000 triangles, 500,000 source 
 
 ### 3.8 Document frame plumbing
 
-The document route indexes the archive and reads checked entries on the viewing origin before sending them to the opaque frame. ZIP entry count and decompressed sizes are bounded, and document XML is scanned for forbidden DTDs and entities. The parent transfers entry buffers and a first-party renderer module as text, never the key. The frame imports that module from a blob and reports one outcome. The parent removes the frame after a failed render or a 30-second timeout and offers the original download.
+Word and EPUB files currently offer an immediate download. Their renderer modules are placeholders, and opening a document does not extract its entries or create a render frame.
 
-The Word and EPUB renderer modules are currently placeholders that report unsupported. EPUB archives with encryption metadata are refused until package parsing can distinguish supported font obfuscation from DRM.
+The inactive document-frame plumbing accepts a format-specific selector that identifies the required parts and every XML part independently of file names. The selector must scan package metadata before parsing it. The route checks the ZIP and scans each selected XML part before transferring it, together with first-party renderer text, to the opaque frame. A failed render, timeout, or stage replacement disposes the frame and its pending payload. Enabling a renderer requires its real selector, renderer, and affected-path proof.
 
 ## 4. The sandbox boundary
 

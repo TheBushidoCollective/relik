@@ -1,8 +1,9 @@
-import { indexZip } from '@relic/format/zip-index';
+import { indexZip, type ZipIndex } from '@relic/format/zip-index';
 import { scanForbiddenDtd } from '@relic/format/xml';
 import type { RelicContent } from './content.ts';
 import type {
   DocumentStateMessage,
+  EpubBook,
   RenderDocumentMessage,
 } from './frame-document-protocol.ts';
 import { frameModuleText } from './frame-modules.ts';
@@ -13,12 +14,12 @@ const LIMITS = {
   maxEntryBytes: 100 * 1024 * 1024,
   maxTotalBytes: 200 * 1024 * 1024,
 };
-const XML_PART = /(?:\.xml|\.rels|\.xhtml|\.html|\.htm|\.opf|\.ncx|\.svg)$/i;
 
 export interface DocumentFrame {
   readonly frame: HTMLIFrameElement;
   readonly linkConfirm: HTMLElement;
   readonly linkRemembered: HTMLElement;
+  dispose(): void;
 }
 export type CreateDocumentFrame = (
   payload: RenderDocumentMessage,
@@ -26,11 +27,30 @@ export type CreateDocumentFrame = (
   onState: (state: DocumentStateMessage) => void
 ) => DocumentFrame;
 
+export interface DocumentParts {
+  readonly ok?: true;
+  readonly parts: readonly string[];
+  readonly xmlParts: ReadonlySet<string>;
+  readonly book?: EpubBook;
+}
+
+// Selectors must scan package metadata before parsing it.
+export type SelectDocumentParts = (index: ZipIndex) => Promise<
+  | DocumentParts
+  | {
+      readonly ok: false;
+      readonly reason: 'protected' | 'corrupt' | 'too-large';
+    }
+>;
+export type DocumentWatchdog = ((state: DocumentStateMessage) => void) & {
+  cancel(): void;
+};
+
 /** Accept the first state only. A timeout closes the same gate. */
 export function documentWatchdog(
   onState: (state: DocumentStateMessage) => void,
   delay = 30000
-): (state: DocumentStateMessage) => void {
+): DocumentWatchdog {
   let settled = false;
   const timer = setTimeout(
     () =>
@@ -47,6 +67,10 @@ export function documentWatchdog(
     clearTimeout(timer);
     onState(state);
   }
+  finish.cancel = () => {
+    settled = true;
+    clearTimeout(timer);
+  };
   return finish;
 }
 
@@ -54,9 +78,28 @@ export async function mountDocumentRoute(
   root: HTMLElement,
   content: RelicContent,
   format: 'docx' | 'epub',
+  selectParts: SelectDocumentParts,
   createFrame: CreateDocumentFrame,
   download: () => void
 ): Promise<void> {
+  let disposed = false;
+  let handle: DocumentFrame | undefined;
+  let finish: DocumentWatchdog | undefined;
+  const observer =
+    typeof MutationObserver === 'undefined'
+      ? undefined
+      : new MutationObserver(() => {
+          if (!root.isConnected) dispose();
+        });
+  observer?.observe(document, { childList: true, subtree: true });
+  function dispose(): void {
+    if (disposed) return;
+    disposed = true;
+    observer?.disconnect();
+    finish?.cancel();
+    handle?.dispose();
+    handle = undefined;
+  }
   const fail = () => {
     const card = document.createElement('div');
     card.className = 'card';
@@ -75,35 +118,41 @@ export async function mountDocumentRoute(
     );
   };
   try {
+    if (!root.isConnected) {
+      dispose();
+      return;
+    }
     const result = await indexZip(content, LIMITS);
+    if (disposed || !root.isConnected) {
+      dispose();
+      return;
+    }
     if (!result.ok) throw new Error(result.reason);
     const index = result.index;
+    const selection = await selectParts(index);
+    if (selection.ok === false) throw new Error(selection.reason);
+    if (disposed || !root.isConnected) {
+      dispose();
+      return;
+    }
+    const selected = new Set(selection.parts);
     if (
-      format === 'epub' &&
-      (index.entries.has('META-INF/rights.xml') ||
-        index.entries.has('META-INF/license.lcpl') ||
-        index.entries.has('META-INF/encryption.xml'))
+      selected.size !== selection.parts.length ||
+      [...selection.xmlParts].some((name) => !selected.has(name))
     )
-      throw new Error('Protected ebook');
+      throw new Error('Invalid document part selection');
     const entries: [string, Uint8Array][] = [];
     const buffers: Transferable[] = [];
-    const decoder = new TextDecoder();
-    for (const [name, info] of index.entries) {
-      if (info.kind !== 'file') continue;
+    for (const name of selection.parts) {
+      const info = index.entries.get(name);
+      if (info?.kind !== 'file') throw new Error('Missing document part');
       const read = await index.read(name);
+      if (disposed || !root.isConnected) {
+        dispose();
+        return;
+      }
       if (!read.ok) throw new Error(read.reason);
-      // EPUB manifests may name XHTML without an extension.
-      const prefix = read.bytes.subarray(0, 256);
-      const looksLikeXml =
-        /^\s*</.test(decoder.decode(prefix)) ||
-        (prefix[0] === 0xff && prefix[1] === 0xfe) ||
-        (prefix[0] === 0xfe && prefix[1] === 0xff) ||
-        (prefix[0] === 0x3c && prefix[1] === 0) ||
-        (prefix[0] === 0 && prefix[1] === 0x3c);
-      if (
-        (XML_PART.test(name) || looksLikeXml) &&
-        scanForbiddenDtd(read.bytes, format)
-      )
+      if (selection.xmlParts.has(name) && scanForbiddenDtd(read.bytes, format))
         throw new Error('Forbidden DTD');
       const bytes = read.bytes;
       if (!(bytes.buffer instanceof ArrayBuffer))
@@ -112,17 +161,22 @@ export async function mountDocumentRoute(
       buffers.push(bytes.buffer);
     }
     const module = await frameModuleText(format);
-    if (!root.isConnected) return;
+    if (disposed || !root.isConnected) {
+      dispose();
+      return;
+    }
     const payload: RenderDocumentMessage = {
       type: 'relic:render-document',
       format,
       module,
       entries,
+      ...(selection.book === undefined ? {} : { book: selection.book }),
     };
-    let handle: DocumentFrame;
-    const finish = documentWatchdog((state) => {
+    finish = documentWatchdog((state) => {
       if (state.state === 'failed') {
-        handle.frame.remove();
+        const frame = handle?.frame;
+        dispose();
+        frame?.remove();
         fail();
       } else {
         root.dispatchEvent(new CustomEvent('relic-repaint', { bubbles: true }));
@@ -135,6 +189,7 @@ export async function mountDocumentRoute(
       handle.frame
     );
   } catch {
+    dispose();
     if (root.isConnected) fail();
   }
 }
