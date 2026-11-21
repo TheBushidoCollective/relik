@@ -147,7 +147,7 @@ const service = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(request)
   }
   if (url.pathname !== '/' || !url.searchParams.has('kind')) return app.fetch(request);
   const entries = entriesFor(url.searchParams.get('kind'));
-  return new Response(`<!doctype html><style>body{margin:0}iframe{border:0;width:100%;height:850px}</style><iframe src="${usercontentOrigin}/sandbox.html" sandbox="allow-scripts"></iframe><script>window.results=[];addEventListener('message',e=>results.push(e.data));window.begin=()=>document.querySelector('iframe').contentWindow.postMessage({type:'relic:render-document',format:'docx',module:${JSON.stringify(moduleText)},entries:${JSON.stringify(entries)}.map(([p,b])=>[p,new Uint8Array(b)])},'*')</script><script type="module" src="/proof-host.js"></script>`, { headers: { 'content-type': 'text/html' } });
+  return new Response(`<!doctype html><style>body{margin:0}iframe{border:0;width:100%;height:850px}</style><script>window.results=[];addEventListener('message',e=>results.push(e.data));</script><iframe src="${usercontentOrigin}/sandbox.html" sandbox="allow-scripts"></iframe><script>window.begin=()=>document.querySelector('iframe').contentWindow.postMessage({type:'relic:render-document',format:'docx',module:${JSON.stringify(moduleText)},entries:${JSON.stringify(entries)}.map(([p,b])=>[p,new Uint8Array(b)])},'*')</script><script type="module" src="/proof-host.js"></script>`, { headers: { 'content-type': 'text/html' } });
 } });
 const usercontent = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: (request) => app.fetch(request) });
 const origin = `http://127.0.0.1:${service.port}`;
@@ -185,7 +185,7 @@ try {
     const loaded = cdp.waitForEvent('Page.loadEventFired', { sessionId, timeoutMs: 30000 });
     await cdp.send('Page.navigate', { url: `${origin}/?kind=${kind}` }, sessionId);
     await loaded;
-    await evaluate(`(async()=>{while(!window.results.some(x=>x.type==='relic:sandbox-ready')) await new Promise(r=>setTimeout(r,10));return true})()`);
+    await evaluate(`(async()=>{const end=Date.now()+30000;while(!window.results.some(x=>x.type==='relic:sandbox-ready')){if(Date.now()>end)throw Error('sandbox ready timeout');await new Promise(r=>setTimeout(r,10))}return true})()`);
     const tree = await cdp.send('Page.getFrameTree', {}, sessionId);
     const childFrame = tree.frameTree.childFrames[0].frame.id;
     const { executionContextId } = await cdp.send('Page.createIsolatedWorld', { frameId: childFrame, worldName: 'docx-proof' }, sessionId);

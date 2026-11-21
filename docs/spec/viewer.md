@@ -131,7 +131,7 @@ Redirects and rewrites performed by third parties, including link shorteners and
 
 `ipynb` is class `notebook`, at privilege tier 2, and it renders on the viewing origin. A notebook takes the `notebook` route only when its whole text parses as nbformat 4: an object whose `nbformat` is 4 and whose `cells` is an array. Any other `.ipynb` is text, and the disagreement rule in 1.3 shows it as text with a notice that says why. A notebook's whole text is read up to 50 MiB. Over that it is never read, and it is shown as text with the notice "This notebook is too large to show as a notebook, so its text is shown."
 
-DOCX and EPUB use the `document` class and render in the document frame. XLSX uses `spreadsheet` and offers a download until its renderer lands. A DOCX or EPUB above 64 MiB, or XLSX above 100 MiB, downloads rather than rendering.
+DOCX and EPUB use the `document` class and render in the document frame. XLSX uses `spreadsheet` and opens in the spreadsheet viewer. A DOCX or EPUB above 64 MiB, or XLSX above 100 MiB, downloads rather than rendering.
 
 The text-based structured views mount into a root the route creates. The source view is drawn into that root first, so the file is never blank. It stays in place while the view loads, when the view cannot show the file, and when Suggesting switches the reader to Source. A view reports its marks and selections as the anchors in `spec/format.md` 3.13. A mark a view cannot place is reported as unplaceable on the thread, and is never painted on something else.
 
