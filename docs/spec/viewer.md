@@ -133,7 +133,7 @@ Redirects and rewrites performed by third parties, including link shorteners and
 
 DOCX and EPUB use the `document` class and render in the document frame. XLSX uses `spreadsheet` and offers a download until its renderer lands. A DOCX or EPUB above 64 MiB, or XLSX above 100 MiB, downloads rather than rendering.
 
-The views mount into a root the route creates. The source view is drawn into that root first, so the file is never blank. It stays in place while the view loads, when the view cannot show the file, and when Suggesting switches the reader to Source. A view reports its marks and selections as the anchors in `spec/format.md` 3.13. A mark a view cannot place is reported as unplaceable on the thread, and is never painted on something else.
+The text-based structured views mount into a root the route creates. The source view is drawn into that root first, so the file is never blank. It stays in place while the view loads, when the view cannot show the file, and when Suggesting switches the reader to Source. A view reports its marks and selections as the anchors in `spec/format.md` 3.13. A mark a view cannot place is reported as unplaceable on the thread, and is never painted on something else.
 
 ## 2. The usercontent origin's shape
 
@@ -285,6 +285,35 @@ The EPUB package reader rejects protected books before a frame is created. Right
 EPUB package metadata is limited to 4 MiB and 20,000 XML elements per part, with at most 5,000 navigation and page-list entries combined. Eager chapter input is limited to 64 MiB in aggregate, including repeated spine references. The renderer caps retained CSS at 4 MiB, CSS rewrite work at 256 MiB, encoded resources and retained references separately at 64 MiB, and traversed nodes at 1,500,000. The manifest media type is carried with each resource and checked at its consuming sink. Unsupported spine media types produce a download fallback rather than a blank page.
 
 PNG, JPEG, GIF, and WebP images with recognizable signatures and dimensions are limited to 32 Mi pixels per image and 128 Mi pixels across distinct resources, regardless of their declared image type. The book remains open: oversized inline HTML and SVG images show an unavailable-image placeholder, and omitted stylesheet images are reported in a notice. Images whose dimensions cannot be read from these headers are left to the browser, so this limit does not bound their decoded memory or animation-frame memory.
+
+### 3.9 Spreadsheet inspection
+
+XLSX files are parsed in a same-origin worker without executing formulas or
+loading external relationships. The viewer shows worksheet cells as text in a
+table, with sheet tabs and a menu for hidden sheets. Charts and images are not
+shown. Cell comments carry the sheet name; sheets whose names cannot be written
+as anchors remain visible but cannot receive cell comments.
+
+Archives are limited to 100 MiB, 10,000 entries, 100 MiB per entry and 200 MiB
+expanded. A workbook is limited to 256 sheets, 5,000,000 cells and 2,000,000
+shared strings. A sheet exceeding 600,000 rows is refused individually.
+Invalid or oversized files can be downloaded.
+
+Rows are indexed sparsely. A formula is limited to 65,536 characters, and
+distinct formula detail is limited to 16 MiB per workbook. Shared-formula
+followers identify their master formula rather than presenting an inferred
+formula as the follower's own. Unsupported time-only and elapsed-time formats
+show their saved numbers instead of calendar dates.
+
+Style tables admit up to 65,536 cell styles and format strings up to 65,536
+characters. Find checks each distinct cell text once per query and scans the
+sheet in cancellable batches.
+
+Copying a range quotes fields with tabs, line breaks, or quotes and prefixes
+formula-like values. Range Copy refuses selections over 100,000 cells or
+8 Mi characters of clipboard output. Single-cell Copy deliberately remains raw
+and is not subject to those range limits. Pasting that text into another
+spreadsheet can cause the receiving application to interpret it as a formula.
 
 ## 4. The sandbox boundary
 

@@ -314,8 +314,12 @@ export async function buildViewer(options?: {
     for (const log of builtTransportGate.logs) console.error(log);
     process.exit(1);
   }
-  // Model parsing and WebGL are loaded only when a 3D relic is opened.
-  for (const entry of ['model-view', 'model-parse-worker']) {
+  // Load model and spreadsheet workers only for their respective routes.
+  for (const entry of [
+    'model-view',
+    'model-parse-worker',
+    'spreadsheet-parse-worker',
+  ]) {
     const modelBuild = await Bun.build({
       entrypoints: [`${pkgDir}src/${entry}.ts`],
       outdir: out,
