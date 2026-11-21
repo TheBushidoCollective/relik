@@ -39,8 +39,10 @@ export function mountView(mount: StructuredMount): StructuredPart | undefined {
   const forcedTab =
     mount.filename.toLowerCase().endsWith('.tsv') ||
     mount.mimetype.toLowerCase().startsWith('text/tab-separated-values');
+  // The viewer's TextDecoder already removed the file BOM.
   const parsed = parseTable(mount.source, {
     delimiter: forcedTab ? '\t' : 'auto',
+    skipBom: false,
   });
   if (!parsed.ok) {
     mount.reportUnshown(unreadableTableNotice(parsed));
@@ -48,5 +50,6 @@ export function mountView(mount: StructuredMount): StructuredPart | undefined {
   }
   return mountDataTable(mount.root, csvTableSource(parsed.table), {
     filename: mount.filename,
+    autoDelimiter: !forcedTab,
   });
 }

@@ -28,6 +28,18 @@ import type { StructuredPart } from './structured-view-bridge.ts';
 import type { TableSource } from './table-source.ts';
 import { LABEL_DISPLAY_LIMIT } from './visible-label.ts';
 import {
+  hasTableInvisible,
+  tableCellSurface,
+  tableFieldAtRange,
+  tableSuggestionCell,
+} from './table-suggest.ts';
+import { paintSuggestions } from './suggestions.ts';
+import type { SuggestionView, SuggestionViews } from './suggestion-views.ts';
+import {
+  registerSuggestionSurface,
+  requestSurfaceSwap,
+} from './suggestion-surface.ts';
+import {
   anchorCoversCell,
   columnLetters,
   displayIndexOf,
@@ -449,7 +461,7 @@ export function ensureDataTableStyles(): void {
 export function mountDataTable(
   root: HTMLElement,
   table: TableSource,
-  options: { readonly filename: string }
+  options: { readonly filename: string; readonly autoDelimiter?: boolean }
 ): StructuredPart {
   ensureDataTableStyles();
   const drawn = drawnColumnCount(table);
@@ -483,6 +495,14 @@ export function mountDataTable(
   let findTimer = 0;
   /** The `bodyKey` the rows on screen were drawn with. */
   let drawnKey = '';
+  let suggestionViews: SuggestionViews | undefined;
+  let suggestionCells = new Map<number, SuggestionView[]>();
+  const unsafeSuggestions = (field: number): boolean =>
+    suggestionCells
+      .get(field)
+      ?.some((change) =>
+        hasTableInvisible(change.input?.suggestion.replacement ?? '')
+      ) ?? false;
 
   const keyOf = (record: number, column: number): number =>
     record * TABLE_COLUMN_LIMIT + column;
@@ -553,6 +573,51 @@ export function mountDataTable(
   cellbar.setAttribute('aria-live', 'polite');
   root.append(cellbar);
 
+  let closeCellEditor: (() => void) | undefined;
+  const openCellEditor = (record: number, column: number): void => {
+    const csv = table.csv;
+    const cell = csv && tableSuggestionCell(csv, record, column);
+    if (
+      !csv ||
+      !cell ||
+      cell.editable !== true ||
+      unsafeSuggestions(cell.field)
+    )
+      return;
+    if (!requestSurfaceSwap(root, 'table-cell')) return;
+    closeCellEditor?.();
+    const panel = element('div', 'dt-suggest-editor');
+    const title = element(
+      'p',
+      'dt-suggest-title',
+      `Suggest an edit to ${columnLetters(column + 1)}${record + 1}`
+    );
+    const editorRoot = element('div', 'dt-suggest-text');
+    editorRoot.setAttribute('aria-label', 'Cell suggestion');
+    const close = element('button', 'dt-suggest-close', 'Close');
+    close.type = 'button';
+    panel.append(title, editorRoot, close);
+    root.append(panel);
+    const unregister = registerSuggestionSurface(
+      root,
+      tableCellSurface(csv, cell, editorRoot, options.autoDelimiter)
+    );
+    closeCellEditor = () => {
+      unregister();
+      panel.remove();
+      closeCellEditor = undefined;
+      root.dispatchEvent(
+        new CustomEvent('relic:structured-state', { bubbles: true })
+      );
+    };
+    close.addEventListener('click', () => {
+      if (requestSurfaceSwap(root, 'table-cell')) closeCellEditor?.();
+    });
+    root.dispatchEvent(
+      new CustomEvent('relic:table-suggest', { bubbles: true })
+    );
+  };
+
   // ---- selection helpers ----------------------------------------------------
   const sortedNow = (): boolean => sort !== undefined;
   const selectOne = (record: number, column: number): void => {
@@ -578,6 +643,11 @@ export function mountDataTable(
     if (typeof document === 'undefined') return;
     const live = document.getSelection();
     if (live === null) return;
+    if (
+      live.anchorNode &&
+      root.querySelector('.dt-suggest-editor')?.contains(live.anchorNode)
+    )
+      return;
     const inside = live.anchorNode !== null && root.contains(live.anchorNode);
     if (selection === undefined) {
       if (inside) live.removeAllRanges();
@@ -713,6 +783,66 @@ export function mountDataTable(
     } else {
       cell.append(element('span', 'dt-text', displayText(value)));
     }
+    const csv = table.csv;
+    const field = csv && csv.recordStart[record]! + column;
+    const changes =
+      field === undefined ? undefined : suggestionCells.get(field);
+    const mapped = csv && changes && tableSuggestionCell(csv, record, column);
+    const text = changes && cell.querySelector<HTMLElement>('.dt-text');
+    if (
+      csv &&
+      mapped &&
+      changes &&
+      suggestionViews &&
+      text &&
+      mapped.editable === true &&
+      (role !== 'head' || headerRow) &&
+      displayText(value) === value
+    ) {
+      text.classList.remove('dt-blank');
+      const surface = tableCellSurface(csv, mapped, text);
+      paintSuggestions(
+        text,
+        mapped.segments,
+        { ...suggestionViews, paint: changes },
+        'markdown',
+        (block, source) =>
+          visibleText(surface.decode?.(block, source) ?? source)
+      );
+      for (const mark of text.querySelectorAll<HTMLElement>('[data-sg-id]')) {
+        const id = mark.dataset['sgId'];
+        if (id) mark.dataset['commentId'] = id;
+      }
+    }
+    if (changes?.length && mapped && text && (role !== 'head' || headerRow)) {
+      const ids = new Set<string>();
+      for (const change of changes) {
+        for (const id of change.conflict?.members ?? [change.row.id]) {
+          ids.add(id);
+          for (const duplicate of suggestionViews?.byId.get(id)?.also ?? [])
+            ids.add(duplicate);
+        }
+      }
+      const members = [...ids];
+      const first = members[0]!;
+      const count = members.length;
+      const indicator = element(
+        'button',
+        'dt-suggestion-indicator',
+        count > 1 ? String(count) : 'Edit'
+      );
+      indicator.type = 'button';
+      indicator.dataset['sgId'] = first;
+      indicator.dataset['commentId'] = first;
+      if (count > 1) indicator.dataset['clusterMembers'] = members.join(' ');
+      indicator.setAttribute(
+        'aria-label',
+        count > 1
+          ? `Open suggestion, ${count} changes in this cell`
+          : 'Open suggestion'
+      );
+      cell.append(indicator);
+    }
     paintCell(cell, record, column, role);
     return cell;
   };
@@ -842,6 +972,22 @@ export function mountDataTable(
           )
         );
       }
+      if (single && table.csv) {
+        const mapped = tableSuggestionCell(table.csv, rect.r0, rect.c0);
+        const suggest = element('button', 'dt-suggest', 'Suggest edit');
+        suggest.type = 'button';
+        const unsafe = mapped && unsafeSuggestions(mapped.field);
+        suggest.disabled = !mapped || mapped.editable !== true || !!unsafe;
+        if (mapped && mapped.editable !== true)
+          suggest.title = mapped.editable.message;
+        else if (unsafe)
+          suggest.title =
+            'A suggestion in this cell contains invisible characters.';
+        suggest.addEventListener('click', () =>
+          openCellEditor(rect.r0, rect.c0)
+        );
+        cells.push(suggest);
+      }
       const copy = element('button', 'dt-copy', 'Copy');
       copy.type = 'button';
       copy.addEventListener('click', () => {
@@ -865,6 +1011,26 @@ export function mountDataTable(
       focus?.focus({ preventScroll: true });
     }
   };
+  const onSuggestionViews = (event: Event): void => {
+    if (!(event instanceof CustomEvent) || !table.csv) return;
+    const next = event.detail as SuggestionViews;
+    suggestionViews = next;
+    suggestionCells = new Map();
+    for (const view of next.paint) {
+      if (view.location.status !== 'resolved') continue;
+      const field = tableFieldAtRange(
+        table.csv,
+        view.location.start,
+        view.location.end
+      );
+      if (field === undefined) continue;
+      const changes = suggestionCells.get(field) ?? [];
+      changes.push(view);
+      suggestionCells.set(field, changes);
+    }
+    update(false);
+  };
+  root.addEventListener('relic:table-suggestion-views', onSuggestionViews);
 
   const scheduleUpdate = (): void => {
     if (frame !== 0 || disposed) return;
@@ -953,6 +1119,7 @@ export function mountDataTable(
     if (event.button !== 0) return;
     const target = event.target;
     if (!(target instanceof Element)) return;
+    if (target.closest('[data-comment-id]')) return;
     const cell = cellOf(target);
     if (cell === undefined) return;
     event.preventDefault();
@@ -990,6 +1157,11 @@ export function mountDataTable(
   });
 
   head.addEventListener('click', (event) => {
+    if (
+      event.target instanceof Element &&
+      event.target.closest('[data-comment-id]')
+    )
+      return;
     const cell =
       event.target instanceof Element
         ? event.target.closest<HTMLElement>('.dt-hcell')
@@ -1184,7 +1356,12 @@ export function mountDataTable(
       const live = document.getSelection();
       if (live === null || live.isCollapsed || live.anchorNode === null)
         return undefined;
-      if (!root.contains(live.anchorNode)) return undefined;
+      if (
+        !grid.contains(live.anchorNode) ||
+        !live.focusNode ||
+        !grid.contains(live.focusNode)
+      )
+        return undefined;
       return anchorForRect(selectionRect(selection), table.sheet);
     },
     reveal(anchor: CommentAnchor): void {
@@ -1217,6 +1394,11 @@ export function mountDataTable(
       selection = undefined;
       syncDomSelection(false);
       document.removeEventListener('mouseup', endDrag);
+      root.removeEventListener(
+        'relic:table-suggestion-views',
+        onSuggestionViews
+      );
+      closeCellEditor?.();
       if (frame !== 0) cancelAnimationFrame(frame);
       window.clearTimeout(findTimer);
     },

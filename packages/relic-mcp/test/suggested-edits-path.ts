@@ -28,6 +28,7 @@ import { diskAssets } from '@relic/server/src/assets.ts';
 import { MemoryStorage } from '@relic/server/src/storage.ts';
 import { MemoryStore } from '@relic/server/src/store.ts';
 import { renderMarkdown } from '../../relic-viewer/src/markdown.ts';
+import { TABLE_SUGGEST_PATH_CRLF } from '../../relic-viewer/test/table-suggest-fixture.ts';
 import { type CdpConnection, connectPipe } from '../src/cover/cdp.ts';
 import { chromeArgs, discoverChrome } from '../src/cover/chrome.ts';
 import {
@@ -45,6 +46,13 @@ const statePath = join(scratch, 'state.json');
 const store = new MemoryStore();
 const writes: Array<{ method: string; path: string; status: number }> = [];
 let handler: ((request: Request) => Promise<Response>) | undefined;
+let heldComment:
+  | {
+      id: string;
+      entered: () => void;
+      resume: Promise<void>;
+    }
+  | undefined;
 const service = Bun.serve({
   hostname: '127.0.0.1',
   port: 0,
@@ -84,6 +92,14 @@ handler = async (request) => {
       : new Response(Buffer.from(bytes), {
           headers: { 'content-type': 'application/octet-stream' },
         });
+  }
+  if (
+    heldComment &&
+    request.method === 'POST' &&
+    url.pathname === `/api/relics/${heldComment.id}/comments`
+  ) {
+    heldComment.entered();
+    await heldComment.resume;
   }
   const response = await app.fetch(request);
   if (
@@ -426,7 +442,7 @@ async function browser(): Promise<Browser> {
         );
         await loaded;
         await page.wait(
-          "document.querySelector('article.prose, pre.code-body') && document.querySelector('textarea.compose-textarea')",
+          "document.querySelector('article.prose, pre.code-body, .structured-table .dt-grid') && document.querySelector('textarea.compose-textarea')",
           'document and authenticated session'
         );
         return page;
@@ -454,11 +470,15 @@ async function browser(): Promise<Browser> {
   }
 }
 
-async function click(page: Page, selector: string): Promise<void> {
+async function click(
+  page: Page,
+  selector: string,
+  scroll = true
+): Promise<void> {
   const box = await page.evaluate<{ x: number; y: number }>(`(() => {
     const element = document.querySelector(${JSON.stringify(selector)});
     if (!(element instanceof HTMLElement)) throw new Error('missing element ' + ${JSON.stringify(selector)});
-    element.scrollIntoView({ block: 'center', inline: 'center' });
+    if (${scroll}) element.scrollIntoView({ block: 'center', inline: 'center' });
     const r = element.getBoundingClientRect();
     if (!r.width || !r.height) throw new Error('element is not visible: ' + ${JSON.stringify(selector)});
     return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
@@ -1379,6 +1399,467 @@ try {
       );
     }
     return 'v1 displayed Accepted in v2, Superseded, Not taken and Seen by the publisher; v2 had no suggestion marks';
+  });
+
+  await step(13, async () => {
+    const fixture = await publish(
+      join(scratch, 'cell-crlf.csv'),
+      TABLE_SUGGEST_PATH_CRLF
+    );
+    const page = await browserInstance.open(fixture.url, tokenA);
+    await page.wait(
+      'document.querySelector(\'.structured-table [data-r="2"][data-c="1"]\')',
+      'second repeated CSV cell'
+    );
+    await click(page, '.structured-table [data-r="2"][data-c="1"]');
+    await click(page, '.dt-cellbar .dt-suggest');
+    await page.wait(
+      "document.querySelector('.dt-suggest-text[contenteditable=true]')",
+      'table editor activated through inspector'
+    );
+    await select(page, '.dt-suggest-text', 'repeat');
+    await input(page, 'nice "one"');
+    await page.wait(
+      "document.querySelector('.dt-suggest-text ins[data-sg-draft]')",
+      'CSV draft'
+    );
+
+    let entered = false;
+    const resume = Promise.withResolvers<void>();
+    heldComment = {
+      id: fixture.id,
+      entered: () => {
+        entered = true;
+      },
+      resume: resume.promise,
+    };
+    try {
+      await leave(page);
+      await until(async () => entered, 'CSV POST entered hold');
+      await click(page, '.structured-table [data-r="1"][data-c="1"]');
+      await click(page, '.dt-cellbar .dt-suggest');
+      assert.equal(
+        await page.evaluate<boolean>(
+          "document.querySelector('.dt-suggest-title')?.textContent.includes('B3') === true"
+        ),
+        true,
+        'switching cells while posting removed the active editor'
+      );
+      await page.wait(
+        "document.querySelector('[data-sg-notice]')?.textContent.includes('finish sending')",
+        'in-flight swap refusal'
+      );
+      await click(page, '.structured-wrap .toggle-row button');
+      await page.wait(
+        "document.querySelector('.structured-wrap .toggle-row button')?.textContent.includes('View table')",
+        'View source remains available while posting'
+      );
+      await click(page, '.structured-wrap .toggle-row button');
+      await page.wait(
+        "document.querySelector('.structured-table .dt-grid')",
+        'table remounted while posting'
+      );
+      await click(page, '.structured-table [data-r="1"][data-c="1"]');
+      await click(page, '.dt-cellbar .dt-suggest');
+      assert.equal(
+        await page.evaluate<boolean>(
+          "!!document.querySelector('.dt-suggest-editor')"
+        ),
+        false,
+        'a new editor opened while another table post was in flight'
+      );
+      await page.wait(
+        "document.querySelector('[data-sg-notice]')?.textContent.includes('finish sending')",
+        'remounted table swap refusal'
+      );
+      await click(page, '.structured-wrap .toggle-row button');
+      await page.wait(
+        "document.querySelector('.structured-wrap .toggle-row button')?.textContent.includes('View table')",
+        'return to source during held post'
+      );
+    } finally {
+      heldComment = undefined;
+      resume.resolve();
+    }
+    await until(
+      async () => writesFor(fixture.id, 'POST') === 1,
+      'CSV suggestion posted'
+    );
+    await page.wait(
+      "document.querySelector('[data-sg-count]')?.textContent.includes('1 suggestion')",
+      'CSV post reflected in viewer'
+    );
+    await click(page, '.structured-wrap .toggle-row button');
+    await page.wait(
+      "document.querySelector('.structured-table .dt-grid')",
+      'table after post and source view'
+    );
+    await click(page, '.structured-table [data-r="1"][data-c="1"]');
+    await click(page, '.dt-cellbar .dt-suggest');
+    await page.wait(
+      "document.querySelector('.dt-suggest-title')?.textContent.includes('B2') && document.querySelector('.dt-suggest-text[contenteditable=true]')",
+      'second cell editable after in-flight post settles'
+    );
+    const stored = await plaintextRows(fixture.id, fixture.key);
+    assert.equal(stored.length, 1);
+    const saved = stored[0]!;
+    const anchor = saved.plain.anchor;
+    const suggestion = saved.plain.suggestion;
+    assert.ok(anchor && anchor.kind === 'source' && suggestion);
+    assert.equal(anchor.exact, 'repeat');
+    assert.equal(suggestion.mode, 'replace');
+    assert.equal(suggestion.replacement, 'nice ""one""');
+    const normalized = TABLE_SUGGEST_PATH_CRLF.slice(1).replaceAll(
+      '\r\n',
+      '\n'
+    );
+    const located = resolveSuggestions(normalized, [
+      {
+        id: saved.row.id,
+        created_at: '2026-01-01T00:00:00Z',
+        exact: anchor.exact,
+        ...(anchor.prefix === undefined ? {} : { prefix: anchor.prefix }),
+        ...(anchor.suffix === undefined ? {} : { suffix: anchor.suffix }),
+        suggestion,
+      },
+    ])[0];
+    assert.equal(located?.status, 'resolved');
+    if (located?.status !== 'resolved')
+      throw new Error('CSV anchor did not resolve');
+    assert.equal(located.start, normalized.lastIndexOf('repeat'));
+    assert.equal(
+      located.end,
+      normalized.lastIndexOf('repeat') + 'repeat'.length
+    );
+    const otherReader = await browserInstance.open(fixture.url, tokenB);
+    for (const [writer, record, selected, replacement, count] of [
+      [page, 3, 'FIRST', 'first replacement', 2],
+      [otherReader, 3, 'SECOND', 'second replacement', 3],
+      [page, 4, 'ONLY', 'only replacement', 4],
+    ] as const) {
+      await click(writer, `.structured-table [data-r="${record}"][data-c="1"]`);
+      await click(writer, '.dt-cellbar .dt-suggest');
+      await writer.wait(
+        "document.querySelector('.dt-suggest-text[contenteditable=true]')",
+        'clipped cell editor'
+      );
+      await select(writer, '.dt-suggest-text', selected);
+      await input(writer, replacement);
+      await leave(writer);
+      await until(
+        async () => writesFor(fixture.id, 'POST') === count,
+        'clipped cell suggestion posted'
+      );
+      await writer.wait(
+        `Number.parseInt(document.querySelector('[data-sg-count]')?.textContent, 10) >= ${count}`,
+        'clipped suggestion refresh'
+      );
+    }
+    const allSaved = await plaintextRows(fixture.id, fixture.key);
+    const mediumRows = allSaved.filter(
+      (row) =>
+        row.plain.suggestion?.replacement === 'first replacement' ||
+        row.plain.suggestion?.replacement === 'second replacement'
+    );
+    assert.equal(mediumRows.length, 2);
+    const solo = allSaved.find(
+      (row) => row.plain.suggestion?.replacement === 'only replacement'
+    );
+    assert.ok(solo, 'single clipped suggestion not stored');
+
+    const reopened = await browserInstance.open(fixture.url, tokenA);
+    const mark = `.structured-table [data-r="2"][data-c="1"] [data-comment-id="${saved.row.id}"]`;
+    await reopened.wait(
+      `document.querySelector(${JSON.stringify(mark)})`,
+      'reopened CSV mark on original cell'
+    );
+    await click(reopened, '.structured-table .dt-hcell[data-c="0"]');
+    await click(reopened, '.structured-table .dt-hcell[data-c="0"]');
+    await reopened.evaluate(
+      `(() => { const grid = document.querySelector('.dt-grid'); grid.scrollTop = grid.scrollHeight; grid.dispatchEvent(new Event('scroll')); })()`
+    );
+    await reopened.evaluate(
+      'new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))'
+    );
+    await reopened.wait(
+      `document.querySelector(${JSON.stringify(mark)})`,
+      'CSV mark after sort and scroll'
+    );
+    await reopened.evaluate(`(() => {
+      const mark = document.querySelector(${JSON.stringify(mark)});
+      const grid = document.querySelector('.dt-grid');
+      const item = mark.getBoundingClientRect();
+      const viewport = grid.getBoundingClientRect();
+      grid.scrollTop += item.top - (viewport.top + viewport.height / 2);
+    })()`);
+    await reopened.evaluate(
+      'new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))'
+    );
+    await reopened.wait(
+      `(() => {
+        const mark = document.querySelector(${JSON.stringify(mark)});
+        if (!mark) return false;
+        const rect = mark.getBoundingClientRect();
+        return mark.contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2));
+      })()`,
+      'visible, unobstructed CSV suggestion'
+    );
+    await click(reopened, mark, false);
+    await reopened.wait(
+      "document.querySelector('.popover-card')",
+      'CSV suggestion thread opened'
+    );
+    assert.equal(
+      await reopened.evaluate<string>(
+        "document.querySelector('.popover-card')?.getAttribute('data-comment-id')"
+      ),
+      saved.row.id,
+      'opened suggestion card does not match the clicked mark'
+    );
+    await click(reopened, '.structured-wrap .toggle-row button');
+    await reopened.wait(
+      "document.querySelector('.structured-wrap .toggle-row button')?.textContent.includes('View table')",
+      'CSV source view'
+    );
+    await click(reopened, '.structured-wrap .toggle-row button');
+    await reopened.wait(
+      `document.querySelector(${JSON.stringify(mark)})`,
+      'CSV mark after table remount'
+    );
+    const indicator =
+      '.structured-table [data-r="3"][data-c="1"] .dt-suggestion-indicator';
+    await reopened.wait(
+      `(() => {
+        const button = document.querySelector(${JSON.stringify(indicator)});
+        if (!button) return false;
+        const rect = button.getBoundingClientRect();
+        return button.contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2));
+      })()`,
+      'clipped cell indicator is visible'
+    );
+    await click(reopened, indicator, false);
+    for (const row of mediumRows) {
+      await reopened.wait(
+        `document.querySelector(${JSON.stringify(`.popover-member[data-member-id="${row.row.id}"]`)})`,
+        'clipped cell suggestion offered in cluster'
+      );
+    }
+    await click(
+      reopened,
+      `.popover-member[data-member-id="${mediumRows[1]!.row.id}"]`
+    );
+    await reopened.wait(
+      `document.querySelector(${JSON.stringify(`.popover-card[data-comment-id="${mediumRows[1]!.row.id}"]`)})`,
+      'second clipped suggestion opened'
+    );
+    await reopened.evaluate(`new Promise((resolve) => {
+      const indicator = document.querySelector(${JSON.stringify(indicator)});
+      const observer = new IntersectionObserver(() => {
+        observer.disconnect();
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve(true)));
+      });
+      observer.observe(indicator);
+    })`);
+    const secondCard = await reopened.evaluate<{
+      visible: boolean;
+      hit: boolean;
+      concealment: string | null;
+    }>(`(() => {
+      const card = document.querySelector(${JSON.stringify(`.popover-card[data-comment-id="${mediumRows[1]!.row.id}"]`)});
+      if (!card) return { visible: false, hit: false, concealment: 'missing' };
+      const rect = card.getBoundingClientRect();
+      const style = getComputedStyle(card);
+      const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+      return {
+        visible: style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity) > 0 && rect.width > 0 && rect.height > 0,
+        hit: !!hit && card.contains(hit),
+        concealment: card.getAttribute('data-concealed'),
+      };
+    })()`);
+    assert.deepEqual(
+      secondCard,
+      { visible: true, hit: true, concealment: null },
+      'second cluster card was concealed after observation'
+    );
+    const assertNearIndicator = async (
+      selector: string,
+      id: string
+    ): Promise<void> => {
+      await reopened.evaluate(`new Promise((resolve) => {
+        const marker = document.querySelector(${JSON.stringify(selector)});
+        const observer = new IntersectionObserver(() => {
+          observer.disconnect();
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve(true)));
+        });
+        observer.observe(marker);
+      })`);
+      const state = await reopened.evaluate<{
+        visible: boolean;
+        hit: boolean;
+        gap: number;
+      }>(`(() => {
+        const marker = document.querySelector(${JSON.stringify(selector)});
+        const card = document.querySelector(${JSON.stringify(`.popover-card[data-comment-id="${id}"]`)});
+        if (!marker || !card) return { visible: false, hit: false, gap: Infinity };
+        const a = marker.getBoundingClientRect(), b = card.getBoundingClientRect();
+        const style = getComputedStyle(card);
+        const target = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2);
+        const dx = Math.max(0, a.left - b.right, b.left - a.right);
+        const dy = Math.max(0, a.top - b.bottom, b.top - a.bottom);
+        return {
+          visible: !card.hasAttribute('data-concealed') && style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity) > 0,
+          hit: !!target && card.contains(target),
+          gap: Math.hypot(dx, dy),
+        };
+      })()`);
+      assert.equal(state.visible, true, `card ${id} was concealed`);
+      assert.equal(state.hit, true, `card ${id} was not hit-testable`);
+      assert.ok(
+        state.gap <= 80,
+        `card ${id} was ${state.gap}px from its visible indicator`
+      );
+    };
+    await assertNearIndicator(indicator, mediumRows[1]!.row.id);
+    await click(reopened, '.popover-card .popover-dismiss');
+    await click(reopened, indicator, false);
+    await click(
+      reopened,
+      `.popover-member[data-member-id="${mediumRows[0]!.row.id}"]`
+    );
+    await reopened.wait(
+      `document.querySelector(${JSON.stringify(`.popover-card[data-comment-id="${mediumRows[0]!.row.id}"]`)})`,
+      'first clipped suggestion opened'
+    );
+    await assertNearIndicator(indicator, mediumRows[0]!.row.id);
+    await click(reopened, '.popover-card .popover-dismiss');
+    const singleIndicator =
+      '.structured-table [data-r="4"][data-c="1"] .dt-suggestion-indicator';
+    await reopened.wait(
+      `document.querySelector(${JSON.stringify(singleIndicator)})`,
+      'single clipped suggestion indicator'
+    );
+    await click(reopened, singleIndicator, false);
+    await reopened.wait(
+      `document.querySelector(${JSON.stringify(`.popover-card[data-comment-id="${solo.row.id}"]`)})`,
+      'single clipped suggestion opened'
+    );
+    await assertNearIndicator(singleIndicator, solo.row.id);
+    await click(reopened, '.popover-card .popover-reply');
+    await reopened.wait(
+      "document.querySelector('.popover-card .popover-field')",
+      'reply draft field'
+    );
+    await input(reopened, 'Keep this unsent draft');
+    await reopened.wait(
+      "document.querySelector('.popover-card .popover-field')?.value === 'Keep this unsent draft'",
+      'reply draft entered'
+    );
+    await reopened.evaluate(
+      "window.__tableProofCard = document.querySelector('.popover-card')"
+    );
+    const gridPoint = await reopened.evaluate<{
+      x: number;
+      y: number;
+    }>(`(() => {
+      const rect = document.querySelector('.dt-grid').getBoundingClientRect();
+      return { x: rect.right - 10, y: rect.top + rect.height / 2 };
+    })()`);
+    await reopened.send('Input.dispatchMouseEvent', {
+      type: 'mouseWheel',
+      ...gridPoint,
+      deltaX: 0,
+      deltaY: 380,
+    });
+    await reopened.wait(
+      `!document.querySelector(${JSON.stringify(singleIndicator)})`,
+      'unselected indicator unmounted after scrolling'
+    );
+    await reopened.wait(
+      `document.querySelector(${JSON.stringify(`.popover-card[data-comment-id="${solo.row.id}"]`)})?.getAttribute('data-concealed') === 'offscreen'`,
+      'card concealed while its virtualized indicator is absent'
+    );
+    const absentCard = await reopened.evaluate<{
+      inert: boolean;
+      underlying: boolean;
+      focusBlocked: boolean;
+      draft: string;
+      same: boolean;
+      diagnostic: string;
+    }>(`(() => {
+      const card = document.querySelector(${JSON.stringify(`.popover-card[data-comment-id="${solo.row.id}"]`)});
+      const field = card.querySelector('.popover-field');
+      const rect = card.getBoundingClientRect();
+      const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+      field.focus({ preventScroll: true });
+      return {
+        inert: card.inert,
+        underlying: !!hit && !card.contains(hit),
+        focusBlocked: !card.contains(document.activeElement),
+        draft: field.value,
+        same: card === window.__tableProofCard,
+        diagnostic: JSON.stringify({ rect: rect.toJSON(), hit: hit?.outerHTML?.slice(0, 300), width: innerWidth, height: innerHeight }),
+      };
+    })()`);
+    assert.equal(absentCard.inert, true, absentCard.diagnostic);
+    assert.equal(absentCard.underlying, true, absentCard.diagnostic);
+    assert.equal(absentCard.focusBlocked, true, absentCard.diagnostic);
+    assert.equal(absentCard.draft, 'Keep this unsent draft');
+    assert.equal(absentCard.same, true);
+    await reopened.send('Input.dispatchMouseEvent', {
+      type: 'mouseWheel',
+      ...gridPoint,
+      deltaX: 0,
+      deltaY: -380,
+    });
+    await reopened.wait(
+      `document.querySelector(${JSON.stringify(singleIndicator)})`,
+      'indicator restored after scrolling back'
+    );
+    await reopened.wait(
+      `document.querySelector(${JSON.stringify(`.popover-card[data-comment-id="${solo.row.id}"]`)}) && !document.querySelector(${JSON.stringify(`.popover-card[data-comment-id="${solo.row.id}"]`)}).hasAttribute('data-concealed')`,
+      'card restored after its indicator returns'
+    );
+    const restoredDraft = await reopened.evaluate<{
+      inert: boolean;
+      draft: string;
+      same: boolean;
+    }>(`(() => {
+      const card = document.querySelector(${JSON.stringify(`.popover-card[data-comment-id="${solo.row.id}"]`)});
+      return {
+        inert: card.inert,
+        draft: card.querySelector('.popover-field').value,
+        same: card === window.__tableProofCard,
+      };
+    })()`);
+    assert.deepEqual(restoredDraft, {
+      inert: false,
+      draft: 'Keep this unsent draft',
+      same: true,
+    });
+    await assertNearIndicator(singleIndicator, solo.row.id);
+    const sniff = await publish(
+      join(scratch, 'sniff.csv'),
+      'a,b;c\r\nrow;target\r\n'
+    );
+    const sniffPage = await browserInstance.open(sniff.url, tokenA);
+    await click(sniffPage, '.structured-table [data-r="1"][data-c="1"]');
+    await click(sniffPage, '.dt-cellbar .dt-suggest');
+    await sniffPage.wait(
+      "document.querySelector('.dt-suggest-text[contenteditable=true]')",
+      'auto-detected CSV editor'
+    );
+    await select(sniffPage, '.dt-suggest-text', 'target');
+    await input(sniffPage, 'x,y');
+    await sniffPage.wait(
+      "document.querySelector('.sg-refusal-code')?.textContent.includes('delimiter-in-cell')",
+      'delimiter sniff change refusal'
+    );
+    assert.equal(
+      writesFor(sniff.id, 'POST'),
+      0,
+      'rejected delimiter change posted'
+    );
+    return 'double-BOM/CRLF edit kept its exact anchor; Source worked during a held post; clipped suggestion cards stayed adjacent and the virtualized card became inert without losing its draft; delimiter-changing input was refused';
   });
 } finally {
   await ownedBrowser?.close();

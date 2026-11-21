@@ -8,6 +8,10 @@ export interface SuggestionSurface {
   segments(source: string): readonly SourceSegment[];
   blockKind(block: number): SuggestBlockKind;
   editable(block: number): true | SuggestRefusal;
+  /** Restrict inline painting and editing to compatible source ranges. */
+  covers?(start: number, end: number, replacement?: string): boolean;
+  /** Only paint resolved changes inside this transient source slice. */
+  readonly clipPaint?: boolean;
   /** Reject selections in non-editable regions instead of snapping to a nearby segment. */
   acceptsSelection?(node: Node): true | SuggestRefusal;
   /** Convert visible insertion text to and from the source representation. */
@@ -71,11 +75,15 @@ export function guardSurfaceSwap(
 }
 
 /** Let the thread refuse a DOM replacement before a view discards its surface. */
-export function requestSurfaceSwap(root: HTMLElement): boolean {
+export function requestSurfaceSwap(
+  root: HTMLElement,
+  reason?: 'table-cell'
+): boolean {
   return root.dispatchEvent(
     new CustomEvent('relic:before-structured-swap', {
       bubbles: true,
       cancelable: true,
+      detail: reason,
     })
   );
 }
