@@ -14,6 +14,7 @@ export * from './crc32c.ts';
 export * from './decision.ts';
 export * from './email.ts';
 export * from './envelope.ts';
+export * from './epub-package.ts';
 export * from './errors.ts';
 export * from './fragment.ts';
 export * from './folder-container.ts';

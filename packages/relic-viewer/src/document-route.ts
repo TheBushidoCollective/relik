@@ -100,12 +100,14 @@ export async function mountDocumentRoute(
     handle?.dispose();
     handle = undefined;
   }
-  const fail = () => {
+  const fail = (protectedBook = false) => {
     const card = document.createElement('div');
     card.className = 'card';
     const title = document.createElement('div');
     title.className = 'card-title';
-    title.textContent = 'This document could not be shown.';
+    title.textContent = protectedBook
+      ? 'This ebook is protected by DRM and cannot be shown.'
+      : 'This document could not be shown.';
     const button = document.createElement('button');
     button.className = 'primary';
     button.type = 'button';
@@ -130,9 +132,13 @@ export async function mountDocumentRoute(
     if (!result.ok) throw new Error(result.reason);
     const index = result.index;
     const selection = await selectParts(index);
-    if (selection.ok === false) throw new Error(selection.reason);
     if (disposed || !root.isConnected) {
       dispose();
+      return;
+    }
+    if (selection.ok === false) {
+      dispose();
+      fail(selection.reason === 'protected');
       return;
     }
     const selected = new Set(selection.parts);

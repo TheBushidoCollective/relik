@@ -10,6 +10,7 @@
     "./containers": "./src/containers.ts",
     "./csv": "./src/csv.ts",
     "./cover": "./src/cover.ts",
+    "./epub-package": "./src/epub-package.ts",
     "./json-tree": "./src/json-tree.ts",
     "./mnemonic": "./src/mnemonic.ts",
     "./notebook": "./src/notebook.ts",
@@ -23,6 +24,9 @@
     "./xlsx": "./src/xlsx.ts",
     "./xml": "./src/xml.ts",
     "./zip-index": "./src/zip-index.ts"
+  },
+  "dependencies": {
+    "entities": "6.0.1"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"
