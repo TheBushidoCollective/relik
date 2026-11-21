@@ -178,6 +178,20 @@ describe('the shell references what is actually served', () => {
 });
 
 describe('the sandbox page', () => {
+  test('does not serve the sandbox through generic asset routes', async () => {
+    const server = app(
+      memoryAssets({ 'sandbox.html': '<!doctype html><title>fixture</title>' })
+    );
+    for (const path of ['/assets/sandbox.html', '/assets/SaNdBoX.html']) {
+      for (const method of ['GET', 'HEAD']) {
+        const response = await server.fetch(
+          new Request(`https://relic.example${path}`, { method })
+        );
+        expect(response.status).toBe(404);
+      }
+    }
+  });
+
   test('is served and only the service origin may frame it', async () => {
     const response = await app().fetch(get('/sandbox.html'));
     expect(response.status).toBe(200);

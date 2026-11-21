@@ -405,6 +405,10 @@ export function createApp(options: AppOptions = {}): RelicApp {
   }
 
   async function serveAsset(name: string, request: Request): Promise<Response> {
+    // The sandbox is served only by the route that applies its policy.
+    if (name.toLowerCase() === 'sandbox.html')
+      return new Response('Not found', { status: 404 });
+
     if (name === 'register-sw.js') {
       return textResponse(REGISTER_SW_JS, request, {
         'content-type': 'text/javascript; charset=utf-8',
