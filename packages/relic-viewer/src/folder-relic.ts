@@ -49,6 +49,7 @@ export async function entryView(
     content,
     document: route.document,
     route: route.route,
+    documentKind: route.documentKind,
     downgradeNotice: route.notice,
     componentModule: route.componentModule,
     folder: { ...folder, index },

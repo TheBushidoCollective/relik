@@ -135,6 +135,7 @@ export interface ReadyView {
     | { readonly bytes: Uint8Array; readonly truncated: boolean }
     | undefined;
   readonly route: RenderRoute;
+  readonly documentKind?: 'docx' | 'epub' | undefined;
   /**
    * Set when the declared type and the sniffed type disagreed. The recipient
    * is told, because silently downgrading is how a viewer trains people to
@@ -734,6 +735,7 @@ export async function load(
         content,
         document: route.document,
         route: route.route,
+        documentKind: route.documentKind,
         downgradeNotice: route.notice,
         componentModule: route.componentModule,
         shareUrl,
