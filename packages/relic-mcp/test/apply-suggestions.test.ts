@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import {
   chmod,
   lstat,
+  mkdir,
   mkdtemp,
   readFile,
   rm,
@@ -19,11 +20,13 @@ import {
   generateKey,
   generateRelicId,
 } from '@relic/format';
+import { parseTable, recordWidth } from '@relic/format/csv';
 import { APPLY_SUGGESTIONS_TOOL_NAME } from '../src/apply-suggestions.ts';
 import { nodeFiles } from '../src/files.ts';
 import type { PublishDeps } from '../src/publish.ts';
 import { handleMessage } from '../src/server.ts';
 import {
+  loadPublishState,
   resolveSourceIdentity,
   savePrivatePublishState,
   savePublishState,
@@ -340,6 +343,412 @@ describe('relic_apply_suggestions', () => {
     expect(allowed.isError).toBe(false);
     expect(await readFile(other, 'utf8')).toBe('# Report\nALPHA beta\nomega\n');
   });
+
+  test.each([
+    [
+      'CSV with BOM and CRLF',
+      'data.csv',
+      '\uFEFFname,value\r\nalpha,1\r\nomega,2\r\n',
+      'BETA',
+    ],
+    ['semicolon CSV', 'data.csv', 'name;value\nalpha;1\nomega;2\n', 'BETA'],
+    [
+      'quoted CSV with escaped quotes',
+      'data.csv',
+      'name,value\n"alpha",1\nomega,2\n',
+      'BETA ""new""',
+    ],
+    ['TSV', 'data.tsv', 'name\tvalue\nalpha\t1\nomega\t2\n', 'BETA'],
+    ['JSON', 'data.json', '{"message":"alpha","number":1}\n', 'BETA'],
+    ['JSON with BOM', 'data.json', '\uFEFF{"message":"alpha"}\n', 'BETA'],
+    [
+      'notebook',
+      'data.ipynb',
+      '{"nbformat":4,"cells":[{"cell_type":"markdown","source":["alpha"]},{"cell_type":"code","source":["x"],"outputs":[{"output_type":"stream","name":"stdout","text":"ok"}]}]}\n',
+      'BETA\\nsecond line',
+    ],
+    [
+      'SRT',
+      'data.srt',
+      '1\n00:00:01,000 --> 00:00:02,000\nalpha\n\n2\n00:00:03,000 --> 00:00:04,000\nomega\n',
+      'BETA',
+    ],
+    [
+      'VTT with CRLF',
+      'data.vtt',
+      'WEBVTT\r\n\r\n00:00:01.000 --> 00:00:02.000\r\nalpha\r\n',
+      'BETA',
+    ],
+  ])(
+    'previews and writes a safe %s suggestion',
+    async (_, filename, original, replacement) => {
+      const target = join(scratch, filename);
+      await writeFile(target, original);
+      await addSuggestion('chosen', 'alpha', replacement);
+      const args = {
+        path: target,
+        accept: ['chosen'],
+        allow_source_mismatch: true,
+      };
+      const preview = await call(args);
+      expect(preview.isError).toBe(false);
+      expect(preview.structuredContent['written']).toBe(false);
+      expect(await readFile(target, 'utf8')).toBe(original);
+      const result = await call({ ...args, write: true });
+      expect(result.isError).toBe(false);
+      expect(result.structuredContent['written']).toBe(true);
+      expect(await readFile(target, 'utf8')).toBe(
+        original.replace('alpha', replacement)
+      );
+    }
+  );
+
+  test.each([
+    [
+      'a final bare CSV row',
+      'data.csv',
+      'name,value\nalpha,1\norphan',
+      'orphan',
+      '',
+      'table_records',
+    ],
+    [
+      'a final bare CSV row with BOM and CRLF',
+      'data.csv',
+      '\uFEFFname,value\r\nalpha,1\r\norphan',
+      'orphan',
+      '',
+      'table_records',
+    ],
+    [
+      'an extra CSV field',
+      'data.csv',
+      'name,value\nalpha,1\nomega,2\n',
+      'alpha,1',
+      'alpha,1,extra',
+      'table_fields',
+    ],
+    [
+      'a missing TSV field',
+      'data.tsv',
+      'name\tvalue\nalpha\t1\nomega\t2\n',
+      'alpha\t1',
+      'alpha1',
+      'table_fields',
+    ],
+    [
+      'an unclosed CSV quote',
+      'data.csv',
+      'name,value\nalpha,1\nomega,2\n',
+      'alpha',
+      '"alpha',
+      'table_parse',
+    ],
+    [
+      'a stray CSV quote',
+      'data.csv',
+      'name,value\nalpha,1\nomega,2\n',
+      'alpha',
+      'al"pha',
+      'table_quotes',
+    ],
+    [
+      'a removed CRLF',
+      'data.csv',
+      'name,value\r\nalpha,1\r\nomega,2',
+      '\nalpha',
+      'alpha',
+      'line_endings',
+    ],
+    [
+      'a newly added BOM',
+      'data.csv',
+      'HEADER,value\nalpha,1\n',
+      'HEADER',
+      '\uFEFFHEADER',
+      'bom',
+    ],
+    [
+      'invalid JSON',
+      'data.json',
+      '{"message":"alpha"}\n',
+      'alpha',
+      'alpha"',
+      'json_parse',
+    ],
+    ['JSON line-ending count', 'data.json', '{}', '{}', '{\n}', 'line_endings'],
+    [
+      'invalid notebook JSON',
+      'data.ipynb',
+      '{"nbformat":4,"cells":[{"cell_type":"raw","source":["alpha"]}]}',
+      'alpha',
+      'alpha"',
+      'notebook_parse',
+    ],
+    [
+      'a deleted notebook cell',
+      'data.ipynb',
+      '{"nbformat":4,"cells":[{"cell_type":"markdown","source":["alpha"]}]}',
+      '{"cell_type":"markdown","source":["alpha"]}',
+      '',
+      'notebook_cells',
+    ],
+    [
+      'a changed notebook cell type',
+      'data.ipynb',
+      '{"nbformat":4,"cells":[{"cell_type":"markdown","source":["alpha"]}]}',
+      'markdown',
+      'raw',
+      'notebook_cell_type',
+    ],
+    [
+      'an unrecognized notebook cell type hidden by the display parser',
+      'data.ipynb',
+      '{"nbformat":4,"cells":[{"cell_type":"raw","source":["alpha"]}]}',
+      'raw',
+      'unknown',
+      'notebook_cell_type',
+    ],
+    [
+      'a removed notebook output',
+      'data.ipynb',
+      '{"nbformat":4,"cells":[{"cell_type":"code","source":["alpha"],"outputs":[{},{}]}]}',
+      '"outputs":[{},{}]',
+      '"outputs":[{}]',
+      'notebook_outputs',
+    ],
+    [
+      'an invalid notebook outputs field',
+      'data.ipynb',
+      '{"nbformat":4,"cells":[{"cell_type":"code","source":["alpha"],"outputs":[]}]}',
+      '"outputs":[]',
+      '"outputs":null',
+      'notebook_outputs',
+    ],
+    [
+      'a changed SRT timing',
+      'data.srt',
+      '1\n00:00:01,000 --> 00:00:02,000\nalpha\n',
+      '00:00:01,000',
+      '00:00:01,001',
+      'subtitle_timings',
+    ],
+    [
+      'a deleted SRT cue',
+      'data.srt',
+      '1\n00:00:01,000 --> 00:00:02,000\nalpha\n\n2\n00:00:03,000 --> 00:00:04,000\nomega\n',
+      'alpha',
+      '',
+      'subtitle_cues',
+    ],
+    [
+      'a deleted VTT cue',
+      'data.vtt',
+      'WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nalpha\n\n00:00:03.000 --> 00:00:04.000\nomega\n',
+      'alpha',
+      '',
+      'subtitle_cues',
+    ],
+    [
+      'a deleted VTT header',
+      'data.vtt',
+      'WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nalpha\n',
+      'WEBVTT',
+      '',
+      'subtitle_header',
+    ],
+    [
+      'a changed VTT timing',
+      'data.vtt',
+      'WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nalpha\n',
+      '00:00:02.000',
+      '00:00:02.500',
+      'subtitle_timings',
+    ],
+  ])(
+    'refuses %s before both preview and write',
+    async (_, filename, original, exact, replacement, check) => {
+      const target = join(scratch, filename);
+      await writeFile(target, original);
+      await addSuggestion('damage', exact, replacement);
+      for (const write of [false, true]) {
+        const result = await call({
+          path: target,
+          accept: ['damage'],
+          write,
+          allow_source_mismatch: true,
+        });
+        expect(result.isError).toBe(true);
+        expect(result.structuredContent).toMatchObject({
+          code: 'suggestion_breaks_structure',
+          check,
+        });
+        expect(await readFile(target, 'utf8')).toBe(original);
+      }
+    }
+  );
+
+  test('refuses a delimiter change caused only by the combined suggestions', async () => {
+    const target = join(scratch, 'data.csv');
+    const header = 'head;name,value\n';
+    const markers = 'Q1Q2';
+    // The table sniffer samples 64 KiB. The semicolon begins just outside its
+    // sample until both one-character deletions move it inside.
+    const padding = 'x'.repeat(65_537 - header.length - markers.length);
+    const original = `${header}${markers}${padding};y,z\n`;
+    const before = parseTable(original);
+    const after = parseTable(original.replace('Q1', 'Q').replace('Q2', 'Q'));
+    if (!before.ok || !after.ok)
+      throw new Error('fixture must parse as a table');
+    expect(before.table.delimiter).toBe(',');
+    expect(after.table.delimiter).toBe(';');
+    expect(before.table.records).toBe(after.table.records);
+    for (let record = 0; record < before.table.records; record += 1)
+      expect(recordWidth(before.table, record)).toBe(
+        recordWidth(after.table, record)
+      );
+    await writeFile(target, original);
+    await addSuggestion('first', 'Q1', 'Q');
+    await addSuggestion('second', 'Q2', 'Q');
+    for (const id of ['first', 'second']) {
+      const preview = await call({
+        path: target,
+        accept: [id],
+        allow_source_mismatch: true,
+      });
+      expect(preview.isError).toBe(false);
+    }
+    for (const write of [false, true]) {
+      const refused = await call({
+        path: target,
+        accept: ['first', 'second'],
+        write,
+        allow_source_mismatch: true,
+      });
+      expect(refused.structuredContent).toMatchObject({
+        code: 'suggestion_breaks_structure',
+        check: 'table_delimiter',
+      });
+      expect(refused.isError).toBe(true);
+      expect(await readFile(target, 'utf8')).toBe(original);
+    }
+  });
+
+  test('uses the published structured filename for a differently named local source', async () => {
+    const target = join(scratch, 'data.txt');
+    const original = '\uFEFFname,value\r\nalpha,1\r\nomega,2\r\n';
+    await writeFile(target, original);
+    const state = await loadPublishState(relicId);
+    if (state === undefined) throw new Error('missing fixture state');
+    await savePublishState(relicId, { ...state, filename: 'data.csv' });
+    await addSuggestion('safe', 'alpha', 'BETA');
+    await addSuggestion('damage', 'alpha', 'alpha,extra');
+    const args = { path: target, allow_source_mismatch: true };
+    const refused = await call({ ...args, accept: ['damage'], write: true });
+    expect(refused.structuredContent).toMatchObject({
+      code: 'suggestion_breaks_structure',
+      check: 'table_fields',
+    });
+    expect(await readFile(target, 'utf8')).toBe(original);
+    const result = await call({ ...args, accept: ['safe'], write: true });
+    expect(result.isError).toBe(false);
+    expect(await readFile(target, 'utf8')).toBe(
+      original.replace('alpha', 'BETA')
+    );
+  });
+
+  test('preflights all folder entries before writing any structured file', async () => {
+    const folder = join(scratch, 'folder');
+    await mkdir(folder);
+    const csv = join(folder, 'good.csv');
+    const json = join(folder, 'bad.json');
+    const originalCsv = 'name,value\nalpha,1\n';
+    const originalJson = '{"message":"omega"}\n';
+    await writeFile(csv, originalCsv);
+    await writeFile(json, originalJson);
+    await addRow('safe', {
+      body: 'safe',
+      display_name: null,
+      entry: 'good.csv',
+      anchor: { kind: 'source', exact: 'alpha' },
+      suggestion: { v: 1, mode: 'replace', replacement: 'BETA' },
+    });
+    await addRow('damage', {
+      body: 'damage',
+      display_name: null,
+      entry: 'bad.json',
+      anchor: { kind: 'source', exact: 'omega' },
+      suggestion: { v: 1, mode: 'replace', replacement: 'omega"' },
+    });
+    const result = await call({
+      path: folder,
+      accept: ['safe', 'damage'],
+      write: true,
+      allow_source_mismatch: true,
+    });
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      code: 'suggestion_breaks_structure',
+      check: 'json_parse',
+    });
+    expect(await readFile(csv, 'utf8')).toBe(originalCsv);
+    expect(await readFile(json, 'utf8')).toBe(originalJson);
+  });
+
+  test('counts notebook outputs beyond the viewer output cap', async () => {
+    const target = join(scratch, 'data.ipynb');
+    const tail = ',{"output_type":"stream","name":"stderr","text":"last"}';
+    const outputs = `${Array(200).fill('{}').join(',')}${tail}`;
+    const original = `{"nbformat":4,"cells":[{"cell_type":"code","source":["alpha"],"outputs":[${outputs}]}]}`;
+    await writeFile(target, original);
+    await addSuggestion('damage', tail, '');
+    const result = await call({
+      path: target,
+      accept: ['damage'],
+      write: true,
+      allow_source_mismatch: true,
+    });
+    expect(result.structuredContent).toMatchObject({
+      code: 'suggestion_breaks_structure',
+      check: 'notebook_outputs',
+    });
+    expect(result.isError).toBe(true);
+    expect(await readFile(target, 'utf8')).toBe(original);
+  });
+
+  test.each([
+    [
+      'mixed table endings',
+      'data.csv',
+      'name,value\r\nalpha,1\n',
+      'mixed_line_endings',
+    ],
+    ['a lone table CR', 'data.csv', 'name,value\ralpha,1', 'has_cr'],
+    ['CRLF JSON', 'data.json', '{\r\n"message":"alpha"\r\n}', 'has_cr'],
+    [
+      'CRLF notebook',
+      'data.ipynb',
+      '{\r\n"nbformat":4,"cells":[{"cell_type":"raw","source":["alpha"]}]\r\n}',
+      'has_cr',
+    ],
+  ])(
+    'refuses %s using the shared source convention',
+    async (_, filename, source, reason) => {
+      const target = join(scratch, filename);
+      await writeFile(target, source);
+      const result = await call({
+        path: target,
+        accept: ['chosen'],
+        write: true,
+        allow_source_mismatch: true,
+      });
+      expect(result.structuredContent).toMatchObject({
+        code: 'source_not_suggestible',
+        reason,
+      });
+      expect(await readFile(target, 'utf8')).toBe(source);
+    }
+  );
 
   test('reports unrecorded identity without inventing a mismatch', async () => {
     const legacy = generateRelicId();
