@@ -192,6 +192,14 @@ recovery lock is process-local. Unavailable metadata, failed cache writes and
 incompatible selected formats are refused. The browser path does not establish
 operating-system IME, real clipboard or drag-and-drop behavior.
 
+`local_state_stale` detects a newer live version only when a comment carries
+that version. If republish completes but its local state update fails before a
+new-version comment exists, suggestion preview and apply can validate against
+the old version's format instead. The `local_state_write_failed` response names
+the live version. Do not preview or apply suggestions for that relic until its
+local publish record has been repaired; this path does not detect that stale
+state on its own.
+
 # Comments on images inside HTML
 
 A reader activates **Comment on image**, posts in the attached composer, dismisses the saved overlay and reopens the same comment from its image badge or thread after reload. Ordinary linked-image activation remains navigation, not commenting.

@@ -1074,9 +1074,19 @@ async function commitPlans(
     }
     for (const item of staged) {
       // rename(2) cannot compare-and-swap, so this narrows but cannot close the race.
-      await confirmUnchanged(item.plan, deps);
+      const mode = await confirmUnchanged(item.plan, deps);
+      if (mode !== item.mode) {
+        await chmod(item.temporary, mode);
+        const latestMode = await confirmUnchanged(item.plan, deps);
+        if (latestMode !== mode)
+          throw new ApplyError(
+            'source_changed_during_apply',
+            'a source permission changed while suggestions were being applied',
+            item.plan.entry === undefined ? {} : { entry: item.plan.entry }
+          );
+      }
       await rename(item.temporary, item.plan.result.path);
-      replaced.push({ plan: item.plan, mode: item.mode });
+      replaced.push({ plan: item.plan, mode });
     }
   } catch (error) {
     const restored: string[] = [];
@@ -1092,6 +1102,9 @@ async function commitPlans(
           item.plan.before,
           item.mode
         );
+        const latest = await readSource(item.plan.result.path, deps.files);
+        if (sha256(latest.bytes) !== item.plan.result.after_sha256)
+          throw new Error('the written file changed before rollback');
         await rename(temporary, item.plan.result.path);
         temporary = undefined;
         restored.push(item.plan.entry ?? item.plan.result.path);

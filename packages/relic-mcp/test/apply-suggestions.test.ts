@@ -2395,6 +2395,126 @@ describe('apply transaction races and stale local state', () => {
     expect((await readdir(folder)).sort()).toEqual(['a.md', 'b.md']);
   });
 
+  test('does not overwrite an edit made after the rollback snapshot', async () => {
+    const { folder, first, second } = await folderFixture();
+    const concurrentFirst = 'edited while rolling back\n';
+    const concurrentSecond = 'changed by another writer\n';
+    let racedSecond = false;
+    let racedFirst = false;
+    deps = {
+      ...deps,
+      files: {
+        ...nodeFiles,
+        async read(file) {
+          if (
+            file === second &&
+            !racedSecond &&
+            (await readFile(first, 'utf8')) === 'ALPHA\n'
+          ) {
+            racedSecond = true;
+            await writeFile(second, concurrentSecond);
+          }
+          const bytes = await nodeFiles.read(file);
+          if (file === first && racedSecond && !racedFirst) {
+            racedFirst = true;
+            await writeFile(first, concurrentFirst);
+          }
+          return bytes;
+        },
+      },
+    };
+    const result = await call({
+      path: folder,
+      accept: ['first', 'second'],
+      write: true,
+    });
+    expect(racedFirst).toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      code: 'source_changed_during_apply',
+      entry: 'b.md',
+      restored: [],
+      not_restored: ['a.md'],
+    });
+    expect(await readFile(first, 'utf8')).toBe(concurrentFirst);
+    expect(await readFile(second, 'utf8')).toBe(concurrentSecond);
+    expect((await readdir(folder)).sort()).toEqual(['a.md', 'b.md']);
+  });
+
+  test('rechecks an applied file after staging its rollback bytes', async () => {
+    const { folder, first, second } = await folderFixture();
+    const concurrentFirst = 'edited after rollback staging\n';
+    const concurrentSecond = 'changed by another writer\n';
+    let racedSecond = false;
+    let racedFirst = false;
+    deps = {
+      ...deps,
+      files: {
+        ...nodeFiles,
+        async read(file) {
+          if (
+            file === second &&
+            !racedSecond &&
+            (await readFile(first, 'utf8')) === 'ALPHA\n'
+          ) {
+            racedSecond = true;
+            await writeFile(second, concurrentSecond);
+          }
+          if (file === first && racedSecond && !racedFirst) {
+            const names = await readdir(folder);
+            for (const name of names) {
+              if (
+                name.startsWith('.a.md.relic-') &&
+                (await readFile(join(folder, name), 'utf8')) === 'alpha\n'
+              ) {
+                racedFirst = true;
+                await writeFile(first, concurrentFirst);
+                break;
+              }
+            }
+          }
+          return nodeFiles.read(file);
+        },
+      },
+    };
+    const result = await call({
+      path: folder,
+      accept: ['first', 'second'],
+      write: true,
+    });
+    expect(racedFirst).toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      code: 'source_changed_during_apply',
+      entry: 'b.md',
+      restored: [],
+      not_restored: ['a.md'],
+    });
+    expect(await readFile(first, 'utf8')).toBe(concurrentFirst);
+    expect(await readFile(second, 'utf8')).toBe(concurrentSecond);
+    expect((await readdir(folder)).sort()).toEqual(['a.md', 'b.md']);
+  });
+
+  test('preserves a mode change made after staging the replacement', async () => {
+    await chmod(path, 0o600);
+    await addSuggestion('chosen', 'alpha', 'ALPHA');
+    let reads = 0;
+    deps = {
+      ...deps,
+      files: {
+        ...nodeFiles,
+        async read(file) {
+          if (file === path && ++reads === 3) await chmod(file, 0o640);
+          return nodeFiles.read(file);
+        },
+      },
+    };
+    const result = await call({ accept: ['chosen'], write: true });
+    expect(result.isError).toBe(false);
+    expect(await readFile(path, 'utf8')).toBe(
+      ORIGINAL.replace('alpha', 'ALPHA')
+    );
+    expect((await lstat(path)).mode & 0o777).toBe(0o640);
+  });
+
   test('refuses a single-file change after preflight without overwriting it', async () => {
     await addSuggestion('chosen', 'alpha', 'ALPHA');
     const concurrent = 'changed by another writer\n';
