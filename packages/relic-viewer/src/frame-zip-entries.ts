@@ -440,29 +440,37 @@ const SVG_CSS_ATTRIBUTES: Record<string, true> = {
   style: true,
   background: true,
   'background-image': true,
+  'border-image': true,
+  'border-image-source': true,
   'clip-path': true,
   'color-profile': true,
   cursor: true,
   fill: true,
   filter: true,
+  'list-style': true,
+  'list-style-image': true,
   marker: true,
   'marker-start': true,
   'marker-mid': true,
   'marker-end': true,
   mask: true,
+  'mask-image': true,
   stroke: true,
   'shape-inside': true,
   'shape-outside': true,
 };
 
 /** Collect URLs from image-bearing attributes, animation values and CSS. */
-function scanSvgResources(text: string, visit: (url: string) => void): void {
+function scanSvgResources(text: string, visit: (url: string) => void): boolean {
   let at = 0;
   let depth = 0;
   let styleDepth = -1;
   let style = '';
-  const css = (value: string) => {
-    for (const entry of scanCssUrls(value).urls) visit(entry.url);
+  const css = (value: string): boolean => {
+    const result = scanCssUrls(value);
+    if (result.opaque) return false;
+    for (const entry of result.urls) visit(entry.url);
+    return true;
   };
   while (at < text.length) {
     if (text[at] !== '<') {
@@ -474,35 +482,30 @@ function scanSvgResources(text: string, visit: (url: string) => void): void {
     }
     if (text.startsWith('<!--', at)) {
       const end = text.indexOf('-->', at + 4);
-      if (end < 0) return;
+      if (end < 0) return false;
       at = end + 3;
       continue;
     }
     if (text.startsWith('<![CDATA[', at)) {
       const end = text.indexOf(']]>', at + 9);
-      if (end < 0) return;
+      if (end < 0) return false;
       if (styleDepth >= 0) style += text.slice(at + 9, end);
       at = end + 3;
       continue;
     }
     if (text.startsWith('<?', at)) {
       const end = text.indexOf('?>', at + 2);
-      if (end < 0) return;
+      if (end < 0 || /^<\?xml-stylesheet\b/i.test(text.slice(at, end)))
+        return false;
       at = end + 2;
       continue;
     }
-    if (text.startsWith('<!', at)) {
-      const end = text.indexOf('>', at + 2);
-      if (end < 0) return;
-      at = end + 1;
-      continue;
-    }
+    if (text.startsWith('<!', at)) return false;
     if (text.startsWith('</', at)) {
       const end = text.indexOf('>', at + 2);
-      if (end < 0) return;
-      depth--;
+      if (end < 0 || --depth < 0) return false;
       if (depth === styleDepth) {
-        css(style);
+        if (!css(style)) return false;
         style = '';
         styleDepth = -1;
       }
@@ -510,24 +513,34 @@ function scanSvgResources(text: string, visit: (url: string) => void): void {
       continue;
     }
     const tag = svgTag(text, at);
-    if (!tag) return;
+    if (!tag) return false;
     const element = localName(tag.name).toLowerCase();
     const animation = element === 'animate' || element === 'set';
     const target = tag.attrs.get('attributeName')?.toLowerCase();
     for (const [name, value] of tag.attrs) {
       const attribute = localName(name).toLowerCase();
       if (
+        (attribute === 'srcset' || attribute === 'imagesrcset') &&
+        value.trim()
+      )
+        return false;
+      if (
         (attribute === 'href' && element !== 'a') ||
         (attribute === 'src' &&
           (element === 'img' || element === 'image' || element === 'source'))
       )
         visit(value);
-      if (Object.hasOwn(SVG_CSS_ATTRIBUTES, attribute)) css(value);
+      if (Object.hasOwn(SVG_CSS_ATTRIBUTES, attribute) && !css(value))
+        return false;
       if (animation && ['from', 'to', 'by', 'values'].includes(attribute)) {
         if (target === 'href' || target === 'xlink:href') {
           for (const url of value.split(/;(?=\s*(?:data:|#))/i)) visit(url);
-        } else if (target && Object.hasOwn(SVG_CSS_ATTRIBUTES, target))
-          css(value);
+        } else if (
+          target &&
+          Object.hasOwn(SVG_CSS_ATTRIBUTES, target) &&
+          !css(value)
+        )
+          return false;
       }
     }
     if (element === 'style' && !tag.selfClosing && styleDepth < 0)
@@ -535,6 +548,7 @@ function scanSvgResources(text: string, visit: (url: string) => void): void {
     if (!tag.selfClosing) depth++;
     at = tag.end;
   }
+  return depth === 0 && styleDepth < 0;
 }
 
 function svgSize(text: string): { width: number; height: number } | undefined {
@@ -640,8 +654,7 @@ export class ImageBudget {
   private admitImage(
     bytes: Uint8Array,
     xmlBudget: XmlReadBudget,
-    detected?: ImageMeasurement,
-    embedded = false
+    detected?: ImageMeasurement
   ): string | undefined {
     const metafile = metafileType(bytes);
     if (metafile) return metafile;
@@ -654,11 +667,6 @@ export class ImageBudget {
         const omittedEmbeddedContent = xmlBudget.omittedEmbeddedContent;
         try {
           svg = xmlBudget.read(bytes);
-        } catch (error) {
-          if (error instanceof DocxLimitError) throw error;
-          // Some measurable SVGs use declarations that the DOCX XML reader
-          // does not accept. Preserve those bytes instead of dropping the image.
-          svg = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
         } finally {
           xmlBudget.omittedEmbeddedContent = omittedEmbeddedContent;
         }
@@ -712,21 +720,21 @@ export class ImageBudget {
       else if (image.type === 'webp')
         readable = chargeWebp(bytes, width, height, charge);
       else charge(width, height);
-      if (!readable && !embedded) {
-        this.reason = 'image-dimensions-unknown';
-        return undefined;
-      }
-      // A nested image can have measurable dimensions even when its frame
-      // stream is not understood. Keep the containing SVG and charge the
-      // canvas (plus any frames already counted) rather than dropping it.
-      if (!readable && pixels === 0 && !tooLarge) charge(width, height);
       if (tooLarge) {
         this.reason = 'too-large';
         return undefined;
       }
+      if (!readable) {
+        this.reason = 'image-dimensions-unknown';
+        return undefined;
+      }
       this.totalPixels += pixels;
       if (svg !== undefined) {
-        scanSvgResources(svg, (url) => this.admitEmbedded(url, xmlBudget));
+        const complete = scanSvgResources(svg, (url) =>
+          this.admitEmbedded(url, xmlBudget)
+        );
+        if (!complete && this.reason === undefined)
+          this.reason = 'image-dimensions-unknown';
         if (this.reason !== undefined) return undefined;
       }
       return mime;
@@ -741,22 +749,28 @@ export class ImageBudget {
 
   private admitEmbedded(url: string, xmlBudget: XmlReadBudget): void {
     if (this.reason !== undefined) return;
-    const normalized = normalizeUrl(url).split('#', 1)[0]!;
+    const value = normalizeUrl(url);
+    if (!value || value.startsWith('#')) return;
+    const normalized = value.split('#', 1)[0]!;
     if (this.embedded.has(normalized)) return;
     const data = parseDataUrl(normalized);
-    if (!data || data === 'invalid' || !data.essence.startsWith('image/'))
+    if (!data || data === 'invalid' || !data.essence.startsWith('image/')) {
+      this.reason = 'image-dimensions-unknown';
       return;
+    }
     let image: ImageMeasurement;
     try {
       image = detectImage(data.bytes);
     } catch {
-      // Keep the containing SVG when the embedded representation is not one
-      // of the formats whose dimensions image-size can recognize.
+      this.reason = 'image-dimensions-unknown';
       return;
     }
-    if (!image.type || !IMAGE_MIME[image.type]) return;
+    if (!image.type || !IMAGE_MIME[image.type]) {
+      this.reason = 'image-dimensions-unknown';
+      return;
+    }
     this.embedded.add(normalized);
-    this.admitImage(data.bytes, xmlBudget, image, true);
+    this.admitImage(data.bytes, xmlBudget, image);
   }
 }
 

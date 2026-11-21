@@ -342,6 +342,18 @@ try {
     return [name, new Uint8Array(bytes)];
   });
   const unknownImageUrl = await publishEntries('reader-unknown-image.docx', unknownImageEntries);
+  const declaredImageUrl = await publishEntries('reader-declared-image.docx', unknownImageEntries.map(([name, bytes]) => [
+    name,
+    name === imagePath
+      ? encode.encode('<!DOCTYPE svg><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"><rect width="20" height="20"/></svg>')
+      : bytes,
+  ]));
+  const dynamicImageUrl = await publishEntries('reader-dynamic-image.docx', unknownImageEntries.map(([name, bytes]) => [
+    name,
+    name === imagePath
+      ? encode.encode('<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"><style>:root { --accent: red }</style><rect width="20" height="20" style="fill: var(--accent)"/></svg>')
+      : bytes,
+  ]));
   const epubUrl = await publishEntries('reader.epub', [
     ['mimetype', encode.encode('application/epub+zip')],
     ['META-INF/container.xml', encode.encode('<container/>')],
@@ -377,10 +389,20 @@ try {
     assert.equal(unknownImage.frame, false);
     assert.match(unknownImage.text, /image whose dimensions could not be checked/);
     assert.match(unknownImage.text, /Download/);
+    for (const [url, message] of [
+      [declaredImageUrl, /This document could not be shown/],
+      [dynamicImageUrl, /image whose dimensions could not be checked/],
+    ]) {
+      const unsupportedSvg = await openReader(url, 'error');
+      assert.equal(unsupportedSvg.frame, false);
+      assert.match(unsupportedSvg.text, message);
+      assert.match(unsupportedSvg.text, /Download/);
+    }
     const epub = await openReader(epubUrl, 'ready');
     assert.equal(epub.frame, false);
     assert.match(epub.text, /Download/);
   }
+  console.log('DOCX_SVG_DOWNLOAD_OK');
   await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false }, sessionId);
   await openReader(commentUrl, 'ready');
   async function readerFrameContext() {

@@ -108,6 +108,7 @@ export function scanCssUrls(text: string): {
       at++;
       continue;
     }
+    const nameStart = at;
     let name = '';
     while (at < text.length && (nameChar(text[at]) || text[at] === '\\')) {
       if (text[at] === '\\') {
@@ -120,9 +121,21 @@ export function scanCssUrls(text: string): {
       }
     }
     name = name.toLowerCase();
+    if (name === 'import' && text[nameStart - 1] === '@') opaque = true;
     if (text[at] !== '(') continue;
     at++;
     if (name !== 'url') {
+      if (
+        [
+          'var',
+          'env',
+          'attr',
+          'src',
+          'cross-fade',
+          '-webkit-cross-fade',
+        ].includes(name)
+      )
+        opaque = true;
       functions.push(name);
       continue;
     }

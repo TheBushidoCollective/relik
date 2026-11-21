@@ -34,6 +34,12 @@ test('decodes ordinary escapes in quoted image URLs', () => {
   ]);
 });
 
+test('marks unresolved CSS values and imported stylesheets as opaque', () => {
+  expect(scanCssUrls('rect { fill: var(--accent); }').opaque).toBe(true);
+  expect(scanCssUrls('@import "theme.css";').opaque).toBe(true);
+  expect(scanCssUrls('rect { fill: red; }').opaque).toBe(false);
+});
+
 test('decodes base64 and percent-encoded data URLs', () => {
   const base64 = parseDataUrl(' DATA:Image/PNG;base64,AQ%49D#fragment ');
   expect(base64).not.toBe('invalid');

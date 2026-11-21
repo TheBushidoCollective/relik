@@ -156,9 +156,38 @@ test('shares the XML byte budget with ordinary document parts', async () => {
   expect(budget.reason).toBe('too-large');
 });
 
-test('keeps measurable SVGs with embedded representations the image detector cannot identify', () => {
+test('offers download when an embedded image cannot be measured', () => {
   const svg = encode(
     '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><image href="data:image/unknown;base64,AQID"/></svg>'
   );
-  expect(new ImageBudget(1, 1).admit('unknown.svg', svg)).toBe(true);
+  const budget = new ImageBudget(1, 1);
+  expect(budget.admit('unknown.svg', svg)).toBe(false);
+  expect(budget.reason).toBe('image-dimensions-unknown');
+});
+
+test('offers download for SVG declarations outside the bounded XML reader', async () => {
+  const ordinary = encode(
+    '<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><rect/></svg>'
+  );
+  expect(new ImageBudget().admit('ordinary.svg', ordinary)).toBe(true);
+
+  const declared = encode(
+    '<!DOCTYPE svg><svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><rect/></svg>'
+  );
+  const budget = new ImageBudget();
+  const archive = await EntryArchive.loadAsync({
+    entries: new Map([['declared.svg', declared]]),
+    budget,
+  });
+  expect(await archive.files['declared.svg']!.async('blob')).toBeNull();
+  expect(budget.reason).toBe('image-dimensions-unknown');
+});
+
+test('offers download when a CSS resource inspection is incomplete', () => {
+  const svg = encode(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><rect style="fill: var(--accent)"/></svg>'
+  );
+  const budget = new ImageBudget();
+  expect(budget.admit('styled.svg', svg)).toBe(false);
+  expect(budget.reason).toBe('image-dimensions-unknown');
 });
