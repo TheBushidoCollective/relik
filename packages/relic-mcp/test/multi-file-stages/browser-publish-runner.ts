@@ -114,10 +114,19 @@ export async function runBrowserPublishStage(
       new URL('../../../relic-viewer/dist/', import.meta.url).pathname
     ),
   });
+  // Calls the publisher itself makes: a challenge, a grant, a completion and
+  // the upload. A viewer page also makes reads of its own in the background,
+  // and those are not what these assertions are about.
   let apiCalls = 0;
   handler = async (request) => {
     const url = new URL(request.url);
-    if (url.pathname.startsWith('/api/')) apiCalls++;
+    if (
+      url.pathname === '/api/challenge' ||
+      url.pathname === '/api/grant' ||
+      /^\/api\/relics\/[^/]+\/complete$/.test(url.pathname) ||
+      url.pathname.startsWith('/__storage/upload/')
+    )
+      apiCalls++;
     if (
       url.pathname.startsWith('/__storage/upload/') &&
       request.method === 'PUT'
@@ -172,6 +181,7 @@ export async function runBrowserPublishStage(
     assert.equal(apiCalls, 0, 'preflight made a request');
     await browser.clickSelector('.pub-row .action.primary');
     await browser.waitForSelector('.pub-link');
+    assert.ok(apiCalls > 0, 'the counter sees the publisher own calls');
     const link = await browser.evaluate<string>(
       `document.querySelector('.pub-link').value`
     );
