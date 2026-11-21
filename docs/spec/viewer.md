@@ -276,6 +276,8 @@ The document route uses a format-specific selector to identify required parts an
 
 The EPUB package reader rejects protected books before a frame is created. Rights and LCP metadata, or encrypted resources other than obfuscated fonts, produce a DRM-specific download card. Obfuscated fonts are omitted. The frame renders the linear spine followed by non-linear items, with contents navigation, chapter position and text-size controls. A page label is shown only when supplied by the book. Author markup is rebuilt from an allowlist and local CSS resources are rewritten inside the frame. The Word renderer remains a placeholder.
 
+EPUB package metadata is limited to 4 MiB and 20,000 XML elements per part, with at most 5,000 navigation and page-list entries combined. Eager chapter input is limited to 64 MiB in aggregate, including repeated spine references. The renderer caps expanded CSS at 4 MiB, encoded and referenced resources separately at 64 MiB, and traversed nodes at 1,500,000. The manifest media type is carried with each resource and checked at its consuming sink. Unsupported spine media types produce a download fallback rather than a blank page.
+
 ## 4. The sandbox boundary
 
 **Direction is forced, not chosen.** The main origin fetches, decrypts, and posts plaintext to a static shim whose own code never touches ciphertext and never makes a request. The alternative shape, where the usercontent origin fetches and the parent posts it the key, is what somebody reaches for to avoid moving large payloads across a boundary, and it requires the key to cross. That must never happen.

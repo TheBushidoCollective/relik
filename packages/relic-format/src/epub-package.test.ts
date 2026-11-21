@@ -53,7 +53,7 @@ test('loads a navigation document containing unknown named entities', async () =
   ]);
   expect(result.book.toc).toEqual([
     {
-      label: 'Chapter&nbsp;one',
+      label: 'Chapter\u00a0one',
       path: 'OPS/chapter.xhtml',
       fragment: 'start',
       depth: 0,
@@ -149,4 +149,53 @@ test('reads NCX contents, page labels and fixed-layout progression', async () =>
   expect(result.book.pageList).toEqual([
     { label: '12', path: 'OPS/chapter.xhtml', fragment: 'p12' },
   ]);
+});
+
+test('reads UTF-16 package and navigation metadata', async () => {
+  const index = book();
+  const converted = new Map<string, Uint8Array>();
+  const entries = new Map(index.entries);
+  for (const name of [
+    'META-INF/container.xml',
+    'OPS/book.opf',
+    'OPS/nav.xhtml',
+  ]) {
+    const read = await index.read(name);
+    if (!read.ok) throw new Error('missing fixture');
+    const text = new TextDecoder().decode(read.bytes);
+    const bytes = new Uint8Array(text.length * 2 + 2);
+    bytes[0] = 0xff;
+    bytes[1] = 0xfe;
+    const view = new DataView(bytes.buffer);
+    for (let i = 0; i < text.length; i++)
+      view.setUint16(2 + i * 2, text.charCodeAt(i), true);
+    converted.set(name, bytes);
+    entries.set(name, { ...entries.get(name)!, size: bytes.length });
+  }
+  const result = await readEpubPackage({
+    entries,
+    read: async (name) =>
+      converted.has(name)
+        ? { ok: true, bytes: converted.get(name)! }
+        : index.read(name),
+  });
+  expect(result.ok).toBe(true);
+  if (result.ok) expect(result.book.toc[0]?.label).toBe('Chapter\u00a0one');
+});
+
+test('limits wide package metadata before building an unbounded tree', async () => {
+  const opf = `<package><metadata>${'<meta/>'.repeat(20001)}</metadata><manifest/><spine/></package>`;
+  expect(await readEpubPackage(book({ 'OPS/book.opf': opf }))).toEqual({
+    ok: false,
+    reason: 'too-large',
+  });
+});
+
+test('limits navigation records before sending a book to the frame', async () => {
+  const links = '<li><a href="chapter.xhtml">Entry</a></li>'.repeat(5001);
+  const nav = `<html xmlns:epub="epub"><body><nav epub:type="toc"><ol>${links}</ol></nav></body></html>`;
+  expect(await readEpubPackage(book({ 'OPS/nav.xhtml': nav }))).toEqual({
+    ok: false,
+    reason: 'too-large',
+  });
 });

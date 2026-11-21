@@ -1,3 +1,5 @@
+import { decodeXmlBytes } from '../../relic-format/src/xml.ts';
+import type { EpubResources } from './epub-css.ts';
 import { mountEpubChrome } from './epub-chrome.ts';
 import { sanitizeEpubChapter } from './epub-sanitize.ts';
 import type {
@@ -11,20 +13,84 @@ export async function render(
 ): Promise<DocumentOutcome> {
   const book = input.book;
   if (!book) return { state: 'failed', reason: 'corrupt' };
+  const blobs: string[] = [];
   try {
     const spine = [
       ...book.spine.filter((item) => item.linear),
       ...book.spine.filter((item) => !item.linear),
     ];
-    const chapters = new Map(spine.map((item, index) => [item.path, index]));
-    const blobs: string[] = [];
+    const chapters = new Map<string, number>();
+    for (const [index, item] of spine.entries())
+      if (!chapters.has(item.path)) chapters.set(item.path, index);
+    const mediaTypes = new Map(
+      book.resources.map((item) => [item.path, item.mediaType])
+    );
+    if (mediaTypes.size !== book.resources.length)
+      return { state: 'failed', reason: 'corrupt' };
+    let chapterBytes = 0;
+    for (const item of spine) {
+      const bytes = input.entries.get(item.path);
+      const type = mediaTypes.get(item.path);
+      if (!bytes || !type) return { state: 'failed', reason: 'corrupt' };
+      if (
+        !['application/xhtml+xml', 'text/html', 'image/svg+xml'].includes(type)
+      )
+        return { state: 'failed', reason: 'unsupported' };
+      chapterBytes += bytes.length;
+      if (bytes.length > 16 * 1024 * 1024 || chapterBytes > 64 * 1024 * 1024)
+        return { state: 'failed', reason: 'too-large' };
+    }
+    const resources: EpubResources = {
+      entries: input.entries,
+      mediaTypes,
+      dataUrls: new Map<string, string>(),
+      mediaUrls: new Map<string, string>(),
+      encodedBytes: 0,
+      referencedBytes: 0,
+      cssBytes: 0,
+    };
     const context = {
       entries: input.entries,
+      resources,
       path: '',
       chapter: 0,
       chapterByPath: chapters,
       blobs,
-      count: 0,
+      budget: { nodes: 0 },
+    };
+    const activeSvg = new Set<string>();
+    resources.svgDataUrl = (path) => {
+      if (activeSvg.has(path)) throw new Error('Cyclic EPUB SVG resource');
+      const bytes = input.entries.get(path);
+      if (!bytes || resources.mediaTypes.get(path) !== 'image/svg+xml')
+        return undefined;
+      activeSvg.add(path);
+      try {
+        const isolated = { ...context, path, chapter: 0, isolatedSvg: true };
+        const container = sanitizeEpubChapter(decodeXmlBytes(bytes), isolated);
+        const svg = container.firstElementChild;
+        if (
+          !svg ||
+          svg.localName.toLowerCase() !== 'svg' ||
+          svg.namespaceURI !== 'http://www.w3.org/2000/svg'
+        )
+          throw new Error('Invalid EPUB SVG resource');
+        const serialized = new TextEncoder().encode(
+          new XMLSerializer().serializeToString(svg)
+        );
+        if (
+          serialized.length > 16 * 1024 * 1024 ||
+          resources.encodedBytes + 4 * Math.ceil(serialized.length / 3) >
+            64 * 1024 * 1024
+        )
+          throw new Error('EPUB resource limit exceeded');
+        let binary = '';
+        for (let at = 0; at < serialized.length; at += 8192)
+          binary += String.fromCharCode(...serialized.subarray(at, at + 8192));
+        return `data:image/svg+xml;base64,${btoa(binary)}`;
+      } finally {
+        activeSvg.delete(path);
+      }
     };
     const style = document.createElement('style');
     style.textContent =
@@ -36,10 +102,7 @@ export async function render(
       if (!bytes) return { state: 'failed', reason: 'corrupt' };
       context.path = part.path;
       context.chapter = index;
-      const article = sanitizeEpubChapter(
-        new TextDecoder().decode(bytes),
-        context
-      );
+      const article = sanitizeEpubChapter(decodeXmlBytes(bytes), context);
       root.append(article);
     }
     if (book.progression !== 'default') root.dir = book.progression;
@@ -70,7 +133,10 @@ export async function render(
         if (!link) return;
         event.preventDefault();
         const id = link.getAttribute('href')?.slice(1);
-        const dest = id && document.getElementById(id);
+        const dest =
+          id &&
+          (document.getElementById(id) ??
+            document.getElementById(id.replace(/^(ep-\d+-).*$/, '$1')));
         if (!dest) return;
         if (link.hasAttribute('data-epub-noteref')) showFootnote(dest);
         else dest.scrollIntoView();
@@ -86,12 +152,15 @@ export async function render(
     );
     return { state: 'ready' };
   } catch (error) {
+    for (const url of blobs) URL.revokeObjectURL(url);
     return {
       state: 'failed',
       reason:
         error instanceof Error && error.message.includes('limit')
           ? 'too-large'
-          : 'corrupt',
+          : error instanceof Error && error.message.startsWith('Unsupported')
+            ? 'unsupported'
+            : 'corrupt',
     };
   }
 }

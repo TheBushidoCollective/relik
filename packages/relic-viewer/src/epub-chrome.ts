@@ -1,3 +1,4 @@
+import { normaliseFrameExternalLink } from './annotate-frame.ts';
 import type { EpubBook } from './frame-document-protocol.ts';
 import { epubAnchor } from './epub-sanitize.ts';
 
@@ -44,9 +45,10 @@ export function mountEpubChrome(
     button.textContent = item.label;
     button.style.paddingInlineStart = `${10 + item.depth * 14}px`;
     button.addEventListener('click', () => {
-      document
-        .getElementById(epubAnchor(chapter, item.fragment ?? ''))
-        ?.scrollIntoView();
+      (
+        document.getElementById(epubAnchor(chapter, item.fragment ?? '')) ??
+        document.getElementById(epubAnchor(chapter, ''))
+      )?.scrollIntoView();
       panel.hidden = true;
     });
     panel.append(button);
@@ -54,6 +56,21 @@ export function mountEpubChrome(
   const chapters = Array.from(
     root.querySelectorAll<HTMLElement>('[data-epub-chapter]')
   );
+  const pages = book.pageList.flatMap((entry) => {
+    const chapter = chapterByPath.get(entry.path);
+    if (chapter === undefined) return [];
+    const node = document.getElementById(
+      epubAnchor(chapter, entry.fragment ?? '')
+    );
+    return node ? [{ node, label: entry.label }] : [];
+  });
+  pages.sort((a, b) => {
+    if (a.node === b.node) return 0;
+    return a.node.compareDocumentPosition(b.node) &
+      Node.DOCUMENT_POSITION_FOLLOWING
+      ? -1
+      : 1;
+  });
   const update = () => {
     let current = 0;
     for (let i = 0; i < chapters.length; i++)
@@ -62,20 +79,23 @@ export function mountEpubChrome(
       1,
       document.documentElement.scrollHeight - innerHeight
     );
+    if (
+      document.documentElement.scrollHeight > innerHeight &&
+      scrollY >= max - 2
+    )
+      current = Math.max(0, chapters.length - 1);
     const percent = Math.max(
       0,
       Math.min(100, Math.round((scrollY / max) * 100))
     );
-    let page = '';
-    for (const entry of book.pageList) {
-      const chapter = chapterByPath.get(entry.path);
-      if (chapter === undefined) continue;
-      const node = document.getElementById(
-        epubAnchor(chapter, entry.fragment ?? '')
-      );
-      if (node && node.getBoundingClientRect().top <= 120)
-        page = ` · Page ${entry.label}`;
+    let low = 0;
+    let high = pages.length;
+    while (low < high) {
+      const mid = Math.floor((low + high) / 2);
+      if (pages[mid]!.node.getBoundingClientRect().top <= 120) low = mid + 1;
+      else high = mid;
     }
+    const page = low > 0 ? ` · Page ${pages[low - 1]!.label}` : '';
     position.textContent = `Chapter ${Math.min(chapters.length, current + 1)} of ${chapters.length} · ${percent}%${page}`;
   };
   addEventListener('scroll', update, { passive: true });
@@ -85,6 +105,31 @@ export function mountEpubChrome(
   const footnote = document.createElement('aside');
   footnote.className = 'panel';
   footnote.hidden = true;
+  footnote.addEventListener('click', (event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    const link = target.closest('a');
+    if (!link) return;
+    event.preventDefault();
+    const href = link.getAttribute('href') ?? '';
+    if (href.startsWith('#ep-')) {
+      const id = href.slice(1);
+      const node =
+        document.getElementById(id) ??
+        document.getElementById(id.replace(/^(ep-\d+-).*$/, '$1'));
+      if (node) {
+        node.scrollIntoView();
+        footnote.hidden = true;
+      }
+    } else if (event.isTrusted) {
+      const external = normaliseFrameExternalLink(href);
+      if (external)
+        window.parent.postMessage(
+          { type: 'relic:open-link', href: external },
+          '*'
+        );
+    }
+  });
   shadow.append(footnote);
   shadow.append(style, panel, bar);
   root.after(host);

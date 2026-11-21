@@ -119,6 +119,9 @@ test('DRM shows its download card without making a frame, while obfuscated fonts
     expect(frames).toBe(1);
     expect(payload?.module).toBe(frameModule);
     expect(payload?.book?.title).toBe('Test');
+    expect(payload?.book?.resources).toEqual([
+      { path: 'c.xhtml', mediaType: 'application/xhtml+xml' },
+    ]);
     expect(payload?.entries.map(([name]) => name)).toEqual(['c.xhtml']);
     settle?.({ type: 'relic:document-state', state: 'ready' });
     const extensionless = {

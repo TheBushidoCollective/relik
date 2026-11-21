@@ -1,4 +1,5 @@
 import {
+  decodeXmlBytes,
   localName,
   parseXml,
   scanForbiddenDtd,
@@ -12,6 +13,10 @@ export interface EpubBook {
   readonly language?: string;
   readonly progression: 'ltr' | 'rtl' | 'default';
   readonly layout: 'reflowable' | 'pre-paginated';
+  readonly resources: readonly {
+    readonly path: string;
+    readonly mediaType: string;
+  }[];
   readonly spine: readonly {
     readonly path: string;
     readonly linear: boolean;
@@ -115,13 +120,18 @@ async function xml(
 ): Promise<XmlElement> {
   const entry = index.entries.get(path);
   if (!entry || entry.kind !== 'file') return fail('corrupt');
-  if (entry.size > 16 * 1024 * 1024) return fail('too-large');
+  if (entry.size > 4 * 1024 * 1024) return fail('too-large');
   const bytes = await index.read(path);
   if (!bytes.ok)
     return fail(bytes.reason.includes('large') ? 'too-large' : 'corrupt');
   if (scanForbiddenDtd(bytes.bytes, 'epub')) return fail('corrupt');
-  const parsed = parseXml(new TextDecoder().decode(bytes.bytes), { lenient });
-  if (!parsed.ok) return fail('corrupt');
+  const parsed = parseXml(decodeXmlBytes(bytes.bytes), {
+    lenient,
+    maxNodes: 20000,
+    maxTextChars: 4 * 1024 * 1024,
+  });
+  if (!parsed.ok)
+    return fail(parsed.reason === 'size' ? 'too-large' : 'corrupt');
   return parsed.root;
 }
 interface ManifestItem {
@@ -183,7 +193,11 @@ export async function readEpubPackage(
         return fail('corrupt');
       const entry = index.entries.get(resolved.path);
       if (!entry || entry.kind !== 'file') return fail('corrupt');
-      const media = attribute(item, 'media-type') ?? '';
+      const media = (attribute(item, 'media-type') ?? '')
+        .toLowerCase()
+        .split(';', 1)[0]!
+        .trim();
+      if (!media) return fail('corrupt');
       const limit =
         media === 'text/css' || FONT_TYPES.has(media)
           ? 4
@@ -261,6 +275,7 @@ export async function readEpubPackage(
       depth: number;
     }[] = [];
     const pageList: { label: string; path: string; fragment?: string }[] = [];
+    const navLimit = 5000;
     const nav = [...items.values()].find((item) =>
       item.properties.includes('nav')
     );
@@ -276,6 +291,14 @@ export async function readEpubPackage(
                 const href = attribute(child, 'href');
                 const target = href && resolveEpubPath(nav.path, href);
                 if (target && paths.has(target.path)) {
+                  if (
+                    toc.length +
+                      pageList.length +
+                      Number(type.includes('toc')) +
+                      Number(type.includes('page-list')) >
+                    navLimit
+                  )
+                    return fail('too-large');
                   const entry = { label: text(child), ...target };
                   if (type.includes('toc'))
                     toc.push({ ...entry, depth: Math.max(0, depth - 1) });
@@ -305,6 +328,8 @@ export async function readEpubPackage(
                 const target = href && resolveEpubPath(ncx.path, href);
                 const label = children(child, 'navLabel')[0];
                 if (target && paths.has(target.path)) {
+                  if (toc.length + pageList.length >= navLimit)
+                    return fail('too-large');
                   const entry = { label: label ? text(label) : '', ...target };
                   if (name === 'navPoint') toc.push({ ...entry, depth });
                   else pageList.push(entry);
@@ -340,6 +365,12 @@ export async function readEpubPackage(
         ...(language ? { language } : {}),
         progression,
         layout,
+        resources: [...items.values()]
+          .filter((item) => !obscured.has(item.path))
+          .map((item) => ({
+            path: item.path,
+            mediaType: item.media.toLowerCase().split(';', 1)[0]!.trim(),
+          })),
         spine,
         toc,
         pageList,
