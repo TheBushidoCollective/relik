@@ -241,9 +241,28 @@ function pointAt(
   const all = segmentElements(root);
   let segmentElement = element?.closest<HTMLElement>('[data-seg]') ?? null;
   let local: number | null = null;
-  if (segmentElement && root.contains(segmentElement)) {
+  if (
+    !segmentElement &&
+    node.nodeType === 1 &&
+    node.childNodes.length === 1 &&
+    offset >= 0 &&
+    offset <= 1
+  ) {
+    const child = (node as Element).firstElementChild;
+    const candidate = child ? all.indexOf(child as HTMLElement) : -1;
+    const segment = segments[candidate];
+    if (
+      candidate >= 0 &&
+      segment?.start === segment?.end &&
+      segment?.text === ''
+    ) {
+      segmentElement = child as HTMLElement;
+      local = 0;
+    }
+  }
+  if (segmentElement && root.contains(segmentElement) && local === null) {
     local = offsetWithin(segmentElement, node, offset, true);
-  } else {
+  } else if (!segmentElement) {
     let before: HTMLElement | null = null;
     let after: HTMLElement | null = null;
     for (const candidate of all) {

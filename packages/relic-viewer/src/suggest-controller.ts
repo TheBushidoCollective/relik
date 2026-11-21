@@ -553,6 +553,15 @@ export function mountSuggestionController(
     }
     gutter.textContent = lines.join('\n');
   };
+  const editablePending = () => {
+    const pending = views?.pending ?? [];
+    return surface?.covers
+      ? pending.filter(
+          (item) =>
+            surface?.covers?.(item.start, item.end, item.inserted) === true
+        )
+      : pending;
+  };
 
   const ensureEditor = (): void => {
     const session = options.session();
@@ -586,7 +595,7 @@ export function mountSuggestionController(
       crlf: sourceResult.crlf,
       surface,
       displayName: options.displayName(),
-      pending: views?.pending ?? [],
+      pending: editablePending(),
       chrome: editorChrome,
       receiptHost: host,
       unavailable: view.version !== currentVersion ? 'older' : null,
@@ -749,7 +758,7 @@ export function mountSuggestionController(
       }
       updateGutter();
     };
-    if (editor) editor.updatePending(views.pending, draw);
+    if (editor) editor.updatePending(editablePending(), draw);
     else draw();
     if (failed && editor?.suggesting) setEditorSuggesting(false);
     updateControls();
