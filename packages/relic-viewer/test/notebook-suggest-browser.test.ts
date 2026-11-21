@@ -94,6 +94,14 @@ test('notebook source maps rendered cells but refuses output selections', async 
       if (!tab.defaultPrevented || editor.draft?.inserted !== String.fromCharCode(9)) throw Error('code Tab did not insert');
       editor.cancel();
       editor.destroy();
+      const crlfSource=JSON.stringify({nbformat:4,cells:[{cell_type:'raw',source:'one'+String.fromCharCode(13,10)+'two'},{cell_type:'markdown',source:'alpha'+String.fromCharCode(10)+'beta'}]});
+      const crlfNotebook=parseNotebook(crlfSource); if (!crlfNotebook.ok) throw Error('CRLF fixture refused');
+      const another=document.createElement('div'); another.innerHTML='<div class=\"nb-cell\" data-cell=\"0\"><div class=\"nb-box\"><pre class=\"nb-src\"></pre></div></div><div class=\"nb-cell\" data-cell=\"1\"><div class=\"nb-box\"><article class=\"prose\"></article></div></div>';
+      const anotherSurface=notebookSuggestionSurface(another,crlfNotebook.notebook); const crlfSegments=anotherSurface.segments(crlfSource);
+      const first=crlfSegments.find(s=>s.text==='one'); const last=crlfSegments.find(s=>s.text==='two');
+      if (!first || !last || !anotherSurface.covers(first.start,last.end)) throw Error('escaped CRLF cell unavailable');
+      const alpha=crlfSegments.find(s=>s.text==='alpha'); const beta=crlfSegments.find(s=>s.text==='beta');
+      if (!alpha || !beta || !anotherSurface.covers(alpha.start,beta.end)) throw Error('markdown soft break unmapped');
       await fetch('/result',{method:'POST',body:'ok'});
     } catch (error) { await fetch('/result',{method:'POST',body:error.stack || String(error)}); }
   </script>`;

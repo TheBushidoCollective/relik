@@ -93,12 +93,15 @@ export function notebookSourceUnits(
   for (let i = 0; i < units.length; i++) {
     const unit = units[i]!;
     const next = units[i + 1];
-    if (
-      unit.text === '\r' &&
-      next?.text === '\n' &&
-      unit.token === next.token &&
-      unit.end === next.start
-    ) {
+    const contiguous =
+      next &&
+      (unit.token === next.token
+        ? unit.end === next.start
+        : next.token === unit.token + 1 &&
+          unit.end === cell.sourceTokens[unit.token]!.end - 1 &&
+          next.start === cell.sourceTokens[next.token]!.start + 1 &&
+          /^"\s*,\s*"$/.test(source.slice(unit.end, next.start)));
+    if (unit.text === '\r' && next?.text === '\n' && contiguous) {
       normalized.push({ ...unit, text: '\n', end: next.end, offset: shown++ });
       i++;
     } else {

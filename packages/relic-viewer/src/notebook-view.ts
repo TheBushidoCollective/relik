@@ -418,10 +418,13 @@ function drawNotebook(
     elements.get(keyOf(target));
 
   const select = (target: NotebookTarget): void => {
-    const previous = selected === undefined ? undefined : elementFor(selected);
-    previous?.classList.remove('is-selected');
-    selected = target;
-    elementFor(target)?.classList.add('is-selected');
+    mutateSurfaceUI(list, () => {
+      const previous =
+        selected === undefined ? undefined : elementFor(selected);
+      previous?.classList.remove('is-selected');
+      selected = target;
+      elementFor(target)?.classList.add('is-selected');
+    });
   };
 
   const toggleText = (key: string): void => {
@@ -545,9 +548,11 @@ function drawNotebook(
       select(target);
       const element = elementFor(target);
       if (element === undefined) return;
-      active?.classList.remove('is-active');
-      element.classList.add('is-active');
-      active = element;
+      mutateSurfaceUI(list, () => {
+        active?.classList.remove('is-active');
+        element.classList.add('is-active');
+        active = element;
+      });
       element.scrollIntoView({ block: 'center' });
     },
     dispose(): void {
