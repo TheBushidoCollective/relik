@@ -1532,11 +1532,12 @@ try {
       normalized.lastIndexOf('repeat') + 'repeat'.length
     );
     const otherReader = await browserInstance.open(fixture.url, tokenB);
-    for (const [writer, selected, replacement, count] of [
-      [page, 'FIRST', 'first replacement', 2],
-      [otherReader, 'SECOND', 'second replacement', 3],
+    for (const [writer, record, selected, replacement, count] of [
+      [page, 3, 'FIRST', 'first replacement', 2],
+      [otherReader, 3, 'SECOND', 'second replacement', 3],
+      [page, 4, 'ONLY', 'only replacement', 4],
     ] as const) {
-      await click(writer, '.structured-table [data-r="3"][data-c="1"]');
+      await click(writer, `.structured-table [data-r="${record}"][data-c="1"]`);
       await click(writer, '.dt-cellbar .dt-suggest');
       await writer.wait(
         "document.querySelector('.dt-suggest-text[contenteditable=true]')",
@@ -1554,12 +1555,17 @@ try {
         'clipped suggestion refresh'
       );
     }
-    const mediumRows = (await plaintextRows(fixture.id, fixture.key)).filter(
+    const allSaved = await plaintextRows(fixture.id, fixture.key);
+    const mediumRows = allSaved.filter(
       (row) =>
         row.plain.suggestion?.replacement === 'first replacement' ||
         row.plain.suggestion?.replacement === 'second replacement'
     );
     assert.equal(mediumRows.length, 2);
+    const solo = allSaved.find(
+      (row) => row.plain.suggestion?.replacement === 'only replacement'
+    );
+    assert.ok(solo, 'single clipped suggestion not stored');
 
     const reopened = await browserInstance.open(fixture.url, tokenA);
     const mark = `.structured-table [data-r="2"][data-c="1"] [data-comment-id="${saved.row.id}"]`;
@@ -1675,6 +1681,69 @@ try {
       { visible: true, hit: true, concealment: null },
       'second cluster card was concealed after observation'
     );
+    const assertNearIndicator = async (
+      selector: string,
+      id: string
+    ): Promise<void> => {
+      await reopened.evaluate(`new Promise((resolve) => {
+        const marker = document.querySelector(${JSON.stringify(selector)});
+        const observer = new IntersectionObserver(() => {
+          observer.disconnect();
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve(true)));
+        });
+        observer.observe(marker);
+      })`);
+      const state = await reopened.evaluate<{
+        visible: boolean;
+        hit: boolean;
+        gap: number;
+      }>(`(() => {
+        const marker = document.querySelector(${JSON.stringify(selector)});
+        const card = document.querySelector(${JSON.stringify(`.popover-card[data-comment-id="${id}"]`)});
+        if (!marker || !card) return { visible: false, hit: false, gap: Infinity };
+        const a = marker.getBoundingClientRect(), b = card.getBoundingClientRect();
+        const style = getComputedStyle(card);
+        const target = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2);
+        const dx = Math.max(0, a.left - b.right, b.left - a.right);
+        const dy = Math.max(0, a.top - b.bottom, b.top - a.bottom);
+        return {
+          visible: !card.hasAttribute('data-concealed') && style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity) > 0,
+          hit: !!target && card.contains(target),
+          gap: Math.hypot(dx, dy),
+        };
+      })()`);
+      assert.equal(state.visible, true, `card ${id} was concealed`);
+      assert.equal(state.hit, true, `card ${id} was not hit-testable`);
+      assert.ok(
+        state.gap <= 80,
+        `card ${id} was ${state.gap}px from its visible indicator`
+      );
+    };
+    await assertNearIndicator(indicator, mediumRows[1]!.row.id);
+    await click(reopened, '.popover-card .popover-dismiss');
+    await click(reopened, indicator, false);
+    await click(
+      reopened,
+      `.popover-member[data-member-id="${mediumRows[0]!.row.id}"]`
+    );
+    await reopened.wait(
+      `document.querySelector(${JSON.stringify(`.popover-card[data-comment-id="${mediumRows[0]!.row.id}"]`)})`,
+      'first clipped suggestion opened'
+    );
+    await assertNearIndicator(indicator, mediumRows[0]!.row.id);
+    await click(reopened, '.popover-card .popover-dismiss');
+    const singleIndicator =
+      '.structured-table [data-r="4"][data-c="1"] .dt-suggestion-indicator';
+    await reopened.wait(
+      `document.querySelector(${JSON.stringify(singleIndicator)})`,
+      'single clipped suggestion indicator'
+    );
+    await click(reopened, singleIndicator, false);
+    await reopened.wait(
+      `document.querySelector(${JSON.stringify(`.popover-card[data-comment-id="${solo.row.id}"]`)})`,
+      'single clipped suggestion opened'
+    );
+    await assertNearIndicator(singleIndicator, solo.row.id);
     const sniff = await publish(
       join(scratch, 'sniff.csv'),
       'a,b;c\r\nrow;target\r\n'
@@ -1697,7 +1766,7 @@ try {
       0,
       'rejected delimiter change posted'
     );
-    return 'double-BOM/CRLF edit posted on the second repeated cell with the exact replace anchor, blocked a cell switch while allowing Source during a held post, and reopened the correct thread after sort, scroll and remount; delimiter-changing input was refused';
+    return 'double-BOM/CRLF edit kept its exact anchor; Source worked during a held post; first, second and sole clipped suggestion cards stayed visible and adjacent after observation; delimiter-changing input was refused';
   });
 } finally {
   await ownedBrowser?.close();

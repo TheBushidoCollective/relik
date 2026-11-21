@@ -6,6 +6,9 @@ export const TABLE_SUGGEST_PATH_CRLF =
   'Medium,' +
   'm'.repeat(270) +
   'FIRSTSECOND\r\n' +
+  'Solo,' +
+  's'.repeat(270) +
+  'ONLY\r\n' +
   Array.from(
     { length: 70 },
     (_, index) => `User ${index},item ${index}\r\n`

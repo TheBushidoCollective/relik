@@ -96,6 +96,7 @@ import { isFrameScrollMessage } from './frame-scroll.ts';
 import {
   type Concealment,
   concealMarks,
+  isRendered,
   createScrollportWatch,
   type ScrollportWatch,
 } from './mark-visibility.ts';
@@ -7694,6 +7695,26 @@ export function buildThread(
           );
         }
       }
+    }
+    // A clipped inline change can have a misleading box. Anchor its card to
+    // the visible table indicator, including for the first or sole member.
+    for (const indicator of host.querySelectorAll<HTMLElement>(
+      '.dt-suggestion-indicator[data-comment-id]'
+    )) {
+      const members = (indicator.dataset['clusterMembers'] ?? '').split(/\s+/);
+      if (
+        indicator.closest('.popover') ||
+        (indicator.dataset['commentId'] !== id && !members.includes(id)) ||
+        indicator.hasAttribute('data-concealed') ||
+        !isRendered(indicator) ||
+        hostWatch?.inView(indicator) === false
+      )
+        continue;
+      return anchorFromClientRect(
+        indicator.getBoundingClientRect(),
+        host.getBoundingClientRect(),
+        host
+      );
     }
 
     const candidates: HTMLElement[] = [];
