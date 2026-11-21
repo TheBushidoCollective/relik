@@ -63,7 +63,7 @@ describe('the built sandbox.html', () => {
     for (const [name, marker] of [
       ['frame-docx', 'Word document renderer is not available yet.'],
       ['frame-epub', 'EPUB document renderer is not available yet.'],
-    ]) {
+    ] as const) {
       expect(
         await Bun.file(`${pkgDir}dist-frame/${name}.frame.js`).text()
       ).toContain(marker);
