@@ -433,6 +433,15 @@ export function mountSuggestEditor(
     version,
     reader,
     crlf: options.crlf ?? false,
+    ...(options.surface?.encode
+      ? { encode: options.surface.encode.bind(options.surface) }
+      : {}),
+    ...(options.surface?.decode
+      ? { decode: options.surface.decode.bind(options.surface) }
+      : {}),
+    ...(options.surface?.emptyAnchor
+      ? { emptyAnchor: options.surface.emptyAnchor.bind(options.surface) }
+      : {}),
     pending,
   });
   let on = false;
@@ -452,7 +461,10 @@ export function mountSuggestEditor(
       'too_large',
       options.fileBytes ?? encoder.encode(source).length
     );
-  if (!unavailable && /[\r\0]/.test(source))
+  if (
+    !unavailable &&
+    (source.includes('\0') || (!options.surface && source.includes('\r')))
+  )
     unavailable = suggestingUnavailable('has_cr');
 
   // Code views use the pre itself as the single source segment.
@@ -810,6 +822,21 @@ export function mountSuggestEditor(
   }
 
   function applyInput(type: string, text: string): void {
+    const selection = root.ownerDocument.getSelection();
+    if (
+      selection &&
+      selection.rangeCount > 0 &&
+      options.surface?.acceptsSelection
+    ) {
+      const range = selection.getRangeAt(0);
+      for (const node of [range.startContainer, range.endContainer]) {
+        const allowed = options.surface.acceptsSelection(node);
+        if (allowed !== true) {
+          displayRefusal(allowed.message, allowed.code);
+          return;
+        }
+      }
+    }
     const points = selectionPoints(root, segments, options.surface);
     if (!points) {
       displayRefusal(INVALID_SELECTION, 'invalid-range');
@@ -1202,6 +1229,15 @@ export function mountSuggestEditor(
           version,
           reader,
           crlf: options.crlf ?? false,
+          ...(options.surface?.encode
+            ? { encode: options.surface.encode.bind(options.surface) }
+            : {}),
+          ...(options.surface?.decode
+            ? { decode: options.surface.decode.bind(options.surface) }
+            : {}),
+          ...(options.surface?.emptyAnchor
+            ? { emptyAnchor: options.surface.emptyAnchor.bind(options.surface) }
+            : {}),
           pending,
         });
       };
