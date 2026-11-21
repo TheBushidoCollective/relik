@@ -48,6 +48,25 @@ export interface SuggestDraftOptions {
   readonly reader: string;
   readonly crlf?: boolean;
   readonly pending?: readonly PendingSuggestion[];
+  readonly encode?: (
+    block: number,
+    text: string,
+    start: number,
+    end: number
+  ) =>
+    | { readonly ok: true; readonly source: string }
+    | { readonly ok: false; readonly refusal: SuggestRefusal };
+  readonly decode?: (block: number, source: string) => string;
+  readonly emptyAnchor?: (
+    block: number,
+    position: number
+  ) =>
+    | {
+        readonly start: number;
+        readonly end: number;
+        readonly mode: 'before' | 'after';
+      }
+    | undefined;
 }
 
 export interface SuggestDraft {
@@ -390,6 +409,18 @@ export class SuggestDraftModel {
       candidate.block
     );
     if (typeof block !== 'number') return block;
+    const encoded = this.options.encode?.(
+      candidate.block,
+      candidate.inserted,
+      candidate.start,
+      candidate.end
+    );
+    if (encoded && !encoded.ok) return encoded.refusal;
+    if (
+      encoded?.ok &&
+      bytes(encoded.source) > SUGGESTION_REPLACEMENT_LIMIT_BYTES
+    )
+      return insertionLimit(bytes(encoded.source));
     if (candidate.struckBytes > COMMENT_ANCHOR_QUOTE_LIMIT_BYTES)
       return quoteLimit(candidate.struckBytes);
     if (candidate.insertedBytes > SUGGESTION_REPLACEMENT_LIMIT_BYTES)
@@ -453,7 +484,7 @@ export class SuggestDraftModel {
         draft = this.makeDraft(
           own.start,
           own.end,
-          own.inserted,
+          this.options.decode?.(block, own.inserted) ?? own.inserted,
           block,
           blockKind,
           own.id
@@ -468,7 +499,12 @@ export class SuggestDraftModel {
         this.makeDraft(
           draft.start,
           end,
-          draft.inserted + this.options.source.slice(draft.end, start) + text,
+          draft.inserted +
+            (this.options.decode?.(
+              block,
+              this.options.source.slice(draft.end, start)
+            ) ?? this.options.source.slice(draft.end, start)) +
+            text,
           block,
           blockKind,
           draft.existingId
@@ -480,7 +516,12 @@ export class SuggestDraftModel {
         this.makeDraft(
           start,
           draft.end,
-          text + this.options.source.slice(end, draft.start) + draft.inserted,
+          text +
+            (this.options.decode?.(
+              block,
+              this.options.source.slice(end, draft.start)
+            ) ?? this.options.source.slice(end, draft.start)) +
+            draft.inserted,
           block,
           blockKind,
           draft.existingId
@@ -522,7 +563,7 @@ export class SuggestDraftModel {
         draft = this.makeDraft(
           pending.start,
           pending.end,
-          pending.inserted,
+          this.options.decode?.(block, pending.inserted) ?? pending.inserted,
           block,
           blockKind,
           pending.id
@@ -618,7 +659,15 @@ export class SuggestDraftModel {
   commit(displayName: string | null): SuggestCommit {
     const draft = this.current;
     if (!draft) return { kind: 'empty' };
-    if (draft.struck === draft.inserted) {
+    const encoded = this.options.encode?.(
+      draft.block,
+      draft.inserted,
+      draft.start,
+      draft.end
+    );
+    if (encoded && !encoded.ok) return encoded.refusal;
+    const replacement = encoded?.ok ? encoded.source : draft.inserted;
+    if (draft.struck === replacement) {
       return draft.existingId === null
         ? { kind: 'empty' }
         : { kind: 'delete', existingId: draft.existingId };
@@ -630,7 +679,23 @@ export class SuggestDraftModel {
     if (start === end) {
       const previous = this.segmentAt(start, 'end', draft.block);
       const next = this.segmentAt(start, 'start', draft.block);
-      if (previous) {
+      const empty = this.options.emptyAnchor?.(draft.block, start);
+      if (empty) {
+        if (
+          !Number.isInteger(empty.start) ||
+          !Number.isInteger(empty.end) ||
+          empty.start < 0 ||
+          empty.end > source.length ||
+          empty.start >= empty.end ||
+          (empty.mode === 'before'
+            ? empty.start !== start
+            : empty.end !== start)
+        )
+          return invalidRange();
+        start = empty.start;
+        end = empty.end;
+        mode = empty.mode;
+      } else if (previous) {
         const found =
           previous.kind === 'join' || previous.kind === 'escape'
             ? previous.start
@@ -654,14 +719,20 @@ export class SuggestDraftModel {
       }
     }
     const exact = source.slice(start, end);
+    if (!exact || exact.includes('\r')) return invalidRange();
     if (bytes(exact) > COMMENT_ANCHOR_QUOTE_LIMIT_BYTES)
       return quoteLimit(bytes(exact));
     const prefix = takeTailUtf8(
-      source.slice(0, start),
+      source.slice(source.lastIndexOf('\r', start - 1) + 1, start),
       COMMENT_ANCHOR_CONTEXT_LIMIT_BYTES
     );
     const suffix = takeHeadUtf8(
-      source.slice(end),
+      source.slice(
+        end,
+        source.indexOf('\r', end) < 0
+          ? source.length
+          : source.indexOf('\r', end)
+      ),
       COMMENT_ANCHOR_CONTEXT_LIMIT_BYTES
     );
     const found = locate(source, exact, prefix, suffix);
@@ -678,7 +749,7 @@ export class SuggestDraftModel {
     const suggestion: SuggestionPayload = {
       v: 1,
       mode,
-      replacement: draft.inserted,
+      replacement,
     };
     return {
       kind: 'save',
