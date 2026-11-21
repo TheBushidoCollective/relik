@@ -1,7 +1,9 @@
+import { docxImageSourceDigest } from '@relic/format/image-identity';
 import { defaultOptions, type HElement, renderAsync } from 'docx-preview';
 import { DocxLimitError, XmlReadBudget } from './document-xml-budget.ts';
 import type {
   DocumentInput,
+  DocumentRenderHooks,
   DocumentOutcome,
 } from './frame-document-protocol.ts';
 import { ImageBudget } from './frame-zip-entries.ts';
@@ -42,7 +44,9 @@ export function boundedRenderFactory(
 }
 
 /** Prevent a missing or externally linked image from starting a request. */
-export function guardImageSources(): () => void {
+export function guardImageSources(
+  onUnavailable?: (image: Element, reason: 'unavailable' | 'decode') => void
+): () => void {
   const prototype = HTMLImageElement.prototype;
   const source = Object.getOwnPropertyDescriptor(prototype, 'src');
   const attribute = Object.getOwnPropertyDescriptor(prototype, 'setAttribute');
@@ -50,12 +54,49 @@ export function guardImageSources(): () => void {
   const setAttribute = prototype.setAttribute;
   const allowed = (value: unknown): value is string =>
     typeof value === 'string' && /^(?:data:|blob:)/i.test(value);
-  const unavailable = (image: HTMLImageElement) => {
-    setAttribute.call(image, 'data-relic-image-unavailable', '');
+  const observed = new WeakSet<object>();
+  const decodedBlobs = new Map<string, Promise<void>>();
+  const unavailable = (
+    image: HTMLImageElement,
+    reason: 'unavailable' | 'decode' = 'unavailable'
+  ) => {
+    setAttribute.call(image, 'data-relic-image-unavailable', reason);
+    onUnavailable?.(image, reason);
+  };
+  const observe = (image: HTMLImageElement | SVGElement): void => {
+    if (observed.has(image) || typeof image.addEventListener !== 'function')
+      return;
+    observed.add(image);
+    image.addEventListener('error', () => {
+      if (image instanceof HTMLImageElement) unavailable(image, 'decode');
+      else {
+        image.setAttribute('data-relic-image-unavailable', 'decode');
+        onUnavailable?.(image, 'decode');
+      }
+    });
+    if (image instanceof HTMLImageElement) {
+      image.addEventListener('load', () => {
+        if (typeof image.decode !== 'function') return;
+        const url = image.currentSrc || image.src;
+        try {
+          let decoded = url.startsWith('blob:')
+            ? decodedBlobs.get(url)
+            : undefined;
+          if (!decoded) {
+            decoded = image.decode();
+            if (url.startsWith('blob:')) decodedBlobs.set(url, decoded);
+          }
+          void decoded.catch(() => unavailable(image, 'decode'));
+        } catch {
+          unavailable(image, 'decode');
+        }
+      });
+    }
   };
   Object.defineProperty(prototype, 'src', {
     ...source,
     set(value: unknown) {
+      observe(this as HTMLImageElement);
       if (allowed(value)) source.set!.call(this, value);
       else unavailable(this as HTMLImageElement);
     },
@@ -64,6 +105,7 @@ export function guardImageSources(): () => void {
     configurable: true,
     writable: true,
     value(this: HTMLImageElement, name: string, value: string) {
+      if (name.toLowerCase() === 'src') observe(this);
       if (name.toLowerCase() === 'src' && !allowed(value)) {
         unavailable(this);
       } else {
@@ -82,12 +124,15 @@ export function guardImageSources(): () => void {
       configurable: true,
       writable: true,
       value(this: SVGElement, name: string, value: string) {
+        if (this.localName === 'image' && /^(?:href|xlink:href)$/i.test(name))
+          observe(this);
         if (
           this.localName === 'image' &&
           /^(?:href|xlink:href)$/i.test(name) &&
           !allowed(value)
         ) {
           svgSetAttribute.call(this, 'data-relic-image-unavailable', '');
+          onUnavailable?.(this, 'unavailable');
         } else {
           svgSetAttribute.call(this, name, value);
         }
@@ -108,32 +153,68 @@ export function guardImageSources(): () => void {
 
 export async function render(
   root: HTMLElement,
-  input: DocumentInput
+  input: DocumentInput,
+  hooks?: DocumentRenderHooks
 ): Promise<DocumentOutcome> {
   const budget = new ImageBudget();
   const xmlBudget = new XmlReadBudget();
   let styles: HTMLElement | undefined;
   let omittedMetafile = false;
+  let rendered: unknown;
+  let ready = false;
+  let notice: HTMLElement | undefined;
+  const imageNotices = new Set<string>();
+  const showImageNotice = (): void => {
+    if (!ready || imageNotices.size === 0) return;
+    if (!notice) {
+      notice = document.createElement('div');
+      notice.setAttribute('role', 'status');
+      notice.setAttribute('aria-live', 'polite');
+      notice.style.cssText =
+        'position:fixed;bottom:1rem;left:1rem;z-index:2147483647;' +
+        'max-width:min(32rem,calc(100vw - 2rem));padding:.5rem .75rem;' +
+        'background:#fff;color:#222;border:1px solid #555;font:14px/1.4 sans-serif;';
+      root.insertAdjacentElement('afterend', notice);
+    }
+    notice.textContent = [...imageNotices].join(' ');
+  };
+  const markImage = (image: Element, message: string): void => {
+    image.setAttribute(
+      'data-relic-image-unavailable',
+      message === 'Image could not be displayed' ? 'decode' : ''
+    );
+    if (image instanceof HTMLImageElement && !image.getAttribute('alt'))
+      image.setAttribute('alt', message);
+    else if (
+      !(image instanceof HTMLImageElement) &&
+      !image.hasAttribute('aria-label')
+    )
+      image.setAttribute('aria-label', message);
+    imageNotices.add(message);
+    showImageNotice();
+  };
   try {
     styles = document.createElement('div');
     document.head.append(styles);
-    const restoreImages = guardImageSources();
+    const restoreImages = guardImageSources((image, reason) =>
+      markImage(
+        image,
+        reason === 'decode'
+          ? 'Image could not be displayed'
+          : 'Image not available'
+      )
+    );
     try {
       const archive = { entries: input.entries, budget, xmlBudget };
-      const rendered: unknown = await renderAsync(
-        archive as unknown as Blob,
-        root,
-        styles,
-        {
-          renderAltChunks: false,
-          trimXmlDeclaration: false,
-          useBase64URL: true,
-          h: boundedRenderFactory(),
-          renderComments: false,
-          renderChanges: false,
-          experimental: false,
-        }
-      );
+      rendered = await renderAsync(archive as unknown as Blob, root, styles, {
+        renderAltChunks: false,
+        trimXmlDeclaration: false,
+        useBase64URL: true,
+        h: boundedRenderFactory(),
+        renderComments: false,
+        renderChanges: false,
+        experimental: false,
+      });
       omittedMetafile =
         typeof rendered === 'object' &&
         rendered !== null &&
@@ -171,38 +252,41 @@ export async function render(
     for (const image of root.querySelectorAll(
       'img[data-relic-image-unavailable]'
     )) {
-      const placeholder = document.createElement('span');
-      placeholder.textContent = 'Image not available';
-      image.replaceWith(placeholder);
+      markImage(
+        image,
+        image.getAttribute('data-relic-image-unavailable') === 'decode'
+          ? 'Image could not be displayed'
+          : 'Image not available'
+      );
     }
-    for (const image of root.querySelectorAll('img[src]')) {
+    for (const image of root.querySelectorAll<HTMLImageElement>('img[src]')) {
       if (
         /^data:image\/(?:x-)?(?:emf|wmf|x-emf|x-wmf)[;,]/i.test(
           image.getAttribute('src') ?? ''
         )
       ) {
-        const placeholder = document.createElement('span');
-        placeholder.textContent = 'Unsupported EMF or WMF image';
-        image.replaceWith(placeholder);
+        markImage(image, 'Unsupported EMF or WMF image');
       }
+      if (image.complete && image.naturalWidth === 0)
+        markImage(image, 'Image could not be displayed');
     }
     for (const image of root.querySelectorAll('svg image')) {
       const href =
         image.getAttribute('href') ?? image.getAttribute('xlink:href') ?? '';
       const unavailable = image.hasAttribute('data-relic-image-unavailable');
       if (unavailable || /^data:image\/(?:x-)?(?:emf|wmf)[;,]/i.test(href)) {
-        const placeholder = document.createElement('span');
-        placeholder.textContent = unavailable
-          ? 'Image not available'
-          : 'Unsupported EMF or WMF image';
-        (image.closest('svg') ?? image).replaceWith(placeholder);
+        markImage(
+          image,
+          unavailable
+            ? image.getAttribute('data-relic-image-unavailable') === 'decode'
+              ? 'Image could not be displayed'
+              : 'Image not available'
+            : 'Unsupported EMF or WMF image'
+        );
       }
     }
-    if (xmlBudget.omittedEmbeddedContent || omittedMetafile) {
-      const notice = document.createElement('p');
-      notice.textContent = 'Embedded content was not shown.';
-      root.prepend(notice);
-    }
+    if (xmlBudget.omittedEmbeddedContent || omittedMetafile)
+      imageNotices.add('Embedded content was not shown.');
     const fit = () => {
       for (const page of root.querySelectorAll<HTMLElement>(
         '.docx-wrapper > section.docx'
@@ -217,6 +301,43 @@ export async function render(
     };
     fit();
     window.addEventListener('resize', fit, { passive: true });
+    if (
+      hooks &&
+      typeof rendered === 'object' &&
+      rendered !== null &&
+      'imageUrls' in rendered &&
+      rendered.imageUrls instanceof Map
+    ) {
+      const identities = new Map<string, Promise<string>>();
+      await Promise.all(
+        [...rendered.imageUrls].map(async ([key, pending]) => {
+          if (typeof key !== 'string') return;
+          const normalized = key.startsWith('/') ? key.slice(1) : key;
+          const name = input.entries.has(normalized)
+            ? normalized
+            : normalized.replace(/\//g, '\\');
+          const bytes = input.entries.get(name);
+          if (!bytes) return;
+          try {
+            const url: unknown = await pending;
+            if (typeof url === 'string' && url.startsWith('blob:')) {
+              const digest = docxImageSourceDigest(name, bytes);
+              // The hook owns the result, but a rejection can precede registration.
+              void digest.catch(() => {});
+              identities.set(url, digest);
+            }
+          } catch {
+            // A failed image load is reported by its element, not as a
+            // failure of the rest of the document.
+          }
+        })
+      );
+      hooks.registerImageIdentities(identities);
+    } else {
+      hooks?.registerImageIdentities(new Map());
+    }
+    ready = true;
+    showImageNotice();
     return { state: 'ready' };
   } catch (error) {
     root.replaceChildren();

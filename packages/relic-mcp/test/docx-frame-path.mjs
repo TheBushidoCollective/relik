@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { decryptComment, deriveCommentKey, parseFragment } from '@relic/format';
 import { createApp } from '@relic/server/src/app.ts';
 import { diskAssets } from '@relic/server/src/assets.ts';
 import { MemoryStorage } from '@relic/server/src/storage.ts';
@@ -25,6 +27,7 @@ if (!hostBuild.success) throw new Error('DOCX proof host build failed');
 const hostScript = await hostBuild.outputs[0].text();
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64');
 const notePng = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAIAAAABAQMAAADO7O3JAAAAA1BMVEUAAP+KeNJXAAAACklEQVQI12NgAAAAAgAB4iG8MwAAAABJRU5ErkJggg==', 'base64');
+const tiff = Buffer.from('SUkqAA4AAAD//wAAAAAPAAABAwABAAAAAQAAAAEBAwABAAAAAQAAAAIBAwADAAAAyAAAAAMBAwABAAAAAQAAAAYBAwABAAAAAgAAAAoBAwABAAAAAQAAABEBBAABAAAACAAAABIBAwABAAAAAQAAABUBAwABAAAAAwAAABYBAwABAAAAAQAAABcBBAABAAAABgAAABwBAwABAAAAAQAAACkBAwACAAAAAAABAD4BBQACAAAA/gAAAD8BBQAGAAAAzgAAAAAAAAAQABAAEACF61EAAACAAMP1qAAAAAACzcxMAAAAAAHNzEwAAACAAM3MTAAAAAACj8L1AAAAABA3GqAAAAAAAiuHCgAAACAA', 'base64');
 const animatedImages = {
   gif: { mime: 'image/gif', bytes: Buffer.from('R0lGODlhAgACAPAAAP8AAAAAACH/C05FVFNDQVBFMi4wAwEAAAAh+QQACgAAACwAAAAAAgACAAACAoRRACH5BAAKAAAALAAAAAACAAIAgAAA/wAAAAIChFEAOw==', 'base64') },
   webp: { mime: 'image/webp', bytes: Buffer.from('UklGRsAAAABXRUJQVlA4WAoAAAACAAAAAQAAAQAAQU5JTQYAAAD/////AABBTk1GSAAAAAAAAAAAAAEAAAEAAGQAAAJWUDggMAAAANABAJ0BKgIAAgACADQloAJ0ugH4AAOwAP7wxAv/ILlhdcjX/yA/5Af8gP/48gAAAEFOTUZEAAAAAAAAAAAAAQAAAQAAZAAAAFZQOCAsAAAAlAEAnQEqAgACAAAANCWgAnS6AAOYAP75k2//kB//kB//kB//ID/iF3sgMAA=', 'base64') },
@@ -46,6 +49,11 @@ const fontEntries = await packageEntries(
   { fonts: [{ name: 'DOCX Fixture', data: fontBytes }] }
 );
 const imageEntries = await packageEntries([new Paragraph({ children: [image(png)] }), new Table({ rows: [new TableRow({ children: [new TableCell({ children: [new Paragraph('DOCX table cell')] })] })] })]);
+const commentEntries = await packageEntries(
+  [png, notePng, png].map((data) => new Paragraph({
+    children: [new ImageRun({ data, type: 'png', transformation: { width: 140, height: 90 } })],
+  }))
+);
 const largeEntries = await packageEntries(
   Array.from({ length: 300 }, (_, i) => new Paragraph({
     children: i === 0
@@ -94,6 +102,7 @@ function entriesFor(kind) {
       const metafileKind = kind.replace('-generic', '');
       if (['emf', 'wmf'].includes(metafileKind)) return [name, Array.from(metafile(metafileKind))];
       if (animatedImages[kind]) return [name, Array.from(animatedImages[kind].bytes)];
+      if (kind === 'tiff') return [name, Array.from(tiff)];
     }
     if (!['word/document.xml', 'word/_rels/document.xml.rels', 'word/header1.xml', 'word/_rels/header1.xml.rels', 'word/fontTable.xml', '[Content_Types].xml'].includes(name)) return [name, bytes];
     let text = decode.decode(new Uint8Array(bytes));
@@ -144,7 +153,11 @@ const usercontent = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: (request)
 const origin = `http://127.0.0.1:${service.port}`;
 usercontentOrigin = `http://127.0.0.1:${usercontent.port}`;
 storage = new MemoryStorage(`${origin}/__storage`);
-app = createApp({ config: { serviceOrigin: origin, usercontentOrigin }, store: new MemoryStore(), storage, assets: diskAssets(`${root}packages/relic-viewer/dist`) });
+const store = new MemoryStore();
+app = createApp({ config: { serviceOrigin: origin, usercontentOrigin }, store, storage, assets: diskAssets(`${root}packages/relic-viewer/dist`) });
+const sessionToken = 'docx-comment-proof-session';
+const tokenHash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(sessionToken));
+await store.putSession({ tokenHash: Buffer.from(tokenHash).toString('hex'), email: 'docx-proof@example.test', createdAt: Date.now(), expiresAt: Date.now() + 3_600_000 });
 const profile = await mkdtemp(join(tmpdir(), 'relic-docx-frame-'));
 const priorPublishState = process.env.RELIC_PUBLISH_STATE;
 process.env.RELIC_PUBLISH_STATE = join(profile, 'publish-state.json');
@@ -159,6 +172,7 @@ try {
   await cdp.send('Page.enable', {}, sessionId);
   await cdp.send('Runtime.enable', {}, sessionId);
   await cdp.send('Network.enable', {}, sessionId);
+  await cdp.send('Network.setCookie', { name: 'relic_session', value: sessionToken, url: origin, httpOnly: true, sameSite: 'Lax' }, sessionId);
   const requests = [];
   const off = cdp.onEvent((event) => { if (event.sessionId === sessionId && event.method === 'Network.requestWillBeSent') requests.push(event.params.request.url); });
   async function evaluate(expression, contextId) {
@@ -166,7 +180,7 @@ try {
     if (response.exceptionDetails) throw new Error(JSON.stringify(response.exceptionDetails));
     return response.result.value;
   }
-  for (const kind of ['embedded', 'font', 'font-reused', 'font-limit', 'emf', 'wmf', 'emf-generic', 'wmf-generic', 'gif', 'apng', 'webp', 'large', 'links']) {
+  for (const kind of ['embedded', 'font', 'font-reused', 'font-limit', 'emf', 'wmf', 'emf-generic', 'wmf-generic', 'gif', 'apng', 'webp', 'tiff', 'large', 'links']) {
     requests.length = 0;
     const loaded = cdp.waitForEvent('Page.loadEventFired', { sessionId, timeoutMs: 30000 });
     await cdp.send('Page.navigate', { url: `${origin}/?kind=${kind}` }, sessionId);
@@ -222,6 +236,10 @@ try {
     if (animatedImages[kind]) {
       const decoded = await evaluate(`(async()=>{const image=document.querySelector('#relic-document img');await image.decode();return [image.naturalWidth,image.naturalHeight]})()`, executionContextId);
       assert.deepEqual(decoded, [2, 2], kind);
+    }
+    if (kind === 'tiff') {
+      const unavailable = await evaluate(`(async()=>{for(let i=0;i<200;i++){const image=document.querySelector('#relic-document img');if(image?.getAttribute('alt')?.includes('Image could not be displayed')&&document.body.innerText.includes('Image could not be displayed'))return true;await new Promise(r=>setTimeout(r,10))}return false})()`, executionContextId);
+      assert.equal(unavailable, true, 'undecodable image notice missing');
     }
     if (kind === 'large') {
       assert.equal(frame.pages, 300);
@@ -285,12 +303,15 @@ try {
       return { status: 200 };
     },
   };
+  const publications = new Map();
   async function publishEntries(filename, entries) {
     const zip = new JSZip();
     for (const [name, bytes] of entries) zip.file(name, bytes, { createFolders: false, compression: 'STORE' });
     const path = join(profile, filename);
     await writeFile(path, await zip.generateAsync({ type: 'nodebuffer', compression: 'STORE' }));
-    return (await publish({ path, cover: false }, publishDeps)).url;
+    const published = await publish({ path, cover: false }, publishDeps);
+    publications.set(filename, published);
+    return published.url;
   }
   const utf16Entries = imageEntries.map(([name, bytes]) => {
     if (!['[Content_Types].xml', 'word/_rels/document.xml.rels', 'word/document.xml'].includes(name)) return [name, new Uint8Array(bytes)];
@@ -302,6 +323,8 @@ try {
   });
   utf16Entries.push(['word/chunk.html', encode.encode('<p>Additional document section</p>')]);
   const readerUrl = await publishEntries('reader-utf16.docx', utf16Entries);
+  const commentUrl = await publishEntries('reader-comments.docx', commentEntries.map(([name, bytes]) => [name, new Uint8Array(bytes)]));
+  const commentRelicId = publications.get('reader-comments.docx').relic_id;
   const badEntries = imageEntries.map(([name, bytes]) => [
     name,
     name === '[Content_Types].xml' ? encode.encode('<Types') : new Uint8Array(bytes),
@@ -323,7 +346,7 @@ try {
     ['mimetype', encode.encode('application/epub+zip')],
     ['META-INF/container.xml', encode.encode('<container/>')],
   ]);
-  await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `window.__docxStates=[];new MutationObserver(()=>{const stage=document.querySelector('.stage-sandboxed-document');if(stage){const state=stage.dataset.renderState;if(state&&window.__docxStates.at(-1)!==state)window.__docxStates.push(state)}}).observe(document,{subtree:true,childList:true,attributes:true,attributeFilter:['data-render-state']})` }, sessionId);
+  await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `window.__docxStates=[];window.__docxMessages=[];window.addEventListener('message',event=>{const frame=document.querySelector('iframe.usercontent-frame');if(frame&&event.source===frame.contentWindow)window.__docxMessages.push(event.data)});new MutationObserver(()=>{const stage=document.querySelector('.stage-sandboxed-document');if(stage){const state=stage.dataset.renderState;if(state&&window.__docxStates.at(-1)!==state)window.__docxStates.push(state)}}).observe(document,{subtree:true,childList:true,attributes:true,attributeFilter:['data-render-state']})` }, sessionId);
   async function openReader(url, expectedState) {
     const loaded = cdp.waitForEvent('Page.loadEventFired', { sessionId, timeoutMs: 30000 });
     await cdp.send('Page.navigate', { url }, sessionId);
@@ -358,6 +381,86 @@ try {
     assert.equal(epub.frame, false);
     assert.match(epub.text, /Download/);
   }
+  await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false }, sessionId);
+  await openReader(commentUrl, 'ready');
+  async function readerFrameContext() {
+    const tree = await cdp.send('Page.getFrameTree', {}, sessionId);
+    const frame = tree.frameTree.childFrames?.[0]?.frame?.id;
+    assert.ok(frame, 'reader frame missing');
+    const world = await cdp.send('Page.createIsolatedWorld', { frameId: frame, worldName: 'docx-comment-proof' }, sessionId);
+    return world.executionContextId;
+  }
+  async function waitFor(expression, contextId) {
+    return evaluate(`(async()=>{const end=Date.now()+30000;while(Date.now()<end){const value=(${expression});if(value)return value;await new Promise(r=>setTimeout(r,25))}throw Error('Timed out: '+${JSON.stringify(expression)})})()`, contextId);
+  }
+  async function clickAt(x, y) {
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y }, sessionId);
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 }, sessionId);
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 }, sessionId);
+  }
+  async function clickParent(selector) {
+    const point = await evaluate(`(()=>{const r=document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2}})()`);
+    await clickAt(point.x, point.y);
+  }
+  async function clickImageControl(contextId, index) {
+    const imagePoint = await evaluate(`(()=>{const image=document.querySelectorAll('#relic-document img')[${index}];image.scrollIntoView({block:'center'});const r=image.getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2}})()`, contextId);
+    const offset = await evaluate(`(()=>{const r=document.querySelector('iframe.usercontent-frame').getBoundingClientRect();return {x:r.left,y:r.top}})()`);
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: offset.x + imagePoint.x, y: offset.y + imagePoint.y }, sessionId);
+    const point = await waitFor(`(()=>{const control=document.querySelectorAll('.relic-image-control')[${index}];if(!control?.classList.contains('is-shown'))return null;const r=control.getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2}})()`, contextId);
+    await clickAt(offset.x + point.x, offset.y + point.y);
+  }
+  let commentFrame = await readerFrameContext();
+  await waitFor("document.querySelectorAll('#relic-document img').length === 3 && document.querySelectorAll('.relic-image-control').length === 3", commentFrame);
+  const firstSources = await evaluate("[...document.querySelectorAll('#relic-document img')].map(image=>image.src)", commentFrame);
+  assert.equal(firstSources[0], firstSources[2]);
+  assert.notEqual(firstSources[0], firstSources[1]);
+  const commentIds = [];
+  for (const [index, body] of ['First DOCX image', 'Second DOCX image', 'Repeated DOCX image'].entries()) {
+    await clickImageControl(commentFrame, index);
+    await waitFor("!!document.querySelector('.popover-composer textarea.popover-field')");
+    await evaluate("document.querySelector('.popover-composer textarea.popover-field').focus()");
+    await cdp.send('Input.insertText', { text: body }, sessionId);
+    await waitFor("!!document.querySelector('.popover-composer .popover-action.is-primary:not([disabled])')");
+    await clickParent('.popover-composer .popover-action.is-primary');
+    await waitFor(`document.querySelector('.popover-card[data-comment-id]:not(.popover-composer)')?.textContent.includes(${JSON.stringify(body)})`);
+    const id = await evaluate("document.querySelector('.popover-card[data-comment-id]:not(.popover-composer)').dataset.commentId");
+    assert.ok(id);
+    commentIds.push(id);
+    await clickParent('.popover-card .popover-dismiss');
+    await waitFor("!document.querySelector('.popover-card[data-comment-id]')");
+  }
+  const commentKey = await deriveCommentKey(parseFragment(new URL(commentUrl).hash).key);
+  const saved = await Promise.all((await store.listComments(commentRelicId)).map((row) => decryptComment(commentKey, row.ciphertext)));
+  assert.equal(saved.length, 3);
+  const anchors = ['First DOCX image', 'Second DOCX image', 'Repeated DOCX image'].map((body) => saved.find((comment) => comment.body === body)?.anchor);
+  assert.ok(anchors.every((anchor) => anchor?.kind === 'image' && /^[0-9a-f]{64}$/.test(anchor.source_sha256)));
+  assert.equal(anchors[0].source_sha256, anchors[2].source_sha256);
+  assert.notEqual(anchors[0].source_sha256, anchors[1].source_sha256);
+  const imageParts = commentEntries.filter(([name]) => name.startsWith('word/media/'));
+  assert.equal(imageParts.length, 2);
+  const expectedDigests = imageParts.map(([name, bytes]) => {
+    const partDigest = createHash('sha256').update(Buffer.from(bytes)).digest('hex');
+    return createHash('sha256').update(JSON.stringify(['docx-image', name, partDigest])).digest('hex');
+  });
+  assert.equal(anchors[0].source_sha256, expectedDigests[0]);
+  assert.equal(anchors[1].source_sha256, expectedDigests[1]);
+  assert.notDeepEqual(anchors[0].path, anchors[2].path);
+  assert.ok(!JSON.stringify(anchors).includes('blob:'));
+  const frameMessages = await evaluate("JSON.stringify(window.__docxMessages.filter(message => message?.type === 'relic:frame-image'))");
+  assert.ok(!frameMessages.includes('blob:') && !frameMessages.includes('word/media/'));
+  const blankLoaded = cdp.waitForEvent('Page.loadEventFired', { sessionId, timeoutMs: 30000 });
+  await cdp.send('Page.navigate', { url: 'about:blank' }, sessionId);
+  await blankLoaded;
+  await openReader(commentUrl, 'ready');
+  commentFrame = await readerFrameContext();
+  await waitFor("document.querySelectorAll('#relic-document img').length === 3", commentFrame);
+  const reopenedSources = await evaluate("[...document.querySelectorAll('#relic-document img')].map(image=>image.src)", commentFrame);
+  assert.notEqual(reopenedSources[0], firstSources[0]);
+  for (const [index, id] of commentIds.entries()) {
+    await waitFor(`(()=>{const mark=document.querySelector('.relic-image-mark[data-comment-id="${id}"]');const image=document.querySelectorAll('#relic-document img')[${index}];if(!mark||!image)return false;const mr=mark.getBoundingClientRect(),ir=image.getBoundingClientRect();return mr.left>=ir.left&&mr.right<=ir.right&&mr.top>=ir.top&&mr.bottom<=ir.bottom})()`, commentFrame);
+  }
+  assert.equal(await evaluate("document.querySelectorAll('.comment-unplaceable').length"), 0);
+  console.log('DOCX_IMAGE_REOPEN_OK');
   console.log('DOCX_READER_PATH_OK');
   off();
   console.log('DOCX_FRAME_PATH_OK');

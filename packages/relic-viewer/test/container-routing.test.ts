@@ -85,6 +85,14 @@ describe('document and spreadsheet routing', () => {
         contentFromBytes(bytes)
       );
       expect(fromContent.route).toBe(format.route);
+      const withSignal = await routeContent(
+        `file.${format.ext}`,
+        'application/octet-stream',
+        contentFromBytes(bytes),
+        new AbortController().signal
+      );
+      expect(withSignal.route).toBe(format.route);
+      if (format.ext === 'epub') expect(withSignal.documentKind).toBe('epub');
       expect(
         (await routeFor('file', 'application/octet-stream', bytes)).route
       ).toBe(format.route);
@@ -144,6 +152,35 @@ describe('document and spreadsheet routing', () => {
       expect(result.notice).toContain('too large');
     });
   }
+  test('cancelling content routing stops the held ZIP classification', async () => {
+    const bytes = makeZip(formats[0].entries);
+    const content = contentFromBytes(bytes);
+    const started = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const controller = new AbortController();
+    let reads = 0;
+    const pending = routeContent(
+      'word.docx',
+      formats[0].mime,
+      {
+        ...content,
+        async read(start, end) {
+          reads += 1;
+          if (reads === 1) {
+            started.resolve();
+            await release.promise;
+          }
+          return content.read(start, end);
+        },
+      },
+      controller.signal
+    );
+    await started.promise;
+    controller.abort();
+    release.resolve();
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    expect(reads).toBe(1);
+  });
   test('distinguishes ebook from Word within document class', async () => {
     const bytes = makeZip([
       ['[Content_Types].xml', ''],

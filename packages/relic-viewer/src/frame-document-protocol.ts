@@ -27,6 +27,13 @@ export interface DocumentInput {
   readonly entries: ReadonlyMap<string, Uint8Array>;
   readonly book?: EpubBook;
 }
+
+export interface DocumentRenderHooks {
+  registerImageIdentities(
+    identities: ReadonlyMap<string, Promise<string>>
+  ): void;
+}
+
 export type DocumentOutcome =
   | { readonly state: 'ready' }
   | {

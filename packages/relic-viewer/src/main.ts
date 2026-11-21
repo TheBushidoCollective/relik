@@ -3781,7 +3781,7 @@ export function renderComparison(
   initialLeft?: number,
   initialRight?: number,
   afterRender?: (page: HTMLElement) => void
-): void {
+): () => void {
   const defaultPair = seedComparisonPair(
     current.version,
     current.currentVersion
@@ -3793,12 +3793,22 @@ export function renderComparison(
   const pinned = new Set<number>();
 
   let request = 0;
+  let entryPreparation: AbortController | undefined;
+  const cancelEntryPreparation = (): void => {
+    entryPreparation?.abort();
+    entryPreparation = undefined;
+  };
+
+  const disposeComparison = (): void => {
+    request += 1;
+    cancelEntryPreparation();
+    for (const version of pinned) store.unpin(version);
+    pinned.clear();
+  };
 
   /** Leaving the comparison invalidates any result still in flight. */
   const closeComparison = (): void => {
-    request += 1;
-    for (const version of pinned) store.unpin(version);
-    pinned.clear();
+    disposeComparison();
     onClose();
   };
 
@@ -3838,6 +3848,7 @@ export function renderComparison(
   };
 
   const updateSelected = async (): Promise<void> => {
+    cancelEntryPreparation();
     const thisRequest = ++request;
 
     // Refuse comparison if both sides are identical
@@ -3963,13 +3974,16 @@ export function renderComparison(
           button.addEventListener('click', () => {
             if (file.kind !== 'changed') return;
             const selected = ++selection;
+            cancelEntryPreparation();
+            const preparation = new AbortController();
+            entryPreparation = preparation;
             void Promise.all([
               file.beforeIndex === undefined
                 ? leftRes.view
-                : entryView(leftRes.view, file.beforeIndex),
+                : entryView(leftRes.view, file.beforeIndex, preparation.signal),
               file.afterIndex === undefined
                 ? rightRes.view
-                : entryView(rightRes.view, file.afterIndex),
+                : entryView(rightRes.view, file.afterIndex, preparation.signal),
             ])
               .then(([before, after]) => {
                 if (thisRequest !== request || selected !== selection) return;
@@ -3987,6 +4001,11 @@ export function renderComparison(
                   detail.replaceChildren(
                     notice('This file could not be compared.')
                   );
+              })
+              .finally(() => {
+                preparation.abort();
+                if (entryPreparation === preparation)
+                  entryPreparation = undefined;
               });
           });
           item.appendChild(button);
@@ -4104,6 +4123,7 @@ export function renderComparison(
   afterRender?.(document.body);
   scaffold.headline.focus();
   void updateSelected();
+  return disposeComparison;
 }
 
 /* ---------- the comment thread ---------- */
@@ -10782,6 +10802,8 @@ export function openSharePanel(
   };
 }
 
+let disposeReadyReader: (() => void) | undefined;
+
 export function renderReady(
   view: ReadyView,
   relicId: string,
@@ -10789,7 +10811,44 @@ export function renderReady(
   deps: ViewerDeps,
   afterRender?: (page: HTMLElement) => void
 ): void {
+  disposeReadyReader?.();
   const lifecycle = createLifecycle();
+  let entryPreparation: AbortController | undefined;
+  let disposeComparison: (() => void) | undefined;
+  let folderHistoryHandler: ((event: PopStateEvent) => void) | undefined;
+  let disposed = false;
+  const readerWindow = typeof window === 'undefined' ? undefined : window;
+  const advance = (): void => {
+    lifecycle.advance();
+    entryPreparation?.abort();
+    entryPreparation = undefined;
+  };
+  const dispose = (): void => {
+    if (disposed) return;
+    disposed = true;
+    advance();
+    disposeComparison?.();
+    disposeComparison = undefined;
+    if (
+      readerWindow &&
+      folderHistoryHandler !== undefined &&
+      readerWindow.onpopstate === folderHistoryHandler
+    ) {
+      readerWindow.onpopstate = null;
+    }
+    folderHistoryHandler = undefined;
+    readerWindow?.removeEventListener('unload', dispose);
+    if (disposeReadyReader === dispose) disposeReadyReader = undefined;
+  };
+  disposeReadyReader = dispose;
+  readerWindow?.addEventListener('unload', dispose, { once: true });
+  const prepareEntry = (base: ReadyView, index: number): Promise<ReadyView> => {
+    const controller = new AbortController();
+    entryPreparation = controller;
+    return entryView(base, index, controller.signal).finally(() => {
+      if (entryPreparation === controller) entryPreparation = undefined;
+    });
+  };
   /** The attached taskbar, so a count arriving can replace just that row. */
   let bar: HTMLElement | undefined;
   let commentCount: number | undefined;
@@ -10935,11 +10994,13 @@ export function renderReady(
   }
   let pinnedView: number | undefined;
   const showSingle = (viewToShow: ReadyView, alreadyPinned = false): void => {
-    lifecycle.advance();
+    advance();
     if (thread && !thread.dispose()) {
       if (alreadyPinned) versionStore.unpin(viewToShow.version);
       return;
     }
+    disposeComparison?.();
+    disposeComparison = undefined;
     decisionPanel?.close();
     if (viewToShow !== activeView || decisionTally === undefined) {
       refreshDecisionTally(viewToShow);
@@ -10987,9 +11048,9 @@ export function renderReady(
     let toolbar: HTMLElement | undefined;
     if (viewToShow.folder) {
       const openEntry = (index: number, fragment = ''): void => {
-        lifecycle.advance();
+        advance();
         const selection = lifecycle.token();
-        void entryView(viewToShow, index)
+        void prepareEntry(viewToShow, index)
           .then((next) => {
             if (!lifecycle.isCurrent(selection)) return;
             history.pushState(
@@ -11051,7 +11112,7 @@ export function renderReady(
   const showVersion = async (v: number): Promise<void> => {
     // Every selection starts a new state. A result still in flight for an
     // earlier selection, or for a screen the reader has left, may not act.
-    lifecycle.advance();
+    advance();
     const selection = lifecycle.token();
     // A pill left by an earlier selection belongs to that selection. Removing
     // it here means this selection never writes into or removes another's.
@@ -11120,7 +11181,7 @@ export function renderReady(
         );
         if (index >= 0 && index !== next.folder.index) {
           try {
-            next = await entryView(next, index);
+            next = await prepareEntry(next, index);
           } catch {
             versionStore.unpin(v);
             if (lifecycle.isCurrent(selection))
@@ -11156,12 +11217,12 @@ export function renderReady(
   };
 
   const showComparison = (left?: number, right?: number): void => {
-    lifecycle.advance();
+    advance();
     if (thread && !thread.dispose()) return;
     decisionPanel?.close();
     if (pinnedView !== undefined) versionStore.unpin(pinnedView);
     pinnedView = undefined;
-    renderComparison(
+    disposeComparison = renderComparison(
       activeView,
       relicId,
       usercontentOrigin,
@@ -11184,7 +11245,8 @@ export function renderReady(
       },
       ''
     );
-    window.onpopstate = (event: PopStateEvent) => {
+    folderHistoryHandler = (event: PopStateEvent) => {
+      if (disposed) return;
       const folder = activeView.folder;
       if (
         !folder ||
@@ -11195,10 +11257,11 @@ export function renderReady(
       const index = folder.manifest.entries.findIndex(
         (entry) => entry.path === event.state.relicEntry
       );
-      if (index < 0 || index === folder.index) return;
-      lifecycle.advance();
+      if (index < 0) return;
+      advance();
+      if (index === folder.index) return;
       const selection = lifecycle.token();
-      void entryView(activeView, index)
+      void prepareEntry(activeView, index)
         .then((next) => {
           if (lifecycle.isCurrent(selection)) showSingle(next);
         })
@@ -11207,6 +11270,7 @@ export function renderReady(
             toast('This file could not be opened.');
         });
     };
+    window.onpopstate = folderHistoryHandler;
   }
   showSingle(activeView);
 }
@@ -11678,6 +11742,7 @@ export function renderDead(
   onRetry?: () => void
 ): void {
   if (typeof document === 'undefined') return;
+  disposeReadyReader?.();
 
   let bar = document.querySelector
     ? (document.querySelector('header.bar') as HTMLElement | null)

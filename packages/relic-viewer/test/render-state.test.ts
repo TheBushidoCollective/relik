@@ -6,6 +6,7 @@ import {
   trackRenderState,
   reportDocumentState,
   renderReady,
+  renderDead,
   renderComparison,
 } from '../src/main.ts';
 import { preserveGlobalDescriptors } from './global-descriptors.ts';
@@ -16,7 +17,7 @@ import {
   type HistoricalVersionState,
   progressLine,
 } from '../src/viewer.ts';
-import { PHASE_RENDERING } from '@relic/format';
+import { crc32, PHASE_RENDERING, planStoredZip } from '@relic/format';
 
 class ElementStub {
   readonly tagName: string;
@@ -47,6 +48,8 @@ class ElementStub {
   complete = false;
   naturalWidth = 0;
   readyState = 0;
+  scrollTop = 0;
+  clientHeight = 700;
   contentWindow: unknown = null;
   ownerDocument: unknown = null;
   parentElement: ElementStub | null = null;
@@ -274,6 +277,10 @@ class ElementStub {
     return true;
   }
 
+  contains(node: ElementStub | null): boolean {
+    return node === this || this.children.some((child) => child.contains(node));
+  }
+
   querySelector(selector: string): ElementStub | null {
     return this.querySelectorAll(selector)[0] ?? null;
   }
@@ -459,6 +466,7 @@ describe('Spec B: V3 Render State, Version Progress, and Comparison Bytes', () =
 
     const doc = {
       body: rootBody,
+      head: new ElementStub('head'),
       defaultView: win,
       documentElement: {
         style: {
@@ -819,6 +827,265 @@ describe('Spec B: V3 Render State, Version Progress, and Comparison Bytes', () =
       );
     }
   });
+
+  test.each([
+    'entry',
+    'history',
+    'version',
+    'comparison',
+    'view',
+    'dead',
+    'other-handler',
+    'unload',
+  ] as const)(
+    'aborts a held folder ZIP when %s replaces its selection',
+    async (replacement) => {
+      const restore = preserveGlobalDescriptors(
+        'history',
+        'matchMedia',
+        'BroadcastChannel'
+      );
+      const started = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<void>();
+      const finished = Promise.withResolvers<void>();
+      const advanced = Promise.withResolvers<void>();
+      const otherHandler = (): void => {};
+      const data = [
+        { name: '[Content_Types].xml', bytes: new Uint8Array() },
+        { name: 'word/document.xml', bytes: new Uint8Array() },
+      ];
+      const layout = planStoredZip(
+        data.map(({ name, bytes }) => ({
+          name,
+          size: bytes.length,
+          crc32: crc32(bytes),
+        }))
+      );
+      const zip = new Uint8Array(layout.totalBytes);
+      let position = 0;
+      for (let i = 0; i < data.length; i++) {
+        const header = layout.localHeaders[i]!;
+        zip.set(header, position);
+        position += header.length;
+        zip.set(data[i]!.bytes, position);
+        position += data[i]!.bytes.length;
+      }
+      zip.set(layout.centralDirectory, position);
+      position += layout.centralDirectory.length;
+      zip.set(layout.end, position);
+
+      const initial = Uint8Array.of(0, 1, 2, 3);
+      const next = Uint8Array.of(0, 4, 5, 6);
+      const zipOffset = initial.length;
+      const nextOffset = zipOffset + zip.length;
+      const bytes = new Uint8Array(nextOffset + next.length);
+      bytes.set(initial);
+      bytes.set(zip, zipOffset);
+      bytes.set(next, nextOffset);
+      let zipReads = 0;
+      class TrackedBlob extends Blob {
+        constructor(
+          part: Blob,
+          private readonly offset: number
+        ) {
+          super([part]);
+        }
+        override slice(start = 0, end = this.size, type?: string): Blob {
+          const relative = Math.max(0, Math.min(start, this.size));
+          return new TrackedBlob(
+            super.slice(start, end, type),
+            this.offset + relative
+          );
+        }
+        override async arrayBuffer(): Promise<ArrayBuffer> {
+          const inZip = this.offset >= zipOffset && this.offset < nextOffset;
+          const read = inZip ? ++zipReads : 0;
+          if (read === 3) {
+            started.resolve();
+            await release.promise;
+          }
+          const result = await super.arrayBuffer();
+          if (read === 3) finished.resolve();
+          return result;
+        }
+      }
+
+      const original = contentFromBytes(bytes);
+      const whole = {
+        ...original,
+        blob: () => new TrackedBlob(new Blob([bytes as BlobPart]), 0),
+      };
+      const entries = [
+        {
+          path: 'initial.bin',
+          mimetype: 'application/octet-stream',
+          offset: 0,
+          length: initial.length,
+        },
+        {
+          path: 'word.docx',
+          mimetype: 'application/octet-stream',
+          offset: zipOffset,
+          length: zip.length,
+        },
+        {
+          path: 'next.bin',
+          mimetype: 'application/octet-stream',
+          offset: nextOffset,
+          length: next.length,
+        },
+      ];
+      const view: ReadyView = {
+        filename: 'initial.bin',
+        declaredMimetype: 'application/octet-stream',
+        content: contentFromBytes(initial),
+        document: undefined,
+        route: 'download',
+        downgradeNotice: undefined,
+        shareUrl: 'https://relic.example/r1#key',
+        version: 1,
+        currentVersion: 2,
+        versionDigest: '1'.repeat(64),
+        keyFor: async () => new Uint8Array(16),
+        folder: {
+          header: {
+            version: 2,
+            name: 'folder',
+            entryCount: entries.length,
+            manifestLength: 0,
+            contentLength: bytes.length,
+          },
+          manifest: { defaultIndex: 0, entries },
+          whole,
+          index: 0,
+        },
+      };
+      const pendingFetch = Promise.withResolvers<Response>().promise;
+      const deps: ViewerDeps = {
+        serviceOrigin: 'https://relic.example',
+        locationHref: 'https://relic.example/r1#key',
+        keyVault: {
+          remember: () => {},
+          recall: () => undefined,
+          forget: () => {},
+        },
+        fetch: (() => pendingFetch) as unknown as typeof fetch,
+      };
+      const historyStub = {
+        state: null as unknown,
+        replaceState(state: unknown) {
+          this.state = state;
+        },
+        pushState(state: unknown) {
+          this.state = state;
+        },
+      };
+      Object.assign(globalThis, {
+        history: historyStub,
+        matchMedia: () => ({ matches: false }),
+        BroadcastChannel: undefined,
+      });
+      try {
+        let renders = 0;
+        renderReady(view, 'r1', 'https://usercontent.example', deps, () => {
+          if (++renders > 1) advanced.resolve();
+        });
+        expect(typeof window.onpopstate).toBe('function');
+        const word = rootBody.querySelector('.folder-row[title="word.docx"]');
+        if (!word) throw new Error('Word entry not found');
+        word.click();
+        await started.promise;
+
+        if (replacement === 'entry') {
+          const selected = rootBody.querySelector(
+            '.folder-row[title="next.bin"]'
+          );
+          if (!selected) throw new Error('Next entry not found');
+          selected.click();
+          await advanced.promise;
+        } else if (replacement === 'history') {
+          const onPopState = window.onpopstate;
+          if (!onPopState) throw new Error('History handler not installed');
+          const event = new Event('popstate') as PopStateEvent;
+          Object.defineProperty(event, 'state', {
+            value: { relicId: 'r1', version: 1, relicEntry: 'initial.bin' },
+          });
+          onPopState.call(window, event);
+        } else if (replacement === 'version') {
+          const trigger = rootBody.querySelector('.version-trigger');
+          if (!trigger) throw new Error('Version selector not found');
+          trigger.click();
+          const current = rootBody.querySelector(
+            '.version-option[data-version="1"]'
+          );
+          if (!current) throw new Error('Current version option not found');
+          current.click();
+          await advanced.promise;
+        } else if (replacement === 'comparison') {
+          const compare = rootBody.querySelector(
+            'button[aria-label="Compare version 1 with its history"]'
+          );
+          if (!compare) throw new Error('Comparison control not found');
+          compare.click();
+        } else if (replacement === 'view') {
+          const { folder: _folder, ...other } = view;
+          renderReady(
+            { ...other, filename: 'replacement.bin' },
+            'r1',
+            'https://usercontent.example',
+            deps
+          );
+        } else if (replacement === 'dead' || replacement === 'other-handler') {
+          if (replacement === 'other-handler') window.onpopstate = otherHandler;
+          renderDead({
+            headline: 'Unavailable',
+            detail: 'This relic is unavailable.',
+            action: 'none',
+            code: 'service_unreachable',
+          });
+        } else {
+          window.dispatchEvent(new Event('unload'));
+        }
+
+        release.resolve();
+        await finished.promise;
+        const settled = Promise.withResolvers<void>();
+        setImmediate(settled.resolve);
+        await settled.promise;
+        expect(zipReads).toBe(3);
+        expect(rootBody.querySelector('iframe')).toBeNull();
+        if (
+          replacement === 'view' ||
+          replacement === 'dead' ||
+          replacement === 'unload'
+        ) {
+          expect(window.onpopstate).toBeNull();
+        } else if (replacement === 'other-handler') {
+          expect(window.onpopstate).toBe(otherHandler);
+        }
+        if (replacement === 'entry') {
+          expect(
+            rootBody.querySelector('.folder-breadcrumb')?.textContent
+          ).toContain('next.bin');
+        } else if (replacement === 'comparison') {
+          expect(rootBody.querySelector('.diff-row')).not.toBeNull();
+        } else if (replacement === 'view') {
+          expect(rootBody.querySelector('.card-title')?.textContent).toBe(
+            'replacement.bin'
+          );
+        } else if (replacement === 'dead' || replacement === 'other-handler') {
+          expect(rootBody.querySelector('.stage-dead')).not.toBeNull();
+        } else {
+          expect(
+            rootBody.querySelector('.folder-breadcrumb')?.textContent
+          ).toContain('initial.bin');
+        }
+      } finally {
+        release.resolve();
+        restore();
+      }
+    }
+  );
 
   test('3c. PDF renderer import failure dispatches an error and shows the failure card', () => {
     // The intentionally rejected import must not poison PDF.js for later tests.

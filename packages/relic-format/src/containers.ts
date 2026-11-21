@@ -126,12 +126,15 @@ export function zipContainerKindSync(bytes: Uint8Array): ZipContainerKind {
   }
 }
 
-/** Inspect a range source with the checked index and never throw on bad ZIPs. */
+/** Inspect a range source with the checked index. Bad ZIPs return archive; cancellation rejects. */
 export async function zipContainerKind(
-  source: ZipSource
+  source: ZipSource,
+  signal?: AbortSignal
 ): Promise<ZipContainerKind> {
+  signal?.throwIfAborted();
   try {
-    const result = await indexZip(source, LIMITS);
+    const result = await indexZip(source, LIMITS, undefined, signal);
+    signal?.throwIfAborted();
     if (!result.ok) return 'archive';
     const entries = result.index.entries;
     const names = new Set(entries.keys());
@@ -143,10 +146,12 @@ export async function zipContainerKind(
       mimetype.size === 20
     ) {
       const read = await result.index.read('mimetype');
+      signal?.throwIfAborted();
       epub = read.ok && new TextDecoder().decode(read.bytes) === EPUB_TYPE;
     }
     return fromNames(names, epub);
   } catch {
+    signal?.throwIfAborted();
     return 'archive';
   }
 }

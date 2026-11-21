@@ -262,3 +262,199 @@ test('omits metafile numbering image URLs and preserves ordinary numbering image
   expect(ordinary.omitted).toBe(false);
   expect(ordinary.css).toContain('url(blob:ordinary-numbering-image)');
 });
+
+function recordStyles() {
+  let css = '';
+  let documentStylesCreated = false;
+  const h = (element: HElement | Node | string): Node => {
+    if (
+      typeof element === 'object' &&
+      element !== null &&
+      'tagName' in element &&
+      'children' in element &&
+      Array.isArray(element.children)
+    ) {
+      if (
+        element.tagName === '#comment' &&
+        element.children[0] === 'docxjs document styles'
+      )
+        documentStylesCreated = true;
+      if (element.tagName === 'style')
+        css += element.children
+          .filter((child): child is string => typeof child === 'string')
+          .join('');
+    }
+    return factory(element);
+  };
+  return {
+    h,
+    css: () => css,
+    documentStylesCreated: () => documentStylesCreated,
+  };
+}
+
+function documentWithStyles() {
+  return {
+    ...rendererDocument(0, async () => null),
+    stylesPart: {
+      styles: [
+        {
+          id: 'base',
+          target: 'p',
+          paragraphProps: {},
+          runProps: {},
+          styles: [
+            {
+              target: 'p',
+              values: { color: 'red', 'font-weight': 'bold' },
+            },
+          ],
+        },
+        {
+          id: 'derived',
+          target: 'p',
+          basedOn: 'base',
+          linked: 'linked',
+          paragraphProps: {},
+          runProps: {},
+          styles: [{ target: 'p', values: { color: 'blue' } }],
+        },
+        {
+          id: 'linked',
+          target: 'span',
+          paragraphProps: {},
+          runProps: {},
+          styles: [{ target: 'span', values: { 'font-style': 'italic' } }],
+        },
+      ],
+    },
+  };
+}
+
+test('bounds generated styles without changing inherited or linked CSS', async () => {
+  const baseline = recordStyles();
+  await renderDocument(documentWithStyles(), { h: baseline.h });
+  expect(baseline.css()).toContain(
+    'p.docx_derived {\r\n  color: blue;\r\n  font-weight: bold;\r\n}\r\n'
+  );
+  expect(baseline.css()).toContain(
+    'p.docx_derived span {\r\n  font-style: italic;\r\n}\r\n'
+  );
+
+  // The inherited declaration is charged before its copy, as well as when
+  // emitted. Empty paragraph and run properties add no inheritance charge.
+  const inheritedCharge = 'font-weight'.length + 'bold'.length + 16;
+  const exactLimit = baseline.css().length + inheritedCharge;
+  const exact = recordStyles();
+  const exactOptions = { h: exact.h, relicCssLimit: exactLimit };
+  await renderDocument(documentWithStyles(), exactOptions);
+  expect(exact.css()).toBe(baseline.css());
+
+  const below = recordStyles();
+  const belowOptions = { h: below.h, relicCssLimit: exactLimit - 1 };
+  await expect(
+    renderDocument(documentWithStyles(), belowOptions)
+  ).rejects.toMatchObject({
+    code: 'RELIC_DOCX_TOO_LARGE',
+  });
+  expect(below.documentStylesCreated()).toBe(false);
+});
+
+test('rejects tiny CSS budgets and bounds inheritance before building a stylesheet', async () => {
+  for (const limit of [0, 1]) {
+    const recorder = recordStyles();
+    const options = { h: recorder.h, relicCssLimit: limit };
+    await expect(
+      renderDocument(documentWithStyles(), options)
+    ).rejects.toMatchObject({
+      code: 'RELIC_DOCX_TOO_LARGE',
+    });
+    expect(recorder.css()).toBe('');
+    expect(recorder.documentStylesCreated()).toBe(false);
+  }
+
+  const defaultStyles = recordStyles();
+  await renderDocument(
+    rendererDocument(0, async () => null),
+    {
+      h: defaultStyles.h,
+    }
+  );
+  const inheritedCharge = 'font-weight'.length + 'bold'.length + 16;
+  const recorder = recordStyles();
+  const options = {
+    h: recorder.h,
+    relicCssLimit: defaultStyles.css().length + inheritedCharge - 1,
+  };
+  await expect(
+    renderDocument(documentWithStyles(), options)
+  ).rejects.toMatchObject({
+    code: 'RELIC_DOCX_TOO_LARGE',
+  });
+  expect(recorder.css()).toBe(defaultStyles.css());
+  expect(recorder.documentStylesCreated()).toBe(false);
+});
+
+function documentWithNumberingImage(url: string, style: string | object) {
+  return {
+    ...rendererDocument(0, async () => null),
+    numberingPart: {
+      domNumberings: [{ id: 1, level: 0, bullet: { src: 'rId1', style } }],
+    },
+    loadNumberingImage: async () => url,
+  };
+}
+
+test('counts numbering CSS at its exact boundary, including raw bullet styles', async () => {
+  for (const style of ['width:12px;', {}]) {
+    const baseline = recordStyles();
+    await renderDocument(
+      documentWithNumberingImage('blob:numbering-image', style),
+      { h: baseline.h }
+    );
+    expect(baseline.css()).toContain('url(blob:numbering-image)');
+    if (typeof style === 'object')
+      expect(baseline.css()).toContain('[object Object]');
+
+    const exact = recordStyles();
+    const exactOptions = {
+      h: exact.h,
+      relicCssLimit: baseline.css().length,
+    };
+    await renderDocument(
+      documentWithNumberingImage('blob:numbering-image', style),
+      exactOptions
+    );
+    expect(exact.css()).toBe(baseline.css());
+
+    const below = recordStyles();
+    const belowOptions = {
+      h: below.h,
+      relicCssLimit: baseline.css().length - 1,
+    };
+    await expect(
+      renderDocument(
+        documentWithNumberingImage('blob:numbering-image', style),
+        belowOptions
+      )
+    ).rejects.toMatchObject({ code: 'RELIC_DOCX_TOO_LARGE' });
+  }
+});
+
+test('propagates a numbering image CSS budget error instead of skipping it', async () => {
+  const url = `blob:${'x'.repeat(512)}`;
+  const baseline = recordStyles();
+  await renderDocument(documentWithNumberingImage(url, ''), { h: baseline.h });
+  const rule = `.docx-wrapper { --docx-rid1: url(${url}) }`;
+  const ruleStart = baseline.css().indexOf(rule);
+  expect(ruleStart).toBeGreaterThanOrEqual(0);
+  const recorder = recordStyles();
+  const options = {
+    h: recorder.h,
+    relicCssLimit: ruleStart + rule.length - 1,
+  };
+  await expect(
+    renderDocument(documentWithNumberingImage(url, ''), options)
+  ).rejects.toMatchObject({ code: 'RELIC_DOCX_TOO_LARGE' });
+  expect(recorder.css()).not.toContain('url(');
+});
