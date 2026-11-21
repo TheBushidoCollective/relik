@@ -1,17 +1,28 @@
 diff --git a/dist/docx-preview.mjs b/dist/docx-preview.mjs
 --- a/dist/docx-preview.mjs
 +++ b/dist/docx-preview.mjs
-@@ -1114,8 +1114,9 @@
+@@ -1113,9 +1113,20 @@
++const MAX_DOCX_FONT_REFERENCES = 128;
++const MAX_DOCX_FONT_BYTES = 4 * 1024 * 1024;
++const MAX_DOCX_FONT_DATA_BYTES = 16 * 1024 * 1024;
++function docxFontLimit() {
++    const error = new Error("DOCX font limit exceeded");
++    error.code = "RELIC_DOCX_TOO_LARGE";
++    return error;
++}
+ class WordDocument {
      constructor() {
          this.parts = [];
          this.partsMap = {};
          this.contentTypes = [];
 +        this.imageUrls = new Map();
++        this.fontUrls = new Map();
++        this.fontDataBytes = 0;
      }
      static async load(blob, parser, options) {
          var d = new WordDocument();
          d._options = options;
-@@ -1195,15 +1196,23 @@
+@@ -1195,12 +1206,20 @@
              await Promise.all(part.rels.map(rel => this.loadRelationshipPart(resolvePath(rel.target, folder), rel.type)));
          }
          return part;
@@ -36,27 +47,113 @@ diff --git a/dist/docx-preview.mjs b/dist/docx-preview.mjs
 -        return path ? this.blobToURL(await this._package.load(path, "blob"), path) : null;
 +        return this.loadImage(this.getPathById(this.numberingPart, id));
      }
+@@ -1207,8 +1226,34 @@
      async loadFont(id, key) {
          const path = this.getPathById(this.fontTablePart, id);
          if (!path)
-@@ -1218,9 +1227,13 @@
+             return null;
+-        const x = await this._package.load(path, "uint8array");
+-        return x ? this.blobToURL(new Blob([deobfuscate(x, key)]), path) : x;
++        const normalized = normalizePath(path);
++        const files = this._package._zip.files;
++        const actualPath = files[normalized] ? normalized : normalized.replace(/\//g, '\\');
++        let keys = this.fontUrls.get(actualPath);
++        if (!keys) {
++            keys = new Map();
++            this.fontUrls.set(actualPath, keys);
++        }
++        let font = keys.get(key);
++        if (!font) {
++            font = { bytes: this._package.load(path, "uint8array"), url: null };
++            keys.set(key, font);
++        }
++        const bytes = await font.bytes;
++        if (!bytes)
++            return bytes;
++        if (bytes.byteLength > MAX_DOCX_FONT_BYTES)
++            throw docxFontLimit();
++        const ct = this.contentTypeForPath(path);
++        const type = typeof ct?.contentType === "string" ? ct.contentType : "";
++        const typeLength = /^[a-z0-9.+_-]+\/[a-z0-9.+_-]+$/i.test(type) ? type.length : Math.max("application/octet-stream".length, type.length * 3);
++        const encodedBytes = "data:".length + typeLength + ";base64,".length + 4 * Math.ceil(bytes.byteLength / 3);
++        if (encodedBytes > MAX_DOCX_FONT_DATA_BYTES - this.fontDataBytes)
++            throw docxFontLimit();
++        this.fontDataBytes += encodedBytes;
++        if (!font.url)
++            font.url = this.blobToURL(new Blob([deobfuscate(new Uint8Array(bytes), key)]), path);
++        return font.url;
+     }
+     async loadAltChunk(id, part) {
+@@ -1218,9 +1263,16 @@
++    contentTypeForPath(path) {
++        const normalized = path.replace(/^\/+/, '');
++        return this.contentTypes.find(x => x.partName && x.partName.replace(/^\/+/, '') === normalized)
++            ?? this.contentTypes.find(x => x.extension && normalized.toLowerCase().endsWith(`.${x.extension.toLowerCase()}`));
++    }
 -    blobToURL(blob, path) {
 +    blobToURL(blob, path, image = false) {
          if (!blob)
              return null;
-         if (path) {
+-        if (path) {
 -            const ct = this.contentTypes.find(x => x.partName === path || (x.extension && path.endsWith(`.${x.extension}`)));
-+            const normalized = path.replace(/^\/+/, '');
-+            const ct = this.contentTypes.find(x => x.partName && x.partName.replace(/^\/+/, '') === normalized)
-+                ?? this.contentTypes.find(x => x.extension && normalized.toLowerCase().endsWith(`.${x.extension.toLowerCase()}`));
-+            if (ct && /^image\/(?:x-)?(?:emf|wmf)$/i.test(ct.contentType))
-+                return `data:${ct.contentType};base64,`;
++        if (image && blob.size === 0 && /^image\/x-(?:emf|wmf)$/i.test(blob.type))
++            return `data:${blob.type};base64,`;
++        if (path && !image) {
++            const ct = this.contentTypeForPath(path);
              blob = ct ? new Blob([blob], { type: ct.contentType }) : blob;
          }
 -        if (this._options.useBase64URL) {
 +        if (this._options.useBase64URL && !image) {
              return blobToBase64(blob);
-@@ -3143,13 +3156,13 @@
+@@ -2999,27 +3051,34 @@
+     async renderFontTable(fontsPart) {
+         const result = [];
++        let references = 0;
+         for (let f of fontsPart.fonts) {
+             for (let ref of f.embedFontRefs) {
++                if (++references > MAX_DOCX_FONT_REFERENCES)
++                    throw docxFontLimit();
++                let fontData;
+                 try {
+-                    const fontData = await this.document.loadFont(ref.id, ref.key);
+-                    const cssValues = {
+-                        'font-family': encloseFontFamily(f.name),
+-                        'src': `url(${fontData})`
+-                    };
+-                    if (ref.type == "bold" || ref.type == "boldItalic") {
+-                        cssValues['font-weight'] = 'bold';
+-                    }
+-                    if (ref.type == "italic" || ref.type == "boldItalic") {
+-                        cssValues['font-style'] = 'italic';
+-                    }
+-                    result.push(this.h({ tagName: "#comment", children: [`docxjs ${f.name} font`] }));
+-                    result.push(this.h({ tagName: "style", children: [this.styleToString(`@font-face`, cssValues)] }));
++                    fontData = await this.document.loadFont(ref.id, ref.key);
+                 }
+                 catch (e) {
++                    if (e?.code === "RELIC_DOCX_TOO_LARGE")
++                        throw e;
+                     if (this.options.debug)
+                         console.warn(`Can't load font with id ${ref.id} and key ${ref.key}`);
++                    continue;
+                 }
++                const cssValues = {
++                    'font-family': encloseFontFamily(f.name),
++                    'src': `url(${fontData})`
++                };
++                if (ref.type == "bold" || ref.type == "boldItalic") {
++                    cssValues['font-weight'] = 'bold';
++                }
++                if (ref.type == "italic" || ref.type == "boldItalic") {
++                    cssValues['font-style'] = 'italic';
++                }
++                result.push(this.h({ tagName: "#comment", children: [`docxjs ${f.name} font`] }));
++                result.push(this.h({ tagName: "style", children: [this.styleToString(`@font-face`, cssValues)] }));
+             }
+         }
+         return result;
+     }
+@@ -3143,13 +3202,13 @@
                  pageElement.appendChild(contentElement);
                  props = sect.sectProps;
              }
@@ -72,7 +169,20 @@ diff --git a/dist/docx-preview.mjs b/dist/docx-preview.mjs
              }
              this.options.renderFooters && this.renderHeaderFooter(props.footerRefs, props, result.length, prevProps != props, pageElement);
              result.push(pageElement);
-@@ -3393,13 +3406,20 @@
+@@ -3325,8 +3384,11 @@
+                 }, num.bullet.style);
+                 try {
+                     const imgData = await this.document.loadNumberingImage(num.bullet.src);
+-                    styleText += `${this.rootSelector} { ${valiable}: url(${imgData}) }`;
++                    if (typeof imgData === "string" && /^data:image\/x-(?:emf|wmf);base64,$/i.test(imgData))
++                        this.document.relicOmittedMetafile = true;
++                    else
++                        styleText += `${this.rootSelector} { ${valiable}: url(${imgData}) }`;
+                 }
+                 catch (e) {
+                     if (this.options.debug)
+                         console.warn(`Can't load numbering image with src ${num.bullet.src}`);
+@@ -3393,13 +3455,20 @@
              this.h({ tagName: "#comment", children: ["docxjs document styles"] }),
              this.h({ tagName: "style", children: [styleText] })
          ];
@@ -97,7 +207,7 @@ diff --git a/dist/docx-preview.mjs b/dist/docx-preview.mjs
      renderElement(elem) {
          switch (elem.type) {
              case DomType.Paragraph:
-@@ -3541,9 +3561,9 @@
+@@ -3541,9 +3610,9 @@
      renderHyperlink(elem) {
          const res = this.toH(elem, ns.html, "a");
          res.href = '';

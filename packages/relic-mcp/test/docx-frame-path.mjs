@@ -25,6 +25,11 @@ if (!hostBuild.success) throw new Error('DOCX proof host build failed');
 const hostScript = await hostBuild.outputs[0].text();
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64');
 const notePng = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAIAAAABAQMAAADO7O3JAAAAA1BMVEUAAP+KeNJXAAAACklEQVQI12NgAAAAAgAB4iG8MwAAAABJRU5ErkJggg==', 'base64');
+const animatedImages = {
+  gif: { mime: 'image/gif', bytes: Buffer.from('R0lGODlhAgACAPAAAP8AAAAAACH/C05FVFNDQVBFMi4wAwEAAAAh+QQACgAAACwAAAAAAgACAAACAoRRACH5BAAKAAAALAAAAAACAAIAgAAA/wAAAAIChFEAOw==', 'base64') },
+  webp: { mime: 'image/webp', bytes: Buffer.from('UklGRsAAAABXRUJQVlA4WAoAAAACAAAAAQAAAQAAQU5JTQYAAAD/////AABBTk1GSAAAAAAAAAAAAAEAAAEAAGQAAAJWUDggMAAAANABAJ0BKgIAAgACADQloAJ0ugH4AAOwAP7wxAv/ILlhdcjX/yA/5Af8gP/48gAAAEFOTUZEAAAAAAAAAAAAAQAAAQAAZAAAAFZQOCAsAAAAlAEAnQEqAgACAAAANCWgAnS6AAOYAP75k2//kB//kB//kB//ID/iF3sgMAA=', 'base64') },
+  apng: { mime: 'image/png', bytes: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAACXBIWXMAAAAAAAAAAQCEeRdzAAAACGFjVEwAAAACAAAAAPONk3AAAAAaZmNUTAAAAAAAAAACAAAAAgAAAAAAAAAAAAEACgAA6FTcAAAAABJJREFUeJxj/MvAyMDAwMIABgANHAEEhmSuyAAAABpmY1RMAAAAAQAAAAIAAAACAAAAAAAAAAAAAQAKAABzJzbUAAAAFmZkQVQAAAACeJxjZGT4y8DAwMIABgALJAEET/99TwAAAABJRU5ErkJggg==', 'base64') },
+};
 const image = (data) => new ImageRun({ data, type: 'png', transformation: { width: 20, height: 20 } });
 async function packageEntries(children, options = {}) {
   const zip = await JSZip.loadAsync(await Packer.toBuffer(new Document({
@@ -84,13 +89,28 @@ function metafile(kind) {
 function entriesFor(kind) {
   if (kind === 'large') return largeEntries;
   const mediaPath = imageEntries.find(([name]) => name.startsWith('word/media/') && name.endsWith('.png'))?.[0];
-  return (kind === 'links' ? largeEntries : kind === 'font' ? fontEntries : imageEntries).map(([name, bytes]) => {
-    if (name === mediaPath && ['emf', 'wmf'].includes(kind)) return [name, Array.from(metafile(kind))];
-    if (!['word/document.xml', 'word/_rels/document.xml.rels', 'word/header1.xml', 'word/_rels/header1.xml.rels', '[Content_Types].xml'].includes(name)) return [name, bytes];
+  return (kind === 'links' ? largeEntries : kind.startsWith('font') ? fontEntries : imageEntries).map(([name, bytes]) => {
+    if (name === mediaPath) {
+      const metafileKind = kind.replace('-generic', '');
+      if (['emf', 'wmf'].includes(metafileKind)) return [name, Array.from(metafile(metafileKind))];
+      if (animatedImages[kind]) return [name, Array.from(animatedImages[kind].bytes)];
+    }
+    if (!['word/document.xml', 'word/_rels/document.xml.rels', 'word/header1.xml', 'word/_rels/header1.xml.rels', 'word/fontTable.xml', '[Content_Types].xml'].includes(name)) return [name, bytes];
     let text = decode.decode(new Uint8Array(bytes));
+    if (name === 'word/fontTable.xml' && (kind === 'font-reused' || kind === 'font-limit')) {
+      const original = text.match(/<w:font w:name="DOCX Fixture">[\s\S]*?<\/w:font>/)?.[0];
+      assert.ok(original);
+      const count = kind === 'font-reused' ? 2 : 128;
+      const aliases = Array.from({ length: count }, (_, i) => original.replace('w:name="DOCX Fixture"', `w:name="DOCX Fixture ${i + 1}"`)).join('');
+      text = text.replace('</w:fonts>', `${aliases}</w:fonts>`);
+    }
     if (['emf', 'wmf'].includes(kind) && name === '[Content_Types].xml') {
       assert.ok(mediaPath);
       text = text.replace('</Types>', `<Override PartName="/${mediaPath}" ContentType="image/x-${kind}"/></Types>`);
+    }
+    if (animatedImages[kind] && name === '[Content_Types].xml') {
+      assert.ok(mediaPath);
+      text = text.replace('</Types>', `<Override PartName="/${mediaPath}" ContentType="${animatedImages[kind].mime}"/></Types>`);
     }
     if (kind === 'links' && name.endsWith('.rels')) {
       const destination = name.includes('header1') ? 'header' : 'document';
@@ -146,7 +166,7 @@ try {
     if (response.exceptionDetails) throw new Error(JSON.stringify(response.exceptionDetails));
     return response.result.value;
   }
-  for (const kind of ['embedded', 'font', 'emf', 'wmf', 'large', 'links']) {
+  for (const kind of ['embedded', 'font', 'font-reused', 'font-limit', 'emf', 'wmf', 'emf-generic', 'wmf-generic', 'gif', 'apng', 'webp', 'large', 'links']) {
     requests.length = 0;
     const loaded = cdp.waitForEvent('Page.loadEventFired', { sessionId, timeoutMs: 30000 });
     await cdp.send('Page.navigate', { url: `${origin}/?kind=${kind}` }, sessionId);
@@ -161,15 +181,26 @@ try {
     const state = await evaluate(`(async()=>{const end=Date.now()+30000;while(Date.now()<end){let x=window.results.find(x=>x.type==='relic:document-state');if(x)return x;await new Promise(r=>setTimeout(r,10))}throw Error('document timeout')})()`);
     const elapsed = performance.now() - start;
     const frame = await evaluate(`({violations:window.violations,text:document.body.innerText,pages:document.querySelectorAll('.docx-wrapper>section.docx').length,elements:document.getElementsByTagName('*').length,images:[...document.images].map(x=>x.getAttribute('src'))})`, executionContextId);
+    if (kind === 'font-limit') {
+      assert.equal(state.state, 'failed');
+      assert.equal(state.reason, 'too-large');
+      assert.deepEqual(frame.violations, []);
+      console.log('DOCX_FRAME font-limit failed=too-large');
+      continue;
+    }
     assert.equal(state.state, 'ready', kind);
     assert.deepEqual(frame.violations, [], kind);
     assert.equal(requests.filter((url) => !url.startsWith(origin) && !url.startsWith(usercontentOrigin) && !url.startsWith('blob:') && !url.startsWith('data:')).length, 0, kind);
     assert.equal(requests.filter((url) => url.startsWith(usercontentOrigin) && url !== `${usercontentOrigin}/sandbox.html`).length, 0, kind);
-    if (kind === 'font') {
+    if (kind === 'font' || kind === 'font-reused') {
       const font = await evaluate(`(async()=>{const loaded=await document.fonts.load('12px \"DOCX Fixture\"');return {count:loaded.length,status:loaded[0]?.status,css:[...document.querySelectorAll('style')].map(style=>style.textContent).join('\\n')}})()`, executionContextId);
       assert.equal(font.count, 1);
       assert.equal(font.status, 'loaded');
       assert.match(font.css, /data:/);
+    }
+    if (kind === 'font-reused') {
+      const loaded = await evaluate(`(async()=>Promise.all([1,2].map(async i=>(await document.fonts.load('12px \"DOCX Fixture '+i+'\"'))[0]?.status)))()`, executionContextId);
+      assert.deepEqual(loaded, ['loaded', 'loaded']);
     }
     if (kind === 'embedded') {
       const imagePoint = await evaluate(`(async()=>{for(let i=0;i<100;i++){let img=document.querySelector('#relic-document img'),b=img?.getBoundingClientRect();if(b&&b.width&&b.height&&document.querySelector('.relic-image-control'))return {x:b.x+b.width/2,y:b.y+b.height/2};await new Promise(r=>setTimeout(r,10))}throw Error('image control unavailable')})()`, executionContextId);
@@ -187,7 +218,11 @@ try {
       const decoded = await evaluate(`(async()=>{const image=document.querySelector('#relic-document img');await image.decode();return [image.naturalWidth,image.naturalHeight]})()`, executionContextId);
       assert.deepEqual(decoded, [1, 1]);
     }
-    if (kind === 'emf' || kind === 'wmf') assert.match(frame.text, /Unsupported EMF or WMF image/);
+    if (/^(?:emf|wmf)(?:-generic)?$/.test(kind)) assert.match(frame.text, /Unsupported EMF or WMF image/);
+    if (animatedImages[kind]) {
+      const decoded = await evaluate(`(async()=>{const image=document.querySelector('#relic-document img');await image.decode();return [image.naturalWidth,image.naturalHeight]})()`, executionContextId);
+      assert.deepEqual(decoded, [2, 2], kind);
+    }
     if (kind === 'large') {
       assert.equal(frame.pages, 300);
       const scopedImages = await evaluate(`(async()=>{const headers=[...document.querySelectorAll('#relic-document header img')];const notes=[...document.querySelectorAll('#relic-document ol img')];await Promise.all([...headers,...notes].map(image=>image.decode()));return {headers:headers.map(image=>image.src),notes:notes.map(image=>({src:image.src,width:image.naturalWidth,height:image.naturalHeight}))}})()`, executionContextId);
@@ -272,10 +307,11 @@ try {
     name === '[Content_Types].xml' ? encode.encode('<Types') : new Uint8Array(bytes),
   ]);
   const badUrl = await publishEntries('reader-invalid.docx', badEntries);
+  const fontLimitUrl = await publishEntries('reader-font-limit.docx', entriesFor('font-limit').map(([name, bytes]) => [name, new Uint8Array(bytes)]));
   const imagePath = imageEntries.find(([name]) => name.startsWith('word/media/') && name.endsWith('.png'))?.[0];
   assert.ok(imagePath);
   const unknownImageEntries = imageEntries.map(([name, bytes]) => {
-    if (name === imagePath) return [name, encode.encode('<svg xmlns="http://www.w3.org/2000/svg"><rect width="20" height="20"/></svg>')];
+    if (name === imagePath) return [name, encode.encode('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><rect width="20" height="20"/></svg>')];
     if (name === '[Content_Types].xml') {
       const xml = decode.decode(new Uint8Array(bytes)).replace('</Types>', `<Override PartName="/${imagePath}" ContentType="image/svg+xml"/></Types>`);
       return [name, encode.encode(xml)];
@@ -311,6 +347,9 @@ try {
     const broken = await openReader(badUrl, 'error');
     assert.equal(broken.frame, false);
     assert.match(broken.text, /Download/);
+    const fontLimit = await openReader(fontLimitUrl, 'error');
+    assert.equal(fontLimit.frame, false);
+    assert.match(fontLimit.text, /Download/);
     const unknownImage = await openReader(unknownImageUrl, 'error');
     assert.equal(unknownImage.frame, false);
     assert.match(unknownImage.text, /image whose dimensions could not be checked/);

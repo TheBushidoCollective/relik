@@ -132,7 +132,12 @@ export async function mountDocumentRoute(
       dispose();
       return;
     }
-    const result = await indexZip(content, LIMITS);
+    const result = await indexZip(
+      content,
+      LIMITS,
+      undefined,
+      controller.signal
+    );
     if (disposed || !root.isConnected) {
       dispose();
       return;

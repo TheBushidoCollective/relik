@@ -113,21 +113,32 @@ export async function render(
   const budget = new ImageBudget();
   const xmlBudget = new XmlReadBudget();
   let styles: HTMLElement | undefined;
+  let omittedMetafile = false;
   try {
     styles = document.createElement('div');
     document.head.append(styles);
     const restoreImages = guardImageSources();
     try {
       const archive = { entries: input.entries, budget, xmlBudget };
-      await renderAsync(archive as unknown as Blob, root, styles, {
-        renderAltChunks: false,
-        trimXmlDeclaration: false,
-        useBase64URL: true,
-        h: boundedRenderFactory(),
-        renderComments: false,
-        renderChanges: false,
-        experimental: false,
-      });
+      const rendered: unknown = await renderAsync(
+        archive as unknown as Blob,
+        root,
+        styles,
+        {
+          renderAltChunks: false,
+          trimXmlDeclaration: false,
+          useBase64URL: true,
+          h: boundedRenderFactory(),
+          renderComments: false,
+          renderChanges: false,
+          experimental: false,
+        }
+      );
+      omittedMetafile =
+        typeof rendered === 'object' &&
+        rendered !== null &&
+        'relicOmittedMetafile' in rendered &&
+        rendered.relicOmittedMetafile === true;
     } finally {
       restoreImages();
     }
@@ -187,7 +198,7 @@ export async function render(
         (image.closest('svg') ?? image).replaceWith(placeholder);
       }
     }
-    if (xmlBudget.omittedEmbeddedContent) {
+    if (xmlBudget.omittedEmbeddedContent || omittedMetafile) {
       const notice = document.createElement('p');
       notice.textContent = 'Embedded content was not shown.';
       root.prepend(notice);

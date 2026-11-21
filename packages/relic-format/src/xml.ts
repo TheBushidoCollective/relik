@@ -232,7 +232,11 @@ export function parseXml(
         at += equals![0].length;
         const end = text.indexOf(equals![1]!, at);
         if (end < 0 || text.slice(at, end).includes('<')) fail();
-        element.attrs.set(attr![0], entities(text.slice(at, end)));
+        // Normalize literal whitespace before decoding character references.
+        element.attrs.set(
+          attr![0],
+          entities(text.slice(at, end).replace(/\r\n|[\r\n\t]/g, ' '))
+        );
         if (element.attrs.size > 256) throw new ParseFailure('attributes');
         at = end + 1;
       }

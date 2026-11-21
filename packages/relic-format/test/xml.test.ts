@@ -65,6 +65,16 @@ describe('bounded XML parser', () => {
       if (typeof child === 'object') expect(child.children).toEqual(['<A😀']);
     }
   });
+  test('normalizes literal attribute whitespace before decoding references', () => {
+    const result = parseXml(
+      `<root double="a\r\nb\rc\nd\te &#9;&#10;&#13; &amp;#xA;" single=' \t\r\n&#x9;&#xA;&#xD; '/>`
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.root.attrs.get('double')).toBe('a b c d e \t\n\r &#xA;');
+    expect(result.root.attrs.get('single')).toBe('   \t\n\r ');
+  });
+
   test('refuses unknown entities unless explicitly lenient', () => {
     expect(parseXml('<x>&nbsp;</x>')).toEqual({ ok: false, reason: 'entity' });
     const result = parseXml('<x>&nbsp;</x>', { lenient: true });

@@ -328,3 +328,83 @@ test('archive checks precede frame creation and timeout removes the frame', asyn
     else Reflect.deleteProperty(globalThis, 'MutationObserver');
   }
 });
+
+test('detaching during ZIP indexing stops reads and never mounts a frame', async () => {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, 'document');
+  const previousObserver = Object.getOwnPropertyDescriptor(
+    globalThis,
+    'MutationObserver'
+  );
+  const observerState: { onMutation?: () => void } = {};
+  let disconnects = 0;
+  Object.defineProperty(globalThis, 'MutationObserver', {
+    configurable: true,
+    value: class {
+      constructor(callback: () => void) {
+        observerState.onMutation = callback;
+      }
+      observe() {}
+      disconnect() {
+        disconnects++;
+      }
+    },
+  });
+  Object.defineProperty(globalThis, 'document', {
+    configurable: true,
+    value: { createElement: () => new ElementStub() },
+  });
+  try {
+    const root = new ElementStub();
+    const original = contentFromBytes(zip([['word/document.xml', '<root/>']]));
+    const started = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    let reads = 0;
+    let selections = 0;
+    let frames = 0;
+    let renderStates = 0;
+    root.addEventListener('relic:render-state', () => renderStates++);
+    const content = {
+      ...original,
+      async read(start: number, end: number) {
+        reads++;
+        if (reads === 3) {
+          started.resolve();
+          await release.promise;
+        }
+        return original.read(start, end);
+      },
+    };
+    const pending = mountDocumentRoute(
+      root as unknown as HTMLElement,
+      content,
+      'docx',
+      async () => {
+        selections++;
+        return { parts: [], xmlParts: new Set<string>() };
+      },
+      () => {
+        frames++;
+        throw new Error('A detached route must not create a frame');
+      },
+      () => {}
+    );
+    await started.promise;
+    root.isConnected = false;
+    observerState.onMutation?.();
+    expect(disconnects).toBe(1);
+    root.isConnected = true;
+    release.resolve();
+    await pending;
+    expect(reads).toBe(3);
+    expect(selections).toBe(0);
+    expect(frames).toBe(0);
+    expect(root.children).toEqual([]);
+    expect(renderStates).toBe(0);
+  } finally {
+    if (previous) Object.defineProperty(globalThis, 'document', previous);
+    else Reflect.deleteProperty(globalThis, 'document');
+    if (previousObserver)
+      Object.defineProperty(globalThis, 'MutationObserver', previousObserver);
+    else Reflect.deleteProperty(globalThis, 'MutationObserver');
+  }
+});
