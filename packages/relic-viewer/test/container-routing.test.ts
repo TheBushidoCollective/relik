@@ -162,4 +162,41 @@ describe('document and spreadsheet routing', () => {
       (await routeFor('file.docx', 'application/octet-stream', bytes)).route
     ).toBe('download');
   });
+  test('plain ZIP remains download-only across declarations', async () => {
+    const bytes = makeZip([['private.txt', 'hello']]);
+    for (const [name, mime] of [
+      ['file.zip', 'application/zip'],
+      ['file.zip', 'application/octet-stream'],
+      ['file', 'application/octet-stream'],
+      ['file.txt', 'application/octet-stream'],
+      ['file.xlsx', 'application/octet-stream'],
+      ['file.html', 'application/octet-stream'],
+    ]) {
+      expect((await routeFor(name!, mime!, bytes)).route).toBe('download');
+    }
+  });
+  test('OTIO retains its existing route and rejects an Office name', async () => {
+    const bytes = makeZip([
+      ['version.txt', '1.0.0'],
+      ['content.otio', '{}'],
+    ]);
+    expect(
+      (await routeFor('file.otioz', 'application/x-otioz', bytes)).route
+    ).toBe('otio');
+    expect(
+      (await routeFor('file.otioz', 'application/octet-stream', bytes)).route
+    ).toBe('otio');
+    expect(
+      (await routeFor('file', 'application/octet-stream', bytes)).route
+    ).toBe('otio');
+    expect(
+      (await routeFor('file.txt', 'application/octet-stream', bytes)).route
+    ).toBe('otio');
+    expect(
+      (await routeFor('file.xlsx', 'application/octet-stream', bytes)).route
+    ).toBe('download');
+    expect(
+      (await routeFor('file.html', 'application/octet-stream', bytes)).route
+    ).toBe('otio');
+  });
 });
