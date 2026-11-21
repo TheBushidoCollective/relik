@@ -21,6 +21,7 @@ export interface WorkbookSheet {
   readonly rowStart: Uint32Array;
   readonly cells: Uint32Array;
   readonly numbers: Float64Array;
+  /** Interned workbook-wide text pool, shared by all drawable worksheets. */
   readonly texts: string[];
   readonly details: CellDetail[];
 }
@@ -283,6 +284,12 @@ export async function parseXlsx(
       );
     }
     const result: WorkbookSheet[] = [];
+    // Every worksheet references this one pool. Structured clone preserves the
+    // shared array identity, so repeated shared strings are posted only once.
+    const textPool = {
+      texts: [] as string[],
+      index: new Map<string, number>(),
+    };
     let totalCells = 0;
     let detailBytes = 0;
     const seenParts = new Set<string>();
@@ -311,6 +318,7 @@ export async function parseXlsx(
           name: spec.name,
           state: spec.state,
           sharedStrings: strings,
+          textPool,
           styles,
           date1904,
           remaining: XLSX_CELL_LIMIT - totalCells,

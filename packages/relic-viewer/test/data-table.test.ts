@@ -397,6 +397,68 @@ async function browserCases(
   });
 
   await check(
+    'a comment reveal keeps its position when an older find finishes',
+    async () => {
+      const root = document.createElement('section');
+      document.body.append(root);
+      let calls = 0;
+      let part: { reveal(anchor: unknown): void; dispose(): void };
+      part = api.mountDataTable(
+        root,
+        {
+          records: 1000,
+          columns: 1,
+          sheet: 'Sheet',
+          summary: 'Spreadsheet',
+          text: (row: number) => (row === 0 ? 'target' : `row ${row + 1}`),
+          numeric: () => undefined,
+          numericColumn: () => false,
+          matchingColumns: (row: number) => {
+            calls++;
+            if (calls === 1)
+              window.setTimeout(
+                () =>
+                  part.reveal({
+                    kind: 'cell',
+                    sheet: 'Sheet',
+                    row: 10,
+                    col: 1,
+                  }),
+                0
+              );
+            return row === 0 ? [0] : [];
+          },
+        },
+        { filename: 'book.xlsx' }
+      );
+      try {
+        const find = root.querySelector<HTMLInputElement>('.dt-find')!;
+        find.value = 'target';
+        find.dispatchEvent(new Event('input', { bubbles: true }));
+        const deadline = Date.now() + 5000;
+        while (
+          root.querySelector('.dt-find-count')?.textContent !== '1 match' &&
+          Date.now() < deadline
+        )
+          await new Promise<void>((resolve) => setTimeout(resolve, 10));
+        eq(
+          root.querySelector('.dt-find-count')?.textContent,
+          '1 match',
+          'search results retained'
+        );
+        eq(
+          root.querySelector('.dt-addr')?.textContent,
+          'A10',
+          'comment remains selected'
+        );
+      } finally {
+        part.dispose();
+        root.remove();
+      }
+    }
+  );
+
+  await check(
     'inspector shows spreadsheet cell type and formula without HTML',
     () => {
       const root = document.createElement('section');
@@ -794,7 +856,7 @@ describe('table view in the browser', () => {
           clearTimeout(timer);
         }
         if (result.error) throw new Error(result.error);
-        expect(result.passed).toHaveLength(14);
+        expect(result.passed).toHaveLength(15);
       } finally {
         browser.kill('SIGKILL');
         if (browser.exitCode === null && browser.signalCode === null) {

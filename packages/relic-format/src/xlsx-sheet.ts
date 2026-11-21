@@ -9,6 +9,7 @@ interface SheetOptions {
   styles: NumberKind[];
   date1904: boolean;
   remaining: number;
+  textPool?: { texts: string[]; index: Map<string, number> };
   remainingDetailBytes?: number;
 }
 interface Cell {
@@ -20,6 +21,10 @@ interface Cell {
   formula: string;
   valueSeen: boolean;
   formulaSeen: boolean;
+  inlineContainerSeen: boolean;
+  inlinePlainSeen: boolean;
+  inlineRichSeen: boolean;
+  inlineRunTextSeen: boolean;
   formulaKind?: string | undefined;
   sharedId?: string | undefined;
   reference: string;
@@ -63,8 +68,10 @@ export function parseWorksheet(
   let rowNumbers = new Uint32Array(rowCapacity);
   let starts = new Uint32Array(rowCapacity + 1);
   const path: string[] = [];
-  const texts: string[] = [],
-    textIndex = new Map<string, number>();
+  const { texts, index: textIndex } = options.textPool ?? {
+    texts: [],
+    index: new Map<string, number>(),
+  };
   const details: CellDetail[] = [],
     detailIndex = new Map<string, number>();
   const masters = new Map<string, { formula: string; ref: string }>();
@@ -150,6 +157,7 @@ export function parseWorksheet(
     let detailId: number | undefined;
     if (cell.formulaKind === 'shared' && cell.sharedId !== undefined) {
       if (formula) {
+        if (masters.has(cell.sharedId)) throw new Error('corrupt');
         masters.set(cell.sharedId, { formula, ref: cell.reference });
       } else {
         const master = masters.get(cell.sharedId);
@@ -216,8 +224,22 @@ export function parseWorksheet(
           formula: '',
           valueSeen: false,
           formulaSeen: false,
+          inlineContainerSeen: false,
+          inlinePlainSeen: false,
+          inlineRichSeen: false,
+          inlineRunTextSeen: false,
           reference: ref || cellReference(row, pos.column),
         };
+      } else if (current && path.join('/') === 'worksheet/sheetData/row/c/is') {
+        if (current.inlineContainerSeen) throw new Error('corrupt');
+        current.inlineContainerSeen = true;
+      } else if (
+        current &&
+        path.join('/') === 'worksheet/sheetData/row/c/is/r'
+      ) {
+        if (current.inlinePlainSeen) throw new Error('corrupt');
+        current.inlineRichSeen = true;
+        current.inlineRunTextSeen = false;
       } else if (
         current &&
         (((n === 'v' || n === 'f') &&
@@ -232,6 +254,16 @@ export function parseWorksheet(
         } else if (n === 'f') {
           if (current.formulaSeen) throw new Error('corrupt');
           current.formulaSeen = true;
+        } else if (n === 't') {
+          if (path.join('/') === 'worksheet/sheetData/row/c/is/t') {
+            if (current.inlinePlainSeen || current.inlineRichSeen)
+              throw new Error('corrupt');
+            current.inlinePlainSeen = true;
+          } else {
+            if (current.inlinePlainSeen || current.inlineRunTextSeen)
+              throw new Error('corrupt');
+            current.inlineRunTextSeen = true;
+          }
         }
         capture = n;
         captureDepth = path.length;

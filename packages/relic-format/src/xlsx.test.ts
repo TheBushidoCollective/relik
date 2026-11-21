@@ -364,6 +364,61 @@ describe('XLSX workbook', () => {
     });
     expect(sheet.cells[5]).toBe(sheet.cells[6002]);
   });
+  test('shared workbook text is interned once across worksheets and worker clones', async () => {
+    const book =
+      '<workbook><sheets><sheet name="One" r:id="r1"/><sheet name="Two" r:id="r4"/></sheets></workbook>';
+    const rels =
+      '<Relationships><Relationship Id="r1" Type="urn:office/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="r4" Type="urn:office/worksheet" Target="worksheets/sheet2.xml"/><Relationship Id="r2" Type="urn:office/sharedStrings" Target="sharedStrings.xml"/></Relationships>';
+    const sheet =
+      '<worksheet><sheetData><row><c t="s"><v>0</v></c></row></sheetData></worksheet>';
+    const parsed = await parseXlsx(
+      fixture(sheet, book, {
+        'xl/_rels/workbook.xml.rels': rels,
+        'xl/worksheets/sheet2.xml': sheet,
+      })
+    );
+    if (!parsed.ok) throw new Error(parsed.reason);
+    const [first, second] = parsed.workbook.sheets;
+    expect(first!.texts).toBe(second!.texts);
+    expect(first!.texts).toEqual(['Hello world']);
+    expect(first!.cells[1]).toBe(second!.cells[1]);
+    const cloned = structuredClone(parsed.workbook);
+    expect(cloned.sheets[0]!.texts).toBe(cloned.sheets[1]!.texts);
+  });
+  test('rejects duplicate shared-formula masters', async () => {
+    const cells =
+      '<c><f t="shared" si="1">A1</f><v>1</v></c><c><f t="shared" si="1"/><v>1</v></c><c><f t="shared" si="1">A2</f><v>2</v></c>';
+    expect(
+      await parseXlsx(
+        fixture(
+          `<worksheet><sheetData><row>${cells}</row></sheetData></worksheet>`
+        )
+      )
+    ).toEqual({ ok: false, reason: 'corrupt' });
+  });
+  test('rejects duplicate inline values but joins separate rich runs', async () => {
+    for (const inline of [
+      '<is><t>one</t></is><is><t>two</t></is>',
+      '<is><t>one</t><t>two</t></is>',
+      '<is><r><t>one</t><t>two</t></r></is>',
+      '<is><t>one</t><r><t>two</t></r></is>',
+    ]) {
+      expect(
+        await parseXlsx(
+          fixture(
+            `<worksheet><sheetData><row><c t="inlineStr">${inline}</c></row></sheetData></worksheet>`
+          )
+        )
+      ).toEqual({ ok: false, reason: 'corrupt' });
+    }
+    const valid = await parseXlsx(
+      fixture(
+        '<worksheet><sheetData><row><c t="inlineStr"><is><r><t>one</t></r><r><t>two</t></r></is></c></row></sheetData></worksheet>'
+      )
+    );
+    if (!valid.ok) throw new Error(valid.reason);
+    expect(valid.workbook.sheets[0]!.texts).toEqual(['onetwo']);
+  });
   test('rejects duplicate and nested scalar cell children', async () => {
     for (const cell of [
       '<c><v>1</v><v>2</v></c>',

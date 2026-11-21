@@ -524,6 +524,7 @@ export function mountDataTable(
   let frame = 0;
   let findTimer = 0;
   let findGeneration = 0;
+  let navigationGeneration = 0;
   /** The `bodyKey` the rows on screen were drawn with. */
   let drawnKey = '';
 
@@ -983,6 +984,7 @@ export function mountDataTable(
     window.clearTimeout(findTimer);
     const needle = query.trim().toLowerCase();
     const searchModel = model;
+    const searchNavigation = navigationGeneration;
     const finish = (hits: CellRef[]): void => {
       if (disposed || generation !== findGeneration || searchModel !== model)
         return;
@@ -999,7 +1001,12 @@ export function mountDataTable(
         update(false);
         return;
       }
-      gotoHit(0);
+      if (navigationGeneration === searchNavigation) {
+        gotoHit(0);
+      } else {
+        findCount.textContent = `${formatter.format(hits.length)} ${hits.length === 1 ? 'match' : 'matches'}`;
+        update(false);
+      }
       if (hits.length >= FIND_LIMIT)
         findCount.textContent = `More than ${formatter.format(FIND_LIMIT)} matches`;
     };
@@ -1055,6 +1062,7 @@ export function mountDataTable(
     if (!(target instanceof Element)) return;
     const cell = cellOf(target);
     if (cell === undefined) return;
+    navigationGeneration++;
     event.preventDefault();
     const column = Number(cell.dataset['c']);
     if (cell.classList.contains('dt-hcell')) {
@@ -1142,6 +1150,7 @@ export function mountDataTable(
 
   grid.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') {
+      navigationGeneration++;
       event.preventDefault();
       selection = undefined;
       update(false);
@@ -1186,6 +1195,7 @@ export function mountDataTable(
       default:
         return;
     }
+    navigationGeneration++;
     event.preventDefault();
     const record = recordAt(model, nextDisplay);
     if (event.shiftKey && selection !== undefined && !sortedNow()) {
@@ -1300,6 +1310,7 @@ export function mountDataTable(
         !markFits(anchor, table.records, drawn, table.sheet)
       )
         return;
+      navigationGeneration++;
       const top = anchor.row - 1;
       const left = anchor.col - 1;
       // A sorted table holds one cell selected, since a range is not contiguous.
