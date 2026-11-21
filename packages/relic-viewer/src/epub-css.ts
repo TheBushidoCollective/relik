@@ -68,7 +68,10 @@ export function epubCss(
           if (css[i] === '\\') i += 2;
           else if (css[i++] === char) break;
         }
-        result += css.slice(start, i);
+        const value = css.slice(start + 1, Math.max(start + 1, i - 1));
+        result += /(?:https?:|\/\/|data:|javascript:)/i.test(decodeCss(value))
+          ? '""'
+          : css.slice(start, i);
         continue;
       }
       if (char === '@' || /[a-z_-]|\\/i.test(char)) {

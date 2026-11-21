@@ -223,6 +223,8 @@ export async function readEpubPackage(
     const spine = refs.map((ref) => {
       const item = items.get(attribute(ref, 'idref') ?? '');
       if (!item || obscured.has(item.path)) return fail('corrupt');
+      if (index.entries.get(item.path)!.size > 16 * 1024 * 1024)
+        return fail('too-large');
       return { path: item.path, linear: attribute(ref, 'linear') !== 'no' };
     });
     const metadata = children(opf, 'metadata')[0];

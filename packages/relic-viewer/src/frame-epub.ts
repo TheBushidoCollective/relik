@@ -48,14 +48,19 @@ export async function render(
         for (const article of root.querySelectorAll<HTMLElement>(
           'article[data-epub-chapter]'
         )) {
-          const width = article.scrollWidth;
-          if (width > root.clientWidth && width > 0)
+          const width = Number(article.dataset.epubViewportWidth);
+          const height = Number(article.dataset.epubViewportHeight);
+          if (width > 0 && height > 0 && root.clientWidth > 0) {
+            article.style.width = `${width}px`;
+            article.style.height = `${height}px`;
             article.style.zoom = String(root.clientWidth / width);
+          }
         }
       };
       resize();
       addEventListener('resize', resize);
     }
+    const showFootnote = mountEpubChrome(root, book, chapters);
     root.addEventListener(
       'click',
       (event) => {
@@ -67,20 +72,11 @@ export async function render(
         const id = link.getAttribute('href')?.slice(1);
         const dest = id && document.getElementById(id);
         if (!dest) return;
-        if (link.hasAttribute('data-epub-noteref')) {
-          root.querySelector('.epub-footnote')?.remove();
-          const popover = document.createElement('aside');
-          popover.className = 'epub-footnote';
-          const close = document.createElement('button');
-          close.textContent = 'Close';
-          close.addEventListener('click', () => popover.remove());
-          popover.append(close, dest.cloneNode(true));
-          root.append(popover);
-        } else dest.scrollIntoView();
+        if (link.hasAttribute('data-epub-noteref')) showFootnote(dest);
+        else dest.scrollIntoView();
       },
       true
     );
-    mountEpubChrome(root, book, chapters);
     addEventListener(
       'pagehide',
       () => {

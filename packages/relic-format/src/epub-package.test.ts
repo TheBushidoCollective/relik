@@ -99,3 +99,30 @@ test('rejects DTD entity declarations in package XML', async () => {
   );
   expect(result).toEqual({ ok: false, reason: 'corrupt' });
 });
+
+test('refuses oversized chapters and a spine above the limit', async () => {
+  const index = book();
+  const entries = new Map(index.entries);
+  const chapter = entries.get('OPS/chapter.xhtml')!;
+  entries.set(chapter.name, { ...chapter, size: 16 * 1024 * 1024 + 1 });
+  expect(await readEpubPackage({ ...index, entries })).toEqual({
+    ok: false,
+    reason: 'too-large',
+  });
+  const spine = '<itemref idref="c"/>'.repeat(2001);
+  const opf = `<package><metadata/><manifest><item id="c" href="chapter.xhtml" media-type="application/xhtml+xml"/></manifest><spine>${spine}</spine></package>`;
+  expect(await readEpubPackage(book({ 'OPS/book.opf': opf }))).toEqual({
+    ok: false,
+    reason: 'too-large',
+  });
+});
+
+test('refuses external and escaping manifest links', async () => {
+  for (const href of ['https://evil.invalid/x', '../../outside.xhtml']) {
+    const opf = `<package><metadata/><manifest><item id="c" href="${href}" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c"/></spine></package>`;
+    expect(await readEpubPackage(book({ 'OPS/book.opf': opf }))).toEqual({
+      ok: false,
+      reason: 'corrupt',
+    });
+  }
+});

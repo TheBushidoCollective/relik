@@ -52,6 +52,15 @@ export function sanitizeEpubChapter(
   const output = document.createElement('article');
   output.id = epubAnchor(ctx.chapter, '');
   output.dataset.epubChapter = String(ctx.chapter);
+  const viewport =
+    parsed.querySelector('meta[name="viewport"]')?.getAttribute('content') ??
+    '';
+  const width = /(?:^|,)\s*width\s*=\s*(\d+(?:\.\d+)?)/i.exec(viewport);
+  const height = /(?:^|,)\s*height\s*=\s*(\d+(?:\.\d+)?)/i.exec(viewport);
+  if (width && height && Number(width[1]) > 0 && Number(height[1]) > 0) {
+    output.dataset.epubViewportWidth = width[1];
+    output.dataset.epubViewportHeight = height[1];
+  }
   const process = (node: Node, parent: Node): void => {
     if (node.nodeType === Node.TEXT_NODE) {
       parent.appendChild(document.createTextNode(node.nodeValue ?? ''));

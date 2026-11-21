@@ -5,7 +5,7 @@ export function mountEpubChrome(
   root: HTMLElement,
   book: EpubBook,
   chapterByPath: ReadonlyMap<string, number>
-): void {
+): (content: Element) => void {
   const host = document.createElement('div');
   const shadow = host.attachShadow({ mode: 'closed' });
   const style = document.createElement('style');
@@ -82,6 +82,19 @@ export function mountEpubChrome(
   addEventListener('resize', update);
   update();
   bar.append(toggle, smaller, larger, position);
+  const footnote = document.createElement('aside');
+  footnote.className = 'panel';
+  footnote.hidden = true;
+  shadow.append(footnote);
   shadow.append(style, panel, bar);
   root.after(host);
+  return (content) => {
+    const close = document.createElement('button');
+    close.textContent = 'Close';
+    close.addEventListener('click', () => {
+      footnote.hidden = true;
+    });
+    footnote.replaceChildren(close, content.cloneNode(true));
+    footnote.hidden = false;
+  };
 }
