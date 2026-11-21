@@ -15,13 +15,14 @@ test('notebook source maps rendered cells but refuses output selections', async 
   const entry = join(tmpdir(), `relic-nb-entry-${id}.ts`);
   const profile = join(tmpdir(), `relic-nb-profile-${id}`);
   const suggest = resolve(import.meta.dir, '../src/notebook-suggest.ts');
+  const editorModule = resolve(import.meta.dir, '../src/suggest-editor.ts');
   const notebook = resolve(
     import.meta.dir,
     '../../relic-format/src/notebook.ts'
   );
   await writeFile(
     entry,
-    `export { notebookSuggestionSurface, notebookAcceptsSelection } from ${JSON.stringify(suggest)}; export { parseNotebook } from ${JSON.stringify(notebook)};`
+    `export { notebookSuggestionSurface, notebookAcceptsSelection } from ${JSON.stringify(suggest)}; export { parseNotebook } from ${JSON.stringify(notebook)}; export { mountSuggestEditor } from ${JSON.stringify(editorModule)};`
   );
   const build = await Bun.build({
     entrypoints: [entry],
@@ -32,7 +33,7 @@ test('notebook source maps rendered cells but refuses output selections', async 
   const js = await build.outputs[0]!.text();
   const result = Promise.withResolvers<string>();
   const page = `<!doctype html><script type="module">
-    import {notebookSuggestionSurface, notebookAcceptsSelection, parseNotebook} from '/entry.js';
+    import {notebookSuggestionSurface, notebookAcceptsSelection, parseNotebook, mountSuggestEditor} from '/entry.js';
     try {
       const source = ${JSON.stringify(notebookSuggestionFixture)};
       const parsed = parseNotebook(source); if (!parsed.ok) throw Error('fixture refused');
@@ -42,7 +43,7 @@ test('notebook source maps rendered cells but refuses output selections', async 
       const surface = notebookSuggestionSurface(root, parsed.notebook);
       const segments = surface.segments(source);
       const smile = segments.find(s => s.text === '☺');
-      if (!smile || smile.kind !== 'escape' || source.slice(smile.start, smile.end) !== String.raw\x60\\u263a\x60) throw Error('Unicode escape mapping');
+      if (!smile || smile.kind !== 'escape' || source.slice(smile.start, smile.end) !== String.raw\x60\\u263a\x60) throw Error('Unicode escape mapping: ' + JSON.stringify({smile,segments}));
       const newline = segments.find(s => s.text === '\\n');
       if (!newline || newline.kind !== 'escape') throw Error('newline escape mapping');
       if (root.querySelectorAll('[data-seg]').length !== segments.length) throw Error('segment layout');
@@ -55,6 +56,19 @@ test('notebook source maps rendered cells but refuses output selections', async 
       if (!next || surface.encode(smile.block, 'x', smile.start, next.end).ok) throw Error('cross-string edit accepted');
       if (notebookAcceptsSelection(root, root.querySelector('.nb-out').firstChild) === true) throw Error('output accepted');
       if (notebookAcceptsSelection(root, root.querySelector('[data-seg]').firstChild) !== true) throw Error('source refused');
+      let refusal = '';
+      const chrome = document.createElement('div'); document.body.append(chrome);
+      const editor = mountSuggestEditor({root,source,segments,delimiters:[],version:1,reader:'reader@example.test',chrome,surface,onCommit(){},onDraftChange(){},onRefusal(message){refusal=message;}});
+      if (!editor.setSuggesting(true)) throw Error('could not start editor');
+      const select = node => { const range=document.createRange(); range.selectNodeContents(node); const selection=document.getSelection(); selection.removeAllRanges(); selection.addRange(range); };
+      select(root.querySelector('.nb-out'));
+      root.dispatchEvent(new InputEvent('beforeinput',{bubbles:true,cancelable:true,inputType:'insertText',data:'x'}));
+      if (editor.draft || !refusal.includes('Only notebook cell source')) throw Error('output editing was not refused');
+      select(root.querySelector('[data-seg=\"' + segments.indexOf(smile) + '\"]'));
+      root.dispatchEvent(new InputEvent('beforeinput',{bubbles:true,cancelable:true,inputType:'insertText',data:typed}));
+      const prepared=editor.prepare();
+      if (prepared.kind !== 'save' || prepared.plaintext.suggestion.replacement !== insertion.source) throw Error('editor did not commit escaped text');
+      editor.destroy();
       await fetch('/result',{method:'POST',body:'ok'});
     } catch (error) { await fetch('/result',{method:'POST',body:error.stack || String(error)}); }
   </script>`;
@@ -71,7 +85,9 @@ test('notebook source maps rendered cells but refuses output selections', async 
         result.resolve(await request.text());
         return new Response('ok');
       }
-      return new Response(page, { headers: { 'content-type': 'text/html' } });
+      return new Response(page, {
+        headers: { 'content-type': 'text/html; charset=utf-8' },
+      });
     },
   });
   const browser = spawn(

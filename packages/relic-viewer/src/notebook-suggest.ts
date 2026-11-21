@@ -17,6 +17,14 @@ interface Unit {
 export function escapeNotebookText(text: string): string {
   return JSON.stringify(text).slice(1, -1);
 }
+export function decodeNotebookText(source: string): string {
+  try {
+    return JSON.parse(`"${source}"`) as string;
+  } catch {
+    return source;
+  }
+}
+
 /** Encode a complete draft only when its replaced range stays in one string. */
 export function encodeNotebookDraft(
   text: string,
@@ -84,15 +92,7 @@ export function notebookSourceUnits(
 export function notebookSuggestionSurface(
   root: HTMLElement,
   notebook: Notebook
-): SuggestionSurface & {
-  encode(
-    block: number,
-    text: string,
-    start: number,
-    end: number
-  ): { ok: true; source: string } | { ok: false; refusal: SuggestRefusal };
-  acceptsSelection(node: Node): true | SuggestRefusal;
-} {
+): SuggestionSurface {
   const kinds = new Map<number, SuggestBlockKind>();
   const allowed = new Set<number>();
   const tokens = new Map<
@@ -223,6 +223,17 @@ export function notebookSuggestionSurface(
     },
     encode(block, text, start, end) {
       return encodeNotebookDraft(text, start, end, tokens.get(block));
+    },
+    decode(_block, source) {
+      return decodeNotebookText(source);
+    },
+    emptyAnchor(block, position) {
+      const token = tokens.get(block);
+      return token &&
+        token.end === token.start + 2 &&
+        position === token.start + 1
+        ? { start: token.start, end: position, mode: 'after' }
+        : undefined;
     },
     acceptsSelection(node) {
       return notebookAcceptsSelection(root, node);

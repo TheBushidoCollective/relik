@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { parseNotebook } from '@relic/format/notebook';
 import {
+  decodeNotebookText,
   encodeNotebookDraft,
   escapeNotebookText,
   notebookSourceUnits,
@@ -36,6 +37,8 @@ describe('notebook suggestion source', () => {
   test('replacement remains in its JSON string', () => {
     const typed = 'quote " slash \\ and newline\nnext';
     const encoded = escapeNotebookText(typed);
+    expect(decodeNotebookText(encoded)).toBe(typed);
+    expect(decodeNotebookText('bad\\')).toBe('bad\\');
     expect(JSON.parse(`{"source":"${encoded}","outputs":[]}`)).toEqual({
       source: typed,
       outputs: [],
