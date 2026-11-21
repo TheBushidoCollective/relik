@@ -751,6 +751,46 @@ describe('relic_apply_suggestions', () => {
       'subtitle_timings',
     ],
     [
+      'an inline timestamp consumed by a new voice annotation',
+      'data.vtt',
+      'WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nalpha<00:00:01.500>beta\n',
+      'alpha',
+      'alpha<v Speaker ',
+      'subtitle_timings',
+    ],
+    [
+      'an inline timestamp consumed by an annotation on the preceding line',
+      'data.vtt',
+      'WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nalpha\n<00:00:01.500>beta\n',
+      'alpha',
+      'alpha<v Speaker ',
+      'subtitle_timings',
+    ],
+    [
+      'an inline timestamp consumed by a new class annotation',
+      'data.vtt',
+      'WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nalpha<00:00:01.500>beta\n',
+      'alpha',
+      'alpha<c.caption ',
+      'subtitle_timings',
+    ],
+    [
+      'an inline timestamp exposed from an annotation',
+      'data.vtt',
+      'WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nalpha<v Speaker <00:00:01.500>beta\n',
+      '<v Speaker ',
+      '<v Speaker>',
+      'subtitle_timings',
+    ],
+    [
+      'an EOF-terminated inline timestamp consumed by an annotation',
+      'data.vtt',
+      'WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nalpha<00:00:01.500\n',
+      'alpha',
+      'alpha<v Speaker ',
+      'subtitle_timings',
+    ],
+    [
       'changed VTT region settings',
       'data.vtt',
       'WEBVTT\n\nREGION\nid:captions\nlines:3\n\n00:00:01.000 --> 00:00:03.000 region:captions\nalpha\n',
@@ -855,6 +895,26 @@ describe('relic_apply_suggestions', () => {
       );
     }
   );
+
+  test('permits text edits beside timestamp-shaped text inside a VTT annotation', async () => {
+    const target = join(scratch, 'data.vtt');
+    const original =
+      'WEBVTT\n\n00:00:01.000 --> 00:00:03.000\n<v Speaker <00:00:01.500>alpha\n';
+    await writeFile(target, original);
+    await addSuggestion('safe', 'alpha', 'BETA &lt;clear&gt;');
+    const args = {
+      path: target,
+      accept: ['safe'],
+      allow_source_mismatch: true,
+    };
+    const preview = await call(args);
+    expect(preview.isError).toBe(false);
+    const result = await call({ ...args, write: true });
+    expect(result.isError).toBe(false);
+    expect(await readFile(target, 'utf8')).toBe(
+      original.replace('alpha', 'BETA &lt;clear&gt;')
+    );
+  });
 
   test('refuses moving an unchanged inline VTT timestamp to another word', async () => {
     const target = join(scratch, 'data.vtt');

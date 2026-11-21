@@ -366,24 +366,32 @@ function cuePayload(
   };
 }
 
-/** Match the inline timestamp syntax recognized by the subtitle reader. */
+/** Read timestamp tokens in WebVTT markup context, including annotations. */
 function cueTimestampTags(
   source: string,
   cue: SubtitleCue
 ): { start: number; end: number; text: string }[] {
-  const offset = source.charCodeAt(0) === 0xfeff ? 1 : 0;
+  const payload = cuePayload(source, cue);
   const tags: { start: number; end: number; text: string }[] = [];
-  for (const span of cue.textSpans) {
-    const start = span.start + offset;
-    const line = source.slice(start, span.end + offset);
-    for (const match of line.matchAll(/<(?:\d{2,}:)?\d{2}:\d{2}\.\d{3}>/g)) {
-      const tagStart = start + match.index!;
-      tags.push({
-        start: tagStart,
-        end: tagStart + match[0].length,
-        text: match[0],
-      });
+  let at = payload.start;
+  while (at < payload.end) {
+    if (source[at] !== '<') {
+      at += 1;
+      continue;
     }
+    // In WebVTT all tag states consume through the next '>' or cue EOF.
+    // A nested '<' is annotation/tag text, not the start of another token.
+    let end = at + 1;
+    while (end < payload.end && source[end] !== '>') end += 1;
+    const tokenEnd = end < payload.end ? end + 1 : end;
+    const first = source.charCodeAt(at + 1);
+    if (
+      first >= 0x30 &&
+      first <= 0x39 &&
+      /^(?:\d{2,}:)?[0-5]\d:[0-5]\d\.\d{3}$/.test(source.slice(at + 1, end))
+    )
+      tags.push({ start: at, end: tokenEnd, text: source.slice(at, tokenEnd) });
+    at = tokenEnd;
   }
   return tags;
 }
