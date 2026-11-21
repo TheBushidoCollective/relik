@@ -26,6 +26,10 @@ async function exercise(
   const source =
     'name,note\r\nZoe,quick fox\r\nAda,other\r\nLong,long target ' +
     'x'.repeat(600) +
+    '\r\nMedium,' +
+    'm'.repeat(270) +
+    'FIRSTSECOND' +
+    '\r\nUnsafe,invisible target' +
     '\r\n' +
     Array.from({ length: 80 }, (_, i) => `User ${i},item ${i}\r\n`).join('');
   const parsed = module.parseTable(source, { delimiter: ',' });
@@ -114,6 +118,33 @@ async function exercise(
     anchor: { kind: 'source', exact: 'long target' },
     suggestion: { v: 1, mode: 'replace', replacement: 'short' },
   });
+  for (const [id, exact] of [
+    ['medium-1', 'FIRST'],
+    ['medium-2', 'SECOND'],
+  ] as const) {
+    entries.push({
+      kind: 'open',
+      id,
+      author: 'other@example.test',
+      version: 1,
+      createdAt: '2026-01-05T00:00:00Z',
+      body: '',
+      displayName: null,
+      anchor: { kind: 'source', exact },
+      suggestion: { v: 1, mode: 'replace', replacement: 'changed' },
+    });
+  }
+  entries.push({
+    kind: 'open',
+    id: 'unsafe',
+    author: 'other@example.test',
+    version: 1,
+    createdAt: '2026-01-06T00:00:00Z',
+    body: '',
+    displayName: null,
+    anchor: { kind: 'source', exact: 'invisible target' },
+    suggestion: { v: 1, mode: 'replace', replacement: 'bad\u200fvalue' },
+  });
   let observed = '';
   tableRoot.addEventListener('relic:table-suggestion-views', (event) => {
     observed = JSON.stringify((event as CustomEvent).detail?.paint);
@@ -139,6 +170,44 @@ async function exercise(
     )
   )
     throw new Error('long cell has no suggestion indicator');
+  const medium = tableRoot.querySelector<HTMLElement>(
+    '[data-r="4"][data-c="1"]'
+  )!;
+  const indicators = medium.querySelectorAll<HTMLElement>(
+    '.dt-suggestion-indicator'
+  );
+  if (indicators.length !== 1)
+    throw new Error('clipped medium cell did not get one bounded indicator');
+  const indicator = indicators[0]!;
+  const indicatorRect = indicator.getBoundingClientRect();
+  const cellRect = medium.getBoundingClientRect();
+  if (
+    indicatorRect.left < cellRect.left ||
+    indicatorRect.right > cellRect.right ||
+    !indicator.contains(
+      document.elementFromPoint(
+        indicatorRect.x + indicatorRect.width / 2,
+        indicatorRect.y + indicatorRect.height / 2
+      )
+    )
+  )
+    throw new Error('suggestion indicator is clipped or occluded');
+  const unsafe = tableRoot.querySelector<HTMLElement>(
+    '[data-r="5"][data-c="1"]'
+  )!;
+  if (
+    unsafe.textContent?.includes('\u200f') ||
+    !unsafe.textContent?.includes('\\u{200F}')
+  )
+    throw new Error('invisible suggestion was not escaped in the grid');
+  unsafe.dispatchEvent(
+    new MouseEvent('mousedown', { bubbles: true, button: 0 })
+  );
+  document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+  if (!(tableRoot.querySelector('.dt-suggest') as HTMLButtonElement).disabled)
+    throw new Error(
+      'a cell with an invisible pending insertion remained editable'
+    );
   cell().dispatchEvent(
     new MouseEvent('mousedown', { bubbles: true, button: 0 })
   );

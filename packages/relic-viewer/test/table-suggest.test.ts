@@ -34,6 +34,54 @@ function cellModel(text: string, record: number, column: number) {
 }
 
 describe('table suggestion source mapping', () => {
+  test('rejects a draft that changes the auto-detected delimiter', () => {
+    const source = 'a,b;c\r\nrow;target\r\n';
+    const result = parseTable(source);
+    if (!result.ok) throw new Error(result.reason);
+    expect(result.table.delimiter).toBe(';');
+    const cell = tableSuggestionCell(result.table, 1, 1)!;
+    const start = cell.segments[0]!.start;
+    const end = cell.segments[0]!.end;
+    expect(
+      encodeTableSuggestion(result.table, cell, 'x,y', start, end, true)
+    ).toMatchObject({ ok: false, refusal: { code: 'delimiter-in-cell' } });
+    expect(
+      encodeTableSuggestion(result.table, cell, 'x,y', start, end, false)
+    ).toEqual({ ok: true, source: 'x,y' });
+    expect(
+      encodeTableSuggestion(result.table, cell, 'safe', start, end, true)
+    ).toEqual({ ok: true, source: 'safe' });
+  });
+
+  test('keeps a second BOM as data and maps the decoded source exactly', () => {
+    const decoded = new TextDecoder().decode(
+      new TextEncoder().encode('\ufeff\ufeffname,note\r\nAda,cat\r\n')
+    );
+    const result = parseTable(decoded, { skipBom: false });
+    if (!result.ok) throw new Error(result.reason);
+    expect(result.table.bom).toBe(false);
+    const first = tableSuggestionCell(result.table, 0, 0)!;
+    expect(first.segments[0]!.text.startsWith('\ufeff')).toBe(true);
+    const cell = tableSuggestionCell(result.table, 1, 1)!;
+    const source = decoded.replaceAll('\r\n', '\n');
+    expect(source.slice(cell.segments[0]!.start, cell.segments[0]!.end)).toBe(
+      'cat'
+    );
+  });
+
+  test('refuses invisible original characters and typed replacements', () => {
+    for (const hidden of ['\u0007', '\u0085', '\u200f', '\u2028']) {
+      const table = parse(`a,b\nx,hi${hidden}there\n`);
+      expect(tableSuggestionCell(table, 1, 1)!.editable).toMatchObject({
+        code: 'not-editable',
+      });
+      const safe = tableSuggestionCell(table, 1, 0)!;
+      const offset = safe.segments[0]!.start;
+      expect(
+        encodeTableSuggestion(table, safe, hidden, offset, offset)
+      ).toMatchObject({ ok: false, refusal: { code: 'invalid-character' } });
+    }
+  });
   test('refuses to edit a blank row without an insertion anchor', () => {
     const table = parse('name\r\n\r\nlast\r\n');
     const blank = tableSuggestionCell(table, 1, 0)!;

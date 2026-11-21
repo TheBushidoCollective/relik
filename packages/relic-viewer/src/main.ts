@@ -9767,8 +9767,8 @@ export function buildThread(
           const reason =
             guardSurfaceSwap(suggestionController) ??
             (suggestionController?.postInFlight &&
-            event.target instanceof Element &&
-            event.target.closest('.structured-table')
+            event instanceof CustomEvent &&
+            event.detail === 'table-cell'
               ? 'Wait for the suggestion to finish sending.'
               : null);
           if (reason) {

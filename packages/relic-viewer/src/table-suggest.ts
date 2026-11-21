@@ -1,4 +1,10 @@
-import { FIELD_QUOTED, FIELD_STRAY, type CsvTable } from '@relic/format/csv';
+import {
+  detectTableDelimiter,
+  FIELD_QUOTED,
+  FIELD_STRAY,
+  type CsvTable,
+} from '@relic/format/csv';
+import { isInvisible } from '@relic/format/structured-text';
 import type { SourceSegment } from './markdown-source.ts';
 import type { SuggestBlockKind, SuggestRefusal } from './suggest-draft.ts';
 import type { SuggestionSurface } from './suggestion-surface.ts';
@@ -16,9 +22,19 @@ const notEditable: SuggestRefusal = {
   code: 'not-editable',
   message: 'This cell cannot be edited safely.',
 };
-const bidi = /[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/u;
+/** Invisible characters have a visible escaped representation in tables. */
+export function hasTableInvisible(text: string): boolean {
+  for (const character of text) {
+    if (isInvisible(character.codePointAt(0)!)) return true;
+  }
+  return false;
+}
 
 const carriageReturns = new WeakMap<CsvTable, readonly number[]>();
+const normalizedSources = new WeakMap<
+  CsvTable,
+  { source: string; crlf: boolean }
+>();
 
 /** Translate a parser offset into the BOM-free, LF-normalized suggestion source. */
 function suggestionOffset(table: CsvTable, offset: number): number {
@@ -105,7 +121,7 @@ export function tableSuggestionCell(
     editable:
       flags & FIELD_STRAY ||
       raw.includes('\r') ||
-      bidi.test(raw) ||
+      hasTableInvisible(raw) ||
       unanchorable
         ? notEditable
         : true,
@@ -175,22 +191,53 @@ export function encodeTableSuggestion(
   cell: TableSuggestionCell,
   text: string,
   start: number,
-  end: number
+  end: number,
+  autoDelimiter = false
 ):
   | { readonly ok: true; readonly source: string }
   | { readonly ok: false; readonly refusal: SuggestRefusal } {
   if (cell.editable !== true) return { ok: false, refusal: cell.editable };
   const refuse = (
-    code: 'delimiter-in-cell' | 'quote-in-cell',
+    code: 'delimiter-in-cell' | 'quote-in-cell' | 'invalid-character',
     message: string
   ) => ({
     ok: false as const,
     refusal: { kind: 'refused' as const, code, message },
   });
+  if (hasTableInvisible(text))
+    return refuse(
+      'invalid-character',
+      'Invisible control characters cannot be inserted in a table cell.'
+    );
   if (table.delimiter === '\t' && text.includes('\t'))
     return refuse('delimiter-in-cell', 'A tab would split this cell.');
-  if (cell.kind === 'csv-quoted')
-    return { ok: true, source: text.replaceAll('"', '""') };
+  const encoded =
+    cell.kind === 'csv-quoted' ? text.replaceAll('"', '""') : text;
+  if (autoDelimiter && start < 65_536) {
+    let cached = normalizedSources.get(table);
+    if (!cached) {
+      cached = {
+        source: table.text.slice(table.bom ? 1 : 0).replaceAll('\r\n', '\n'),
+        crlf: table.text.includes('\r\n'),
+      };
+      normalizedSources.set(table, cached);
+    }
+    // Only the first 64 Ki UTF-16 positions are inspected by the sniffer.
+    const candidate =
+      cached.source.slice(0, start) +
+      encoded +
+      cached.source.slice(end, end + 65_536);
+    const restored = cached.crlf
+      ? candidate.replaceAll('\n', '\r\n')
+      : candidate;
+    const sniffSource = table.bom ? `\ufeff${restored}` : restored;
+    if (detectTableDelimiter(sniffSource, table.bom) !== table.delimiter)
+      return refuse(
+        'delimiter-in-cell',
+        'This edit would change the detected table delimiter.'
+      );
+  }
+  if (cell.kind === 'csv-quoted') return { ok: true, source: encoded };
   const rawStart = table.fieldStart[cell.field]!;
   const rawEnd = table.fieldEnd[cell.field]!;
   if (
@@ -229,7 +276,8 @@ export function encodeTableSuggestion(
 export function tableCellSurface(
   table: CsvTable,
   cell: TableSuggestionCell,
-  root: HTMLElement
+  root: HTMLElement,
+  autoDelimiter = false
 ): SuggestionSurface {
   const render = (): void => {
     const spans = cell.segments.map((segment, index) => {
@@ -250,7 +298,7 @@ export function tableCellSurface(
     acceptsSelection: (node) =>
       root.contains(node) ? cell.editable : notEditable,
     encode: (_block, text, start, end) =>
-      encodeTableSuggestion(table, cell, text, start, end),
+      encodeTableSuggestion(table, cell, text, start, end, autoDelimiter),
     decode: (_block, source) =>
       cell.kind === 'csv-quoted' ? source.replaceAll('""', '"') : source,
     emptyAnchor: (_block, position) =>

@@ -1449,6 +1449,11 @@ try {
         "document.querySelector('[data-sg-notice]')?.textContent.includes('finish sending')",
         'in-flight swap refusal'
       );
+      await click(page, '.structured-wrap .toggle-row button');
+      await page.wait(
+        "document.querySelector('.structured-wrap .toggle-row button')?.textContent.includes('View table')",
+        'View source remains available while posting'
+      );
     } finally {
       heldComment = undefined;
       resume.resolve();
@@ -1460,6 +1465,11 @@ try {
     await page.wait(
       "document.querySelector('[data-sg-count]')?.textContent.includes('1 suggestion')",
       'CSV post reflected in viewer'
+    );
+    await click(page, '.structured-wrap .toggle-row button');
+    await page.wait(
+      "document.querySelector('.structured-table .dt-grid')",
+      'table after post and source view'
     );
     await click(page, '.structured-table [data-r="1"][data-c="1"]');
     await click(page, '.dt-cellbar .dt-suggest');
@@ -1474,6 +1484,7 @@ try {
     const suggestion = saved.plain.suggestion;
     assert.ok(anchor && anchor.kind === 'source' && suggestion);
     assert.equal(anchor.exact, 'repeat');
+    assert.equal(suggestion.mode, 'replace');
     assert.equal(suggestion.replacement, 'nice ""one""');
     const normalized = TABLE_SUGGEST_PATH_CRLF.slice(1).replaceAll(
       '\r\n',
@@ -1493,6 +1504,10 @@ try {
     if (located?.status !== 'resolved')
       throw new Error('CSV anchor did not resolve');
     assert.equal(located.start, normalized.lastIndexOf('repeat'));
+    assert.equal(
+      located.end,
+      normalized.lastIndexOf('repeat') + 'repeat'.length
+    );
 
     const reopened = await browserInstance.open(fixture.url, tokenA);
     const mark = `.structured-table [data-r="2"][data-c="1"] [data-comment-id="${saved.row.id}"]`;
@@ -1536,6 +1551,13 @@ try {
       "document.querySelector('.popover-card')",
       'CSV suggestion thread opened'
     );
+    assert.equal(
+      await reopened.evaluate<string>(
+        "document.querySelector('.popover-card')?.getAttribute('data-comment-id')"
+      ),
+      saved.row.id,
+      'opened suggestion card does not match the clicked mark'
+    );
     await click(reopened, '.structured-wrap .toggle-row button');
     await reopened.wait(
       "document.querySelector('.structured-wrap .toggle-row button')?.textContent.includes('View table')",
@@ -1546,7 +1568,29 @@ try {
       `document.querySelector(${JSON.stringify(mark)})`,
       'CSV mark after table remount'
     );
-    return 'CSV BOM/CRLF edit posted with escaped quotes on the second repeated cell, blocked an in-flight switch, reopened its thread, and survived sorting, scrolling and remount';
+    const sniff = await publish(
+      join(scratch, 'sniff.csv'),
+      'a,b;c\r\nrow;target\r\n'
+    );
+    const sniffPage = await browserInstance.open(sniff.url, tokenA);
+    await click(sniffPage, '.structured-table [data-r="1"][data-c="1"]');
+    await click(sniffPage, '.dt-cellbar .dt-suggest');
+    await sniffPage.wait(
+      "document.querySelector('.dt-suggest-text[contenteditable=true]')",
+      'auto-detected CSV editor'
+    );
+    await select(sniffPage, '.dt-suggest-text', 'target');
+    await input(sniffPage, 'x,y');
+    await sniffPage.wait(
+      "document.querySelector('.sg-refusal-code')?.textContent.includes('delimiter-in-cell')",
+      'delimiter sniff change refusal'
+    );
+    assert.equal(
+      writesFor(sniff.id, 'POST'),
+      0,
+      'rejected delimiter change posted'
+    );
+    return 'double-BOM/CRLF edit posted on the second repeated cell with the exact replace anchor, blocked a cell switch while allowing Source during a held post, and reopened the correct thread after sort, scroll and remount; delimiter-changing input was refused';
   });
 } finally {
   await ownedBrowser?.close();

@@ -28,6 +28,7 @@ import type { StructuredPart } from './structured-view-bridge.ts';
 import type { TableSource } from './table-source.ts';
 import { LABEL_DISPLAY_LIMIT } from './visible-label.ts';
 import {
+  hasTableInvisible,
   tableCellSurface,
   tableFieldAtRange,
   tableSuggestionCell,
@@ -460,7 +461,7 @@ export function ensureDataTableStyles(): void {
 export function mountDataTable(
   root: HTMLElement,
   table: TableSource,
-  options: { readonly filename: string }
+  options: { readonly filename: string; readonly autoDelimiter?: boolean }
 ): StructuredPart {
   ensureDataTableStyles();
   const drawn = drawnColumnCount(table);
@@ -496,6 +497,12 @@ export function mountDataTable(
   let drawnKey = '';
   let suggestionViews: SuggestionViews | undefined;
   let suggestionCells = new Map<number, SuggestionView[]>();
+  const unsafeSuggestions = (field: number): boolean =>
+    suggestionCells
+      .get(field)
+      ?.some((change) =>
+        hasTableInvisible(change.input?.suggestion.replacement ?? '')
+      ) ?? false;
 
   const keyOf = (record: number, column: number): number =>
     record * TABLE_COLUMN_LIMIT + column;
@@ -570,8 +577,14 @@ export function mountDataTable(
   const openCellEditor = (record: number, column: number): void => {
     const csv = table.csv;
     const cell = csv && tableSuggestionCell(csv, record, column);
-    if (!csv || !cell || cell.editable !== true) return;
-    if (closeCellEditor && !requestSurfaceSwap(root)) return;
+    if (
+      !csv ||
+      !cell ||
+      cell.editable !== true ||
+      unsafeSuggestions(cell.field)
+    )
+      return;
+    if (closeCellEditor && !requestSurfaceSwap(root, 'table-cell')) return;
     closeCellEditor?.();
     const panel = element('div', 'dt-suggest-editor');
     const title = element(
@@ -587,7 +600,7 @@ export function mountDataTable(
     root.append(panel);
     const unregister = registerSuggestionSurface(
       root,
-      tableCellSurface(csv, cell, editorRoot)
+      tableCellSurface(csv, cell, editorRoot, options.autoDelimiter)
     );
     closeCellEditor = () => {
       unregister();
@@ -598,7 +611,7 @@ export function mountDataTable(
       );
     };
     close.addEventListener('click', () => {
-      if (requestSurfaceSwap(root)) closeCellEditor?.();
+      if (requestSurfaceSwap(root, 'table-cell')) closeCellEditor?.();
     });
     root.dispatchEvent(
       new CustomEvent('relic:table-suggest', { bubbles: true })
@@ -793,37 +806,35 @@ export function mountDataTable(
         mapped.segments,
         { ...suggestionViews, paint: changes },
         'markdown',
-        surface.decode?.bind(surface)
+        (block, source) =>
+          visibleText(surface.decode?.(block, source) ?? source)
       );
       for (const mark of text.querySelectorAll<HTMLElement>('[data-sg-id]')) {
         const id = mark.dataset['sgId'];
         if (id) mark.dataset['commentId'] = id;
       }
-    } else if (
-      changes &&
-      mapped &&
-      suggestionViews &&
-      text &&
-      mapped.editable === true &&
-      (role !== 'head' || headerRow)
-    ) {
-      for (const change of changes) {
-        const indicator = element(
-          'button',
-          'dt-suggestion-indicator',
-          change.conflict ? String(change.conflict.members.length) : 'Edit'
-        );
-        indicator.type = 'button';
-        indicator.dataset['sgId'] = change.row.id;
-        indicator.dataset['commentId'] = change.row.id;
-        indicator.setAttribute(
-          'aria-label',
-          change.conflict
-            ? `${change.conflict.members.length} conflicting suggestions`
-            : 'Open suggestion'
-        );
-        cell.append(indicator);
-      }
+    }
+    if (changes?.length && mapped && text && (role !== 'head' || headerRow)) {
+      const first = changes[0]!;
+      const count = changes.reduce(
+        (total, change) => total + (change.conflict?.members.length ?? 1),
+        0
+      );
+      const indicator = element(
+        'button',
+        'dt-suggestion-indicator',
+        count > 1 ? String(count) : 'Edit'
+      );
+      indicator.type = 'button';
+      indicator.dataset['sgId'] = first.row.id;
+      indicator.dataset['commentId'] = first.row.id;
+      indicator.setAttribute(
+        'aria-label',
+        count > 1
+          ? `Open suggestion, ${count} changes in this cell`
+          : 'Open suggestion'
+      );
+      cell.append(indicator);
     }
     paintCell(cell, record, column, role);
     return cell;
@@ -958,9 +969,13 @@ export function mountDataTable(
         const mapped = tableSuggestionCell(table.csv, rect.r0, rect.c0);
         const suggest = element('button', 'dt-suggest', 'Suggest edit');
         suggest.type = 'button';
-        suggest.disabled = !mapped || mapped.editable !== true;
+        const unsafe = mapped && unsafeSuggestions(mapped.field);
+        suggest.disabled = !mapped || mapped.editable !== true || !!unsafe;
         if (mapped && mapped.editable !== true)
           suggest.title = mapped.editable.message;
+        else if (unsafe)
+          suggest.title =
+            'A suggestion in this cell contains invisible characters.';
         suggest.addEventListener('click', () =>
           openCellEditor(rect.r0, rect.c0)
         );
