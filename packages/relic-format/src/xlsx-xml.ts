@@ -158,7 +158,8 @@ export function tokenizeSpreadsheetXml(xml: string, events: XmlEvents): void {
     for (const [key, value] of attrs) {
       if (key !== 'xmlns' && !key.startsWith('xmlns:')) continue;
       const prefix = key === 'xmlns' ? '' : key.slice(6);
-      (scope ??= []).push([prefix, namespaces.get(prefix)]);
+      scope ??= [];
+      scope.push([prefix, namespaces.get(prefix)]);
       namespaces.set(prefix, value);
     }
     events.start(name, attrs, namespaces);
