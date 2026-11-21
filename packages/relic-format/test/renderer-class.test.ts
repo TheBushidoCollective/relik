@@ -210,11 +210,11 @@ describe('the HTML prefix list recognizes real pages', () => {
 });
 
 describe('privilegeTier', () => {
-  test('only html and jsx execute, and they share the top tier', () => {
+  test('html, jsx and documents share the top tier', () => {
     expect(privilegeTier('html')).toBe(3);
     expect(privilegeTier('jsx')).toBe(3);
     for (const cls of RENDERER_CLASSES) {
-      if (cls !== 'html' && cls !== 'jsx') {
+      if (cls !== 'html' && cls !== 'jsx' && cls !== 'document') {
         expect(privilegeTier(cls)).toBeLessThan(3);
       }
     }

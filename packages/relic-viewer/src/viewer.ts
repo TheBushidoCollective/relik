@@ -1271,7 +1271,7 @@ export interface RouteSample {
   readonly component: boolean;
   /** Set when the notebook's whole text parsed as nbformat 4. */
   readonly notebook?: boolean;
-  readonly containerKind?: 'docx' | 'xlsx' | 'epub';
+  readonly containerKind?: 'docx' | 'xlsx' | 'epub' | undefined;
   /** The transpiled component, when the caller has already compiled it. */
   readonly componentModule?: string | undefined;
 }

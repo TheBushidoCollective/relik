@@ -42,6 +42,7 @@ export * from './stream.ts';
 export * from './stream-any.ts';
 export * from './supported-formats.ts';
 export * from './share.ts';
+export * from './xml.ts';
 export * from './zip-write.ts';
 export * from './title.ts';
 export { Crc32, indexZip } from './zip-index.ts';
