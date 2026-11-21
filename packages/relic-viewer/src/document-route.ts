@@ -87,11 +87,23 @@ export async function mountDocumentRoute(
       throw new Error('Protected ebook');
     const entries: [string, Uint8Array][] = [];
     const buffers: Transferable[] = [];
+    const decoder = new TextDecoder();
     for (const [name, info] of index.entries) {
       if (info.kind !== 'file') continue;
       const read = await index.read(name);
       if (!read.ok) throw new Error(read.reason);
-      if (XML_PART.test(name) && scanForbiddenDtd(read.bytes, format))
+      // EPUB manifests may name XHTML without an extension.
+      const prefix = read.bytes.subarray(0, 256);
+      const looksLikeXml =
+        /^\s*</.test(decoder.decode(prefix)) ||
+        (prefix[0] === 0xff && prefix[1] === 0xfe) ||
+        (prefix[0] === 0xfe && prefix[1] === 0xff) ||
+        (prefix[0] === 0x3c && prefix[1] === 0) ||
+        (prefix[0] === 0 && prefix[1] === 0x3c);
+      if (
+        (XML_PART.test(name) || looksLikeXml) &&
+        scanForbiddenDtd(read.bytes, format)
+      )
         throw new Error('Forbidden DTD');
       const bytes = read.bytes;
       if (!(bytes.buffer instanceof ArrayBuffer))
