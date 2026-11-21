@@ -17,6 +17,9 @@ const root = new URL('../../../', import.meta.url).pathname;
 const chrome = process.env.RELIC_CHROME_PATH;
 if (!chrome) throw new Error('Set RELIC_CHROME_PATH to the owned headless shell');
 const moduleText = await Bun.file(`${root}packages/relic-viewer/dist-frame/frame-docx.frame.js`).text();
+const hostBuild = await Bun.build({ entrypoints: [`${root}packages/relic-viewer/test/docx-frame-proof-host.ts`], target: 'browser', format: 'esm' });
+if (!hostBuild.success) throw new Error('DOCX proof host build failed');
+const hostScript = await hostBuild.outputs[0].text();
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64');
 async function packageEntries(children) {
   const zip = await JSZip.loadAsync(await Packer.toBuffer(new Document({ sections: [{ children }] })));
@@ -51,8 +54,9 @@ function entriesFor(kind) {
 let app;
 let usercontentOrigin = '';
 const service = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch(request) {
+  if (new URL(request.url).pathname === '/proof-host.js') return new Response(hostScript, { headers: { 'content-type': 'text/javascript' } });
   const entries = entriesFor(new URL(request.url).searchParams.get('kind'));
-  return new Response(`<!doctype html><style>body{margin:0}iframe{border:0;width:100%;height:850px}</style><iframe src="${usercontentOrigin}/sandbox.html" sandbox="allow-scripts"></iframe><script>window.results=[];addEventListener('message',e=>results.push(e.data));window.begin=()=>document.querySelector('iframe').contentWindow.postMessage({type:'relic:render-document',format:'docx',module:${JSON.stringify(moduleText)},entries:${JSON.stringify(entries)}.map(([p,b])=>[p,new Uint8Array(b)])},'*')</script>`, { headers: { 'content-type': 'text/html' } });
+  return new Response(`<!doctype html><style>body{margin:0}iframe{border:0;width:100%;height:850px}</style><iframe src="${usercontentOrigin}/sandbox.html" sandbox="allow-scripts"></iframe><script>window.results=[];addEventListener('message',e=>results.push(e.data));window.begin=()=>document.querySelector('iframe').contentWindow.postMessage({type:'relic:render-document',format:'docx',module:${JSON.stringify(moduleText)},entries:${JSON.stringify(entries)}.map(([p,b])=>[p,new Uint8Array(b)])},'*')</script><script type="module" src="/proof-host.js"></script>`, { headers: { 'content-type': 'text/html' } });
 } });
 const usercontent = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: (request) => app.fetch(request) });
 const origin = `http://127.0.0.1:${service.port}`;
@@ -134,6 +138,11 @@ try {
       await clickLink('External link');
       const linkRequest = await evaluate(`(async()=>{for(let i=0;i<100;i++){let x=window.results.find(x=>x.type==='relic:open-link');if(x)return x;await new Promise(r=>setTimeout(r,10))}return null})()`);
       assert.equal(linkRequest?.href, 'https://example.invalid/document');
+      const bar = await evaluate(`(async()=>{for(let i=0;i<100;i++){const el=document.querySelector('.link-confirm');if(el&&!el.hidden)return {text:el.textContent,hidden:el.hidden};await new Promise(r=>setTimeout(r,10))}return null})()`);
+      assert.ok(bar && !bar.hidden && bar.text.includes('example.invalid'), 'link confirmation bar did not open');
+      const cancel = await evaluate(`(()=>{const b=[...document.querySelectorAll('.link-confirm button')].find(x=>x.textContent==='Cancel');const r=b.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()`);
+      await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: cancel.x, y: cancel.y, button: 'left', clickCount: 1 }, sessionId);
+      await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: cancel.x, y: cancel.y, button: 'left', clickCount: 1 }, sessionId);
       await clickLink('Go to bookmark');
       const scrolled = await evaluate(`(async()=>{for(let i=0;i<100;i++){if(scrollY>500)return scrollY;await new Promise(r=>setTimeout(r,10))}return scrollY})()`, executionContextId);
       assert.ok(scrolled > 500, `bookmark did not scroll: ${scrolled}`);
