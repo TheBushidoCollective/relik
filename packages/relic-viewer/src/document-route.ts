@@ -1,6 +1,7 @@
 import { indexZip } from '@relic/format/zip-index';
 import { scanForbiddenDtd } from '@relic/format/xml';
 import type { RelicContent } from './content.ts';
+import { includeDocxPart } from './document-payload-docx.ts';
 import type {
   DocumentStateMessage,
   RenderDocumentMessage,
@@ -90,6 +91,7 @@ export async function mountDocumentRoute(
     const decoder = new TextDecoder();
     for (const [name, info] of index.entries) {
       if (info.kind !== 'file') continue;
+      if (format === 'docx' && !includeDocxPart(name)) continue;
       const read = await index.read(name);
       if (!read.ok) throw new Error(read.reason);
       // EPUB manifests may name XHTML without an extension.
