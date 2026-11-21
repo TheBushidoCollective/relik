@@ -42,6 +42,51 @@ const SAFE_ATTR = new Set(
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const MATH_NS = 'http://www.w3.org/1998/Math/MathML';
 
+const MAX_GRADIENT_TRANSFORM_LENGTH = 4096;
+const GRADIENT_TRANSFORMS = new Set([
+  'matrix',
+  'translate',
+  'scale',
+  'rotate',
+  'skewx',
+  'skewy',
+]);
+
+/** Check static SVG transform lists with bounded, single-pass scanning. */
+function isGradientTransform(value: string): boolean {
+  if (value.length > MAX_GRADIENT_TRANSFORM_LENGTH) return false;
+  const input = value.trim();
+  if (input === 'none') return true;
+  let at = 0;
+  let found = false;
+  const skipSpace = () => {
+    while (at < input.length && /\s/.test(input[at]!)) at++;
+  };
+  while (at < input.length) {
+    skipSpace();
+    if (found && input[at] === ',') {
+      at++;
+      skipSpace();
+    }
+    const start = at;
+    while (at < input.length && /[a-z]/i.test(input[at]!)) at++;
+    if (!GRADIENT_TRANSFORMS.has(input.slice(start, at).toLowerCase()))
+      return false;
+    skipSpace();
+    if (input[at++] !== '(') return false;
+    let digit = false;
+    while (at < input.length && input[at] !== ')') {
+      const char = input[at++]!;
+      if (/[0-9]/.test(char)) digit = true;
+      else if (!/[,\s.eE+-]/.test(char)) return false;
+    }
+    if (!digit || input[at++] !== ')') return false;
+    found = true;
+    skipSpace();
+  }
+  return found;
+}
+
 export interface EpubSanitizeContext {
   readonly entries: ReadonlyMap<string, Uint8Array>;
   readonly resources: EpubResources;
@@ -279,14 +324,8 @@ export function sanitizeEpubChapter(
         (tag === 'lineargradient' || tag === 'radialgradient') &&
         name === 'gradienttransform'
       ) {
-        const transform = attr.value.trim();
-        if (
-          transform === 'none' ||
-          /^(?:\s*(?:matrix|translate|scale|rotate|skewX|skewY)\s*\([\s,0-9.eE+-]*\)\s*,?)+$/i.test(
-            transform
-          )
-        )
-          el.setAttribute(attr.name, transform);
+        if (isGradientTransform(attr.value))
+          el.setAttribute(attr.name, attr.value.trim());
       } else if (
         svg &&
         tag === 'radialgradient' &&

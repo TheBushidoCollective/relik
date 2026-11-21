@@ -127,12 +127,16 @@ test('bounds measured raster area without rejecting an unmeasurable image', () =
     ['OPS/ordinary', png(64, 64)],
     ['OPS/large', png(10000, 10000)],
     ['OPS/mislabeled-large', png(10000, 10000)],
+    ['OPS/font-labeled', png(10000, 10000)],
+    ['OPS/ordinary-font', new Uint8Array([119, 79, 70, 50])],
     ['OPS/mislabeled-small', png(32, 32)],
     ['OPS/unknown', new Uint8Array([1, 2, 3])],
   ]);
   const context = resources(entries);
   for (const path of entries.keys()) context.mediaTypes.set(path, 'image/png');
   context.mediaTypes.set('OPS/mislabeled-large', 'image/jpeg');
+  context.mediaTypes.set('OPS/font-labeled', 'font/woff2');
+  context.mediaTypes.set('OPS/ordinary-font', 'font/woff2');
   context.mediaTypes.set('OPS/mislabeled-small', 'image/gif');
   expect(
     epubDataUrl(context, 'OPS/book.xhtml', 'ordinary', 'image')
@@ -154,6 +158,13 @@ test('bounds measured raster area without rejecting an unmeasurable image', () =
   expect(
     epubDataUrl(context, 'OPS/book.xhtml', 'mislabeled-small', 'image')
   ).toBeDefined();
+  expect(
+    epubCss(context, 'OPS/book.xhtml', 'p{background:url(font-labeled)}')
+  ).toContain('url("")');
+  expect(context.omittedImagePaths.has('OPS/font-labeled')).toBe(true);
+  expect(epubDataUrl(context, 'OPS/book.xhtml', 'ordinary-font')).toStartWith(
+    'data:font/woff2;base64,'
+  );
   expect(
     epubDataUrl(context, 'OPS/book.xhtml', 'unknown', 'image')
   ).toBeDefined();

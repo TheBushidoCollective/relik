@@ -4,12 +4,19 @@ const MAX_CSS = 4 * 1024 * 1024;
 const MAX_CSS_REWRITE_BYTES = 256 * 1024 * 1024;
 const MAX_IMAGE_PIXELS = 32 * 1024 * 1024;
 const MAX_BOOK_IMAGE_PIXELS = 128 * 1024 * 1024;
+type UnicodeRange = readonly [number, number];
+interface CachedFontFace {
+  readonly signature: string;
+  readonly prefix: string;
+  readonly ranges: readonly UnicodeRange[];
+}
+
 export interface EpubResources {
   readonly entries: ReadonlyMap<string, Uint8Array>;
   readonly mediaTypes: ReadonlyMap<string, string>;
   readonly dataUrls: Map<string, string>;
   readonly mediaUrls: Map<string, string>;
-  fontFaces?: Map<string, string>;
+  fontFaces?: Map<string, Map<string, CachedFontFace>>;
   imagePixels?: Map<string, number>;
   decodedImagePixels?: number;
   omittedImages?: boolean;
@@ -37,6 +44,125 @@ const FONT_TYPES = new Set([
   'application/vnd.ms-opentype',
   'application/vnd.ms-fontobject',
 ]);
+
+const FONT_STRETCHES: Readonly<Record<string, number>> = {
+  'ultra-condensed': 50,
+  'extra-condensed': 62.5,
+  condensed: 75,
+  'semi-condensed': 87.5,
+  normal: 100,
+  'semi-expanded': 112.5,
+  expanded: 125,
+  'extra-expanded': 150,
+  'ultra-expanded': 200,
+};
+
+const ALL_UNICODE: readonly UnicodeRange[] = [[0, 0x10ffff]];
+
+function fontUnicodeRanges(value: string): readonly UnicodeRange[] {
+  if (!value || value.length > 4096) return ALL_UNICODE;
+  const parts = value.split(',');
+  if (parts.length > 128) return ALL_UNICODE;
+  const ranges: UnicodeRange[] = [];
+  for (const part of parts) {
+    const match = /^u\+([0-9a-f?]{1,6})(?:-([0-9a-f]{1,6}))?$/i.exec(
+      part.trim()
+    );
+    if (
+      !match ||
+      (match[2] && match[1]!.includes('?')) ||
+      /\?[0-9a-f]/i.test(match[1]!)
+    )
+      return ALL_UNICODE;
+    const start = Number.parseInt(match[1]!.replaceAll('?', '0'), 16);
+    const end = match[2]
+      ? Number.parseInt(match[2], 16)
+      : Number.parseInt(match[1]!.replaceAll('?', 'f'), 16);
+    if (start > end || start > 0x10ffff) return ALL_UNICODE;
+    ranges.push([start, Math.min(end, 0x10ffff)]);
+  }
+  ranges.sort((a, b) => a[0] - b[0]);
+  const merged: UnicodeRange[] = [];
+  for (const range of ranges) {
+    const previous = merged.at(-1);
+    if (previous && range[0] <= previous[1] + 1)
+      merged[merged.length - 1] = [
+        previous[0],
+        Math.max(previous[1], range[1]),
+      ];
+    else merged.push(range);
+  }
+  return merged;
+}
+
+function unicodeRangesOverlap(
+  a: readonly UnicodeRange[],
+  b: readonly UnicodeRange[]
+): boolean {
+  let i = 0;
+  let j = 0;
+  while (i < a.length && j < b.length) {
+    if (a[i]![0] <= b[j]![1] && b[j]![0] <= a[i]![1]) return true;
+    if (a[i]![1] < b[j]![1]) i++;
+    else j++;
+  }
+  return false;
+}
+
+/** Only partition faces when their fixed descriptors cannot overlap. */
+function fontFaceIdentity(rule: CSSFontFaceRule): {
+  family: string;
+  slot: string;
+  prefix: string;
+  ranges: readonly UnicodeRange[];
+} {
+  const family = rule.style
+    .getPropertyValue('font-family')
+    .trim()
+    .toLowerCase();
+  const style =
+    rule.style.getPropertyValue('font-style').trim().toLowerCase() || 'normal';
+  const rawWeight = rule.style
+    .getPropertyValue('font-weight')
+    .trim()
+    .toLowerCase();
+  const weight =
+    rawWeight === '' || rawWeight === 'normal'
+      ? 400
+      : rawWeight === 'bold'
+        ? 700
+        : /^\d+(?:\.\d+)?$/.test(rawWeight)
+          ? Number(rawWeight)
+          : NaN;
+  const rawStretch = rule.style
+    .getPropertyValue('font-stretch')
+    .trim()
+    .toLowerCase();
+  const stretch =
+    rawStretch === ''
+      ? 100
+      : (FONT_STRETCHES[rawStretch] ??
+        (/^\d+(?:\.\d+)?%$/.test(rawStretch)
+          ? Number.parseFloat(rawStretch)
+          : NaN));
+  const specific =
+    (style === 'normal' || style === 'italic') &&
+    weight >= 1 &&
+    weight <= 1000 &&
+    Number.isFinite(stretch) &&
+    stretch > 0;
+  if (!specific) return { family, slot: '*', prefix: '*', ranges: ALL_UNICODE };
+  const prefix = `${style}\0${weight}\0${stretch}`;
+  const ranges = fontUnicodeRanges(
+    rule.style.getPropertyValue('unicode-range')
+  );
+  return {
+    family,
+    slot: `${prefix}\0${JSON.stringify(ranges)}`,
+    prefix,
+    ranges,
+  };
+}
 
 /** Contain stylesheet rules without allowing unmatched braces to escape the scope. */
 export function scopeEpubCss(
@@ -134,20 +260,50 @@ export function scopeEpubCss(
     }
     return result;
   };
-  const duplicateFonts = new Set<string>();
+  const duplicateFonts = new Map<string, Set<string>>();
   if (resources && !isolatedSvg) {
-    const sequences = new Map<string, string[]>();
+    const families = new Map<
+      string,
+      {
+        all: string[];
+        slots: Map<
+          string,
+          {
+            sequence: string[];
+            prefix: string;
+            ranges: readonly UnicodeRange[];
+          }
+        >;
+      }
+    >();
     const collectFonts = (rules: CSSRuleList, context = ''): void => {
       for (const rule of Array.from(rules)) {
         if (rule.type === CSSRule.FONT_FACE_RULE) {
-          const family = (rule as CSSFontFaceRule).style
-            .getPropertyValue('font-family')
-            .trim()
-            .toLowerCase();
+          const { family, slot, prefix, ranges } = fontFaceIdentity(
+            rule as CSSFontFaceRule
+          );
           if (family) {
-            const sequence = sequences.get(family) ?? [];
-            sequence.push(`${fontMedia}\0${context}\0${rule.cssText}`);
-            sequences.set(family, sequence);
+            const group = families.get(family) ?? {
+              all: [],
+              slots: new Map<
+                string,
+                {
+                  sequence: string[];
+                  prefix: string;
+                  ranges: readonly UnicodeRange[];
+                }
+              >(),
+            };
+            const signature = `${fontMedia}\0${context}\0${rule.cssText}`;
+            group.all.push(`${slot}\0${signature}`);
+            const entry = group.slots.get(slot) ?? {
+              sequence: [],
+              prefix,
+              ranges,
+            };
+            entry.sequence.push(signature);
+            group.slots.set(slot, entry);
+            families.set(family, group);
           }
         } else if ('cssRules' in rule) {
           const group = rule as CSSGroupingRule;
@@ -162,21 +318,61 @@ export function scopeEpubCss(
     };
     collectFonts(sheet.cssRules);
     resources.fontFaces ??= new Map();
-    const faces = resources.fontFaces;
-    for (const [family, sequence] of sequences) {
-      const signature = JSON.stringify(sequence);
-      if (faces.get(family) === signature) duplicateFonts.add(family);
-      else faces.set(family, signature);
+    for (const [family, group] of families) {
+      const faces =
+        resources.fontFaces.get(family) ?? new Map<string, CachedFontFace>();
+      if (faces.has('!')) continue;
+      // Keep overlap bookkeeping bounded; uncached faces still render normally.
+      if (group.slots.size > 256) {
+        faces.clear();
+        faces.set('!', { signature: '', prefix: '!', ranges: [] });
+        resources.fontFaces.set(family, faces);
+        continue;
+      }
+      const duplicates = new Set<string>();
+      if (group.slots.has('*')) {
+        const signature = JSON.stringify(group.all);
+        if (faces.get('*')?.signature === signature) duplicates.add('*');
+        faces.clear();
+        faces.set('*', { signature, prefix: '*', ranges: ALL_UNICODE });
+      } else {
+        if (faces.has('*')) faces.clear();
+        for (const [slot, entry] of group.slots) {
+          const signature = JSON.stringify(entry.sequence);
+          if (faces.get(slot)?.signature === signature) {
+            duplicates.add(slot);
+            continue;
+          }
+          for (const [otherSlot, previous] of faces)
+            if (
+              previous.prefix === entry.prefix &&
+              unicodeRangesOverlap(previous.ranges, entry.ranges)
+            )
+              faces.delete(otherSlot);
+          faces.set(slot, {
+            signature,
+            prefix: entry.prefix,
+            ranges: entry.ranges,
+          });
+          if (faces.size > 256) {
+            faces.clear();
+            faces.set('!', { signature: '', prefix: '!', ranges: [] });
+            break;
+          }
+        }
+      }
+      resources.fontFaces.set(family, faces);
+      if (duplicates.size) duplicateFonts.set(family, duplicates);
     }
   }
   const rewriteRules = (rules: CSSRuleList, context = ''): string =>
     Array.from(rules, (rule) => {
       if (rule.type === CSSRule.FONT_FACE_RULE) {
-        const family = (rule as CSSFontFaceRule).style
-          .getPropertyValue('font-family')
-          .trim()
-          .toLowerCase();
-        return duplicateFonts.has(family) ? '' : rule.cssText;
+        const { family, slot } = fontFaceIdentity(rule as CSSFontFaceRule);
+        const duplicates = duplicateFonts.get(family);
+        return duplicates?.has('*') || duplicates?.has(slot)
+          ? ''
+          : rule.cssText;
       }
       if (rule.type === CSSRule.STYLE_RULE) {
         const style = rule as CSSStyleRule;
@@ -431,24 +627,23 @@ export function epubDataUrl(
   const limit = FONT_TYPES.has(mime) ? 4 * 1024 * 1024 : 16 * 1024 * 1024;
   if (bytes.length > limit) throw new Error('EPUB resource limit exceeded');
   if (resources.omittedImagePaths?.has(target.path)) return undefined;
-  if (IMAGE_TYPES.has(mime)) {
-    resources.imagePixels ??= new Map();
-    const images = resources.imagePixels;
-    if (!images.has(target.path)) {
-      const pixels = rasterPixels(bytes);
-      const total = resources.decodedImagePixels ?? 0;
-      if (
-        pixels !== undefined &&
-        (pixels > MAX_IMAGE_PIXELS || total + pixels > MAX_BOOK_IMAGE_PIXELS)
-      ) {
-        resources.omittedImages = true;
-        resources.omittedImagePaths ??= new Set();
-        resources.omittedImagePaths.add(target.path);
-        return undefined;
-      }
-      images.set(target.path, pixels ?? 0);
-      if (pixels !== undefined) resources.decodedImagePixels = total + pixels;
+  // CSS URLs can be used as images even when the manifest labels them as fonts.
+  resources.imagePixels ??= new Map();
+  const images = resources.imagePixels;
+  if (!images.has(target.path)) {
+    const pixels = rasterPixels(bytes);
+    const total = resources.decodedImagePixels ?? 0;
+    if (
+      pixels !== undefined &&
+      (pixels > MAX_IMAGE_PIXELS || total + pixels > MAX_BOOK_IMAGE_PIXELS)
+    ) {
+      resources.omittedImages = true;
+      resources.omittedImagePaths ??= new Set();
+      resources.omittedImagePaths.add(target.path);
+      return undefined;
     }
+    images.set(target.path, pixels ?? 0);
+    if (pixels !== undefined) resources.decodedImagePixels = total + pixels;
   }
   let url = resources.dataUrls.get(target.path);
   if (!url && mime === 'image/svg+xml') {
