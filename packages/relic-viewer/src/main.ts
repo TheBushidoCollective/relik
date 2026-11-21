@@ -2159,8 +2159,21 @@ export function buildCurrentStage(
     case 'pdf':
       main.appendChild(renderPdfView(view));
       break;
+    case 'spreadsheet': {
+      const root = document.createElement('section');
+      root.textContent = 'Loading spreadsheet';
+      main.appendChild(root);
+      void import('./spreadsheet-view.ts')
+        .then(({ renderSpreadsheetRoute }) =>
+          renderSpreadsheetRoute(root, view, () => downloadContent(view))
+        )
+        .catch(() => {
+          root.textContent =
+            'This spreadsheet could not be shown. Download the original file.';
+        });
+      break;
+    }
     case 'sandboxed-document':
-    case 'spreadsheet':
       main.appendChild(
         notice(
           'The viewer cannot show this file yet. Download it to inspect it.'

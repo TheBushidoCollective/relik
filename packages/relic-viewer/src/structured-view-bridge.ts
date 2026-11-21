@@ -168,6 +168,16 @@ const loaders: Readonly<
 
 const handles = new WeakMap<HTMLElement, StructuredViewHandle>();
 
+/** Registers a structured route that owns its own asynchronous loading. */
+export function registerStructuredHandle(
+  root: HTMLElement,
+  handle: StructuredViewHandle
+): void {
+  root.classList.add('structured-view', `structured-${handle.kind}`);
+  handles.set(root, handle);
+  root.addEventListener('cleanup', () => handle.dispose(), { once: true });
+}
+
 /** The handle for a structured view inside `host`, drawn or not. */
 export function structuredViewFor(
   host: HTMLElement

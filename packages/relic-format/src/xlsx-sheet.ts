@@ -1,6 +1,7 @@
 import type { CellDetail, WorkbookSheet } from './xlsx.ts';
 import { tokenizeSpreadsheetXml } from './xlsx-xml.ts';
 import { displayNumber, type NumberKind } from './xlsx-number.ts';
+import { translateSharedFormula } from './xlsx-formula.ts';
 
 interface SheetOptions {
   name: string;
@@ -17,8 +18,8 @@ interface Cell {
   value: string;
   inline: string;
   formula: string;
-  formulaKind?: string;
-  sharedId?: string;
+  formulaKind?: string | undefined;
+  sharedId?: string | undefined;
   reference: string;
 }
 function coordinate(ref: string): { row: number; column: number } {
@@ -126,7 +127,11 @@ export function parseWorksheet(
       else {
         const master = masters.get(cell.sharedId);
         if (!master) throw new Error('corrupt');
-        formula = master.formula;
+        formula = translateSharedFormula(
+          master.formula,
+          master.ref,
+          cell.reference
+        );
         sharedFrom = master.ref;
       }
     }

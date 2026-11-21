@@ -438,7 +438,8 @@ export function createApp(options: AppOptions = {}): RelicApp {
       'x-content-type-options': 'nosniff',
       ...(name === 'otio-audio-pcm-worker.js' ||
       name === 'otio-transport-gate-worklet.js' ||
-      name === 'model-parse-worker.js'
+      name === 'model-parse-worker.js' ||
+      name === 'spreadsheet-parse-worker.js'
         ? {
             'content-security-policy':
               name === 'model-parse-worker.js'

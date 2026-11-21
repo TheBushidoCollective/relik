@@ -19,6 +19,7 @@ export * from './fragment.ts';
 export * from './folder-container.ts';
 export * from './folder-stream.ts';
 export * from './gitignore.ts';
+export * from './guards.ts';
 export * from './hosted.ts';
 export * from './id.ts';
 export * from './json-tree.ts';

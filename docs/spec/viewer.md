@@ -268,6 +268,19 @@ The viewer displays binary and ASCII STL and geometry-only OBJ. It does not load
 
 The interactive parser admits at most 16 MiB, 250,000 triangles, 500,000 source vertices, and 1,024 vertices per face. Invalid, unsupported, or over-limit files must produce an error with the original download available. A parser worker can be terminated, but is not an isolation boundary against arbitrary code execution on the viewing origin.
 
+### 3.9 Spreadsheet inspection
+
+XLSX files are parsed in a same-origin worker without executing formulas or
+loading external relationships. The viewer shows worksheet cells as text in a
+table, with sheet tabs and a menu for hidden sheets. Charts and images are not
+shown. Cell comments carry the sheet name; sheets whose names cannot be written
+as anchors remain visible but cannot receive cell comments.
+
+Archives are limited to 100 MiB, 10,000 entries, 100 MiB per entry and 200 MiB
+expanded. A workbook is limited to 256 sheets, 5,000,000 cells and 2,000,000
+shared strings. A sheet exceeding 600,000 rows is refused individually.
+Invalid or oversized files can be downloaded.
+
 ## 4. The sandbox boundary
 
 **Direction is forced, not chosen.** The main origin fetches, decrypts, and posts plaintext to a static shim whose own code never touches ciphertext and never makes a request. The alternative shape, where the usercontent origin fetches and the parent posts it the key, is what somebody reaches for to avoid moving large payloads across a boundary, and it requires the key to cross. That must never happen.

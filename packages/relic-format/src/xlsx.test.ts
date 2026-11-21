@@ -105,4 +105,36 @@ describe('XLSX workbook', () => {
       reason: 'corrupt',
     });
   });
+  test('resolves shared formulas and preserves array formulas', async () => {
+    const result = await parseXlsx(
+      fixture(
+        '<worksheet><sheetData><row r="1"><c r="B1"><f t="shared" si="0">A1+$A$1+LOG10(A1)+&quot;A1&quot;</f><v>1</v></c><c r="C1"><f t="shared" si="0"/><v>2</v></c><c r="D1"><f t="array" ref="D1:D2">SUM(A1:A2)</f><v>3</v></c></row></sheetData></worksheet>'
+      )
+    );
+    if (!result.ok) throw new Error(result.reason);
+    const sheet = result.workbook.sheets[0]!;
+    expect(sheet.details[sheet.cells[5]! - 1]).toEqual({
+      type: 'number',
+      formula: 'B1+$A$1+LOG10(B1)+"A1"',
+      sharedFrom: 'B1',
+    });
+    expect(sheet.details[sheet.cells[8]! - 1]?.formula).toBe('SUM(A1:A2)');
+  });
+  test('refuses XML entities and workbooks with more than 256 sheets', async () => {
+    expect(
+      await parseXlsx(fixture('<!ENTITY injected "x"><worksheet/>'))
+    ).toEqual({ ok: false, reason: 'corrupt' });
+    const sheets = Array.from(
+      { length: 257 },
+      (_, i) => `<sheet name="S${i}" r:id="r1"/>`
+    ).join('');
+    expect(
+      await parseXlsx(
+        fixture(
+          '<worksheet/>',
+          `<workbook><sheets>${sheets}</sheets></workbook>`
+        )
+      )
+    ).toEqual({ ok: false, reason: 'too-large' });
+  });
 });
