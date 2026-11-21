@@ -540,8 +540,11 @@ export async function backfillWraps(
     ) {
       throw new ProblemError('invalid_wrap');
     }
-    if (isDeleted(row, wrap.version)) throw new ProblemError('invalid_wrap');
-    if ((await env.store.getSeal(row.id, wrap.version)) === undefined) {
+    if (
+      isDeleted(row, wrap.version) ||
+      wrap.version > (row.sealedVersion ?? 0) ||
+      (await env.store.getSeal(row.id, wrap.version)) === undefined
+    ) {
       throw new ProblemError('invalid_wrap');
     }
     let recipients = recipientsByRelic.get(row.id);

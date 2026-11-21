@@ -20,6 +20,8 @@ const mails: Array<{ code?: string }> = [];
 let handler: ((request: Request) => Promise<Response>) | undefined;
 let grants = 0;
 let puts = 0;
+let nonces = 0;
+let hideIdentity = false;
 const grantBodies: Record<string, unknown>[] = [];
 const putHeaders: Headers[] = [];
 const service = Bun.serve({
@@ -45,6 +47,9 @@ const app = createApp({
 });
 handler = async (request) => {
   const url = new URL(request.url);
+  if (url.pathname === '/api/attest/nonce') nonces++;
+  if (url.pathname === '/api/identity' && hideIdentity)
+    return Response.json({ identity: null, passkeys: [] });
   if (url.pathname === '/api/grant' && request.method === 'POST') {
     grants++;
     grantBodies.push((await request.clone().json()) as Record<string, unknown>);
@@ -128,6 +133,35 @@ try {
     `[...document.querySelectorAll('.pub-setup-slot button')].find(e=>e.textContent.includes('Set up private key') || e.textContent.includes('set up private key')).click()`
   );
   await wait(`!document.querySelector('.pub-row .action.primary').disabled`);
+  assert.match(
+    await browser.evaluate<string>(
+      `document.querySelector('.pub-setup').innerText`
+    ),
+    /Private owner: owner\+browser@example\.test/
+  );
+  const beforeMismatch = { nonces, grants, puts };
+  hideIdentity = true;
+  await click('.pub-row .action.primary');
+  await wait(`document.body.innerText.includes('Your private owner changed')`);
+  assert.deepEqual({ nonces, grants, puts }, beforeMismatch);
+  assert.equal(
+    await browser.evaluate<boolean>(
+      `document.querySelector('.pub-row .action.primary').disabled`
+    ),
+    true,
+    'identity change must invalidate the reviewed owner'
+  );
+  hideIdentity = false;
+  await browser.evaluate<void>(
+    `[...document.querySelectorAll('.pub-setup button')].find(e=>e.textContent.includes('Retry private setup')).click()`
+  );
+  await wait(`!document.querySelector('.pub-row .action.primary').disabled`);
+  assert.match(
+    await browser.evaluate<string>(
+      `document.querySelector('.pub-setup').innerText`
+    ),
+    /Private owner: owner\+browser@example\.test/
+  );
   await click('.pub-row .action.primary');
   try {
     await browser.waitForSelector('.pub-link', 30000);
@@ -189,7 +223,15 @@ try {
   assert.equal(grants, beforeGrant, 'private setup must not reserve a relic');
   assert.equal(puts, beforePut, 'private setup must not upload');
   await click('.pub-row .action.primary');
-  await browser.waitForSelector('.pub-link', 30000);
+  try {
+    await browser.waitForSelector('.pub-link', 30000);
+  } catch (error) {
+    console.error(
+      'FOLDER_REVIEW_STATE',
+      await browser.evaluate<string>('document.body.innerText')
+    );
+    throw error;
+  }
   const folderLink = await browser.evaluate<string>(
     `document.querySelector('.pub-link').value`
   );

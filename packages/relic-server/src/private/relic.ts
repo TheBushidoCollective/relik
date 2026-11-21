@@ -12,6 +12,7 @@
 
 import type { PasskeyRecord } from '../store.ts';
 import {
+  canonicalJson,
   decodeBase64url,
   fingerprintsEqual,
   identityFingerprint,
@@ -866,9 +867,12 @@ async function deviceSigner(env: PrivateEnv, deviceId: string) {
 // ---------------------------------------------------------------- seal
 
 /**
- * Accepts a seal for the open version (plan 4.12). Checks run in the plan's
- * order; the seal is written before the relic row is moved, and undone if the
- * move is refused, so a refused seal leaves no wraps behind.
+ * Claims the open version with a create-only seal before touching its wraps.
+ * The relic-row CAS commits the seal; only its claimant can undo an unfinished
+ * attempt. An indeterminate commit is fenced, or preserved if the fence fails.
+ * A reader or identical replay can observe the commit before a changed owner
+ * epoch is detected and reverted. Closing that window requires one record or
+ * a conditional write covering both the owner epoch and sealedVersion.
  */
 export async function completeSeal(
   env: PrivateEnv,
@@ -899,24 +903,42 @@ export async function completeSeal(
     throw new ProblemError('private_seal_required');
   }
   const sealBody = input.seal as Record<string, unknown>;
-  // The key commitment is stored with the seal but not checked here: this
-  // service never holds a version key. Every opener checks it before use.
+  // The service cannot check the key commitment without the version key.
   const statement = parseSeal(sealBody['statement']);
-  if (typeof sealBody['signature'] !== 'string') {
+  const signature = sealBody['signature'];
+  if (typeof signature !== 'string') {
     throw new ProblemError('invalid_seal', { seal_check: 'signature' });
   }
   if (statement.relic_id !== row.id) {
     throw new ProblemError('invalid_seal', { seal_check: 'relic_id' });
   }
-  if (
-    statement.version !== row.version ||
-    statement.version <= (row.sealedVersion ?? 0)
-  ) {
+  if (statement.version !== row.version) {
     throw new ProblemError('version_conflict');
   }
 
-  // Signer: the owner's identity, or one of the owner's live devices.
   const kind = sealBody['signer_kind'];
+  const accepted = async (current: RelicRow | undefined): Promise<boolean> => {
+    if (
+      current === undefined ||
+      current.version !== statement.version ||
+      (current.sealedVersion ?? 0) < statement.version
+    ) {
+      return false;
+    }
+    const stored = await env.store.getSeal(row.id, statement.version);
+    return (
+      stored !== undefined &&
+      stored.signerKind === kind &&
+      stored.signerId === statement.signer_id &&
+      stored.signature === signature &&
+      canonicalJson(stored.statement) === canonicalJson(statement)
+    );
+  };
+  const replay =
+    statement.version <= (row.sealedVersion ?? 0) && (await accepted(row));
+
+  // A replay still verifies the signed bytes, including for a since-revoked
+  // device. Revocation prevents new seals, not acknowledgment of an old one.
   if (kind === 'identity') {
     if (statement.signer_id !== owner.identityId) {
       throw new ProblemError('invalid_seal', { seal_check: 'signer' });
@@ -924,7 +946,7 @@ export async function completeSeal(
     const valid = await verifyStatement(
       decodeBase64url(owner.sigPublicKey),
       statementBytes('seal', statement),
-      sealBody['signature']
+      signature
     );
     if (!valid)
       throw new ProblemError('invalid_seal', { seal_check: 'signature' });
@@ -933,7 +955,7 @@ export async function completeSeal(
     if (device === undefined || device.ownerIdentityId !== owner.identityId) {
       throw new ProblemError('invalid_seal', { seal_check: 'signer' });
     }
-    if (device.revokedAt !== undefined)
+    if (device.revokedAt !== undefined && !replay)
       throw new ProblemError('device_revoked');
     if (device.notAfter < statement.at) {
       throw new ProblemError('device_revoked', { device_check: 'expired' });
@@ -941,19 +963,66 @@ export async function completeSeal(
     const valid = await verifyStatement(
       decodeBase64url(device.sigPublicKey),
       statementBytes('seal', statement),
-      sealBody['signature']
+      signature
     );
     if (!valid)
       throw new ProblemError('invalid_seal', { seal_check: 'signature' });
   } else {
     throw new ProblemError('invalid_seal', { seal_check: 'signer_kind' });
   }
-
   if (statement.ciphertext_sha256 !== input.digest) {
     throw new ProblemError('seal_digest_mismatch');
   }
+  if (statement.version <= (row.sealedVersion ?? 0) && !replay) {
+    throw new ProblemError('version_conflict');
+  }
+  const result = (current: RelicRow) => ({
+    version: statement.version,
+    access_epoch: current.accessEpoch ?? 0,
+    digest: input.digest,
+    owner_epoch: owner.recipientsEpoch,
+  });
+  const replayResult = async (current: RelicRow) => {
+    const versionKey = String(statement.version);
+    const oldDigest = current.versionDigests?.[versionKey];
+    if (oldDigest !== undefined && oldDigest !== input.digest) {
+      throw new ProblemError('seal_digest_mismatch');
+    }
+    if (oldDigest !== undefined && current.publishedAt !== undefined) {
+      return result(current);
+    }
+    const stored = await env.store.getSeal(row.id, statement.version);
+    if (stored === undefined) throw new ProblemError('version_conflict');
+    const repaired = await env.store.updateRelic(row.id, (cur) => {
+      if (
+        cur.version !== statement.version ||
+        (cur.sealedVersion ?? 0) < statement.version
+      ) {
+        throw new ProblemError('version_conflict');
+      }
+      const digest = cur.versionDigests?.[versionKey];
+      if (digest !== undefined && digest !== input.digest) {
+        throw new ProblemError('seal_digest_mismatch');
+      }
+      return {
+        ...cur,
+        versionDigests: { ...cur.versionDigests, [versionKey]: input.digest },
+        ...(cur.publishedAt === undefined
+          ? {
+              publishedAt: stored.sealedAt,
+              objectLength: input.objectLength,
+              objectCrc32c: input.objectCrc32c,
+            }
+          : {}),
+      };
+    });
+    if (repaired === undefined) {
+      throw new ProblemError('relic_not_found', { relic_id: row.id });
+    }
+    return result(repaired);
+  };
+  if (replay) return replayResult(row);
 
-  // Recipients: the wraps must be exactly R, which the seal also names.
   if (statement.owner_epoch !== owner.recipientsEpoch) {
     throw new ProblemError('recipients_changed', {
       owner_epoch: owner.recipientsEpoch,
@@ -983,86 +1052,260 @@ export async function completeSeal(
     });
   }
 
-  // Write: wraps and seal first, then the CAS that makes them current.
-  await env.store.deleteWraps(row.id, { version: statement.version });
-  const written: WrapRow[] = [];
-  for (const w of wraps) {
-    const wrapRow: WrapRow = {
-      relicId: row.id,
-      version: w.version,
-      recipientKeyId: w.recipientKeyId,
-      enc: w.enc,
-      ct: w.ct,
-      createdAt: env.now,
-      source: 'seal',
-    };
-    await env.store.putWrap(wrapRow);
-    written.push(wrapRow);
-  }
   const sealRow: SealRow = {
     relicId: row.id,
     version: statement.version,
     statement: sealBody['statement'] as Record<string, unknown>,
-    signature: sealBody['signature'],
+    signature,
     signerKind: kind,
     signerId: statement.signer_id,
     sealedAt: env.now,
   };
+  // A failed or ambiguous claim cannot authorize any cleanup: another
+  // request may own it, or the store may have accepted it before timing out.
   if (!(await env.store.putSeal(sealRow))) {
-    await env.store.deleteWraps(row.id, { version: statement.version });
+    const current = await env.store.getRelic(row.id);
+    if (current !== undefined && (await accepted(current))) {
+      return replayResult(current);
+    }
+    if (
+      current !== undefined &&
+      current.version === statement.version &&
+      (current.sealedVersion ?? 0) < statement.version
+    ) {
+      throw new ProblemError('version_conflict', {
+        relic_id: row.id,
+        retry_after_seconds: 5,
+        detail: 'Another seal for this version is in progress.',
+      });
+    }
     throw new ProblemError('version_conflict');
   }
-  const undo = async () => {
-    await env.store.deleteWraps(row.id, { version: statement.version });
-    await env.store.deleteSeals(row.id, statement.version);
+
+  let touchedWraps = false;
+  let mayBeCommitted = false;
+  let rejectedCommit: ProblemError | undefined;
+  const commitState: {
+    previous?: {
+      sealedVersion: number | undefined;
+      publishedAt: number | undefined;
+      objectLength: number | undefined;
+      objectCrc32c: string | undefined;
+      digest: string | undefined;
+    };
+  } = {};
+  const versionKey = String(statement.version);
+  const refuseWrapConflict = async (): Promise<never> => {
+    const current = await env.store.getRelic(row.id);
+    const currentOwner = await env.store.getIdentity(owner.identityId);
+    if (
+      currentOwner === undefined ||
+      currentOwner.retiredAt !== undefined ||
+      currentOwner.recipientsEpoch !== statement.owner_epoch ||
+      (current !== undefined &&
+        (current.ownerIdentityId !== owner.identityId ||
+          (current.accessEpoch ?? 0) !== statement.access_epoch))
+    ) {
+      throw new ProblemError('recipients_changed', {
+        owner_epoch: currentOwner?.recipientsEpoch ?? owner.recipientsEpoch,
+        access_epoch: current?.accessEpoch ?? row.accessEpoch ?? 0,
+      });
+    }
+    throw new ProblemError('version_conflict');
   };
   try {
-    await env.store.updateRelic(row.id, (cur) => {
-      if (cur.version !== statement.version) {
-        throw new ProblemError('version_conflict');
+    const current = await env.store.getRelic(row.id);
+    const currentOwner = await env.store.getIdentity(owner.identityId);
+    if (
+      current === undefined ||
+      current.version !== statement.version ||
+      (current.sealedVersion ?? 0) !== (row.sealedVersion ?? 0)
+    ) {
+      throw new ProblemError('version_conflict');
+    }
+    if (
+      current.ownerIdentityId !== owner.identityId ||
+      currentOwner === undefined ||
+      currentOwner.retiredAt !== undefined ||
+      currentOwner.recipientsEpoch !== statement.owner_epoch ||
+      (current.accessEpoch ?? 0) !== statement.access_epoch
+    ) {
+      throw new ProblemError('recipients_changed', {
+        owner_epoch: currentOwner?.recipientsEpoch ?? owner.recipientsEpoch,
+        access_epoch: current.accessEpoch ?? 0,
+      });
+    }
+
+    touchedWraps = true;
+    await env.store.deleteWraps(row.id, { version: statement.version });
+    for (const w of wraps) {
+      const wrapRow: WrapRow = {
+        relicId: row.id,
+        version: w.version,
+        recipientKeyId: w.recipientKeyId,
+        enc: w.enc,
+        ct: w.ct,
+        createdAt: env.now,
+        source: 'seal',
+      };
+      if (!(await env.store.putWrap(wrapRow))) {
+        await refuseWrapConflict();
       }
-      if ((cur.accessEpoch ?? 0) !== statement.access_epoch) {
-        throw new ProblemError('recipients_changed', {
-          access_epoch: cur.accessEpoch ?? 0,
-          owner_epoch: owner.recipientsEpoch,
-        });
+    }
+    const expectedWraps = new Map(wraps.map((w) => [w.recipientKeyId, w]));
+    const storedWraps = await env.store.listWraps(row.id, statement.version);
+    if (
+      storedWraps.length !== wraps.length ||
+      storedWraps.some((stored) => {
+        const expected = expectedWraps.get(stored.recipientKeyId);
+        return (
+          expected === undefined ||
+          expected.enc !== stored.enc ||
+          expected.ct !== stored.ct
+        );
+      })
+    ) {
+      await refuseWrapConflict();
+    }
+
+    const beforeCommit = await env.store.getIdentity(owner.identityId);
+    if (
+      beforeCommit === undefined ||
+      beforeCommit.retiredAt !== undefined ||
+      beforeCommit.recipientsEpoch !== statement.owner_epoch
+    ) {
+      throw new ProblemError('recipients_changed', {
+        owner_epoch: beforeCommit?.recipientsEpoch ?? owner.recipientsEpoch,
+        access_epoch: current.accessEpoch ?? 0,
+      });
+    }
+
+    // Include publication metadata and the digest in the same CAS, so a lost
+    // response cannot leave a committed seal with unfinished metadata.
+    mayBeCommitted = true;
+    let committed: RelicRow | undefined;
+    try {
+      committed = await env.store.updateRelic(row.id, (cur) => {
+        if (
+          cur.version !== statement.version ||
+          (cur.sealedVersion ?? 0) !== (row.sealedVersion ?? 0)
+        ) {
+          rejectedCommit = new ProblemError('version_conflict');
+          throw rejectedCommit;
+        }
+        if (
+          cur.ownerIdentityId !== owner.identityId ||
+          (cur.accessEpoch ?? 0) !== statement.access_epoch
+        ) {
+          rejectedCommit = new ProblemError('recipients_changed', {
+            access_epoch: cur.accessEpoch ?? 0,
+            owner_epoch: beforeCommit.recipientsEpoch,
+          });
+          throw rejectedCommit;
+        }
+        const oldDigest = cur.versionDigests?.[versionKey];
+        if (oldDigest !== undefined && oldDigest !== input.digest) {
+          rejectedCommit = new ProblemError('seal_digest_mismatch');
+          throw rejectedCommit;
+        }
+        commitState.previous = {
+          sealedVersion: cur.sealedVersion,
+          publishedAt: cur.publishedAt,
+          objectLength: cur.objectLength,
+          objectCrc32c: cur.objectCrc32c,
+          digest: oldDigest,
+        };
+        return {
+          ...cur,
+          sealedVersion: statement.version,
+          versionDigests: { ...cur.versionDigests, [versionKey]: input.digest },
+          ...(cur.publishedAt === undefined
+            ? {
+                publishedAt: env.now,
+                objectLength: input.objectLength,
+                objectCrc32c: input.objectCrc32c,
+              }
+            : {}),
+        };
+      });
+    } catch (error) {
+      if (error === rejectedCommit) {
+        mayBeCommitted = false;
+        throw error;
       }
-      return { ...cur, sealedVersion: statement.version };
-    });
+      // A second CAS advances the row generation. It either observes the
+      // first commit or prevents a late write based on its old generation.
+      const fenced = await env.store.updateRelic(row.id, (cur) => ({ ...cur }));
+      if (
+        fenced === undefined ||
+        (fenced.sealedVersion ?? 0) < statement.version
+      ) {
+        mayBeCommitted = false;
+        throw error;
+      }
+      committed = fenced;
+    }
+    if (committed === undefined) {
+      mayBeCommitted = false;
+      throw new ProblemError('relic_not_found', { relic_id: row.id });
+    }
+
+    const after = await env.store.getIdentity(owner.identityId);
+    if (
+      after === undefined ||
+      after.retiredAt !== undefined ||
+      after.recipientsEpoch !== statement.owner_epoch
+    ) {
+      const changed = new ProblemError('recipients_changed', {
+        owner_epoch: after?.recipientsEpoch ?? owner.recipientsEpoch,
+        access_epoch: committed.accessEpoch ?? 0,
+      });
+      const prior = commitState.previous;
+      if (prior === undefined) throw changed;
+      const rolledBack = await env.store.updateRelic(row.id, (cur) => {
+        if (
+          cur.version !== statement.version ||
+          cur.sealedVersion !== statement.version ||
+          cur.ownerIdentityId !== owner.identityId ||
+          (cur.accessEpoch ?? 0) !== statement.access_epoch
+        ) {
+          throw changed;
+        }
+        const digests = { ...cur.versionDigests };
+        if (prior.digest === undefined) delete digests[versionKey];
+        else digests[versionKey] = prior.digest;
+        return {
+          ...cur,
+          sealedVersion: prior.sealedVersion,
+          versionDigests:
+            Object.keys(digests).length === 0 ? undefined : digests,
+          ...(prior.publishedAt === undefined
+            ? {
+                publishedAt: prior.publishedAt,
+                objectLength: prior.objectLength,
+                objectCrc32c: prior.objectCrc32c,
+              }
+            : {}),
+        };
+      });
+      if (rolledBack !== undefined) mayBeCommitted = false;
+      throw changed;
+    }
+    return result(committed);
   } catch (error) {
-    await undo();
+    if (!mayBeCommitted) {
+      // Releasing the claim is the last cleanup, and it runs even when the
+      // wrap sweep fails. A remaining wrap is removed by the next claimant.
+      try {
+        if (touchedWraps) {
+          await env.store.deleteWraps(row.id, { version: statement.version });
+        }
+      } finally {
+        await env.store.deleteSeals(row.id, statement.version);
+      }
+    }
     throw error;
   }
-  // The owner's recipients may have moved during the seal (a device revoked,
-  // a recovery changed). Re-check the epoch once; a moved epoch undoes it.
-  const after = await env.store.getIdentity(owner.identityId);
-  if (after !== undefined && after.recipientsEpoch !== statement.owner_epoch) {
-    await env.store.updateRelic(row.id, (cur) =>
-      cur.sealedVersion === statement.version
-        ? { ...cur, sealedVersion: row.sealedVersion }
-        : cur
-    );
-    await undo();
-    throw new ProblemError('recipients_changed', {
-      owner_epoch: after.recipientsEpoch,
-    });
-  }
-  await env.store.recordVersionDigest(row.id, statement.version, input.digest);
-  if (row.publishedAt === undefined) {
-    await env.store.markPublished(
-      row.id,
-      env.now,
-      input.objectLength,
-      input.objectCrc32c
-    );
-  }
-  const current = await env.store.getRelic(row.id);
-  return {
-    version: statement.version,
-    access_epoch: current?.accessEpoch ?? 0,
-    digest: input.digest,
-    owner_epoch: owner.recipientsEpoch,
-  };
 }
 
 // ---------------------------------------------------------------- delete

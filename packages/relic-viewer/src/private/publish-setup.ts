@@ -1,4 +1,4 @@
-import type { RequestOptionsJSON } from '@relic/format';
+import { normalizeEmail, type RequestOptionsJSON } from '@relic/format';
 import { readSession } from '../comments.ts';
 import { submitSignInCode, normalizeSignInCode } from '../sign-in-code.ts';
 import {
@@ -15,9 +15,11 @@ import {
 import {
   credentialsOf,
   loadIdentityState,
+  loadReviewedIdentity,
   postJson,
   PrivateRequestError,
   readField,
+  type ReviewedPrivateOwner,
 } from './keys.ts';
 
 export type PrivateSetupOutcome =
@@ -25,8 +27,13 @@ export type PrivateSetupOutcome =
       readonly kind: 'ready';
       readonly defaultTtlDays: number;
       readonly maxTtlDays: number;
+      readonly owner: ReviewedPrivateOwner;
     }
-  | { readonly kind: 'blocked'; readonly message: string };
+  | {
+      readonly kind: 'blocked';
+      readonly message: string;
+      readonly retryable?: boolean;
+    };
 
 /** Mount sign-in and key setup inside the existing review form. */
 export async function mountPrivatePublishSetup(
@@ -99,6 +106,11 @@ export async function mountPrivatePublishSetup(
     return promise;
   }
 
+  const ready = async (owner: ReviewedPrivateOwner): Promise<void> => {
+    await loadReviewedIdentity(deps, owner, signal);
+    if (!settled) finish({ kind: 'ready', ...capability, owner });
+  };
+
   const button = (label: string): HTMLButtonElement => {
     const control = document.createElement('button');
     control.type = 'button';
@@ -137,7 +149,10 @@ export async function mountPrivatePublishSetup(
           const outcome = await setUpIdentity(deps, email, signal);
           if (settled) return;
           if (outcome.kind === 'ready') {
-            finish({ kind: 'ready', ...capability });
+            await ready({
+              identityId: outcome.identity.identityId,
+              email: outcome.identity.email,
+            });
             return;
           }
           if (outcome.kind === 'replace-offer') {
@@ -176,7 +191,10 @@ export async function mountPrivatePublishSetup(
           );
           if (settled) return;
           if (outcome.kind === 'ready')
-            finish({ kind: 'ready', ...capability });
+            await ready({
+              identityId: outcome.identity.identityId,
+              email: outcome.identity.email,
+            });
           else
             status.textContent =
               'That passkey cannot protect a private key. Nothing was uploaded.';
@@ -204,9 +222,23 @@ export async function mountPrivatePublishSetup(
         signIn();
         return;
       }
-      const state = await loadIdentityState(deps);
+      const state = await loadIdentityState(deps, signal);
       if (settled) return;
       if (state.identity !== null) {
+        if (
+          !state.identity.identity_id ||
+          typeof state.identity.email !== 'string' ||
+          !state.identity.email ||
+          normalizeEmail(state.identity.email) !== normalizeEmail(session.email)
+        ) {
+          finish({
+            kind: 'blocked',
+            message:
+              'Your signed-in account changed. Start private setup again.',
+            retryable: true,
+          });
+          return;
+        }
         if (
           !state.identity.credentials.some((credential) =>
             state.passkeys.some(
@@ -222,13 +254,17 @@ export async function mountPrivatePublishSetup(
               'Your private identity has no bound passkey. Nothing was uploaded.',
           });
         } else {
-          finish({ kind: 'ready', ...capability });
+          await ready({
+            identityId: state.identity.identity_id,
+            email: state.identity.email,
+          });
         }
         return;
       }
       setup(session.email, state.passkeys.length > 0);
     } catch (error) {
-      if (!settled) finish({ kind: 'blocked', message: errorText(error) });
+      if (!settled)
+        finish({ kind: 'blocked', message: errorText(error), retryable: true });
     }
   };
 

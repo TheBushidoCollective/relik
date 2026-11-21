@@ -291,7 +291,7 @@ All proof writes target the local in-memory service. The browser is an isolated 
 
 # Publish from the browser
 
-A visitor opens `/publish`, drops one file, reviews it and its link-preview title, and gets a link whose key never reached the service. The link opens to the file they dropped. A cleared title sends no title and no filename. A file over the page's ceiling, and a dropped folder, are refused before any grant. A file dropped on any relic page, including one that fills the window with a sandboxed frame, opens the same publisher in a dialog over it and makes a new relic, and a relic that takes file drops itself keeps them. The homepage takes a drop the same way, and every page's top bar ends in an Upload button that opens a file chooser and the same dialog.
+A visitor opens `/publish`, drops a file or folder, reviews it and its link-preview title, and gets a link whose key never reached the service. The public title defaults to the original source name and stays separate from the editable encrypted filename, including when ZIP expansion is toggled. A cleared title sends no title and no filename. Folder and ZIP enumeration can be cancelled. A file over the page's ceiling is refused before any grant. A file dropped on any relic page, including one that fills the window with a sandboxed frame, opens the same publisher in a dialog over it and makes a new relic, and a relic that takes file drops itself keeps them. The homepage takes a drop the same way, and every page's top bar ends in an Upload button that opens a file chooser and the same dialog.
 
 ## Acceptance command
 
@@ -306,6 +306,7 @@ Success requires these lines in order, then `BROWSER_PUBLISH_PATH_OK`:
 `PUBLISH_STEP_3_PUBLISHED relic_id=<id> key_in_requests=false plaintext_at_rest=false`,
 `PUBLISH_STEP_4_OPENS content=decrypted`,
 `PUBLISH_STEP_5_CLEARED_TITLE filename_sent=false title_stored=false`,
+`PUBLISH_REVIEW_SAFETY title=original zip_cancel=ok directory_cancel=ok`,
 `PUBLISH_STEP_6_REFUSALS oversize=refused folder=reviewed grants=0`,
 `PUBLISH_STEP_7_DROP_ANYWHERE text_drag=ignored file_drag=curtain dialog=opened new_relic=<id> page_behind=kept`,
 `PUBLISH_STEP_8_REAL_DRAG over_bar=caught over_sandboxed_frame=caught`,
@@ -323,7 +324,7 @@ Private browser publishing has a separate loopback proof:
 RELIC_CHROME_PATH=<isolated-headless-shell> bun packages/relic-mcp/test/browser-private-publish-path.ts
 ```
 
-`BROWSER_PRIVATE_PUBLISH_PATH_OK` requires in-place email-code sign-in, a virtual PRF passkey, a private first publish, a sealed version with no public title or cover, a fragmentless link, and an owner open. It does not prove a second identity's access grant or the production storage preflight.
+`BROWSER_PRIVATE_PUBLISH_PATH_OK` requires in-place email-code sign-in, a virtual PRF passkey, a displayed owner, and a missing-identity refusal before nonce, grant, or upload. It then requires a fresh private review and click, a sealed version with no public title or cover, a fragmentless link, and an owner open. The path does not prove a second identity's access grant or the production storage preflight.
 
 Steps 8 and 9 use the browser's own drag path (`Input.dispatchDragEvent` with a file on disk) over a relic whose frame is a real cross-origin document, so the drag is routed by the browser rather than dispatched by the script. The frame's origin is `127.0.0.1` against the service's `localhost`. With the shim's drag signal removed, step 8 fails at the curtain, which is the negative control that was run.
 

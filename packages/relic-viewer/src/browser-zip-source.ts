@@ -1,9 +1,13 @@
 import { indexZip, MAX_ENTRIES, type ZipRefusal } from '@relic/format';
 import {
+  abortable,
   BROWSER_PUBLISH_LIMIT_BYTES,
   prepareBrowserFolder,
   PublishSourceFailure,
   requireBoundedSize,
+  reservedSegmentReason,
+  rethrowAbort,
+  throwIfAborted,
   type BrowserFolder,
   type BrowserFolderFile,
   type BrowserOmission,
@@ -20,8 +24,14 @@ function zipFailure(refusal: ZipRefusal): PublishSourceFailure {
 /** Index the archive through File slices, validating each entry before publication. */
 export async function prepareBrowserZip(
   file: File,
-  options: { readonly filename?: string; readonly openFirst?: string } = {}
+  options: {
+    readonly filename?: string;
+    readonly openFirst?: string;
+    readonly signal?: AbortSignal;
+  } = {}
 ): Promise<BrowserFolder> {
+  const { signal } = options;
+  throwIfAborted(signal);
   requireBoundedSize(file.size);
   if (!/\.zip$/i.test(file.name)) {
     throw new PublishSourceFailure(
@@ -29,50 +39,68 @@ export async function prepareBrowserZip(
       'Only a selected ZIP file can be expanded into a folder.'
     );
   }
-  const index = await indexZip(
-    {
-      size: file.size,
-      async read(start, end) {
-        try {
-          return new Uint8Array(await file.slice(start, end).arrayBuffer());
-        } catch {
-          throw new Error(
-            `Could not read ${file.name}. Check that it is available on this device.`
-          );
-        }
+  let abortError: unknown;
+  let abortedRead = false;
+  const index = await abortable(
+    indexZip(
+      {
+        size: file.size,
+        async read(start, end) {
+          try {
+            throwIfAborted(signal);
+            const bytes = new Uint8Array(
+              await abortable(file.slice(start, end).arrayBuffer(), signal)
+            );
+            throwIfAborted(signal);
+            return bytes;
+          } catch (error) {
+            try {
+              rethrowAbort(error, signal);
+            } catch (abort) {
+              abortedRead = true;
+              abortError = abort;
+              throw abort;
+            }
+            throw new Error(
+              `Could not read ${file.name}. Check that it is available on this device.`
+            );
+          }
+        },
       },
-    },
-    {
-      maxArchiveBytes: BROWSER_PUBLISH_LIMIT_BYTES,
-      maxEntries: MAX_ENTRIES,
-      maxEntryBytes: BROWSER_PUBLISH_LIMIT_BYTES,
-      maxTotalBytes: BROWSER_PUBLISH_LIMIT_BYTES,
-    }
+      {
+        maxArchiveBytes: BROWSER_PUBLISH_LIMIT_BYTES,
+        maxEntries: MAX_ENTRIES,
+        maxEntryBytes: BROWSER_PUBLISH_LIMIT_BYTES,
+        maxTotalBytes: BROWSER_PUBLISH_LIMIT_BYTES,
+      },
+      undefined,
+      signal
+    ),
+    signal
   );
+  throwIfAborted(signal);
+  if (abortedRead) throw abortError;
   if (!index.ok) throw zipFailure(index);
   const files: BrowserFolderFile[] = [];
   const leftOut: BrowserOmission[] = [];
   for (const entry of index.index.entries.values()) {
-    const parts = entry.name.split('/');
+    throwIfAborted(signal);
     const reason =
-      entry.kind === 'directory'
+      entry.name.split('/').map(reservedSegmentReason).find(Boolean) ??
+      (entry.kind === 'directory'
         ? 'directory'
-        : parts.includes('__MACOSX') ||
-            parts.some((part) => part === '.DS_Store' || part.startsWith('._'))
-          ? 'os_metadata'
-          : parts.includes('.git')
-            ? 'git_metadata'
-            : parts.includes('node_modules')
-              ? 'node_modules'
-              : entry.kind === 'symlink'
-                ? 'symlink'
-                : undefined;
+        : entry.kind === 'symlink'
+          ? 'symlink'
+          : undefined);
     if (reason) {
       leftOut.push({ path: entry.name, reason });
       continue;
     }
     const read = async (): Promise<Uint8Array> => {
-      const result = await index.index.read(entry.name);
+      throwIfAborted(signal);
+      const result = await abortable(index.index.read(entry.name), signal);
+      throwIfAborted(signal);
+      if (abortedRead) throw abortError;
       if (!result.ok) throw zipFailure(result);
       return result.bytes;
     };
@@ -90,6 +118,11 @@ export async function prepareBrowserZip(
     'zip',
     files,
     leftOut,
-    options.openFirst
+    {
+      ...(options.openFirst === undefined
+        ? {}
+        : { openFirst: options.openFirst }),
+      ...(signal === undefined ? {} : { signal }),
+    }
   );
 }

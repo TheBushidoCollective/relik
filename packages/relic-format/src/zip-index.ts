@@ -151,50 +151,84 @@ function checkExtra(bytes: Uint8Array, label: string): void {
 async function inflate(
   data: Uint8Array,
   expected: number,
-  max: number
+  max: number,
+  signal?: AbortSignal
 ): Promise<Uint8Array> {
   if (typeof DecompressionStream === 'undefined')
     return fail('unsupported-method', 'No deflate inflater is available');
+  if (signal?.aborted) return fail('corrupt', 'ZIP operation aborted');
   const stream = new DecompressionStream('deflate-raw');
   const writer = stream.writable.getWriter();
   const reader = stream.readable.getReader();
-  const copy = new Uint8Array(data.length);
-  copy.set(data);
-  const writing = writer
-    .write(copy)
-    .then(() => writer.close())
-    .catch(() => undefined);
-  const chunks: Uint8Array[] = [];
+  const out = new Uint8Array(Math.min(expected, max));
   let total = 0;
+  let stopped = false;
+  let writeFailed = false;
+  let writeError: unknown;
+
+  const stop = (reason?: unknown) => {
+    stopped = true;
+    void reader.cancel(reason).catch(() => undefined);
+    void writer.abort(reason).catch(() => undefined);
+  };
+  const onAbort = () => stop(signal?.reason);
+  signal?.addEventListener('abort', onAbort, { once: true });
+
+  // Limit each input write as well as the output retained below. A compressed
+  // slice can expand inside the browser before its readable stream yields.
+  const writing = (async () => {
+    for (let offset = 0; offset < data.length; ) {
+      if (stopped) return;
+      await writer.ready;
+      if (stopped) return;
+      // DEFLATE's maximum expansion is approximately 1032:1. Keep a small
+      // output allowance even when the claimed entry size is close to zero.
+      const size = Math.min(
+        16 * 1024,
+        Math.max(1, Math.ceil((out.length - total + 1) / 1032)),
+        data.length - offset
+      );
+      const slice = data.subarray(offset, offset + size);
+      const chunk =
+        slice.buffer instanceof ArrayBuffer
+          ? (slice as Uint8Array<ArrayBuffer>)
+          : new Uint8Array(slice);
+      await writer.write(chunk);
+      offset += size;
+    }
+    if (!stopped) await writer.close();
+  })().catch((error: unknown) => {
+    writeFailed = true;
+    writeError = error;
+    stop(error);
+  });
+
   try {
     for (;;) {
+      if (signal?.aborted) return fail('corrupt', 'ZIP operation aborted');
       const result = await reader.read();
+      if (signal?.aborted) return fail('corrupt', 'ZIP operation aborted');
       if (result.done) break;
-      if (total > max - result.value.length) {
-        await reader.cancel();
-        await writer.abort().catch(() => undefined);
+      if (result.value.length > out.length - total)
         return fail('entry-too-large', 'Inflated entry exceeds its bound');
-      }
-      chunks.push(result.value);
+      out.set(result.value, total);
       total += result.value.length;
     }
     await writing;
+    if (signal?.aborted) return fail('corrupt', 'ZIP operation aborted');
+    if (writeFailed) throw writeError;
     if (total !== expected)
       return fail(
         'size-mismatch',
         'Inflated entry length differs from the directory'
       );
-    const out = new Uint8Array(total);
-    let at = 0;
-    for (const chunk of chunks) {
-      out.set(chunk, at);
-      at += chunk.length;
-    }
     return out;
   } catch (error) {
-    await reader.cancel().catch(() => undefined);
-    await writer.abort().catch(() => undefined);
+    stop(error);
+    if (signal?.aborted) return fail('corrupt', 'ZIP operation aborted');
     throw error;
+  } finally {
+    signal?.removeEventListener('abort', onAbort);
   }
 }
 export interface OtioIndexedEntry extends ZipEntryInfo {
@@ -605,14 +639,13 @@ async function indexZipInternal(
           );
         }
       }
+      const activeInflater = customInflater ?? inflater;
       const bytes =
         entry.method === 0
           ? data
-          : await (customInflater ?? inflater ?? inflate)(
-              data,
-              entry.size,
-              entry.size
-            );
+          : activeInflater
+            ? await activeInflater(data, entry.size, entry.size)
+            : await inflate(data, entry.size, entry.size, signal);
       checkAborted();
       if (!(bytes instanceof Uint8Array) || bytes.length !== entry.size)
         return fail(

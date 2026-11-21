@@ -13,6 +13,10 @@ import { MAX_FILENAME_BYTES, normalizeTitle } from '@relic/format';
 import { prepareBrowserDirectory } from './browser-folder-source.ts';
 import { droppedFrom } from './drop-anywhere.ts';
 import {
+  PrivateRequestError,
+  type ReviewedPrivateOwner,
+} from './private/keys.ts';
+import {
   createPrivatePublisher,
   type PrivatePublisher,
 } from './private/publish.ts';
@@ -230,7 +234,12 @@ export type PublishReviewSubmission = Omit<
         readonly title: string;
         readonly cover?: ApprovedCover;
       }
-    | { readonly private: true; readonly title?: never; readonly cover?: never }
+    | {
+        readonly private: true;
+        readonly owner: ReviewedPrivateOwner;
+        readonly title?: never;
+        readonly cover?: never;
+      }
   );
 
 export type PublishPrivateSetup =
@@ -238,6 +247,7 @@ export type PublishPrivateSetup =
       readonly kind: 'ready';
       readonly defaultTtlDays: number;
       readonly maxTtlDays: number;
+      readonly owner: ReviewedPrivateOwner;
     }
   | {
       readonly kind: 'blocked';
@@ -303,6 +313,8 @@ function browserReviewAdapter(deps: PublishDeps): PublishReviewAdapter {
           submission.openFirst,
           submission.ttlDays,
           submission.decisions,
+          submission.owner.identityId,
+          submission.owner.email,
         ]);
         if (
           pending === undefined ||
@@ -326,6 +338,7 @@ function browserReviewAdapter(deps: PublishDeps): PublishReviewAdapter {
           const publisher = createPrivatePublisher({
             deps: privateDeps,
             source: reviewed,
+            owner: submission.owner,
             decisions: submission.decisions,
             ...(submission.ttlDays === undefined
               ? {}
@@ -435,6 +448,7 @@ function createPublisher(
   };
 
   let busy = false;
+  let readingDirectory = false;
 
   const show = (...nodes: Node[]): void => panel.replaceChildren(...nodes);
 
@@ -544,15 +558,41 @@ function createPublisher(
   ): void => {
     if (busy) return;
     if (isFolder && directory === undefined) {
+      dispose();
       busy = true;
-      show(el('p', 'pub-meta', 'Reading files for review.'));
-      void prepareBrowserDirectory(entries, files).then(
+      readingDirectory = true;
+      const scope = new AbortController();
+      releaseReview = () => {
+        scope.abort();
+        busy = false;
+        readingDirectory = false;
+      };
+      const card = el('div', 'pub-card');
+      card.append(
+        el('p', 'pub-meta', 'Reading files for review.'),
+        action('Cancel', ICONS.back, () => {
+          dispose();
+          if (onClose === undefined) idle();
+          else onClose();
+        })
+      );
+      show(card);
+      void prepareBrowserDirectory(entries, files, {
+        signal: scope.signal,
+      }).then(
         (prepared) => {
+          if (scope.signal.aborted) return;
+          // The reviewed folder keeps this signal for its later reads, so the
+          // review's own dispose must not abort the finished read.
+          releaseReview = undefined;
           busy = false;
+          readingDirectory = false;
           review(files, true, entries, prepared);
         },
         (error: unknown) => {
+          if (scope.signal.aborted) return;
           busy = false;
+          readingDirectory = false;
           idle(
             error instanceof Error
               ? error.message
@@ -602,7 +642,7 @@ function createPublisher(
       `${id}-name`,
       'Encrypted filename',
       filename,
-      'Stored inside the encrypted relic.'
+      'Stored inside the encrypted relic. It does not change the public title.'
     );
     const expansion = el('div', 'pub-option');
     expansion.hidden = !eligible;
@@ -694,14 +734,14 @@ function createPublisher(
     );
 
     const title = el('input', 'pub-input pub-title');
-    title.value = normalizeTitle(defaultName());
+    title.value = normalizeTitle(sourceName);
     title.spellcheck = false;
     title.autocomplete = 'off';
     const titleField = reviewField(
       `${id}-title`,
       'Public title',
       title,
-      'Defaults to the encrypted name. Relik and link preview services can read it without the key. Clear the field to omit it.'
+      'Defaults to the original source name. Relik and link preview services can read it without the key. Clear the field to omit it.'
     );
     const cover = el('input', 'pub-cover');
     cover.type = 'checkbox';
@@ -765,15 +805,16 @@ function createPublisher(
 
     let live = true;
     let editedName = false;
-    let editedTitle = false;
     let invalidField: HTMLInputElement | undefined;
     let folder: ReviewedFolderSource | undefined = directory;
     let loadingFolder = false;
+    let folderScope: AbortController | undefined;
     let setupScope: AbortController | undefined;
     let privateSettings:
       | Extract<PublishPrivateSetup, { kind: 'ready' }>
       | undefined;
     let coverRevision = 0;
+    let coverScope: AbortController | undefined;
     let coverUrl: string | undefined;
     let approved:
       | {
@@ -825,6 +866,8 @@ function createPublisher(
 
     const disposeCover = (): void => {
       coverRevision += 1;
+      coverScope?.abort();
+      coverScope = undefined;
       approved = undefined;
       preview.hidden = true;
       preview.replaceChildren();
@@ -860,6 +903,8 @@ function createPublisher(
         return;
       }
       const revision = coverRevision;
+      const scope = new AbortController();
+      coverScope = scope;
       const name = effectiveName();
       const chosen = entry();
       const active = (): boolean => live && revision === coverRevision;
@@ -868,7 +913,11 @@ function createPublisher(
       try {
         const source = folderSelected()
           ? reviewFolder(name, chosen)
-          : await prepare(file!, { filename: name, expand: false });
+          : await prepare(file!, {
+              filename: name,
+              expand: false,
+              signal: scope.signal,
+            });
         if (!active()) return;
         const result = await makeCover(source.preview);
         if (!active()) return;
@@ -937,11 +986,15 @@ function createPublisher(
       )
         return;
       loadingFolder = true;
+      const scope = new AbortController();
+      folderScope = scope;
       zipStatus.textContent = 'Checking folder entries on this device.';
       syncFolder();
       try {
-        const source = folder ?? (await prepare!(file!, { expand: true }));
-        if (!live) return;
+        const source =
+          folder ??
+          (await prepare!(file!, { expand: true, signal: scope.signal }));
+        if (!live || scope.signal.aborted || !folderSelected()) return;
         if (source.shape !== 'folder')
           throw new Error('Could not read this ZIP as a folder.');
         folder = source;
@@ -1017,15 +1070,18 @@ function createPublisher(
         folderDetails.replaceChildren(detail, ...warnings, fileList);
         zipStatus.textContent = '';
       } catch (error) {
-        if (!live) return;
+        if (!live || scope.signal.aborted) return;
         const message =
           error instanceof Error ? error.message : 'Could not expand this ZIP.';
         zipStatus.textContent = `${message} You can publish the ZIP as one file instead.`;
       } finally {
-        loadingFolder = false;
-        if (live) {
-          syncFolder();
-          if (folderSelected() && cover.checked) void refreshCover();
+        if (folderScope === scope) {
+          folderScope = undefined;
+          loadingFolder = false;
+          if (live) {
+            syncFolder();
+            if (folderSelected() && cover.checked) void refreshCover();
+          }
         }
       }
     };
@@ -1076,14 +1132,18 @@ function createPublisher(
         Number.isSafeInteger(result.defaultTtlDays) &&
         Number.isSafeInteger(result.maxTtlDays) &&
         result.defaultTtlDays >= 1 &&
-        result.defaultTtlDays <= result.maxTtlDays
+        result.defaultTtlDays <= result.maxTtlDays &&
+        typeof result.owner?.identityId === 'string' &&
+        result.owner.identityId.length > 0 &&
+        typeof result.owner.email === 'string' &&
+        result.owner.email.length > 0
       ) {
         privateSettings = result;
-        setupStatus.textContent =
-          'Private access is set up. Review your options, then publish.';
+        setupStatus.textContent = `Private owner: ${result.owner.email}. Review your options, then publish.`;
       } else {
         setupStatus.textContent =
-          'The service did not provide a usable private expiration policy.';
+          'The service did not provide a usable private identity or expiration policy.';
+        retrySetup.hidden = false;
       }
       updateExpiry();
       syncSubmit();
@@ -1107,7 +1167,6 @@ function createPublisher(
 
     filename.addEventListener('input', () => {
       editedName = true;
-      if (!editedTitle) title.value = normalizeTitle(filename.value);
       if (cover.checked) {
         disposeCover();
         coverStatus.textContent =
@@ -1118,15 +1177,17 @@ function createPublisher(
     filename.addEventListener('change', () => {
       if (cover.checked) void refreshCover();
     });
-    title.addEventListener('input', () => {
-      editedTitle = true;
-    });
     title.addEventListener('change', () => {
       title.value = normalizeTitle(title.value);
     });
     expand.addEventListener('change', () => {
+      if (!expand.checked) {
+        folderScope?.abort();
+        folderScope = undefined;
+        loadingFolder = false;
+        zipStatus.textContent = '';
+      }
       if (!editedName) filename.value = defaultName();
-      if (!editedTitle) title.value = normalizeTitle(effectiveName());
       syncFolder();
       void refreshCover();
       void checkFolder();
@@ -1205,15 +1266,24 @@ function createPublisher(
             : { openFirst: draft.openFirst }),
           ...(source === undefined ? {} : { source }),
         };
+        if (draft.private && privateSettings === undefined) return;
         const submission: PublishReviewSubmission = draft.private
-          ? { ...base, private: true }
+          ? { ...base, private: true, owner: privateSettings!.owner }
           : {
               ...base,
               private: false,
               title: draft.title,
               ...(raster === undefined ? {} : { cover: raster.cover }),
             };
-        void start(submission, card, showProblem);
+        void start(submission, card, showProblem, () => {
+          adapter.dispose?.();
+          disposeSetup();
+          setupStatus.textContent =
+            'Your private owner changed. Set up and review private access again.';
+          retrySetup.hidden = false;
+          updateExpiry();
+          syncSubmit();
+        });
       } catch (error) {
         showProblem(
           error instanceof Error
@@ -1225,6 +1295,8 @@ function createPublisher(
 
     releaseReview = () => {
       live = false;
+      folderScope?.abort();
+      folderScope = undefined;
       disposeCover();
       disposeSetup();
     };
@@ -1365,7 +1437,8 @@ function createPublisher(
   const start = async (
     submission: PublishReviewSubmission,
     reviewCard: HTMLFormElement,
-    showProblem: (message: string) => void
+    showProblem: (message: string) => void,
+    invalidatePrivateReview: () => void
   ): Promise<void> => {
     if (busy) return;
     busy = true;
@@ -1416,15 +1489,30 @@ function createPublisher(
       busy = false;
       status.textContent = '';
       show(reviewCard);
-      showProblem(
-        error instanceof PublishFailure || error instanceof PublishSourceFailure
-          ? error.message
-          : 'Could not finish publishing. No link was shown.'
-      );
+      if (
+        submission.private &&
+        error instanceof PrivateRequestError &&
+        error.code === 'private_owner_changed'
+      ) {
+        invalidatePrivateReview();
+        showProblem(
+          'Your private owner changed. Review private access again before publishing.'
+        );
+      } else {
+        showProblem(
+          error instanceof PublishFailure ||
+            error instanceof PublishSourceFailure
+            ? error.message
+            : error instanceof PrivateRequestError &&
+                error.code === 'private_publish_in_progress'
+              ? 'Publishing may still be finishing. Try again to check its status.'
+              : 'Could not finish publishing. No link was shown.'
+        );
+      }
     }
   };
 
-  return { idle, review, isBusy: () => busy, dispose };
+  return { idle, review, isBusy: () => busy && !readingDirectory, dispose };
 }
 
 export async function mountPublish(

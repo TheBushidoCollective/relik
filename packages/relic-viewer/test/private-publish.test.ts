@@ -29,6 +29,10 @@ async function world(
     forgedRoster?: boolean;
     recipientsChangedOnce?: boolean;
     invalidGrant?: 'id' | 'access' | 'target' | 'length' | 'expiry';
+    identityChangeAfter?: 'nonce' | 'grant';
+    lostBeforeSeal?: boolean;
+    holdCompletion?: boolean;
+    completionConflict?: boolean;
     unsupported?: boolean;
   } = {}
 ) {
@@ -95,6 +99,15 @@ async function world(
     | undefined;
   let lost = false;
   let changed = false;
+  let currentIdentity: typeof identity | null = identity;
+  let delayed:
+    | { seal: Record<string, unknown>; wraps: Record<string, unknown>[] }
+    | undefined;
+  const held = Promise.withResolvers<void>();
+  const completionStarted = Promise.withResolvers<void>();
+  const changeIdentity = (): void => {
+    currentIdentity = { ...identity, identity_id: 'different-owner' };
+  };
   const fetch = async (
     input: string | URL | Request,
     init?: RequestInit
@@ -118,10 +131,11 @@ async function world(
       });
     if (path === '/api/identity')
       return json({
-        identity,
+        identity: currentIdentity,
         passkeys: [{ credential_id: credentialId, bound: true }],
       });
-    if (path === '/api/attest/nonce')
+    if (path === '/api/attest/nonce') {
+      if (options.identityChangeAfter === 'nonce') changeIdentity();
       return json({
         nonce: encodeBase64url(crypto.getRandomValues(new Uint8Array(32))),
         public_key: {
@@ -129,8 +143,10 @@ async function world(
           allowCredentials: [{ type: 'public-key', id: credentialId }],
         },
       });
+    }
     if (path === '/api/grant') {
       relicId = String(body['relic_id']);
+      if (options.identityChangeAfter === 'grant') changeIdentity();
       return json({
         relic_id:
           options.invalidGrant === 'id'
@@ -170,14 +186,23 @@ async function world(
         recipient_key_ids: options.forgedRoster ? ['f'.repeat(64)] : [keyId],
       });
     if (path === `/api/relics/${relicId}/complete`) {
+      completionStarted.resolve();
       if (options.recipientsChangedOnce && !changed) {
         changed = true;
         return json({ code: 'recipients_changed' }, 409);
       }
-      stored = {
+      delayed = {
         seal: body['seal'] as Record<string, unknown>,
         wraps: body['wraps'] as Record<string, unknown>[],
       };
+      if (options.lostBeforeSeal && !lost) {
+        lost = true;
+        throw new Error('connection lost while seal may still be in flight');
+      }
+      if (options.holdCompletion) await held.promise;
+      stored = delayed;
+      if (options.completionConflict)
+        return json({ code: 'version_conflict' }, 409);
       if (options.loseCompletion && !lost) {
         lost = true;
         throw new Error('connection lost after seal');
@@ -223,8 +248,10 @@ async function world(
   const content = new TextEncoder().encode('private browser test');
   let uploads = 0;
   let encrypted = 0;
+  let versionKey: Uint8Array | undefined;
   const publisher = createPrivatePublisher({
     deps,
+    owner: { identityId: keys.identityId, email },
     ttlDays: 7,
     decisions: true,
     source: {
@@ -232,6 +259,7 @@ async function world(
       rendererClass: 'code',
       async encrypt(key) {
         encrypted++;
+        versionKey = key;
         return encryptRelic({
           content,
           filename: 'secret.txt',
@@ -249,6 +277,24 @@ async function world(
   return {
     publisher,
     calls,
+    completionStarted: completionStarted.promise,
+    changeIdentity,
+    changeEmail() {
+      currentIdentity = { ...identity, email: 'other@example.com' };
+    },
+    clearIdentity() {
+      currentIdentity = null;
+    },
+    acceptDelayedSeal() {
+      if (delayed === undefined) throw new Error('no completion was sent');
+      stored = delayed;
+    },
+    releaseCompletion() {
+      held.resolve();
+    },
+    get keyCleared() {
+      return versionKey?.every((byte) => byte === 0) ?? false;
+    },
     get uploads() {
       return uploads;
     },
@@ -340,3 +386,101 @@ for (const invalidGrant of [
     expect(w.calls.some((call) => call.path.endsWith('/complete'))).toBe(false);
   });
 }
+
+for (const change of ['identity', 'email', 'missing'] as const) {
+  test(`a ${change} owner at publish requires a new review before nonce or grant`, async () => {
+    const w = await world();
+    if (change === 'identity') w.changeIdentity();
+    else if (change === 'email') w.changeEmail();
+    else w.clearIdentity();
+    await expect(w.publisher.publish()).rejects.toThrow(
+      'private_owner_changed'
+    );
+    expect(w.calls.some((call) => call.path === '/api/attest/nonce')).toBe(
+      false
+    );
+    expect(w.calls.some((call) => call.path === '/api/grant')).toBe(false);
+    expect(w.uploads).toBe(0);
+    await expect(w.publisher.retry()).rejects.toThrow(
+      'private_publish_disposed'
+    );
+  });
+}
+
+test('an owner change during attestation prevents the grant', async () => {
+  const w = await world({ identityChangeAfter: 'nonce' });
+  await expect(w.publisher.publish()).rejects.toThrow('private_owner_changed');
+  expect(w.calls.some((call) => call.path === '/api/attest/nonce')).toBe(true);
+  expect(w.calls.some((call) => call.path === '/api/grant')).toBe(false);
+  expect(w.uploads).toBe(0);
+  expect(w.keyCleared).toBe(true);
+  await expect(w.publisher.retry()).rejects.toThrow('private_publish_disposed');
+});
+
+test('an owner change after the grant prevents the upload', async () => {
+  const w = await world({ identityChangeAfter: 'grant' });
+  await expect(w.publisher.publish()).rejects.toThrow('private_owner_changed');
+  expect(w.calls.some((call) => call.path === '/api/grant')).toBe(true);
+  expect(w.uploads).toBe(0);
+  expect(w.keyCleared).toBe(true);
+  await expect(w.publisher.retry()).rejects.toThrow('private_publish_disposed');
+});
+
+test('a retry checks the reviewed owner before reading or modifying a pending seal', async () => {
+  const w = await world({ lostBeforeSeal: true });
+  await expect(w.publisher.publish()).rejects.toThrow();
+  const priorCalls = w.calls.length;
+  w.changeIdentity();
+  await expect(w.publisher.retry()).rejects.toThrow('private_owner_changed');
+  expect(w.calls.slice(priorCalls).map((call) => call.path)).toEqual([
+    '/api/identity',
+  ]);
+  expect(
+    w.calls.filter((call) => call.path.endsWith('/complete'))
+  ).toHaveLength(1);
+  await expect(w.publisher.retry()).rejects.toThrow('private_publish_disposed');
+});
+
+test('a second publish cannot issue completion while the first is in flight', async () => {
+  const w = await world({ holdCompletion: true });
+  const first = w.publisher.publish();
+  await w.completionStarted;
+  await expect(w.publisher.retry()).rejects.toThrow(
+    'private_publish_in_progress'
+  );
+  expect(
+    w.calls.filter((call) => call.path.endsWith('/complete'))
+  ).toHaveLength(1);
+  w.releaseCompletion();
+  expect((await first).access).toBe('private');
+});
+
+test('an ambiguous completion is only read back until its original seal is accepted', async () => {
+  const w = await world({ lostBeforeSeal: true });
+  await expect(w.publisher.publish()).rejects.toThrow();
+  await expect(w.publisher.retry()).rejects.toThrow(
+    'private_publish_in_progress'
+  );
+  expect(
+    w.calls.filter((call) => call.path.endsWith('/complete'))
+  ).toHaveLength(1);
+  w.acceptDelayedSeal();
+  const result = await w.publisher.retry();
+  expect(result.access).toBe('private');
+  expect(
+    w.calls.filter((call) => call.path.endsWith('/complete'))
+  ).toHaveLength(1);
+  expect(w.uploads).toBe(1);
+});
+
+test('a completion conflict returns the verified accepted seal without a second completion', async () => {
+  const w = await world({ completionConflict: true });
+  const result = await w.publisher.publish();
+  expect(result.access).toBe('private');
+  expect(
+    w.calls.filter((call) => call.path.endsWith('/complete'))
+  ).toHaveLength(1);
+  expect(w.calls.some((call) => call.path.endsWith('/versions/1/key'))).toBe(
+    true
+  );
+});

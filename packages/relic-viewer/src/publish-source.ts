@@ -4,10 +4,13 @@ import {
   guessMimetype,
 } from '@relic/format';
 import {
+  abortable,
   checkFilename,
   checkPreviewLimit,
   PublishSourceFailure,
   requireBoundedSize,
+  rethrowAbort,
+  throwIfAborted,
   type ReviewedPublishSource,
 } from './browser-folder-preflight.ts';
 import { prepareBrowserZip } from './browser-zip-source.ts';
@@ -33,6 +36,8 @@ export interface PreparePublishSourceOptions {
   readonly filename?: string;
   /** Undefined selects automatically; a missing or invalid path is refused. */
   readonly openFirst?: string;
+  /** Cancel local source review before it completes. */
+  readonly signal?: AbortSignal;
 }
 
 export function canExpandZip(file: Pick<File, 'name'>): boolean {
@@ -47,6 +52,7 @@ export async function preparePublishSource(
   file: File,
   options: PreparePublishSourceOptions = {}
 ): Promise<ReviewedPublishSource> {
+  throwIfAborted(options.signal);
   requireBoundedSize(file.size);
   const eligible = canExpandZip(file);
   const expand = options.expand ?? eligible;
@@ -71,13 +77,17 @@ export async function preparePublishSource(
       ...(options.openFirst === undefined
         ? {}
         : { openFirst: options.openFirst }),
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
     });
   }
 
   let bytes: Uint8Array;
   try {
-    bytes = new Uint8Array(await file.arrayBuffer());
-  } catch {
+    throwIfAborted(options.signal);
+    bytes = new Uint8Array(await abortable(file.arrayBuffer(), options.signal));
+    throwIfAborted(options.signal);
+  } catch (error) {
+    rethrowAbort(error, options.signal);
     throw new PublishSourceFailure(
       'source_unreadable',
       'This file could not be read. Check that it is available on this device.'

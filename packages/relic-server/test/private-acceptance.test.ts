@@ -13,13 +13,14 @@ import {
   signStatement,
   statementBytes,
   keyCommitment,
+  unwrapVersionKey,
   wrapVersionKey,
   type IdentityKeys,
 } from '@relic/format/private';
 import { encryptedSize, type RequestOptionsJSON } from '@relic/format';
 import { createApp, type RelicApp } from '../src/app.ts';
 import { MemoryStorage } from '../src/storage.ts';
-import { MemoryStore, type RelicRow } from '../src/store.ts';
+import { MemoryStore, type RelicRow, type WrapRow } from '../src/store.ts';
 import { fakeAuthenticator } from './fake-authenticator.ts';
 import { DAY, NOW, RELIC_ID } from './private-fixtures.ts';
 
@@ -113,11 +114,16 @@ function post(
 async function send(
   path: string,
   init: RequestInit & { cookie?: string } = {}
-): Promise<{ status: number; body: Record<string, unknown> }> {
+): Promise<{
+  status: number;
+  body: Record<string, unknown>;
+  headers: Headers;
+}> {
   const response = await app.fetch(req(path, init));
   const text = await response.text();
   return {
     status: response.status,
+    headers: response.headers,
     body:
       text.length === 0 ? {} : (JSON.parse(text) as Record<string, unknown>),
   };
@@ -511,6 +517,55 @@ async function buildSealVersionTwo(
     },
     key,
   };
+}
+
+function latch() {
+  const { promise, resolve } = Promise.withResolvers<void>();
+  return { promise, release: resolve };
+}
+
+async function ownerVersionKey(owner: Person, version: number) {
+  const response = await send(
+    `/api/relics/${RELIC_ID}/versions/${version}/key`,
+    post({}, owner.cookie)
+  );
+  expect(response.status).toBe(200);
+  const wrapped = response.body['wrap'] as { enc: string; ct: string };
+  const keys = owner.keys as IdentityKeys;
+  return unwrapVersionKey({
+    recipient: {
+      publicKey: keys.kemPublicKey,
+      dh: async (peer) => {
+        const publicKey = await crypto.subtle.importKey(
+          'raw',
+          peer as BufferSource,
+          { name: 'ECDH', namedCurve: 'P-256' },
+          false,
+          []
+        );
+        return new Uint8Array(
+          await crypto.subtle.deriveBits(
+            { name: 'ECDH', public: publicKey },
+            keys.kem.privateKey,
+            256
+          )
+        );
+      },
+    },
+    relicId: RELIC_ID,
+    version,
+    enc: wrapped.enc,
+    ct: wrapped.ct,
+  });
+}
+
+async function versionTwoFixture() {
+  const owner = await person('owner@example.com');
+  await registerIdentity(owner);
+  const first = await sealedPrivateRelic(owner);
+  const device = { keys: first.deviceKeys, deviceId: first.deviceId };
+  const bytes = await openVersionTwo();
+  return { owner, device, bytes };
 }
 
 async function deviceKeyId_(keys: IdentityKeys): Promise<string> {
@@ -921,6 +976,551 @@ describe('the interleaved grant and seal race', () => {
     expect(
       await store.getWrap(RELIC_ID, 2, readerRecord!.kemKeyId)
     ).toBeUndefined();
+  });
+});
+
+describe('private seal claims', () => {
+  test('a pending claim rejects another completion and backfill without touching the winner', async () => {
+    const { owner, device, bytes } = await versionTwoFixture();
+    const winner = await buildSealVersionTwo(owner, device, bytes, []);
+    const loser = await buildSealVersionTwo(owner, device, bytes, []);
+    const claimed = latch();
+    const resume = latch();
+    const putWrap = store.putWrap.bind(store);
+    const deleteWraps = store.deleteWraps.bind(store);
+    const deleteSeals = store.deleteSeals.bind(store);
+    const mutations: string[] = [];
+    let paused = false;
+    store.putWrap = async (wrapRow) => {
+      if (wrapRow.version === 2) {
+        mutations.push('putWrap');
+        if (!paused) {
+          paused = true;
+          claimed.release();
+          await resume.promise;
+        }
+      }
+      return putWrap(wrapRow);
+    };
+    store.deleteWraps = async (id, filter) => {
+      if (filter.version === 2) mutations.push('deleteWraps');
+      return deleteWraps(id, filter);
+    };
+    store.deleteSeals = async (id, version) => {
+      if (version === 2) mutations.push('deleteSeals');
+      return deleteSeals(id, version);
+    };
+    const completing = send(
+      `/api/relics/${RELIC_ID}/complete`,
+      post(winner.body)
+    );
+    try {
+      await claimed.promise;
+      expect((await store.getRelic(RELIC_ID))?.sealedVersion).toBe(1);
+      expect(await store.getSeal(RELIC_ID, 2)).toBeDefined();
+      const ownerRecord = (await store.getIdentity(owner.identityId!))!;
+      const ownerWrap = (
+        winner.body['wraps'] as Record<string, unknown>[]
+      ).find((item) => item['recipient_key_id'] === ownerRecord.kemKeyId)!;
+      const backfill = await send(
+        '/api/identity/backfill',
+        post({ wraps: [{ relic_id: RELIC_ID, ...ownerWrap }] }, owner.cookie)
+      );
+      expect(backfill.status).toBe(400);
+      expect(backfill.body['code']).toBe('invalid_wrap');
+      expect(
+        await store.getWrap(RELIC_ID, 2, ownerRecord.kemKeyId)
+      ).toBeUndefined();
+
+      const beforeLoser = [...mutations];
+      const refused = await send(
+        `/api/relics/${RELIC_ID}/complete`,
+        post(loser.body)
+      );
+      expect(refused.status).toBe(409);
+      expect(refused.body['code']).toBe('version_conflict');
+      expect(refused.body['retry_after_seconds']).toBe(5);
+      expect(refused.headers.get('retry-after')).toBe('5');
+      expect(mutations).toEqual(beforeLoser);
+      expect(await store.getSeal(RELIC_ID, 2)).toBeDefined();
+    } finally {
+      resume.release();
+    }
+    expect((await completing).status).toBe(200);
+    const expected = winner.body['wraps'] as {
+      recipient_key_id: string;
+      enc: string;
+      ct: string;
+    }[];
+    const stored = await store.listWraps(RELIC_ID, 2);
+    expect(stored).toHaveLength(expected.length);
+    for (const item of expected) {
+      expect(
+        stored.find((entry) => entry.recipientKeyId === item.recipient_key_id)
+      ).toMatchObject({ enc: item.enc, ct: item.ct });
+    }
+    expect(await ownerVersionKey(owner, 2)).toEqual(new Uint8Array(winner.key));
+  });
+
+  test('a request holding a stale row cannot delete a committed winner', async () => {
+    const { owner, device, bytes } = await versionTwoFixture();
+    const loser = await buildSealVersionTwo(owner, device, bytes, []);
+    const winner = await buildSealVersionTwo(owner, device, bytes, []);
+    const atClaim = latch();
+    const resume = latch();
+    const putSeal = store.putSeal.bind(store);
+    let first = true;
+    store.putSeal = async (seal) => {
+      if (seal.version === 2 && first) {
+        first = false;
+        atClaim.release();
+        await resume.promise;
+      }
+      return putSeal(seal);
+    };
+    const stale = send(`/api/relics/${RELIC_ID}/complete`, post(loser.body));
+    try {
+      await atClaim.promise;
+      const committed = await send(
+        `/api/relics/${RELIC_ID}/complete`,
+        post(winner.body)
+      );
+      expect(committed.status).toBe(200);
+      expect(await ownerVersionKey(owner, 2)).toEqual(
+        new Uint8Array(winner.key)
+      );
+    } finally {
+      resume.release();
+    }
+    const refused = await stale;
+    expect(refused.status).toBe(409);
+    expect(refused.body['code']).toBe('version_conflict');
+    expect(await store.getSeal(RELIC_ID, 2)).toBeDefined();
+    expect(await ownerVersionKey(owner, 2)).toEqual(new Uint8Array(winner.key));
+  });
+
+  test('a stale duplicate acknowledges the identical seal once its rival commits', async () => {
+    const { owner, device, bytes } = await versionTwoFixture();
+    const built = await buildSealVersionTwo(owner, device, bytes, []);
+    const atClaim = latch();
+    const resume = latch();
+    const putSeal = store.putSeal.bind(store);
+    let first = true;
+    store.putSeal = async (seal) => {
+      if (seal.version === 2 && first) {
+        first = false;
+        atClaim.release();
+        await resume.promise;
+      }
+      return putSeal(seal);
+    };
+    const stale = send(`/api/relics/${RELIC_ID}/complete`, post(built.body));
+    let original: readonly WrapRow[] = [];
+    try {
+      await atClaim.promise;
+      expect(
+        (await send(`/api/relics/${RELIC_ID}/complete`, post(built.body)))
+          .status
+      ).toBe(200);
+      original = await store.listWraps(RELIC_ID, 2);
+    } finally {
+      resume.release();
+    }
+    expect((await stale).status).toBe(200);
+    expect(await store.listWraps(RELIC_ID, 2)).toEqual(original);
+    expect(await ownerVersionKey(owner, 2)).toEqual(new Uint8Array(built.key));
+  });
+
+  test('an exact accepted seal replays without rewriting wraps and still checks the digest', async () => {
+    const { owner, device, bytes } = await versionTwoFixture();
+    const built = await buildSealVersionTwo(owner, device, bytes, []);
+    const differentWraps = await buildSealVersionTwo(owner, device, bytes, []);
+    expect(
+      (await send(`/api/relics/${RELIC_ID}/complete`, post(built.body))).status
+    ).toBe(200);
+    const original = await store.listWraps(RELIC_ID, 2);
+    const originalSeal = (await store.getSeal(RELIC_ID, 2))!;
+    await store.updateRelic(RELIC_ID, (current) => {
+      const digests = { ...current.versionDigests };
+      delete digests['2'];
+      return {
+        ...current,
+        versionDigests: digests,
+        publishedAt: undefined,
+        objectLength: undefined,
+        objectCrc32c: undefined,
+      };
+    });
+    let mutations = 0;
+    const putSeal = store.putSeal.bind(store);
+    const deleteSeals = store.deleteSeals.bind(store);
+    const putWrap = store.putWrap.bind(store);
+    const deleteWraps = store.deleteWraps.bind(store);
+    store.putSeal = async (value) => {
+      mutations++;
+      return putSeal(value);
+    };
+    store.deleteSeals = async (id, version) => {
+      mutations++;
+      return deleteSeals(id, version);
+    };
+    store.putWrap = async (value) => {
+      mutations++;
+      return putWrap(value);
+    };
+    store.deleteWraps = async (id, filter) => {
+      mutations++;
+      return deleteWraps(id, filter);
+    };
+    const replay = await send(
+      `/api/relics/${RELIC_ID}/complete`,
+      post(built.body)
+    );
+    expect(replay.status).toBe(200);
+    const repaired = (await store.getRelic(RELIC_ID))!;
+    expect(repaired.publishedAt).toBe(originalSeal.sealedAt);
+    expect(repaired.versionDigests?.['2']).toBe(
+      createHash('sha256').update(bytes).digest('hex')
+    );
+    expect(repaired.objectLength).toBe(bytes.length);
+    expect(mutations).toBe(0);
+    expect(await store.getSeal(RELIC_ID, 2)).toEqual(originalSeal);
+    const replayWithOtherWraps = await send(
+      `/api/relics/${RELIC_ID}/complete`,
+      post({ ...built.body, wraps: differentWraps.body['wraps'] })
+    );
+    expect(replayWithOtherWraps.status).toBe(200);
+    expect(mutations).toBe(0);
+    expect(await store.listWraps(RELIC_ID, 2)).toEqual(original);
+    expect(await ownerVersionKey(owner, 2)).toEqual(new Uint8Array(built.key));
+
+    const seal = built.body['seal'] as Record<string, unknown>;
+    const badSignature = await send(
+      `/api/relics/${RELIC_ID}/complete`,
+      post({
+        ...built.body,
+        seal: { ...seal, signature: encodeBase64url(randomBytes(64)) },
+      })
+    );
+    expect(badSignature.status).not.toBe(200);
+    storage.put(`${RELIC_ID}/v2`, randomBytes(bytes.length));
+    const badDigest = await send(
+      `/api/relics/${RELIC_ID}/complete`,
+      post(built.body)
+    );
+    expect(badDigest.status).toBe(409);
+    expect(badDigest.body['code']).toBe('seal_digest_mismatch');
+    expect(await store.listWraps(RELIC_ID, 2)).toEqual(original);
+  });
+
+  test('an accepted device seal can be replayed after that device is revoked', async () => {
+    const { owner, device, bytes } = await versionTwoFixture();
+    const built = await buildSealVersionTwo(owner, device, bytes, []);
+    expect(
+      (await send(`/api/relics/${RELIC_ID}/complete`, post(built.body))).status
+    ).toBe(200);
+    const revoked = await send(
+      `/api/devices/${device.deviceId}/revoke`,
+      await deviceRevocation(owner, device.deviceId)
+    );
+    expect(revoked.status).toBe(200);
+    const wraps = await store.listWraps(RELIC_ID, 2);
+    expect(
+      (await send(`/api/relics/${RELIC_ID}/complete`, post(built.body))).status
+    ).toBe(200);
+    expect(await store.listWraps(RELIC_ID, 2)).toEqual(wraps);
+    expect(await ownerVersionKey(owner, 2)).toEqual(new Uint8Array(built.key));
+  });
+
+  test('a create-only wrap collision refuses the claim and a retry succeeds', async () => {
+    const { owner, device, bytes } = await versionTwoFixture();
+    const built = await buildSealVersionTwo(owner, device, bytes, []);
+    const putWrap = store.putWrap.bind(store);
+    let collide = true;
+    store.putWrap = async (wrapRow) => {
+      if (wrapRow.version === 2 && collide) {
+        collide = false;
+        await putWrap(wrapRow);
+        return false;
+      }
+      return putWrap(wrapRow);
+    };
+    const refused = await send(
+      `/api/relics/${RELIC_ID}/complete`,
+      post(built.body)
+    );
+    expect(refused.status).toBe(409);
+    expect(refused.body['code']).toBe('version_conflict');
+    expect(await store.getSeal(RELIC_ID, 2)).toBeUndefined();
+    expect(await store.listWraps(RELIC_ID, 2)).toEqual([]);
+    expect(
+      (await send(`/api/relics/${RELIC_ID}/complete`, post(built.body))).status
+    ).toBe(200);
+    expect((await store.listWraps(RELIC_ID, 2)).length).toBe(2);
+    expect(await ownerVersionKey(owner, 2)).toEqual(new Uint8Array(built.key));
+  });
+
+  test('a wrap collision racing an owner epoch change reports recipients_changed', async () => {
+    const { owner, device, bytes } = await versionTwoFixture();
+    const built = await buildSealVersionTwo(owner, device, bytes, []);
+    const putWrap = store.putWrap.bind(store);
+    let collide = true;
+    store.putWrap = async (wrapRow) => {
+      if (wrapRow.version === 2 && collide) {
+        collide = false;
+        await store.updateIdentity(owner.identityId!, (record) => ({
+          ...record,
+          recipientsEpoch: record.recipientsEpoch + 1,
+        }));
+        return false;
+      }
+      return putWrap(wrapRow);
+    };
+    const refused = await send(
+      `/api/relics/${RELIC_ID}/complete`,
+      post(built.body)
+    );
+    expect(refused.status).toBe(409);
+    expect(refused.body['code']).toBe('recipients_changed');
+    expect(await store.getSeal(RELIC_ID, 2)).toBeUndefined();
+    expect(await store.listWraps(RELIC_ID, 2)).toEqual([]);
+    const retried = await buildSealVersionTwo(owner, device, bytes, []);
+    expect(
+      (await send(`/api/relics/${RELIC_ID}/complete`, post(retried.body)))
+        .status
+    ).toBe(200);
+    expect(await ownerVersionKey(owner, 2)).toEqual(
+      new Uint8Array(retried.key)
+    );
+  });
+
+  test('an unexpected wrap before commit refuses the claim and a retry succeeds', async () => {
+    const { owner, device, bytes } = await versionTwoFixture();
+    const built = await buildSealVersionTwo(owner, device, bytes, []);
+    const listWraps = store.listWraps.bind(store);
+    const putWrap = store.putWrap.bind(store);
+    let inject = true;
+    store.listWraps = async (id, version) => {
+      const rows = await listWraps(id, version);
+      if (version === 2 && inject) {
+        inject = false;
+        await putWrap({ ...rows[0]!, recipientKeyId: 'f'.repeat(64) });
+        return listWraps(id, version);
+      }
+      return rows;
+    };
+    const refused = await send(
+      `/api/relics/${RELIC_ID}/complete`,
+      post(built.body)
+    );
+    expect(refused.status).toBe(409);
+    expect(refused.body['code']).toBe('version_conflict');
+    expect(await store.getSeal(RELIC_ID, 2)).toBeUndefined();
+    expect(await store.listWraps(RELIC_ID, 2)).toEqual([]);
+    expect(
+      (await send(`/api/relics/${RELIC_ID}/complete`, post(built.body))).status
+    ).toBe(200);
+    const expected = (built.body['wraps'] as { recipient_key_id: string }[])
+      .map((wrap) => wrap.recipient_key_id)
+      .sort();
+    expect(
+      (await store.listWraps(RELIC_ID, 2))
+        .map((wrap) => wrap.recipientKeyId)
+        .sort()
+    ).toEqual(expected);
+    expect(await ownerVersionKey(owner, 2)).toEqual(new Uint8Array(built.key));
+  });
+
+  test('a failed wrap write clears only the claimed version and releases the seal last', async () => {
+    const { owner, device, bytes } = await versionTwoFixture();
+    const built = await buildSealVersionTwo(owner, device, bytes, []);
+    const putWrap = store.putWrap.bind(store);
+    const deleteWraps = store.deleteWraps.bind(store);
+    const deleteSeals = store.deleteSeals.bind(store);
+    const cleanup: string[] = [];
+    let fail = true;
+    store.putWrap = async (wrapRow) => {
+      const created = await putWrap(wrapRow);
+      if (wrapRow.version === 2 && fail) {
+        fail = false;
+        throw new Error('wrap write failed');
+      }
+      return created;
+    };
+    store.deleteWraps = async (id, filter) => {
+      if (filter.version === 2) cleanup.push('wraps');
+      return deleteWraps(id, filter);
+    };
+    store.deleteSeals = async (id, version) => {
+      if (version === 2) cleanup.push('seal');
+      return deleteSeals(id, version);
+    };
+    await expect(
+      send(`/api/relics/${RELIC_ID}/complete`, post(built.body))
+    ).rejects.toThrow('wrap write failed');
+    expect(cleanup.slice(-2)).toEqual(['wraps', 'seal']);
+    expect(await store.getSeal(RELIC_ID, 2)).toBeUndefined();
+    expect(await store.listWraps(RELIC_ID, 2)).toEqual([]);
+    expect((await store.getRelic(RELIC_ID))?.sealedVersion).toBe(1);
+    expect((await ownerVersionKey(owner, 1)).length).toBe(16);
+    expect(
+      (await send(`/api/relics/${RELIC_ID}/complete`, post(built.body))).status
+    ).toBe(200);
+    expect(await ownerVersionKey(owner, 2)).toEqual(new Uint8Array(built.key));
+  });
+
+  test('an access epoch move at the CAS refuses and cleans the claimed version', async () => {
+    const { owner, device, bytes } = await versionTwoFixture();
+    const built = await buildSealVersionTwo(owner, device, bytes, []);
+    store.beforeUpdate = async () => {
+      await store.updateRelic(RELIC_ID, (current) => ({
+        ...current,
+        accessEpoch: (current.accessEpoch ?? 0) + 1,
+      }));
+    };
+    const refused = await send(
+      `/api/relics/${RELIC_ID}/complete`,
+      post(built.body)
+    );
+    expect(refused.status).toBe(409);
+    expect(refused.body['code']).toBe('recipients_changed');
+    expect(await store.getSeal(RELIC_ID, 2)).toBeUndefined();
+    expect(await store.listWraps(RELIC_ID, 2)).toEqual([]);
+    expect((await store.getRelic(RELIC_ID))?.sealedVersion).toBe(1);
+    expect((await ownerVersionKey(owner, 1)).length).toBe(16);
+    const retried = await buildSealVersionTwo(owner, device, bytes, []);
+    expect(
+      (await send(`/api/relics/${RELIC_ID}/complete`, post(retried.body)))
+        .status
+    ).toBe(200);
+    expect(await ownerVersionKey(owner, 2)).toEqual(
+      new Uint8Array(retried.key)
+    );
+  });
+
+  test('an owner epoch move during the commit rolls back before releasing the claim', async () => {
+    const { owner, device, bytes } = await versionTwoFixture();
+    const built = await buildSealVersionTwo(owner, device, bytes, []);
+    store.beforeUpdate = async () => {
+      await store.updateIdentity(owner.identityId!, (record) => ({
+        ...record,
+        recipientsEpoch: record.recipientsEpoch + 1,
+      }));
+    };
+    const refused = await send(
+      `/api/relics/${RELIC_ID}/complete`,
+      post(built.body)
+    );
+    expect(refused.status).toBe(409);
+    expect(refused.body['code']).toBe('recipients_changed');
+    const current = (await store.getRelic(RELIC_ID))!;
+    expect(current.sealedVersion).toBe(1);
+    expect(current.versionDigests?.['2']).toBeUndefined();
+    expect(current.publishedAt).toBeUndefined();
+    expect(await store.getSeal(RELIC_ID, 2)).toBeUndefined();
+    expect(await store.listWraps(RELIC_ID, 2)).toEqual([]);
+    const retried = await buildSealVersionTwo(owner, device, bytes, []);
+    expect(
+      (await send(`/api/relics/${RELIC_ID}/complete`, post(retried.body)))
+        .status
+    ).toBe(200);
+    expect(await ownerVersionKey(owner, 2)).toEqual(
+      new Uint8Array(retried.key)
+    );
+  });
+
+  test('a lost commit response preserves the accepted seal and exact replay succeeds', async () => {
+    const { owner, device, bytes } = await versionTwoFixture();
+    const built = await buildSealVersionTwo(owner, device, bytes, []);
+    const updateRelic = store.updateRelic.bind(store);
+    let fail = true;
+    store.updateRelic = async (id, change) => {
+      const result = await updateRelic(id, change);
+      if (fail && result?.sealedVersion === 2) {
+        fail = false;
+        throw new Error('commit response lost');
+      }
+      return result;
+    };
+    expect(
+      (await send(`/api/relics/${RELIC_ID}/complete`, post(built.body))).status
+    ).toBe(200);
+    expect((await store.getRelic(RELIC_ID))?.sealedVersion).toBe(2);
+    expect((await store.getRelic(RELIC_ID))?.versionDigests?.['2']).toBe(
+      createHash('sha256').update(bytes).digest('hex')
+    );
+    const wraps = await store.listWraps(RELIC_ID, 2);
+    expect(await store.getSeal(RELIC_ID, 2)).toBeDefined();
+    expect(
+      (await send(`/api/relics/${RELIC_ID}/complete`, post(built.body))).status
+    ).toBe(200);
+    expect(await store.listWraps(RELIC_ID, 2)).toEqual(wraps);
+    expect(await ownerVersionKey(owner, 2)).toEqual(new Uint8Array(built.key));
+  });
+
+  test('a failed commit fenced before writing releases its claim for retry', async () => {
+    const { owner, device, bytes } = await versionTwoFixture();
+    const built = await buildSealVersionTwo(owner, device, bytes, []);
+    const updateRelic = store.updateRelic.bind(store);
+    let fail = true;
+    store.updateRelic = async (id, change) => {
+      if (fail) {
+        fail = false;
+        throw new Error('commit did not write');
+      }
+      return updateRelic(id, change);
+    };
+    await expect(
+      send(`/api/relics/${RELIC_ID}/complete`, post(built.body))
+    ).rejects.toThrow('commit did not write');
+    expect((await store.getRelic(RELIC_ID))?.sealedVersion).toBe(1);
+    expect(await store.getSeal(RELIC_ID, 2)).toBeUndefined();
+    expect(await store.listWraps(RELIC_ID, 2)).toEqual([]);
+    expect(
+      (await send(`/api/relics/${RELIC_ID}/complete`, post(built.body))).status
+    ).toBe(200);
+    expect(await ownerVersionKey(owner, 2)).toEqual(new Uint8Array(built.key));
+  });
+
+  test('a failed commit fence retains the claim and wraps as indeterminate', async () => {
+    const { owner, device, bytes } = await versionTwoFixture();
+    const built = await buildSealVersionTwo(owner, device, bytes, []);
+    store.updateRelic = async () => {
+      throw new Error('store unavailable');
+    };
+    await expect(
+      send(`/api/relics/${RELIC_ID}/complete`, post(built.body))
+    ).rejects.toThrow('store unavailable');
+    expect((await store.getRelic(RELIC_ID))?.sealedVersion).toBe(1);
+    expect(await store.getSeal(RELIC_ID, 2)).toBeDefined();
+    expect(await store.listWraps(RELIC_ID, 2)).toHaveLength(2);
+  });
+
+  test('an indeterminate claim failure never deletes a possibly owned seal', async () => {
+    const { owner, device, bytes } = await versionTwoFixture();
+    const built = await buildSealVersionTwo(owner, device, bytes, []);
+    const putSeal = store.putSeal.bind(store);
+    let fail = true;
+    store.putSeal = async (seal) => {
+      const created = await putSeal(seal);
+      if (seal.version === 2 && created && fail) {
+        fail = false;
+        throw new Error('claim response lost');
+      }
+      return created;
+    };
+    await expect(
+      send(`/api/relics/${RELIC_ID}/complete`, post(built.body))
+    ).rejects.toThrow('claim response lost');
+    expect(await store.getSeal(RELIC_ID, 2)).toBeDefined();
+    expect(await store.listWraps(RELIC_ID, 2)).toEqual([]);
+    const retry = await send(
+      `/api/relics/${RELIC_ID}/complete`,
+      post(built.body)
+    );
+    expect(retry.status).toBe(409);
+    expect(retry.body['code']).toBe('version_conflict');
+    expect(await store.getSeal(RELIC_ID, 2)).toBeDefined();
   });
 });
 

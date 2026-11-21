@@ -426,4 +426,130 @@ describe('general ZIP index', () => {
     expect(read.ok).toBe(false);
     if (!read.ok) expect(read.reason).toBe('not-a-file');
   });
+  test('bounds compressed writes and stops inflation when the declared size is exceeded', async () => {
+    const archive = zip([
+      { name: 'bomb.txt', data: 'x'.repeat(20 * 1024 * 1024), deflated: true },
+    ]);
+    const view = new DataView(archive.buffer);
+    const central = view.getUint32(archive.length - 6, true);
+    view.setUint32(22, 4096, true);
+    view.setUint32(central + 24, 4096, true);
+
+    const original = globalThis.DecompressionStream;
+    const writes: number[] = [];
+    let outstanding = 0;
+    let mostOutstanding = 0;
+    globalThis.DecompressionStream = new Proxy(original, {
+      construct(target, args) {
+        const stream = Reflect.construct(target, args) as DecompressionStream;
+        const writer = stream.writable.getWriter();
+        return {
+          readable: stream.readable,
+          writable: {
+            getWriter() {
+              return {
+                get ready() {
+                  return writer.ready;
+                },
+                write(chunk: BufferSource) {
+                  writes.push(chunk.byteLength);
+                  outstanding++;
+                  mostOutstanding = Math.max(mostOutstanding, outstanding);
+                  return writer.write(chunk).finally(() => {
+                    outstanding--;
+                  });
+                },
+                close: () => writer.close(),
+                abort: (reason: unknown) => writer.abort(reason),
+              };
+            },
+          },
+        };
+      },
+    });
+    try {
+      const indexed = await indexZip(archive, limits);
+      expect(indexed.ok).toBe(true);
+      if (!indexed.ok) throw new Error(indexed.message);
+      expect(await indexed.index.read('bomb.txt')).toEqual({
+        ok: false,
+        reason: 'entry-too-large',
+        message: 'Inflated entry exceeds its bound',
+      });
+      expect(writes.length).toBeGreaterThan(0);
+      expect(Math.max(...writes)).toBeLessThanOrEqual(16 * 1024);
+      expect(mostOutstanding).toBe(1);
+      expect(writes.reduce((sum, size) => sum + size, 0)).toBeLessThanOrEqual(
+        32 * 1024
+      );
+    } finally {
+      globalThis.DecompressionStream = original;
+    }
+  });
+  test('reads a valid deflated entry with the default inflater', async () => {
+    const indexed = await indexZip(
+      zip([{ name: 'a.txt', data: 'hello', deflated: true }]),
+      limits
+    );
+    expect(indexed.ok).toBe(true);
+    if (!indexed.ok) throw new Error(indexed.message);
+    expect(await indexed.index.read('a.txt')).toEqual({
+      ok: true,
+      bytes: new TextEncoder().encode('hello'),
+    });
+  });
+
+  test('cancels a default inflater without waiting for its pending write', async () => {
+    const archive = zip([{ name: 'a.txt', data: 'hello', deflated: true }]);
+    const controller = new AbortController();
+    const started = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const original = globalThis.DecompressionStream;
+    let writes = 0;
+    globalThis.DecompressionStream = new Proxy(original, {
+      construct(target, args) {
+        const stream = Reflect.construct(target, args) as DecompressionStream;
+        const writer = stream.writable.getWriter();
+        return {
+          readable: stream.readable,
+          writable: new WritableStream<BufferSource>({
+            async write(chunk) {
+              writes++;
+              started.resolve();
+              await release.promise;
+              await writer.write(chunk);
+            },
+            async close() {
+              await writer.close();
+            },
+            async abort(reason) {
+              await writer.abort(reason);
+            },
+          }),
+        };
+      },
+    });
+    try {
+      const indexed = await indexZip(
+        archive,
+        limits,
+        undefined,
+        controller.signal
+      );
+      expect(indexed.ok).toBe(true);
+      if (!indexed.ok) throw new Error(indexed.message);
+      const read = indexed.index.read('a.txt');
+      await started.promise;
+      controller.abort();
+      expect(await read).toEqual({
+        ok: false,
+        reason: 'corrupt',
+        message: 'ZIP operation aborted',
+      });
+      expect(writes).toBe(1);
+    } finally {
+      release.resolve();
+      globalThis.DecompressionStream = original;
+    }
+  });
 });

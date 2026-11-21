@@ -29,10 +29,12 @@ import {
 import type { ViewerDeps } from '../viewer.ts';
 import {
   attest,
+  loadReviewedIdentity,
   nowMs,
   postJson,
   PrivateRequestError,
   recipientOf,
+  type ReviewedPrivateOwner,
   type UnlockedIdentity,
 } from './keys.ts';
 import {
@@ -73,6 +75,7 @@ export interface PrivatePublishResult {
 export interface PrivatePublisherOptions {
   readonly deps: ViewerDeps;
   readonly source: PrivatePublishSource;
+  readonly owner: ReviewedPrivateOwner;
   readonly ttlDays?: number;
   readonly decisions?: boolean;
   readonly signal?: AbortSignal;
@@ -101,6 +104,7 @@ interface Pending {
   readonly identity: UnlockedIdentity;
   expiresAt?: string;
   stage: 'grant' | 'upload' | 'seal';
+  completionAttempted: boolean;
 }
 
 interface UploadGrant {
@@ -372,8 +376,12 @@ async function sealPending(
       ),
       signer_kind: 'identity',
     };
+    await loadReviewedIdentity(options.deps, options.owner, options.signal);
+    // A lost response can leave the server finishing this exact request.
+    p.completionAttempted = true;
+    let response: Record<string, unknown>;
     try {
-      const response = record(
+      response = record(
         await postJson(
           options.deps,
           `/api/relics/${p.relicId}/complete`,
@@ -381,26 +389,35 @@ async function sealPending(
           options.signal
         )
       );
-      if (
-        response['relic_id'] !== p.relicId ||
-        response['access'] !== 'private' ||
-        response['version'] !== 1 ||
-        response['sealed_version'] !== 1 ||
-        response['version_digest'] !== p.digest ||
-        response['relic_expires_at'] !== p.expiresAt
-      ) {
-        throw new PrivateRequestError('private_seal_mismatch', 0);
-      }
-      await readBack(p, options);
-      return;
     } catch (error) {
       if (
         error instanceof PrivateRequestError &&
         error.code === 'recipients_changed'
-      )
+      ) {
+        p.completionAttempted = false;
         continue;
+      }
+      if (
+        error instanceof PrivateRequestError &&
+        error.code === 'version_conflict'
+      ) {
+        await readBack(p, options);
+        return;
+      }
       throw error;
     }
+    if (
+      response['relic_id'] !== p.relicId ||
+      response['access'] !== 'private' ||
+      response['version'] !== 1 ||
+      response['sealed_version'] !== 1 ||
+      response['version_digest'] !== p.digest ||
+      response['relic_expires_at'] !== p.expiresAt
+    ) {
+      throw new PrivateRequestError('private_seal_mismatch', 0);
+    }
+    await readBack(p, options);
+    return;
   }
   throw new PrivateRequestError('recipients_changed', 409);
 }
@@ -409,6 +426,7 @@ export function createPrivatePublisher(
   options: PrivatePublisherOptions
 ): PrivatePublisher {
   let pending: Pending | undefined;
+  let unretainedKey: Uint8Array | undefined;
   let result: PrivatePublishResult | undefined;
   let busy = false;
   let disposed = false;
@@ -429,6 +447,8 @@ export function createPrivatePublisher(
   };
 
   async function upload(p: Pending, raw: unknown): Promise<void> {
+    requireActive();
+    await loadReviewedIdentity(options.deps, options.owner, abort.signal);
     requireActive();
     const grant = uploadGrant(
       raw,
@@ -473,6 +493,7 @@ export function createPrivatePublisher(
     requireActive();
     phase({ kind: 'finishing' });
     await sealPending(p, activeOptions);
+    await loadReviewedIdentity(options.deps, options.owner, abort.signal);
     requireActive();
     if (p.expiresAt === undefined)
       throw new PrivateRequestError('invalid_private_grant', 0);
@@ -527,6 +548,7 @@ export function createPrivatePublisher(
       }
       const relicId = generateRelicId();
       const key = generateKey();
+      unretainedKey = key;
       phase({ kind: 'encrypting' });
       const ciphertext = await options.source.encrypt(key);
       if (abort.signal.aborted) {
@@ -555,6 +577,7 @@ export function createPrivatePublisher(
         {
           purpose: 'owner_publish',
           relicId,
+          reviewedOwner: options.owner,
           build: (identityId) => [
             {
               kind: 'owner_publish',
@@ -581,12 +604,16 @@ export function createPrivatePublisher(
         digest: await ciphertextDigest(ciphertext),
         identity: signed.identity,
         stage: 'grant',
+        completionAttempted: false,
       };
       if (abort.signal.aborted) {
         key.fill(0);
         requireActive();
       }
       pending = p;
+      unretainedKey = undefined;
+      await loadReviewedIdentity(options.deps, options.owner, abort.signal);
+      requireActive();
       let grant: unknown;
       try {
         grant = await postJson(
@@ -620,6 +647,7 @@ export function createPrivatePublisher(
     if (p.stage === 'seal') {
       try {
         await readBack(p, activeOptions);
+        await loadReviewedIdentity(options.deps, options.owner, abort.signal);
         requireActive();
         if (p.expiresAt === undefined)
           throw new PrivateRequestError('invalid_private_grant', 0);
@@ -639,6 +667,8 @@ export function createPrivatePublisher(
           error.code !== 'relic_not_yet_published'
         )
           throw error;
+        if (p.completionAttempted)
+          throw new PrivateRequestError('private_publish_in_progress', 0);
       }
       return finish(p);
     }
@@ -673,8 +703,24 @@ export function createPrivatePublisher(
     if (busy) throw new PrivateRequestError('private_publish_in_progress', 0);
     busy = true;
     try {
+      await loadReviewedIdentity(options.deps, options.owner, abort.signal);
+      requireActive();
       return await resume();
+    } catch (error) {
+      if (
+        error instanceof PrivateRequestError &&
+        error.code === 'private_owner_changed'
+      ) {
+        disposed = true;
+        abort.abort();
+        options.signal?.removeEventListener('abort', abortFromCaller);
+        pending?.key.fill(0);
+        pending = undefined;
+      }
+      throw error;
     } finally {
+      unretainedKey?.fill(0);
+      unretainedKey = undefined;
       busy = false;
     }
   }
@@ -686,6 +732,8 @@ export function createPrivatePublisher(
       disposed = true;
       abort.abort();
       options.signal?.removeEventListener('abort', abortFromCaller);
+      unretainedKey?.fill(0);
+      unretainedKey = undefined;
       pending?.key.fill(0);
       pending = undefined;
     },

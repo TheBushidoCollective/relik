@@ -407,6 +407,54 @@ describe('browser publish sources', () => {
     expect(total.details['reason']).toBe('total-too-large');
   });
 
+  test('propagates cancellation through raw and expanded source review', async () => {
+    const rawController = new AbortController();
+    const rawReason = new Error('stop raw review');
+    const raw = new File(['document'], 'document.txt');
+    Object.defineProperty(raw, 'arrayBuffer', {
+      value: async () => {
+        rawController.abort(rawReason);
+        return new Uint8Array().buffer;
+      },
+    });
+    await expect(
+      preparePublishSource(raw, { signal: rawController.signal })
+    ).rejects.toBe(rawReason);
+
+    const zipController = new AbortController();
+    const zipReason = new Error('stop ZIP review');
+    const expanded = selectedFile(zip([['README.md', 'content']]));
+    Object.defineProperty(expanded, 'slice', {
+      value: () => ({
+        async arrayBuffer() {
+          zipController.abort(zipReason);
+          return new Uint8Array().buffer;
+        },
+      }),
+    });
+    await expect(
+      preparePublishSource(expanded, { signal: zipController.signal })
+    ).rejects.toBe(zipReason);
+  });
+
+  test('aborts a raw file read that never settles', async () => {
+    const controller = new AbortController();
+    const reason = new Error('stop pending raw read');
+    const { promise } = Promise.withResolvers<ArrayBuffer>();
+    const file = new File(['document'], 'document.txt');
+    let started = false;
+    Object.defineProperty(file, 'arrayBuffer', {
+      value: () => {
+        started = true;
+        return promise;
+      },
+    });
+    const pending = preparePublishSource(file, { signal: controller.signal });
+    expect(started).toBe(true);
+    controller.abort(reason);
+    await expect(pending).rejects.toBe(reason);
+  });
+
   test('review and its failures make no network requests', async () => {
     const savedFetch = globalThis.fetch;
     let requests = 0;

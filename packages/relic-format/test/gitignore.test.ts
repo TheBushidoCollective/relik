@@ -3,7 +3,11 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { createIgnoreMatcher } from '../src/gitignore.ts';
+import {
+  createIgnoreMatcher,
+  MAX_IGNORE_PATTERN_BYTES,
+  MAX_IGNORE_RULES,
+} from '../src/gitignore.ts';
 
 const gitAvailable = spawnSync('git', ['--version']).status === 0;
 const seed = 0x73a219cb;
@@ -58,6 +62,125 @@ describe('gitignore', () => {
         { dir: 'a', text: '!secret\n' },
       ])('a/secret', false)
     ).toBe(true);
+  });
+
+  test('handles adversarial alternating stars without regexp backtracking', () => {
+    const pattern = `${'*a'.repeat(160)}b`;
+    const match = createIgnoreMatcher([{ dir: '', text: `${pattern}\n` }]);
+    expect(match(`${'a'.repeat(300)}c`, false)).toBe(false);
+    expect(match(`${'a'.repeat(300)}b`, false)).toBe(true);
+    expect(match(`nested/${'a'.repeat(300)}b`, false)).toBe(true);
+  });
+
+  test('bounds cumulative glob work and fails closed', () => {
+    const match = createIgnoreMatcher([{ dir: '', text: '*a*a*a*a*b\n' }], {
+      maxWork: 250,
+    });
+    expect(match('aaaab', false)).toBe(true);
+    expect(() => match('a'.repeat(50), false)).toThrow(
+      'Ignore rules are too complex to review safely'
+    );
+    expect(() => createIgnoreMatcher([], { maxWork: -1 })).toThrow(
+      'nonnegative safe integer'
+    );
+  });
+
+  test('matches bracket classes, directory globstars, and UTF-8 as bytes', () => {
+    const match = createIgnoreMatcher([
+      {
+        dir: '',
+        text: 'a/**/file[[:digit:]].txt\n[!a-c]??\n',
+      },
+    ]);
+    expect(match('a/file1.txt', false)).toBe(true);
+    expect(match('a/x/y/file9.txt', false)).toBe(true);
+    expect(match('a/x/y/fileA.txt', false)).toBe(false);
+    expect(match('zé', false)).toBe(true);
+    expect(match('bé', false)).toBe(false);
+  });
+
+  test('malformed long bracket expressions do not match', () => {
+    const match = createIgnoreMatcher([
+      { dir: '', text: `[${'[:'.repeat(400)}\n` },
+    ]);
+    expect(match('anything', false)).toBe(false);
+    const closed = createIgnoreMatcher([
+      { dir: '', text: `[${'[:'.repeat(400)}x]\n` },
+    ]);
+    expect(closed('z', false)).toBe(false);
+  });
+
+  test('bounds each UTF-8 pattern and the total rules per matcher', () => {
+    const atPatternLimit = createIgnoreMatcher([
+      { dir: '', text: 'a'.repeat(MAX_IGNORE_PATTERN_BYTES) },
+    ]);
+    expect(atPatternLimit('a'.repeat(MAX_IGNORE_PATTERN_BYTES), false)).toBe(
+      true
+    );
+    expect(() =>
+      createIgnoreMatcher([{ dir: '', text: 'é'.repeat(513) }])
+    ).toThrow(`${MAX_IGNORE_PATTERN_BYTES}-byte limit`);
+
+    const match = createIgnoreMatcher([
+      { dir: '', text: 'x\n'.repeat(MAX_IGNORE_RULES) },
+    ]);
+    expect(() => match.add({ dir: 'nested', text: 'another\n' })).toThrow(
+      'Too many ignore rules'
+    );
+    expect(() => match('other', false)).toThrow('Too many ignore rules');
+  });
+
+  test('invalidates cached ancestor decisions when nested rules are added', () => {
+    const match = createIgnoreMatcher([{ dir: '', text: '*.txt\n' }]);
+    expect(match('nested/keep.txt', false)).toBe(true);
+    match.add({ dir: 'nested', text: '!keep.txt\n' });
+    expect(match('nested/keep.txt', false)).toBe(false);
+    expect(match('nested/drop.txt', false)).toBe(true);
+  });
+
+  test('reviews 50,000 realistic paths and 20 rules within a tenth of the budget', () => {
+    const rules = [
+      '*-*.log',
+      '*-*.tmp',
+      '*-*.cache',
+      '*-*.bak',
+      '*-*.swp',
+      '*-*.pyc',
+      '*-*.class',
+      '*-*.map',
+      '*-*.env',
+      '*-*.orig',
+      '*.min.*',
+      '*.test-??.js',
+      '*.bundle.*',
+      '*.[oa]',
+      '*~*',
+      'test-??*.js',
+      'debug-*.json',
+      'config-*.local',
+      '*.generated.*',
+      '*-backup-*.txt',
+    ];
+    const maxWork = 2_000_000_000;
+    const match = createIgnoreMatcher([{ dir: '', text: rules.join('\n') }], {
+      maxWork,
+      maxMatchWork: 1_000_000,
+    });
+    for (let i = 0; i < 50_000; i++) {
+      const path = `src/features/module-${String(i % 100).padStart(3, '0')}/file-${String(i).padStart(5, '0')}.txt`;
+      expect(match(path, false)).toBe(false);
+    }
+    expect(match.work * 10).toBeLessThan(maxWork);
+  });
+
+  test('refuses an adversarial single glob before excessive matching work', () => {
+    const match = createIgnoreMatcher([{ dir: '', text: '*a'.repeat(512) }], {
+      maxWork: 2_000_000_000,
+      maxMatchWork: 1_000_000,
+    });
+    expect(() => match('a'.repeat(1024), false)).toThrow(
+      'Ignore rules are too complex to review safely'
+    );
   });
 
   (gitAvailable ? test : test.skip)(

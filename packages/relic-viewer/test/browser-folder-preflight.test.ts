@@ -113,4 +113,75 @@ describe('shared browser folder preflight', () => {
       'entry-size-mismatch'
     );
   });
+
+  test('preserves cancellation before and during preflight entry reads', async () => {
+    const controller = new AbortController();
+    const reason = new Error('stop preflight');
+    let reads = 0;
+    const file: BrowserFolderFile = {
+      path: 'document.txt',
+      size: 1,
+      async read() {
+        reads++;
+        controller.abort(reason);
+        return encoder.encode('x');
+      },
+      async *chunks() {
+        yield encoder.encode('x');
+      },
+    };
+    await expect(
+      prepareBrowserFolder('folder', 'directory', [file], [], {
+        signal: controller.signal,
+      })
+    ).rejects.toBe(reason);
+    expect(reads).toBe(1);
+    await expect(
+      prepareBrowserFolder('folder', 'directory', [file], [], {
+        signal: controller.signal,
+      })
+    ).rejects.toBe(reason);
+    expect(reads).toBe(1);
+  });
+
+  test('does not translate a read AbortError into a source failure', async () => {
+    const reason = new DOMException('Cancelled', 'AbortError');
+    const file: BrowserFolderFile = {
+      path: 'document.txt',
+      size: 1,
+      async read() {
+        throw reason;
+      },
+      async *chunks() {
+        yield encoder.encode('x');
+      },
+    };
+    await expect(
+      prepareBrowserFolder('folder', 'directory', [file], [])
+    ).rejects.toBe(reason);
+  });
+
+  test('aborts a preflight read that never settles', async () => {
+    const controller = new AbortController();
+    const reason = new Error('stop pending preflight');
+    const { promise } = Promise.withResolvers<Uint8Array>();
+    let reads = 0;
+    const file: BrowserFolderFile = {
+      path: 'document.txt',
+      size: 1,
+      read() {
+        reads++;
+        return promise;
+      },
+      async *chunks() {
+        yield encoder.encode('x');
+      },
+    };
+    const pending = prepareBrowserFolder('folder', 'directory', [file], [], {
+      signal: controller.signal,
+    });
+    expect(reads).toBe(1);
+    controller.abort(reason);
+    await expect(pending).rejects.toBe(reason);
+  });
 });

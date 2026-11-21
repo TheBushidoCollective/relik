@@ -189,6 +189,18 @@ try {
     `document.querySelector('.pub-title').value`
   );
   assert.equal(titleDefault, 'dropped-notes.md');
+  await browser.evaluate<void>(`(() => {
+    const name = document.querySelector('.pub-filename');
+    name.value = 'private-internal-name.md';
+    name.dispatchEvent(new Event('input', { bubbles: true }));
+  })()`);
+  assert.equal(
+    await browser.evaluate<string>(
+      `document.querySelector('.pub-title').value`
+    ),
+    'dropped-notes.md',
+    'editing the encrypted name must not change the public title'
+  );
   assert.equal(apiRequests().length, 0, 'a drop must not contact the service');
   console.log('PUBLISH_STEP_2_REVIEW title=filename api_requests=0');
 
@@ -215,6 +227,7 @@ try {
   assert.match(grantBody, /"title":"dropped-notes\.md"/);
   assert.match(grantBody, /"share_verifier":"[0-9a-f]{64}"/);
   assert.match(grantBody, /"publishing_client":"relik-web"/);
+  assert.doesNotMatch(grantBody, /private-internal-name/);
   for (const request of seen) {
     assert.ok(
       !request.body.includes(encodedKey) && !request.url.includes(encodedKey),
@@ -307,6 +320,85 @@ try {
     apiRequests().length,
     0,
     'a folder review must not contact the service'
+  );
+  await browser.clickSelector('.pub-row .action:not(.primary)');
+  await browser.waitForSelector('.pub-drop');
+  await browser.evaluate<void>(`(() => {
+    window.__originalBlobRead = Blob.prototype.arrayBuffer;
+    window.__zipReads = [];
+    Blob.prototype.arrayBuffer = function() {
+      const {promise, resolve} = Promise.withResolvers();
+      window.__zipReads.push(resolve);
+      return promise;
+    };
+    const dt = new DataTransfer();
+    dt.items.add(new File(['x'.repeat(64)], 'original.zip'));
+    document.querySelector('.pub-drop').dispatchEvent(
+      new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true })
+    );
+  })()`);
+  await waitForText('Checking folder entries on this device.');
+  await browser.evaluate<void>(`(() => {
+    const name = document.querySelector('.pub-filename');
+    name.value = 'private-renamed.zip';
+    name.dispatchEvent(new Event('input', { bubbles: true }));
+    const zip = document.querySelector('.pub-expand');
+    zip.checked = false;
+    zip.dispatchEvent(new Event('change', { bubbles: true }));
+    zip.checked = true;
+    zip.dispatchEvent(new Event('change', { bubbles: true }));
+    zip.checked = false;
+    zip.dispatchEvent(new Event('change', { bubbles: true }));
+    Blob.prototype.arrayBuffer = window.__originalBlobRead;
+    for (const resolve of window.__zipReads) resolve(new ArrayBuffer(64));
+  })()`);
+  assert.equal(
+    await browser.evaluate<string>(
+      `document.querySelector('.pub-title').value`
+    ),
+    'original.zip',
+    'ZIP toggling must never turn the edited encrypted filename into a public title'
+  );
+  await browser.evaluate<void>(
+    `(() => { const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, 0); return promise; })()`
+  );
+  assert.equal(
+    await browser.evaluate<boolean>(
+      `document.body.innerText.includes('Could not expand this ZIP')`
+    ),
+    false,
+    'cancelled ZIP enumeration must not report a failure'
+  );
+  await browser.clickSelector('.pub-row .action:not(.primary)');
+  await browser.waitForSelector('.pub-drop');
+  await browser.evaluate<void>(`(() => {
+    const file = new File(['# Report'], 'README.md');
+    const entry = { name: 'slow', isDirectory: true, isFile: false, createReader() {
+      return { readEntries(done) { window.__finishDirectory = done; } };
+    } };
+    const event = new DragEvent('drop', { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'dataTransfer', {
+      value: { files: [file], items: [{ webkitGetAsEntry: () => entry }] },
+    });
+    document.querySelector('.pub-drop').dispatchEvent(event);
+  })()`);
+  await waitForText('Reading files for review.');
+  await browser.clickSelector('.pub-card .action');
+  await browser.waitForSelector('.pub-drop');
+  await browser.evaluate<void>(`window.__finishDirectory?.([])`);
+  await browser.evaluate<void>(
+    `(() => { const {promise, resolve} = Promise.withResolvers(); setTimeout(resolve, 0); return promise; })()`
+  );
+  assert.equal(
+    await browser.evaluate<boolean>(
+      `document.body.innerText.includes('could not be read')`
+    ),
+    false,
+    'cancelled directory enumeration must not report a failure'
+  );
+  assert.equal(apiRequests().length, 0);
+  console.log(
+    'PUBLISH_REVIEW_SAFETY title=original zip_cancel=ok directory_cancel=ok'
   );
   console.log(
     'PUBLISH_STEP_6_REFUSALS oversize=refused folder=reviewed grants=0'

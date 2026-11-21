@@ -5,6 +5,7 @@ import {
   deriveRendererClass,
   encodeManifest,
   encryptFolderStream,
+  foldEntryPath,
   encryptedSize,
   guessMimetype,
   isRenderable,
@@ -17,6 +18,68 @@ import {
 
 /** The browser caps both the selected input and the plaintext it will publish. */
 export const BROWSER_PUBLISH_LIMIT_BYTES = 100_000_000;
+
+/** Reserved metadata is excluded by segment, identically for folders and ZIPs. */
+export function reservedSegmentReason(name: string): string | undefined {
+  const folded = foldEntryPath(name);
+  if (folded === '.git') return 'git_metadata';
+  if (folded === 'node_modules') return 'node_modules';
+  if (
+    folded === '.ds_store' ||
+    folded === '__macosx' ||
+    folded.startsWith('._')
+  )
+    return 'os_metadata';
+  return undefined;
+}
+
+export function throwIfAborted(signal?: AbortSignal): void {
+  signal?.throwIfAborted();
+}
+
+/** Stop waiting on an in-flight read, even when its browser callback never fires. */
+export function abortable<T>(
+  pending: Promise<T>,
+  signal?: AbortSignal
+): Promise<T> {
+  if (!signal) return pending;
+  const { promise, resolve, reject } = Promise.withResolvers<T>();
+  let settled = false;
+  const abort = () => {
+    if (settled) return;
+    settled = true;
+    signal.removeEventListener('abort', abort);
+    reject(signal.reason);
+  };
+  signal.addEventListener('abort', abort, { once: true });
+  void pending.then(
+    (value) => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener('abort', abort);
+      resolve(value);
+    },
+    (error: unknown) => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener('abort', abort);
+      reject(error);
+    }
+  );
+  if (signal.aborted) abort();
+  return promise;
+}
+
+export function rethrowAbort(error: unknown, signal?: AbortSignal): void {
+  throwIfAborted(signal);
+  if (
+    typeof error === 'object' &&
+    error !== null &&
+    'name' in error &&
+    error.name === 'AbortError'
+  )
+    throw error;
+}
 const encoder = new TextEncoder();
 
 export type PublishSourceFailureCode =
@@ -143,11 +206,14 @@ export async function prepareBrowserFolder(
   source: 'zip' | 'directory',
   files: BrowserFolderFile[],
   leftOut: BrowserOmission[],
-  openFirst?: string
+  options: { readonly openFirst?: string; readonly signal?: AbortSignal } = {}
 ): Promise<ReviewedFolderSource> {
+  const { openFirst, signal } = options;
+  throwIfAborted(signal);
   const fix = source === 'zip' ? ' Publish as one file instead.' : '';
   checkFilename(name);
   const normalized = files.map((file) => {
+    throwIfAborted(signal);
     const result = normaliseEntryPath(file.path);
     if (!result.ok) {
       throw new PublishSourceFailure(
@@ -202,8 +268,11 @@ export async function prepareBrowserFolder(
   for (const file of normalized) {
     let bytes: Uint8Array;
     try {
-      bytes = await file.read();
+      throwIfAborted(signal);
+      bytes = await abortable(file.read(), signal);
+      throwIfAborted(signal);
     } catch (error) {
+      rethrowAbort(error, signal);
       if (error instanceof PublishSourceFailure) throw error;
       throw new PublishSourceFailure(
         'source_unreadable',
@@ -339,5 +408,6 @@ export async function prepareBrowserFolder(
       },
     };
   };
+  throwIfAborted(signal);
   return withSelection(name, openFirst);
 }
