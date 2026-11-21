@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { crc32, planStoredZip } from '@relic/format';
-import { routeFor } from '../src/viewer.ts';
+import { contentFromBytes, type RelicContent } from '../src/content.ts';
+import { routeContent, routeFor } from '../src/viewer.ts';
 
 function makeZip(entries: readonly (readonly [string, string])[]): Uint8Array {
   const encoder = new TextEncoder();
@@ -76,6 +77,12 @@ describe('document and spreadsheet routing', () => {
           )
         ).route
       ).toBe(format.route);
+      const fromContent = await routeContent(
+        `file.${format.ext}`,
+        'application/octet-stream',
+        contentFromBytes(bytes)
+      );
+      expect(fromContent.route).toBe(format.route);
       expect(
         (await routeFor('file', 'application/octet-stream', bytes)).route
       ).toBe(format.route);
@@ -93,6 +100,46 @@ describe('document and spreadsheet routing', () => {
         (await routeFor(`file.${wrong}`, 'application/octet-stream', bytes))
           .route
       ).toBe('download');
+    });
+    test(`${format.ext} respects the route size ceiling`, async () => {
+      const limit = (format.ext === 'xlsx' ? 100 : 64) * 1024 * 1024;
+      const tail = bytes.slice(
+        new DataView(bytes.buffer).getUint32(bytes.length - 6, true)
+      );
+      const directoryOffset = limit + 1 - tail.length;
+      new DataView(tail.buffer).setUint32(
+        tail.length - 6,
+        directoryOffset,
+        true
+      );
+      const content: RelicContent = {
+        size: limit + 1,
+        head: bytes.subarray(0, Math.min(bytes.length, 64)),
+        tail,
+        blob: () => new Blob([]),
+        async read(start, end) {
+          const out = new Uint8Array(end - start);
+          const headEnd = Math.min(end, bytes.length - tail.length);
+          if (start < headEnd) out.set(bytes.subarray(start, headEnd));
+          const tailStart = Math.max(start, directoryOffset);
+          if (tailStart < end)
+            out.set(
+              tail.subarray(tailStart - directoryOffset, end - directoryOffset),
+              tailStart - start
+            );
+          return out;
+        },
+        async readWhole() {
+          throw new Error('oversized document was read whole');
+        },
+      };
+      const result = await routeContent(
+        `file.${format.ext}`,
+        format.mime,
+        content
+      );
+      expect(result.route).toBe('download');
+      expect(result.notice).toContain('too large');
     });
   }
   test('distinguishes ebook from Word within document class', async () => {
