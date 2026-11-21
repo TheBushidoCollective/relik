@@ -131,7 +131,7 @@ Redirects and rewrites performed by third parties, including link shorteners and
 
 `ipynb` is class `notebook`, at privilege tier 2, and it renders on the viewing origin. A notebook takes the `notebook` route only when its whole text parses as nbformat 4: an object whose `nbformat` is 4 and whose `cells` is an array. Any other `.ipynb` is text, and the disagreement rule in 1.3 shows it as text with a notice that says why. A notebook's whole text is read up to 50 MiB. Over that it is never read, and it is shown as text with the notice "This notebook is too large to show as a notebook, so its text is shown."
 
-DOCX and EPUB use the `document` class, and XLSX uses `spreadsheet`. Their container routes currently offer a download with a notice until their renderers land. A DOCX or EPUB above 64 MiB, or XLSX above 100 MiB, downloads rather than rendering.
+DOCX and EPUB use the `document` class, and XLSX uses `spreadsheet`. EPUB renders in the document frame; DOCX and XLSX offer a download until their renderers land. A DOCX or EPUB above 64 MiB, or XLSX above 100 MiB, downloads rather than rendering.
 
 The views mount into a root the route creates. The source view is drawn into that root first, so the file is never blank. It stays in place while the view loads, when the view cannot show the file, and when Suggesting switches the reader to Source. A view reports its marks and selections as the anchors in `spec/format.md` 3.13. A mark a view cannot place is reported as unplaceable on the thread, and is never painted on something else.
 
@@ -272,7 +272,7 @@ The interactive parser admits at most 16 MiB, 250,000 triangles, 500,000 source 
 
 The document route indexes the archive and reads checked entries on the viewing origin before sending them to the opaque frame. ZIP entry count and decompressed sizes are bounded, and document XML is scanned for forbidden DTDs and entities. The parent transfers entry buffers and a first-party renderer module as text, never the key. The frame imports that module from a blob and reports one outcome. The parent removes the frame after a failed render or a 30-second timeout and offers the original download.
 
-The Word and EPUB renderer modules are currently placeholders that report unsupported. EPUB archives with encryption metadata are refused until package parsing can distinguish supported font obfuscation from DRM.
+The EPUB package reader rejects protected books before a frame is created. Rights and LCP metadata, or encrypted resources other than obfuscated fonts, produce a DRM-specific download card. Obfuscated fonts are omitted. The frame renders the linear spine followed by non-linear items, with contents navigation, chapter position and text-size controls. A page label is shown only when supplied by the book. Author markup is rebuilt from an allowlist and local CSS resources are rewritten inside the frame. The Word renderer remains a placeholder.
 
 ## 4. The sandbox boundary
 
