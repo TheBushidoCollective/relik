@@ -5628,6 +5628,15 @@ export function buildMarkControls(deps: MarkDeps): MarkControls {
   };
 
   const onMouseDown = (event: MouseEvent): void => {
+    // A new press changes the selection before its next offer is drawn.
+    // Keep the previous offer from being used for the wrong selection.
+    if (
+      bubble !== undefined &&
+      event.target instanceof Element &&
+      !bubble.contains(event.target)
+    ) {
+      dismiss();
+    }
     if (!armed()) return;
     if (!(event.target instanceof Element)) return;
     if (
