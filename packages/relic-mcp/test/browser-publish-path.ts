@@ -446,12 +446,36 @@ try {
   const realDrag = async (
     name: string,
     x: number,
-    y: number
+    y: number,
+    fromFrame = false
   ): Promise<void> => {
     const path = await draggedFile(name);
+    if (fromFrame)
+      await browser.evaluate<void>(`(() => {
+      window.__proofFrameDrag = false;
+      window.addEventListener('message', e => {
+        if (e.source === document.querySelector('iframe')?.contentWindow && e.data?.type === 'relic:file-drag') window.__proofFrameDrag = true;
+      }, { once: false });
+    })()`);
     await sendDrag('dragEnter', x, y, path);
     await sendDrag('dragOver', x, y, path);
     await waitInPage('[data-file-curtain]');
+    if (fromFrame) {
+      await browser.evaluate<void>(`new Promise((resolve, reject) => {
+        const deadline = Date.now() + 15000;
+        const look = () => {
+          const curtain = document.querySelector('[data-file-curtain]');
+          const hit = document.elementFromPoint(${x}, ${y});
+          if (window.__proofFrameDrag && curtain && (hit === curtain || curtain.contains(hit))) return resolve();
+          if (Date.now() > deadline) return reject(new Error('iframe drag signal or curtain hit target missing'));
+          requestAnimationFrame(look);
+        };
+        requestAnimationFrame(look);
+      })`);
+      // CDP does not synthesize the native widget-entry transition when the
+      // iframe raises a parent-window curtain during an existing drag.
+      await sendDrag('dragEnter', x, y, path);
+    }
     await sendDrag('dragOver', x, y, path);
     await sendDrag('drop', x, y, path);
   };
@@ -476,12 +500,16 @@ try {
   // The control: a real drag over the page's own bar. If this does not open
   // the dialog the drag mechanism is what failed, not the frame.
   await realDrag('over-the-bar.md', 300, 20);
-  await waitInPage('dialog.pub-dialog .pub-title');
+  await waitInPage('dialog.pub-dialog .pub-title').catch((error) => {
+    throw new Error(`real drag over bar: ${String(error)}`);
+  });
   assert.equal(await dialogTitle(), 'over-the-bar.md');
   await dialogClosed();
 
-  await realDrag('over-the-frame.md', frame.x, frame.y);
-  await waitInPage('dialog.pub-dialog .pub-title');
+  await realDrag('over-the-frame.md', frame.x, frame.y, true);
+  await waitInPage('dialog.pub-dialog .pub-title').catch((error) => {
+    throw new Error(`real drag over iframe: ${String(error)}`);
+  });
   assert.equal(await dialogTitle(), 'over-the-frame.md');
   console.log(
     'PUBLISH_STEP_8_REAL_DRAG over_bar=caught over_sandboxed_frame=caught'
