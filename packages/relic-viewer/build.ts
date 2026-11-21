@@ -350,6 +350,10 @@ export async function buildViewer(options?: {
     throw new Error('Timing worker build did not emit its fixed worker asset');
   }
   await copyFile(mediabunny.licensePath, `${out}mediabunny-license.txt`);
+  await copyFile(
+    `${pkgDir}node_modules/docx-preview/LICENSE`,
+    `${out}docx-preview-license.txt`
+  );
 
   /**
    * Inline the sandbox bundle into its page, rather than linking it.
