@@ -1529,31 +1529,16 @@ body {
   max-width: none;
 }
 
-/*
- * No height here, deliberately. Every frame this class reaches is inside a
- * sandboxed stage or a comparison pane, and both set their own: the document,
- * HTML and JSX routes and the two panes of a rendered comparison. This rule
- * used to carry
- * `calc(100vh - var(--bar-height) - 4rem)`, a third answer nothing ever read,
- * which is how the same guess survived unnoticed in the rule below it.
- */
+/* HTML, JSX and document stages size their own frames. Comparison panes
+ * size theirs separately, so the base rule leaves height to the container. */
 .usercontent-frame {
   width: 100%;
   border: 1px solid var(--rule);
   background: #fff;
 }
 
-/*
- * A published HTML document is already a page. It brings its own margins, its
- * own background, and often a full-bleed hero that runs to the edge on
- * purpose. Sitting it inside the reading gutter puts a second margin around a
- * document that already decided how it wants to sit, and frames somebody's
- * design in a border they did not ask for.
- *
- * So the HTML and component routes get the whole surface. Markdown and code
- * keep the gutter, because that markup is generated here from a plain file
- * and has no opinion of its own to respect.
- */
+/* Framed content brings its own margins. Give it the pane; loading and
+ * download states on the document route keep the normal reading gutter. */
 .stage-sandboxed-html,
 .stage-sandboxed-jsx,
 .stage-sandboxed-document:has(> .doc > .usercontent-frame) {
@@ -1563,65 +1548,51 @@ body {
   padding: 0;
 }
 
-/*
- * The wrapper is in the chain and skipping it broke the viewer once.
- *
- * The frame is not a child of the stage: `renderSandboxedHtml` wraps it in a
- * `.doc` first. An earlier attempt put the fill on the frame and the flex
- * container on the stage, so the flex properties applied to something that
- * was not a flex child and did nothing, while the height they replaced was
- * the only thing sizing the iframe. It collapsed to its intrinsic 300x150 in
- * production. This rule is the missing middle.
- *
- * A flex child rather than `height: 100%` so a notice above it takes its own
- * height instead of being added to a frame already claiming the whole row.
- */
+/* The .doc wrapper fills the height left by stage notices and anchors the
+ * link confirmation overlay. Skipping it leaves the frame at its intrinsic
+ * 150px height. */
 .stage-sandboxed-html .doc,
 .stage-sandboxed-jsx .doc,
-.stage-sandboxed-document:has(> .doc > .usercontent-frame) > .doc {
+.stage-sandboxed-document > .doc:has(> .usercontent-frame) {
   flex: 1 1 auto;
   min-height: 0;
   margin: 0;
+  position: relative;
 }
 
+/* Use the wrapper's height rather than guessing the height of the taskbar. */
 .stage-sandboxed-html .usercontent-frame,
-.stage-sandboxed-jsx .usercontent-frame,
-.stage-sandboxed-document > .doc > .usercontent-frame {
-  /* Block, or the iframe sits on the text baseline and leaves a strip of page
-     background under it that reads as one more stray margin. */
+.stage-sandboxed-jsx .usercontent-frame {
   display: block;
-
-  /*
-   * Fills the wrapper rather than guessing at the chrome. This was
-   * `calc(100vh - var(--bar-height))`, and the reserve has to equal the real
-   * taskbar to the pixel. It does not: `.bar` carries a min-height and the
-   * identity zone stacks a filename over an accession number, so the frame
-   * ended up taller than the row, `.stage-wrap` grew a scrollbar for the
-   * overflow, and the iframe kept its own.
-   */
   height: 100%;
   border: 0;
 }
 
-/* The network notice sits above every frame, and a downgrade notice would
-   too if routing ever changed; either way it must not be jammed against the
-   window edge. */
+/* In a document wrapper the frame fills the space below the in-flow
+ * remembered-link strip, including when the strip wraps on a phone. */
+.stage-sandboxed-document > .doc:has(> .usercontent-frame) {
+  display: flex;
+  flex-direction: column;
+  max-width: none;
+}
+
+.stage-sandboxed-document > .doc > .usercontent-frame {
+  display: block;
+  flex: 1 1 0;
+  min-height: 0;
+  border: 0;
+}
+
+/* Notices take their own height and keep their gutter above the frame. */
 .stage-sandboxed-html .notice,
 .stage-sandboxed-jsx .notice,
-.stage-sandboxed-document:has(> .doc > .usercontent-frame) .notice {
+.stage-sandboxed-document:has(> .doc > .usercontent-frame) > .notice {
+  flex: none;
   margin: 1rem 1.25rem;
 }
 
 /* ---------- frame link confirmation ----------
-   A frame's link opens only after the reader confirms it here. The bar is host
-   chrome: it overlays the top of the stage and never sits inside the frame, so
-   the frame keeps its full-height layout. Its buttons are the popover's own
-   action classes, so they look like the rest of the viewer's chrome. */
-.stage-sandboxed-html .doc,
-.stage-sandboxed-jsx .doc,
-.stage-sandboxed-document:has(> .doc > .usercontent-frame) > .doc {
-  position: relative;
-}
+   This host overlay leaves the frame's height unchanged. */
 
 .link-confirm {
   position: absolute;

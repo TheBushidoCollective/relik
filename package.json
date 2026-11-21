@@ -14,6 +14,7 @@
     "verify": "bun run lint && bun run typecheck && bun run test"
   },
   "patchedDependencies": {
+    "docx-preview@0.4.1": "patches/docx-preview@0.4.1.patch",
     "pdfjs-dist@5.4.149": "patches/pdfjs-dist@5.4.149.patch"
   },
   "devDependencies": {

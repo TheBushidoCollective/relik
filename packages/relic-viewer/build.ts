@@ -207,6 +207,16 @@ export async function buildViewer(options?: {
     format: 'esm',
     minify: true,
     splitting: false,
+    plugins: [
+      {
+        name: 'docx-entry-archive',
+        setup(build) {
+          build.onResolve({ filter: /^jszip$/ }, () => ({
+            path: `${pkgDir}src/frame-zip-entries.ts`,
+          }));
+        },
+      },
+    ],
   });
   if (!frameModules.success) {
     for (const log of frameModules.logs) console.error(log);
@@ -357,6 +367,10 @@ export async function buildViewer(options?: {
   await copyFile(
     `${pkgDir}node_modules/docx-preview/LICENSE`,
     `${out}docx-preview-license.txt`
+  );
+  await copyFile(
+    `${pkgDir}node_modules/image-size/LICENSE`,
+    `${out}image-size-license.txt`
   );
   await copyFile(
     `${pkgDir}../relic-format/node_modules/entities/LICENSE`,

@@ -175,14 +175,44 @@ test('archive checks precede frame creation and timeout removes the frame', asyn
       () => {}
     );
     expect(frameCount).toBe(0);
+    const failedSelectionSignal: { current: AbortSignal | undefined } = {
+      current: undefined,
+    };
+    let protectedDownloads = 0;
+    let protectedStates = 0;
+    root.addEventListener('relic:render-state', () => protectedStates++);
     await mountDocumentRoute(
       root as unknown as HTMLElement,
       extensionless,
       'epub',
-      async () => ({ ok: false, reason: 'protected' }),
+      async (_index, signal) => {
+        failedSelectionSignal.current = signal;
+        return { ok: false, reason: 'protected' };
+      },
       createFrame,
-      () => {}
+      () => protectedDownloads++
     );
+    expect(failedSelectionSignal.current?.aborted).toBe(true);
+    expect(protectedStates).toBe(1);
+    expect(root.children[0]?.children[0]?.textContent).toBe(
+      'This ebook is protected by DRM and cannot be shown.'
+    );
+    expect(root.children[0]?.children[1]?.textContent).toBe('Download');
+    root.children[0]?.children[1]?.dispatchEvent(new Event('click'));
+    expect(protectedDownloads).toBe(1);
+    for (const reason of ['corrupt', 'too-large'] as const) {
+      await mountDocumentRoute(
+        root as unknown as HTMLElement,
+        extensionless,
+        'epub',
+        async () => ({ ok: false, reason }),
+        createFrame,
+        () => {}
+      );
+      expect(root.children[0]?.children[0]?.textContent).toBe(
+        'This document could not be shown.'
+      );
+    }
     await mountDocumentRoute(
       root as unknown as HTMLElement,
       extensionless,
@@ -243,14 +273,46 @@ test('archive checks precede frame creation and timeout removes the frame', asyn
     expect(frameDisposals).toBe(3);
     jest.advanceTimersByTime(30000);
     expect(frameDisposals).toBe(3);
+    const unknownImageRoot = new ElementStub();
+    let downloads = 0;
+    await mountDocumentRoute(
+      unknownImageRoot as unknown as HTMLElement,
+      valid,
+      'docx',
+      select,
+      createFrame,
+      () => downloads++
+    );
+    frameState.respond?.({
+      type: 'relic:document-state',
+      state: 'failed',
+      reason: 'image-dimensions-unknown',
+    });
+    expect(frame.removed).toBe(true);
+    expect(frameDisposals).toBe(4);
+    const fallback = unknownImageRoot.children[0]!;
+    expect(fallback.children[0]?.textContent).toContain(
+      'image whose dimensions could not be checked'
+    );
+    expect(fallback.children[1]?.textContent).toBe('Download');
+    fallback.children[1]?.dispatchEvent(new Event('click'));
+    expect(downloads).toBe(1);
     const pendingRoot = new ElementStub();
     const started = Promise.withResolvers<void>();
     const release = Promise.withResolvers<void>();
+    const selectionSignal: { current: AbortSignal | undefined } = {
+      current: undefined,
+    };
+    let renderStates = 0;
+    pendingRoot.addEventListener('relic:render-state', () => renderStates++);
     const pending = mountDocumentRoute(
       pendingRoot as unknown as HTMLElement,
       valid,
       'docx',
-      async (index) => {
+      async (index, signal) => {
+        selectionSignal.current = signal;
+        const metadata = await index.read('word/document.xml');
+        if (!metadata.ok) throw new Error(metadata.reason);
         started.resolve();
         await release.promise;
         return select(index);
@@ -261,17 +323,57 @@ test('archive checks precede frame creation and timeout removes the frame', asyn
     await started.promise;
     pendingRoot.isConnected = false;
     observerState.onMutation?.();
+    expect(selectionSignal.current?.aborted).toBe(true);
+    pendingRoot.isConnected = true;
     release.resolve();
     await pending;
-    expect(frameCount).toBe(3);
+    expect(frameCount).toBe(4);
+    expect(pendingRoot.children).toEqual([]);
+    expect(renderStates).toBe(0);
+
+    const rejectedRoot = new ElementStub();
+    const rejectedStarted = Promise.withResolvers<void>();
+    const rejectRelease = Promise.withResolvers<void>();
+    const rejectedSignal: { current: AbortSignal | undefined } = {
+      current: undefined,
+    };
+    rejectedRoot.addEventListener('relic:render-state', () => renderStates++);
+    const rejected = mountDocumentRoute(
+      rejectedRoot as unknown as HTMLElement,
+      valid,
+      'docx',
+      async (_index, signal) => {
+        rejectedSignal.current = signal;
+        rejectedStarted.resolve();
+        await rejectRelease.promise;
+        throw new Error('metadata selection cancelled');
+      },
+      createFrame,
+      () => {}
+    );
+    await rejectedStarted.promise;
+    rejectedRoot.isConnected = false;
+    observerState.onMutation?.();
+    expect(rejectedSignal.current?.aborted).toBe(true);
+    rejectedRoot.isConnected = true;
+    rejectRelease.resolve();
+    await rejected;
+    expect(frameCount).toBe(4);
+    expect(rejectedRoot.children).toEqual([]);
+    expect(renderStates).toBe(0);
+
     const pendingProtectedRoot = new ElementStub();
     const protectedStarted = Promise.withResolvers<void>();
     const protectedRelease = Promise.withResolvers<void>();
+    const protectedSignal: { current: AbortSignal | undefined } = {
+      current: undefined,
+    };
     const pendingProtected = mountDocumentRoute(
       pendingProtectedRoot as unknown as HTMLElement,
       valid,
       'epub',
-      async () => {
+      async (_index, signal) => {
+        protectedSignal.current = signal;
         protectedStarted.resolve();
         await protectedRelease.promise;
         return { ok: false, reason: 'protected' };
@@ -282,10 +384,92 @@ test('archive checks precede frame creation and timeout removes the frame', asyn
     await protectedStarted.promise;
     pendingProtectedRoot.isConnected = false;
     observerState.onMutation?.();
+    expect(protectedSignal.current?.aborted).toBe(true);
+    pendingProtectedRoot.isConnected = true;
     protectedRelease.resolve();
     await pendingProtected;
     expect(pendingProtectedRoot.children).toEqual([]);
-    expect(frameCount).toBe(3);
+    expect(frameCount).toBe(4);
+  } finally {
+    if (previous) Object.defineProperty(globalThis, 'document', previous);
+    else Reflect.deleteProperty(globalThis, 'document');
+    if (previousObserver)
+      Object.defineProperty(globalThis, 'MutationObserver', previousObserver);
+    else Reflect.deleteProperty(globalThis, 'MutationObserver');
+  }
+});
+
+test('detaching during ZIP indexing stops reads and never mounts a frame', async () => {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, 'document');
+  const previousObserver = Object.getOwnPropertyDescriptor(
+    globalThis,
+    'MutationObserver'
+  );
+  const observerState: { onMutation?: () => void } = {};
+  let disconnects = 0;
+  Object.defineProperty(globalThis, 'MutationObserver', {
+    configurable: true,
+    value: class {
+      constructor(callback: () => void) {
+        observerState.onMutation = callback;
+      }
+      observe() {}
+      disconnect() {
+        disconnects++;
+      }
+    },
+  });
+  Object.defineProperty(globalThis, 'document', {
+    configurable: true,
+    value: { createElement: () => new ElementStub() },
+  });
+  try {
+    const root = new ElementStub();
+    const original = contentFromBytes(zip([['word/document.xml', '<root/>']]));
+    const started = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    let reads = 0;
+    let selections = 0;
+    let frames = 0;
+    let renderStates = 0;
+    root.addEventListener('relic:render-state', () => renderStates++);
+    const content = {
+      ...original,
+      async read(start: number, end: number) {
+        reads++;
+        if (reads === 3) {
+          started.resolve();
+          await release.promise;
+        }
+        return original.read(start, end);
+      },
+    };
+    const pending = mountDocumentRoute(
+      root as unknown as HTMLElement,
+      content,
+      'docx',
+      async () => {
+        selections++;
+        return { parts: [], xmlParts: new Set<string>() };
+      },
+      () => {
+        frames++;
+        throw new Error('A detached route must not create a frame');
+      },
+      () => {}
+    );
+    await started.promise;
+    root.isConnected = false;
+    observerState.onMutation?.();
+    expect(disconnects).toBe(1);
+    root.isConnected = true;
+    release.resolve();
+    await pending;
+    expect(reads).toBe(3);
+    expect(selections).toBe(0);
+    expect(frames).toBe(0);
+    expect(root.children).toEqual([]);
+    expect(renderStates).toBe(0);
   } finally {
     if (previous) Object.defineProperty(globalThis, 'document', previous);
     else Reflect.deleteProperty(globalThis, 'document');

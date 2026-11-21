@@ -1287,8 +1287,10 @@ export interface ContentRouteDecision extends RouteDecision {
 export async function routeContent(
   filename: string,
   mimetype: string,
-  content: RelicContent
+  content: RelicContent,
+  signal?: AbortSignal
 ): Promise<ContentRouteDecision> {
+  signal?.throwIfAborted();
   const head = content.head;
   let sniffed = sniffContentClass(head);
   let containerKind: 'docx' | 'xlsx' | 'epub' | undefined;
@@ -1300,17 +1302,21 @@ export async function routeContent(
     head[3] === 0x04;
   if (zip) {
     let failure: ContentStoreError | undefined;
-    const kind = await zipContainerKind({
-      size: content.size,
-      async read(start, end) {
-        try {
-          return await content.read(start, end);
-        } catch (error) {
-          if (error instanceof ContentStoreError) failure = error;
-          throw error;
-        }
+    const kind = await zipContainerKind(
+      {
+        size: content.size,
+        async read(start, end) {
+          try {
+            return await content.read(start, end);
+          } catch (error) {
+            if (error instanceof ContentStoreError) failure = error;
+            throw error;
+          }
+        },
       },
-    });
+      signal
+    );
+    signal?.throwIfAborted();
     if (failure) throw failure;
     containerKind =
       kind === 'docx' || kind === 'xlsx' || kind === 'epub' ? kind : undefined;
@@ -1331,6 +1337,7 @@ export async function routeContent(
   let notebook = false;
   if (declaredNotebook && !oversizedNotebook) {
     const whole = await content.readWhole(NOTEBOOK_RENDER_LIMIT_BYTES);
+    signal?.throwIfAborted();
     notebook = whole !== undefined && isNbformat4Notebook(whole);
   }
 
@@ -1341,6 +1348,7 @@ export async function routeContent(
       size <= head.length
         ? head.subarray(0, size)
         : await content.read(0, size);
+    signal?.throwIfAborted();
     model = sniffModelFormat(prefix, content.size);
   }
 
@@ -1353,14 +1361,17 @@ export async function routeContent(
     content.size <= DOCUMENT_RENDER_LIMIT_BYTES
   ) {
     documentBytes = await content.readWhole(DOCUMENT_RENDER_LIMIT_BYTES);
+    signal?.throwIfAborted();
     if (documentBytes) {
       const { isComponentSource } = await loadJsxCompiler();
+      signal?.throwIfAborted();
       component = isComponentSource(
         new TextDecoder('utf-8', { fatal: false }).decode(documentBytes),
         filename
       );
       if (component) {
         componentModule = await compileComponent(documentBytes, filename);
+        signal?.throwIfAborted();
       }
     }
   }
@@ -1374,6 +1385,7 @@ export async function routeContent(
         notebook,
         containerKind,
       });
+  signal?.throwIfAborted();
   if (
     decision.route === 'sandboxed-document' &&
     content.size > 64 * 1024 * 1024
@@ -1410,6 +1422,7 @@ export async function routeContent(
     decision.route === 'notebook'
   ) {
     documentBytes ??= await content.readWhole(DOCUMENT_RENDER_LIMIT_BYTES);
+    signal?.throwIfAborted();
   } else {
     documentBytes = undefined;
   }

@@ -66,6 +66,7 @@ import {
 import {
   isDocumentStateMessage,
   isRenderDocumentMessage,
+  type DocumentRenderHooks,
   type RenderDocumentMessage,
 } from './frame-document-protocol.ts';
 import { announceUnclaimedFileDrags } from './frame-file-drag.ts';
@@ -908,6 +909,67 @@ export function applyDocumentScrollFraction(
   applyDocumentScrollTop(doc, win, bounded * travel);
 }
 
+export interface ImageIdentitySource {
+  readonly settled: Promise<void>;
+  digest(img: HTMLImageElement): Promise<string>;
+}
+
+export function createImageIdentitySource(): {
+  readonly source: ImageIdentitySource;
+  readonly hooks: DocumentRenderHooks;
+  seal(): void;
+} {
+  const identities = new Map<string, Promise<string>>();
+  let registered = false;
+  let sealed = false;
+  const { promise: settled, resolve: settle } = Promise.withResolvers<void>();
+  const hooks: DocumentRenderHooks = {
+    registerImageIdentities(entries) {
+      if (registered || sealed) return;
+      registered = true;
+      for (const [url, identity] of entries) {
+        const digest = Promise.resolve(identity);
+        // A digest may fail before an image is inspected.
+        void digest.catch(() => {});
+        identities.set(url, digest);
+      }
+    },
+  };
+  return {
+    source: {
+      settled,
+      async digest(img) {
+        await settled;
+        const url = img.getAttribute('src');
+        const parent = img.parentElement;
+        if (
+          !url?.startsWith('blob:') ||
+          img.hasAttribute('srcset') ||
+          img.hasAttribute('sizes') ||
+          (parent?.tagName.toLowerCase() === 'picture' &&
+            Array.from(parent.children).some(
+              (child) => child.tagName.toLowerCase() === 'source'
+            ))
+        ) {
+          throw new Error('Image has no stable identity');
+        }
+        const identity = identities.get(url);
+        if (!identity) throw new Error('Image has no stable identity');
+        const digest = await identity;
+        if (typeof digest !== 'string' || !/^[0-9a-f]{64}$/.test(digest))
+          throw new Error('Invalid image identity');
+        return digest;
+      },
+    },
+    hooks,
+    seal() {
+      if (sealed) return;
+      sealed = true;
+      settle();
+    },
+  };
+}
+
 type ImagePath = readonly { readonly tag: string; readonly index: number }[];
 type ImageFrameMark = {
   readonly id: string;
@@ -952,7 +1014,8 @@ function setupImageMarks(
   post: (msg: object) => void,
   tracked: () => string | null,
   enabled: boolean,
-  inParent: () => boolean
+  inParent: () => boolean,
+  identitySource?: ImageIdentitySource
 ) {
   type Entry = {
     mark: ImageFrameMark;
@@ -970,6 +1033,12 @@ function setupImageMarks(
     HTMLImageElement,
     { source: string; hash: Promise<string> }
   >();
+  type IdentityState = {
+    declaration: string;
+    status: 'pending' | 'ready' | 'unavailable';
+  };
+  const imageIdentities = new WeakMap<HTMLImageElement, IdentityState>();
+  let identitySettled = identitySource === undefined;
   let layer: HTMLElement | undefined;
   let scheduled = false;
   let serial = 0;
@@ -1004,6 +1073,7 @@ function setupImageMarks(
         : [],
     ]);
   const fingerprint = (img: HTMLImageElement): Promise<string> => {
+    if (identitySource) return identitySource.digest(img);
     const value = source(img);
     const cached = hashes.get(img);
     if (cached?.source === value) return cached.hash;
@@ -1228,11 +1298,13 @@ function setupImageMarks(
     if (row && entry.badge) revealButton(row, entry.badge);
   };
   const reportRows = (): void => {
+    if (disposed) return;
     for (const entry of entries.values()) {
       if (
         !entry.badge ||
         !entry.image ||
-        entry.declaration !== source(entry.image)
+        entry.declaration !== source(entry.image) ||
+        (identitySource !== undefined && !visible(entry.image))
       )
         continue;
       const row = rows.get(entry.image);
@@ -1336,7 +1408,36 @@ function setupImageMarks(
       win.requestAnimationFrame(run);
     else setTimeout(run, 0);
   };
+  const identify = (img: HTMLImageElement): IdentityState => {
+    const declaration = source(img);
+    const cached = imageIdentities.get(img);
+    if (cached?.declaration === declaration) return cached;
+    const state: IdentityState = { declaration, status: 'pending' };
+    imageIdentities.set(img, state);
+    void fingerprint(img).then(
+      () => {
+        if (disposed || imageIdentities.get(img) !== state) return;
+        if (source(img) !== declaration) imageIdentities.delete(img);
+        else state.status = 'ready';
+        schedule();
+      },
+      () => {
+        if (disposed || imageIdentities.get(img) !== state) return;
+        if (source(img) !== declaration) imageIdentities.delete(img);
+        else state.status = 'unavailable';
+        schedule();
+      }
+    );
+    return state;
+  };
+  const dropControl = (img: HTMLImageElement): void => {
+    rows.get(img)?.remove();
+    rows.delete(img);
+    controls.delete(img);
+    resizeObserver?.unobserve(img);
+  };
   const refresh = (): void => {
+    if (!identitySettled) return;
     const host = getLayer();
     if (!host || !doc.body) return;
     const images = Array.from(doc.body.querySelectorAll('img')).filter(
@@ -1344,14 +1445,17 @@ function setupImageMarks(
     );
     const live = new Set(images);
     for (const img of controls.keys()) {
-      if (!live.has(img)) {
-        rows.get(img)?.remove();
-        rows.delete(img);
-        controls.delete(img);
-        resizeObserver?.unobserve(img);
-      }
+      if (!live.has(img)) dropControl(img);
     }
     for (const img of images) {
+      if (
+        identitySource &&
+        (identify(img).status !== 'ready' ||
+          (img.complete && img.naturalWidth === 0))
+      ) {
+        dropControl(img);
+        continue;
+      }
       let button = controls.get(img);
       if (!button) {
         button = doc.createElement('button');
@@ -1387,6 +1491,7 @@ function setupImageMarks(
               };
               const box = markFrameRect(control);
               if (
+                disposed ||
                 !box ||
                 !visible(img) ||
                 source(img) !== before ||
@@ -1431,6 +1536,26 @@ function setupImageMarks(
         });
         continue;
       }
+      if (identitySource) {
+        const identity = identify(img);
+        if (identity.status === 'pending') {
+          remove(entry);
+          continue;
+        }
+        if (
+          identity.status === 'unavailable' ||
+          (img.complete && img.naturalWidth === 0)
+        ) {
+          remove(entry);
+          post({
+            type: 'relic:frame-image-placement',
+            id: mark.id,
+            requestId: mark.requestId,
+            status: 'unavailable',
+          });
+          continue;
+        }
+      }
       if (!rect) {
         // Not drawn is not the same as not placeable: the image is still in the
         // document, so the parent is told why rather than told it is gone.
@@ -1445,7 +1570,11 @@ function setupImageMarks(
         remove(entry);
       void fingerprint(img)
         .then((digest) => {
-          if (entries.get(mark.id) !== entry || entry.serial !== generation)
+          if (
+            disposed ||
+            entries.get(mark.id) !== entry ||
+            entry.serial !== generation
+          )
             return;
           const currentRect = visible(img);
           if (
@@ -1511,7 +1640,11 @@ function setupImageMarks(
           scheduleRowReport();
         })
         .catch(() => {
-          if (entries.get(mark.id) !== entry || entry.serial !== generation)
+          if (
+            disposed ||
+            entries.get(mark.id) !== entry ||
+            entry.serial !== generation
+          )
             return;
           remove(entry);
           post({
@@ -1552,10 +1685,18 @@ function setupImageMarks(
   doc.addEventListener('pointermove', onPointerMove, true);
   doc.addEventListener('mouseout', onPointerLeave);
   doc.addEventListener('load', schedule, true);
+  doc.addEventListener('error', schedule, true);
   doc.addEventListener('scroll', schedule, true);
   doc.addEventListener('DOMContentLoaded', schedule);
   win.addEventListener?.('resize', schedule);
   win.addEventListener?.('scroll', schedule, { passive: true });
+  if (identitySource) {
+    void identitySource.settled.then(() => {
+      if (disposed) return;
+      identitySettled = true;
+      schedule();
+    });
+  }
   schedule();
   return {
     dispose(): void {
@@ -1565,6 +1706,7 @@ function setupImageMarks(
       doc.removeEventListener('pointermove', onPointerMove, true);
       doc.removeEventListener('mouseout', onPointerLeave);
       doc.removeEventListener('load', schedule, true);
+      doc.removeEventListener('error', schedule, true);
       doc.removeEventListener('scroll', schedule, true);
       doc.removeEventListener('DOMContentLoaded', schedule);
       win.removeEventListener?.('resize', schedule);
@@ -1661,6 +1803,7 @@ function setupImageMarks(
         void fingerprint(img)
           .then((digest) => {
             if (
+              disposed ||
               entries.get(id) !== entry ||
               digest !== entry.mark.source_sha256 ||
               source(img) !== declaration ||
@@ -1684,8 +1827,13 @@ export function setupFrameInteraction(
   doc: Document,
   win: Window,
   postOutward: (msg: object) => void,
-  imageControlsEnabled = true
+  imageControlsEnabled = true,
+  imageIdentitySource?: ImageIdentitySource
 ): FrameInteraction {
+  let disposed = false;
+  const post = (message: object): void => {
+    if (!disposed) postOutward(message);
+  };
   let armed = false;
   let startX = 0;
   let startY = 0;
@@ -1718,6 +1866,7 @@ export function setupFrameInteraction(
   let trackedConcealment: Concealment | undefined;
   const conceal = (): void => {
     concealScheduled = false;
+    if (disposed) return;
     if (!doc.body || typeof doc.body.querySelectorAll !== 'function') return;
     const marks: ConcealableMark[] = [];
     const overlay = frameRegionOverlays.get(doc);
@@ -1741,7 +1890,7 @@ export function setupFrameInteraction(
     }
   };
   const scheduleConceal = (): void => {
-    if (concealScheduled) return;
+    if (disposed || concealScheduled) return;
     concealScheduled = true;
     if (typeof requestAnimationFrame === 'function') {
       requestAnimationFrame(conceal);
@@ -1753,10 +1902,11 @@ export function setupFrameInteraction(
   const imageMarks = setupImageMarks(
     doc,
     win,
-    postOutward,
+    post,
     () => trackedId,
     imageControlsEnabled,
-    () => parentVisible
+    () => parentVisible,
+    imageIdentitySource
   );
 
   const reportMarkRect = (
@@ -1861,10 +2011,11 @@ export function setupFrameInteraction(
   const reportTracked = (): void => {
     if (trackedId === null) return;
     const report = reportMarkRect(doc, trackedId);
-    postOutward(report);
+    post(report);
   };
 
   const scheduleTrackReport = (): void => {
+    if (disposed) return;
     scheduleConceal();
     if (trackedId === null) return;
     if (typeof requestAnimationFrame === 'function') {
@@ -1896,14 +2047,14 @@ export function setupFrameInteraction(
   const reportSelectionCleared = (): void => {
     if (!selectionLive) return;
     selectionLive = false;
-    postOutward({ type: 'relic:frame-selection-cleared' });
+    post({ type: 'relic:frame-selection-cleared' });
   };
 
   const handleScroll = (): void => {
     if (suppressScroll) return;
     const position = documentScrollPosition(doc, win);
     if (position === null) return;
-    postOutward({ type: 'relic:frame-scroll', ...position });
+    post({ type: 'relic:frame-scroll', ...position });
   };
 
   // Guarded because this function is called with a stub window in the frame
@@ -1939,7 +2090,7 @@ export function setupFrameInteraction(
     event.preventDefault();
     if (armed || !event.isTrusted) return;
     const href = normaliseFrameExternalLink(rawHref);
-    if (href !== undefined) postOutward({ type: 'relic:open-link', href });
+    if (href !== undefined) post({ type: 'relic:open-link', href });
   };
   doc.addEventListener('click', (event: MouseEvent) => {
     let node = event.target as Element | null;
@@ -2111,7 +2262,7 @@ export function setupFrameInteraction(
       ...(truncated ? { truncated } : {}),
     };
     selectionLive = true;
-    postOutward(message);
+    post(message);
   }
 
   doc.addEventListener('mouseup', (event: MouseEvent) => {
@@ -2165,7 +2316,7 @@ export function setupFrameInteraction(
         rect: gesture.rect,
         ...(regionBox !== undefined ? { box: regionBox } : {}),
       };
-      postOutward(msg);
+      post(msg);
     } else {
       const clientX = event.clientX ?? event.pageX ?? 0;
       const clientY = event.clientY ?? event.pageY ?? 0;
@@ -2181,7 +2332,7 @@ export function setupFrameInteraction(
         y: gesture.y,
         box: pointBox,
       };
-      postOutward(msg);
+      post(msg);
     }
   });
 
@@ -2352,7 +2503,7 @@ export function setupFrameInteraction(
       if (!doc.body) return;
       if (id !== null) {
         const report = reportMarkRect(doc, id);
-        postOutward(report);
+        post(report);
       }
       for (const mark of Array.from(
         doc.body.querySelectorAll('[data-comment-id]')
@@ -2377,6 +2528,10 @@ export function setupFrameInteraction(
       conceal();
     },
     dispose() {
+      disposed = true;
+      if (trackRaf !== undefined && typeof cancelAnimationFrame === 'function')
+        cancelAnimationFrame(trackRaf);
+      clearTimeout(scrollResetTimer);
       imageMarks.dispose();
       if (typeof doc.removeEventListener === 'function') {
         doc.removeEventListener('scroll', scheduleConceal, true);
@@ -2533,16 +2688,23 @@ async function mountComponent(code: string): Promise<void> {
   }
 }
 
-async function mountDocument(
+export async function mountDocument(
   message: RenderDocumentMessage,
-  initInteraction: (imageControlsEnabled: boolean) => FrameInteraction
+  initInteraction: (
+    imageControlsEnabled: boolean,
+    imageIdentitySource?: ImageIdentitySource
+  ) => FrameInteraction
 ): Promise<void> {
-  const root = document.createElement('div');
-  root.id = 'relic-document';
-  document.body.replaceChildren(root);
-  const interaction = initInteraction(true);
+  const identity =
+    message.format === 'docx' ? createImageIdentitySource() : undefined;
   let url: string | undefined;
   try {
+    const root = document.createElement('div');
+    root.id = 'relic-document';
+    document.body.replaceChildren(root);
+    const interaction = identity
+      ? initInteraction(true, identity.source)
+      : initInteraction(true);
     url = URL.createObjectURL(
       new Blob([message.module], { type: 'text/javascript' })
     );
@@ -2550,23 +2712,27 @@ async function mountDocument(
     const module = await import(url);
     if (typeof module.render !== 'function')
       throw new Error('Missing renderer');
-    const outcome = await module.render(root, {
+    const input = {
       entries: new Map(message.entries),
       requestExternalLink: interaction.requestExternalLink,
       ...(message.book === undefined ? {} : { book: message.book }),
-    });
+    };
+    const outcome = identity
+      ? await module.render(root, input, identity.hooks)
+      : await module.render(root, input);
     const state = { ...outcome, type: 'relic:document-state' };
     if (!isDocumentStateMessage(state))
       throw new Error('Invalid renderer outcome');
+    identity?.seal();
     window.parent.postMessage(state, '*');
   } catch {
+    identity?.seal();
     window.parent.postMessage(
       { type: 'relic:document-state', state: 'failed', reason: 'corrupt' },
       '*'
     );
   } finally {
     if (url !== undefined) URL.revokeObjectURL(url);
-    scheduleReport();
   }
 }
 
@@ -3177,7 +3343,10 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   installSandboxContainment(window, document);
   let interaction: FrameInteraction | undefined;
 
-  function initInteraction(imageControlsEnabled: boolean): FrameInteraction {
+  function initInteraction(
+    imageControlsEnabled: boolean,
+    imageIdentitySource?: ImageIdentitySource
+  ): FrameInteraction {
     interaction?.dispose();
     interaction = setupFrameInteraction(
       document,
@@ -3185,7 +3354,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       (msg) => {
         window.parent.postMessage(msg, '*');
       },
-      imageControlsEnabled
+      imageControlsEnabled,
+      imageIdentitySource
     );
     return interaction;
   }
