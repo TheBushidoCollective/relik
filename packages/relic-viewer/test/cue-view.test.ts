@@ -313,7 +313,10 @@ async function browserCases(
         'text/vtt'
       );
       await handle.ready;
-      const em = rowAt(root, 3).querySelector('em')?.firstChild as Node;
+      const italic = rowAt(root, 3).querySelector('em')!;
+      const em = document
+        .createTreeWalker(italic, NodeFilter.SHOW_TEXT)
+        .nextNode()!;
       const range = document.createRange();
       range.setStart(em, 0);
       range.setEnd(em, 3);
@@ -449,6 +452,63 @@ async function browserCases(
     root.remove();
   });
 
+  await check(
+    'cue fragments retain formatting and exclude source tags',
+    async () => {
+      const source =
+        'WEBVTT\r\n\r\n00:00:01.000 --> 00:00:02.000\r\nHello &amp; <b>world</b>\r\n';
+      const { root, handle } = mountCues(source, 'test.vtt', 'text/vtt');
+      await handle.ready;
+      const text = rowAt(root, 1).querySelector('.cue-content')!;
+      eq(text.textContent, 'Hello & world', 'decoded cue');
+      eq(text.querySelector('strong')?.textContent, 'world', 'bold text');
+      const pieces = Array.from(text.querySelectorAll('[data-seg]'));
+      eq(
+        pieces.map((part) => part.textContent).join(''),
+        'Hello & world',
+        'mapped text'
+      );
+      truth(
+        pieces.some((part) => part.textContent === '&'),
+        'entity has its own segment'
+      );
+      handle.dispose();
+      root.remove();
+    }
+  );
+
+  await check('JSON suggest edit selects its value in Source', async () => {
+    const source = '{"name":"Larkspur"}';
+    const root = document.createElement('section');
+    document.body.append(root);
+    const handle = bridge.mountStructuredView(root, 'tree', {
+      filename: 'data.json',
+      mimetype: 'application/json',
+      source,
+      sourceView: () => {
+        const pre = document.createElement('pre');
+        pre.className = 'code-body';
+        pre.textContent = source;
+        return pre;
+      },
+    });
+    await handle.ready;
+    const row = Array.from(root.querySelectorAll<HTMLElement>('.jt-row')).find(
+      (node) => node.textContent?.includes('Larkspur')
+    );
+    truth(row, 'value row');
+    row!.click();
+    const suggest = Array.from(root.querySelectorAll('button')).find(
+      (node) => node.textContent === 'Suggest edit'
+    );
+    truth(suggest, 'suggest action');
+    suggest!.click();
+    truth(handle.showingSource, 'source shown');
+    eq(document.getSelection()?.toString(), '"Larkspur"', 'selected token');
+    handle.dispose();
+    root.remove();
+  });
+
   return passed;
 }
 
@@ -563,7 +623,7 @@ describe('the cue list in the browser', () => {
           clearTimeout(stallTimer);
         }
         if (result.error) throw new Error(result.error);
-        expect(result.passed).toHaveLength(13);
+        expect(result.passed).toHaveLength(15);
       } finally {
         browser.kill('SIGKILL');
         if (browser.exitCode === null && browser.signalCode === null) {

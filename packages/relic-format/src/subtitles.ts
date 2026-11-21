@@ -257,9 +257,9 @@ export function subtitleTextSpans(
     text: string,
     start: number,
     end: number,
-    escape = false
+    isEscape = false
   ): void => {
-    if (text !== '') spans.push({ text, start, end, escape });
+    if (text !== '') spans.push({ text, start, end, escape: isEscape });
   };
   cue.textSpans.forEach((line, index) => {
     if (index > 0) {
