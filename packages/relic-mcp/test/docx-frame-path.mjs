@@ -28,10 +28,16 @@ async function packageEntries(children, options = {}) {
   const zip = await JSZip.loadAsync(await Packer.toBuffer(new Document({
     footnotes: options.footnotes,
     endnotes: options.endnotes,
+    fonts: options.fonts,
     sections: [{ children, headers: options.headers }],
   })));
   return Promise.all(Object.values(zip.files).filter((entry) => !entry.dir).map(async (entry) => [entry.name, Array.from(await entry.async('uint8array'))]));
 }
+const fontBytes = Buffer.from(await Bun.file(`${root}packages/relic-viewer/node_modules/pdfjs-dist/standard_fonts/LiberationSans-Regular.ttf`).arrayBuffer());
+const fontEntries = await packageEntries(
+  [new Paragraph({ children: [new TextRun({ text: 'Embedded font', font: 'DOCX Fixture' })] })],
+  { fonts: [{ name: 'DOCX Fixture', data: fontBytes }] }
+);
 const imageEntries = await packageEntries([new Paragraph({ children: [image(png)] }), new Table({ rows: [new TableRow({ children: [new TableCell({ children: [new Paragraph('DOCX table cell')] })] })] })]);
 const largeEntries = await packageEntries(
   Array.from({ length: 300 }, (_, i) => new Paragraph({
@@ -76,7 +82,7 @@ function metafile(kind) {
 function entriesFor(kind) {
   if (kind === 'large') return largeEntries;
   const mediaPath = imageEntries.find(([name]) => name.startsWith('word/media/') && name.endsWith('.png'))?.[0];
-  return (kind === 'links' ? largeEntries : imageEntries).map(([name, bytes]) => {
+  return (kind === 'links' ? largeEntries : kind === 'font' ? fontEntries : imageEntries).map(([name, bytes]) => {
     if (name === mediaPath && ['emf', 'wmf'].includes(kind)) return [name, Array.from(metafile(kind))];
     if (!['word/document.xml', 'word/_rels/document.xml.rels', 'word/header1.xml', 'word/_rels/header1.xml.rels', '[Content_Types].xml'].includes(name)) return [name, bytes];
     let text = decode.decode(new Uint8Array(bytes));
@@ -128,7 +134,7 @@ try {
     if (response.exceptionDetails) throw new Error(JSON.stringify(response.exceptionDetails));
     return response.result.value;
   }
-  for (const kind of ['embedded', 'emf', 'wmf', 'large', 'links']) {
+  for (const kind of ['embedded', 'font', 'emf', 'wmf', 'large', 'links']) {
     requests.length = 0;
     const loaded = cdp.waitForEvent('Page.loadEventFired', { sessionId, timeoutMs: 30000 });
     await cdp.send('Page.navigate', { url: `${origin}/?kind=${kind}` }, sessionId);
@@ -147,6 +153,12 @@ try {
     assert.deepEqual(frame.violations, [], kind);
     assert.equal(requests.filter((url) => !url.startsWith(origin) && !url.startsWith(usercontentOrigin) && !url.startsWith('blob:') && !url.startsWith('data:')).length, 0, kind);
     assert.equal(requests.filter((url) => url.startsWith(usercontentOrigin) && url !== `${usercontentOrigin}/sandbox.html`).length, 0, kind);
+    if (kind === 'font') {
+      const font = await evaluate(`(async()=>{const loaded=await document.fonts.load('12px \"DOCX Fixture\"');return {count:loaded.length,status:loaded[0]?.status,css:[...document.querySelectorAll('style')].map(style=>style.textContent).join('\\n')}})()`, executionContextId);
+      assert.equal(font.count, 1);
+      assert.equal(font.status, 'loaded');
+      assert.match(font.css, /data:/);
+    }
     if (kind === 'embedded') {
       const imagePoint = await evaluate(`(async()=>{for(let i=0;i<100;i++){let img=document.querySelector('#relic-document img'),b=img?.getBoundingClientRect();if(b&&b.width&&b.height&&document.querySelector('.relic-image-control'))return {x:b.x+b.width/2,y:b.y+b.height/2};await new Promise(r=>setTimeout(r,10))}throw Error('image control unavailable')})()`, executionContextId);
       await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: imagePoint.x, y: imagePoint.y }, sessionId);

@@ -115,7 +115,7 @@ export async function render(
     try {
       await renderAsync(input.entries as unknown as Blob, root, styles, {
         renderAltChunks: false,
-        useBase64URL: false,
+        useBase64URL: true,
         h: boundedRenderFactory(),
         renderComments: false,
         renderChanges: false,

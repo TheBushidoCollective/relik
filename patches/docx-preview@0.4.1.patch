@@ -21,7 +21,7 @@ diff --git a/dist/docx-preview.mjs b/dist/docx-preview.mjs
 +            return null;
 +        let image = this.imageUrls.get(path);
 +        if (!image) {
-+            image = this._package.load(path, "blob").then(blob => this.blobToURL(blob, path));
++            image = this._package.load(path, "blob").then(blob => this.blobToURL(blob, path, true));
 +            this.imageUrls.set(path, image);
 +        }
 +        return image;
@@ -40,7 +40,8 @@ diff --git a/dist/docx-preview.mjs b/dist/docx-preview.mjs
          const path = this.getPathById(this.fontTablePart, id);
          if (!path)
 @@ -1218,9 +1227,13 @@
-     blobToURL(blob, path) {
+-    blobToURL(blob, path) {
++    blobToURL(blob, path, image = false) {
          if (!blob)
              return null;
          if (path) {
@@ -52,7 +53,8 @@ diff --git a/dist/docx-preview.mjs b/dist/docx-preview.mjs
 +                return `data:${ct.contentType};base64,`;
              blob = ct ? new Blob([blob], { type: ct.contentType }) : blob;
          }
-         if (this._options.useBase64URL) {
+-        if (this._options.useBase64URL) {
++        if (this._options.useBase64URL && !image) {
              return blobToBase64(blob);
 @@ -3143,13 +3156,13 @@
                  pageElement.appendChild(contentElement);
