@@ -1629,6 +1629,7 @@ function sandboxFrame(
   // That message comes from the shim's own document, which is listening before
   // it announces itself, so nothing is lost. Later ready messages, and any load
   // after the first, post nothing: see FrameHandshake.
+  let documentStateReceived = false;
   const onMessage = (event: MessageEvent): void => {
     if (event.source !== frame.contentWindow) return;
     const type = (event.data as { type?: unknown } | null)?.type;
@@ -1648,9 +1649,12 @@ function sandboxFrame(
     }
     if (
       onDocumentState !== undefined &&
+      !documentStateReceived &&
+      handshake.rendered &&
       handshake.canPost() &&
       isDocumentStateMessage(event.data)
     ) {
+      documentStateReceived = true;
       onDocumentState(event.data);
       return;
     }
