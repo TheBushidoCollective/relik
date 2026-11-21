@@ -37,6 +37,15 @@ describe('document frame protocol', () => {
       { ...doc, book: { title: 'bad' } },
     ])
       expect(isRenderDocumentMessage(bad)).toBe(false);
+    const mib = new Uint8Array(1024 * 1024);
+    const entries = Array.from({ length: 201 }, (_, index) => [
+      String(index),
+      mib,
+    ]);
+    expect(
+      isRenderDocumentMessage({ ...doc, entries: entries.slice(0, 200) })
+    ).toBe(true);
+    expect(isRenderDocumentMessage({ ...doc, entries })).toBe(false);
   });
   test('accepts only exact ready and failed responses', () => {
     expect(
