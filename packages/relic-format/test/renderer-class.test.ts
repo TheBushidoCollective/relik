@@ -29,10 +29,14 @@ describe('the taxonomy', () => {
 
   test('keeps OTIO outside the telemetry renderable wedge', () => {
     expect(isRenderable('otio')).toBe(false);
+    expect(isRenderable('document')).toBe(true);
+    expect(isRenderable('spreadsheet')).toBe(true);
+    expect(privilegeTier('document')).toBe(3);
+    expect(privilegeTier('spreadsheet')).toBe(2);
   });
 
   test('rejects a value outside the taxonomy', () => {
-    expect(isRendererClass('spreadsheet')).toBe(false);
+    expect(isRendererClass('unknown-format')).toBe(false);
     expect(isRendererClass('markdown')).toBe(true);
     expect(isRendererClass('jsx')).toBe(true);
   });
@@ -206,11 +210,11 @@ describe('the HTML prefix list recognizes real pages', () => {
 });
 
 describe('privilegeTier', () => {
-  test('only html and jsx execute, and they share the top tier', () => {
+  test('html, jsx and documents share the top tier', () => {
     expect(privilegeTier('html')).toBe(3);
     expect(privilegeTier('jsx')).toBe(3);
     for (const cls of RENDERER_CLASSES) {
-      if (cls !== 'html' && cls !== 'jsx') {
+      if (cls !== 'html' && cls !== 'jsx' && cls !== 'document') {
         expect(privilegeTier(cls)).toBeLessThan(3);
       }
     }
