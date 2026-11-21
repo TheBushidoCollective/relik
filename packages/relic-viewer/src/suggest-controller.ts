@@ -684,6 +684,11 @@ export function mountSuggestionController(
       currentVersion,
       session.kind === 'verified' ? session.email : null
     );
+    host
+      .querySelector('.structured-table')
+      ?.dispatchEvent(
+        new CustomEvent('relic:table-suggestion-views', { detail: views })
+      );
     ensureEditor();
     updateControls();
     resumePresenceRefresh();
@@ -708,10 +713,24 @@ export function mountSuggestionController(
       clearSuggestionPaint(target);
       surface?.repaint();
       ordinary();
+      const first = segments[0];
+      const last = segments[segments.length - 1];
+      const visibleViews =
+        surface?.clipPaint && first && last
+          ? {
+              ...views!,
+              paint: views!.paint.filter(
+                (view) =>
+                  view.location.status === 'resolved' &&
+                  view.location.start >= first.start &&
+                  view.location.end <= last.end
+              ),
+            }
+          : views!;
       const result = paintSuggestions(
         target,
         segments,
-        views!,
+        visibleViews,
         surface ? 'markdown' : kind,
         surface?.decode?.bind(surface)
       );
@@ -755,6 +774,25 @@ export function mountSuggestionController(
     original = undefined;
     surface = undefined;
     options.onSurfaceReleased?.();
+  };
+  const adoptCurrentSurface = (): boolean => {
+    const next = suggestionSurfaceFor(host);
+    if (!next || next === surface) return true;
+    if (editor?.draft || transport?.shouldWarnBeforeUnload) return false;
+    editor?.destroy();
+    editor = undefined;
+    editorReader = undefined;
+    for (const type of ['beforeinput', 'paste', 'drop', 'keydown'])
+      root?.removeEventListener(type, stopInputDuringSend, true);
+    surface = next;
+    root = next.root;
+    original = next.root;
+    segments = sourceResult.ok ? next.segments(source) : [];
+    delimiters = [];
+    failed = false;
+    for (const type of ['beforeinput', 'paste', 'drop', 'keydown'])
+      root.addEventListener(type, stopInputDuringSend, true);
+    return true;
   };
   root?.addEventListener('beforeinput', stopInputDuringSend, true);
   root?.addEventListener('paste', stopInputDuringSend, true);
@@ -943,6 +981,7 @@ export function mountSuggestionController(
         options.signIn();
         return;
       }
+      if (on && !adoptCurrentSurface()) return;
       ensureEditor();
       if (on && guard()) {
         updateControls();

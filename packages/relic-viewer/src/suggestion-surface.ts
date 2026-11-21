@@ -8,6 +8,8 @@ export interface SuggestionSurface {
   segments(source: string): readonly SourceSegment[];
   blockKind(block: number): SuggestBlockKind;
   editable(block: number): true | SuggestRefusal;
+  /** Only paint resolved changes inside this transient source slice. */
+  readonly clipPaint?: boolean;
   /** Reject selections in non-editable regions instead of snapping to a nearby segment. */
   acceptsSelection?(node: Node): true | SuggestRefusal;
   /** Convert visible insertion text to and from the source representation. */

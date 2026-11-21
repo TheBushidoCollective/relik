@@ -1,6 +1,7 @@
 import { FIELD_QUOTED, FIELD_STRAY, type CsvTable } from '@relic/format/csv';
 import type { SourceSegment } from './markdown-source.ts';
 import type { SuggestBlockKind, SuggestRefusal } from './suggest-draft.ts';
+import type { SuggestionSurface } from './suggestion-surface.ts';
 
 /** Source offsets are UTF-16 offsets into the source with its BOM removed. */
 export interface TableSuggestionCell {
@@ -77,6 +78,28 @@ export function tableSuggestionCell(
   };
 }
 
+/** Find the field containing a resolved edit without depending on display order. */
+export function tableFieldAtRange(
+  table: CsvTable,
+  start: number,
+  end: number
+): number | undefined {
+  const shift = table.bom ? 1 : 0;
+  let lo = 0;
+  let hi = table.fieldStart.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (table.fieldStart[mid]! - shift <= start) lo = mid + 1;
+    else hi = mid;
+  }
+  const field = lo - 1;
+  if (field < 0) return undefined;
+  const quoted = (table.fieldFlags[field]! & FIELD_QUOTED) !== 0;
+  const from = table.fieldStart[field]! - shift + (quoted ? 1 : 0);
+  const to = table.fieldEnd[field]! - shift - (quoted ? 1 : 0);
+  return start >= from && end >= start && end <= to ? field : undefined;
+}
+
 /** Anchor an empty field on its own quote or an adjacent field delimiter. */
 export function emptyTableCellAnchor(
   table: CsvTable,
@@ -140,4 +163,37 @@ export function encodeTableSuggestion(
       'A quote cannot be inserted in an unquoted cell.'
     );
   return { ok: true, source: text };
+}
+
+/** A single-cell editor remains mounted while the virtual table redraws. */
+export function tableCellSurface(
+  table: CsvTable,
+  cell: TableSuggestionCell,
+  root: HTMLElement
+): SuggestionSurface {
+  const render = (): void => {
+    const spans = cell.segments.map((segment, index) => {
+      const span = root.ownerDocument.createElement('span');
+      span.dataset['seg'] = String(index);
+      span.append(root.ownerDocument.createTextNode(segment.text));
+      return span;
+    });
+    root.replaceChildren(...spans);
+  };
+  render();
+  return {
+    root,
+    clipPaint: true,
+    segments: () => cell.segments,
+    blockKind: () => cell.kind,
+    editable: () => cell.editable,
+    acceptsSelection: (node) =>
+      root.contains(node) ? cell.editable : notEditable,
+    encode: (_block, text) => encodeTableSuggestion(table, cell, text),
+    decode: (_block, source) =>
+      cell.kind === 'csv-quoted' ? source.replaceAll('""', '"') : source,
+    emptyAnchor: (_block, position) =>
+      emptyTableCellAnchor(table, cell, position),
+    repaint: render,
+  };
 }

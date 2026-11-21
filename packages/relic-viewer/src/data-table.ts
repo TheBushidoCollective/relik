@@ -28,6 +28,17 @@ import type { StructuredPart } from './structured-view-bridge.ts';
 import type { TableSource } from './table-source.ts';
 import { LABEL_DISPLAY_LIMIT } from './visible-label.ts';
 import {
+  tableCellSurface,
+  tableFieldAtRange,
+  tableSuggestionCell,
+} from './table-suggest.ts';
+import { paintSuggestions } from './suggestions.ts';
+import type { SuggestionView, SuggestionViews } from './suggestion-views.ts';
+import {
+  registerSuggestionSurface,
+  requestSurfaceSwap,
+} from './suggestion-surface.ts';
+import {
   anchorCoversCell,
   columnLetters,
   displayIndexOf,
@@ -483,6 +494,8 @@ export function mountDataTable(
   let findTimer = 0;
   /** The `bodyKey` the rows on screen were drawn with. */
   let drawnKey = '';
+  let suggestionViews: SuggestionViews | undefined;
+  let suggestionCells = new Map<number, SuggestionView[]>();
 
   const keyOf = (record: number, column: number): number =>
     record * TABLE_COLUMN_LIMIT + column;
@@ -553,6 +566,42 @@ export function mountDataTable(
   cellbar.setAttribute('aria-live', 'polite');
   root.append(cellbar);
 
+  let closeCellEditor: (() => void) | undefined;
+  const openCellEditor = (record: number, column: number): void => {
+    const csv = table.csv;
+    const cell = csv && tableSuggestionCell(csv, record, column);
+    if (!csv || !cell || cell.editable !== true) return;
+    if (closeCellEditor && !requestSurfaceSwap(root)) return;
+    closeCellEditor?.();
+    const panel = element('div', 'dt-suggest-editor');
+    const title = element(
+      'p',
+      'dt-suggest-title',
+      `Suggest an edit to ${columnLetters(column + 1)}${record + 1}`
+    );
+    const editorRoot = element('div', 'dt-suggest-text');
+    editorRoot.setAttribute('aria-label', 'Cell suggestion');
+    const close = element('button', 'dt-suggest-close', 'Close');
+    close.type = 'button';
+    panel.append(title, editorRoot, close);
+    root.append(panel);
+    const unregister = registerSuggestionSurface(
+      root,
+      tableCellSurface(csv, cell, editorRoot)
+    );
+    closeCellEditor = () => {
+      unregister();
+      panel.remove();
+      closeCellEditor = undefined;
+    };
+    close.addEventListener('click', () => {
+      if (requestSurfaceSwap(root)) closeCellEditor?.();
+    });
+    root.dispatchEvent(
+      new CustomEvent('relic:table-suggest', { bubbles: true })
+    );
+  };
+
   // ---- selection helpers ----------------------------------------------------
   const sortedNow = (): boolean => sort !== undefined;
   const selectOne = (record: number, column: number): void => {
@@ -578,6 +627,11 @@ export function mountDataTable(
     if (typeof document === 'undefined') return;
     const live = document.getSelection();
     if (live === null) return;
+    if (
+      live.anchorNode &&
+      root.querySelector('.dt-suggest-editor')?.contains(live.anchorNode)
+    )
+      return;
     const inside = live.anchorNode !== null && root.contains(live.anchorNode);
     if (selection === undefined) {
       if (inside) live.removeAllRanges();
@@ -713,6 +767,32 @@ export function mountDataTable(
     } else {
       cell.append(element('span', 'dt-text', displayText(value)));
     }
+    const csv = table.csv;
+    const field = csv && csv.recordStart[record]! + column;
+    const changes =
+      field === undefined ? undefined : suggestionCells.get(field);
+    const mapped = csv && changes && tableSuggestionCell(csv, record, column);
+    const text = changes && cell.querySelector<HTMLElement>('.dt-text');
+    if (
+      csv &&
+      mapped &&
+      changes &&
+      suggestionViews &&
+      text &&
+      mapped.editable === true &&
+      (role !== 'head' || headerRow) &&
+      displayText(value) === value
+    ) {
+      text.classList.remove('dt-blank');
+      const surface = tableCellSurface(csv, mapped, text);
+      paintSuggestions(
+        text,
+        mapped.segments,
+        { ...suggestionViews, paint: changes },
+        'markdown',
+        surface.decode?.bind(surface)
+      );
+    }
     paintCell(cell, record, column, role);
     return cell;
   };
@@ -842,6 +922,18 @@ export function mountDataTable(
           )
         );
       }
+      if (single && table.csv) {
+        const mapped = tableSuggestionCell(table.csv, rect.r0, rect.c0);
+        const suggest = element('button', 'dt-suggest', 'Suggest edit');
+        suggest.type = 'button';
+        suggest.disabled = !mapped || mapped.editable !== true;
+        if (mapped && mapped.editable !== true)
+          suggest.title = mapped.editable.message;
+        suggest.addEventListener('click', () =>
+          openCellEditor(rect.r0, rect.c0)
+        );
+        cells.push(suggest);
+      }
       const copy = element('button', 'dt-copy', 'Copy');
       copy.type = 'button';
       copy.addEventListener('click', () => {
@@ -865,6 +957,26 @@ export function mountDataTable(
       focus?.focus({ preventScroll: true });
     }
   };
+  const onSuggestionViews = (event: Event): void => {
+    if (!(event instanceof CustomEvent) || !table.csv) return;
+    const next = event.detail as SuggestionViews;
+    suggestionViews = next;
+    suggestionCells = new Map();
+    for (const view of next.paint) {
+      if (view.location.status !== 'resolved') continue;
+      const field = tableFieldAtRange(
+        table.csv,
+        view.location.start,
+        view.location.end
+      );
+      if (field === undefined) continue;
+      const changes = suggestionCells.get(field) ?? [];
+      changes.push(view);
+      suggestionCells.set(field, changes);
+    }
+    update(false);
+  };
+  root.addEventListener('relic:table-suggestion-views', onSuggestionViews);
 
   const scheduleUpdate = (): void => {
     if (frame !== 0 || disposed) return;
@@ -1217,6 +1329,11 @@ export function mountDataTable(
       selection = undefined;
       syncDomSelection(false);
       document.removeEventListener('mouseup', endDrag);
+      root.removeEventListener(
+        'relic:table-suggestion-views',
+        onSuggestionViews
+      );
+      closeCellEditor?.();
       if (frame !== 0) cancelAnimationFrame(frame);
       window.clearTimeout(findTimer);
     },
