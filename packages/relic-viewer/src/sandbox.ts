@@ -2090,7 +2090,7 @@ export function setupFrameInteraction(
     event.preventDefault();
     if (armed || !event.isTrusted) return;
     const href = normaliseFrameExternalLink(rawHref);
-    if (href !== undefined) postOutward({ type: 'relic:open-link', href });
+    if (href !== undefined) post({ type: 'relic:open-link', href });
   };
   doc.addEventListener('click', (event: MouseEvent) => {
     let node = event.target as Element | null;
@@ -2690,19 +2690,21 @@ async function mountComponent(code: string): Promise<void> {
 
 export async function mountDocument(
   message: RenderDocumentMessage,
-  initInteraction: (imageControlsEnabled: boolean) => FrameInteraction
+  initInteraction: (
+    imageControlsEnabled: boolean,
+    imageIdentitySource?: ImageIdentitySource
+  ) => FrameInteraction
 ): Promise<void> {
-  const root = document.createElement('div');
-  root.id = 'relic-document';
-  document.body.replaceChildren(root);
-  const interaction = initInteraction(true);
+  const identity =
+    message.format === 'docx' ? createImageIdentitySource() : undefined;
   let url: string | undefined;
   try {
     const root = document.createElement('div');
     root.id = 'relic-document';
     document.body.replaceChildren(root);
-    if (identity) initInteraction(true, identity.source);
-    else initInteraction(true);
+    const interaction = identity
+      ? initInteraction(true, identity.source)
+      : initInteraction(true);
     url = URL.createObjectURL(
       new Blob([message.module], { type: 'text/javascript' })
     );
@@ -3341,7 +3343,10 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   installSandboxContainment(window, document);
   let interaction: FrameInteraction | undefined;
 
-  function initInteraction(imageControlsEnabled: boolean): FrameInteraction {
+  function initInteraction(
+    imageControlsEnabled: boolean,
+    imageIdentitySource?: ImageIdentitySource
+  ): FrameInteraction {
     interaction?.dispose();
     interaction = setupFrameInteraction(
       document,

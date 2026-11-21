@@ -16,6 +16,7 @@ import {
   isRenderJsxMessage,
   isRenderMessage,
   mountDocument,
+  type FrameInteraction,
 } from '../src/sandbox.ts';
 import { isCacheable } from '../src/sw-cache.ts';
 import type { ReadyView, RenderRoute } from '../src/viewer.ts';
@@ -581,7 +582,10 @@ describe('the usercontent frame the render routes build', () => {
             module,
             entries: [],
           },
-          () => interactions++
+          () => {
+            interactions++;
+            return { requestExternalLink() {} } as unknown as FrameInteraction;
+          }
         );
         expect(messages.pop()).toEqual(expected);
         expect(messages).toEqual([]);
@@ -691,7 +695,7 @@ describe('the usercontent frame the render routes build', () => {
       'Rendered as a document, no author code'
     );
     expect(markerLabelFor('sandboxed-document', 'epub')).toBe(
-      'Downloads to your device, no author code'
+      'Rendered as a document, no author code'
     );
 
     for (const route of [...executes, ...inert]) {

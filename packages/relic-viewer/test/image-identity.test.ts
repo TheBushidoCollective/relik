@@ -3,6 +3,7 @@ import { docxImageSourceDigest } from '@relic/format/image-identity';
 import {
   createImageIdentitySource,
   mountDocument,
+  type FrameInteraction,
   type ImageIdentitySource,
 } from '../src/sandbox.ts';
 
@@ -157,7 +158,12 @@ describe('document mount image identity', () => {
     const pending = Promise.withResolvers<string>();
     const events: string[] = [];
     const messages: unknown[] = [];
+    const interactionCalls: boolean[] = [];
+    const interaction = {
+      requestExternalLink() {},
+    } as unknown as FrameInteraction;
     let source: ImageIdentitySource | undefined;
+    const registeredSources: ImageIdentitySource[] = [];
     Object.defineProperty(globalThis, 'document', {
       configurable: true,
       value: { createElement: () => ({}), body: { replaceChildren() {} } },
@@ -175,13 +181,21 @@ describe('document mount image identity', () => {
     });
     Object.defineProperty(globalThis, '__imageIdentityTest', {
       configurable: true,
-      value: { digest: pending.promise },
+      value: {
+        digest: pending.promise,
+        requestExternalLink: interaction.requestExternalLink,
+      },
     });
     URL.revokeObjectURL = () => {};
     try {
       for (const [renderer, expected] of [
         [
-          'export function render(root, input, hooks) { hooks.registerImageIdentities(new Map([["blob:null/image", globalThis.__imageIdentityTest.digest]])); return { state: "ready" }; }',
+          `export function render(root, input, hooks) {
+            if (input.requestExternalLink !== globalThis.__imageIdentityTest.requestExternalLink)
+              throw new Error("missing link callback");
+            hooks.registerImageIdentities(new Map([["blob:null/image", globalThis.__imageIdentityTest.digest]]));
+            return { state: "ready" };
+          }`,
           { type: 'relic:document-state', state: 'ready' },
         ],
         [
@@ -198,6 +212,7 @@ describe('document mount image identity', () => {
         ],
       ] as const) {
         events.length = 0;
+        interactionCalls.length = 0;
         URL.createObjectURL = () =>
           `data:text/javascript;base64,${Buffer.from(renderer).toString('base64')}`;
         await mountDocument(
@@ -207,18 +222,28 @@ describe('document mount image identity', () => {
             module: renderer,
             entries: [],
           },
-          (_enabled, received) => {
+          (enabled, received) => {
+            interactionCalls.push(enabled);
             source = received;
+            if (expected.state === 'ready' && received)
+              registeredSources.push(received);
             void source?.settled.then(() => events.push('sealed'));
+            return interaction;
           }
         );
+        expect(interactionCalls).toEqual([true]);
         expect(messages.pop()).toEqual(expected);
         expect(source).toBeDefined();
         expect(events).toEqual(['sealed', 'state delivered']);
       }
       events.length = 0;
-      const epubRenderer =
-        'export function render(root, input, hooks) { if (hooks !== undefined) throw new Error("unexpected hooks"); return { state: "ready" }; }';
+      interactionCalls.length = 0;
+      const epubRenderer = `export function render(root, input, hooks) {
+        if (hooks !== undefined) throw new Error("unexpected hooks");
+        if (input.requestExternalLink !== globalThis.__imageIdentityTest.requestExternalLink)
+          throw new Error("missing link callback");
+        return { state: "ready" };
+      }`;
       URL.createObjectURL = () =>
         `data:text/javascript;base64,${Buffer.from(epubRenderer).toString('base64')}`;
       await mountDocument(
@@ -228,10 +253,13 @@ describe('document mount image identity', () => {
           module: epubRenderer,
           entries: [],
         },
-        (_enabled, received) => {
+        (enabled, received) => {
+          interactionCalls.push(enabled);
           source = received;
+          return interaction;
         }
       );
+      expect(interactionCalls).toEqual([true]);
       expect(source).toBeUndefined();
       expect(messages.pop()).toEqual({
         type: 'relic:document-state',
@@ -239,6 +267,9 @@ describe('document mount image identity', () => {
       });
       expect(events).toEqual(['state delivered']);
       pending.resolve('a'.repeat(64));
+      expect(
+        await registeredSources[0]?.digest(image({ src: 'blob:null/image' }))
+      ).toBe('a'.repeat(64));
     } finally {
       URL.createObjectURL = originalCreate;
       URL.revokeObjectURL = originalRevoke;

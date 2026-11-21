@@ -17,9 +17,13 @@ class ElementStub {
   readonly classes = new Set<string>();
   readonly classList = {
     add: (...names: string[]) =>
-      names.forEach((name) => this.classes.add(name)),
+      names.forEach((name) => {
+        this.classes.add(name);
+      }),
     remove: (...names: string[]) =>
-      names.forEach((name) => this.classes.delete(name)),
+      names.forEach((name) => {
+        this.classes.delete(name);
+      }),
     contains: (name: string) => this.classes.has(name),
     toggle: (name: string, force?: boolean) => {
       const present = force ?? !this.classes.has(name);

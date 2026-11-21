@@ -52,10 +52,10 @@ function cssString(
     if (char === quote) return { value, start, end: at, next: at + 1 };
     if (char === '\n' || char === '\r' || char === '\f') return undefined;
     if (char === '\\') {
-      const escape = cssEscape(text, at);
-      if (!escape) return undefined;
-      value += escape.value;
-      at = escape.end;
+      const escaped = cssEscape(text, at);
+      if (!escaped) return undefined;
+      value += escaped.value;
+      at = escaped.end;
     } else {
       value += char;
       at++;
@@ -112,10 +112,10 @@ export function scanCssUrls(text: string): {
     let name = '';
     while (at < text.length && (nameChar(text[at]) || text[at] === '\\')) {
       if (text[at] === '\\') {
-        const escape = cssEscape(text, at);
-        if (!escape || escape.value === '') return { urls, opaque: true };
-        name += escape.value;
-        at = escape.end;
+        const escaped = cssEscape(text, at);
+        if (!escaped || escaped.value === '') return { urls, opaque: true };
+        name += escaped.value;
+        at = escaped.end;
       } else {
         name += text[at++];
       }
@@ -154,10 +154,10 @@ export function scanCssUrls(text: string): {
     let value = '';
     while (at < text.length && text[at] !== ')' && !cssWhitespace(text[at])) {
       if (text[at] === '\\') {
-        const escape = cssEscape(text, at);
-        if (!escape || escape.value === '') return { urls, opaque: true };
-        value += escape.value;
-        at = escape.end;
+        const escaped = cssEscape(text, at);
+        if (!escaped || escaped.value === '') return { urls, opaque: true };
+        value += escaped.value;
+        at = escaped.end;
       } else if (
         text[at] === '"' ||
         text[at] === "'" ||
@@ -181,9 +181,11 @@ export function scanCssUrls(text: string): {
 
 /** Apply the URL parser's ASCII whitespace normalization without changing its content. */
 export function normalizeUrl(url: string): string {
-  return url
-    .replace(/^[\u0000-\u0020]+|[\u0000-\u0020]+$/g, '')
-    .replace(/[\t\n\r]/g, '');
+  let start = 0;
+  let end = url.length;
+  while (start < end && url.charCodeAt(start) <= 0x20) start++;
+  while (end > start && url.charCodeAt(end - 1) <= 0x20) end--;
+  return url.slice(start, end).replace(/[\t\n\r]/g, '');
 }
 
 /** Decode a data URL to its MIME essence and bytes. Non-data URLs return undefined. */

@@ -780,7 +780,7 @@ describe('Spec B: V3 Render State, Version Progress, and Comparison Bytes', () =
     expect(stageWrap.getAttribute('aria-busy')).toBe('false');
   });
 
-  test('download-only EPUB settles immediately', () => {
+  test('EPUB render-state tracking settles immediately', () => {
     const stage = new ElementStub('main');
     const stageWrap = new ElementStub('div');
     stageWrap.appendChild(stage);

@@ -398,8 +398,10 @@ try {
       assert.match(unsupportedSvg.text, message);
       assert.match(unsupportedSvg.text, /Download/);
     }
-    const epub = await openReader(epubUrl, 'ready');
+    await openReader(epubUrl, 'ready');
+    const epub = await evaluate(`(async()=>{const end=Date.now()+30000;while(Date.now()<end){const stage=document.querySelector('.stage-sandboxed-document');if(stage?.innerText.includes('Download'))return {text:stage.innerText,frame:!!stage.querySelector('iframe.usercontent-frame')};await new Promise(r=>setTimeout(r,10))}throw Error('EPUB download fallback did not appear')})()`);
     assert.equal(epub.frame, false);
+    assert.match(epub.text, /This document could not be shown/);
     assert.match(epub.text, /Download/);
   }
   console.log('DOCX_SVG_DOWNLOAD_OK');

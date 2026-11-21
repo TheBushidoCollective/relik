@@ -21,31 +21,27 @@ export function localName(name: string): string {
   return name.slice(name.lastIndexOf(':') + 1);
 }
 /** Decode XML using the same UTF-8 or UTF-16 detection as the DTD scanner. */
-export function decodeXmlBytes(input: Uint8Array): string {
+export function decodeXmlBytes(
+  input: Uint8Array,
+  options?: { readonly fatal?: boolean }
+): string {
   if (
     (input[0] === 0xff && input[1] === 0xfe) ||
     (input[0] === 0x3c && input[1] === 0)
   )
-    return new TextDecoder('utf-16le').decode(input);
+    return new TextDecoder('utf-16le', {
+      fatal: options?.fatal === true,
+    }).decode(input);
   if (
     (input[0] === 0xfe && input[1] === 0xff) ||
     (input[0] === 0 && input[1] === 0x3c)
   )
-    return new TextDecoder('utf-16be').decode(input);
-  return new TextDecoder('utf-8').decode(input);
-}
-
-/** Decode XML bytes using their UTF-8 or UTF-16 byte-order signature. */
-export function decodeXmlBytes(bytes: Uint8Array): string {
-  const encoding =
-    (bytes[0] === 0xff && bytes[1] === 0xfe) ||
-    (bytes[0] === 0x3c && bytes[1] === 0)
-      ? 'utf-16le'
-      : (bytes[0] === 0xfe && bytes[1] === 0xff) ||
-          (bytes[0] === 0 && bytes[1] === 0x3c)
-        ? 'utf-16be'
-        : 'utf-8';
-  return new TextDecoder(encoding, { fatal: true }).decode(bytes);
+    return new TextDecoder('utf-16be', {
+      fatal: options?.fatal === true,
+    }).decode(input);
+  return new TextDecoder('utf-8', { fatal: options?.fatal === true }).decode(
+    input
+  );
 }
 
 /** True when the input contains a DTD or entity declaration forbidden for this format. */
@@ -94,6 +90,8 @@ export function parseXml(
     readonly lenient?: boolean;
     readonly maxNodes?: number;
     readonly maxTextChars?: number;
+    /** Called before allocation; the root has depth zero. */
+    readonly admitElement?: (name: string, depth: number) => boolean;
   }
 ): XmlResult {
   try {
@@ -211,6 +209,8 @@ export function parseXml(
       at += name.length + 1;
       if (++nodes > (opts?.maxNodes ?? Number.POSITIVE_INFINITY))
         throw new ParseFailure('size');
+      if (opts?.admitElement && !opts.admitElement(name, stack.length))
+        throw new ParseFailure('elements');
       const element: MutableElement = { name, attrs: new Map(), children: [] };
       if (stack.length) stack[stack.length - 1]!.children.push(element);
       else {

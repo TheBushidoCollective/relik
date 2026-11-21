@@ -19,6 +19,15 @@ describe('DOCX XML read budget', () => {
     await expect(entry.async('string')).rejects.toBeInstanceOf(DocxLimitError);
   });
 
+  test('rejects a truncated UTF-8 sequence in document text', () => {
+    const bytes = new Uint8Array([
+      ...encode('<document>caf'),
+      0xc3,
+      ...encode('</document>'),
+    ]);
+    expect(() => new XmlReadBudget().read(bytes)).toThrow();
+  });
+
   test('bounds structural units before a native parser is called', () => {
     const xml = encode('<document><p>One</p></document>');
     expect(new XmlReadBudget(1024, 1024, 3).read(xml)).toContain('One');

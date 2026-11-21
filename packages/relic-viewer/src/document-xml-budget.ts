@@ -32,7 +32,7 @@ export class XmlReadBudget {
     )
       throw new DocxLimitError('DOCX XML byte limit exceeded');
     this.bytes += bytes.byteLength;
-    const text = decodeXmlBytes(bytes);
+    const text = decodeXmlBytes(bytes, { fatal: true });
     if (scanForbiddenDtd(text, 'docx')) throw new Error('Invalid DOCX XML');
     this.inspect(text);
     return text;

@@ -1038,12 +1038,12 @@ describe('version comparison affordance', () => {
     ).toBe(true);
   });
 
-  test('Word documents offer download without extracting or framing', () => {
+  test('unrecognized documents offer download without extracting or framing', () => {
     const original = view('sandboxed-document', 1);
     let reads = 0;
     const current: ReadyView = {
       ...original,
-      documentKind: 'docx',
+      documentKind: undefined,
       content: {
         ...original.content,
         read: async () => {
@@ -1064,6 +1064,24 @@ describe('version comparison affordance', () => {
     expect(
       descendants(stage).some((element) => element.tagName === 'IFRAME')
     ).toBe(false);
+  });
+
+  test('DOCX enters its document rendering stage', () => {
+    const current: ReadyView = {
+      ...view('sandboxed-document', 1),
+      documentKind: 'docx',
+    };
+    const stage = buildCurrentStage(current, 'https://usercontent.test', {
+      comparisonNotice: false,
+    }) as unknown as ElementStub;
+    const bar = buildBar(
+      current,
+      'aaaaaaaaaaaaaaaaaaaaaaaaaa'
+    ) as unknown as ElementStub;
+    expect(withClass(stage, 'doc-document')).toHaveLength(1);
+    expect(withClass(stage, 'doc-download')).toHaveLength(0);
+    expect(textOf(stage)).toContain('Loading document');
+    expect(textOf(bar)).toContain('Rendered as a document, no author code');
   });
 
   test('EPUB opens a document stage and identifies its inert renderer', async () => {

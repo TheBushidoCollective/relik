@@ -102,6 +102,23 @@ describe('DOCX package input', () => {
     }
   });
 
+  test('rejects a truncated UTF-8 sequence in metadata text', async () => {
+    const encoder = new TextEncoder();
+    const types = new Uint8Array([
+      ...encoder.encode('<Types>'),
+      0xc3,
+      ...encoder.encode('</Types>'),
+    ]);
+    await expect(
+      selectDocxParts(
+        indexFor({
+          '[Content_Types].xml': types,
+          '_rels/.rels': '<Relationships/>',
+        })
+      )
+    ).rejects.toThrow();
+  });
+
   test('follows custom-properties relationships and rejects invalid direct children', async () => {
     const office =
       'http://schemas.openxmlformats.org/officeDocument/2006/relationships/';

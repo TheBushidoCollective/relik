@@ -88,7 +88,7 @@ export async function selectDocxParts(
     if (result.bytes.byteLength > MAX_METADATA_BYTES - metadataBytes)
       throw new Error('DOCX metadata byte limit exceeded');
     metadataBytes += result.bytes.byteLength;
-    const text = decodeXmlBytes(result.bytes);
+    const text = decodeXmlBytes(result.bytes, { fatal: true });
     if (scanForbiddenDtd(text, 'docx'))
       throw new Error('Forbidden DOCX metadata DTD');
     let relationshipLimitExceeded = false;

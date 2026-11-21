@@ -374,7 +374,10 @@ export function markerLabelFor(
   route: RenderRoute,
   documentKind?: 'docx' | 'epub'
 ): string {
-  if (route === 'sandboxed-document' && documentKind === 'docx')
+  if (
+    route === 'sandboxed-document' &&
+    (documentKind === 'docx' || documentKind === 'epub')
+  )
     return 'Rendered as a document, no author code';
   return MARKER_LABELS[route];
 }
@@ -1020,10 +1023,7 @@ export function buildBar(
   // which is exactly the mismatch that breaks speech control.
   // Keyed on the route the viewer resolved, so the sentence describes what
   // this relic does rather than what the riskiest relic would.
-  const markerLabel =
-    view.route === 'sandboxed-document' && view.documentKind === 'epub'
-      ? 'Rendered as a document, no author code'
-      : markerLabelFor(view.route);
+  const markerLabel = markerLabelFor(view.route, view.documentKind);
   marker.setAttribute('aria-label', markerLabel);
   marker.title = `${markerLabel}. What Relic knows.`;
   marker.appendChild(icon(ICONS.source));
@@ -2235,6 +2235,48 @@ export function buildCurrentStage(
       main.appendChild(renderPdfView(view));
       break;
     case 'sandboxed-document': {
+      if (view.documentKind === 'docx') {
+        const root = document.createElement('div');
+        root.className = 'doc doc-document';
+        root.textContent = 'Loading document';
+        main.appendChild(root);
+        void Promise.all([
+          import('./document-route.ts'),
+          import('./document-payload-docx.ts'),
+        ])
+          .then(([{ mountDocumentRoute }, { selectDocxParts }]) =>
+            mountDocumentRoute(
+              root,
+              view.content,
+              'docx',
+              selectDocxParts,
+              (payload, transfer, onState) =>
+                sandboxFrame(
+                  view,
+                  usercontentOrigin,
+                  payload,
+                  undefined,
+                  transfer,
+                  (state) => reportDocumentState(root, onState, state)
+                ),
+              () => downloadContent(view)
+            )
+          )
+          .catch(() => {
+            if (!root.isConnected) return;
+            root.replaceChildren(
+              notice('This document could not be shown.'),
+              renderDownloadView(view)
+            );
+            root.dispatchEvent(
+              new CustomEvent('relic:render-state', {
+                detail: 'error',
+                bubbles: true,
+              })
+            );
+          });
+        break;
+      }
       if (view.documentKind !== 'epub') {
         main.appendChild(
           notice(

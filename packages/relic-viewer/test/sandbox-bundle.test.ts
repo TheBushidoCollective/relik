@@ -60,12 +60,6 @@ describe('the built sandbox.html', () => {
   test('document renderers stay outside the sandbox and shell', async () => {
     const html = await Bun.file(`${pkgDir}dist/sandbox.html`).text();
     const shell = await Bun.file(`${pkgDir}dist/viewer.js`).text();
-    const docxMarker = 'Word document renderer is not available yet.';
-    expect(
-      await Bun.file(`${pkgDir}dist-frame/frame-docx.frame.js`).text()
-    ).toContain(docxMarker);
-    expect(html).not.toContain(docxMarker);
-    expect(shell).not.toContain(docxMarker);
     const reachable = new Set<string>();
     const pending = [shell];
     while (pending.length > 0) {
@@ -79,9 +73,12 @@ describe('the built sandbox.html', () => {
         pending.push(await Bun.file(`${pkgDir}dist/${name}`).text());
       }
     }
-    for (const marker of ['EPUB element limit exceeded']) {
+    for (const [name, marker] of [
+      ['frame-docx', 'Unsupported EMF or WMF image'],
+      ['frame-epub', 'EPUB element limit exceeded'],
+    ] as const) {
       expect(
-        await Bun.file(`${pkgDir}dist-frame/frame-epub.frame.js`).text()
+        await Bun.file(`${pkgDir}dist-frame/${name}.frame.js`).text()
       ).toContain(marker);
       expect(html).not.toContain(marker);
       expect(shell).not.toContain(marker);
