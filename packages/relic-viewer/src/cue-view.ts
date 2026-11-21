@@ -23,7 +23,11 @@ import {
 } from '@relic/format/subtitles';
 import { isInvisible } from '@relic/format/structured-text';
 import { subtitleClock } from './annotate-cue.ts';
-import { cueSourceSegments } from './cue-suggest.ts';
+import {
+  cueSourceSegments,
+  decodeCueText,
+  encodeCueText,
+} from './cue-suggest.ts';
 import { registerSuggestionSurface } from './suggestion-surface.ts';
 import type { SourceSegment } from './markdown-source.ts';
 import type {
@@ -196,6 +200,7 @@ function drawCues(mount: StructuredMount, file: SubtitleFile): StructuredPart {
       : mount.source;
   const mappedSegments: SourceSegment[] = [];
   const editableBlocks = new Set<number>();
+  const cueByBlock = new Map<number, SubtitleCue>();
   const redraw: (() => void)[] = [];
 
   const density = el('div', 'cues-density');
@@ -233,6 +238,7 @@ function drawCues(mount: StructuredMount, file: SubtitleFile): StructuredPart {
       const first = mappedSegments.length;
       if (editable) {
         mappedSegments.push(...pieces);
+        cueByBlock.set(entry.index, entry);
         editableBlocks.add(entry.index);
       } else {
         content.setAttribute('contenteditable', 'false');
@@ -335,6 +341,45 @@ function drawCues(mount: StructuredMount, file: SubtitleFile): StructuredPart {
             code: 'not-editable',
             message: 'This cue cannot be edited safely.',
           },
+    acceptsSelection: (node) => {
+      const element =
+        node.nodeType === 1 ? (node as Element) : node.parentElement;
+      const content = element?.closest('.cue-content');
+      return content &&
+        list.contains(content) &&
+        content.getAttribute('contenteditable') !== 'false'
+        ? true
+        : {
+            kind: 'refused',
+            code: 'not-editable',
+            message: 'Select editable cue text.',
+          };
+    },
+    encode: (block, text, start, end) => {
+      const cue = cueByBlock.get(block);
+      const first = cue?.textSpans[0];
+      const last = cue?.textSpans.at(-1);
+      if (!first || !last || start < first.start || end > last.end) {
+        return {
+          ok: false,
+          refusal: {
+            kind: 'refused',
+            code: 'not-editable',
+            message: 'This cue cannot be edited safely.',
+          },
+        };
+      }
+      const result = encodeCueText(
+        file.format,
+        text,
+        source.slice(first.start, start),
+        source.slice(end, last.end)
+      );
+      return typeof result === 'string'
+        ? { ok: true, source: result }
+        : { ok: false, refusal: result };
+    },
+    decode: (_block, text) => decodeCueText(file.format, text),
     repaint: () => {
       for (const draw of redraw) draw();
     },

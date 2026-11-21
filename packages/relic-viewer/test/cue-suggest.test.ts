@@ -1,6 +1,10 @@
 import { expect, test } from 'bun:test';
 import { parseSubtitles, type SubtitleCue } from '@relic/format/subtitles';
-import { cueSourceSegments, encodeCueText } from '../src/cue-suggest.ts';
+import {
+  cueSourceSegments,
+  decodeCueText,
+  encodeCueText,
+} from '../src/cue-suggest.ts';
 import { SuggestDraftModel } from '../src/suggest-draft.ts';
 
 export const cueFixtures = {
@@ -37,6 +41,13 @@ test('cue text encoding rejects structural changes and escapes VTT text', () => 
   expect(encodeCueText('srt', '<i>')).toMatchObject({ code: 'markup-in-cue' });
   expect(encodeCueText('srt', 'a\n\nb')).toMatchObject({ code: 'ends-cue' });
   expect(encodeCueText('srt', '-->')).toMatchObject({ code: 'ends-cue' });
+  expect(encodeCueText('srt', '>', '--', '')).toMatchObject({
+    code: 'ends-cue',
+  });
+  expect(encodeCueText('srt', '\n', 'a\n', 'b')).toMatchObject({
+    code: 'ends-cue',
+  });
+  expect(decodeCueText('vtt', '&amp;lt;&gt;')).toBe('&lt;>');
 });
 
 test('a cue edit cannot consume formatting tags or split an entity', () => {
