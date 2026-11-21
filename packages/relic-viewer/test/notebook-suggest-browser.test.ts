@@ -135,6 +135,13 @@ test('notebook source maps rendered cells but refuses output selections', async 
       if (crlfEditor.draft?.inserted!=='A'+String.fromCharCode(13,10)+'tZ') throw Error('retained CRLF was refused');
       const crlfDraft=crlfEditor.draft, crlfCommit=crlfEditor.prepare();
       if (crlfCommit.kind!=='save' || JSON.parse(crlfSource.slice(0,crlfDraft.start)+crlfCommit.plaintext.suggestion.replacement+crlfSource.slice(crlfDraft.end)).cells[0].source!=='A'+String.fromCharCode(13,10)+'tZwo') throw Error('retained CRLF changed');
+      const crlfIns=another.querySelector('ins[data-sg-draft]'), crlfText=crlfIns.firstChild, imeCaret=document.createRange();
+      imeCaret.setStart(crlfText,crlfText.length); imeCaret.collapse(true); selection.removeAllRanges(); selection.addRange(imeCaret);
+      another.dispatchEvent(new CompositionEvent('compositionstart',{bubbles:true}));
+      const composition=another.querySelector('ins[data-sg-draft]'); composition.firstChild.nodeValue += '漢';
+      await Promise.resolve(); await Promise.resolve();
+      if (crlfEditor.draft?.inserted!=='A'+String.fromCharCode(13,10)+'tZ漢') throw Error('IME rejected retained CRLF');
+      another.dispatchEvent(new CompositionEvent('compositionend',{bubbles:true}));
       crlfEditor.cancel(); crlfEditor.destroy();
       const alpha=crlfSegments.find(s=>s.text==='alpha'); const beta=crlfSegments.find(s=>s.text==='beta');
       if (!alpha || !beta || !anotherSurface.covers(alpha.start,beta.end)) throw Error('markdown soft break unmapped');
@@ -143,11 +150,30 @@ test('notebook source maps rendered cells but refuses output selections', async 
       const emptySurface=notebookSuggestionSurface(emptyRoot,emptyNotebook.notebook), emptySegments=emptySurface.segments(emptySource);
       if (emptySegments.length!==1) throw Error('empty source array has no edit anchor');
       const emptyEditor=mountSuggestEditor({root:emptyRoot,source:emptySource,segments:emptySegments,delimiters:[],version:1,reader:'reader@example.test',chrome,surface:emptySurface,onCommit(){},onDraftChange(){},onRefusal(){}});
-      emptyEditor.setSuggesting(true); select(emptyRoot.querySelector('[data-seg]')); emptyRoot.dispatchEvent(new InputEvent('beforeinput',{bubbles:true,cancelable:true,inputType:'insertText',data:'hello \"world\"'}));
-      const emptyCommit=emptyEditor.prepare(); if(emptyCommit.kind!=='save') throw Error('empty source suggestion refused');
+      const blankPre=emptyRoot.querySelector('.nb-src'); blankPre.style.cssText='display:block;padding:10px 14px;font:13px/1.6 monospace;white-space:pre'; blankPre.scrollIntoView();
+      let trustedInput=false; emptyRoot.addEventListener('beforeinput',event=>{if(event.isTrusted && event.data==='hello \"world\"') trustedInput=true;});
+      emptyEditor.setSuggesting(true);
+      const blankRect=blankPre.getBoundingClientRect();
+      const click=await fetch('/trusted-click?x='+(blankRect.left+15)+'&y='+(blankRect.top+10));
+      if(!click.ok) throw Error('trusted blank-cell click failed: '+await click.text());
+      if (!trustedInput) throw Error('blank-cell typing did not use a trusted event');
+      const emptyCommit=emptyEditor.prepare(); if(emptyCommit.kind!=='save') throw Error('trusted blank-cell typing refused: '+chrome.textContent);
       const emptyPos=emptySegments[0].start, inserted=emptyCommit.plaintext.suggestion.replacement;
       if (emptyCommit.plaintext.suggestion.mode!=='after' || emptyCommit.plaintext.anchor.exact!=='[' || emptySurface.decode(emptySegments[0].block,inserted)!=='hello \"world\"') throw Error('empty source anchor or painting decode wrong');
+      if (typeof emptySurface.decode(emptySegments[0].block,'42')!=='string') throw Error('empty array decoder returned non-string');
       if (JSON.parse(emptySource.slice(0,emptyPos)+inserted+emptySource.slice(emptyPos)).cells[0].source[0]!=='hello \"world\"') throw Error('empty source suggestion broke JSON');
+      if (emptySurface.covers(emptyPos,emptyPos,'42') || emptySurface.covers(emptyPos,emptyPos,'null') || !emptySurface.covers(emptyPos,emptyPos,inserted)) throw Error('invalid empty array replacement painted');
+      const tabSource=JSON.stringify({nbformat:4,cells:[{cell_type:'raw',source:'alpha'+String.fromCharCode(9)+'beta'}]});
+      const tabNotebook=parseNotebook(tabSource), tabRoot=document.createElement('div'); tabRoot.innerHTML='<div class=\"nb-cell\" data-cell=\"0\"><div class=\"nb-box\"><pre class=\"nb-src\"></pre></div></div>'; document.body.append(tabRoot);
+      const tabSurface=notebookSuggestionSurface(tabRoot,tabNotebook.notebook), tabSegments=tabSurface.segments(tabSource);
+      const tabEditor=mountSuggestEditor({root:tabRoot,source:tabSource,segments:tabSegments,delimiters:[],version:1,reader:'reader@example.test',chrome,surface:tabSurface,onCommit(){},onDraftChange(){},onRefusal(){}});
+      tabEditor.setSuggesting(true); select(tabRoot.querySelector('[data-seg=\"0\"]')); tabRoot.dispatchEvent(new InputEvent('beforeinput',{bubbles:true,cancelable:true,inputType:'insertText',data:'A'}));
+      const betaPart=tabSegments.find(s=>s.text==='beta'), betaNode=tabRoot.querySelector('[data-seg=\"'+tabSegments.indexOf(betaPart)+'\"]').firstChild, betaCaret=document.createRange();
+      betaCaret.setStart(betaNode,1); betaCaret.collapse(true); selection.removeAllRanges(); selection.addRange(betaCaret);
+      tabRoot.dispatchEvent(new InputEvent('beforeinput',{bubbles:true,cancelable:true,inputType:'insertText',data:'Z'}));
+      if (tabEditor.draft?.inserted!=='A'+String.fromCharCode(9)+'bZ') throw Error('retained tab was refused');
+      const oldTabDraft=tabEditor.draft.inserted; tabRoot.dispatchEvent(new InputEvent('beforeinput',{bubbles:true,cancelable:true,inputType:'insertText',data:String.fromCharCode(9)}));
+      if (tabEditor.draft?.inserted!==oldTabDraft) throw Error('new tab accepted in raw cell'); tabEditor.cancel();tabEditor.destroy();
       emptyEditor.cancel();emptyEditor.destroy();
       const bidiSource=JSON.stringify({nbformat:4,cells:[{cell_type:'code',source:'left'+String.fromCharCode(0x202e)+'right',outputs:[]},{cell_type:'code',source:'other',outputs:[]}]});
       const bidiNotebook=parseNotebook(bidiSource), bidiRoot=document.createElement('div');
@@ -160,11 +186,75 @@ test('notebook source maps rendered cells but refuses output selections', async 
       await fetch('/result',{method:'POST',body:'ok'});
     } catch (error) { await fetch('/result',{method:'POST',body:error.stack || String(error)}); }
   </script>`;
+  async function trustedClick(x: number, y: number): Promise<void> {
+    const port = (
+      await Bun.file(join(profile, 'DevToolsActivePort')).text()
+    ).split('\n')[0];
+    const targets = (await (
+      await fetch(`http://127.0.0.1:${port}/json/list`)
+    ).json()) as { type: string; webSocketDebuggerUrl: string }[];
+    const target = targets.find((item) => item.type === 'page');
+    if (!target) throw new Error('headless page target missing');
+    const socket = new WebSocket(target.webSocketDebuggerUrl);
+    const opened = Promise.withResolvers<void>();
+    socket.onopen = () => opened.resolve();
+    socket.onerror = () => opened.reject(new Error('CDP connection failed'));
+    await opened.promise;
+    let id = 0;
+    const send = (method: string, params: object) => {
+      const done = Promise.withResolvers<void>();
+      const current = ++id;
+      const listener = (event: MessageEvent) => {
+        const message = JSON.parse(String(event.data)) as {
+          id?: number;
+          error?: { message: string };
+        };
+        if (message.id !== current) return;
+        socket.removeEventListener('message', listener);
+        if (message.error) done.reject(new Error(message.error.message));
+        else done.resolve();
+      };
+      socket.addEventListener('message', listener);
+      socket.send(JSON.stringify({ id: current, method, params }));
+      return done.promise;
+    };
+    try {
+      await send('Input.dispatchMouseEvent', {
+        type: 'mousePressed',
+        x,
+        y,
+        button: 'left',
+        clickCount: 1,
+      });
+      await send('Input.dispatchMouseEvent', {
+        type: 'mouseReleased',
+        x,
+        y,
+        button: 'left',
+        clickCount: 1,
+      });
+      await send('Input.insertText', { text: 'hello "world"' });
+    } finally {
+      socket.close();
+    }
+  }
   const server = Bun.serve({
     hostname: '127.0.0.1',
     port: 0,
     async fetch(request) {
       const path = new URL(request.url).pathname;
+      if (path === '/trusted-click') {
+        const url = new URL(request.url);
+        try {
+          await trustedClick(
+            Number(url.searchParams.get('x')),
+            Number(url.searchParams.get('y'))
+          );
+          return new Response('ok');
+        } catch (error) {
+          return new Response(String(error), { status: 500 });
+        }
+      }
       if (path === '/entry.js')
         return new Response(js, {
           headers: { 'content-type': 'text/javascript' },
@@ -184,6 +274,7 @@ test('notebook source maps rendered cells but refuses output selections', async 
       '--headless',
       '--disable-gpu',
       '--no-sandbox',
+      '--remote-debugging-port=0',
       `--user-data-dir=${profile}`,
       `http://127.0.0.1:${server.port}/`,
     ],

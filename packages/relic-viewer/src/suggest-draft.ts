@@ -194,6 +194,9 @@ function newlineRefusal(kind: SuggestBlockKind): SuggestRefusal {
     `A line break can’t go inside ${inside}. Suggest the words, and reply if the layout should change.`
   );
 }
+function tabsAllowed(kind: SuggestBlockKind): boolean {
+  return kind === 'code' || kind === 'fenced-code' || kind === 'nb-code';
+}
 
 function validReplacement(text: string, allowCR = false): boolean {
   for (let i = 0; i < text.length; i++) {
@@ -429,15 +432,17 @@ export class SuggestDraftModel {
     if (this.options.crlf && /[\r\n]/.test(candidate.inserted))
       return crlfLineBreak();
     const hasCR = candidate.inserted.includes('\r');
-    const retainedCRs = hasCR
-      ? (
-          this.options.decodeRange?.(
+    const restrictedTabs =
+      !tabsAllowed(candidate.blockKind) && candidate.inserted.includes('\t');
+    const retained =
+      hasCR || restrictedTabs
+        ? (this.options.decodeRange?.(
             candidate.block,
             candidate.start,
             candidate.end
-          ) ?? ''
-        ).split('\r').length - 1
-      : 0;
+          ) ?? '')
+        : '';
+    const retainedCRs = hasCR ? retained.split('\r').length - 1 : 0;
     const insertedCRs = hasCR ? candidate.inserted.split('\r').length - 1 : 0;
     if (
       insertedCRs > retainedCRs ||
@@ -458,10 +463,8 @@ export class SuggestDraftModel {
     )
       return newlineRefusal(candidate.blockKind);
     if (
-      candidate.inserted.includes('\t') &&
-      candidate.blockKind !== 'code' &&
-      candidate.blockKind !== 'fenced-code' &&
-      candidate.blockKind !== 'nb-code'
+      restrictedTabs &&
+      candidate.inserted.split('\t').length > retained.split('\t').length
     )
       return refused('tab-here', 'Tab works only in code.');
     if (
@@ -489,6 +492,8 @@ export class SuggestDraftModel {
         'invalid-character',
         'This suggestion contains unsupported characters.'
       );
+    if (text.includes('\t') && !tabsAllowed(blockKind))
+      return refused('tab-here', 'Tab works only in code.');
     const block = this.rangeBlock(start, end);
     if (typeof block !== 'number') return block;
     let draft = this.current;
@@ -577,6 +582,8 @@ export class SuggestDraftModel {
         'invalid-character',
         'This suggestion contains unsupported characters.'
       );
+    if (text.includes('\t') && !tabsAllowed(blockKind))
+      return refused('tab-here', 'Tab works only in code.');
     let draft = this.current;
     if (commentId !== undefined) {
       const pending = this.pending.find(

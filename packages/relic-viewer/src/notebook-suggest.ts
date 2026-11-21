@@ -56,6 +56,13 @@ export function notebookAcceptsSelection(
   );
   if (!target || !root.contains(target)) return notebookNotEditable();
   if (
+    element === target &&
+    target.childNodes.length === 1 &&
+    target.firstElementChild?.hasAttribute('data-seg') &&
+    target.textContent === ''
+  )
+    return true;
+  if (
     (mappingReady || target.querySelector('[data-seg]')) &&
     !element?.closest('[data-seg]')
   )
@@ -327,13 +334,20 @@ export function notebookSuggestionSurface(
             message: 'Only notebook cell source can be edited.',
           };
     },
-    covers(start, end) {
+    covers(start, end, replacement) {
       const first = mapped.find(
         (part) =>
           part.start <= start &&
           (start === end ? start <= part.end : start < part.end)
       );
       if (!first) return false;
+      if (replacement !== undefined && emptyArrays.has(first.block)) {
+        try {
+          if (typeof JSON.parse(replacement) !== 'string') return false;
+        } catch {
+          return false;
+        }
+      }
       if (start === end)
         return (
           first.kind !== 'escape' ||
@@ -363,7 +377,8 @@ export function notebookSuggestionSurface(
     decode(block, source) {
       if (emptyArrays.has(block)) {
         try {
-          return JSON.parse(source) as string;
+          const value: unknown = JSON.parse(source);
+          return typeof value === 'string' ? value : source;
         } catch {
           return source;
         }

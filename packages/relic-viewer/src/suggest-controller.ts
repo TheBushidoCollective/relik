@@ -723,8 +723,11 @@ export function mountSuggestionController(
             paint: views!.paint.filter(
               (item) =>
                 item.location.status !== 'resolved' ||
-                surface?.covers?.(item.location.start, item.location.end) ===
-                  true
+                surface?.covers?.(
+                  item.location.start,
+                  item.location.end,
+                  item.input?.suggestion.replacement
+                ) === true
             ),
           }
         : views!;

@@ -452,7 +452,6 @@ export function mountSuggestEditor(
   let composing = false;
   let compositionOffset = 0;
   let compositionLength = 0;
-  let compositionBaseLength = 0;
   let draftIns: HTMLElement | null = null;
   let hiddenInsertions: { element: HTMLElement; hidden: boolean }[] = [];
   let snapshot: Node | null = null;
@@ -643,24 +642,35 @@ export function mountSuggestEditor(
       ) &&
       Array.from(draftIns.childNodes).every((node) => node.nodeType === 3);
     if (insideComposition && draftIns && model.draft) {
-      const change = model.editInsertion(
-        0,
-        model.draft.inserted.length,
-        draftIns.textContent ?? '',
-        model.draft.blockKind
-      );
-      if (change.kind === 'changed') {
-        compositionLength = Math.max(
-          0,
-          change.draft.inserted.length - compositionBaseLength
-        );
+      const old = model.draft.inserted;
+      const value = draftIns.textContent ?? '';
+      const prefix = old.slice(0, compositionOffset);
+      const suffix = old.slice(compositionOffset + compositionLength);
+      const withinComposition =
+        value.length >= prefix.length + suffix.length &&
+        value.startsWith(prefix) &&
+        value.endsWith(suffix);
+      const text = withinComposition
+        ? value.slice(prefix.length, value.length - suffix.length)
+        : null;
+      const change =
+        text === null
+          ? null
+          : model.editInsertion(
+              compositionOffset,
+              compositionOffset + compositionLength,
+              text,
+              model.draft.blockKind
+            );
+      if (change?.kind === 'changed') {
+        compositionLength = text!.length;
         snapshot = root.cloneNode(true);
         updateHint();
         options.onDraftChange(change.draft);
         observe();
         return;
       }
-      if (change.kind === 'refused')
+      if (change?.kind === 'refused')
         displayRefusal(change.message, change.code);
     }
     if (!reverse(records)) {
@@ -1144,7 +1154,6 @@ export function mountSuggestEditor(
     }
     compositionOffset = start.kind === 'insertion' ? start.offset : 0;
     compositionLength = 0;
-    compositionBaseLength = model.draft?.inserted.length ?? 0;
     composing = draftIns !== null;
   }
 
