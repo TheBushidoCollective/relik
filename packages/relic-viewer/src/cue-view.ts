@@ -195,6 +195,7 @@ function drawCues(mount: StructuredMount, file: SubtitleFile): StructuredPart {
       ? mount.source.slice(1)
       : mount.source;
   const mappedSegments: SourceSegment[] = [];
+  const editableBlocks = new Set<number>();
   const redraw: (() => void)[] = [];
 
   const density = el('div', 'cues-density');
@@ -230,7 +231,12 @@ function drawCues(mount: StructuredMount, file: SubtitleFile): StructuredPart {
         pieces.map((piece) => piece.text).join('') === entry.text &&
         visibleText(entry.text) === entry.text;
       const first = mappedSegments.length;
-      if (editable) mappedSegments.push(...pieces);
+      if (editable) {
+        mappedSegments.push(...pieces);
+        editableBlocks.add(entry.index);
+      } else {
+        content.setAttribute('contenteditable', 'false');
+      }
       const drawContent = (): void => {
         content.replaceChildren();
         if (!editable) {
@@ -321,7 +327,14 @@ function drawCues(mount: StructuredMount, file: SubtitleFile): StructuredPart {
     root: list,
     segments: () => mappedSegments,
     blockKind: () => 'cue',
-    editable: () => true,
+    editable: (block) =>
+      editableBlocks.has(block)
+        ? true
+        : {
+            kind: 'refused',
+            code: 'not-editable',
+            message: 'This cue cannot be edited safely.',
+          },
     repaint: () => {
       for (const draw of redraw) draw();
     },

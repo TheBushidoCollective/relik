@@ -15,9 +15,10 @@ test('controller uses the registered structured suggestion surface', async () =>
   const profile = join(tmpdir(), `relic-surface-profile-${id}`);
   const controller = resolve(import.meta.dir, '../src/suggest-controller.ts');
   const surface = resolve(import.meta.dir, '../src/suggestion-surface.ts');
+  const cues = resolve(import.meta.dir, '../src/cue-view.ts');
   await writeFile(
     entry,
-    `export { mountSuggestionController } from ${JSON.stringify(controller)}; export { registerSuggestionSurface } from ${JSON.stringify(surface)};`
+    `export { mountSuggestionController } from ${JSON.stringify(controller)}; export { registerSuggestionSurface } from ${JSON.stringify(surface)}; export { mountView as mountCues } from ${JSON.stringify(cues)};`
   );
   const build = await Bun.build({
     entrypoints: [entry],
@@ -28,7 +29,7 @@ test('controller uses the registered structured suggestion surface', async () =>
   const js = await build.outputs[0]!.text();
   const result = Promise.withResolvers<string>();
   const page = `<!doctype html><script type="module">
-    import { mountSuggestionController, registerSuggestionSurface } from '/entry.js';
+    import { mountSuggestionController, registerSuggestionSurface, mountCues } from '/entry.js';
     try {
       const host = document.createElement('div');
       const owner = document.createElement('div'); owner.className = 'structured-view';
@@ -56,6 +57,24 @@ test('controller uses the registered structured suggestion surface', async () =>
       const type = text => root.dispatchEvent(new InputEvent('beforeinput',{bubbles:true,cancelable:true,inputType:'insertText',data:text}));
       type('b'); if (editor.draftOpen || !host.textContent.includes('Not editable')) throw Error('surface refusal ignored');
       allowed = true; type('b'); if (!editor.draftOpen) throw Error('editable surface did not create a draft');
+      const cueSource = 'WEBVTT\\r\\n\\r\\n00:00:01.000 --> 00:00:02.000\\r\\nA &amp; <b>B</b>\\r\\n';
+      const cueHost = document.createElement('div');
+      const cueOwner = document.createElement('section'); cueOwner.className = 'structured-view';
+      cueHost.append(cueOwner); document.body.append(cueHost);
+      const cuePart = mountCues({root:cueOwner, source:cueSource, filename:'test.vtt', mimetype:'text/vtt', sourceView:()=>document.createElement('pre'), reportUnshown(){}});
+      const cueView = {route:'code', filename:'test.vtt', declaredMimetype:'text/vtt', version:1, currentVersion:1, document:{bytes:new TextEncoder().encode(cueSource), truncated:false}};
+      const cueBar = document.createElement('div'); document.body.append(cueBar);
+      const cueEditor = mountSuggestionController({view:cueView, host:cueHost, bar:cueBar, relicId:'cue-fixture', deps:{serviceOrigin:location.origin,fetch},
+        session:()=>({kind:'verified',email:'reader@example.test'}), cipher:()=>({seal:async()=>'',open:async()=>({body:'',display_name:null,anchor:null})}),
+        entries:()=>[], displayName:()=>null, refresh:async()=>{}, readCurrentVersion:async()=>1, repaint(){}, signIn(){}, open(){} });
+      cueEditor.setSuggesting(true);
+      if (!cueEditor.suggesting) throw Error('cue surface could not enter suggesting');
+      const cueText = cueOwner.querySelector('strong [data-seg]').firstChild;
+      const cueRange = document.createRange(); cueRange.selectNodeContents(cueText);
+      sel.removeAllRanges(); sel.addRange(cueRange);
+      cueText.parentElement.dispatchEvent(new InputEvent('beforeinput',{bubbles:true,cancelable:true,inputType:'insertText',data:'<C>'}));
+      if (!cueEditor.draftOpen) throw Error('cue edit did not create a draft');
+      cuePart.dispose();
       await fetch('/result',{method:'POST',body:'ok'});
     } catch (e) { await fetch('/result',{method:'POST',body:e.stack || String(e)}); }
   </script>`;
