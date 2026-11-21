@@ -74,3 +74,57 @@ export function tableSuggestionCell(
         : true,
   };
 }
+
+/** Encode one displayed insertion without permitting a structural CSV change. */
+export function encodeTableSuggestion(
+  table: CsvTable,
+  cell: TableSuggestionCell,
+  text: string
+):
+  | { readonly ok: true; readonly source: string }
+  | { readonly ok: false; readonly refusal: SuggestRefusal } {
+  if (cell.editable !== true) return { ok: false, refusal: cell.editable };
+  if (text.includes('\r') || text.includes('\n')) {
+    return {
+      ok: false,
+      refusal: {
+        kind: 'refused',
+        code: 'delimiter-in-cell',
+        message: 'A line break cannot be inserted in a table cell.',
+      },
+    };
+  }
+  if (table.delimiter === '\t' && text.includes('\t')) {
+    return {
+      ok: false,
+      refusal: {
+        kind: 'refused',
+        code: 'delimiter-in-cell',
+        message: 'A tab would split this cell.',
+      },
+    };
+  }
+  if (cell.kind === 'csv-quoted')
+    return { ok: true, source: text.replaceAll('"', '""') };
+  if (text.includes(table.delimiter)) {
+    return {
+      ok: false,
+      refusal: {
+        kind: 'refused',
+        code: 'delimiter-in-cell',
+        message: 'The delimiter would split this cell.',
+      },
+    };
+  }
+  if (text.includes('"')) {
+    return {
+      ok: false,
+      refusal: {
+        kind: 'refused',
+        code: 'quote-in-cell',
+        message: 'A quote cannot be inserted in an unquoted cell.',
+      },
+    };
+  }
+  return { ok: true, source: text };
+}
