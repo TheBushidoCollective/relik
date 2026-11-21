@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { crc32 } from './zip-index.ts';
 import { planStoredZip } from './zip-write.ts';
 import { parseXlsx } from './xlsx.ts';
+import { parseWorksheet } from './xlsx-sheet.ts';
 
 function zip(files: Record<string, string>): Uint8Array {
   const encoder = new TextEncoder();
@@ -171,4 +172,39 @@ describe('XLSX workbook', () => {
     view.setUint32(directory + 24, 100 * 1024 * 1024 + 1, true);
     expect(await parseXlsx(bytes)).toEqual({ ok: false, reason: 'too-large' });
   });
+  test('enforces the remaining global cell budget across sheets', () => {
+    expect(() =>
+      parseWorksheet(
+        '<worksheet><sheetData><row><c><v>1</v></c><c><v>2</v></c></row></sheetData></worksheet>',
+        {
+          name: 'S',
+          state: 'visible',
+          sharedStrings: [],
+          styles: [],
+          date1904: false,
+          remaining: 1,
+        }
+      )
+    ).toThrow('too-large');
+  });
+  test('rejects archives beyond the file and entry-count caps', async () => {
+    expect(await parseXlsx(new Uint8Array(100 * 1024 * 1024 + 1))).toEqual({
+      ok: false,
+      reason: 'too-large',
+    });
+    const files: Record<string, string> = {};
+    for (let i = 0; i < 10001; i++) files[`part${i}`] = '';
+    expect(await parseXlsx(zip(files))).toEqual({
+      ok: false,
+      reason: 'too-large',
+    });
+  });
+  test('rejects more than two million shared strings', async () => {
+    const shared = `<sst>${'<si/>'.repeat(2_000_001)}</sst>`;
+    expect(
+      await parseXlsx(
+        fixture('<worksheet/>', undefined, { 'xl/sharedStrings.xml': shared })
+      )
+    ).toEqual({ ok: false, reason: 'too-large' });
+  }, 30000);
 });
