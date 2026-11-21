@@ -58,6 +58,8 @@ export function notebookSourceUnits(
   let offset = 0;
   for (const [token, range] of cell.sourceTokens.entries()) {
     let at = range.start + 1;
+    if (at === range.end - 1)
+      units.push({ text: '', start: at, end: at, token, offset });
     while (at < range.end - 1) {
       const start = at;
       if (source[at] === '\\') {
@@ -150,6 +152,8 @@ export function notebookSuggestionSurface(
           const spans = Array.from(
             target.querySelectorAll<HTMLElement>('[data-seg]')
           );
+          if (decoded === '' && units.length > 0)
+            appendUnit(target, units[0]!, 0);
           let cursor = 0;
           for (const [index, span] of spans.entries()) {
             const segment = mapped.segments[index];
