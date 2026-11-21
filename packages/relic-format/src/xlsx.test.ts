@@ -137,4 +137,38 @@ describe('XLSX workbook', () => {
       )
     ).toEqual({ ok: false, reason: 'too-large' });
   });
+  test('preserves hidden and chart sheet metadata and isolates an oversized sheet', async () => {
+    const book =
+      '<workbook><sheets><sheet name="Too big" r:id="r1"/><sheet name="Hidden" state="hidden" r:id="r4"/><sheet name="Chart" state="veryHidden" r:id="r5"/></sheets></workbook>';
+    const rels =
+      '<Relationships><Relationship Id="r1" Type="urn:office/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="r4" Type="urn:office/worksheet" Target="worksheets/sheet2.xml"/><Relationship Id="r5" Type="urn:office/chartsheet" Target="chartsheets/sheet1.xml"/></Relationships>';
+    const parsed = await parseXlsx(
+      fixture(
+        '<worksheet><sheetData><row r="600001"/></sheetData></worksheet>',
+        book,
+        {
+          'xl/_rels/workbook.xml.rels': rels,
+          'xl/worksheets/sheet2.xml':
+            '<worksheet><sheetData><row r="1"><c r="A1"><v>9</v></c></row></sheetData></worksheet>',
+        }
+      )
+    );
+    if (!parsed.ok) throw new Error(parsed.reason);
+    expect(
+      parsed.workbook.sheets.map((s) => [s.name, s.state, s.kind, s.refused])
+    ).toEqual([
+      ['Too big', 'visible', 'worksheet', 'too-large'],
+      ['Hidden', 'hidden', 'worksheet', undefined],
+      ['Chart', 'veryHidden', 'chartsheet', undefined],
+    ]);
+    expect(parsed.workbook.sheets[1]!.texts).toEqual(['9']);
+  });
+  test('rejects a ZIP entry claiming more than the expanded size limit', async () => {
+    const bytes = fixture('<worksheet/>');
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const directory = view.getUint32(bytes.length - 6, true);
+    view.setUint16(directory + 10, 8, true);
+    view.setUint32(directory + 24, 100 * 1024 * 1024 + 1, true);
+    expect(await parseXlsx(bytes)).toEqual({ ok: false, reason: 'too-large' });
+  });
 });
