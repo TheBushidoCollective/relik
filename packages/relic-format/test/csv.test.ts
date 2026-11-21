@@ -90,6 +90,31 @@ describe('parseTable: RFC 4180 reading', () => {
     expect(parsed.records).toBe(2);
   });
 
+  test('keeps a decoded leading BOM as data only when skipBom is false', () => {
+    const decoded = '\uFEFF"alpha,beta",x\r\nrow,value,last\r\n';
+    const skipped = parseTable(decoded);
+    const explicitlySkipped = parseTable(decoded, { skipBom: true });
+    const kept = parseTable(decoded, { skipBom: false });
+    if (!skipped.ok || !explicitlySkipped.ok || !kept.ok)
+      throw new Error('fixture must parse as a table');
+
+    expect(skipped.table.bom).toBe(true);
+    expect(explicitlySkipped.table.bom).toBe(true);
+    expect(cellText(skipped.table, 0, 0)).toBe('alpha,beta');
+    expect(grid(explicitlySkipped.table)).toEqual(grid(skipped.table));
+    expect(skipped.table.fieldStart[0]).toBe(1);
+
+    expect(kept.table.bom).toBe(false);
+    expect(kept.table.fieldStart[0]).toBe(0);
+    expect(recordWidth(kept.table, 0)).toBe(3);
+    expect(cellText(kept.table, 0, 0)).toBe('\uFEFF"alpha');
+    expect(cellFlags(kept.table, 0, 0)).toBe(FIELD_STRAY);
+    expect(parseTable('\uFEFF')).toEqual({ ok: false, reason: 'empty' });
+    const onlyDataBom = parseTable('\uFEFF', { skipBom: false });
+    if (!onlyDataBom.ok) throw new Error('the data BOM must be a cell');
+    expect(grid(onlyDataBom.table)).toEqual([['\uFEFF']]);
+  });
+
   test('a blank line is a record, so record numbers are the file rows', () => {
     const parsed = table('a\n\nb\n');
     expect(parsed.records).toBe(3);

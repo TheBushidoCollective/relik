@@ -89,6 +89,13 @@ import {
   type PrivatePublishState,
   savePrivatePublishState,
 } from './state.ts';
+import {
+  buildCachedFormat,
+  nextVersionFormats,
+  saveCachedVersionFormat,
+  versionFormatFor,
+  withVersionFormat,
+} from './suggestion-format.ts';
 import { prepareZipPublish } from './zip-source.ts';
 
 /** Attempts at a seal before a recipients change is reported rather than retried forever. */
@@ -694,6 +701,7 @@ async function preparePrivateSource(
         container,
         shape: 'folder' as const,
         folder: folderReport(folderSource),
+        entryPaths: folderSource.folder.entries.map((entry) => entry.path),
       };
     } catch (error) {
       if (error instanceof FolderContentError)
@@ -721,6 +729,7 @@ async function preparePrivateSource(
     }),
     shape: 'file' as const,
     folder: undefined,
+    entryPaths: [],
   };
 }
 
@@ -868,6 +877,11 @@ export async function publishPrivate(
     device_id: session.entry.device_id,
     source: lookup.source,
     shape: source.shape,
+    version_formats: withVersionFormat(
+      {},
+      1,
+      versionFormatFor(source.shape, filename)
+    ),
     filename,
     published_at: new Date().toISOString(),
     content_sha256: digest,
@@ -918,6 +932,29 @@ export async function publishPrivate(
       'the version digest the service computed does not match the ciphertext this machine uploaded',
       { relic_id: relicId, version: 1 }
     );
+  }
+  if (source.shape === 'folder') {
+    try {
+      await saveCachedVersionFormat(
+        relicId,
+        1,
+        key,
+        buildCachedFormat(
+          { shape: 'folder' },
+          source.entryPaths,
+          key,
+          relicId,
+          1
+        )
+      );
+    } catch (error) {
+      throw new PublishError(
+        'local_state_write_failed',
+        'the private relic is published, but its encrypted folder format cache could not be recorded: ' +
+          (error as Error).message,
+        { relic_id: relicId, version: 1 }
+      );
+    }
   }
 
   return {
@@ -1048,6 +1085,11 @@ export async function republishPrivate(
     ...state,
     shape: source.shape,
     version: first.version,
+    version_formats: nextVersionFormats(
+      state,
+      first.version,
+      versionFormatFor(source.shape, filename)
+    ),
     version_keys: {
       ...state.version_keys,
       [String(first.version)]: encodeKey(key),
@@ -1084,6 +1126,29 @@ export async function republishPrivate(
       'the version digest the service computed does not match the ciphertext this machine uploaded',
       { relic_id: input.relic_id, version: first.version }
     );
+  }
+  if (source.shape === 'folder') {
+    try {
+      await saveCachedVersionFormat(
+        input.relic_id,
+        first.version,
+        key,
+        buildCachedFormat(
+          { shape: 'folder' },
+          source.entryPaths,
+          key,
+          input.relic_id,
+          first.version
+        )
+      );
+    } catch (error) {
+      throw new PublishError(
+        'local_state_write_failed',
+        'the private version is published, but its encrypted folder format cache could not be recorded: ' +
+          (error as Error).message,
+        { relic_id: input.relic_id, version: first.version }
+      );
+    }
   }
 
   return {

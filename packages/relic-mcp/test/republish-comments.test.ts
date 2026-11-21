@@ -1,12 +1,15 @@
 import { fetchUpload } from './upload-fixture.ts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { deflateSync } from 'node:zlib';
 import { decodeKey, deriveCommentKey, encryptComment } from '@relic/format';
+import { COVER_HEIGHT, COVER_WIDTH, crc32 } from '@relic/format/cover';
 import { createApp, type RelicApp } from '@relic/server/src/app.ts';
 import { MemoryStorage } from '@relic/server/src/storage.ts';
 import { MemoryStore } from '@relic/server/src/store.ts';
+import { APPLY_SUGGESTIONS_TOOL_NAME } from '../src/apply-suggestions.ts';
 import { postComment, readComments } from '../src/comments.ts';
 import { nodeFiles } from '../src/files.ts';
 import {
@@ -18,9 +21,11 @@ import { republish } from '../src/republish.ts';
 import {
   handleMessage,
   READ_COMMENTS_TOOL_NAME,
+  REPUBLISH_TOOL_DEFINITION,
   REPUBLISH_TOOL_NAME,
 } from '../src/server.ts';
 import { loadPublishState } from '../src/state.ts';
+import { cachedVersionFormatPath } from '../src/suggestion-format.ts';
 
 const SERVICE = 'https://relic.example';
 
@@ -89,7 +94,8 @@ afterEach(async () => {
 
 async function callTool(
   name: string,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  callDeps: PublishDeps = deps
 ): Promise<Record<string, unknown>> {
   const response = await handleMessage(
     {
@@ -98,9 +104,134 @@ async function callTool(
       method: 'tools/call',
       params: { name, arguments: args },
     },
-    deps
+    callDeps
   );
   return response?.result as Record<string, unknown>;
+}
+
+function coverPng(): Uint8Array {
+  const chunk = (type: string, bytes: Uint8Array): Buffer => {
+    const name = Buffer.from(type, 'ascii');
+    const length = Buffer.alloc(4);
+    length.writeUInt32BE(bytes.length);
+    const checksum = Buffer.alloc(4);
+    checksum.writeUInt32BE(crc32(Buffer.concat([name, bytes])));
+    return Buffer.concat([length, name, bytes, checksum]);
+  };
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(COVER_WIDTH, 0);
+  header.writeUInt32BE(COVER_HEIGHT, 4);
+  header[8] = 8;
+  header[9] = 2;
+  const pixels = Buffer.alloc(COVER_HEIGHT * (1 + COVER_WIDTH * 3));
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', header),
+    chunk('IDAT', deflateSync(pixels)),
+    chunk('IEND', Buffer.alloc(0)),
+  ]);
+}
+
+function depsWithCover(): PublishDeps {
+  const bytes = coverPng();
+  return {
+    ...deps,
+    renderCover: async () => ({
+      status: 'rendered',
+      kind: 'markdown',
+      type: 'image/png',
+      bytes,
+    }),
+  };
+}
+
+/** Validate the JSON Schema keywords used by the republish output contract. */
+function schemaErrors(schema: unknown, value: unknown, path = '$'): string[] {
+  const rule = schema as Record<string, unknown>;
+  const errors: string[] = [];
+  const keywords = [
+    'type',
+    'enum',
+    'minimum',
+    'pattern',
+    'required',
+    'properties',
+    'items',
+    'additionalProperties',
+    'description',
+  ];
+  for (const keyword of Object.keys(rule)) {
+    if (!keywords.includes(keyword))
+      errors.push(`${path}: unsupported ${keyword}`);
+  }
+  const expected =
+    rule['type'] === undefined
+      ? []
+      : Array.isArray(rule['type'])
+        ? rule['type']
+        : [rule['type']];
+  if (
+    expected.length > 0 &&
+    !expected.some((type) =>
+      type === 'null'
+        ? value === null
+        : type === 'array'
+          ? Array.isArray(value)
+          : type === 'object'
+            ? value !== null &&
+              typeof value === 'object' &&
+              !Array.isArray(value)
+            : type === 'integer'
+              ? Number.isInteger(value)
+              : typeof value === type
+    )
+  ) {
+    errors.push(`${path}: incorrect type`);
+    return errors;
+  }
+  if (Array.isArray(rule['enum']) && !rule['enum'].includes(value))
+    errors.push(`${path}: outside enum`);
+  if (
+    typeof rule['minimum'] === 'number' &&
+    typeof value === 'number' &&
+    value < rule['minimum']
+  )
+    errors.push(`${path}: below minimum`);
+  if (
+    typeof rule['pattern'] === 'string' &&
+    typeof value === 'string' &&
+    !new RegExp(rule['pattern']).test(value)
+  )
+    errors.push(`${path}: pattern mismatch`);
+  if (Array.isArray(value) && rule['items'] !== undefined) {
+    value.forEach((item, index) => {
+      errors.push(...schemaErrors(rule['items'], item, `${path}[${index}]`));
+    });
+  } else if (value !== null && typeof value === 'object') {
+    const object = value as Record<string, unknown>;
+    const properties = (rule['properties'] ?? {}) as Record<string, unknown>;
+    for (const name of (rule['required'] ?? []) as string[]) {
+      if (!Object.hasOwn(object, name)) errors.push(`${path}.${name}: missing`);
+    }
+    for (const [name, field] of Object.entries(object)) {
+      if (Object.hasOwn(properties, name)) {
+        errors.push(
+          ...schemaErrors(properties[name], field, `${path}.${name}`)
+        );
+      } else if (rule['additionalProperties'] === false) {
+        errors.push(`${path}.${name}: unexpected`);
+      } else if (typeof rule['additionalProperties'] === 'object') {
+        errors.push(
+          ...schemaErrors(
+            rule['additionalProperties'],
+            field,
+            `${path}.${name}`
+          )
+        );
+      }
+    }
+  }
+  return errors;
 }
 
 describe('republish comments gate', () => {
@@ -745,5 +876,246 @@ describe('suggestions at the republish gate', () => {
       addresses: 'suggestion-1',
     });
     expect(read.summary.open).toBe(0);
+  });
+});
+
+describe('republish suggestion format history', () => {
+  test('preserves a legacy file format and previews an old suggestion without minting', async () => {
+    const filePath = join(scratch, 'notes.md');
+    await writeFile(filePath, '# Draft\n');
+    const published = await publish({ path: filePath, cover: false }, deps);
+    const initial = await loadPublishState(published.relic_id);
+    if (!initial) throw new Error('publish state missing');
+    const key = await deriveCommentKey(decodeKey(initial.key));
+
+    const statePath = join(scratch, 'publish-state.json');
+    const raw = JSON.parse(await readFile(statePath, 'utf8')) as {
+      relics: Record<string, Record<string, unknown>>;
+    };
+    const legacy = raw.relics[published.relic_id];
+    if (!legacy) throw new Error('publish state missing');
+    delete legacy['version_formats'];
+    delete legacy['shape'];
+    await writeFile(statePath, `${JSON.stringify(raw, null, 2)}\n`);
+
+    await store.putComment({
+      id: 'legacy-suggestion',
+      relicId: published.relic_id,
+      author: 'reader@example.com',
+      createdAt: Date.parse('2026-08-20T00:00:00Z'),
+      version: 1,
+      ciphertext: await encryptComment(key, {
+        body: 'Revise the title.',
+        display_name: null,
+        anchor: { kind: 'source', exact: 'Draft' },
+        suggestion: { v: 1, mode: 'replace', replacement: 'Revised' },
+      }),
+    });
+    await writeFile(filePath, '# Draft\n\nAdded detail.\n');
+    const result = await republish(
+      {
+        relic_id: published.relic_id,
+        path: filePath,
+        filename: 'notes.markdown',
+        addresses: [
+          {
+            comment_id: 'legacy-suggestion',
+            note: 'Saved for a later revision.',
+            outcome: 'deferred',
+          },
+        ],
+      },
+      depsWithCover()
+    );
+    expect(result.version).toBe(2);
+    expect(result.cover.status).toBe('uploaded');
+    expect(result.warnings).toBeUndefined();
+    const state = await loadPublishState(published.relic_id);
+    expect(state?.cover_uploaded).toBe(true);
+    expect(state?.version_formats).toEqual({
+      '1': { shape: 'file', extension: 'md' },
+      '2': { shape: 'file', extension: 'markdown' },
+    });
+
+    let mints = 0;
+    const trackingDeps: PublishDeps = {
+      ...deps,
+      fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (new URL(String(input)).pathname.endsWith('/mint')) mints++;
+        return deps.fetch(input, init);
+      }) as typeof fetch,
+    };
+    const preview = await callTool(
+      APPLY_SUGGESTIONS_TOOL_NAME,
+      {
+        relic_id: published.relic_id,
+        path: filePath,
+        accept: ['legacy-suggestion'],
+      },
+      trackingDeps
+    );
+    expect(preview['isError']).toBe(false);
+    expect(preview['structuredContent']).toMatchObject({
+      written: false,
+      applied: [{ comment_id: 'legacy-suggestion', line: 1, end_line: 1 }],
+    });
+    expect(mints).toBe(0);
+    expect(await readFile(filePath, 'utf8')).toBe('# Draft\n\nAdded detail.\n');
+  });
+
+  test('reports a damaged folder cache through MCP and still uploads the cover and acknowledgements', async () => {
+    const folder = join(scratch, 'docs');
+    const filePath = join(folder, 'a.md');
+    await mkdir(folder);
+    await writeFile(filePath, '# Draft\n');
+    const published = await publish({ path: folder, cover: false }, deps);
+    const initial = await loadPublishState(published.relic_id);
+    if (!initial) throw new Error('publish state missing');
+    const key = await deriveCommentKey(decodeKey(initial.key));
+    for (const [id, body] of [
+      ['folder-comment-1', 'Review the first section.'],
+      ['folder-comment-2', 'Review the second section.'],
+    ] as const) {
+      await store.putComment({
+        id,
+        relicId: published.relic_id,
+        author: 'reader@example.com',
+        createdAt: Date.parse('2026-08-20T00:00:00Z'),
+        version: 1,
+        ciphertext: await encryptComment(key, {
+          body,
+          display_name: null,
+          entry: 'a.md',
+        }),
+      });
+    }
+    await writeFile(filePath, '# Revised\n');
+    const cachePath = cachedVersionFormatPath(published.relic_id, 2);
+    await mkdir(dirname(cachePath), { recursive: true });
+    await writeFile(cachePath, 'damaged');
+
+    const response = await callTool(
+      REPUBLISH_TOOL_NAME,
+      {
+        relic_id: published.relic_id,
+        path: folder,
+        addresses: [
+          {
+            comment_id: 'folder-comment-1',
+            note: 'Updated the first section.',
+          },
+          {
+            comment_id: 'folder-comment-2',
+            note: 'Updated the second section.',
+          },
+        ],
+      },
+      depsWithCover()
+    );
+    expect(response['isError']).toBe(false);
+    const result = response['structuredContent'] as {
+      version: number;
+      acknowledgements: unknown[];
+      cover: { status: string };
+      warnings: { code: string; message: string }[];
+    };
+    expect(result.version).toBe(2);
+    expect(result.acknowledgements).toHaveLength(2);
+    expect(
+      schemaErrors(REPUBLISH_TOOL_DEFINITION.outputSchema, result)
+    ).toEqual([]);
+    const missingUrl = { ...result } as Record<string, unknown>;
+    delete missingUrl['report_url'];
+    expect(
+      schemaErrors(REPUBLISH_TOOL_DEFINITION.outputSchema, missingUrl)
+    ).toContain('$.report_url: missing');
+    const invalidWarning = {
+      ...result,
+      warnings: [{ ...result.warnings[0], unexpected: true }],
+    };
+    expect(
+      schemaErrors(REPUBLISH_TOOL_DEFINITION.outputSchema, invalidWarning)
+    ).toContain('$.warnings[0].unexpected: unexpected');
+    expect(result.cover.status).toBe('uploaded');
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toMatchObject({
+      code: 'suggestion_format_cache_failed',
+    });
+    expect(result.warnings[0]?.message).toContain('Version 2 is live');
+    expect(result.warnings[0]?.message).toContain('corrupt');
+    const content = response['content'] as { text: string }[];
+    expect(content[0]?.text).toContain('suggestion_format_cache_failed');
+    expect(content[0]?.text).toContain(result.warnings[0]!.message);
+    expect(REPUBLISH_TOOL_DEFINITION.outputSchema.properties.warnings).toEqual({
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: { code: { type: 'string' }, message: { type: 'string' } },
+        required: ['code', 'message'],
+        additionalProperties: false,
+      },
+    });
+    expect(await readFile(cachePath, 'utf8')).toBe('damaged');
+    const state = await loadPublishState(published.relic_id);
+    expect(state?.version).toBe(2);
+    expect(state?.cover_uploaded).toBe(true);
+    expect(state?.version_formats).toEqual({
+      '1': { shape: 'folder' },
+      '2': { shape: 'folder' },
+    });
+    expect((await store.getRelic(published.relic_id))?.cover?.version).toBe(2);
+    const thread = await readComments(published.relic_id, deps, {
+      version: '*',
+    });
+    for (const id of ['folder-comment-1', 'folder-comment-2']) {
+      expect(
+        thread.comments.find((row) => row.comment_id === id)
+      ).toMatchObject({
+        addressed: true,
+        addressed_by: { version: 2 },
+      });
+    }
+
+    await store.putComment({
+      id: 'version-2-suggestion',
+      relicId: published.relic_id,
+      author: 'reader@example.com',
+      createdAt: Date.parse('2026-08-21T00:00:00Z'),
+      version: 2,
+      ciphertext: await encryptComment(key, {
+        body: 'Revise the heading.',
+        display_name: null,
+        entry: 'a.md',
+        anchor: { kind: 'source', exact: 'Revised' },
+        suggestion: { v: 1, mode: 'replace', replacement: 'Final' },
+      }),
+    });
+    let mints = 0;
+    const trackingDeps: PublishDeps = {
+      ...deps,
+      fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (new URL(String(input)).pathname.endsWith('/mint')) mints++;
+        return deps.fetch(input, init);
+      }) as typeof fetch,
+    };
+    const refused = await callTool(
+      APPLY_SUGGESTIONS_TOOL_NAME,
+      {
+        relic_id: published.relic_id,
+        path: folder,
+        accept: ['version-2-suggestion'],
+        write: true,
+      },
+      trackingDeps
+    );
+    expect(refused['isError']).toBe(true);
+    expect(refused['structuredContent']).toMatchObject({
+      code: 'suggestion_source_format_unavailable',
+      version: 2,
+      reason: 'Error: The suggestion format cache is corrupt.',
+    });
+    expect(mints).toBe(0);
+    expect(await readFile(cachePath, 'utf8')).toBe('damaged');
+    expect(await readFile(filePath, 'utf8')).toBe('# Revised\n');
   });
 });

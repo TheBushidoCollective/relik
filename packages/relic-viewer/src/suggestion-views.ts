@@ -59,6 +59,25 @@ export interface SuggestionViews {
   readonly olderVersionReason: string | null;
 }
 
+/** Pick one placeable member per conflict group, without changing the group. */
+export function placeableSuggestionPaint(
+  views: SuggestionViews,
+  accepts: (view: SuggestionView) => boolean
+): SuggestionView[] {
+  const seen = new Set<string>();
+  const paint: SuggestionView[] = [];
+  for (const result of views.resolved) {
+    if (result.status !== 'resolved') continue;
+    const group = result.group ?? result.id;
+    if (seen.has(group)) continue;
+    const view = views.byId.get(result.id);
+    if (!view || !accepts(view)) continue;
+    seen.add(group);
+    paint.push(view);
+  }
+  return paint;
+}
+
 export const OLDER_VERSION_REASON =
   'Suggestions can only be made on the current version.';
 export const SUGGESTION_NOT_FOUND =
@@ -93,7 +112,8 @@ export function buildSuggestionViews(
   rows: readonly SuggestionThreadRow[],
   version: number,
   currentVersion: number,
-  reader: string | null = null
+  reader: string | null = null,
+  exclusiveInsertions?: ReadonlySet<number>
 ): SuggestionViews {
   const facts: ThreadFact[] = rows.map((row) => ({
     id: row.id,
@@ -137,7 +157,7 @@ export function buildSuggestionViews(
     const input = inputFor(row);
     return input === null ? [] : [input];
   });
-  const resolved = resolveSuggestions(source, inputs);
+  const resolved = resolveSuggestions(source, inputs, exclusiveInsertions);
   const locations = new Map<string, ResolvedSuggestion>();
   const groups = new Map<string, string[]>();
   for (const result of resolved) {

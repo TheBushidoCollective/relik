@@ -749,9 +749,11 @@ export function renderSuggestionCard(
       element(doc, 'p', 'comment-unplaceable', SUGGESTION_NOT_FOUND)
     );
   }
-  if (view.conflict && view.conflict.defaultId === view.row.id) {
+  if (view.conflict) {
     const members = element(doc, 'ol', 'card-members');
-    const firstName = displayName(view).split(/\s+/)[0] ?? displayName(view);
+    const defaultView = views.byId.get(view.conflict.defaultId) ?? view;
+    const firstName =
+      displayName(defaultView).split(/\s+/)[0] ?? displayName(defaultView);
     card.appendChild(
       element(
         doc,

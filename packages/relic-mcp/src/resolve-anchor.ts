@@ -803,7 +803,8 @@ function selectEntry(
 async function fetchAndDecryptRelic(
   relicId: string,
   deps: PublishDeps,
-  requestedVersion?: number
+  requestedVersion?: number,
+  requireConfirmedVersion = false
 ): Promise<RawRelicFetch> {
   const privateState = await loadPrivatePublishState(relicId);
   const state =
@@ -863,6 +864,11 @@ async function fetchAndDecryptRelic(
       error: `Network error reaching relic service: ${(error as Error).message}.`,
     };
   }
+  if (requireConfirmedVersion && typeof mint.version !== 'number')
+    return {
+      ok: false,
+      error: 'The service did not confirm the requested historical revision.',
+    };
 
   const servedVersion =
     typeof mint.version === 'number' ? mint.version : requestedVersion;
@@ -927,6 +933,40 @@ async function fetchAndDecryptRelic(
     return {
       ok: false,
       error: `Failed to decrypt relic content: ${(error as Error).message}.`,
+    };
+  }
+}
+
+/** Read a revision's sealed filename or complete folder manifest once. */
+export async function fetchRevisionNames(
+  relicId: string,
+  deps: PublishDeps,
+  version: number
+): Promise<
+  | { ok: true; shape: 'file'; filename: string }
+  | { ok: true; shape: 'folder'; paths: readonly string[] }
+  | { ok: false; error: string }
+> {
+  try {
+    const fetched = await fetchAndDecryptRelic(relicId, deps, version, true);
+    if (!fetched.ok) return fetched;
+    if (fetched.opened.envelope.version === 2) {
+      const folder = openFolder(fetched.opened);
+      return {
+        ok: true,
+        shape: 'folder',
+        paths: folder.manifest.entries.map((entry) => entry.path),
+      };
+    }
+    const filename = (fetched.opened as OpenedRelic).envelope.entries[0]
+      ?.filename;
+    if (!filename)
+      return { ok: false, error: 'The revision has no source filename.' };
+    return { ok: true, shape: 'file', filename };
+  } catch (error) {
+    return {
+      ok: false,
+      error: `The revision could not be inspected: ${String(error)}`,
     };
   }
 }

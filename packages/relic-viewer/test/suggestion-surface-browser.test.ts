@@ -103,6 +103,25 @@ test('controller uses the registered structured suggestion surface', async () =>
       await Promise.resolve();
       if (cueSealed?.anchor?.exact !== 'B' || cueSealed?.suggestion?.replacement !== '&lt;C&gt;') throw Error('CRLF cue selected wrong source: ' + JSON.stringify(cueSealed));
       cuePart.dispose();
+      for (const [filename, source] of [
+        ['white.srt', '1\\n00:00:01,000 --> 00:00:02,000\\n \\t\\ntext\\n \\t\\n'],
+        ['white.vtt', 'WEBVTT\\n\\n00:00:01.000 --> 00:00:02.000\\n \\t\\ntext\\n \\t\\n'],
+      ]) {
+        const h = document.createElement('div');
+        const o = document.createElement('section'); o.className = 'structured-view';
+        h.append(o); document.body.append(h);
+        const part = mountCues({root:o, source, filename, mimetype:'text/plain', sourceView:()=>document.createElement('pre'), reportUnshown(){}});
+        const surface = suggestionSurfaceFor(h);
+        const textAt = source.indexOf('text');
+        const edit = surface.encode(1, 'changed', textAt, textAt + 4);
+        if (!edit.ok || edit.source !== 'changed') throw Error('existing whitespace boundary rejected: ' + filename);
+        const spacesAt = source.indexOf(' \\t\\ntext');
+        const emptyBoundary = surface.encode(1, '', spacesAt, spacesAt + 2);
+        if (emptyBoundary.ok || emptyBoundary.refusal.code !== 'ends-cue') throw Error('new empty boundary accepted: ' + filename);
+        const split = surface.encode(1, '\\n', textAt, textAt + 4);
+        if (split.ok || split.refusal.code !== 'ends-cue') throw Error('new blank line accepted: ' + filename);
+        part.dispose(); h.remove();
+      }
       editor.destroy();
       for (const [source, crlf, hasSurface, shouldEnable] of [
         ['a\\r\\nb', true, true, true],

@@ -611,6 +611,7 @@ export class StructuredReader {
       this.#oversize === undefined
         ? parseTable(this.#source, {
             delimiter: this.#tsv ? '\t' : 'auto',
+            skipBom: false,
           })
         : { ok: false, reason: 'too-large', limit: 'bytes' };
     return this.#table;

@@ -166,6 +166,27 @@ describe('concealMarks', () => {
     expect(concealed.has('c1')).toBe(false);
   });
 
+  test('a visible cluster is a visible mark for every member', () => {
+    const body = el('body');
+    const subject = el('div', body);
+    const indicator = mark('first', subject);
+    indicator.node.setAttribute('data-cluster-members', 'first second');
+    const clipped = mark('second', subject);
+    const outside = new Set<Element>([clipped.node]);
+    const watch: ScrollportWatch = {
+      sync: () => {},
+      inView: (node) => !outside.has(node),
+      disconnect: () => {},
+    };
+    const visible = concealMarks([indicator, clipped], watch);
+    expect(visible.has('first')).toBe(false);
+    expect(visible.has('second')).toBe(false);
+    outside.add(indicator.node);
+    const hidden = concealMarks([indicator, clipped], watch);
+    expect(hidden.get('first')).toBe('offscreen');
+    expect(hidden.get('second')).toBe('offscreen');
+  });
+
   test('a mark outside its scrollport is offscreen, not hidden', () => {
     const body = el('body');
     const subject = el('p', body);

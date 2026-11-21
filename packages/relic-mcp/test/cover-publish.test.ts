@@ -412,6 +412,9 @@ describe('publish flow with cover options', () => {
     const state = await loadPublishState(result.relic_id);
     expect(state).toBeDefined();
     expect(state?.cover_uploaded).toBe(false);
+    expect(state?.version_formats).toEqual({
+      '1': { shape: 'file', extension: 'md' },
+    });
   });
 
   test('a large-source fallback is reported without uploading a cover', async () => {
@@ -561,6 +564,7 @@ describe('republish duplicate gate table (five rows)', () => {
       publish_token: 'tok123',
       version: 1,
       filename: 'doc.md',
+      version_formats: { '1': { shape: 'file', extension: 'md' } },
       content_sha256: contentSha256,
       published_at: new Date().toISOString(),
       expires_at: null,
@@ -680,6 +684,10 @@ describe('republish duplicate gate table (five rows)', () => {
 
     const state = await loadPublishState(relicId);
     expect(state?.cover_uploaded).toBe(true);
+    expect(state?.version_formats).toEqual({
+      '1': { shape: 'file', extension: 'md' },
+      '2': { shape: 'file', extension: 'md' },
+    });
   });
 
   test('Row 5b: same && requested && !previous with skipped outcome -> duplicate_version with detail', async () => {

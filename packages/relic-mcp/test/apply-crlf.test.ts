@@ -30,6 +30,7 @@ test('apply resolves LF-normalized anchors, preserves BOM and CRLF, and rejects 
       key: encodeKey(keyBytes),
       publish_token: 'fixture',
       version: 1,
+      filename: 'data.csv',
       source: await resolveSourceIdentity(path),
     });
     const makeRow = async (id: string, replacement: string) => {
@@ -67,7 +68,10 @@ test('apply resolves LF-normalized anchors, preserves BOM and CRLF, and rejects 
         { relic_id: relicId, path, accept: ['unsafe'], write: true },
         deps
       )
-    ).rejects.toMatchObject({ code: 'line-break-in-crlf-file' });
+    ).rejects.toMatchObject({
+      code: 'suggestion_breaks_structure',
+      details: { check: 'line_endings' },
+    });
     expect(await readFile(path, 'utf8')).toBe(original);
     const result = await applySuggestions(
       { relic_id: relicId, path, accept: ['safe'], write: true },

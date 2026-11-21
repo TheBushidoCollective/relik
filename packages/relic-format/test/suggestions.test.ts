@@ -13,6 +13,7 @@ import {
   type ThreadFact,
 } from '../src/suggestions.ts';
 import type { SuggestionMode } from '../src/comments.ts';
+import { emptyNotebookSourceOffsets } from '../src/notebook.ts';
 
 const encoder = new TextEncoder();
 
@@ -197,6 +198,51 @@ describe('stacking and merging suggestions', () => {
     expect(
       mergeSuggestions(source, results, suggestions, 'defaults').text
     ).toBe('abABZcdefghij');
+  });
+
+  it('treats alternative fills of one empty notebook array as a conflict', () => {
+    const notebook =
+      '{"nbformat":4,"cells":[{"cell_type":"code","source":[],"outputs":[]}]}';
+    const inputs = ['first', 'second'].map((name) => ({
+      ...edit(name, '[', 'after', JSON.stringify(name)),
+      prefix: '"source":',
+      suffix: '],"outputs"',
+    }));
+    const offsets = emptyNotebookSourceOffsets(notebook);
+    expect(
+      offsets.has(notebook.indexOf('"source":[') + '"source":['.length)
+    ).toBe(true);
+    const results = resolveSuggestions(notebook, inputs, offsets);
+    expect(resolved(results, 'first').group).toBe('first');
+    expect(resolved(results, 'second').group).toBe('first');
+    const merged = mergeSuggestions(notebook, results, inputs, 'defaults');
+    expect(JSON.parse(merged.text).cells[0].source).toEqual(['first']);
+    expect(() =>
+      mergeSuggestions(notebook, results, inputs, new Set(['first', 'second']))
+    ).toThrow();
+  });
+
+  it('keeps fills of different empty notebook cells independent', () => {
+    const notebook =
+      '{"nbformat":4,"cells":[{"cell_type":"code","id":"a","source":[]},{"cell_type":"code","id":"b","source":[]}]}';
+    const inputs = ['a', 'b'].map((id) => ({
+      ...edit(id, '[', 'after', JSON.stringify(id)),
+      prefix: `"id":"${id}","source":`,
+      suffix: ']}',
+    }));
+    const results = resolveSuggestions(
+      notebook,
+      inputs,
+      emptyNotebookSourceOffsets(notebook)
+    );
+    expect(resolved(results, 'a').group).toBeNull();
+    expect(resolved(results, 'b').group).toBeNull();
+    const merged = JSON.parse(
+      mergeSuggestions(notebook, results, inputs, 'defaults').text
+    );
+    expect(
+      merged.cells.map((cell: { source: string[] }) => cell.source)
+    ).toEqual([['a'], ['b']]);
   });
 
   it('treats an insertion strictly inside a range as a conflict', () => {

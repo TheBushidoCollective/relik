@@ -35,6 +35,11 @@ import type {
   StructuredPart,
 } from './structured-view-bridge.ts';
 import { buildProse } from './text-views.ts';
+import { notebookSuggestionSurface } from './notebook-suggest.ts';
+import {
+  mutateSurfaceUI,
+  registerSuggestionSurface,
+} from './suggestion-surface.ts';
 
 const STYLESHEET_ID = 'relic-notebook-view-css';
 const STYLESHEET_HREF = '/assets/notebook-view.css';
@@ -379,6 +384,10 @@ function drawNotebook(
   };
 
   for (const cell of notebook.cells) list.append(cellItem(cell));
+  const unregisterSurface = registerSuggestionSurface(
+    root,
+    notebookSuggestionSurface(list, notebook)
+  );
 
   /** Puts the badge for one element's marks on it, dropping its stale badge. */
   const refreshMark = (key: string, element: HTMLElement): void => {
@@ -409,10 +418,13 @@ function drawNotebook(
     elements.get(keyOf(target));
 
   const select = (target: NotebookTarget): void => {
-    const previous = selected === undefined ? undefined : elementFor(selected);
-    previous?.classList.remove('is-selected');
-    selected = target;
-    elementFor(target)?.classList.add('is-selected');
+    mutateSurfaceUI(list, () => {
+      const previous =
+        selected === undefined ? undefined : elementFor(selected);
+      previous?.classList.remove('is-selected');
+      selected = target;
+      elementFor(target)?.classList.add('is-selected');
+    });
   };
 
   const toggleText = (key: string): void => {
@@ -424,14 +436,16 @@ function drawNotebook(
       target.output === undefined
     )
       return;
-    revealed.add(key);
-    const cell = notebook.cells[target.cell];
-    const output = cell?.outputs[target.output];
-    if (cell === undefined || output === undefined) return;
-    const wrap = block.parentElement;
-    const next = outputWrap(cell, output);
-    if (wrap !== null) wrap.replaceWith(next);
-    refreshMarks();
+    mutateSurfaceUI(list, () => {
+      revealed.add(key);
+      const cell = notebook.cells[target.cell];
+      const output = cell?.outputs[target.output!];
+      if (cell === undefined || output === undefined) return;
+      const wrap = block.parentElement;
+      const next = outputWrap(cell, output);
+      if (wrap !== null) wrap.replaceWith(next);
+      refreshMarks();
+    });
   };
 
   list.addEventListener(
@@ -534,12 +548,15 @@ function drawNotebook(
       select(target);
       const element = elementFor(target);
       if (element === undefined) return;
-      active?.classList.remove('is-active');
-      element.classList.add('is-active');
-      active = element;
+      mutateSurfaceUI(list, () => {
+        active?.classList.remove('is-active');
+        element.classList.add('is-active');
+        active = element;
+      });
       element.scrollIntoView({ block: 'center' });
     },
     dispose(): void {
+      unregisterSurface();
       controller.abort();
       for (const url of blobs) URL.revokeObjectURL(url);
       blobs.length = 0;

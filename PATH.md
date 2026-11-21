@@ -163,17 +163,42 @@ Both drive the built MCP bundle over stdio. The browser path uses separate
 authenticated browser contexts for the two readers.
 
 ```sh
+RELIC_REQUIRE_CHROME=1 RELIC_CHROME_PATH=<isolated-headless-shell> mise run verify
 mise exec -- bun run --cwd packages/relic-viewer build
 mise exec -- bun run --cwd packages/relic-mcp build
 RELIC_SUGGEST_MAIN_MCP=<efa3afee-mcp-bundle> mise exec -- bun packages/relic-mcp/test/suggestions-mcp-path.ts
 RELIC_CHROME_PATH=<isolated-headless-shell> RELIC_SUGGEST_MAIN_DIST=<efa3afee-viewer-dist> mise exec -- bun packages/relic-mcp/test/suggested-edits-path.ts
+RELIC_CHROME_PATH=<isolated-headless-shell> mise exec -- bun packages/relic-mcp/test/structured-formats-path.ts
 ```
 
 The expected markers are `SUGGESTIONS_MCP_PATH_OK legacy=ran` and
-`SUGGESTED_EDITS_PATH_OK classes=2 negative=ran`. CI omits the old bundles and
-may report `legacy=skipped` and `negative=skipped` instead. The browser path
-does not establish operating-system IME, real clipboard or drag-and-drop
-behavior.
+`SUGGESTED_EDITS_PATH_OK classes=2 negative=ran cue=applied csv=applied notebook=applied target=validated`.
+CI omits the old bundles and may report `legacy=skipped` and `negative=skipped`
+instead. The browser path requires the SRT, CSV and notebook application stages.
+It previews and applies viewer-posted suggestions with the built MCP and checks
+whole-file bytes. The cue stage also applies a deferred edit after a display-only
+rename, and the CSV stage checks a deferred text edit against a newer CSV format.
+It checks cross-cell conflict placement, refuses multiline cell deletion and
+rejects a same-basename wrong path. The notebook stage rejects
+competing empty-cell fills and attempts to edit outputs. Cue and output refusal
+checks count attempted POSTs, including rejected requests. Source identity
+identifies the path, not the version; matching preview and write hashes are
+checked for these fixtures. Newly published versions record their formats
+locally without a mint. A legacy version whose format is unknown requires one
+mint to read its encrypted revision; the recovered format and keyed folder-entry
+digests are stored in an encrypted local cache before preview succeeds. Separate
+MCP processes can each mint the same uncached version concurrently, because the
+recovery lock is process-local. Unavailable metadata, failed cache writes and
+incompatible selected formats are refused. The browser path does not establish
+operating-system IME, real clipboard or drag-and-drop behavior.
+
+`local_state_stale` detects a newer live version only when a comment carries
+that version. If republish completes but its local state update fails before a
+new-version comment exists, suggestion preview and apply can validate against
+the old version's format instead. The `local_state_write_failed` response names
+the live version. Do not preview or apply suggestions for that relic until its
+local publish record has been repaired; this path does not detect that stale
+state on its own.
 
 # Comments on images inside HTML
 

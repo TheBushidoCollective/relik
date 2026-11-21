@@ -223,6 +223,145 @@ describe('putting the conversation down', () => {
   });
 });
 
+/** Where a data-table cell sits: a header cell is the header row's. */
+interface CellAt {
+  readonly record: number;
+  readonly head: boolean;
+}
+
+/**
+ * A data-table cell holding the indicator a conflict draws on it.
+ *
+ * A conflict draws all of its members, first id included, on every cell it
+ * touches, so two cells carry identical indicators and only the cell tells
+ * them apart. Each indicator gets its own box, because this harness lays
+ * nothing out.
+ */
+function conflictCell(at: CellAt, top: number): Node {
+  const cell = new Node('div');
+  // The grid draws a header cell with both classes.
+  cell.className = at.head ? 'dt-cell dt-hcell' : 'dt-cell';
+  cell.setAttribute('data-r', String(at.record));
+  cell.setAttribute('data-c', '1');
+  const indicator = new Node('button');
+  indicator.className = 'dt-suggestion-indicator';
+  indicator.setAttribute('data-sg-id', 'x');
+  indicator.setAttribute('data-comment-id', 'x');
+  indicator.setAttribute('data-cluster-members', 'x y z');
+  indicator.rect = {
+    left: 200,
+    top,
+    right: 240,
+    bottom: top + 20,
+    width: 40,
+    height: 20,
+  };
+  cell.appendChild(indicator);
+  return cell;
+}
+
+describe('a card opened on a table cell', () => {
+  beforeEach(installDom);
+  afterEach(clearDom);
+
+  // The other cell goes into the stage first, so a lookup by the ids alone
+  // would land on it rather than on the cell the card was opened on.
+  for (const { on, other, pinned } of [
+    {
+      on: 'a body cell',
+      other: { record: 1, head: false },
+      pinned: { record: 2, head: false },
+    },
+    {
+      on: 'a body cell below the header row',
+      other: { record: 0, head: true },
+      pinned: { record: 2, head: false },
+    },
+    {
+      on: 'a header cell',
+      other: { record: 1, head: false },
+      pinned: { record: 0, head: true },
+    },
+  ]) {
+    test(`stays on ${on} when another cell draws the same conflict`, async () => {
+      const mounted = await mount(
+        {},
+        'verified',
+        ['x', 'y', 'z'].map((id) => ({
+          id,
+          body: `change ${id}`,
+          anchor: null,
+        }))
+      );
+      const grid = new Node('div');
+      mounted.stage.appendChild(grid);
+      const otherCell = conflictCell(other, 100);
+      let pinnedCell = conflictCell(pinned, 300);
+      grid.append(otherCell, pinnedCell);
+      const card = (): Node => only(mounted.stage, 'popover-card');
+      const top = (): number => Number.parseFloat(String(card().style.top));
+      const members = (): (string | undefined)[] =>
+        withClass(mounted.stage, 'popover-member').map(
+          (member) => member.dataset.memberId
+        );
+      // In a browser an observer reconciles the marks whenever the grid drops
+      // or draws a cell. This harness has none, so a repaint stands in.
+      const redrawn = (): void => mounted.stage.dispatch('relic:page-changed');
+
+      only(otherCell, 'dt-suggestion-indicator').dispatch('click');
+      const onOther = top();
+      only(pinnedCell, 'dt-suggestion-indicator').dispatch('click');
+      const onPinned = top();
+      // Beside the indicator it was opened on, which sits 200px lower.
+      expect(onPinned - onOther).toBe(200);
+      expect(members()).toEqual(['x', 'y', 'z']);
+
+      // That cell is dropped. The card waits out of reach, although the
+      // other cell still draws every id the card holds.
+      pinnedCell.remove();
+      redrawn();
+      expect(card().getAttribute('data-concealed')).toBe('offscreen');
+      expect(card().hasAttribute('inert')).toBe(true);
+
+      // Drawn again 50px lower, the card comes back on the same cell, whole.
+      pinnedCell = conflictCell(pinned, 350);
+      grid.appendChild(pinnedCell);
+      redrawn();
+      expect(card().getAttribute('data-concealed')).toBeNull();
+      expect(card().hasAttribute('inert')).toBe(false);
+      expect(top() - onPinned).toBe(50);
+      expect(members()).toEqual(['x', 'y', 'z']);
+
+      // A member picked from the list keeps the cell too.
+      const pick = withClass(mounted.stage, 'popover-member').find(
+        (member) => member.dataset.memberId === 'y'
+      );
+      expect(pick).toBeDefined();
+      pick?.dispatch('click');
+      expect(card().dataset.commentId).toBe('y');
+      const onMember = top();
+      pinnedCell.remove();
+      redrawn();
+      expect(card().getAttribute('data-concealed')).toBe('offscreen');
+      expect(card().hasAttribute('inert')).toBe(true);
+      pinnedCell = conflictCell(pinned, 380);
+      grid.appendChild(pinnedCell);
+      redrawn();
+      expect(card().hasAttribute('inert')).toBe(false);
+      expect(top() - onMember).toBe(30);
+
+      // A card opened on the other cell answers to that cell alone.
+      only(mounted.stage, 'popover-dismiss').dispatch('click');
+      only(otherCell, 'dt-suggestion-indicator').dispatch('click');
+      expect(top()).toBe(onOther);
+      pinnedCell.remove();
+      redrawn();
+      expect(card().getAttribute('data-concealed')).toBeNull();
+      expect(card().hasAttribute('inert')).toBe(false);
+    });
+  }
+});
+
 describe('what the card offers, and to whom', () => {
   beforeEach(installDom);
   afterEach(clearDom);

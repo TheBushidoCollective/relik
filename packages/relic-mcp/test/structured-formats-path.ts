@@ -1056,6 +1056,44 @@ await stage('table', async () => {
   } finally {
     await tsvPage.close();
   }
+
+  for (const [name, separator] of [
+    ['double-bom.csv', ','],
+    ['double-bom.tsv', '\t'],
+  ] as const) {
+    const source =
+      `\uFEFF\uFEFF"alpha${separator}beta"${separator}x\r\n` +
+      `row${separator}value${separator}last\r\n`;
+    const fixture = await publish(name, source);
+    const bomPage = await openPage(fixture.url, reader);
+    try {
+      const header = '.dt-hcell[data-c="1"]';
+      await bomPage.waitFor(
+        `document.querySelector('${header} .dt-text')?.textContent === ${JSON.stringify('beta"')}`,
+        `${name}: second decoded header draws`
+      );
+      const displayed = await bomPage.evaluate<string>(
+        `document.querySelector('${header} .dt-text').textContent`
+      );
+      assert.equal(displayed, 'beta"');
+      await bomPage.hover(header);
+      await bomPage.click(`${header} .dt-hc-comment`);
+      await composeAndPost(bomPage, 'Read the second decoded header');
+      await awaitStored(fixture.relicId, 1);
+      const comment = await commentFor(
+        fixture.relicId,
+        'Read the second decoded header'
+      );
+      assert.deepEqual(comment.anchor, { kind: 'cell', row: 1, col: 2 });
+      assert.equal(comment.resolved?.['status'], 'resolved');
+      assert.equal(comment.resolved?.['text'], displayed);
+      assert.equal(comment.resolved?.['header'], displayed);
+      assert.equal(comment.resolved?.['line'], 1);
+      assertNoPageErrors(bomPage, name);
+    } finally {
+      await bomPage.close();
+    }
+  }
 });
 
 await stage('tree', async () => {

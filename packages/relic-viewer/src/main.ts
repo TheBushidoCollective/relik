@@ -101,6 +101,7 @@ import { isFrameScrollMessage } from './frame-scroll.ts';
 import {
   type Concealment,
   concealMarks,
+  isRendered,
   createScrollportWatch,
   type ScrollportWatch,
 } from './mark-visibility.ts';
@@ -6594,6 +6595,38 @@ function visibleOtioEntryAtVersion(
 }
 
 /**
+ * A data-table cell, header or body, named by the record and column its
+ * element carries.
+ *
+ * The grid draws and drops rows as it scrolls, so a cell is held by these
+ * values rather than by an element that may be gone the next frame. The
+ * header row is record 0 wherever it is drawn, so a card on it follows that
+ * record when the header row is turned on or off.
+ */
+interface TableCell {
+  readonly record: string;
+  readonly column: string;
+}
+
+/** The data-table cell `node` is drawn in, if it is drawn in one. */
+function tableCellOf(node: Element): TableCell | undefined {
+  // Header cells carry both classes. Naming `.dt-hcell` keeps the header
+  // row's indicators counted without relying on that.
+  const cell = node.closest<HTMLElement>(
+    '.dt-cell[data-r][data-c], .dt-hcell[data-r][data-c]'
+  );
+  const record = cell?.dataset['r'];
+  const column = cell?.dataset['c'];
+  return record === undefined || column === undefined
+    ? undefined
+    : { record, column };
+}
+
+function sameTableCell(cell: TableCell, other: TableCell | undefined): boolean {
+  return other?.record === cell.record && other.column === cell.column;
+}
+
+/**
  * The thread, in the service-origin chrome.
  *
  * It cannot live in the render frame and this is not a preference: the frame
@@ -6717,8 +6750,9 @@ export function buildThread(
       return true;
     },
     suggestionSelection: (range) => {
+      const selectedSurface = host ? suggestionSurfaceFor(host) : undefined;
       const selectedRoot =
-        (host && suggestionSurfaceFor(host)?.root) ??
+        selectedSurface?.root ??
         host?.querySelector(
           view.route === 'code' || view.route === 'notebook'
             ? 'pre.code-body'
@@ -6729,7 +6763,11 @@ export function buildThread(
         suggesting: suggestionController?.suggesting ?? false,
         canSuggest:
           sourceIssue() === null &&
-          !!selectedRoot?.contains(range.commonAncestorContainer),
+          !!selectedRoot?.contains(range.commonAncestorContainer) &&
+          (selectedSurface?.acceptsSelection?.(range.startContainer) ??
+            true) === true &&
+          (selectedSurface?.acceptsSelection?.(range.endContainer) ?? true) ===
+            true,
         replyId: suggestionController?.selectedSuggestion(range) ?? null,
       };
     },
@@ -6868,6 +6906,10 @@ export function buildThread(
       suggestionController.sync();
       return;
     }
+    readingMode.setAttribute('aria-pressed', 'true');
+    suggestingMode.setAttribute('aria-pressed', 'false');
+    appliedMode.hidden = false;
+    appliedMode.setAttribute('aria-checked', 'false');
     const reason =
       sourceIssue() ??
       (session.kind === 'verified' ? null : 'Sign in to suggest edits.');
@@ -6940,7 +6982,15 @@ export function buildThread(
                   stage
                 )
               : undefined;
-            cardForId(id, box, true);
+            // A conflict member opened from a card on a table cell stays on
+            // that cell, whose indicator carries every member.
+            const cell =
+              target !== undefined &&
+              popover?.contains(target) === true &&
+              tableCardMembers?.includes(id) === true
+                ? tableCardCell
+                : undefined;
+            cardForId(id, box, true, cell);
           },
         });
         suggestionController = controller;
@@ -7337,6 +7387,71 @@ export function buildThread(
   let hostWatch: ScrollportWatch | undefined;
   let hostObserver: MutationObserver | undefined;
   let hostConcealScheduled = false;
+  // A virtualized table may unmount the indicator while its card is open.
+  let tableCardMembers: readonly string[] | undefined;
+  // The cell the open card was opened on. A conflict paints all of its
+  // members, first id included, on every cell it touches, so the ids alone
+  // cannot say which of those cells the card belongs to.
+  let tableCardCell: TableCell | undefined;
+  let inertTableCard: { node: HTMLElement; wasInert: boolean } | undefined;
+
+  function setMissingTableCardInert(missing: boolean): void {
+    const current = missing ? popover?.current() : undefined;
+    if (inertTableCard && inertTableCard.node !== current) {
+      if (!inertTableCard.wasInert)
+        inertTableCard.node.removeAttribute('inert');
+      inertTableCard = undefined;
+    }
+    if (current && !inertTableCard) {
+      inertTableCard = {
+        node: current,
+        wasInert: current.hasAttribute('inert'),
+      };
+      current.setAttribute('inert', '');
+    }
+  }
+
+  function tableIndicatorFor(
+    id: string,
+    visibleOnly = false,
+    cell?: TableCell
+  ): HTMLElement | undefined {
+    if (!host) return undefined;
+    for (const indicator of host.querySelectorAll<HTMLElement>(
+      '.dt-suggestion-indicator[data-comment-id]'
+    )) {
+      const members = (indicator.dataset['clusterMembers'] ?? '').split(/\s+/);
+      if (
+        indicator.closest('.popover') ||
+        (indicator.dataset['commentId'] !== id && !members.includes(id)) ||
+        (cell !== undefined && !sameTableCell(cell, tableCellOf(indicator)))
+      )
+        continue;
+      if (
+        visibleOnly &&
+        (indicator.hasAttribute('data-concealed') ||
+          !isRendered(indicator) ||
+          hostWatch?.inView(indicator) === false)
+      )
+        continue;
+      return indicator;
+    }
+    return undefined;
+  }
+
+  function rememberTableCard(id: string, cell?: TableCell): void {
+    const indicator = tableIndicatorFor(id, false, cell);
+    if (indicator) {
+      const members = indicator.dataset['clusterMembers'];
+      tableCardMembers = members ? members.split(/\s+/).filter(Boolean) : [id];
+    } else if (
+      !tableCardMembers?.includes(id) ||
+      (cell !== undefined && !sameTableCell(cell, tableCardCell))
+    ) {
+      tableCardMembers = undefined;
+    }
+    tableCardCell = tableCardMembers === undefined ? undefined : cell;
+  }
 
   // A pin or a box is drawn on the surface it sits over, so the surface being
   // hidden hides it. A text highlight is its own subject: it is the thing.
@@ -7352,12 +7467,44 @@ export function buildThread(
     const nodes = Array.from(
       host.querySelectorAll<HTMLElement>('[data-comment-id]')
     ).filter((node) => node.closest('.popover') === null);
-    hostConcealed = concealMarks(
+    const concealed = concealMarks(
       nodes.map((node) => ({ node, subject: hostSubject(node) })),
       hostWatch,
       true
     );
+    const id = cardId;
+    const tableCard =
+      id !== undefined && tableCardMembers?.includes(id) === true;
+    // A card opened on a cell answers to that cell's marks alone: the same
+    // ids drawn in another cell say nothing about this one.
+    const cell = tableCard ? tableCardCell : undefined;
+    const drawn = nodes.filter(
+      (node) =>
+        tableCard &&
+        id !== undefined &&
+        (cell === undefined || sameTableCell(cell, tableCellOf(node))) &&
+        (node.dataset['commentId'] === id ||
+          (node.dataset['clusterMembers'] ?? '').split(/\s+/).includes(id))
+    );
+    const missingTableMark = tableCard && drawn.length === 0;
+    if (missingTableMark && id) {
+      const withMissing = new Map(concealed);
+      withMissing.set(id, 'offscreen');
+      hostConcealed = withMissing;
+    } else if (cell !== undefined && id !== undefined) {
+      // The concealment above is merged across every cell drawing the id,
+      // so the card takes its own cell's instead.
+      const reasons = drawn.map((node) => node.getAttribute('data-concealed'));
+      const forCell = new Map(concealed);
+      if (reasons.includes(null)) forCell.delete(id);
+      else if (reasons.includes('hidden')) forCell.set(id, 'hidden');
+      else forCell.set(id, 'offscreen');
+      hostConcealed = forCell;
+    } else {
+      hostConcealed = concealed;
+    }
     applyCardConcealment();
+    setMissingTableCardInert(!!missingTableMark);
   };
 
   const scheduleHostConceal = (): void => {
@@ -7419,6 +7566,9 @@ export function buildThread(
       });
       window.removeEventListener('resize', scheduleHostConceal);
     }
+    setMissingTableCardInert(false);
+    tableCardMembers = undefined;
+    tableCardCell = undefined;
     hostConcealed = new Map();
   };
 
@@ -7817,6 +7967,9 @@ export function buildThread(
   const closeCard = (): void => {
     cardGeneration++;
     cardId = undefined;
+    tableCardMembers = undefined;
+    tableCardCell = undefined;
+    setMissingTableCardInert(false);
     clearTimeout(hoverTimer);
     clearTimeout(leaveTimer);
     popover?.hide();
@@ -7866,8 +8019,15 @@ export function buildThread(
 
   /**
    * Where a painted mark sits, in the stage's content coordinates.
+   *
+   * With `cell`, only what is drawn in that table cell counts. A conflict
+   * draws its ids on every cell it touches, and a card opened on one of them
+   * must never be placed on another.
    */
-  const anchorBoxFor = (id: string): AnchorBox | undefined => {
+  const anchorBoxFor = (
+    id: string,
+    cell?: TableCell
+  ): AnchorBox | undefined => {
     if (host === undefined) return undefined;
     const viewHeight = host.clientHeight;
 
@@ -7911,16 +8071,40 @@ export function buildThread(
         }
       }
     }
+    // Prefer the visible table indicator over a potentially clipped inline mark.
+    const tableIndicator = tableIndicatorFor(id, true, cell);
+    if (tableIndicator) {
+      return anchorFromClientRect(
+        tableIndicator.getBoundingClientRect(),
+        host.getBoundingClientRect(),
+        host
+      );
+    }
 
+    const inCell = (node: Element): boolean =>
+      cell === undefined || sameTableCell(cell, tableCellOf(node));
     const candidates: HTMLElement[] = [];
     for (const node of host.querySelectorAll<HTMLElement>(
       `[data-comment-id="${id}"]`
     )) {
-      if (!node.closest('.popover')) {
+      if (!node.closest('.popover') && inCell(node)) {
         const painted =
           node.closest<HTMLElement>('[data-cluster-members]') ?? node;
         candidates.push(painted);
       }
+    }
+    for (const cluster of host.querySelectorAll<HTMLElement>(
+      '[data-cluster-members]'
+    )) {
+      if (
+        cluster.closest('.popover') ||
+        !inCell(cluster) ||
+        !(cluster.dataset['clusterMembers'] ?? '').split(/\s+/).includes(id) ||
+        candidates.includes(cluster)
+      )
+        continue;
+      if (!cluster.hasAttribute('data-concealed')) candidates.unshift(cluster);
+      else if (candidates.length === 0) candidates.push(cluster);
     }
     if (candidates.length === 0 && id === PENDING_MARK_ID) {
       for (const node of host.querySelectorAll<HTMLElement>(
@@ -8292,13 +8476,16 @@ export function buildThread(
   const openCard = (
     entry: CommentEntry,
     box: AnchorBox,
-    sticky: boolean
+    sticky: boolean,
+    cell?: TableCell
   ): void => {
     if (host === undefined || entry.id === null) return;
     const layer = popover;
     if (layer === undefined) return;
+    setMissingTableCardInert(false);
     cardGeneration++;
     cardId = entry.id ?? undefined;
+    rememberTableCard(entry.id, cell);
     clearTimeout(leaveTimer);
     // The card takes the panel, so a composer that held it is over.
     dropComposing();
@@ -8317,8 +8504,8 @@ export function buildThread(
     const reopen = (): void => {
       if (layer.current() !== activePanel) return;
       const fresh = entryById(id);
-      const at = anchorBoxFor(id) ?? box;
-      if (fresh !== undefined) openCard(fresh, at, true);
+      const at = anchorBoxFor(id, cell) ?? box;
+      if (fresh !== undefined) openCard(fresh, at, true, cell);
       else closeCard();
     };
 
@@ -8464,7 +8651,7 @@ export function buildThread(
             panel.appendChild(composer.element);
             activePanel = panel;
             layer.show(panel, box, {
-              follow: () => anchorBoxFor(id),
+              follow: () => anchorBoxFor(id, cell),
               reveal: sticky,
               prefer: preferFor(editKind),
             });
@@ -8582,7 +8769,7 @@ export function buildThread(
     card.dataset['anchorKind'] = cardKind;
     holdOnHover(card);
     layer.show(card, box, {
-      follow: () => anchorBoxFor(id),
+      follow: () => anchorBoxFor(id, cell),
       reveal: sticky,
       prefer: preferFor(cardKind),
     });
@@ -8612,11 +8799,15 @@ export function buildThread(
    * stacked in one panel, because each card already carries its own reply,
    * edit and resolve. A stack would need those per thread or lose them, and
    * a list keeps every comment one press away.
+   *
+   * With `cell`, the list and every member's card stay on that table cell,
+   * however many other cells draw the same ids.
    */
   const openClusterCard = (
     ids: readonly string[],
     box: AnchorBox,
-    sticky: boolean
+    sticky: boolean,
+    cell?: TableCell
   ): void => {
     const layer = popover;
     if (host === undefined || layer === undefined) return;
@@ -8628,8 +8819,10 @@ export function buildThread(
     if (first === undefined || firstId === null || firstId === undefined) {
       return;
     }
+    setMissingTableCardInert(false);
     cardGeneration++;
     cardId = firstId;
+    rememberTableCard(firstId, cell);
     clearTimeout(leaveTimer);
     dropComposing();
 
@@ -8687,7 +8880,7 @@ export function buildThread(
         if (surface !== undefined && anchor !== null) {
           adapterFor(anchor, surface)?.reveal?.(surface, anchor, memberId);
         }
-        openCard(member, anchorBoxFor(memberId) ?? box, true);
+        openCard(member, anchorBoxFor(memberId, cell) ?? box, true, cell);
       });
       const item = document.createElement('li');
       item.appendChild(pick);
@@ -8712,11 +8905,11 @@ export function buildThread(
     card.dataset['anchorKind'] = firstAnchor?.kind ?? 'time';
     holdOnHover(card);
     layer.show(card, box, {
-      follow: () => anchorBoxFor(firstId),
+      follow: () => anchorBoxFor(firstId, cell),
       reveal: sticky,
       prefer: preferFor(firstAnchor?.kind ?? 'time'),
     });
-    reanchor = () => anchorBoxFor(firstId);
+    reanchor = () => anchorBoxFor(firstId, cell);
     if (sticky) stickyId = firstId;
     setActiveMark(firstId);
   };
@@ -8992,7 +9185,8 @@ export function buildThread(
   const cardForId = (
     id: string,
     box: AnchorBox | undefined,
-    sticky: boolean
+    sticky: boolean,
+    cell?: TableCell
   ): void => {
     // A press on a mark is not a reason to throw away what somebody is
     // typing in the open panel, and nothing here could give it back.
@@ -9015,30 +9209,32 @@ export function buildThread(
       otioControllerFor(host)?.reveal(entry.anchor, id);
       box = anchorBoxFor(id) ?? box;
     }
-    const at = box ?? anchorBoxFor(id);
+    const at = box ?? anchorBoxFor(id, cell);
     if (at === undefined) return;
-    openCard(entry, at, sticky);
+    openCard(entry, at, sticky, cell);
   };
 
   /**
    * The card for whatever mark the pointer or the focus landed on: one
-   * comment's, or the list for a cluster of them on the timeline.
+   * comment's, or the list for a cluster of them on the timeline. A mark in
+   * a table cell keeps its card on that cell.
    */
   const cardForMark = (mark: HTMLElement, sticky: boolean): void => {
     if (suggestionController?.suggesting && mark.hasAttribute('data-sg-id'))
       return;
+    const cell = tableCellOf(mark);
     const members = (mark.dataset['clusterMembers'] ?? '')
       .split(' ')
       .filter((member) => member.length > 0);
     const first = members[0];
     if (members.length > 1 && first !== undefined) {
       if (holdsUnsavedText()) return;
-      const at = anchorBoxFor(first);
-      if (at !== undefined) openClusterCard(members, at, sticky);
+      const at = anchorBoxFor(first, cell);
+      if (at !== undefined) openClusterCard(members, at, sticky, cell);
       return;
     }
     const id = mark.dataset['commentId'];
-    if (id !== undefined) cardForId(id, undefined, sticky);
+    if (id !== undefined) cardForId(id, undefined, sticky, cell);
   };
 
   const bindMarkPointing = (root: HTMLElement): void => {
@@ -9980,16 +10176,36 @@ export function buildThread(
         next.dataset.pairBind = '1';
         next.addEventListener('relic:before-structured-swap', (event) => {
           if (host !== next) return;
-          const reason = guardSurfaceSwap(suggestionController);
+          const reason =
+            guardSurfaceSwap(suggestionController) ??
+            (suggestionController?.postInFlight &&
+            event instanceof CustomEvent &&
+            event.detail === 'table-cell'
+              ? 'Wait for the suggestion to finish sending.'
+              : null);
           if (reason) {
             event.preventDefault();
             suggestionNotice.textContent = reason;
           }
         });
-        next.addEventListener('relic:structured-state', () => {
+        next.addEventListener('relic:structured-state', (event) => {
           if (host !== next) return;
           if (suggestionController?.destroy()) suggestionController = undefined;
           updateSuggestionStub();
+          if (
+            event instanceof CustomEvent &&
+            event.detail === 'structured' &&
+            allEntries.some(
+              (entry) => entry.kind === 'open' && entry.suggestion
+            )
+          )
+            void ensureSuggestion();
+        });
+        next.addEventListener('relic:table-suggest', () => {
+          if (host !== next) return;
+          void ensureSuggestion().then((controller) =>
+            controller?.setSuggesting(true)
+          );
         });
         bindHostConcealment(next);
         bindPairing(next);
