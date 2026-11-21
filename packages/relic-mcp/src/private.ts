@@ -91,6 +91,7 @@ import {
 } from './state.ts';
 import {
   buildCachedFormat,
+  nextVersionFormats,
   saveCachedVersionFormat,
   versionFormatFor,
   withVersionFormat,
@@ -1084,7 +1085,7 @@ export async function republishPrivate(
     ...state,
     shape: source.shape,
     version: first.version,
-    version_formats: withVersionFormat(
+    version_formats: nextVersionFormats(
       state,
       first.version,
       versionFormatFor(source.shape, filename)

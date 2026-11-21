@@ -649,6 +649,25 @@ async function readThread(
       }
     );
   }
+  const newest = listed.reduce<number>((latest, value: unknown) => {
+    const row =
+      typeof value === 'object' && value !== null && !Array.isArray(value)
+        ? (value as Record<string, unknown>)
+        : undefined;
+    const version = row?.['version'];
+    return typeof version === 'number' &&
+      Number.isSafeInteger(version) &&
+      version > 0
+      ? Math.max(latest, version)
+      : latest;
+  }, 0);
+  if (newest > local.state.version) {
+    throw new ApplyError(
+      'local_state_stale',
+      `this machine records version ${local.state.version} of the relic, but its comments reach version ${newest}; the current version's source format is unknown here, so nothing was previewed or written`,
+      { local_version: local.state.version, thread_version: newest }
+    );
+  }
   const keys = new Map<number, CryptoKey>();
   const entries: ThreadEntry[] = [];
   for (const [index, value] of listed.entries()) {
@@ -1014,30 +1033,33 @@ async function stageBytes(
   }
 }
 
-/** Stage every planned file only after every source has passed its final readback. */
+async function confirmUnchanged(
+  plan: PlannedFile,
+  deps: PublishDeps
+): Promise<number> {
+  const reread = await readSource(plan.result.path, deps.files);
+  if (sha256(reread.bytes) !== plan.result.before_sha256)
+    throw new ApplyError(
+      'source_changed_during_apply',
+      'a source changed while suggestions were being applied',
+      plan.entry === undefined ? {} : { entry: plan.entry }
+    );
+  const stat = await lstat(plan.result.path);
+  if (!stat.isFile() || stat.isSymbolicLink())
+    throw new ApplyError(
+      'source_not_regular_file',
+      'a target is no longer a regular file'
+    );
+  return stat.mode & 0o7777;
+}
+
+/** Stage only after all sources pass readback, then recheck each before rename. */
 async function commitPlans(
   plans: readonly PlannedFile[],
   deps: PublishDeps
 ): Promise<void> {
   const modes: number[] = [];
-  for (const plan of plans) {
-    const reread = await readSource(plan.result.path, deps.files);
-    if (sha256(reread.bytes) !== plan.result.before_sha256)
-      throw new ApplyError(
-        'source_changed_during_apply',
-        'a source changed while suggestions were being applied',
-        {
-          ...(plan.entry === undefined ? {} : { entry: plan.entry }),
-        }
-      );
-    const stat = await lstat(plan.result.path);
-    if (!stat.isFile() || stat.isSymbolicLink())
-      throw new ApplyError(
-        'source_not_regular_file',
-        'a target is no longer a regular file'
-      );
-    modes.push(stat.mode & 0o7777);
-  }
+  for (const plan of plans) modes.push(await confirmUnchanged(plan, deps));
   const staged: Array<{ plan: PlannedFile; temporary: string; mode: number }> =
     [];
   const replaced: Array<{ plan: PlannedFile; mode: number }> = [];
@@ -1051,6 +1073,8 @@ async function commitPlans(
       });
     }
     for (const item of staged) {
+      // rename(2) cannot compare-and-swap, so this narrows but cannot close the race.
+      await confirmUnchanged(item.plan, deps);
       await rename(item.temporary, item.plan.result.path);
       replaced.push({ plan: item.plan, mode: item.mode });
     }
@@ -1077,6 +1101,12 @@ async function commitPlans(
         if (temporary) await unlink(temporary).catch(() => undefined);
       }
     }
+    if (error instanceof ApplyError || error instanceof PublishError)
+      throw new ApplyError(error.code, error.message, {
+        ...error.details,
+        restored,
+        not_restored: notRestored,
+      });
     throw new ApplyError(
       'suggestion_write_failed',
       'the planned files could not all be written',
@@ -1163,13 +1193,9 @@ async function planSuggestionFile(
     (item) => folderEntry === undefined || item.plaintext?.entry === folderEntry
   );
   const byId = new Map(entries.map((entry) => [entry.fact.id, entry]));
-  const currentVersion = thread.reduce(
-    (version, entry) => Math.max(version, entry.fact.version),
-    local.state.version
-  );
   const states = suggestionStates(
     thread.map((entry) => entry.fact),
-    currentVersion
+    local.state.version
   );
   for (const id of input.accept) {
     const entry = byId.get(id);
@@ -1567,13 +1593,9 @@ async function applyFolderSuggestions(
   }
   const entries = await readThread(input.relic_id, local, deps);
   const byId = new Map(entries.map((item) => [item.fact.id, item]));
-  const currentVersion = entries.reduce(
-    (version, entry) => Math.max(version, entry.fact.version),
-    local.state.version
-  );
   const states = suggestionStates(
     entries.map((entry) => entry.fact),
-    currentVersion
+    local.state.version
   );
   const grouped = new Map<string, string[]>();
   for (const id of input.accept) {

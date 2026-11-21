@@ -126,6 +126,33 @@ export function withVersionFormat(
   >;
 }
 
+/** Preserve a known legacy single-file format before recording its successor. */
+export function nextVersionFormats(
+  state: {
+    readonly version: number;
+    readonly shape?: 'file' | 'folder' | undefined;
+    readonly filename?: string | undefined;
+    readonly version_formats?: Readonly<Record<string, VersionFormat>>;
+  },
+  version: number,
+  format: VersionFormat
+): Readonly<Record<string, VersionFormat>> {
+  const outgoing =
+    state.shape !== 'folder' &&
+    typeof state.filename === 'string' &&
+    state.filename.length > 0 &&
+    recordedVersionFormat(state, state.version) === undefined
+      ? {
+          version_formats: withVersionFormat(
+            state,
+            state.version,
+            versionFormatFor('file', state.filename)
+          ),
+        }
+      : state;
+  return withVersionFormat(outgoing, version, format);
+}
+
 function context(
   relicId: string,
   version: number

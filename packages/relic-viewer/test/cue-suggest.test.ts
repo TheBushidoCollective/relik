@@ -66,6 +66,39 @@ test('cue text encoding rejects structural changes and escapes VTT text', () => 
   expect(decodeCueText('vtt', '&amp;lt;&gt;')).toBe('&lt;>');
 });
 
+test('cue edits preserve existing whitespace-only boundary lines', () => {
+  for (const format of ['srt', 'vtt'] as const) {
+    for (const newline of ['\n', '\r\n']) {
+      const leading = ` \t${newline}word`;
+      const trailing = `word${newline}\t `;
+      expect(encodeCueText(format, 'new', ` \t${newline}`, '', leading)).toBe(
+        'new'
+      );
+      expect(encodeCueText(format, 'new', '', `${newline}\t `, trailing)).toBe(
+        'new'
+      );
+      expect(encodeCueText(format, ' ', '', `${newline}word`, leading)).toBe(
+        ' '
+      );
+      expect(encodeCueText(format, '\t', `word${newline}`, '', trailing)).toBe(
+        '\t'
+      );
+      expect(
+        encodeCueText(format, ' ', '', `${newline}word`, `old${newline}word`)
+      ).toMatchObject({ code: 'ends-cue' });
+      expect(
+        encodeCueText(format, ' ', `word${newline}`, '', `word${newline}old`)
+      ).toMatchObject({ code: 'ends-cue' });
+      expect(
+        encodeCueText(format, '', '', `${newline}word`, leading)
+      ).toMatchObject({ code: 'ends-cue' });
+      expect(
+        encodeCueText(format, '', `word${newline}`, '', trailing)
+      ).toMatchObject({ code: 'ends-cue' });
+    }
+  }
+});
+
 test('a cue edit cannot consume formatting tags or split an entity', () => {
   const source = cueFixtures.vtt;
   const parsed = parseSubtitles(source, 'vtt');

@@ -669,6 +669,8 @@ export const REPUBLISH_TOOL_DEFINITION = {
       filename: { type: 'string' },
       title: { type: ['string', 'null'] },
       resolved_path: { type: 'string' },
+      report_url: { type: 'string' },
+      disclosure_url: { type: 'string' },
       key_phrase: {
         type: 'string',
         description: `A ${MNEMONIC_WORDS}-word spoken phrase for the key. ${KEY_PHRASE_DISCLOSURE}`,
@@ -686,6 +688,32 @@ export const REPUBLISH_TOOL_DEFINITION = {
         },
         required: ['status'],
         additionalProperties: false,
+      },
+      acknowledgements: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            relic_id: { type: 'string' },
+            comment_id: { type: 'string' },
+            author: { type: 'string' },
+            created_at: { type: 'string' },
+          },
+          required: ['relic_id', 'comment_id', 'author', 'created_at'],
+          additionalProperties: false,
+        },
+      },
+      warnings: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            code: { type: 'string' },
+            message: { type: 'string' },
+          },
+          required: ['code', 'message'],
+          additionalProperties: false,
+        },
       },
       notify: {
         type: 'boolean',
@@ -3368,6 +3396,12 @@ async function callRepublish(
             text:
               `Republished ${result.folder ? jsonLine(result.filename) : result.filename} as version ${result.version} ` +
               `of relic ${result.relic_id}.\n\n` +
+              (result.warnings ?? [])
+                .map(
+                  (warning) =>
+                    `Warning (${warning.code}): ${warning.message}\n\n`
+                )
+                .join('') +
               folderParagraph(result.folder, result.filename) +
               'The share URL is unchanged: everyone holding the existing ' +
               'link, including its fragment, now sees this content. There ' +

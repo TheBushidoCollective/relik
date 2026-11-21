@@ -12,7 +12,7 @@
  * directly rather than driven through WebAuthn.
  */
 
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
@@ -356,6 +356,35 @@ describe('the private publish against the real service', () => {
       '2': { shape: 'file', extension: 'md' },
     });
     expect(encryptedSize(EDITED.length)).toBeGreaterThan(0);
+  });
+
+  test('republish preserves the outgoing format from legacy private state', async () => {
+    await seedOwnerAndDevice();
+    const first = await publishPrivate({ path: SOURCE_PATH }, depsFor());
+    const statePath = join(dir, 'publish-state.json');
+    const raw = JSON.parse(await readFile(statePath, 'utf8')) as {
+      private_relics: Record<string, Record<string, unknown>>;
+    };
+    const legacy = raw.private_relics[first.relic_id];
+    if (!legacy) throw new Error('private publish state missing');
+    delete legacy['version_formats'];
+    delete legacy['shape'];
+    await writeFile(statePath, `${JSON.stringify(raw, null, 2)}\n`);
+
+    const result = await republishPrivate(
+      {
+        relic_id: first.relic_id,
+        path: SOURCE_PATH,
+        filename: 'board.markdown',
+      },
+      depsFor(EDITED)
+    );
+    expect(result.version).toBe(2);
+    const state = await loadPrivatePublishState(first.relic_id);
+    expect(state?.version_formats).toEqual({
+      '1': { shape: 'file', extension: 'md' },
+      '2': { shape: 'file', extension: 'markdown' },
+    });
   });
 });
 

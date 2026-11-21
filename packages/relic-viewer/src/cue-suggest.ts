@@ -10,7 +10,8 @@ export function encodeCueText(
   format: SubtitleFormat,
   text: string,
   before = '',
-  after = ''
+  after = '',
+  original?: string
 ): string | SuggestRefusal {
   if (format === 'srt' && text.includes('<'))
     return {
@@ -26,10 +27,20 @@ export function encodeCueText(
           .replaceAll('>', '&gt;')
       : text;
   const result = before + encoded + after;
+  const leadingBoundary = /^[ \t]*\r?\n/.test(result);
+  const trailingBoundary = /\r?\n[ \t]*$/.test(result);
+  const preservesLeadingWhitespace =
+    /^[ \t]+\r?\n/.test(result) &&
+    original !== undefined &&
+    /^[ \t]+\r?\n/.test(original);
+  const preservesTrailingWhitespace =
+    /\r?\n[ \t]+$/.test(result) &&
+    original !== undefined &&
+    /\r?\n[ \t]+$/.test(original);
   if (
     result === '' ||
-    /^[ \t]*\r?\n/.test(result) ||
-    /\r?\n[ \t]*$/.test(result) ||
+    (leadingBoundary && !preservesLeadingWhitespace) ||
+    (trailingBoundary && !preservesTrailingWhitespace) ||
     /\r?\n[ \t]*\r?\n/.test(result) ||
     result.includes('-->')
   )

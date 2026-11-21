@@ -17,6 +17,7 @@ import {
   formatFilename,
   formatForFilename,
   loadCachedVersionFormat,
+  nextVersionFormats,
   recordedVersionFormat,
   saveCachedVersionFormat,
   versionFormatFor,
@@ -105,6 +106,75 @@ describe('suggestion format records', () => {
       expect(recordedVersionFormat(malformed, version)).toBeUndefined();
     }
     expect(recordedVersionFormat(state, 0)).toBeUndefined();
+  });
+
+  test('backfills only a known legacy single-file format on republish', () => {
+    const next = { shape: 'folder' } as const;
+    expect(
+      nextVersionFormats({ version: 1, filename: 'notes.CSV' }, 2, next)
+    ).toEqual({
+      '1': { shape: 'file', extension: 'csv' },
+      '2': next,
+    });
+    expect(
+      nextVersionFormats(
+        { version: 1, shape: 'file', filename: 'notes.private-suffix' },
+        2,
+        next
+      )
+    ).toEqual({
+      '1': { shape: 'file', extension: null },
+      '2': next,
+    });
+
+    const recorded = {
+      version: 1,
+      filename: 'notes.csv',
+      version_formats: { '1': { shape: 'file', extension: 'txt' } as const },
+    };
+    expect(nextVersionFormats(recorded, 2, next)).toEqual({
+      '1': { shape: 'file', extension: 'txt' },
+      '2': next,
+    });
+    expect(recorded.version_formats['1'].extension).toBe('txt');
+
+    const malformed = {
+      version: 1,
+      filename: 'notes.csv',
+      version_formats: { '1': { shape: 'file', extension: 'secret-name' } },
+    } as unknown as {
+      version: number;
+      filename: string;
+      version_formats: Record<string, VersionFormat>;
+    };
+    expect(nextVersionFormats(malformed, 2, next)).toEqual({
+      '1': { shape: 'file', extension: 'csv' },
+      '2': next,
+    });
+
+    for (const state of [
+      { version: 1 },
+      { version: 1, filename: '' },
+      { version: 1, shape: 'folder' as const, filename: 'site.md' },
+    ]) {
+      expect(nextVersionFormats(state, 2, next)).toEqual({ '2': next });
+    }
+  });
+
+  test('keeps existing records for folder and nameless legacy states', () => {
+    const existing = {
+      '1': { shape: 'file', extension: 'txt' } as const,
+      '2': { shape: 'folder' } as const,
+    };
+    const next = { shape: 'file', extension: 'md' } as const;
+    for (const state of [
+      { version: 2, filename: 'site.md', shape: 'folder' as const },
+      { version: 2 },
+    ]) {
+      expect(
+        nextVersionFormats({ ...state, version_formats: existing }, 3, next)
+      ).toEqual({ ...existing, '3': next });
+    }
   });
 
   test('entry digests are scoped to each relic and version, and distinguish absent entries', () => {

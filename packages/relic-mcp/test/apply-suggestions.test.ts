@@ -6,6 +6,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  readdir,
   rm,
   symlink,
   writeFile,
@@ -2293,5 +2294,273 @@ describe('relic_apply_suggestions', () => {
       { path: `/api/relics/${privateId}/mint`, method: 'POST' },
       { path: '/private-history-v1', method: 'GET' },
     ]);
+  });
+});
+
+describe('apply transaction races and stale local state', () => {
+  async function folderFixture() {
+    const folder = join(scratch, 'transaction-folder');
+    await mkdir(folder);
+    const first = join(folder, 'a.md');
+    const second = join(folder, 'b.md');
+    await writeFile(first, 'alpha\n');
+    await writeFile(second, 'omega\n');
+    await recordFixtureFolder(folder, ['a.md', 'b.md']);
+    for (const [id, entry, exact, replacement] of [
+      ['first', 'a.md', 'alpha', 'ALPHA'],
+      ['second', 'b.md', 'omega', 'OMEGA'],
+    ] as const)
+      await addRow(id, {
+        body: 'folder suggestion',
+        display_name: null,
+        entry,
+        anchor: { kind: 'source', exact },
+        suggestion: { v: 1, mode: 'replace', replacement },
+      });
+    return { folder, first, second };
+  }
+
+  test('restores an applied file when a later target changes after preflight', async () => {
+    const { folder, first, second } = await folderFixture();
+    const concurrent = 'changed by another writer\n';
+    let secondReads = 0;
+    deps = {
+      ...deps,
+      files: {
+        ...nodeFiles,
+        async read(file) {
+          const bytes = await nodeFiles.read(file);
+          if (file === second && ++secondReads === 2)
+            await writeFile(second, concurrent);
+          return bytes;
+        },
+      },
+    };
+    const result = await call({
+      path: folder,
+      accept: ['first', 'second'],
+      write: true,
+    });
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      code: 'source_changed_during_apply',
+      entry: 'b.md',
+      restored: ['a.md'],
+      not_restored: [],
+    });
+    expect(secondReads).toBe(3);
+    expect(await readFile(first, 'utf8')).toBe('alpha\n');
+    expect(await readFile(second, 'utf8')).toBe(concurrent);
+    expect((await readdir(folder)).sort()).toEqual(['a.md', 'b.md']);
+  });
+
+  test('preserves a concurrent edit to an already-applied file during rollback', async () => {
+    const { folder, first, second } = await folderFixture();
+    const editedFirst = 'edited after apply\n';
+    const editedSecond = 'changed by another writer\n';
+    let injected = false;
+    deps = {
+      ...deps,
+      files: {
+        ...nodeFiles,
+        async read(file) {
+          if (
+            file === second &&
+            !injected &&
+            (await readFile(first, 'utf8')) === 'ALPHA\n'
+          ) {
+            injected = true;
+            await writeFile(first, editedFirst);
+            await writeFile(second, editedSecond);
+          }
+          return nodeFiles.read(file);
+        },
+      },
+    };
+    const result = await call({
+      path: folder,
+      accept: ['first', 'second'],
+      write: true,
+    });
+    expect(injected).toBe(true);
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      code: 'source_changed_during_apply',
+      entry: 'b.md',
+      restored: [],
+      not_restored: ['a.md'],
+    });
+    expect(await readFile(first, 'utf8')).toBe(editedFirst);
+    expect(await readFile(second, 'utf8')).toBe(editedSecond);
+    expect((await readdir(folder)).sort()).toEqual(['a.md', 'b.md']);
+  });
+
+  test('refuses a single-file change after preflight without overwriting it', async () => {
+    await addSuggestion('chosen', 'alpha', 'ALPHA');
+    const concurrent = 'changed by another writer\n';
+    let reads = 0;
+    deps = {
+      ...deps,
+      files: {
+        ...nodeFiles,
+        async read(file) {
+          const bytes = await nodeFiles.read(file);
+          if (file === path && ++reads === 2) await writeFile(path, concurrent);
+          return bytes;
+        },
+      },
+    };
+    const result = await call({ accept: ['chosen'], write: true });
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      code: 'source_changed_during_apply',
+      restored: [],
+      not_restored: [],
+    });
+    expect(reads).toBe(3);
+    expect(await readFile(path, 'utf8')).toBe(concurrent);
+    expect(
+      (await readdir(scratch)).filter((name) => name.includes('.relic-'))
+    ).toEqual([]);
+  });
+
+  test('preserves a readSource refusal and rollback diagnostics during the final check', async () => {
+    const { folder, first, second } = await folderFixture();
+    let secondStats = 0;
+    deps = {
+      ...deps,
+      files: {
+        ...nodeFiles,
+        async stat(file) {
+          if (file === second && ++secondStats === 3) return { kind: 'other' };
+          return nodeFiles.stat(file);
+        },
+      },
+    };
+    const result = await call({
+      path: folder,
+      accept: ['first', 'second'],
+      write: true,
+    });
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      code: 'source_not_regular_file',
+      restored: ['a.md'],
+      not_restored: [],
+    });
+    expect(secondStats).toBe(3);
+    expect(await readFile(first, 'utf8')).toBe('alpha\n');
+    expect(await readFile(second, 'utf8')).toBe('omega\n');
+    expect((await readdir(folder)).sort()).toEqual(['a.md', 'b.md']);
+  });
+
+  test('refuses old and newer single-file suggestions when local state is stale', async () => {
+    await addSuggestion('old', 'alpha', 'ALPHA');
+    await addSuggestion('newer', 'omega', 'OMEGA', { version: 2 });
+    for (const accept of [['old'], ['newer']]) {
+      for (const write of [false, true]) {
+        requests.length = 0;
+        const result = await call({ accept, write });
+        expect(result.isError).toBe(true);
+        expect(result.structuredContent).toMatchObject({
+          code: 'local_state_stale',
+          local_version: 1,
+          thread_version: 2,
+        });
+        expect(await readFile(path, 'utf8')).toBe(ORIGINAL);
+        expect(requests).toEqual([
+          { path: `/api/relics/${relicId}/comments`, method: 'GET' },
+        ]);
+      }
+    }
+  });
+
+  test('refuses folder suggestions before resolving revision formats when local state is stale', async () => {
+    const folder = join(scratch, 'stale-folder');
+    await mkdir(folder);
+    const first = join(folder, 'a.md');
+    await writeFile(first, 'alpha\n');
+    await recordFixtureFolder(folder, ['a.md']);
+    await addRow('first', {
+      body: 'folder suggestion',
+      display_name: null,
+      entry: 'a.md',
+      anchor: { kind: 'source', exact: 'alpha' },
+      suggestion: { v: 1, mode: 'replace', replacement: 'ALPHA' },
+    });
+    await addRow(
+      'newer',
+      { body: 'A later comment', display_name: null },
+      { version: 2 }
+    );
+    for (const accept of [['first'], ['newer']]) {
+      for (const write of [false, true]) {
+        requests.length = 0;
+        const result = await call({ path: folder, accept, write });
+        expect(result.isError).toBe(true);
+        expect(result.structuredContent).toMatchObject({
+          code: 'local_state_stale',
+          local_version: 1,
+          thread_version: 2,
+        });
+        expect(await readFile(first, 'utf8')).toBe('alpha\n');
+        expect((await readdir(folder)).sort()).toEqual(['a.md']);
+        expect(requests).toEqual([
+          { path: `/api/relics/${relicId}/comments`, method: 'GET' },
+        ]);
+      }
+    }
+  });
+
+  test('ignores invalid comment versions when checking for stale state', async () => {
+    await addSuggestion('chosen', 'alpha', 'ALPHA');
+    for (const version of ['2', 2.5, 0, -1, Number.MAX_SAFE_INTEGER + 1, null])
+      rows.push({ version, ciphertext: 'unreadable' });
+    const result = await call({ accept: ['chosen'] });
+    expect(result.isError).toBe(false);
+    expect(await readFile(path, 'utf8')).toBe(ORIGINAL);
+    expect(requests).toEqual([
+      { path: `/api/relics/${relicId}/comments`, method: 'GET' },
+    ]);
+  });
+
+  test('refuses stale private state before fetching any version key', async () => {
+    const privateId = generateRelicId();
+    const version1 = generateKey();
+    const version2 = generateKey();
+    await savePrivatePublishState(privateId, {
+      access: 'private',
+      service_origin: SERVICE,
+      publish_token: 'private-token',
+      version: 1,
+      filename: 'report.md',
+      version_keys: { '1': encodeKey(version1) },
+      owner_identity_id: 'owner',
+      device_id: 'device',
+      source: await resolveSourceIdentity(path),
+    });
+    await addSuggestion('old', 'alpha', 'ALPHA', {
+      key: await deriveCommentKey(version1),
+    });
+    await addSuggestion('newer', 'omega', 'OMEGA', {
+      version: 2,
+      key: await deriveCommentKey(version2),
+    });
+    for (const accept of [['old'], ['newer']]) {
+      for (const write of [false, true]) {
+        requests.length = 0;
+        const result = await call({ relic_id: privateId, accept, write });
+        expect(result.isError).toBe(true);
+        expect(result.structuredContent).toMatchObject({
+          code: 'local_state_stale',
+          local_version: 1,
+          thread_version: 2,
+        });
+        expect(await readFile(path, 'utf8')).toBe(ORIGINAL);
+        expect(requests).toEqual([
+          { path: `/api/relics/${privateId}/comments/list`, method: 'POST' },
+        ]);
+      }
+    }
   });
 });
