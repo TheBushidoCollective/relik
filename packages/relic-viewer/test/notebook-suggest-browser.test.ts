@@ -46,6 +46,13 @@ test('notebook source maps rendered cells but refuses output selections', async 
       const newline = segments.find(s => s.text === '\\n');
       if (!newline || newline.kind !== 'escape') throw Error('newline escape mapping');
       if (root.querySelectorAll('[data-seg]').length !== segments.length) throw Error('segment layout');
+      const typed = '\"' + String.fromCharCode(92, 10);
+      const insertion = surface.encode(smile.block, typed, smile.start, smile.end);
+      if (!insertion.ok) throw Error('source edit refused');
+      const changed = source.slice(0, smile.start) + insertion.source + source.slice(smile.end);
+      if (JSON.parse(changed).cells[0].source[0] !== 'Hello ' + typed + String.fromCharCode(10)) throw Error('replacement was not JSON escaped');
+      const next = segments.find(s => s.text === 'next line');
+      if (!next || surface.encode(smile.block, 'x', smile.start, next.end).ok) throw Error('cross-string edit accepted');
       if (notebookAcceptsSelection(root, root.querySelector('.nb-out').firstChild) === true) throw Error('output accepted');
       if (notebookAcceptsSelection(root, root.querySelector('[data-seg]').firstChild) !== true) throw Error('source refused');
       await fetch('/result',{method:'POST',body:'ok'});

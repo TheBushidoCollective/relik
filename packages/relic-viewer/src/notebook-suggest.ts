@@ -84,7 +84,15 @@ export function notebookSourceUnits(
 export function notebookSuggestionSurface(
   root: HTMLElement,
   notebook: Notebook
-): SuggestionSurface {
+): SuggestionSurface & {
+  encode(
+    block: number,
+    text: string,
+    start: number,
+    end: number
+  ): { ok: true; source: string } | { ok: false; refusal: SuggestRefusal };
+  acceptsSelection(node: Node): true | SuggestRefusal;
+} {
   const kinds = new Map<number, SuggestBlockKind>();
   const allowed = new Set<number>();
   const tokens = new Map<
@@ -212,6 +220,12 @@ export function notebookSuggestionSurface(
             code: 'not-editable',
             message: 'Only notebook cell source can be edited.',
           };
+    },
+    encode(block, text, start, end) {
+      return encodeNotebookDraft(text, start, end, tokens.get(block));
+    },
+    acceptsSelection(node) {
+      return notebookAcceptsSelection(root, node);
     },
     repaint() {},
   };
