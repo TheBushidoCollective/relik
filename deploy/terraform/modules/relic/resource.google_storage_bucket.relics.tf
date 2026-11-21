@@ -99,13 +99,12 @@ resource "google_storage_bucket" "relics" {
   # straight to GCS. Content-Range has to be exposed or the browser cannot see
   # range responses, which is what progressive decryption runs on.
   #
-  # The publisher's upload runs from its own machine and needs no preflight.
-  # The one browser upload is a private relic's rekey, a PUT to a signed URL
-  # from the service origin, so PUT is admitted for that origin and no other.
+  # Browser uploads use signed PUTs only from the service origin. Private
+  # uploads sign their expiry in x-goog-custom-time for lifecycle deletion.
   cors {
     origin          = [var.service_url]
     method          = ["GET", "HEAD", "PUT"]
-    response_header = ["Content-Type", "Content-Length", "Content-Range", "ETag", "x-goog-hash"]
+    response_header = ["Content-Type", "Content-Length", "Content-Range", "ETag", "x-goog-hash", "x-goog-custom-time"]
     max_age_seconds = 3600
   }
 

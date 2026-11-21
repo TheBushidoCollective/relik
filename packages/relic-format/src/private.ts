@@ -56,7 +56,8 @@ export type StatementKind =
   | 'device_enroll'
   | 'device_request'
   | 'owner_bind'
-  | 'private_publish';
+  | 'private_publish'
+  | 'owner_publish';
 
 export interface IdentityRegisterStatement {
   readonly at: number;
@@ -187,6 +188,15 @@ export interface PrivatePublishStatement {
   readonly ttl_days: number | null;
 }
 
+/** An identity's authorization of the exact first private grant. */
+export interface OwnerPublishStatement {
+  readonly at: number;
+  readonly owner_identity_id: string;
+  readonly relic_id: string;
+  readonly challenge_nonce: string;
+  readonly body_sha256: string;
+}
+
 /** The statement for each kind. Every field is listed; nullable fields are typed `| null`. */
 export interface StatementMap {
   readonly identity_register: IdentityRegisterStatement;
@@ -205,6 +215,7 @@ export interface StatementMap {
   readonly device_request: DeviceRequestStatement;
   readonly owner_bind: OwnerBindStatement;
   readonly private_publish: PrivatePublishStatement;
+  readonly owner_publish: OwnerPublishStatement;
 }
 
 /** The reason a statement was refused. The service reports it as `statement_check`. */
@@ -292,6 +303,16 @@ export function canonicalJson(value: unknown): string {
   throw new TypeError(
     'canonical JSON takes strings, booleans, null, integers, arrays and plain objects'
   );
+}
+
+/** Hash the canonical grant without its attestation on both sides of the wire. */
+export async function ownerPublishBodySha256(
+  body: Readonly<Record<string, unknown>>
+): Promise<string> {
+  const fields = Object.fromEntries(
+    Object.entries(body).filter(([key]) => key !== 'owner_attestation')
+  );
+  return bytesToHex(await sha256(utf8(canonicalJson(fields))));
 }
 
 /** The exact bytes a statement is signed over: `relic-statement/v1`, the kind, then canonical JSON. */
@@ -1126,6 +1147,13 @@ const SPECS: { readonly [K in StatementKind]: Readonly<Record<string, Rule>> } =
       device_id: HEX_ID,
       relic_id: RELIC_ID,
       ttl_days: nullable(integer(1)),
+    },
+    owner_publish: {
+      at: AT,
+      body_sha256: HEX_ID,
+      challenge_nonce: SERVICE_TOKEN,
+      owner_identity_id: HEX_ID,
+      relic_id: RELIC_ID,
     },
   };
 

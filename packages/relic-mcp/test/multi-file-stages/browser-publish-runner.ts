@@ -224,7 +224,7 @@ export async function runBrowserPublishStage(
       const path = join(scratch, 'fixture.zip');
       await writeFile(path, bytes);
       await drop(path);
-      await waitText('Folder: 3 files');
+      await waitText('3 files included');
       await waitText('os metadata: 1');
       await waitText('symlink: 1');
       await waitText('directory: 1');
@@ -237,7 +237,7 @@ export async function runBrowserPublishStage(
       await waitText('Guide');
       apiCalls = 0;
       await drop(path);
-      await waitText('Folder: 3 files');
+      await waitText('3 files included');
       assert.equal(apiCalls, 0, 'viewer ZIP preflight made a request');
       await publishAndCheck({
         'README.md': '# Guide',
@@ -248,11 +248,9 @@ export async function runBrowserPublishStage(
       await browser.waitForSelector('.pub-drop');
       apiCalls = 0;
       await drop(path);
-      await waitText('Folder: 3 files');
+      await waitText('3 files included');
       assert.equal(apiCalls, 0);
-      await browser.evaluate<void>(
-        `[...document.querySelectorAll('button')].find(b => b.innerText.includes('Publish as one file instead')).click()`
-      );
+      await browser.clickSelector('.pub-expand');
       await browser.waitForSelector('.pub-title');
       await browser.clickSelector('.pub-row .action.primary');
       await browser.waitForSelector('.pub-link');
@@ -334,9 +332,9 @@ export async function runBrowserPublishStage(
         await browser.waitForSelector('.pub-drop');
         apiCalls = 0;
         await drop(target);
-        await waitText('Could not expand ZIP');
+        await browser.waitForSelector('.pub-review-status');
         await waitText(item.reason);
-        await waitText('Publish as one file instead');
+        await waitText('You can publish the ZIP as one file instead.');
         assert.equal(apiCalls, 0, `${item.name} contacted the API`);
       }
       const docx = join(scratch, 'fixture.docx');
@@ -389,7 +387,7 @@ export async function runBrowserPublishStage(
       for (const [path, contents] of Object.entries(files))
         await writeFile(join(root, path), contents);
       await drop(root);
-      await waitText('Folder: 4 files');
+      await waitText('4 files included');
       await waitText('gitignore: 3');
       await waitText('node modules: 1');
       await waitText('os metadata: 1');
@@ -428,13 +426,13 @@ export async function runBrowserPublishStage(
         { nodeId: input['nodeId'], files: [root] },
         browser.sessionId
       );
-      await waitText('Folder: 4 files');
+      await waitText('4 files included');
       assert.equal(apiCalls, 0);
       await navigate(link);
       await waitText('Guide');
       apiCalls = 0;
       await drop(root);
-      await waitText('Folder: 4 files');
+      await waitText('4 files included');
       await publishAndCheck(expected);
       if (process.env['RELIC_LARGE_FOLDER_PROOF']) {
         const largeRoot = join(scratch, 'large');
@@ -448,7 +446,7 @@ export async function runBrowserPublishStage(
         await browser.waitForSelector('.pub-drop');
         apiCalls = 0;
         await drop(largeRoot);
-        await waitText('Folder: 1 files');
+        await waitText('1 file included');
         assert.equal(apiCalls, 0);
         await browser.clickSelector('.pub-row .action.primary');
         await browser.waitForSelector('.pub-link', 120000);

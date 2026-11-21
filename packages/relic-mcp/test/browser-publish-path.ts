@@ -284,6 +284,9 @@ try {
     !apiRequests().some((r) => r.url.endsWith('/api/grant')),
     'an oversize file must not reach the grant'
   );
+  // The review stays open after validation so the publisher can correct it.
+  await browser.clickSelector('.pub-row .action:not(.primary)');
+  await browser.waitForSelector('.pub-drop');
 
   seen.length = 0;
   await browser.evaluate<void>(`(() => {
@@ -443,12 +446,36 @@ try {
   const realDrag = async (
     name: string,
     x: number,
-    y: number
+    y: number,
+    fromFrame = false
   ): Promise<void> => {
     const path = await draggedFile(name);
+    if (fromFrame)
+      await browser.evaluate<void>(`(() => {
+      window.__proofFrameDrag = false;
+      window.addEventListener('message', e => {
+        if (e.source === document.querySelector('iframe')?.contentWindow && e.data?.type === 'relic:file-drag') window.__proofFrameDrag = true;
+      }, { once: false });
+    })()`);
     await sendDrag('dragEnter', x, y, path);
     await sendDrag('dragOver', x, y, path);
     await waitInPage('[data-file-curtain]');
+    if (fromFrame) {
+      await browser.evaluate<void>(`new Promise((resolve, reject) => {
+        const deadline = Date.now() + 15000;
+        const look = () => {
+          const curtain = document.querySelector('[data-file-curtain]');
+          const hit = document.elementFromPoint(${x}, ${y});
+          if (window.__proofFrameDrag && curtain && (hit === curtain || curtain.contains(hit))) return resolve();
+          if (Date.now() > deadline) return reject(new Error('iframe drag signal or curtain hit target missing'));
+          requestAnimationFrame(look);
+        };
+        requestAnimationFrame(look);
+      })`);
+      // CDP does not synthesize the native widget-entry transition when the
+      // iframe raises a parent-window curtain during an existing drag.
+      await sendDrag('dragEnter', x, y, path);
+    }
     await sendDrag('dragOver', x, y, path);
     await sendDrag('drop', x, y, path);
   };
@@ -473,12 +500,16 @@ try {
   // The control: a real drag over the page's own bar. If this does not open
   // the dialog the drag mechanism is what failed, not the frame.
   await realDrag('over-the-bar.md', 300, 20);
-  await waitInPage('dialog.pub-dialog .pub-title');
+  await waitInPage('dialog.pub-dialog .pub-title').catch((error) => {
+    throw new Error(`real drag over bar: ${String(error)}`);
+  });
   assert.equal(await dialogTitle(), 'over-the-bar.md');
   await dialogClosed();
 
-  await realDrag('over-the-frame.md', frame.x, frame.y);
-  await waitInPage('dialog.pub-dialog .pub-title');
+  await realDrag('over-the-frame.md', frame.x, frame.y, true);
+  await waitInPage('dialog.pub-dialog .pub-title').catch((error) => {
+    throw new Error(`real drag over iframe: ${String(error)}`);
+  });
   assert.equal(await dialogTitle(), 'over-the-frame.md');
   console.log(
     'PUBLISH_STEP_8_REAL_DRAG over_bar=caught over_sandboxed_frame=caught'
@@ -717,6 +748,111 @@ try {
   console.log(
     `PUBLISH_STEP_12_EVERY_BAR pages=${pages.map(([n]) => n).join(',')} last_action=Upload widths=${fit.join(',')} overflow=none`
   );
+
+  // The review selections must affect the published relic, not just its form.
+  await goto(`${serviceOrigin}/publish`);
+  await browser.waitForSelector('.pub-drop');
+  await dropFile('source.txt', 'Options selected on the review form.');
+  await browser.waitForSelector('.pub-filename');
+  await browser.evaluate<void>(`(() => {
+    const name = document.querySelector('.pub-filename');
+    name.value = 'selected-name.txt';
+    name.dispatchEvent(new Event('input', { bubbles: true }));
+    const title = document.querySelector('.pub-title');
+    title.value = '';
+    title.dispatchEvent(new Event('input', { bubbles: true }));
+    const ttl = document.querySelector('.pub-ttl');
+    ttl.value = '7';
+    ttl.dispatchEvent(new Event('input', { bubbles: true }));
+    const decisions = document.querySelector('.pub-decisions');
+    decisions.checked = true;
+    decisions.dispatchEvent(new Event('change', { bubbles: true }));
+  })()`);
+  const beforePublish = Date.now();
+  await browser.clickSelector('.pub-row .action.primary');
+  await browser.waitForSelector('.pub-link');
+  const optionsLink = await browser.evaluate<string>(
+    `document.querySelector('.pub-link').value`
+  );
+  const optionsId = new URL(optionsLink).pathname.slice(1);
+  const optionsRow = await store.getRelic(optionsId);
+  assert.equal(optionsRow?.decisionsOpen, true);
+  assert.equal(optionsRow?.title, undefined);
+  assert.ok(
+    optionsRow?.expiresAt !== undefined &&
+      optionsRow.expiresAt >= beforePublish + 7 * 86400_000
+  );
+  await goto(optionsLink);
+  await waitForText('Options selected on the review form.');
+  assert.equal(
+    await browser.evaluate<string>(
+      `document.querySelector('.filename').textContent`
+    ),
+    'selected-name.txt'
+  );
+  console.log(
+    'PUBLISH_STEP_13_OPTIONS filename=encrypted ttl=7 decisions=open title=omitted'
+  );
+
+  // The public image shown for approval must be the image served without a key.
+  await goto(`${serviceOrigin}/`);
+  await waitLoaded();
+  await browser.evaluate<void>(`(() => {
+    const transfer = new DataTransfer();
+    transfer.items.add(new File(['# Approved cover\\n\\nPreview this text.'], 'cover.md'));
+    document.body.dispatchEvent(new DragEvent('drop', { dataTransfer: transfer, bubbles: true, cancelable: true }));
+  })()`);
+  await waitInPage('dialog.pub-dialog .pub-cover');
+  await browser.evaluate<void>(`(() => {
+    const control = document.querySelector('dialog.pub-dialog .pub-cover');
+    control.checked = true;
+    control.dispatchEvent(new Event('change', { bubbles: true }));
+  })()`);
+  await waitInPage('dialog.pub-dialog .pub-preview img');
+  await browser.evaluate<void>(`new Promise((resolve, reject) => {
+    const image = document.querySelector('dialog.pub-dialog .pub-preview img');
+    if (image.complete && image.naturalWidth > 0) return resolve();
+    image.addEventListener('load', resolve, { once: true });
+    image.addEventListener('error', reject, { once: true });
+  })`);
+  const approvedPixels = await browser.evaluate<string>(`(async () => {
+    const image = document.querySelector('dialog.pub-dialog .pub-preview img');
+    const canvas = document.createElement('canvas');
+    canvas.width = image.naturalWidth; canvas.height = image.naturalHeight;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(image, 0, 0);
+    const digest = await crypto.subtle.digest('SHA-256', ctx.getImageData(0, 0, canvas.width, canvas.height).data);
+    return Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('');
+  })()`);
+  await browser.clickSelector('dialog.pub-dialog .pub-row .action.primary');
+  await browser.waitForSelector('dialog.pub-dialog .pub-link');
+  const coverLink = await browser.evaluate<string>(
+    `document.querySelector('dialog.pub-dialog .pub-link').value`
+  );
+  const coverRow = await store.getRelic(new URL(coverLink).pathname.slice(1));
+  assert.ok(coverRow?.cover);
+  const coverUrl = `${serviceOrigin}/${coverRow.id}/cover/${coverRow.cover.sha256}.${coverRow.cover.type === 'image/png' ? 'png' : 'jpg'}`;
+  const servedCover = await fetch(coverUrl);
+  assert.equal(servedCover.status, 200);
+  const servedHash = await crypto.subtle.digest(
+    'SHA-256',
+    await servedCover.arrayBuffer()
+  );
+  assert.equal(Buffer.from(servedHash).toString('hex'), coverRow.cover.sha256);
+  const servedPixels = await browser.evaluate<string>(`(async () => {
+    const image = new Image();
+    const loaded = new Promise((resolve, reject) => { image.onload = resolve; image.onerror = reject; });
+    image.src = ${JSON.stringify(coverUrl)};
+    await loaded;
+    const canvas = document.createElement('canvas');
+    canvas.width = image.naturalWidth; canvas.height = image.naturalHeight;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(image, 0, 0);
+    const digest = await crypto.subtle.digest('SHA-256', ctx.getImageData(0, 0, canvas.width, canvas.height).data);
+    return Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('');
+  })()`);
+  assert.equal(servedPixels, approvedPixels);
+  console.log('PUBLISH_STEP_14_COVER approved=served_without_key');
 
   console.log('BROWSER_PUBLISH_PATH_OK');
 } finally {

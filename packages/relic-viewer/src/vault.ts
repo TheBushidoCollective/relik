@@ -42,7 +42,7 @@ const VAULT_PREFIX = 'relic:key:';
  * does not accumulate keys to relics that stopped existing days ago.
  */
 export function localStorageKeyVault(
-  storage: Storage | undefined = globalThis.localStorage,
+  storage?: Storage,
   now: () => number = Date.now
 ): KeyVault {
   const read = (): Storage | undefined => {
@@ -50,7 +50,7 @@ export function localStorageKeyVault(
       // Touching localStorage throws outright in some embedded contexts,
       // rather than being absent, so the guard has to be a try and not a null
       // check.
-      return storage ?? undefined;
+      return storage ?? globalThis.localStorage ?? undefined;
     } catch {
       return undefined;
     }
