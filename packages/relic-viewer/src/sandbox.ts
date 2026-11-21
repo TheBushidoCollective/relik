@@ -63,6 +63,11 @@ import {
   takeHeadUtf8,
   takeTailUtf8,
 } from './annotate-frame.ts';
+import {
+  isDocumentStateMessage,
+  isRenderDocumentMessage,
+  type RenderDocumentMessage,
+} from './frame-document-protocol.ts';
 import { announceUnclaimedFileDrags } from './frame-file-drag.ts';
 import { isSetScrollMessage } from './frame-scroll.ts';
 import { scrubFrameHtml } from './frame-html-scrub.ts';
@@ -2402,7 +2407,8 @@ export function createSandboxHandler(
     marks: readonly Mark[],
     anchors?: readonly Anchor[]
   ) => void = () => {},
-  interaction?: FrameInteractionHandler
+  interaction?: FrameInteractionHandler,
+  writeDocument: (message: RenderDocumentMessage) => void = () => {}
 ): (data: unknown) => boolean {
   let rendered = false;
   let annotated = false;
@@ -2420,6 +2426,11 @@ export function createSandboxHandler(
         rendered = true;
         cover = data.cover === true;
         writeJsx(data.code);
+        return true;
+      }
+      if (isRenderDocumentMessage(data)) {
+        rendered = true;
+        writeDocument(data);
         return true;
       }
       return false;
@@ -2518,6 +2529,42 @@ async function mountComponent(code: string): Promise<void> {
       'padding: 2rem; color: #333;';
     failure.textContent = 'This component could not be rendered.';
     root.replaceChildren(failure);
+  }
+}
+
+async function mountDocument(
+  message: RenderDocumentMessage,
+  initInteraction: (imageControlsEnabled: boolean) => void
+): Promise<void> {
+  const root = document.createElement('div');
+  root.id = 'relic-document';
+  document.body.replaceChildren(root);
+  initInteraction(true);
+  let url: string | undefined;
+  try {
+    url = URL.createObjectURL(
+      new Blob([message.module], { type: 'text/javascript' })
+    );
+    // The parent supplies our selected renderer as text for this opaque frame.
+    const module = await import(url);
+    if (typeof module.render !== 'function')
+      throw new Error('Missing renderer');
+    const outcome = await module.render(root, {
+      entries: new Map(message.entries),
+      ...(message.book === undefined ? {} : { book: message.book }),
+    });
+    const state = { ...outcome, type: 'relic:document-state' };
+    if (!isDocumentStateMessage(state))
+      throw new Error('Invalid renderer outcome');
+    window.parent.postMessage(state, '*');
+  } catch {
+    window.parent.postMessage(
+      { type: 'relic:document-state', state: 'failed', reason: 'corrupt' },
+      '*'
+    );
+  } finally {
+    if (url !== undefined) URL.revokeObjectURL(url);
+    scheduleReport();
   }
 }
 
@@ -3193,6 +3240,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       onRevealChange: (changeId, top) =>
         interaction?.onRevealChange?.(changeId, top),
       onSetScroll: (fraction) => interaction?.onSetScroll?.(fraction),
+    },
+    (message) => {
+      void mountDocument(message, initInteraction);
     }
   );
 
