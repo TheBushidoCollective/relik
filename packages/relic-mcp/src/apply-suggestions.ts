@@ -1,7 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { chmod, lstat, open, realpath, rename, unlink } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
-import { isDeepStrictEqual } from 'node:util';
 import {
   type CommentPlaintext,
   decodeKey,
@@ -12,8 +11,13 @@ import {
 } from '@relic/format';
 import { entryPathRule } from '@relic/format';
 import { FIELD_STRAY, parseTable, recordWidth } from '@relic/format/csv';
+import {
+  type JsonTree,
+  jsonStringValue,
+  parseJsonTree,
+} from '@relic/format/json-tree';
 import { parseNotebook } from '@relic/format/notebook';
-import { parseSubtitles } from '@relic/format/subtitles';
+import { type SubtitleCue, parseSubtitles } from '@relic/format/subtitles';
 import {
   mergeSuggestions,
   resolveSuggestions,
@@ -191,28 +195,41 @@ function validateTable(
   }
 }
 
-function notebookCells(source: string): readonly unknown[] {
-  let value: unknown;
-  try {
-    value = JSON.parse(source);
-  } catch {
-    return refuseStructure(
-      'notebook_parse',
-      'the notebook must remain valid JSON'
-    );
+function notebookMembers(
+  tree: JsonTree,
+  cell: number
+): { type: number; source: number; outputs: number } {
+  const members = { type: -1, source: -1, outputs: -1 };
+  for (
+    let child = tree.firstChild(cell);
+    child !== -1;
+    child = tree.nextSibling(child)
+  ) {
+    const key = tree.key(child);
+    if (key === 'cell_type') members.type = child;
+    else if (key === 'source') members.source = child;
+    else if (key === 'outputs') members.outputs = child;
   }
-  if (
-    typeof value !== 'object' ||
-    value === null ||
-    Array.isArray(value) ||
-    !('cells' in value) ||
-    !Array.isArray(value.cells)
-  )
-    return refuseStructure(
-      'notebook_parse',
-      'the notebook must retain its cells array'
-    );
-  return value.cells;
+  return members;
+}
+
+function validNotebookSource(tree: JsonTree, node: number): boolean {
+  if (node === -1) return false;
+  if (tree.kind(node) === 'string')
+    return !hasUnpairedSurrogate(jsonStringValue(tree.valueSource(node)));
+  if (tree.kind(node) !== 'array') return false;
+  for (
+    let child = tree.firstChild(node);
+    child !== -1;
+    child = tree.nextSibling(child)
+  ) {
+    if (
+      tree.kind(child) !== 'string' ||
+      hasUnpairedSurrogate(jsonStringValue(tree.valueSource(child)))
+    )
+      return false;
+  }
+  return true;
 }
 
 function validateNotebook(
@@ -227,68 +244,114 @@ function validateNotebook(
       'notebook_parse',
       'the original notebook or the result cannot be parsed'
     );
-  const oldCells = notebookCells(before);
-  const newCells = notebookCells(after);
-  if (oldCells.length !== newCells.length)
+  if (original.notebook.cells.length !== result.notebook.cells.length)
     refuseStructure('notebook_cells', 'the notebook cell count would change');
-  for (let index = 0; index < oldCells.length; index += 1) {
-    const oldCell = oldCells[index];
-    const newCell = newCells[index];
+  const originalTree = parseJsonTree(before);
+  const resultTree = parseJsonTree(after);
+  if (!originalTree.ok || !resultTree.ok)
+    refuseStructure('notebook_parse', 'the notebook JSON cannot be parsed');
+  const oldTree = originalTree.tree;
+  const newTree = resultTree.tree;
+  let oldCell = oldTree.firstChild(oldTree.resolve('/cells'));
+  let newCell = newTree.firstChild(newTree.resolve('/cells'));
+  let oldEnd = 0;
+  let newEnd = 0;
+  let structureChanged = false;
+  for (let index = 0; index < original.notebook.cells.length; index += 1) {
     if (
-      typeof oldCell !== 'object' ||
-      oldCell === null ||
-      Array.isArray(oldCell) ||
-      typeof newCell !== 'object' ||
-      newCell === null ||
-      Array.isArray(newCell)
+      oldCell === -1 ||
+      newCell === -1 ||
+      oldTree.kind(oldCell) !== 'object' ||
+      newTree.kind(newCell) !== 'object'
     )
       refuseStructure(
         'notebook_cells',
         `notebook cell ${index + 1} must remain an object`
       );
-    const oldType = 'cell_type' in oldCell ? oldCell.cell_type : undefined;
-    const newType = 'cell_type' in newCell ? newCell.cell_type : undefined;
-    if (typeof oldType !== 'string' || oldType !== newType)
+    const oldMembers = notebookMembers(oldTree, oldCell);
+    const newMembers = notebookMembers(newTree, newCell);
+    if (
+      oldMembers.type === -1 ||
+      newMembers.type === -1 ||
+      oldTree.kind(oldMembers.type) !== 'string' ||
+      newTree.kind(newMembers.type) !== 'string' ||
+      jsonStringValue(oldTree.valueSource(oldMembers.type)) !==
+        jsonStringValue(newTree.valueSource(newMembers.type))
+    )
       refuseStructure(
         'notebook_cell_type',
         `the type of notebook cell ${index + 1} would change`
       );
-    const oldSource = 'source' in oldCell ? oldCell.source : undefined;
-    const newSource = 'source' in newCell ? newCell.source : undefined;
-    const validSource =
-      typeof newSource === 'string'
-        ? !hasUnpairedSurrogate(newSource)
-        : Array.isArray(newSource) &&
-          newSource.every(
-            (line) => typeof line === 'string' && !hasUnpairedSurrogate(line)
-          );
+    const oldSource = oldMembers.source;
+    const newSource = newMembers.source;
+    const sourceChanged =
+      (oldSource === -1) !== (newSource === -1) ||
+      (oldSource !== -1 &&
+        newSource !== -1 &&
+        oldTree.valueSource(oldSource) !== newTree.valueSource(newSource));
     const cellSpan = original.notebook.cells[index]!;
     const touched = edits.some((edit) =>
       edit.start === edit.end
         ? edit.start >= cellSpan.start && edit.start < cellSpan.end
         : edit.start < cellSpan.end && edit.end > cellSpan.start
     );
-    if ((!isDeepStrictEqual(oldSource, newSource) || touched) && !validSource)
+    if ((sourceChanged || touched) && !validNotebookSource(newTree, newSource))
       refuseStructure(
         'notebook_source',
         `the source of notebook cell ${index + 1} must be well-formed text or an array of text`
       );
-    const oldOutputs = 'outputs' in oldCell ? oldCell.outputs : undefined;
-    const newOutputs = 'outputs' in newCell ? newCell.outputs : undefined;
+    const oldOutputs = oldMembers.outputs;
+    const newOutputs = newMembers.outputs;
     if (
-      (oldOutputs !== undefined && !Array.isArray(oldOutputs)) ||
-      (newOutputs !== undefined && !Array.isArray(newOutputs)) ||
-      Array.isArray(oldOutputs) !== Array.isArray(newOutputs) ||
-      (Array.isArray(oldOutputs) &&
-        Array.isArray(newOutputs) &&
-        oldOutputs.length !== newOutputs.length) ||
-      !isDeepStrictEqual(oldOutputs, newOutputs)
+      (oldOutputs === -1) !== (newOutputs === -1) ||
+      (oldOutputs !== -1 &&
+        newOutputs !== -1 &&
+        (oldTree.kind(oldOutputs) !== 'array' ||
+          newTree.kind(newOutputs) !== 'array' ||
+          oldTree.valueSource(oldOutputs) !== newTree.valueSource(newOutputs)))
     )
       refuseStructure(
         'notebook_outputs',
         `the outputs of notebook cell ${index + 1} would change`
       );
+    if (oldSource !== -1 && newSource !== -1) {
+      const oldStart = oldTree.valueStart(oldSource);
+      const newStart = newTree.valueStart(newSource);
+      if (before.slice(oldEnd, oldStart) !== after.slice(newEnd, newStart))
+        structureChanged = true;
+      oldEnd = oldTree.valueEnd(oldSource);
+      newEnd = newTree.valueEnd(newSource);
+    } else if (oldSource !== newSource) {
+      structureChanged = true;
+    }
+    oldCell = oldTree.nextSibling(oldCell);
+    newCell = newTree.nextSibling(newCell);
   }
+  if (structureChanged || before.slice(oldEnd) !== after.slice(newEnd))
+    refuseStructure(
+      'notebook_structure',
+      'notebook content outside cell sources would change'
+    );
+}
+
+/** Raw arrows in cue text, in the same coordinates as suggestion anchors. */
+function cueArrows(source: string, cue: SubtitleCue): number[] {
+  const offset = source.charCodeAt(0) === 0xfeff ? 1 : 0;
+  const arrows: number[] = [];
+  for (const span of cue.textSpans) {
+    const end = span.end + offset;
+    for (let at = span.start + offset; at + 3 <= end; at += 1) {
+      if (
+        source[at] === '-' &&
+        source[at + 1] === '-' &&
+        source[at + 2] === '>'
+      ) {
+        arrows.push(at);
+        at += 2;
+      }
+    }
+  }
+  return arrows;
 }
 
 function validateSubtitles(
@@ -326,6 +389,7 @@ function validateSubtitles(
   const oldStarts = lineStarts(before);
   const newStarts = lineStarts(after);
   const mapBoundary = boundaryMapper(edits);
+  const mapArrow = boundaryMapper(edits);
   for (let index = 0; index < oldFile.entries.length; index += 1) {
     const oldEntry = oldFile.entries[index]!;
     const newEntry = newFile.entries[index]!;
@@ -354,6 +418,26 @@ function validateSubtitles(
           'subtitle_cues',
           'a subtitle cue identifier would change'
         );
+      if (format === 'vtt') {
+        const retained = new Set<number>();
+        for (const oldArrow of cueArrows(before, oldEntry)) {
+          const start = mapArrow(oldArrow);
+          const middle = mapArrow(oldArrow + 1);
+          const end = mapArrow(oldArrow + 2);
+          if (
+            start !== undefined &&
+            middle === start + 1 &&
+            end === start + 2 &&
+            after.slice(start, start + 3) === '-->'
+          )
+            retained.add(start);
+        }
+        if (cueArrows(after, newEntry).some((arrow) => !retained.has(arrow)))
+          refuseStructure(
+            'subtitle_cues',
+            'a raw timing separator would be introduced into WebVTT cue text'
+          );
+      }
     }
     if (
       mapBoundary(oldStarts[oldEntry.line - 1]!) !==
@@ -391,11 +475,11 @@ function validateMergedStructure(
     extension !== 'vtt'
   )
     return;
-  // JSON Source accepts multiline LF edits. The other structured surfaces
+  // JSON and notebook Source accept multiline LF edits. Tables and subtitles
   // preserve physical line counts; CRLF files retain their original endings.
   if (
     after.includes('\r') ||
-    ((crlf || extension !== 'json') &&
+    ((crlf || (extension !== 'json' && extension !== 'ipynb')) &&
       newlineCount(before) !== newlineCount(after))
   )
     refuseStructure(

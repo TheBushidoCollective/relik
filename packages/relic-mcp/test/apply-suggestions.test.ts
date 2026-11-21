@@ -423,6 +423,28 @@ describe('relic_apply_suggestions', () => {
     expect(await readFile(target, 'utf8')).toBe(replacement);
   });
 
+  test('accepts multiline notebook Source edits without changing other tokens', async () => {
+    const target = join(scratch, 'data.ipynb');
+    const original =
+      '{"nbformat":4,"cells":[{"cell_type":"code","id":"cell-1","source":["alpha","beta"],"metadata":{"tag":"keep"},"outputs":[{"output_type":"display_data","data":{"application/json":9007199254740993}}]}],"metadata":{"owner":"keep"}}';
+    const replacement = '[\n    "ALPHA",\n    "beta"\n  ]';
+    await writeFile(target, original);
+    await addSuggestion('chosen', '["alpha","beta"]', replacement);
+    const args = {
+      path: target,
+      accept: ['chosen'],
+      allow_source_mismatch: true,
+    };
+    const preview = await call(args);
+    expect(preview.isError).toBe(false);
+    expect(await readFile(target, 'utf8')).toBe(original);
+    const result = await call({ ...args, write: true });
+    expect(result.isError).toBe(false);
+    expect(await readFile(target, 'utf8')).toBe(
+      original.replace('["alpha","beta"]', replacement)
+    );
+  });
+
   test.each([
     [
       'a final bare CSV row',
@@ -585,6 +607,62 @@ describe('relic_apply_suggestions', () => {
       'notebook_outputs',
     ],
     [
+      'a large notebook output number changed without changing its rounded JS value',
+      'data.ipynb',
+      '{"nbformat":4,"cells":[{"cell_type":"code","source":["alpha"],"outputs":[{"output_type":"display_data","data":{"application/json":9007199254740992}}]}]}',
+      '9007199254740992',
+      '9007199254740993',
+      'notebook_outputs',
+    ],
+    [
+      'notebook root metadata',
+      'data.ipynb',
+      '{"nbformat":4,"metadata":{"tag":"root"},"cells":[{"cell_type":"raw","source":["alpha"]}]}',
+      '{"tag":"root"}',
+      'null',
+      'notebook_structure',
+    ],
+    [
+      'notebook cell metadata',
+      'data.ipynb',
+      '{"nbformat":4,"cells":[{"cell_type":"raw","source":["alpha"],"metadata":{"tag":"cell"}}]}',
+      '{"tag":"cell"}',
+      'null',
+      'notebook_structure',
+    ],
+    [
+      'a notebook cell id',
+      'data.ipynb',
+      '{"nbformat":4,"cells":[{"cell_type":"raw","id":"cell-1","source":["alpha"]}]}',
+      'cell-1',
+      'cell-2',
+      'notebook_structure',
+    ],
+    [
+      'notebook cell attachments',
+      'data.ipynb',
+      '{"nbformat":4,"cells":[{"cell_type":"markdown","source":["alpha"],"attachments":{"file":{"text/plain":"before"}}}]}',
+      'before',
+      'after',
+      'notebook_structure',
+    ],
+    [
+      'a shadowed notebook source value',
+      'data.ipynb',
+      '{"nbformat":4,"cells":[{"cell_type":"raw","source":["hidden"],"source":["alpha"]}]}',
+      'hidden',
+      'changed',
+      'notebook_structure',
+    ],
+    [
+      'notebook formatting outside cell sources',
+      'data.ipynb',
+      '{"nbformat":4,"cells":[{"cell_type":"raw","source":["alpha"],"metadata":{}}]}',
+      '"metadata":{}',
+      '"metadata": {}',
+      'notebook_structure',
+    ],
+    [
       'a changed SRT timing',
       'data.srt',
       '1\n00:00:01,000 --> 00:00:02,000\nalpha\n',
@@ -632,6 +710,14 @@ describe('relic_apply_suggestions', () => {
       '00:00:01,000',
       'subtitle_timings',
     ],
+    [
+      'a new raw VTT cue-text timing separator',
+      'data.vtt',
+      'WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nalpha\nomega\n',
+      'alpha',
+      'alpha --> extra',
+      'subtitle_cues',
+    ],
   ])(
     'refuses %s before both preview and write',
     async (_, filename, original, exact, replacement, check) => {
@@ -654,6 +740,33 @@ describe('relic_apply_suggestions', () => {
       }
     }
   );
+
+  test('allows existing VTT cue arrows but refuses moving one into new text', async () => {
+    const target = join(scratch, 'data.vtt');
+    const original = 'WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nx-->y\nbeta\n';
+    await writeFile(target, original);
+    await addSuggestion('safe', 'beta', 'BETA');
+    await addSuggestion('remove', 'x-->y', 'xy');
+    await addSuggestion('add', 'beta', 'be-->ta');
+    const args = { path: target, allow_source_mismatch: true };
+    const safe = await call({ ...args, accept: ['safe'] });
+    expect(safe.isError).toBe(false);
+    const removed = await call({ ...args, accept: ['remove'] });
+    expect(removed.isError).toBe(false);
+    for (const write of [false, true]) {
+      const result = await call({
+        ...args,
+        accept: ['remove', 'add'],
+        write,
+      });
+      expect(result.structuredContent).toMatchObject({
+        code: 'suggestion_breaks_structure',
+        check: 'subtitle_cues',
+      });
+      expect(result.isError).toBe(true);
+      expect(await readFile(target, 'utf8')).toBe(original);
+    }
+  });
 
   test('refuses a delimiter change caused only by the combined suggestions', async () => {
     const target = join(scratch, 'data.csv');
