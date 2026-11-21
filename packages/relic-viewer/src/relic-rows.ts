@@ -42,9 +42,13 @@ export function dashboardPreview(renderer: string | undefined): {
 } {
   switch (renderer) {
     case 'markdown':
+    case 'document':
+    case 'sandboxed-document':
       return { kind: 'document', label: 'Document' };
     case 'notebook':
       return { kind: 'document', label: 'Notebook' };
+    case 'spreadsheet':
+      return { kind: 'document', label: 'Spreadsheet' };
     case 'code':
       return { kind: 'code', label: 'Code' };
     case 'image':

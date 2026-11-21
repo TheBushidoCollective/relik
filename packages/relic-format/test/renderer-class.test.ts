@@ -29,10 +29,14 @@ describe('the taxonomy', () => {
 
   test('keeps OTIO outside the telemetry renderable wedge', () => {
     expect(isRenderable('otio')).toBe(false);
+    expect(isRenderable('document')).toBe(true);
+    expect(isRenderable('spreadsheet')).toBe(true);
+    expect(privilegeTier('document')).toBe(3);
+    expect(privilegeTier('spreadsheet')).toBe(2);
   });
 
   test('rejects a value outside the taxonomy', () => {
-    expect(isRendererClass('spreadsheet')).toBe(false);
+    expect(isRendererClass('unknown-format')).toBe(false);
     expect(isRendererClass('markdown')).toBe(true);
     expect(isRendererClass('jsx')).toBe(true);
   });

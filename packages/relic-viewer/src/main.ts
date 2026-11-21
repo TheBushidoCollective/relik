@@ -358,6 +358,8 @@ const MARKER_LABELS: Record<RenderRoute, string> = {
   model: 'Shown as a 3D model, no author code',
   pdf: 'Rendered as a document, no author code',
   notebook: 'Rendered as a notebook, no author code',
+  'sandboxed-document': 'Rendered as a document, no author code',
+  spreadsheet: 'Shown as a table, no author code',
   'sandboxed-html': 'Runs author code, isolated',
   'sandboxed-jsx': 'Runs author code, isolated',
   download: 'Downloads to your device, no author code',
@@ -2156,6 +2158,15 @@ export function buildCurrentStage(
       break;
     case 'pdf':
       main.appendChild(renderPdfView(view));
+      break;
+    case 'sandboxed-document':
+    case 'spreadsheet':
+      main.appendChild(
+        notice(
+          'The viewer cannot show this file yet. Download it to inspect it.'
+        )
+      );
+      main.appendChild(renderDownloadView(view));
       break;
     default:
       main.appendChild(renderDownloadView(view));

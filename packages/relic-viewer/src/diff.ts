@@ -267,6 +267,10 @@ export function diffModeForRoute(route: RenderRoute): DiffMode | undefined {
     case 'sandboxed-html':
     case 'sandboxed-jsx':
       return 'rendered';
+    // Document and spreadsheet comparison is implemented by a later slice.
+    case 'sandboxed-document':
+    case 'spreadsheet':
+      return undefined;
     case 'image':
       return 'image';
     default:
@@ -328,6 +332,10 @@ export function uncomparableClassNoun(route: RenderRoute): string | undefined {
       return 'PDF';
     case 'model':
       return '3D model';
+    case 'sandboxed-document':
+      return 'document';
+    case 'spreadsheet':
+      return 'spreadsheet';
     default:
       return undefined;
   }

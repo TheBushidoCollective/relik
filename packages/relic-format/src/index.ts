@@ -9,6 +9,7 @@
 
 export * from './comments.ts';
 export * from './container.ts';
+export * from './containers.ts';
 export * from './crc32c.ts';
 export * from './decision.ts';
 export * from './email.ts';

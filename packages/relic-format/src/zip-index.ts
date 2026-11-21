@@ -129,6 +129,11 @@ function safeName(raw: string, legacyNames: boolean): string {
   if (!name) return fail('unsafe-name', `Invalid ZIP entry path: ${raw}`);
   return name;
 }
+/** Normalize a ZIP member name or throw when it cannot be used safely. */
+export function assertSafeZipPath(raw: string): string {
+  return safeName(raw, false);
+}
+
 function checkExtra(bytes: Uint8Array, label: string): void {
   let pos = 0;
   while (pos < bytes.length) {

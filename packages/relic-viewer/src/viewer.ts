@@ -25,7 +25,8 @@ import {
   INSECURE_ADVICE,
   INSECURE_DETAIL,
   INSECURE_TITLE,
-  isOtiozSource,
+  zipContainerKind,
+  zipContainerKindSync,
   KeyIdPresentError,
   leastPrivileged,
   LOAD_OPENING,
@@ -192,6 +193,8 @@ export type RenderRoute =
   | 'model'
   | 'pdf'
   | 'notebook'
+  | 'spreadsheet'
+  | 'sandboxed-document'
   | 'download';
 
 export type DeadAction =
@@ -1258,6 +1261,7 @@ export interface RouteDecision {
    * when it compiles. Routing compiles once, so render posts this text as is.
    */
   readonly componentModule?: string | undefined;
+  readonly documentKind?: 'docx' | 'epub';
 }
 
 /** Content-derived facts only, never server-supplied renderer metadata. */
@@ -1267,6 +1271,7 @@ export interface RouteSample {
   readonly component: boolean;
   /** Set when the notebook's whole text parsed as nbformat 4. */
   readonly notebook?: boolean;
+  readonly containerKind?: 'docx' | 'xlsx' | 'epub';
   /** The transpiled component, when the caller has already compiled it. */
   readonly componentModule?: string | undefined;
 }
@@ -1284,6 +1289,7 @@ export async function routeContent(
 ): Promise<ContentRouteDecision> {
   const head = content.head;
   let sniffed = sniffContentClass(head);
+  let containerKind: 'docx' | 'xlsx' | 'epub' | undefined;
   const zip =
     head.length >= 4 &&
     head[0] === 0x50 &&
@@ -1292,7 +1298,7 @@ export async function routeContent(
     head[3] === 0x04;
   if (zip) {
     let failure: ContentStoreError | undefined;
-    const isOtio = await isOtiozSource({
+    const kind = await zipContainerKind({
       size: content.size,
       async read(start, end) {
         try {
@@ -1304,7 +1310,14 @@ export async function routeContent(
       },
     });
     if (failure) throw failure;
-    sniffed = isOtio ? 'otio' : 'archive';
+    containerKind =
+      kind === 'docx' || kind === 'xlsx' || kind === 'epub' ? kind : undefined;
+    sniffed =
+      kind === 'docx' || kind === 'epub'
+        ? 'document'
+        : kind === 'xlsx'
+          ? 'spreadsheet'
+          : kind;
   }
 
   // A notebook is decided from its whole text, which is read once here the
@@ -1357,7 +1370,25 @@ export async function routeContent(
         component,
         componentModule,
         notebook,
+        containerKind,
       });
+  if (
+    decision.route === 'sandboxed-document' &&
+    content.size > 64 * 1024 * 1024
+  ) {
+    decision = {
+      route: 'download',
+      notice: 'This document is too large to show here.',
+    };
+  } else if (
+    decision.route === 'spreadsheet' &&
+    content.size > 100 * 1024 * 1024
+  ) {
+    decision = {
+      route: 'download',
+      notice: 'This spreadsheet is too large to show here.',
+    };
+  }
   if (
     !zip &&
     decision.route === 'otio' &&
@@ -1443,6 +1474,44 @@ export async function routeFor(
       (!declaredModel || candidate === declaredModel)
     ) {
       return { route: 'model', notice: undefined };
+    }
+    return {
+      route: 'download',
+      notice:
+        'The file name or type does not match its contents. Download it to inspect it.',
+    };
+  }
+
+  // Office and ebook containers never fall back to text or active HTML.
+  if (
+    declared === 'document' ||
+    declared === 'spreadsheet' ||
+    sniffed === 'document' ||
+    sniffed === 'spreadsheet'
+  ) {
+    const nameSilent =
+      (mime === '' || mime === 'application/octet-stream') &&
+      deriveRendererClass(new Uint8Array([0]), filename) === 'binary';
+    if (
+      (sniffed === 'document' || sniffed === 'spreadsheet') &&
+      (declared === sniffed || nameSilent)
+    ) {
+      const kind =
+        content instanceof Uint8Array
+          ? zipContainerKindSync(content)
+          : content.containerKind;
+      const extension = filenameExtension(filename);
+      const notice =
+        extension === 'epub' && kind === 'docx'
+          ? 'This file is named like an ebook but its contents are a Word document.'
+          : extension === 'docx' && kind === 'epub'
+            ? 'This file is named like a Word document but its contents are an ebook.'
+            : undefined;
+      return {
+        route: routeForClass(sniffed),
+        notice,
+        ...(kind === 'docx' || kind === 'epub' ? { documentKind: kind } : {}),
+      };
     }
     return {
       route: 'download',
@@ -1547,6 +1616,10 @@ export function routeForClass(
       return 'pdf';
     case 'notebook':
       return 'notebook';
+    case 'document':
+      return 'sandboxed-document';
+    case 'spreadsheet':
+      return 'spreadsheet';
     default:
       // Archives and arbitrary binaries are download-only in the
       // first release. The framing keeps range decryption available so this
@@ -1567,6 +1640,16 @@ function classFromMimetype(mimetype: string, filename: string): RendererClass {
   if (type.startsWith('video/') || type.startsWith('audio/')) return 'media';
   if (type === 'application/pdf') return 'pdf';
   if (type === 'application/x-ipynb+json') return 'notebook';
+  if (
+    type === 'application/epub+zip' ||
+    type ===
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+  )
+    return 'document';
+  if (
+    type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  )
+    return 'spreadsheet';
   if (type === 'application/x-subrip') return 'code';
   // relic-mcp before the notebook class declared a notebook as text/plain.
   if (
@@ -1612,6 +1695,10 @@ function describe(cls: RendererClass | 'folder'): string {
       return 'a PDF document';
     case 'notebook':
       return 'a Jupyter notebook';
+    case 'document':
+      return 'a document';
+    case 'spreadsheet':
+      return 'a spreadsheet';
     case 'image':
       return 'an image';
     case 'media':
