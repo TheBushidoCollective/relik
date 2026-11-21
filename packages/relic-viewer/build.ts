@@ -290,7 +290,11 @@ export async function buildViewer(options?: {
     process.exit(1);
   }
   // Model parsing and WebGL are loaded only when a 3D relic is opened.
-  for (const entry of ['model-view', 'model-parse-worker']) {
+  for (const entry of [
+    'model-view',
+    'model-parse-worker',
+    'spreadsheet-parse-worker',
+  ]) {
     const modelBuild = await Bun.build({
       entrypoints: [`${pkgDir}src/${entry}.ts`],
       outdir: out,

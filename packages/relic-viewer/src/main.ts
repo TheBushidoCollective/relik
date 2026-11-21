@@ -2159,8 +2159,33 @@ export function buildCurrentStage(
     case 'pdf':
       main.appendChild(renderPdfView(view));
       break;
+    case 'spreadsheet': {
+      const root = document.createElement('section');
+      root.textContent = 'Loading spreadsheet';
+      main.appendChild(root);
+      void import('./spreadsheet-view.ts')
+        .then(({ renderSpreadsheetRoute }) => {
+          if (root.isConnected)
+            renderSpreadsheetRoute(root, view, () => downloadContent(view));
+        })
+        .catch(() => {
+          if (!root.isConnected) return;
+          root.replaceChildren(
+            notice(
+              'This spreadsheet could not be shown. Download it to inspect it.'
+            ),
+            renderDownloadView(view)
+          );
+          root.dispatchEvent(
+            new CustomEvent('relic:render-state', {
+              bubbles: true,
+              detail: 'error',
+            })
+          );
+        });
+      break;
+    }
     case 'sandboxed-document':
-    case 'spreadsheet':
       main.appendChild(
         notice(
           'The viewer cannot show this file yet. Download it to inspect it.'
@@ -11444,6 +11469,7 @@ export function trackRenderState(
       }
       break;
     }
+    case 'spreadsheet':
     case 'notebook':
     case 'model': {
       stage.addEventListener('relic:render-state', (event: Event) => {

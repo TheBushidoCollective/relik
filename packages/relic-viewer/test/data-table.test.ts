@@ -265,6 +265,57 @@ async function browserCases(
     passed.push(name);
   };
 
+  await check(
+    'inspector shows spreadsheet cell type and formula without HTML',
+    () => {
+      const root = document.createElement('section');
+      document.body.append(root);
+      const result = api.parseTable('header\n42');
+      const formula = '<img src=x onerror=evil()>';
+      if (!result.ok || result.table === undefined)
+        throw new Error('fixture refused');
+      const part = api.mountDataTable(
+        root,
+        {
+          ...api.csvTableSource(result.table),
+          sheet: 'Sheet 2',
+          detail: () => ({
+            type: 'number',
+            formula,
+            sharedFrom: 'A1',
+          }),
+        },
+        { filename: 'book.xlsx' }
+      );
+      try {
+        part.reveal({ kind: 'cell', row: 2, col: 1, sheet: 'Sheet 2' });
+        truth(
+          root.querySelector('.dt-sub')?.textContent?.includes('number'),
+          'cell type'
+        );
+        truth(
+          root
+            .querySelector('.dt-value')
+            ?.textContent?.includes(`Shared master formula: ${formula}`),
+          'formula text'
+        );
+        truth(
+          root
+            .querySelector('.dt-value')
+            ?.textContent?.includes('Shared from: A1'),
+          'shared formula master'
+        );
+        truth(
+          !root.querySelector('.dt-cellbar img'),
+          'formula rendered as text'
+        );
+      } finally {
+        part.dispose();
+        root.remove();
+      }
+    }
+  );
+
   await check('C14 is drawn on its cell and the mark is outlined', () => {
     const f = mount(source);
     try {
@@ -612,7 +663,7 @@ describe('table view in the browser', () => {
           clearTimeout(timer);
         }
         if (result.error) throw new Error(result.error);
-        expect(result.passed).toHaveLength(10);
+        expect(result.passed).toHaveLength(11);
       } finally {
         browser.kill('SIGKILL');
         if (browser.exitCode === null && browser.signalCode === null) {
