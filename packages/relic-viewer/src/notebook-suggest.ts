@@ -42,7 +42,8 @@ export function notebookAcceptsSelection(
   node: Node
 ): true | SuggestRefusal {
   const element = node.nodeType === 1 ? (node as Element) : node.parentElement;
-  const target = element?.closest(
+  const segment = element?.closest('[data-seg]');
+  const target = segment?.closest(
     '.nb-box > article.prose, .nb-box > pre.nb-src'
   );
   return target && root.contains(target) ? true : notebookNotEditable();
@@ -84,6 +85,10 @@ export function notebookSuggestionSurface(
 ): SuggestionSurface {
   const kinds = new Map<number, SuggestBlockKind>();
   const allowed = new Set<number>();
+  const tokens = new Map<
+    number,
+    { readonly start: number; readonly end: number }
+  >();
   let nextBlock = 0;
   return {
     root,
@@ -91,6 +96,7 @@ export function notebookSuggestionSurface(
       const result: SourceSegment[] = [];
       kinds.clear();
       allowed.clear();
+      tokens.clear();
       nextBlock = 0;
       for (const cell of notebook.cells) {
         const box = root.querySelector<HTMLElement>(
@@ -111,6 +117,8 @@ export function notebookSuggestionSurface(
             block = nextBlock++;
             tokenBlocks.set(key, block);
             kinds.set(block, `nb-${cell.kind}` as SuggestBlockKind);
+            const range = cell.sourceTokens[token];
+            if (range) tokens.set(block, range);
             allowed.add(block);
           }
           return block;
