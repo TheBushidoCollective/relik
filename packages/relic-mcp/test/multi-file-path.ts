@@ -75,6 +75,8 @@ await import('./multi-file-stages/markdown-links.ts');
 await import('./multi-file-stages/html-entry.ts');
 await import('./multi-file-stages/folder-publish.ts');
 await import('./multi-file-stages/zip-publish.ts');
+await import('./multi-file-stages/browser-zip.ts');
+await import('./multi-file-stages/browser-folder.ts');
 await import('./multi-file-stages/private-publish.ts');
 await import('./multi-file-stages/private-rekey.ts');
 await import('./multi-file-stages/private-folder-e2e.ts');

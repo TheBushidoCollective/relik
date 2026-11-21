@@ -95,7 +95,8 @@ export function pickFile(open: (dropped: DroppedFiles) => void): void {
     const file = input.files?.[0];
     remove();
     // A folder cannot be chosen through this input, so nothing here is one.
-    if (file !== undefined) open({ files: [file], isFolder: false });
+    if (file !== undefined)
+      open({ files: [file], isFolder: false, entries: [] });
   });
   input.addEventListener('cancel', remove);
   // In the document, because some browsers will not open a chooser for an

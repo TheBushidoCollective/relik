@@ -10,6 +10,9 @@
  */
 
 import { MAX_TITLE_CHARS, normalizeTitle } from '@relic/format';
+import { prepareBrowserDirectory } from './browser-folder-source.ts';
+import type { BrowserFolder } from './browser-folder-preflight.ts';
+import { prepareBrowserZip } from './browser-zip-source.ts';
 import { droppedFrom } from './drop-anywhere.ts';
 import {
   BROWSER_PUBLISH_LIMIT_BYTES,
@@ -19,6 +22,7 @@ import {
   type PublishResult,
   type PublishSource,
   publishFile,
+  publishFolder,
 } from './publish.ts';
 import { pickFile } from './upload-button.ts';
 import { formatBytes } from './viewer.ts';
@@ -187,7 +191,11 @@ function loadStylesheet(): Promise<void> {
 
 interface Publisher {
   readonly idle: (problem?: string) => void;
-  readonly review: (files: File[], isFolder: boolean) => void;
+  readonly review: (
+    files: File[],
+    isFolder: boolean,
+    entries?: FileSystemEntry[]
+  ) => void;
   readonly isBusy: () => boolean;
 }
 
@@ -234,6 +242,14 @@ function createPublisher(
     input.className = 'pub-hidden';
     input.tabIndex = -1;
     input.setAttribute('aria-hidden', 'true');
+    const folderInput = document.createElement('input');
+    folderInput.type = 'file';
+    folderInput.className = 'pub-hidden';
+    folderInput.setAttribute('webkitdirectory', '');
+    folderInput.multiple = true;
+    folderInput.addEventListener('change', () =>
+      review([...(folderInput.files ?? [])], true)
+    );
 
     const zone = el('div', 'pub-drop');
     zone.tabIndex = 0;
@@ -244,11 +260,11 @@ function createPublisher(
     mark.classList.add('pub-drop-icon');
     zone.append(
       mark,
-      el('h1', 'pub-drop-title', 'Drop a file to publish it'),
+      el('h1', 'pub-drop-title', 'Drop a file or folder to publish it'),
       el(
         'p',
         'pub-drop-note',
-        `or click to choose one. One file, up to ${formatBytes(BROWSER_PUBLISH_LIMIT_BYTES)}.`
+        `or click to choose a file. Up to ${formatBytes(BROWSER_PUBLISH_LIMIT_BYTES)}.`
       )
     );
 
@@ -284,7 +300,7 @@ function createPublisher(
       zone.classList.remove('over');
       if (event.dataTransfer === null) return;
       const dropped = droppedFrom(event.dataTransfer);
-      review(dropped.files, dropped.isFolder);
+      review(dropped.files, dropped.isFolder, dropped.entries);
     });
 
     const nodes: Node[] = [];
@@ -293,15 +309,61 @@ function createPublisher(
       failure.setAttribute('role', 'alert');
       nodes.push(failure);
     }
-    nodes.push(zone, input, terms());
+    nodes.push(
+      zone,
+      input,
+      folderInput,
+      action('Choose a folder', ICONS.upload, () => folderInput.click()),
+      terms()
+    );
     show(...nodes);
   };
 
   /** The step between choosing a file and sending anything: what will cross, and the title. */
-  const review = (files: File[], isFolder: boolean): void => {
+  const review = (
+    files: File[],
+    isFolder: boolean,
+    entries: FileSystemEntry[] = []
+  ): void => {
     if (busy) return;
-    if (isFolder) {
-      idle('A folder cannot be published. Make an archive and publish that.');
+    if (isFolder || (files.length === 1 && /\.zip$/i.test(files[0]!.name))) {
+      busy = true;
+      show(el('p', 'pub-meta', 'Reading files for review.'));
+      const file = files[0];
+      const prepared = isFolder
+        ? prepareBrowserDirectory(entries, files)
+        : prepareBrowserZip(file!);
+      void prepared.then(
+        (folder) => {
+          busy = false;
+          reviewFolder(
+            folder,
+            isFolder ? undefined : file,
+            isFolder && entries.length > 0
+          );
+        },
+        (error: unknown) => {
+          busy = false;
+          const message =
+            error instanceof Error
+              ? error.message
+              : 'The files could not be read.';
+          if (isFolder || !file) {
+            idle(message);
+            return;
+          }
+          const card = el('div', 'pub-card');
+          card.append(
+            el('h1', 'pub-card-title', 'Could not expand ZIP'),
+            el('p', 'pub-help', message),
+            action('Publish as one file instead', ICONS.upload, () =>
+              reviewFile(file)
+            ),
+            action('Cancel', ICONS.back, () => (onClose ? onClose() : idle()))
+          );
+          show(card);
+        }
+      );
       return;
     }
     if (files.length !== 1) {
@@ -312,8 +374,10 @@ function createPublisher(
       );
       return;
     }
-    const file = files[0] as File;
+    reviewFile(files[0]!);
+  };
 
+  const reviewFile = (file: File): void => {
     const card = el('div', 'pub-card');
     card.appendChild(el('h1', 'pub-card-title', file.name));
     card.appendChild(el('p', 'pub-meta', formatBytes(file.size)));
@@ -374,12 +438,185 @@ function createPublisher(
     field.select();
   };
 
-  const done = (result: PublishResult): void => {
+  const omissionText = (folder: BrowserFolder): string => {
+    const counts = new Map<string, number>();
+    for (const omission of folder.leftOut)
+      counts.set(omission.reason, (counts.get(omission.reason) ?? 0) + 1);
+    return counts.size
+      ? `Left out ${folder.leftOut.length}: ${[...counts].map(([reason, count]) => `${reason.replaceAll('_', ' ')}: ${count}`).join(', ')}.`
+      : 'Nothing left out.';
+  };
+
+  const reviewFolder = (
+    folder: BrowserFolder,
+    zip?: File,
+    dropped = false
+  ): void => {
+    const card = el('div', 'pub-card');
+    card.append(
+      el('h1', 'pub-card-title', folder.name),
+      el(
+        'p',
+        'pub-meta',
+        `Folder: ${folder.entries.length} files, ${formatBytes(folder.totalBytes)}.`
+      ),
+      el('p', 'pub-help', omissionText(folder))
+    );
+    const firstPath = folder.entries[folder.defaultIndex]!.path;
+    if (firstPath.length > 90) {
+      const first = el('details', 'pub-help pub-first-path');
+      const summary = el(
+        'summary',
+        '',
+        `Opens first: ${firstPath.slice(0, 42)}…${firstPath.slice(-32)}`
+      );
+      summary.title = firstPath;
+      first.append(summary, el('p', '', firstPath));
+      card.insertBefore(first, card.children[2] ?? null);
+    } else {
+      card.insertBefore(
+        el('p', 'pub-help', `Opens first: ${firstPath}`),
+        card.children[2] ?? null
+      );
+    }
+    if (folder.leftOut.length) {
+      const omitted = el('details', 'pub-help');
+      omitted.appendChild(el('summary', '', 'See what was left out'));
+      const omittedList = el('ul', '');
+      for (const item of folder.leftOut)
+        omittedList.appendChild(
+          el('li', '', `${item.path}: ${item.reason.replaceAll('_', ' ')}`)
+        );
+      omitted.appendChild(omittedList);
+      card.appendChild(omitted);
+    }
+    if (folder.source === 'directory')
+      card.appendChild(
+        el(
+          'p',
+          'pub-help',
+          'Ignore rules were applied by this page, not by Git.'
+        )
+      );
+    if (dropped)
+      card.appendChild(
+        el(
+          'p',
+          'pub-help',
+          'Your browser does not tell this page about shortcuts or symbolic links, so check the list before you publish.'
+        )
+      );
+    const list = el('div', 'pub-file-list');
+    list.setAttribute('role', 'list');
+    list.setAttribute('aria-label', 'Files to publish');
+    list.tabIndex = 0;
+    const rowHeight = 32;
+    list.style.height = `min(14rem, ${folder.entries.length * rowHeight}px)`;
+    const paint = (): void => {
+      const first = Math.max(0, Math.floor(list.scrollTop / rowHeight) - 2);
+      const last = Math.min(folder.entries.length, first + 14);
+      const before = el('div', '');
+      before.style.height = `${first * rowHeight}px`;
+      const after = el('div', '');
+      after.style.height = `${(folder.entries.length - last) * rowHeight}px`;
+      const rows = folder.entries.slice(first, last).map((entry, index) => {
+        const row = el(
+          'div',
+          'pub-file-row',
+          `${entry.path} (${formatBytes(entry.bytes.size)})`
+        );
+        row.title = entry.path;
+        row.setAttribute('role', 'listitem');
+        row.setAttribute('aria-setsize', String(folder.entries.length));
+        row.setAttribute('aria-posinset', String(first + index + 1));
+        return row;
+      });
+      list.replaceChildren(before, ...rows, after);
+    };
+    list.addEventListener('scroll', paint);
+    paint();
+    card.appendChild(list);
+    const label = el('label', 'pub-label', 'Link preview title');
+    const field = el('input', 'pub-title');
+    field.type = 'text';
+    field.maxLength = MAX_TITLE_CHARS;
+    field.value = normalizeTitle(folder.name);
+    label.appendChild(field);
+    card.append(
+      label,
+      el(
+        'p',
+        'pub-help',
+        'The title is stored in the clear. Clear it to publish without one.'
+      )
+    );
+    const row = el('div', 'pub-row');
+    const go = action(
+      'Publish',
+      ICONS.upload,
+      () => void startFolder(folder, field.value)
+    );
+    go.classList.add('primary');
+    row.appendChild(go);
+    row.appendChild(
+      action('Cancel', ICONS.back, () => (onClose ? onClose() : idle()))
+    );
+    if (zip)
+      row.appendChild(
+        action('Publish as one file instead', ICONS.upload, () =>
+          reviewFile(zip)
+        )
+      );
+    card.appendChild(row);
+    if (onClose !== undefined) card.appendChild(terms());
+    show(card);
+    field.focus();
+  };
+
+  const startFolder = async (
+    folder: BrowserFolder,
+    title: string
+  ): Promise<void> => {
+    if (busy) return;
+    busy = true;
+    const card = el('div', 'pub-card');
+    const label = el('p', 'pub-meta');
+    const meter = el('progress', 'pub-meter');
+    card.append(el('h1', 'pub-card-title', folder.name), label, meter);
+    show(card);
+    try {
+      const result = await publishFolder(folder, { title }, deps, (phase) => {
+        label.textContent = phaseText(phase, folder.name);
+        status.textContent = label.textContent;
+        if (phase.kind === 'uploading' && phase.total > 0) {
+          meter.max = phase.total;
+          meter.value = phase.sent;
+        } else meter.removeAttribute('value');
+      });
+      done(result, folder);
+    } catch (error) {
+      idle(
+        error instanceof Error
+          ? error.message
+          : 'The folder could not be published.'
+      );
+    }
+  };
+
+  const done = (result: PublishResult, folder?: BrowserFolder): void => {
     busy = false;
     status.textContent = 'Published. Your link is ready.';
 
     const card = el('div', 'pub-card');
     card.appendChild(el('h1', 'pub-card-title', 'Published'));
+    if (folder)
+      card.appendChild(
+        el(
+          'p',
+          'pub-meta',
+          `Folder published: ${folder.entries.length} files. ${omissionText(folder)}`
+        )
+      );
     card.appendChild(
       el(
         'p',
@@ -521,7 +758,8 @@ export async function mountPublish(body: HTMLElement): Promise<void> {
  */
 export async function openPublishDialog(
   files: File[],
-  isFolder: boolean
+  isFolder: boolean,
+  entries: FileSystemEntry[] = []
 ): Promise<void> {
   if (document.querySelector('dialog.pub-dialog') !== null) return;
 
@@ -547,5 +785,5 @@ export async function openPublishDialog(
   document.body.appendChild(dialog);
   await loadStylesheet();
   dialog.showModal();
-  publisher.review(files, isFolder);
+  publisher.review(files, isFolder, entries);
 }

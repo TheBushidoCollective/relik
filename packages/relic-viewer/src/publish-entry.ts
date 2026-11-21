@@ -10,7 +10,9 @@ import type { DroppedFiles } from './drop-anywhere.ts';
 
 export function openPublisher(dropped: DroppedFiles): void {
   void import('./publish-view.ts')
-    .then((view) => view.openPublishDialog(dropped.files, dropped.isFolder))
+    .then((view) =>
+      view.openPublishDialog(dropped.files, dropped.isFolder, dropped.entries)
+    )
     .catch((error: unknown) => {
       // Offline, or a deploy replaced the chunk under an open tab. The visitor
       // is left on the page they were on with nothing published.
