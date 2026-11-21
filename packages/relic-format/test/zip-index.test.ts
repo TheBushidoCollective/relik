@@ -201,6 +201,31 @@ describe('general ZIP index', () => {
       bytes: new TextEncoder().encode('hello'),
     });
   });
+  test('recognizes a suffix-free DOS directory without overriding explicit file types', async () => {
+    const bytes = zip([
+      { name: 'folder', mode: 0o600, dosAttrs: 0x10 },
+      { name: 'folder/child.txt', data: 'child', mode: 0o600 },
+      { name: 'normal.txt', data: 'normal', mode: 0o100644, dosAttrs: 0x10 },
+      { name: 'link', data: 'target', mode: 0o120777, dosAttrs: 0x10 },
+    ]);
+    const result = await indexZip(bytes, limits);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.index.entries.get('folder')?.kind).toBe('directory');
+    expect(result.index.entries.get('folder/child.txt')?.kind).toBe('file');
+    expect(result.index.entries.get('normal.txt')?.kind).toBe('file');
+    expect(result.index.entries.get('link')?.kind).toBe('symlink');
+    expect(await result.index.read('folder/child.txt')).toEqual({
+      ok: true,
+      bytes: new TextEncoder().encode('child'),
+    });
+    for (const name of ['folder', 'link']) {
+      const read = await result.index.read(name);
+      expect(read.ok).toBe(false);
+      if (!read.ok) expect(read.reason).toBe('not-a-file');
+    }
+  });
+
   test('indexes symlinks but refuses reading them', async () => {
     const result = await indexZip(
       zip([{ name: 'link', data: 'target', mode: 0o120777 }]),

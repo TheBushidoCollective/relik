@@ -440,7 +440,9 @@ async function indexZipInternal(
       const kind =
         fileType === 0o120000
           ? 'symlink'
-          : rawName.endsWith('/') || fileType === 0o040000
+          : rawName.endsWith('/') ||
+              fileType === 0o040000 ||
+              (fileType === 0 && (attrs & 0x10) !== 0)
             ? 'directory'
             : 'file';
       if (legacyNames && kind === 'symlink')
@@ -545,7 +547,7 @@ async function indexZipInternal(
       entries.set(name, {
         name,
         rawName,
-        isDirectory: rawName.endsWith('/') || rawName.endsWith('\\'),
+        isDirectory: kind === 'directory' || rawName.endsWith('\\'),
         kind,
         method,
         compressedSize,
