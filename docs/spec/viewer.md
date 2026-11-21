@@ -131,7 +131,7 @@ Redirects and rewrites performed by third parties, including link shorteners and
 
 `ipynb` is class `notebook`, at privilege tier 2, and it renders on the viewing origin. A notebook takes the `notebook` route only when its whole text parses as nbformat 4: an object whose `nbformat` is 4 and whose `cells` is an array. Any other `.ipynb` is text, and the disagreement rule in 1.3 shows it as text with a notice that says why. A notebook's whole text is read up to 50 MiB. Over that it is never read, and it is shown as text with the notice "This notebook is too large to show as a notebook, so its text is shown."
 
-DOCX and EPUB use the `document` class, and XLSX uses `spreadsheet`. Their container routes currently offer a download with a notice until their renderers land. A DOCX or EPUB above 64 MiB, or XLSX above 100 MiB, downloads rather than rendering.
+DOCX and EPUB use the `document` class, and XLSX uses `spreadsheet`. EPUB renders in the document frame; DOCX and XLSX offer a download until their renderers land. A DOCX or EPUB above 64 MiB, or XLSX above 100 MiB, downloads rather than rendering.
 
 The views mount into a root the route creates. The source view is drawn into that root first, so the file is never blank. It stays in place while the view loads, when the view cannot show the file, and when Suggesting switches the reader to Source. A view reports its marks and selections as the anchors in `spec/format.md` 3.13. A mark a view cannot place is reported as unplaceable on the thread, and is never painted on something else.
 
@@ -270,9 +270,11 @@ The interactive parser admits at most 16 MiB, 250,000 triangles, 500,000 source 
 
 ### 3.8 Document frame plumbing
 
-Word and EPUB files currently offer an immediate download. Their renderer modules are placeholders, and opening a document does not extract its entries or create a render frame.
+Word files offer an immediate download; the Word renderer is a placeholder. EPUB files use the document frame.
 
-The inactive document-frame plumbing accepts a format-specific selector that identifies the required parts and every XML part independently of file names. The selector must scan package metadata before parsing it. The route checks the ZIP and scans each selected XML part before transferring it, together with first-party renderer text, to the opaque frame. A failed render, timeout, or stage replacement disposes the frame and its pending payload. Enabling a renderer requires its real selector, renderer, and affected-path proof.
+The document route uses a format-specific selector to identify required parts and XML parts independently of file names. The selector scans package metadata before parsing; the route checks the ZIP and scans each selected XML part before transferring it and first-party renderer text to the opaque frame. A failed render, timeout, or stage replacement disposes the frame and its pending payload.
+
+The EPUB package reader rejects protected books before a frame is created. Rights and LCP metadata, or encrypted resources other than obfuscated fonts, produce a DRM-specific download card. Obfuscated fonts are omitted. The frame renders the linear spine followed by non-linear items, with contents navigation, chapter position and text-size controls. A page label is shown only when supplied by the book. Author markup is rebuilt from an allowlist and local CSS resources are rewritten inside the frame. The Word renderer remains a placeholder.
 
 ## 4. The sandbox boundary
 
