@@ -69,6 +69,12 @@ test('controller uses the registered structured suggestion surface', async () =>
         entries:()=>[], displayName:()=>null, refresh:async()=>{}, readCurrentVersion:async()=>1, repaint(){}, signIn(){}, open(){} });
       cueEditor.setSuggesting(true);
       if (!cueEditor.suggesting) throw Error('cue surface could not enter suggesting');
+      const time = cueOwner.querySelector('.cue-time').firstChild;
+      const timeRange = document.createRange(); timeRange.selectNodeContents(time);
+      sel.removeAllRanges(); sel.addRange(timeRange);
+      const invalid = new InputEvent('beforeinput',{bubbles:true,cancelable:true,inputType:'insertText',data:'x'});
+      time.parentElement.dispatchEvent(invalid);
+      if (!invalid.defaultPrevented || cueEditor.draftOpen) throw Error('cue timing was editable');
       const cueText = cueOwner.querySelector('strong [data-seg]').firstChild;
       const cueRange = document.createRange(); cueRange.selectNodeContents(cueText);
       sel.removeAllRanges(); sel.addRange(cueRange);

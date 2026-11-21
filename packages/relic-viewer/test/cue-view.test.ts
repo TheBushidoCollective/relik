@@ -448,6 +448,13 @@ async function browserCases(
     const text = rowAt(root, 1).querySelector('.cue-text')?.textContent ?? '';
     truth(text.includes('[U+202E]'), 'escape shown');
     truth(!text.includes('\u202e'), 'raw control gone');
+    eq(
+      rowAt(root, 1)
+        .querySelector('.cue-content')
+        ?.getAttribute('contenteditable'),
+      'false',
+      'rewritten text cannot be edited'
+    );
     handle.dispose();
     root.remove();
   });

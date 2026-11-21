@@ -339,6 +339,29 @@ function drawCues(mount: StructuredMount, file: SubtitleFile): StructuredPart {
       for (const draw of redraw) draw();
     },
   });
+  list.addEventListener(
+    'beforeinput',
+    (event) => {
+      const selection = doc.getSelection();
+      const anchor = selection?.anchorNode;
+      const focus = selection?.focusNode;
+      const start = (
+        anchor?.nodeType === 1 ? (anchor as Element) : anchor?.parentElement
+      )?.closest('.cue-content');
+      const end = (
+        focus?.nodeType === 1 ? (focus as Element) : focus?.parentElement
+      )?.closest('.cue-content');
+      if (
+        !start ||
+        start !== end ||
+        start.getAttribute('contenteditable') === 'false'
+      ) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      }
+    },
+    { capture: true, signal }
+  );
 
   const visibleRows = (): HTMLLIElement[] =>
     allRows.filter((row) => !row.hidden);
