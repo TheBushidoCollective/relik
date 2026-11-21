@@ -198,6 +198,21 @@ export async function buildViewer(options?: {
   await mkdir(out, { recursive: true });
   const mediabunny = await readMediabunnyDistribution();
 
+  // Build renderer code separately so the parent can transfer it as text.
+  const frameModules = await Bun.build({
+    entrypoints: [`${pkgDir}src/frame-docx.ts`, `${pkgDir}src/frame-epub.ts`],
+    outdir: `${pkgDir}dist-frame`,
+    naming: '[name].frame.js',
+    target: 'browser',
+    format: 'esm',
+    minify: true,
+    splitting: false,
+  });
+  if (!frameModules.success) {
+    for (const log of frameModules.logs) console.error(log);
+    throw new Error('Frame module build failed');
+  }
+
   // Two builds here, because exactly one entrypoint wants code splitting and the
   // others must not have it. `main.ts` dynamically imports the PDF renderer,
   // and splitting is what keeps that 429 KB out of the app shell.

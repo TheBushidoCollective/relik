@@ -92,6 +92,11 @@ import {
   decorateDecisionControl,
   tallyFromList,
 } from './decisions.ts';
+import {
+  isDocumentStateMessage,
+  type DocumentStateMessage,
+  type RenderDocumentMessage,
+} from './frame-document-protocol.ts';
 import { isFrameScrollMessage } from './frame-scroll.ts';
 import {
   type Concealment,
@@ -1514,12 +1519,14 @@ function renderImageView(view: ReadyView): HTMLElement {
  */
 type RenderPayload =
   | { readonly type: 'relic:render'; readonly html: string }
-  | { readonly type: 'relic:render-jsx'; readonly code: string };
+  | { readonly type: 'relic:render-jsx'; readonly code: string }
+  | RenderDocumentMessage;
 interface FrameHandle {
   readonly frame: HTMLIFrameElement;
   /** The confirmation bar for this frame's link requests. Place it above the frame. */
   readonly linkConfirm: HTMLElement;
   readonly linkRemembered: HTMLElement;
+  post(message: object, transfer?: Transferable[]): void;
   /**
    * Mark this frame's own rendered nodes, once the parent holds a diff.
    *
@@ -1560,7 +1567,9 @@ function sandboxFrame(
   view: ReadyView,
   usercontentOrigin: string,
   payload: RenderPayload,
-  onTree?: (tree: TreeNode) => void
+  onTree?: (tree: TreeNode) => void,
+  transfer: Transferable[] = [],
+  onDocumentState?: (state: DocumentStateMessage) => void
 ): FrameHandle {
   const frame = document.createElement('iframe');
   frame.className = 'usercontent-frame';
@@ -1574,9 +1583,9 @@ function sandboxFrame(
   // payload goes once, to the document that announced itself, and nothing goes
   // to a frame whose document changed after its first load.
   const handshake = new FrameHandshake();
-  const post = (message: object): void => {
+  const post = (message: object, transferList: Transferable[] = []): void => {
     if (!handshake.canPost()) return;
-    frame.contentWindow?.postMessage(message, '*');
+    frame.contentWindow?.postMessage(message, '*', transferList);
   };
 
   // A link the frame asks to open is confirmed by the reader, in host chrome,
@@ -1625,7 +1634,7 @@ function sandboxFrame(
     const type = (event.data as { type?: unknown } | null)?.type;
     if (type === 'relic:sandbox-ready') {
       if (!handshake.onReady()) return;
-      post(payload);
+      post(payload, transfer);
       reportVisibility();
       // Announced on this origin too, because marks are posted into the
       // frame and a post that arrives before the frame is listening is
@@ -1635,6 +1644,14 @@ function sandboxFrame(
       frame.dispatchEvent(
         new CustomEvent('relic:frame-ready', { bubbles: true })
       );
+      return;
+    }
+    if (
+      onDocumentState !== undefined &&
+      handshake.canPost() &&
+      isDocumentStateMessage(event.data)
+    ) {
+      onDocumentState(event.data);
       return;
     }
     // The captured tree is tag names, a fixed attribute allowlist, and text.
@@ -1754,6 +1771,7 @@ function sandboxFrame(
     frame,
     linkConfirm: linkBar.element,
     linkRemembered: linkBar.remembered,
+    post,
     annotate: (marks, anchors) =>
       post({ type: 'relic:annotate', marks, anchors }),
     setScroll: (position: ScrollPosition) =>
@@ -2159,7 +2177,57 @@ export function buildCurrentStage(
     case 'pdf':
       main.appendChild(renderPdfView(view));
       break;
-    case 'sandboxed-document':
+    case 'sandboxed-document': {
+      const root = document.createElement('div');
+      root.className = 'doc doc-document';
+      root.textContent = 'Loading document';
+      main.appendChild(root);
+      void import('./document-route.ts')
+        .then(({ mountDocumentRoute }) => {
+          if (!view.documentKind) throw new Error('Missing document kind');
+          return mountDocumentRoute(
+            root,
+            view.content,
+            view.documentKind,
+            (payload, transfer, onState) => {
+              let ready = false;
+              return sandboxFrame(
+                view,
+                usercontentOrigin,
+                payload,
+                () => {
+                  if (ready)
+                    root.dispatchEvent(
+                      new CustomEvent('relic:render-state', {
+                        detail: 'ready',
+                        bubbles: true,
+                      })
+                    );
+                },
+                transfer,
+                (state) => {
+                  if (state.state === 'ready') ready = true;
+                  onState(state);
+                }
+              );
+            },
+            () => downloadContent(view)
+          );
+        })
+        .catch(() => {
+          root.replaceChildren(
+            notice('This document could not be shown.'),
+            renderDownloadView(view)
+          );
+          root.dispatchEvent(
+            new CustomEvent('relic:render-state', {
+              detail: 'error',
+              bubbles: true,
+            })
+          );
+        });
+      break;
+    }
     case 'spreadsheet':
       main.appendChild(
         notice(
@@ -11445,6 +11513,7 @@ export function trackRenderState(
       break;
     }
     case 'notebook':
+    case 'sandboxed-document':
     case 'model': {
       stage.addEventListener('relic:render-state', (event: Event) => {
         const detail = (event as CustomEvent).detail;
