@@ -4,7 +4,13 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Readable, Writable } from 'node:stream';
-import { planStoredZip } from '@relic/format';
+import { deflateRawSync } from 'node:zlib';
+import {
+  writeZipLocalHeader,
+  writeZipCentralRecord,
+  writeZipEnd,
+  type ZipEntryRecord,
+} from '@relic/format';
 import { crc32 } from '@relic/format/zip-index';
 import { createApp } from '@relic/server/src/app.ts';
 import { diskAssets } from '@relic/server/src/assets.ts';
@@ -95,29 +101,46 @@ function workbook(): Uint8Array {
       );
   }
   const encoder = new TextEncoder();
-  const entries = Object.entries(files).map(([name, value]) => ({
-    name,
-    bytes: encoder.encode(value),
-  }));
-  const plan = planStoredZip(
-    entries.map((e) => ({
-      name: e.name,
-      size: e.bytes.length,
-      crc32: crc32(e.bytes),
-    }))
-  );
-  const out = new Uint8Array(plan.totalBytes);
-  let at = 0;
-  entries.forEach((entry, i) => {
-    const header = plan.localHeaders[i]!;
-    out.set(header, at);
-    at += header.length;
-    out.set(entry.bytes, at);
-    at += entry.bytes.length;
+  const entries = Object.entries(files).map(([name, value]) => {
+    const bytes = encoder.encode(value);
+    const compressed = name.startsWith('xl/worksheets/');
+    return {
+      name: encoder.encode(name),
+      bytes,
+      packed: compressed ? deflateRawSync(bytes) : bytes,
+      method: compressed ? (8 as const) : (0 as const),
+    };
   });
-  out.set(plan.centralDirectory, at);
-  at += plan.centralDirectory.length;
-  out.set(plan.end, at);
+  const records: ZipEntryRecord[] = [];
+  let offset = 0;
+  let directorySize = 0;
+  for (const entry of entries) {
+    records.push({
+      nameBytes: entry.name,
+      method: entry.method,
+      crc32: crc32(entry.bytes),
+      compressedSize: entry.packed.length,
+      uncompressedSize: entry.bytes.length,
+      localHeaderOffset: offset,
+    });
+    offset += 30 + entry.name.length + entry.packed.length;
+    directorySize += 46 + entry.name.length;
+  }
+  const out = new Uint8Array(offset + directorySize + 22);
+  let at = 0;
+  for (let i = 0; i < entries.length; i++) {
+    at += writeZipLocalHeader(out, at, records[i]!);
+    out.set(entries[i]!.packed, at);
+    at += entries[i]!.packed.length;
+  }
+  const directoryOffset = at;
+  for (const record of records) at += writeZipCentralRecord(out, at, record);
+  writeZipEnd(out, at, {
+    entryCount: records.length,
+    directorySize,
+    directoryOffset,
+    comment: new Uint8Array(),
+  });
   return out;
 }
 async function callTool(
@@ -174,7 +197,12 @@ try {
     expiresAt: now + 3600000,
   });
   const path = join(scratch, 'sheets.xlsx');
-  await writeFile(path, workbook());
+  const bytes = workbook();
+  assert.ok(
+    bytes.length > 16 * 1024 * 1024,
+    'fixture must exceed the bounded range-read limit'
+  );
+  await writeFile(path, bytes);
   const published = await callTool('relic_publish', {
     path,
     title: 'Sheets',
