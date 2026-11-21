@@ -467,6 +467,10 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
       );
     },
 
+    async createRelic(row: RelicRow): Promise<boolean> {
+      return put(key('relic', `${row.id}.json`), row, '0', customTimeOf(row));
+    },
+
     async markPublished(
       id: string,
       at: number,

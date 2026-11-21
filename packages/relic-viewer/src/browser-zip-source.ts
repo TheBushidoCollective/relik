@@ -1,15 +1,34 @@
-import { indexZip, MAX_ENTRIES } from '@relic/format';
+import { indexZip, MAX_ENTRIES, type ZipRefusal } from '@relic/format';
 import {
+  BROWSER_PUBLISH_LIMIT_BYTES,
   prepareBrowserFolder,
+  PublishSourceFailure,
+  requireBoundedSize,
   type BrowserFolder,
   type BrowserFolderFile,
   type BrowserOmission,
 } from './browser-folder-preflight.ts';
-import { BROWSER_PUBLISH_LIMIT_BYTES } from './publish.ts';
+
+function zipFailure(refusal: ZipRefusal): PublishSourceFailure {
+  return new PublishSourceFailure(
+    'zip_invalid',
+    `${refusal.message} (${refusal.reason}). Publish as one file instead.`,
+    { reason: refusal.reason }
+  );
+}
 
 /** Index the archive through File slices, validating each entry before publication. */
-export async function prepareBrowserZip(file: File): Promise<BrowserFolder> {
-  const fix = 'Publish as one file instead.';
+export async function prepareBrowserZip(
+  file: File,
+  options: { readonly filename?: string; readonly openFirst?: string } = {}
+): Promise<BrowserFolder> {
+  requireBoundedSize(file.size);
+  if (!/\.zip$/i.test(file.name)) {
+    throw new PublishSourceFailure(
+      'zip_not_supported',
+      'Only a selected ZIP file can be expanded into a folder.'
+    );
+  }
   const index = await indexZip(
     {
       size: file.size,
@@ -30,7 +49,7 @@ export async function prepareBrowserZip(file: File): Promise<BrowserFolder> {
       maxTotalBytes: BROWSER_PUBLISH_LIMIT_BYTES,
     }
   );
-  if (!index.ok) throw new Error(`${index.message} (${index.reason}). ${fix}`);
+  if (!index.ok) throw zipFailure(index);
   const files: BrowserFolderFile[] = [];
   const leftOut: BrowserOmission[] = [];
   for (const entry of index.index.entries.values()) {
@@ -54,8 +73,7 @@ export async function prepareBrowserZip(file: File): Promise<BrowserFolder> {
     }
     const read = async (): Promise<Uint8Array> => {
       const result = await index.index.read(entry.name);
-      if (!result.ok)
-        throw new Error(`${result.message} (${result.reason}). ${fix}`);
+      if (!result.ok) throw zipFailure(result);
       return result.bytes;
     };
     files.push({
@@ -68,9 +86,10 @@ export async function prepareBrowserZip(file: File): Promise<BrowserFolder> {
     });
   }
   return prepareBrowserFolder(
-    file.name.replace(/\.zip$/i, ''),
+    options.filename ?? file.name.replace(/\.zip$/i, ''),
     'zip',
     files,
-    leftOut
+    leftOut,
+    options.openFirst
   );
 }

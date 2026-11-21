@@ -55,7 +55,8 @@ export interface ObjectStorage {
     relicId: string,
     contentLength: number,
     validitySeconds: number,
-    now: number
+    now: number,
+    customTime?: number
   ): Promise<SignedUpload>;
   signDownload(
     relicId: string,
@@ -80,7 +81,11 @@ export class MemoryStorage implements ObjectStorage {
     string,
     { bytes: Uint8Array; crc32c: string }
   >();
-  private readonly uploads = new Map<string, { maxBytes: number }>();
+  private readonly uploads = new Map<
+    string,
+    { maxBytes: number; customTime?: number }
+  >();
+  private readonly pendingCustomTimes = new Map<string, number>();
 
   private readonly customTimes = new Map<string, number>();
   constructor(private readonly origin = 'https://storage.invalid') {}
@@ -89,14 +94,25 @@ export class MemoryStorage implements ObjectStorage {
     relicId: string,
     contentLength: number,
     validitySeconds: number,
-    now: number
+    now: number,
+    customTime?: number
   ): Promise<SignedUpload> {
     const token = `${relicId}.${now}`;
-    this.uploads.set(token, { maxBytes: contentLength });
+    this.uploads.set(token, {
+      maxBytes: contentLength,
+      ...(customTime === undefined ? {} : { customTime }),
+    });
+    if (customTime !== undefined)
+      this.pendingCustomTimes.set(relicId, customTime);
     return {
       url: `${this.origin}/upload/${relicId}?token=${token}`,
       method: 'PUT',
-      headers: { 'content-length': String(contentLength) },
+      headers: {
+        'content-length': String(contentLength),
+        ...(customTime === undefined
+          ? {}
+          : { 'x-goog-custom-time': new Date(customTime).toISOString() }),
+      },
       expiresAt: now + validitySeconds * 1000,
       contentLength,
     };
@@ -158,6 +174,8 @@ export class MemoryStorage implements ObjectStorage {
   }
   /** Test seam: stand in for the client's direct-to-storage PUT. Treat bytes as immutable. */
   put(relicId: string, bytes: Uint8Array): void {
+    const customTime = this.pendingCustomTimes.get(relicId);
+    if (customTime !== undefined) this.customTimes.set(relicId, customTime);
     this.objects.set(relicId, {
       bytes,
       crc32c: new Crc32c().update(bytes).base64(),

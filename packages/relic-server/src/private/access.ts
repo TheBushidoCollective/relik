@@ -154,6 +154,7 @@ export async function readableVersions(
   const versions = new Set<number>();
   for (const wrap of await env.store.listWraps(row.id)) {
     if (wrap.recipientKeyId !== recipientKeyId) continue;
+    if (wrap.version > (row.sealedVersion ?? 0)) continue;
     if (isDeleted(row, wrap.version)) continue;
     if ((await env.store.getSeal(row.id, wrap.version)) !== undefined) {
       versions.add(wrap.version);
@@ -177,7 +178,10 @@ export async function requireRead(
   if (isDeleted(row, version)) {
     throw new ProblemError('version_deleted', { version });
   }
-  if ((await env.store.getSeal(row.id, version)) === undefined) {
+  if (
+    version > (row.sealedVersion ?? 0) ||
+    (await env.store.getSeal(row.id, version)) === undefined
+  ) {
     throw new ProblemError('relic_not_yet_published', {
       relic_id: row.id,
       retry_after_seconds: 5,

@@ -20,7 +20,8 @@ export type AttestPurpose =
   | 'delete'
   | 'device_approve'
   | 'device_revoke'
-  | 'recovery_designate';
+  | 'recovery_designate'
+  | 'owner_publish';
 
 export interface SignedStatementJSON {
   readonly kind: StatementKind;

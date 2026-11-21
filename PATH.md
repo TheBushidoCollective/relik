@@ -295,14 +295,24 @@ Success requires these lines in order, then `BROWSER_PUBLISH_PATH_OK`:
 `PUBLISH_STEP_3_PUBLISHED relic_id=<id> key_in_requests=false plaintext_at_rest=false`,
 `PUBLISH_STEP_4_OPENS content=decrypted`,
 `PUBLISH_STEP_5_CLEARED_TITLE filename_sent=false title_stored=false`,
-`PUBLISH_STEP_6_REFUSALS oversize=refused folder=refused grants=0`,
+`PUBLISH_STEP_6_REFUSALS oversize=refused folder=reviewed grants=0`,
 `PUBLISH_STEP_7_DROP_ANYWHERE text_drag=ignored file_drag=curtain dialog=opened new_relic=<id> page_behind=kept`,
 `PUBLISH_STEP_8_REAL_DRAG over_bar=caught over_sandboxed_frame=caught`,
 `PUBLISH_STEP_9_RELIC_CLAIMS curtain=none relic_got_drop=true dialog=none`,
 `PUBLISH_STEP_10_HOMEPAGE scripts=1 dialog=styled published=<id> key_in_requests=false`,
 `PUBLISH_STEP_11_UPLOAD_BUTTON chooser=opened homepage=dialog relic_page=dialog`,
-`PUBLISH_STEP_12_EVERY_BAR pages=relic,dashboard,policy,publish,unopenable last_action=Upload widths=1280,390,320 overflow=none`.
+`PUBLISH_STEP_12_EVERY_BAR pages=relic,dashboard,policy,publish,unopenable last_action=Upload widths=1280,390,320 overflow=none`,
+`PUBLISH_STEP_13_OPTIONS filename=encrypted ttl=7 decisions=open title=omitted`,
+`PUBLISH_STEP_14_COVER approved=served_without_key`.
 The browser is an owned isolated headless Chrome with a throwaway profile, and all writes target the local in-memory service.
+
+Private browser publishing has a separate loopback proof:
+
+```sh
+RELIC_CHROME_PATH=<isolated-headless-shell> bun packages/relic-mcp/test/browser-private-publish-path.ts
+```
+
+`BROWSER_PRIVATE_PUBLISH_PATH_OK` requires in-place email-code sign-in, a virtual PRF passkey, a private first publish, a sealed version with no public title or cover, a fragmentless link, and an owner open. It does not prove a second identity's access grant or the production storage preflight.
 
 Steps 8 and 9 use the browser's own drag path (`Input.dispatchDragEvent` with a file on disk) over a relic whose frame is a real cross-origin document, so the drag is routed by the browser rather than dispatched by the script. The frame's origin is `127.0.0.1` against the service's `localhost`. With the shim's drag signal removed, step 8 fails at the curtain, which is the negative control that was run.
 
