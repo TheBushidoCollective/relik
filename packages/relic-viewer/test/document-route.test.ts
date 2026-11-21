@@ -236,14 +236,44 @@ test('archive checks precede frame creation and timeout removes the frame', asyn
     expect(frameDisposals).toBe(3);
     jest.advanceTimersByTime(30000);
     expect(frameDisposals).toBe(3);
+    const unknownImageRoot = new ElementStub();
+    let downloads = 0;
+    await mountDocumentRoute(
+      unknownImageRoot as unknown as HTMLElement,
+      valid,
+      'docx',
+      select,
+      createFrame,
+      () => downloads++
+    );
+    frameState.respond?.({
+      type: 'relic:document-state',
+      state: 'failed',
+      reason: 'image-dimensions-unknown',
+    });
+    expect(frame.removed).toBe(true);
+    expect(frameDisposals).toBe(4);
+    const fallback = unknownImageRoot.children[0]!;
+    expect(fallback.children[0]?.textContent).toContain(
+      'image whose dimensions could not be checked'
+    );
+    expect(fallback.children[1]?.textContent).toBe('Download');
+    fallback.children[1]?.dispatchEvent(new Event('click'));
+    expect(downloads).toBe(1);
     const pendingRoot = new ElementStub();
     const started = Promise.withResolvers<void>();
     const release = Promise.withResolvers<void>();
+    let selectionSignal: AbortSignal | undefined;
+    let renderStates = 0;
+    pendingRoot.addEventListener('relic:render-state', () => renderStates++);
     const pending = mountDocumentRoute(
       pendingRoot as unknown as HTMLElement,
       valid,
       'docx',
-      async (index) => {
+      async (index, signal) => {
+        selectionSignal = signal;
+        const metadata = await index.read('word/document.xml');
+        if (!metadata.ok) throw new Error(metadata.reason);
         started.resolve();
         await release.promise;
         return select(index);
@@ -254,9 +284,42 @@ test('archive checks precede frame creation and timeout removes the frame', asyn
     await started.promise;
     pendingRoot.isConnected = false;
     observerState.onMutation?.();
+    expect(selectionSignal?.aborted).toBe(true);
+    pendingRoot.isConnected = true;
     release.resolve();
     await pending;
-    expect(frameCount).toBe(3);
+    expect(frameCount).toBe(4);
+    expect(pendingRoot.children).toEqual([]);
+    expect(renderStates).toBe(0);
+
+    const rejectedRoot = new ElementStub();
+    const rejectedStarted = Promise.withResolvers<void>();
+    const rejectRelease = Promise.withResolvers<void>();
+    let rejectedSignal: AbortSignal | undefined;
+    rejectedRoot.addEventListener('relic:render-state', () => renderStates++);
+    const rejected = mountDocumentRoute(
+      rejectedRoot as unknown as HTMLElement,
+      valid,
+      'docx',
+      async (_index, signal) => {
+        rejectedSignal = signal;
+        rejectedStarted.resolve();
+        await rejectRelease.promise;
+        throw new Error('metadata selection cancelled');
+      },
+      createFrame,
+      () => {}
+    );
+    await rejectedStarted.promise;
+    rejectedRoot.isConnected = false;
+    observerState.onMutation?.();
+    expect(rejectedSignal?.aborted).toBe(true);
+    rejectedRoot.isConnected = true;
+    rejectRelease.resolve();
+    await rejected;
+    expect(frameCount).toBe(4);
+    expect(rejectedRoot.children).toEqual([]);
+    expect(renderStates).toBe(0);
   } finally {
     if (previous) Object.defineProperty(globalThis, 'document', previous);
     else Reflect.deleteProperty(globalThis, 'document');

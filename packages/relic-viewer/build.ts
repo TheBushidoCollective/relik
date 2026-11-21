@@ -364,6 +364,10 @@ export async function buildViewer(options?: {
     `${pkgDir}node_modules/docx-preview/LICENSE`,
     `${out}docx-preview-license.txt`
   );
+  await copyFile(
+    `${pkgDir}node_modules/image-size/LICENSE`,
+    `${out}image-size-license.txt`
+  );
 
   /**
    * Inline the sandbox bundle into its page, rather than linking it.

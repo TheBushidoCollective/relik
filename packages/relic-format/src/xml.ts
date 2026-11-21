@@ -7,6 +7,7 @@ export type XmlFailure =
   | 'doctype'
   | 'entity'
   | 'depth'
+  | 'elements'
   | 'attributes'
   | 'malformed';
 export type XmlResult =
@@ -15,6 +16,19 @@ export type XmlResult =
 
 export function localName(name: string): string {
   return name.slice(name.lastIndexOf(':') + 1);
+}
+
+/** Decode XML bytes using their UTF-8 or UTF-16 byte-order signature. */
+export function decodeXmlBytes(bytes: Uint8Array): string {
+  const encoding =
+    (bytes[0] === 0xff && bytes[1] === 0xfe) ||
+    (bytes[0] === 0x3c && bytes[1] === 0)
+      ? 'utf-16le'
+      : (bytes[0] === 0xfe && bytes[1] === 0xff) ||
+          (bytes[0] === 0 && bytes[1] === 0x3c)
+        ? 'utf-16be'
+        : 'utf-8';
+  return new TextDecoder(encoding, { fatal: true }).decode(bytes);
 }
 
 /** True when the input contains a DTD or entity declaration forbidden for this format. */
@@ -74,7 +88,11 @@ class ParseFailure extends Error {
 /** Parse a single XML root without evaluating DTDs or fetching external data. */
 export function parseXml(
   text: string,
-  opts?: { readonly lenient?: boolean }
+  opts?: {
+    readonly lenient?: boolean;
+    /** Called before allocation; the root has depth zero. */
+    readonly admitElement?: (name: string, depth: number) => boolean;
+  }
 ): XmlResult {
   try {
     if (/<!ENTITY\b/i.test(text)) throw new ParseFailure('entity');
@@ -184,6 +202,8 @@ export function parseXml(
       if (!match) fail();
       const name = match![0];
       at += name.length + 1;
+      if (opts?.admitElement && !opts.admitElement(name, stack.length))
+        throw new ParseFailure('elements');
       const element: MutableElement = { name, attrs: new Map(), children: [] };
       if (stack.length) stack[stack.length - 1]!.children.push(element);
       else {

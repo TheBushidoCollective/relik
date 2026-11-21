@@ -276,6 +276,8 @@ The document route uses a format-specific selector that identifies required part
 
 The Word renderer uses the checked entries rather than decompressing the archive in the frame. Embedded objects, custom XML, binary parts and thumbnails are not sent. Word styles can restyle content and controls within the opaque frame, as with HTML relics, but cannot style the parent viewer. EPUB remains download-only until its selector and renderer are available.
 
+DOCX preparation accepts at most 4 MiB of package metadata, 50,000 metadata elements and 10,000 relationships. The frame admits at most 2,000 pages, 250,000 generated nodes, 40 million pixels per image and 100 million pixels across distinct image parts. An over-limit document offers the original download. If an image's dimensions cannot be determined before decoding, the reader explains why and offers the original download.
+
 ## 4. The sandbox boundary
 
 **Direction is forced, not chosen.** The main origin fetches, decrypts, and posts plaintext to a static shim whose own code never touches ciphertext and never makes a request. The alternative shape, where the usercontent origin fetches and the parent posts it the key, is what somebody reaches for to avoid moving large payloads across a boundary, and it requires the key to cross. That must never happen.

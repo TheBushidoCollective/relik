@@ -1,8 +1,10 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { fileURLToPath } from 'node:url';
 import { contentFromBytes } from '../src/content.ts';
+import { documentWatchdog } from '../src/document-route.ts';
 import {
   trackRenderState,
+  reportDocumentState,
   renderReady,
   renderComparison,
 } from '../src/main.ts';
@@ -50,6 +52,9 @@ class ElementStub {
   parentElement: ElementStub | null = null;
   readonly dataset: Record<string, string> = {};
   readonly children: ElementStub[] = [];
+  get firstElementChild(): ElementStub | null {
+    return this.children.find((child) => child.tagName !== '#TEXT') ?? null;
+  }
   readonly attributes = new Map<string, string>();
   private readonly styles = new Map<string, string>();
 
@@ -690,6 +695,131 @@ describe('Spec B: V3 Render State, Version Progress, and Comparison Bytes', () =
     ).toBeNull();
   });
 
+  test('DOCX stays busy until its accepted scalar ready state', () => {
+    const stage = new ElementStub('main');
+    const stageWrap = new ElementStub('div');
+    const root = new ElementStub('div');
+    stage.appendChild(root);
+    stageWrap.appendChild(stage);
+    rootBody.appendChild(stageWrap);
+    trackRenderState(
+      stage as unknown as HTMLElement,
+      stageWrap as unknown as HTMLElement,
+      'sandboxed-document',
+      'docx'
+    );
+    expect(stage.dataset['renderState']).toBe('rendering');
+    expect(stageWrap.getAttribute('aria-busy')).toBe('true');
+    let readyEvents = 0;
+    root.addEventListener('relic:render-state', () => readyEvents++);
+    const watchdog = documentWatchdog((state) => {
+      if (state.state === 'ready')
+        root.dispatchEvent({ type: 'relic-repaint', bubbles: true });
+    });
+    const ready = { type: 'relic:document-state', state: 'ready' } as const;
+    reportDocumentState(root as unknown as HTMLElement, watchdog, ready);
+    reportDocumentState(root as unknown as HTMLElement, watchdog, ready);
+    expect(readyEvents).toBe(1);
+    expect(stage.dataset['renderState']).toBe('ready');
+    expect(stageWrap.getAttribute('aria-busy')).toBe('false');
+  });
+
+  test('DOCX failure settles as error and ignores a later ready state', () => {
+    const stage = new ElementStub('main');
+    const stageWrap = new ElementStub('div');
+    const root = new ElementStub('div');
+    stage.appendChild(root);
+    stageWrap.appendChild(stage);
+    rootBody.appendChild(stageWrap);
+    trackRenderState(
+      stage as unknown as HTMLElement,
+      stageWrap as unknown as HTMLElement,
+      'sandboxed-document',
+      'docx'
+    );
+    let readyEvents = 0;
+    root.addEventListener('relic:render-state', (event) => {
+      if (
+        typeof event === 'object' &&
+        event !== null &&
+        'detail' in event &&
+        event.detail === 'ready'
+      )
+        readyEvents++;
+    });
+    const watchdog = documentWatchdog((state) => {
+      if (state.state === 'failed') {
+        root.dispatchEvent({
+          type: 'relic:render-state',
+          detail: 'error',
+          bubbles: true,
+        });
+      } else {
+        root.dispatchEvent({ type: 'relic-repaint', bubbles: true });
+      }
+    });
+    reportDocumentState(root as unknown as HTMLElement, watchdog, {
+      type: 'relic:document-state',
+      state: 'failed',
+      reason: 'corrupt',
+    });
+    reportDocumentState(root as unknown as HTMLElement, watchdog, {
+      type: 'relic:document-state',
+      state: 'ready',
+    });
+    expect(readyEvents).toBe(0);
+    expect(stage.dataset['renderState']).toBe('error');
+    expect(stageWrap.getAttribute('aria-busy')).toBe('false');
+  });
+
+  test('download-only EPUB settles immediately', () => {
+    const stage = new ElementStub('main');
+    const stageWrap = new ElementStub('div');
+    stageWrap.appendChild(stage);
+    rootBody.appendChild(stageWrap);
+    trackRenderState(
+      stage as unknown as HTMLElement,
+      stageWrap as unknown as HTMLElement,
+      'sandboxed-document',
+      'epub'
+    );
+    expect(stage.dataset['renderState']).toBe('ready');
+    expect(stageWrap.getAttribute('aria-busy')).toBe('false');
+  });
+
+  test('the reader passes the document kind to render-state tracking', () => {
+    const deps: ViewerDeps = {
+      serviceOrigin: 'https://relic.example',
+      locationHref: 'https://relic.example/r1#key',
+      keyVault: {
+        remember: () => {},
+        recall: () => undefined,
+        forget: () => {},
+      },
+      fetch: (() => new Promise<Response>(() => {})) as unknown as typeof fetch,
+    };
+    for (const kind of ['docx', 'epub'] as const) {
+      const view: ReadyView = {
+        filename: `document.${kind}`,
+        declaredMimetype: 'application/octet-stream',
+        content: contentFromBytes(new Uint8Array()),
+        document: undefined,
+        route: 'sandboxed-document',
+        documentKind: kind,
+        downgradeNotice: undefined,
+        shareUrl: 'https://relic.example/r1#key',
+        version: 1,
+        currentVersion: 1,
+        versionDigest: '1'.repeat(64),
+      };
+      renderReady(view, 'r1', 'https://usercontent.example', deps);
+      const stage = rootBody.querySelector('main.stage');
+      expect(stage?.dataset['renderState']).toBe(
+        kind === 'docx' ? 'rendering' : 'ready'
+      );
+    }
+  });
+
   test('3c. PDF renderer import failure dispatches an error and shows the failure card', () => {
     // The intentionally rejected import must not poison PDF.js for later tests.
     const child = Bun.spawnSync([
@@ -835,6 +965,36 @@ describe('Spec B: V3 Render State, Version Progress, and Comparison Bytes', () =
     expect(
       rootBody.querySelector('div.render-status[data-render-status]')
     ).toBeNull();
+  });
+
+  test('HTML and JSX settle when a rendered tree is unavailable', () => {
+    for (const route of ['sandboxed-html', 'sandboxed-jsx'] as const) {
+      const stage = new ElementStub('main');
+      const stageWrap = new ElementStub('div');
+      const frame = new ElementStub('iframe');
+      frame.className = 'usercontent-frame';
+      const frameWindow = {};
+      frame.contentWindow = frameWindow;
+      stage.appendChild(frame);
+      stageWrap.appendChild(stage);
+      rootBody.appendChild(stageWrap);
+      trackRenderState(
+        stage as unknown as HTMLElement,
+        stageWrap as unknown as HTMLElement,
+        route
+      );
+      expect(stage.dataset['renderState']).toBe('rendering');
+      const win = globalThis.window as unknown as {
+        dispatchEvent: (event: unknown) => void;
+      };
+      win.dispatchEvent({
+        type: 'message',
+        source: frameWindow,
+        data: { type: 'relic:tree', tree: null },
+      });
+      expect(stage.dataset['renderState']).toBe('ready');
+      expect(stageWrap.getAttribute('aria-busy')).toBe('false');
+    }
   });
 
   test('6. Markdown, code and download are ready synchronously on mount', () => {

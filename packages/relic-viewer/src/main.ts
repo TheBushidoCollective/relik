@@ -1573,7 +1573,7 @@ export function sandboxFrame(
   view: ReadyView,
   usercontentOrigin: string,
   payload: RenderPayload,
-  onTree?: (tree: TreeNode) => void,
+  onTree?: (tree: TreeNode | null) => void,
   transfer: Transferable[] = [],
   onDocumentState?: (state: DocumentStateMessage) => void
 ): FrameHandle {
@@ -1669,11 +1669,10 @@ export function sandboxFrame(
       onDocumentState(event.data);
       return;
     }
-    // The captured tree is tag names, a fixed attribute allowlist, and text.
-    // No markup crosses back to this origin, so nothing here has to be
-    // sanitized before it is read: there is nothing to sanitize.
-    if (onTree !== undefined && isTreeMessage(event.data)) {
-      onTree(event.data.tree);
+    // Refuse an oversized or malformed snapshot without retaining it. The
+    // rendered panes remain available even when their comparison is not.
+    if (onTree !== undefined && type === 'relic:tree') {
+      onTree(isTreeMessage(event.data) ? event.data.tree : null);
       return;
     }
     if (isFrameSelectionMessage(event.data)) {
@@ -2066,6 +2065,36 @@ export function renderMediaView(view: ReadyView): HTMLElement {
   return wrapper;
 }
 
+/** Relay readiness only when the document watchdog accepts this state. */
+export function reportDocumentState(
+  root: HTMLElement,
+  onState: (state: DocumentStateMessage) => void,
+  state: DocumentStateMessage
+): void {
+  if (state.state !== 'ready') {
+    onState(state);
+    return;
+  }
+  let accepted = false;
+  const onRepaint = (event: Event): void => {
+    if (event.target === root) accepted = true;
+  };
+  root.addEventListener('relic-repaint', onRepaint);
+  try {
+    onState(state);
+  } finally {
+    root.removeEventListener('relic-repaint', onRepaint);
+  }
+  if (accepted) {
+    root.dispatchEvent(
+      new CustomEvent('relic:render-state', {
+        detail: 'ready',
+        bubbles: true,
+      })
+    );
+  }
+}
+
 export function buildCurrentStage(
   view: ReadyView,
   usercontentOrigin: string,
@@ -2226,28 +2255,15 @@ export function buildCurrentStage(
             view.content,
             'docx',
             selectDocxParts,
-            (payload, transfer, onState) => {
-              let ready = false;
-              return sandboxFrame(
+            (payload, transfer, onState) =>
+              sandboxFrame(
                 view,
                 usercontentOrigin,
                 payload,
-                () => {
-                  if (ready)
-                    root.dispatchEvent(
-                      new CustomEvent('relic:render-state', {
-                        detail: 'ready',
-                        bubbles: true,
-                      })
-                    );
-                },
+                undefined,
                 transfer,
-                (state) => {
-                  if (state.state === 'ready') ready = true;
-                  onState(state);
-                }
-              );
-            },
+                (state) => reportDocumentState(root, onState, state)
+              ),
             () => downloadContent(view)
           )
         )
@@ -2584,8 +2600,8 @@ export function buildChangeNav(deps: {
 /** One side of a rendered comparison, and how to mark it once a diff exists. */
 interface ComparisonPane {
   readonly element: HTMLElement;
-  /** Resolves with the pane's captured tree, or never when it cannot render. */
-  readonly tree: Promise<TreeNode>;
+  /** Resolves with a complete snapshot, null when unavailable, or never. */
+  readonly tree: Promise<TreeNode | null>;
   annotate(marks: readonly Mark[], anchors: readonly Anchor[]): void;
   readonly setScroll?: (position: ScrollPosition) => void;
   /**
@@ -2746,12 +2762,10 @@ function framePane(view: ReadyView, usercontentOrigin: string): ComparisonPane {
     };
   }
 
-  let settle: ((tree: TreeNode) => void) | undefined;
-  const tree = new Promise<TreeNode>((resolve) => {
-    settle = resolve;
-  });
+  const { promise: tree, resolve: settle } =
+    Promise.withResolvers<TreeNode | null>();
   const handle = sandboxFrame(view, usercontentOrigin, payload, (reported) =>
-    settle?.(reported)
+    settle(reported)
   );
   const host = document.createElement('div');
   host.className = 'frame-pane-host';
@@ -2959,13 +2973,14 @@ export function renderRenderedComparison(
   void Promise.race([Promise.all([before.tree, after.tree]), timeout]).then(
     (trees) => {
       if (typeof document === 'undefined') return;
-      if (trees === undefined) {
+      const beforeTree = trees?.[0] ?? undefined;
+      const afterTree = trees?.[1] ?? undefined;
+      if (beforeTree === undefined || afterTree === undefined) {
         counts.textContent =
           'Both versions are shown. Relik could not read their rendered ' +
           'structure, so changes are not outlined.';
         return;
       }
-      const [beforeTree, afterTree] = trees;
       const diff: TreeDiff = diffTrees(beforeTree, afterTree);
       counts.textContent = diff.summary;
       before.annotate(diff.removedMarks, diff.beforeAnchors);
@@ -11030,7 +11045,7 @@ export function renderReady(
     );
     thread?.attach(wrap);
     afterRender?.(document.body);
-    trackRenderState(stage, wrap, viewToShow.route);
+    trackRenderState(stage, wrap, viewToShow.route, viewToShow.documentKind);
   };
 
   const showVersion = async (v: number): Promise<void> => {
@@ -11454,7 +11469,8 @@ export function adoptOrMountPlate(relicId: string): PlateHandles {
 export function trackRenderState(
   stage: HTMLElement,
   stageWrap: HTMLElement,
-  route: RenderRoute
+  route: RenderRoute,
+  documentKind?: ReadyView['documentKind']
 ): void {
   if (typeof document === 'undefined' || !document.querySelector) {
     return;
@@ -11552,6 +11568,18 @@ export function trackRenderState(
     }
     case 'notebook':
     case 'model': {
+      stage.addEventListener('relic:render-state', (event: Event) => {
+        const detail = (event as CustomEvent).detail;
+        if (detail === 'ready') setReady();
+        else if (detail === 'error') setError();
+      });
+      break;
+    }
+    case 'sandboxed-document': {
+      if (documentKind !== 'docx') {
+        setReady();
+        break;
+      }
       stage.addEventListener('relic:render-state', (event: Event) => {
         const detail = (event as CustomEvent).detail;
         if (detail === 'ready') setReady();

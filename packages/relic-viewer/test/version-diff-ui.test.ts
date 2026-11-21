@@ -1225,6 +1225,58 @@ describe('version comparison affordance', () => {
     expect(textOf(comparison)).toContain('Rendered comparison');
   });
 
+  test('an unavailable tree leaves both versions visible without claiming equality', async () => {
+    const listeners: Array<(event: unknown) => void> = [];
+    (globalThis as { window?: unknown }).window = {
+      innerWidth: 1024,
+      innerHeight: 768,
+      addEventListener: (type: string, listener: (event: unknown) => void) => {
+        if (type === 'message') listeners.push(listener);
+      },
+      removeEventListener: () => {},
+    };
+    let changesReported = false;
+    const comparison = renderRenderedComparison(
+      view('sandboxed-html', 5, encoder.encode('<p>Current</p>')),
+      view('sandboxed-html', 2, encoder.encode('<p>Earlier</p>'), 5),
+      'rendered',
+      'https://relik-usercontent.example',
+      () => {
+        changesReported = true;
+      }
+    ) as unknown as ElementStub;
+    const frames = descendants(comparison).filter(
+      (element) => element.tagName === 'IFRAME'
+    );
+    const status = withClass(comparison, 'diff-summary')[0]?.children[1];
+    if (frames.length !== 2 || status === undefined)
+      throw new Error('comparison frames or status missing');
+    const { promise, resolve } = Promise.withResolvers<void>();
+    status.onTextChange = () => resolve();
+    const sources = [{ postMessage: () => {} }, { postMessage: () => {} }];
+    Object.assign(frames[0]!, { contentWindow: sources[0] });
+    Object.assign(frames[1]!, { contentWindow: sources[1] });
+    const reports = [
+      { type: 'relic:tree', tree: null },
+      {
+        type: 'relic:tree',
+        tree: { tag: 'p', text: 'Current', attrs: [], children: [] },
+      },
+    ];
+    for (let i = 0; i < sources.length; i++) {
+      for (const listener of listeners) {
+        listener({ source: sources[i], data: reports[i] });
+      }
+    }
+    await promise;
+    expect(status.textContent).toContain('changes are not outlined');
+    expect(textOf(comparison)).not.toContain('render identically');
+    expect(changesReported).toBe(false);
+    expect(
+      descendants(comparison).filter((node) => node.tagName === 'IFRAME')
+    ).toHaveLength(2);
+  });
+
   test('the rendered comparison offers a swipe and a side by side layout', () => {
     const comparison = renderRenderedComparison(
       view('markdown', 5, encoder.encode('# After\n')),

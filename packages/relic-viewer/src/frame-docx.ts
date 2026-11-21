@@ -3,6 +3,7 @@ import type {
   DocumentInput,
   DocumentOutcome,
 } from './frame-document-protocol.ts';
+import { ImageBudget } from './frame-zip-entries.ts';
 
 const MAX_ELEMENTS = 250_000;
 const MAX_PAGES = 2_000;
@@ -111,9 +112,11 @@ export async function render(
   try {
     const styles = document.createElement('div');
     document.head.append(styles);
+    const budget = new ImageBudget();
     const restoreImages = guardImageSources();
     try {
-      await renderAsync(input.entries as unknown as Blob, root, styles, {
+      const archive = { entries: input.entries, budget };
+      await renderAsync(archive as unknown as Blob, root, styles, {
         renderAltChunks: false,
         useBase64URL: true,
         h: boundedRenderFactory(),
@@ -123,6 +126,11 @@ export async function render(
       });
     } finally {
       restoreImages();
+    }
+    if (budget.reason !== undefined) {
+      root.replaceChildren();
+      styles.remove();
+      return { state: 'failed', reason: budget.reason };
     }
     if (root.getElementsByTagName('*').length > MAX_ELEMENTS) {
       root.replaceChildren();

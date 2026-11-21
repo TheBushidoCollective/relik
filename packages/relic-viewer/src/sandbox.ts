@@ -2532,7 +2532,7 @@ async function mountComponent(code: string): Promise<void> {
   }
 }
 
-async function mountDocument(
+export async function mountDocument(
   message: RenderDocumentMessage,
   initInteraction: (imageControlsEnabled: boolean) => void
 ): Promise<void> {
@@ -2564,7 +2564,6 @@ async function mountDocument(
     );
   } finally {
     if (url !== undefined) URL.revokeObjectURL(url);
-    scheduleReport();
   }
 }
 

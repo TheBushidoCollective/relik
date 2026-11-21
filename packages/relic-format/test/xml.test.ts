@@ -1,7 +1,57 @@
 import { describe, expect, test } from 'bun:test';
-import { localName, parseXml, scanForbiddenDtd } from '../src/xml.ts';
+import {
+  decodeXmlBytes,
+  localName,
+  parseXml,
+  scanForbiddenDtd,
+} from '../src/xml.ts';
 
 describe('bounded XML parser', () => {
+  test('decodes UTF-8 and UTF-16 XML byte signatures strictly', () => {
+    const xml = '<root>Résumé 😀</root>';
+    expect(decodeXmlBytes(new TextEncoder().encode(xml))).toBe(xml);
+    for (const littleEndian of [true, false]) {
+      for (const bom of [true, false]) {
+        const offset = bom ? 2 : 0;
+        const bytes = new Uint8Array(offset + xml.length * 2);
+        if (bom) {
+          bytes[0] = littleEndian ? 0xff : 0xfe;
+          bytes[1] = littleEndian ? 0xfe : 0xff;
+        }
+        for (let i = 0; i < xml.length; i++) {
+          const code = xml.charCodeAt(i);
+          bytes[offset + i * 2 + (littleEndian ? 0 : 1)] = code & 0xff;
+          bytes[offset + i * 2 + (littleEndian ? 1 : 0)] = code >>> 8;
+        }
+        expect(decodeXmlBytes(bytes)).toBe(xml);
+      }
+    }
+    expect(() => decodeXmlBytes(new Uint8Array([0xc3, 0x28]))).toThrow();
+    expect(() => decodeXmlBytes(new Uint8Array([0xff, 0xfe, 0x3c]))).toThrow();
+  });
+
+  test('asks for element admission with zero-based depth before allocation', () => {
+    const admitted: [string, number][] = [];
+    const result = parseXml('<root><leaf/><group><deep/></group></root>', {
+      admitElement: (name, depth) => {
+        admitted.push([name, depth]);
+        return admitted.length <= 3;
+      },
+    });
+    expect(result).toEqual({ ok: false, reason: 'elements' });
+    expect(admitted).toEqual([
+      ['root', 0],
+      ['leaf', 1],
+      ['group', 1],
+      ['deep', 2],
+    ]);
+    const lenient = parseXml('<root>&nbsp;</root>', {
+      lenient: true,
+      admitElement: () => true,
+    });
+    expect(lenient.ok && lenient.root.children).toEqual(['&nbsp;']);
+  });
+
   test('parses element structure, namespaces and safe entities', () => {
     const result = parseXml(
       '<r:root a="one &amp; two"><child>&lt;&#65;&#x1F600;</child></r:root>'

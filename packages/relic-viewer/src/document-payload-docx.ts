@@ -1,5 +1,6 @@
 import type { ZipIndex } from '@relic/format/zip-index';
 import {
+  decodeXmlBytes,
   localName,
   parseXml,
   scanForbiddenDtd,
@@ -29,7 +30,7 @@ const XML_RELATIONSHIPS = new Set([
   `${OFFICE}header`,
   `${PACKAGE}metadata/core-properties`,
   `${OFFICE}extended-properties`,
-  `${OFFICE}custom-properties`,
+  `${PACKAGE}metadata/custom-properties`,
   `${OFFICE}settings`,
   `${OFFICE}comments`,
   'http://schemas.microsoft.com/office/2011/relationships/commentsExtended',
@@ -38,8 +39,12 @@ const TOP_LEVEL = [
   [`${OFFICE}officeDocument`, 'word/document.xml'],
   [`${OFFICE}extended-properties`, 'docProps/app.xml'],
   [`${PACKAGE}metadata/core-properties`, 'docProps/core.xml'],
-  [`${OFFICE}custom-properties`, 'docProps/custom.xml'],
+  [`${PACKAGE}metadata/custom-properties`, 'docProps/custom.xml'],
 ] as const;
+
+const MAX_METADATA_BYTES = 4 * 1024 * 1024;
+const MAX_METADATA_ELEMENTS = 50_000;
+const MAX_RELATIONSHIPS = 10_000;
 
 interface Relationship {
   readonly type: string;
@@ -47,58 +52,104 @@ interface Relationship {
 }
 
 /** Select the package entries and every entry docx-preview may parse as XML. */
-export async function selectDocxParts(index: ZipIndex): Promise<{
+export async function selectDocxParts(
+  index: ZipIndex,
+  signal?: AbortSignal
+): Promise<{
   parts: readonly string[];
   xmlParts: ReadonlySet<string>;
 }> {
+  const checkCancelled = () => {
+    if (signal?.aborted)
+      throw new DOMException('DOCX selection cancelled', 'AbortError');
+  };
+  checkCancelled();
   const parts = [...index.entries]
     .filter(([name, info]) => info.kind === 'file' && includeDocxPart(name))
     .map(([name]) => name);
   const available = new Set(parts);
   const xmlParts = new Set<string>();
-  const parsed = new Map<string, XmlElement>();
-  const readXml = async (name: string): Promise<XmlElement> => {
-    const cached = parsed.get(name);
-    if (cached) return cached;
-    if (!available.has(name)) throw new Error(`Missing DOCX metadata: ${name}`);
+  let metadataBytes = 0;
+  let metadataElements = 0;
+  let relationshipCount = 0;
+  const readXml = async (
+    name: string,
+    relationshipMetadata = false
+  ): Promise<XmlElement> => {
+    checkCancelled();
+    const info = index.entries.get(name);
+    if (!available.has(name) || info?.kind !== 'file')
+      throw new Error(`Missing DOCX metadata: ${name}`);
+    if (info.size > MAX_METADATA_BYTES - metadataBytes)
+      throw new Error('DOCX metadata byte limit exceeded');
     const result = await index.read(name);
+    checkCancelled();
     if (!result.ok) throw new Error(result.reason);
-    if (scanForbiddenDtd(result.bytes, 'docx'))
+    if (result.bytes.byteLength > MAX_METADATA_BYTES - metadataBytes)
+      throw new Error('DOCX metadata byte limit exceeded');
+    metadataBytes += result.bytes.byteLength;
+    const text = decodeXmlBytes(result.bytes);
+    if (scanForbiddenDtd(text, 'docx'))
       throw new Error('Forbidden DOCX metadata DTD');
-    const document = parseXml(
-      new TextDecoder('utf-8', { fatal: true }).decode(result.bytes)
-    );
-    if (!document.ok) throw new Error(`Invalid DOCX metadata: ${name}`);
+    let relationshipLimitExceeded = false;
+    const document = parseXml(text, {
+      admitElement: (elementName, depth) => {
+        if (++metadataElements > MAX_METADATA_ELEMENTS) return false;
+        if (
+          relationshipMetadata &&
+          depth === 1 &&
+          localName(elementName) === 'Relationship' &&
+          ++relationshipCount > MAX_RELATIONSHIPS
+        ) {
+          relationshipLimitExceeded = true;
+          return false;
+        }
+        return true;
+      },
+    });
+    if (!document.ok) {
+      if (document.reason === 'elements')
+        throw new Error(
+          relationshipLimitExceeded
+            ? 'DOCX relationship limit exceeded'
+            : 'DOCX metadata element limit exceeded'
+        );
+      throw new Error(`Invalid DOCX metadata: ${name}`);
+    }
     xmlParts.add(name);
-    parsed.set(name, document.root);
     return document.root;
   };
-  const children = (element: XmlElement): XmlElement[] =>
-    element.children.filter(
-      (child): child is XmlElement => typeof child !== 'string'
-    );
   const attribute = (element: XmlElement, name: string): string | undefined => {
     for (const [key, value] of element.attrs)
       if (localName(key) === name) return value;
     return undefined;
   };
-  const types = await readXml('[Content_Types].xml');
-  if (localName(types.name) !== 'Types')
-    throw new Error('Invalid DOCX content types');
-  const defaults = new Map<string, string>();
-  const overrides = new Map<string, string>();
-  for (const entry of children(types)) {
-    const tag = localName(entry.name);
-    if (tag !== 'Default' && tag !== 'Override') continue;
-    const type = attribute(entry, 'ContentType');
-    const key = attribute(entry, tag === 'Default' ? 'Extension' : 'PartName');
-    if (!type || !key) throw new Error('Invalid DOCX content type entry');
-    const map = tag === 'Default' ? defaults : overrides;
-    const normalized =
-      tag === 'Default' ? key.toLowerCase() : key.replace(/^\//, '');
-    if (map.has(normalized)) throw new Error('Duplicate DOCX content type');
-    map.set(normalized, type.toLowerCase());
-  }
+  const readContentTypes = async () => {
+    const types = await readXml('[Content_Types].xml');
+    checkCancelled();
+    if (localName(types.name) !== 'Types')
+      throw new Error('Invalid DOCX content types');
+    const defaults = new Map<string, string>();
+    const overrides = new Map<string, string>();
+    for (const entry of types.children) {
+      if (typeof entry === 'string') continue;
+      const tag = localName(entry.name);
+      if (tag !== 'Default' && tag !== 'Override') continue;
+      const type = attribute(entry, 'ContentType');
+      const key = attribute(
+        entry,
+        tag === 'Default' ? 'Extension' : 'PartName'
+      );
+      if (!type || !key) throw new Error('Invalid DOCX content type entry');
+      const map = tag === 'Default' ? defaults : overrides;
+      const normalized =
+        tag === 'Default' ? key.toLowerCase() : key.replace(/^\//, '');
+      if (map.has(normalized)) throw new Error('Duplicate DOCX content type');
+      map.set(normalized, type.toLowerCase());
+    }
+    return { defaults, overrides };
+  };
+  const { defaults, overrides } = await readContentTypes();
   for (const name of parts) {
     const extension = name.slice(name.lastIndexOf('.') + 1).toLowerCase();
     const type = (overrides.get(name) ?? defaults.get(extension) ?? '')
@@ -108,18 +159,23 @@ export async function selectDocxParts(index: ZipIndex): Promise<{
       xmlParts.add(name);
   }
   const relationships = async (name: string): Promise<Relationship[]> => {
+    checkCancelled();
     if (!available.has(name)) return [];
-    const root = await readXml(name);
+    const root = await readXml(name, true);
+    checkCancelled();
     if (localName(root.name) !== 'Relationships')
       throw new Error('Invalid DOCX relationships');
-    return children(root)
-      .filter((entry) => localName(entry.name) === 'Relationship')
-      .map((entry) => {
-        const type = attribute(entry, 'Type');
-        const target = attribute(entry, 'Target');
-        if (!type || !target) throw new Error('Invalid DOCX relationship');
-        return { type, target };
-      });
+    const result: Relationship[] = [];
+    for (const entry of root.children) {
+      if (typeof entry === 'string') continue;
+      if (localName(entry.name) !== 'Relationship')
+        throw new Error('Invalid DOCX relationship element');
+      const type = attribute(entry, 'Type');
+      const target = attribute(entry, 'Target');
+      if (!type || !target) throw new Error('Invalid DOCX relationship');
+      result.push({ type, target });
+    }
+    return result;
   };
   const rootRels = await relationships('_rels/.rels');
   const pending: string[] = TOP_LEVEL.map(
@@ -128,6 +184,7 @@ export async function selectDocxParts(index: ZipIndex): Promise<{
   );
   const visited = new Set<string>();
   while (pending.length) {
+    checkCancelled();
     const path = pending.pop()!.replace(/^\//, '');
     if (!available.has(path) || visited.has(path)) continue;
     visited.add(path);
@@ -149,5 +206,6 @@ export async function selectDocxParts(index: ZipIndex): Promise<{
       pending.push(resolved);
     }
   }
+  checkCancelled();
   return { parts, xmlParts };
 }

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { boundedRenderFactory, guardImageSources } from '../src/frame-docx.ts';
+import EntryArchive, { ImageBudget } from '../src/frame-zip-entries.ts';
 
 class TestImage {
   attributes = new Map<string, string>();
@@ -102,4 +103,54 @@ test('bounds document nodes and pages before constructing them', () => {
   expect(() =>
     boundedPages({ tagName: 'section', className: 'docx' })
   ).toThrow();
+});
+
+test('charges image pixels per member and reuses its admitted blob', async () => {
+  const onePixel = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+    'base64'
+  );
+  const twoPixels = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAIAAAABAQMAAADO7O3JAAAAA1BMVEUAAP+KeNJXAAAACklEQVQI12NgAAAAAgAB4iG8MwAAAABJRU5ErkJggg==',
+    'base64'
+  );
+  const budget = new ImageBudget(2, 2);
+  const archive = await EntryArchive.loadAsync({
+    entries: new Map([
+      ['first.png', onePixel],
+      ['second.png', twoPixels],
+    ]),
+    budget,
+  });
+  const first = archive.files['first.png']!;
+  const blob = await first.async('blob');
+  expect(blob).toBeInstanceOf(Blob);
+  expect(await first.async('blob')).toBe(blob);
+  expect(await archive.files['second.png']!.async('blob')).toBeNull();
+  expect(budget.reason).toBe('too-large');
+
+  const individual = new ImageBudget(1, 10);
+  expect(individual.admit('second.png', twoPixels)).toBe(false);
+  expect(individual.reason).toBe('too-large');
+});
+
+test('reports an image with unknown dimensions for download fallback', () => {
+  const svg = new TextEncoder().encode(
+    '<svg xmlns="http://www.w3.org/2000/svg"><rect width="20" height="20"/></svg>'
+  );
+  const budget = new ImageBudget();
+  expect(budget.admit('image.svg', svg)).toBe(false);
+  expect(budget.reason).toBe('image-dimensions-unknown');
+});
+
+test('decodes UTF-16 XML entries for the document renderer', async () => {
+  const text = '<document>Résumé</document>';
+  const bytes = Buffer.concat([
+    Buffer.from([0xff, 0xfe]),
+    Buffer.from(text, 'utf16le'),
+  ]);
+  const archive = await EntryArchive.loadAsync(
+    new Map([['document.xml', bytes]])
+  );
+  expect(await archive.files['document.xml']!.async('string')).toBe(text);
 });

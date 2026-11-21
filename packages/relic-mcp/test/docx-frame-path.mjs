@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createApp } from '@relic/server/src/app.ts';
@@ -11,6 +11,8 @@ import { Document, Packer, Paragraph, TextRun, ImageRun, Header, FootnoteReferen
 import JSZip from '../../relic-viewer/node_modules/jszip/lib/index.js';
 import { LINK_COOLDOWN_MS } from '../../relic-viewer/src/open-link-confirm.ts';
 import { connectPipe } from '../src/cover/cdp.ts';
+import { nodeFiles } from '../src/files.ts';
+import { publish } from '../src/publish.ts';
 import { chromeArgs } from '../src/cover/chrome.ts';
 import { attestBrowserHeadless, createBrowserHeadlessLaunch } from './browser-headless.ts';
 
@@ -105,17 +107,27 @@ function entriesFor(kind) {
   });
 }
 let app;
+let storage;
 let usercontentOrigin = '';
-const service = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch(request) {
-  if (new URL(request.url).pathname === '/proof-host.js') return new Response(hostScript, { headers: { 'content-type': 'text/javascript' } });
-  const entries = entriesFor(new URL(request.url).searchParams.get('kind'));
+const service = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(request) {
+  const url = new URL(request.url);
+  if (url.pathname === '/proof-host.js') return new Response(hostScript, { headers: { 'content-type': 'text/javascript' } });
+  if (url.pathname.startsWith('/__storage/o/')) {
+    const bytes = await storage.read(url.pathname.slice('/__storage/o/'.length));
+    return bytes ? new Response(bytes) : new Response(null, { status: 404 });
+  }
+  if (url.pathname !== '/' || !url.searchParams.has('kind')) return app.fetch(request);
+  const entries = entriesFor(url.searchParams.get('kind'));
   return new Response(`<!doctype html><style>body{margin:0}iframe{border:0;width:100%;height:850px}</style><iframe src="${usercontentOrigin}/sandbox.html" sandbox="allow-scripts"></iframe><script>window.results=[];addEventListener('message',e=>results.push(e.data));window.begin=()=>document.querySelector('iframe').contentWindow.postMessage({type:'relic:render-document',format:'docx',module:${JSON.stringify(moduleText)},entries:${JSON.stringify(entries)}.map(([p,b])=>[p,new Uint8Array(b)])},'*')</script><script type="module" src="/proof-host.js"></script>`, { headers: { 'content-type': 'text/html' } });
 } });
 const usercontent = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: (request) => app.fetch(request) });
 const origin = `http://127.0.0.1:${service.port}`;
 usercontentOrigin = `http://127.0.0.1:${usercontent.port}`;
-app = createApp({ config: { serviceOrigin: origin, usercontentOrigin }, store: new MemoryStore(), storage: new MemoryStorage(`${origin}/storage`), assets: diskAssets(`${root}packages/relic-viewer/dist`) });
+storage = new MemoryStorage(`${origin}/__storage`);
+app = createApp({ config: { serviceOrigin: origin, usercontentOrigin }, store: new MemoryStore(), storage, assets: diskAssets(`${root}packages/relic-viewer/dist`) });
 const profile = await mkdtemp(join(tmpdir(), 'relic-docx-frame-'));
+const priorPublishState = process.env.RELIC_PUBLISH_STATE;
+process.env.RELIC_PUBLISH_STATE = join(profile, 'publish-state.json');
 const args = chromeArgs(chrome, profile).filter((arg) => !arg.startsWith('--proxy-')).map((arg) => arg === '--host-resolver-rules=MAP * ~NOTFOUND' ? '--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1' : arg);
 const launch = createBrowserHeadlessLaunch(args, profile);
 const child = spawn(chrome, launch.args, { stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'], env: { ...process.env, DISPLAY: '', WAYLAND_DISPLAY: '' } });
@@ -225,9 +237,88 @@ try {
     }
     console.log(`DOCX_FRAME ${kind} ready_ms=${elapsed.toFixed(1)} elements=${frame.elements} pages=${frame.pages} violations=${frame.violations.length}`);
   }
+  // Exercise the real reader using only an in-memory loopback service.
+  const publishDeps = {
+    serviceOrigin: origin,
+    relicOrigin: origin,
+    clientName: 'docx-reader-proof',
+    files: nodeFiles,
+    fetch: globalThis.fetch,
+    renderCover: async () => ({ status: 'skipped', reason: 'browser_disabled', detail: 'test' }),
+    upload: async (url, _headers, bytes) => {
+      storage.put(new URL(url).pathname.replace(/^\/__storage\/upload\//, ''), bytes);
+      return { status: 200 };
+    },
+  };
+  async function publishEntries(filename, entries) {
+    const zip = new JSZip();
+    for (const [name, bytes] of entries) zip.file(name, bytes, { createFolders: false, compression: 'STORE' });
+    const path = join(profile, filename);
+    await writeFile(path, await zip.generateAsync({ type: 'nodebuffer', compression: 'STORE' }));
+    return (await publish({ path, cover: false }, publishDeps)).url;
+  }
+  const utf16Entries = imageEntries.map(([name, bytes]) => {
+    if (!['[Content_Types].xml', 'word/_rels/document.xml.rels', 'word/document.xml'].includes(name)) return [name, new Uint8Array(bytes)];
+    const xml = decode.decode(new Uint8Array(bytes)).replace(/encoding="UTF-8"/i, 'encoding="UTF-16"');
+    return [name, Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(xml, 'utf16le')])];
+  });
+  const readerUrl = await publishEntries('reader-utf16.docx', utf16Entries);
+  const badEntries = imageEntries.map(([name, bytes]) => [
+    name,
+    name === '[Content_Types].xml' ? encode.encode('<Types') : new Uint8Array(bytes),
+  ]);
+  const badUrl = await publishEntries('reader-invalid.docx', badEntries);
+  const imagePath = imageEntries.find(([name]) => name.startsWith('word/media/') && name.endsWith('.png'))?.[0];
+  assert.ok(imagePath);
+  const unknownImageEntries = imageEntries.map(([name, bytes]) => {
+    if (name === imagePath) return [name, encode.encode('<svg xmlns="http://www.w3.org/2000/svg"><rect width="20" height="20"/></svg>')];
+    if (name === '[Content_Types].xml') {
+      const xml = decode.decode(new Uint8Array(bytes)).replace('</Types>', `<Override PartName="/${imagePath}" ContentType="image/svg+xml"/></Types>`);
+      return [name, encode.encode(xml)];
+    }
+    return [name, new Uint8Array(bytes)];
+  });
+  const unknownImageUrl = await publishEntries('reader-unknown-image.docx', unknownImageEntries);
+  const epubUrl = await publishEntries('reader.epub', [
+    ['mimetype', encode.encode('application/epub+zip')],
+    ['META-INF/container.xml', encode.encode('<container/>')],
+  ]);
+  await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `window.__docxStates=[];new MutationObserver(()=>{const stage=document.querySelector('.stage-sandboxed-document');if(stage){const state=stage.dataset.renderState;if(state&&window.__docxStates.at(-1)!==state)window.__docxStates.push(state)}}).observe(document,{subtree:true,childList:true,attributes:true,attributeFilter:['data-render-state']})` }, sessionId);
+  async function openReader(url, expectedState) {
+    const loaded = cdp.waitForEvent('Page.loadEventFired', { sessionId, timeoutMs: 30000 });
+    await cdp.send('Page.navigate', { url }, sessionId);
+    await loaded;
+    return evaluate(`(async()=>{const end=Date.now()+30000;while(Date.now()<end){const stage=document.querySelector('.stage-sandboxed-document');if(stage?.dataset.renderState===${JSON.stringify(expectedState)}){const frame=stage.querySelector('iframe.usercontent-frame');const wrap=stage.closest('.stage-wrap');const s=stage.getBoundingClientRect(),f=frame?.getBoundingClientRect();return {state:stage.dataset.renderState,busy:wrap?.getAttribute('aria-busy'),text:stage.innerText,frame:!!frame,stageHeight:s.height,frameHeight:f?.height??0,stageBottom:s.bottom,frameBottom:f?.bottom??0,scrollWidth:document.documentElement.scrollWidth,clientWidth:document.documentElement.clientWidth,states:window.__docxStates}}await new Promise(r=>setTimeout(r,10))}throw Error('reader state timeout: '+document.body.innerText)})()`);
+  }
+  for (const width of [1440, 390]) {
+    await cdp.send('Emulation.setDeviceMetricsOverride', { width, height: width === 390 ? 844 : 900, deviceScaleFactor: 1, mobile: false }, sessionId);
+    const shown = await openReader(readerUrl, 'ready');
+    assert.equal(shown.busy, 'false');
+    assert.ok(shown.states.includes('rendering'));
+    assert.ok(shown.frame && shown.frameHeight > 200);
+    assert.ok(Math.abs(shown.stageBottom - shown.frameBottom) <= 1, JSON.stringify(shown));
+    assert.ok(shown.scrollWidth <= shown.clientWidth, JSON.stringify(shown));
+    const readerTree = await cdp.send('Page.getFrameTree', {}, sessionId);
+    const readerFrame = readerTree.frameTree.childFrames[0].frame.id;
+    const world = await cdp.send('Page.createIsolatedWorld', { frameId: readerFrame, worldName: 'docx-reader-proof' }, sessionId);
+    assert.match(await evaluate('document.body.innerText', world.executionContextId), /DOCX table cell/);
+    const broken = await openReader(badUrl, 'error');
+    assert.equal(broken.frame, false);
+    assert.match(broken.text, /Download/);
+    const unknownImage = await openReader(unknownImageUrl, 'error');
+    assert.equal(unknownImage.frame, false);
+    assert.match(unknownImage.text, /image whose dimensions could not be checked/);
+    assert.match(unknownImage.text, /Download/);
+    const epub = await openReader(epubUrl, 'ready');
+    assert.equal(epub.frame, false);
+    assert.match(epub.text, /Download/);
+  }
+  console.log('DOCX_READER_PATH_OK');
   off();
   console.log('DOCX_FRAME_PATH_OK');
 } finally {
+  if (priorPublishState === undefined) delete process.env.RELIC_PUBLISH_STATE;
+  else process.env.RELIC_PUBLISH_STATE = priorPublishState;
   cdp.dispose();
   child.kill();
   service.stop(true);

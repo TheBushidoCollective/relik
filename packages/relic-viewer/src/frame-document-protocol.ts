@@ -31,7 +31,11 @@ export type DocumentOutcome =
   | { readonly state: 'ready' }
   | {
       readonly state: 'failed';
-      readonly reason: 'corrupt' | 'unsupported' | 'too-large';
+      readonly reason:
+        | 'corrupt'
+        | 'unsupported'
+        | 'too-large'
+        | 'image-dimensions-unknown';
     };
 export interface RenderDocumentMessage {
   readonly type: 'relic:render-document';
@@ -131,6 +135,7 @@ export function isDocumentStateMessage(
     keys.length === 3 &&
     (value['reason'] === 'corrupt' ||
       value['reason'] === 'unsupported' ||
-      value['reason'] === 'too-large')
+      value['reason'] === 'too-large' ||
+      value['reason'] === 'image-dimensions-unknown')
   );
 }

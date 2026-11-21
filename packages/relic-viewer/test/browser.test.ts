@@ -10,11 +10,12 @@ import {
   safeDownloadName,
   sniffImageType,
 } from '../src/main.ts';
-import type { Mark } from '../src/rendered-tree.ts';
+import { MAX_TREE_BYTES, type Mark } from '../src/rendered-tree.ts';
 import {
   createSandboxHandler,
   isRenderJsxMessage,
   isRenderMessage,
+  mountDocument,
 } from '../src/sandbox.ts';
 import { isCacheable } from '../src/sw-cache.ts';
 import type { ReadyView, RenderRoute } from '../src/viewer.ts';
@@ -501,6 +502,104 @@ describe('the usercontent frame the render routes build', () => {
     pending.dispose();
     send({ type: 'relic:sandbox-ready' });
     expect(messages).toHaveLength(count);
+  });
+
+  test('a frame retains complete bounded trees and reports oversized trees unavailable', () => {
+    let listener: ((event: unknown) => void) | undefined;
+    const received: unknown[] = [];
+    const source = { postMessage: () => {} };
+    (globalThis as { window?: unknown }).window = {
+      addEventListener: (type: string, callback: (event: unknown) => void) => {
+        if (type === 'message') listener = callback;
+      },
+      removeEventListener: () => {},
+    };
+    const handle = sandboxFrame(
+      view('sandboxed-html', '<p>Résumé</p>'),
+      USERCONTENT_ORIGIN,
+      { type: 'relic:render', html: '<p>Résumé</p>' },
+      (tree) => received.push(tree)
+    );
+    Object.assign(handle.frame, { contentWindow: source });
+    const send = (data: unknown) => listener?.({ source, data });
+    send({ type: 'relic:sandbox-ready' });
+    const tree = { tag: 'p', text: 'Résumé', attrs: [], children: [] };
+    send({ type: 'relic:tree', tree });
+    send({
+      type: 'relic:tree',
+      tree: {
+        tag: 'p',
+        text: 'é'.repeat(MAX_TREE_BYTES / 2),
+        attrs: [],
+        children: [],
+      },
+    });
+    expect(received).toEqual([tree, null]);
+    handle.dispose();
+  });
+
+  test('DOCX mount posts only scalar state on success and failure', async () => {
+    const messages: unknown[] = [];
+    let scheduled = 0;
+    let interactions = 0;
+    const originalCreate = URL.createObjectURL;
+    const originalRevoke = URL.revokeObjectURL;
+    const rafDescriptor = Object.getOwnPropertyDescriptor(
+      globalThis,
+      'requestAnimationFrame'
+    );
+    Object.assign(globalThis.document, { body: { replaceChildren: () => {} } });
+    (globalThis as { window?: unknown }).window = {
+      parent: { postMessage: (message: unknown) => messages.push(message) },
+    };
+    Object.defineProperty(globalThis, 'requestAnimationFrame', {
+      configurable: true,
+      writable: true,
+      value: () => {
+        scheduled++;
+        return 1;
+      },
+    });
+    URL.revokeObjectURL = () => {};
+    try {
+      for (const [module, expected] of [
+        [
+          'export function render() { return { state: "ready" }; }',
+          { type: 'relic:document-state', state: 'ready' },
+        ],
+        [
+          'export function render() { throw new Error("invalid document"); }',
+          { type: 'relic:document-state', state: 'failed', reason: 'corrupt' },
+        ],
+      ] as const) {
+        URL.createObjectURL = () =>
+          `data:text/javascript,${encodeURIComponent(module)}`;
+        await mountDocument(
+          {
+            type: 'relic:render-document',
+            format: 'docx',
+            module,
+            entries: [],
+          },
+          () => interactions++
+        );
+        expect(messages.pop()).toEqual(expected);
+        expect(messages).toEqual([]);
+      }
+      expect(interactions).toBe(2);
+      expect(scheduled).toBe(0);
+    } finally {
+      URL.createObjectURL = originalCreate;
+      URL.revokeObjectURL = originalRevoke;
+      if (rafDescriptor === undefined)
+        Reflect.deleteProperty(globalThis, 'requestAnimationFrame');
+      else
+        Object.defineProperty(
+          globalThis,
+          'requestAnimationFrame',
+          rafDescriptor
+        );
+    }
   });
 
   test('a frame link request waits for the reader and opens nothing', () => {
