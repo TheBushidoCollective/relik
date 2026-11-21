@@ -41,9 +41,12 @@ export function scanForbiddenDtd(
   if (text.includes('\0')) return true;
   if (/<!ENTITY\b/i.test(text)) return true;
   if (kind === 'docx') return /<!DOCTYPE\b/i.test(text);
-  for (const match of text.matchAll(/<!DOCTYPE\b/gi)) {
+  const doctype = /<!DOCTYPE\b/gi;
+  while (true) {
+    if (doctype.exec(text) === null) break;
     let quote = '';
-    for (let i = match.index! + match[0].length; i < text.length; i++) {
+    let i = doctype.lastIndex;
+    for (; i < text.length; i++) {
       const c = text[i]!;
       if (quote) {
         if (c === quote) quote = '';
@@ -52,9 +55,12 @@ export function scanForbiddenDtd(
       } else if (c === '[') {
         return true;
       } else if (c === '>') {
+        i++;
         break;
       }
     }
+    // A declaration without a closing '>' consumes the rest of the input.
+    doctype.lastIndex = i;
   }
   return false;
 }

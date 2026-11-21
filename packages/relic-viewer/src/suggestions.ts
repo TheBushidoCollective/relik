@@ -40,6 +40,7 @@ type Leaf = {
   readonly start: number;
   readonly end: number;
   readonly join: boolean;
+  readonly block: number;
 };
 
 type PaintOperation = {
@@ -49,6 +50,7 @@ type PaintOperation = {
   readonly view: SuggestionView;
   readonly decorate: boolean;
   readonly order: number;
+  readonly block: number;
 };
 
 function textNodes(root: Node): Text[] {
@@ -89,13 +91,15 @@ function sourceLeaves(
       holder.textContent !== segment.text
     )
       return null;
+    if (segment.start === segment.end && holder.childNodes.length === 0)
+      holder.appendChild(holder.ownerDocument.createTextNode(''));
     let offset = 0;
     for (const node of textNodes(holder)) {
       const length = node.data.length;
       const join = segment.kind === 'join' || segment.kind === 'escape';
       const start = join ? segment.start : segment.start + offset;
       const end = join ? segment.end : start + length;
-      leaves.push({ node, start, end, join });
+      leaves.push({ node, start, end, join, block: segment.block });
       offset += length;
     }
   }
@@ -123,6 +127,10 @@ function pointLeaf(
   position: number,
   side: 'before' | 'after'
 ): Leaf | undefined {
+  const empty = leaves.find(
+    (leaf) => leaf.start === position && leaf.end === position
+  );
+  if (empty) return empty;
   if (side === 'before') {
     return (
       leaves.find((leaf) => leaf.start <= position && position < leaf.end) ??
@@ -174,6 +182,7 @@ function addRange(
       view,
       order,
       decorate: decorate && i === matches.length - 1,
+      block: leaf.block,
     });
   }
 }
@@ -198,6 +207,7 @@ function addPoint(
     view,
     order,
     decorate,
+    block: leaf.block,
   });
 }
 
@@ -306,7 +316,8 @@ function decorate(
 
 function paintNodes(
   ops: Map<Text, PaintOperation[]>,
-  views: SuggestionViews
+  views: SuggestionViews,
+  decode?: (block: number, source: string) => string
 ): void {
   for (const [node, operations] of ops) {
     const parent = node.parentNode;
@@ -369,7 +380,9 @@ function paintNodes(
           doc,
           'ins',
           'sg-ins',
-          op.view.input?.suggestion.replacement ?? ''
+          decode?.(op.block, op.view.input?.suggestion.replacement ?? '') ??
+            op.view.input?.suggestion.replacement ??
+            ''
         );
         ins.setAttribute('data-sg', op.view.row.id);
         ins.setAttribute('data-sg-paint', 'inserted');
@@ -414,7 +427,8 @@ export function paintSuggestions(
   root: HTMLElement,
   segments: readonly SourceSegment[],
   views: SuggestionViews,
-  kind: 'markdown' | 'code'
+  kind: 'markdown' | 'code',
+  decode?: (block: number, source: string) => string
 ): SuggestionPaintResult {
   clearSuggestionPaint(root);
   const leaves = sourceLeaves(root, segments, kind);
@@ -440,7 +454,7 @@ export function paintSuggestions(
       addPoint(ops, leaves, end, side, 'insert', view, order, true);
     }
   });
-  paintNodes(ops, views);
+  paintNodes(ops, views, decode);
   return { ok: true };
 }
 
