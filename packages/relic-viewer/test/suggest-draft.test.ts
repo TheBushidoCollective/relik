@@ -325,6 +325,21 @@ describe('suggestion draft source model', () => {
     expect(fenced.draft?.inserted).toBe('\n');
   });
 
+  test('notebook source accepts line breaks and code indentation', () => {
+    for (const kind of ['nb-markdown', 'nb-code', 'nb-raw'] as const) {
+      const model = code('abc');
+      expect(model.enter(1, 1, kind).kind).toBe('changed');
+      expect(model.draft?.inserted).toBe('\n');
+      expect(code('abc').replace(1, 1, 'a\nb', kind).kind).toBe('changed');
+    }
+    expect(code('abc').tab(1, 1, 'nb-code').kind).toBe('changed');
+    for (const kind of ['nb-markdown', 'nb-raw'] as const)
+      expect(code('abc').tab(1, 1, kind)).toMatchObject({
+        kind: 'refused',
+        code: 'tab-here',
+      });
+  });
+
   test('S6g refuses pipe characters in table cells even when pasted', () => {
     const source = '| left | right |\n| --- | --- |';
     const model = markdown(source);

@@ -436,13 +436,17 @@ export class SuggestDraftModel {
       candidate.inserted.includes('\n') &&
       candidate.blockKind !== 'paragraph' &&
       candidate.blockKind !== 'code' &&
-      candidate.blockKind !== 'fenced-code'
+      candidate.blockKind !== 'fenced-code' &&
+      candidate.blockKind !== 'nb-markdown' &&
+      candidate.blockKind !== 'nb-code' &&
+      candidate.blockKind !== 'nb-raw'
     )
       return newlineRefusal(candidate.blockKind);
     if (
       candidate.inserted.includes('\t') &&
       candidate.blockKind !== 'code' &&
-      candidate.blockKind !== 'fenced-code'
+      candidate.blockKind !== 'fenced-code' &&
+      candidate.blockKind !== 'nb-code'
     )
       return refused('tab-here', 'Tab works only in code.');
     if (
@@ -599,7 +603,10 @@ export class SuggestDraftModel {
     if (
       blockKind !== 'paragraph' &&
       blockKind !== 'code' &&
-      blockKind !== 'fenced-code'
+      blockKind !== 'fenced-code' &&
+      blockKind !== 'nb-markdown' &&
+      blockKind !== 'nb-code' &&
+      blockKind !== 'nb-raw'
     )
       return newlineRefusal(blockKind);
     return this.replace(
@@ -611,7 +618,11 @@ export class SuggestDraftModel {
   }
 
   tab(start: number, end: number, blockKind: SuggestBlockKind): DraftChange {
-    if (blockKind !== 'code' && blockKind !== 'fenced-code')
+    if (
+      blockKind !== 'code' &&
+      blockKind !== 'fenced-code' &&
+      blockKind !== 'nb-code'
+    )
       return refused('tab-here', 'Tab works only in code.');
     return this.replace(start, end, '\t', blockKind);
   }
