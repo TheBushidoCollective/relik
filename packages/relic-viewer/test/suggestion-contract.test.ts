@@ -66,6 +66,14 @@ describe('structured suggestion contract', () => {
       kind: 'refused',
       code: 'line-break-in-crlf-file',
     });
+    const insertion = model(source, segments, true);
+    expect(insertion.replace(0, 1, 'x', 'csv-quoted').kind).toBe('changed');
+    for (const text of ['\r', '\n', '\r\n'])
+      expect(insertion.editInsertion(0, 1, text, 'csv-quoted')).toMatchObject({
+        kind: 'refused',
+        code: 'line-break-in-crlf-file',
+      });
+    expect(insertion.draft?.inserted).toBe('x');
     expect(draft.replace(1, 2, '', 'csv-quoted').kind).toBe('changed');
     expect(draft.commit(null)).toMatchObject({
       kind: 'save',

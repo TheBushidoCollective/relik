@@ -1,0 +1,1 @@
+export const notebookSuggestionFixture = String.raw`{"nbformat":4,"cells":[{"cell_type":"markdown","source":["Hello \u263a\n","next line"]},{"cell_type":"code","source":["print(\"hi\")\n","second"],"outputs":[{"output_type":"stream","name":"stdout","text":"output"}]},{"cell_type":"raw","source":"raw \ud83d\ude00"}]}`;

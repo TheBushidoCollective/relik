@@ -10,6 +10,8 @@ export interface SuggestionSurface {
   editable(block: number): true | SuggestRefusal;
   /** Reject selections in non-editable regions instead of snapping to a nearby segment. */
   acceptsSelection?(node: Node): true | SuggestRefusal;
+  /** Restrict inline painting to ranges represented by this surface. */
+  covers?(start: number, end: number, replacement?: string): boolean;
   /** Convert visible insertion text to and from the source representation. */
   encode?(
     block: number,
@@ -20,6 +22,8 @@ export interface SuggestionSurface {
     | { readonly ok: true; readonly source: string }
     | { readonly ok: false; readonly refusal: SuggestRefusal };
   decode?(block: number, source: string): string;
+  /** Decode an untouched span of original source when extending a draft. */
+  decodeRange?(block: number, start: number, end: number): string;
   emptyAnchor?(
     block: number,
     position: number
@@ -31,6 +35,14 @@ export interface SuggestionSurface {
       }
     | undefined;
   repaint(): void;
+}
+/** Let an active editor preserve a deliberate view-owned DOM change. */
+export function mutateSurfaceUI(root: HTMLElement, action: () => void): void {
+  const event = new CustomEvent('relic:surface-ui-mutation', {
+    cancelable: true,
+    detail: action,
+  });
+  if (root.dispatchEvent(event)) action();
 }
 
 const surfaces = new WeakMap<HTMLElement, SuggestionSurface>();

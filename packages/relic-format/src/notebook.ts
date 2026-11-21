@@ -82,6 +82,13 @@ export interface NotebookCell {
   /** The execution count, when the file holds a non-negative integer. */
   readonly executionCount: number | undefined;
   readonly source: NotebookText;
+  /** JSON string token ranges for the source, including their quotes. */
+  readonly sourceTokens: readonly {
+    readonly start: number;
+    readonly end: number;
+  }[];
+  /** Opening and closing brackets for a source array with no elements. */
+  readonly emptySourceArray?: { readonly start: number; readonly end: number };
   readonly outputs: readonly NotebookOutput[];
   /** Outputs past the per-cell cap. They are counted, not read. */
   readonly omittedOutputs: number;
@@ -331,6 +338,7 @@ function readCell(
       kind: 'raw',
       executionCount: undefined,
       source: { text: '', truncated: false },
+      sourceTokens: [],
       outputs: [],
       omittedOutputs: 0,
       start,
@@ -345,6 +353,27 @@ function readCell(
   const sourceNode = member(tree, node, 'source');
   const sourceText =
     sourceNode === undefined ? '' : (textOf(tree, sourceNode) ?? '');
+  const sourceTokens: { start: number; end: number }[] = [];
+  if (sourceNode !== undefined) {
+    if (tree.kind(sourceNode) === 'string') {
+      sourceTokens.push({
+        start: tree.valueStart(sourceNode),
+        end: tree.valueEnd(sourceNode),
+      });
+    } else if (tree.kind(sourceNode) === 'array') {
+      for (
+        let token = tree.firstChild(sourceNode);
+        token !== NONE;
+        token = tree.nextSibling(token)
+      ) {
+        if (tree.kind(token) === 'string')
+          sourceTokens.push({
+            start: tree.valueStart(token),
+            end: tree.valueEnd(token),
+          });
+      }
+    }
+  }
 
   const outputs: NotebookOutput[] = [];
   let omittedOutputs = 0;
@@ -372,6 +401,17 @@ function readCell(
     kind,
     executionCount: countOf(tree, member(tree, node, 'execution_count')),
     source: display(sourceText),
+    sourceTokens,
+    ...(sourceNode !== undefined &&
+    tree.kind(sourceNode) === 'array' &&
+    tree.childCount(sourceNode) === 0
+      ? {
+          emptySourceArray: {
+            start: tree.valueStart(sourceNode),
+            end: tree.valueEnd(sourceNode),
+          },
+        }
+      : {}),
     outputs,
     omittedOutputs,
     start,

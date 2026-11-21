@@ -103,9 +103,17 @@ function selectionOffsets(
     const prefix = root.ownerDocument.createRange();
     prefix.selectNodeContents(root);
     prefix.setEnd(range.startContainer, range.startOffset);
-    const start = prefix.toString().length;
+    const sourceLength = (): number => {
+      const fragment = prefix.cloneContents();
+      for (const excluded of fragment.querySelectorAll(
+        'ins[data-sg], [data-sg-decoration]'
+      ))
+        excluded.remove();
+      return fragment.textContent?.length ?? 0;
+    };
+    const start = sourceLength();
     prefix.setEnd(range.endContainer, range.endOffset);
-    return [start, prefix.toString().length];
+    return [start, sourceLength()];
   } catch {
     return null;
   }
@@ -128,11 +136,12 @@ function restoreOffsets(
     const element = node.parentElement;
     if (element?.closest('ins[data-sg], [data-sg-decoration]')) continue;
     const length = node.textContent?.length ?? 0;
-    if (!start && offsets[0] <= count + length)
+    if (!start && offsets[0] < count + length)
       start = [node, offsets[0] - count];
     if (!end && offsets[1] <= count + length) end = [node, offsets[1] - count];
     count += length;
   }
+  if (!start && offsets[0] === count && end) start = end;
   if (!start || !end) return;
   const range = root.ownerDocument.createRange();
   range.setStart(...start);
@@ -544,6 +553,15 @@ export function mountSuggestionController(
     }
     gutter.textContent = lines.join('\n');
   };
+  const editablePending = () => {
+    const pending = views?.pending ?? [];
+    return surface?.covers
+      ? pending.filter(
+          (item) =>
+            surface?.covers?.(item.start, item.end, item.inserted) === true
+        )
+      : pending;
+  };
 
   const ensureEditor = (): void => {
     const session = options.session();
@@ -577,7 +595,7 @@ export function mountSuggestionController(
       crlf: sourceResult.crlf,
       surface,
       displayName: options.displayName(),
-      pending: views?.pending ?? [],
+      pending: editablePending(),
       chrome: editorChrome,
       receiptHost: host,
       unavailable: view.version !== currentVersion ? 'older' : null,
@@ -708,10 +726,24 @@ export function mountSuggestionController(
       clearSuggestionPaint(target);
       surface?.repaint();
       ordinary();
+      const paintedViews = surface?.covers
+        ? {
+            ...views!,
+            paint: views!.paint.filter(
+              (item) =>
+                item.location.status !== 'resolved' ||
+                surface?.covers?.(
+                  item.location.start,
+                  item.location.end,
+                  item.input?.suggestion.replacement
+                ) === true
+            ),
+          }
+        : views!;
       const result = paintSuggestions(
         target,
         segments,
-        views!,
+        paintedViews,
         surface ? 'markdown' : kind,
         surface?.decode?.bind(surface)
       );
@@ -726,7 +758,7 @@ export function mountSuggestionController(
       }
       updateGutter();
     };
-    if (editor) editor.updatePending(views.pending, draw);
+    if (editor) editor.updatePending(editablePending(), draw);
     else draw();
     if (failed && editor?.suggesting) setEditorSuggesting(false);
     updateControls();
