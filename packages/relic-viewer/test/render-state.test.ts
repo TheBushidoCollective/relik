@@ -690,6 +690,25 @@ describe('Spec B: V3 Render State, Version Progress, and Comparison Bytes', () =
     ).toBeNull();
   });
 
+  test('spreadsheet remains rendering until its worker reports ready or error', () => {
+    for (const outcome of ['ready', 'error'] as const) {
+      const stage = new ElementStub('main');
+      const wrap = new ElementStub('div');
+      wrap.appendChild(stage);
+      rootBody.appendChild(wrap);
+      trackRenderState(
+        stage as unknown as HTMLElement,
+        wrap as unknown as HTMLElement,
+        'spreadsheet'
+      );
+      expect(stage.dataset['renderState']).toBe('rendering');
+      expect(wrap.getAttribute('aria-busy')).toBe('true');
+      stage.dispatchEvent({ type: 'relic:render-state', detail: outcome });
+      expect(stage.dataset['renderState']).toBe(outcome);
+      expect(wrap.getAttribute('aria-busy')).toBe('false');
+    }
+  });
+
   test('3c. PDF renderer import failure dispatches an error and shows the failure card', () => {
     // The intentionally rejected import must not poison PDF.js for later tests.
     const child = Bun.spawnSync([

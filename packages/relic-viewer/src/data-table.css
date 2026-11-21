@@ -477,3 +477,17 @@
     padding-bottom: 45vh;
   }
 }
+
+.spreadsheet-tabs {
+  display: flex;
+  gap: 0.25rem;
+  overflow-x: auto;
+}
+.spreadsheet-tabs button {
+  flex: none;
+  padding: 0.5rem 0.75rem;
+}
+.spreadsheet-tabs button[aria-selected='true'] {
+  font-weight: 700;
+  border-bottom: 2px solid currentColor;
+}

@@ -1016,7 +1016,10 @@ export function buildBar(
   // which is exactly the mismatch that breaks speech control.
   // Keyed on the route the viewer resolved, so the sentence describes what
   // this relic does rather than what the riskiest relic would.
-  const markerLabel = markerLabelFor(view.route);
+  const markerLabel =
+    view.route === 'sandboxed-document' && view.documentKind === 'epub'
+      ? 'Rendered as a document, no author code'
+      : markerLabelFor(view.route);
   marker.setAttribute('aria-label', markerLabel);
   marker.title = `${markerLabel}. What Relic knows.`;
   marker.appendChild(icon(ICONS.source));
@@ -2198,15 +2201,79 @@ export function buildCurrentStage(
     case 'pdf':
       main.appendChild(renderPdfView(view));
       break;
-    case 'sandboxed-document':
-    case 'spreadsheet':
-      main.appendChild(
-        notice(
-          'The viewer cannot show this file yet. Download it to inspect it.'
-        )
-      );
-      main.appendChild(renderDownloadView(view));
+    case 'spreadsheet': {
+      const root = document.createElement('section');
+      root.textContent = 'Loading spreadsheet';
+      main.appendChild(root);
+      void import('./spreadsheet-view.ts')
+        .then(({ renderSpreadsheetRoute }) => {
+          if (root.isConnected)
+            renderSpreadsheetRoute(root, view, () => downloadContent(view));
+        })
+        .catch(() => {
+          if (!root.isConnected) return;
+          root.replaceChildren(
+            notice(
+              'This spreadsheet could not be shown. Download it to inspect it.'
+            ),
+            renderDownloadView(view)
+          );
+          root.dispatchEvent(
+            new CustomEvent('relic:render-state', {
+              bubbles: true,
+              detail: 'error',
+            })
+          );
+        });
       break;
+    }
+    case 'sandboxed-document': {
+      if (view.documentKind !== 'epub') {
+        main.appendChild(
+          notice(
+            'The viewer cannot show this file yet. Download it to inspect it.'
+          )
+        );
+        main.appendChild(renderDownloadView(view));
+        break;
+      }
+      const root = document.createElement('div');
+      root.className = 'doc doc-html';
+      main.appendChild(root);
+      void Promise.all([
+        import('./document-route.ts'),
+        import('@relic/format/epub-package'),
+      ])
+        .then(([route, epub]) =>
+          route.mountDocumentRoute(
+            root,
+            view.content,
+            'epub',
+            epub.readEpubPackage,
+            (payload, transfer, onState) =>
+              sandboxFrame(
+                view,
+                usercontentOrigin,
+                payload,
+                undefined,
+                transfer,
+                onState
+              ),
+            () => downloadContent(view)
+          )
+        )
+        .catch(() => {
+          if (!root.isConnected) return;
+          root.replaceChildren(renderDownloadView(view));
+          root.dispatchEvent(
+            new CustomEvent('relic:render-state', {
+              detail: 'error',
+              bubbles: true,
+            })
+          );
+        });
+      break;
+    }
     default:
       main.appendChild(renderDownloadView(view));
       break;
@@ -11698,6 +11765,7 @@ export function trackRenderState(
       }
       break;
     }
+    case 'spreadsheet':
     case 'notebook':
     case 'model': {
       stage.addEventListener('relic:render-state', (event: Event) => {

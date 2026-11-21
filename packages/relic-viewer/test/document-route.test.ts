@@ -84,6 +84,13 @@ class ElementStub extends EventTarget {
 }
 
 test('archive checks precede frame creation and timeout removes the frame', async () => {
+  const frameFile = Bun.file(
+    new URL('../dist-frame/frame-docx.frame.js', import.meta.url)
+  );
+  if (!(await frameFile.exists()))
+    throw new Error(
+      "Document route test requires a fresh viewer build: bun run --filter '@relic/viewer' build"
+    );
   const previous = Object.getOwnPropertyDescriptor(globalThis, 'document');
   const previousObserver = Object.getOwnPropertyDescriptor(
     globalThis,
@@ -256,6 +263,28 @@ test('archive checks precede frame creation and timeout removes the frame', asyn
     observerState.onMutation?.();
     release.resolve();
     await pending;
+    expect(frameCount).toBe(3);
+    const pendingProtectedRoot = new ElementStub();
+    const protectedStarted = Promise.withResolvers<void>();
+    const protectedRelease = Promise.withResolvers<void>();
+    const pendingProtected = mountDocumentRoute(
+      pendingProtectedRoot as unknown as HTMLElement,
+      valid,
+      'epub',
+      async () => {
+        protectedStarted.resolve();
+        await protectedRelease.promise;
+        return { ok: false, reason: 'protected' };
+      },
+      createFrame,
+      () => {}
+    );
+    await protectedStarted.promise;
+    pendingProtectedRoot.isConnected = false;
+    observerState.onMutation?.();
+    protectedRelease.resolve();
+    await pendingProtected;
+    expect(pendingProtectedRoot.children).toEqual([]);
     expect(frameCount).toBe(3);
   } finally {
     if (previous) Object.defineProperty(globalThis, 'document', previous);

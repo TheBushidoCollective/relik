@@ -1,6 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import { parseTable } from '@relic/format/csv';
-import { anchorForRect, markFits, rectText } from '../src/data-table.ts';
+import {
+  anchorForRect,
+  markFits,
+  rectText,
+  RangeCopyTooLargeError,
+} from '../src/data-table.ts';
 import { csvTableSource } from '../src/table-source.ts';
 
 describe('table source', () => {
@@ -10,13 +15,43 @@ describe('table source', () => {
     );
     if (!parsed.ok) throw new Error('fixture refused');
     const table = csvTableSource(parsed.table);
-    // Leading tab or space and the fullwidth equals sign are not trigger characters.
+    // Embedded separators and quotes are quoted as one TSV field.
     expect(rectText(table, { r0: 0, r1: 0, c0: 0, c1: 10 })).toBe(
-      "'=HYPERLINK(\"x\")\t'+1+1\t'-2+3\t-5\t+3.2\t'@SUM(A1)\t\t=1\t =1\t\t'=a\nb\t＝1"
+      [
+        '"\'=HYPERLINK(""x"")"',
+        "'+1+1",
+        "'-2+3",
+        '-5',
+        '+3.2',
+        "'@SUM(A1)",
+        '"\t=1"',
+        ' =1',
+        '',
+        '"\'=a\nb"',
+        '＝1',
+      ].join('\t')
     );
     expect(rectText(table, { r0: 0, r1: 0, c0: 0, c1: 0 })).toBe(
       '=HYPERLINK("x")'
     );
+  });
+
+  test('range copy refuses excessive cells or output, while single copy remains raw', () => {
+    const value = 'x'.repeat(4 * 1024 * 1024 + 1);
+    const table = {
+      records: 100001,
+      columns: 2,
+      summary: 'Spreadsheet',
+      text: () => value,
+      numeric: () => undefined,
+    };
+    expect(() => rectText(table, { r0: 0, r1: 100000, c0: 0, c1: 0 })).toThrow(
+      RangeCopyTooLargeError
+    );
+    expect(() => rectText(table, { r0: 0, r1: 0, c0: 0, c1: 1 })).toThrow(
+      RangeCopyTooLargeError
+    );
+    expect(rectText(table, { r0: 0, r1: 0, c0: 0, c1: 0 })).toBe(value);
   });
 
   test('sheet anchors match only the same sheet', () => {

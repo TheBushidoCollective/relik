@@ -1531,9 +1531,9 @@ body {
 
 /*
  * No height here, deliberately. Every frame this class reaches is inside a
- * sandboxed stage or a comparison pane, and both set their own: the only
- * routes that build a frame are `sandboxed-html` and `sandboxed-jsx`, plus the
- * two panes of a rendered comparison. This rule used to carry
+ * sandboxed stage or a comparison pane, and both set their own: the document,
+ * HTML and JSX routes and the two panes of a rendered comparison. This rule
+ * used to carry
  * `calc(100vh - var(--bar-height) - 4rem)`, a third answer nothing ever read,
  * which is how the same guess survived unnoticed in the rule below it.
  */
@@ -1555,7 +1555,8 @@ body {
  * and has no opinion of its own to respect.
  */
 .stage-sandboxed-html,
-.stage-sandboxed-jsx {
+.stage-sandboxed-jsx,
+.stage-sandboxed-document:has(> .doc > .usercontent-frame) {
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -1576,14 +1577,16 @@ body {
  * height instead of being added to a frame already claiming the whole row.
  */
 .stage-sandboxed-html .doc,
-.stage-sandboxed-jsx .doc {
+.stage-sandboxed-jsx .doc,
+.stage-sandboxed-document:has(> .doc > .usercontent-frame) > .doc {
   flex: 1 1 auto;
   min-height: 0;
   margin: 0;
 }
 
 .stage-sandboxed-html .usercontent-frame,
-.stage-sandboxed-jsx .usercontent-frame {
+.stage-sandboxed-jsx .usercontent-frame,
+.stage-sandboxed-document > .doc > .usercontent-frame {
   /* Block, or the iframe sits on the text baseline and leaves a strip of page
      background under it that reads as one more stray margin. */
   display: block;
@@ -1604,7 +1607,8 @@ body {
    too if routing ever changed; either way it must not be jammed against the
    window edge. */
 .stage-sandboxed-html .notice,
-.stage-sandboxed-jsx .notice {
+.stage-sandboxed-jsx .notice,
+.stage-sandboxed-document:has(> .doc > .usercontent-frame) .notice {
   margin: 1rem 1.25rem;
 }
 
@@ -1614,7 +1618,8 @@ body {
    the frame keeps its full-height layout. Its buttons are the popover's own
    action classes, so they look like the rest of the viewer's chrome. */
 .stage-sandboxed-html .doc,
-.stage-sandboxed-jsx .doc {
+.stage-sandboxed-jsx .doc,
+.stage-sandboxed-document:has(> .doc > .usercontent-frame) > .doc {
   position: relative;
 }
 
