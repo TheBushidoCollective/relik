@@ -53,6 +53,11 @@ export interface SubtitleCue {
   readonly segments: readonly SubtitleSegment[];
   /** The plain text of the cue, lines joined with `\n`. */
   readonly text: string;
+  /** Source offsets for each text line, excluding line endings and the BOM. */
+  readonly textSpans: readonly {
+    readonly start: number;
+    readonly end: number;
+  }[];
   readonly truncated: boolean;
 }
 
@@ -235,6 +240,57 @@ function decodeEntities(text: string): string {
   return out;
 }
 
+/** A visible fragment and its UTF-16 span in the BOM-stripped source. */
+export interface SubtitleTextSpan {
+  readonly text: string;
+  readonly start: number;
+  readonly end: number;
+  readonly escape: boolean;
+}
+
+export function subtitleTextSpans(
+  source: string,
+  cue: SubtitleCue
+): SubtitleTextSpan[] {
+  const spans: SubtitleTextSpan[] = [];
+  const add = (
+    text: string,
+    start: number,
+    end: number,
+    escape = false
+  ): void => {
+    if (text !== '') spans.push({ text, start, end, escape });
+  };
+  cue.textSpans.forEach((line, index) => {
+    if (index > 0) {
+      const previous = cue.textSpans[index - 1]!;
+      add('\n', previous.end, line.start, line.start - previous.end !== 1);
+    }
+    let at = line.start;
+    while (at < line.end) {
+      if (source[at] === '<') {
+        const tag = readTag(source, at);
+        if (tag && tag.end <= line.end) {
+          at = tag.end;
+          continue;
+        }
+      }
+      if (source[at] === '&') {
+        const entity = ENTITIES.find(([name]) => source.startsWith(name, at));
+        if (entity && at + entity[0].length <= line.end) {
+          add(entity[1], at, at + entity[0].length, true);
+          at += entity[0].length;
+          continue;
+        }
+      }
+      const start = at++;
+      while (at < line.end && source[at] !== '<' && source[at] !== '&') at++;
+      add(source.slice(start, at), start, at);
+    }
+  });
+  return spans;
+}
+
 interface CueContent {
   readonly segments: readonly SubtitleSegment[];
   readonly text: string;
@@ -415,6 +471,8 @@ function readCueBlock(
 interface LineRead {
   readonly text: string;
   readonly number: number;
+  readonly start: number;
+  readonly end: number;
 }
 
 /**
@@ -429,6 +487,7 @@ function lineCursor(source: string): () => LineRead | undefined {
   return () => {
     if (start > source.length) return undefined;
     number += 1;
+    const lineStart = start;
     let end = start;
     while (end < source.length) {
       const code = source.charCodeAt(end);
@@ -443,7 +502,7 @@ function lineCursor(source: string): () => LineRead | undefined {
     )
       start = end + 2;
     else start = end + 1;
-    return { text, number };
+    return { text, number, start: lineStart, end };
   };
 }
 
@@ -479,8 +538,10 @@ export function parseSubtitles(
     }
     const line = pending.number;
     const block: string[] = [];
+    const blockLines: LineRead[] = [];
     while (pending !== undefined && pending.text !== '') {
       block.push(pending.text);
+      blockLines.push(pending);
       pending = nextLine();
     }
     const isFirstBlock = blocks === 0;
@@ -529,6 +590,9 @@ export function parseSubtitles(
       ...(content.speaker === undefined ? {} : { speaker: content.speaker }),
       segments: content.segments,
       text: content.text,
+      textSpans: blockLines
+        .slice(blockLines.length - read.text.length)
+        .map(({ start, end }) => ({ start, end })),
       truncated: content.truncated,
     });
   }

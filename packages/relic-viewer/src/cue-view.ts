@@ -23,6 +23,9 @@ import {
 } from '@relic/format/subtitles';
 import { isInvisible } from '@relic/format/structured-text';
 import { subtitleClock } from './annotate-cue.ts';
+import { cueSourceSegments } from './cue-suggest.ts';
+import { registerSuggestionSurface } from './suggestion-surface.ts';
+import type { SourceSegment } from './markdown-source.ts';
 import type {
   StructuredMount,
   StructuredPart,
@@ -90,8 +93,9 @@ function commentIcon(): SVGSVGElement {
 }
 
 /** A run of text as nodes: underline, then italic, then bold, each a plain element. */
-function segmentNode(segment: SubtitleSegment): Node {
-  let node: Node = document.createTextNode(visibleText(segment.text));
+function segmentNode(segment: SubtitleSegment, contents?: Node): Node {
+  let node: Node =
+    contents ?? document.createTextNode(visibleText(segment.text));
   if (segment.underline) {
     const span = el('span', 'u');
     span.append(node);
@@ -186,6 +190,12 @@ function drawCues(mount: StructuredMount, file: SubtitleFile): StructuredPart {
   const speakers = new Set<string>();
   let duration = 0;
   let chosen: CueRow | undefined;
+  const source =
+    mount.source.charCodeAt(0) === 0xfeff
+      ? mount.source.slice(1)
+      : mount.source;
+  const mappedSegments: SourceSegment[] = [];
+  const redraw: (() => void)[] = [];
 
   const density = el('div', 'cues-density');
   density.setAttribute('aria-hidden', 'true');
@@ -213,7 +223,40 @@ function drawCues(mount: StructuredMount, file: SubtitleFile): StructuredPart {
         speakers.add(entry.speaker);
         text.append(el('span', 'cue-speaker', visibleText(entry.speaker)));
       }
-      for (const segment of entry.segments) text.append(segmentNode(segment));
+      const content = el('span', 'cue-content');
+      const pieces = cueSourceSegments(source, entry);
+      const editable =
+        !entry.truncated &&
+        pieces.map((piece) => piece.text).join('') === entry.text &&
+        visibleText(entry.text) === entry.text;
+      const first = mappedSegments.length;
+      if (editable) mappedSegments.push(...pieces);
+      const drawContent = (): void => {
+        content.replaceChildren();
+        if (!editable) {
+          for (const segment of entry.segments)
+            content.append(segmentNode(segment));
+          return;
+        }
+        let piece = 0;
+        for (const segment of entry.segments) {
+          const holder = doc.createDocumentFragment();
+          let remaining = segment.text.length;
+          while (remaining > 0 && piece < pieces.length) {
+            const item = pieces[piece]!;
+            const span = el('span');
+            span.dataset['seg'] = String(first + piece);
+            span.textContent = item.text;
+            holder.append(span);
+            remaining -= item.text.length;
+            piece++;
+          }
+          content.append(segmentNode(segment, holder));
+        }
+      };
+      drawContent();
+      redraw.push(drawContent);
+      text.append(content);
       const add = el('button', 'cm-add');
       add.type = 'button';
       add.title = `Comment on cue ${entry.index}`;
@@ -274,6 +317,15 @@ function drawCues(mount: StructuredMount, file: SubtitleFile): StructuredPart {
     notices.push(el('p', 'cues-notice', skippedNotice(file.skipped)));
 
   root.replaceChildren(bar, ...notices, density, list);
+  const unregister = registerSuggestionSurface(root, {
+    root: list,
+    segments: () => mappedSegments,
+    blockKind: () => 'cue',
+    editable: () => true,
+    repaint: () => {
+      for (const draw of redraw) draw();
+    },
+  });
 
   const visibleRows = (): HTMLLIElement[] =>
     allRows.filter((row) => !row.hidden);
@@ -504,7 +556,10 @@ function drawCues(mount: StructuredMount, file: SubtitleFile): StructuredPart {
     clearMarks,
     selectionAnchor,
     reveal,
-    dispose: () => controller.abort(),
+    dispose: () => {
+      unregister();
+      controller.abort();
+    },
   };
 }
 
