@@ -35,6 +35,8 @@ import type {
   StructuredPart,
 } from './structured-view-bridge.ts';
 import { buildProse } from './text-views.ts';
+import { notebookSuggestionSurface } from './notebook-suggest.ts';
+import { registerSuggestionSurface } from './suggestion-surface.ts';
 
 const STYLESHEET_ID = 'relic-notebook-view-css';
 const STYLESHEET_HREF = '/assets/notebook-view.css';
@@ -379,6 +381,10 @@ function drawNotebook(
   };
 
   for (const cell of notebook.cells) list.append(cellItem(cell));
+  const unregisterSurface = registerSuggestionSurface(
+    root,
+    notebookSuggestionSurface(root, notebook)
+  );
 
   /** Puts the badge for one element's marks on it, dropping its stale badge. */
   const refreshMark = (key: string, element: HTMLElement): void => {
@@ -540,6 +546,7 @@ function drawNotebook(
       element.scrollIntoView({ block: 'center' });
     },
     dispose(): void {
+      unregisterSurface();
       controller.abort();
       for (const url of blobs) URL.revokeObjectURL(url);
       blobs.length = 0;
