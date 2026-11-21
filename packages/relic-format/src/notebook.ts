@@ -87,6 +87,8 @@ export interface NotebookCell {
     readonly start: number;
     readonly end: number;
   }[];
+  /** Opening and closing brackets for a source array with no elements. */
+  readonly emptySourceArray?: { readonly start: number; readonly end: number };
   readonly outputs: readonly NotebookOutput[];
   /** Outputs past the per-cell cap. They are counted, not read. */
   readonly omittedOutputs: number;
@@ -400,6 +402,16 @@ function readCell(
     executionCount: countOf(tree, member(tree, node, 'execution_count')),
     source: display(sourceText),
     sourceTokens,
+    ...(sourceNode !== undefined &&
+    tree.kind(sourceNode) === 'array' &&
+    tree.childCount(sourceNode) === 0
+      ? {
+          emptySourceArray: {
+            start: tree.valueStart(sourceNode),
+            end: tree.valueEnd(sourceNode),
+          },
+        }
+      : {}),
     outputs,
     omittedOutputs,
     start,

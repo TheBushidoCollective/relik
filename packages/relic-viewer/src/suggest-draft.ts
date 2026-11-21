@@ -195,12 +195,12 @@ function newlineRefusal(kind: SuggestBlockKind): SuggestRefusal {
   );
 }
 
-function validReplacement(text: string): boolean {
+function validReplacement(text: string, allowCR = false): boolean {
   for (let i = 0; i < text.length; i++) {
     const code = text.charCodeAt(i);
     if (
       code <= 0x08 ||
-      (code >= 0x0b && code <= 0x1f) ||
+      (code >= 0x0b && code <= 0x1f && !(allowCR && code === 0x0d)) ||
       code === 0x7f ||
       (code >= 0x202a && code <= 0x202e) ||
       (code >= 0x2066 && code <= 0x2069)
@@ -428,7 +428,21 @@ export class SuggestDraftModel {
       return insertionLimit(candidate.insertedBytes);
     if (this.options.crlf && /[\r\n]/.test(candidate.inserted))
       return crlfLineBreak();
-    if (!validReplacement(candidate.inserted))
+    const hasCR = candidate.inserted.includes('\r');
+    const retainedCRs = hasCR
+      ? (
+          this.options.decodeRange?.(
+            candidate.block,
+            candidate.start,
+            candidate.end
+          ) ?? ''
+        ).split('\r').length - 1
+      : 0;
+    const insertedCRs = hasCR ? candidate.inserted.split('\r').length - 1 : 0;
+    if (
+      insertedCRs > retainedCRs ||
+      !validReplacement(candidate.inserted, insertedCRs > 0)
+    )
       return refused(
         'invalid-character',
         'This suggestion contains unsupported characters.'
@@ -470,6 +484,11 @@ export class SuggestDraftModel {
     text: string,
     blockKind: SuggestBlockKind
   ): DraftChange {
+    if (!validReplacement(text))
+      return refused(
+        'invalid-character',
+        'This suggestion contains unsupported characters.'
+      );
     const block = this.rangeBlock(start, end);
     if (typeof block !== 'number') return block;
     let draft = this.current;
@@ -553,6 +572,11 @@ export class SuggestDraftModel {
     blockKind: SuggestBlockKind,
     commentId?: string
   ): DraftChange {
+    if (!validReplacement(text))
+      return refused(
+        'invalid-character',
+        'This suggestion contains unsupported characters.'
+      );
     let draft = this.current;
     if (commentId !== undefined) {
       const pending = this.pending.find(

@@ -333,6 +333,10 @@ describe('suggestion draft source model', () => {
       expect(code('abc').replace(1, 1, 'a\nb', kind).kind).toBe('changed');
     }
     expect(code('abc').tab(1, 1, 'nb-code').kind).toBe('changed');
+    expect(code('abc').replace(1, 1, '\r\n', 'nb-code')).toMatchObject({
+      kind: 'refused',
+      code: 'invalid-character',
+    });
     for (const kind of ['nb-markdown', 'nb-raw'] as const)
       expect(code('abc').tab(1, 1, kind)).toMatchObject({
         kind: 'refused',
