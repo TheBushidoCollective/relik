@@ -72,7 +72,7 @@ export async function render(
         const width = page.offsetWidth;
         if (width > 0)
           page.style.zoom = String(
-            Math.min(1, Math.max(1, root.clientWidth - 32) / width)
+            Math.min(1, Math.max(1, root.clientWidth - 60) / width)
           );
       }
     };

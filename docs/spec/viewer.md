@@ -272,7 +272,9 @@ The interactive parser admits at most 16 MiB, 250,000 triangles, 500,000 source 
 
 The document route indexes the archive and reads checked entries on the viewing origin before sending them to the opaque frame. ZIP entry count and decompressed sizes are bounded, and document XML is scanned for forbidden DTDs and entities. The parent transfers entry buffers and a first-party renderer module as text, never the key. The frame imports that module from a blob and reports one outcome. The parent removes the frame after a failed render or a 30-second timeout and offers the original download.
 
-The Word and EPUB renderer modules are currently placeholders that report unsupported. EPUB archives with encryption metadata are refused until package parsing can distinguish supported font obfuscation from DRM.
+The Word renderer uses the checked entries rather than decompressing the archive in the frame. Embedded objects, custom XML, binary parts and thumbnails are not sent. Word styles can restyle content and controls within the opaque frame, as with HTML relics, but cannot style the parent viewer. EPUB archives with encryption metadata are refused until package parsing can distinguish supported font obfuscation from DRM.
+
+The EPUB renderer is currently a placeholder that reports unsupported.
 
 ## 4. The sandbox boundary
 
