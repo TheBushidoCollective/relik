@@ -817,20 +817,26 @@ export function mountDataTable(
       if (single) {
         const value = table.text(rect.r0, rect.c0);
         const columnName = headerRow ? table.text(0, rect.c0) : '';
+        const detail = table.detail?.(rect.r0, rect.c0);
+        const meta = detail ? ` · ${detail.type}` : '';
         cells.push(
           element(
             'p',
             'dt-sub',
-            columnName === ''
+            (columnName === ''
               ? `Row ${rect.r0 + 1}`
-              : `Row ${rect.r0 + 1}, ${labelText(columnName)}`
+              : `Row ${rect.r0 + 1}, ${labelText(columnName)}`) + meta
           )
         );
         cells.push(
           element(
             'pre',
             'dt-value',
-            value === '' ? '(blank)' : displayText(value)
+            (value === '' ? '(blank)' : displayText(value)) +
+              (detail?.formula
+                ? `\nFormula: ${displayText(detail.formula)}`
+                : '') +
+              (detail?.sharedFrom ? `\nShared from: ${detail.sharedFrom}` : '')
           )
         );
       } else {
