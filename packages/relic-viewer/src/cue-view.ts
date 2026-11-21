@@ -18,10 +18,13 @@ import {
   type SubtitleCue,
   type SubtitleFile,
   type SubtitleSegment,
+  SUBTITLE_LIMIT_BYTES,
   parseSubtitles,
   subtitleFormatFor,
+  utf8ByteLength,
 } from '@relic/format/subtitles';
 import { isInvisible } from '@relic/format/structured-text';
+import { normalizeCrLf } from '@relic/format/suggestions';
 import { subtitleClock } from './annotate-cue.ts';
 import {
   cueSourceSegments,
@@ -157,8 +160,12 @@ function spanAnchor(start: number, end: number): CommentAnchor {
 
 export function mountView(mount: StructuredMount): StructuredPart | undefined {
   stylesheet();
+  const source =
+    utf8ByteLength(mount.source) > SUBTITLE_LIMIT_BYTES
+      ? mount.source
+      : normalizeCrLf(mount.source);
   const parsed = parseSubtitles(
-    mount.source,
+    source,
     subtitleFormatFor(mount.filename, mount.mimetype)
   );
   if (!parsed.ok) {
@@ -173,7 +180,7 @@ export function mountView(mount: StructuredMount): StructuredPart | undefined {
     mount.root.replaceChildren(...notices, mount.sourceView());
     return INERT;
   }
-  return drawCues(mount, parsed.file);
+  return drawCues(mount, parsed.file, source);
 }
 
 /**
@@ -183,7 +190,11 @@ export function mountView(mount: StructuredMount): StructuredPart | undefined {
  */
 const CUE_MARKS_PER_COMMENT = 500;
 
-function drawCues(mount: StructuredMount, file: SubtitleFile): StructuredPart {
+function drawCues(
+  mount: StructuredMount,
+  file: SubtitleFile,
+  normalized: string
+): StructuredPart {
   const root = mount.root;
   const doc = root.ownerDocument;
   const controller = new AbortController();
@@ -195,9 +206,7 @@ function drawCues(mount: StructuredMount, file: SubtitleFile): StructuredPart {
   let duration = 0;
   let chosen: CueRow | undefined;
   const source =
-    mount.source.charCodeAt(0) === 0xfeff
-      ? mount.source.slice(1)
-      : mount.source;
+    normalized.charCodeAt(0) === 0xfeff ? normalized.slice(1) : normalized;
   const mappedSegments: SourceSegment[] = [];
   const editableBlocks = new Set<number>();
   const cueByBlock = new Map<number, SubtitleCue>();

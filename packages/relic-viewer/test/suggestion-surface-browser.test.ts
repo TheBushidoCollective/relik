@@ -72,18 +72,20 @@ test('controller uses the registered structured suggestion surface', async () =>
       cueHost.append(cueOwner); document.body.append(cueHost);
       const cuePart = mountCues({root:cueOwner, source:cueSource, filename:'test.vtt', mimetype:'text/vtt', sourceView:()=>document.createElement('pre'), reportUnshown(){}});
       const cueSurface = suggestionSurfaceFor(cueHost);
-      const at = cueSource.indexOf('B</b>');
+      const cueNormalized = cueSource.split('\\r\\n').join('\\n');
+      const at = cueNormalized.indexOf('B</b>');
       const encoded = cueSurface.encode(1, '<C>&', at, at + 1);
       if (!encoded.ok || encoded.source !== '&lt;C&gt;&amp;') throw Error('VTT replacement was not escaped');
       if (cueSurface.decode(1, encoded.source) !== '<C>&') throw Error('VTT replacement did not decode');
-      const model = new SuggestDraftModel({source:cueSource, segments:cueSurface.segments(cueSource), delimiters:[], version:1, reader:'reader@example.test', crlf:true, encode:cueSurface.encode, decode:cueSurface.decode});
+      const model = new SuggestDraftModel({source:cueNormalized, segments:cueSurface.segments(cueNormalized), delimiters:[], version:1, reader:'reader@example.test', crlf:true, encode:cueSurface.encode, decode:cueSurface.decode});
       if (model.replace(at, at + 1, '<C>&', 'cue').kind !== 'changed') throw Error('escaped VTT draft rejected');
       const prepared = model.commit(null);
       if (prepared.kind !== 'save' || prepared.plaintext.suggestion.replacement !== '&lt;C&gt;&amp;') throw Error('VTT saved payload was not encoded');
       const cueView = {route:'code', filename:'test.vtt', declaredMimetype:'text/vtt', version:1, currentVersion:1, document:{bytes:new TextEncoder().encode(cueSource), truncated:false}};
       const cueBar = document.createElement('div'); document.body.append(cueBar);
+      let cueSealed;
       const cueEditor = mountSuggestionController({view:cueView, host:cueHost, bar:cueBar, relicId:'cue-fixture', deps:{serviceOrigin:location.origin,fetch},
-        session:()=>({kind:'verified',email:'reader@example.test'}), cipher:()=>({seal:async()=>'',open:async()=>({body:'',display_name:null,anchor:null})}),
+        session:()=>({kind:'verified',email:'reader@example.test'}), cipher:()=>({seal:async value=>{ cueSealed=value; return ''; },open:async()=>({body:'',display_name:null,anchor:null})}),
         entries:()=>[], displayName:()=>null, refresh:async()=>{}, readCurrentVersion:async()=>1, repaint(){}, signIn(){}, open(){} });
       cueEditor.setSuggesting(true);
       if (!cueEditor.suggesting) throw Error('cue surface could not enter suggesting');
@@ -98,6 +100,8 @@ test('controller uses the registered structured suggestion surface', async () =>
       sel.removeAllRanges(); sel.addRange(cueRange);
       cueText.parentElement.dispatchEvent(new InputEvent('beforeinput',{bubbles:true,cancelable:true,inputType:'insertText',data:'<C>'}));
       if (!cueEditor.draftOpen) throw Error('cue edit did not create a draft');
+      await Promise.resolve();
+      if (cueSealed?.anchor?.exact !== 'B' || cueSealed?.suggestion?.replacement !== '&lt;C&gt;') throw Error('CRLF cue selected wrong source: ' + JSON.stringify(cueSealed));
       cuePart.dispose();
       editor.destroy();
       for (const [source, crlf, hasSurface, shouldEnable] of [
