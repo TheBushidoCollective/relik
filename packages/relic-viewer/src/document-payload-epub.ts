@@ -19,15 +19,7 @@ export async function epubPayload(
         ok: false,
         reason: read.reason.includes('large') ? 'too-large' : 'corrupt',
       };
-    const prefix = read.bytes.subarray(0, 256);
-    const looksXml =
-      /(?:\.xml|\.xhtml|\.html|\.htm|\.opf|\.ncx|\.svg)$/i.test(name) ||
-      /^\s*</.test(new TextDecoder().decode(prefix)) ||
-      (prefix[0] === 0xff && prefix[1] === 0xfe) ||
-      (prefix[0] === 0xfe && prefix[1] === 0xff) ||
-      (prefix[0] === 0x3c && prefix[1] === 0) ||
-      (prefix[0] === 0 && prefix[1] === 0x3c);
-    if (looksXml && scanForbiddenDtd(read.bytes, 'epub'))
+    if (result.xmlParts.has(name) && scanForbiddenDtd(read.bytes, 'epub'))
       return { ok: false, reason: 'corrupt' };
     entries.push([name, read.bytes]);
   }

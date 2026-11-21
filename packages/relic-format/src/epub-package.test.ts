@@ -45,6 +45,9 @@ test('loads a navigation document containing unknown named entities', async () =
   const result = await readEpubPackage(book());
   expect(result.ok).toBe(true);
   if (!result.ok) return;
+  expect(result.xmlParts).toEqual(
+    new Set(['OPS/chapter.xhtml', 'OPS/nav.xhtml'])
+  );
   expect(result.book.spine).toEqual([
     { path: 'OPS/chapter.xhtml', linear: true },
   ]);

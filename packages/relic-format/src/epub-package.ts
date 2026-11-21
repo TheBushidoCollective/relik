@@ -1,4 +1,9 @@
-import { localName, parseXml, type XmlElement } from './xml.ts';
+import {
+  localName,
+  parseXml,
+  scanForbiddenDtd,
+  type XmlElement,
+} from './xml.ts';
 import type { ZipIndex } from './zip-index.ts';
 
 export interface EpubBook {
@@ -28,6 +33,7 @@ export type EpubPackageResult =
       readonly ok: true;
       readonly book: EpubBook;
       readonly parts: readonly string[];
+      readonly xmlParts: ReadonlySet<string>;
     }
   | {
       readonly ok: false;
@@ -113,6 +119,7 @@ async function xml(
   const bytes = await index.read(path);
   if (!bytes.ok)
     return fail(bytes.reason.includes('large') ? 'too-large' : 'corrupt');
+  if (scanForbiddenDtd(bytes.bytes, 'epub')) return fail('corrupt');
   const parsed = parseXml(new TextDecoder().decode(bytes.bytes), { lenient });
   if (!parsed.ok) return fail('corrupt');
   return parsed.root;
@@ -309,6 +316,22 @@ export async function readEpubPackage(
         walk(root, 0);
       }
     }
+    const parts = [...paths.keys()].filter((path) => !obscured.has(path));
+    const xmlParts = new Set<string>();
+    for (const [id, item] of items) {
+      const media = item.media.toLowerCase().split(';', 1)[0]!.trim();
+      if (
+        media === 'text/html' ||
+        media === 'text/xml' ||
+        media === 'application/xml' ||
+        media.endsWith('+xml') ||
+        item.properties.includes('nav') ||
+        attribute(spineNode, 'toc') === id
+      ) {
+        if (!obscured.has(item.path)) xmlParts.add(item.path);
+      }
+    }
+    for (const item of spine) xmlParts.add(item.path);
     return {
       ok: true,
       book: {
@@ -321,7 +344,8 @@ export async function readEpubPackage(
         toc,
         pageList,
       },
-      parts: [...paths.keys()].filter((path) => !obscured.has(path)),
+      parts,
+      xmlParts,
     };
   } catch (error) {
     return {

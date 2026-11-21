@@ -2,7 +2,11 @@ import { expect, test } from 'bun:test';
 import type { ZipEntryInfo, ZipIndex } from '@relic/format/zip-index';
 import { epubPayload } from '../src/document-payload-epub.ts';
 
-function fixture(encryption?: string, rights = false): ZipIndex {
+function fixture(
+  encryption?: string,
+  rights = false,
+  overrides: Record<string, string> = {}
+): ZipIndex {
   const source: Record<string, string> = {
     'META-INF/container.xml':
       '<container><rootfiles><rootfile full-path="book.opf"/></rootfiles></container>',
@@ -10,6 +14,7 @@ function fixture(encryption?: string, rights = false): ZipIndex {
       '<package><metadata><title>Test</title></metadata><manifest><item id="c" href="chapter.xhtml" media-type="application/xhtml+xml"/><item id="f" href="font.otf" media-type="font/otf"/></manifest><spine><itemref idref="c"/></spine></package>',
     'chapter.xhtml': '<html><body>Readable</body></html>',
     'font.otf': 'opaque font',
+    ...overrides,
   };
   if (encryption) source['META-INF/encryption.xml'] = encryption;
   if (rights) source['META-INF/rights.xml'] = '<rights/>';
@@ -71,4 +76,20 @@ test('rejects declarations in chapters before frame creation', async () => {
       name === 'chapter.xhtml' ? { ok: true, bytes: bad } : index.read(name),
   });
   expect(result).toEqual({ ok: false, reason: 'corrupt' });
+});
+
+test('scans manifest-selected extensionless XHTML even beyond the prefix window', async () => {
+  const opf =
+    '<package><metadata><title>Test</title></metadata><manifest><item id="c" href="chapter" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c"/></spine></package>';
+  const good = `${' '.repeat(300)}<html><body>Readable</body></html>`;
+  const accepted = await epubPayload(
+    fixture(undefined, false, { 'book.opf': opf, chapter: good })
+  );
+  expect(accepted.ok).toBe(true);
+  const bad = `${' '.repeat(300)}<!DOCTYPE html [<!ENTITY a "boom">]><html>&a;</html>`;
+  expect(
+    await epubPayload(
+      fixture(undefined, false, { 'book.opf': opf, chapter: bad })
+    )
+  ).toEqual({ ok: false, reason: 'corrupt' });
 });
