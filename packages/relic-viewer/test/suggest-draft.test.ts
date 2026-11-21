@@ -54,6 +54,113 @@ function saved(result: SuggestCommit) {
   };
 }
 
+describe('structured suggestion contracts', () => {
+  test('encodes the combined draft and refuses a boundary-spanning sequence', () => {
+    const source = 'cue';
+    const model = new SuggestDraftModel({
+      source,
+      segments: codeSegments(source),
+      delimiters: [],
+      version: 3,
+      reader: 'reader@example.com',
+      encode: (_block, text) =>
+        text.includes('-->')
+          ? {
+              ok: false,
+              refusal: {
+                kind: 'refused',
+                code: 'markup-in-cue',
+                message: 'Invalid cue',
+              },
+            }
+          : { ok: true, source: text },
+    });
+    expect(model.replace(0, 3, '--', 'cue').kind).toBe('changed');
+    expect(model.editInsertion(2, 2, '>', 'cue')).toMatchObject({
+      kind: 'refused',
+      code: 'markup-in-cue',
+    });
+    expect(model.draft?.inserted).toBe('--');
+  });
+
+  test('edits displayed offsets but stores encoded replacement', () => {
+    const model = new SuggestDraftModel({
+      source: 'abc',
+      segments: codeSegments('abc'),
+      delimiters: [],
+      version: 3,
+      reader: 'reader@example.com',
+      pending: [
+        {
+          id: 'mine',
+          author: 'reader@example.com',
+          displayName: 'Reader',
+          version: 3,
+          start: 0,
+          end: 1,
+          inserted: 'a""b',
+        },
+      ],
+      encode: (_block, text) => ({
+        ok: true,
+        source: text.replaceAll('"', '""'),
+      }),
+      decode: (_block, text) => text.replaceAll('""', '"'),
+    });
+    expect(model.editInsertion(2, 3, 'c', 'code', 'mine').kind).toBe('changed');
+    expect(model.draft?.inserted).toBe('a"c');
+    expect(saved(model.commit(null)).suggestion.replacement).toBe('a""c');
+  });
+
+  test('empty spans anchor on adjacent delimiters and reject ambiguity', () => {
+    const make = (source: string, position: number) =>
+      new SuggestDraftModel({
+        source,
+        segments: [
+          { text: '', start: position, end: position, block: 7, kind: 'text' },
+        ],
+        delimiters: [],
+        version: 3,
+        reader: 'reader@example.com',
+        emptyAnchor: () => ({
+          start: position - 1,
+          end: position,
+          mode: 'after',
+        }),
+      });
+    const model = make('left,,right', 5);
+    expect(model.replace(5, 5, 'x', 'csv-bare').kind).toBe('changed');
+    expect(saved(model.commit(null))).toMatchObject({
+      anchor: { exact: ',' },
+      suggestion: { mode: 'after', replacement: 'x' },
+    });
+    const repeated = `${'x'.repeat(1100)},,${'x'.repeat(1100)},,${'x'.repeat(1100)}`;
+    const ambiguous = make(repeated, 1101);
+    expect(ambiguous.replace(1101, 1101, 'x', 'csv-bare').kind).toBe('changed');
+    expect(ambiguous.commit(null)).toMatchObject({
+      kind: 'refused',
+      code: 'repeats',
+    });
+  });
+
+  test('CRLF context stops at CR and CR anchors are refused', () => {
+    const source = 'before\r\ncell\r\nafter';
+    const model = new SuggestDraftModel({
+      source,
+      segments: [{ text: 'cell', start: 8, end: 12, block: 1, kind: 'text' }],
+      delimiters: [],
+      version: 3,
+      reader: 'reader@example.com',
+      crlf: true,
+    });
+    expect(model.replace(8, 12, 'word', 'cue').kind).toBe('changed');
+    const { anchor } = saved(model.commit(null));
+    expect(
+      `${anchor.exact}${anchor.prefix ?? ''}${anchor.suffix ?? ''}`
+    ).not.toContain('\r');
+  });
+});
+
 describe('suggestion draft source model', () => {
   test('S6a refuses typing in another reader’s insertion with the mock copy', () => {
     const model = markdown('Alpha beta', [

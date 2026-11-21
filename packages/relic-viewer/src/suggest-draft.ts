@@ -681,6 +681,17 @@ export class SuggestDraftModel {
       const next = this.segmentAt(start, 'start', draft.block);
       const empty = this.options.emptyAnchor?.(draft.block, start);
       if (empty) {
+        if (
+          !Number.isInteger(empty.start) ||
+          !Number.isInteger(empty.end) ||
+          empty.start < 0 ||
+          empty.end > source.length ||
+          empty.start >= empty.end ||
+          (empty.mode === 'before'
+            ? empty.start !== start
+            : empty.end !== start)
+        )
+          return invalidRange();
         start = empty.start;
         end = empty.end;
         mode = empty.mode;
@@ -708,6 +719,7 @@ export class SuggestDraftModel {
       }
     }
     const exact = source.slice(start, end);
+    if (!exact || exact.includes('\r')) return invalidRange();
     if (bytes(exact) > COMMENT_ANCHOR_QUOTE_LIMIT_BYTES)
       return quoteLimit(bytes(exact));
     const prefix = takeTailUtf8(
