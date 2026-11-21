@@ -158,6 +158,43 @@ describe('cell anchors on CSV and TSV', () => {
     });
   });
 
+  test.each([
+    ['CSV', 'bom.csv', ','],
+    ['TSV', 'bom.tsv', '\t'],
+  ] as const)(
+    'resolves %s cells after decoding only the first BOM',
+    (_, filename, delimiter) => {
+      const source =
+        `\uFEFF\uFEFF"alpha${delimiter}beta"${delimiter}x\r\n` +
+        `row${delimiter}value${delimiter}last\r\n`;
+      const table = reader(source, filename);
+      expect(table.cell(cell(1, 1))).toMatchObject({
+        status: 'resolved',
+        text: '\uFEFF"alpha',
+        header: '\uFEFF"alpha',
+        line: 1,
+      });
+      expect(table.cell(cell(1, 2))).toMatchObject({
+        status: 'resolved',
+        text: 'beta"',
+        header: 'beta"',
+        line: 1,
+      });
+      expect(table.cell(cell(1, 3))).toMatchObject({
+        status: 'resolved',
+        text: 'x',
+        header: 'x',
+        line: 1,
+      });
+      expect(table.cell(cell(2, 2))).toMatchObject({
+        status: 'resolved',
+        text: 'value',
+        header: 'beta"',
+        line: 2,
+      });
+    }
+  );
+
   test('a TSV file splits on tabs, even when a cell holds a comma', () => {
     const resolved = reader('a\tb,c\n1\t2\n', 'data.tsv').cell(cell(1, 2));
     expect(resolved).toMatchObject({ status: 'resolved', text: 'b,c' });
