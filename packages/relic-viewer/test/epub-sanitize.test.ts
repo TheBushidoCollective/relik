@@ -38,11 +38,13 @@ test.skipIf(!process.env['RELIC_CHROME_PATH'])(
       );
       expect(child.status).toBe(0);
       const html = child.stdout;
-      expect(html).toContain('hello&nbsp;world');
-      expect(html).toContain('fallback');
-      expect(html).toContain('first');
-      expect(html).not.toContain('>second</mi>');
-      const article = html.slice(html.indexOf('<article'));
+      const start = html.indexOf('<article');
+      expect(start).toBeGreaterThanOrEqual(0);
+      const article = html.slice(start);
+      expect(article).toContain('hello&nbsp;world');
+      expect(article).toContain('fallback');
+      expect(article).toContain('first');
+      expect(article).not.toContain('>second</mi>');
       expect(article).not.toMatch(
         /<script|<iframe|<foreignObject|<animate|onerror=|javascript:|evil\.invalid/i
       );

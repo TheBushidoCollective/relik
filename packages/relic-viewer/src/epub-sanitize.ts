@@ -21,6 +21,15 @@ const DROP = new Set(
     ' '
   )
 );
+const MEDIA_TYPES: Record<string, string> = {
+  mp3: 'audio/mpeg',
+  m4a: 'audio/mp4',
+  ogg: 'audio/ogg',
+  opus: 'audio/ogg',
+  wav: 'audio/wav',
+  mp4: 'video/mp4',
+  webm: 'video/webm',
+};
 const SAFE_ATTR = new Set(
   'alt title lang dir class width height colspan rowspan scope start reversed value open role aria-label aria-hidden viewbox d x y x1 x2 y1 y2 cx cy r rx ry points fill stroke stroke-width opacity transform preserveaspectratio xmlns display mathvariant'.split(
     ' '
@@ -161,12 +170,12 @@ export function sanitizeEpubChapter(
       if (tag !== 'source') el.setAttribute('controls', '');
       const target = resolveEpubPath(ctx.path, input.getAttribute('src') ?? '');
       const bytes = target && ctx.entries.get(target.path);
-      if (
-        target &&
-        bytes &&
-        /\.(?:mp3|m4a|ogg|opus|wav|mp4|webm)$/i.test(target.path)
-      ) {
-        const url = URL.createObjectURL(new Blob([new Uint8Array(bytes)]));
+      const extension = target?.path.split('.').pop()?.toLowerCase() ?? '';
+      const mime = MEDIA_TYPES[extension];
+      if (target && bytes && mime) {
+        const url = URL.createObjectURL(
+          new Blob([new Uint8Array(bytes)], { type: mime })
+        );
         ctx.blobs.push(url);
         el.setAttribute('src', url);
       }

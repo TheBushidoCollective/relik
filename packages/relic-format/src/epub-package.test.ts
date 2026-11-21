@@ -126,3 +126,24 @@ test('refuses external and escaping manifest links', async () => {
     });
   }
 });
+
+test('reads NCX contents, page labels and fixed-layout progression', async () => {
+  const opf =
+    '<package><metadata><title>Book</title><meta property="rendition:layout">pre-paginated</meta></metadata><manifest><item id="c" href="chapter.xhtml" media-type="application/xhtml+xml"/><item id="n" href="toc.ncx" media-type="application/x-dtbncx+xml"/></manifest><spine toc="n" page-progression-direction="rtl"><itemref idref="c" linear="no"/></spine></package>';
+  const ncx =
+    '<ncx><navMap><navPoint><navLabel><text>Chapter</text></navLabel><content src="chapter.xhtml#one"/></navPoint></navMap><pageList><pageTarget><navLabel><text>12</text></navLabel><content src="chapter.xhtml#p12"/></pageTarget></pageList></ncx>';
+  const result = await readEpubPackage(
+    book({ 'OPS/book.opf': opf, 'OPS/toc.ncx': ncx })
+  );
+  expect(result.ok).toBe(true);
+  if (!result.ok) return;
+  expect(result.book.layout).toBe('pre-paginated');
+  expect(result.book.progression).toBe('rtl');
+  expect(result.book.spine[0]?.linear).toBe(false);
+  expect(result.book.toc).toEqual([
+    { label: 'Chapter', path: 'OPS/chapter.xhtml', fragment: 'one', depth: 0 },
+  ]);
+  expect(result.book.pageList).toEqual([
+    { label: '12', path: 'OPS/chapter.xhtml', fragment: 'p12' },
+  ]);
+});
