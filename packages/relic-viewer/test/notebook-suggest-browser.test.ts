@@ -16,6 +16,10 @@ test('notebook source maps rendered cells but refuses output selections', async 
   const profile = join(tmpdir(), `relic-nb-profile-${id}`);
   const suggest = resolve(import.meta.dir, '../src/notebook-suggest.ts');
   const editorModule = resolve(import.meta.dir, '../src/suggest-editor.ts');
+  const controllerModule = resolve(
+    import.meta.dir,
+    '../src/suggest-controller.ts'
+  );
   const surfaceModule = resolve(
     import.meta.dir,
     '../src/suggestion-surface.ts'
@@ -26,7 +30,7 @@ test('notebook source maps rendered cells but refuses output selections', async 
   );
   await writeFile(
     entry,
-    `export { notebookSuggestionSurface, notebookAcceptsSelection } from ${JSON.stringify(suggest)}; export { parseNotebook } from ${JSON.stringify(notebook)}; export { mountSuggestEditor } from ${JSON.stringify(editorModule)}; export { mutateSurfaceUI } from ${JSON.stringify(surfaceModule)};`
+    `export { notebookSuggestionSurface, notebookAcceptsSelection } from ${JSON.stringify(suggest)}; export { parseNotebook } from ${JSON.stringify(notebook)}; export { mountSuggestEditor } from ${JSON.stringify(editorModule)}; export { mutateSurfaceUI, registerSuggestionSurface } from ${JSON.stringify(surfaceModule)}; export { mountSuggestionController } from ${JSON.stringify(controllerModule)};`
   );
   const build = await Bun.build({
     entrypoints: [entry],
@@ -37,7 +41,7 @@ test('notebook source maps rendered cells but refuses output selections', async 
   const js = await build.outputs[0]!.text();
   const result = Promise.withResolvers<string>();
   const page = `<!doctype html><script type="module">
-    import {notebookSuggestionSurface, notebookAcceptsSelection, parseNotebook, mountSuggestEditor, mutateSurfaceUI} from '/entry.js';
+    import {notebookSuggestionSurface, notebookAcceptsSelection, parseNotebook, mountSuggestEditor, mutateSurfaceUI, registerSuggestionSurface, mountSuggestionController} from '/entry.js';
     try {
       const source = ${JSON.stringify(notebookSuggestionFixture)};
       const parsed = parseNotebook(source); if (!parsed.ok) throw Error('fixture refused');
@@ -94,6 +98,14 @@ test('notebook source maps rendered cells but refuses output selections', async 
       if (!tab.defaultPrevented || editor.draft?.inserted !== String.fromCharCode(9)) throw Error('code Tab did not insert');
       editor.cancel();
       editor.destroy();
+      const owner=document.createElement('div'); owner.className='structured-view'; const host=document.createElement('div'); document.body.append(host); host.append(owner); owner.append(root);
+      registerSuggestionSurface(owner,surface);
+      const bar=document.createElement('div'); document.body.append(bar);
+      const entries=[{kind:'open',id:'metadata-edit',author:'reader@example.test',version:1,createdAt:'2026-01-01T00:00:00Z',body:'test',displayName:null,anchor:{kind:'source',exact:'nbformat'},suggestion:{mode:'replace',replacement:'LEAK'}},{kind:'open',id:'output-edit',author:'reader@example.test',version:1,createdAt:'2026-01-01T00:00:01Z',body:'test',displayName:null,anchor:{kind:'source',exact:'stdout'},suggestion:{mode:'replace',replacement:'OUTPUTLEAK'}},{kind:'open',id:'code-edit',author:'reader@example.test',version:1,createdAt:'2026-01-01T00:00:02Z',body:'test',displayName:null,anchor:{kind:'source',exact:'print('},suggestion:{mode:'replace',replacement:'VALID'}}];
+      const controller=mountSuggestionController({view:{route:'notebook',filename:'test.ipynb',version:1,currentVersion:1,document:{bytes:new TextEncoder().encode(source),truncated:false}},host,bar,relicId:'test',deps:{serviceOrigin:location.origin,fetch},session:()=>({kind:'verified',email:'reader@example.test'}),cipher:()=>({seal:async()=>'',open:async()=>({})}),entries:()=>entries,displayName:()=>null,refresh:async()=>{},readCurrentVersion:async()=>1,repaint(){},signIn(){},open(){}});
+      controller.repaint(()=>{});
+      if (root.textContent.includes('LEAK') || !root.textContent.includes('VALID')) throw Error('metadata painted or code suggestion missing');
+      controller.destroy();
       const crlfSource=JSON.stringify({nbformat:4,cells:[{cell_type:'raw',source:'one'+String.fromCharCode(13,10)+'two'},{cell_type:'markdown',source:'alpha'+String.fromCharCode(10)+'beta'}]});
       const crlfNotebook=parseNotebook(crlfSource); if (!crlfNotebook.ok) throw Error('CRLF fixture refused');
       const another=document.createElement('div'); another.innerHTML='<div class=\"nb-cell\" data-cell=\"0\"><div class=\"nb-box\"><pre class=\"nb-src\"></pre></div></div><div class=\"nb-cell\" data-cell=\"1\"><div class=\"nb-box\"><article class=\"prose\"></article></div></div>';
