@@ -844,6 +844,25 @@ describe('otio-zip security indexing and subtype detection', () => {
     expect(media['media/a.bin']?.sha256).toMatch(/^[a-f0-9]{64}$/);
     expect(media['media/z.bin']?.sha256).toMatch(/^[a-f0-9]{64}$/);
   });
+  test('omits suffix-free DOS directories from the OTIO media index', async () => {
+    const archive = createZipBuffer([
+      { name: 'version.txt', data: validVersionTxt },
+      { name: 'content.otio', data: validContentOtio },
+      {
+        name: 'media/folder',
+        data: new Uint8Array(),
+        externalAttr: (0o600 << 16) | 0x10,
+      },
+      { name: 'media/folder/clip.bin', data: new Uint8Array([1, 2, 3]) },
+      { name: 'media\\legacy\\', data: new Uint8Array() },
+    ]);
+    const indexed = await indexOtioZip(archive);
+    expect(indexed.entries.get('media/folder')?.isDirectory).toBe(true);
+    expect(indexed.entries.get('media/legacy')?.isDirectory).toBe(true);
+    const media = await otioBundleMediaIndex(indexed);
+    expect(Object.keys(media)).toEqual(['media/folder/clip.bin']);
+    expect(media['media/folder/clip.bin']?.size).toBe(3);
+  });
 });
 
 describe('range-backed OTIO ZIP', () => {
