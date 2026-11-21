@@ -983,6 +983,7 @@ export function mountSuggestionController(
       }
       if (on && !adoptCurrentSurface()) return;
       ensureEditor();
+      if (on && surface?.clipPaint && !editor?.draft) repaint(() => {});
       if (on && guard()) {
         updateControls();
         return;

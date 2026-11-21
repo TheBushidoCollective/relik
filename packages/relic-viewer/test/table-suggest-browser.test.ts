@@ -39,6 +39,18 @@ async function exercise(
     module.csvTableSource(parsed.table),
     { filename: 'test.csv' }
   );
+  const stylesheet =
+    document.querySelector<HTMLLinkElement>('link[data-dt-css]')!;
+  if (!stylesheet.sheet) {
+    const loaded = Promise.withResolvers<void>();
+    stylesheet.addEventListener('load', () => loaded.resolve(), { once: true });
+    stylesheet.addEventListener(
+      'error',
+      () => loaded.reject(new Error('table CSS did not load')),
+      { once: true }
+    );
+    await loaded.promise;
+  }
   const view = {
     route: 'code',
     filename: 'test.csv',
@@ -78,6 +90,17 @@ async function exercise(
     anchor: { kind: 'source', exact: 'quick' },
     suggestion: { v: 1, mode: 'replace', replacement },
   }));
+  entries.push({
+    kind: 'open',
+    id: 'other-cell',
+    author: 'other@example.test',
+    version: 1,
+    createdAt: '2026-01-03T00:00:00Z',
+    body: '',
+    displayName: null,
+    anchor: { kind: 'source', exact: 'other' },
+    suggestion: { v: 1, mode: 'replace', replacement: 'wrong-cell' },
+  });
   let observed = '';
   tableRoot.addEventListener('relic:table-suggestion-views', (event) => {
     observed = JSON.stringify((event as CustomEvent).detail?.paint);
@@ -98,14 +121,25 @@ async function exercise(
   if (
     !editor ||
     !controller.suggesting ||
-    !editor.textContent?.includes('quick fox')
+    !editor.textContent?.includes('fox') ||
+    !editor.querySelector('.sg-chip')
   )
     throw new Error('editor did not open on selected cell');
-  const text = editor.querySelector('[data-seg]')?.firstChild;
+  if (editor.textContent?.includes('wrong-cell'))
+    throw new Error('another cell painted inside the editor');
+  const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
+  let text: Node | null = null;
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    if (node.textContent?.includes('fox')) {
+      text = node;
+      break;
+    }
+  }
   if (!text) throw new Error('missing mapped text');
   const range = document.createRange();
-  range.setStart(text, 0);
-  range.setEnd(text, 5);
+  const start = text.textContent!.indexOf('fox');
+  range.setStart(text, start);
+  range.setEnd(text, start + 3);
   document.getSelection()!.removeAllRanges();
   document.getSelection()!.addRange(range);
   const input = new InputEvent('beforeinput', {
@@ -121,7 +155,7 @@ async function exercise(
     '[data-r="0"][data-c="0"]'
   ) as HTMLElement;
   header.click();
-  grid.scrollTop = 1600;
+  grid.scrollTop = grid.scrollHeight;
   grid.dispatchEvent(new Event('scroll'));
   const firstFrame = Promise.withResolvers<void>();
   requestAnimationFrame(() =>
@@ -130,6 +164,9 @@ async function exercise(
   await firstFrame.promise;
   if (!editor.isConnected || !editor.textContent?.includes('swift'))
     throw new Error('draft lost on sort or scroll');
+  const original = tableRoot.querySelector('[data-r="1"][data-c="1"]');
+  if (!original?.querySelector('.sg-chip'))
+    throw new Error('badge missing from original cell after sort and scroll');
   grid.scrollTop = 0;
   grid.dispatchEvent(new Event('scroll'));
   const secondFrame = Promise.withResolvers<void>();
@@ -137,9 +174,6 @@ async function exercise(
     requestAnimationFrame(() => secondFrame.resolve())
   );
   await secondFrame.promise;
-  const original = tableRoot.querySelector('[data-r="1"][data-c="1"]');
-  if (original && !original.querySelector('.sg-chip'))
-    throw new Error('badge moved after sort');
   part.dispose();
   controller.destroy();
 }
@@ -171,6 +205,7 @@ test('table suggestions stay attached to source cells through sort and scroll', 
   });
   if (!build.success) throw new Error(build.logs.map(String).join('\n'));
   const js = await build.outputs[0]!.text();
+  const css = await Bun.file(resolve(src, 'data-table.css')).text();
   const result = Promise.withResolvers<{ error?: string }>();
   const page = `<!doctype html><script type="module">import * as m from '/test.js';try { await (${exercise.toString()})(m); await fetch('/result',{method:'POST',body:'{}'}); } catch(e) { await fetch('/result',{method:'POST',body:JSON.stringify({error:e?.stack||String(e)})}); }</script>`;
   const server = Bun.serve({
@@ -182,6 +217,8 @@ test('table suggestions stay attached to source cells through sort and scroll', 
         result.resolve((await request.json()) as { error?: string });
         return new Response('ok');
       }
+      if (path === '/assets/data-table.css')
+        return new Response(css, { headers: { 'content-type': 'text/css' } });
       if (path === '/test.js')
         return new Response(js, {
           headers: { 'content-type': 'text/javascript' },

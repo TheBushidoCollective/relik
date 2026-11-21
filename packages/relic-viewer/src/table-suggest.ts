@@ -3,7 +3,7 @@ import type { SourceSegment } from './markdown-source.ts';
 import type { SuggestBlockKind, SuggestRefusal } from './suggest-draft.ts';
 import type { SuggestionSurface } from './suggestion-surface.ts';
 
-/** Source offsets are UTF-16 offsets into the source with its BOM removed. */
+/** UTF-16 offsets refer to the BOM-free, LF-normalized suggestion source. */
 export interface TableSuggestionCell {
   readonly segments: readonly SourceSegment[];
   readonly kind: Extract<SuggestBlockKind, 'csv-quoted' | 'csv-bare'>;

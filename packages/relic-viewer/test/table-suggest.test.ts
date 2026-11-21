@@ -5,6 +5,7 @@ import {
   encodeTableSuggestion,
   tableSuggestionCell,
 } from '../src/table-suggest.ts';
+import { TABLE_SUGGEST_CRLF } from './table-suggest-fixture.ts';
 
 function parse(text: string, delimiter: ',' | '\t' = ',') {
   const result = parseTable(text, { delimiter });
@@ -14,7 +15,7 @@ function parse(text: string, delimiter: ',' | '\t' = ',') {
 
 describe('table suggestion source mapping', () => {
   test('maps BOM, CRLF and doubled quotes to source offsets', () => {
-    const table = parse('\ufeffname,note\r\nAda,"a ""quote"""\r\n');
+    const table = parse(TABLE_SUGGEST_CRLF);
     const cell = tableSuggestionCell(table, 1, 1)!;
     const source = table.text.slice(1).replaceAll('\r\n', '\n');
     expect(cell.kind).toBe('csv-quoted');
