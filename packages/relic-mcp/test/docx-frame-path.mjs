@@ -259,9 +259,13 @@ try {
   }
   const utf16Entries = imageEntries.map(([name, bytes]) => {
     if (!['[Content_Types].xml', 'word/_rels/document.xml.rels', 'word/document.xml'].includes(name)) return [name, new Uint8Array(bytes)];
-    const xml = decode.decode(new Uint8Array(bytes)).replace(/encoding="UTF-8"/i, 'encoding="UTF-16"');
+    let xml = decode.decode(new Uint8Array(bytes)).replace(/encoding="UTF-8"/i, 'encoding="UTF-16"');
+    if (name === '[Content_Types].xml') xml = xml.replace('</Types>', '<Default Extension="html" ContentType="text/html"/></Types>');
+    if (name === 'word/_rels/document.xml.rels') xml = xml.replace('</Relationships>', '<Relationship Id="rIdEmbedded" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/aFChunk" Target="chunk.html"/></Relationships>');
+    if (name === 'word/document.xml') xml = xml.replace('</w:body>', '<w:altChunk r:id="rIdEmbedded"/></w:body>');
     return [name, Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(xml, 'utf16le')])];
   });
+  utf16Entries.push(['word/chunk.html', encode.encode('<p>Additional document section</p>')]);
   const readerUrl = await publishEntries('reader-utf16.docx', utf16Entries);
   const badEntries = imageEntries.map(([name, bytes]) => [
     name,
@@ -301,7 +305,9 @@ try {
     const readerTree = await cdp.send('Page.getFrameTree', {}, sessionId);
     const readerFrame = readerTree.frameTree.childFrames[0].frame.id;
     const world = await cdp.send('Page.createIsolatedWorld', { frameId: readerFrame, worldName: 'docx-reader-proof' }, sessionId);
-    assert.match(await evaluate('document.body.innerText', world.executionContextId), /DOCX table cell/);
+    const readerText = await evaluate('document.body.innerText', world.executionContextId);
+    assert.match(readerText, /DOCX table cell/);
+    assert.match(readerText, /Embedded content was not shown/);
     const broken = await openReader(badUrl, 'error');
     assert.equal(broken.frame, false);
     assert.match(broken.text, /Download/);

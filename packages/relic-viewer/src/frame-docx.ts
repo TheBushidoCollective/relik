@@ -1,4 +1,5 @@
 import { defaultOptions, type HElement, renderAsync } from 'docx-preview';
+import { DocxLimitError, XmlReadBudget } from './document-xml-budget.ts';
 import type {
   DocumentInput,
   DocumentOutcome,
@@ -109,15 +110,18 @@ export async function render(
   root: HTMLElement,
   input: DocumentInput
 ): Promise<DocumentOutcome> {
+  const budget = new ImageBudget();
+  const xmlBudget = new XmlReadBudget();
+  let styles: HTMLElement | undefined;
   try {
-    const styles = document.createElement('div');
+    styles = document.createElement('div');
     document.head.append(styles);
-    const budget = new ImageBudget();
     const restoreImages = guardImageSources();
     try {
-      const archive = { entries: input.entries, budget };
+      const archive = { entries: input.entries, budget, xmlBudget };
       await renderAsync(archive as unknown as Blob, root, styles, {
         renderAltChunks: false,
+        trimXmlDeclaration: false,
         useBase64URL: true,
         h: boundedRenderFactory(),
         renderComments: false,
@@ -183,14 +187,7 @@ export async function render(
         (image.closest('svg') ?? image).replaceWith(placeholder);
       }
     }
-    const decoder = new TextDecoder();
-    if (
-      [...input.entries].some(
-        ([name, data]) =>
-          /^word\/.*\.xml$/i.test(name) &&
-          /<(?:[\w.-]+:)?altChunk(?:\s|\/|>)/.test(decoder.decode(data))
-      )
-    ) {
+    if (xmlBudget.omittedEmbeddedContent) {
       const notice = document.createElement('p');
       notice.textContent = 'Embedded content was not shown.';
       root.prepend(notice);
@@ -211,9 +208,18 @@ export async function render(
     window.addEventListener('resize', fit, { passive: true });
     return { state: 'ready' };
   } catch (error) {
+    root.replaceChildren();
+    styles?.remove();
+    const limited =
+      error instanceof DocumentTooLarge ||
+      error instanceof DocxLimitError ||
+      (typeof error === 'object' &&
+        error !== null &&
+        'code' in error &&
+        error.code === 'RELIC_DOCX_TOO_LARGE');
     return {
       state: 'failed',
-      reason: error instanceof DocumentTooLarge ? 'too-large' : 'corrupt',
+      reason: budget.reason ?? (limited ? 'too-large' : 'corrupt'),
     };
   }
 }

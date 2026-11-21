@@ -1,5 +1,5 @@
-import { decodeXmlBytes } from '@relic/format/xml';
 import { imageSize } from 'image-size';
+import { XmlReadBudget } from './document-xml-budget.ts';
 
 const MAX_IMAGE_PIXELS = 40_000_000;
 const MAX_TOTAL_IMAGE_PIXELS = 100_000_000;
@@ -78,6 +78,7 @@ export class ImageBudget {
 export interface EntryArchiveInput {
   readonly entries: ReadonlyMap<string, Uint8Array>;
   readonly budget: ImageBudget;
+  readonly xmlBudget?: XmlReadBudget;
 }
 
 /** docx-preview reads an already validated and decompressed package. */
@@ -90,11 +91,13 @@ export default class EntryArchive {
     const archive = new EntryArchive();
     const entries = 'budget' in input ? input.entries : input;
     const budget = 'budget' in input ? input.budget : undefined;
+    const xmlBudget =
+      ('budget' in input ? input.xmlBudget : undefined) ?? new XmlReadBudget();
     for (const [path, bytes] of entries) {
       let blob: Blob | undefined;
       archive.files[path] = {
         async async(type) {
-          if (type === 'string') return decodeXmlBytes(bytes);
+          if (type === 'string') return xmlBudget.read(bytes);
           if (type === 'uint8array') return bytes;
           if (type === 'blob') {
             if (budget && !budget.admit(path, bytes)) return null;
