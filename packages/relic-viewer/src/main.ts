@@ -158,6 +158,12 @@ import { deleteRememberedStrip, rememberControl } from './confirmation-ui.ts';
 import { installSkippedConfirmations } from './skipped-confirmations.ts';
 import { describeLinkRequest, LinkConfirmGate } from './open-link-confirm.ts';
 import { armFileDrop } from './drop-anywhere.ts';
+import { openPublisher } from './publish-entry.ts';
+import {
+  armUploadButtons,
+  ensureUploadButton,
+  uploadLink,
+} from './upload-button.ts';
 import {
   type AddressedBy,
   addressedBadgeLabel,
@@ -1272,6 +1278,8 @@ export function buildBar(
 
   moreWrap.append(moreBtn, moreList);
   actions.appendChild(moreWrap);
+  // Last in the row, so it is the rightmost control on the bar.
+  actions.appendChild(uploadLink());
 
   bar.appendChild(actions);
   return bar;
@@ -11152,6 +11160,7 @@ export function adoptOrMountPlate(relicId: string): PlateHandles {
       document.body.appendChild(bar);
     }
   }
+  ensureUploadButton(bar);
 
   let plate = document.querySelector(
     'main.stage.stage-loading[data-load-plate]'
@@ -11541,6 +11550,7 @@ export function renderDead(
       document.body.appendChild(bar);
     }
   }
+  if (bar) ensureUploadButton(bar);
 
   const custodyEl = bar?.querySelector?.(
     '[data-load-custody]'
@@ -11769,6 +11779,7 @@ export async function renderDashboard(deps: ViewerDeps): Promise<void> {
   identity.append(title, meta);
   bar.appendChild(identity);
 
+  ensureUploadButton(bar);
   document.body.replaceChildren(bar);
 
   const main = document.createElement('main');
@@ -12308,6 +12319,7 @@ export async function renderDocument(
 
   const main = document.createElement('main');
   main.className = 'stage stage-markdown';
+  ensureUploadButton(bar);
   document.body.replaceChildren(bar, main);
 
   if (!SERVICE_DOCUMENTS.includes(path)) {
@@ -12483,15 +12495,11 @@ if (typeof document !== 'undefined') {
   // graph failed to fetch never reaches this line.
   document.documentElement.dataset['viewerBooted'] = '1';
   void boot();
-  // Any page that runs this bundle takes a dropped file as a new relic. The
-  // publish page is left out because its own drop zone is the target there.
+  // Any page that runs this bundle takes a dropped file, or a file chosen with
+  // the bar's Upload button, as a new relic. The publish page is left out
+  // because its own drop zone and button are the target there.
   if (document.getElementById('relic-root')?.dataset['view'] !== 'publish') {
-    armFileDrop((dropped) => {
-      // The publisher is a lazy chunk, so a reader who never drops a file
-      // never downloads it.
-      void import('./publish-view.ts').then((view) =>
-        view.openPublishDialog(dropped.files, dropped.isFolder, dropped.entries)
-      );
-    });
+    armFileDrop(openPublisher);
+    armUploadButtons(openPublisher);
   }
 }

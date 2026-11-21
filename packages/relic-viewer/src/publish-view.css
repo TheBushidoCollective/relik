@@ -100,6 +100,8 @@
 }
 
 .pub-card-title {
+  /* The homepage's own h1 is serif; the viewer's headings are not. */
+  font-family: var(--sans);
   margin: 0 0 0.35rem;
   font-size: 1.15rem;
   font-weight: 600;

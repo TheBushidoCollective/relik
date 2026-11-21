@@ -1436,9 +1436,14 @@ describe('Dashboard rendering (DOM)', () => {
     expect(rootBody.querySelector('.filename')?.textContent).toBe(
       'What Relic knows'
     );
-    // It is not a relic: no actions (comments, decisions, share, copy link,
-    // download, report) and no comment thread.
-    expect(rootBody.querySelector('.actions')).toBeNull();
+    // It is not a relic: no comments, decisions, share, copy link, download or
+    // report, and no comment thread. Its bar carries the one action every bar
+    // does, Upload, and nothing else.
+    const row = rootBody.querySelector('.actions') as ElementStub;
+    expect(row).not.toBeNull();
+    expect(
+      row.children.map((child) => (child as ElementStub).className)
+    ).toEqual(['action action-upload']);
     expect(rootBody.querySelector('.thread')).toBeNull();
   });
 

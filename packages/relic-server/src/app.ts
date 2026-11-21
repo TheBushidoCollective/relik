@@ -6385,6 +6385,7 @@ async function shell(
 <div class="actions">
 <a class="action" href="/policy" aria-label="${escapeHtml(POLICY_LINK_LABEL)}"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false" class="icon"><path d="M5.7 3.3 2 7l3.7 3.7.7-.7L3.4 7l3-3-.7-.7zm4.6 0-.7.7 3 3-3 3 .7.7L14 7l-3.7-3.7z"/></svg><span>${escapeHtml(POLICY_LINK_LABEL)}</span></a>
 <a class="action" href="/abuse" aria-label="${escapeHtml(REPORT_LINK_LABEL)}"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false" class="icon"><path d="M3 1h1v14H3V1zm2 1h8l-2 3 2 3H5V2z"/></svg><span>${escapeHtml(REPORT_LINK_LABEL)}</span></a>
+<a class="action action-upload" href="/publish" data-upload aria-label="Upload a file" title="Publish a file as a new relic"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false" class="icon"><path d="M8 1.8l3.8 3.8-.7.7-2.6-2.6V11h-1V3.7L4.9 6.3l-.7-.7L8 1.8zM2 12h12v1H2v-1z"/></svg><span>Upload</span></a>
 </div>
 </header>
 <main class="stage stage-loading" data-load-plate data-load-phase="opening">
@@ -6458,10 +6459,13 @@ ${
  * "you did not configure me" into a DNS error on the first publish.
  *
  * `/` and `/install` serve the same bytes, so install instructions cannot
- * drift. The page carries no script and a CSP that denies scripts outright.
- * It used to load a client script that listed the relics held in this
- * browser's local vault; that list now lives only at `/dashboard`, and the
- * header links there, so the landing page never touches the key vault.
+ * drift. The page loads exactly one script, `/assets/landing.js`, which makes
+ * the window a place to drop a file and wires the header's Upload button; the
+ * publisher it opens is a lazy chunk and the page still never touches the key
+ * vault. It used to be script-free (reversed 2026-11-20 on Jason Waldrip's
+ * instruction, so a file can be dropped on the homepage), and before that it
+ * loaded a script that listed the relics held in this browser's local vault.
+ * That list lives only at `/dashboard`, and the header links there.
  *
  * The screenshots are real renders of the viewer, produced by
  * `scripts/landing-shots.ts` and served from `/assets/`. `img-src 'self'`
@@ -6563,6 +6567,9 @@ export function landingPage(config: RelicConfig): Response {
   .mine:hover,
   .mine:focus-visible { background: var(--ground); color: var(--patina); }
   .mine + .mine { margin-left: 0; }
+  .mine-upload { background: var(--patina); color: var(--surface); border-left: 0; }
+  .mine-upload:hover,
+  .mine-upload:focus-visible { background: var(--patina); color: var(--surface); filter: brightness(1.12); }
   .wrap { max-width: 72rem; margin: 0 auto; padding: 0 1.5rem; }
   .hero {
     display: grid;
@@ -6713,8 +6720,8 @@ export function landingPage(config: RelicConfig): Response {
     <a href="#recipient">What they see</a>
     <a href="#limits">What we hold</a>
   </nav>
-  <a class="mine" href="/publish">Publish a file</a>
   <a class="mine" href="/dashboard">Your relics</a>
+  <a class="mine mine-upload" href="/publish" data-upload title="Publish a file as a new relic">Upload</a>
 </header>
 <main>
   <div class="wrap hero" id="install">
@@ -6909,6 +6916,7 @@ npx -y relic-mcp@latest install --client cursor${hosted ? '' : ` --origin ${orig
     <a href="https://github.com/TheBushidoCollective/relik">Source</a>
   </div>
 </footer>
+<script type="module" src="/assets/landing.js"></script>
 `;
   return new Response(body, {
     headers: {
@@ -6919,7 +6927,12 @@ npx -y relic-mcp@latest install --client cursor${hosted ? '' : ` --origin ${orig
       'x-robots-tag': 'noindex',
       'content-security-policy': [
         "default-src 'none'",
-        "style-src 'unsafe-inline'",
+        "script-src 'self'",
+        // The stylesheet the upload dialog brings with it comes from here.
+        "style-src 'self' 'unsafe-inline'",
+        // The ciphertext goes straight to storage, which is another https
+        // origin, so the dialog's upload needs https as well as this origin.
+        "connect-src 'self' https:",
         "img-src 'self'",
         // The page links the manifest so a browser can offer to install it,
         // and a manifest fetch falls back to default-src when manifest-src is
@@ -7260,13 +7273,17 @@ your transcripts. This is structural, not a defect we plan to fix.
 
 ## Publishing from the web page
 
-The page at \`/publish\` encrypts and uploads a file you drop on it, and so does
-any relic, dashboard or policy page: a file dropped there opens the same
-publisher in a dialog and starts a new relic, and nothing is sent until you
-confirm it. The key is drawn and the file encrypted by JavaScript in your
-browser, and the link it hands back is the only place the key exists: the page
-does not store it, and we cannot recover it. The key does not enter a model
-transcript on this path.
+Every page has an Upload button at the top right, and the page at \`/publish\`
+encrypts and uploads a file you drop on it. So does any other page of this
+site, the homepage included: a file dropped there, or chosen with Upload, opens
+the same publisher in a dialog and starts a new relic, and nothing is sent
+until you confirm it. The key is drawn and the file encrypted by JavaScript in
+your browser, and the link it hands back is the only place the key exists: the
+page does not store it, and we cannot recover it. The key does not enter a
+model transcript on this path.
+
+The homepage runs one small script of ours for this. It reads no key and no
+relic, and the publisher it opens is the same code the other pages use.
 
 What crosses to us is what the publishing tool would send: the coarse class,
 the tool's name (\`relik-web\`), the sizes, and a title, which the page fills in

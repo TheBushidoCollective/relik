@@ -351,6 +351,14 @@ describe('the shell', () => {
     expect(body).toContain('Report this relic');
     expect(body).toContain('How Relic handles your data');
     expect(body).toContain(`<span class="accession">${id}</span>`);
+    // The Upload action is in the bar from the first paint, not added by script.
+    const bar = body.slice(
+      body.indexOf('data-load-bar'),
+      body.indexOf('</header>', body.indexOf('data-load-bar'))
+    );
+    expect(bar).toContain(
+      'class="action action-upload" href="/publish" data-upload'
+    );
 
     // noscript styles and card
     expect(body).toContain(
@@ -696,6 +704,10 @@ describe('the shell', () => {
   });
 });
 
+/** The homepage's policy: its own script and stylesheet, and https for the upload. */
+const LANDING_CSP =
+  "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' https:; img-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'";
+
 describe('reserved segments beat ids at the router', () => {
   for (const word of RESERVED_SEGMENTS) {
     test(`/${word} is not treated as a relic id`, async () => {
@@ -829,14 +841,12 @@ describe('reserved segments beat ids at the router', () => {
     expect(body).not.toMatch(/nobody can read/i);
   });
 
-  test('/install is noindex and needs no script', async () => {
+  test('/install is noindex and carries only the homepage script', async () => {
     const response = await app.fetch(req('/install'));
     expect(response.headers.get('x-robots-tag')).toBe('noindex');
-    expect(response.headers.get('content-security-policy')).toBe(
-      "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'"
-    );
+    expect(response.headers.get('content-security-policy')).toBe(LANDING_CSP);
     const body = await response.text();
-    expect(body).not.toContain('<script');
+    expect(body.match(/<script\b/g)).toHaveLength(1);
   });
 });
 
@@ -886,16 +896,18 @@ describe('the landing page', () => {
     expect(root).toBe(install);
   });
 
-  test('/ carries no script and its CSP denies scripts', async () => {
+  test('/ loads exactly one script, its own, and a CSP that allows nothing more', async () => {
     const response = await app.fetch(req('/'));
     const csp = response.headers.get('content-security-policy') ?? '';
-    expect(csp).toBe(
-      "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'"
-    );
+    expect(csp).toBe(LANDING_CSP);
+    // The only script source is this origin, and no script may be inline.
+    expect(csp).toMatch(/script-src 'self';/);
     expect(response.headers.get('x-robots-tag')).toBe('noindex');
     expect(response.headers.get('referrer-policy')).toBe('no-referrer');
     const body = await response.text();
-    expect(body).not.toContain('<script');
+    expect(body.match(/<script\b[^>]*>/g)).toEqual([
+      '<script type="module" src="/assets/landing.js">',
+    ]);
     expect(body).not.toContain('home-relics');
   });
 
@@ -910,15 +922,22 @@ describe('the landing page', () => {
     );
   });
 
-  test('the header and the hero both lead to the publish page', async () => {
+  test('the top right of the header is the Upload button, a link to the publish page without script', async () => {
     const body = await app.fetch(req('/')).then((r) => r.text());
     const header = body.slice(
       body.indexOf('<header'),
       body.indexOf('</header>')
     );
-    expect(header).toContain(
-      '<a class="mine" href="/publish">Publish a file</a>'
+    const upload = '<a class="mine mine-upload" href="/publish" data-upload';
+    expect(header).toContain(upload);
+    // Rightmost: nothing follows it in the header.
+    expect(header.indexOf(upload)).toBeGreaterThan(
+      header.indexOf('href="/dashboard"')
     );
+    expect(header.slice(header.indexOf(upload) + upload.length)).not.toContain(
+      '<a class='
+    );
+    // The hero still points a reader with no agent at the same page.
     expect(body.slice(body.indexOf('</header>'))).toContain('href="/publish"');
   });
 
