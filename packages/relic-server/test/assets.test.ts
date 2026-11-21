@@ -180,7 +180,10 @@ describe('the shell references what is actually served', () => {
 describe('the sandbox page', () => {
   test('does not serve the sandbox through generic asset routes', async () => {
     const server = app(
-      memoryAssets({ 'sandbox.html': '<!doctype html><title>fixture</title>' })
+      memoryAssets({
+        'sandbox.html': '<!doctype html><title>fixture</title>',
+        'SaNdBoX.html': '<!doctype html><title>fixture</title>',
+      })
     );
     for (const path of ['/assets/sandbox.html', '/assets/SaNdBoX.html']) {
       for (const method of ['GET', 'HEAD']) {
