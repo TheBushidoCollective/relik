@@ -18,6 +18,7 @@
     "@relic/server": "workspace:*",
     "diff": "^9.0.0",
     "docx": "^9.15.3",
+    "docx-preview": "0.4.1",
     "mediabunny": "1.62.0",
     "pdfjs-dist": "5.4.149",
     "react": "19.2.0",
