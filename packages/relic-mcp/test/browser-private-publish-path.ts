@@ -213,6 +213,42 @@ try {
   );
   await click('[data-action="private-unlock"]');
   await wait(`document.body.innerText.includes('Private folder payload')`);
+  // A different signed-in account without an owner grant must not receive a wrap.
+  const request = await fetch(`${origin}/api/auth/request`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ email: 'other-reader@example.test' }),
+  });
+  assert.equal(request.status, 202);
+  const pendingCookie = request.headers
+    .getSetCookie()
+    .map((part) => part.split(';')[0])
+    .join('; ');
+  const otherCode = mails.at(-1)?.code;
+  assert.ok(otherCode);
+  const verify = await fetch(`${origin}/api/auth/code`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', cookie: pendingCookie },
+    body: JSON.stringify({ code: otherCode }),
+  });
+  assert.equal(verify.status, 200);
+  const readerCookie = verify.headers
+    .getSetCookie()
+    .map((part) => part.split(';')[0])
+    .join('; ');
+  const denied = await fetch(
+    `${origin}/api/relics/${folderUrl.pathname.slice(1)}/versions/1/key`,
+    {
+      method: 'POST',
+      headers: { cookie: readerCookie, 'content-type': 'application/json' },
+      body: '{}',
+    }
+  );
+  assert.equal(
+    denied.status,
+    403,
+    'an unrelated signed-in account must not receive the folder key'
+  );
   console.log(
     'BROWSER_PRIVATE_FOLDER_PATH_OK fragment=absent sealed=1 owner_open=ok'
   );
