@@ -266,6 +266,137 @@ async function browserCases(
   };
 
   await check(
+    'large range copy shows a refusal instead of allocating it',
+    () => {
+      const root = document.createElement('section');
+      document.body.append(root);
+      const part = api.mountDataTable(
+        root,
+        {
+          records: 100001,
+          columns: 1,
+          summary: 'Spreadsheet',
+          sheet: 'Sheet',
+          text: () => '',
+          numeric: () => undefined,
+        },
+        { filename: 'book.xlsx' }
+      );
+      try {
+        part.reveal({
+          kind: 'cell',
+          row: 1,
+          col: 1,
+          row_end: 100001,
+          col_end: 1,
+          sheet: 'Sheet',
+        });
+        const copy = root.querySelector<HTMLButtonElement>('.dt-copy');
+        truth(copy, 'copy control');
+        copy?.click();
+        truth(
+          copy?.textContent?.includes('too large to copy'),
+          'copy refusal is visible'
+        );
+      } finally {
+        part.dispose();
+        root.remove();
+      }
+    }
+  );
+
+  await check('wide spreadsheet points to download rather than source', () => {
+    const root = document.createElement('section');
+    document.body.append(root);
+    const part = api.mountDataTable(
+      root,
+      {
+        records: 1,
+        columns: 257,
+        summary: 'Spreadsheet',
+        sheet: 'Sheet',
+        text: () => '',
+        numeric: () => undefined,
+      },
+      { filename: 'book.xlsx' }
+    );
+    try {
+      truth(
+        root
+          .querySelector('.dt-notice')
+          ?.textContent?.includes('Download the spreadsheet'),
+        'download notice'
+      );
+      truth(
+        !root.querySelector('.dt-notice')?.textContent?.includes('source view'),
+        'no source claim'
+      );
+    } finally {
+      part.dispose();
+      root.remove();
+    }
+  });
+
+  // This exercises cancellation between real browser event-loop batches.
+  await check('spreadsheet find cancels an older batched query', async () => {
+    const root = document.createElement('section');
+    document.body.append(root);
+    let oldCalls = 0;
+    let nextCalls = 0;
+    let find: HTMLInputElement;
+    const part = api.mountDataTable(
+      root,
+      {
+        records: 1000,
+        columns: 1,
+        sheet: 'Sheet',
+        summary: 'Spreadsheet',
+        text: (row: number) => (row === 0 ? 'target' : ''),
+        numeric: () => undefined,
+        numericColumn: () => false,
+        matchingColumns: (row: number, needle: string) => {
+          if (needle === 'old') {
+            oldCalls++;
+            if (oldCalls === 1)
+              window.setTimeout(() => {
+                find.value = 'target';
+                find.dispatchEvent(new Event('input', { bubbles: true }));
+              }, 0);
+            return [];
+          }
+          nextCalls++;
+          return row === 0 ? [0] : [];
+        },
+      },
+      { filename: 'book.xlsx' }
+    );
+    try {
+      find = root.querySelector<HTMLInputElement>('.dt-find')!;
+      find.value = 'old';
+      find.dispatchEvent(new Event('input', { bubbles: true }));
+      const deadline = Date.now() + 5000;
+      while (
+        root.querySelector('.dt-find-count')?.textContent !== '1 of 1' &&
+        Date.now() < deadline
+      )
+        await new Promise<void>((resolve) => setTimeout(resolve, 10));
+      truth(
+        oldCalls > 0 && oldCalls < 1000,
+        'old query stopped before scanning all rows'
+      );
+      eq(nextCalls, 1000, 'new query scanned all rows');
+      eq(
+        root.querySelector('.dt-find-count')?.textContent,
+        '1 of 1',
+        'new query completed'
+      );
+    } finally {
+      part.dispose();
+      root.remove();
+    }
+  });
+
+  await check(
     'inspector shows spreadsheet cell type and formula without HTML',
     () => {
       const root = document.createElement('section');
@@ -663,7 +794,7 @@ describe('table view in the browser', () => {
           clearTimeout(timer);
         }
         if (result.error) throw new Error(result.error);
-        expect(result.passed).toHaveLength(11);
+        expect(result.passed).toHaveLength(14);
       } finally {
         browser.kill('SIGKILL');
         if (browser.exitCode === null && browser.signalCode === null) {

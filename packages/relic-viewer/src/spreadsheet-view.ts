@@ -35,6 +35,8 @@ export function sourceFor(sheet: WorkbookSheet): TableSource {
       : -1;
   }
   let numericKinds: { all: Uint8Array; body: Uint8Array } | undefined;
+  let cachedNeedle = '';
+  let matchesByText = new Uint8Array(0);
   return {
     numericColumn(column, headerRow) {
       if (!numericKinds) {
@@ -56,6 +58,13 @@ export function sourceFor(sheet: WorkbookSheet): TableSource {
       );
     },
     matchingColumns(record, needle, drawn, limit) {
+      if (
+        needle !== cachedNeedle ||
+        matchesByText.length !== sheet.texts.length
+      ) {
+        cachedNeedle = needle;
+        matchesByText = new Uint8Array(sheet.texts.length);
+      }
       const r = worksheetRowIndex(sheet, record);
       if (r < 0) return EMPTY_COLUMNS;
       const matches: number[] = [];
@@ -66,12 +75,15 @@ export function sourceFor(sheet: WorkbookSheet): TableSource {
       ) {
         const col = sheet.cells[i * 3]!;
         if (col >= drawn) break;
-        if (
-          (sheet.texts[sheet.cells[i * 3 + 1]!] ?? '')
-            .toLowerCase()
-            .includes(needle)
-        )
-          matches.push(col);
+        const textIndex = sheet.cells[i * 3 + 1]!;
+        let result = matchesByText[textIndex]!;
+        if (result === 0) {
+          result = (sheet.texts[textIndex] ?? '').toLowerCase().includes(needle)
+            ? 2
+            : 1;
+          matchesByText[textIndex] = result;
+        }
+        if (result === 2) matches.push(col);
       }
       return matches;
     },

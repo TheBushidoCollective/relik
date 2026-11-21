@@ -259,7 +259,7 @@ export async function parseXlsx(
         )
       );
     }
-    const formats = new Map<number, string>();
+    const formats = new Map<number, NumberKind>();
     const styles: NumberKind[] = [];
     const styleRel = byKind('styles');
     if (styleRel) {
@@ -269,11 +269,15 @@ export async function parseXlsx(
           if (path === 'styleSheet/numFmts/numFmt') {
             const id = Number(attrs.get('numFmtId'));
             const code = attrs.get('formatCode');
-            if (Number.isInteger(id) && code !== undefined)
-              formats.set(id, code);
+            if (Number.isInteger(id) && code !== undefined) {
+              if (code.length > 65_536) throw new Error('too-large');
+              if (formats.has(id)) throw new Error('corrupt');
+              formats.set(id, numberKind(id, code));
+            }
           } else if (path === 'styleSheet/cellXfs/xf') {
             const id = Number(attrs.get('numFmtId') ?? '0');
-            styles.push(numberKind(id, formats.get(id)));
+            if (styles.length >= 65_536) throw new Error('too-large');
+            styles.push(formats.get(id) ?? numberKind(id));
           }
         })
       );

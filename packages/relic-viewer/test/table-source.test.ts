@@ -1,6 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import { parseTable } from '@relic/format/csv';
-import { anchorForRect, markFits, rectText } from '../src/data-table.ts';
+import {
+  anchorForRect,
+  markFits,
+  rectText,
+  RangeCopyTooLargeError,
+} from '../src/data-table.ts';
 import { csvTableSource } from '../src/table-source.ts';
 
 describe('table source', () => {
@@ -29,6 +34,24 @@ describe('table source', () => {
     expect(rectText(table, { r0: 0, r1: 0, c0: 0, c1: 0 })).toBe(
       '=HYPERLINK("x")'
     );
+  });
+
+  test('range copy refuses excessive cells or output, while single copy remains raw', () => {
+    const value = 'x'.repeat(4 * 1024 * 1024 + 1);
+    const table = {
+      records: 100001,
+      columns: 2,
+      summary: 'Spreadsheet',
+      text: () => value,
+      numeric: () => undefined,
+    };
+    expect(() => rectText(table, { r0: 0, r1: 100000, c0: 0, c1: 0 })).toThrow(
+      RangeCopyTooLargeError
+    );
+    expect(() => rectText(table, { r0: 0, r1: 0, c0: 0, c1: 1 })).toThrow(
+      RangeCopyTooLargeError
+    );
+    expect(rectText(table, { r0: 0, r1: 0, c0: 0, c1: 0 })).toBe(value);
   });
 
   test('sheet anchors match only the same sheet', () => {

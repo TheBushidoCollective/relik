@@ -29,3 +29,32 @@ test('sparse table lookup and column classification use populated rows', () => {
   expect(source.matchingColumns?.(599999, '42', 2, 10)).toEqual([1]);
   expect(source.matchingColumns?.(200000, '42', 2, 10)).toEqual([]);
 });
+
+test('find checks each shared text once per query and resets for a new query', () => {
+  let reads = 0;
+  const texts = ['shared value'];
+  Object.defineProperty(texts, '0', {
+    get() {
+      reads++;
+      return 'shared value';
+    },
+  });
+  const source = sourceFor({
+    name: 'Shared',
+    state: 'visible',
+    kind: 'worksheet',
+    rows: 2,
+    columns: 1,
+    rowNumbers: new Uint32Array([0, 1]),
+    rowStart: new Uint32Array([0, 1, 2]),
+    cells: new Uint32Array([0, 0, 1, 0, 0, 1]),
+    numbers: new Float64Array([NaN, NaN]),
+    texts,
+    details: [{ type: 'text' }],
+  });
+  expect(source.matchingColumns?.(0, 'missing', 1, 10)).toEqual([]);
+  expect(source.matchingColumns?.(1, 'missing', 1, 10)).toEqual([]);
+  expect(reads).toBe(1);
+  expect(source.matchingColumns?.(1, 'shared', 1, 10)).toEqual([0]);
+  expect(reads).toBe(2);
+});

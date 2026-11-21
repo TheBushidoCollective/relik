@@ -29,4 +29,21 @@ describe('spreadsheet XML tokenizer', () => {
   ])('refuses hostile or malformed XML: %s', (xml) => {
     expect(() => tokens(xml)).toThrow();
   });
+  test('namespace scopes use shared state and restore shadowed bindings', () => {
+    const maps: ReadonlyMap<string, string>[] = [];
+    const values: Array<string | undefined> = [];
+    tokenizeSpreadsheetXml(
+      '<root xmlns:p="one"><child xmlns:p="two"><leaf/></child><sibling/></root>',
+      {
+        start(_name, _attrs, namespaces) {
+          maps.push(namespaces);
+          values.push(namespaces.get('p'));
+        },
+        end() {},
+        text() {},
+      }
+    );
+    expect(values).toEqual(['one', 'two', 'two', 'one']);
+    expect(maps.every((map) => map === maps[0])).toBe(true);
+  });
 });

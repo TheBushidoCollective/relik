@@ -11,11 +11,23 @@ export function numberKind(id: number, format?: string): NumberKind {
   if ([18, 19, 20, 21, 32, 33, 45, 46, 47].includes(id)) return 'number';
   if (id === 9 || id === 10) return 'percent';
   if (!format) return 'number';
-  const stripped = format
-    .replace(/"[^"]*"|\\.|_.|\*./g, '')
-    .replace(/\[(?!h+\]|m+\]|s+\])[^\]]*\]/gi, '');
-  if (/[yd]/i.test(stripped)) return 'date';
-  return stripped.includes('%') ? 'percent' : 'number';
+  let percent = false;
+  for (let i = 0; i < format.length; i++) {
+    const c = format[i]!;
+    if (c === '\\' || c === '_' || c === '*') {
+      i++;
+      continue;
+    }
+    if (c === '"' || c === '[') {
+      const end = format.indexOf(c === '"' ? '"' : ']', i + 1);
+      if (end < 0) break;
+      i = end;
+      continue;
+    }
+    if (c === 'y' || c === 'Y' || c === 'd' || c === 'D') return 'date';
+    if (c === '%') percent = true;
+  }
+  return percent ? 'percent' : 'number';
 }
 
 /** Serial 60 represents Excel's fictitious 1900-02-29, kept as displayed. */

@@ -364,4 +364,42 @@ describe('XLSX workbook', () => {
     });
     expect(sheet.cells[5]).toBe(sheet.cells[6002]);
   });
+  test('rejects duplicate and nested scalar cell children', async () => {
+    for (const cell of [
+      '<c><v>1</v><v>2</v></c>',
+      '<c><f>1</f><f>2</f></c>',
+      '<c><v>1<value>2</value></v></c>',
+      '<c t="b"><f>TRUE()</f><v/></c>',
+    ]) {
+      expect(
+        await parseXlsx(
+          fixture(
+            `<worksheet><sheetData><row>${cell}</row></sheetData></worksheet>`
+          )
+        )
+      ).toEqual({ ok: false, reason: 'corrupt' });
+    }
+  });
+  test('applies one custom format to many styles and enforces style budgets', async () => {
+    const styles = `<styleSheet><numFmts><numFmt numFmtId="164" formatCode="yyyy-mm-dd"/></numFmts><cellXfs>${'<xf numFmtId="164"/>'.repeat(512)}</cellXfs></styleSheet>`;
+    const sheet =
+      '<worksheet><sheetData><row><c s="511"><v>61</v></c></row></sheetData></worksheet>';
+    const parsed = await parseXlsx(
+      fixture(sheet, undefined, { 'xl/styles.xml': styles })
+    );
+    if (!parsed.ok) throw new Error(parsed.reason);
+    expect(parsed.workbook.sheets[0]!.texts).toEqual(['1900-03-01']);
+    const oversized = `<styleSheet><numFmts><numFmt numFmtId="164" formatCode="${'0'.repeat(65537)}"/></numFmts></styleSheet>`;
+    expect(
+      await parseXlsx(
+        fixture('<worksheet/>', undefined, { 'xl/styles.xml': oversized })
+      )
+    ).toEqual({ ok: false, reason: 'too-large' });
+    const tooManyStyles = `<styleSheet><cellXfs>${'<xf numFmtId="0"/>'.repeat(65537)}</cellXfs></styleSheet>`;
+    expect(
+      await parseXlsx(
+        fixture('<worksheet/>', undefined, { 'xl/styles.xml': tooManyStyles })
+      )
+    ).toEqual({ ok: false, reason: 'too-large' });
+  });
 });

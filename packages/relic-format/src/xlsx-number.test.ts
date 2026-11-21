@@ -12,3 +12,10 @@ test('rounding a date time to midnight advances the calendar date', () => {
   expect(displayDate(61 + 86399.7 / 86400, false)).toBe('1900-03-02');
   expect(displayDate(59 + 86399.7 / 86400, false)).toBe('1900-02-29');
 });
+
+test('format classification ignores quoted, escaped and bracketed text', () => {
+  expect(numberKind(164, '[Blue]"days"0%')).toBe('percent');
+  expect(numberKind(164, '\\d0')).toBe('number');
+  expect(numberKind(164, '0"percent%"')).toBe('number');
+  expect(numberKind(164, '[unfinished')).toBe('number');
+});

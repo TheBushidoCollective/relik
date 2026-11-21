@@ -52,8 +52,18 @@ export function tokenizeSpreadsheetXml(xml: string, events: XmlEvents): void {
     throw new Error('Forbidden XML declaration');
   let at = xml.charCodeAt(0) === 0xfeff ? 1 : 0;
   const stack: string[] = [];
-  const namespaceStack: ReadonlyMap<string, string>[] = [];
-  const emptyNamespaces = new Map<string, string>();
+  const namespaces = new Map<string, string>();
+  const scopeStack: Array<Array<[string, string | undefined]> | undefined> = [];
+  const restore = (
+    scope: Array<[string, string | undefined]> | undefined
+  ): void => {
+    if (!scope) return;
+    for (let i = scope.length - 1; i >= 0; i--) {
+      const [prefix, previous] = scope[i]!;
+      if (previous === undefined) namespaces.delete(prefix);
+      else namespaces.set(prefix, previous);
+    }
+  };
   let roots = 0;
   const whitespace = (): void => {
     SPACE.lastIndex = at;
@@ -105,8 +115,8 @@ export function tokenizeSpreadsheetXml(xml: string, events: XmlEvents): void {
       whitespace();
       if (xml[at++] !== '>' || stack.pop() !== name)
         throw new Error('Unmatched XML element');
-      namespaceStack.pop();
       events.end(name);
+      restore(scopeStack.pop());
       continue;
     }
     if (xml.startsWith('<!', at)) throw new Error('Forbidden XML declaration');
@@ -144,21 +154,20 @@ export function tokenizeSpreadsheetXml(xml: string, events: XmlEvents): void {
       attrs.set(attr, decode(xml.slice(at, end)));
       at = end + 1;
     }
-    let namespaces = namespaceStack.at(-1) ?? emptyNamespaces;
+    let scope: Array<[string, string | undefined]> | undefined;
     for (const [key, value] of attrs) {
       if (key !== 'xmlns' && !key.startsWith('xmlns:')) continue;
-      if (namespaces === (namespaceStack.at(-1) ?? emptyNamespaces))
-        namespaces = new Map(namespaces);
-      (namespaces as Map<string, string>).set(
-        key === 'xmlns' ? '' : key.slice(6),
-        value
-      );
+      const prefix = key === 'xmlns' ? '' : key.slice(6);
+      (scope ??= []).push([prefix, namespaces.get(prefix)]);
+      namespaces.set(prefix, value);
     }
     events.start(name, attrs, namespaces);
-    if (empty) events.end(name);
-    else {
+    if (empty) {
+      events.end(name);
+      restore(scope);
+    } else {
       stack.push(name);
-      namespaceStack.push(namespaces);
+      scopeStack.push(scope);
     }
   }
   if (roots !== 1 || stack.length) throw new Error('Incomplete XML');

@@ -18,6 +18,8 @@ interface Cell {
   value: string;
   inline: string;
   formula: string;
+  valueSeen: boolean;
+  formulaSeen: boolean;
   formulaKind?: string | undefined;
   sharedId?: string | undefined;
   reference: string;
@@ -70,6 +72,7 @@ export function parseWorksheet(
   let detailBytes = 0;
   let current: Cell | undefined,
     capture: 'v' | 't' | 'f' | undefined,
+    captureDepth = 0,
     refused = false;
   const intern = (value: string): number => {
     const old = textIndex.get(value);
@@ -123,7 +126,10 @@ export function parseWorksheet(
       text = cell.value;
       type = cell.type === 'd' ? 'date' : 'text';
     } else if (cell.type === 'b') {
-      if (cell.value !== '' && cell.value !== '0' && cell.value !== '1')
+      if (
+        (cell.value === '' && cell.valueSeen) ||
+        (cell.value !== '' && cell.value !== '0' && cell.value !== '1')
+      )
         throw new Error('corrupt');
       text = cell.value === '' ? '' : cell.value === '1' ? 'TRUE' : 'FALSE';
       type = 'boolean';
@@ -180,6 +186,7 @@ export function parseWorksheet(
         uri === 'http://purl.oclc.org/ooxml/spreadsheetml/main';
       const n = allowed ? local : `!${local}`;
       path.push(n);
+      if (capture !== undefined) throw new Error('corrupt');
       if (path.length === 1 && n !== 'worksheet') throw new Error('corrupt');
       if (n === 'row' && path.join('/') === 'worksheet/sheetData/row') {
         const next = attrs.has('r') ? Number(attrs.get('r')) : row + 1;
@@ -207,6 +214,8 @@ export function parseWorksheet(
           value: '',
           inline: '',
           formula: '',
+          valueSeen: false,
+          formulaSeen: false,
           reference: ref || cellReference(row, pos.column),
         };
       } else if (
@@ -217,7 +226,15 @@ export function parseWorksheet(
             (path.join('/') === 'worksheet/sheetData/row/c/is/t' ||
               path.join('/') === 'worksheet/sheetData/row/c/is/r/t')))
       ) {
+        if (n === 'v') {
+          if (current.valueSeen) throw new Error('corrupt');
+          current.valueSeen = true;
+        } else if (n === 'f') {
+          if (current.formulaSeen) throw new Error('corrupt');
+          current.formulaSeen = true;
+        }
         capture = n;
+        captureDepth = path.length;
         if (n === 'f') {
           current.formulaKind = attrs.get('t');
           current.sharedId = attrs.get('si');
@@ -227,7 +244,11 @@ export function parseWorksheet(
     end(name) {
       const n = name.slice(name.lastIndexOf(':') + 1);
       const joined = path.join('/');
-      if ((n === 'v' || n === 't' || n === 'f') && capture === n)
+      if (
+        (n === 'v' || n === 't' || n === 'f') &&
+        capture === n &&
+        captureDepth === path.length
+      )
         capture = undefined;
       else if (joined === 'worksheet/sheetData/row/c') finishCell();
       else if (

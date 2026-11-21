@@ -287,10 +287,15 @@ followers identify their master formula rather than presenting an inferred
 formula as the follower's own. Unsupported time-only and elapsed-time formats
 show their saved numbers instead of calendar dates.
 
+Style tables admit up to 65,536 cell styles and format strings up to 65,536
+characters. Find checks each distinct cell text once per query and scans the
+sheet in cancellable batches.
+
 Copying a range quotes fields with tabs, line breaks, or quotes and prefixes
-formula-like values. Single-cell Copy deliberately remains raw. Pasting that
-text into another spreadsheet can cause the receiving application to interpret
-it as a formula.
+formula-like values. Range Copy refuses selections over 100,000 cells or
+8 Mi characters of clipboard output. Single-cell Copy deliberately remains raw
+and is not subject to those range limits. Pasting that text into another
+spreadsheet can cause the receiving application to interpret it as a formula.
 
 ## 4. The sandbox boundary
 
