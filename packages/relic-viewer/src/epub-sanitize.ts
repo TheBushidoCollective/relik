@@ -183,7 +183,21 @@ export function sanitizeEpubChapter(
     parent.appendChild(el);
     for (const child of Array.from(input.childNodes)) process(child, el);
   };
-  for (const child of Array.from(parsed.documentElement.childNodes))
-    process(child, output);
+  const head = parsed.querySelector('head');
+  if (head) {
+    for (const child of Array.from(head.children)) {
+      if (
+        child.localName.toLowerCase() === 'style' ||
+        child.localName.toLowerCase() === 'link'
+      )
+        process(child, output);
+    }
+  }
+  const body = parsed.querySelector('body');
+  if (body)
+    for (const child of Array.from(body.childNodes)) process(child, output);
+  else
+    for (const child of Array.from(parsed.documentElement.childNodes))
+      process(child, output);
   return output;
 }

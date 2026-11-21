@@ -16,7 +16,7 @@ test.skipIf(!process.env['RELIC_CHROME_PATH'])(
     });
     if (!build.success) throw new Error(build.logs.join('\n'));
     const js = await build.outputs[0]!.text();
-    const input = `<html xmlns="http://www.w3.org/1999/xhtml"><body><p id="x">hello&nbsp;world</p><script>evil()</script><img src="https://evil.invalid/x" onerror="evil()"/><a href="javascript:evil()">bad</a><iframe src="https://evil.invalid"></iframe><object><p>fallback</p></object><svg xmlns="http://www.w3.org/2000/svg"><foreignObject><p>bad</p></foreignObject><use href="https://evil.invalid/x"/><animate attributeName="href" values="https://evil.invalid"/></svg><math xmlns="http://www.w3.org/1998/Math/MathML"><mi href="https://evil.invalid">x</mi><maction><mi>first</mi><mi>second</mi></maction></math></body></html>`;
+    const input = `<html xmlns="http://www.w3.org/1999/xhtml"><head><title>hidden metadata</title></head><body><p id="x">hello&nbsp;world</p><script>evil()</script><img src="https://evil.invalid/x" onerror="evil()"/><a href="javascript:evil()">bad</a><iframe src="https://evil.invalid"></iframe><object><p>fallback</p></object><svg xmlns="http://www.w3.org/2000/svg"><foreignObject><p>bad</p></foreignObject><use href="https://evil.invalid/x"/><animate attributeName="href" values="https://evil.invalid"/></svg><math xmlns="http://www.w3.org/1998/Math/MathML"><mi href="https://evil.invalid">x</mi><maction><mi>first</mi><mi>second</mi></maction></math></body></html>`;
     const page = `<!doctype html><body><script type="module">${js}\nconst ctx={entries:new Map(),path:'a.xhtml',chapter:0,chapterByPath:new Map([['a.xhtml',0]]),blobs:[],count:0}; const el=sanitizeEpubChapter(${JSON.stringify(input).replaceAll('<', '\\u003c')},ctx); document.body.append(el); document.body.dataset.result=JSON.stringify({text:el.textContent,html:el.innerHTML});</script>`;
     const profile = mkdtempSync(join(tmpdir(), 'epub-sanitize-'));
     try {
@@ -26,6 +26,7 @@ test.skipIf(!process.env['RELIC_CHROME_PATH'])(
           '--headless',
           '--no-sandbox',
           '--disable-gpu',
+          '--host-resolver-rules=MAP * ~NOTFOUND',
           `--user-data-dir=${profile}`,
           '--dump-dom',
           `data:text/html,${encodeURIComponent(page)}`,
@@ -44,6 +45,7 @@ test.skipIf(!process.env['RELIC_CHROME_PATH'])(
       expect(article).toContain('hello&nbsp;world');
       expect(article).toContain('fallback');
       expect(article).toContain('first');
+      expect(article).not.toContain('hidden metadata');
       expect(article).not.toContain('>second</mi>');
       expect(article).not.toMatch(
         /<script|<iframe|<foreignObject|<animate|onerror=|javascript:|evil\.invalid/i

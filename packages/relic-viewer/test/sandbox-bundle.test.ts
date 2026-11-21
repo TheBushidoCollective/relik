@@ -62,7 +62,7 @@ describe('the built sandbox.html', () => {
     const shell = await Bun.file(`${pkgDir}dist/viewer.js`).text();
     for (const marker of [
       'Word document renderer is not available yet.',
-      'EPUB document renderer is not available yet.',
+      'EPUB element limit exceeded',
     ]) {
       expect(html).not.toContain(marker);
       expect(shell).not.toContain(marker);
