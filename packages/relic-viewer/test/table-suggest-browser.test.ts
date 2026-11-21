@@ -174,6 +174,28 @@ async function exercise(
     requestAnimationFrame(() => secondFrame.resolve())
   );
   await secondFrame.promise;
+  editor.dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })
+  );
+  if (controller.draftOpen) throw new Error('draft did not cancel');
+  (tableRoot.querySelector('.dt-suggest-close') as HTMLButtonElement).click();
+  const second = tableRoot.querySelector(
+    '[data-r="2"][data-c="1"]'
+  ) as HTMLElement;
+  if (!second) throw new Error('second cell was not drawn after sorting');
+  second.dispatchEvent(
+    new MouseEvent('mousedown', { bubbles: true, button: 0 })
+  );
+  document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+  (tableRoot.querySelector('.dt-suggest') as HTMLButtonElement).click();
+  controller.setSuggesting(true);
+  const nextEditor = tableRoot.querySelector('.dt-suggest-text');
+  if (
+    !controller.suggesting ||
+    !nextEditor?.textContent?.includes('other') ||
+    nextEditor === editor
+  )
+    throw new Error('controller did not adopt the next cell surface');
   part.dispose();
   controller.destroy();
 }

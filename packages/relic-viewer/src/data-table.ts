@@ -593,6 +593,9 @@ export function mountDataTable(
       unregister();
       panel.remove();
       closeCellEditor = undefined;
+      root.dispatchEvent(
+        new CustomEvent('relic:structured-state', { bubbles: true })
+      );
     };
     close.addEventListener('click', () => {
       if (requestSurfaceSwap(root)) closeCellEditor?.();
