@@ -61,7 +61,7 @@ describe('the built sandbox.html', () => {
     const html = await Bun.file(`${pkgDir}dist/sandbox.html`).text();
     const shell = await Bun.file(`${pkgDir}dist/viewer.js`).text();
     for (const marker of [
-      'Word document renderer is not available yet.',
+      'Unsupported EMF or WMF image',
       'EPUB document renderer is not available yet.',
     ]) {
       expect(html).not.toContain(marker);
