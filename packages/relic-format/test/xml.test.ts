@@ -54,4 +54,52 @@ describe('bounded XML parser', () => {
     expect(scanForbiddenDtd(utf16, 'epub')).toBe(true);
     expect(parseXml('<!DOCTYPE html><html/>').ok).toBe(true);
   });
+  test('matches the previous EPUB scanner on ordinary and edge declarations', () => {
+    const previous = (text: string): boolean => {
+      if (text.includes('\0') || /<!ENTITY\b/i.test(text)) return true;
+      for (const match of text.matchAll(/<!DOCTYPE\b/gi)) {
+        let quote = '';
+        for (let i = match.index! + match[0].length; i < text.length; i++) {
+          const c = text[i]!;
+          if (quote) {
+            if (c === quote) quote = '';
+          } else if (c === '"' || c === "'") {
+            quote = c;
+          } else if (c === '[') {
+            return true;
+          } else if (c === '>') {
+            break;
+          }
+        }
+      }
+      return false;
+    };
+    const cases = [
+      '',
+      '<html/>',
+      '<!DOCTYPE html><html/>',
+      '<!doctype html>',
+      '<!DOCTYPE html [ <!ELEMENT html ANY> ]>',
+      '<!ENTITY x "bad">',
+      '<!DOCTYPE html SYSTEM "a>b"><html/>',
+      "<!DOCTYPE html SYSTEM 'a[b'><html/>",
+      '<!DOCTYPE html',
+      '<!DOCTYPE html "unterminated',
+      '<!DOCTYPE html><!DOCTYPE x [ ]>',
+      '<!DOCTYPE html><!DOCTYPE x>',
+      '<!DOCTYPE html <!DOCTYPE x [',
+      '<!DOCTYPE-html [',
+      '\0',
+    ];
+    for (const text of cases) {
+      expect(scanForbiddenDtd(text, 'epub')).toBe(previous(text));
+    }
+  });
+
+  test('scans repeated unterminated declarations in linear time', () => {
+    const input = '<!DOCTYPE '.repeat(200_000);
+    const start = performance.now();
+    expect(scanForbiddenDtd(input, 'epub')).toBe(false);
+    expect(performance.now() - start).toBeLessThan(100);
+  });
 });
