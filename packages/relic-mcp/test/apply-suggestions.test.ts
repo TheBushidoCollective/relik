@@ -751,6 +751,30 @@ describe('relic_apply_suggestions', () => {
       'subtitle_timings',
     ],
     [
+      'a changed inline VTT timestamp with a single-digit hour',
+      'data.vtt',
+      'WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nalpha<0:00:01.500>beta\n',
+      '0:00:01.500',
+      '0:00:02.500',
+      'subtitle_timings',
+    ],
+    [
+      'a single-digit-hour VTT timestamp consumed by a voice annotation',
+      'data.vtt',
+      'WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nalpha<0:00:01.500>beta\n',
+      'alpha',
+      'alpha<v Speaker ',
+      'subtitle_timings',
+    ],
+    [
+      'a Chromium timestamp prefix with trailing text consumed by an annotation',
+      'data.vtt',
+      'WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nalpha<0:00:01.500suffix>beta\n',
+      'alpha',
+      'alpha<v Speaker ',
+      'subtitle_timings',
+    ],
+    [
       'an inline timestamp consumed by a new voice annotation',
       'data.vtt',
       'WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nalpha<00:00:01.500>beta\n',
@@ -895,6 +919,45 @@ describe('relic_apply_suggestions', () => {
       );
     }
   );
+
+  test.each([
+    [
+      'cue text beside a one-digit-hour timestamp',
+      'alpha<0:00:01.500>beta',
+      'alpha',
+      'BETA',
+    ],
+    [
+      'a one-digit first field without hours',
+      'alpha<0:00.100>beta',
+      '0:00.100',
+      '0:00.200',
+    ],
+    [
+      'a timestamp-shaped token with four fractional digits',
+      'alpha<00:01.1234>beta',
+      '00:01.1234',
+      '00:01.5678',
+    ],
+  ])('permits %s', async (_, cue, exact, replacement) => {
+    const target = join(scratch, 'data.vtt');
+    const original = `WEBVTT\n\n00:00:01.000 --> 00:00:03.000\n${cue}\n`;
+    await writeFile(target, original);
+    await addSuggestion('safe', exact, replacement);
+    const args = {
+      path: target,
+      accept: ['safe'],
+      allow_source_mismatch: true,
+    };
+    const preview = await call(args);
+    expect(preview.isError).toBe(false);
+    expect(await readFile(target, 'utf8')).toBe(original);
+    const result = await call({ ...args, write: true });
+    expect(result.isError).toBe(false);
+    expect(await readFile(target, 'utf8')).toBe(
+      original.replace(exact, replacement)
+    );
+  });
 
   test('permits text edits beside timestamp-shaped text inside a VTT annotation', async () => {
     const target = join(scratch, 'data.vtt');

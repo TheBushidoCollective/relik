@@ -385,10 +385,12 @@ function cueTimestampTags(
     while (end < payload.end && source[end] !== '>') end += 1;
     const tokenEnd = end < payload.end ? end + 1 : end;
     const first = source.charCodeAt(at + 1);
+    // Chromium accepts one or more hour digits and non-digit text after
+    // exactly three millisecond digits when parsing a timestamp token.
     if (
       first >= 0x30 &&
       first <= 0x39 &&
-      /^(?:\d{2,}:)?[0-5]\d:[0-5]\d\.\d{3}$/.test(source.slice(at + 1, end))
+      /^(?:\d+:)?[0-5]\d:[0-5]\d\.\d{3}(?!\d)/.test(source.slice(at + 1, end))
     )
       tags.push({ start: at, end: tokenEnd, text: source.slice(at, tokenEnd) });
     at = tokenEnd;
