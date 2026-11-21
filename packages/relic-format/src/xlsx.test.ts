@@ -207,4 +207,23 @@ describe('XLSX workbook', () => {
       )
     ).toEqual({ ok: false, reason: 'too-large' });
   }, 30000);
+  test('accepts openpyxl-style permission bits without Unix file-type bits', async () => {
+    const bytes = fixture(
+      '<worksheet><sheetData><row><c><v>42</v></c></row></sheetData></worksheet>'
+    );
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    let at = view.getUint32(bytes.length - 6, true);
+    const count = view.getUint16(bytes.length - 12, true);
+    for (let i = 0; i < count; i++) {
+      view.setUint16(at + 4, (3 << 8) | 20, true);
+      view.setUint32(at + 38, 0o600 << 16, true);
+      at +=
+        46 +
+        view.getUint16(at + 28, true) +
+        view.getUint16(at + 30, true) +
+        view.getUint16(at + 32, true);
+    }
+    const parsed = await parseXlsx(bytes);
+    expect(parsed.ok && parsed.workbook.sheets[0]!.texts).toEqual(['42']);
+  });
 });

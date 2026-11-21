@@ -63,15 +63,17 @@ function workbook(): Uint8Array {
   const files: Record<string, string> = {
     '[Content_Types].xml': '<Types/>',
     'xl/workbook.xml':
-      '<workbook><sheets><sheet name="First" r:id="r1"/><sheet name="Second" r:id="r2"/><sheet name="Bad&#x202e;name" r:id="r3"/></sheets></workbook>',
+      '<workbook><sheets><sheet name="First" r:id="r1"/><sheet name="Second" r:id="r2"/><sheet name="Bad&#x202e;name" r:id="r3"/><sheet name="Hidden" state="hidden" r:id="r4"/></sheets></workbook>',
     'xl/_rels/workbook.xml.rels':
-      '<Relationships><Relationship Id="r1" Type="urn:office/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="r2" Type="urn:office/worksheet" Target="worksheets/sheet2.xml"/><Relationship Id="r3" Type="urn:office/worksheet" Target="worksheets/sheet3.xml"/></Relationships>',
+      '<Relationships><Relationship Id="r1" Type="urn:office/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="r2" Type="urn:office/worksheet" Target="worksheets/sheet2.xml"/><Relationship Id="r3" Type="urn:office/worksheet" Target="worksheets/sheet3.xml"/><Relationship Id="r4" Type="urn:office/worksheet" Target="worksheets/sheet4.xml"/></Relationships>',
     'xl/worksheets/sheet1.xml':
       '<worksheet><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Header</t></is></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>First value</t></is></c></row></sheetData></worksheet>',
     'xl/worksheets/sheet2.xml':
       '<worksheet><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Header</t></is></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>Second value</t></is></c></row></sheetData></worksheet>',
     'xl/worksheets/sheet3.xml':
       '<worksheet><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Header</t></is></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>Restricted value</t></is></c></row></sheetData></worksheet>',
+    'xl/worksheets/sheet4.xml':
+      '<worksheet><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Header</t></is></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>Hidden value</t></is></c></row></sheetData></worksheet>',
   };
   const encoder = new TextEncoder();
   const entries = Object.entries(files).map(([name, value]) => ({
@@ -345,6 +347,12 @@ try {
       assert.equal(
         await evaluate(`Boolean(document.querySelector('.popover-comment'))`),
         false
+      );
+      assert.equal(
+        await evaluate(
+          `document.querySelector('select[aria-label="Hidden sheets"] option[value="3"]')?.textContent`
+        ),
+        'Hidden'
       );
       console.log(`SPREADSHEET_PATH_WIDTH_OK ${width}`);
     } finally {

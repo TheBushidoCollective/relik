@@ -2168,8 +2168,18 @@ export function buildCurrentStage(
           renderSpreadsheetRoute(root, view, () => downloadContent(view))
         )
         .catch(() => {
-          root.textContent =
-            'This spreadsheet could not be shown. Download the original file.';
+          root.replaceChildren(
+            notice(
+              'This spreadsheet could not be shown. Download it to inspect it.'
+            ),
+            renderDownloadView(view)
+          );
+          root.dispatchEvent(
+            new CustomEvent('relic:render-state', {
+              bubbles: true,
+              detail: 'error',
+            })
+          );
         });
       break;
     }
