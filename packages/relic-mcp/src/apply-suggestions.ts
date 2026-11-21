@@ -145,7 +145,8 @@ function validateTable(
   crlf: boolean,
   edits: readonly StructureEdit[]
 ): void {
-  const options = { delimiter: tsv ? '\t' : 'auto' } as const;
+  // Decoding already removed the file BOM; any remaining U+FEFF is table data.
+  const options = { delimiter: tsv ? '\t' : 'auto', skipBom: false } as const;
   // The viewer sniffs the unnormalized source, including every CR in CRLF.
   const original = parseTable(crlf ? restoreCrLf(before) : before, options);
   const result = parseTable(crlf ? restoreCrLf(after) : after, options);
@@ -170,10 +171,10 @@ function validateTable(
   // Merge offsets use normalized LF, so parse those strings with the dialect
   // selected above before mapping their field boundaries through the edits.
   const oldOffsets = crlf
-    ? parseTable(before, { delimiter: oldTable.delimiter })
+    ? parseTable(before, { delimiter: oldTable.delimiter, skipBom: false })
     : original;
   const newOffsets = crlf
-    ? parseTable(after, { delimiter: oldTable.delimiter })
+    ? parseTable(after, { delimiter: oldTable.delimiter, skipBom: false })
     : result;
   if (!oldOffsets.ok || !newOffsets.ok)
     refuseStructure('table_parse', 'the normalized table cannot be parsed');

@@ -1143,6 +1143,117 @@ describe('relic_apply_suggestions', () => {
     }
   });
 
+  test.each([
+    ['CSV', 'data.csv', ','],
+    ['TSV', 'data.tsv', '\t'],
+  ] as const)(
+    'keeps the second BOM as data when applying %s edits with CRLF',
+    async (_, filename, delimiter) => {
+      const target = join(scratch, filename);
+      const original =
+        `\uFEFF\uFEFF"alpha${delimiter}beta"${delimiter}x\r\n` +
+        `row${delimiter}value${delimiter}last\r\n`;
+      const decoded = new TextDecoder('utf-8', { fatal: true }).decode(
+        new TextEncoder().encode(original)
+      );
+      const viewer = parseTable(decoded, { delimiter, skipBom: false });
+      const incorrectlySkipped = parseTable(decoded, { delimiter });
+      if (!viewer.ok || !incorrectlySkipped.ok)
+        throw new Error('fixture must parse as a table');
+      expect(viewer.table.fieldStart[0]).toBe(0);
+      expect(recordWidth(viewer.table, 0)).toBe(3);
+      expect(recordWidth(incorrectlySkipped.table, 0)).toBe(2);
+
+      await writeFile(target, original);
+      await addSuggestion('safe', 'alpha', 'ALPHA');
+      await addSuggestion('damage', `alpha${delimiter}beta`, 'alphabeta');
+      for (const write of [false, true]) {
+        const refused = await call({
+          path: target,
+          accept: ['damage'],
+          write,
+          allow_source_mismatch: true,
+        });
+        expect(refused.structuredContent).toMatchObject({
+          code: 'suggestion_breaks_structure',
+          check: 'table_fields',
+        });
+        expect(refused.isError).toBe(true);
+        expect(await readFile(target)).toEqual(Buffer.from(original));
+      }
+
+      const args = {
+        path: target,
+        accept: ['safe'],
+        allow_source_mismatch: true,
+      };
+      const preview = await call(args);
+      expect(preview.isError).toBe(false);
+      expect(preview.structuredContent['written']).toBe(false);
+      expect(await readFile(target)).toEqual(Buffer.from(original));
+      const result = await call({ ...args, write: true });
+      expect(result.isError).toBe(false);
+      expect(result.structuredContent['written']).toBe(true);
+      expect(await readFile(target)).toEqual(
+        Buffer.from(original.replace('alpha', 'ALPHA'))
+      );
+    }
+  );
+
+  test('sniffs a double-BOM CRLF table using the decoded viewer sample', async () => {
+    const target = join(scratch, 'data.csv');
+    const header = '\uFEFFhead;name,value\r\n';
+    const marker = 'Q1';
+    // The second BOM is data at the start of the viewer's 64 KiB sample.
+    // Skipping it incorrectly admits the semicolon one character too early.
+    const padding = 'x'.repeat(65_536 - header.length - marker.length);
+    const decoded = `${header}${marker}${padding};y,z\r\n`;
+    const edited = decoded.replace('Q1', 'Q');
+    const original = `\uFEFF${decoded}`;
+    const viewerBefore = parseTable(decoded, { skipBom: false });
+    const viewerAfter = parseTable(edited, { skipBom: false });
+    const skippedBefore = parseTable(decoded);
+    const skippedAfter = parseTable(edited);
+    const normalizedBefore = parseTable(decoded.replaceAll('\r\n', '\n'), {
+      skipBom: false,
+    });
+    const normalizedAfter = parseTable(edited.replaceAll('\r\n', '\n'), {
+      skipBom: false,
+    });
+    if (
+      !viewerBefore.ok ||
+      !viewerAfter.ok ||
+      !skippedBefore.ok ||
+      !skippedAfter.ok ||
+      !normalizedBefore.ok ||
+      !normalizedAfter.ok
+    )
+      throw new Error('fixture must parse as a table');
+    expect(viewerBefore.table.delimiter).toBe(',');
+    expect(viewerAfter.table.delimiter).toBe(';');
+    expect(skippedBefore.table.delimiter).toBe(';');
+    expect(skippedAfter.table.delimiter).toBe(';');
+    expect(normalizedBefore.table.delimiter).toBe(';');
+    expect(normalizedAfter.table.delimiter).toBe(';');
+
+    await writeFile(target, original);
+    await addSuggestion('damage', marker, 'Q');
+    for (const write of [false, true]) {
+      const refused = await call({
+        path: target,
+        accept: ['damage'],
+        write,
+        allow_source_mismatch: true,
+      });
+      expect(refused.structuredContent).toMatchObject({
+        code: 'suggestion_breaks_structure',
+        check: 'table_delimiter',
+      });
+      expect(refused.isError).toBe(true);
+      expect(await readFile(target)).toEqual(Buffer.from(original));
+    }
+  });
+
   test('refuses combined CSV edits that move an unchanged cell across a separator', async () => {
     const target = join(scratch, 'data.csv');
     const original = 'name,value\nfoo,bar\nomega,2\n';
