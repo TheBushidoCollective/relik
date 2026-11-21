@@ -1138,7 +1138,7 @@ describe('the grant', () => {
         body: JSON.stringify({
           challenge_nonce: challenge.challenge_nonce,
           relic_id: generateRelicId(),
-          renderer_class: 'spreadsheet',
+          renderer_class: 'unknown-format',
           publishing_client: 'test',
           declared_size_bytes: 1,
           declared_ciphertext_bytes: encryptedSize(1),
@@ -1147,6 +1147,18 @@ describe('the grant', () => {
     );
     expect(response.status).toBe(400);
     expect((await response.json()).code).toBe('invalid_publish_metadata');
+  });
+
+  test('accepts document and spreadsheet renderer classes at the grant', async () => {
+    for (const renderer of ['document', 'spreadsheet'] as const) {
+      const id = generateRelicId();
+      const response = await grantFor({
+        relic_id: id,
+        renderer_class: renderer,
+      });
+      expect(response.status).toBe(200);
+      expect((await app.store.getRelic(id))?.rendererClass).toBe(renderer);
+    }
   });
 
   test('accepts a folder renderer class at the grant', async () => {

@@ -22,8 +22,23 @@ export function scanForbiddenDtd(
   input: Uint8Array | string,
   kind: 'docx' | 'epub'
 ): boolean {
-  const text =
-    typeof input === 'string' ? input : new TextDecoder().decode(input);
+  let text: string;
+  if (typeof input === 'string') {
+    text = input;
+  } else if (
+    (input[0] === 0xff && input[1] === 0xfe) ||
+    (input[0] === 0x3c && input[1] === 0)
+  ) {
+    text = new TextDecoder('utf-16le').decode(input);
+  } else if (
+    (input[0] === 0xfe && input[1] === 0xff) ||
+    (input[0] === 0 && input[1] === 0x3c)
+  ) {
+    text = new TextDecoder('utf-16be').decode(input);
+  } else {
+    text = new TextDecoder().decode(input);
+  }
+  if (text.includes('\0')) return true;
   if (/<!ENTITY\b/i.test(text)) return true;
   if (kind === 'docx') return /<!DOCTYPE\b/i.test(text);
   for (const match of text.matchAll(/<!DOCTYPE\b/gi)) {
@@ -56,6 +71,7 @@ export function parseXml(
   opts?: { readonly lenient?: boolean }
 ): XmlResult {
   try {
+    if (/<!ENTITY\b/i.test(text)) throw new ParseFailure('entity');
     if (scanForbiddenDtd(text, 'epub')) throw new ParseFailure('doctype');
     type MutableElement = {
       name: string;

@@ -1489,12 +1489,14 @@ export async function routeFor(
     sniffed === 'document' ||
     sniffed === 'spreadsheet'
   ) {
+    const namedClass = deriveRendererClass(new Uint8Array([0]), filename);
     const nameSilent =
       (mime === '' || mime === 'application/octet-stream') &&
-      deriveRendererClass(new Uint8Array([0]), filename) === 'binary';
+      namedClass === 'binary';
     if (
       (sniffed === 'document' || sniffed === 'spreadsheet') &&
-      (declared === sniffed || nameSilent)
+      (declared === sniffed || nameSilent) &&
+      (namedClass === 'binary' || namedClass === sniffed)
     ) {
       const kind =
         content instanceof Uint8Array

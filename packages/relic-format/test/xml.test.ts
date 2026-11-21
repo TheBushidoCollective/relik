@@ -46,6 +46,12 @@ describe('bounded XML parser', () => {
     const hostile = '<!DOCTYPE html SYSTEM "a>b" [<!ENTITY x "bad">]><html/>';
     expect(scanForbiddenDtd(hostile, 'epub')).toBe(true);
     expect(parseXml(hostile).ok).toBe(false);
+    const utf16 = new Uint8Array(hostile.length * 2 + 2);
+    utf16[0] = 0xff;
+    utf16[1] = 0xfe;
+    for (let i = 0; i < hostile.length; i++)
+      utf16[2 + i * 2] = hostile.charCodeAt(i);
+    expect(scanForbiddenDtd(utf16, 'epub')).toBe(true);
     expect(parseXml('<!DOCTYPE html><html/>').ok).toBe(true);
   });
 });

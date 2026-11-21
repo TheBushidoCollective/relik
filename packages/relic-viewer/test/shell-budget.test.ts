@@ -273,7 +273,7 @@ describe('the app shell', () => {
     // Runs on the clean build above. The converter is the docx library, and
     // every reader of every relic would otherwise download it to open a page.
     const shell = await Bun.file(`${pkgDir}dist/viewer.js`).text();
-    const marker = 'wordprocessingml';
+    const marker = '/word/styles.xml';
     expect(shell.includes(marker)).toBe(false);
 
     const carriers: string[] = [];

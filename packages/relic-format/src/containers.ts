@@ -88,6 +88,14 @@ export function zipContainerKindSync(bytes: Uint8Array): ZipContainerKind {
         local === 0xffffffff
       )
         return 'archive';
+      const extraEnd = cursor + 46 + nameLen + extraLen;
+      for (let pos = cursor + 46 + nameLen; pos < extraEnd; ) {
+        if (pos + 4 > extraEnd) return 'archive';
+        const id = view.getUint16(pos, true);
+        const fieldSize = view.getUint16(pos + 2, true);
+        if (id === 1 || pos + 4 + fieldSize > extraEnd) return 'archive';
+        pos += 4 + fieldSize;
+      }
       const name = assertSafeZipPath(
         decoder.decode(bytes.subarray(cursor + 46, cursor + 46 + nameLen))
       );

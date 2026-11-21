@@ -9,7 +9,7 @@
  *
  * What it never carries: the contents, the envelope header's authoritative
  * filename and declared mimetype, which stay inside the AEAD, and anything
- * finer than the ten-value class.
+ * finer than the renderer class.
  * Why the class is allowed here at all. It is the coarse category the frame
  * already concedes to the operator on the grant, so the card is a new
  * audience for a field the service has always held rather than a new field.
