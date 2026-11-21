@@ -9771,6 +9771,12 @@ export function buildThread(
           if (suggestionController?.destroy()) suggestionController = undefined;
           updateSuggestionStub();
         });
+        next.addEventListener('relic:table-suggest', () => {
+          if (host !== next) return;
+          void ensureSuggestion().then((controller) =>
+            controller?.setSuggesting(true)
+          );
+        });
         bindHostConcealment(next);
         bindPairing(next);
         bindMarkPointing(next);
