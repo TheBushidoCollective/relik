@@ -103,9 +103,17 @@ function selectionOffsets(
     const prefix = root.ownerDocument.createRange();
     prefix.selectNodeContents(root);
     prefix.setEnd(range.startContainer, range.startOffset);
-    const start = prefix.toString().length;
+    const sourceLength = (): number => {
+      const fragment = prefix.cloneContents();
+      for (const excluded of fragment.querySelectorAll(
+        'ins[data-sg], [data-sg-decoration]'
+      ))
+        excluded.remove();
+      return fragment.textContent?.length ?? 0;
+    };
+    const start = sourceLength();
     prefix.setEnd(range.endContainer, range.endOffset);
-    return [start, prefix.toString().length];
+    return [start, sourceLength()];
   } catch {
     return null;
   }

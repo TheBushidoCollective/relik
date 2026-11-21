@@ -439,6 +439,9 @@ export function mountSuggestEditor(
     ...(options.surface?.decode
       ? { decode: options.surface.decode.bind(options.surface) }
       : {}),
+    ...(options.surface?.decodeRange
+      ? { decodeRange: options.surface.decodeRange.bind(options.surface) }
+      : {}),
     ...(options.surface?.emptyAnchor
       ? { emptyAnchor: options.surface.emptyAnchor.bind(options.surface) }
       : {}),
@@ -952,7 +955,15 @@ export function mountSuggestEditor(
     const prior = model.draft;
     const base =
       prior && a >= prior.end
-        ? prior.inserted.length + source.slice(prior.end, a).length
+        ? prior.inserted.length +
+          (
+            options.surface?.decodeRange?.(start.block, prior.end, a) ??
+            options.surface?.decode?.(
+              start.block,
+              source.slice(prior.end, a)
+            ) ??
+            source.slice(prior.end, a)
+          ).length
         : 0;
     if (type === 'insertParagraph' || type === 'insertLineBreak') {
       const value = start.blockKind === 'paragraph' ? '\n\n' : '\n';
@@ -1253,6 +1264,9 @@ export function mountSuggestEditor(
             : {}),
           ...(options.surface?.decode
             ? { decode: options.surface.decode.bind(options.surface) }
+            : {}),
+          ...(options.surface?.decodeRange
+            ? { decodeRange: options.surface.decodeRange.bind(options.surface) }
             : {}),
           ...(options.surface?.emptyAnchor
             ? { emptyAnchor: options.surface.emptyAnchor.bind(options.surface) }

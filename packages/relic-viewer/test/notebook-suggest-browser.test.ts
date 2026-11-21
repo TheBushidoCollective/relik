@@ -97,6 +97,16 @@ test('notebook source maps rendered cells but refuses output selections', async 
       const tab = new KeyboardEvent('keydown',{key:'Tab',bubbles:true,cancelable:true}); root.dispatchEvent(tab);
       if (!tab.defaultPrevented || editor.draft?.inserted !== String.fromCharCode(9)) throw Error('code Tab did not insert');
       editor.cancel();
+      select(root.querySelector('[data-seg=\"' + segments.indexOf(codeSegment) + '\"]'));
+      root.dispatchEvent(new InputEvent('beforeinput',{bubbles:true,cancelable:true,inputType:'insertText',data:'A'}));
+      const second=segments.find(s=>s.text==='second');
+      const secondNode=root.querySelector('[data-seg=\"'+segments.indexOf(second)+'\"]').firstChild;
+      const secondCaret=document.createRange(); secondCaret.setStart(secondNode,1); secondCaret.collapse(true); selection.removeAllRanges(); selection.addRange(secondCaret);
+      root.dispatchEvent(new InputEvent('beforeinput',{bubbles:true,cancelable:true,inputType:'insertText',data:'Z'}));
+      if (editor.draft?.inserted !== 'A\"hi\")'+String.fromCharCode(10)+'sZ') throw Error('draft extension changed untouched source');
+      const combined=editor.prepare(), draft=editor.draft;
+      if (combined.kind!=='save' || JSON.parse(source.slice(0,draft.start)+combined.plaintext.suggestion.replacement+source.slice(draft.end)).cells[1].source.join('')!=='A\"hi\")'+String.fromCharCode(10)+'sZecond') throw Error('extended edit did not preserve notebook source');
+      editor.cancel();
       editor.destroy();
       const owner=document.createElement('div'); owner.className='structured-view'; const host=document.createElement('div'); document.body.append(host); host.append(owner); owner.append(root);
       registerSuggestionSurface(owner,surface);
@@ -105,8 +115,13 @@ test('notebook source maps rendered cells but refuses output selections', async 
       const controller=mountSuggestionController({view:{route:'notebook',filename:'test.ipynb',version:1,currentVersion:1,document:{bytes:new TextEncoder().encode(source),truncated:false}},host,bar,relicId:'test',deps:{serviceOrigin:location.origin,fetch},session:()=>({kind:'verified',email:'reader@example.test'}),cipher:()=>({seal:async()=>'',open:async()=>({})}),entries:()=>entries,displayName:()=>null,refresh:async()=>{},readCurrentVersion:async()=>1,repaint(){},signIn(){},open(){}});
       controller.repaint(()=>{});
       if (root.textContent.includes('LEAK') || !root.textContent.includes('VALID')) throw Error('metadata painted or code suggestion missing');
+      const hi=[...root.querySelectorAll('[data-seg]')].find(node=>node.textContent==='hi');
+      const hiRange=document.createRange(); hiRange.selectNodeContents(hi); selection.removeAllRanges(); selection.addRange(hiRange);
+      controller.setSuggesting(true,hiRange);
+      if (selection.toString()!=='hi') throw Error('selection shifted by earlier tracked insertion: '+selection.toString());
+      controller.setSuggesting(false);
       controller.destroy();
-      const crlfSource=JSON.stringify({nbformat:4,cells:[{cell_type:'raw',source:'one'+String.fromCharCode(13,10)+'two'},{cell_type:'markdown',source:'alpha'+String.fromCharCode(10)+'beta'}]});
+      const crlfSource=JSON.stringify({nbformat:4,cells:[{cell_type:'raw',source:'one'+String.fromCharCode(13,10)+'two'},{cell_type:'markdown',source:'alpha  '+String.fromCharCode(10)+'beta'}]});
       const crlfNotebook=parseNotebook(crlfSource); if (!crlfNotebook.ok) throw Error('CRLF fixture refused');
       const another=document.createElement('div'); another.innerHTML='<div class=\"nb-cell\" data-cell=\"0\"><div class=\"nb-box\"><pre class=\"nb-src\"></pre></div></div><div class=\"nb-cell\" data-cell=\"1\"><div class=\"nb-box\"><article class=\"prose\"></article></div></div>';
       const anotherSurface=notebookSuggestionSurface(another,crlfNotebook.notebook); const crlfSegments=anotherSurface.segments(crlfSource);
@@ -114,6 +129,14 @@ test('notebook source maps rendered cells but refuses output selections', async 
       if (!first || !last || !anotherSurface.covers(first.start,last.end)) throw Error('escaped CRLF cell unavailable');
       const alpha=crlfSegments.find(s=>s.text==='alpha'); const beta=crlfSegments.find(s=>s.text==='beta');
       if (!alpha || !beta || !anotherSurface.covers(alpha.start,beta.end)) throw Error('markdown soft break unmapped');
+      const bidiSource=JSON.stringify({nbformat:4,cells:[{cell_type:'code',source:'left'+String.fromCharCode(0x202e)+'right',outputs:[]},{cell_type:'code',source:'other',outputs:[]}]});
+      const bidiNotebook=parseNotebook(bidiSource), bidiRoot=document.createElement('div');
+      bidiRoot.innerHTML='<div class=\"nb-cell\" data-cell=\"0\"><div class=\"nb-box\"><pre class=\"nb-src\">left[U+202E]right</pre></div></div><div class=\"nb-cell\" data-cell=\"1\"><div class=\"nb-box\"><pre class=\"nb-src\"></pre></div></div>';
+      document.body.append(bidiRoot); const bidiSurface=notebookSuggestionSurface(bidiRoot,bidiNotebook.notebook); const bidiSegments=bidiSurface.segments(bidiSource);
+      const bidiEditor=mountSuggestEditor({root:bidiRoot,source:bidiSource,segments:bidiSegments,delimiters:[],version:1,reader:'reader@example.test',chrome,surface:bidiSurface,onCommit(){},onDraftChange(){},onRefusal(){}});
+      bidiEditor.setSuggesting(true); select(bidiRoot.querySelector('.nb-cell[data-cell=\"0\"] pre'));
+      bidiRoot.dispatchEvent(new InputEvent('beforeinput',{bubbles:true,cancelable:true,inputType:'insertText',data:'x'}));
+      if (bidiEditor.draft) throw Error('unmapped cell input changed another cell'); bidiEditor.destroy();
       await fetch('/result',{method:'POST',body:'ok'});
     } catch (error) { await fetch('/result',{method:'POST',body:error.stack || String(error)}); }
   </script>`;

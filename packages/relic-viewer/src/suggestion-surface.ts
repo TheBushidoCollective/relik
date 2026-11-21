@@ -22,6 +22,8 @@ export interface SuggestionSurface {
     | { readonly ok: true; readonly source: string }
     | { readonly ok: false; readonly refusal: SuggestRefusal };
   decode?(block: number, source: string): string;
+  /** Decode an untouched span of original source when extending a draft. */
+  decodeRange?(block: number, start: number, end: number): string;
   emptyAnchor?(
     block: number,
     position: number

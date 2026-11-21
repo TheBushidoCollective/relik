@@ -57,6 +57,7 @@ export interface SuggestDraftOptions {
     | { readonly ok: true; readonly source: string }
     | { readonly ok: false; readonly refusal: SuggestRefusal };
   readonly decode?: (block: number, source: string) => string;
+  readonly decodeRange?: (block: number, start: number, end: number) => string;
   readonly emptyAnchor?: (
     block: number,
     position: number
@@ -504,10 +505,12 @@ export class SuggestDraftModel {
           draft.start,
           end,
           draft.inserted +
-            (this.options.decode?.(
-              block,
-              this.options.source.slice(draft.end, start)
-            ) ?? this.options.source.slice(draft.end, start)) +
+            (this.options.decodeRange?.(block, draft.end, start) ??
+              this.options.decode?.(
+                block,
+                this.options.source.slice(draft.end, start)
+              ) ??
+              this.options.source.slice(draft.end, start)) +
             text,
           block,
           blockKind,
@@ -521,10 +524,12 @@ export class SuggestDraftModel {
           start,
           draft.end,
           text +
-            (this.options.decode?.(
-              block,
-              this.options.source.slice(end, draft.start)
-            ) ?? this.options.source.slice(end, draft.start)) +
+            (this.options.decodeRange?.(block, end, draft.start) ??
+              this.options.decode?.(
+                block,
+                this.options.source.slice(end, draft.start)
+              ) ??
+              this.options.source.slice(end, draft.start)) +
             draft.inserted,
           block,
           blockKind,

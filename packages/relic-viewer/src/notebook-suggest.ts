@@ -47,14 +47,18 @@ export function notebookNotEditable(): SuggestRefusal {
 
 export function notebookAcceptsSelection(
   root: HTMLElement,
-  node: Node
+  node: Node,
+  mappingReady = false
 ): true | SuggestRefusal {
   const element = node.nodeType === 1 ? (node as Element) : node.parentElement;
   const target = element?.closest(
     '.nb-box > article.prose, .nb-box > pre.nb-src'
   );
   if (!target || !root.contains(target)) return notebookNotEditable();
-  if (target.querySelector('[data-seg]') && !element?.closest('[data-seg]'))
+  if (
+    (mappingReady || target.querySelector('[data-seg]')) &&
+    !element?.closest('[data-seg]')
+  )
     return notebookNotEditable();
   return true;
 }
@@ -133,11 +137,16 @@ export function notebookSuggestionSurface(
     number,
     { readonly start: number; readonly end: number }
   >();
+  const cellTokens = new Map<number, NotebookCell['sourceTokens']>();
+  let documentSource = '';
   let mapped: readonly SourceSegment[] = [];
+  let mappingReady = false;
   let nextBlock = 0;
   return {
     root,
     segments(source) {
+      documentSource = source;
+      cellTokens.clear();
       const result: SourceSegment[] = [];
       kinds.clear();
       allowed.clear();
@@ -181,6 +190,7 @@ export function notebookSuggestionSurface(
             tokenBlocks.set(key, block);
             kinds.set(block, `nb-${cell.kind}` as SuggestBlockKind);
             const range = groupRanges.get(group);
+            cellTokens.set(block, cell.sourceTokens);
             if (range) tokens.set(block, range);
             allowed.add(block);
           }
@@ -251,11 +261,24 @@ export function notebookSuggestionSurface(
             }
             if (
               segment.kind === 'join' &&
-              subset.length === 1 &&
-              subset[0]!.text === '\n' &&
-              segment.text === ' '
-            )
-              subset[0] = { ...subset[0]!, text: ' ' };
+              segment.text === ' ' &&
+              subset.length > 0 &&
+              /^[ \t]*\n[ \t]*$/.test(
+                subset.map((unit) => unit.text).join('')
+              ) &&
+              subset.every(
+                (unit, i) =>
+                  i === 0 ||
+                  (subset[i - 1]!.end === unit.start &&
+                    groups[unit.token] === groups[subset[0]!.token])
+              )
+            ) {
+              subset.splice(0, subset.length, {
+                ...subset[0]!,
+                text: ' ',
+                end: subset[subset.length - 1]!.end,
+              });
+            }
             if (subset.map((unit) => unit.text).join('') !== segment.text) {
               span.removeAttribute('data-seg');
               continue;
@@ -268,6 +291,7 @@ export function notebookSuggestionSurface(
         }
       }
       mapped = result;
+      mappingReady = true;
       return result;
     },
     blockKind(block) {
@@ -311,6 +335,16 @@ export function notebookSuggestionSurface(
     decode(_block, source) {
       return decodeNotebookText(source);
     },
+    decodeRange(block, start, end) {
+      let result = '';
+      for (const token of cellTokens.get(block) ?? []) {
+        const from = Math.max(start, token.start + 1);
+        const to = Math.min(end, token.end - 1);
+        if (from < to)
+          result += JSON.parse(`"${documentSource.slice(from, to)}"`) as string;
+      }
+      return result;
+    },
     emptyAnchor(block, position) {
       const token = tokens.get(block);
       return token &&
@@ -320,7 +354,7 @@ export function notebookSuggestionSurface(
         : undefined;
     },
     acceptsSelection(node) {
-      return notebookAcceptsSelection(root, node);
+      return notebookAcceptsSelection(root, node, mappingReady);
     },
     repaint() {},
   };
