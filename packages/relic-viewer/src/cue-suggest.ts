@@ -28,6 +28,8 @@ export function encodeCueText(
   const result = before + encoded + after;
   if (
     result === '' ||
+    /^[ \t]*\r?\n/.test(result) ||
+    /\r?\n[ \t]*$/.test(result) ||
     /\r?\n[ \t]*\r?\n/.test(result) ||
     result.includes('-->')
   )

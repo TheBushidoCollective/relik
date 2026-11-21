@@ -34,6 +34,7 @@ import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+import type { VersionFormat } from './suggestion-format.ts';
 
 export type SourceIdentityKind = 'git_remote' | 'git_common_dir' | 'realpath';
 
@@ -65,6 +66,8 @@ export interface PublishState {
   readonly version: number;
   /** Absent in legacy state, where the relic contains one file. */
   readonly shape?: 'file' | 'folder' | undefined;
+  /** Non-secret source format recorded for versions published here. */
+  readonly version_formats?: Readonly<Record<string, VersionFormat>>;
   /**
    * Absent on state written before source lookup shipped. Absence is valid
    * legacy state and means this entry cannot take part in prior-publish
@@ -148,6 +151,8 @@ export interface PrivatePublishState {
   /** The newest version this machine published. */
   readonly version: number;
   readonly shape?: 'file' | 'folder' | undefined;
+  /** Non-secret source format recorded for versions published here. */
+  readonly version_formats?: Readonly<Record<string, VersionFormat>>;
   /** Version number to base64url 16-byte key, for the versions created here. */
   readonly version_keys: Readonly<Record<string, string>>;
   readonly owner_identity_id: string;
@@ -701,6 +706,18 @@ async function writeEntry(
     throw new Error(`publish state at ${path} holds malformed ${bucket}.`);
   }
   const oldEntry = storedBucket?.[relicId];
+  const oldFormats = isPlainObject(oldEntry)
+    ? oldEntry['version_formats']
+    : undefined;
+  const newFormats =
+    'version_formats' in state ? state.version_formats : undefined;
+  const mergedFormats =
+    isPlainObject(oldFormats) || isPlainObject(newFormats)
+      ? {
+          ...(isPlainObject(oldFormats) ? oldFormats : {}),
+          ...(isPlainObject(newFormats) ? newFormats : {}),
+        }
+      : undefined;
   const entries = {
     ...storedBucket,
     [relicId]: {
@@ -713,6 +730,9 @@ async function writeEntry(
       // source identity disappears from a write that was only meant to bump
       // a version number.
       ...defined(state),
+      ...(mergedFormats === undefined
+        ? {}
+        : { version_formats: mergedFormats }),
     },
   };
 

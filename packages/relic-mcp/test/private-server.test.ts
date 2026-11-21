@@ -351,6 +351,10 @@ describe('the private publish against the real service', () => {
     expect(state?.version).toBe(2);
     expect(state?.version_keys['2']).toBeDefined();
     expect(state?.version_keys['2']).not.toBe(state?.version_keys['1']);
+    expect(state?.version_formats).toEqual({
+      '1': { shape: 'file', extension: 'md' },
+      '2': { shape: 'file', extension: 'md' },
+    });
     expect(encryptedSize(EDITED.length)).toBeGreaterThan(0);
   });
 });

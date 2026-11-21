@@ -60,6 +60,12 @@ import {
   type SourceIdentity,
   savePublishState,
 } from './state.ts';
+import {
+  buildCachedFormat,
+  saveCachedVersionFormat,
+  versionFormatFor,
+  withVersionFormat,
+} from './suggestion-format.ts';
 import type { ObjectUploader } from './upload.ts';
 import type { SecureEnclaveSeam } from './device.ts';
 
@@ -768,6 +774,11 @@ export async function publish(
         publish_token: publishToken,
         version: 1,
         shape: folderSource ? 'folder' : 'file',
+        version_formats: withVersionFormat(
+          {},
+          1,
+          versionFormatFor(folderSource ? 'folder' : 'file', filename)
+        ),
         source: sourceLookup.source,
         filename,
         content_sha256: digest,
@@ -787,6 +798,30 @@ export async function publish(
           `machine: ${(error as Error).message}`,
         { relic_id: relicId, url }
       );
+    }
+
+    if (folderSource) {
+      try {
+        await saveCachedVersionFormat(
+          relicId,
+          1,
+          key,
+          buildCachedFormat(
+            { shape: 'folder' },
+            folderSource.folder.entries.map((entry) => entry.path),
+            key,
+            relicId,
+            1
+          )
+        );
+      } catch (error) {
+        throw new PublishError(
+          'local_state_write_failed',
+          'the relic is published, but its encrypted folder format cache could not be recorded: ' +
+            (error as Error).message,
+          { relic_id: relicId, url, version: 1 }
+        );
+      }
     }
 
     let coverReport: CoverReport;
@@ -814,6 +849,11 @@ export async function publish(
             publish_token: publishToken,
             version: 1,
             shape: folderSource ? 'folder' : 'file',
+            version_formats: withVersionFormat(
+              {},
+              1,
+              versionFormatFor(folderSource ? 'folder' : 'file', filename)
+            ),
             source: sourceLookup.source,
             filename,
             content_sha256: digest,

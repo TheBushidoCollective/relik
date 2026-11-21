@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import {
   loadPrivatePublishState,
   loadPublishInventory,
+  loadPublishState,
   type PrivatePublishState,
   type PublishState,
   savePrivatePublishState,
@@ -79,6 +80,36 @@ describe('private entries in the publish state file', () => {
     expect(Object.keys(raw['relics'] as Record<string, unknown>)).toEqual([
       RELIC_A,
     ]);
+  });
+
+  test('stale public and private updates preserve all recorded version formats', async () => {
+    const first = { shape: 'file' as const, extension: 'csv' };
+    const second = { shape: 'folder' as const };
+    const stalePublic = { ...publicState(), version_formats: { '1': first } };
+    await savePublishState(RELIC_A, stalePublic);
+    await savePublishState(RELIC_A, {
+      ...stalePublic,
+      version: 2,
+      version_formats: { ...stalePublic.version_formats, '2': second },
+    });
+    await savePublishState(RELIC_A, { ...stalePublic, cover_uploaded: true });
+    expect((await loadPublishState(RELIC_A))?.version_formats).toEqual({
+      '1': first,
+      '2': second,
+    });
+
+    const stalePrivate = { ...privateState(), version_formats: { '1': first } };
+    await savePrivatePublishState(RELIC_B, stalePrivate);
+    await savePrivatePublishState(RELIC_B, {
+      ...stalePrivate,
+      version: 2,
+      version_formats: { ...stalePrivate.version_formats, '2': second },
+    });
+    await savePrivatePublishState(RELIC_B, stalePrivate);
+    expect((await loadPrivatePublishState(RELIC_B))?.version_formats).toEqual({
+      '1': first,
+      '2': second,
+    });
   });
 
   test('the state file is written 0600', async () => {

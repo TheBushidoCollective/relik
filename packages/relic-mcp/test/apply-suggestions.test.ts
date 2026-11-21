@@ -11,13 +11,14 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { basename, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import {
   type CommentPlaintext,
   decodeKey,
   deriveCommentKey,
   encodeKey,
   encryptComment,
+  encryptFolder,
   encryptRelic,
   generateKey,
   generateRelicId,
@@ -28,6 +29,11 @@ import { APPLY_SUGGESTIONS_TOOL_NAME } from '../src/apply-suggestions.ts';
 import { nodeFiles } from '../src/files.ts';
 import type { PublishDeps } from '../src/publish.ts';
 import { handleMessage } from '../src/server.ts';
+import {
+  buildCachedFormat,
+  cachedVersionFormatPath,
+  saveCachedVersionFormat,
+} from '../src/suggestion-format.ts';
 import {
   loadPublishState,
   resolveSourceIdentity,
@@ -179,6 +185,101 @@ async function recordFixtureFilename(target: string): Promise<void> {
   const state = await loadPublishState(relicId);
   if (!state) throw new Error('missing fixture publish state');
   await savePublishState(relicId, { ...state, filename: basename(target) });
+}
+
+async function recordFixtureFolder(
+  folder: string,
+  paths: readonly string[],
+  version = 1
+): Promise<Uint8Array> {
+  const state = await loadPublishState(relicId);
+  if (!state) throw new Error('missing fixture publish state');
+  const keyBytes = decodeKey(state.key);
+  const format = { shape: 'folder' } as const;
+  await savePublishState(relicId, {
+    ...state,
+    shape: 'folder',
+    version,
+    source: await resolveSourceIdentity(folder),
+    version_formats: { ...state.version_formats, [String(version)]: format },
+  });
+  await saveCachedVersionFormat(
+    relicId,
+    version,
+    keyBytes,
+    buildCachedFormat(format, paths, keyBytes, relicId, version)
+  );
+  return keyBytes;
+}
+
+async function historicalFolderFixture(includeSecond: boolean) {
+  const folder = join(scratch, 'historical-folder');
+  await mkdir(folder);
+  const first = join(folder, 'a.md');
+  const second = join(folder, 'b.md');
+  await writeFile(first, 'alpha\n');
+  await writeFile(second, 'omega\n');
+  const keyBytes = await recordFixtureFolder(folder, ['a.md', 'b.md'], 2);
+  for (const [id, entry, exact, replacement] of [
+    ['first', 'a.md', 'alpha', 'ALPHA'],
+    ['second', 'b.md', 'omega', 'OMEGA'],
+  ] as const)
+    await addRow(id, {
+      body: 'folder suggestion',
+      display_name: null,
+      entry,
+      anchor: { kind: 'source', exact },
+      suggestion: { v: 1, mode: 'replace', replacement },
+    });
+  const container = await encryptFolder({
+    name: 'folder',
+    defaultIndex: 0,
+    key: keyBytes,
+    entries: [
+      {
+        path: 'a.md',
+        mimetype: 'text/markdown',
+        bytes: new TextEncoder().encode('alpha\n'),
+      },
+      ...(includeSecond
+        ? [
+            {
+              path: 'b.md',
+              mimetype: 'text/markdown',
+              bytes: new TextEncoder().encode('omega\n'),
+            },
+          ]
+        : []),
+    ],
+  });
+  const previousFetch = deps.fetch;
+  let mints = 0;
+  deps = {
+    ...deps,
+    fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith('/mint')) {
+        mints++;
+        if (mints > 1)
+          return Response.json(
+            { error: 'download cap exhausted' },
+            { status: 410 }
+          );
+        const body = JSON.parse(String(init?.body)) as { version?: number };
+        expect(body.version).toBe(1);
+        return Response.json({
+          url: `${SERVICE}/historical-folder-v1`,
+          object_length: container.length,
+          version: 1,
+          current_version: 2,
+        });
+      }
+      if (url.pathname === '/historical-folder-v1')
+        return new Response(new Blob([container as BlobPart]));
+      return previousFetch(input, init);
+    }) as typeof fetch,
+  };
+  return { folder, first, second, mintCount: () => mints };
 }
 
 async function deferredCueFixture() {
@@ -538,11 +639,18 @@ describe('relic_apply_suggestions', () => {
       content: new TextEncoder().encode(original),
     });
     const previousFetch = deps.fetch;
+    let mints = 0;
     deps = {
       ...deps,
       fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = new URL(String(input));
         if (url.pathname.endsWith('/mint')) {
+          mints++;
+          if (mints > 1)
+            return Response.json(
+              { error: 'download cap exhausted' },
+              { status: 410 }
+            );
           const body = JSON.parse(String(init?.body)) as { version?: number };
           expect(body.version).toBe(1);
           return Response.json({
@@ -559,6 +667,10 @@ describe('relic_apply_suggestions', () => {
     };
     await addSuggestion('new-text', 'omega', 'OTHER', { version: 2 });
     const args = { path: target, accept: ['old-cue'] };
+    const preview = await call(args);
+    expect(preview.isError).toBe(false);
+    expect(preview.structuredContent['source_identity']).toBe('match');
+    expect(await readFile(target, 'utf8')).toBe(original);
     for (const write of [false, true]) {
       const mixed = await call({
         path: target,
@@ -571,10 +683,6 @@ describe('relic_apply_suggestions', () => {
       );
       expect(await readFile(target, 'utf8')).toBe(original);
     }
-    const preview = await call(args);
-    expect(preview.isError).toBe(false);
-    expect(preview.structuredContent['source_identity']).toBe('match');
-    expect(await readFile(target, 'utf8')).toBe(original);
     const written = await call({ ...args, write: true });
     expect(written.isError).toBe(false);
     expect(written.structuredContent['before_sha256']).toBe(
@@ -583,8 +691,45 @@ describe('relic_apply_suggestions', () => {
     expect(written.structuredContent['after_sha256']).toBe(
       preview.structuredContent['after_sha256']
     );
+    expect(mints).toBe(1);
     expect(await readFile(target, 'utf8')).toBe(
       original.replace('alpha', 'BETA')
+    );
+  });
+
+  test('validates the current CSV even when the selected edit was made on text', async () => {
+    const target = join(scratch, 'data.csv');
+    const original = 'name,value\nalpha,1\nomega,2\n';
+    await writeFile(target, original);
+    const state = await loadPublishState(relicId);
+    if (!state) throw new Error('missing fixture publish state');
+    await savePublishState(relicId, {
+      ...state,
+      version: 2,
+      filename: 'data.csv',
+      source: await resolveSourceIdentity(target),
+      version_formats: {
+        '1': { shape: 'file', extension: 'txt' },
+        '2': { shape: 'file', extension: 'csv' },
+      },
+    });
+    await addSuggestion('damage', 'alpha', 'alpha,extra');
+    await addSuggestion('safe', 'omega', 'OMEGA');
+    for (const write of [false, true]) {
+      const refused = await call({ path: target, accept: ['damage'], write });
+      expect(refused.structuredContent).toMatchObject({
+        code: 'suggestion_breaks_structure',
+        check: 'table_fields',
+      });
+      expect(await readFile(target, 'utf8')).toBe(original);
+    }
+    expect((await call({ path: target, accept: ['safe'] })).isError).toBe(
+      false
+    );
+    const written = await call({ path: target, accept: ['safe'], write: true });
+    expect(written.isError).toBe(false);
+    expect(await readFile(target, 'utf8')).toBe(
+      original.replace('omega', 'OMEGA')
     );
   });
 
@@ -620,6 +765,44 @@ describe('relic_apply_suggestions', () => {
         expect(await readFile(target, 'utf8')).toBe(original);
       }
     }
+  });
+
+  test('refuses a preview when recovered format metadata cannot be persisted', async () => {
+    const { target, original, keyBytes } = await deferredCueFixture();
+    const container = await encryptRelic({
+      key: keyBytes,
+      filename: 'captions.srt',
+      mimetype: 'application/x-subrip',
+      content: new TextEncoder().encode(original),
+    });
+    const previousFetch = deps.fetch;
+    const cacheDirectory = dirname(cachedVersionFormatPath(relicId, 1));
+    let mints = 0;
+    deps = {
+      ...deps,
+      fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input));
+        if (url.pathname.endsWith('/mint')) {
+          mints++;
+          await writeFile(cacheDirectory, 'blocks cache creation');
+          return Response.json({
+            url: `${SERVICE}/unwritable-cache-v1`,
+            object_length: container.length,
+            version: 1,
+            current_version: 2,
+          });
+        }
+        if (url.pathname === '/unwritable-cache-v1')
+          return new Response(new Blob([container as BlobPart]));
+        return previousFetch(input, init);
+      }) as typeof fetch,
+    };
+    const refused = await call({ path: target, accept: ['old-cue'] });
+    expect(refused.structuredContent['code']).toBe(
+      'suggestion_source_format_unavailable'
+    );
+    expect(mints).toBe(1);
+    expect(await readFile(target, 'utf8')).toBe(original);
   });
 
   test('does not guess a missing current revision filename from the local path', async () => {
@@ -1667,6 +1850,7 @@ describe('relic_apply_suggestions', () => {
     const originalJson = '{"message":"omega"}\n';
     await writeFile(csv, originalCsv);
     await writeFile(json, originalJson);
+    await recordFixtureFolder(folder, ['good.csv', 'bad.json']);
     await addRow('safe', {
       body: 'safe',
       display_name: null,
@@ -1694,6 +1878,107 @@ describe('relic_apply_suggestions', () => {
     });
     expect(await readFile(csv, 'utf8')).toBe(originalCsv);
     expect(await readFile(json, 'utf8')).toBe(originalJson);
+  });
+
+  test('shares one historical folder mint across two entries, preview and write', async () => {
+    const { folder, first, second, mintCount } =
+      await historicalFolderFixture(true);
+    const args = { path: folder, accept: ['first', 'second'] };
+    const preview = await call(args);
+    expect(preview.isError).toBe(false);
+    expect(await readFile(first, 'utf8')).toBe('alpha\n');
+    expect(await readFile(second, 'utf8')).toBe('omega\n');
+    const written = await call({ ...args, write: true });
+    expect(written.isError).toBe(false);
+    expect(mintCount()).toBe(1);
+    expect(await readFile(first, 'utf8')).toBe('ALPHA\n');
+    expect(await readFile(second, 'utf8')).toBe('OMEGA\n');
+  });
+
+  test('refuses a forged historical folder entry before writing either file', async () => {
+    const { folder, first, second, mintCount } =
+      await historicalFolderFixture(false);
+    const result = await call({
+      path: folder,
+      accept: ['first', 'second'],
+      write: true,
+    });
+    expect(result.structuredContent).toMatchObject({
+      code: 'suggestion_source_format_unavailable',
+      reason: 'file_not_in_version',
+    });
+    expect(mintCount()).toBe(1);
+    expect(await readFile(first, 'utf8')).toBe('alpha\n');
+    expect(await readFile(second, 'utf8')).toBe('omega\n');
+  });
+
+  test('refuses a recorded file revision for a folder without minting', async () => {
+    const { folder, first, second, mintCount } =
+      await historicalFolderFixture(true);
+    const state = await loadPublishState(relicId);
+    if (!state) throw new Error('missing fixture state');
+    await savePublishState(relicId, {
+      ...state,
+      version_formats: {
+        ...state.version_formats,
+        '1': { shape: 'file', extension: 'md' },
+      },
+    });
+    const result = await call({
+      path: folder,
+      accept: ['first', 'second'],
+      write: true,
+    });
+    expect(result.structuredContent).toMatchObject({
+      code: 'suggestion_source_format_unavailable',
+      reason: 'version_is_file',
+    });
+    expect(mintCount()).toBe(0);
+    expect(await readFile(first, 'utf8')).toBe('alpha\n');
+    expect(await readFile(second, 'utf8')).toBe('omega\n');
+  });
+
+  test('rechecks every planned folder source before changing any file', async () => {
+    const folder = join(scratch, 'raced-folder');
+    await mkdir(folder);
+    const first = join(folder, 'a.md');
+    const second = join(folder, 'b.md');
+    await writeFile(first, 'alpha\n');
+    await writeFile(second, 'omega\n');
+    await recordFixtureFolder(folder, ['a.md', 'b.md']);
+    for (const [id, entry, exact, replacement] of [
+      ['first', 'a.md', 'alpha', 'ALPHA'],
+      ['second', 'b.md', 'omega', 'OMEGA'],
+    ] as const)
+      await addRow(id, {
+        body: 'folder suggestion',
+        display_name: null,
+        entry,
+        anchor: { kind: 'source', exact },
+        suggestion: { v: 1, mode: 'replace', replacement },
+      });
+    let firstReads = 0;
+    deps = {
+      ...deps,
+      files: {
+        ...nodeFiles,
+        async read(file) {
+          if (file === first && ++firstReads === 2)
+            await writeFile(second, 'changed by another writer\n');
+          return nodeFiles.read(file);
+        },
+      },
+    };
+    const result = await call({
+      path: folder,
+      accept: ['first', 'second'],
+      write: true,
+    });
+    expect(result.structuredContent['code']).toBe(
+      'source_changed_during_apply'
+    );
+    expect(await readFile(first, 'utf8')).toBe('alpha\n');
+    expect(await readFile(second, 'utf8')).toBe('changed by another writer\n');
   });
 
   test('requires a valid source for touched notebook cells without rejecting untouched ones', async () => {
@@ -1954,6 +2239,7 @@ describe('relic_apply_suggestions', () => {
       service_origin: SERVICE,
       publish_token: 'private-token',
       version: 2,
+      filename: 'report.md',
       version_keys: { '1': encodeKey(version1), '2': encodeKey(version2) },
       owner_identity_id: 'owner',
       device_id: 'device',

@@ -37,6 +37,7 @@ import { renderMarkdown } from '../../relic-viewer/src/markdown.ts';
 import { TABLE_SUGGEST_PATH_CRLF } from '../../relic-viewer/test/table-suggest-fixture.ts';
 import { type CdpConnection, connectPipe } from '../src/cover/cdp.ts';
 import { chromeArgs, discoverChrome } from '../src/cover/chrome.ts';
+import { cachedVersionFormatPath } from '../src/suggestion-format.ts';
 import {
   attestBrowserHeadless,
   cleanupOwnedBrowserStartup,
@@ -49,9 +50,11 @@ const bundle = join(root, 'packages/relic-mcp/dist/relic-mcp.js');
 const legacyDist = process.env['RELIC_SUGGEST_MAIN_DIST'];
 const scratch = await mkdtemp(join(tmpdir(), 'relic-suggested-edits-path-'));
 const statePath = join(scratch, 'state.json');
+process.env['RELIC_PUBLISH_STATE'] = statePath;
 const store = new MemoryStore();
 const writes: Array<{ method: string; path: string; status: number }> = [];
 const commentAttempts: Array<{ method: string; path: string }> = [];
+const mintAttempts = new Map<string, number>();
 let unavailableHistoryFor: string | undefined;
 let handler: ((request: Request) => Promise<Response>) | undefined;
 let heldComment:
@@ -84,6 +87,11 @@ function appFor(dist: string) {
 let app = appFor(viewerDist);
 handler = async (request) => {
   const url = new URL(request.url);
+  if (request.method === 'POST') {
+    const mint = /^\/api\/relics\/([^/]+)\/mint$/.exec(url.pathname);
+    if (mint?.[1])
+      mintAttempts.set(mint[1], (mintAttempts.get(mint[1]) ?? 0) + 1);
+  }
   if (
     /\/comments(?:\/[^/]+)?$/.test(url.pathname) &&
     ['POST', 'PATCH', 'DELETE'].includes(request.method)
@@ -687,10 +695,15 @@ interface PublishedFixture {
 }
 async function publish(
   path: string,
-  source: string
+  source: string,
+  filename?: string
 ): Promise<PublishedFixture> {
   await writeFile(path, source);
-  const result = await mcp('relic_publish', { path, cover: false });
+  const result = await mcp('relic_publish', {
+    path,
+    cover: false,
+    ...(filename === undefined ? {} : { filename }),
+  });
   assert.equal(typeof result['url'], 'string');
   assert.equal(typeof result['relic_id'], 'string');
   const url = new URL(result['url'] as string);
@@ -1357,7 +1370,8 @@ try {
     const cuePath = join(scratch, 'caption-apply.srt');
     const source =
       '\uFEFF1\r\n00:00:01,000 --> 00:00:02,000\r\nChange this line\r\n\r\n' +
-      '2\r\n00:00:03,000 --> 00:00:04,000\r\nLeave this line\r\n';
+      '2\r\n00:00:03,000 --> 00:00:04,000\r\nLeave this line\r\n\r\n' +
+      '3\r\n00:00:05,000 --> 00:00:06,000\r\nFirst cue line\r\nLast cue line\r\n';
     const fixture = await publish(cuePath, source);
     const page = await browserInstance.open(fixture.url, tokenA);
     const cueSelector = '.cue[data-cue-index="1"] .cue-content';
@@ -1379,6 +1393,24 @@ try {
       false,
       'whole-cue deletion opened a draft'
     );
+    for (const text of ['First cue line', 'Last cue line']) {
+      await page.evaluate(
+        "window.__cueProofRefusal = document.querySelector('.sg-refusal-code')"
+      );
+      await select(page, '.cue[data-cue-index="3"] .cue-content', text);
+      await key(page, 'Backspace', 'Backspace', 8);
+      await page.wait(
+        "document.querySelector('.sg-refusal-code') !== window.__cueProofRefusal && document.querySelector('.sg-refusal-code')?.textContent.includes('ends-cue')",
+        `boundary cue deletion refusal for ${text}`
+      );
+      assert.equal(
+        await page.evaluate<boolean>(
+          "!!document.querySelector('ins[data-sg-draft], del.is-draft')"
+        ),
+        false,
+        `boundary deletion opened a draft for ${text}`
+      );
+    }
     await leave(page);
     await Bun.sleep(150);
     assert.equal(
@@ -1517,6 +1549,34 @@ try {
       'display-only cue rename did not republish'
     );
     assert.deepEqual(await readFile(cuePath), originalBytes);
+    const beforeRecorded = mintAttempts.get(fixture.id) ?? 0;
+    unavailableHistoryFor = fixture.id;
+    try {
+      const recordedPreview = await mcp('relic_apply_suggestions', {
+        relic_id: fixture.id,
+        path: cuePath,
+        accept: [saved.row.id],
+      });
+      assert.equal(recordedPreview['written'], false);
+      assert.deepEqual(await readFile(cuePath), originalBytes);
+    } finally {
+      unavailableHistoryFor = undefined;
+    }
+    assert.equal(
+      mintAttempts.get(fixture.id) ?? 0,
+      beforeRecorded,
+      'recorded source format minted'
+    );
+
+    // The proof owns this scratch state. Remove the new record to exercise a legacy client.
+    const scratchState = JSON.parse(await readFile(statePath, 'utf8')) as {
+      relics: Record<string, Record<string, unknown>>;
+    };
+    const scratchRelic = scratchState.relics[fixture.id];
+    assert.ok(scratchRelic, 'published scratch state missing');
+    delete scratchRelic['version_formats'];
+    await writeFile(statePath, `${JSON.stringify(scratchState, null, 2)}\n`);
+    await rm(cachedVersionFormatPath(fixture.id, 1), { force: true });
     unavailableHistoryFor = fixture.id;
     try {
       for (const write of [false, true]) {
@@ -1539,6 +1599,7 @@ try {
     } finally {
       unavailableHistoryFor = undefined;
     }
+    const beforeRecovery = mintAttempts.get(fixture.id) ?? 0;
     const renamedPreview = await mcp('relic_apply_suggestions', {
       relic_id: fixture.id,
       path: cuePath,
@@ -1553,12 +1614,28 @@ try {
       originalBytes,
       'renamed cue preview changed bytes'
     );
-    const written = await mcp('relic_apply_suggestions', {
-      relic_id: fixture.id,
-      path: cuePath,
-      accept: [saved.row.id],
-      write: true,
-    });
+    assert.equal(
+      mintAttempts.get(fixture.id),
+      beforeRecovery + 1,
+      'legacy preview did not use exactly one mint'
+    );
+    unavailableHistoryFor = fixture.id;
+    let written: Record<string, unknown>;
+    try {
+      written = await mcp('relic_apply_suggestions', {
+        relic_id: fixture.id,
+        path: cuePath,
+        accept: [saved.row.id],
+        write: true,
+      });
+    } finally {
+      unavailableHistoryFor = undefined;
+    }
+    assert.equal(
+      mintAttempts.get(fixture.id),
+      beforeRecovery + 1,
+      'cached write attempted another mint'
+    );
     assert.equal(written['written'], true);
     assert.equal(written['source_identity'], 'match');
     assert.equal(written['before_sha256'], preview['before_sha256']);
@@ -1569,7 +1646,7 @@ try {
       'applied cue bytes differ, including the BOM'
     );
     console.log(
-      'C4_CUE_APPLY_PATH_OK viewer=posted mcp=preview-write deferred_rename=applied deletion=refused controls=2'
+      'C4_CUE_APPLY_PATH_OK viewer=posted mcp=preview-write deferred_rename=applied recorded_mints=0 historical_mints=1 deletion=refused controls=2'
     );
     return 'viewer SRT suggestion applied after a display-only rename with exact bytes; cue deletion and structural controls refused';
   });
@@ -2234,6 +2311,12 @@ try {
       'Ada,"repeat tail"',
       'cross-cell control'
     );
+    const leftId = await postStructuralControl(
+      fixture,
+      tokenA,
+      'Ada',
+      'Alicia'
+    );
     const conflictPage = await browserInstance.open(fixture.url, tokenA);
     const cellMark = `.structured-table [data-r="2"][data-c="1"] [data-comment-id="${saved.row.id}"]`;
     await conflictPage.wait(
@@ -2244,9 +2327,99 @@ try {
       `(() => (document.querySelector('.structured-table [data-r="2"][data-c="1"] .dt-suggestion-indicator')?.dataset.clusterMembers ?? '').split(/\\s+/))()`
     );
     assert.ok(
-      cluster.includes(saved.row.id) && cluster.includes(crossId),
+      cluster.includes(saved.row.id) &&
+        cluster.includes(crossId) &&
+        cluster.includes(leftId),
       'CSV conflict thread lost a member'
     );
+    const leftIndicator =
+      '.structured-table [data-r="2"][data-c="0"] .dt-suggestion-indicator';
+    const rightIndicator =
+      '.structured-table [data-r="2"][data-c="1"] .dt-suggestion-indicator';
+    await conflictPage.wait(
+      `document.querySelector(${JSON.stringify(leftIndicator)}) && document.querySelector(${JSON.stringify(rightIndicator)})`,
+      'two indicators for the cross-cell conflict'
+    );
+    await click(conflictPage, rightIndicator);
+    for (const id of [crossId, leftId, saved.row.id])
+      await conflictPage.wait(
+        `document.querySelector(${JSON.stringify(`.popover-member[data-member-id="${id}"]`)})`,
+        'cross-cell conflict member'
+      );
+    await click(
+      conflictPage,
+      `.popover-member[data-member-id="${saved.row.id}"]`
+    );
+    const chosenCard = `.popover-card[data-comment-id="${saved.row.id}"]`;
+    await conflictPage.wait(
+      `document.querySelector(${JSON.stringify(chosenCard)})`,
+      'cross-cell member card'
+    );
+    const assertRightAnchor = async (): Promise<void> => {
+      const geometry = await conflictPage.evaluate<{
+        right: number;
+        left: number;
+        visible: boolean;
+      }>(`(() => {
+        const card = document.querySelector(${JSON.stringify(chosenCard)});
+        const a = document.querySelector(${JSON.stringify(leftIndicator)});
+        const b = document.querySelector(${JSON.stringify(rightIndicator)});
+        if (!card || !a || !b) return {right: Infinity, left: 0, visible: false};
+        const c = card.getBoundingClientRect(), ar = a.getBoundingClientRect(), br = b.getBoundingClientRect();
+        const center = (c.left + c.right) / 2;
+        return {
+          right: Math.abs(center - (br.left + br.right) / 2),
+          left: Math.abs(center - (ar.left + ar.right) / 2),
+          visible: !card.hasAttribute('data-concealed') && !card.inert && c.width > 0 && c.height > 0,
+        };
+      })()`);
+      assert.equal(
+        geometry.visible,
+        true,
+        'clicked cross-cell card was not visible'
+      );
+      assert.ok(
+        geometry.right < geometry.left,
+        `card followed the other cell: ${JSON.stringify(geometry)}`
+      );
+    };
+    await assertRightAnchor();
+    await conflictPage.evaluate(
+      `window.__crossCellCard = document.querySelector(${JSON.stringify(chosenCard)})`
+    );
+    const crossGridPoint = await conflictPage.evaluate<{
+      x: number;
+      y: number;
+    }>(`(() => {
+      const rect = document.querySelector('.dt-grid').getBoundingClientRect();
+      return { x: rect.right - 10, y: rect.top + rect.height / 2 };
+    })()`);
+    await conflictPage.send('Input.dispatchMouseEvent', {
+      type: 'mouseWheel',
+      ...crossGridPoint,
+      deltaX: 0,
+      deltaY: 380,
+    });
+    await conflictPage.wait(
+      `!document.querySelector(${JSON.stringify(rightIndicator)})`,
+      'clicked cross-cell indicator virtualized'
+    );
+    await conflictPage.wait(
+      `document.querySelector(${JSON.stringify(chosenCard)})?.getAttribute('data-concealed') === 'offscreen' && document.querySelector(${JSON.stringify(chosenCard)})?.inert`,
+      'cross-cell card concealed while its own indicator is absent'
+    );
+    await conflictPage.send('Input.dispatchMouseEvent', {
+      type: 'mouseWheel',
+      ...crossGridPoint,
+      deltaX: 0,
+      deltaY: -380,
+    });
+    await conflictPage.wait(
+      `document.querySelector(${JSON.stringify(rightIndicator)}) && document.querySelector(${JSON.stringify(chosenCard)}) === window.__crossCellCard && !document.querySelector(${JSON.stringify(chosenCard)}).hasAttribute('data-concealed')`,
+      'cross-cell card restored at its original indicator'
+    );
+    await assertRightAnchor();
+    await click(conflictPage, '.popover-card .popover-dismiss');
     await clickTableCell(
       conflictPage,
       '.structured-table [data-r="2"][data-c="1"]'
@@ -2591,6 +2764,94 @@ try {
     );
     return 'viewer source and empty-cell suggestions applied byte-for-byte; competing fills and output edits were refused';
   });
+
+  await step(17, async () => {
+    const target = join(scratch, 'renamed-table.csv');
+    const original = 'name,value\nalpha,1\nomega,2\n';
+    const fixture = await publish(target, original, 'notes.txt');
+    const page = await browserInstance.open(fixture.url, tokenA);
+    await writeSuggestion(
+      page,
+      fixture.id,
+      'pre.code-body',
+      'alpha',
+      'alpha,extra'
+    );
+    await writeSuggestion(page, fixture.id, 'pre.code-body', 'omega', 'OMEGA');
+    const rows = await plaintextRows(fixture.id, fixture.key);
+    const damage = rows.find(
+      (row) => row.plain.suggestion?.replacement === 'alpha,extra'
+    );
+    const safe = rows.find(
+      (row) => row.plain.suggestion?.replacement === 'OMEGA'
+    );
+    assert.ok(damage && safe, 'viewer did not save both text suggestions');
+    const renamed = await mcp('relic_republish', {
+      relic_id: fixture.id,
+      path: target,
+      filename: 'table.csv',
+      cover: false,
+      notify: false,
+      addresses: [
+        {
+          comment_id: damage.row.id,
+          outcome: 'deferred',
+          note: 'Review later.',
+        },
+        { comment_id: safe.row.id, outcome: 'deferred', note: 'Review later.' },
+      ],
+    });
+    assert.equal(renamed['version'], 2);
+    const beforeMints = mintAttempts.get(fixture.id) ?? 0;
+    unavailableHistoryFor = fixture.id;
+    try {
+      for (const write of [false, true]) {
+        const refused = await mcp(
+          'relic_apply_suggestions',
+          {
+            relic_id: fixture.id,
+            path: target,
+            accept: [damage.row.id],
+            write,
+          },
+          'suggestion_breaks_structure'
+        );
+        assert.equal(refused['check'], 'table_fields');
+        assert.deepEqual(await readFile(target), Buffer.from(original));
+      }
+      const preview = await mcp('relic_apply_suggestions', {
+        relic_id: fixture.id,
+        path: target,
+        accept: [safe.row.id],
+      });
+      assert.equal(preview['written'], false);
+      assert.deepEqual(await readFile(target), Buffer.from(original));
+      const applied = await mcp('relic_apply_suggestions', {
+        relic_id: fixture.id,
+        path: target,
+        accept: [safe.row.id],
+        write: true,
+      });
+      assert.equal(applied['written'], true);
+      assert.equal(applied['before_sha256'], preview['before_sha256']);
+      assert.equal(applied['after_sha256'], preview['after_sha256']);
+      assert.deepEqual(
+        await readFile(target),
+        Buffer.from(original.replace('omega', 'OMEGA'))
+      );
+    } finally {
+      unavailableHistoryFor = undefined;
+    }
+    assert.equal(
+      mintAttempts.get(fixture.id) ?? 0,
+      beforeMints,
+      'recorded rename minted'
+    );
+    console.log(
+      'C4_CURRENT_TABLE_FORMAT_OK viewer=posted rename=validated damage=refused safe=applied mints=0'
+    );
+    return 'deferred text edits were checked against the current CSV; the split-column edit was refused and the safe edit applied';
+  });
 } finally {
   await ownedBrowser?.close();
   await service.stop(true);
@@ -2601,12 +2862,12 @@ if (failures.size > 0) {
     `Suggestion path failed steps ${[...failures.keys()].sort((a, b) => a - b).join(', ')}`
   );
 }
-for (const required of [13, 14, 15, 16]) {
+for (const required of [13, 14, 15, 16, 17]) {
   if (!results.has(required))
     throw new Error(`Suggestion path is missing required step ${required}`);
 }
 console.log(
-  `SUGGESTED_EDITS_PATH_OK classes=2 negative=${negative} cue=applied csv=applied notebook=applied`
+  `SUGGESTED_EDITS_PATH_OK classes=2 negative=${negative} cue=applied csv=applied notebook=applied target=validated`
 );
 console.log(
   'HEADLESS_LIMITS OS IME, real clipboard and drag and drop were not exercised'

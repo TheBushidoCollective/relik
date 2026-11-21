@@ -51,6 +51,18 @@ test('cue text encoding rejects structural changes and escapes VTT text', () => 
   expect(encodeCueText('vtt', '')).toMatchObject({ code: 'ends-cue' });
   expect(encodeCueText('srt', '', 'keep ', '')).toBe('');
   expect(encodeCueText('srt', ' ')).toBe(' ');
+  for (const [format, before, after] of [
+    ['srt', 'first\n', ''],
+    ['srt', 'first\r\n', ''],
+    ['srt', '', '\nsecond'],
+    ['vtt', '', '\r\nsecond'],
+    ['vtt', 'first\n  ', ''],
+  ] as const) {
+    expect(encodeCueText(format, '', before, after)).toMatchObject({
+      code: 'ends-cue',
+    });
+  }
+  expect(encodeCueText('srt', 'x', 'first\n', '')).toBe('x');
   expect(decodeCueText('vtt', '&amp;lt;&gt;')).toBe('&lt;>');
 });
 

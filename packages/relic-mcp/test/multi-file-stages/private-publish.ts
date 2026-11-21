@@ -19,6 +19,10 @@ import {
 import { handleMessage } from '../../src/server.ts';
 import { loadPrivatePublishState } from '../../src/state.ts';
 import {
+  cachedEntryFormat,
+  loadCachedVersionFormat,
+} from '../../src/suggestion-format.ts';
+import {
   DAY_MS,
   makeCert,
   makeDevice,
@@ -151,6 +155,34 @@ try {
   assert.equal(state?.shape, 'folder');
   const ciphertext = await storage.read(first.relic_id);
   assert.ok(ciphertext && state);
+  assert.deepEqual(state.version_formats?.['1'], { shape: 'folder' });
+  const firstKey = decodeKey(state.version_keys['1']!);
+  const firstFormat = await loadCachedVersionFormat(
+    first.relic_id,
+    1,
+    firstKey
+  );
+  assert.ok(firstFormat);
+  assert.deepEqual(
+    cachedEntryFormat(
+      firstFormat,
+      'secret-name.md',
+      firstKey,
+      first.relic_id,
+      1
+    ),
+    {
+      found: true,
+      extension: 'md',
+    }
+  );
+  assert.deepEqual(
+    cachedEntryFormat(firstFormat, 'added.csv', firstKey, first.relic_id, 1),
+    {
+      found: false,
+      extension: null,
+    }
+  );
   const chunks: Uint8Array[] = [];
   const envelope = await streamAnyRelicContent(
     new Blob([ciphertext as BlobPart]).stream(),
@@ -175,6 +207,7 @@ try {
     'secondfirst'
   );
   await writeFile(join(root, 'secret-name.md'), 'updated');
+  await writeFile(join(root, 'added.csv'), 'third');
   const next = await republishPrivate(
     { relic_id: first.relic_id, path: root },
     deps
@@ -185,6 +218,27 @@ try {
   assert.notEqual(nextState?.version_keys['1'], nextState?.version_keys['2']);
   const nextCiphertext = await storage.read(lastObjectKey);
   assert.ok(nextCiphertext && nextState);
+  assert.deepEqual(nextState.version_formats, {
+    '1': { shape: 'folder' },
+    '2': { shape: 'folder' },
+  });
+  const nextKey = decodeKey(nextState.version_keys['2']!);
+  const nextFormat = await loadCachedVersionFormat(first.relic_id, 2, nextKey);
+  assert.ok(nextFormat);
+  assert.deepEqual(
+    cachedEntryFormat(nextFormat, 'added.csv', nextKey, first.relic_id, 2),
+    {
+      found: true,
+      extension: 'csv',
+    }
+  );
+  assert.deepEqual(
+    cachedEntryFormat(firstFormat, 'added.csv', firstKey, first.relic_id, 1),
+    {
+      found: false,
+      extension: null,
+    }
+  );
   const nextChunks: Uint8Array[] = [];
   const nextEnvelope = await streamAnyRelicContent(
     new Blob([nextCiphertext as BlobPart]).stream(),
@@ -200,7 +254,7 @@ try {
   if (!('manifestLength' in nextEnvelope)) throw new Error('expected folder');
   assert.equal(
     Buffer.concat(nextChunks).subarray(nextEnvelope.manifestLength).toString(),
-    'secondupdated'
+    'thirdsecondupdated'
   );
   await assert.rejects(
     streamAnyRelicContent(
@@ -213,6 +267,7 @@ try {
     assert.ok(!request.includes(root));
     assert.ok(!request.includes('secret-name.md'));
     assert.ok(!request.includes('other.txt'));
+    assert.ok(!request.includes('added.csv'));
   }
   console.log('MULTI_FILE_STAGE private-publish OK');
 } finally {

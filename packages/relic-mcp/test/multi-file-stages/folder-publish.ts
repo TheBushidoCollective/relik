@@ -30,7 +30,11 @@ import { nodeFiles } from '../../src/files.ts';
 import { publish, PublishError, type PublishDeps } from '../../src/publish.ts';
 import { republish } from '../../src/republish.ts';
 import { publishPrivate, republishPrivate } from '../../src/private.ts';
-import { savePrivatePublishState } from '../../src/state.ts';
+import { loadPublishState, savePrivatePublishState } from '../../src/state.ts';
+import {
+  cachedEntryFormat,
+  loadCachedVersionFormat,
+} from '../../src/suggestion-format.ts';
 import { walkFolder } from '../../src/folder-source.ts';
 
 const tmp = await mkdtemp(join(tmpdir(), 'relic-folder-path-'));
@@ -188,6 +192,38 @@ try {
   assert.match(await card.text(), /A folder of files\./);
   const fragment = parseFragment(new URL(result.url).hash);
   assert.ok(fragment);
+  const firstFormat = await loadCachedVersionFormat(
+    result.relic_id,
+    1,
+    fragment.key
+  );
+  assert.ok(firstFormat);
+  assert.deepEqual(
+    cachedEntryFormat(
+      firstFormat,
+      'data/a.json',
+      fragment.key,
+      result.relic_id,
+      1
+    ),
+    {
+      found: true,
+      extension: 'json',
+    }
+  );
+  assert.deepEqual(
+    cachedEntryFormat(
+      firstFormat,
+      'data/b.csv',
+      fragment.key,
+      result.relic_id,
+      1
+    ),
+    {
+      found: false,
+      extension: null,
+    }
+  );
   const mintResponse = await deps.fetch(
     `${origin}/api/relics/${result.relic_id}/mint`,
     { method: 'POST' }
@@ -266,12 +302,64 @@ try {
   );
   assert.equal(calls.length, 0);
   await writeFile(join(root, 'README.md'), 'updated');
+  await rm(join(root, 'data', 'a.json'));
+  await writeFile(join(root, 'data', 'b.csv'), 'a,b\n');
   const next = await republish(
     { relic_id: result.relic_id, path: root, cover: false, notify: false },
     deps
   );
   assert.equal(next.shape, 'folder');
   assert.equal(next.version, 2);
+  const formats = (await loadPublishState(result.relic_id))?.version_formats;
+  assert.deepEqual(formats, {
+    '1': { shape: 'folder' },
+    '2': { shape: 'folder' },
+  });
+  const nextFormat = await loadCachedVersionFormat(
+    result.relic_id,
+    2,
+    fragment.key
+  );
+  assert.ok(nextFormat);
+  assert.deepEqual(
+    cachedEntryFormat(
+      nextFormat,
+      'data/a.json',
+      fragment.key,
+      result.relic_id,
+      2
+    ),
+    {
+      found: false,
+      extension: null,
+    }
+  );
+  assert.deepEqual(
+    cachedEntryFormat(
+      nextFormat,
+      'data/b.csv',
+      fragment.key,
+      result.relic_id,
+      2
+    ),
+    {
+      found: true,
+      extension: 'csv',
+    }
+  );
+  assert.deepEqual(
+    cachedEntryFormat(
+      firstFormat,
+      'data/a.json',
+      fragment.key,
+      result.relic_id,
+      1
+    ),
+    {
+      found: true,
+      extension: 'json',
+    }
+  );
   assert.ok(uploaded);
   const reopened = await openAnyRelic(uploaded, fragment.key, {
     admitted: [1, 2],

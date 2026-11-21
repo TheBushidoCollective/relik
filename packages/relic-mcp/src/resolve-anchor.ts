@@ -937,21 +937,32 @@ async function fetchAndDecryptRelic(
   }
 }
 
-/** Read the filename sealed in the exact revision that received a suggestion. */
-export async function fetchRevisionFilename(
+/** Read a revision's sealed filename or complete folder manifest once. */
+export async function fetchRevisionNames(
   relicId: string,
   deps: PublishDeps,
-  version: number,
-  entry?: string
-): Promise<{ ok: true; filename: string } | { ok: false; error: string }> {
+  version: number
+): Promise<
+  | { ok: true; shape: 'file'; filename: string }
+  | { ok: true; shape: 'folder'; paths: readonly string[] }
+  | { ok: false; error: string }
+> {
   try {
     const fetched = await fetchAndDecryptRelic(relicId, deps, version, true);
-    const selected = selectEntry(fetched, entry);
-    if (!selected.ok) return selected;
-    const filename = selected.opened.envelope.entries[0]?.filename;
+    if (!fetched.ok) return fetched;
+    if (fetched.opened.envelope.version === 2) {
+      const folder = openFolder(fetched.opened);
+      return {
+        ok: true,
+        shape: 'folder',
+        paths: folder.manifest.entries.map((entry) => entry.path),
+      };
+    }
+    const filename = (fetched.opened as OpenedRelic).envelope.entries[0]
+      ?.filename;
     if (!filename)
       return { ok: false, error: 'The revision has no source filename.' };
-    return { ok: true, filename };
+    return { ok: true, shape: 'file', filename };
   } catch (error) {
     return {
       ok: false,

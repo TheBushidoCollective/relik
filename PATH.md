@@ -172,21 +172,25 @@ RELIC_CHROME_PATH=<isolated-headless-shell> mise exec -- bun packages/relic-mcp/
 ```
 
 The expected markers are `SUGGESTIONS_MCP_PATH_OK legacy=ran` and
-`SUGGESTED_EDITS_PATH_OK classes=2 negative=ran cue=applied csv=applied notebook=applied`.
+`SUGGESTED_EDITS_PATH_OK classes=2 negative=ran cue=applied csv=applied notebook=applied target=validated`.
 CI omits the old bundles and may report `legacy=skipped` and `negative=skipped`
 instead. The browser path requires the SRT, CSV and notebook application stages.
 It previews and applies viewer-posted suggestions with the built MCP and checks
 whole-file bytes. The cue stage also applies a deferred edit after a display-only
-rename. The CSV stage checks a placeable conflict member, refuses multiline
-cell deletion and rejects a same-basename wrong path. The notebook stage rejects
+rename, and the CSV stage checks a deferred text edit against a newer CSV format.
+It checks cross-cell conflict placement, refuses multiline cell deletion and
+rejects a same-basename wrong path. The notebook stage rejects
 competing empty-cell fills and attempts to edit outputs. Cue and output refusal
 checks count attempted POSTs, including rejected requests. Source identity
 identifies the path, not the version; matching preview and write hashes are
-checked for these fixtures. An older selected suggestion, or a missing recorded
-filename for a single-file relic, requires the exact encrypted revision to be
-minted and opened. Each lookup consumes a normal download mint. Unavailable or
-unconfirmed revisions and incompatible selected formats are refused. The browser
-path does not establish operating-system IME, real clipboard or drag-and-drop behavior.
+checked for these fixtures. Newly published versions record their formats
+locally without a mint. A legacy version whose format is unknown requires one
+mint to read its encrypted revision; the recovered format and keyed folder-entry
+digests are stored in an encrypted local cache before preview succeeds. Separate
+MCP processes can each mint the same uncached version concurrently, because the
+recovery lock is process-local. Unavailable metadata, failed cache writes and
+incompatible selected formats are refused. The browser path does not establish
+operating-system IME, real clipboard or drag-and-drop behavior.
 
 # Comments on images inside HTML
 

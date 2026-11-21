@@ -59,6 +59,12 @@ import {
   type PublishState,
   savePublishState,
 } from './state.ts';
+import {
+  buildCachedFormat,
+  saveCachedVersionFormat,
+  versionFormatFor,
+  withVersionFormat,
+} from './suggestion-format.ts';
 
 export interface RepublishAddressEntry {
   readonly comment_id: string;
@@ -649,6 +655,11 @@ export async function republish(
       ...state,
       version,
       shape: folderSource ? 'folder' : 'file',
+      version_formats: withVersionFormat(
+        state,
+        version,
+        versionFormatFor(folderSource ? 'folder' : 'file', filename)
+      ),
       filename,
       content_sha256: digest,
       updated_at: new Date().toISOString(),
@@ -662,6 +673,31 @@ export async function republish(
         `report a stale version number: ${(error as Error).message}`,
       { relic_id: input.relic_id, version }
     );
+  }
+
+  if (folderSource) {
+    try {
+      const key = decodeKey(state.key);
+      await saveCachedVersionFormat(
+        input.relic_id,
+        version,
+        key,
+        buildCachedFormat(
+          { shape: 'folder' },
+          folderSource.folder.entries.map((entry) => entry.path),
+          key,
+          input.relic_id,
+          version
+        )
+      );
+    } catch (error) {
+      throw new PublishError(
+        'local_state_write_failed',
+        'the new version is live, but its encrypted folder format cache could not be recorded: ' +
+          (error as Error).message,
+        { relic_id: input.relic_id, version }
+      );
+    }
   }
 
   let coverReport: CoverReport;
@@ -688,6 +724,11 @@ export async function republish(
           ...state,
           version,
           shape: folderSource ? 'folder' : 'file',
+          version_formats: withVersionFormat(
+            state,
+            version,
+            versionFormatFor(folderSource ? 'folder' : 'file', filename)
+          ),
           filename,
           content_sha256: digest,
           updated_at: new Date().toISOString(),
