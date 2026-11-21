@@ -205,6 +205,17 @@ focus, and active/resolved state updates. `RELIC_IMAGE_SHOTS_DIR` retains the
 `markers-<width>-<scenario>.png` screenshots and `rectangles.json` measurements
 alongside the existing light/dark receipts.
 
+# Comments on images inside DOCX
+
+Build the viewer and run the loopback reader proof with an isolated headless shell:
+
+```sh
+mise exec -- bun run --cwd packages/relic-viewer build
+RELIC_CHROME_PATH=/absolute/path/to/chrome-headless-shell mise exec -- bun packages/relic-mcp/test/docx-frame-path.mjs
+```
+
+Success requires `DOCX_IMAGE_REOPEN_OK`, `DOCX_READER_PATH_OK` and `DOCX_FRAME_PATH_OK`. The image-comment stage posts encrypted comments on two image parts and a repeated image, then reopens the same version and checks their badges against the original images. It uses an in-memory loopback service.
+
 # Large relic upload and preview
 
 Build the viewer and MCP bundle, then run the loopback proof from the repository root:

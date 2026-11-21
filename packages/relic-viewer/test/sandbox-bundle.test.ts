@@ -57,18 +57,37 @@ describe('the built sandbox.html', () => {
     expect(html).toContain('relic:annotate');
     expect(html).toContain('relic:tree');
   });
-  test('disabled renderer modules stay outside the sandbox and shell', async () => {
+  test('document renderers stay outside the sandbox and shell', async () => {
     const html = await Bun.file(`${pkgDir}dist/sandbox.html`).text();
     const shell = await Bun.file(`${pkgDir}dist/viewer.js`).text();
+    const reachable = new Set<string>();
+    const pending = [shell];
+    while (pending.length > 0) {
+      const code = pending.pop()!;
+      for (const match of code.matchAll(
+        /(?:from|import\()\s*["']\.\/(chunk-[a-z0-9]+\.js)/g
+      )) {
+        const name = match[1]!;
+        if (reachable.has(name)) continue;
+        reachable.add(name);
+        pending.push(await Bun.file(`${pkgDir}dist/${name}`).text());
+      }
+    }
     for (const [name, marker] of [
-      ['frame-docx', 'Word document renderer is not available yet.'],
-      ['frame-epub', 'EPUB document renderer is not available yet.'],
+      ['frame-docx', 'Unsupported EMF or WMF image'],
+      ['frame-epub', 'EPUB element limit exceeded'],
     ] as const) {
       expect(
         await Bun.file(`${pkgDir}dist-frame/${name}.frame.js`).text()
       ).toContain(marker);
       expect(html).not.toContain(marker);
       expect(shell).not.toContain(marker);
+      const carriers: string[] = [];
+      for (const chunk of reachable) {
+        if ((await Bun.file(`${pkgDir}dist/${chunk}`).text()).includes(marker))
+          carriers.push(chunk);
+      }
+      expect(carriers).toHaveLength(1);
     }
   });
 });

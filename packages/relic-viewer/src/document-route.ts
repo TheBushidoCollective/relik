@@ -35,7 +35,10 @@ export interface DocumentParts {
 }
 
 // Selectors must scan package metadata before parsing it.
-export type SelectDocumentParts = (index: ZipIndex) => Promise<
+export type SelectDocumentParts = (
+  index: ZipIndex,
+  signal?: AbortSignal
+) => Promise<
   | DocumentParts
   | {
       readonly ok: false;
@@ -83,6 +86,7 @@ export async function mountDocumentRoute(
   download: () => void
 ): Promise<void> {
   let disposed = false;
+  const controller = new AbortController();
   let handle: DocumentFrame | undefined;
   let finish: DocumentWatchdog | undefined;
   const observer =
@@ -95,17 +99,27 @@ export async function mountDocumentRoute(
   function dispose(): void {
     if (disposed) return;
     disposed = true;
+    controller.abort();
     observer?.disconnect();
     finish?.cancel();
     handle?.dispose();
     handle = undefined;
   }
-  const fail = () => {
+  const fail = (
+    reason?:
+      | Extract<DocumentStateMessage, { state: 'failed' }>['reason']
+      | 'protected'
+  ) => {
     const card = document.createElement('div');
     card.className = 'card';
     const title = document.createElement('div');
     title.className = 'card-title';
-    title.textContent = 'This document could not be shown.';
+    title.textContent =
+      reason === 'protected'
+        ? 'This ebook is protected by DRM and cannot be shown.'
+        : reason === 'image-dimensions-unknown'
+          ? 'This document contains an image whose dimensions could not be checked. Download it to view it.'
+          : 'This document could not be shown.';
     const button = document.createElement('button');
     button.className = 'primary';
     button.type = 'button';
@@ -122,17 +136,26 @@ export async function mountDocumentRoute(
       dispose();
       return;
     }
-    const result = await indexZip(content, LIMITS);
+    const result = await indexZip(
+      content,
+      LIMITS,
+      undefined,
+      controller.signal
+    );
     if (disposed || !root.isConnected) {
       dispose();
       return;
     }
     if (!result.ok) throw new Error(result.reason);
     const index = result.index;
-    const selection = await selectParts(index);
-    if (selection.ok === false) throw new Error(selection.reason);
+    const selection = await selectParts(index, controller.signal);
     if (disposed || !root.isConnected) {
       dispose();
+      return;
+    }
+    if (selection.ok === false) {
+      dispose();
+      fail(selection.reason);
       return;
     }
     const selected = new Set(selection.parts);
@@ -173,23 +196,40 @@ export async function mountDocumentRoute(
       ...(selection.book === undefined ? {} : { book: selection.book }),
     };
     finish = documentWatchdog((state) => {
+      if (disposed || !root.isConnected) {
+        dispose();
+        return;
+      }
       if (state.state === 'failed') {
         const frame = handle?.frame;
         dispose();
         frame?.remove();
-        fail();
+        fail(state.reason);
       } else {
         root.dispatchEvent(new CustomEvent('relic-repaint', { bubbles: true }));
       }
     });
-    handle = createFrame(payload, buffers, finish);
+    const created = createFrame(payload, buffers, finish);
+    if (disposed) {
+      created.dispose();
+      return;
+    }
+    handle = created;
+    if (!root.isConnected) {
+      dispose();
+      return;
+    }
     root.replaceChildren(
       handle.linkRemembered,
       handle.linkConfirm,
       handle.frame
     );
   } catch {
+    if (disposed || !root.isConnected) {
+      dispose();
+      return;
+    }
     dispose();
-    if (root.isConnected) fail();
+    fail();
   }
 }

@@ -265,6 +265,280 @@ async function browserCases(
     passed.push(name);
   };
 
+  const waitForFindCount = (
+    root: HTMLElement,
+    expected: string
+  ): Promise<void> => {
+    const count = root.querySelector('.dt-find-count');
+    if (!count) throw new Error('find count is missing');
+    if (count.textContent === expected) return Promise.resolve();
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    const observer = new MutationObserver(() => {
+      if (count.textContent !== expected) return;
+      observer.disconnect();
+      window.clearTimeout(timeout);
+      resolve();
+    });
+    observer.observe(count, {
+      childList: true,
+      characterData: true,
+      subtree: true,
+    });
+    const timeout = window.setTimeout(() => {
+      observer.disconnect();
+      reject(new Error(`Find count did not reach ${expected}`));
+    }, 5000);
+    return promise;
+  };
+
+  await check(
+    'large range copy shows a refusal instead of allocating it',
+    () => {
+      const root = document.createElement('section');
+      document.body.append(root);
+      const part = api.mountDataTable(
+        root,
+        {
+          records: 100001,
+          columns: 1,
+          summary: 'Spreadsheet',
+          sheet: 'Sheet',
+          text: () => '',
+          numeric: () => undefined,
+        },
+        { filename: 'book.xlsx' }
+      );
+      try {
+        part.reveal({
+          kind: 'cell',
+          row: 1,
+          col: 1,
+          row_end: 100001,
+          col_end: 1,
+          sheet: 'Sheet',
+        });
+        const copy = root.querySelector<HTMLButtonElement>('.dt-copy');
+        truth(copy, 'copy control');
+        copy?.click();
+        truth(
+          copy?.textContent?.includes('too large to copy'),
+          'copy refusal is visible'
+        );
+      } finally {
+        part.dispose();
+        root.remove();
+      }
+    }
+  );
+
+  await check('wide spreadsheet points to download rather than source', () => {
+    const root = document.createElement('section');
+    document.body.append(root);
+    const part = api.mountDataTable(
+      root,
+      {
+        records: 1,
+        columns: 257,
+        summary: 'Spreadsheet',
+        sheet: 'Sheet',
+        text: () => '',
+        numeric: () => undefined,
+      },
+      { filename: 'book.xlsx' }
+    );
+    try {
+      truth(
+        root
+          .querySelector('.dt-notice')
+          ?.textContent?.includes('Download the spreadsheet'),
+        'download notice'
+      );
+      truth(
+        !root.querySelector('.dt-notice')?.textContent?.includes('source view'),
+        'no source claim'
+      );
+    } finally {
+      part.dispose();
+      root.remove();
+    }
+  });
+
+  // This exercises cancellation between real browser event-loop batches.
+  await check('spreadsheet find cancels an older batched query', async () => {
+    const root = document.createElement('section');
+    document.body.append(root);
+    let oldCalls = 0;
+    let nextCalls = 0;
+    let find: HTMLInputElement;
+    const part = api.mountDataTable(
+      root,
+      {
+        records: 1000,
+        columns: 1,
+        sheet: 'Sheet',
+        summary: 'Spreadsheet',
+        text: (row: number) => (row === 0 ? 'target' : ''),
+        numeric: () => undefined,
+        numericColumn: () => false,
+        matchingColumns: (row: number, needle: string) => {
+          if (needle === 'old') {
+            oldCalls++;
+            if (oldCalls === 1)
+              window.setTimeout(() => {
+                find.value = 'target';
+                find.dispatchEvent(new Event('input', { bubbles: true }));
+              }, 0);
+            return [];
+          }
+          nextCalls++;
+          return row === 0 ? [0] : [];
+        },
+      },
+      { filename: 'book.xlsx' }
+    );
+    try {
+      find = root.querySelector<HTMLInputElement>('.dt-find')!;
+      find.value = 'old';
+      find.dispatchEvent(new Event('input', { bubbles: true }));
+      await waitForFindCount(root, '1 of 1');
+      truth(
+        oldCalls > 0 && oldCalls < 1000,
+        'old query stopped before scanning all rows'
+      );
+      eq(nextCalls, 1000, 'new query scanned all rows');
+      eq(
+        root.querySelector('.dt-find-count')?.textContent,
+        '1 of 1',
+        'new query completed'
+      );
+    } finally {
+      part.dispose();
+      root.remove();
+    }
+  });
+
+  await check(
+    'a comment reveal keeps its position when an older find finishes',
+    async () => {
+      const root = document.createElement('section');
+      document.body.append(root);
+      let calls = 0;
+      let part: { reveal(anchor: unknown): void; dispose(): void };
+      part = api.mountDataTable(
+        root,
+        {
+          records: 1000,
+          columns: 1,
+          sheet: 'Sheet',
+          summary: 'Spreadsheet',
+          text: (row: number) => (row === 0 ? 'target' : `row ${row + 1}`),
+          numeric: () => undefined,
+          numericColumn: () => false,
+          matchingColumns: (row: number) => {
+            calls++;
+            if (calls === 1)
+              window.setTimeout(
+                () =>
+                  part.reveal({
+                    kind: 'cell',
+                    sheet: 'Sheet',
+                    row: 10,
+                    col: 1,
+                  }),
+                0
+              );
+            return row === 0 ? [0] : [];
+          },
+        },
+        { filename: 'book.xlsx' }
+      );
+      try {
+        const find = root.querySelector<HTMLInputElement>('.dt-find')!;
+        find.value = 'target';
+        find.dispatchEvent(new Event('input', { bubbles: true }));
+        await waitForFindCount(root, '1 match');
+        eq(
+          root.querySelector('.dt-find-count')?.textContent,
+          '1 match',
+          'search results retained'
+        );
+        eq(
+          root.querySelector('.dt-addr')?.textContent,
+          'A10',
+          'comment remains selected'
+        );
+        find.value = 'next';
+        find.dispatchEvent(new Event('input', { bubbles: true }));
+        part.reveal({ kind: 'cell', sheet: 'Sheet', row: 20, col: 1 });
+        await waitForFindCount(root, '1 match');
+        eq(
+          root.querySelector('.dt-find-count')?.textContent,
+          '1 match',
+          'debounced search results retained'
+        );
+        eq(
+          root.querySelector('.dt-addr')?.textContent,
+          'A20',
+          'reveal during debounce remains selected'
+        );
+      } finally {
+        part.dispose();
+        root.remove();
+      }
+    }
+  );
+
+  await check(
+    'inspector shows spreadsheet cell type and formula without HTML',
+    () => {
+      const root = document.createElement('section');
+      document.body.append(root);
+      const result = api.parseTable('header\n42');
+      const formula = '<img src=x onerror=evil()>';
+      if (!result.ok || result.table === undefined)
+        throw new Error('fixture refused');
+      const part = api.mountDataTable(
+        root,
+        {
+          ...api.csvTableSource(result.table),
+          sheet: 'Sheet 2',
+          detail: () => ({
+            type: 'number',
+            formula,
+            sharedFrom: 'A1',
+          }),
+        },
+        { filename: 'book.xlsx' }
+      );
+      try {
+        part.reveal({ kind: 'cell', row: 2, col: 1, sheet: 'Sheet 2' });
+        truth(
+          root.querySelector('.dt-sub')?.textContent?.includes('number'),
+          'cell type'
+        );
+        truth(
+          root
+            .querySelector('.dt-value')
+            ?.textContent?.includes(`Shared master formula: ${formula}`),
+          'formula text'
+        );
+        truth(
+          root
+            .querySelector('.dt-value')
+            ?.textContent?.includes('Shared from: A1'),
+          'shared formula master'
+        );
+        truth(
+          !root.querySelector('.dt-cellbar img'),
+          'formula rendered as text'
+        );
+      } finally {
+        part.dispose();
+        root.remove();
+      }
+    }
+  );
+
   await check('C14 is drawn on its cell and the mark is outlined', () => {
     const f = mount(source);
     try {
@@ -612,7 +886,7 @@ describe('table view in the browser', () => {
           clearTimeout(timer);
         }
         if (result.error) throw new Error(result.error);
-        expect(result.passed).toHaveLength(10);
+        expect(result.passed).toHaveLength(15);
       } finally {
         browser.kill('SIGKILL');
         if (browser.exitCode === null && browser.signalCode === null) {

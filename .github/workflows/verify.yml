@@ -112,6 +112,14 @@ jobs:
         run: env -u RELIC_SUGGEST_MAIN_DIST -u DISPLAY -u WAYLAND_DISPLAY RELIC_CHROME_PATH="$(command -v google-chrome)" bun packages/relic-mcp/test/suggested-edits-path.ts
       - name: Structured formats path
         run: env -u DISPLAY -u WAYLAND_DISPLAY RELIC_CHROME_PATH="$(command -v google-chrome)" bun packages/relic-mcp/test/structured-formats-path.ts
+      - name: Spreadsheet path
+        run: env -u DISPLAY -u WAYLAND_DISPLAY RELIC_CHROME_PATH="$(command -v google-chrome)" bun packages/relic-mcp/test/spreadsheet-path.ts
+      - name: EPUB viewer desktop and mobile path
+        run: env -u DISPLAY -u WAYLAND_DISPLAY RELIC_CHROME_PATH="$(command -v google-chrome)" bun packages/relic-mcp/test/epub-viewer-path.ts
+      - name: EPUB sanitizer browser regressions
+        run: |
+          test -x "$(command -v google-chrome)"
+          env -u DISPLAY -u WAYLAND_DISPLAY RELIC_CHROME_PATH="$(command -v google-chrome)" bun test packages/relic-viewer/test/epub-sanitize.test.ts
       - name: Multi-file path
         run: env -u DISPLAY -u WAYLAND_DISPLAY RELIC_REQUIRE_CHROME=1 RELIC_CHROME_PATH="$(command -v google-chrome)" bun packages/relic-mcp/test/multi-file-path.ts
       - name: Browser publisher options path

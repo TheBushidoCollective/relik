@@ -682,6 +682,7 @@ describe('the shell', () => {
       assets: memoryAssets({
         'otio-audio-pcm-worker.js': 'self.onmessage = () => {}',
         'otio-transport-gate-worklet.js': 'registerProcessor("gate", class {})',
+        'spreadsheet-parse-worker.js': 'self.onmessage = () => {}',
         'viewer.js': 'console.log("viewer")',
       }),
     });
@@ -697,6 +698,13 @@ describe('the shell', () => {
     );
     expect(worklet.status).toBe(200);
     expect(worklet.headers.get('content-security-policy')).toBe(
+      worker.headers.get('content-security-policy')
+    );
+    const spreadsheet = await customApp.fetch(
+      req('/assets/spreadsheet-parse-worker.js')
+    );
+    expect(spreadsheet.status).toBe(200);
+    expect(spreadsheet.headers.get('content-security-policy')).toBe(
       worker.headers.get('content-security-policy')
     );
     const viewer = await customApp.fetch(req('/assets/viewer.js'));

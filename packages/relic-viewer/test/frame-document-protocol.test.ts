@@ -47,6 +47,48 @@ describe('document frame protocol', () => {
     ).toBe(true);
     expect(isRenderDocumentMessage({ ...doc, entries })).toBe(false);
   });
+  test('requires bounded manifest media metadata for EPUB books', () => {
+    const book = {
+      title: 'Book',
+      progression: 'default',
+      layout: 'reflowable',
+      resources: [{ path: 'chapter', mediaType: 'application/xhtml+xml' }],
+      spine: [{ path: 'chapter', linear: true }],
+      toc: [],
+      pageList: [],
+    };
+    expect(isRenderDocumentMessage({ ...doc, format: 'epub', book })).toBe(
+      true
+    );
+    expect(
+      isRenderDocumentMessage({
+        ...doc,
+        format: 'epub',
+        book: { ...book, resources: undefined },
+      })
+    ).toBe(false);
+    expect(
+      isRenderDocumentMessage({
+        ...doc,
+        format: 'epub',
+        book: { ...book, resources: [{ path: 'chapter' }] },
+      })
+    ).toBe(false);
+    expect(
+      isRenderDocumentMessage({
+        ...doc,
+        format: 'epub',
+        book: {
+          ...book,
+          toc: Array.from({ length: 5001 }, () => ({
+            label: 'x',
+            path: 'chapter',
+            depth: 0,
+          })),
+        },
+      })
+    ).toBe(false);
+  });
   test('accepts only exact ready and failed responses', () => {
     expect(
       isDocumentStateMessage({ type: 'relic:document-state', state: 'ready' })
@@ -56,6 +98,13 @@ describe('document frame protocol', () => {
         type: 'relic:document-state',
         state: 'failed',
         reason: 'corrupt',
+      })
+    ).toBe(true);
+    expect(
+      isDocumentStateMessage({
+        type: 'relic:document-state',
+        state: 'failed',
+        reason: 'image-dimensions-unknown',
       })
     ).toBe(true);
     for (const bad of [

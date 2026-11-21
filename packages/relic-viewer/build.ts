@@ -207,6 +207,16 @@ export async function buildViewer(options?: {
     format: 'esm',
     minify: true,
     splitting: false,
+    plugins: [
+      {
+        name: 'docx-entry-archive',
+        setup(build) {
+          build.onResolve({ filter: /^jszip$/ }, () => ({
+            path: `${pkgDir}src/frame-zip-entries.ts`,
+          }));
+        },
+      },
+    ],
   });
   if (!frameModules.success) {
     for (const log of frameModules.logs) console.error(log);
@@ -304,8 +314,12 @@ export async function buildViewer(options?: {
     for (const log of builtTransportGate.logs) console.error(log);
     process.exit(1);
   }
-  // Model parsing and WebGL are loaded only when a 3D relic is opened.
-  for (const entry of ['model-view', 'model-parse-worker']) {
+  // Load model and spreadsheet workers only for their respective routes.
+  for (const entry of [
+    'model-view',
+    'model-parse-worker',
+    'spreadsheet-parse-worker',
+  ]) {
     const modelBuild = await Bun.build({
       entrypoints: [`${pkgDir}src/${entry}.ts`],
       outdir: out,
@@ -353,6 +367,14 @@ export async function buildViewer(options?: {
   await copyFile(
     `${pkgDir}node_modules/docx-preview/LICENSE`,
     `${out}docx-preview-license.txt`
+  );
+  await copyFile(
+    `${pkgDir}node_modules/image-size/LICENSE`,
+    `${out}image-size-license.txt`
+  );
+  await copyFile(
+    `${pkgDir}../relic-format/node_modules/entities/LICENSE`,
+    `${out}entities-license.txt`
   );
 
   /**

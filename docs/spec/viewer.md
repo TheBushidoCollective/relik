@@ -131,9 +131,9 @@ Redirects and rewrites performed by third parties, including link shorteners and
 
 `ipynb` is class `notebook`, at privilege tier 2, and it renders on the viewing origin. A notebook takes the `notebook` route only when its whole text parses as nbformat 4: an object whose `nbformat` is 4 and whose `cells` is an array. Any other `.ipynb` is text, and the disagreement rule in 1.3 shows it as text with a notice that says why. A notebook's whole text is read up to 50 MiB. Over that it is never read, and it is shown as text with the notice "This notebook is too large to show as a notebook, so its text is shown."
 
-DOCX and EPUB use the `document` class, and XLSX uses `spreadsheet`. Their container routes currently offer a download with a notice until their renderers land. A DOCX or EPUB above 64 MiB, or XLSX above 100 MiB, downloads rather than rendering.
+DOCX and EPUB use the `document` class and render in the document frame. XLSX uses `spreadsheet` and opens in the spreadsheet viewer. A DOCX or EPUB above 64 MiB, or XLSX above 100 MiB, downloads rather than rendering.
 
-The views mount into a root the route creates. The source view is drawn into that root first, so the file is never blank. It stays in place while the view loads, when the view cannot show the file, and when Suggesting switches the reader to Source. A view reports its marks and selections as the anchors in `spec/format.md` 3.13. A mark a view cannot place is reported as unplaceable on the thread, and is never painted on something else.
+The text-based structured views mount into a root the route creates. The source view is drawn into that root first, so the file is never blank. It stays in place while the view loads, when the view cannot show the file, and when Suggesting switches the reader to Source. A view reports its marks and selections as the anchors in `spec/format.md` 3.13. A mark a view cannot place is reported as unplaceable on the thread, and is never painted on something else.
 
 ## 2. The usercontent origin's shape
 
@@ -270,9 +270,50 @@ The interactive parser admits at most 16 MiB, 250,000 triangles, 500,000 source 
 
 ### 3.8 Document frame plumbing
 
-Word and EPUB files currently offer an immediate download. Their renderer modules are placeholders, and opening a document does not extract its entries or create a render frame.
+Word documents and EPUB files render in the document frame.
 
-The inactive document-frame plumbing accepts a format-specific selector that identifies the required parts and every XML part independently of file names. The selector must scan package metadata before parsing it. The route checks the ZIP and scans each selected XML part before transferring it, together with first-party renderer text, to the opaque frame. A failed render, timeout, or stage replacement disposes the frame and its pending payload. Enabling a renderer requires its real selector, renderer, and affected-path proof.
+The document route uses a format-specific selector to identify required parts and XML parts independently of file names. The selector scans package metadata before parsing; the route checks the ZIP and scans each selected XML part before transferring it and first-party renderer text to the opaque frame. A failed render, timeout, or stage replacement disposes the frame and its pending payload.
+
+The Word renderer uses the checked entries rather than decompressing the archive in the frame. Embedded objects, custom XML, binary parts and thumbnails are not sent. Word styles can restyle content and controls within the opaque frame, as with HTML relics, but cannot style the parent viewer.
+
+DOCX preparation accepts at most 4 MiB of package metadata, 50,000 metadata elements and 10,000 relationships. Before parsing, the frame checks each XML read, limiting each to 16 MiB, the total to 32 MiB and the combined structural units to 250,000. The frame admits at most 2,000 pages, 250,000 generated nodes, 40 million canvas pixels per image and 100 million pixels across distinct image parts. For GIF, APNG and animated WebP, each frame's full canvas counts once per cycle; playback may repeat. Other supported sequence formats are charged by a single canvas. Embedded fonts are limited to 128 references, 4 MiB per font and 16 MiB of encoded data across references. An over-limit document offers the original download. If an image's dimensions cannot be determined before decoding, the reader explains why and offers the original download.
+
+Generated stylesheet construction and inherited-style copies share a 32 Mi UTF-16 code-unit budget. SVG images must pass the XML screen; recognized nested images are charged, and an incomplete resource scan or unmeasurable nested image offers the original download. VML shape CSS resources remain outside the image-pixel budget. JPEG XL and HEIF sequences are charged by one canvas rather than by frame. Word numbering model expansion occurs before the generated node and stylesheet limits and has no separate expansion limit.
+
+The EPUB package reader rejects protected books before a frame is created. Rights and LCP metadata, or encrypted resources other than obfuscated fonts, produce a DRM-specific download card. Obfuscated fonts are omitted. The frame renders the linear spine followed by non-linear items, with contents navigation, chapter position and text-size controls. A page label is shown only when supplied by the book. Author markup is rebuilt from an allowlist and local CSS resources are rewritten inside the frame.
+
+EPUB package metadata is limited to 4 MiB and 20,000 XML elements per part, with at most 5,000 navigation and page-list entries combined. Eager chapter input is limited to 64 MiB in aggregate, including repeated spine references. The renderer caps retained CSS at 4 MiB, CSS rewrite work at 256 MiB, encoded resources and retained references separately at 64 MiB, and traversed nodes at 1,500,000. The manifest media type is carried with each resource and checked at its consuming sink. Unsupported spine media types produce a download fallback rather than a blank page.
+
+PNG, JPEG, GIF, and WebP images with recognizable signatures and dimensions are limited to 32 Mi pixels per image and 128 Mi pixels across distinct resources, regardless of their declared image type. The book remains open: oversized inline HTML and SVG images show an unavailable-image placeholder, and omitted stylesheet images are reported in a notice. Images whose dimensions cannot be read from these headers are left to the browser, so this limit does not bound their decoded memory or animation-frame memory.
+
+### 3.9 Spreadsheet inspection
+
+XLSX files are parsed in a same-origin worker without executing formulas or
+loading external relationships. The viewer shows worksheet cells as text in a
+table, with sheet tabs and a menu for hidden sheets. Charts and images are not
+shown. Cell comments carry the sheet name; sheets whose names cannot be written
+as anchors remain visible but cannot receive cell comments.
+
+Archives are limited to 100 MiB, 10,000 entries, 100 MiB per entry and 200 MiB
+expanded. A workbook is limited to 256 sheets, 5,000,000 cells and 2,000,000
+shared strings. A sheet exceeding 600,000 rows is refused individually.
+Invalid or oversized files can be downloaded.
+
+Rows are indexed sparsely. A formula is limited to 65,536 characters, and
+distinct formula detail is limited to 16 MiB per workbook. Shared-formula
+followers identify their master formula rather than presenting an inferred
+formula as the follower's own. Unsupported time-only and elapsed-time formats
+show their saved numbers instead of calendar dates.
+
+Style tables admit up to 65,536 cell styles and format strings up to 65,536
+characters. Find checks each distinct cell text once per query and scans the
+sheet in cancellable batches.
+
+Copying a range quotes fields with tabs, line breaks, or quotes and prefixes
+formula-like values. Range Copy refuses selections over 100,000 cells or
+8 Mi characters of clipboard output. Single-cell Copy deliberately remains raw
+and is not subject to those range limits. Pasting that text into another
+spreadsheet can cause the receiving application to interpret it as a formula.
 
 ## 4. The sandbox boundary
 
@@ -677,9 +718,9 @@ Card reconciliation also refreshes Edit and Resolve from the same entry shown
 in the updated rows. An already open reply or edit field keeps its draft.
 
 
-**Images inside HTML have their own attached comments.** Each eligible image gets a shim-owned native **Comment on image** button usable by pointer, touch and keyboard. Ordinary image clicks, including linked-image navigation, keep their existing behavior. Activating the button opens the existing composer directly, reading **Commenting on an image.** An unverified reader follows sidebar verification with the target retained. New-comment controls and saved badges are separate; multiple comments remain individually reachable. Dismiss leaves the comment, badge and thread intact.
+**Images inside HTML and DOCX have their own attached comments.** Each eligible image gets a shim-owned native **Comment on image** button usable by pointer, touch and keyboard. Ordinary image clicks, including linked-image navigation, keep their existing behavior. Activating the button opens the existing composer directly, reading **Commenting on an image.** An unverified reader follows sidebar verification with the target retained. New-comment controls and saved badges are separate; multiple comments remain individually reachable. Dismiss leaves the comment, badge and thread intact.
 
-The sealed anchor is `{kind:'image', path:[{tag,index}], source_sha256}`. Its revision-local path starts at `document.body`, uses lowercase tags and same-tag sibling ordinals, and excludes controls by shim ownership. Resolution walks elements directly and requires the exact `IMG` and matching digest. The digest covers authored `src`, `srcset`, `sizes` and ordered immediate-picture source declarations, preserving absent versus empty attributes. It never contains image bytes or uses `currentSrc` or alt text as identity. There is no nearest-image, coordinate or source-search fallback.
+The sealed anchor is `{kind:'image', path:[{tag,index}], source_sha256}`. Its revision-local path starts at `document.body`, uses lowercase tags and same-tag sibling ordinals, and excludes controls by shim ownership. Resolution walks elements directly and requires the exact `IMG` and matching digest. For HTML the digest covers authored `src`, `srcset`, `sizes` and ordered immediate-picture source declarations, preserving absent versus empty attributes. For DOCX it covers the admitted package member name and its content digest, not the temporary Blob URL. Neither form stores image bytes or uses `currentSrc` or alt text as identity. There is no nearest-image, coordinate or source-search fallback.
 
 The frame receives locators and comment IDs, never bodies or keys. Placement acknowledgments must match the current frame, live comment and latest request ID. Unavailable placement removes stale geometry and marks the readable thread unplaceable. An unavailable pending target retains its draft but refuses image-targeted submission until re-aimed or cleared. Replies update geometry only and never reopen a dismissed card. Actual edge controls and badges supply attachment rectangles; full-image outlines do not intercept input. Load, resize, nested scrolling and author reflow refresh geometry. Thread activation reveals the image and obtains fresh placement before opening.
 

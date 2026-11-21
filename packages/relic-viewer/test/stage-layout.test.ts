@@ -19,26 +19,44 @@ import { describe, expect, test } from 'bun:test';
  * So this file checks the whole chain, element by element, rather than any one
  * declaration in it.
  */
-function fillChainFaults(source: string): readonly string[] {
-  // Comments first, or the checker reads prose: the stylesheet's own
-  // explanation quotes the `calc()` it replaced.
+function fillChainFaults(
+  source: string,
+  route: 'html' | 'jsx' | 'document' = 'html'
+): readonly string[] {
+  // Comments first, or the checker reads prose instead of a declaration.
   const css = source.replace(/\/\*[\s\S]*?\*\//g, '');
   const faults: string[] = [];
   const rule = (selector: string): string => {
     const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    return (
-      new RegExp(`${escaped}\\s*(,[^{]*)?\\{([^}]*)\\}`).exec(css)?.[2] ?? ''
+    const rules = css.matchAll(
+      new RegExp(`${escaped}\\s*(?:,[^{]*)?\\{([^}]*)\\}`, 'g')
     );
+    return Array.from(rules, (match) => match[1]).join('\n');
   };
 
-  const stage = rule('.stage-sandboxed-html');
-  const doc = rule('.stage-sandboxed-html .doc');
-  const frame = rule('.stage-sandboxed-html .usercontent-frame');
+  const scope = `.stage-sandboxed-${route}`;
+  const documentRoute = route === 'document';
+  const stage = rule(
+    documentRoute ? `${scope}:has(> .doc > .usercontent-frame)` : scope
+  );
+  const doc = rule(
+    documentRoute
+      ? `${scope} > .doc:has(> .usercontent-frame)`
+      : `${scope} .doc`
+  );
+  const frame = rule(
+    documentRoute
+      ? `${scope} > .doc > .usercontent-frame`
+      : `${scope} .usercontent-frame`
+  );
 
   if (!/height:\s*100%/.test(stage)) {
     faults.push('the stage does not take the height of the row');
   }
-  if (!/display:\s*flex/.test(stage)) {
+  if (
+    !/display:\s*flex/.test(stage) ||
+    !/flex-direction:\s*column/.test(stage)
+  ) {
     faults.push('the stage cannot hand height to its children');
   }
   if (!/flex:\s*1/.test(doc)) {
@@ -50,7 +68,23 @@ function fillChainFaults(source: string): readonly string[] {
   if (/calc\(\s*100[vd]h/.test(frame)) {
     faults.push('the frame guesses the chrome height with a viewport reserve');
   }
-  if (!/height:\s*100%/.test(frame)) {
+  if (documentRoute) {
+    if (
+      !/display:\s*flex/.test(doc) ||
+      !/flex-direction:\s*column/.test(doc) ||
+      !/flex:\s*1 1 0\s*;/.test(frame) ||
+      !/min-height:\s*0/.test(frame)
+    ) {
+      faults.push(
+        'the document frame cannot fill the space below its link strip'
+      );
+    }
+    if (!/position:\s*relative/.test(doc)) {
+      faults.push(
+        'the document wrapper does not anchor the confirmation overlay'
+      );
+    }
+  } else if (!/height:\s*100%/.test(frame)) {
     faults.push('the frame has no height, so it falls back to 300x150');
   }
   return faults;
@@ -62,6 +96,8 @@ describe('the sandboxed fill chain', () => {
       new URL('../src/styles.css', import.meta.url)
     ).text();
     expect(fillChainFaults(css)).toEqual([]);
+    expect(fillChainFaults(css, 'jsx')).toEqual([]);
+    expect(fillChainFaults(css, 'document')).toEqual([]);
   });
 
   test('it names the reserve that grew a second scrollbar', () => {

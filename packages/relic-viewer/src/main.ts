@@ -370,7 +370,15 @@ const MARKER_LABELS: Record<RenderRoute, string> = {
   download: 'Downloads to your device, no author code',
 };
 
-export function markerLabelFor(route: RenderRoute): string {
+export function markerLabelFor(
+  route: RenderRoute,
+  documentKind?: 'docx' | 'epub'
+): string {
+  if (
+    route === 'sandboxed-document' &&
+    (documentKind === 'docx' || documentKind === 'epub')
+  )
+    return 'Rendered as a document, no author code';
   return MARKER_LABELS[route];
 }
 
@@ -1015,7 +1023,7 @@ export function buildBar(
   // which is exactly the mismatch that breaks speech control.
   // Keyed on the route the viewer resolved, so the sentence describes what
   // this relic does rather than what the riskiest relic would.
-  const markerLabel = markerLabelFor(view.route);
+  const markerLabel = markerLabelFor(view.route, view.documentKind);
   marker.setAttribute('aria-label', markerLabel);
   marker.title = `${markerLabel}. What Relic knows.`;
   marker.appendChild(icon(ICONS.source));
@@ -1568,7 +1576,7 @@ export function sandboxFrame(
   view: ReadyView,
   usercontentOrigin: string,
   payload: RenderPayload,
-  onTree?: (tree: TreeNode) => void,
+  onTree?: (tree: TreeNode | null) => void,
   transfer: Transferable[] = [],
   onDocumentState?: (state: DocumentStateMessage) => void
 ): FrameHandle {
@@ -1664,11 +1672,10 @@ export function sandboxFrame(
       onDocumentState(event.data);
       return;
     }
-    // The captured tree is tag names, a fixed attribute allowlist, and text.
-    // No markup crosses back to this origin, so nothing here has to be
-    // sanitized before it is read: there is nothing to sanitize.
-    if (onTree !== undefined && isTreeMessage(event.data)) {
-      onTree(event.data.tree);
+    // Refuse an oversized or malformed snapshot without retaining it. The
+    // rendered panes remain available even when their comparison is not.
+    if (onTree !== undefined && type === 'relic:tree') {
+      onTree(isTreeMessage(event.data) ? event.data.tree : null);
       return;
     }
     if (isFrameSelectionMessage(event.data)) {
@@ -2061,6 +2068,36 @@ export function renderMediaView(view: ReadyView): HTMLElement {
   return wrapper;
 }
 
+/** Relay readiness only when the document watchdog accepts this state. */
+export function reportDocumentState(
+  root: HTMLElement,
+  onState: (state: DocumentStateMessage) => void,
+  state: DocumentStateMessage
+): void {
+  if (state.state !== 'ready') {
+    onState(state);
+    return;
+  }
+  let accepted = false;
+  const onRepaint = (event: Event): void => {
+    if (event.target === root) accepted = true;
+  };
+  root.addEventListener('relic-repaint', onRepaint);
+  try {
+    onState(state);
+  } finally {
+    root.removeEventListener('relic-repaint', onRepaint);
+  }
+  if (accepted) {
+    root.dispatchEvent(
+      new CustomEvent('relic:render-state', {
+        detail: 'ready',
+        bubbles: true,
+      })
+    );
+  }
+}
+
 export function buildCurrentStage(
   view: ReadyView,
   usercontentOrigin: string,
@@ -2197,15 +2234,121 @@ export function buildCurrentStage(
     case 'pdf':
       main.appendChild(renderPdfView(view));
       break;
-    case 'sandboxed-document':
-    case 'spreadsheet':
-      main.appendChild(
-        notice(
-          'The viewer cannot show this file yet. Download it to inspect it.'
-        )
-      );
-      main.appendChild(renderDownloadView(view));
+    case 'spreadsheet': {
+      const root = document.createElement('section');
+      root.textContent = 'Loading spreadsheet';
+      main.appendChild(root);
+      void import('./spreadsheet-view.ts')
+        .then(({ renderSpreadsheetRoute }) => {
+          if (root.isConnected)
+            renderSpreadsheetRoute(root, view, () => downloadContent(view));
+        })
+        .catch(() => {
+          if (!root.isConnected) return;
+          root.replaceChildren(
+            notice(
+              'This spreadsheet could not be shown. Download it to inspect it.'
+            ),
+            renderDownloadView(view)
+          );
+          root.dispatchEvent(
+            new CustomEvent('relic:render-state', {
+              bubbles: true,
+              detail: 'error',
+            })
+          );
+        });
       break;
+    }
+    case 'sandboxed-document': {
+      if (view.documentKind === 'docx') {
+        const root = document.createElement('div');
+        root.className = 'doc doc-document';
+        root.textContent = 'Loading document';
+        main.appendChild(root);
+        void Promise.all([
+          import('./document-route.ts'),
+          import('./document-payload-docx.ts'),
+        ])
+          .then(([{ mountDocumentRoute }, { selectDocxParts }]) =>
+            mountDocumentRoute(
+              root,
+              view.content,
+              'docx',
+              selectDocxParts,
+              (payload, transfer, onState) =>
+                sandboxFrame(
+                  view,
+                  usercontentOrigin,
+                  payload,
+                  undefined,
+                  transfer,
+                  (state) => reportDocumentState(root, onState, state)
+                ),
+              () => downloadContent(view)
+            )
+          )
+          .catch(() => {
+            if (!root.isConnected) return;
+            root.replaceChildren(
+              notice('This document could not be shown.'),
+              renderDownloadView(view)
+            );
+            root.dispatchEvent(
+              new CustomEvent('relic:render-state', {
+                detail: 'error',
+                bubbles: true,
+              })
+            );
+          });
+        break;
+      }
+      if (view.documentKind !== 'epub') {
+        main.appendChild(
+          notice(
+            'The viewer cannot show this file yet. Download it to inspect it.'
+          )
+        );
+        main.appendChild(renderDownloadView(view));
+        break;
+      }
+      const root = document.createElement('div');
+      root.className = 'doc doc-html';
+      main.appendChild(root);
+      void Promise.all([
+        import('./document-route.ts'),
+        import('@relic/format/epub-package'),
+      ])
+        .then(([route, epub]) =>
+          route.mountDocumentRoute(
+            root,
+            view.content,
+            'epub',
+            epub.readEpubPackage,
+            (payload, transfer, onState) =>
+              sandboxFrame(
+                view,
+                usercontentOrigin,
+                payload,
+                undefined,
+                transfer,
+                onState
+              ),
+            () => downloadContent(view)
+          )
+        )
+        .catch(() => {
+          if (!root.isConnected) return;
+          root.replaceChildren(renderDownloadView(view));
+          root.dispatchEvent(
+            new CustomEvent('relic:render-state', {
+              detail: 'error',
+              bubbles: true,
+            })
+          );
+        });
+      break;
+    }
     default:
       main.appendChild(renderDownloadView(view));
       break;
@@ -2516,8 +2659,8 @@ export function buildChangeNav(deps: {
 /** One side of a rendered comparison, and how to mark it once a diff exists. */
 interface ComparisonPane {
   readonly element: HTMLElement;
-  /** Resolves with the pane's captured tree, or never when it cannot render. */
-  readonly tree: Promise<TreeNode>;
+  /** Resolves with a complete snapshot, null when unavailable, or never. */
+  readonly tree: Promise<TreeNode | null>;
   annotate(marks: readonly Mark[], anchors: readonly Anchor[]): void;
   readonly setScroll?: (position: ScrollPosition) => void;
   /**
@@ -2678,12 +2821,10 @@ function framePane(view: ReadyView, usercontentOrigin: string): ComparisonPane {
     };
   }
 
-  let settle: ((tree: TreeNode) => void) | undefined;
-  const tree = new Promise<TreeNode>((resolve) => {
-    settle = resolve;
-  });
+  const { promise: tree, resolve: settle } =
+    Promise.withResolvers<TreeNode | null>();
   const handle = sandboxFrame(view, usercontentOrigin, payload, (reported) =>
-    settle?.(reported)
+    settle(reported)
   );
   const host = document.createElement('div');
   host.className = 'frame-pane-host';
@@ -2891,13 +3032,14 @@ export function renderRenderedComparison(
   void Promise.race([Promise.all([before.tree, after.tree]), timeout]).then(
     (trees) => {
       if (typeof document === 'undefined') return;
-      if (trees === undefined) {
+      const beforeTree = trees?.[0] ?? undefined;
+      const afterTree = trees?.[1] ?? undefined;
+      if (beforeTree === undefined || afterTree === undefined) {
         counts.textContent =
           'Both versions are shown. Relik could not read their rendered ' +
           'structure, so changes are not outlined.';
         return;
       }
-      const [beforeTree, afterTree] = trees;
       const diff: TreeDiff = diffTrees(beforeTree, afterTree);
       counts.textContent = diff.summary;
       before.annotate(diff.removedMarks, diff.beforeAnchors);
@@ -3698,7 +3840,7 @@ export function renderComparison(
   initialLeft?: number,
   initialRight?: number,
   afterRender?: (page: HTMLElement) => void
-): void {
+): () => void {
   const defaultPair = seedComparisonPair(
     current.version,
     current.currentVersion
@@ -3710,12 +3852,22 @@ export function renderComparison(
   const pinned = new Set<number>();
 
   let request = 0;
+  let entryPreparation: AbortController | undefined;
+  const cancelEntryPreparation = (): void => {
+    entryPreparation?.abort();
+    entryPreparation = undefined;
+  };
+
+  const disposeComparison = (): void => {
+    request += 1;
+    cancelEntryPreparation();
+    for (const version of pinned) store.unpin(version);
+    pinned.clear();
+  };
 
   /** Leaving the comparison invalidates any result still in flight. */
   const closeComparison = (): void => {
-    request += 1;
-    for (const version of pinned) store.unpin(version);
-    pinned.clear();
+    disposeComparison();
     onClose();
   };
 
@@ -3755,6 +3907,7 @@ export function renderComparison(
   };
 
   const updateSelected = async (): Promise<void> => {
+    cancelEntryPreparation();
     const thisRequest = ++request;
 
     // Refuse comparison if both sides are identical
@@ -3880,13 +4033,16 @@ export function renderComparison(
           button.addEventListener('click', () => {
             if (file.kind !== 'changed') return;
             const selected = ++selection;
+            cancelEntryPreparation();
+            const preparation = new AbortController();
+            entryPreparation = preparation;
             void Promise.all([
               file.beforeIndex === undefined
                 ? leftRes.view
-                : entryView(leftRes.view, file.beforeIndex),
+                : entryView(leftRes.view, file.beforeIndex, preparation.signal),
               file.afterIndex === undefined
                 ? rightRes.view
-                : entryView(rightRes.view, file.afterIndex),
+                : entryView(rightRes.view, file.afterIndex, preparation.signal),
             ])
               .then(([before, after]) => {
                 if (thisRequest !== request || selected !== selection) return;
@@ -3904,6 +4060,11 @@ export function renderComparison(
                   detail.replaceChildren(
                     notice('This file could not be compared.')
                   );
+              })
+              .finally(() => {
+                preparation.abort();
+                if (entryPreparation === preparation)
+                  entryPreparation = undefined;
               });
           });
           item.appendChild(button);
@@ -4021,6 +4182,7 @@ export function renderComparison(
   afterRender?.(document.body);
   scaffold.headline.focus();
   void updateSelected();
+  return disposeComparison;
 }
 
 /* ---------- the comment thread ---------- */
@@ -10699,6 +10861,8 @@ export function openSharePanel(
   };
 }
 
+let disposeReadyReader: (() => void) | undefined;
+
 export function renderReady(
   view: ReadyView,
   relicId: string,
@@ -10706,7 +10870,44 @@ export function renderReady(
   deps: ViewerDeps,
   afterRender?: (page: HTMLElement) => void
 ): void {
+  disposeReadyReader?.();
   const lifecycle = createLifecycle();
+  let entryPreparation: AbortController | undefined;
+  let disposeComparison: (() => void) | undefined;
+  let folderHistoryHandler: ((event: PopStateEvent) => void) | undefined;
+  let disposed = false;
+  const readerWindow = typeof window === 'undefined' ? undefined : window;
+  const advance = (): void => {
+    lifecycle.advance();
+    entryPreparation?.abort();
+    entryPreparation = undefined;
+  };
+  const dispose = (): void => {
+    if (disposed) return;
+    disposed = true;
+    advance();
+    disposeComparison?.();
+    disposeComparison = undefined;
+    if (
+      readerWindow &&
+      folderHistoryHandler !== undefined &&
+      readerWindow.onpopstate === folderHistoryHandler
+    ) {
+      readerWindow.onpopstate = null;
+    }
+    folderHistoryHandler = undefined;
+    readerWindow?.removeEventListener('unload', dispose);
+    if (disposeReadyReader === dispose) disposeReadyReader = undefined;
+  };
+  disposeReadyReader = dispose;
+  readerWindow?.addEventListener('unload', dispose, { once: true });
+  const prepareEntry = (base: ReadyView, index: number): Promise<ReadyView> => {
+    const controller = new AbortController();
+    entryPreparation = controller;
+    return entryView(base, index, controller.signal).finally(() => {
+      if (entryPreparation === controller) entryPreparation = undefined;
+    });
+  };
   /** The attached taskbar, so a count arriving can replace just that row. */
   let bar: HTMLElement | undefined;
   let commentCount: number | undefined;
@@ -10852,11 +11053,13 @@ export function renderReady(
   }
   let pinnedView: number | undefined;
   const showSingle = (viewToShow: ReadyView, alreadyPinned = false): void => {
-    lifecycle.advance();
+    advance();
     if (thread && !thread.dispose()) {
       if (alreadyPinned) versionStore.unpin(viewToShow.version);
       return;
     }
+    disposeComparison?.();
+    disposeComparison = undefined;
     decisionPanel?.close();
     if (viewToShow !== activeView || decisionTally === undefined) {
       refreshDecisionTally(viewToShow);
@@ -10904,9 +11107,9 @@ export function renderReady(
     let toolbar: HTMLElement | undefined;
     if (viewToShow.folder) {
       const openEntry = (index: number, fragment = ''): void => {
-        lifecycle.advance();
+        advance();
         const selection = lifecycle.token();
-        void entryView(viewToShow, index)
+        void prepareEntry(viewToShow, index)
           .then((next) => {
             if (!lifecycle.isCurrent(selection)) return;
             history.pushState(
@@ -10962,13 +11165,13 @@ export function renderReady(
     );
     thread?.attach(wrap);
     afterRender?.(document.body);
-    trackRenderState(stage, wrap, viewToShow.route);
+    trackRenderState(stage, wrap, viewToShow.route, viewToShow.documentKind);
   };
 
   const showVersion = async (v: number): Promise<void> => {
     // Every selection starts a new state. A result still in flight for an
     // earlier selection, or for a screen the reader has left, may not act.
-    lifecycle.advance();
+    advance();
     const selection = lifecycle.token();
     // A pill left by an earlier selection belongs to that selection. Removing
     // it here means this selection never writes into or removes another's.
@@ -11037,7 +11240,7 @@ export function renderReady(
         );
         if (index >= 0 && index !== next.folder.index) {
           try {
-            next = await entryView(next, index);
+            next = await prepareEntry(next, index);
           } catch {
             versionStore.unpin(v);
             if (lifecycle.isCurrent(selection))
@@ -11073,12 +11276,12 @@ export function renderReady(
   };
 
   const showComparison = (left?: number, right?: number): void => {
-    lifecycle.advance();
+    advance();
     if (thread && !thread.dispose()) return;
     decisionPanel?.close();
     if (pinnedView !== undefined) versionStore.unpin(pinnedView);
     pinnedView = undefined;
-    renderComparison(
+    disposeComparison = renderComparison(
       activeView,
       relicId,
       usercontentOrigin,
@@ -11101,7 +11304,8 @@ export function renderReady(
       },
       ''
     );
-    window.onpopstate = (event: PopStateEvent) => {
+    folderHistoryHandler = (event: PopStateEvent) => {
+      if (disposed) return;
       const folder = activeView.folder;
       if (
         !folder ||
@@ -11112,10 +11316,11 @@ export function renderReady(
       const index = folder.manifest.entries.findIndex(
         (entry) => entry.path === event.state.relicEntry
       );
-      if (index < 0 || index === folder.index) return;
-      lifecycle.advance();
+      if (index < 0) return;
+      advance();
+      if (index === folder.index) return;
       const selection = lifecycle.token();
-      void entryView(activeView, index)
+      void prepareEntry(activeView, index)
         .then((next) => {
           if (lifecycle.isCurrent(selection)) showSingle(next);
         })
@@ -11124,6 +11329,7 @@ export function renderReady(
             toast('This file could not be opened.');
         });
     };
+    window.onpopstate = folderHistoryHandler;
   }
   showSingle(activeView);
 }
@@ -11386,7 +11592,8 @@ export function adoptOrMountPlate(relicId: string): PlateHandles {
 export function trackRenderState(
   stage: HTMLElement,
   stageWrap: HTMLElement,
-  route: RenderRoute
+  route: RenderRoute,
+  documentKind?: ReadyView['documentKind']
 ): void {
   if (typeof document === 'undefined' || !document.querySelector) {
     return;
@@ -11482,8 +11689,21 @@ export function trackRenderState(
       }
       break;
     }
+    case 'spreadsheet':
     case 'notebook':
     case 'model': {
+      stage.addEventListener('relic:render-state', (event: Event) => {
+        const detail = (event as CustomEvent).detail;
+        if (detail === 'ready') setReady();
+        else if (detail === 'error') setError();
+      });
+      break;
+    }
+    case 'sandboxed-document': {
+      if (documentKind !== 'docx') {
+        setReady();
+        break;
+      }
       stage.addEventListener('relic:render-state', (event: Event) => {
         const detail = (event as CustomEvent).detail;
         if (detail === 'ready') setReady();
@@ -11582,6 +11802,7 @@ export function renderDead(
   onRetry?: () => void
 ): void {
   if (typeof document === 'undefined') return;
+  disposeReadyReader?.();
 
   let bar = document.querySelector
     ? (document.querySelector('header.bar') as HTMLElement | null)

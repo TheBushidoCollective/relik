@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { deflateRawSync, inflateRawSync } from 'node:zlib';
 import { crc32 } from '../src/otio-zip.ts';
 import { zipContainerKind, zipContainerKindSync } from '../src/containers.ts';
 import { indexZip, type ZipLimits } from '../src/zip-index.ts';
@@ -19,6 +20,7 @@ type File = {
   extra?: Uint8Array;
   comment?: string;
   descriptor?: boolean;
+  deflated?: boolean;
 };
 function zip(files: File[], archiveComment = ''): Uint8Array {
   const encoder = new TextEncoder();
@@ -30,31 +32,33 @@ function zip(files: File[], archiveComment = ''): Uint8Array {
       data = encoder.encode(file.data ?? ''),
       extra = file.extra ?? new Uint8Array(),
       comment = encoder.encode(file.comment ?? '');
+    const compressed = file.deflated ? deflateRawSync(data) : data;
     const checksum = crc32(data);
     const local = new Uint8Array(
         30 +
           name.length +
           extra.length +
-          data.length +
+          compressed.length +
           (file.descriptor ? 16 : 0)
       ),
       lv = new DataView(local.buffer);
     lv.setUint32(0, 0x04034b50, true);
     lv.setUint16(4, 20, true);
     lv.setUint16(6, (file.flags ?? 0) | (file.descriptor ? 8 : 0), true);
+    lv.setUint16(8, file.deflated ? 8 : 0, true);
     lv.setUint32(14, file.descriptor ? 0 : checksum, true);
-    lv.setUint32(18, file.descriptor ? 0 : data.length, true);
+    lv.setUint32(18, file.descriptor ? 0 : compressed.length, true);
     lv.setUint32(22, file.descriptor ? 0 : data.length, true);
     lv.setUint16(26, name.length, true);
     lv.setUint16(28, extra.length, true);
     local.set(name, 30);
     local.set(extra, 30 + name.length);
-    local.set(data, 30 + name.length + extra.length);
+    local.set(compressed, 30 + name.length + extra.length);
     if (file.descriptor) {
-      const start = 30 + name.length + extra.length + data.length;
+      const start = 30 + name.length + extra.length + compressed.length;
       lv.setUint32(start, 0x08074b50, true);
       lv.setUint32(start + 4, checksum, true);
-      lv.setUint32(start + 8, data.length, true);
+      lv.setUint32(start + 8, compressed.length, true);
       lv.setUint32(start + 12, data.length, true);
     }
     const cd = new Uint8Array(46 + name.length + extra.length + comment.length),
@@ -63,8 +67,9 @@ function zip(files: File[], archiveComment = ''): Uint8Array {
     cv.setUint16(4, file.madeBy ?? 20, true);
     cv.setUint16(6, 20, true);
     cv.setUint16(8, (file.flags ?? 0) | (file.descriptor ? 8 : 0), true);
+    cv.setUint16(10, file.deflated ? 8 : 0, true);
     cv.setUint32(16, checksum, true);
-    cv.setUint32(20, data.length, true);
+    cv.setUint32(20, compressed.length, true);
     cv.setUint32(24, data.length, true);
     cv.setUint16(28, name.length, true);
     cv.setUint16(30, extra.length, true);
@@ -201,6 +206,98 @@ describe('general ZIP index', () => {
       bytes: new TextEncoder().encode('hello'),
     });
   });
+  test('stops indexing after an aborted source read', async () => {
+    const bytes = zip([
+      { name: 'a.txt', data: 'hello' },
+      { name: 'b.txt', data: 'world' },
+    ]);
+    const active = new AbortController();
+    const complete = await indexZip(bytes, limits, undefined, active.signal);
+    expect(complete.ok).toBe(true);
+    if (complete.ok) {
+      expect(await complete.index.read('a.txt')).toEqual({
+        ok: true,
+        bytes: new TextEncoder().encode('hello'),
+      });
+    }
+    const aborted = new AbortController();
+    aborted.abort();
+    let reads = 0;
+    const source = {
+      size: bytes.length,
+      async read(start: number, end: number) {
+        reads++;
+        return bytes.subarray(start, end);
+      },
+    };
+    expect(await indexZip(source, limits, undefined, aborted.signal)).toEqual({
+      ok: false,
+      reason: 'corrupt',
+      message: 'ZIP operation aborted',
+    });
+    expect(reads).toBe(0);
+
+    for (const heldRead of [1, 2, 3, 4, 5, 6]) {
+      const controller = new AbortController();
+      const started = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<void>();
+      reads = 0;
+      const result = indexZip(
+        {
+          size: bytes.length,
+          async read(start, end) {
+            reads++;
+            if (reads === heldRead) {
+              started.resolve();
+              await release.promise;
+            }
+            return bytes.subarray(start, end);
+          },
+        },
+        limits,
+        undefined,
+        controller.signal
+      );
+      await started.promise;
+      controller.abort();
+      release.resolve();
+      expect(await result).toEqual({
+        ok: false,
+        reason: 'corrupt',
+        message: 'ZIP operation aborted',
+      });
+      expect(reads).toBe(heldRead);
+    }
+  });
+
+  test('stops a read aborted while its inflater is running', async () => {
+    const archive = zip([{ name: 'a.txt', data: 'hello', deflated: true }]);
+    const controller = new AbortController();
+    const started = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const indexed = await indexZip(
+      archive,
+      limits,
+      async (compressed) => {
+        started.resolve();
+        await release.promise;
+        return new Uint8Array(inflateRawSync(compressed));
+      },
+      controller.signal
+    );
+    expect(indexed.ok).toBe(true);
+    if (!indexed.ok) return;
+    const read = indexed.index.read('a.txt');
+    await started.promise;
+    controller.abort();
+    release.resolve();
+    expect(await read).toEqual({
+      ok: false,
+      reason: 'corrupt',
+      message: 'ZIP operation aborted',
+    });
+  });
+
   test('recognizes a suffix-free DOS directory without overriding explicit file types', async () => {
     const bytes = zip([
       { name: 'folder', mode: 0o600, dosAttrs: 0x10 },

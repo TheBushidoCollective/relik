@@ -30,8 +30,10 @@ export async function openFolderRelic(
 
 export async function entryView(
   view: ReadyView,
-  index: number
+  index: number,
+  signal?: AbortSignal
 ): Promise<ReadyView> {
+  signal?.throwIfAborted();
   const folder = view.folder;
   const entry = folder?.manifest.entries[index];
   if (!folder || !entry) throw new RangeError('Invalid folder entry');
@@ -41,7 +43,9 @@ export async function entryView(
       .blob('application/octet-stream')
       .slice(entry.offset, entry.offset + entry.length)
   );
-  const route = await routeContent(filename, entry.mimetype, content);
+  signal?.throwIfAborted();
+  const route = await routeContent(filename, entry.mimetype, content, signal);
+  signal?.throwIfAborted();
   return {
     ...view,
     filename,

@@ -1038,34 +1038,77 @@ describe('version comparison affordance', () => {
     ).toBe(true);
   });
 
-  test('placeholder document formats offer download without extracting or framing', () => {
-    for (const kind of ['docx', 'epub'] as const) {
-      const original = view('sandboxed-document', 1);
-      let reads = 0;
-      const current: ReadyView = {
-        ...original,
-        documentKind: kind,
-        content: {
-          ...original.content,
-          read: async () => {
-            reads++;
-            throw new Error('unexpected extraction');
-          },
-          readWhole: async () => {
-            reads++;
-            throw new Error('unexpected extraction');
-          },
+  test('unrecognized documents offer download without extracting or framing', () => {
+    const original = view('sandboxed-document', 1);
+    let reads = 0;
+    const current: ReadyView = {
+      ...original,
+      documentKind: undefined,
+      content: {
+        ...original.content,
+        read: async () => {
+          reads++;
+          throw new Error('unexpected extraction');
         },
-      };
-      const stage = buildCurrentStage(current, 'https://usercontent.test', {
-        comparisonNotice: false,
-      }) as unknown as ElementStub;
-      expect(reads).toBe(0);
-      expect(textOf(stage)).toContain('Download');
-      expect(
-        descendants(stage).some((element) => element.tagName === 'IFRAME')
-      ).toBe(false);
-    }
+        readWhole: async () => {
+          reads++;
+          throw new Error('unexpected extraction');
+        },
+      },
+    };
+    const stage = buildCurrentStage(current, 'https://usercontent.test', {
+      comparisonNotice: false,
+    }) as unknown as ElementStub;
+    expect(reads).toBe(0);
+    expect(textOf(stage)).toContain('Download');
+    expect(
+      descendants(stage).some((element) => element.tagName === 'IFRAME')
+    ).toBe(false);
+  });
+
+  test('DOCX enters its document rendering stage', () => {
+    const current: ReadyView = {
+      ...view('sandboxed-document', 1),
+      documentKind: 'docx',
+    };
+    const stage = buildCurrentStage(current, 'https://usercontent.test', {
+      comparisonNotice: false,
+    }) as unknown as ElementStub;
+    const bar = buildBar(
+      current,
+      'aaaaaaaaaaaaaaaaaaaaaaaaaa'
+    ) as unknown as ElementStub;
+    expect(withClass(stage, 'doc-document')).toHaveLength(1);
+    expect(withClass(stage, 'doc-download')).toHaveLength(0);
+    expect(textOf(stage)).toContain('Loading document');
+    expect(textOf(bar)).toContain('Rendered as a document, no author code');
+  });
+
+  test('EPUB opens a document stage and identifies its inert renderer', async () => {
+    const mounted = Promise.withResolvers<void>();
+    const current: ReadyView = {
+      ...view('sandboxed-document', 1),
+      documentKind: 'epub',
+    };
+    const stage = buildCurrentStage(
+      current,
+      'https://usercontent.test'
+    ) as unknown as ElementStub;
+    const bar = buildBar(
+      current,
+      'aaaaaaaaaaaaaaaaaaaaaaaaaa'
+    ) as unknown as ElementStub;
+    const root = withClass(stage, 'doc-html')[0];
+    expect(root).toBeDefined();
+    Object.assign(root!, {
+      isConnected: true,
+      dispatchEvent: () => true,
+      onChildrenReplaced: mounted.resolve,
+    });
+    expect(withClass(stage, 'doc-download')).toHaveLength(0);
+    expect(textOf(bar)).toContain('Rendered as a document, no author code');
+    await mounted.promise;
+    expect(textOf(stage)).toContain('This document could not be shown.');
   });
 
   test('oversized code history is reachable, and states the ceiling', () => {
@@ -1214,6 +1257,58 @@ describe('version comparison affordance', () => {
     expect(textOf(comparison)).not.toContain(collector);
     expect(textOf(comparison)).not.toContain('<script>');
     expect(textOf(comparison)).toContain('Rendered comparison');
+  });
+
+  test('an unavailable tree leaves both versions visible without claiming equality', async () => {
+    const listeners: Array<(event: unknown) => void> = [];
+    (globalThis as { window?: unknown }).window = {
+      innerWidth: 1024,
+      innerHeight: 768,
+      addEventListener: (type: string, listener: (event: unknown) => void) => {
+        if (type === 'message') listeners.push(listener);
+      },
+      removeEventListener: () => {},
+    };
+    let changesReported = false;
+    const comparison = renderRenderedComparison(
+      view('sandboxed-html', 5, encoder.encode('<p>Current</p>')),
+      view('sandboxed-html', 2, encoder.encode('<p>Earlier</p>'), 5),
+      'rendered',
+      'https://relik-usercontent.example',
+      () => {
+        changesReported = true;
+      }
+    ) as unknown as ElementStub;
+    const frames = descendants(comparison).filter(
+      (element) => element.tagName === 'IFRAME'
+    );
+    const status = withClass(comparison, 'diff-summary')[0]?.children[1];
+    if (frames.length !== 2 || status === undefined)
+      throw new Error('comparison frames or status missing');
+    const { promise, resolve } = Promise.withResolvers<void>();
+    status.onTextChange = () => resolve();
+    const sources = [{ postMessage: () => {} }, { postMessage: () => {} }];
+    Object.assign(frames[0]!, { contentWindow: sources[0] });
+    Object.assign(frames[1]!, { contentWindow: sources[1] });
+    const reports = [
+      { type: 'relic:tree', tree: null },
+      {
+        type: 'relic:tree',
+        tree: { tag: 'p', text: 'Current', attrs: [], children: [] },
+      },
+    ];
+    for (let i = 0; i < sources.length; i++) {
+      for (const listener of listeners) {
+        listener({ source: sources[i], data: reports[i] });
+      }
+    }
+    await promise;
+    expect(status.textContent).toContain('changes are not outlined');
+    expect(textOf(comparison)).not.toContain('render identically');
+    expect(changesReported).toBe(false);
+    expect(
+      descendants(comparison).filter((node) => node.tagName === 'IFRAME')
+    ).toHaveLength(2);
   });
 
   test('the rendered comparison offers a swipe and a side by side layout', () => {

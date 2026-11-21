@@ -12,6 +12,9 @@
     "packages/relic-format": {
       "name": "@relic/format",
       "version": "0.1.0",
+      "dependencies": {
+        "entities": "6.0.1",
+      },
     },
     "packages/relic-mcp": {
       "name": "relic-mcp",
@@ -41,6 +44,7 @@
         "diff": "^9.0.0",
         "docx": "^9.15.3",
         "docx-preview": "0.4.1",
+        "image-size": "2.1.0",
         "mediabunny": "1.62.0",
         "pdfjs-dist": "5.4.149",
         "react": "19.2.0",
@@ -57,6 +61,7 @@
     },
   },
   "patchedDependencies": {
+    "docx-preview@0.4.1": "patches/docx-preview@0.4.1.patch",
     "pdfjs-dist@5.4.149": "patches/pdfjs-dist@5.4.149.patch",
   },
   "packages": {
@@ -136,9 +141,13 @@
 
     "docx-preview": ["docx-preview@0.4.1", "", { "dependencies": { "jszip": ">=3.0.0" } }, "sha512-Dv4g+LeE0swHpPvNC0lAT0YsR5Zq5pAxw7d3vHQ8EChBLgIrqqe9VPL5nVt2HBJap8bEZbXUI0TJob7kBeNU9w=="],
 
+    "entities": ["entities@6.0.1", "", {}, "sha512-aN97NXWF6AWBTahfVOIrB/NShkzi5H7F9r1s9mD3cDj4Ko5f2qhhVoYMibXF7GlLveb/D2ioWay8lxI97Ven3g=="],
+
     "fdir": ["fdir@6.5.0", "", { "peerDependencies": { "picomatch": "^3 || ^4" }, "optionalPeers": ["picomatch"] }, "sha512-tIbYtZbucOs0BRGqPJkshJUYdL+SDH7dVM8gjy+ERp3WAUjLEFJE+02kanyHtwjWOnwrKYBiwAmM0p4kLJAnXg=="],
 
     "fflate": ["fflate@0.8.3", "", {}, "sha512-tbZNuJrLwGUp3zshBtdy4W+ORxZuIh8a5ilyIEQDC5rY1f3U20JMry0Ll3WBzU58EZKsEuJFXhb5gwv8CsPvgA=="],
+
+    "image-size": ["image-size@2.1.0", "", { "bin": { "image-size": "bin/image-size.js" } }, "sha512-6Dbisa46RsgeAh3TMSFL2i8+uIFG+/LRmz6Q2oscSJJvXo1sOw3EgNO4M8jPl1P+gR1atJLDPrpclX4IHz63sA=="],
 
     "immediate": ["immediate@3.0.6", "", {}, "sha512-XXOFtyqDjNDAQxVfYxuF7g9Il/IbWmmlQg2MYKOH8ExIT1qg6xc4zyS3HaEEATgs1btfzxq15ciUiY7gjSXRGQ=="],
 

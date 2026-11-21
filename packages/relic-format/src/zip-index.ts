@@ -219,9 +219,10 @@ export interface OtioCompatibleZipIndex extends ZipIndex {
 export async function indexZip(
   archive: Uint8Array | ZipSource,
   limits: ZipLimits,
-  inflater?: InflaterFn
+  inflater?: InflaterFn,
+  signal?: AbortSignal
 ): Promise<ZipIndexResult> {
-  return indexZipInternal(archive, limits, inflater, false);
+  return indexZipInternal(archive, limits, inflater, false, undefined, signal);
 }
 
 export async function indexZipForOtio(
@@ -248,7 +249,8 @@ async function indexZipInternal(
     name: string,
     method: number,
     size: number
-  ) => ZipRefusal | undefined
+  ) => ZipRefusal | undefined,
+  signal?: AbortSignal
 ): Promise<
   { readonly ok: true; readonly index: OtioCompatibleZipIndex } | ZipRefusal
 > {
@@ -270,7 +272,11 @@ async function indexZipInternal(
           },
         }
       : archive;
+  function checkAborted(): void {
+    if (signal?.aborted) fail('corrupt', 'ZIP operation aborted');
+  }
   async function range(start: number, end: number): Promise<Uint8Array> {
+    checkAborted();
     if (
       !Number.isSafeInteger(start) ||
       !Number.isSafeInteger(end) ||
@@ -280,11 +286,13 @@ async function indexZipInternal(
     )
       return fail('corrupt', 'ZIP range is outside the archive');
     const bytes = await source.read(start, end);
+    checkAborted();
     if (!(bytes instanceof Uint8Array) || bytes.length !== end - start)
       return fail('corrupt', 'ZIP source returned an incomplete range');
     return bytes;
   }
   try {
+    checkAborted();
     if (!Number.isSafeInteger(source.size) || source.size < 0)
       return fail('corrupt', 'Invalid archive size');
     if (source.size > limits.maxArchiveBytes)
@@ -369,6 +377,7 @@ async function indexZipInternal(
     let cursor = 0,
       total = 0;
     for (let i = 0; i < count; i++) {
+      checkAborted();
       if (cursor + 46 > cdSize)
         return fail('corrupt', 'Truncated central directory entry');
       if (view.getUint32(cursor, true) !== 0x02014b50)
@@ -564,9 +573,11 @@ async function indexZipInternal(
         'Central directory census did not consume the declared extent'
       );
     extents.sort((a, b) => a.start - b.start || a.end - b.end);
-    for (let i = 1; i < extents.length; i++)
+    for (let i = 1; i < extents.length; i++) {
+      checkAborted();
       if (extents[i]!.start < extents[i - 1]!.end)
         return fail('corrupt', `ZIP entries overlap: ${extents[i]!.name}`);
+    }
     async function load(
       name: string,
       customInflater?: InflaterFn
@@ -602,6 +613,7 @@ async function indexZipInternal(
               entry.size,
               entry.size
             );
+      checkAborted();
       if (!(bytes instanceof Uint8Array) || bytes.length !== entry.size)
         return fail(
           'size-mismatch',
@@ -635,6 +647,7 @@ async function indexZipInternal(
         }
       },
     };
+    checkAborted();
     return { ok: true, index };
   } catch (error) {
     return failure(error);
