@@ -863,9 +863,13 @@ export function mountSuggestEditor(
         start.offset === end.offset
       ) {
         const direction = type === 'deleteContentBackward' ? 'left' : 'right';
-        const value = start.id
+        const encoded = start.id
           ? (pending.find((item) => item.id === start.id)?.inserted ?? '')
-          : (draft?.inserted ?? '');
+          : null;
+        const value =
+          encoded === null
+            ? (draft?.inserted ?? '')
+            : (options.surface?.decode?.(start.block, encoded) ?? encoded);
         if (
           (direction === 'left' && start.offset === 0) ||
           (direction === 'right' && start.offset === value.length)

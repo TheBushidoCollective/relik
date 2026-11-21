@@ -60,7 +60,8 @@ async function browserCases(
   function fixture(
     source: string,
     pending: readonly PendingSuggestion[] = [],
-    paint?: (root: HTMLElement) => void
+    paint?: (root: HTMLElement) => void,
+    decode?: (source: string) => string
   ) {
     const map = markdown.renderMarkdownWithSource(source);
     const chrome = document.createElement('div');
@@ -81,6 +82,18 @@ async function browserCases(
       version: 1,
       reader: 'reader@example.com',
       pending,
+      ...(decode
+        ? {
+            surface: {
+              root,
+              segments: () => map.segments,
+              blockKind: () => 'paragraph' as const,
+              editable: () => true as const,
+              decode: (_block: number, text: string) => decode(text),
+              repaint: () => {},
+            },
+          }
+        : {}),
       onCommit: (change) => commits.push(change),
       onRefusal: (message) => refusals.push(message),
       onDraftChange: (change) => changes.push(change),
@@ -417,6 +430,59 @@ async function browserCases(
     );
     cleanup(own);
   });
+
+  await check(
+    'delete keys use the displayed length of encoded own insertions',
+    () => {
+      const pending: PendingSuggestion = {
+        id: 'encoded',
+        author: 'reader@example.com',
+        displayName: 'Reader',
+        version: 1,
+        start: 0,
+        end: 5,
+        inserted: 'a""b',
+      };
+      const make = () => {
+        const f = fixture(
+          'alpha beta',
+          [pending],
+          (root) => {
+            const segment = root.querySelector('[data-seg]')!;
+            const del = document.createElement('del');
+            del.textContent = 'alpha';
+            const ins = document.createElement('ins');
+            ins.setAttribute('data-sg', 'encoded');
+            ins.textContent = 'a"b';
+            segment.replaceChildren(del, ins, document.createTextNode(' beta'));
+          },
+          (text) => text.replaceAll('""', '"')
+        );
+        f.adapter.setSuggesting(true);
+        return f;
+      };
+      const forward = make();
+      const first = forward.root.querySelector('ins[data-sg]')!;
+      select(first.firstChild!, 3);
+      input(forward.root, 'deleteContentForward');
+      eq(
+        forward.adapter.draft?.struck,
+        'alpha ',
+        'forward extends strike at decoded edge'
+      );
+      cleanup(forward);
+      const backward = make();
+      const second = backward.root.querySelector('ins[data-sg]')!;
+      select(second.firstChild!, 2);
+      input(backward.root, 'deleteContentBackward');
+      eq(
+        backward.adapter.draft?.inserted,
+        'ab',
+        'backspace removes one displayed quote'
+      );
+      cleanup(backward);
+    }
+  );
 
   await check('injected nodes are reverted by the observer', async () => {
     const f = fixture('original');
