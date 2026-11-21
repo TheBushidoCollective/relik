@@ -712,7 +712,8 @@ export function mountSuggestionController(
         target,
         segments,
         views!,
-        surface ? 'markdown' : kind
+        surface ? 'markdown' : kind,
+        surface?.decode?.bind(surface)
       );
       if (!result.ok) {
         failed = true;

@@ -433,6 +433,15 @@ export function mountSuggestEditor(
     version,
     reader,
     crlf: options.crlf ?? false,
+    ...(options.surface?.encode
+      ? { encode: options.surface.encode.bind(options.surface) }
+      : {}),
+    ...(options.surface?.decode
+      ? { decode: options.surface.decode.bind(options.surface) }
+      : {}),
+    ...(options.surface?.emptyAnchor
+      ? { emptyAnchor: options.surface.emptyAnchor.bind(options.surface) }
+      : {}),
     pending,
   });
   let on = false;
@@ -452,7 +461,12 @@ export function mountSuggestEditor(
       'too_large',
       options.fileBytes ?? encoder.encode(source).length
     );
-  if (!unavailable && /[\r\0]/.test(source))
+  if (
+    !unavailable &&
+    (source.includes('\0') ||
+      (source.includes('\r') &&
+        (!options.surface || !options.crlf || /\r(?!\n)/.test(source))))
+  )
     unavailable = suggestingUnavailable('has_cr');
 
   // Code views use the pre itself as the single source segment.
@@ -809,7 +823,22 @@ export function mountSuggestEditor(
     return true;
   }
 
+  function selectionAllowed(): boolean {
+    const selection = doc.getSelection();
+    if (!selection || selection.rangeCount === 0) return true;
+    const range = selection.getRangeAt(0);
+    for (const node of [range.startContainer, range.endContainer]) {
+      const allowed = options.surface?.acceptsSelection?.(node);
+      if (allowed && allowed !== true) {
+        displayRefusal(allowed.message, allowed.code);
+        return false;
+      }
+    }
+    return true;
+  }
+
   function applyInput(type: string, text: string): void {
+    if (!selectionAllowed()) return;
     const points = selectionPoints(root, segments, options.surface);
     if (!points) {
       displayRefusal(INVALID_SELECTION, 'invalid-range');
@@ -1053,6 +1082,7 @@ export function mountSuggestEditor(
 
   function compositionStart(): void {
     if (!on) return;
+    if (!selectionAllowed()) return;
     const points = selectionPoints(root, segments, options.surface);
     if (!points) return;
     const [start, end] = points;
@@ -1202,6 +1232,15 @@ export function mountSuggestEditor(
           version,
           reader,
           crlf: options.crlf ?? false,
+          ...(options.surface?.encode
+            ? { encode: options.surface.encode.bind(options.surface) }
+            : {}),
+          ...(options.surface?.decode
+            ? { decode: options.surface.decode.bind(options.surface) }
+            : {}),
+          ...(options.surface?.emptyAnchor
+            ? { emptyAnchor: options.surface.emptyAnchor.bind(options.surface) }
+            : {}),
           pending,
         });
       };

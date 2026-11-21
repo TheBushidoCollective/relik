@@ -8,6 +8,28 @@ export interface SuggestionSurface {
   segments(source: string): readonly SourceSegment[];
   blockKind(block: number): SuggestBlockKind;
   editable(block: number): true | SuggestRefusal;
+  /** Reject selections in non-editable regions instead of snapping to a nearby segment. */
+  acceptsSelection?(node: Node): true | SuggestRefusal;
+  /** Convert visible insertion text to and from the source representation. */
+  encode?(
+    block: number,
+    text: string,
+    start: number,
+    end: number
+  ):
+    | { readonly ok: true; readonly source: string }
+    | { readonly ok: false; readonly refusal: SuggestRefusal };
+  decode?(block: number, source: string): string;
+  emptyAnchor?(
+    block: number,
+    position: number
+  ):
+    | {
+        readonly start: number;
+        readonly end: number;
+        readonly mode: 'before' | 'after';
+      }
+    | undefined;
   repaint(): void;
 }
 
