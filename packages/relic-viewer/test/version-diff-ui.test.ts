@@ -1038,12 +1038,12 @@ describe('version comparison affordance', () => {
     ).toBe(true);
   });
 
-  test('placeholder EPUB offers download without extracting or framing', () => {
+  test('Word documents offer download without extracting or framing', () => {
     const original = view('sandboxed-document', 1);
     let reads = 0;
     const current: ReadyView = {
       ...original,
-      documentKind: 'epub',
+      documentKind: 'docx',
       content: {
         ...original.content,
         read: async () => {
@@ -1066,15 +1066,31 @@ describe('version comparison affordance', () => {
     ).toBe(false);
   });
 
-  test('DOCX enters its document rendering stage', () => {
+  test('EPUB opens a document stage and identifies its inert renderer', async () => {
+    const mounted = Promise.withResolvers<void>();
     const current: ReadyView = {
       ...view('sandboxed-document', 1),
-      documentKind: 'docx',
+      documentKind: 'epub',
     };
-    const stage = buildCurrentStage(current, 'https://usercontent.test', {
-      comparisonNotice: false,
-    }) as unknown as ElementStub;
-    expect(textOf(stage)).toContain('Loading document');
+    const stage = buildCurrentStage(
+      current,
+      'https://usercontent.test'
+    ) as unknown as ElementStub;
+    const bar = buildBar(
+      current,
+      'aaaaaaaaaaaaaaaaaaaaaaaaaa'
+    ) as unknown as ElementStub;
+    const root = withClass(stage, 'doc-html')[0];
+    expect(root).toBeDefined();
+    Object.assign(root!, {
+      isConnected: true,
+      dispatchEvent: () => true,
+      onChildrenReplaced: mounted.resolve,
+    });
+    expect(withClass(stage, 'doc-download')).toHaveLength(0);
+    expect(textOf(bar)).toContain('Rendered as a document, no author code');
+    await mounted.promise;
+    expect(textOf(stage)).toContain('This document could not be shown.');
   });
 
   test('oversized code history is reachable, and states the ceiling', () => {

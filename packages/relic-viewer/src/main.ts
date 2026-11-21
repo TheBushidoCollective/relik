@@ -1020,7 +1020,10 @@ export function buildBar(
   // which is exactly the mismatch that breaks speech control.
   // Keyed on the route the viewer resolved, so the sentence describes what
   // this relic does rather than what the riskiest relic would.
-  const markerLabel = markerLabelFor(view.route, view.documentKind);
+  const markerLabel =
+    view.route === 'sandboxed-document' && view.documentKind === 'epub'
+      ? 'Rendered as a document, no author code'
+      : markerLabelFor(view.route);
   marker.setAttribute('aria-label', markerLabel);
   marker.title = `${markerLabel}. What Relic knows.`;
   marker.appendChild(icon(ICONS.source));
@@ -2232,7 +2235,7 @@ export function buildCurrentStage(
       main.appendChild(renderPdfView(view));
       break;
     case 'sandboxed-document': {
-      if (view.documentKind !== 'docx') {
+      if (view.documentKind !== 'epub') {
         main.appendChild(
           notice(
             'The viewer cannot show this file yet. Download it to inspect it.'
@@ -2242,19 +2245,18 @@ export function buildCurrentStage(
         break;
       }
       const root = document.createElement('div');
-      root.className = 'doc doc-document';
-      root.textContent = 'Loading document';
+      root.className = 'doc doc-html';
       main.appendChild(root);
       void Promise.all([
         import('./document-route.ts'),
-        import('./document-payload-docx.ts'),
+        import('@relic/format/epub-package'),
       ])
-        .then(([{ mountDocumentRoute }, { selectDocxParts }]) =>
-          mountDocumentRoute(
+        .then(([route, epub]) =>
+          route.mountDocumentRoute(
             root,
             view.content,
-            'docx',
-            selectDocxParts,
+            'epub',
+            epub.readEpubPackage,
             (payload, transfer, onState) =>
               sandboxFrame(
                 view,
@@ -2262,17 +2264,14 @@ export function buildCurrentStage(
                 payload,
                 undefined,
                 transfer,
-                (state) => reportDocumentState(root, onState, state)
+                onState
               ),
             () => downloadContent(view)
           )
         )
         .catch(() => {
           if (!root.isConnected) return;
-          root.replaceChildren(
-            notice('This document could not be shown.'),
-            renderDownloadView(view)
-          );
+          root.replaceChildren(renderDownloadView(view));
           root.dispatchEvent(
             new CustomEvent('relic:render-state', {
               detail: 'error',

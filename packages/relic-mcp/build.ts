@@ -13,12 +13,16 @@
  * packages to answer "what happens to my file".
  */
 
-import { chmod, mkdir } from 'node:fs/promises';
+import { chmod, copyFile, mkdir } from 'node:fs/promises';
 import { buildCover } from '@relic/viewer/build';
 import { buildProgramPage } from '@relic/viewer/program-render/build';
 
 const out = new URL('./dist/', import.meta.url).pathname;
 await mkdir(out, { recursive: true });
+await copyFile(
+  new URL('../relic-format/node_modules/entities/LICENSE', import.meta.url),
+  `${out}entities-license.txt`
+);
 await buildCover({ outdir: `${out}cover/` });
 await buildProgramPage(`${out}program/`);
 

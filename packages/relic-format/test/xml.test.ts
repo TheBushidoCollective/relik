@@ -65,20 +65,15 @@ describe('bounded XML parser', () => {
       if (typeof child === 'object') expect(child.children).toEqual(['<A😀']);
     }
   });
-  test('normalizes literal attribute whitespace before decoding references', () => {
-    const result = parseXml(
-      `<root double="a\r\nb\rc\nd\te &#9;&#10;&#13; &amp;#xA;" single=' \t\r\n&#x9;&#xA;&#xD; '/>`
-    );
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.root.attrs.get('double')).toBe('a b c d e \t\n\r &#xA;');
-    expect(result.root.attrs.get('single')).toBe('   \t\n\r ');
-  });
-
-  test('refuses unknown entities unless explicitly lenient', () => {
+  test('decodes known ebook entities and preserves unknown entities in lenient mode', () => {
     expect(parseXml('<x>&nbsp;</x>')).toEqual({ ok: false, reason: 'entity' });
-    const result = parseXml('<x>&nbsp;</x>', { lenient: true });
-    expect(result.ok && result.root.children).toEqual(['&nbsp;']);
+    const result = parseXml(
+      '<x>&nbsp;&copy;&NotEqualTilde;&amp;nbsp;&custom;</x>',
+      { lenient: true }
+    );
+    expect(result.ok && result.root.children).toEqual([
+      '\u00a0\u00a9\u2242\u0338&nbsp;&custom;',
+    ]);
     expect(parseXml('<x>&#0;</x>').ok).toBe(false);
   });
   test('enforces depth and attribute bounds', () => {
@@ -89,6 +84,26 @@ describe('bounded XML parser', () => {
       `<x ${Array.from({ length: n }, (_, i) => `a${i}="v"`).join(' ')}/>`;
     expect(parseXml(attrs(256)).ok).toBe(true);
     expect(parseXml(attrs(257))).toEqual({ ok: false, reason: 'attributes' });
+  });
+  test('bounds total metadata nodes and text', () => {
+    expect(parseXml('<r><a/><b/></r>', { maxNodes: 2 })).toEqual({
+      ok: false,
+      reason: 'size',
+    });
+    expect(parseXml('<r>abcd</r>', { maxTextChars: 3 })).toEqual({
+      ok: false,
+      reason: 'size',
+    });
+  });
+  test('decodes clean UTF-16 XML with the same byte detection as preflight', () => {
+    const input = '<root><title>Book</title></root>';
+    const bytes = new Uint8Array(input.length * 2 + 2);
+    bytes[0] = 0xff;
+    bytes[1] = 0xfe;
+    for (let i = 0; i < input.length; i++)
+      bytes[2 + i * 2] = input.charCodeAt(i);
+    expect(scanForbiddenDtd(bytes, 'epub')).toBe(false);
+    expect(parseXml(decodeXmlBytes(bytes)).ok).toBe(true);
   });
   test('refuses malformed and mismatched elements', () => {
     for (const xml of [

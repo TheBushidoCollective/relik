@@ -105,17 +105,14 @@ export async function mountDocumentRoute(
     handle?.dispose();
     handle = undefined;
   }
-  const fail = (
-    reason?: Extract<DocumentStateMessage, { state: 'failed' }>['reason']
-  ) => {
+  const fail = (protectedBook = false) => {
     const card = document.createElement('div');
     card.className = 'card';
     const title = document.createElement('div');
     title.className = 'card-title';
-    title.textContent =
-      reason === 'image-dimensions-unknown'
-        ? 'This document contains an image whose dimensions could not be checked. Download it to view it.'
-        : 'This document could not be shown.';
+    title.textContent = protectedBook
+      ? 'This ebook is protected by DRM and cannot be shown.'
+      : 'This document could not be shown.';
     const button = document.createElement('button');
     button.className = 'primary';
     button.type = 'button';
@@ -144,10 +141,14 @@ export async function mountDocumentRoute(
     }
     if (!result.ok) throw new Error(result.reason);
     const index = result.index;
-    const selection = await selectParts(index, controller.signal);
-    if (selection.ok === false) throw new Error(selection.reason);
+    const selection = await selectParts(index);
     if (disposed || !root.isConnected) {
       dispose();
+      return;
+    }
+    if (selection.ok === false) {
+      dispose();
+      fail(selection.reason === 'protected');
       return;
     }
     const selected = new Set(selection.parts);

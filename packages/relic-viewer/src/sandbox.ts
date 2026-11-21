@@ -148,6 +148,7 @@ export interface FrameInteractionHandler {
 }
 
 export interface FrameInteraction extends FrameInteractionHandler {
+  requestExternalLink(event: MouseEvent, href: string | null): void;
   isArmed(): boolean;
   onTrackMark(id: string | null): void;
   onFrameVisibility(visible: boolean): void;
@@ -2085,6 +2086,12 @@ export function setupFrameInteraction(
     attributeFilter: ['class', 'hidden', 'open', 'style'],
   });
   scheduleConceal();
+  const requestExternalLink = (event: MouseEvent, rawHref: string | null) => {
+    event.preventDefault();
+    if (armed || !event.isTrusted) return;
+    const href = normaliseFrameExternalLink(rawHref);
+    if (href !== undefined) postOutward({ type: 'relic:open-link', href });
+  };
   doc.addEventListener('click', (event: MouseEvent) => {
     let node = event.target as Element | null;
     if (node?.nodeType !== 1) node = node?.parentElement ?? null;
@@ -2093,15 +2100,8 @@ export function setupFrameInteraction(
     }
     if (node === null) return;
 
-    // Every authored anchor is contained here. The frame never navigates and
-    // never opens its own popup, even when the URL is rejected or pointing is
-    // armed. Only a trusted reader action may ask the parent to navigate.
-    event.preventDefault();
-    if (armed || !event.isTrusted) return;
-
-    const href = normaliseFrameExternalLink(node.getAttribute('href'));
-    if (href === undefined) return;
-    post({ type: 'relic:open-link', href });
+    // Authored links and reader footnotes share the same pointing-mode gate.
+    requestExternalLink(event, node.getAttribute('href'));
   });
 
   // A selection collapses by more paths than mouseup: clicking elsewhere,
@@ -2337,6 +2337,7 @@ export function setupFrameInteraction(
   });
 
   return {
+    requestExternalLink,
     setArmed(nextArmed: boolean) {
       armed = nextArmed;
       if (!armed) stopDrawing();
@@ -2689,13 +2690,12 @@ async function mountComponent(code: string): Promise<void> {
 
 export async function mountDocument(
   message: RenderDocumentMessage,
-  initInteraction: (
-    imageControlsEnabled: boolean,
-    imageIdentitySource?: ImageIdentitySource
-  ) => void
+  initInteraction: (imageControlsEnabled: boolean) => FrameInteraction
 ): Promise<void> {
-  const identity =
-    message.format === 'docx' ? createImageIdentitySource() : undefined;
+  const root = document.createElement('div');
+  root.id = 'relic-document';
+  document.body.replaceChildren(root);
+  const interaction = initInteraction(true);
   let url: string | undefined;
   try {
     const root = document.createElement('div');
@@ -2712,6 +2712,7 @@ export async function mountDocument(
       throw new Error('Missing renderer');
     const input = {
       entries: new Map(message.entries),
+      requestExternalLink: interaction.requestExternalLink,
       ...(message.book === undefined ? {} : { book: message.book }),
     };
     const outcome = identity
@@ -3340,10 +3341,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   installSandboxContainment(window, document);
   let interaction: FrameInteraction | undefined;
 
-  function initInteraction(
-    imageControlsEnabled: boolean,
-    imageIdentitySource?: ImageIdentitySource
-  ): void {
+  function initInteraction(imageControlsEnabled: boolean): FrameInteraction {
     interaction?.dispose();
     interaction = setupFrameInteraction(
       document,
@@ -3354,6 +3352,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       imageControlsEnabled,
       imageIdentitySource
     );
+    return interaction;
   }
 
   const handle = createSandboxHandler(

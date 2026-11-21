@@ -365,8 +365,8 @@ export async function buildViewer(options?: {
     `${out}docx-preview-license.txt`
   );
   await copyFile(
-    `${pkgDir}node_modules/image-size/LICENSE`,
-    `${out}image-size-license.txt`
+    `${pkgDir}../relic-format/node_modules/entities/LICENSE`,
+    `${out}entities-license.txt`
   );
 
   /**
