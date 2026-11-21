@@ -487,6 +487,7 @@ export class SuggestDraftModel {
     text: string,
     blockKind: SuggestBlockKind
   ): DraftChange {
+    if (this.options.crlf && /[\r\n]/.test(text)) return crlfLineBreak();
     if (!validReplacement(text))
       return refused(
         'invalid-character',
@@ -577,6 +578,7 @@ export class SuggestDraftModel {
     blockKind: SuggestBlockKind,
     commentId?: string
   ): DraftChange {
+    if (this.options.crlf && /[\r\n]/.test(text)) return crlfLineBreak();
     if (!validReplacement(text))
       return refused(
         'invalid-character',
