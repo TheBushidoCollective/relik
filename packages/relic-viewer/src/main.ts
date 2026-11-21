@@ -7122,6 +7122,44 @@ export function buildThread(
   let hostWatch: ScrollportWatch | undefined;
   let hostObserver: MutationObserver | undefined;
   let hostConcealScheduled = false;
+  // A virtualized table may unmount the indicator while its card is open.
+  let tableCardMembers: readonly string[] | undefined;
+
+  function tableIndicatorFor(
+    id: string,
+    visibleOnly = false
+  ): HTMLElement | undefined {
+    if (!host) return undefined;
+    for (const indicator of host.querySelectorAll<HTMLElement>(
+      '.dt-suggestion-indicator[data-comment-id]'
+    )) {
+      const members = (indicator.dataset['clusterMembers'] ?? '').split(/\s+/);
+      if (
+        indicator.closest('.popover') ||
+        (indicator.dataset['commentId'] !== id && !members.includes(id))
+      )
+        continue;
+      if (
+        visibleOnly &&
+        (indicator.hasAttribute('data-concealed') ||
+          !isRendered(indicator) ||
+          hostWatch?.inView(indicator) === false)
+      )
+        continue;
+      return indicator;
+    }
+    return undefined;
+  }
+
+  function rememberTableCard(id: string): void {
+    const indicator = tableIndicatorFor(id);
+    if (indicator) {
+      const members = indicator.dataset['clusterMembers'];
+      tableCardMembers = members ? members.split(/\s+/).filter(Boolean) : [id];
+    } else if (!tableCardMembers?.includes(id)) {
+      tableCardMembers = undefined;
+    }
+  }
 
   // A pin or a box is drawn on the surface it sits over, so the surface being
   // hidden hides it. A text highlight is its own subject: it is the thing.
@@ -7137,11 +7175,27 @@ export function buildThread(
     const nodes = Array.from(
       host.querySelectorAll<HTMLElement>('[data-comment-id]')
     ).filter((node) => node.closest('.popover') === null);
-    hostConcealed = concealMarks(
+    const concealed = concealMarks(
       nodes.map((node) => ({ node, subject: hostSubject(node) })),
       hostWatch,
       true
     );
+    const id = cardId;
+    const missingTableMark =
+      id !== undefined &&
+      tableCardMembers?.includes(id) &&
+      !nodes.some(
+        (node) =>
+          node.dataset['commentId'] === id ||
+          (node.dataset['clusterMembers'] ?? '').split(/\s+/).includes(id)
+      );
+    if (missingTableMark && id) {
+      const withMissing = new Map(concealed);
+      withMissing.set(id, 'offscreen');
+      hostConcealed = withMissing;
+    } else {
+      hostConcealed = concealed;
+    }
     applyCardConcealment();
   };
 
@@ -7204,6 +7258,7 @@ export function buildThread(
       });
       window.removeEventListener('resize', scheduleHostConceal);
     }
+    tableCardMembers = undefined;
     hostConcealed = new Map();
   };
 
@@ -7602,6 +7657,7 @@ export function buildThread(
   const closeCard = (): void => {
     cardGeneration++;
     cardId = undefined;
+    tableCardMembers = undefined;
     clearTimeout(hoverTimer);
     clearTimeout(leaveTimer);
     popover?.hide();
@@ -7696,22 +7752,11 @@ export function buildThread(
         }
       }
     }
-    // A clipped inline change can have a misleading box. Anchor its card to
-    // the visible table indicator, including for the first or sole member.
-    for (const indicator of host.querySelectorAll<HTMLElement>(
-      '.dt-suggestion-indicator[data-comment-id]'
-    )) {
-      const members = (indicator.dataset['clusterMembers'] ?? '').split(/\s+/);
-      if (
-        indicator.closest('.popover') ||
-        (indicator.dataset['commentId'] !== id && !members.includes(id)) ||
-        indicator.hasAttribute('data-concealed') ||
-        !isRendered(indicator) ||
-        hostWatch?.inView(indicator) === false
-      )
-        continue;
+    // Prefer the visible table indicator over a potentially clipped inline mark.
+    const tableIndicator = tableIndicatorFor(id, true);
+    if (tableIndicator) {
       return anchorFromClientRect(
-        indicator.getBoundingClientRect(),
+        tableIndicator.getBoundingClientRect(),
         host.getBoundingClientRect(),
         host
       );
@@ -8116,6 +8161,7 @@ export function buildThread(
     if (layer === undefined) return;
     cardGeneration++;
     cardId = entry.id ?? undefined;
+    rememberTableCard(entry.id);
     clearTimeout(leaveTimer);
     // The card takes the panel, so a composer that held it is over.
     dropComposing();
@@ -8447,6 +8493,7 @@ export function buildThread(
     }
     cardGeneration++;
     cardId = firstId;
+    rememberTableCard(firstId);
     clearTimeout(leaveTimer);
     dropComposing();
 

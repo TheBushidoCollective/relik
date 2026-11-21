@@ -1744,6 +1744,42 @@ try {
       'single clipped suggestion opened'
     );
     await assertNearIndicator(singleIndicator, solo.row.id);
+    const gridPoint = await reopened.evaluate<{
+      x: number;
+      y: number;
+    }>(`(() => {
+      const rect = document.querySelector('.dt-grid').getBoundingClientRect();
+      return { x: rect.right - 10, y: rect.top + rect.height / 2 };
+    })()`);
+    await reopened.send('Input.dispatchMouseEvent', {
+      type: 'mouseWheel',
+      ...gridPoint,
+      deltaX: 0,
+      deltaY: 3000,
+    });
+    await reopened.wait(
+      `!document.querySelector(${JSON.stringify(singleIndicator)})`,
+      'unselected indicator unmounted after scrolling'
+    );
+    await reopened.wait(
+      `document.querySelector(${JSON.stringify(`.popover-card[data-comment-id="${solo.row.id}"]`)})?.getAttribute('data-concealed') === 'offscreen'`,
+      'card concealed while its virtualized indicator is absent'
+    );
+    await reopened.send('Input.dispatchMouseEvent', {
+      type: 'mouseWheel',
+      ...gridPoint,
+      deltaX: 0,
+      deltaY: -3000,
+    });
+    await reopened.wait(
+      `document.querySelector(${JSON.stringify(singleIndicator)})`,
+      'indicator restored after scrolling back'
+    );
+    await reopened.wait(
+      `document.querySelector(${JSON.stringify(`.popover-card[data-comment-id="${solo.row.id}"]`)}) && !document.querySelector(${JSON.stringify(`.popover-card[data-comment-id="${solo.row.id}"]`)}).hasAttribute('data-concealed')`,
+      'card restored after its indicator returns'
+    );
+    await assertNearIndicator(singleIndicator, solo.row.id);
     const sniff = await publish(
       join(scratch, 'sniff.csv'),
       'a,b;c\r\nrow;target\r\n'
@@ -1766,7 +1802,7 @@ try {
       0,
       'rejected delimiter change posted'
     );
-    return 'double-BOM/CRLF edit kept its exact anchor; Source worked during a held post; first, second and sole clipped suggestion cards stayed visible and adjacent after observation; delimiter-changing input was refused';
+    return 'double-BOM/CRLF edit kept its exact anchor; Source worked during a held post; clipped suggestion cards stayed adjacent and the sole card concealed and restored across virtualization; delimiter-changing input was refused';
   });
 } finally {
   await ownedBrowser?.close();
