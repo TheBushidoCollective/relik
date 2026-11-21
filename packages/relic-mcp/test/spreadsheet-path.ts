@@ -69,12 +69,31 @@ function workbook(): Uint8Array {
     'xl/worksheets/sheet1.xml':
       '<worksheet><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Header</t></is></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>First value</t></is></c></row></sheetData></worksheet>',
     'xl/worksheets/sheet2.xml':
-      '<worksheet><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Header</t></is></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>Second value</t></is></c></row></sheetData></worksheet>',
+      '<worksheet><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Header</t></is></c><c r="B1" t="inlineStr"><is><t>Calculated</t></is></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>Second value</t></is></c><c r="B2"><f>1+1</f><v>42</v></c></row></sheetData></worksheet>',
     'xl/worksheets/sheet3.xml':
       '<worksheet><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Header</t></is></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>Restricted value</t></is></c></row></sheetData></worksheet>',
     'xl/worksheets/sheet4.xml':
       '<worksheet><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Header</t></is></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>Hidden value</t></is></c></row></sheetData></worksheet>',
+    'padding.bin': 'x'.repeat(17 * 1024 * 1024),
   };
+  const sheetNs = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
+  files['xl/workbook.xml'] = files['xl/workbook.xml']!.replace(
+    '<workbook',
+    `<workbook xmlns="${sheetNs}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"`
+  );
+  files['xl/_rels/workbook.xml.rels'] = files[
+    'xl/_rels/workbook.xml.rels'
+  ]!.replace(
+    '<Relationships',
+    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"'
+  );
+  for (const name of Object.keys(files)) {
+    if (name.startsWith('xl/worksheets/'))
+      files[name] = files[name]!.replace(
+        '<worksheet',
+        `<worksheet xmlns="${sheetNs}"`
+      );
+  }
   const encoder = new TextEncoder();
   const entries = Object.entries(files).map(([name, value]) => ({
     name,
@@ -268,6 +287,18 @@ try {
         `document.querySelector('.dt-cell[data-r="1"][data-c="0"]')?.textContent === 'Second value'`
       );
       if (width === 1440) {
+        assert.equal(
+          await evaluate(
+            `document.querySelector('.dt-cell[data-r="1"][data-c="1"]')?.textContent`
+          ),
+          '42'
+        );
+        await click('.dt-cell[data-r="1"][data-c="1"]');
+        await wait(
+          `document.querySelector('.dt-value')?.textContent?.includes('Formula: 1+1')`
+        );
+      }
+      if (width === 1440) {
         await click('.dt-cell[data-r="1"][data-c="0"]');
         await click('.popover-comment');
         await click('.popover-composer .popover-field');
@@ -342,6 +373,10 @@ try {
       );
       await wait(
         `document.querySelector('.structured-view [role="status"]')?.textContent?.includes('Comments are unavailable')`
+      );
+      assert.equal(
+        await evaluate(`Boolean(document.querySelector('.dt-hc-comment'))`),
+        false
       );
       await click('.dt-cell[data-r="1"][data-c="0"]');
       assert.equal(

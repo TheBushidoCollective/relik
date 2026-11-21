@@ -10,9 +10,21 @@ describe('table source', () => {
     );
     if (!parsed.ok) throw new Error('fixture refused');
     const table = csvTableSource(parsed.table);
-    // Leading tab or space and the fullwidth equals sign are not trigger characters.
+    // Embedded separators and quotes are quoted as one TSV field.
     expect(rectText(table, { r0: 0, r1: 0, c0: 0, c1: 10 })).toBe(
-      "'=HYPERLINK(\"x\")\t'+1+1\t'-2+3\t-5\t+3.2\t'@SUM(A1)\t\t=1\t =1\t\t'=a\nb\t＝1"
+      [
+        '"\'=HYPERLINK(""x"")"',
+        "'+1+1",
+        "'-2+3",
+        '-5',
+        '+3.2',
+        "'@SUM(A1)",
+        '"\t=1"',
+        ' =1',
+        '',
+        '"\'=a\nb"',
+        '＝1',
+      ].join('\t')
     );
     expect(rectText(table, { r0: 0, r1: 0, c0: 0, c1: 0 })).toBe(
       '=HYPERLINK("x")'

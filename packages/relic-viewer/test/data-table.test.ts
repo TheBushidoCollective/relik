@@ -296,7 +296,7 @@ async function browserCases(
         truth(
           root
             .querySelector('.dt-value')
-            ?.textContent?.includes(`Formula: ${formula}`),
+            ?.textContent?.includes(`Shared master formula: ${formula}`),
           'formula text'
         );
         truth(

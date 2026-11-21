@@ -2164,9 +2164,10 @@ export function buildCurrentStage(
       root.textContent = 'Loading spreadsheet';
       main.appendChild(root);
       void import('./spreadsheet-view.ts')
-        .then(({ renderSpreadsheetRoute }) =>
-          renderSpreadsheetRoute(root, view, () => downloadContent(view))
-        )
+        .then(({ renderSpreadsheetRoute }) => {
+          if (root.isConnected)
+            renderSpreadsheetRoute(root, view, () => downloadContent(view));
+        })
         .catch(() => {
           root.replaceChildren(
             notice(
@@ -11467,6 +11468,7 @@ export function trackRenderState(
       }
       break;
     }
+    case 'spreadsheet':
     case 'notebook':
     case 'model': {
       stage.addEventListener('relic:render-state', (event: Event) => {

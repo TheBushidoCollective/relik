@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { crc32 } from './zip-index.ts';
 import { planStoredZip } from './zip-write.ts';
-import { parseXlsx } from './xlsx.ts';
+import { parseXlsx, worksheetRowIndex } from './xlsx.ts';
 import { parseWorksheet } from './xlsx-sheet.ts';
 
 function zip(files: Record<string, string>): Uint8Array {
@@ -36,7 +36,7 @@ function fixture(
   workbook = '<workbook><sheets><sheet name="Sales" r:id="r1"/></sheets></workbook>',
   extra: Record<string, string> = {}
 ): Uint8Array {
-  return zip({
+  const files: Record<string, string> = {
     '[Content_Types].xml': '<Types/>',
     'xl/workbook.xml': workbook,
     'xl/_rels/workbook.xml.rels':
@@ -47,7 +47,34 @@ function fixture(
     'xl/styles.xml':
       '<styleSheet><numFmts><numFmt numFmtId="164" formatCode="yyyy-mm-dd"/></numFmts><cellXfs><xf numFmtId="0"/><xf numFmtId="14"/><xf numFmtId="10"/><xf numFmtId="164"/></cellXfs></styleSheet>',
     ...extra,
-  });
+  };
+  const spreadsheet =
+    'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
+  for (const [name, xml] of Object.entries(files)) {
+    if (name === 'xl/workbook.xml')
+      files[name] = xml.replace(
+        '<workbook',
+        `<workbook xmlns="${spreadsheet}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"`
+      );
+    else if (name === 'xl/_rels/workbook.xml.rels')
+      files[name] = xml.replace(
+        '<Relationships',
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"'
+      );
+    else if (name.startsWith('xl/worksheets/'))
+      files[name] = xml.replace(
+        '<worksheet',
+        `<worksheet xmlns="${spreadsheet}"`
+      );
+    else if (name === 'xl/sharedStrings.xml')
+      files[name] = xml.replace('<sst', `<sst xmlns="${spreadsheet}"`);
+    else if (name === 'xl/styles.xml')
+      files[name] = xml.replace(
+        '<styleSheet',
+        `<styleSheet xmlns="${spreadsheet}"`
+      );
+  }
+  return zip(files);
 }
 
 describe('XLSX workbook', () => {
@@ -106,7 +133,7 @@ describe('XLSX workbook', () => {
       reason: 'corrupt',
     });
   });
-  test('resolves shared formulas and preserves array formulas', async () => {
+  test('labels shared master formulas and preserves array formulas', async () => {
     const result = await parseXlsx(
       fixture(
         '<worksheet><sheetData><row r="1"><c r="B1"><f t="shared" si="0">A1+$A$1+LOG10(A1)+&quot;A1&quot;</f><v>1</v></c><c r="C1"><f t="shared" si="0"/><v>2</v></c><c r="D1"><f t="array" ref="D1:D2">SUM(A1:A2)</f><v>3</v></c></row></sheetData></worksheet>'
@@ -116,7 +143,7 @@ describe('XLSX workbook', () => {
     const sheet = result.workbook.sheets[0]!;
     expect(sheet.details[sheet.cells[5]! - 1]).toEqual({
       type: 'number',
-      formula: 'B1+$A$1+LOG10(B1)+"A1"',
+      formula: 'A1+$A$1+LOG10(A1)+"A1"',
       sharedFrom: 'B1',
     });
     expect(sheet.details[sheet.cells[8]! - 1]?.formula).toBe('SUM(A1:A2)');
@@ -175,7 +202,7 @@ describe('XLSX workbook', () => {
   test('enforces the remaining global cell budget across sheets', () => {
     expect(() =>
       parseWorksheet(
-        '<worksheet><sheetData><row><c><v>1</v></c><c><v>2</v></c></row></sheetData></worksheet>',
+        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row><c><v>1</v></c><c><v>2</v></c></row></sheetData></worksheet>',
         {
           name: 'S',
           state: 'visible',
@@ -225,5 +252,97 @@ describe('XLSX workbook', () => {
     }
     const parsed = await parseXlsx(bytes);
     expect(parsed.ok && parsed.workbook.sheets[0]!.texts).toEqual(['42']);
+  });
+  test('sparse rows retain offsets only for populated rows', async () => {
+    const parsed = await parseXlsx(
+      fixture(
+        '<worksheet><sheetData><row r="1"><c r="B1"><v>2</v></c></row><row r="600000"><c r="D600000"><v>4</v></c></row></sheetData></worksheet>'
+      )
+    );
+    if (!parsed.ok) throw new Error(parsed.reason);
+    const sheet = parsed.workbook.sheets[0]!;
+    expect(sheet.rows).toBe(600000);
+    expect([...sheet.rowNumbers]).toEqual([0, 599999]);
+    expect([...sheet.rowStart]).toEqual([0, 1, 2]);
+    expect(worksheetRowIndex(sheet, 0)).toBe(0);
+    expect(worksheetRowIndex(sheet, 100)).toBe(-1);
+    expect(worksheetRowIndex(sheet, 599999)).toBe(1);
+  });
+  test('retains 256 sheets with widely separated rows without dense row indexes', async () => {
+    const sheets: string[] = [],
+      relationships: string[] = [];
+    const extra: Record<string, string> = {};
+    for (let i = 0; i < 256; i++) {
+      sheets.push(`<sheet name="S${i}" r:id="r${i}"/>`);
+      relationships.push(
+        `<Relationship Id="r${i}" Type="urn:office/worksheet" Target="worksheets/s${i}.xml"/>`
+      );
+      extra[`xl/worksheets/s${i}.xml`] =
+        '<worksheet><sheetData><row r="600000"><c r="A600000"><v>1</v></c></row></sheetData></worksheet>';
+    }
+    extra['xl/_rels/workbook.xml.rels'] =
+      `<Relationships>${relationships.join('')}</Relationships>`;
+    const parsed = await parseXlsx(
+      fixture(
+        '<worksheet/>',
+        `<workbook><sheets>${sheets.join('')}</sheets></workbook>`,
+        extra
+      )
+    );
+    if (!parsed.ok) throw new Error(parsed.reason);
+    expect(parsed.workbook.sheets).toHaveLength(256);
+    expect(
+      parsed.workbook.sheets.every(
+        (s) =>
+          s.rows === 600000 &&
+          s.rowNumbers.length === 1 &&
+          s.rowStart.length === 2
+      )
+    ).toBe(true);
+  });
+  test('refuses duplicate worksheet-part aliases', async () => {
+    const workbook =
+      '<workbook><sheets><sheet name="One" r:id="r1"/><sheet name="Two" r:id="r4"/></sheets></workbook>';
+    const rels =
+      '<Relationships><Relationship Id="r1" Type="urn:office/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="r4" Type="urn:office/worksheet" Target="worksheets/./sheet1.xml"/></Relationships>';
+    expect(
+      await parseXlsx(
+        fixture('<worksheet/>', workbook, {
+          'xl/_rels/workbook.xml.rels': rels,
+        })
+      )
+    ).toEqual({ ok: false, reason: 'corrupt' });
+  });
+  test('accepts relationship namespace aliases and ignores cells outside sheet data', async () => {
+    const book =
+      '<workbook xmlns:q="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Sales" q:id="r1"/></sheets></workbook>';
+    const sheet =
+      '<worksheet><other><row r="1"><c r="A1"><v>99</v></c></row></other><sheetData><row r="2"><c r="A2"><v>7</v></c></row></sheetData></worksheet>';
+    const result = await parseXlsx(fixture(sheet, book));
+    if (!result.ok) throw new Error(result.reason);
+    expect(result.workbook.sheets[0]!.texts).toEqual(['7']);
+    expect(await parseXlsx(fixture('<unexpected/>'))).toEqual({
+      ok: false,
+      reason: 'corrupt',
+    });
+  });
+  test('caps derived formula data and accepts boolean formulas without a cached value', async () => {
+    const boolean = await parseXlsx(
+      fixture(
+        '<worksheet><sheetData><row><c t="b"><f>TRUE()</f></c></row></sheetData></worksheet>'
+      )
+    );
+    if (!boolean.ok) throw new Error(boolean.reason);
+    expect(boolean.workbook.sheets[0]!.details[0]).toEqual({
+      type: 'boolean',
+      formula: 'TRUE()',
+    });
+    expect(
+      await parseXlsx(
+        fixture(
+          `<worksheet><sheetData><row><c><f>${'A'.repeat(65537)}</f></c></row></sheetData></worksheet>`
+        )
+      )
+    ).toEqual({ ok: false, reason: 'too-large' });
   });
 });

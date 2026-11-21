@@ -1,7 +1,11 @@
 /* A streaming XML tokenizer for spreadsheet parts. It never resolves external
  * entities and does not construct a tree of worksheet cells. */
 export interface XmlEvents {
-  start(name: string, attributes: ReadonlyMap<string, string>): void;
+  start(
+    name: string,
+    attributes: ReadonlyMap<string, string>,
+    namespaces: ReadonlyMap<string, string>
+  ): void;
   end(name: string): void;
   text(value: string): void;
 }
@@ -48,6 +52,8 @@ export function tokenizeSpreadsheetXml(xml: string, events: XmlEvents): void {
     throw new Error('Forbidden XML declaration');
   let at = xml.charCodeAt(0) === 0xfeff ? 1 : 0;
   const stack: string[] = [];
+  const namespaceStack: ReadonlyMap<string, string>[] = [];
+  const emptyNamespaces = new Map<string, string>();
   let roots = 0;
   const whitespace = (): void => {
     SPACE.lastIndex = at;
@@ -99,6 +105,7 @@ export function tokenizeSpreadsheetXml(xml: string, events: XmlEvents): void {
       whitespace();
       if (xml[at++] !== '>' || stack.pop() !== name)
         throw new Error('Unmatched XML element');
+      namespaceStack.pop();
       events.end(name);
       continue;
     }
@@ -137,9 +144,22 @@ export function tokenizeSpreadsheetXml(xml: string, events: XmlEvents): void {
       attrs.set(attr, decode(xml.slice(at, end)));
       at = end + 1;
     }
-    events.start(name, attrs);
+    let namespaces = namespaceStack.at(-1) ?? emptyNamespaces;
+    for (const [key, value] of attrs) {
+      if (key !== 'xmlns' && !key.startsWith('xmlns:')) continue;
+      if (namespaces === (namespaceStack.at(-1) ?? emptyNamespaces))
+        namespaces = new Map(namespaces);
+      (namespaces as Map<string, string>).set(
+        key === 'xmlns' ? '' : key.slice(6),
+        value
+      );
+    }
+    events.start(name, attrs, namespaces);
     if (empty) events.end(name);
-    else stack.push(name);
+    else {
+      stack.push(name);
+      namespaceStack.push(namespaces);
+    }
   }
   if (roots !== 1 || stack.length) throw new Error('Incomplete XML');
 }

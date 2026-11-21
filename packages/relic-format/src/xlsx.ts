@@ -16,12 +16,26 @@ export interface WorkbookSheet {
   readonly rows: number;
   readonly columns: number;
   readonly refused?: 'too-large';
+  /** Zero-based populated row numbers. rowStart[i..i+1] spans their cells. */
+  readonly rowNumbers: Uint32Array;
   readonly rowStart: Uint32Array;
   readonly cells: Uint32Array;
   readonly numbers: Float64Array;
   readonly texts: string[];
   readonly details: CellDetail[];
 }
+/** Index of a populated zero-based row, or -1. rowStart[i] and [i+1] bound it. */
+export function worksheetRowIndex(sheet: WorkbookSheet, row: number): number {
+  let low = 0;
+  let high = sheet.rowNumbers.length;
+  while (low < high) {
+    const mid = (low + high) >>> 1;
+    if (sheet.rowNumbers[mid]! < row) low = mid + 1;
+    else high = mid;
+  }
+  return sheet.rowNumbers[low] === row ? low : -1;
+}
+
 export interface Workbook {
   readonly sheets: WorkbookSheet[];
   readonly date1904: boolean;
@@ -52,12 +66,49 @@ function attrsValue(
 ): string | undefined {
   return attrs.get(name);
 }
-function xmlEvents(
-  start: XmlEvents['start'],
-  end: XmlEvents['end'] = () => {},
-  text: XmlEvents['text'] = () => {}
+const SPREADSHEET_NS = [
+  'http://schemas.openxmlformats.org/spreadsheetml/2006/main',
+  'http://purl.oclc.org/ooxml/spreadsheetml/main',
+];
+const PACKAGE_REL_NS = [
+  'http://schemas.openxmlformats.org/package/2006/relationships',
+];
+const OFFICE_REL_NS = [
+  'http://schemas.openxmlformats.org/officeDocument/2006/relationships',
+  'http://purl.oclc.org/ooxml/officeDocument/relationships',
+];
+function partEvents(
+  root: string,
+  allowedNamespaces: readonly string[],
+  start: (
+    path: string,
+    attrs: ReadonlyMap<string, string>,
+    namespaces: ReadonlyMap<string, string>
+  ) => void,
+  end: (path: string) => void = () => {},
+  text: (value: string, path: string) => void = () => {}
 ): XmlEvents {
-  return { start, end, text };
+  const parts: string[] = [];
+  return {
+    start(name, attrs, namespaces) {
+      const colon = name.indexOf(':');
+      const uri = namespaces.get(colon < 0 ? '' : name.slice(0, colon));
+      if (colon >= 0 && uri === undefined) throw new Error('corrupt');
+      const n = local(name);
+      parts.push(
+        uri !== undefined && allowedNamespaces.includes(uri) ? n : `!${n}`
+      );
+      if (parts.length === 1 && parts[0] !== root) throw new Error('corrupt');
+      start(parts.join('/'), attrs, namespaces);
+    },
+    end() {
+      end(parts.join('/'));
+      parts.pop();
+    },
+    text(value) {
+      text(value, parts.join('/'));
+    },
+  };
 }
 function decode(bytes: Uint8Array): string {
   return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
@@ -126,8 +177,8 @@ export async function parseXlsx(
     const relationships = new Map<string, Relationship>();
     tokenizeSpreadsheetXml(
       await read(index, 'xl/_rels/workbook.xml.rels'),
-      xmlEvents((name, attrs) => {
-        if (local(name) !== 'Relationship') return;
+      partEvents('Relationships', PACKAGE_REL_NS, (path, attrs) => {
+        if (path !== 'Relationships/Relationship') return;
         const id = attrsValue(attrs, 'Id'),
           target = attrsValue(attrs, 'Target'),
           type = attrsValue(attrs, 'Type');
@@ -145,13 +196,22 @@ export async function parseXlsx(
       seen = new Set<string>();
     tokenizeSpreadsheetXml(
       await read(index, 'xl/workbook.xml'),
-      xmlEvents((name, attrs) => {
-        if (local(name) === 'workbookPr')
+      partEvents('workbook', SPREADSHEET_NS, (path, attrs, namespaces) => {
+        if (path === 'workbook/workbookPr')
           date1904 =
             attrs.get('date1904') === '1' || attrs.get('date1904') === 'true';
-        if (local(name) !== 'sheet') return;
-        const sheetName = attrs.get('name'),
-          id = attrs.get('r:id');
+        if (path !== 'workbook/sheets/sheet') return;
+        const sheetName = attrs.get('name');
+        let id: string | undefined;
+        for (const [key, value] of attrs) {
+          if (!key.endsWith(':id')) continue;
+          const prefix = key.slice(0, -3);
+          const uri = namespaces.get(prefix);
+          if (uri !== undefined && OFFICE_REL_NS.includes(uri)) {
+            if (id !== undefined) throw new Error('corrupt');
+            id = value;
+          }
+        }
         const state = attrs.get('state') ?? 'visible';
         if (
           !sheetName ||
@@ -175,31 +235,24 @@ export async function parseXlsx(
     const strings: string[] = [];
     const shared = byKind('sharedStrings');
     if (shared) {
-      let inItem = false,
-        inText = false,
-        text = '';
+      let text = '';
       tokenizeSpreadsheetXml(
         await read(index, shared.path),
-        xmlEvents(
-          (name) => {
-            const n = local(name);
-            if (n === 'si') {
-              inItem = true;
-              text = '';
-            } else if (inItem && n === 't') inText = true;
+        partEvents(
+          'sst',
+          SPREADSHEET_NS,
+          (path) => {
+            if (path === 'sst/si') text = '';
           },
-          (name) => {
-            const n = local(name);
-            if (n === 't') inText = false;
-            else if (n === 'si') {
+          (path) => {
+            if (path === 'sst/si') {
               strings.push(text);
-              inItem = false;
               if (strings.length > XLSX_STRING_LIMIT)
                 throw new Error('too-large');
             }
           },
-          (value) => {
-            if (inText) text += value;
+          (value, path) => {
+            if (path === 'sst/si/t' || path === 'sst/si/r/t') text += value;
           }
         )
       );
@@ -208,35 +261,31 @@ export async function parseXlsx(
     const styles: NumberKind[] = [];
     const styleRel = byKind('styles');
     if (styleRel) {
-      let inCellXfs = false;
       tokenizeSpreadsheetXml(
         await read(index, styleRel.path),
-        xmlEvents(
-          (name, attrs) => {
-            const n = local(name);
-            if (n === 'numFmt') {
-              const id = Number(attrs.get('numFmtId'));
-              const code = attrs.get('formatCode');
-              if (Number.isInteger(id) && code !== undefined)
-                formats.set(id, code);
-            } else if (n === 'cellXfs') inCellXfs = true;
-            else if (n === 'xf' && inCellXfs) {
-              const id = Number(attrs.get('numFmtId') ?? '0');
-              styles.push(numberKind(id, formats.get(id)));
-            }
-          },
-          (name) => {
-            if (local(name) === 'cellXfs') inCellXfs = false;
+        partEvents('styleSheet', SPREADSHEET_NS, (path, attrs) => {
+          if (path === 'styleSheet/numFmts/numFmt') {
+            const id = Number(attrs.get('numFmtId'));
+            const code = attrs.get('formatCode');
+            if (Number.isInteger(id) && code !== undefined)
+              formats.set(id, code);
+          } else if (path === 'styleSheet/cellXfs/xf') {
+            const id = Number(attrs.get('numFmtId') ?? '0');
+            styles.push(numberKind(id, formats.get(id)));
           }
-        )
+        })
       );
     }
     const result: WorkbookSheet[] = [];
     let totalCells = 0;
+    let detailBytes = 0;
+    const seenParts = new Set<string>();
     for (const spec of sheets) {
       const rel = relationships.get(spec.id);
       if (!rel || (rel.kind !== 'worksheet' && rel.kind !== 'chartsheet'))
         throw new Error('corrupt');
+      if (seenParts.has(rel.path)) throw new Error('corrupt');
+      seenParts.add(rel.path);
       if (rel.kind === 'chartsheet') {
         result.push({
           name: spec.name,
@@ -244,6 +293,7 @@ export async function parseXlsx(
           kind: 'chartsheet',
           rows: 0,
           columns: 0,
+          rowNumbers: new Uint32Array(),
           rowStart: new Uint32Array(1),
           cells: new Uint32Array(),
           numbers: new Float64Array(),
@@ -258,8 +308,10 @@ export async function parseXlsx(
           styles,
           date1904,
           remaining: XLSX_CELL_LIMIT - totalCells,
+          remainingDetailBytes: 16 * 1024 * 1024 - detailBytes,
         });
         totalCells += parsed.cellCount;
+        detailBytes += parsed.detailBytes;
         result.push(parsed.sheet);
       }
     }

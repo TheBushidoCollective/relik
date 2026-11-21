@@ -20,6 +20,7 @@ self.addEventListener('message', async (event: MessageEvent<unknown>) => {
   const transfers: Transferable[] = [];
   for (const sheet of result.workbook.sheets) {
     transfers.push(
+      sheet.rowNumbers.buffer as ArrayBuffer,
       sheet.rowStart.buffer as ArrayBuffer,
       sheet.cells.buffer as ArrayBuffer,
       sheet.numbers.buffer as ArrayBuffer

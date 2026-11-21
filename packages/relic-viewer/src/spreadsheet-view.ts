@@ -4,6 +4,7 @@ import type {
   WorkbookResult,
   WorkbookSheet,
 } from '@relic/format/xlsx';
+import { worksheetRowIndex } from '@relic/format/xlsx';
 import { drawnColumnCount, markFits, mountDataTable } from './data-table.ts';
 import {
   registerStructuredHandle,
@@ -11,26 +12,73 @@ import {
   type StructuredViewHandle,
 } from './structured-view-bridge.ts';
 import type { TableSource } from './table-source.ts';
+import { visibleLabel } from './visible-label.ts';
+import { DOCUMENT_RENDER_LIMIT_BYTES } from './content.ts';
 import type { ReadyView } from './viewer.ts';
 
-function sourceFor(sheet: WorkbookSheet): TableSource {
+const EMPTY_COLUMNS: readonly number[] = [];
+
+export function sourceFor(sheet: WorkbookSheet): TableSource {
   function index(row: number, column: number): number {
-    let low = sheet.rowStart[row] ?? 0,
-      high = sheet.rowStart[row + 1] ?? low;
+    const rowIndex = worksheetRowIndex(sheet, row);
+    if (rowIndex < 0) return -1;
+    let low = sheet.rowStart[rowIndex] ?? 0,
+      high = sheet.rowStart[rowIndex + 1] ?? low;
     while (low < high) {
       const mid = (low + high) >>> 1;
       if (sheet.cells[mid * 3]! < column) low = mid + 1;
       else high = mid;
     }
-    return low < (sheet.rowStart[row + 1] ?? 0) &&
+    return low < (sheet.rowStart[rowIndex + 1] ?? 0) &&
       sheet.cells[low * 3] === column
       ? low
       : -1;
   }
+  let numericKinds: { all: Uint8Array; body: Uint8Array } | undefined;
   return {
+    numericColumn(column, headerRow) {
+      if (!numericKinds) {
+        const all = new Uint8Array(sheet.columns);
+        const body = new Uint8Array(sheet.columns);
+        for (let r = 0; r < sheet.rowNumbers.length; r++) {
+          for (let i = sheet.rowStart[r]!; i < sheet.rowStart[r + 1]!; i++) {
+            const col = sheet.cells[i * 3]!;
+            if ((sheet.texts[sheet.cells[i * 3 + 1]!] ?? '') === '') continue;
+            const bit = Number.isNaN(sheet.numbers[i]!) ? 2 : 1;
+            all[col] = all[col]! | bit;
+            if (sheet.rowNumbers[r] !== 0) body[col] = body[col]! | bit;
+          }
+        }
+        numericKinds = { all, body };
+      }
+      return (
+        (headerRow ? numericKinds.body[column] : numericKinds.all[column]) === 1
+      );
+    },
+    matchingColumns(record, needle, drawn, limit) {
+      const r = worksheetRowIndex(sheet, record);
+      if (r < 0) return EMPTY_COLUMNS;
+      const matches: number[] = [];
+      for (
+        let i = sheet.rowStart[r]!;
+        i < sheet.rowStart[r + 1]! && matches.length < limit;
+        i++
+      ) {
+        const col = sheet.cells[i * 3]!;
+        if (col >= drawn) break;
+        if (
+          (sheet.texts[sheet.cells[i * 3 + 1]!] ?? '')
+            .toLowerCase()
+            .includes(needle)
+        )
+          matches.push(col);
+      }
+      return matches;
+    },
     records: sheet.rows,
     columns: sheet.columns,
     summary: 'Spreadsheet',
+    commentable: canComment(sheet.name),
     sheet: sheet.name,
     text(row, col) {
       const i = index(row, col);
@@ -90,6 +138,15 @@ export function renderSpreadsheetRoute(
   const worker = new Worker('/assets/spreadsheet-parse-worker.js', {
     type: 'module',
   });
+  let finished = false;
+  const observer = new MutationObserver(() => {
+    if (!root.isConnected) handle.dispose();
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
+  const timeout = window.setTimeout(
+    () => fail('This spreadsheet took too long to load.'),
+    30_000
+  );
   const draw = (index: number): void => {
     if (!workbook || !workbook.sheets[index]) return;
     const sheet = workbook.sheets[index]!;
@@ -117,8 +174,10 @@ export function renderSpreadsheetRoute(
       sheet.kind === 'chartsheet' ||
       sheet.rows === 0 ||
       sheet.columns === 0
-    )
+    ) {
+      root.dispatchEvent(new CustomEvent('relic-repaint', { bubbles: true }));
       return;
+    }
     part = mountDataTable(table, sourceFor(sheet), { filename: view.filename });
     for (const [id, anchor] of marks)
       if (anchor.kind === 'cell' && anchor.sheet === sheet.name)
@@ -176,6 +235,8 @@ export function renderSpreadsheetRoute(
     dispose() {
       if (disposed) return;
       disposed = true;
+      observer.disconnect();
+      window.clearTimeout(timeout);
       worker.terminate();
       part?.dispose();
       marks.clear();
@@ -184,7 +245,10 @@ export function renderSpreadsheetRoute(
   };
   registerStructuredHandle(root, handle);
   const fail = (reason: string): void => {
-    if (disposed) return;
+    if (disposed || finished) return;
+    finished = true;
+    window.clearTimeout(timeout);
+    worker.terminate();
     message.textContent = reason;
     const button = document.createElement('button');
     button.type = 'button';
@@ -198,7 +262,7 @@ export function renderSpreadsheetRoute(
   };
   worker.onerror = () => fail('This spreadsheet could not be shown.');
   worker.onmessage = (event: MessageEvent<WorkbookResult>) => {
-    if (disposed) return;
+    if (disposed || finished) return;
     const result = event.data;
     if (!result.ok) {
       fail(
@@ -208,6 +272,9 @@ export function renderSpreadsheetRoute(
       );
       return;
     }
+    finished = true;
+    window.clearTimeout(timeout);
+    worker.terminate();
     workbook = result.workbook;
     const placeholder = document.createElement('option');
     placeholder.value = '';
@@ -219,13 +286,13 @@ export function renderSpreadsheetRoute(
         button.type = 'button';
         button.setAttribute('role', 'tab');
         button.dataset['index'] = String(index);
-        button.textContent = sheet.name;
+        button.textContent = visibleLabel(sheet.name);
         button.addEventListener('click', () => draw(index));
         tabs.append(button);
       } else {
         const option = document.createElement('option');
         option.value = String(index);
-        option.textContent = sheet.name;
+        option.textContent = visibleLabel(sheet.name);
         hidden.append(option);
       }
     });
@@ -242,11 +309,20 @@ export function renderSpreadsheetRoute(
       new CustomEvent('relic:render-state', { bubbles: true, detail: 'ready' })
     );
   };
-  void view.content.read(0, view.content.size).then(
+  void view.content.readWhole(DOCUMENT_RENDER_LIMIT_BYTES).then(
     (bytes) => {
-      if (disposed) return;
-      const copy = new Uint8Array(bytes);
-      worker.postMessage({ type: 'parse', bytes: copy.buffer }, [copy.buffer]);
+      if (disposed || finished) return;
+      if (!bytes) {
+        fail('This spreadsheet is too large to show.');
+        return;
+      }
+      const buffer =
+        bytes.buffer instanceof ArrayBuffer &&
+        bytes.byteOffset === 0 &&
+        bytes.byteLength === bytes.buffer.byteLength
+          ? bytes.buffer
+          : new Uint8Array(bytes).buffer;
+      worker.postMessage({ type: 'parse', bytes: buffer }, [buffer]);
     },
     () => fail('This spreadsheet could not be read.')
   );

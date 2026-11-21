@@ -281,6 +281,17 @@ expanded. A workbook is limited to 256 sheets, 5,000,000 cells and 2,000,000
 shared strings. A sheet exceeding 600,000 rows is refused individually.
 Invalid or oversized files can be downloaded.
 
+Rows are indexed sparsely. A formula is limited to 65,536 characters, and
+distinct formula detail is limited to 16 MiB per workbook. Shared-formula
+followers identify their master formula rather than presenting an inferred
+formula as the follower's own. Unsupported time-only and elapsed-time formats
+show their saved numbers instead of calendar dates.
+
+Copying a range quotes fields with tabs, line breaks, or quotes and prefixes
+formula-like values. Single-cell Copy deliberately remains raw. Pasting that
+text into another spreadsheet can cause the receiving application to interpret
+it as a formula.
+
 ## 4. The sandbox boundary
 
 **Direction is forced, not chosen.** The main origin fetches, decrypts, and posts plaintext to a static shim whose own code never touches ciphertext and never makes a request. The alternative shape, where the usercontent origin fetches and the parent posts it the key, is what somebody reaches for to avoid moving large payloads across a boundary, and it requires the key to cross. That must never happen.

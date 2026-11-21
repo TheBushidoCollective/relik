@@ -1,7 +1,6 @@
 import type { CellDetail, WorkbookSheet } from './xlsx.ts';
 import { tokenizeSpreadsheetXml } from './xlsx-xml.ts';
 import { displayNumber, type NumberKind } from './xlsx-number.ts';
-import { translateSharedFormula } from './xlsx-formula.ts';
 
 interface SheetOptions {
   name: string;
@@ -10,6 +9,7 @@ interface SheetOptions {
   styles: NumberKind[];
   date1904: boolean;
   remaining: number;
+  remainingDetailBytes?: number;
 }
 interface Cell {
   column: number;
@@ -31,27 +31,43 @@ function coordinate(ref: string): { row: number; column: number } {
   if (col > 16384 || row > 1048576) throw new Error('corrupt');
   return { row, column: col - 1 };
 }
+function cellReference(row: number, column: number): string {
+  let n = column + 1;
+  let letters = '';
+  while (n > 0) {
+    n--;
+    letters = String.fromCharCode(65 + (n % 26)) + letters;
+    n = Math.floor(n / 26);
+  }
+  return `${letters}${row}`;
+}
 
 /** Read one sheet at a time, retaining only typed-array cells and interned text. */
 export function parseWorksheet(
   xml: string,
   options: SheetOptions
-): { sheet: WorkbookSheet; cellCount: number } {
+): { sheet: WorkbookSheet; cellCount: number; detailBytes: number } {
   let capacity = 256,
     count = 0,
     rows = 0,
     columns = 0,
     row = 0,
     lastColumn = -1,
-    filledRow = 0;
+    populatedRows = 0,
+    rowFirst = 0;
   let cells = new Uint32Array(capacity * 3),
     numbers = new Float64Array(capacity);
-  const starts = new Uint32Array(600001);
+  let rowCapacity = 256;
+  let rowNumbers = new Uint32Array(rowCapacity);
+  let starts = new Uint32Array(rowCapacity + 1);
+  const path: string[] = [];
   const texts: string[] = [],
     textIndex = new Map<string, number>();
   const details: CellDetail[] = [],
     detailIndex = new Map<string, number>();
   const masters = new Map<string, { formula: string; ref: string }>();
+  const sharedDetails = new Map<string, number>();
+  let detailBytes = 0;
   let current: Cell | undefined,
     capture: 'v' | 't' | 'f' | undefined,
     refused = false;
@@ -68,6 +84,9 @@ export function parseWorksheet(
       old = detailIndex.get(key);
     if (old !== undefined) return old + 1;
     const n = details.length;
+    detailBytes += key.length * 2;
+    if (detailBytes > (options.remainingDetailBytes ?? 16 * 1024 * 1024))
+      throw new Error('too-large');
     details.push(value);
     detailIndex.set(key, n);
     return n + 1;
@@ -104,8 +123,9 @@ export function parseWorksheet(
       text = cell.value;
       type = cell.type === 'd' ? 'date' : 'text';
     } else if (cell.type === 'b') {
-      if (cell.value !== '0' && cell.value !== '1') throw new Error('corrupt');
-      text = cell.value === '1' ? 'TRUE' : 'FALSE';
+      if (cell.value !== '' && cell.value !== '0' && cell.value !== '1')
+        throw new Error('corrupt');
+      text = cell.value === '' ? '' : cell.value === '1' ? 'TRUE' : 'FALSE';
       type = 'boolean';
     } else if (cell.type === 'e') {
       text = cell.value;
@@ -120,36 +140,48 @@ export function parseWorksheet(
         type = 'number';
       }
     } else throw new Error('corrupt');
-    let formula = cell.formula || undefined,
-      sharedFrom: string | undefined;
+    let formula = cell.formula || undefined;
+    let detailId: number | undefined;
     if (cell.formulaKind === 'shared' && cell.sharedId !== undefined) {
-      if (formula) masters.set(cell.sharedId, { formula, ref: cell.reference });
-      else {
+      if (formula) {
+        masters.set(cell.sharedId, { formula, ref: cell.reference });
+      } else {
         const master = masters.get(cell.sharedId);
         if (!master) throw new Error('corrupt');
-        formula = translateSharedFormula(
-          master.formula,
-          master.ref,
-          cell.reference
-        );
-        sharedFrom = master.ref;
+        const key = `${cell.sharedId}:${type}`;
+        detailId = sharedDetails.get(key);
+        if (detailId === undefined) {
+          detailId = detail({
+            type,
+            formula: master.formula,
+            sharedFrom: master.ref,
+          });
+          sharedDetails.set(key, detailId);
+        }
       }
     }
     const i = count - 1;
     cells[i * 3] = cell.column;
     cells[i * 3 + 1] = intern(text);
-    cells[i * 3 + 2] = detail({
-      type,
-      ...(formula ? { formula } : {}),
-      ...(sharedFrom ? { sharedFrom } : {}),
-    });
+    cells[i * 3 + 2] =
+      detailId ?? detail({ type, ...(formula ? { formula } : {}) });
     numbers[i] = numeric;
     current = undefined;
   };
   tokenizeSpreadsheetXml(xml, {
-    start(name, attrs) {
-      const n = name.slice(name.lastIndexOf(':') + 1);
-      if (n === 'row') {
+    start(name, attrs, namespaces) {
+      const split = name.indexOf(':');
+      const prefix = split < 0 ? '' : name.slice(0, split);
+      const uri = namespaces.get(prefix);
+      if (prefix && uri === undefined) throw new Error('corrupt');
+      const local = split < 0 ? name : name.slice(split + 1);
+      const allowed =
+        uri === 'http://schemas.openxmlformats.org/spreadsheetml/2006/main' ||
+        uri === 'http://purl.oclc.org/ooxml/spreadsheetml/main';
+      const n = allowed ? local : `!${local}`;
+      path.push(n);
+      if (path.length === 1 && n !== 'worksheet') throw new Error('corrupt');
+      if (n === 'row' && path.join('/') === 'worksheet/sheetData/row') {
         const next = attrs.has('r') ? Number(attrs.get('r')) : row + 1;
         if (!Number.isInteger(next) || next <= row || next > 1048576)
           throw new Error('corrupt');
@@ -157,9 +189,9 @@ export function parseWorksheet(
         rows = Math.max(rows, row);
         lastColumn = -1;
         if (row > 600000) refused = true;
-        if (!refused) while (filledRow < row - 1) starts[++filledRow] = count;
-      } else if (n === 'c') {
-        if (current || row === 0) throw new Error('corrupt');
+        rowFirst = count;
+      } else if (n === 'c' && path.join('/') === 'worksheet/sheetData/row/c') {
+        if (current) throw new Error('corrupt');
         const ref = attrs.get('r') ?? '';
         const pos = ref ? coordinate(ref) : { row, column: lastColumn + 1 };
         if (pos.row !== row || pos.column <= lastColumn || pos.column >= 16384)
@@ -175,9 +207,16 @@ export function parseWorksheet(
           value: '',
           inline: '',
           formula: '',
-          reference: ref,
+          reference: ref || cellReference(row, pos.column),
         };
-      } else if (current && (n === 'v' || n === 't' || n === 'f')) {
+      } else if (
+        current &&
+        (((n === 'v' || n === 'f') &&
+          path.join('/') === `worksheet/sheetData/row/c/${n}`) ||
+          (n === 't' &&
+            (path.join('/') === 'worksheet/sheetData/row/c/is/t' ||
+              path.join('/') === 'worksheet/sheetData/row/c/is/r/t')))
+      ) {
         capture = n;
         if (n === 'f') {
           current.formulaKind = attrs.get('t');
@@ -187,21 +226,45 @@ export function parseWorksheet(
     },
     end(name) {
       const n = name.slice(name.lastIndexOf(':') + 1);
-      if (n === 'v' || n === 't' || n === 'f') capture = undefined;
-      else if (n === 'c') finishCell();
-      else if (n === 'row' && !refused) starts[++filledRow] = count;
+      const joined = path.join('/');
+      if ((n === 'v' || n === 't' || n === 'f') && capture === n)
+        capture = undefined;
+      else if (joined === 'worksheet/sheetData/row/c') finishCell();
+      else if (
+        joined === 'worksheet/sheetData/row' &&
+        !refused &&
+        count > rowFirst
+      ) {
+        if (populatedRows === rowCapacity) {
+          rowCapacity *= 2;
+          const nextRows = new Uint32Array(rowCapacity);
+          nextRows.set(rowNumbers);
+          rowNumbers = nextRows;
+          const nextStarts = new Uint32Array(rowCapacity + 1);
+          nextStarts.set(starts);
+          starts = nextStarts;
+        }
+        rowNumbers[populatedRows] = row - 1;
+        starts[++populatedRows] = count;
+      }
+      path.pop();
     },
     text(value) {
       if (!current) return;
       if (capture === 'v') current.value += value;
       else if (capture === 't') current.inline += value;
-      else if (capture === 'f') current.formula += value;
+      else if (capture === 'f') {
+        if (current.formula.length + value.length > 65_536)
+          throw new Error('too-large');
+        current.formula += value;
+      }
     },
   });
   if (current) throw new Error('corrupt');
   if (refused)
     return {
       cellCount: count,
+      detailBytes: 0,
       sheet: {
         name: options.name,
         state: options.state,
@@ -209,6 +272,7 @@ export function parseWorksheet(
         rows,
         columns,
         refused: 'too-large',
+        rowNumbers: new Uint32Array(),
         rowStart: new Uint32Array(1),
         cells: new Uint32Array(),
         numbers: new Float64Array(),
@@ -218,13 +282,15 @@ export function parseWorksheet(
     };
   return {
     cellCount: count,
+    detailBytes,
     sheet: {
       name: options.name,
       state: options.state,
       kind: 'worksheet',
       rows,
       columns,
-      rowStart: starts.slice(0, rows + 1),
+      rowNumbers: rowNumbers.slice(0, populatedRows),
+      rowStart: starts.slice(0, populatedRows + 1),
       cells: cells.slice(0, count * 3),
       numbers: numbers.slice(0, count),
       texts,

@@ -150,6 +150,7 @@ export function isNumericColumn(
   column: number,
   headerRow: boolean
 ): boolean {
+  if (table.numericColumn) return table.numericColumn(column, headerRow);
   let seen = false;
   for (let record = headerRow ? 1 : 0; record < table.records; record++) {
     const value = table.text(record, column);
@@ -292,6 +293,17 @@ export function findCells(
   const hits: CellRef[] = [];
   for (let display = 0; display < model.records; display++) {
     const record = recordAt(model, display);
+    if (table.matchingColumns) {
+      for (const column of table.matchingColumns(
+        record,
+        needle,
+        drawn,
+        FIND_LIMIT - hits.length
+      ))
+        hits.push({ record, column });
+      if (hits.length >= FIND_LIMIT) return hits;
+      continue;
+    }
     for (let column = 0; column < drawn; column++) {
       if (table.text(record, column).toLowerCase().includes(needle)) {
         hits.push({ record, column });
@@ -310,10 +322,14 @@ export function rectText(table: TableSource, rect: SelectionRect): string {
     const cells: string[] = [];
     for (let column = rect.c0; column <= rect.c1; column++) {
       const text = table.text(record, column);
+      if (!range) {
+        cells.push(text);
+        continue;
+      }
+      const guarded =
+        /^[=+\-@]/.test(text) && !isNumericText(text) ? `'${text}` : text;
       cells.push(
-        range && /^[=+\-@]/.test(text) && !isNumericText(text)
-          ? `'${text}`
-          : text
+        /[\t\r\n"]/.test(guarded) ? `"${guarded.replace(/"/g, '""')}"` : guarded
       );
     }
     rows.push(cells.join('\t'));
@@ -700,14 +716,16 @@ export function mountDataTable(
         indicator.dataset['dir'] = sort?.direction ?? 'asc';
         cell.append(indicator);
       }
-      const commentButton = element('button', 'dt-hc-comment');
-      commentButton.type = 'button';
-      commentButton.setAttribute(
-        'aria-label',
-        `Comment on column ${columnLetters(column + 1)}`
-      );
-      commentButton.title = `Comment on column ${columnLetters(column + 1)}`;
-      cell.append(commentButton);
+      if (table.commentable !== false) {
+        const commentButton = element('button', 'dt-hc-comment');
+        commentButton.type = 'button';
+        commentButton.setAttribute(
+          'aria-label',
+          `Comment on column ${columnLetters(column + 1)}`
+        );
+        commentButton.title = `Comment on column ${columnLetters(column + 1)}`;
+        cell.append(commentButton);
+      }
     } else if (value === '') {
       cell.append(element('span', 'dt-text dt-blank', 'blank'));
     } else {
@@ -834,7 +852,7 @@ export function mountDataTable(
             'dt-value',
             (value === '' ? '(blank)' : displayText(value)) +
               (detail?.formula
-                ? `\nFormula: ${displayText(detail.formula)}`
+                ? `\n${detail.sharedFrom ? 'Shared master formula' : 'Formula'}: ${displayText(detail.formula)}`
                 : '') +
               (detail?.sharedFrom ? `\nShared from: ${detail.sharedFrom}` : '')
           )
@@ -1021,6 +1039,7 @@ export function mountDataTable(
       if (!(event.target instanceof Element)) return;
       const comment = event.target.closest<HTMLElement>('.dt-hc-comment');
       if (comment === null) return;
+      if (table.commentable === false) return;
       event.stopPropagation();
       const column = Number(
         comment.closest<HTMLElement>('.dt-hcell')?.dataset['c']
