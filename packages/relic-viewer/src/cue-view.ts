@@ -23,6 +23,13 @@ import {
 } from '@relic/format/subtitles';
 import { isInvisible } from '@relic/format/structured-text';
 import { subtitleClock } from './annotate-cue.ts';
+import {
+  cueSourceSegments,
+  decodeCueText,
+  encodeCueText,
+} from './cue-suggest.ts';
+import { registerSuggestionSurface } from './suggestion-surface.ts';
+import type { SourceSegment } from './markdown-source.ts';
 import type {
   StructuredMount,
   StructuredPart,
@@ -90,8 +97,9 @@ function commentIcon(): SVGSVGElement {
 }
 
 /** A run of text as nodes: underline, then italic, then bold, each a plain element. */
-function segmentNode(segment: SubtitleSegment): Node {
-  let node: Node = document.createTextNode(visibleText(segment.text));
+function segmentNode(segment: SubtitleSegment, contents?: Node): Node {
+  let node: Node =
+    contents ?? document.createTextNode(visibleText(segment.text));
   if (segment.underline) {
     const span = el('span', 'u');
     span.append(node);
@@ -186,6 +194,14 @@ function drawCues(mount: StructuredMount, file: SubtitleFile): StructuredPart {
   const speakers = new Set<string>();
   let duration = 0;
   let chosen: CueRow | undefined;
+  const source =
+    mount.source.charCodeAt(0) === 0xfeff
+      ? mount.source.slice(1)
+      : mount.source;
+  const mappedSegments: SourceSegment[] = [];
+  const editableBlocks = new Set<number>();
+  const cueByBlock = new Map<number, SubtitleCue>();
+  const redraw: (() => void)[] = [];
 
   const density = el('div', 'cues-density');
   density.setAttribute('aria-hidden', 'true');
@@ -213,7 +229,46 @@ function drawCues(mount: StructuredMount, file: SubtitleFile): StructuredPart {
         speakers.add(entry.speaker);
         text.append(el('span', 'cue-speaker', visibleText(entry.speaker)));
       }
-      for (const segment of entry.segments) text.append(segmentNode(segment));
+      const content = el('span', 'cue-content');
+      const pieces = cueSourceSegments(source, entry);
+      const editable =
+        !entry.truncated &&
+        pieces.map((piece) => piece.text).join('') === entry.text &&
+        visibleText(entry.text) === entry.text;
+      const first = mappedSegments.length;
+      if (editable) {
+        mappedSegments.push(...pieces);
+        cueByBlock.set(entry.index, entry);
+        editableBlocks.add(entry.index);
+      } else {
+        content.setAttribute('contenteditable', 'false');
+      }
+      const drawContent = (): void => {
+        content.replaceChildren();
+        if (!editable) {
+          for (const segment of entry.segments)
+            content.append(segmentNode(segment));
+          return;
+        }
+        let piece = 0;
+        for (const segment of entry.segments) {
+          const holder = doc.createDocumentFragment();
+          let remaining = segment.text.length;
+          while (remaining > 0 && piece < pieces.length) {
+            const item = pieces[piece]!;
+            const span = el('span');
+            span.dataset['seg'] = String(first + piece);
+            span.textContent = item.text;
+            holder.append(span);
+            remaining -= item.text.length;
+            piece++;
+          }
+          content.append(segmentNode(segment, holder));
+        }
+      };
+      drawContent();
+      redraw.push(drawContent);
+      text.append(content);
       const add = el('button', 'cm-add');
       add.type = 'button';
       add.title = `Comment on cue ${entry.index}`;
@@ -274,6 +329,84 @@ function drawCues(mount: StructuredMount, file: SubtitleFile): StructuredPart {
     notices.push(el('p', 'cues-notice', skippedNotice(file.skipped)));
 
   root.replaceChildren(bar, ...notices, density, list);
+  const unregister = registerSuggestionSurface(root, {
+    root: list,
+    segments: () => mappedSegments,
+    blockKind: () => 'cue',
+    editable: (block) =>
+      editableBlocks.has(block)
+        ? true
+        : {
+            kind: 'refused',
+            code: 'not-editable',
+            message: 'This cue cannot be edited safely.',
+          },
+    acceptsSelection: (node) => {
+      const element =
+        node.nodeType === 1 ? (node as Element) : node.parentElement;
+      const content = element?.closest('.cue-content');
+      return content &&
+        list.contains(content) &&
+        content.getAttribute('contenteditable') !== 'false'
+        ? true
+        : {
+            kind: 'refused',
+            code: 'not-editable',
+            message: 'Select editable cue text.',
+          };
+    },
+    encode: (block, text, start, end) => {
+      const cue = cueByBlock.get(block);
+      const first = cue?.textSpans[0];
+      const last = cue?.textSpans.at(-1);
+      if (!first || !last || start < first.start || end > last.end) {
+        return {
+          ok: false,
+          refusal: {
+            kind: 'refused',
+            code: 'not-editable',
+            message: 'This cue cannot be edited safely.',
+          },
+        };
+      }
+      const result = encodeCueText(
+        file.format,
+        text,
+        source.slice(first.start, start),
+        source.slice(end, last.end)
+      );
+      return typeof result === 'string'
+        ? { ok: true, source: result }
+        : { ok: false, refusal: result };
+    },
+    decode: (_block, text) => decodeCueText(file.format, text),
+    repaint: () => {
+      for (const draw of redraw) draw();
+    },
+  });
+  list.addEventListener(
+    'beforeinput',
+    (event) => {
+      const selection = doc.getSelection();
+      const anchor = selection?.anchorNode;
+      const focus = selection?.focusNode;
+      const start = (
+        anchor?.nodeType === 1 ? (anchor as Element) : anchor?.parentElement
+      )?.closest('.cue-content');
+      const end = (
+        focus?.nodeType === 1 ? (focus as Element) : focus?.parentElement
+      )?.closest('.cue-content');
+      if (
+        !start ||
+        start !== end ||
+        start.getAttribute('contenteditable') === 'false'
+      ) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      }
+    },
+    { capture: true, signal }
+  );
 
   const visibleRows = (): HTMLLIElement[] =>
     allRows.filter((row) => !row.hidden);
@@ -504,7 +637,10 @@ function drawCues(mount: StructuredMount, file: SubtitleFile): StructuredPart {
     clearMarks,
     selectionAnchor,
     reveal,
-    dispose: () => controller.abort(),
+    dispose: () => {
+      unregister();
+      controller.abort();
+    },
   };
 }
 
