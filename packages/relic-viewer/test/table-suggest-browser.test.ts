@@ -200,6 +200,14 @@ async function exercise(
     !unsafe.textContent?.includes('\\u{200F}')
   )
     throw new Error('invisible suggestion was not escaped in the grid');
+  const unsafeEntry = entries.find((entry) => entry.id === 'unsafe');
+  if (!unsafeEntry) throw new Error('missing unsafe entry');
+  const unsafeCard = controller.card(unsafeEntry);
+  if (
+    unsafeCard?.textContent?.includes('\u200f') ||
+    !unsafeCard?.textContent?.includes('[U+200F]')
+  )
+    throw new Error('invisible suggestion was not escaped in its card');
   unsafe.dispatchEvent(
     new MouseEvent('mousedown', { bubbles: true, button: 0 })
   );

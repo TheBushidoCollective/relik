@@ -1,5 +1,6 @@
 import { suggestionSourceFor } from '@relic/format/suggestions';
 import type { CommentPlaintext } from '@relic/format';
+import { escapeInvisible } from '@relic/format/structured-text';
 import type { CommentCipher, CommentEntry, SessionState } from './comments.ts';
 import type { ReadyView, ViewerDeps } from './viewer.ts';
 import type { SuggestCommit, SuggestDraft } from './suggest-draft.ts';
@@ -965,6 +966,13 @@ export function mountSuggestionController(
       const found = views.byId.get(entry.id);
       if (!found) return null;
       const card = renderSuggestionCard(found, views, doc, kind);
+      if (host.querySelector('.structured-table')) {
+        for (const part of card.querySelectorAll<HTMLElement>(
+          '.sg-del, .sg-ins'
+        )) {
+          part.textContent = escapeInvisible(part.textContent ?? '');
+        }
+      }
       card.addEventListener('click', (event) => {
         if (!(event.target instanceof Element)) return;
         const target = event.target.closest<HTMLElement>('[data-sg-open]');
