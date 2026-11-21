@@ -56,6 +56,14 @@ function canComment(name: string): boolean {
   }
 }
 
+/** Handles a hidden-sheet menu selection; the placeholder selects nothing. */
+export function selectHiddenSheet(
+  value: string,
+  draw: (index: number) => void
+): void {
+  if (value !== '') draw(Number(value));
+}
+
 /** Load the workbook in a worker and attach the existing structured comment API. */
 export function renderSpreadsheetRoute(
   root: HTMLElement,
@@ -222,9 +230,9 @@ export function renderSpreadsheetRoute(
       }
     });
     hidden.hidden = hidden.options.length <= 1;
-    hidden.addEventListener('change', () => {
-      if (hidden.value !== '') draw(Number(hidden.value));
-    });
+    hidden.addEventListener('change', () =>
+      selectHiddenSheet(hidden.value, draw)
+    );
     const first = workbook.sheets.findIndex(
       (sheet) => sheet.state === 'visible'
     );
