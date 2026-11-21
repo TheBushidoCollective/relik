@@ -1016,8 +1016,10 @@ export function mountDataTable(
     const next = event.detail as SuggestionViews;
     suggestionViews = next;
     suggestionCells = new Map();
-    for (const view of next.paint) {
-      if (view.location.status !== 'resolved') continue;
+    for (const result of next.resolved) {
+      if (result.status !== 'resolved') continue;
+      const view = next.byId.get(result.id);
+      if (!view || view.location.status !== 'resolved') continue;
       const field = tableFieldAtRange(
         table.csv,
         view.location.start,
@@ -1025,6 +1027,13 @@ export function mountDataTable(
       );
       if (field === undefined) continue;
       const changes = suggestionCells.get(field) ?? [];
+      if (
+        view.conflict &&
+        changes.some(
+          (other) => other.conflict?.defaultId === view.conflict?.defaultId
+        )
+      )
+        continue;
       changes.push(view);
       suggestionCells.set(field, changes);
     }

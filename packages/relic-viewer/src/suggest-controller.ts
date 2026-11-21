@@ -1,4 +1,5 @@
 import { suggestionSourceFor } from '@relic/format/suggestions';
+import { emptyNotebookSourceOffsets } from '@relic/format/notebook';
 import type { CommentPlaintext } from '@relic/format';
 import { escapeInvisible } from '@relic/format/structured-text';
 import type { CommentCipher, CommentEntry, SessionState } from './comments.ts';
@@ -28,6 +29,7 @@ import type {
 } from './markdown-source.ts';
 import type { LocalPresence } from './presence.ts';
 import { suggestionSurfaceFor } from './suggestion-surface.ts';
+import { placeableSuggestionPaint } from './suggestion-views.ts';
 
 export interface SuggestControllerOptions {
   readonly view: ReadyView;
@@ -260,6 +262,10 @@ export function mountSuggestionController(
         )
       : { ok: false as const, reason: 'too_large' as const };
   const source = sourceResult.ok ? sourceResult.source : '';
+  const exclusiveInsertions =
+    view.route === 'notebook' && sourceResult.ok
+      ? emptyNotebookSourceOffsets(source)
+      : undefined;
   let segments: readonly SourceSegment[] = [];
   let delimiters: readonly MarkdownDelimiterPair[] = [];
   let editor: SuggestEditor | undefined;
@@ -701,7 +707,8 @@ export function mountSuggestionController(
       rows(),
       view.version,
       currentVersion,
-      session.kind === 'verified' ? session.email : null
+      session.kind === 'verified' ? session.email : null,
+      exclusiveInsertions
     );
     host
       .querySelector('.structured-table')
@@ -735,9 +742,10 @@ export function mountSuggestionController(
       const paintedViews = surface?.covers
         ? {
             ...views!,
-            paint: views!.paint.filter(
+            paint: placeableSuggestionPaint(
+              views!,
               (item) =>
-                item.location.status !== 'resolved' ||
+                item.location.status === 'resolved' &&
                 surface?.covers?.(
                   item.location.start,
                   item.location.end,
@@ -984,7 +992,10 @@ export function mountSuggestionController(
       const found = views.byId.get(entry.id);
       if (!found) return null;
       const card = renderSuggestionCard(found, views, doc, kind);
-      if (host.querySelector('.structured-table')) {
+      if (
+        view.route === 'notebook' ||
+        host.querySelector('.structured-table')
+      ) {
         for (const part of card.querySelectorAll<HTMLElement>(
           '.sg-del, .sg-ins'
         )) {

@@ -118,6 +118,31 @@ describe('table suggestion source mapping', () => {
       ).toBe('changed');
     }
   });
+
+  test('refuses to remove a physical line from an LF quoted cell', () => {
+    const { table, cell, model } = cellModel(
+      'name,note\nAda,"first\nsecond"\n',
+      1,
+      1
+    );
+    const start = cell.segments[0]!.start;
+    const end = cell.segments[cell.segments.length - 1]!.end;
+    expect(cell.editable).toBe(true);
+    expect(
+      model.replace(start, end, 'single line', 'csv-quoted')
+    ).toMatchObject({
+      kind: 'refused',
+      code: 'newline-here',
+    });
+    expect(model.draft).toBeNull();
+    expect(encodeTableSuggestion(table, cell, 'one\ntwo', start, end)).toEqual({
+      ok: true,
+      source: 'one\ntwo',
+    });
+    expect(model.replace(start, start + 5, 'updated', 'csv-quoted').kind).toBe(
+      'changed'
+    );
+  });
   test('maps BOM, CRLF and doubled quotes to source offsets', () => {
     const table = parse(TABLE_SUGGEST_CRLF);
     const cell = tableSuggestionCell(table, 1, 1)!;

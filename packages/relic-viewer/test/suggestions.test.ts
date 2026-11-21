@@ -4,6 +4,7 @@ import type {
   SuggestionOutcome,
   SuggestionPayload,
 } from '@relic/format';
+import { emptyNotebookSourceOffsets } from '@relic/format/notebook';
 import {
   codeSegments,
   renderMarkdownWithSource,
@@ -19,6 +20,7 @@ import {
   SUGGESTION_NOT_FOUND,
   type SuggestionThreadRow,
 } from '../src/suggestions.ts';
+import { placeableSuggestionPaint } from '../src/suggestion-views.ts';
 
 // Like the other viewer unit tests, use a structural DOM stub. Browser layout
 // and event behavior are exercised by the integrating viewer path.
@@ -256,6 +258,68 @@ function mappedRoot(source: string): {
     segments: mapped.segments,
   };
 }
+
+test('chooses a placeable conflict member without losing the full thread', () => {
+  const views = buildSuggestionViews(
+    'Ada,other',
+    [textRow('cross', 'Ada,other', 'x'), textRow('cell', 'other', 'changed')],
+    1,
+    1
+  );
+  expect(views.paint.map((view) => view.row.id)).toEqual(['cross']);
+  const cellPaint = placeableSuggestionPaint(
+    views,
+    (view) => view.location.status === 'resolved' && view.location.start >= 4
+  );
+  expect(cellPaint.map((view) => view.row.id)).toEqual(['cell']);
+  expect(cellPaint[0]?.conflict?.members).toEqual(['cross', 'cell']);
+  const card = renderSuggestionCard(
+    cellPaint[0]!,
+    views,
+    documentLike
+  ) as unknown as TestNode;
+  expect(card.querySelectorAll('.card-member')).toHaveLength(2);
+});
+
+test('applied notebook preview selects one empty-cell alternative', () => {
+  const source =
+    '{"nbformat":4,"cells":[{"cell_type":"code","source":[],"outputs":[]}]}';
+  const rows = ['first', 'second'].map((id) => {
+    const row = textRow(id, '[', JSON.stringify(id), { mode: 'after' });
+    return {
+      ...row,
+      plaintext: {
+        ...row.plaintext,
+        anchor: {
+          kind: 'source' as const,
+          exact: '[',
+          prefix: '"source":',
+          suffix: '],"outputs"',
+        },
+      },
+    };
+  });
+  const views = buildSuggestionViews(
+    source,
+    rows,
+    1,
+    1,
+    null,
+    emptyNotebookSourceOffsets(source)
+  );
+  expect(views.byId.get('first')?.conflict?.members).toEqual([
+    'first',
+    'second',
+  ]);
+  const applied = renderAppliedView(
+    views,
+    'code',
+    documentLike
+  ) as unknown as TestNode;
+  expect(
+    JSON.parse(applied.querySelector('.code-body')!.textContent).cells[0].source
+  ).toEqual(['first']);
+});
 
 describe('suggestion views', () => {
   test('paints an insertion in an empty mapped segment', () => {

@@ -36,6 +36,21 @@ const normalizedSources = new WeakMap<
   { source: string; crlf: boolean }
 >();
 
+function normalizedTableSource(table: CsvTable): {
+  source: string;
+  crlf: boolean;
+} {
+  let cached = normalizedSources.get(table);
+  if (!cached) {
+    cached = {
+      source: table.text.slice(table.bom ? 1 : 0).replaceAll('\r\n', '\n'),
+      crlf: table.text.includes('\r\n'),
+    };
+    normalizedSources.set(table, cached);
+  }
+  return cached;
+}
+
 /** Translate a parser offset into the BOM-free, LF-normalized suggestion source. */
 function suggestionOffset(table: CsvTable, offset: number): number {
   let positions = carriageReturns.get(table);
@@ -198,7 +213,11 @@ export function encodeTableSuggestion(
   | { readonly ok: false; readonly refusal: SuggestRefusal } {
   if (cell.editable !== true) return { ok: false, refusal: cell.editable };
   const refuse = (
-    code: 'delimiter-in-cell' | 'quote-in-cell' | 'invalid-character',
+    code:
+      | 'delimiter-in-cell'
+      | 'quote-in-cell'
+      | 'invalid-character'
+      | 'newline-here',
     message: string
   ) => ({
     ok: false as const,
@@ -213,15 +232,24 @@ export function encodeTableSuggestion(
     return refuse('delimiter-in-cell', 'A tab would split this cell.');
   const encoded =
     cell.kind === 'csv-quoted' ? text.replaceAll('"', '""') : text;
+  if (
+    encoded.includes('\n') ||
+    cell.segments.some((segment) => segment.text.includes('\n'))
+  ) {
+    const source = normalizedTableSource(table).source;
+    let removed = 0;
+    let inserted = 0;
+    for (let at = start; at < end; at++)
+      if (source.charCodeAt(at) === 10) removed++;
+    for (const character of encoded) if (character === '\n') inserted++;
+    if (removed !== inserted)
+      return refuse(
+        'newline-here',
+        'This edit would change the number of table lines.'
+      );
+  }
   if (autoDelimiter && start < 65_536) {
-    let cached = normalizedSources.get(table);
-    if (!cached) {
-      cached = {
-        source: table.text.slice(table.bom ? 1 : 0).replaceAll('\r\n', '\n'),
-        crlf: table.text.includes('\r\n'),
-      };
-      normalizedSources.set(table, cached);
-    }
+    const cached = normalizedTableSource(table);
     // Only the first 64 Ki UTF-16 positions are inspected by the sniffer.
     const candidate =
       cached.source.slice(0, start) +

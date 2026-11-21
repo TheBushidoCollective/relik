@@ -109,6 +109,17 @@ async function exercise(
   });
   entries.push({
     kind: 'open',
+    id: 'cross-cell',
+    author: 'cross@example.test',
+    version: 1,
+    createdAt: '2026-01-01T00:00:00Z',
+    body: '',
+    displayName: null,
+    anchor: { kind: 'source', exact: 'Ada,other' },
+    suggestion: { v: 1, mode: 'replace', replacement: 'cross' },
+  });
+  entries.push({
+    kind: 'open',
     id: 'long-cell',
     author: 'other@example.test',
     version: 1,
@@ -155,6 +166,18 @@ async function exercise(
     tableRoot.querySelector('[data-r="1"][data-c="1"]') as HTMLElement;
   if (!cell()?.querySelector('.sg-chip'))
     throw new Error(`conflict badge missing: ${observed}`);
+  const insideConflict = tableRoot.querySelector<HTMLElement>(
+    '[data-r="2"][data-c="1"] [data-comment-id="other-cell"]'
+  );
+  if (!insideConflict)
+    throw new Error('placeable conflict member missing from grid');
+  const otherEntry = entries.find((entry) => entry.id === 'other-cell');
+  if (!otherEntry) throw new Error('missing cell conflict entry');
+  const otherCard = controller.card(otherEntry);
+  for (const id of ['cross-cell', 'other-cell']) {
+    if (!otherCard?.querySelector(`[data-sg-open="${id}"]`))
+      throw new Error(`conflict thread omitted ${id}`);
+  }
   const marked = cell().querySelector<HTMLElement>(
     '[data-comment-id="change-0"]'
   );
@@ -341,6 +364,8 @@ async function exercise(
     new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })
   );
   if (controller.draftOpen) throw new Error('draft did not cancel');
+  // A real click arrives in a later task, after cancellation discards the prepared post.
+  await Promise.resolve();
   (tableRoot.querySelector('.dt-suggest-close') as HTMLButtonElement).click();
   const second = tableRoot.querySelector(
     '[data-r="2"][data-c="1"]'
@@ -355,10 +380,13 @@ async function exercise(
   const nextEditor = tableRoot.querySelector('.dt-suggest-text');
   if (
     !controller.suggesting ||
-    !nextEditor?.textContent?.includes('other') ||
+    !nextEditor?.hasAttribute('contenteditable') ||
+    !nextEditor.textContent?.includes('other') ||
     nextEditor === editor
   )
     throw new Error('controller did not adopt the next cell surface');
+  if (!nextEditor.querySelector('[data-sg="other-cell"]'))
+    throw new Error('placeable conflict member missing from the cell editor');
   controller.setSuggesting(false);
   const gridCell = tableRoot.querySelector(
     '[data-r="2"][data-c="0"]'

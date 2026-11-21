@@ -52,6 +52,8 @@ test('notebook source maps rendered cells but refuses output selections', async 
       const segments = surface.segments(source);
       const smile = segments.find(s => s.text === '☺');
       if (!smile || smile.kind !== 'escape' || source.slice(smile.start, smile.end) !== String.raw\x60\\u263a\x60) throw Error('Unicode escape mapping: ' + JSON.stringify({smile,segments}));
+      const escapedBidi = String.fromCharCode(92) + 'u202e';
+      if (surface.covers(smile.start, smile.end, escapedBidi) || !surface.covers(smile.start, smile.end, 'safe')) throw Error('decoded invisible replacement was admitted');
       const newline = segments.find(s => s.text === '\\n');
       if (!newline || newline.kind !== 'escape') throw Error('newline escape mapping');
       if (root.querySelectorAll('[data-seg]').length !== segments.length) throw Error('segment layout');
@@ -112,9 +114,13 @@ test('notebook source maps rendered cells but refuses output selections', async 
       registerSuggestionSurface(owner,surface);
       const bar=document.createElement('div'); document.body.append(bar);
       const entries=[{kind:'open',id:'metadata-edit',author:'reader@example.test',version:1,createdAt:'2026-01-01T00:00:00Z',body:'test',displayName:null,anchor:{kind:'source',exact:'nbformat'},suggestion:{mode:'replace',replacement:'LEAK'}},{kind:'open',id:'output-edit',author:'reader@example.test',version:1,createdAt:'2026-01-01T00:00:01Z',body:'test',displayName:null,anchor:{kind:'source',exact:'stdout'},suggestion:{mode:'replace',replacement:'OUTPUTLEAK'}},{kind:'open',id:'code-edit',author:'reader@example.test',version:1,createdAt:'2026-01-01T00:00:02Z',body:'test',displayName:null,anchor:{kind:'source',exact:'print('},suggestion:{mode:'replace',replacement:'VALID'}}];
+      entries.push({kind:'open',id:'bidi-edit',author:'reader@example.test',version:1,createdAt:'2026-01-01T00:00:03Z',body:'test',displayName:null,anchor:{kind:'source',exact:'hi'},suggestion:{mode:'replace',replacement:escapedBidi}});
       const controller=mountSuggestionController({view:{route:'notebook',filename:'test.ipynb',version:1,currentVersion:1,document:{bytes:new TextEncoder().encode(source),truncated:false}},host,bar,relicId:'test',deps:{serviceOrigin:location.origin,fetch},session:()=>({kind:'verified',email:'reader@example.test'}),cipher:()=>({seal:async()=>'',open:async()=>({})}),entries:()=>entries,displayName:()=>null,refresh:async()=>{},readCurrentVersion:async()=>1,repaint(){},signIn(){},open(){}});
       controller.repaint(()=>{});
       if (root.textContent.includes('LEAK') || !root.textContent.includes('VALID')) throw Error('metadata painted or code suggestion missing');
+      if (root.textContent.includes(String.fromCharCode(0x202e))) throw Error('decoded bidi edit painted inline');
+      const bidiCard=controller.card(entries[entries.length-1]);
+      if (!bidiCard?.textContent.includes(escapedBidi) || entries[entries.length-1].suggestion.replacement !== escapedBidi) throw Error('thread lost the raw suggestion');
       const hi=[...root.querySelectorAll('[data-seg]')].find(node=>node.textContent==='hi');
       const hiRange=document.createRange(); hiRange.selectNodeContents(hi); selection.removeAllRanges(); selection.addRange(hiRange);
       controller.setSuggesting(true,hiRange);
@@ -164,6 +170,7 @@ test('notebook source maps rendered cells but refuses output selections', async 
       if (typeof emptySurface.decode(emptySegment.block,'42')!=='string') throw Error('empty array decoder returned non-string');
       if (JSON.parse(emptySource.slice(0,emptyPos)+inserted+emptySource.slice(emptyPos)).cells[1].source[0]!=='hello \"world\"') throw Error('empty source suggestion broke JSON');
       if (emptySurface.covers(emptyPos,emptyPos,'42') || emptySurface.covers(emptyPos,emptyPos,'null') || !emptySurface.covers(emptyPos,emptyPos,inserted)) throw Error('invalid empty array replacement painted');
+      if (emptySurface.covers(emptyPos,emptyPos,'\"'+escapedBidi+'\"')) throw Error('escaped invisible empty-cell insertion admitted');
       const tabSource=JSON.stringify({nbformat:4,cells:[{cell_type:'raw',source:'alpha'+String.fromCharCode(9)+'beta'}]});
       const tabNotebook=parseNotebook(tabSource), tabRoot=document.createElement('div'); tabRoot.innerHTML='<div class=\"nb-cell\" data-cell=\"0\"><div class=\"nb-box\"><pre class=\"nb-src\"></pre></div></div>'; document.body.append(tabRoot);
       const tabSurface=notebookSuggestionSurface(tabRoot,tabNotebook.notebook), tabSegments=tabSurface.segments(tabSource);

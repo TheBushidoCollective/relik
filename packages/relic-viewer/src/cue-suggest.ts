@@ -26,7 +26,11 @@ export function encodeCueText(
           .replaceAll('>', '&gt;')
       : text;
   const result = before + encoded + after;
-  if (/\r?\n[ \t]*\r?\n/.test(result) || result.includes('-->'))
+  if (
+    result === '' ||
+    /\r?\n[ \t]*\r?\n/.test(result) ||
+    result.includes('-->')
+  )
     return {
       kind: 'refused',
       code: 'ends-cue',

@@ -324,6 +324,41 @@ export function parseNotebook(source: string): NotebookResult {
   };
 }
 
+/** A fill of an empty source array occupies the whole insertion position. */
+export function emptyNotebookSourceOffsets(
+  source: string
+): ReadonlySet<number> {
+  const parsed = parseJsonTree(source);
+  const offsets = new Set<number>();
+  if (!parsed.ok) return offsets;
+  const tree = parsed.tree;
+  const cells = member(tree, 0, 'cells');
+  const format = member(tree, 0, 'nbformat');
+  if (
+    cells === undefined ||
+    tree.kind(cells) !== 'array' ||
+    tree.childCount(cells) > NOTEBOOK_MAX_CELLS ||
+    format === undefined ||
+    tree.kind(format) !== 'number' ||
+    Number(tree.valueSource(format)) !== 4
+  )
+    return offsets;
+  for (
+    let cell = tree.firstChild(cells);
+    cell !== NONE;
+    cell = tree.nextSibling(cell)
+  ) {
+    const value = member(tree, cell, 'source');
+    if (
+      value !== undefined &&
+      tree.kind(value) === 'array' &&
+      tree.childCount(value) === 0
+    )
+      offsets.add(tree.valueStart(value) + 1);
+  }
+  return offsets;
+}
+
 function readCell(
   tree: JsonTree,
   node: number,

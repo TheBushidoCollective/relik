@@ -803,7 +803,8 @@ function selectEntry(
 async function fetchAndDecryptRelic(
   relicId: string,
   deps: PublishDeps,
-  requestedVersion?: number
+  requestedVersion?: number,
+  requireConfirmedVersion = false
 ): Promise<RawRelicFetch> {
   const privateState = await loadPrivatePublishState(relicId);
   const state =
@@ -863,6 +864,11 @@ async function fetchAndDecryptRelic(
       error: `Network error reaching relic service: ${(error as Error).message}.`,
     };
   }
+  if (requireConfirmedVersion && typeof mint.version !== 'number')
+    return {
+      ok: false,
+      error: 'The service did not confirm the requested historical revision.',
+    };
 
   const servedVersion =
     typeof mint.version === 'number' ? mint.version : requestedVersion;
@@ -927,6 +933,29 @@ async function fetchAndDecryptRelic(
     return {
       ok: false,
       error: `Failed to decrypt relic content: ${(error as Error).message}.`,
+    };
+  }
+}
+
+/** Read the filename sealed in the exact revision that received a suggestion. */
+export async function fetchRevisionFilename(
+  relicId: string,
+  deps: PublishDeps,
+  version: number,
+  entry?: string
+): Promise<{ ok: true; filename: string } | { ok: false; error: string }> {
+  try {
+    const fetched = await fetchAndDecryptRelic(relicId, deps, version, true);
+    const selected = selectEntry(fetched, entry);
+    if (!selected.ok) return selected;
+    const filename = selected.opened.envelope.entries[0]?.filename;
+    if (!filename)
+      return { ok: false, error: 'The revision has no source filename.' };
+    return { ok: true, filename };
+  } catch (error) {
+    return {
+      ok: false,
+      error: `The revision could not be inspected: ${String(error)}`,
     };
   }
 }

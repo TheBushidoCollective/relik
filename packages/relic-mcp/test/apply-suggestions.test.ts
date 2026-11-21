@@ -11,12 +11,14 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import {
   type CommentPlaintext,
+  decodeKey,
   deriveCommentKey,
   encodeKey,
   encryptComment,
+  encryptRelic,
   generateKey,
   generateRelicId,
 } from '@relic/format';
@@ -56,6 +58,7 @@ beforeEach(async () => {
     key: encodeKey(keyBytes),
     publish_token: 'fixture-token',
     version: 1,
+    filename: 'report.md',
     source: await resolveSourceIdentity(path),
   });
   rows = [];
@@ -172,6 +175,40 @@ async function call(args: Record<string, unknown>): Promise<{
   };
 }
 
+async function recordFixtureFilename(target: string): Promise<void> {
+  const state = await loadPublishState(relicId);
+  if (!state) throw new Error('missing fixture publish state');
+  await savePublishState(relicId, { ...state, filename: basename(target) });
+}
+
+async function deferredCueFixture() {
+  const target = join(scratch, 'captions.srt');
+  const original =
+    '\ufeff1\r\n00:00:01,000 --> 00:00:02,000\r\nalpha\r\n\r\n' +
+    '2\r\n00:00:03,000 --> 00:00:04,000\r\nomega\r\n';
+  await writeFile(target, original);
+  const state = await loadPublishState(relicId);
+  if (!state) throw new Error('missing fixture publish state');
+  await savePublishState(relicId, {
+    ...state,
+    version: 2,
+    filename: 'captions.txt',
+    source: await resolveSourceIdentity(target),
+  });
+  await addSuggestion('old-cue', 'alpha', 'BETA');
+  await addRow(
+    'deferred',
+    {
+      body: 'Apply later',
+      display_name: null,
+      addresses: 'old-cue',
+      suggestion_outcome: 'deferred',
+    },
+    { author: 'publisher', version: 2 }
+  );
+  return { target, original, keyBytes: decodeKey(state.key) };
+}
+
 describe('relic_apply_suggestions', () => {
   test('lists exactly 16 tools and requires explicit ids', async () => {
     const response = await handleMessage(
@@ -279,6 +316,7 @@ describe('relic_apply_suggestions', () => {
   test('applies a multiline insertion to code with source line numbers', async () => {
     const code = join(scratch, 'program.ts');
     await writeFile(code, 'const a = 1;\nconst b = 2;\n');
+    await recordFixtureFilename(code);
     await addRow('insertion', {
       body: 'insert a declaration',
       display_name: null,
@@ -385,6 +423,7 @@ describe('relic_apply_suggestions', () => {
     async (_, filename, original, replacement) => {
       const target = join(scratch, filename);
       await writeFile(target, original);
+      await recordFixtureFilename(target);
       await addSuggestion('chosen', 'alpha', replacement);
       const args = {
         path: target,
@@ -409,6 +448,7 @@ describe('relic_apply_suggestions', () => {
     const original = '{}';
     const replacement = '{\n  "message": "hello"\n}';
     await writeFile(target, original);
+    await recordFixtureFilename(target);
     await addSuggestion('chosen', original, replacement);
     const args = {
       path: target,
@@ -429,6 +469,7 @@ describe('relic_apply_suggestions', () => {
       '{"nbformat":4,"cells":[{"cell_type":"code","id":"cell-1","source":["alpha","beta"],"metadata":{"tag":"keep"},"outputs":[{"output_type":"display_data","data":{"application/json":9007199254740993}}]}],"metadata":{"owner":"keep"}}';
     const replacement = '[\n    "ALPHA",\n    "beta"\n  ]';
     await writeFile(target, original);
+    await recordFixtureFilename(target);
     await addSuggestion('chosen', '["alpha","beta"]', replacement);
     const args = {
       path: target,
@@ -443,6 +484,178 @@ describe('relic_apply_suggestions', () => {
     expect(await readFile(target, 'utf8')).toBe(
       original.replace('["alpha","beta"]', replacement)
     );
+  });
+
+  test('treats competing empty notebook cell fills as alternatives', async () => {
+    const target = join(scratch, 'empty.ipynb');
+    const original =
+      '{"nbformat":4,"cells":[{"cell_type":"code","source":[],"outputs":[]}]}';
+    await writeFile(target, original);
+    await recordFixtureFilename(target);
+    for (const [id, replacement] of [
+      ['first', '"one"'],
+      ['second', '"two"'],
+    ] as const) {
+      await addRow(id, {
+        body: 'Fill empty source',
+        display_name: null,
+        anchor: {
+          kind: 'source',
+          exact: '[',
+          prefix: '"source":',
+          suffix: '],"outputs"',
+        },
+        suggestion: { v: 1, mode: 'after', replacement },
+      });
+    }
+    const args = { path: target, allow_source_mismatch: true };
+    for (const write of [false, true]) {
+      const refused = await call({
+        ...args,
+        accept: ['first', 'second'],
+        write,
+      });
+      expect(refused.isError).toBe(true);
+      expect(refused.structuredContent['code']).toBe('conflicting_accepts');
+      expect(await readFile(target, 'utf8')).toBe(original);
+    }
+    const preview = await call({ ...args, accept: ['first'] });
+    expect(preview.isError).toBe(false);
+    expect(await readFile(target, 'utf8')).toBe(original);
+    const written = await call({ ...args, accept: ['first'], write: true });
+    expect(written.isError).toBe(false);
+    expect(await readFile(target, 'utf8')).toBe(
+      original.replace('"source":[]', '"source":["one"]')
+    );
+  });
+
+  test('uses a deferred suggestion revision format after a display-only rename', async () => {
+    const { target, original, keyBytes } = await deferredCueFixture();
+    const container = await encryptRelic({
+      key: keyBytes,
+      filename: 'captions.srt',
+      mimetype: 'application/x-subrip',
+      content: new TextEncoder().encode(original),
+    });
+    const previousFetch = deps.fetch;
+    deps = {
+      ...deps,
+      fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input));
+        if (url.pathname.endsWith('/mint')) {
+          const body = JSON.parse(String(init?.body)) as { version?: number };
+          expect(body.version).toBe(1);
+          return Response.json({
+            url: `${SERVICE}/historical-v1`,
+            object_length: container.length,
+            version: 1,
+            current_version: 2,
+          });
+        }
+        if (url.pathname === '/historical-v1')
+          return new Response(new Blob([container as BlobPart]));
+        return previousFetch(input, init);
+      }) as typeof fetch,
+    };
+    await addSuggestion('new-text', 'omega', 'OTHER', { version: 2 });
+    const args = { path: target, accept: ['old-cue'] };
+    for (const write of [false, true]) {
+      const mixed = await call({
+        path: target,
+        accept: ['old-cue', 'new-text'],
+        write,
+      });
+      expect(mixed.isError).toBe(true);
+      expect(mixed.structuredContent['code']).toBe(
+        'suggestion_source_format_mismatch'
+      );
+      expect(await readFile(target, 'utf8')).toBe(original);
+    }
+    const preview = await call(args);
+    expect(preview.isError).toBe(false);
+    expect(preview.structuredContent['source_identity']).toBe('match');
+    expect(await readFile(target, 'utf8')).toBe(original);
+    const written = await call({ ...args, write: true });
+    expect(written.isError).toBe(false);
+    expect(written.structuredContent['before_sha256']).toBe(
+      preview.structuredContent['before_sha256']
+    );
+    expect(written.structuredContent['after_sha256']).toBe(
+      preview.structuredContent['after_sha256']
+    );
+    expect(await readFile(target, 'utf8')).toBe(
+      original.replace('alpha', 'BETA')
+    );
+  });
+
+  test('refuses a deferred edit when its historical revision cannot be read', async () => {
+    const { target, original } = await deferredCueFixture();
+    const previousFetch = deps.fetch;
+    for (const unconfirmed of [false, true]) {
+      deps = {
+        ...deps,
+        fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+          const url = new URL(String(input));
+          if (url.pathname.endsWith('/mint'))
+            return unconfirmed
+              ? Response.json({
+                  url: `${SERVICE}/unknown`,
+                  object_length: 0,
+                  current_version: 2,
+                })
+              : Response.json({ error: 'unavailable' }, { status: 410 });
+          return previousFetch(input, init);
+        }) as typeof fetch,
+      };
+      for (const write of [false, true]) {
+        const refused = await call({
+          path: target,
+          accept: ['old-cue'],
+          write,
+        });
+        expect(refused.isError).toBe(true);
+        expect(refused.structuredContent['code']).toBe(
+          'suggestion_source_format_unavailable'
+        );
+        expect(await readFile(target, 'utf8')).toBe(original);
+      }
+    }
+  });
+
+  test('does not guess a missing current revision filename from the local path', async () => {
+    const legacyId = generateRelicId();
+    const keyBytes = generateKey();
+    key = await deriveCommentKey(keyBytes);
+    await savePublishState(legacyId, {
+      key: encodeKey(keyBytes),
+      publish_token: 'fixture-token',
+      version: 1,
+      source: await resolveSourceIdentity(path),
+    });
+    await addSuggestion('chosen', 'alpha', 'ALPHA');
+    for (const write of [false, true]) {
+      const refused = await call({
+        relic_id: legacyId,
+        accept: ['chosen'],
+        write,
+      });
+      expect(refused.structuredContent['code']).toBe(
+        'suggestion_source_format_unavailable'
+      );
+      expect(await readFile(path, 'utf8')).toBe(ORIGINAL);
+    }
+  });
+
+  test('refuses a suggestion without a recorded revision', async () => {
+    await addSuggestion('missing-version', 'alpha', 'ALPHA');
+    delete rows[0]!.version;
+    for (const write of [false, true]) {
+      const refused = await call({ accept: ['missing-version'], write });
+      expect(refused.structuredContent['code']).toBe(
+        'suggestion_source_format_unavailable'
+      );
+      expect(await readFile(path, 'utf8')).toBe(ORIGINAL);
+    }
   });
 
   test.each([
@@ -859,6 +1072,7 @@ describe('relic_apply_suggestions', () => {
     async (_, filename, original, exact, replacement, check) => {
       const target = join(scratch, filename);
       await writeFile(target, original);
+      await recordFixtureFilename(target);
       await addSuggestion('damage', exact, replacement);
       for (const write of [false, true]) {
         const result = await call({
@@ -902,6 +1116,7 @@ describe('relic_apply_suggestions', () => {
           '',
         ].join(eol);
       await writeFile(target, original);
+      await recordFixtureFilename(target);
       await addSuggestion('first', 'alpha', 'A');
       await addSuggestion('second', 'middle', 'MID');
       const args = {
@@ -943,6 +1158,7 @@ describe('relic_apply_suggestions', () => {
     const target = join(scratch, 'data.vtt');
     const original = `WEBVTT\n\n00:00:01.000 --> 00:00:03.000\n${cue}\n`;
     await writeFile(target, original);
+    await recordFixtureFilename(target);
     await addSuggestion('safe', exact, replacement);
     const args = {
       path: target,
@@ -964,6 +1180,7 @@ describe('relic_apply_suggestions', () => {
     const original =
       'WEBVTT\n\n00:00:01.000 --> 00:00:03.000\n<v Speaker <00:00:01.500>alpha\n';
     await writeFile(target, original);
+    await recordFixtureFilename(target);
     await addSuggestion('safe', 'alpha', 'BETA &lt;clear&gt;');
     const args = {
       path: target,
@@ -984,6 +1201,7 @@ describe('relic_apply_suggestions', () => {
     const tag = '<00:00:01.500>';
     const original = `WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nalpha${tag}beta\n`;
     await writeFile(target, original);
+    await recordFixtureFilename(target);
     await addSuggestion('remove', tag, '');
     await addRow('move', {
       body: 'move the timestamp',
@@ -1013,6 +1231,7 @@ describe('relic_apply_suggestions', () => {
       `WEBVTT\n\nNOTE ${'x'.repeat(33_000)}GUARD\n\n` +
       '00:00:01.000 --> 00:00:03.000\nalpha\n';
     await writeFile(target, original);
+    await recordFixtureFilename(target);
     await addSuggestion('damage', 'GUARD', 'OTHER');
     for (const write of [false, true]) {
       const result = await call({
@@ -1034,6 +1253,7 @@ describe('relic_apply_suggestions', () => {
     const target = join(scratch, 'data.vtt');
     const original = 'WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nx-->y\nbeta\n';
     await writeFile(target, original);
+    await recordFixtureFilename(target);
     await addSuggestion('safe', 'beta', 'BETA');
     await addSuggestion('remove', 'x-->y', 'xy');
     await addSuggestion('add', 'beta', 'be-->ta');
@@ -1077,6 +1297,7 @@ describe('relic_apply_suggestions', () => {
         recordWidth(after.table, record)
       );
     await writeFile(target, original);
+    await recordFixtureFilename(target);
     await addSuggestion('first', 'Q1', 'Q');
     await addSuggestion('second', 'Q2', 'Q');
     for (const id of ['first', 'second']) {
@@ -1126,6 +1347,7 @@ describe('relic_apply_suggestions', () => {
     expect(normalizedBefore.table.delimiter).toBe(';');
     expect(normalizedAfter.table.delimiter).toBe(';');
     await writeFile(target, original);
+    await recordFixtureFilename(target);
     await addSuggestion('damage', 'Q1', 'Q');
     for (const write of [false, true]) {
       const result = await call({
@@ -1165,6 +1387,7 @@ describe('relic_apply_suggestions', () => {
       expect(recordWidth(incorrectlySkipped.table, 0)).toBe(2);
 
       await writeFile(target, original);
+      await recordFixtureFilename(target);
       await addSuggestion('safe', 'alpha', 'ALPHA');
       await addSuggestion('damage', `alpha${delimiter}beta`, 'alphabeta');
       for (const write of [false, true]) {
@@ -1237,6 +1460,7 @@ describe('relic_apply_suggestions', () => {
     expect(normalizedAfter.table.delimiter).toBe(';');
 
     await writeFile(target, original);
+    await recordFixtureFilename(target);
     await addSuggestion('damage', marker, 'Q');
     for (const write of [false, true]) {
       const refused = await call({
@@ -1269,6 +1493,7 @@ describe('relic_apply_suggestions', () => {
         recordWidth(after.table, record)
       );
     await writeFile(target, original);
+    await recordFixtureFilename(target);
     await addSuggestion('first', 'foo', '"foo');
     await addRow('second', {
       body: 'insert after the neighboring value',
@@ -1296,6 +1521,7 @@ describe('relic_apply_suggestions', () => {
     const target = join(scratch, 'data.csv');
     const original = 'name,value\nalpha,1\n';
     await writeFile(target, original);
+    await recordFixtureFilename(target);
     await addSuggestion('first', 'alpha', 'BETA');
     await addSuggestion('duplicate', 'alpha', 'BETA');
     const result = await call({
@@ -1327,6 +1553,7 @@ describe('relic_apply_suggestions', () => {
       throw new Error('fixture entries must be cues');
     expect([oldCue.start, oldCue.end]).toEqual([newCue.start, newCue.end]);
     await writeFile(target, original);
+    await recordFixtureFilename(target);
     await addSuggestion('recover', '~~>', '-->');
     await addSuggestion('damage', '-->', '~~>');
     for (const write of [false, true]) {
@@ -1350,6 +1577,7 @@ describe('relic_apply_suggestions', () => {
     const original =
       '{"nbformat":4,"cells":[{"cell_type":"markdown","source":["Hi 😀 there"]}]}';
     await writeFile(target, original);
+    await recordFixtureFilename(target);
     await addSuggestion('damage', '\ud83d', '');
     await addSuggestion('safe', '😀', '🤝');
     const args = { path: target, allow_source_mismatch: true };
@@ -1473,6 +1701,7 @@ describe('relic_apply_suggestions', () => {
     const original =
       '{"nbformat":4,"cells":[{"cell_type":"raw","source":null,"metadata":{"tag":"old"}},{"cell_type":"markdown","source":["alpha"]}]}';
     await writeFile(target, original);
+    await recordFixtureFilename(target);
     await addSuggestion('invalid', '"old"', '"new"');
     await addSuggestion('safe', 'alpha', 'BETA');
     const args = { path: target, allow_source_mismatch: true };
@@ -1495,6 +1724,7 @@ describe('relic_apply_suggestions', () => {
     const outputs = `${Array(200).fill('{}').join(',')}${tail}`;
     const original = `{"nbformat":4,"cells":[{"cell_type":"code","source":["alpha"],"outputs":[${outputs}]}]}`;
     await writeFile(target, original);
+    await recordFixtureFilename(target);
     await addSuggestion('damage', tail, '');
     const result = await call({
       path: target,
@@ -1530,6 +1760,8 @@ describe('relic_apply_suggestions', () => {
     async (_, filename, source, reason) => {
       const target = join(scratch, filename);
       await writeFile(target, source);
+      await recordFixtureFilename(target);
+      await addSuggestion('chosen', 'alpha', 'ALPHA');
       const result = await call({
         path: target,
         accept: ['chosen'],
@@ -1552,6 +1784,7 @@ describe('relic_apply_suggestions', () => {
       key: encodeKey(bytes),
       publish_token: 'fixture-token',
       version: 1,
+      filename: 'report.md',
     });
     await addSuggestion('chosen', 'alpha', 'ALPHA');
     const result = await call({ relic_id: legacy, accept: ['chosen'] });
@@ -1560,6 +1793,7 @@ describe('relic_apply_suggestions', () => {
 
   test('rejects CR and unsupported renderer classes', async () => {
     await writeFile(path, '# Report\r\nalpha beta\r\n');
+    await addSuggestion('chosen', 'alpha', 'ALPHA');
     const cr = await call({ accept: ['chosen'] });
     expect(cr.structuredContent).toMatchObject({
       code: 'source_not_suggestible',
@@ -1567,6 +1801,7 @@ describe('relic_apply_suggestions', () => {
     });
     const html = join(scratch, 'index.html');
     await writeFile(html, '<p>alpha</p>');
+    await recordFixtureFilename(html);
     const unsupported = await call({ path: html, accept: ['chosen'] });
     expect(unsupported.structuredContent).toMatchObject({
       code: 'suggestions_unsupported_class',
@@ -1708,7 +1943,7 @@ describe('relic_apply_suggestions', () => {
     expect(await readFile(path, 'utf8')).toBe(ORIGINAL);
   });
 
-  test('private all-version reads decrypt with the key for each row without minting', async () => {
+  test('private all-version reads decrypt rows and the selected revision with their own keys', async () => {
     const privateId = generateRelicId();
     const version1 = generateKey();
     const version2 = generateKey();
@@ -1730,6 +1965,38 @@ describe('relic_apply_suggestions', () => {
       { body: 'Seen', display_name: null, addresses: 'private' },
       { author: 'publisher', version: 2, key: key2 }
     );
+    const container = await encryptRelic({
+      key: version1,
+      filename: 'report.md',
+      mimetype: 'text/markdown',
+      content: new TextEncoder().encode(ORIGINAL),
+    });
+    const previousFetch = deps.fetch;
+    deps = {
+      ...deps,
+      fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input));
+        if (url.pathname.endsWith('/mint')) {
+          requests.push({ path: url.pathname, method: init?.method ?? 'GET' });
+          const body = JSON.parse(String(init?.body)) as {
+            version?: number;
+            publish_token?: string;
+          };
+          expect(body).toEqual({ version: 1, publish_token: 'private-token' });
+          return Response.json({
+            url: `${SERVICE}/private-history-v1`,
+            object_length: container.length,
+            version: 1,
+            current_version: 2,
+          });
+        }
+        if (url.pathname === '/private-history-v1') {
+          requests.push({ path: url.pathname, method: init?.method ?? 'GET' });
+          return new Response(new Blob([container as BlobPart]));
+        }
+        return previousFetch(input, init);
+      }) as typeof fetch,
+    };
     const result = await call({ relic_id: privateId, accept: ['private'] });
     expect(result.isError).toBe(false);
     expect(result.structuredContent['applied']).toEqual([
@@ -1737,6 +2004,8 @@ describe('relic_apply_suggestions', () => {
     ]);
     expect(requests).toEqual([
       { path: `/api/relics/${privateId}/comments/list`, method: 'POST' },
+      { path: `/api/relics/${privateId}/mint`, method: 'POST' },
+      { path: '/private-history-v1', method: 'GET' },
     ]);
   });
 });

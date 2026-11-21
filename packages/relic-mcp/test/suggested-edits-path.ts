@@ -51,6 +51,8 @@ const scratch = await mkdtemp(join(tmpdir(), 'relic-suggested-edits-path-'));
 const statePath = join(scratch, 'state.json');
 const store = new MemoryStore();
 const writes: Array<{ method: string; path: string; status: number }> = [];
+const commentAttempts: Array<{ method: string; path: string }> = [];
+let unavailableHistoryFor: string | undefined;
 let handler: ((request: Request) => Promise<Response>) | undefined;
 let heldComment:
   | {
@@ -82,6 +84,20 @@ function appFor(dist: string) {
 let app = appFor(viewerDist);
 handler = async (request) => {
   const url = new URL(request.url);
+  if (
+    /\/comments(?:\/[^/]+)?$/.test(url.pathname) &&
+    ['POST', 'PATCH', 'DELETE'].includes(request.method)
+  )
+    commentAttempts.push({ method: request.method, path: url.pathname });
+  if (
+    unavailableHistoryFor &&
+    request.method === 'POST' &&
+    url.pathname === `/api/relics/${unavailableHistoryFor}/mint`
+  )
+    return Response.json(
+      { error: 'historical revision unavailable' },
+      { status: 410 }
+    );
   if (
     url.pathname.startsWith('/__storage/upload/') &&
     request.method === 'PUT'
@@ -509,6 +525,36 @@ async function click(
     ...box,
   });
 }
+
+/** Select the cell itself without activating a suggestion mark inside it. */
+async function clickTableCell(page: Page, selector: string): Promise<void> {
+  const point = await page.evaluate<{ x: number; y: number }>(`(() => {
+    const cell = document.querySelector(${JSON.stringify(selector)});
+    if (!(cell instanceof HTMLElement)) throw new Error('missing cell ' + ${JSON.stringify(selector)});
+    cell.scrollIntoView({ block: 'center', inline: 'center' });
+    const rect = cell.getBoundingClientRect();
+    for (const [dx, dy] of [[3, rect.height / 2], [3, 3], [rect.width / 2, 3], [rect.width - 3, 3]]) {
+      const x = rect.left + dx, y = rect.top + dy;
+      const hit = document.elementFromPoint(x, y);
+      if (hit && cell.contains(hit) && hit.closest('[data-r][data-c]') === cell && !hit.closest('[data-comment-id], button'))
+        return { x, y };
+    }
+    throw new Error('no unobstructed cell selection point: ' + cell.outerHTML);
+  })()`);
+  await page.send('Input.dispatchMouseEvent', { type: 'mouseMoved', ...point });
+  await page.send('Input.dispatchMouseEvent', {
+    type: 'mousePressed',
+    button: 'left',
+    clickCount: 1,
+    ...point,
+  });
+  await page.send('Input.dispatchMouseEvent', {
+    type: 'mouseReleased',
+    button: 'left',
+    clickCount: 1,
+    ...point,
+  });
+}
 async function key(
   page: Page,
   keyName: string,
@@ -607,6 +653,19 @@ function writesFor(id: string, method: string): number {
       row.path.startsWith(`/api/relics/${id}/comments`) &&
       row.status >= 200 &&
       row.status < 300
+  ).length;
+}
+function commentAttemptsFor(id: string, method: string): number {
+  return commentAttempts.filter(
+    (row) =>
+      row.method === method && row.path.startsWith(`/api/relics/${id}/comments`)
+  ).length;
+}
+function viewerPostAttempts(page: Page, id: string): number {
+  return page.trace.filter(
+    (request) =>
+      request.method.toUpperCase() === 'POST' &&
+      new URL(request.url, origin).pathname === `/api/relics/${id}/comments`
   ).length;
 }
 async function plaintextRows(id: string, key: CryptoKey) {
@@ -1306,6 +1365,33 @@ try {
       `document.querySelector(${JSON.stringify(cueSelector)})`,
       'cue view'
     );
+    await suggesting(page);
+    await select(page, cueSelector, 'Change this line');
+    await key(page, 'Backspace', 'Backspace', 8);
+    await page.wait(
+      "document.querySelector('.sg-refusal-code')?.textContent.includes('ends-cue')",
+      'whole-cue deletion refusal'
+    );
+    assert.equal(
+      await page.evaluate<boolean>(
+        "!!document.querySelector('ins[data-sg-draft], del.is-draft')"
+      ),
+      false,
+      'whole-cue deletion opened a draft'
+    );
+    await leave(page);
+    await Bun.sleep(150);
+    assert.equal(
+      commentAttemptsFor(fixture.id, 'POST'),
+      0,
+      'cue deletion attempted a POST'
+    );
+    assert.equal(
+      viewerPostAttempts(page, fixture.id),
+      0,
+      'viewer attempted a cue deletion POST'
+    );
+    assert.deepEqual(await readFile(cuePath), Buffer.from(source));
     await writeSuggestion(
       page,
       fixture.id,
@@ -1350,6 +1436,7 @@ try {
 
     // These are deliberately forged controls, not viewer-authored edits. The
     // loopback in-memory service stores them so the built MCP reads real rows.
+    const controlIds: string[] = [];
     for (const [exact, replacement, check] of [
       ['00:00:01,000', '00:00:01,500', 'subtitle_timings'],
       ['Leave this line', '', 'subtitle_cues'],
@@ -1389,6 +1476,7 @@ try {
         throw new Error(
           'control POST did not return the expected reader comment'
         );
+      controlIds.push(posted.comment_id);
       for (const write of [false, true]) {
         const refused = await mcp(
           'relic_apply_suggestions',
@@ -1408,6 +1496,63 @@ try {
         );
       }
     }
+    const renamed = await mcp('relic_republish', {
+      relic_id: fixture.id,
+      path: cuePath,
+      filename: 'captions.txt',
+      cover: false,
+      notify: false,
+      addresses: [
+        { comment_id: saved.row.id, outcome: 'deferred', note: 'Apply later.' },
+        ...controlIds.map((comment_id) => ({
+          comment_id,
+          outcome: 'declined',
+          note: 'Control complete.',
+        })),
+      ],
+    });
+    assert.equal(
+      renamed['version'],
+      2,
+      'display-only cue rename did not republish'
+    );
+    assert.deepEqual(await readFile(cuePath), originalBytes);
+    unavailableHistoryFor = fixture.id;
+    try {
+      for (const write of [false, true]) {
+        await mcp(
+          'relic_apply_suggestions',
+          {
+            relic_id: fixture.id,
+            path: cuePath,
+            accept: [saved.row.id],
+            write,
+          },
+          'suggestion_source_format_unavailable'
+        );
+        assert.deepEqual(
+          await readFile(cuePath),
+          originalBytes,
+          'unavailable history changed cue bytes'
+        );
+      }
+    } finally {
+      unavailableHistoryFor = undefined;
+    }
+    const renamedPreview = await mcp('relic_apply_suggestions', {
+      relic_id: fixture.id,
+      path: cuePath,
+      accept: [saved.row.id],
+    });
+    assert.equal(renamedPreview['written'], false);
+    assert.equal(renamedPreview['source_identity'], 'match');
+    assert.equal(renamedPreview['before_sha256'], preview['before_sha256']);
+    assert.equal(renamedPreview['after_sha256'], preview['after_sha256']);
+    assert.deepEqual(
+      await readFile(cuePath),
+      originalBytes,
+      'renamed cue preview changed bytes'
+    );
     const written = await mcp('relic_apply_suggestions', {
       relic_id: fixture.id,
       path: cuePath,
@@ -1424,9 +1569,9 @@ try {
       'applied cue bytes differ, including the BOM'
     );
     console.log(
-      'C4_CUE_APPLY_PATH_OK viewer=posted mcp=preview-write controls=2'
+      'C4_CUE_APPLY_PATH_OK viewer=posted mcp=preview-write deferred_rename=applied deletion=refused controls=2'
     );
-    return 'viewer-authored SRT suggestion previewed and applied with exact BOM and CRLF bytes; timing and cue-loss controls refused';
+    return 'viewer SRT suggestion applied after a display-only rename with exact bytes; cue deletion and structural controls refused';
   });
 
   if (!legacyDist) console.log('STEP 12 SKIPPED no RELIC_SUGGEST_MAIN_DIST');
@@ -2054,8 +2199,69 @@ try {
       0,
       'rejected delimiter change posted'
     );
+    const multiline = await publish(
+      join(scratch, 'multiline.csv'),
+      'name,note\nAda,"first\nsecond"\n'
+    );
+    const multilinePage = await browserInstance.open(multiline.url, tokenA);
+    await click(multilinePage, '.structured-table [data-r="1"][data-c="1"]');
+    await click(multilinePage, '.dt-cellbar .dt-suggest');
+    await multilinePage.wait(
+      "document.querySelector('.dt-suggest-text[contenteditable=true]')",
+      'multiline CSV editor'
+    );
+    await select(multilinePage, '.dt-suggest-text', 'first\nsecond');
+    await key(multilinePage, 'Backspace', 'Backspace', 8);
+    await multilinePage.wait(
+      "document.querySelector('.sg-refusal-code')?.textContent.includes('newline-here')",
+      'multiline CSV deletion refusal'
+    );
+    await leave(multilinePage);
+    await Bun.sleep(150);
+    assert.equal(
+      commentAttemptsFor(multiline.id, 'POST'),
+      0,
+      'multiline CSV deletion attempted a POST'
+    );
+    assert.equal(
+      viewerPostAttempts(multilinePage, multiline.id),
+      0,
+      'viewer attempted a multiline CSV POST'
+    );
+    const crossId = await postStructuralControl(
+      fixture,
+      tokenA,
+      'Ada,"repeat tail"',
+      'cross-cell control'
+    );
+    const conflictPage = await browserInstance.open(fixture.url, tokenA);
+    const cellMark = `.structured-table [data-r="2"][data-c="1"] [data-comment-id="${saved.row.id}"]`;
+    await conflictPage.wait(
+      `document.querySelector(${JSON.stringify(cellMark)})`,
+      'placeable CSV conflict member'
+    );
+    const cluster = await conflictPage.evaluate<string[]>(
+      `(() => (document.querySelector('.structured-table [data-r="2"][data-c="1"] .dt-suggestion-indicator')?.dataset.clusterMembers ?? '').split(/\\s+/))()`
+    );
+    assert.ok(
+      cluster.includes(saved.row.id) && cluster.includes(crossId),
+      'CSV conflict thread lost a member'
+    );
+    await clickTableCell(
+      conflictPage,
+      '.structured-table [data-r="2"][data-c="1"]'
+    );
+    await conflictPage.wait(
+      "document.querySelector('.dt-cellbar .dt-addr')?.textContent === 'B3'",
+      'marked CSV cell selected without opening its thread'
+    );
+    await click(conflictPage, '.dt-cellbar .dt-suggest');
+    await conflictPage.wait(
+      `document.querySelector(${JSON.stringify(`.dt-suggest-text [data-sg="${saved.row.id}"]`)})`,
+      'placeable CSV conflict in editor'
+    );
     tableProof = { fixture, suggestionId: saved.row.id };
-    return 'double-BOM/CRLF edit kept its exact anchor; Source worked during a held post; clipped suggestion cards stayed adjacent and the virtualized card became inert without losing its draft; delimiter-changing input was refused';
+    return 'CSV marks and editor retained the placeable conflict member; Source swaps and virtualized cards stayed safe; delimiter and multiline deletion were refused';
   });
 
   await step(15, async () => {
@@ -2177,7 +2383,11 @@ try {
       "document.querySelector('.sg-refusal-code')?.textContent.includes('not-editable')",
       'notebook output selection refusal'
     );
-    assert.equal(writesFor(fixture.id, 'POST'), 0, 'output selection posted');
+    assert.equal(
+      commentAttemptsFor(fixture.id, 'POST'),
+      0,
+      'output selection attempted a POST'
+    );
     assert.equal(
       await page.evaluate<boolean>(
         "!!document.querySelector('ins[data-sg-draft]')"
@@ -2188,9 +2398,14 @@ try {
     await leave(page);
     await Bun.sleep(150);
     assert.equal(
-      writesFor(fixture.id, 'POST'),
+      commentAttemptsFor(fixture.id, 'POST'),
       0,
       'leaving posted an output edit'
+    );
+    assert.equal(
+      viewerPostAttempts(page, fixture.id),
+      0,
+      'viewer attempted an output POST'
     );
     assert.equal(
       await page.evaluate<boolean>(
@@ -2279,6 +2494,55 @@ try {
       path: notebookPath,
       accept: [codeEdit.row.id, emptyEdit.row.id],
     };
+    // This competing fill is a forged control, anchored exactly as the viewer posted.
+    const alternativeCiphertext = await encryptComment(fixture.key, {
+      body: 'Competing empty-cell control',
+      display_name: null,
+      anchor: emptyEdit.plain.anchor,
+      suggestion: {
+        v: 1,
+        mode: 'after',
+        replacement: JSON.stringify('alternative'),
+      },
+    });
+    const alternativeResponse = await fetch(
+      `${origin}/api/relics/${fixture.id}/comments`,
+      {
+        method: 'POST',
+        headers: {
+          cookie: `relic_session=${tokenB}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ ciphertext: alternativeCiphertext }),
+      }
+    );
+    assert.equal(
+      alternativeResponse.status,
+      201,
+      'alternative control POST failed'
+    );
+    const alternative: unknown = await alternativeResponse.json();
+    if (
+      typeof alternative !== 'object' ||
+      alternative === null ||
+      !('comment_id' in alternative) ||
+      typeof alternative.comment_id !== 'string' ||
+      !('author' in alternative) ||
+      alternative.author !== 'reader-b@example.test'
+    )
+      throw new Error('alternative control has no reader comment ID');
+    for (const write of [false, true]) {
+      await mcp(
+        'relic_apply_suggestions',
+        { ...args, accept: [emptyEdit.row.id, alternative.comment_id], write },
+        'conflicting_accepts'
+      );
+      assert.deepEqual(
+        await readFile(notebookPath),
+        original,
+        'conflicting notebook fills changed bytes'
+      );
+    }
     const preview = await mcp('relic_apply_suggestions', args);
     assert.equal(preview['written'], false);
     assert.equal(preview['source_identity'], 'match');
@@ -2323,9 +2587,9 @@ try {
       'notebook write changed protected bytes'
     );
     console.log(
-      'C4_NOTEBOOK_APPLY_PATH_OK viewer=source-empty mcp=preview-write output=refused'
+      'C4_NOTEBOOK_APPLY_PATH_OK viewer=source-empty mcp=preview-write competing=refused output=refused'
     );
-    return 'viewer source and empty-cell suggestions previewed and applied byte-for-byte; output selection and output mutation were refused';
+    return 'viewer source and empty-cell suggestions applied byte-for-byte; competing fills and output edits were refused';
   });
 } finally {
   await ownedBrowser?.close();

@@ -175,12 +175,18 @@ The expected markers are `SUGGESTIONS_MCP_PATH_OK legacy=ran` and
 `SUGGESTED_EDITS_PATH_OK classes=2 negative=ran cue=applied csv=applied notebook=applied`.
 CI omits the old bundles and may report `legacy=skipped` and `negative=skipped`
 instead. The browser path requires the SRT, CSV and notebook application stages.
-It previews and applies viewer-posted suggestions with the built MCP, checks
-whole-file bytes, and refuses structural changes to cells, cues and notebook
-outputs. The CSV check also refuses a write to a same-basename wrong path. Source
-identity identifies the path, not the version; matching preview and write hashes
-are checked for these fixtures. The browser path does not establish
-operating-system IME, real clipboard or drag-and-drop behavior.
+It previews and applies viewer-posted suggestions with the built MCP and checks
+whole-file bytes. The cue stage also applies a deferred edit after a display-only
+rename. The CSV stage checks a placeable conflict member, refuses multiline
+cell deletion and rejects a same-basename wrong path. The notebook stage rejects
+competing empty-cell fills and attempts to edit outputs. Cue and output refusal
+checks count attempted POSTs, including rejected requests. Source identity
+identifies the path, not the version; matching preview and write hashes are
+checked for these fixtures. An older selected suggestion, or a missing recorded
+filename for a single-file relic, requires the exact encrypted revision to be
+minted and opened. Each lookup consumes a normal download mint. Unavailable or
+unconfirmed revisions and incompatible selected formats are refused. The browser
+path does not establish operating-system IME, real clipboard or drag-and-drop behavior.
 
 # Comments on images inside HTML
 

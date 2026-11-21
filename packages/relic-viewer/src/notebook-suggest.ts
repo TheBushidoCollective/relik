@@ -1,4 +1,5 @@
 import type { Notebook, NotebookCell } from '@relic/format/notebook';
+import { isInvisible } from '@relic/format/structured-text';
 import {
   renderMarkdownWithSource,
   type SourceSegment,
@@ -341,12 +342,19 @@ export function notebookSuggestionSurface(
           (start === end ? start <= part.end : start < part.end)
       );
       if (!first) return false;
-      if (replacement !== undefined && emptyArrays.has(first.block)) {
-        try {
-          if (typeof JSON.parse(replacement) !== 'string') return false;
-        } catch {
-          return false;
+      if (replacement !== undefined) {
+        let decoded = decodeNotebookText(replacement);
+        if (emptyArrays.has(first.block)) {
+          try {
+            const value: unknown = JSON.parse(replacement);
+            if (typeof value !== 'string') return false;
+            decoded = value;
+          } catch {
+            return false;
+          }
         }
+        for (const character of decoded.replaceAll('\r\n', '\n'))
+          if (isInvisible(character.codePointAt(0)!)) return false;
       }
       if (start === end)
         return (

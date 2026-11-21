@@ -16,7 +16,10 @@ import {
   jsonStringValue,
   parseJsonTree,
 } from '@relic/format/json-tree';
-import { parseNotebook } from '@relic/format/notebook';
+import {
+  emptyNotebookSourceOffsets,
+  parseNotebook,
+} from '@relic/format/notebook';
 import { type SubtitleCue, parseSubtitles } from '@relic/format/subtitles';
 import {
   mergeSuggestions,
@@ -42,6 +45,7 @@ import {
   PublishError,
   readSource,
 } from './publish.ts';
+import { fetchRevisionFilename } from './resolve-anchor.ts';
 import { resolveSourceIdentity } from './state.ts';
 
 export const APPLY_SUGGESTIONS_TOOL_NAME = 'relic_apply_suggestions';
@@ -539,6 +543,23 @@ function validateSubtitles(
     );
 }
 
+function structuredSuggestionFormat(
+  filename: string
+): 'csv' | 'tsv' | 'json' | 'ipynb' | 'srt' | 'vtt' | undefined {
+  const extension = filenameExtension(filename);
+  switch (extension) {
+    case 'csv':
+    case 'tsv':
+    case 'json':
+    case 'ipynb':
+    case 'srt':
+    case 'vtt':
+      return extension;
+    default:
+      return undefined;
+  }
+}
+
 /** Validate the merged result, before returning a preview or touching the file. */
 function validateMergedStructure(
   before: string,
@@ -554,16 +575,8 @@ function validateMergedStructure(
       'unicode',
       'the suggestion would split a Unicode character'
     );
-  const extension = filenameExtension(filename);
-  if (
-    extension !== 'csv' &&
-    extension !== 'tsv' &&
-    extension !== 'json' &&
-    extension !== 'ipynb' &&
-    extension !== 'srt' &&
-    extension !== 'vtt'
-  )
-    return;
+  const extension = structuredSuggestionFormat(filename);
+  if (extension === undefined) return;
   // JSON and notebook Source accept multiline LF edits. Tables and subtitles
   // preserve physical line counts; CRLF files retain their original endings.
   if (
@@ -593,6 +606,7 @@ function validateMergedStructure(
 interface ThreadEntry {
   readonly fact: ThreadFact;
   readonly plaintext: CommentPlaintext | null;
+  readonly recordedVersion: number | null;
 }
 
 /** The same all-versions list as readComments({version: '*'}), without minting content. */
@@ -639,7 +653,12 @@ async function readThread(
       typeof row['author'] === 'string' ? row['author'] : 'unknown';
     const createdAt =
       typeof row['created_at'] === 'string' ? row['created_at'] : 'unknown';
-    const version = typeof row['version'] === 'number' ? row['version'] : null;
+    const version =
+      typeof row['version'] === 'number' &&
+      Number.isSafeInteger(row['version']) &&
+      row['version'] > 0
+        ? row['version']
+        : null;
     const resolvedAt =
       typeof row['resolved_at'] === 'string' ? row['resolved_at'] : null;
     const resolvedBy =
@@ -677,6 +696,7 @@ async function readThread(
             : null,
         has_suggestion: plaintext?.suggestion != null,
       },
+      recordedVersion: version,
       plaintext,
     });
   }
@@ -792,30 +812,6 @@ async function applySingleSuggestionFile(
 ) {
   const local = await localRelic(input.relic_id);
   const source = await readSource(input.path, deps.files);
-  const effectiveFilename =
-    folderEntry === undefined
-      ? (local.state.filename ?? source.basename)
-      : source.basename;
-  const rendererClass = deriveRendererClass(source.bytes, effectiveFilename);
-  if (
-    rendererClass !== 'markdown' &&
-    rendererClass !== 'code' &&
-    rendererClass !== 'notebook'
-  ) {
-    throw new ApplyError(
-      'suggestions_unsupported_class',
-      'suggestions require markdown, code, or a notebook',
-      { renderer_class: rendererClass }
-    );
-  }
-  const decoded = suggestionSourceFor(source.bytes, effectiveFilename);
-  if (!decoded.ok) {
-    throw new ApplyError(
-      'source_not_suggestible',
-      'the local source cannot be used for suggestions',
-      { reason: decoded.reason }
-    );
-  }
   const identity = await (deps.identifySource ?? resolveSourceIdentity)(
     source.resolvedPath
   );
@@ -879,13 +875,6 @@ async function applySingleSuggestionFile(
         { comment_id: id }
       );
     }
-    if (decoded.crlf && /[\r\n]/.test(entry.plaintext.suggestion.replacement)) {
-      throw new ApplyError(
-        'suggestion_breaks_structure',
-        'a suggestion cannot insert a line break in a CRLF file',
-        { check: 'line_endings', comment_id: id }
-      );
-    }
     if (entry.plaintext.anchor?.kind !== 'source') {
       throw new ApplyError(
         'suggestion_unsupported_anchor',
@@ -902,6 +891,96 @@ async function applySingleSuggestionFile(
       );
     }
   }
+
+  const filenames = new Map<number, string>();
+  for (const id of input.accept) {
+    const entry = byId.get(id)!;
+    const version = entry.recordedVersion;
+    if (version === null)
+      throw new ApplyError(
+        'suggestion_source_format_unavailable',
+        'the selected suggestion has no recorded revision',
+        { comment_id: id }
+      );
+    if (filenames.has(version)) continue;
+    if (
+      version === local.state.version &&
+      (folderEntry !== undefined || local.state.filename)
+    ) {
+      filenames.set(
+        version,
+        folderEntry === undefined ? local.state.filename! : source.basename
+      );
+      continue;
+    }
+    const revision = await fetchRevisionFilename(
+      input.relic_id,
+      deps,
+      version,
+      folderEntry
+    );
+    if (!revision.ok)
+      throw new ApplyError(
+        'suggestion_source_format_unavailable',
+        'the selected suggestion revision could not be read',
+        { comment_id: id, version, reason: revision.error }
+      );
+    filenames.set(version, revision.filename);
+  }
+  const formats = new Set<string>();
+  for (const filename of filenames.values()) {
+    formats.add(
+      structuredSuggestionFormat(filename) ??
+        deriveRendererClass(source.bytes, filename)
+    );
+  }
+  if (formats.size !== 1)
+    throw new ApplyError(
+      'suggestion_source_format_mismatch',
+      'the selected suggestions come from incompatible source formats',
+      {
+        revisions: [...filenames].map(([version, filename]) => ({
+          version,
+          filename,
+        })),
+      }
+    );
+  const effectiveFilename = filenames.values().next().value;
+  if (!effectiveFilename)
+    throw new ApplyError(
+      'suggestion_source_format_unavailable',
+      'no selected source format was found'
+    );
+  const rendererClass = deriveRendererClass(source.bytes, effectiveFilename);
+  if (
+    rendererClass !== 'markdown' &&
+    rendererClass !== 'code' &&
+    rendererClass !== 'notebook'
+  ) {
+    throw new ApplyError(
+      'suggestions_unsupported_class',
+      'suggestions require markdown, code, or a notebook',
+      { renderer_class: rendererClass }
+    );
+  }
+  const decoded = suggestionSourceFor(source.bytes, effectiveFilename);
+  if (!decoded.ok) {
+    throw new ApplyError(
+      'source_not_suggestible',
+      'the local source cannot be used for suggestions',
+      { reason: decoded.reason }
+    );
+  }
+  if (decoded.crlf)
+    for (const id of input.accept) {
+      const suggestion = byId.get(id)?.plaintext?.suggestion;
+      if (suggestion && /[\r\n]/.test(suggestion.replacement))
+        throw new ApplyError(
+          'suggestion_breaks_structure',
+          'a suggestion cannot insert a line break in a CRLF file',
+          { check: 'line_endings', comment_id: id }
+        );
+    }
 
   const suggestions: SuggestionInput[] = [];
   for (const entry of entries) {
@@ -925,7 +1004,13 @@ async function applySingleSuggestionFile(
       suggestion: plain.suggestion,
     });
   }
-  const resolved = resolveSuggestions(decoded.source, suggestions);
+  const resolved = resolveSuggestions(
+    decoded.source,
+    suggestions,
+    rendererClass === 'notebook'
+      ? emptyNotebookSourceOffsets(decoded.source)
+      : undefined
+  );
   const resolvedById = new Map<string, ResolvedSuggestion>();
   for (const item of resolved) {
     resolvedById.set(item.id, item);

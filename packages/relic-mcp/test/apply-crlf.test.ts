@@ -30,6 +30,7 @@ test('apply resolves LF-normalized anchors, preserves BOM and CRLF, and rejects 
       key: encodeKey(keyBytes),
       publish_token: 'fixture',
       version: 1,
+      filename: 'data.csv',
       source: await resolveSourceIdentity(path),
     });
     const makeRow = async (id: string, replacement: string) => {
