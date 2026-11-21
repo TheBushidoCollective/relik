@@ -428,7 +428,7 @@ async function indexZipInternal(
       const mode = attrs >>> 16,
         fileType = mode & 0o170000;
       if (
-        mode &&
+        fileType !== 0 &&
         fileType !== 0o100000 &&
         fileType !== 0o040000 &&
         fileType !== 0o120000
