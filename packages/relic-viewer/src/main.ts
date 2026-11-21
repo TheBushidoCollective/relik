@@ -7124,6 +7124,23 @@ export function buildThread(
   let hostConcealScheduled = false;
   // A virtualized table may unmount the indicator while its card is open.
   let tableCardMembers: readonly string[] | undefined;
+  let inertTableCard: { node: HTMLElement; wasInert: boolean } | undefined;
+
+  function setMissingTableCardInert(missing: boolean): void {
+    const current = missing ? popover?.current() : undefined;
+    if (inertTableCard && inertTableCard.node !== current) {
+      if (!inertTableCard.wasInert)
+        inertTableCard.node.removeAttribute('inert');
+      inertTableCard = undefined;
+    }
+    if (current && !inertTableCard) {
+      inertTableCard = {
+        node: current,
+        wasInert: current.hasAttribute('inert'),
+      };
+      current.setAttribute('inert', '');
+    }
+  }
 
   function tableIndicatorFor(
     id: string,
@@ -7197,6 +7214,7 @@ export function buildThread(
       hostConcealed = concealed;
     }
     applyCardConcealment();
+    setMissingTableCardInert(!!missingTableMark);
   };
 
   const scheduleHostConceal = (): void => {
@@ -7258,6 +7276,7 @@ export function buildThread(
       });
       window.removeEventListener('resize', scheduleHostConceal);
     }
+    setMissingTableCardInert(false);
     tableCardMembers = undefined;
     hostConcealed = new Map();
   };
@@ -7658,6 +7677,7 @@ export function buildThread(
     cardGeneration++;
     cardId = undefined;
     tableCardMembers = undefined;
+    setMissingTableCardInert(false);
     clearTimeout(hoverTimer);
     clearTimeout(leaveTimer);
     popover?.hide();
@@ -8159,6 +8179,7 @@ export function buildThread(
     if (host === undefined || entry.id === null) return;
     const layer = popover;
     if (layer === undefined) return;
+    setMissingTableCardInert(false);
     cardGeneration++;
     cardId = entry.id ?? undefined;
     rememberTableCard(entry.id);
@@ -8491,6 +8512,7 @@ export function buildThread(
     if (first === undefined || firstId === null || firstId === undefined) {
       return;
     }
+    setMissingTableCardInert(false);
     cardGeneration++;
     cardId = firstId;
     rememberTableCard(firstId);

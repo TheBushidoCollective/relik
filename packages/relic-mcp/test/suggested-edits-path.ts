@@ -1744,6 +1744,19 @@ try {
       'single clipped suggestion opened'
     );
     await assertNearIndicator(singleIndicator, solo.row.id);
+    await click(reopened, '.popover-card .popover-reply');
+    await reopened.wait(
+      "document.querySelector('.popover-card .popover-field')",
+      'reply draft field'
+    );
+    await input(reopened, 'Keep this unsent draft');
+    await reopened.wait(
+      "document.querySelector('.popover-card .popover-field')?.value === 'Keep this unsent draft'",
+      'reply draft entered'
+    );
+    await reopened.evaluate(
+      "window.__tableProofCard = document.querySelector('.popover-card')"
+    );
     const gridPoint = await reopened.evaluate<{
       x: number;
       y: number;
@@ -1755,7 +1768,7 @@ try {
       type: 'mouseWheel',
       ...gridPoint,
       deltaX: 0,
-      deltaY: 3000,
+      deltaY: 380,
     });
     await reopened.wait(
       `!document.querySelector(${JSON.stringify(singleIndicator)})`,
@@ -1765,11 +1778,38 @@ try {
       `document.querySelector(${JSON.stringify(`.popover-card[data-comment-id="${solo.row.id}"]`)})?.getAttribute('data-concealed') === 'offscreen'`,
       'card concealed while its virtualized indicator is absent'
     );
+    const absentCard = await reopened.evaluate<{
+      inert: boolean;
+      underlying: boolean;
+      focusBlocked: boolean;
+      draft: string;
+      same: boolean;
+      diagnostic: string;
+    }>(`(() => {
+      const card = document.querySelector(${JSON.stringify(`.popover-card[data-comment-id="${solo.row.id}"]`)});
+      const field = card.querySelector('.popover-field');
+      const rect = card.getBoundingClientRect();
+      const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+      field.focus({ preventScroll: true });
+      return {
+        inert: card.inert,
+        underlying: !!hit && !card.contains(hit),
+        focusBlocked: !card.contains(document.activeElement),
+        draft: field.value,
+        same: card === window.__tableProofCard,
+        diagnostic: JSON.stringify({ rect: rect.toJSON(), hit: hit?.outerHTML?.slice(0, 300), width: innerWidth, height: innerHeight }),
+      };
+    })()`);
+    assert.equal(absentCard.inert, true, absentCard.diagnostic);
+    assert.equal(absentCard.underlying, true, absentCard.diagnostic);
+    assert.equal(absentCard.focusBlocked, true, absentCard.diagnostic);
+    assert.equal(absentCard.draft, 'Keep this unsent draft');
+    assert.equal(absentCard.same, true);
     await reopened.send('Input.dispatchMouseEvent', {
       type: 'mouseWheel',
       ...gridPoint,
       deltaX: 0,
-      deltaY: -3000,
+      deltaY: -380,
     });
     await reopened.wait(
       `document.querySelector(${JSON.stringify(singleIndicator)})`,
@@ -1779,6 +1819,23 @@ try {
       `document.querySelector(${JSON.stringify(`.popover-card[data-comment-id="${solo.row.id}"]`)}) && !document.querySelector(${JSON.stringify(`.popover-card[data-comment-id="${solo.row.id}"]`)}).hasAttribute('data-concealed')`,
       'card restored after its indicator returns'
     );
+    const restoredDraft = await reopened.evaluate<{
+      inert: boolean;
+      draft: string;
+      same: boolean;
+    }>(`(() => {
+      const card = document.querySelector(${JSON.stringify(`.popover-card[data-comment-id="${solo.row.id}"]`)});
+      return {
+        inert: card.inert,
+        draft: card.querySelector('.popover-field').value,
+        same: card === window.__tableProofCard,
+      };
+    })()`);
+    assert.deepEqual(restoredDraft, {
+      inert: false,
+      draft: 'Keep this unsent draft',
+      same: true,
+    });
     await assertNearIndicator(singleIndicator, solo.row.id);
     const sniff = await publish(
       join(scratch, 'sniff.csv'),
@@ -1802,7 +1859,7 @@ try {
       0,
       'rejected delimiter change posted'
     );
-    return 'double-BOM/CRLF edit kept its exact anchor; Source worked during a held post; clipped suggestion cards stayed adjacent and the sole card concealed and restored across virtualization; delimiter-changing input was refused';
+    return 'double-BOM/CRLF edit kept its exact anchor; Source worked during a held post; clipped suggestion cards stayed adjacent and the virtualized card became inert without losing its draft; delimiter-changing input was refused';
   });
 } finally {
   await ownedBrowser?.close();
