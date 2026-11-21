@@ -368,6 +368,12 @@ try {
         `document.querySelector('.dt-cell[data-r="1"][data-c="0"].is-marked')`
       );
       await click('.spreadsheet-tabs button:nth-child(3)');
+      assert.equal(
+        await evaluate(
+          `document.querySelector('.spreadsheet-tabs button:nth-child(3)')?.textContent`
+        ),
+        'Bad\\u{202E}name'
+      );
       await wait(
         `document.querySelector('.dt-cell[data-r="1"][data-c="0"]')?.textContent === 'Restricted value'`
       );

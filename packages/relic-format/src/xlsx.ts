@@ -175,6 +175,7 @@ export async function parseXlsx(
       };
     const index = indexed.index;
     const relationships = new Map<string, Relationship>();
+    const relationshipIds = new Set<string>();
     tokenizeSpreadsheetXml(
       await read(index, 'xl/_rels/workbook.xml.rels'),
       partEvents('Relationships', PACKAGE_REL_NS, (path, attrs) => {
@@ -182,8 +183,9 @@ export async function parseXlsx(
         const id = attrsValue(attrs, 'Id'),
           target = attrsValue(attrs, 'Target'),
           type = attrsValue(attrs, 'Type');
-        if (!id || !target || !type || relationships.has(id))
+        if (!id || !target || !type || relationshipIds.has(id))
           throw new Error('corrupt');
+        relationshipIds.add(id);
         if (attrs.get('TargetMode') === 'External') return;
         relationships.set(id, {
           path: targetPath(target),

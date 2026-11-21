@@ -2169,6 +2169,7 @@ export function buildCurrentStage(
             renderSpreadsheetRoute(root, view, () => downloadContent(view));
         })
         .catch(() => {
+          if (!root.isConnected) return;
           root.replaceChildren(
             notice(
               'This spreadsheet could not be shown. Download it to inspect it.'

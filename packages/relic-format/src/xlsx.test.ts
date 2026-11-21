@@ -325,6 +325,11 @@ describe('XLSX workbook', () => {
       ok: false,
       reason: 'corrupt',
     });
+    const foreign =
+      '<worksheet xmlns:x="urn:other"><sheetData><x:row r="1"><x:c r="A1"><x:v>99</x:v></x:c></x:row><row r="2"><c r="A2"><v>7</v></c></row></sheetData></worksheet>';
+    const scoped = await parseXlsx(fixture(foreign, book));
+    if (!scoped.ok) throw new Error(scoped.reason);
+    expect(scoped.workbook.sheets[0]!.texts).toEqual(['7']);
   });
   test('caps derived formula data and accepts boolean formulas without a cached value', async () => {
     const boolean = await parseXlsx(
@@ -344,5 +349,19 @@ describe('XLSX workbook', () => {
         )
       )
     ).toEqual({ ok: false, reason: 'too-large' });
+  });
+  test('shared followers reuse master text and infer a missing master coordinate', async () => {
+    const followers = '<c><f t="shared" si="1"/><v>3</v></c>'.repeat(2000);
+    const xml = `<worksheet><sheetData><row><c><f t="shared" si="1">SUM(A:A)</f><v>3</v></c>${followers}</row></sheetData></worksheet>`;
+    const parsed = await parseXlsx(fixture(xml));
+    if (!parsed.ok) throw new Error(parsed.reason);
+    const sheet = parsed.workbook.sheets[0]!;
+    expect(sheet.details).toHaveLength(2);
+    expect(sheet.details[sheet.cells[5]! - 1]).toEqual({
+      type: 'number',
+      formula: 'SUM(A:A)',
+      sharedFrom: 'A1',
+    });
+    expect(sheet.cells[5]).toBe(sheet.cells[6002]);
   });
 });
