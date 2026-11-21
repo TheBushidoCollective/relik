@@ -1038,34 +1038,43 @@ describe('version comparison affordance', () => {
     ).toBe(true);
   });
 
-  test('placeholder document formats offer download without extracting or framing', () => {
-    for (const kind of ['docx', 'epub'] as const) {
-      const original = view('sandboxed-document', 1);
-      let reads = 0;
-      const current: ReadyView = {
-        ...original,
-        documentKind: kind,
-        content: {
-          ...original.content,
-          read: async () => {
-            reads++;
-            throw new Error('unexpected extraction');
-          },
-          readWhole: async () => {
-            reads++;
-            throw new Error('unexpected extraction');
-          },
+  test('placeholder EPUB offers download without extracting or framing', () => {
+    const original = view('sandboxed-document', 1);
+    let reads = 0;
+    const current: ReadyView = {
+      ...original,
+      documentKind: 'epub',
+      content: {
+        ...original.content,
+        read: async () => {
+          reads++;
+          throw new Error('unexpected extraction');
         },
-      };
-      const stage = buildCurrentStage(current, 'https://usercontent.test', {
-        comparisonNotice: false,
-      }) as unknown as ElementStub;
-      expect(reads).toBe(0);
-      expect(textOf(stage)).toContain('Download');
-      expect(
-        descendants(stage).some((element) => element.tagName === 'IFRAME')
-      ).toBe(false);
-    }
+        readWhole: async () => {
+          reads++;
+          throw new Error('unexpected extraction');
+        },
+      },
+    };
+    const stage = buildCurrentStage(current, 'https://usercontent.test', {
+      comparisonNotice: false,
+    }) as unknown as ElementStub;
+    expect(reads).toBe(0);
+    expect(textOf(stage)).toContain('Download');
+    expect(
+      descendants(stage).some((element) => element.tagName === 'IFRAME')
+    ).toBe(false);
+  });
+
+  test('DOCX enters its document rendering stage', () => {
+    const current: ReadyView = {
+      ...view('sandboxed-document', 1),
+      documentKind: 'docx',
+    };
+    const stage = buildCurrentStage(current, 'https://usercontent.test', {
+      comparisonNotice: false,
+    }) as unknown as ElementStub;
+    expect(textOf(stage)).toContain('Loading document');
   });
 
   test('oversized code history is reachable, and states the ceiling', () => {

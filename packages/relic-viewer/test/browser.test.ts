@@ -588,6 +588,12 @@ describe('the usercontent frame the render routes build', () => {
     expect(markerLabelFor('sandboxed-document')).toBe(
       'Downloads to your device, no author code'
     );
+    expect(markerLabelFor('sandboxed-document', 'docx')).toBe(
+      'Rendered as a document, no author code'
+    );
+    expect(markerLabelFor('sandboxed-document', 'epub')).toBe(
+      'Downloads to your device, no author code'
+    );
 
     for (const route of [...executes, ...inert]) {
       const label = markerLabelFor(route);

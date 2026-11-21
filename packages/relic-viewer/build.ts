@@ -207,6 +207,16 @@ export async function buildViewer(options?: {
     format: 'esm',
     minify: true,
     splitting: false,
+    plugins: [
+      {
+        name: 'docx-entry-archive',
+        setup(build) {
+          build.onResolve({ filter: /^jszip$/ }, () => ({
+            path: `${pkgDir}src/frame-zip-entries.ts`,
+          }));
+        },
+      },
+    ],
   });
   if (!frameModules.success) {
     for (const log of frameModules.logs) console.error(log);
