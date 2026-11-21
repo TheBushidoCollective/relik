@@ -57,4 +57,18 @@ describe('the built sandbox.html', () => {
     expect(html).toContain('relic:annotate');
     expect(html).toContain('relic:tree');
   });
+  test('disabled renderer modules stay outside the sandbox and shell', async () => {
+    const html = await Bun.file(`${pkgDir}dist/sandbox.html`).text();
+    const shell = await Bun.file(`${pkgDir}dist/viewer.js`).text();
+    for (const [name, marker] of [
+      ['frame-docx', 'Word document renderer is not available yet.'],
+      ['frame-epub', 'EPUB document renderer is not available yet.'],
+    ] as const) {
+      expect(
+        await Bun.file(`${pkgDir}dist-frame/${name}.frame.js`).text()
+      ).toContain(marker);
+      expect(html).not.toContain(marker);
+      expect(shell).not.toContain(marker);
+    }
+  });
 });

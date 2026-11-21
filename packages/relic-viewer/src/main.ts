@@ -92,6 +92,11 @@ import {
   decorateDecisionControl,
   tallyFromList,
 } from './decisions.ts';
+import {
+  isDocumentStateMessage,
+  type DocumentStateMessage,
+  type RenderDocumentMessage,
+} from './frame-document-protocol.ts';
 import { isFrameScrollMessage } from './frame-scroll.ts';
 import {
   type Concealment,
@@ -358,7 +363,7 @@ const MARKER_LABELS: Record<RenderRoute, string> = {
   model: 'Shown as a 3D model, no author code',
   pdf: 'Rendered as a document, no author code',
   notebook: 'Rendered as a notebook, no author code',
-  'sandboxed-document': 'Rendered as a document, no author code',
+  'sandboxed-document': 'Downloads to your device, no author code',
   spreadsheet: 'Shown as a table, no author code',
   'sandboxed-html': 'Runs author code, isolated',
   'sandboxed-jsx': 'Runs author code, isolated',
@@ -1514,12 +1519,15 @@ function renderImageView(view: ReadyView): HTMLElement {
  */
 type RenderPayload =
   | { readonly type: 'relic:render'; readonly html: string }
-  | { readonly type: 'relic:render-jsx'; readonly code: string };
+  | { readonly type: 'relic:render-jsx'; readonly code: string }
+  | RenderDocumentMessage;
 interface FrameHandle {
   readonly frame: HTMLIFrameElement;
   /** The confirmation bar for this frame's link requests. Place it above the frame. */
   readonly linkConfirm: HTMLElement;
   readonly linkRemembered: HTMLElement;
+  post(message: object, transfer?: Transferable[]): void;
+  dispose(): void;
   /**
    * Mark this frame's own rendered nodes, once the parent holds a diff.
    *
@@ -1556,11 +1564,13 @@ interface FrameHandle {
  * recipient has decided to trust what they are looking at, and a second
  * render is exactly that swap.
  */
-function sandboxFrame(
+export function sandboxFrame(
   view: ReadyView,
   usercontentOrigin: string,
   payload: RenderPayload,
-  onTree?: (tree: TreeNode) => void
+  onTree?: (tree: TreeNode) => void,
+  transfer: Transferable[] = [],
+  onDocumentState?: (state: DocumentStateMessage) => void
 ): FrameHandle {
   const frame = document.createElement('iframe');
   frame.className = 'usercontent-frame';
@@ -1574,9 +1584,12 @@ function sandboxFrame(
   // payload goes once, to the document that announced itself, and nothing goes
   // to a frame whose document changed after its first load.
   const handshake = new FrameHandshake();
-  const post = (message: object): void => {
-    if (!handshake.canPost()) return;
-    frame.contentWindow?.postMessage(message, '*');
+  let pendingPayload: RenderPayload | undefined = payload;
+  let pendingTransfer = transfer;
+  let disposed = false;
+  const post = (message: object, transferList: Transferable[] = []): void => {
+    if (disposed || !handshake.canPost()) return;
+    frame.contentWindow?.postMessage(message, '*', transferList);
   };
 
   // A link the frame asks to open is confirmed by the reader, in host chrome,
@@ -1620,12 +1633,15 @@ function sandboxFrame(
   // That message comes from the shim's own document, which is listening before
   // it announces itself, so nothing is lost. Later ready messages, and any load
   // after the first, post nothing: see FrameHandshake.
+  let documentStateReceived = false;
   const onMessage = (event: MessageEvent): void => {
-    if (event.source !== frame.contentWindow) return;
+    if (disposed || event.source !== frame.contentWindow) return;
     const type = (event.data as { type?: unknown } | null)?.type;
     if (type === 'relic:sandbox-ready') {
       if (!handshake.onReady()) return;
-      post(payload);
+      if (pendingPayload !== undefined) post(pendingPayload, pendingTransfer);
+      pendingPayload = undefined;
+      pendingTransfer = [];
       reportVisibility();
       // Announced on this origin too, because marks are posted into the
       // frame and a post that arrives before the frame is listening is
@@ -1635,6 +1651,17 @@ function sandboxFrame(
       frame.dispatchEvent(
         new CustomEvent('relic:frame-ready', { bubbles: true })
       );
+      return;
+    }
+    if (
+      onDocumentState !== undefined &&
+      !documentStateReceived &&
+      handshake.rendered &&
+      handshake.canPost() &&
+      isDocumentStateMessage(event.data)
+    ) {
+      documentStateReceived = true;
+      onDocumentState(event.data);
       return;
     }
     // The captured tree is tag names, a fixed attribute allowlist, and text.
@@ -1741,19 +1768,30 @@ function sandboxFrame(
   if (typeof window !== 'undefined') {
     window.addEventListener('message', onMessage);
   }
-  frame.addEventListener('load', () => {
+  const onLoad = (): void => {
     // No payload here. The payload waits for the frame's own ready message, and
     // a later load means the document changed, which FrameHandshake records.
     handshake.onLoad();
     frame.dispatchEvent(
       new CustomEvent('relic:frame-navigation', { bubbles: true })
     );
-  });
+  };
+  frame.addEventListener('load', onLoad);
 
   return {
     frame,
     linkConfirm: linkBar.element,
     linkRemembered: linkBar.remembered,
+    post,
+    dispose: () => {
+      if (disposed) return;
+      disposed = true;
+      pendingPayload = undefined;
+      pendingTransfer = [];
+      visibility?.disconnect();
+      window.removeEventListener('message', onMessage);
+      frame.removeEventListener('load', onLoad);
+    },
     annotate: (marks, anchors) =>
       post({ type: 'relic:annotate', marks, anchors }),
     setScroll: (position: ScrollPosition) =>

@@ -7,7 +7,7 @@ import { createHash } from 'node:crypto';
  * The shell carries exactly one inline module script, the bundle the build
  * inlines. `script-src` names that script by the SHA-256 of its text and no
  * other script source. `blob:` is the only other source, and the shim uses it
- * for two things: the author scripts it re-emits, and the JSX module. No
+ * for re-emitted author scripts, the JSX module, and document renderer modules. No
  * `unsafe-inline`, `unsafe-eval` or scheme source remains.
  *
  * `frame-src 'none'` and `object-src 'none'` stop the frame creating a child

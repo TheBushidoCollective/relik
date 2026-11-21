@@ -40,6 +40,7 @@
         "@relic/server": "workspace:*",
         "diff": "^9.0.0",
         "docx": "^9.15.3",
+        "docx-preview": "0.4.1",
         "mediabunny": "1.62.0",
         "pdfjs-dist": "5.4.149",
         "react": "19.2.0",
@@ -132,6 +133,8 @@
     "diff": ["diff@9.0.0", "", {}, "sha512-svtcdpS8CgJyqAjEQIXdb3OjhFVVYjzGAPO8WGCmRbrml64SPw/jJD4GoE98aR7r25A0XcgrK3F02yw9R/vhQw=="],
 
     "docx": ["docx@9.15.3", "", { "dependencies": { "@types/node": "^26.6.2", "fflate": "^0.8.3", "nanoid": "^6.0.1" } }, "sha512-3FnU6K5cuvGXEAn24yhvP3mfrZ1G8k9+hH8pSVDYsMR+mGmfK/t0NR5AwoMQodnaaxiRt2e+SvckffcJe/NvTQ=="],
+
+    "docx-preview": ["docx-preview@0.4.1", "", { "dependencies": { "jszip": ">=3.0.0" } }, "sha512-Dv4g+LeE0swHpPvNC0lAT0YsR5Zq5pAxw7d3vHQ8EChBLgIrqqe9VPL5nVt2HBJap8bEZbXUI0TJob7kBeNU9w=="],
 
     "fdir": ["fdir@6.5.0", "", { "peerDependencies": { "picomatch": "^3 || ^4" }, "optionalPeers": ["picomatch"] }, "sha512-tIbYtZbucOs0BRGqPJkshJUYdL+SDH7dVM8gjy+ERp3WAUjLEFJE+02kanyHtwjWOnwrKYBiwAmM0p4kLJAnXg=="],
 

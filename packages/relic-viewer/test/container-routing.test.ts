@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import { crc32, planStoredZip } from '@relic/format';
 import { contentFromBytes, type RelicContent } from '../src/content.ts';
+import { entryView } from '../src/folder-relic.ts';
+import type { ReadyView } from '../src/viewer.ts';
 import { routeContent, routeFor } from '../src/viewer.ts';
 
 function makeZip(entries: readonly (readonly [string, string])[]): Uint8Array {
@@ -155,6 +157,67 @@ describe('document and spreadsheet routing', () => {
     expect(decision.route).toBe('sandboxed-document');
     expect(decision.documentKind).toBe('docx');
     expect(decision.notice).toContain('Word document');
+  });
+  test('folder views carry the sniffed document kind and clear it on another entry', async () => {
+    const word = makeZip(formats[0].entries);
+    const ebook = makeZip(formats[2].entries);
+    const text = new TextEncoder().encode('plain text');
+    const all = new Uint8Array(word.length + ebook.length + text.length);
+    all.set(word);
+    all.set(ebook, word.length);
+    all.set(text, word.length + ebook.length);
+    const content = contentFromBytes(all);
+    const entries = [
+      {
+        path: 'word.epub',
+        mimetype: 'application/octet-stream',
+        offset: 0,
+        length: word.length,
+      },
+      {
+        path: 'book.epub',
+        mimetype: 'application/octet-stream',
+        offset: word.length,
+        length: ebook.length,
+      },
+      {
+        path: 'note.txt',
+        mimetype: 'text/plain',
+        offset: word.length + ebook.length,
+        length: text.length,
+      },
+    ];
+    const base: ReadyView = {
+      filename: 'folder',
+      declaredMimetype: '',
+      content,
+      document: undefined,
+      route: 'download',
+      downgradeNotice: undefined,
+      shareUrl: '',
+      version: 1,
+      currentVersion: 1,
+      versionDigest: '',
+      folder: {
+        header: {
+          version: 2,
+          name: 'folder',
+          entryCount: 3,
+          manifestLength: 0,
+          contentLength: all.length,
+        },
+        manifest: { defaultIndex: 0, entries },
+        whole: content,
+        index: 0,
+      },
+    };
+    const first = await entryView(base, 0);
+    expect(first.route).toBe('sandboxed-document');
+    expect(first.documentKind).toBe('docx');
+    const second = await entryView(first, 1);
+    expect(second.route).toBe('sandboxed-document');
+    expect(second.documentKind).toBe('epub');
+    expect((await entryView(second, 2)).documentKind).toBeUndefined();
   });
   test('an ordinary archive named as a document downloads', async () => {
     const bytes = makeZip([['private.txt', 'hello']]);

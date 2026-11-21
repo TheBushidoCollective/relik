@@ -696,6 +696,7 @@ class PrivateReader {
       content,
       document: route.document,
       route: route.route,
+      documentKind: route.documentKind,
       downgradeNotice: route.notice,
       shareUrl: keylessLink(this.mount.deps.locationHref),
       version,
