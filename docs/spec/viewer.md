@@ -278,6 +278,8 @@ The EPUB package reader rejects protected books before a frame is created. Right
 
 EPUB package metadata is limited to 4 MiB and 20,000 XML elements per part, with at most 5,000 navigation and page-list entries combined. Eager chapter input is limited to 64 MiB in aggregate, including repeated spine references. The renderer caps expanded CSS at 4 MiB, encoded and referenced resources separately at 64 MiB, and traversed nodes at 1,500,000. The manifest media type is carried with each resource and checked at its consuming sink. Unsupported spine media types produce a download fallback rather than a blank page.
 
+PNG, JPEG, GIF, and WebP images with recognizable dimensions are limited to 32 Mi pixels per image and 128 Mi pixels across distinct resources. The book remains open: oversized inline HTML and SVG images show an unavailable-image placeholder, and omitted stylesheet images are reported in a notice. Images whose dimensions cannot be read from these headers are left to the browser, so this limit does not bound their decoded memory or animation-frame memory.
+
 ## 4. The sandbox boundary
 
 **Direction is forced, not chosen.** The main origin fetches, decrypts, and posts plaintext to a static shim whose own code never touches ciphertext and never makes a request. The alternative shape, where the usercontent origin fetches and the parent posts it the key, is what somebody reaches for to avoid moving large payloads across a boundary, and it requires the key to cross. That must never happen.

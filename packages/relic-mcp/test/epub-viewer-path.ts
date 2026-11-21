@@ -66,8 +66,8 @@ function epub(version: 2 | 3): Uint8Array {
   const encoder = new TextEncoder();
   const nav =
     version === 3
-      ? '<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><body><nav epub:type="toc"><ol><li><a href="chapter#start">Chapter One</a></li><li><a href="second#target">Chapter Two</a></li></ol></nav></body></html>'
-      : '<ncx><navMap><navPoint><navLabel><text>Chapter One</text></navLabel><content src="chapter#start"/></navPoint><navPoint><navLabel><text>Chapter Two</text></navLabel><content src="second#target"/></navPoint></navMap></ncx>';
+      ? '<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><body><nav epub:type="toc"><ol><li><a href="chapter#start">Chapter One</a></li><li><a href="second#target">Chapter Two</a></li><li><a href="third#start">Chapter Three</a></li></ol></nav></body></html>'
+      : '<ncx><navMap><navPoint><navLabel><text>Chapter One</text></navLabel><content src="chapter#start"/></navPoint><navPoint><navLabel><text>Chapter Two</text></navLabel><content src="second#target"/></navPoint><navPoint><navLabel><text>Chapter Three</text></navLabel><content src="third#start"/></navPoint></navMap></ncx>';
   const navType =
     version === 3 ? 'application/xhtml+xml' : 'application/x-dtbncx+xml';
   const navProps = version === 3 ? ' properties="nav"' : '';
@@ -79,7 +79,7 @@ function epub(version: 2 | 3): Uint8Array {
     ],
     [
       'OPS/book.opf',
-      `<package><metadata><title>Viewer proof ${version}</title></metadata><manifest><item id="c" href="chapter" media-type="application/xhtml+xml"/><item id="c2" href="second" media-type="image/svg+xml"/><item id="nav" href="contents" media-type="${navType}"${navProps}/><item id="cover" href="cover" media-type="image/svg+xml"/><item id="style" href="style" media-type="text/css"/><item id="base" href="base.css" media-type="text/css"/></manifest><spine toc="nav"><itemref idref="c"/><itemref idref="c2"/></spine></package>`,
+      `<package><metadata><title>Viewer proof ${version}</title>${version === 2 ? '<meta property="rendition:layout">pre-paginated</meta>' : ''}</metadata><manifest><item id="c" href="chapter" media-type="application/xhtml+xml"/><item id="c2" href="second" media-type="image/svg+xml"/><item id="c3" href="third" media-type="application/xhtml+xml"/><item id="nav" href="contents" media-type="${navType}"${navProps}/><item id="cover" href="cover" media-type="image/svg+xml"/><item id="style" href="style" media-type="text/css"/><item id="base" href="base.css" media-type="text/css"/></manifest><spine toc="nav"><itemref idref="c"/><itemref idref="c2"/><itemref idref="c3"/></spine></package>`,
     ],
     ['OPS/contents', nav],
     [
@@ -89,11 +89,15 @@ function epub(version: 2 | 3): Uint8Array {
     ['OPS/base.css', 'body#start{background-color:rgb(7, 8, 9)}'],
     [
       'OPS/chapter',
-      `<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><head><link rel="stylesheet" href="style"/><style>body#start{color:rgb(1, 2, 3)}</style></head><body id="start"><h1>Readable EPUB chapter</h1><p>Unique annotation sentence.</p><a id="jump" href="second#target">Go to chapter two</a><p>Note <a id="noteref" epub:type="noteref" href="#footnote">1</a></p><aside id="footnote">The footnote <a href="#start">Return to chapter</a> <a href="https://example.com/">Read more</a></aside><img id="art" src="cover"/>${'<p>Reader text.</p>'.repeat(90)}</body></html>`,
+      `<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><head><link rel="stylesheet" href="style"/><style>body#start{color:rgb(1, 2, 3)}</style><style media="print">body#start{color:red}</style></head><body id="start"><h1>Readable EPUB chapter</h1><p>Unique annotation sentence.</p><a id="jump" href="second#target">Go to chapter two</a><p>Note <a id="noteref" epub:type="noteref" href="#footnote">1</a></p><aside id="footnote">The footnote <a href="#start">Return to chapter</a> <a href="https://example.com/">Read more</a></aside><img id="art" src="cover"/>${'<p>Reader text.</p>'.repeat(90)}</body></html>`,
     ],
     [
       'OPS/second',
-      '<svg xmlns="http://www.w3.org/2000/svg" id="target" viewBox="0 0 600 600" width="100%" height="500"><text x="10" y="30">Chapter Two Heading</text><rect width="100" height="100" fill="blue"/></svg>',
+      `<svg xmlns="http://www.w3.org/2000/svg" id="target" viewBox="0 0 600 600" width="${version === 2 ? '1200' : '100%'}" height="${version === 2 ? '1200' : '500'}"><text x="10" y="30">Chapter Two Heading</text><rect width="100" height="100" fill="blue"/></svg>`,
+    ],
+    [
+      'OPS/third',
+      `<html xmlns="http://www.w3.org/1999/xhtml"><body id="start"><h1>Chapter Three</h1>${'<p>Following chapter text.</p>'.repeat(90)}</body></html>`,
     ],
     [
       'OPS/cover',
@@ -168,6 +172,7 @@ async function publish(version: 2 | 3): Promise<string> {
 }
 type DomNode = {
   nodeId: number;
+  backendNodeId: number;
   parentId?: number;
   nodeName: string;
   nodeValue: string;
@@ -176,7 +181,8 @@ type DomNode = {
 async function prove(
   url: string,
   width: number,
-  height: number
+  height: number,
+  fixed: boolean
 ): Promise<void> {
   const found = await discoverChrome(process.env['RELIC_CHROME_PATH']);
   if (found.kind !== 'found')
@@ -303,6 +309,50 @@ async function prove(
       ),
       'SVG spine viewport missing'
     );
+    if (fixed) {
+      const svg = all.find((node) => attr(node, 'id') === 'ep-1-target');
+      assert.ok(svg);
+      const svgObject = (await send('DOM.resolveNode', {
+        backendNodeId: svg.backendNodeId,
+      })) as { object: { objectId: string } };
+      const geometry = (await send('Runtime.callFunctionOn', {
+        objectId: svgObject.object.objectId,
+        functionDeclaration:
+          "function(){const rect=this.getBoundingClientRect();const page=this.closest('article[data-epub-chapter]');return {left:rect.left,right:rect.right,width:rect.width,height:rect.height,viewport:this.ownerDocument.documentElement.clientWidth,zoom:Number.parseFloat(getComputedStyle(page).zoom),intrinsic:this.getAttribute('width')}}",
+        returnByValue: true,
+      })) as {
+        result: {
+          value?: {
+            left: number;
+            right: number;
+            width: number;
+            height: number;
+            viewport: number;
+            zoom: number;
+            intrinsic: string | null;
+          };
+        };
+      };
+      const rect = geometry.result.value;
+      assert.ok(rect, 'fixed SVG geometry unavailable');
+      assert.equal(
+        rect.intrinsic,
+        '1200',
+        'fixed SVG fixture lost its intrinsic width'
+      );
+      assert.ok(
+        rect.zoom > 0 && rect.zoom < 1,
+        `fixed SVG scale is ${rect.zoom}`
+      );
+      assert.ok(
+        rect.width > 0 && rect.left >= -1 && rect.right <= rect.viewport + 1,
+        `fixed SVG exceeds reader width: ${JSON.stringify(rect)}`
+      );
+      assert.ok(
+        Math.abs(rect.width - rect.height) <= 2,
+        `fixed SVG aspect ratio changed: ${JSON.stringify(rect)}`
+      );
+    }
     const targetNode = all.find((node) => attr(node, 'id') === 'ep-0-start');
     assert.ok(targetNode, 'body fragment missing');
     const resolved = (await send('DOM.resolveNode', {
@@ -349,65 +399,216 @@ async function prove(
           current.find((parent) => parent.nodeId === node.parentId)
             ?.nodeName === 'BUTTON'
       );
-      assert.ok(text?.parentId, `missing button ${label}`);
-      return text.parentId;
+      const element = current.find((node) => node.nodeId === text?.parentId);
+      assert.ok(element, `missing button ${label}`);
+      return element.backendNodeId;
     };
     const byId = async (id: string) => {
       const node = (await nodes()).find((item) => attr(item, 'id') === id);
       assert.ok(node, `missing ${id}`);
-      return node.nodeId;
+      return node.backendNodeId;
     };
-    const click = async (nodeId: number) => {
-      await send('DOM.scrollIntoViewIfNeeded', { nodeId });
-      const buttonBox = (await send('DOM.getBoxModel', { nodeId })) as {
-        model: { content: number[] };
-      };
-      const q = buttonBox.model.content;
-      const x = (q[0]! + q[2]!) / 2;
-      const y = (q[1]! + q[5]!) / 2;
-      for (const type of ['mousePressed', 'mouseReleased'])
-        await send('Input.dispatchMouseEvent', {
-          type,
-          x,
-          y,
-          button: 'left',
-          clickCount: 1,
-        });
+    const noteLink = async (label: string) => {
+      const current = await nodes();
+      const byNodeId = new Map(current.map((node) => [node.nodeId, node]));
+      for (const text of current) {
+        if (text.nodeName !== '#text' || text.nodeValue !== label) continue;
+        const link = byNodeId.get(text.parentId ?? 0);
+        if (link?.nodeName !== 'A') continue;
+        let ancestor: DomNode | undefined = link;
+        while (ancestor) {
+          if (
+            ancestor.nodeName === 'ASIDE' &&
+            attr(ancestor, 'class') === 'panel' &&
+            attr(ancestor, 'hidden') === undefined
+          )
+            return link.backendNodeId;
+          ancestor = byNodeId.get(ancestor.parentId ?? 0);
+        }
+      }
+      throw new Error(`missing visible footnote link ${label}`);
     };
-    await click(await button('Contents'));
-    await click(await button('Chapter Two'));
+    const click = async (backendNodeId: number, label: string) => {
+      try {
+        await send('DOM.scrollIntoViewIfNeeded', { backendNodeId });
+        const buttonBox = (await send('DOM.getBoxModel', {
+          backendNodeId,
+        })) as {
+          model: { content: number[] };
+        };
+        const q = buttonBox.model.content;
+        const x = (q[0]! + q[2]!) / 2;
+        const y = (q[1]! + q[5]!) / 2;
+        for (const type of ['mousePressed', 'mouseReleased'])
+          await send('Input.dispatchMouseEvent', {
+            type,
+            x,
+            y,
+            button: 'left',
+            clickCount: 1,
+          });
+      } catch (error) {
+        throw new Error(`Could not click ${label}`, { cause: error });
+      }
+    };
+    const clickButton = async (label: string) =>
+      click(await button(label), `button ${label}`);
+    const clickId = async (id: string) =>
+      click(await byId(id), `element ${id}`);
+    const clickNoteLink = async (label: string) =>
+      click(await noteLink(label), `footnote link ${label}`);
+    await clickId('ep-0-noteref');
+    all = await nodes();
+    assert.ok(
+      all.some(
+        (node) =>
+          node.nodeName === 'ASIDE' &&
+          attr(node, 'class') === 'panel' &&
+          attr(node, 'hidden') === undefined
+      ),
+      'footnote did not open before navigation'
+    );
+    const noteContent = all.find(
+      (node) => attr(node, 'class') === 'note-content'
+    );
+    assert.ok(noteContent);
+    const noteObject = (await send('DOM.resolveNode', {
+      nodeId: noteContent.nodeId,
+    })) as { object: { objectId: string } };
+    const noteContainment = (await send('Runtime.callFunctionOn', {
+      objectId: noteObject.object.objectId,
+      functionDeclaration: 'function(){return getComputedStyle(this).contain}',
+      returnByValue: true,
+    })) as { result: { value?: string } };
+    assert.ok(noteContainment.result.value?.includes('paint'));
+    await clickButton('Contents');
+    await clickButton('Chapter Two');
     await Bun.sleep(100);
     all = await nodes();
     assert.ok(
       all.some(
         (node) =>
           node.nodeName === '#text' &&
-          node.nodeValue.startsWith('Chapter 2 of 2 ·')
+          node.nodeValue.startsWith('Chapter 2 of 3 ·')
       ),
       'contents did not navigate'
     );
-    await click(await button('A+'));
+    assert.ok(
+      all.some(
+        (node) =>
+          node.nodeName === 'ASIDE' &&
+          attr(node, 'class') === 'panel' &&
+          attr(node, 'hidden') !== undefined
+      ),
+      'footnote remained visible after chapter navigation'
+    );
+    const chapterNode = await byId('ep-1-target');
+    const chapterObject = (await send('DOM.resolveNode', {
+      backendNodeId: chapterNode,
+    })) as { object: { objectId: string } };
+    const chapterTop = async (): Promise<number> => {
+      const result = (await send('Runtime.callFunctionOn', {
+        objectId: chapterObject.object.objectId,
+        functionDeclaration:
+          'function(){return this.getBoundingClientRect().top}',
+        returnByValue: true,
+      })) as { result: { value?: number } };
+      assert.equal(typeof result.result.value, 'number');
+      return result.result.value!;
+    };
+    const beforeZoom = await chapterTop();
+    for (let i = 0; i < 5; i++) await clickButton('A+');
+    const afterZoom = await chapterTop();
+    assert.ok(
+      Math.abs(afterZoom - beforeZoom) < 40,
+      `zoom moved the reading position from ${beforeZoom} to ${afterZoom}`
+    );
+    all = await nodes();
+    assert.ok(
+      all.some(
+        (node) =>
+          node.nodeName === '#text' &&
+          node.nodeValue.startsWith('Chapter 2 of 3 ·')
+      ),
+      'chapter label went stale after zoom'
+    );
+    for (let i = 0; i < 5; i++) await clickButton('A−');
+    const afterShrink = await chapterTop();
+    assert.ok(
+      Math.abs(afterShrink - beforeZoom) < 40,
+      `shrinking text moved the reading position from ${beforeZoom} to ${afterShrink}`
+    );
+    await clickButton('Contents');
+    await clickButton('Chapter Three');
+    const textChapter = await byId('ep-2-start');
+    const textObject = (await send('DOM.resolveNode', {
+      backendNodeId: textChapter,
+    })) as { object: { objectId: string } };
+    const textTop = async (): Promise<number> => {
+      const result = (await send('Runtime.callFunctionOn', {
+        objectId: textObject.object.objectId,
+        functionDeclaration:
+          'function(){return this.getBoundingClientRect().top}',
+        returnByValue: true,
+      })) as { result: { value?: number } };
+      assert.equal(typeof result.result.value, 'number');
+      return result.result.value!;
+    };
+    const textBefore = await textTop();
+    for (let i = 0; i < 5; i++) await clickButton('A+');
+    const textAfter = await textTop();
+    assert.ok(
+      Math.abs(textAfter - textBefore) < 40,
+      `zoom moved the text chapter from ${textBefore} to ${textAfter}`
+    );
+    all = await nodes();
+    assert.ok(
+      all.some(
+        (node) =>
+          node.nodeName === '#text' &&
+          node.nodeValue.startsWith('Chapter 3 of 3 ·')
+      ),
+      'text chapter label went stale after zoom'
+    );
+    for (let i = 0; i < 5; i++) await clickButton('A−');
+    const textAfterShrink = await textTop();
+    assert.ok(
+      Math.abs(textAfterShrink - textBefore) < 40,
+      `shrinking moved the text chapter from ${textBefore} to ${textAfterShrink}`
+    );
+    await clickButton('A+');
     all = await nodes();
     const documentRoot = all.find(
       (node) => attr(node, 'id') === 'relic-document'
     );
+    assert.ok(documentRoot);
+    const rootObject = (await send('DOM.resolveNode', {
+      nodeId: documentRoot.nodeId,
+    })) as { object: { objectId: string } };
+    const rootIsolation = (await send('Runtime.callFunctionOn', {
+      objectId: rootObject.object.objectId,
+      functionDeclaration:
+        'function(){return getComputedStyle(this).isolation}',
+      returnByValue: true,
+    })) as { result: { value?: string } };
+    assert.equal(rootIsolation.result.value, 'isolate');
     assert.match(
       documentRoot ? (attr(documentRoot, 'style') ?? '') : '',
       /zoom:\s*1\.1/,
       'text size did not change'
     );
-    await click(await byId('ep-0-jump'));
+    await clickId('ep-0-jump');
     await Bun.sleep(100);
     all = await nodes();
     assert.ok(
       all.some(
         (node) =>
           node.nodeName === '#text' &&
-          node.nodeValue.startsWith('Chapter 2 of 2 ·')
+          node.nodeValue.startsWith('Chapter 2 of 3 ·')
       ),
       'internal link did not navigate'
     );
-    await click(await byId('ep-0-noteref'));
+    await clickId('ep-0-noteref');
     all = await nodes();
     assert.ok(
       all.some(
@@ -415,37 +616,54 @@ async function prove(
       ),
       'footnote did not open'
     );
-    const returnLink = all
-      .filter(
-        (node) =>
-          node.nodeName === '#text' && node.nodeValue === 'Return to chapter'
-      )
-      .at(-1);
-    assert.ok(returnLink?.parentId, 'footnote return link missing');
-    await click(returnLink.parentId);
+    await clickNoteLink('Return to chapter');
     await Bun.sleep(100);
     all = await nodes();
     assert.ok(
       all.some(
         (node) =>
           node.nodeName === '#text' &&
-          node.nodeValue.startsWith('Chapter 1 of 2 ·')
+          node.nodeValue.startsWith('Chapter 1 of 3 ·')
       ),
       'footnote return link did not navigate'
     );
-    await click(await byId('ep-0-noteref'));
+    await clickId('ep-0-noteref');
     await send('Runtime.evaluate', {
       expression:
         "window.__epubLinks=[];window.addEventListener('message',e=>{if(e.data?.type==='relic:open-link')window.__epubLinks.push(e.data.href)})",
     });
-    all = await nodes();
-    const externalLink = all
-      .filter(
-        (node) => node.nodeName === '#text' && node.nodeValue === 'Read more'
-      )
-      .at(-1);
-    assert.ok(externalLink?.parentId, 'footnote external link missing');
-    await click(externalLink.parentId);
+    const setPointing = async (armed: boolean) => {
+      await send('Runtime.evaluate', {
+        expression: `document.querySelector('iframe.usercontent-frame').contentWindow.postMessage({type:'relic:arm-pointing',armed:${armed}},'*')`,
+      });
+      for (let i = 0; i < 100; i++) {
+        const current = await nodes();
+        const active = current.some(
+          (node) =>
+            node.nodeName === 'HTML' &&
+            (attr(node, 'class') ?? '')
+              .split(/\s+/)
+              .includes('relic-pointing-active')
+        );
+        if (active === armed) return;
+        await Bun.sleep(10);
+      }
+      throw new Error(`pointing mode did not become ${armed}`);
+    };
+    await setPointing(true);
+    await clickNoteLink('Read more');
+    await send('Runtime.evaluate', {
+      expression:
+        'new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))',
+      awaitPromise: true,
+    });
+    const whilePointing = (await send('Runtime.evaluate', {
+      expression: 'window.__epubLinks',
+      returnByValue: true,
+    })) as { result: { value?: string[] } };
+    assert.deepEqual(whilePointing.result.value, []);
+    await setPointing(false);
+    await clickNoteLink('Read more');
     await Bun.sleep(100);
     const observed = (await send('Runtime.evaluate', {
       expression: 'window.__epubLinks',
@@ -475,8 +693,8 @@ async function prove(
 try {
   for (const version of [2, 3] as const) {
     const url = await publish(version);
-    await prove(url, 1440, 900);
-    await prove(url, 390, 844);
+    await prove(url, 1440, 900, version === 2);
+    await prove(url, 390, 844, version === 2);
   }
   console.log('EPUB_VIEWER_PATH_OK');
 } finally {

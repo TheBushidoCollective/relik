@@ -80,9 +80,48 @@ export function sanitizeEpubChapter(
     '';
   const width = /(?:^|,)\s*width\s*=\s*(\d+(?:\.\d+)?)/i.exec(viewport);
   const height = /(?:^|,)\s*height\s*=\s*(\d+(?:\.\d+)?)/i.exec(viewport);
-  if (width && height && Number(width[1]) > 0 && Number(height[1]) > 0) {
-    output.dataset.epubViewportWidth = width[1];
-    output.dataset.epubViewportHeight = height[1];
+  let pageWidth = Number(width?.[1]);
+  let pageHeight = Number(height?.[1]);
+  const svgRoot = parsed.documentElement;
+  if (svgRoot?.namespaceURI === SVG_NS && svgRoot.localName === 'svg') {
+    const pixels = (value: string | null): number => {
+      if (
+        !value ||
+        !/^\s*(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?(?:px)?\s*$/i.test(value)
+      )
+        return 0;
+      return Number.parseFloat(value);
+    };
+    pageWidth = pixels(svgRoot.getAttribute('width'));
+    pageHeight = pixels(svgRoot.getAttribute('height'));
+    const viewBox = (svgRoot.getAttribute('viewBox') ?? '')
+      .trim()
+      .split(/[\s,]+/)
+      .map(Number);
+    if (
+      viewBox.length === 4 &&
+      viewBox.every(Number.isFinite) &&
+      viewBox[2]! > 0 &&
+      viewBox[3]! > 0
+    ) {
+      if (pageWidth > 0 && !(pageHeight > 0))
+        pageHeight = (pageWidth * viewBox[3]!) / viewBox[2]!;
+      else if (pageHeight > 0 && !(pageWidth > 0))
+        pageWidth = (pageHeight * viewBox[2]!) / viewBox[3]!;
+      else if (!(pageWidth > 0) && !(pageHeight > 0)) {
+        pageWidth = viewBox[2]!;
+        pageHeight = viewBox[3]!;
+      }
+    }
+  }
+  if (
+    Number.isFinite(pageWidth) &&
+    Number.isFinite(pageHeight) &&
+    pageWidth > 0 &&
+    pageHeight > 0
+  ) {
+    output.dataset.epubViewportWidth = String(pageWidth);
+    output.dataset.epubViewportHeight = String(pageHeight);
   }
   const process = (node: Node, parent: Node): void => {
     if (++ctx.budget.nodes > 1500000)
@@ -106,11 +145,20 @@ export function sanitizeEpubChapter(
         input.namespaceURI === SVG_NS
           ? document.createElementNS(SVG_NS, 'style')
           : document.createElement('style');
+      const media = input.getAttribute('media');
+      if (media !== null) style.setAttribute('media', media);
       style.textContent = scopeEpubCss(
-        epubCss(ctx.resources, ctx.path, input.textContent ?? '', ctx.chapter),
+        epubCss(
+          ctx.resources,
+          ctx.path,
+          input.textContent ?? '',
+          ctx.chapter,
+          true
+        ),
         ctx.chapter,
         ctx.isolatedSvg,
-        ctx.resources
+        ctx.resources,
+        media?.trim() ?? ''
       );
       parent.appendChild(style);
       return;
@@ -133,16 +181,20 @@ export function sanitizeEpubChapter(
           ctx.resources.mediaTypes.get(target.path) === 'text/css'
         ) {
           const style = document.createElement('style');
+          const media = input.getAttribute('media');
+          if (media !== null) style.setAttribute('media', media);
           style.textContent = scopeEpubCss(
             epubCss(
               ctx.resources,
               target.path,
               new TextDecoder().decode(bytes),
-              ctx.chapter
+              ctx.chapter,
+              true
             ),
             ctx.chapter,
             ctx.isolatedSvg,
-            ctx.resources
+            ctx.resources,
+            media?.trim() ?? ''
           );
           parent.appendChild(style);
         }
@@ -194,6 +246,20 @@ export function sanitizeEpubChapter(
           attr.name,
           `url(#${epubAnchor(ctx.chapter, fragment)})`
         );
+      } else if (svg && tag === 'stop' && name === 'offset') {
+        const value = attr.value.trim();
+        if (
+          /^[+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?%?$/i.test(value) &&
+          Number.isFinite(Number.parseFloat(value))
+        )
+          el.setAttribute(attr.name, value);
+      } else if (
+        svg &&
+        tag === 'stop' &&
+        ((name === 'stop-color' && CSS.supports('color', attr.value)) ||
+          (name === 'stop-opacity' && CSS.supports('opacity', attr.value)))
+      ) {
+        el.setAttribute(attr.name, attr.value);
       } else if (SAFE_ATTR.has(name) && !/url\s*\(/i.test(attr.value))
         el.setAttribute(attr.name, attr.value);
     }
@@ -218,16 +284,60 @@ export function sanitizeEpubChapter(
       if (href.startsWith('#'))
         el.setAttribute('href', `#${epubAnchor(ctx.chapter, href.slice(1))}`);
     } else if (tag === 'img' || (svg && tag === 'image')) {
-      const src = epubDataUrl(
-        ctx.resources,
-        ctx.path,
+      if (tag === 'img') el.setAttribute('loading', 'lazy');
+      const href =
         input.getAttribute('src') ??
-          input.getAttribute('href') ??
-          input.getAttribute('xlink:href') ??
-          '',
-        'image'
-      );
-      if (src) el.setAttribute(svg ? 'href' : 'src', src);
+        input.getAttribute('href') ??
+        input.getAttribute('xlink:href') ??
+        '';
+      const src = epubDataUrl(ctx.resources, ctx.path, href, 'image');
+      if (src) {
+        el.setAttribute(svg ? 'href' : 'src', src);
+      } else {
+        const target = resolveEpubPath(ctx.path, href);
+        if (target && ctx.resources.omittedImagePaths?.has(target.path)) {
+          const description = (
+            input.getAttribute('alt') ??
+            input.getAttribute('aria-label') ??
+            ''
+          ).trim();
+          const message = `Image unavailable (reader size limit).${description ? ` ${description}` : ''}`;
+          const placeholder = svg
+            ? document.createElementNS(SVG_NS, 'g')
+            : document.createElement('span');
+          placeholder.setAttribute('class', 'epub-image-unavailable');
+          placeholder.setAttribute('data-epub-image-unavailable', '');
+          placeholder.setAttribute('role', 'img');
+          placeholder.setAttribute('aria-label', message);
+          const id = el.getAttribute('id');
+          if (id) placeholder.setAttribute('id', id);
+          if (svg) {
+            const rect = document.createElementNS(SVG_NS, 'rect');
+            for (const [name, fallback] of [
+              ['x', '0'],
+              ['y', '0'],
+              ['width', '160'],
+              ['height', '40'],
+            ] as const)
+              rect.setAttribute(name, el.getAttribute(name) ?? fallback);
+            rect.setAttribute('fill', '#eee');
+            rect.setAttribute('stroke', '#555');
+            const text = document.createElementNS(SVG_NS, 'text');
+            text.setAttribute('x', el.getAttribute('x') ?? '0');
+            text.setAttribute('y', el.getAttribute('y') ?? '0');
+            text.setAttribute('dx', '4');
+            text.setAttribute('dy', '1em');
+            text.setAttribute('font-size', '12');
+            text.setAttribute('fill', '#333');
+            text.textContent = message;
+            placeholder.append(rect, text);
+          } else {
+            placeholder.textContent = message;
+          }
+          parent.appendChild(placeholder);
+          return;
+        }
+      }
     } else if (tag === 'audio' || tag === 'video' || tag === 'source') {
       if (tag !== 'source') el.setAttribute('controls', '');
       const target = resolveEpubPath(ctx.path, input.getAttribute('src') ?? '');

@@ -1,17 +1,17 @@
-import { normaliseFrameExternalLink } from './annotate-frame.ts';
 import type { EpubBook } from './frame-document-protocol.ts';
 import { epubAnchor } from './epub-sanitize.ts';
 
 export function mountEpubChrome(
   root: HTMLElement,
   book: EpubBook,
-  chapterByPath: ReadonlyMap<string, number>
+  chapterByPath: ReadonlyMap<string, number>,
+  requestExternalLink?: (event: MouseEvent, href: string | null) => void
 ): (content: Element) => void {
   const host = document.createElement('div');
   const shadow = host.attachShadow({ mode: 'closed' });
   const style = document.createElement('style');
   style.textContent =
-    ':host{position:fixed;z-index:2147483000;bottom:0;left:0;right:0;font:14px system-ui;color:#222} .bar{display:flex;align-items:center;gap:12px;padding:8px 14px;background:#fff;border-top:1px solid #aaa} button{font:inherit;padding:5px 10px;cursor:pointer} .position{margin-left:auto} .panel{position:absolute;bottom:48px;left:8px;width:min(360px,90vw);max-height:60vh;overflow:auto;background:#fff;border:1px solid #aaa;padding:12px;box-shadow:0 4px 16px #0003} .panel[hidden]{display:none} .panel button{display:block;text-align:left;border:0;background:none;width:100%}';
+    ':host{position:fixed;z-index:2147483000;bottom:0;left:0;right:0;font:14px system-ui;color:#222} .bar{display:flex;align-items:center;gap:12px;padding:8px 14px;background:#fff;border-top:1px solid #aaa} button{font:inherit;padding:5px 10px;cursor:pointer} .position{margin-left:auto} .panel{position:absolute;bottom:48px;left:8px;width:min(360px,90vw);max-height:60vh;overflow:auto;background:#fff;border:1px solid #aaa;padding:12px;box-shadow:0 4px 16px #0003} .panel[hidden]{display:none} .panel button{display:block;text-align:left;border:0;background:none;width:100%} .note-content{position:relative;isolation:isolate;contain:paint;overflow-wrap:anywhere} .note-content img,.note-content svg{max-width:100%;height:auto}';
   const bar = document.createElement('div');
   bar.className = 'bar';
   const toggle = document.createElement('button');
@@ -28,13 +28,84 @@ export function mountEpubChrome(
   const panel = document.createElement('div');
   panel.className = 'panel';
   panel.hidden = true;
+  const footnote = document.createElement('aside');
+  footnote.className = 'panel';
+  footnote.hidden = true;
+  let currentChapter = 0;
+  let noteChapter: number | undefined;
+  const hideFootnote = () => {
+    footnote.hidden = true;
+    noteChapter = undefined;
+  };
   toggle.addEventListener('click', () => {
     panel.hidden = !panel.hidden;
   });
   let zoom = 1;
   const setZoom = (value: number) => {
-    zoom = Math.min(1.5, Math.max(0.9, Math.round(value * 10) / 10));
+    const next = Math.min(1.5, Math.max(0.9, Math.round(value * 10) / 10));
+    if (next === zoom) return;
+
+    // Anchor a visible text position before reflow, with an element fallback
+    // for image and SVG chapters where the browser cannot place a caret.
+    const bounds = root.getBoundingClientRect();
+    const x = Math.min(
+      Math.max(0, innerWidth - 1),
+      Math.max(0, bounds.left + bounds.width / 2)
+    );
+    const y = Math.min(32, Math.max(0, innerHeight - 1));
+    const hit = document.elementFromPoint(x, y);
+    const visual = hit?.closest('svg, img, video');
+    const visualAnchor = visual && root.contains(visual) ? visual : undefined;
+    const caretDocument = document as Document & {
+      caretPositionFromPoint?: (
+        x: number,
+        y: number
+      ) => { offsetNode: Node; offset: number } | null;
+      caretRangeFromPoint?: (x: number, y: number) => Range | null;
+    };
+    const caret = visualAnchor
+      ? null
+      : caretDocument.caretPositionFromPoint?.(x, y);
+    let range: Range | null = null;
+    if (caret) {
+      range = document.createRange();
+      range.setStart(caret.offsetNode, caret.offset);
+      range.collapse(true);
+    } else if (!visualAnchor) {
+      range = caretDocument.caretRangeFromPoint?.(x, y) ?? null;
+    }
+    const rect = range?.getBoundingClientRect();
+    let before: number;
+    let measure: () => number;
+    if (
+      range &&
+      root.contains(range.startContainer) &&
+      rect &&
+      rect.height > 0 &&
+      rect.bottom >= 0 &&
+      rect.top < innerHeight &&
+      Math.max(rect.top - y, y - rect.bottom, 0) <= Math.max(24, rect.height)
+    ) {
+      const anchor = range;
+      before = rect.top;
+      measure = () => anchor.getBoundingClientRect().top;
+    } else {
+      const anchor = visualAnchor ?? (hit && root.contains(hit) ? hit : root);
+      const start = anchor.getBoundingClientRect();
+      const fraction =
+        start.height > 0
+          ? Math.min(1, Math.max(0, (y - start.top) / start.height))
+          : 0;
+      before = start.top + fraction * start.height;
+      measure = () => {
+        const current = anchor.getBoundingClientRect();
+        return current.top + fraction * current.height;
+      };
+    }
+    zoom = next;
     root.style.zoom = String(zoom);
+    window.scrollBy(0, measure() - before);
+    update();
   };
   smaller.addEventListener('click', () => setZoom(zoom - 0.1));
   larger.addEventListener('click', () => setZoom(zoom + 0.1));
@@ -45,11 +116,13 @@ export function mountEpubChrome(
     button.textContent = item.label;
     button.style.paddingInlineStart = `${10 + item.depth * 14}px`;
     button.addEventListener('click', () => {
+      hideFootnote();
       (
         document.getElementById(epubAnchor(chapter, item.fragment ?? '')) ??
         document.getElementById(epubAnchor(chapter, ''))
       )?.scrollIntoView();
       panel.hidden = true;
+      update();
     });
     panel.append(button);
   }
@@ -84,6 +157,8 @@ export function mountEpubChrome(
       scrollY >= max - 2
     )
       current = Math.max(0, chapters.length - 1);
+    if (noteChapter !== undefined && noteChapter !== current) hideFootnote();
+    currentChapter = current;
     const percent = Math.max(
       0,
       Math.min(100, Math.round((scrollY / max) * 100))
@@ -100,11 +175,7 @@ export function mountEpubChrome(
   };
   addEventListener('scroll', update, { passive: true });
   addEventListener('resize', update);
-  update();
   bar.append(toggle, smaller, larger, position);
-  const footnote = document.createElement('aside');
-  footnote.className = 'panel';
-  footnote.hidden = true;
   footnote.addEventListener('click', (event) => {
     const target = event.target;
     if (!(target instanceof Element)) return;
@@ -118,28 +189,38 @@ export function mountEpubChrome(
         document.getElementById(id) ??
         document.getElementById(id.replace(/^(ep-\d+-).*$/, '$1'));
       if (node) {
+        hideFootnote();
         node.scrollIntoView();
-        footnote.hidden = true;
+        update();
       }
-    } else if (event.isTrusted) {
-      const external = normaliseFrameExternalLink(href);
-      if (external)
-        window.parent.postMessage(
-          { type: 'relic:open-link', href: external },
-          '*'
-        );
+    } else {
+      requestExternalLink?.(event, href);
     }
   });
+  root.addEventListener(
+    'click',
+    (event) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const link = target.closest('a[href^="#ep-"]');
+      if (link && !link.hasAttribute('data-epub-noteref')) hideFootnote();
+    },
+    true
+  );
   shadow.append(footnote);
   shadow.append(style, panel, bar);
   root.after(host);
+  update();
   return (content) => {
     const close = document.createElement('button');
     close.textContent = 'Close';
-    close.addEventListener('click', () => {
-      footnote.hidden = true;
-    });
-    footnote.replaceChildren(close, content.cloneNode(true));
+    close.addEventListener('click', hideFootnote);
+    const noteContent = document.createElement('div');
+    noteContent.className = 'note-content';
+    noteContent.append(content.cloneNode(true));
+    footnote.replaceChildren(close, noteContent);
+    update();
+    noteChapter = currentChapter;
     footnote.hidden = false;
   };
 }

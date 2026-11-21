@@ -30,6 +30,10 @@ export interface EpubBook {
 export interface DocumentInput {
   readonly entries: ReadonlyMap<string, Uint8Array>;
   readonly book?: EpubBook;
+  readonly requestExternalLink?: (
+    event: MouseEvent,
+    href: string | null
+  ) => void;
 }
 export type DocumentOutcome =
   | { readonly state: 'ready' }

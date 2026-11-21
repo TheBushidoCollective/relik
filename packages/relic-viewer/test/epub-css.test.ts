@@ -14,6 +14,10 @@ function resources(entries: Map<string, Uint8Array>) {
     ]),
     dataUrls: new Map<string, string>(),
     mediaUrls: new Map<string, string>(),
+    imagePixels: new Map<string, number>(),
+    decodedImagePixels: 0,
+    omittedImages: false,
+    omittedImagePaths: new Set<string>(),
     encodedBytes: 0,
     referencedBytes: 0,
     cssBytes: 0,
@@ -106,6 +110,84 @@ test('uses manifest MIME for extensionless images and rejects mismatched assets'
     epubDataUrl(context, 'OPS/book.xhtml', 'misnamed.png', 'image')
   ).toBeUndefined();
   expect(context.dataUrls.size).toBe(1);
+});
+
+test('bounds measured raster area without rejecting an unmeasurable image', () => {
+  const png = (width: number, height: number): Uint8Array => {
+    const bytes = new Uint8Array(24);
+    bytes.set([137, 80, 78, 71, 13, 10, 26, 10]);
+    bytes.set([73, 72, 68, 82], 12);
+    const view = new DataView(bytes.buffer);
+    view.setUint32(16, width);
+    view.setUint32(20, height);
+    return bytes;
+  };
+  const entries = new Map([
+    ['OPS/ordinary', png(64, 64)],
+    ['OPS/large', png(10000, 10000)],
+    ['OPS/unknown', new Uint8Array([1, 2, 3])],
+  ]);
+  const context = resources(entries);
+  for (const path of entries.keys()) context.mediaTypes.set(path, 'image/png');
+  expect(
+    epubDataUrl(context, 'OPS/book.xhtml', 'ordinary', 'image')
+  ).toBeDefined();
+  expect(
+    epubDataUrl(context, 'OPS/book.xhtml', 'ordinary', 'image')
+  ).toBeDefined();
+  expect(context.decodedImagePixels).toBe(64 * 64);
+  expect(
+    epubDataUrl(context, 'OPS/book.xhtml', 'large', 'image')
+  ).toBeUndefined();
+  expect(context.omittedImages).toBe(true);
+  expect(context.omittedImagePaths.has('OPS/large')).toBe(true);
+  expect(context.omittedImagePaths.has('OPS/ordinary')).toBe(false);
+  expect(
+    epubDataUrl(context, 'OPS/book.xhtml', 'unknown', 'image')
+  ).toBeDefined();
+  const many = new Map(
+    Array.from(
+      { length: 9 },
+      (_, i) => [`OPS/image${i}`, png(4096, 4096)] as const
+    )
+  );
+  const total = resources(many);
+  for (const path of many.keys()) total.mediaTypes.set(path, 'image/png');
+  for (let i = 0; i < 8; i++)
+    expect(
+      epubDataUrl(total, 'OPS/book.xhtml', `image${i}`, 'image')
+    ).toBeDefined();
+  expect(
+    epubDataUrl(total, 'OPS/book.xhtml', 'image8', 'image')
+  ).toBeUndefined();
+  expect(total.omittedImages).toBe(true);
+});
+
+test('recognizes GIF, JPEG and WebP raster dimensions before admission', () => {
+  const gif = new Uint8Array(10);
+  gif.set([71, 73, 70, 56, 57, 97]);
+  new DataView(gif.buffer).setUint16(6, 10000, true);
+  new DataView(gif.buffer).setUint16(8, 10000, true);
+  const jpeg = new Uint8Array([
+    0xff, 0xd8, 0xff, 0xc0, 0, 8, 8, 0x27, 0x10, 0x27, 0x10, 1,
+  ]);
+  const webp = new Uint8Array(30);
+  webp.set([82, 73, 70, 70], 0);
+  webp.set([87, 69, 66, 80], 8);
+  webp.set([86, 80, 56, 88], 12);
+  webp.set([0x0f, 0x27, 0, 0x0f, 0x27, 0], 24);
+  for (const [name, mime, bytes] of [
+    ['picture.gif', 'image/gif', gif],
+    ['picture.jpg', 'image/jpeg', jpeg],
+    ['picture.webp', 'image/webp', webp],
+  ] as const) {
+    const context = resources(new Map([[`OPS/${name}`, bytes]]));
+    context.mediaTypes.set(`OPS/${name}`, mime);
+    expect(
+      epubDataUrl(context, 'OPS/book.xhtml', name, 'image')
+    ).toBeUndefined();
+    expect(context.omittedImages).toBe(true);
+  }
 });
 
 test('bounds stylesheet expansion and rejects incomplete CSS scopes', () => {

@@ -94,7 +94,7 @@ export async function render(
     };
     const style = document.createElement('style');
     style.textContent =
-      '#relic-document{max-width:52rem;margin:0 auto;padding:1.5rem 1.5rem 5rem;overflow-wrap:anywhere}#relic-document img,#relic-document video{max-width:100%;height:auto}.epub-footnote{position:fixed;z-index:2147482999;bottom:4rem;right:1rem;max-width:min(32rem,80vw);max-height:45vh;overflow:auto;padding:1rem;background:white;border:1px solid #999;box-shadow:0 4px 12px #0003}';
+      '#relic-document{position:relative;isolation:isolate;z-index:0;max-width:52rem;margin:0 auto;padding:1.5rem 1.5rem 5rem;overflow-wrap:anywhere}#relic-document img,#relic-document video{max-width:100%;height:auto}#relic-document span.epub-image-unavailable{display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;min-width:10rem;min-height:3rem;max-width:100%;padding:.5rem;border:1px solid #777;background:#eee;color:#222;font:14px/1.4 system-ui;text-align:center}.epub-footnote{position:fixed;z-index:2147482999;bottom:4rem;right:1rem;max-width:min(32rem,80vw);max-height:45vh;overflow:auto;padding:1rem;background:white;border:1px solid #999;box-shadow:0 4px 12px #0003}';
     document.head.append(style);
     for (let index = 0; index < spine.length; index++) {
       const part = spine[index]!;
@@ -105,25 +105,42 @@ export async function render(
       const article = sanitizeEpubChapter(decodeXmlBytes(bytes), context);
       root.append(article);
     }
+    if (resources.omittedImages) {
+      const warning = document.createElement('p');
+      warning.setAttribute('role', 'status');
+      warning.textContent =
+        'Some images exceed the reader size limit. Download the original to view them.';
+      root.prepend(warning);
+    }
     if (book.progression !== 'default') root.dir = book.progression;
     if (book.layout === 'pre-paginated') {
       const resize = () => {
+        const rootStyle = getComputedStyle(root);
+        const availableWidth =
+          root.clientWidth -
+          Number.parseFloat(rootStyle.paddingLeft || '0') -
+          Number.parseFloat(rootStyle.paddingRight || '0');
         for (const article of root.querySelectorAll<HTMLElement>(
           'article[data-epub-chapter]'
         )) {
           const width = Number(article.dataset.epubViewportWidth);
           const height = Number(article.dataset.epubViewportHeight);
-          if (width > 0 && height > 0 && root.clientWidth > 0) {
+          if (width > 0 && height > 0 && availableWidth > 0) {
             article.style.width = `${width}px`;
             article.style.height = `${height}px`;
-            article.style.zoom = String(root.clientWidth / width);
+            article.style.zoom = String(availableWidth / width);
           }
         }
       };
       resize();
       addEventListener('resize', resize);
     }
-    const showFootnote = mountEpubChrome(root, book, chapters);
+    const showFootnote = mountEpubChrome(
+      root,
+      book,
+      chapters,
+      input.requestExternalLink
+    );
     root.addEventListener(
       'click',
       (event) => {

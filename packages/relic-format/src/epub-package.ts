@@ -298,7 +298,7 @@ export async function readEpubPackage(
                       Number(type.includes('page-list')) >
                     navLimit
                   )
-                    return fail('too-large');
+                    fail('too-large');
                   const entry = { label: text(child), ...target };
                   if (type.includes('toc'))
                     toc.push({ ...entry, depth: Math.max(0, depth - 1) });
@@ -329,7 +329,7 @@ export async function readEpubPackage(
                 const label = children(child, 'navLabel')[0];
                 if (target && paths.has(target.path)) {
                   if (toc.length + pageList.length >= navLimit)
-                    return fail('too-large');
+                    fail('too-large');
                   const entry = { label: label ? text(label) : '', ...target };
                   if (name === 'navPoint') toc.push({ ...entry, depth });
                   else pageList.push(entry);
