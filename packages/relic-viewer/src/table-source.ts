@@ -18,7 +18,15 @@ export interface TableSource {
   text(record: number, column: number): string;
   numeric(record: number, column: number): number | undefined;
   detail?(record: number, column: number): CellDetail | undefined;
+  numericColumn?(column: number, headerRow: boolean): boolean;
+  matchingColumns?(
+    record: number,
+    needle: string,
+    drawn: number,
+    limit: number
+  ): readonly number[];
   readonly summary: string;
+  readonly commentable?: boolean;
   readonly sheet?: string;
   readonly csv?: CsvTable;
 }

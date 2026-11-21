@@ -150,6 +150,7 @@ export function isNumericColumn(
   column: number,
   headerRow: boolean
 ): boolean {
+  if (table.numericColumn) return table.numericColumn(column, headerRow);
   let seen = false;
   for (let record = headerRow ? 1 : 0; record < table.records; record++) {
     const value = table.text(record, column);
@@ -292,6 +293,17 @@ export function findCells(
   const hits: CellRef[] = [];
   for (let display = 0; display < model.records; display++) {
     const record = recordAt(model, display);
+    if (table.matchingColumns) {
+      for (const column of table.matchingColumns(
+        record,
+        needle,
+        drawn,
+        FIND_LIMIT - hits.length
+      ))
+        hits.push({ record, column });
+      if (hits.length >= FIND_LIMIT) return hits;
+      continue;
+    }
     for (let column = 0; column < drawn; column++) {
       if (table.text(record, column).toLowerCase().includes(needle)) {
         hits.push({ record, column });
@@ -301,20 +313,50 @@ export function findCells(
   }
   return hits;
 }
+export const RANGE_COPY_CELL_LIMIT = 100_000;
+export const RANGE_COPY_CHAR_LIMIT = 8 * 1024 * 1024;
+export class RangeCopyTooLargeError extends Error {
+  constructor() {
+    super('This range is too large to copy. Select a smaller range.');
+  }
+}
 
 /** The text a copy puts on the clipboard for a rectangle: tabs between cells, newlines between rows. */
 export function rectText(table: TableSource, rect: SelectionRect): string {
   const rows: string[] = [];
   const range = rect.r0 !== rect.r1 || rect.c0 !== rect.c1;
+  if (
+    range &&
+    (rect.r1 - rect.r0 + 1) * (rect.c1 - rect.c0 + 1) > RANGE_COPY_CELL_LIMIT
+  )
+    throw new RangeCopyTooLargeError();
+  let outputLength = 0;
   for (let record = rect.r0; record <= rect.r1; record++) {
     const cells: string[] = [];
     for (let column = rect.c0; column <= rect.c1; column++) {
       const text = table.text(record, column);
-      cells.push(
-        range && /^[=+\-@]/.test(text) && !isNumericText(text)
-          ? `'${text}`
-          : text
-      );
+      if (!range) {
+        cells.push(text);
+        continue;
+      }
+      if (record !== rect.r0 || column !== rect.c0) outputLength++;
+      if (text.length > RANGE_COPY_CHAR_LIMIT - outputLength)
+        throw new RangeCopyTooLargeError();
+      const guarded =
+        /^[=+\-@]/.test(text) && !isNumericText(text) ? `'${text}` : text;
+      const field = /[\t\r\n"]/.test(guarded)
+        ? `"${guarded.replace(/"/g, '""')}"`
+        : guarded;
+      for (const character of field) {
+        const code = character.codePointAt(0) ?? 0;
+        outputLength +=
+          code !== 9 && code !== 10 && isInvisible(code)
+            ? `\\u{${code.toString(16).toUpperCase()}}`.length
+            : character.length;
+        if (outputLength > RANGE_COPY_CHAR_LIMIT)
+          throw new RangeCopyTooLargeError();
+      }
+      cells.push(field);
     }
     rows.push(cells.join('\t'));
   }
@@ -481,6 +523,8 @@ export function mountDataTable(
   let disposed = false;
   let frame = 0;
   let findTimer = 0;
+  let findGeneration = 0;
+  let navigationGeneration = 0;
   /** The `bodyKey` the rows on screen were drawn with. */
   let drawnKey = '';
 
@@ -524,7 +568,9 @@ export function mountDataTable(
       'dt-notice',
       `Only the first ${formatter.format(drawn)} of ` +
         `${formatter.format(table.columns)} columns are drawn. ` +
-        'The source view shows all of them.'
+        (table.csv
+          ? 'The source view shows all of them.'
+          : 'Download the spreadsheet to inspect all columns.')
     );
     root.append(notice);
   }
@@ -700,14 +746,16 @@ export function mountDataTable(
         indicator.dataset['dir'] = sort?.direction ?? 'asc';
         cell.append(indicator);
       }
-      const commentButton = element('button', 'dt-hc-comment');
-      commentButton.type = 'button';
-      commentButton.setAttribute(
-        'aria-label',
-        `Comment on column ${columnLetters(column + 1)}`
-      );
-      commentButton.title = `Comment on column ${columnLetters(column + 1)}`;
-      cell.append(commentButton);
+      if (table.commentable !== false) {
+        const commentButton = element('button', 'dt-hc-comment');
+        commentButton.type = 'button';
+        commentButton.setAttribute(
+          'aria-label',
+          `Comment on column ${columnLetters(column + 1)}`
+        );
+        commentButton.title = `Comment on column ${columnLetters(column + 1)}`;
+        cell.append(commentButton);
+      }
     } else if (value === '') {
       cell.append(element('span', 'dt-text dt-blank', 'blank'));
     } else {
@@ -817,20 +865,26 @@ export function mountDataTable(
       if (single) {
         const value = table.text(rect.r0, rect.c0);
         const columnName = headerRow ? table.text(0, rect.c0) : '';
+        const detail = table.detail?.(rect.r0, rect.c0);
+        const meta = detail ? ` · ${detail.type}` : '';
         cells.push(
           element(
             'p',
             'dt-sub',
-            columnName === ''
+            (columnName === ''
               ? `Row ${rect.r0 + 1}`
-              : `Row ${rect.r0 + 1}, ${labelText(columnName)}`
+              : `Row ${rect.r0 + 1}, ${labelText(columnName)}`) + meta
           )
         );
         cells.push(
           element(
             'pre',
             'dt-value',
-            value === '' ? '(blank)' : displayText(value)
+            (value === '' ? '(blank)' : displayText(value)) +
+              (detail?.formula
+                ? `\n${detail.sharedFrom ? 'Shared master formula' : 'Formula'}: ${displayText(detail.formula)}`
+                : '') +
+              (detail?.sharedFrom ? `\nShared from: ${detail.sharedFrom}` : '')
           )
         );
       } else {
@@ -845,8 +899,14 @@ export function mountDataTable(
       const copy = element('button', 'dt-copy', 'Copy');
       copy.type = 'button';
       copy.addEventListener('click', () => {
-        const text = clipboardText(rectText(table, rect));
-        void navigator.clipboard?.writeText(text).catch(() => undefined);
+        try {
+          const text = clipboardText(rectText(table, rect));
+          void navigator.clipboard?.writeText(text).catch(() => undefined);
+        } catch (error) {
+          if (!(error instanceof RangeCopyTooLargeError)) throw error;
+          copy.textContent = error.message;
+          copy.setAttribute('aria-label', error.message);
+        }
       });
       cells.push(copy);
     }
@@ -888,6 +948,7 @@ export function mountDataTable(
       `${formatter.format(table.columns)} columns · ` +
       table.summary;
     update(false);
+    if (find.value.trim()) runFind(find.value);
   };
 
   const cycleSort = (column: number): void => {
@@ -905,6 +966,7 @@ export function mountDataTable(
     // Sorting moves the rows a selection was made on, so the selection goes.
     selection = undefined;
     update(false);
+    if (find.value.trim()) runFind(find.value);
   };
 
   const gotoHit = (index: number): void => {
@@ -917,24 +979,71 @@ export function mountDataTable(
     update(false);
   };
 
-  const runFind = (query: string): void => {
-    findHits = findCells(table, model, drawn, query);
-    findKeys = new Set(findHits.map((hit) => keyOf(hit.record, hit.column)));
-    findCurrent = -1;
-    if (query.trim() === '') {
-      findCount.textContent = '';
-      update(false);
+  const runFind = (
+    query: string,
+    searchNavigation = navigationGeneration
+  ): void => {
+    const generation = ++findGeneration;
+    window.clearTimeout(findTimer);
+    const needle = query.trim().toLowerCase();
+    const searchModel = model;
+    const finish = (hits: CellRef[]): void => {
+      if (disposed || generation !== findGeneration || searchModel !== model)
+        return;
+      findHits = hits;
+      findKeys = new Set(hits.map((hit) => keyOf(hit.record, hit.column)));
+      findCurrent = -1;
+      if (!needle) {
+        findCount.textContent = '';
+        update(false);
+        return;
+      }
+      if (!hits.length) {
+        findCount.textContent = 'No matches';
+        update(false);
+        return;
+      }
+      if (navigationGeneration === searchNavigation) {
+        gotoHit(0);
+      } else {
+        findCount.textContent = `${formatter.format(hits.length)} ${hits.length === 1 ? 'match' : 'matches'}`;
+        update(false);
+      }
+      if (hits.length >= FIND_LIMIT)
+        findCount.textContent = `More than ${formatter.format(FIND_LIMIT)} matches`;
+    };
+    if (!needle || !table.matchingColumns) {
+      finish(findCells(table, searchModel, drawn, query));
       return;
     }
-    if (findHits.length === 0) {
-      findCount.textContent = 'No matches';
-      update(false);
-      return;
-    }
-    gotoHit(0);
-    if (findHits.length >= FIND_LIMIT) {
-      findCount.textContent = `More than ${formatter.format(FIND_LIMIT)} matches`;
-    }
+    const hits: CellRef[] = [];
+    let display = 0;
+    findCount.textContent = 'Searching';
+    const batch = (): void => {
+      if (disposed || generation !== findGeneration || searchModel !== model)
+        return;
+      const deadline = performance.now() + 8;
+      let rows = 0;
+      while (
+        display < searchModel.records &&
+        hits.length < FIND_LIMIT &&
+        rows++ < 256 &&
+        performance.now() < deadline
+      ) {
+        const record = recordAt(searchModel, display++);
+        for (const column of table.matchingColumns!(
+          record,
+          needle,
+          drawn,
+          FIND_LIMIT - hits.length
+        ))
+          hits.push({ record, column });
+      }
+      if (display < searchModel.records && hits.length < FIND_LIMIT)
+        findTimer = window.setTimeout(batch, 0);
+      else finish(hits);
+    };
+    batch();
   };
 
   // ---- events ---------------------------------------------------------------
@@ -955,6 +1064,7 @@ export function mountDataTable(
     if (!(target instanceof Element)) return;
     const cell = cellOf(target);
     if (cell === undefined) return;
+    navigationGeneration++;
     event.preventDefault();
     const column = Number(cell.dataset['c']);
     if (cell.classList.contains('dt-hcell')) {
@@ -1015,6 +1125,7 @@ export function mountDataTable(
       if (!(event.target instanceof Element)) return;
       const comment = event.target.closest<HTMLElement>('.dt-hc-comment');
       if (comment === null) return;
+      if (table.commentable === false) return;
       event.stopPropagation();
       const column = Number(
         comment.closest<HTMLElement>('.dt-hcell')?.dataset['c']
@@ -1041,6 +1152,7 @@ export function mountDataTable(
 
   grid.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') {
+      navigationGeneration++;
       event.preventDefault();
       selection = undefined;
       update(false);
@@ -1085,6 +1197,7 @@ export function mountDataTable(
       default:
         return;
     }
+    navigationGeneration++;
     event.preventDefault();
     const record = recordAt(model, nextDisplay);
     if (event.shiftKey && selection !== undefined && !sortedNow()) {
@@ -1104,8 +1217,18 @@ export function mountDataTable(
   headerBox.addEventListener('change', () => setHeaderRow(headerBox.checked));
 
   find.addEventListener('input', () => {
+    findGeneration++;
     window.clearTimeout(findTimer);
-    findTimer = window.setTimeout(() => runFind(find.value), FIND_DELAY_MS);
+    findHits = [];
+    findKeys.clear();
+    findCurrent = -1;
+    findCount.textContent = '';
+    update(false);
+    const searchNavigation = navigationGeneration;
+    findTimer = window.setTimeout(
+      () => runFind(find.value, searchNavigation),
+      FIND_DELAY_MS
+    );
   });
   find.addEventListener('keydown', (event) => {
     if (event.key === 'Enter') {
@@ -1193,6 +1316,7 @@ export function mountDataTable(
         !markFits(anchor, table.records, drawn, table.sheet)
       )
         return;
+      navigationGeneration++;
       const top = anchor.row - 1;
       const left = anchor.col - 1;
       // A sorted table holds one cell selected, since a range is not contiguous.
