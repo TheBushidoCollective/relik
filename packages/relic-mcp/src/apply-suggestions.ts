@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { chmod, lstat, open, realpath, rename, unlink } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import {
   type CommentPlaintext,
   decodeKey,
@@ -8,7 +9,6 @@ import {
   deriveCommentKey,
   deriveRendererClass,
   filenameExtension,
-  guessMimetype,
 } from '@relic/format';
 import { entryPathRule } from '@relic/format';
 import { FIELD_STRAY, parseTable, recordWidth } from '@relic/format/csv';
@@ -90,12 +90,61 @@ function newlineCount(text: string): number {
   return count;
 }
 
-function validateTable(before: string, after: string, tsv: boolean): void {
+interface StructureEdit {
+  readonly start: number;
+  readonly end: number;
+  readonly replacementLength: number;
+}
+
+/** Map increasing, unchanged source boundaries through the selected edits. */
+function boundaryMapper(
+  edits: readonly StructureEdit[]
+): (offset: number) => number | undefined {
+  let next = 0;
+  let shift = 0;
+  return (offset) => {
+    while (next < edits.length && edits[next]!.end <= offset) {
+      const edit = edits[next++]!;
+      shift += edit.replacementLength - (edit.end - edit.start);
+    }
+    const edit = edits[next];
+    if (edit !== undefined && edit.start <= offset && edit.end > offset)
+      return undefined;
+    return offset + shift;
+  };
+}
+
+function hasUnpairedSurrogate(text: string): boolean {
+  for (let index = 0; index < text.length; index += 1) {
+    const code = text.charCodeAt(index);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = text.charCodeAt(index + 1);
+      if (next < 0xdc00 || next > 0xdfff || Number.isNaN(next)) return true;
+      index += 1;
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function leadingBomCount(text: string): number {
+  let count = 0;
+  while (text.charCodeAt(count) === 0xfeff) count += 1;
+  return count;
+}
+
+function validateTable(
+  before: string,
+  after: string,
+  tsv: boolean,
+  crlf: boolean,
+  edits: readonly StructureEdit[]
+): void {
   const options = { delimiter: tsv ? '\t' : 'auto' } as const;
-  // Auto-detect each complete result, just as the table view does. Fixing the
-  // second parse to the original delimiter would hide a change in the view.
-  const original = parseTable(before, options);
-  const result = parseTable(after, options);
+  // The viewer sniffs the unnormalized source, including every CR in CRLF.
+  const original = parseTable(crlf ? restoreCrLf(before) : before, options);
+  const result = parseTable(crlf ? restoreCrLf(after) : after, options);
   if (!original.ok || !result.ok)
     refuseStructure(
       'table_parse',
@@ -114,6 +163,17 @@ function validateTable(before: string, after: string, tsv: boolean): void {
         `the field count of record ${record + 1} would change`
       );
   }
+  // Merge offsets use normalized LF, so parse those strings with the dialect
+  // selected above before mapping their field boundaries through the edits.
+  const oldOffsets = crlf
+    ? parseTable(before, { delimiter: oldTable.delimiter })
+    : original;
+  const newOffsets = crlf
+    ? parseTable(after, { delimiter: oldTable.delimiter })
+    : result;
+  if (!oldOffsets.ok || !newOffsets.ok)
+    refuseStructure('table_parse', 'the normalized table cannot be parsed');
+  const mapBoundary = boundaryMapper(edits);
   for (let field = 0; field < oldTable.fieldFlags.length; field += 1) {
     if (
       (oldTable.fieldFlags[field]! & FIELD_STRAY) === 0 &&
@@ -123,6 +183,11 @@ function validateTable(before: string, after: string, tsv: boolean): void {
         'table_quotes',
         'a table field would gain an irregular quote'
       );
+    if (
+      mapBoundary(oldOffsets.table.fieldEnd[field]!) !==
+      newOffsets.table.fieldEnd[field]
+    )
+      refuseStructure('table_boundaries', 'a table cell boundary would move');
   }
 }
 
@@ -150,8 +215,14 @@ function notebookCells(source: string): readonly unknown[] {
   return value.cells;
 }
 
-function validateNotebook(before: string, after: string): void {
-  if (!parseNotebook(before).ok || !parseNotebook(after).ok)
+function validateNotebook(
+  before: string,
+  after: string,
+  edits: readonly StructureEdit[]
+): void {
+  const original = parseNotebook(before);
+  const result = parseNotebook(after);
+  if (!original.ok || !result.ok)
     refuseStructure(
       'notebook_parse',
       'the original notebook or the result cannot be parsed'
@@ -182,6 +253,26 @@ function validateNotebook(before: string, after: string): void {
         'notebook_cell_type',
         `the type of notebook cell ${index + 1} would change`
       );
+    const oldSource = 'source' in oldCell ? oldCell.source : undefined;
+    const newSource = 'source' in newCell ? newCell.source : undefined;
+    const validSource =
+      typeof newSource === 'string'
+        ? !hasUnpairedSurrogate(newSource)
+        : Array.isArray(newSource) &&
+          newSource.every(
+            (line) => typeof line === 'string' && !hasUnpairedSurrogate(line)
+          );
+    const cellSpan = original.notebook.cells[index]!;
+    const touched = edits.some((edit) =>
+      edit.start === edit.end
+        ? edit.start >= cellSpan.start && edit.start < cellSpan.end
+        : edit.start < cellSpan.end && edit.end > cellSpan.start
+    );
+    if ((!isDeepStrictEqual(oldSource, newSource) || touched) && !validSource)
+      refuseStructure(
+        'notebook_source',
+        `the source of notebook cell ${index + 1} must be well-formed text or an array of text`
+      );
     const oldOutputs = 'outputs' in oldCell ? oldCell.outputs : undefined;
     const newOutputs = 'outputs' in newCell ? newCell.outputs : undefined;
     if (
@@ -190,11 +281,12 @@ function validateNotebook(before: string, after: string): void {
       Array.isArray(oldOutputs) !== Array.isArray(newOutputs) ||
       (Array.isArray(oldOutputs) &&
         Array.isArray(newOutputs) &&
-        oldOutputs.length !== newOutputs.length)
+        oldOutputs.length !== newOutputs.length) ||
+      !isDeepStrictEqual(oldOutputs, newOutputs)
     )
       refuseStructure(
         'notebook_outputs',
-        `the outputs of notebook cell ${index + 1} would change in number`
+        `the outputs of notebook cell ${index + 1} would change`
       );
   }
 }
@@ -202,7 +294,8 @@ function validateNotebook(before: string, after: string): void {
 function validateSubtitles(
   before: string,
   after: string,
-  format: 'srt' | 'vtt'
+  format: 'srt' | 'vtt',
+  edits: readonly StructureEdit[]
 ): void {
   const original = parseSubtitles(before, format);
   const result = parseSubtitles(after, format);
@@ -211,10 +304,12 @@ function validateSubtitles(
       'subtitle_parse',
       'the original subtitles or the result cannot be parsed'
     );
+  const oldLines = before.split('\n');
+  const newLines = after.split('\n');
   if (
     format === 'vtt' &&
-    /^WEBVTT(?:[ \t]|$)/.test(before.split('\n', 1)[0] ?? '') !==
-      /^WEBVTT(?:[ \t]|$)/.test(after.split('\n', 1)[0] ?? '')
+    /^WEBVTT(?:[ \t]|$)/.test(oldLines[0] ?? '') !==
+      /^WEBVTT(?:[ \t]|$)/.test(newLines[0] ?? '')
   )
     refuseStructure('subtitle_header', 'the WebVTT header would change');
   const oldFile = original.file;
@@ -228,19 +323,45 @@ function validateSubtitles(
       'subtitle_cues',
       'the subtitle cue or block count would change'
     );
+  const oldStarts = lineStarts(before);
+  const newStarts = lineStarts(after);
+  const mapBoundary = boundaryMapper(edits);
   for (let index = 0; index < oldFile.entries.length; index += 1) {
     const oldEntry = oldFile.entries[index]!;
     const newEntry = newFile.entries[index]!;
     if (oldEntry.kind !== newEntry.kind)
       refuseStructure('subtitle_cues', 'the subtitle block types would change');
+    if (oldEntry.kind === 'cue' && newEntry.kind === 'cue') {
+      const oldFirst = oldLines[oldEntry.line - 1] ?? '';
+      const newFirst = newLines[newEntry.line - 1] ?? '';
+      const oldTiming = oldFirst.includes('-->')
+        ? oldFirst
+        : oldLines[oldEntry.line];
+      const newTiming = newFirst.includes('-->')
+        ? newFirst
+        : newLines[newEntry.line];
+      if (
+        oldEntry.start !== newEntry.start ||
+        oldEntry.end !== newEntry.end ||
+        oldTiming !== newTiming
+      )
+        refuseStructure(
+          'subtitle_timings',
+          `the timing of subtitle cue ${oldEntry.index} would change`
+        );
+      if (oldEntry.id !== newEntry.id)
+        refuseStructure(
+          'subtitle_cues',
+          'a subtitle cue identifier would change'
+        );
+    }
     if (
-      oldEntry.kind === 'cue' &&
-      newEntry.kind === 'cue' &&
-      (oldEntry.start !== newEntry.start || oldEntry.end !== newEntry.end)
+      mapBoundary(oldStarts[oldEntry.line - 1]!) !==
+      newStarts[newEntry.line - 1]
     )
       refuseStructure(
-        'subtitle_timings',
-        `the timing of subtitle cue ${oldEntry.index} would change`
+        'subtitle_cues',
+        'a subtitle block would be replaced or moved'
       );
   }
 }
@@ -250,10 +371,16 @@ function validateMergedStructure(
   before: string,
   after: string,
   filename: string,
-  bom: boolean
+  crlf: boolean,
+  edits: readonly StructureEdit[]
 ): void {
-  if (!bom && after.charCodeAt(0) === 0xfeff)
+  if (leadingBomCount(after) > leadingBomCount(before))
     refuseStructure('bom', 'a byte order mark would be added');
+  if (hasUnpairedSurrogate(after))
+    refuseStructure(
+      'unicode',
+      'the suggestion would split a Unicode character'
+    );
   const extension = filenameExtension(filename);
   if (
     extension !== 'csv' &&
@@ -264,19 +391,23 @@ function validateMergedStructure(
     extension !== 'vtt'
   )
     return;
-  // Source offsets are LF-normalized. The original file has either only CRLF
-  // or only LF, so preserving this count also preserves its original endings.
-  if (after.includes('\r') || newlineCount(before) !== newlineCount(after))
+  // JSON Source accepts multiline LF edits. The other structured surfaces
+  // preserve physical line counts; CRLF files retain their original endings.
+  if (
+    after.includes('\r') ||
+    ((crlf || extension !== 'json') &&
+      newlineCount(before) !== newlineCount(after))
+  )
     refuseStructure(
       'line_endings',
       'the number or kind of line endings would change'
     );
   if (extension === 'csv' || extension === 'tsv') {
-    validateTable(before, after, extension === 'tsv');
+    validateTable(before, after, extension === 'tsv', crlf, edits);
   } else if (extension === 'ipynb') {
-    validateNotebook(before, after);
+    validateNotebook(before, after, edits);
   } else if (extension === 'srt' || extension === 'vtt') {
-    validateSubtitles(before, after, extension);
+    validateSubtitles(before, after, extension, edits);
   } else {
     try {
       JSON.parse(after);
@@ -488,7 +619,11 @@ async function applySingleSuggestionFile(
 ) {
   const local = await localRelic(input.relic_id);
   const source = await readSource(input.path, deps.files);
-  const rendererClass = deriveRendererClass(source.bytes, source.basename);
+  const effectiveFilename =
+    folderEntry === undefined
+      ? (local.state.filename ?? source.basename)
+      : source.basename;
+  const rendererClass = deriveRendererClass(source.bytes, effectiveFilename);
   if (
     rendererClass !== 'markdown' &&
     rendererClass !== 'code' &&
@@ -500,15 +635,7 @@ async function applySingleSuggestionFile(
       { renderer_class: rendererClass }
     );
   }
-  const publishedFilename =
-    folderEntry === undefined ? local.state.filename : undefined;
-  const decoded = suggestionSourceFor(
-    source.bytes,
-    source.basename,
-    publishedFilename === undefined || rendererClass === 'notebook'
-      ? ''
-      : guessMimetype(publishedFilename, rendererClass)
-  );
+  const decoded = suggestionSourceFor(source.bytes, effectiveFilename);
   if (!decoded.ok) {
     throw new ApplyError(
       'source_not_suggestible',
@@ -665,19 +792,32 @@ async function applySingleSuggestionFile(
     suggestions,
     new Set(input.accept)
   );
+  const suggestionsById = new Map(suggestions.map((item) => [item.id, item]));
+  const seenEdits = new Set<string>();
+  const edits: StructureEdit[] = [];
+  for (const applied of merged.applied) {
+    const item = resolvedById.get(applied.id);
+    if (item?.status !== 'resolved')
+      throw new Error('an applied suggestion has no resolved source range');
+    if (seenEdits.has(item.id)) continue;
+    const suggestion = suggestionsById.get(item.id);
+    if (suggestion === undefined)
+      throw new Error('an applied suggestion has no source payload');
+    seenEdits.add(item.id);
+    edits.push({
+      start: item.start,
+      end: item.end,
+      replacementLength: suggestion.suggestion.replacement.length,
+    });
+  }
+  edits.sort((a, b) => a.start - b.start || a.end - b.end);
   validateMergedStructure(
     decoded.source,
     merged.text,
-    source.basename,
-    decoded.bom
+    effectiveFilename,
+    decoded.crlf,
+    edits
   );
-  if (publishedFilename !== undefined && publishedFilename !== source.basename)
-    validateMergedStructure(
-      decoded.source,
-      merged.text,
-      publishedFilename,
-      decoded.bom
-    );
   const addresses = new Map<
     string,
     { comment_id: string; outcome: 'accepted' | 'superseded'; note: string }

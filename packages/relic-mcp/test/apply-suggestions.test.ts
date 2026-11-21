@@ -21,6 +21,7 @@ import {
   generateRelicId,
 } from '@relic/format';
 import { parseTable, recordWidth } from '@relic/format/csv';
+import { parseSubtitles } from '@relic/format/subtitles';
 import { APPLY_SUGGESTIONS_TOOL_NAME } from '../src/apply-suggestions.ts';
 import { nodeFiles } from '../src/files.ts';
 import type { PublishDeps } from '../src/publish.ts';
@@ -403,6 +404,25 @@ describe('relic_apply_suggestions', () => {
     }
   );
 
+  test('accepts valid multiline JSON Source edits', async () => {
+    const target = join(scratch, 'data.json');
+    const original = '{}';
+    const replacement = '{\n  "message": "hello"\n}';
+    await writeFile(target, original);
+    await addSuggestion('chosen', original, replacement);
+    const args = {
+      path: target,
+      accept: ['chosen'],
+      allow_source_mismatch: true,
+    };
+    const preview = await call(args);
+    expect(preview.isError).toBe(false);
+    expect(await readFile(target, 'utf8')).toBe(original);
+    const result = await call({ ...args, write: true });
+    expect(result.isError).toBe(false);
+    expect(await readFile(target, 'utf8')).toBe(replacement);
+  });
+
   test.each([
     [
       'a final bare CSV row',
@@ -469,6 +489,14 @@ describe('relic_apply_suggestions', () => {
       'bom',
     ],
     [
+      'a second BOM added to a BOM-bearing file',
+      'data.csv',
+      '\uFEFFHEADER,value\nalpha,1\n',
+      'HEADER',
+      '\uFEFFHEADER',
+      'bom',
+    ],
+    [
       'invalid JSON',
       'data.json',
       '{"message":"alpha"}\n',
@@ -476,7 +504,6 @@ describe('relic_apply_suggestions', () => {
       'alpha"',
       'json_parse',
     ],
-    ['JSON line-ending count', 'data.json', '{}', '{}', '{\n}', 'line_endings'],
     [
       'invalid notebook JSON',
       'data.ipynb',
@@ -510,11 +537,43 @@ describe('relic_apply_suggestions', () => {
       'notebook_cell_type',
     ],
     [
+      'a null notebook source',
+      'data.ipynb',
+      '{"nbformat":4,"cells":[{"cell_type":"markdown","source":["alpha"]}]}',
+      '["alpha"]',
+      'null',
+      'notebook_source',
+    ],
+    [
+      'a non-string notebook source array element',
+      'data.ipynb',
+      '{"nbformat":4,"cells":[{"cell_type":"raw","source":["alpha"]}]}',
+      '["alpha"]',
+      '["alpha",1]',
+      'notebook_source',
+    ],
+    [
+      'a split escaped surrogate in a notebook source',
+      'data.ipynb',
+      '{"nbformat":4,"cells":[{"cell_type":"raw","source":["\\ud83d\\ude00"]}]}',
+      '\\ude00',
+      '',
+      'notebook_source',
+    ],
+    [
       'a removed notebook output',
       'data.ipynb',
       '{"nbformat":4,"cells":[{"cell_type":"code","source":["alpha"],"outputs":[{},{}]}]}',
       '"outputs":[{},{}]',
       '"outputs":[{}]',
+      'notebook_outputs',
+    ],
+    [
+      'a replaced notebook output with the same output count',
+      'data.ipynb',
+      '{"nbformat":4,"cells":[{"cell_type":"code","source":["alpha"],"outputs":[{"output_type":"stream","text":"result"}]}]}',
+      '{"output_type":"stream","text":"result"}',
+      'null',
       'notebook_outputs',
     ],
     [
@@ -563,6 +622,14 @@ describe('relic_apply_suggestions', () => {
       'WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nalpha\n',
       '00:00:02.000',
       '00:00:02.500',
+      'subtitle_timings',
+    ],
+    [
+      'a VTT timestamp with unchanged numeric value but invalid punctuation',
+      'data.vtt',
+      'WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nalpha\n',
+      '00:00:01.000',
+      '00:00:01,000',
       'subtitle_timings',
     ],
   ])(
@@ -634,16 +701,173 @@ describe('relic_apply_suggestions', () => {
     }
   });
 
+  test('detects a CSV delimiter switch at the CRLF viewer sample boundary', async () => {
+    const target = join(scratch, 'data.csv');
+    const header = 'head;name,value\r\n';
+    const marker = 'Q1';
+    const padding = 'x'.repeat(65_536 - header.length - marker.length);
+    const original = `${header}${marker}${padding};y,z\r\n`;
+    const edited = original.replace('Q1', 'Q');
+    const rawBefore = parseTable(original);
+    const rawAfter = parseTable(edited);
+    const normalizedBefore = parseTable(original.replaceAll('\r\n', '\n'));
+    const normalizedAfter = parseTable(edited.replaceAll('\r\n', '\n'));
+    if (
+      !rawBefore.ok ||
+      !rawAfter.ok ||
+      !normalizedBefore.ok ||
+      !normalizedAfter.ok
+    )
+      throw new Error('fixture must parse as a table');
+    expect(rawBefore.table.delimiter).toBe(',');
+    expect(rawAfter.table.delimiter).toBe(';');
+    expect(normalizedBefore.table.delimiter).toBe(';');
+    expect(normalizedAfter.table.delimiter).toBe(';');
+    await writeFile(target, original);
+    await addSuggestion('damage', 'Q1', 'Q');
+    for (const write of [false, true]) {
+      const result = await call({
+        path: target,
+        accept: ['damage'],
+        write,
+        allow_source_mismatch: true,
+      });
+      expect(result.structuredContent).toMatchObject({
+        code: 'suggestion_breaks_structure',
+        check: 'table_delimiter',
+      });
+      expect(result.isError).toBe(true);
+      expect(await readFile(target, 'utf8')).toBe(original);
+    }
+  });
+
+  test('refuses combined CSV edits that move an unchanged cell across a separator', async () => {
+    const target = join(scratch, 'data.csv');
+    const original = 'name,value\nfoo,bar\nomega,2\n';
+    const changed = 'name,value\n"foo,bar",x\nomega,2\n';
+    const before = parseTable(original);
+    const after = parseTable(changed);
+    if (!before.ok || !after.ok)
+      throw new Error('fixture must parse as a table');
+    expect(before.table.delimiter).toBe(after.table.delimiter);
+    expect(before.table.records).toBe(after.table.records);
+    for (let record = 0; record < before.table.records; record += 1)
+      expect(recordWidth(before.table, record)).toBe(
+        recordWidth(after.table, record)
+      );
+    await writeFile(target, original);
+    await addSuggestion('first', 'foo', '"foo');
+    await addRow('second', {
+      body: 'insert after the neighboring value',
+      display_name: null,
+      anchor: { kind: 'source', exact: 'bar' },
+      suggestion: { v: 1, mode: 'after', replacement: '",x' },
+    });
+    for (const write of [false, true]) {
+      const result = await call({
+        path: target,
+        accept: ['first', 'second'],
+        write,
+        allow_source_mismatch: true,
+      });
+      expect(result.structuredContent).toMatchObject({
+        code: 'suggestion_breaks_structure',
+        check: 'table_boundaries',
+      });
+      expect(result.isError).toBe(true);
+      expect(await readFile(target, 'utf8')).toBe(original);
+    }
+  });
+
+  test('maps duplicate selected CSV suggestions only once', async () => {
+    const target = join(scratch, 'data.csv');
+    const original = 'name,value\nalpha,1\n';
+    await writeFile(target, original);
+    await addSuggestion('first', 'alpha', 'BETA');
+    await addSuggestion('duplicate', 'alpha', 'BETA');
+    const result = await call({
+      path: target,
+      accept: ['first', 'duplicate'],
+      write: true,
+      allow_source_mismatch: true,
+    });
+    expect(result.isError).toBe(false);
+    expect(await readFile(target, 'utf8')).toBe('name,value\nBETA,1\n');
+  });
+
+  test('does not let a recovered subtitle block mask a lost cue', async () => {
+    const target = join(scratch, 'data.srt');
+    const original =
+      '1\n00:00:01,000 ~~> 00:00:02,000\nghost\n\n' +
+      '1\n00:00:01,000 --> 00:00:02,000\nalpha\n';
+    const changed =
+      '1\n00:00:01,000 --> 00:00:02,000\nghost\n\n' +
+      '1\n00:00:01,000 ~~> 00:00:02,000\nalpha\n';
+    const before = parseSubtitles(original, 'srt');
+    const after = parseSubtitles(changed, 'srt');
+    if (!before.ok || !after.ok) throw new Error('fixture must contain a cue');
+    expect(before.file.cueCount).toBe(after.file.cueCount);
+    expect(before.file.skipped).toBe(after.file.skipped);
+    const oldCue = before.file.entries[0];
+    const newCue = after.file.entries[0];
+    if (oldCue?.kind !== 'cue' || newCue?.kind !== 'cue')
+      throw new Error('fixture entries must be cues');
+    expect([oldCue.start, oldCue.end]).toEqual([newCue.start, newCue.end]);
+    await writeFile(target, original);
+    await addSuggestion('recover', '~~>', '-->');
+    await addSuggestion('damage', '-->', '~~>');
+    for (const write of [false, true]) {
+      const result = await call({
+        path: target,
+        accept: ['recover', 'damage'],
+        write,
+        allow_source_mismatch: true,
+      });
+      expect(result.structuredContent).toMatchObject({
+        code: 'suggestion_breaks_structure',
+        check: 'subtitle_cues',
+      });
+      expect(result.isError).toBe(true);
+      expect(await readFile(target, 'utf8')).toBe(original);
+    }
+  });
+
+  test('refuses a split Unicode character but accepts a whole-character notebook edit', async () => {
+    const target = join(scratch, 'data.ipynb');
+    const original =
+      '{"nbformat":4,"cells":[{"cell_type":"markdown","source":["Hi 😀 there"]}]}';
+    await writeFile(target, original);
+    await addSuggestion('damage', '\ud83d', '');
+    await addSuggestion('safe', '😀', '🤝');
+    const args = { path: target, allow_source_mismatch: true };
+    for (const write of [false, true]) {
+      const result = await call({ ...args, accept: ['damage'], write });
+      expect(result.structuredContent).toMatchObject({
+        code: 'suggestion_breaks_structure',
+        check: 'unicode',
+      });
+      expect(result.isError).toBe(true);
+      expect(await readFile(target, 'utf8')).toBe(original);
+    }
+    const safe = await call({ ...args, accept: ['safe'], write: true });
+    expect(safe.isError).toBe(false);
+    expect(await readFile(target, 'utf8')).toBe(original.replace('😀', '🤝'));
+  });
+
   test('uses the published structured filename for a differently named local source', async () => {
-    const target = join(scratch, 'data.txt');
+    const target = join(scratch, 'data.json');
     const original = '\uFEFFname,value\r\nalpha,1\r\nomega,2\r\n';
     await writeFile(target, original);
     const state = await loadPublishState(relicId);
     if (state === undefined) throw new Error('missing fixture state');
-    await savePublishState(relicId, { ...state, filename: 'data.csv' });
+    await savePublishState(relicId, {
+      ...state,
+      source: await resolveSourceIdentity(target),
+      filename: 'data.csv',
+    });
     await addSuggestion('safe', 'alpha', 'BETA');
     await addSuggestion('damage', 'alpha', 'alpha,extra');
-    const args = { path: target, allow_source_mismatch: true };
+    const args = { path: target };
     const refused = await call({ ...args, accept: ['damage'], write: true });
     expect(refused.structuredContent).toMatchObject({
       code: 'suggestion_breaks_structure',
@@ -656,6 +880,42 @@ describe('relic_apply_suggestions', () => {
       original.replace('alpha', 'BETA')
     );
   });
+
+  test.each([
+    ['CSV', 'data.json', 'published.csv', 'name,value\nalpha,1\n'],
+    ['JSON', 'data.csv', 'published.json', '{"message":"alpha"}\n'],
+    [
+      'notebook',
+      'data.json',
+      'published.ipynb',
+      '{"nbformat":4,"cells":[{"cell_type":"markdown","source":["alpha"]}]}',
+    ],
+  ])(
+    'uses the published %s format instead of a conflicting local suffix',
+    async (_, localName, publishedName, original) => {
+      const target = join(scratch, localName);
+      await writeFile(target, original);
+      const state = await loadPublishState(relicId);
+      if (state === undefined) throw new Error('missing fixture state');
+      await savePublishState(relicId, {
+        ...state,
+        source: await resolveSourceIdentity(target),
+        filename: publishedName,
+      });
+      await addSuggestion('safe', 'alpha', 'BETA');
+      const preview = await call({ path: target, accept: ['safe'] });
+      expect(preview.isError).toBe(false);
+      const result = await call({
+        path: target,
+        accept: ['safe'],
+        write: true,
+      });
+      expect(result.isError).toBe(false);
+      expect(await readFile(target, 'utf8')).toBe(
+        original.replace('alpha', 'BETA')
+      );
+    }
+  );
 
   test('preflights all folder entries before writing any structured file', async () => {
     const folder = join(scratch, 'folder');
@@ -693,6 +953,27 @@ describe('relic_apply_suggestions', () => {
     });
     expect(await readFile(csv, 'utf8')).toBe(originalCsv);
     expect(await readFile(json, 'utf8')).toBe(originalJson);
+  });
+
+  test('requires a valid source for touched notebook cells without rejecting untouched ones', async () => {
+    const target = join(scratch, 'data.ipynb');
+    const original =
+      '{"nbformat":4,"cells":[{"cell_type":"raw","source":null,"metadata":{"tag":"old"}},{"cell_type":"markdown","source":["alpha"]}]}';
+    await writeFile(target, original);
+    await addSuggestion('invalid', '"old"', '"new"');
+    await addSuggestion('safe', 'alpha', 'BETA');
+    const args = { path: target, allow_source_mismatch: true };
+    const refused = await call({ ...args, accept: ['invalid'], write: true });
+    expect(refused.structuredContent).toMatchObject({
+      code: 'suggestion_breaks_structure',
+      check: 'notebook_source',
+    });
+    expect(await readFile(target, 'utf8')).toBe(original);
+    const safe = await call({ ...args, accept: ['safe'], write: true });
+    expect(safe.isError).toBe(false);
+    expect(await readFile(target, 'utf8')).toBe(
+      original.replace('alpha', 'BETA')
+    );
   });
 
   test('counts notebook outputs beyond the viewer output cap', async () => {
