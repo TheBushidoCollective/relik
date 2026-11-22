@@ -28,6 +28,11 @@ import { type Anchor, HIGHLIGHT_CSS, type Mark } from './rendered-tree.ts';
  * same-origin pane: a heavier patina outline, here with a halo so it reads
  * against the changed block's own double outline. Comment styles are not in a
  * compare frame, so without this rule the current change looked like the rest.
+ *
+ * docx-preview zooms a page to fit the frame, and that scales the outline with
+ * it. The rule divides by --relic-page-zoom, which the frame sets on each page
+ * to that zoom, so the outline stays 3px on screen. EPUB frames set no
+ * variable, so the fallback of 1 leaves their outline at 3px.
  */
 export const DOCUMENT_HIGHLIGHT_CSS = `
 [data-relic-diff='removed'] {
@@ -39,8 +44,10 @@ export const DOCUMENT_HIGHLIGHT_CSS = `
   outline-width: 4px !important;
 }
 [data-relic-change-id].is-current-change {
-  outline: 3px solid rgb(31, 107, 100) !important;
-  outline-offset: 3px !important;
+  outline-style: solid !important;
+  outline-width: calc(3px / var(--relic-page-zoom, 1)) !important;
+  outline-color: rgb(31, 107, 100) !important;
+  outline-offset: calc(3px / var(--relic-page-zoom, 1)) !important;
   box-shadow: 0 0 0 9px rgba(31, 107, 100, 0.22) !important;
 }
 `;

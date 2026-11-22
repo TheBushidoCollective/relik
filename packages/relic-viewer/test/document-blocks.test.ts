@@ -388,5 +388,13 @@ describe('installHighlightCss', () => {
     expect(DOCUMENT_HIGHLIGHT_CSS).toContain(
       '[data-relic-change-id].is-current-change'
     );
+    // The outline is 3px on screen in a page the frame zooms: its width and
+    // offset divide by the page zoom the frame publishes, and fall back to 1.
+    expect(DOCUMENT_HIGHLIGHT_CSS).toContain(
+      'outline-width: calc(3px / var(--relic-page-zoom, 1)) !important;'
+    );
+    expect(DOCUMENT_HIGHLIGHT_CSS).toContain(
+      'outline-offset: calc(3px / var(--relic-page-zoom, 1)) !important;'
+    );
   });
 });

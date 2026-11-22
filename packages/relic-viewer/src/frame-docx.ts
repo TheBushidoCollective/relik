@@ -299,11 +299,16 @@ export async function render(
         '.docx-wrapper > section.docx'
       )) {
         page.style.zoom = '';
+        page.style.removeProperty('--relic-page-zoom');
         const width = page.offsetWidth;
-        if (width > 0)
-          page.style.zoom = String(
+        if (width > 0) {
+          const zoom = String(
             Math.min(1, Math.max(1, root.clientWidth - 60) / width)
           );
+          page.style.zoom = zoom;
+          // The current-change outline divides by this, so it stays 3px on screen.
+          page.style.setProperty('--relic-page-zoom', zoom);
+        }
       }
     };
     fit();
