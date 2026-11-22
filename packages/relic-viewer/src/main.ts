@@ -3882,6 +3882,9 @@ export function lazyComparison<M>(
   usercontentOrigin: string
 ): HTMLElement {
   const slot = document.createElement('div');
+  // The slot sits between .diff-result and the comparison, so it carries the
+  // same flex column; without it the stage collapses to its iframe's 150 px.
+  slot.className = 'diff-lazy';
   const rendering = document.createElement('p');
   rendering.className = 'diff-loading';
   rendering.setAttribute('role', 'status');

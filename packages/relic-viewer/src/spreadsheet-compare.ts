@@ -54,6 +54,13 @@ const COLUMN_PADDING_PX = 24;
 const COLUMN_PX_PER_CHARACTER = 8;
 /** Characters of one cell that size its column. Longer text does not widen it. */
 const COLUMN_CHARACTERS = 40;
+/**
+ * The least a compare grid draws: rows 1 to 12 and columns A to H. A small
+ * sheet then reads as a sheet, with empty cells past its data, rather than as
+ * a few boxes floating in an empty pane, and both grids keep one geometry.
+ */
+const MIN_ROWS = 12;
+const MIN_COLUMNS = 8;
 
 /** Copy from plan section 3.5, verbatim. */
 const COPY = {
@@ -567,8 +574,10 @@ export function renderSpreadsheetComparison(
   heading.append(label, counts);
 
   const leftSlot = document.createElement('div');
+  leftSlot.className = 'spreadsheet-compare-slot';
   leftSlot.append(placeholder(COPY.reading));
   const rightSlot = document.createElement('div');
+  rightSlot.className = 'spreadsheet-compare-slot';
   rightSlot.append(placeholder(COPY.reading));
 
   const nav = ui.buildChangeNav({
@@ -841,9 +850,13 @@ export function renderSpreadsheetComparison(
             (sheet): sheet is WorkbookSheet => sheet !== undefined
           )
         : [];
-    // Both grids take the same rows and columns, padded to the larger version.
-    const records = Math.max(0, ...drawable.map((sheet) => sheet.rows));
-    const columns = Math.max(0, ...drawable.map((sheet) => sheet.columns));
+    // Both grids take the same rows and columns: the larger version's extent,
+    // and at least MIN_ROWS by MIN_COLUMNS.
+    const records = Math.max(MIN_ROWS, ...drawable.map((sheet) => sheet.rows));
+    const columns = Math.min(
+      DRAWN_COLUMNS,
+      Math.max(MIN_COLUMNS, ...drawable.map((sheet) => sheet.columns))
+    );
     const widths =
       drawable.length === 0 ? [] : widthPlanFor(index, drawable, columns);
 
