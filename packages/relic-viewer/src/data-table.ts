@@ -487,18 +487,30 @@ function element<K extends keyof HTMLElementTagNameMap>(
 
 const formatter = new Intl.NumberFormat('en-US');
 
-let stylesheetRequested = false;
+/** Set once the table's stylesheet has applied, or has failed to load. */
+let tableStylesReady = false;
+let tableStyles: Promise<void> | undefined;
 
-/** Adds the table's stylesheet once. Views in a bundle share one `<link>`. */
-export function ensureDataTableStyles(): void {
-  if (stylesheetRequested || typeof document === 'undefined') return;
-  stylesheetRequested = true;
-  if (document.querySelector('link[data-dt-css]') !== null) return;
+/**
+ * Adds the table's stylesheet once. The promise settles when its styles apply,
+ * or when the file fails to load, so a table is never held back for good.
+ */
+function loadTableStyles(): Promise<void> {
+  if (tableStyles !== undefined) return tableStyles;
+  const { promise, resolve } = Promise.withResolvers<void>();
+  const settled = (): void => {
+    tableStylesReady = true;
+    resolve();
+  };
   const link = document.createElement('link');
   link.rel = 'stylesheet';
   link.href = STYLESHEET_HREF;
   link.setAttribute('data-dt-css', '');
+  link.addEventListener('load', settled, { once: true });
+  link.addEventListener('error', settled, { once: true });
   document.head.appendChild(link);
+  tableStyles = promise;
+  return promise;
 }
 
 /**
@@ -510,7 +522,14 @@ export function mountDataTable(
   table: TableSource,
   options: { readonly filename: string; readonly autoDelimiter?: boolean }
 ): StructuredPart {
-  ensureDataTableStyles();
+  // Drawn before its stylesheet applies, the table lays out unstyled and moves
+  // under the reader's pointer when the styles arrive. It stays hidden until then.
+  if (!tableStylesReady) {
+    root.style.visibility = 'hidden';
+    void loadTableStyles().then(() => {
+      root.style.visibility = '';
+    });
+  }
   const drawn = drawnColumnCount(table);
   const widths = columnWidths(table, drawn);
   const totalWidth = ROW_NUMBER_WIDTH + widths.reduce((sum, w) => sum + w, 0);

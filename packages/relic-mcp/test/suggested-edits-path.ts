@@ -506,19 +506,43 @@ async function browser(): Promise<Browser> {
   }
 }
 
+/**
+ * Waits until the centre of the element is the element or a part of it, then
+ * returns that point. A table drawn before its stylesheet applies stays hidden
+ * until the styles arrive, so a click measured sooner lands beneath it.
+ */
+async function clickablePoint(
+  page: Page,
+  selector: string,
+  scroll: boolean
+): Promise<{ x: number; y: number }> {
+  if (scroll)
+    await page.evaluate(
+      `document.querySelector(${JSON.stringify(selector)})?.scrollIntoView({ block: 'center', inline: 'center' })`
+    );
+  let point: { x: number; y: number } | null = null;
+  await until(async () => {
+    point = await page.evaluate<{ x: number; y: number } | null>(`(() => {
+      const element = document.querySelector(${JSON.stringify(selector)});
+      if (!(element instanceof HTMLElement)) return null;
+      const r = element.getBoundingClientRect();
+      if (!r.width || !r.height) return null;
+      const x = r.left + r.width / 2;
+      const y = r.top + r.height / 2;
+      const hit = document.elementFromPoint(x, y);
+      return hit && element.contains(hit) ? { x, y } : null;
+    })()`);
+    return point !== null;
+  }, `clickable ${selector}`);
+  return point!;
+}
+
 async function click(
   page: Page,
   selector: string,
   scroll = true
 ): Promise<void> {
-  const box = await page.evaluate<{ x: number; y: number }>(`(() => {
-    const element = document.querySelector(${JSON.stringify(selector)});
-    if (!(element instanceof HTMLElement)) throw new Error('missing element ' + ${JSON.stringify(selector)});
-    if (${scroll}) element.scrollIntoView({ block: 'center', inline: 'center' });
-    const r = element.getBoundingClientRect();
-    if (!r.width || !r.height) throw new Error('element is not visible: ' + ${JSON.stringify(selector)});
-    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-  })()`);
+  const box = await clickablePoint(page, selector, scroll);
   await page.send('Input.dispatchMouseEvent', { type: 'mouseMoved', ...box });
   await page.send('Input.dispatchMouseEvent', {
     type: 'mousePressed',

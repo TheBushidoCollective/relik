@@ -47,7 +47,11 @@ async function exercise(
   );
   const stylesheet =
     document.querySelector<HTMLLinkElement>('link[data-dt-css]')!;
+  // Drawn before its stylesheet applies, the table must stay hidden: a reader
+  // would otherwise see, and click, an unstyled grid that moves once styled.
   if (!stylesheet.sheet) {
+    if (tableRoot.style.visibility !== 'hidden')
+      throw new Error('table drawn before its stylesheet applied');
     const loaded = Promise.withResolvers<void>();
     stylesheet.addEventListener('load', () => loaded.resolve(), { once: true });
     stylesheet.addEventListener(
@@ -56,6 +60,8 @@ async function exercise(
       { once: true }
     );
     await loaded.promise;
+    if (tableRoot.style.visibility === 'hidden')
+      throw new Error('table stayed hidden after its stylesheet applied');
   }
   const view = {
     route: 'code',
