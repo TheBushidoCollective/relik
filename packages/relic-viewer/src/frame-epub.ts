@@ -1,11 +1,19 @@
+import { epubRenderOrder } from '../../relic-format/src/epub-package.ts';
 import { decodeXmlBytes } from '../../relic-format/src/xml.ts';
+import {
+  annotateBlocks,
+  collectBlocks,
+  installHighlightCss,
+} from './document-blocks.ts';
 import type { EpubResources } from './epub-css.ts';
 import { mountEpubChrome } from './epub-chrome.ts';
 import { sanitizeEpubChapter } from './epub-sanitize.ts';
 import type {
+  DocumentBlockSnapshot,
   DocumentInput,
   DocumentOutcome,
 } from './frame-document-protocol.ts';
+import type { Anchor, Mark } from './rendered-tree.ts';
 
 export async function render(
   root: HTMLElement,
@@ -15,10 +23,7 @@ export async function render(
   if (!book) return { state: 'failed', reason: 'corrupt' };
   const blobs: string[] = [];
   try {
-    const spine = [
-      ...book.spine.filter((item) => item.linear),
-      ...book.spine.filter((item) => !item.linear),
-    ];
+    const spine = epubRenderOrder(book);
     const chapters = new Map<string, number>();
     for (const [index, item] of spine.entries())
       if (!chapters.has(item.path)) chapters.set(item.path, index);
@@ -180,4 +185,19 @@ export async function render(
             : 'corrupt',
     };
   }
+}
+
+/** The blocks of this book's chapters, for a comparison. */
+export function blocks(root: HTMLElement): DocumentBlockSnapshot | null {
+  return collectBlocks(root, 'epub');
+}
+
+/** Installs the outline rules, then marks the blocks by index. */
+export function annotate(
+  snapshot: DocumentBlockSnapshot,
+  marks: readonly Mark[],
+  anchors: readonly Anchor[]
+): number {
+  installHighlightCss(document);
+  return annotateBlocks(snapshot, marks, anchors);
 }

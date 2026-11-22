@@ -64,9 +64,12 @@ import {
   takeTailUtf8,
 } from './annotate-frame.ts';
 import {
+  type DocumentBlockSnapshot,
+  type DocumentModule,
+  type DocumentRenderHooks,
+  isDocumentBlocksMessage,
   isDocumentStateMessage,
   isRenderDocumentMessage,
-  type DocumentRenderHooks,
   type RenderDocumentMessage,
 } from './frame-document-protocol.ts';
 import { announceUnclaimedFileDrags } from './frame-file-drag.ts';
@@ -2688,30 +2691,110 @@ async function mountComponent(code: string): Promise<void> {
   }
 }
 
+/**
+ * The document a comparison render left on screen. Its annotations go to the
+ * module that drew it, which knows which element each block is.
+ */
+export interface ComparedDocument {
+  annotate(marks: readonly Mark[], anchors: readonly Anchor[]): void;
+}
+
+export interface Annotator {
+  annotate(marks: readonly Mark[], anchors?: readonly Anchor[]): void;
+  adopt(compared: ComparedDocument): void;
+}
+
+/**
+ * Routes `relic:annotate` for this frame. A comparison document is marked by
+ * the module that drew it, never by `markTree`, which paints the rendered tree.
+ * Every other frame is marked through `markTree`, as before.
+ */
+export function createAnnotator(
+  markTree: (marks: readonly Mark[], anchors?: readonly Anchor[]) => void
+): Annotator {
+  let compared: ComparedDocument | undefined;
+  return {
+    annotate(marks, anchors) {
+      if (compared === undefined) markTree(marks, anchors);
+      else compared.annotate(marks, anchors ?? []);
+    },
+    adopt(next) {
+      compared = next;
+    },
+  };
+}
+
+/**
+ * Posts the blocks this frame read, once and after ready. A reader that throws
+ * or reports nothing posts `null`, and so does a message the validator would
+ * refuse. The snapshot is returned only when blocks were posted, so annotations
+ * reach nothing this frame did not send.
+ */
+function postBlocks(
+  frame: Partial<DocumentModule>,
+  root: HTMLElement
+): DocumentBlockSnapshot | undefined {
+  let snapshot: DocumentBlockSnapshot | null | undefined;
+  try {
+    snapshot = frame.blocks?.(root);
+  } catch {
+    snapshot = undefined;
+  }
+  const message = {
+    type: 'relic:document-blocks',
+    blocks: snapshot?.blocks ?? null,
+  };
+  if (!isDocumentBlocksMessage(message)) {
+    window.parent.postMessage(
+      { type: 'relic:document-blocks', blocks: null },
+      '*'
+    );
+    return undefined;
+  }
+  window.parent.postMessage(message, '*');
+  return snapshot ?? undefined;
+}
+
 export async function mountDocument(
   message: RenderDocumentMessage,
   initInteraction: (
     imageControlsEnabled: boolean,
     imageIdentitySource?: ImageIdentitySource
-  ) => FrameInteraction
+  ) => FrameInteraction,
+  adopt?: (compared: ComparedDocument) => void
 ): Promise<void> {
+  const comparing = message.compare === true;
   const identity =
     message.format === 'docx' ? createImageIdentitySource() : undefined;
   let url: string | undefined;
+  let frame: Partial<DocumentModule> | undefined;
+  let blocks: DocumentBlockSnapshot | undefined;
+  if (comparing) {
+    // Adopted before anything awaits, so no annotation can reach the rendered
+    // tree while the comparison is still loading.
+    adopt?.({
+      annotate(marks, anchors) {
+        if (blocks !== undefined) frame?.annotate?.(blocks, marks, anchors);
+      },
+    });
+  }
   try {
     const root = document.createElement('div');
     root.id = 'relic-document';
     document.body.replaceChildren(root);
+    // A comparison paints no comment badges on images. The thread is off the
+    // page while versions are compared, so there is nothing to attach them to.
     const interaction = identity
-      ? initInteraction(true, identity.source)
-      : initInteraction(true);
+      ? initInteraction(!comparing, identity.source)
+      : initInteraction(!comparing);
     url = URL.createObjectURL(
       new Blob([message.module], { type: 'text/javascript' })
     );
     // The parent supplies our selected renderer as text for this opaque frame.
-    const module = await import(url);
+    const module: Partial<DocumentModule> = await import(url);
     if (typeof module.render !== 'function')
       throw new Error('Missing renderer');
+    frame = module;
     const input = {
       entries: new Map(message.entries),
       requestExternalLink: interaction.requestExternalLink,
@@ -2725,6 +2808,8 @@ export async function mountDocument(
       throw new Error('Invalid renderer outcome');
     identity?.seal();
     window.parent.postMessage(state, '*');
+    if (comparing && outcome.state === 'ready')
+      blocks = postBlocks(module, root);
   } catch {
     identity?.seal();
     window.parent.postMessage(
@@ -3360,6 +3445,18 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     return interaction;
   }
 
+  // A comparison document is marked by the module that drew it. Only the
+  // rendered tree is marked through `applyMarks`.
+  const annotator = createAnnotator((marks, anchors) => {
+    const style = document.createElement('style');
+    style.textContent = HIGHLIGHT_CSS;
+    document.head.appendChild(style);
+    applyMarks(document.body, marks);
+    // After the marks, never before: `applyMarks` clears every authored
+    // copy of the id attribute first, and anchors written ahead of that
+    // sweep would be wiped by it.
+    if (anchors !== undefined) applyAnchors(document.body, anchors);
+  });
   const handle = createSandboxHandler(
     (html, imageControlsEnabled) => {
       // Author scripts are re-emitted as blob scripts first, so the policy never
@@ -3388,16 +3485,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       initInteraction(false);
       void mountComponent(code).then(scheduleReport, scheduleReport);
     },
-    (marks, anchors) => {
-      const style = document.createElement('style');
-      style.textContent = HIGHLIGHT_CSS;
-      document.head.appendChild(style);
-      applyMarks(document.body, marks);
-      // After the marks, never before: `applyMarks` clears every authored
-      // copy of the id attribute first, and anchors written ahead of that
-      // sweep would be wiped by it.
-      if (anchors !== undefined) applyAnchors(document.body, anchors);
-    },
+    annotator.annotate,
     {
       setArmed: (armed) => interaction?.setArmed(armed),
       onPaintMark: (mark) => interaction?.onPaintMark(mark) ?? false,
@@ -3415,7 +3503,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       onSetScroll: (fraction) => interaction?.onSetScroll?.(fraction),
     },
     (message) => {
-      void mountDocument(message, initInteraction);
+      void mountDocument(message, initInteraction, annotator.adopt);
     }
   );
 
