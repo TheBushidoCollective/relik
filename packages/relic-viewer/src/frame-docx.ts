@@ -1,12 +1,19 @@
 import { docxImageSourceDigest } from '@relic/format/image-identity';
 import { defaultOptions, type HElement, renderAsync } from 'docx-preview';
+import {
+  annotateBlocks,
+  collectBlocks,
+  installHighlightCss,
+} from './document-blocks.ts';
 import { DocxLimitError, XmlReadBudget } from './document-xml-budget.ts';
 import type {
+  DocumentBlockSnapshot,
   DocumentInput,
   DocumentRenderHooks,
   DocumentOutcome,
 } from './frame-document-protocol.ts';
 import { ImageBudget } from './frame-zip-entries.ts';
+import type { Anchor, Mark } from './rendered-tree.ts';
 
 const MAX_ELEMENTS = 250_000;
 const MAX_PAGES = 2_000;
@@ -292,11 +299,16 @@ export async function render(
         '.docx-wrapper > section.docx'
       )) {
         page.style.zoom = '';
+        page.style.removeProperty('--relic-page-zoom');
         const width = page.offsetWidth;
-        if (width > 0)
-          page.style.zoom = String(
+        if (width > 0) {
+          const zoom = String(
             Math.min(1, Math.max(1, root.clientWidth - 60) / width)
           );
+          page.style.zoom = zoom;
+          // The current-change outline divides by this, so it stays 3px on screen.
+          page.style.setProperty('--relic-page-zoom', zoom);
+        }
       }
     };
     fit();
@@ -354,4 +366,19 @@ export async function render(
       reason: budget.reason ?? (limited ? 'too-large' : 'corrupt'),
     };
   }
+}
+
+/** The blocks this page's text is made of, for a comparison. */
+export function blocks(root: HTMLElement): DocumentBlockSnapshot | null {
+  return collectBlocks(root, 'docx');
+}
+
+/** Installs the outline rules, then marks the blocks by index. */
+export function annotate(
+  snapshot: DocumentBlockSnapshot,
+  marks: readonly Mark[],
+  anchors: readonly Anchor[]
+): number {
+  installHighlightCss(document);
+  return annotateBlocks(snapshot, marks, anchors);
 }

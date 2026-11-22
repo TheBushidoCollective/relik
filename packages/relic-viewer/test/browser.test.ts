@@ -12,6 +12,8 @@ import {
 } from '../src/main.ts';
 import { MAX_TREE_BYTES, type Mark } from '../src/rendered-tree.ts';
 import {
+  type ComparedDocument,
+  createAnnotator,
   createSandboxHandler,
   isRenderJsxMessage,
   isRenderMessage,
@@ -604,6 +606,182 @@ describe('the usercontent frame the render routes build', () => {
           rafDescriptor
         );
     }
+  });
+
+  /**
+   * Mounts one DOCX render with fake globals. Returns what the frame posted, in
+   * order, and each image-control flag it was given.
+   */
+  async function mountFrame(
+    module: string,
+    options: {
+      readonly compare?: true;
+      readonly adopt?: (compared: ComparedDocument) => void;
+      readonly entries?: readonly (readonly [string, Uint8Array])[];
+    } = {}
+  ): Promise<{ readonly messages: unknown[]; readonly controls: boolean[] }> {
+    const messages: unknown[] = [];
+    const controls: boolean[] = [];
+    const originalCreate = URL.createObjectURL;
+    const originalRevoke = URL.revokeObjectURL;
+    Object.assign(globalThis.document, { body: { replaceChildren: () => {} } });
+    (globalThis as { window?: unknown }).window = {
+      parent: { postMessage: (message: unknown) => messages.push(message) },
+    };
+    // Base64, as image-identity.test.ts does: the test runtime loads a
+    // percent-encoded module that uses member expressions as CommonJS.
+    URL.createObjectURL = () =>
+      `data:text/javascript;base64,${Buffer.from(module).toString('base64')}`;
+    URL.revokeObjectURL = () => {};
+    try {
+      await mountDocument(
+        {
+          type: 'relic:render-document',
+          format: 'docx',
+          module,
+          entries: options.entries ?? [],
+          ...(options.compare === undefined
+            ? {}
+            : { compare: options.compare }),
+        },
+        (enabled) => {
+          controls.push(enabled);
+          return { requestExternalLink() {} } as unknown as FrameInteraction;
+        },
+        options.adopt
+      );
+      return { messages, controls };
+    } finally {
+      URL.createObjectURL = originalCreate;
+      URL.revokeObjectURL = originalRevoke;
+    }
+  }
+
+  const READY = 'export function render() { return { state: "ready" }; }';
+  const ONE_BLOCK =
+    'export function blocks() { return { blocks: [{ kind: "paragraph", text: "Hello", part: 0 }], elements: [{}] }; }';
+
+  test('a comparison render posts ready, then exactly one blocks message', async () => {
+    const { messages, controls } = await mountFrame(`${READY}\n${ONE_BLOCK}`, {
+      compare: true,
+    });
+    expect(messages).toEqual([
+      { type: 'relic:document-state', state: 'ready' },
+      {
+        type: 'relic:document-blocks',
+        blocks: [{ kind: 'paragraph', text: 'Hello', part: 0 }],
+      },
+    ]);
+    // The thread is off the page while versions are compared, so the frame
+    // paints no comment badges on images.
+    expect(controls).toEqual([false]);
+  });
+
+  test('a render that is not a comparison posts no blocks and keeps image controls', async () => {
+    const { messages, controls } = await mountFrame(
+      `${READY}\nexport function blocks() { throw new Error("not read"); }`
+    );
+    expect(messages).toEqual([
+      { type: 'relic:document-state', state: 'ready' },
+    ]);
+    expect(controls).toEqual([true]);
+  });
+
+  test('a comparison whose blocks() throws or returns nothing posts null blocks', async () => {
+    for (const reader of [
+      'export function blocks() { throw new Error("boom"); }',
+      'export function blocks() { return null; }',
+    ]) {
+      const { messages } = await mountFrame(`${READY}\n${reader}`, {
+        compare: true,
+      });
+      expect(messages).toEqual([
+        { type: 'relic:document-state', state: 'ready' },
+        { type: 'relic:document-blocks', blocks: null },
+      ]);
+    }
+  });
+
+  test('blocks the validator refuses post null, never a partial message', async () => {
+    const { messages } = await mountFrame(
+      `${READY}\nexport function blocks() { return { blocks: [{ kind: "bogus", text: "x", part: 0 }], elements: [{}] }; }`,
+      { compare: true }
+    );
+    expect(messages).toEqual([
+      { type: 'relic:document-state', state: 'ready' },
+      { type: 'relic:document-blocks', blocks: null },
+    ]);
+  });
+
+  test('a failed comparison render posts no blocks and reads none', async () => {
+    const { messages } = await mountFrame(
+      'export function render() { return { state: "failed", reason: "too-large" }; }\nexport function blocks() { throw new Error("must not be read"); }',
+      { compare: true }
+    );
+    expect(messages).toEqual([
+      { type: 'relic:document-state', state: 'failed', reason: 'too-large' },
+    ]);
+  });
+
+  test('annotations after a comparison render reach its module, never the rendered tree', async () => {
+    // The module reaches its sink through the entries it renders with. A module
+    // that names a global is loaded as CommonJS by the test runtime.
+    const received: unknown[] = [];
+    const treeMarks: unknown[] = [];
+    const annotator = createAnnotator((marks) => {
+      treeMarks.push(marks);
+    });
+    await mountFrame(
+      `let sink;
+export function render(root, input) {
+  sink = input.entries.get('sink');
+  return { state: 'ready' };
+}
+${ONE_BLOCK}
+export function annotate(snapshot, marks, anchors) {
+  sink.push({ count: snapshot.blocks.length, marks, anchors });
+  return 1;
+}`,
+      {
+        compare: true,
+        adopt: annotator.adopt,
+        entries: [['sink', received as unknown as Uint8Array]],
+      }
+    );
+    annotator.annotate(
+      [{ path: [0], kind: 'added' }],
+      [{ path: [0], syncId: 'a1' }]
+    );
+    expect(received).toEqual([
+      {
+        count: 1,
+        marks: [{ path: [0], kind: 'added' }],
+        anchors: [{ path: [0], syncId: 'a1' }],
+      },
+    ]);
+    expect(treeMarks).toEqual([]);
+  });
+
+  test('a comparison that failed to render still keeps annotations off the rendered tree', async () => {
+    const treeMarks: unknown[] = [];
+    const annotator = createAnnotator((marks) => {
+      treeMarks.push(marks);
+    });
+    await mountFrame(
+      'export function render() { return { state: "failed", reason: "corrupt" }; }',
+      { compare: true, adopt: annotator.adopt }
+    );
+    annotator.annotate([{ path: [0], kind: 'changed' }]);
+    expect(treeMarks).toEqual([]);
+  });
+
+  test('without a comparison, annotations mark the rendered tree', () => {
+    const treeMarks: unknown[] = [];
+    const annotator = createAnnotator((marks) => {
+      treeMarks.push(marks);
+    });
+    annotator.annotate([{ path: [0], kind: 'added' }]);
+    expect(treeMarks).toEqual([[{ path: [0], kind: 'added' }]]);
   });
 
   test('a frame link request waits for the reader and opens nothing', () => {

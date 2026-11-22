@@ -13,8 +13,13 @@
  * on mouseup and keyup, so a cell or a range is offered exactly as text is.
  *
  * Every cell's text goes in through `textContent`. No attacker text reaches
- * `innerHTML` or an attribute: the only attributes set are record and column
- * numbers, and classes and ARIA values this module chooses.
+ * `innerHTML`. Attributes hold record and column numbers, classes and ARIA
+ * values this module chooses, and a file or sheet name as a value (`aria-label`,
+ * `data-file`), never parsed as markup.
+ *
+ * `mountCompareTable` draws one side of a spreadsheet comparison (plan B5). It
+ * sorts nothing, has no header toggle, find, comment or editor, and selects one
+ * cell at a time. Both sides of a comparison share one width plan.
  */
 
 import type { CellCommentAnchor, CommentAnchor } from '@relic/format';
@@ -1553,6 +1558,415 @@ export function mountDataTable(
       closeCellEditor?.();
       if (frame !== 0) cancelAnimationFrame(frame);
       window.clearTimeout(findTimer);
+    },
+  };
+}
+
+/** The state of one cell in a spreadsheet comparison, judged by its A1 position. */
+export type CompareCellState = 'added' | 'removed' | 'changed' | 'formula';
+
+export interface CompareTableOptions {
+  /** The file the grid shows. It is kept on the grid as `data-file`. */
+  readonly filename: string;
+  /** The grid's accessible name, such as "Version 2 of Q3.xlsx, sheet Q3 budget". */
+  readonly label: string;
+  /** Pixel widths of the drawn columns. Both grids of a comparison share one plan. */
+  readonly widths: readonly number[];
+  /** The state of a cell, or `undefined` when it is unchanged. Both indexes are zero-based. */
+  state(record: number, column: number): CompareCellState | undefined;
+  /** Called when the selected cell changes, whether a reader chose it or `select` did. */
+  onSelect?(record: number, column: number): void;
+}
+
+/** One side of a comparison. Its `scroller` is mirrored against the other side's. */
+export interface CompareTablePart {
+  readonly scroller: HTMLElement;
+  /**
+   * Selects a cell and calls `onSelect` when the selection changes. Focus does
+   * not move. Selecting the selected cell again does nothing, so a mirror that
+   * selects through `onSelect` stops after one step.
+   */
+  select(record: number, column: number): void;
+  /** Scrolls so the cell's top edge is `top` pixels below the top of the grid. It does not select. */
+  reveal(record: number, column: number, top: number): void;
+  dispose(): void;
+}
+
+const COMPARE_STATE_TEXT: Record<CompareCellState, string> = {
+  added: ' (added)',
+  removed: ' (removed)',
+  changed: ' (changed)',
+  formula: ' (formula changed)',
+};
+
+interface CompareCell {
+  readonly cell: HTMLElement;
+  readonly record: number;
+  readonly column: number;
+  readonly state: CompareCellState | undefined;
+}
+
+/** The cell a navigation key moves to, or `undefined` for a key that does not navigate. */
+function compareKeyTarget(
+  key: string,
+  jump: boolean,
+  at: CellRef,
+  rows: number,
+  columns: number,
+  page: number
+): CellRef | undefined {
+  const last = rows - 1;
+  const end = columns - 1;
+  switch (key) {
+    case 'ArrowUp':
+      return { record: Math.max(0, at.record - 1), column: at.column };
+    case 'ArrowDown':
+      return { record: Math.min(last, at.record + 1), column: at.column };
+    case 'ArrowLeft':
+      return { record: at.record, column: Math.max(0, at.column - 1) };
+    case 'ArrowRight':
+      return { record: at.record, column: Math.min(end, at.column + 1) };
+    case 'Home':
+      return { record: jump ? 0 : at.record, column: 0 };
+    case 'End':
+      return { record: jump ? last : at.record, column: end };
+    case 'PageUp':
+      return { record: Math.max(0, at.record - page), column: at.column };
+    case 'PageDown':
+      return { record: Math.min(last, at.record + page), column: at.column };
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * One side of a spreadsheet comparison (plan B5). Record `r` is A1 row `r + 1`,
+ * and the header row carries column letters only. There is no sort, header
+ * toggle, find, comment, suggestion or cell editor, and one cell is selected at
+ * a time. Copy stays. Every cell's text goes in through `textContent`.
+ */
+export function mountCompareTable(
+  root: HTMLElement,
+  table: TableSource,
+  options: CompareTableOptions
+): CompareTablePart {
+  if (!tableStylesReady) {
+    root.style.visibility = 'hidden';
+    void loadTableStyles().then(() => {
+      root.style.visibility = '';
+    });
+  }
+  const drawn = Math.min(
+    table.columns,
+    options.widths.length,
+    TABLE_DRAWN_COLUMN_LIMIT
+  );
+  const widths = options.widths.slice(0, drawn);
+  const totalWidth = ROW_NUMBER_WIDTH + widths.reduce((sum, w) => sum + w, 0);
+  const columnLeft: number[] = [];
+  for (let column = 0, left = ROW_NUMBER_WIDTH; column < drawn; column++) {
+    columnLeft.push(left);
+    left += widths[column]!;
+  }
+
+  let selection: CellRef | undefined;
+  let disposed = false;
+  let frame = 0;
+  let drawnKey = '';
+  const cells = new Map<number, CompareCell>();
+  const keyOf = (record: number, column: number): number =>
+    record * TABLE_DRAWN_COLUMN_LIMIT + column;
+
+  // ---- static skeleton ------------------------------------------------------
+  const grid = element('div', 'dt-grid');
+  grid.setAttribute('role', 'grid');
+  grid.setAttribute('aria-label', labelText(options.label));
+  grid.setAttribute('aria-rowcount', String(table.records + 1));
+  grid.setAttribute('aria-colcount', String(drawn + 1));
+  grid.dataset['file'] = options.filename;
+  grid.style.setProperty(
+    '--dt-tracks',
+    [`${ROW_NUMBER_WIDTH}px`, ...widths.map((w) => `${w}px`)].join(' ')
+  );
+  const head = element('div', 'dt-head');
+  head.setAttribute('role', 'row');
+  head.style.width = `${totalWidth}px`;
+  const body = element('div', 'dt-body');
+  body.style.width = `${totalWidth}px`;
+  grid.append(head, body);
+  const cellbar = element('div', 'dt-cellbar');
+  cellbar.setAttribute('aria-live', 'polite');
+  root.classList.add('dt', 'dt-compare');
+  root.replaceChildren(grid, cellbar);
+
+  const viewportHeight = (): number =>
+    grid.clientHeight > 0 ? grid.clientHeight - HEAD_HEIGHT : 480;
+
+  // ---- painting -------------------------------------------------------------
+  const paintCell = ({ cell, record, column }: CompareCell): void => {
+    const active =
+      selection !== undefined &&
+      selection.record === record &&
+      selection.column === column;
+    cell.classList.toggle('is-active', active);
+    cell.setAttribute('aria-selected', String(active));
+    cell.tabIndex = active ? 0 : -1;
+  };
+  const repaint = (): void => {
+    for (const entry of cells.values()) paintCell(entry);
+  };
+
+  const buildCell = (record: number, column: number): HTMLElement => {
+    const value = table.text(record, column);
+    const state = options.state(record, column);
+    const classes = ['dt-cell'];
+    if (table.numeric(record, column) !== undefined) classes.push('is-num');
+    if (state !== undefined) classes.push(`dt-diff-${state}`);
+    const cell = element('div', classes.join(' '));
+    cell.setAttribute('role', 'gridcell');
+    cell.setAttribute('aria-colindex', String(column + 2));
+    cell.dataset['r'] = String(record);
+    cell.dataset['c'] = String(column);
+    cell.append(
+      value === ''
+        ? element('span', 'dt-text dt-blank', 'blank')
+        : element('span', 'dt-text', displayText(value))
+    );
+    if (state !== undefined) {
+      cell.append(element('span', 'dt-sr', COMPARE_STATE_TEXT[state]));
+    }
+    const entry: CompareCell = { cell, record, column, state };
+    cells.set(keyOf(record, column), entry);
+    paintCell(entry);
+    return cell;
+  };
+
+  const buildRow = (record: number): HTMLElement => {
+    const row = element('div', 'dt-row');
+    row.setAttribute('role', 'row');
+    row.setAttribute('aria-rowindex', String(record + 2));
+    row.style.top = `${record * ROW_HEIGHT}px`;
+    row.style.width = `${totalWidth}px`;
+    const number = element('div', 'dt-rn', String(record + 1));
+    number.setAttribute('role', 'rowheader');
+    row.append(number);
+    for (let column = 0; column < drawn; column++) {
+      row.append(buildCell(record, column));
+    }
+    return row;
+  };
+
+  const renderHead = (): void => {
+    const headCells: HTMLElement[] = [element('div', 'dt-corner')];
+    for (let column = 0; column < drawn; column++) {
+      const cell = element('div', 'dt-hcell');
+      cell.setAttribute('role', 'columnheader');
+      cell.setAttribute('aria-colindex', String(column + 2));
+      cell.append(element('span', 'dt-letter', columnLetters(column + 1)));
+      headCells.push(cell);
+    }
+    head.replaceChildren(...headCells);
+  };
+
+  /** What a body render depends on: the rows on screen and the pinned selection. */
+  const bodyKey = (): string => {
+    const visible = rowWindow(
+      table.records,
+      grid.scrollTop,
+      viewportHeight(),
+      ROW_HEIGHT,
+      OVERSCAN
+    );
+    return `${visible.first}:${visible.end}:${selection?.record ?? -1}`;
+  };
+  const renderBody = (): void => {
+    body.style.height = `${table.records * ROW_HEIGHT}px`;
+    cells.clear();
+    const visible = rowWindow(
+      table.records,
+      grid.scrollTop,
+      viewportHeight(),
+      ROW_HEIGHT,
+      OVERSCAN
+    );
+    const wanted = new Set<number>();
+    for (let record = visible.first; record < visible.end; record++) {
+      wanted.add(record);
+    }
+    // The selected row stays drawn, so the focused cell is never removed under the reader.
+    if (selection !== undefined) wanted.add(selection.record);
+    const rows = [...wanted]
+      .sort((a, b) => a - b)
+      .map((record) => buildRow(record));
+    body.replaceChildren(...rows);
+    drawnKey = bodyKey();
+  };
+  const syncWindow = (): void => {
+    if (bodyKey() !== drawnKey) renderBody();
+  };
+
+  // ---- cellbar --------------------------------------------------------------
+  const renderCellbar = (): void => {
+    if (selection === undefined) {
+      cellbar.replaceChildren(
+        element('p', 'dt-hint', 'Select a cell to copy it.')
+      );
+      return;
+    }
+    const { record, column } = selection;
+    const value = table.text(record, column);
+    const detail = table.detail?.(record, column);
+    const copy = element('button', 'dt-copy', 'Copy');
+    copy.type = 'button';
+    copy.addEventListener('click', () => {
+      void navigator.clipboard
+        ?.writeText(clipboardText(value))
+        .catch(() => undefined);
+    });
+    cellbar.replaceChildren(
+      element('p', 'dt-addr', `${columnLetters(column + 1)}${record + 1}`),
+      element(
+        'p',
+        'dt-sub',
+        `Row ${record + 1}${detail ? ` · ${detail.type}` : ''}`
+      ),
+      element(
+        'pre',
+        'dt-value',
+        (value === '' ? '(blank)' : displayText(value)) +
+          (detail?.formula
+            ? `\n${detail.sharedFrom ? 'Shared master formula' : 'Formula'}: ${displayText(detail.formula)}`
+            : '') +
+          (detail?.sharedFrom ? `\nShared from: ${detail.sharedFrom}` : '')
+      ),
+      copy
+    );
+  };
+
+  // ---- selection and scroll -------------------------------------------------
+  const select = (record: number, column: number): void => {
+    if (
+      disposed ||
+      record < 0 ||
+      record >= table.records ||
+      column < 0 ||
+      column >= drawn
+    ) {
+      return;
+    }
+    if (
+      selection !== undefined &&
+      selection.record === record &&
+      selection.column === column
+    ) {
+      return;
+    }
+    selection = { record, column };
+    syncWindow();
+    repaint();
+    renderCellbar();
+    grid.tabIndex = -1;
+    options.onSelect?.(record, column);
+  };
+
+  /** Scrolls the least that puts the column beside the row labels. */
+  const revealColumn = (column: number): void => {
+    const left = columnLeft[column];
+    if (left === undefined) return;
+    const right = left + widths[column]!;
+    if (left < grid.scrollLeft + ROW_NUMBER_WIDTH) {
+      grid.scrollLeft = Math.max(0, left - ROW_NUMBER_WIDTH);
+    } else if (right > grid.scrollLeft + grid.clientWidth) {
+      grid.scrollLeft = right - grid.clientWidth;
+    }
+  };
+
+  /** Scrolls the least that brings the row into view below the sticky header. */
+  const ensureVisible = (record: number, column: number): void => {
+    const shown = grid.scrollTop;
+    const viewport = viewportHeight();
+    if (record * ROW_HEIGHT < shown) {
+      grid.scrollTop = record * ROW_HEIGHT;
+    } else if ((record + 1) * ROW_HEIGHT > shown + viewport) {
+      grid.scrollTop = (record + 1) * ROW_HEIGHT - viewport;
+    }
+    revealColumn(column);
+  };
+
+  /** Chooses a cell and focuses it. A keyboard choice also brings the cell into view. */
+  const choose = (record: number, column: number, follow: boolean): void => {
+    select(record, column);
+    if (follow) ensureVisible(record, column);
+    syncWindow();
+    cells.get(keyOf(record, column))?.cell.focus({ preventScroll: true });
+  };
+
+  const scheduleUpdate = (): void => {
+    if (frame !== 0 || disposed) return;
+    frame = requestAnimationFrame(() => {
+      frame = 0;
+      syncWindow();
+    });
+  };
+
+  // ---- first paint and events -----------------------------------------------
+  renderHead();
+  renderBody();
+  renderCellbar();
+  grid.tabIndex = 0;
+  grid.addEventListener('scroll', scheduleUpdate);
+  grid.addEventListener('mousedown', (event) => {
+    const target = event.target;
+    if (disposed || event.button !== 0 || !(target instanceof Element)) return;
+    const cell = target.closest<HTMLElement>('.dt-cell');
+    if (cell === null) return;
+    event.preventDefault();
+    choose(Number(cell.dataset['r']), Number(cell.dataset['c']), false);
+  });
+  grid.addEventListener('keydown', (event) => {
+    if (disposed || table.records === 0 || drawn === 0) return;
+    const from: CellRef = selection ?? { record: 0, column: 0 };
+    const page = Math.max(1, Math.floor(viewportHeight() / ROW_HEIGHT));
+    const moved = compareKeyTarget(
+      event.key,
+      event.ctrlKey || event.metaKey,
+      from,
+      table.records,
+      drawn,
+      page
+    );
+    if (moved === undefined) return;
+    event.preventDefault();
+    // The first navigation key chooses the first cell and does not move past it.
+    const target = selection === undefined ? from : moved;
+    choose(target.record, target.column, true);
+  });
+
+  return {
+    scroller: grid,
+    select,
+    reveal(record, column, top) {
+      if (
+        disposed ||
+        record < 0 ||
+        record >= table.records ||
+        column < 0 ||
+        column >= drawn
+      ) {
+        return;
+      }
+      // The body starts below the sticky header, so the row's top sits
+      // HEAD_HEIGHT plus its offset into the body.
+      grid.scrollTop = HEAD_HEIGHT + record * ROW_HEIGHT - top;
+      revealColumn(column);
+      syncWindow();
+    },
+    dispose(): void {
+      if (disposed) return;
+      disposed = true;
+      if (frame !== 0) cancelAnimationFrame(frame);
+      frame = 0;
+      cells.clear();
     },
   };
 }

@@ -93,10 +93,21 @@ import {
   tallyFromList,
 } from './decisions.ts';
 import {
-  isDocumentStateMessage,
+  type DocumentBlock,
   type DocumentStateMessage,
+  isDocumentBlocksMessage,
+  isDocumentStateMessage,
   type RenderDocumentMessage,
 } from './frame-document-protocol.ts';
+import type {
+  ChangeNav,
+  ChangeReport,
+  CompareStage,
+  CompareStageOptions,
+  CompareUi,
+  ComparisonPane,
+  PairedComparisonSpec,
+} from './compare-ui.ts';
 import { isFrameScrollMessage } from './frame-scroll.ts';
 import {
   type Concealment,
@@ -239,24 +250,23 @@ import {
   DIFF_LIMIT_LABEL,
   FOLDER_COMPARE_MAX_BYTES,
   FOLDER_COMPARE_LIMIT_COPY,
+  IDENTICAL_CONTENT_COPY,
   bytesEqual,
   comparisonAvailability,
   createImageDiff,
   createTextDiff,
-  diffModeForRoute,
-  diffModeForRoutes,
+  diffModeForView,
+  diffModeForViews,
+  type DiffSegment,
   type TextDiffPart,
   uncomparableClassNoun,
   unpromptedComparisonNotice,
   versionHistoryAvailability,
 } from './diff.ts';
-import {
-  type ChangeJump,
-  diffTrees,
-  type RenderedChange,
-  type TreeDiff,
-} from './domdiff.ts';
+import { type ChangeJump, diffTrees, type RenderedChange } from './domdiff.ts';
+import { visibleText } from './json-tree-rows.ts';
 import { renderMarkdown } from './markdown.ts';
+import { visibleLabel } from './visible-label.ts';
 import type { DashboardSearch, RowMatch } from './dashboard-search.ts';
 import {
   buildCommentedDashboardRows,
@@ -1579,14 +1589,17 @@ export function sandboxFrame(
   payload: RenderPayload,
   onTree?: (tree: TreeNode | null) => void,
   transfer: Transferable[] = [],
-  onDocumentState?: (state: DocumentStateMessage) => void
+  onDocumentState?: (state: DocumentStateMessage) => void,
+  onDocumentBlocks?: (
+    blocks: readonly DocumentBlock[] | null | 'invalid'
+  ) => void
 ): FrameHandle {
   const frame = document.createElement('iframe');
   frame.className = 'usercontent-frame';
   frame.setAttribute('sandbox', 'allow-scripts');
   frame.setAttribute('referrerpolicy', 'no-referrer');
   frame.src = `${usercontentOrigin}/sandbox.html`;
-  frame.title = view.filename;
+  frame.title = `Version ${view.version} of ${visibleLabel(view.filename)}`;
 
   // The frame is opaque, so no targetOrigin can name it and '*' is the only
   // value that reaches it. What limits who receives a post is the handshake: the
@@ -1642,7 +1655,12 @@ export function sandboxFrame(
   // That message comes from the shim's own document, which is listening before
   // it announces itself, so nothing is lost. Later ready messages, and any load
   // after the first, post nothing: see FrameHandshake.
+  // One document state and one blocks message per frame. Blocks are taken only
+  // once the payload is posted and the document has said it is ready. A second
+  // message of either kind is ignored, not counted.
   let documentStateReceived = false;
+  let documentReady = false;
+  let documentBlocksReceived = false;
   const onMessage = (event: MessageEvent): void => {
     if (disposed || event.source !== frame.contentWindow) return;
     const type = (event.data as { type?: unknown } | null)?.type;
@@ -1663,14 +1681,32 @@ export function sandboxFrame(
       return;
     }
     if (
-      onDocumentState !== undefined &&
       !documentStateReceived &&
       handshake.rendered &&
       handshake.canPost() &&
       isDocumentStateMessage(event.data)
     ) {
       documentStateReceived = true;
-      onDocumentState(event.data);
+      documentReady = event.data.state === 'ready';
+      onDocumentState?.(event.data);
+      return;
+    }
+    if (type === 'relic:document-blocks') {
+      // Before the document is ready a frame has nothing to compare yet, so the
+      // message is ignored. A malformed one counts as the single message.
+      if (
+        onDocumentBlocks === undefined ||
+        !documentReady ||
+        documentBlocksReceived ||
+        !handshake.rendered ||
+        !handshake.canPost()
+      ) {
+        return;
+      }
+      documentBlocksReceived = true;
+      onDocumentBlocks(
+        isDocumentBlocksMessage(event.data) ? event.data.blocks : 'invalid'
+      );
       return;
     }
     // Refuse an oversized or malformed snapshot without retaining it. The
@@ -2490,10 +2526,18 @@ export function renderCodeComparison(
   return wrapper;
 }
 
-/** What a reader sees changed, in rendered terms rather than source terms. */
-function renderChangeList(
+/**
+ * What a reader sees changed, in rendered terms rather than source terms.
+ *
+ * `more` counts the changes the list does not carry. They are named by one row
+ * at the end and reached through change navigation, so that row is text and
+ * not a control: a row that looked pressable and did nothing would be false.
+ */
+export function renderChangeList(
   changes: readonly RenderedChange[],
-  onJump?: (index: number) => void
+  onJump?: (index: number) => void,
+  more = 0,
+  moreCopy: (n: number) => string = moreChangesCopy
 ): HTMLElement {
   const list = document.createElement('ul');
   list.className = 'diff-change-list';
@@ -2524,28 +2568,103 @@ function renderChangeList(
     what.className = 'diff-change-what';
     what.textContent = change.label;
 
-    // Rendered text from the compared versions, and it reaches the DOM as a
-    // text node. Nothing parses it, so content that is secretly markup shows
-    // as its own source and does nothing, which is the correct outcome on the
-    // origin that holds the key.
     const detail = document.createElement('span');
-    detail.className = 'diff-change-detail';
-    if (change.kind === 'changed') {
-      const before = document.createElement('del');
-      before.textContent = change.before;
-      const after = document.createElement('ins');
-      after.textContent = change.after;
-      detail.append(before, after);
-    } else {
-      detail.textContent =
-        change.kind === 'added' ? change.after : change.before;
-    }
+    detail.className =
+      change.kind === 'changed' && change.segments !== undefined
+        ? 'diff-change-detail diff-change-words'
+        : 'diff-change-detail';
+    appendChangeDetail(detail, change);
 
     item.append(kind, what, detail);
     list.appendChild(item);
   }
 
+  if (more > 0) {
+    const row = document.createElement('li');
+    row.className = 'diff-change-more';
+    row.textContent = moreCopy(more);
+    list.appendChild(row);
+  }
   return list;
+}
+
+/**
+ * The words of one change, as its row quotes them.
+ *
+ * A changed row with word segments reads as one sentence: unchanged words as
+ * text, removed words in `del`, added words in `ins`, in the order the document
+ * reads them. A changed row without segments keeps two lines, the old text and
+ * the new. Every piece is its own element, isolated for bidi, so a control or
+ * bidi character in one piece cannot reorder the words beside it. Each piece is
+ * shown escaped, as the JSON and spreadsheet views show their text. Rendered
+ * text reaches the DOM as text nodes or as the text of a mark, never as markup.
+ */
+function appendChangeDetail(detail: HTMLElement, change: RenderedChange): void {
+  if (change.kind === 'changed' && change.segments !== undefined) {
+    for (const segment of mergeSegments(
+      change.segments.before,
+      change.segments.after
+    )) {
+      let tag = 'bdi';
+      if (segment.kind === 'removed') tag = 'del';
+      else if (segment.kind === 'added') tag = 'ins';
+      const run = document.createElement(tag);
+      run.textContent = visibleText(segment.text);
+      detail.appendChild(run);
+    }
+    return;
+  }
+  if (change.kind === 'changed') {
+    const before = document.createElement('del');
+    before.textContent = visibleText(change.before);
+    const after = document.createElement('ins');
+    after.textContent = visibleText(change.after);
+    detail.append(before, after);
+    return;
+  }
+  const shown = change.kind === 'added' ? change.after : change.before;
+  detail.textContent = visibleText(shown);
+}
+
+/**
+ * The two sides of a changed row, in the order the document reads them.
+ *
+ * Each side keeps its unchanged words and marks only its own changes. Walking
+ * the two in step rebuilds the sequence that was compared: a removal comes from
+ * the before side, an addition from the after side, and an unchanged run is
+ * taken once.
+ */
+function mergeSegments(
+  before: readonly DiffSegment[],
+  after: readonly DiffSegment[]
+): DiffSegment[] {
+  const merged: DiffSegment[] = [];
+  let b = 0;
+  let a = 0;
+  while (b < before.length || a < after.length) {
+    const removal = before[b];
+    const addition = after[a];
+    if (removal?.kind === 'removed') {
+      merged.push(removal);
+      b += 1;
+    } else if (addition?.kind === 'added') {
+      merged.push(addition);
+      a += 1;
+    } else {
+      // Both sides stand on the same unchanged run, or one side has ended.
+      const same = removal ?? addition;
+      if (same === undefined) break;
+      merged.push({ kind: 'unchanged', text: same.text });
+      if (removal !== undefined) b += 1;
+      if (addition !== undefined) a += 1;
+    }
+  }
+  return merged;
+}
+
+function moreChangesCopy(count: number): string {
+  const noun = count === 1 ? 'change' : 'changes';
+  return `${count} more ${noun}. Use Next change to reach them.`;
 }
 
 /** Where a jumped-to change is placed in the pane, in CSS pixels. */
@@ -2563,16 +2682,6 @@ export function paneForJump<T>(jump: ChangeJump, before: T, after: T): T {
   return jump.side === 'before' ? before : after;
 }
 
-export interface ChangeNav {
-  readonly element: HTMLElement;
-  /** Handed the diff's stops once the trees arrive. */
-  setJumps(jumps: readonly ChangeJump[]): void;
-  /** Move by one stop, wrapping at each end. Returns the new position. */
-  step(delta: 1 | -1): number | undefined;
-  /** Go to one stop by index, for a press on a row in the change list. */
-  goTo(index: number): void;
-}
-
 /**
  * Previous, next, and where you are.
  *
@@ -2587,7 +2696,8 @@ export function buildChangeNav(deps: {
 }): ChangeNav {
   const element = document.createElement('div');
   element.className = 'compare-nav';
-  let jumps: readonly ChangeJump[] = [];
+  let jumps: ArrayLike<ChangeJump> = [];
+  let emptyNote = 'No changes';
   let at = -1;
   /**
    * Whether the comparison has been computed yet.
@@ -2610,7 +2720,7 @@ export function buildChangeNav(deps: {
     position.textContent = !counted
       ? 'Comparing'
       : jumps.length === 0
-        ? 'No changes'
+        ? emptyNote
         : at < 0
           ? `${jumps.length} ${jumps.length === 1 ? 'change' : 'changes'}`
           : `Change ${at + 1} of ${jumps.length}`;
@@ -2646,8 +2756,9 @@ export function buildChangeNav(deps: {
 
   return {
     element,
-    setJumps: (value) => {
+    setJumps: (value, note) => {
       jumps = value;
+      emptyNote = note ?? 'No changes';
       at = -1;
       counted = true;
       show();
@@ -2655,24 +2766,6 @@ export function buildChangeNav(deps: {
     step,
     goTo,
   };
-}
-
-/** One side of a rendered comparison, and how to mark it once a diff exists. */
-interface ComparisonPane {
-  readonly element: HTMLElement;
-  /** Resolves with a complete snapshot, null when unavailable, or never. */
-  readonly tree: Promise<TreeNode | null>;
-  annotate(marks: readonly Mark[], anchors: readonly Anchor[]): void;
-  readonly setScroll?: (position: ScrollPosition) => void;
-  /**
-   * Put one change at `top` inside this pane, and say whether it landed.
-   *
-   * The pane does it rather than the caller, because for a framed version
-   * the node is in another origin and only the frame can measure or move
-   * it. The other pane is not moved here: the two are already synced, and
-   * moving both would fight that.
-   */
-  readonly revealChange?: (changeId: string, top: number) => boolean;
 }
 
 /** Paired changed node nearest the top of one same-origin pane. */
@@ -2717,13 +2810,13 @@ const TREE_TIMEOUT_MS = 6000;
  * versions are ordinary DOM on this origin, and the comparison needs no frame
  * and no protocol.
  */
-function markdownPane(view: ReadyView): ComparisonPane {
+function markdownPane(view: ReadyView): ComparisonPane<TreeNode> {
   const prose = document.createElement('article');
   prose.className = 'prose';
   prose.innerHTML = renderMarkdown(decodeText(documentBytes(view)));
   return {
     element: prose,
-    tree: Promise.resolve(captureTree(prose)),
+    snapshot: Promise.resolve(captureTree(prose)),
     annotate: (marks, anchors) => {
       applyMarks(prose, marks);
       // Second, because the first call clears authored ids before painting
@@ -2809,7 +2902,10 @@ export function revealChangeIn(
  * render frame is an opaque origin, so the frame reports its own rendered
  * structure and the parent posts back marks that carry no content.
  */
-function framePane(view: ReadyView, usercontentOrigin: string): ComparisonPane {
+function framePane(
+  view: ReadyView,
+  usercontentOrigin: string
+): ComparisonPane<TreeNode> {
   const payload = payloadFor(view);
   if (payload === undefined) {
     return {
@@ -2817,12 +2913,13 @@ function framePane(view: ReadyView, usercontentOrigin: string): ComparisonPane {
         `Version ${view.version} is named like a React component and does ` +
           'not compile as one, so it cannot be rendered for comparison.'
       ),
-      tree: new Promise<TreeNode>(() => {}),
+      // Never settles. The comparison's own timeout is what reports it.
+      snapshot: Promise.withResolvers<TreeNode | null>().promise,
       annotate: () => {},
     };
   }
 
-  const { promise: tree, resolve: settle } =
+  const { promise: snapshot, resolve: settle } =
     Promise.withResolvers<TreeNode | null>();
   const handle = sandboxFrame(view, usercontentOrigin, payload, (reported) =>
     settle(reported)
@@ -2832,7 +2929,7 @@ function framePane(view: ReadyView, usercontentOrigin: string): ComparisonPane {
   host.append(handle.linkRemembered, handle.linkConfirm, handle.frame);
   return {
     element: host,
-    tree,
+    snapshot,
     annotate: handle.annotate,
     setScroll: handle.setScroll,
     revealChange: (changeId, top) => {
@@ -2846,113 +2943,46 @@ function framePane(view: ReadyView, usercontentOrigin: string): ComparisonPane {
 }
 
 /**
- * The visual comparison for every class that has a rendered form.
+ * The layout, labels and swipe of one comparison, around two panes the caller
+ * has built.
  *
- * Two panes, each showing one version as it actually renders, stacked under a
- * swipe control so the reader can wipe between them, or laid side by side.
- * On top of that, each pane's own changed nodes are outlined where they sit,
- * so a change is visible without hunting for it. Markdown defaults to side by
- * side because prose is read, and a page or a component defaults to the swipe
- * because what matters there is whether the pixels moved.
+ * The caller knows what is in each pane. This builds only what a reader uses
+ * to move between them, so every class lays out the same way.
  */
-export function renderRenderedComparison(
-  current: ReadyView,
-  historical: ReadyView,
-  mode: 'markdown' | 'rendered',
-  usercontentOrigin: string,
-  onChanges?: (
-    changes: readonly RenderedChange[],
-    summary: string,
-    /**
-     * How to take the reader to one of those changes.
-     *
-     * Handed out because the list is rendered by whoever owns the sidebar,
-     * and a row that names a change without going to it leaves the reader
-     * running the search themselves.
-     */
-    onJump?: (index: number) => void
-  ) => void
-): HTMLElement {
-  const wrapper = document.createElement('section');
-  wrapper.className = `diff-view diff-view-${mode}`;
-
-  const summary = document.createElement('div');
-  summary.className = 'diff-summary';
-  const label = document.createElement('strong');
-  label.textContent = 'Rendered comparison';
-  const counts = document.createElement('span');
-  counts.textContent = 'Rendering both versions.';
-  summary.append(label, counts);
-  wrapper.appendChild(summary);
-
-  const before =
-    mode === 'markdown'
-      ? markdownPane(historical)
-      : framePane(historical, usercontentOrigin);
-  const after =
-    mode === 'markdown'
-      ? markdownPane(current)
-      : framePane(current, usercontentOrigin);
-
+export function buildCompareStage(o: CompareStageOptions): CompareStage {
   const stage = document.createElement('div');
   stage.className = 'compare-stage';
   // Side by side, whatever the class. These are documents people read, and
-  // reading two of them at once is what the pane pair is for; the swipe
-  // answers "did the pixels move", which is a narrower question and one
-  // press away. A remembered choice beats this default.
+  // reading two of them at once is what the pane pair is for; the swipe answers
+  // "did the pixels move", which is a narrower question and one press away. A
+  // remembered choice beats this default.
   stage.dataset['layout'] = readCompareLayout() ?? 'split';
   stage.style.setProperty('--split', '50%');
 
   const beforePane = document.createElement('div');
   beforePane.className = 'compare-pane compare-pane-before';
-  beforePane.appendChild(before.element);
+  beforePane.appendChild(o.before);
 
   const afterPane = document.createElement('div');
   afterPane.className = 'compare-pane compare-pane-current';
-  afterPane.appendChild(after.element);
+  afterPane.appendChild(o.after);
 
   const beforeLabel = document.createElement('span');
   beforeLabel.className = 'compare-label compare-label-before';
   beforeLabel.textContent =
-    historical.version === historical.currentVersion
-      ? `Version ${historical.version}, current`
-      : `Version ${historical.version}`;
+    o.historical.version === o.historical.currentVersion
+      ? `Version ${o.historical.version}, current`
+      : `Version ${o.historical.version}`;
   const afterLabel = document.createElement('span');
   afterLabel.className = 'compare-label compare-label-current';
   afterLabel.textContent =
-    current.version === current.currentVersion
-      ? `Version ${current.version}, current`
-      : `Version ${current.version}`;
+    o.current.version === o.current.currentVersion
+      ? `Version ${o.current.version}, current`
+      : `Version ${o.current.version}`;
   const divider = document.createElement('span');
   divider.className = 'compare-divider';
   divider.setAttribute('aria-hidden', 'true');
-
   stage.append(beforePane, afterPane, beforeLabel, afterLabel, divider);
-
-  // The listeners live on the panes, so they go when the stage does.
-  if (mode === 'markdown') {
-    syncScrollers([beforePane, afterPane], undefined, {
-      read: paneScrollLandmark,
-      apply: applyPaneScrollLandmark,
-    });
-  } else if (before.setScroll !== undefined && after.setScroll !== undefined) {
-    syncFrameScrollers([
-      {
-        setScrollPosition: before.setScroll,
-        addEventListener: (type, listener) =>
-          before.element.addEventListener(type, listener),
-        removeEventListener: (type, listener) =>
-          before.element.removeEventListener(type, listener),
-      },
-      {
-        setScrollPosition: after.setScroll,
-        addEventListener: (type, listener) =>
-          after.element.addEventListener(type, listener),
-        removeEventListener: (type, listener) =>
-          after.element.removeEventListener(type, listener),
-      },
-    ]);
-  }
 
   const controls = document.createElement('div');
   controls.className = 'compare-controls';
@@ -2960,7 +2990,7 @@ export function renderRenderedComparison(
   const swipeControl = document.createElement('label');
   swipeControl.className = 'compare-swipe';
   const swipeText = document.createElement('span');
-  const swipeLabel = `Reveal version ${current.version} over version ${historical.version}`;
+  const swipeLabel = `Reveal version ${o.current.version} over version ${o.historical.version}`;
   swipeText.textContent = swipeLabel;
   const slider = document.createElement('input');
   slider.type = 'range';
@@ -3000,14 +3030,48 @@ export function renderRenderedComparison(
   }
   setLayout(stage.dataset['layout'] === 'split' ? 'split' : 'swipe');
 
-  // Moving through the changes, rather than hunting for the outlines.
-  // A comparison with forty marked nodes is a search problem without this,
-  // and the reader is the one who has to solve it.
+  controls.append(layout, o.nav.element, swipeControl);
+  return { stage, controls, beforePane, afterPane };
+}
+
+/**
+ * Two versions side by side, with their changes listed beside them.
+ *
+ * What differs by class is the spec: how each side is read, how the two are
+ * diffed, and what the copy says. What a reader does with them (swipe, move
+ * through the changes, keep the panes in step) is the same for every class.
+ */
+export function renderPairedComparison<S>(
+  spec: PairedComparisonSpec<S>,
+  current: ReadyView,
+  historical: ReadyView,
+  onChanges?: (report: ChangeReport) => void
+): HTMLElement {
+  const wrapper = document.createElement('section');
+  wrapper.className = `diff-view diff-view-${spec.mode}`;
+
+  const summary = document.createElement('div');
+  summary.className = 'diff-summary';
+  const label = document.createElement('strong');
+  label.textContent = spec.label;
+  const counts = document.createElement('span');
+  counts.textContent = 'Rendering both versions.';
+  summary.append(label, counts);
+  wrapper.appendChild(summary);
+
+  const before = spec.pane(historical);
+  const after = spec.pane(current);
+  const result = document.createElement('div');
+  result.className = 'diff-rendered-result';
+
+  // Moving through the changes, rather than hunting for the outlines. A
+  // comparison with forty marked nodes is a search problem without this, and
+  // the reader is the one who has to solve it.
   const nav = buildChangeNav({
     reveal: (jumpTarget, top) => {
-      // Offered to both. The pane that does not hold this stop clears its
-      // own light and does nothing else, which is how the two stop
-      // disagreeing about where the reader is.
+      // Offered to both. The pane that does not hold this stop clears its own
+      // light and does nothing else, which is how the two stop disagreeing
+      // about where the reader is.
       paneForJump(jumpTarget, after, before).revealChange?.(
         jumpTarget.changeId,
         top
@@ -3017,51 +3081,205 @@ export function renderRenderedComparison(
     },
   });
 
-  controls.append(layout, nav.element, swipeControl);
-
-  const result = document.createElement('div');
-  result.className = 'diff-rendered-result';
-
-  wrapper.append(controls, stage, result);
+  const stage = buildCompareStage({
+    before: before.element,
+    after: after.element,
+    current,
+    historical,
+    nav,
+  });
+  // The listeners live on the panes, so they go when the stage does.
+  if (spec.sync === 'landmark') {
+    syncScrollers([stage.beforePane, stage.afterPane], undefined, {
+      read: paneScrollLandmark,
+      apply: applyPaneScrollLandmark,
+    });
+  } else if (before.setScroll !== undefined && after.setScroll !== undefined) {
+    syncFrameScrollers([
+      {
+        setScrollPosition: before.setScroll,
+        addEventListener: (type, listener) =>
+          before.element.addEventListener(type, listener),
+        removeEventListener: (type, listener) =>
+          before.element.removeEventListener(type, listener),
+      },
+      {
+        setScrollPosition: after.setScroll,
+        addEventListener: (type, listener) =>
+          after.element.addEventListener(type, listener),
+        removeEventListener: (type, listener) =>
+          after.element.removeEventListener(type, listener),
+      },
+    ]);
+  }
+  wrapper.append(stage.controls, stage.stage, result);
 
   // The structural comparison is the annotation, and the two live renders are
-  // the evidence. So a frame that never reports a tree costs the outlines and
-  // the change list, and leaves the reader everything a swipe can show.
-  const timeout = new Promise<undefined>((resolve) => {
-    setTimeout(() => resolve(undefined), TREE_TIMEOUT_MS);
-  });
-  void Promise.race([Promise.all([before.tree, after.tree]), timeout]).then(
-    (trees) => {
-      if (typeof document === 'undefined') return;
-      const beforeTree = trees?.[0] ?? undefined;
-      const afterTree = trees?.[1] ?? undefined;
-      if (beforeTree === undefined || afterTree === undefined) {
-        counts.textContent =
-          'Both versions are shown. Relik could not read their rendered ' +
-          'structure, so changes are not outlined.';
-        return;
-      }
-      const diff: TreeDiff = diffTrees(beforeTree, afterTree);
-      counts.textContent = diff.summary;
-      before.annotate(diff.removedMarks, diff.beforeAnchors);
-      after.annotate(diff.addedMarks, diff.afterAnchors);
-      nav.setJumps(diff.jumps);
-      if (onChanges !== undefined) {
-        onChanges(diff.changes, diff.summary, nav.goTo);
-      }
-      if (!diff.changed) {
-        if (onChanges === undefined) {
-          result.replaceChildren(noChanges(diff.summary));
-        }
-        return;
-      }
-      if (diff.changes.length > 0 && onChanges === undefined) {
-        result.replaceChildren(renderChangeList(diff.changes, nav.goTo));
-      }
+  // the evidence. So a pane that never reports costs the outlines and the
+  // change list, and leaves the reader everything a swipe can show.
+  const { promise: timeout, resolve: giveUp } =
+    Promise.withResolvers<undefined>();
+  setTimeout(() => giveUp(undefined), spec.snapshotTimeoutMs);
+  // What is compared and what is not. It sits with the changes when there is a
+  // list, and in the result when there is none.
+  const scope = spec.scope === undefined ? undefined : scopeLine(spec.scope);
+  void Promise.race([
+    Promise.all([before.snapshot, after.snapshot]),
+    timeout,
+  ]).then((snapshots) => {
+    if (typeof document === 'undefined') return;
+    const beforeSnapshot = snapshots?.[0] ?? null;
+    const afterSnapshot = snapshots?.[1] ?? null;
+    if (beforeSnapshot === null || afterSnapshot === null) {
+      counts.textContent =
+        (beforeSnapshot === null ? before : after).failure?.() ??
+        spec.unavailable;
+      result.replaceChildren(...(scope === undefined ? [] : [scope]));
+      return;
     }
-  );
+    const diff = spec.diff(beforeSnapshot, afterSnapshot, nav.goTo);
+    if ('unavailable' in diff) {
+      counts.textContent = diff.unavailable;
+      result.replaceChildren(...(scope === undefined ? [] : [scope]));
+      return;
+    }
+    counts.textContent = diff.summary;
+    before.annotate(diff.removedMarks, diff.beforeAnchors);
+    after.annotate(diff.addedMarks, diff.afterAnchors);
+    nav.setJumps(diff.jumps);
+    const preface = prefaceFor(scope, diff.preface);
+    if (onChanges !== undefined) {
+      onChanges({
+        changes: diff.changes,
+        total: diff.total,
+        summary: diff.summary,
+        onJump: nav.goTo,
+        ...(preface === undefined ? {} : { preface }),
+      });
+      return;
+    }
+    // With no sidebar, the same content goes in the result.
+    const parts: HTMLElement[] = [];
+    if (preface !== undefined) parts.push(preface);
+    if (!diff.changed) {
+      parts.push(noChanges(diff.summary));
+    } else if (diff.changes.length > 0) {
+      parts.push(
+        renderChangeList(
+          diff.changes,
+          nav.goTo,
+          diff.total - diff.changes.length
+        )
+      );
+    }
+    result.replaceChildren(...parts);
+  });
 
   return wrapper;
+}
+
+/**
+ * The rendered comparison of markdown and HTML, through the paired shell.
+ *
+ * Markdown renders on this origin, so its panes are ordinary DOM and keep in
+ * step by their landmarks. A page or a component renders in its own frame and
+ * reports its structure back, so its panes keep in step through the frame.
+ */
+export function renderRenderedComparison(
+  current: ReadyView,
+  historical: ReadyView,
+  mode: 'markdown' | 'rendered',
+  usercontentOrigin: string,
+  onChanges?: (report: ChangeReport) => void
+): HTMLElement {
+  return renderPairedComparison<TreeNode>(
+    {
+      mode,
+      label: 'Rendered comparison',
+      snapshotTimeoutMs: TREE_TIMEOUT_MS,
+      unavailable:
+        'Both versions are shown. Relik could not read their rendered ' +
+        'structure, so changes are not outlined.',
+      sync: mode === 'markdown' ? 'landmark' : 'frame',
+      pane: (view) =>
+        mode === 'markdown'
+          ? markdownPane(view)
+          : framePane(view, usercontentOrigin),
+      diff: (before, after) => {
+        const diff = diffTrees(before, after);
+        return { ...diff, total: diff.jumps.length };
+      },
+    },
+    current,
+    historical,
+    onChanges
+  );
+}
+
+function scopeLine(text: string): HTMLElement {
+  const line = document.createElement('p');
+  line.className = 'diff-scope';
+  line.textContent = text;
+  return line;
+}
+
+/** The scope line, then whatever preface the diff brings with it. */
+function prefaceFor(
+  scope: HTMLElement | undefined,
+  preface: HTMLElement | undefined
+): HTMLElement | undefined {
+  if (scope === undefined) return preface;
+  if (preface === undefined) return scope;
+  const both = document.createElement('div');
+  both.append(scope, preface);
+  return both;
+}
+
+/** What the Changes sidebar shows under its count: the preface, then the list. */
+export function changeSidebarContent(
+  report: ChangeReport
+): HTMLElement | undefined {
+  const beyond = report.more;
+  const more = beyond?.count ?? report.total - report.changes.length;
+  const moreCopy =
+    beyond === undefined ? undefined : (n: number): string => beyond.copy(n);
+  const list =
+    report.changes.length > 0 || more > 0
+      ? renderChangeList(report.changes, report.onJump, more, moreCopy)
+      : undefined;
+  if (report.preface === undefined) return list;
+  if (list === undefined) return report.preface;
+  const content = document.createElement('div');
+  content.append(report.preface, list);
+  return content;
+}
+
+/**
+ * The shell's services for the lazily loaded comparison modules, bound to this
+ * viewer's usercontent origin. Those modules take them as a parameter and never
+ * import this file.
+ */
+export function compareUiFor(usercontentOrigin: string): CompareUi {
+  return {
+    buildCompareStage,
+    buildChangeNav,
+    renderChangeList,
+    notice,
+    noChanges,
+    renderSingleVersion: (view, reason) =>
+      renderSingleVersion(view, usercontentOrigin, reason),
+    documentFrame: (view, payload, transfer, onState, onBlocks) =>
+      sandboxFrame(
+        view,
+        usercontentOrigin,
+        payload,
+        undefined,
+        transfer,
+        onState,
+        onBlocks
+      ),
+    download: downloadContent,
+  };
 }
 
 async function loadImage(
@@ -3105,9 +3323,7 @@ export function renderImageComparison(
       }
       if (bytesEqual(beforeBytes, currentBytes)) {
         status.textContent = 'No changed pixels or metadata bytes.';
-        wrapper.appendChild(
-          noChanges('No changes. These versions have identical content.')
-        );
+        wrapper.appendChild(noChanges(IDENTICAL_CONTENT_COPY));
         return;
       }
 
@@ -3557,13 +3773,13 @@ export function uncomparableReason(
       'open here on its own.'
     );
   }
-  if (diffModeForRoute(historical.route) === undefined) {
+  if (diffModeForView(historical) === undefined) {
     return (
       `Version ${selectedVersion} is download-only, so it cannot be shown ` +
       `beside version ${current.version}. It is open here on its own.`
     );
   }
-  if (diffModeForRoute(current.route) === undefined) {
+  if (diffModeForView(current) === undefined) {
     return (
       `Version ${current.version} is download-only, so it cannot be shown ` +
       `beside version ${selectedVersion}. Version ${selectedVersion} is ` +
@@ -3599,13 +3815,122 @@ export function renderSingleVersion(
 
   const label = document.createElement('p');
   label.className = 'diff-single-label';
-  label.textContent = `Version ${view.version}: ${view.filename}`;
+  label.textContent = `Version ${view.version}: ${visibleLabel(view.filename)}`;
   wrap.appendChild(label);
 
   wrap.appendChild(
     buildCurrentStage(view, usercontentOrigin, { comparisonNotice: false })
   );
   return wrap;
+}
+
+/**
+ * The version a comparison shows alone when one side is over the limit.
+ *
+ * The version that can be read is the one shown, and the reason names the one
+ * that cannot. When only the older version is over, the newer one is shown.
+ * When only the newer one is over, the older one is shown. When both are, the
+ * older one is shown and the reason names both.
+ */
+export function oversizeSingle(
+  current: ReadyView,
+  historical: ReadyView
+): { readonly shown: ReadyView; readonly reason: string } | undefined {
+  const historicalOver = historical.content.size > MAX_DIFF_BYTES;
+  const currentOver = current.content.size > MAX_DIFF_BYTES;
+  if (historicalOver && currentOver) {
+    return {
+      shown: historical,
+      reason:
+        `Versions ${historical.version} and ${current.version} are larger ` +
+        `than the ${DIFF_LIMIT_LABEL} comparison limit, so Relik cannot show ` +
+        `them side by side. Version ${historical.version} is open here on ` +
+        'its own.',
+    };
+  }
+  if (historicalOver) {
+    return {
+      shown: current,
+      reason: oversizeReason(historical.version, current.version),
+    };
+  }
+  if (currentOver) {
+    return {
+      shown: historical,
+      reason: oversizeReason(current.version, historical.version),
+    };
+  }
+  return undefined;
+}
+
+function oversizeReason(failed: number, shown: number): string {
+  return (
+    `Version ${failed} is larger than the ${DIFF_LIMIT_LABEL} comparison ` +
+    `limit, so Relik cannot show it beside another. Version ${shown} is open ` +
+    'here on its own.'
+  );
+}
+
+/**
+ * A comparison whose module loads on first use, so the shell never carries it.
+ *
+ * The slot says it is rendering at once. When the module arrives, the
+ * comparison is built and put in the slot within the same turn: a pane mounts
+ * on the next microtask, and only a pane already on the page mounts. A module
+ * that fails to load leaves the readable version on its own, with the reason.
+ */
+export function lazyComparison<M>(
+  load: () => Promise<M>,
+  build: (loaded: M) => HTMLElement,
+  historical: ReadyView,
+  usercontentOrigin: string
+): HTMLElement {
+  const slot = document.createElement('div');
+  // The slot sits between .diff-result and the comparison, so it carries the
+  // same flex column; without it the stage collapses to its iframe's 150 px.
+  slot.className = 'diff-lazy';
+  const rendering = document.createElement('p');
+  rendering.className = 'diff-loading';
+  rendering.setAttribute('role', 'status');
+  rendering.textContent = 'Rendering both versions.';
+  slot.append(rendering);
+  void load()
+    .then((loaded) => {
+      if (!slot.isConnected) return;
+      slot.replaceChildren(build(loaded));
+    })
+    .catch(() => {
+      if (!slot.isConnected) return;
+      slot.replaceChildren(
+        renderSingleVersion(
+          historical,
+          usercontentOrigin,
+          `Relik could not load this comparison. Version ${historical.version} is open here on its own.`
+        )
+      );
+    });
+  return slot;
+}
+
+/**
+ * Whether two versions hold the same bytes. Sizes settle most pairs before a
+ * byte is read. A version that cannot be read is left to the comparison that
+ * follows, which says what failed.
+ */
+async function identicalBytes(
+  before: ReadyView,
+  after: ReadyView
+): Promise<boolean> {
+  if (before.content.size !== after.content.size) return false;
+  try {
+    const [left, right] = await Promise.all([
+      before.content.readWhole(MAX_DIFF_BYTES),
+      after.content.readWhole(MAX_DIFF_BYTES),
+    ]);
+    return left !== undefined && right !== undefined && bytesEqual(left, right);
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -3619,38 +3944,61 @@ export function renderLoadedVersion(
   historical: ReadyView,
   selectedVersion: number,
   usercontentOrigin: string,
-  onChanges?: (
-    changes: readonly RenderedChange[],
-    summary: string,
-    onJump?: (index: number) => void
-  ) => void
+  onChanges?: (report: ChangeReport) => void
 ): HTMLElement {
-  if (
-    current.content.size > MAX_DIFF_BYTES ||
-    historical.content.size > MAX_DIFF_BYTES
-  ) {
+  const oversize = oversizeSingle(current, historical);
+  if (oversize !== undefined) {
     return renderSingleVersion(
-      historical,
+      oversize.shown,
       usercontentOrigin,
-      `This version is larger than the ${DIFF_LIMIT_LABEL} comparison limit.`
+      oversize.reason
     );
   }
-  const mode = diffModeForRoutes(current.route, historical.route);
-  if (mode === undefined) {
-    return renderSingleVersion(
-      historical,
-      usercontentOrigin,
-      uncomparableReason(current, historical, selectedVersion)
-    );
-  }
+  const mode = diffModeForViews(current, historical);
   if (mode === 'image') return renderImageComparison(current, historical);
   if (mode === 'code') return renderCodeComparison(current, historical);
-  return renderRenderedComparison(
-    current,
+  if (mode === 'markdown' || mode === 'rendered') {
+    return renderRenderedComparison(
+      current,
+      historical,
+      mode,
+      usercontentOrigin,
+      onChanges
+    );
+  }
+  if (mode === 'docx' || mode === 'epub') {
+    return lazyComparison(
+      () => import('./document-compare.ts'),
+      ({ documentComparisonSpec }) =>
+        renderPairedComparison(
+          documentComparisonSpec(mode, compareUiFor(usercontentOrigin)),
+          current,
+          historical,
+          onChanges
+        ),
+      historical,
+      usercontentOrigin
+    );
+  }
+  if (mode === 'xlsx') {
+    return lazyComparison(
+      () => import('./spreadsheet-compare.ts'),
+      ({ renderSpreadsheetComparison }) =>
+        renderSpreadsheetComparison(
+          current,
+          historical,
+          compareUiFor(usercontentOrigin),
+          onChanges
+        ),
+      historical,
+      usercontentOrigin
+    );
+  }
+  // Anything else has no side-by-side comparison, so it is shown on its own.
+  return renderSingleVersion(
     historical,
-    mode,
     usercontentOrigin,
-    onChanges
+    uncomparableReason(current, historical, selectedVersion)
   );
 }
 
@@ -3762,7 +4110,12 @@ export function buildChangesSidebar(): ChangesSidebarHandle {
       } else {
         body.replaceChildren(noChanges('No changes between these versions.'));
       }
-      setOpen(count > 0);
+      // On a narrow screen the list is a drawer over the panes, so it waits
+      // for its tab rather than covering the comparison it lists.
+      const narrow =
+        typeof window.matchMedia === 'function' &&
+        window.matchMedia('(max-width: 44rem)').matches;
+      setOpen(count > 0 && !narrow);
     },
   };
 }
@@ -4076,9 +4429,7 @@ export function renderComparison(
         container.append(fileList);
         if (unchangedCount) container.append(unchanged);
         if (!files.some((file) => file.kind !== 'unchanged'))
-          container.appendChild(
-            noChanges('No changes. These versions have identical content.')
-          );
+          container.appendChild(noChanges(IDENTICAL_CONTENT_COPY));
         container.appendChild(detail);
         scaffold.result.replaceChildren(container);
         changesSidebar.setChanges(
@@ -4109,7 +4460,7 @@ export function renderComparison(
       return;
     }
 
-    const mode = diffModeForRoutes(leftRes.view.route, rightRes.view.route);
+    const mode = diffModeForViews(leftRes.view, rightRes.view);
     const comparable = mode !== undefined;
     scaffold.headline.textContent = comparisonCopy(
       leftVersion,
@@ -4117,6 +4468,24 @@ export function renderComparison(
       current.currentVersion,
       comparable
     ).headline;
+
+    // Identical bytes need no comparison, so they are answered before any
+    // frame or worker starts, and the left version is shown on its own.
+    if (
+      (mode === 'docx' || mode === 'epub' || mode === 'xlsx') &&
+      (await identicalBytes(leftRes.view, rightRes.view))
+    ) {
+      if (thisRequest !== request) return;
+      scaffold.result.replaceChildren(
+        renderSingleVersion(
+          leftRes.view,
+          usercontentOrigin,
+          IDENTICAL_CONTENT_COPY
+        )
+      );
+      changesSidebar.setChanges(0, undefined);
+      return;
+    }
 
     if (mode === 'code') {
       const textDiff = createTextDiff(
@@ -4149,12 +4518,9 @@ export function renderComparison(
         leftRes.view,
         leftVersion,
         usercontentOrigin,
-        (changes, _summary, onJump) => {
+        (report) => {
           if (thisRequest !== request) return;
-          changesSidebar.setChanges(
-            changes.length,
-            changes.length > 0 ? renderChangeList(changes, onJump) : undefined
-          );
+          changesSidebar.setChanges(report.total, changeSidebarContent(report));
         }
       )
     );
@@ -10148,6 +10514,10 @@ export function buildThread(
     dispose: () => {
       if (suggestionController && !suggestionController.destroy()) return false;
       suggestionDisposed = true;
+      // A hover still counting down would open or close a card on a thread
+      // that has gone. Nothing may fire into it once it is disposed.
+      clearTimeout(hoverTimer);
+      clearTimeout(leaveTimer);
       stopPresence();
       presenceWindow?.removeEventListener('pagehide', hidePresence);
       presenceWindow?.removeEventListener('pageshow', showPresence);

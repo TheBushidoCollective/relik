@@ -2334,6 +2334,17 @@ canvas.relic-page {
   height: 100%;
   border: 0;
 }
+
+/*
+ * A document pane holds the document route's .doc wrapper. In a pane it is
+ * the frame's container, not a reading column: the 46rem cap would centre a
+ * narrow page in swipe mode, and without a height the frame stays 150 px.
+ */
+.compare-pane > .doc {
+  max-width: none;
+  height: 100%;
+  margin: 0;
+}
 .compare-divider {
   position: absolute;
   top: 0;
@@ -2380,6 +2391,21 @@ canvas.relic-page {
 .compare-stage[data-layout='split'] .compare-label-current {
   left: auto;
   right: 0.6rem;
+}
+
+/*
+ * Over grids the labels sit at the foot, each at its pane's right edge: at the
+ * top they covered the cell bar and a sheet's placeholder, and at the left
+ * they covered the row numbers.
+ */
+.diff-view-xlsx .compare-label {
+  top: auto;
+  bottom: 0.6rem;
+}
+
+.diff-view-xlsx .compare-stage[data-layout='split'] .compare-label-before {
+  left: auto;
+  right: calc(50% + 0.6rem);
 }
 
 .compare-controls {
@@ -2590,6 +2616,51 @@ canvas.relic-page {
   text-decoration: none;
 }
 
+/*
+ * A changed row with word segments reads as one sentence, as the mock draws
+ * it: removed words struck through, added words underlined, unchanged words
+ * plain. The clamp above is for rows that show the old and new text whole.
+ */
+.diff-change-words {
+  display: block;
+  overflow: visible;
+}
+
+.diff-change-words del,
+.diff-change-words ins {
+  display: inline;
+  overflow: visible;
+  -webkit-line-clamp: none;
+  line-clamp: none;
+}
+
+.diff-change-words ins {
+  border-bottom: 1px solid var(--patina);
+}
+
+.diff-change-words del + ins {
+  margin-left: 0.18em;
+}
+
+/*
+ * Each piece of a changed sentence is an isolated run, so a bidi control in one
+ * piece cannot reorder the words beside it. A bdi isolates already; del and ins
+ * are made to.
+ */
+.diff-change-words > bdi,
+.diff-change-words > del,
+.diff-change-words > ins {
+  unicode-bidi: isolate;
+}
+
+/* The row that says there are more changes than the list holds. */
+.diff-change-more {
+  padding: 0.55rem 0.75rem;
+  border-top: 1px solid var(--rule);
+  color: var(--ink-soft);
+  font-size: 0.8rem;
+}
+
 .diff-result {
   display: flex;
   flex-direction: column;
@@ -2618,10 +2689,13 @@ canvas.relic-page {
   flex: 1 1 auto;
   min-height: 0;
   gap: 1rem;
+  padding: 1rem 1.25rem;
+  overflow: auto;
 }
 
 .diff-single > .notice {
   margin: 0;
+  max-width: 52rem;
 }
 
 .diff-single-label {
@@ -2642,6 +2716,7 @@ canvas.relic-page {
   max-width: none;
 }
 
+.diff-lazy,
 .diff-view,
 .diff-view-markdown,
 .diff-view-rendered,
@@ -2666,6 +2741,94 @@ canvas.relic-page {
 .diff-summary span {
   color: var(--ink-soft);
   text-align: right;
+}
+
+/* What the comparison compares, and what it leaves out. */
+.diff-scope {
+  margin: 0 0 0.75rem;
+  color: var(--ink-soft);
+  font-size: 0.8rem;
+}
+
+/* A book whose title changed says so once, in the sidebar's type size. */
+.diff-title-line {
+  margin: 0 0 0.75rem;
+  font-size: 0.85rem;
+}
+
+/*
+ * The chapters of a book comparison, above its list of changes. Each chapter
+ * is a row: its label, then how it changed.
+ */
+.diff-chapters {
+  margin: 0 0 0.75rem;
+  border: 1px solid var(--rule);
+  background: var(--surface);
+}
+
+.diff-chapters h2 {
+  margin: 0;
+  padding: 0.45rem 0.75rem;
+  border-bottom: 1px solid var(--rule);
+  color: var(--patina-ink);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.diff-chapters ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.diff-chapters li + li {
+  border-top: 1px solid var(--rule);
+}
+
+.diff-chapter-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.45rem 0.75rem;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.84rem;
+  text-align: left;
+}
+
+button.diff-chapter-row {
+  cursor: pointer;
+}
+
+button.diff-chapter-row:hover {
+  background: color-mix(in srgb, var(--patina) 10%, transparent);
+}
+
+button.diff-chapter-row:focus-visible {
+  outline: 2px solid var(--patina);
+  outline-offset: -2px;
+}
+
+.diff-chapter-state {
+  flex: none;
+  color: var(--ink-soft);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+.diff-chapter-added .diff-chapter-state {
+  color: var(--patina-ink);
+}
+
+.diff-chapter-removed .diff-chapter-state {
+  color: var(--oxide);
 }
 
 .diff-empty {
@@ -2830,6 +2993,13 @@ canvas.relic-page {
     flex-direction: column;
     gap: 0.85rem;
   }
+
+  /* In a column the heading's 16rem basis became 16rem of height, leaving a
+     gap under the history note. It takes its content's height instead. */
+  .diff-heading {
+    flex: none;
+    min-width: 0;
+  }
   .compare-picker {
     flex-wrap: wrap;
     gap: 0.5rem;
@@ -2854,6 +3024,20 @@ canvas.relic-page {
   .compare-stage[data-layout='split'] .compare-label-current {
     top: auto;
     bottom: 0.6rem;
+  }
+
+  /* Over grids both labels sit at their pane's foot: the historical one at
+     the foot of the top pane, the current one at the foot of the stage. */
+  .diff-view-xlsx .compare-stage[data-layout='split'] .compare-label-before {
+    right: 0.6rem;
+    bottom: calc(50% + 0.6rem);
+  }
+
+  /* A book pane ends in its reader bar (Contents, A-, A+), so the current
+     label sits at the head of the lower pane instead of over those controls. */
+  .diff-view-epub .compare-stage[data-layout='split'] .compare-label-current {
+    top: calc(50% + 0.6rem);
+    bottom: auto;
   }
 
   .compare-pane,
@@ -3183,6 +3367,23 @@ canvas.relic-page {
   }
   .thread.is-open ~ .thread-resizer {
     display: none;
+  }
+
+  /*
+   * A comparison needs both panes on the screen, so its Changes list does not
+   * take the row. It is a drawer over the foot of the stage, opened from its
+   * tab; side by side it left the panes 245 px and clipped its own rows.
+   */
+  .diff-row > .diff-changes-sidebar.is-open {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 20;
+    max-height: 72%;
+    border-top: 1px solid var(--rule-strong);
+    border-left: 0;
+    box-shadow: 0 -12px 28px rgb(0 0 0 / 22%);
   }
 }
 

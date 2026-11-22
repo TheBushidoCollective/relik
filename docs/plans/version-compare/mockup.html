@@ -1,0 +1,1002 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; base-uri 'none'; form-action 'none'">
+<title>Relik · version comparison for documents, books and spreadsheets · mock</title>
+<!--
+  A local, clickable mock for docs/plans/version-compare/plan.md, section 8 (B5).
+  It is not the viewer. The band, the comparison toolbar, the pickers, the layout
+  control, the slider, the change navigation, the Changes sidebar and its tab are
+  drawn from packages/relic-viewer/src/styles.css (.diff-*, .compare-*, .thread*).
+  Everything new is the outline cues on document blocks, the Chapters preface, the
+  sheet strip and the paired grids.
+
+  Non-colour cues (plan 3.6): documents use a solid outline for added, dashed with
+  line-through for removed and double for changed. Grids use a solid stripe for
+  added, line-through for removed, a dotted ring for changed and an "fx" corner for
+  a formula-only change. Every cue also carries visually hidden text.
+
+  Untrusted text: every fixture string is inserted with createTextNode. Bidi
+  controls are drawn as a visible escape.
+
+  Mock chrome (the state bar, the state list) is drawn with dashed rules so it
+  never passes for the product.
+-->
+<style>
+:root {
+  color-scheme: light;
+  --ground: #f1f2f0; --surface: #fbfbfa; --ink: #16191a; --ink-soft: #5a6163;
+  --rule: #d2d5d2; --rule-strong: #b3b8b4; --patina: #1f6b64; --patina-ink: #0f3b37;
+  --oxide: #8c4a2f; --diff-added: #dfeeea; --diff-added-strong: #a7d6ca;
+  --diff-removed: #f3e5df; --diff-removed-strong: #ddb6a6;
+  --page: #ffffff; --page-ink: #1b1b1b;
+  --serif: Charter, "Iowan Old Style", "Source Serif Pro", Palatino, "Palatino Linotype", Georgia, serif;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --bar-height: 3.25rem;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ground: #101314; --surface: #171b1c; --ink: #e6e9e7; --ink-soft: #969e9d;
+  --rule: #2a3032; --rule-strong: #3b4345; --patina: #4fb3a6; --patina-ink: #a7ded5;
+  --oxide: #c98058; --diff-added: #15332f; --diff-added-strong: #24564e;
+  --diff-removed: #34231d; --diff-removed-strong: #684331;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; padding: 0; height: 100%; }
+body { display: flex; flex-direction: column; height: 100dvh; overflow: hidden;
+  background: var(--ground); color: var(--ink); font: 16px/1.55 var(--sans); -webkit-text-size-adjust: 100%; }
+.icon { width: 14px; height: 14px; flex: none; }
+button { font: inherit; }
+.vh { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+/* ---------- mock chrome: not the viewer, drawn with dashed rules ---------- */
+.mk-bar { flex: none; position: relative; z-index: 60; display: flex; align-items: center; gap: .4rem;
+  height: 36px; padding: 0 .5rem; min-width: 0; background: var(--surface);
+  border-bottom: 1px dashed var(--rule-strong); font: 11px/1.3 var(--mono); }
+.mk-tag { flex: none; padding: .1rem .35rem; border: 1px dashed var(--rule-strong); color: var(--ink-soft);
+  font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
+.mk-btn { flex: none; display: inline-flex; align-items: center; justify-content: center; gap: .3rem;
+  height: 24px; min-width: 24px; padding: 0 .5rem; border: 1px solid var(--rule-strong);
+  background: var(--surface); color: var(--ink); font: 11px var(--mono); cursor: pointer; white-space: nowrap; }
+.mk-btn:hover { border-color: var(--patina); color: var(--patina-ink); }
+.mk-btn:focus-visible { outline: 2px solid var(--patina); outline-offset: 1px; }
+.mk-btn[aria-pressed="true"] { border-color: var(--patina); background: var(--diff-added); color: var(--patina-ink); }
+.mk-title { flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font: 12px/1.3 var(--sans); }
+.mk-title b { margin-right: .45rem; font: 600 11px var(--mono); color: var(--patina-ink); }
+@media (max-width: 719px) { .mk-wide { display: none !important; } }
+.mk-drawer { position: absolute; top: 36px; left: 0; right: 0; z-index: 70; max-height: calc(100dvh - 36px);
+  overflow-y: auto; padding: .7rem .75rem 1.2rem; background: var(--surface);
+  border-bottom: 1px dashed var(--rule-strong); box-shadow: 0 12px 24px rgb(0 0 0 / 18%); font: 12px/1.45 var(--sans); }
+.mk-drawer h3 { margin: .9rem 0 .35rem; color: var(--ink-soft); font: 600 10px var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+.mk-drawer ol { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 20rem), 1fr)); gap: .25rem; margin: 0; padding: 0; list-style: none; }
+.mk-state { display: flex; gap: .5rem; width: 100%; padding: .35rem .5rem; border: 1px solid var(--rule);
+  background: var(--surface); color: var(--ink); font: 12px/1.35 var(--sans); text-align: left; cursor: pointer; }
+.mk-state b { flex: none; min-width: 3.4rem; font: 600 11px/1.5 var(--mono); color: var(--patina-ink); }
+.mk-state:hover { border-color: var(--patina); }
+.mk-state[aria-current="true"] { border-color: var(--patina); background: var(--diff-added); }
+.mk-floor { flex: 1 1 auto; min-height: 0; display: flex; justify-content: center; align-items: flex-start; overflow: hidden; }
+.mk-device { container: viewer / inline-size; position: relative; width: 100%; height: 100%;
+  display: flex; flex-direction: column; overflow: hidden; background: var(--ground); }
+.mk-device[data-frame="390"] { width: min(390px, 100%); height: min(808px, 100%); box-shadow: 0 0 0 1px var(--rule-strong); }
+
+/* ---------- the viewer, from packages/relic-viewer/src/styles.css ---------- */
+.viewer { position: relative; display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; background: var(--ground); color: var(--ink); }
+.bar { position: relative; z-index: 10; display: flex; align-items: stretch; flex: none; min-height: var(--bar-height);
+  background: var(--surface); border-bottom: 1px solid var(--rule-strong); }
+.mark { display: flex; align-items: center; padding: 0 1rem; font: 600 .78rem var(--mono); letter-spacing: .01em; color: var(--ink); border-right: 1px solid var(--rule); white-space: nowrap; }
+.identity { display: flex; flex-direction: column; justify-content: center; gap: .1rem; padding: .4rem 1rem; min-width: 0; flex: 1; }
+.filename { font-size: .9rem; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.identity-meta { display: flex; align-items: center; gap: .6rem; min-width: 0; }
+.accession { min-width: 0; flex: 0 1 auto; font: .66rem var(--mono); letter-spacing: .14em; color: var(--ink-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.version-label { flex: none; display: inline-flex; align-items: center; padding: .05rem .35rem; border: 1px solid var(--rule-strong); background: var(--surface); color: var(--ink-soft); font: .66rem var(--mono); letter-spacing: .06em; white-space: nowrap; }
+.actions { display: flex; align-items: stretch; border-left: 1px solid var(--rule); }
+.action { position: relative; display: inline-flex; align-items: center; gap: .45rem; padding: 0 .9rem; border: 0; border-right: 1px solid var(--rule);
+  background: transparent; color: var(--ink); font-size: .82rem; cursor: pointer; white-space: nowrap; }
+.actions .action:last-child { border-right: 0; }
+.action:hover { background: var(--ground); color: var(--patina-ink); }
+.action:focus-visible { outline: 2px solid var(--patina); outline-offset: -2px; }
+.action[aria-pressed="true"] { color: var(--patina-ink); background: var(--diff-added); }
+@container viewer (max-width: 34rem) {
+  .action .lbl { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .action { padding: 0 .75rem; }
+  .mark { display: none; }
+  .identity { padding: .4rem .7rem; }
+  .identity-meta .accession { display: none; }
+}
+.viewer-main { position: relative; flex: 1 1 auto; min-height: 0; display: flex; }
+.stage-wrap { position: relative; flex: 1 1 auto; min-width: 0; min-height: 0; overflow: auto; }
+.stage { position: relative; padding: 2rem 1.25rem 4rem; }
+.notice { display: flex; gap: .6rem; align-items: flex-start; max-width: 46rem; margin: 0 auto 1.5rem; padding: .7rem .9rem;
+  border-left: 3px solid var(--oxide); background: var(--surface); color: var(--ink); font-size: .86rem; }
+.notice.is-info { border-left-color: var(--patina); }
+.notice p { margin: 0; }
+.notice .icon { margin-top: .2rem; color: var(--oxide); }
+.notice.is-info .icon { color: var(--patina); }
+.notice .action-inline { margin-top: .5rem; display: inline-flex; align-items: center; gap: .4rem; padding: .3rem .7rem;
+  border: 1px solid var(--rule-strong); background: var(--surface); color: var(--ink); font-size: .8rem; cursor: pointer; }
+
+/* the comparison shell */
+.diff-shell { display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; min-height: 0; }
+.diff-toolbar { flex: none; display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 1rem 2rem;
+  padding: 1rem 1.25rem .75rem; background: var(--ground); border-bottom: 1px solid var(--rule-strong); }
+.diff-heading { flex: 1 1 16rem; min-width: 14rem; }
+.diff-eyebrow { margin-bottom: .25rem; color: var(--patina-ink); font: 700 .68rem var(--mono); letter-spacing: .14em; text-transform: uppercase; }
+.diff-heading h1 { margin: 0; font-size: clamp(1.3rem, 2.5vw, 1.9rem); line-height: 1.2; letter-spacing: -.02em; font-family: var(--sans); font-weight: 700; }
+.diff-heading h1:focus { outline: none; }
+.diff-heading h1:focus-visible { outline: 2px solid var(--patina); outline-offset: 4px; }
+.diff-history-note { max-width: 52rem; margin: .45rem 0 0; color: var(--ink-soft); font-size: .88rem; }
+/* The comparison's kind and its result, under the toolbar rule (main.ts .diff-summary). */
+.diff-summary-bar { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; width: 100%; margin: .25rem 0 0; font: .76rem var(--mono); }
+.diff-summary-bar span { color: var(--ink-soft); text-align: right; }
+.diff-shell > .diff-summary-bar, .diff-shell > .compare-controls { width: auto; margin: .75rem 1.25rem 0; }
+.diff-shell > .diff-summary-bar + .compare-controls { margin-top: .75rem; }
+.book-pane .frame-book h2 { font: 700 1.9rem/1.2 "Times New Roman", Times, serif; margin: 0 0 1rem; }
+.book-pane .frame-book article { border-bottom: 0; padding-bottom: 0; }
+.compare-picker { display: flex; align-items: center; gap: .6rem; flex: none; }
+.compare-picker-side { display: flex; align-items: center; gap: .4rem; position: relative; }
+.compare-picker-caption { font: .68rem var(--mono); color: var(--ink-soft); text-transform: uppercase; letter-spacing: .08em; }
+.compare-picker-separator { font: .68rem var(--mono); color: var(--ink-soft); }
+.compare-picker-trigger { display: inline-flex; align-items: center; gap: .3rem; padding: .2rem .5rem; font: .72rem var(--mono);
+  border: 1px solid var(--rule-strong); background: var(--surface); color: var(--ink); cursor: pointer; }
+.compare-controls { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem 1.25rem; margin-top: .75rem; width: 100%; }
+.compare-layout { display: flex; flex: none; border: 1px solid var(--rule-strong); }
+.compare-layout .action { padding: .35rem .7rem; border-right: 1px solid var(--rule-strong); font-size: .8rem; }
+.compare-layout .action:last-child { border-right: 0; }
+.compare-layout .action[aria-pressed='true'] { background: var(--patina); color: var(--surface); }
+.compare-nav { display: flex; flex: none; align-items: center; gap: .25rem; border: 1px solid var(--rule-strong); }
+.compare-nav .action { padding: .35rem .5rem; font-size: .8rem; border-right: 0; }
+.compare-nav .action:disabled { color: var(--ink-soft); cursor: default; background: transparent; }
+.compare-nav-previous svg { transform: rotate(180deg); }
+.compare-nav-position { padding: 0 .35rem; color: var(--ink-soft); font: .72rem var(--mono); white-space: nowrap; }
+.compare-swipe { display: flex; align-items: center; gap: .75rem; flex: 1; min-width: 0; }
+.compare-swipe span { flex: none; color: var(--ink-soft); font-size: .78rem; }
+.compare-swipe input { flex: 1; min-width: 4rem; accent-color: var(--patina); }
+.compare-swipe input:focus-visible { outline: 2px solid var(--patina); outline-offset: 2px; }
+
+.diff-row { position: relative; display: flex; flex: 1 1 auto; min-height: 0; width: 100%; }
+.diff-body { position: relative; display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; min-height: 0; padding: .75rem 1.25rem 1rem; gap: .6rem; }
+.compare-stage { --split: 50%; position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; border: 1px solid var(--rule-strong); background: var(--surface); }
+.compare-stage[data-layout='swipe'] { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+.compare-stage[data-layout='swipe'] .compare-pane { grid-area: 1 / 1; min-width: 0; min-height: 0; height: 100%; }
+.compare-stage[data-layout='swipe'] .compare-pane-current { clip-path: inset(0 calc(100% - var(--split)) 0 0); }
+.compare-stage[data-layout='split'] { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: minmax(0, 1fr); }
+.compare-stage[data-layout='split'] .compare-pane { min-width: 0; min-height: 0; height: 100%; }
+.compare-stage[data-layout='split'] .compare-pane-before { border-right: 1px solid var(--rule-strong); }
+.compare-stage[data-layout='split'] .compare-divider { display: none; }
+.compare-pane { overflow: auto; flex: 1 1 0; min-width: 0; min-height: 0; height: 100%; background: var(--ground); position: relative; }
+.compare-divider { position: absolute; top: 0; bottom: 0; left: var(--split); width: 1px; background: #fff; box-shadow: 0 0 0 1px rgb(0 0 0 / 35%); pointer-events: none; z-index: 3; }
+.compare-label { position: absolute; top: .6rem; z-index: 2; padding: .2rem .45rem; background: rgb(16 19 20 / 82%); color: #fff; font: .66rem var(--mono); pointer-events: none; letter-spacing: .04em; }
+.compare-label-before { right: .6rem; }
+.compare-label-current { left: .6rem; }
+.compare-stage[data-layout='split'] .compare-label-before { left: .6rem; right: auto; }
+.compare-stage[data-layout='split'] .compare-label-current { left: auto; right: .6rem; }
+.diff-loading { margin: 2rem 0; color: var(--ink-soft); font: .82rem var(--mono); }
+.diff-scope { margin: 0; color: var(--ink-soft); font-size: .8rem; }
+
+/* the Changes sidebar */
+.thread { flex: 0 1 auto; width: clamp(18rem, 22rem, calc(100% - 28rem)); min-width: 18rem; margin: 0; padding: 0 1.25rem 1.5rem; overflow-y: auto;
+  background: var(--surface); border-left: 1px solid var(--rule-strong); }
+.thread-title { position: sticky; top: 0; z-index: 1; margin: 0 -1.25rem .25rem; background: var(--surface); border-bottom: 1px solid var(--rule); }
+.thread-toggle { display: flex; align-items: center; justify-content: space-between; width: 100%; min-height: 2.75rem; padding: .65rem 1.25rem;
+  color: var(--ink); font: 600 .95rem var(--sans); text-align: left; background: transparent; border: 0; cursor: pointer; }
+.thread-toggle:focus-visible { outline: 2px solid var(--patina); outline-offset: -2px; }
+.count { display: inline-grid; place-items: center; min-width: 1.6rem; padding: 0 .35rem; margin-left: auto; margin-right: .75rem; border: 1px solid var(--rule-strong); font: .72rem var(--mono); color: var(--ink-soft); }
+.thread-toggle .diff-tab { display: flex; flex: 1; align-items: center; }
+.thread-toggle > svg { transform: rotate(-90deg); }
+.thread-tab { position: relative; flex: 0 0 auto; align-self: center; z-index: 5; padding: .85rem .4rem; color: var(--ink); font: 600 .76rem var(--sans);
+  letter-spacing: .06em; text-transform: uppercase; writing-mode: vertical-rl; background: var(--surface); border: 1px solid var(--rule-strong); border-right: 0; cursor: pointer; }
+.thread-tab:focus-visible { outline: 2px solid var(--patina); outline-offset: 2px; }
+.thread.is-open ~ .thread-tab { display: none; }
+.diff-summary { margin: .75rem 0 .3rem; font-size: .92rem; font-weight: 600; }
+.diff-title-line { margin: .3rem 0; font-size: .85rem; }
+.diff-change-list { margin: .75rem 0 0; padding: 0; list-style: none; border: 1px solid var(--rule); background: var(--surface); font-size: .84rem; }
+.diff-change { display: grid; grid-template-columns: 5.5rem minmax(0, 1fr); gap: .15rem .75rem; padding: .5rem .75rem; width: 100%; border: 0; background: transparent;
+  color: var(--ink); font: inherit; text-align: left; }
+.diff-change + .diff-change, li + li > .diff-change { border-top: 1px solid var(--rule); }
+.diff-change.is-linked { cursor: pointer; }
+.diff-change.is-linked:hover, .diff-change.is-linked:focus-visible { background: color-mix(in srgb, var(--patina) 10%, transparent); outline: none; }
+.diff-change.is-linked:focus-visible { box-shadow: inset 0 0 0 2px var(--patina); }
+.diff-change-kind { font: .68rem var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--ink-soft); padding-top: .12rem; }
+.diff-change-added .diff-change-kind { color: var(--patina-ink); }
+.diff-change-removed .diff-change-kind { color: var(--oxide); }
+.diff-change-what { color: var(--ink-soft); min-width: 0; overflow-wrap: anywhere; }
+.diff-change-detail { grid-column: 1 / -1; min-width: 0; overflow-wrap: anywhere; }
+.diff-change-detail del { background: var(--diff-removed); text-decoration-thickness: 1px; }
+.diff-change-detail ins { background: var(--diff-added); text-decoration: none; border-bottom: 1px solid var(--patina); }
+.diff-change-detail del + ins { margin-left: .18em; }
+/* A changed cell lists its old and new text on two lines (styles.css .diff-change-detail). */
+.diff-change-detail.is-cells del, .diff-change-detail.is-cells ins { display: block; margin: 0; border-bottom: 0; }
+.diff-change-more { padding: .55rem .75rem; color: var(--ink-soft); font-size: .8rem; border-top: 1px solid var(--rule); }
+.esc { display: inline-block; padding: 0 .2rem; margin: 0 .1rem; border: 1px solid var(--oxide); color: var(--oxide); font: .7rem/1.3 var(--mono); vertical-align: .05em; }
+
+/* Chapters preface (document-compare.ts class names) */
+.diff-chapters { margin: .75rem 0 0; border: 1px solid var(--rule); background: var(--surface); }
+.diff-chapters h2 { margin: 0; padding: .45rem .75rem; font: 700 .68rem var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--patina-ink); border-bottom: 1px solid var(--rule); }
+.diff-chapters ul { margin: 0; padding: 0; list-style: none; }
+.diff-chapters li + li { border-top: 1px solid var(--rule); }
+.diff-chapter-row { display: flex; justify-content: space-between; gap: .75rem; width: 100%; padding: .45rem .75rem; border: 0;
+  background: transparent; color: var(--ink); font: .84rem var(--sans); text-align: left; }
+button.diff-chapter-row { cursor: pointer; }
+button.diff-chapter-row:hover, button.diff-chapter-row:focus-visible { background: color-mix(in srgb, var(--patina) 10%, transparent); outline: none; }
+button.diff-chapter-row:focus-visible { box-shadow: inset 0 0 0 2px var(--patina); }
+.diff-chapter-state { flex: none; font: .7rem var(--mono); color: var(--ink-soft); letter-spacing: .04em; }
+.diff-chapter-removed .diff-chapter-state { color: var(--oxide); }
+.diff-chapter-added .diff-chapter-state { color: var(--patina-ink); }
+
+/* Document panes: docx-preview pages inside each frame */
+/* Document panes: docx-preview renders a letter page on grey and scales it to the pane. */
+.frame-doc { min-height: 100%; padding: 1.9rem 0 3rem; background: #808080; }
+.docx-page { position: relative; width: 8.5in; min-height: 11in; max-width: none; margin: 0 auto; padding: 3.25rem 6rem 3.5rem; background: #fff; color: #000;
+  font: 16px/1.15 "Times New Roman", Times, serif; zoom: .58; }
+.compare-stage[data-layout='swipe'] .docx-page { zoom: .97; }
+.docx-header, .docx-footer { position: absolute; left: 6rem; right: 6rem; color: #000; font-size: 14px; }
+.docx-header { top: 2rem; } .docx-footer { bottom: 1.6rem; }
+.docx-page h1 { margin: 1.2rem 0 0; font-size: 21px; font-weight: 400; color: #2e74b5; }
+.docx-page p { margin: 0; }
+.docx-page table { border-collapse: collapse; width: 100%; margin: 0; }
+.docx-page td { border: 1px solid #000; padding: 0 .15rem; }
+.docx-page .docx-img { display: block; width: 60px; height: 48px; margin: 0; background: #8080ff; }
+.frame-book { max-width: 36rem; margin: 0 auto; padding: 2rem 1.5rem 4rem; font: 17px/1.7 var(--serif); color: var(--ink); }
+.frame-book article { padding-bottom: 1.5rem; margin-bottom: 1.5rem; border-bottom: 1px solid var(--rule); }
+.frame-book h2 { font: 600 1.25rem/1.3 var(--serif); margin: 0 0 .6rem; }
+.frame-book p { margin: 0 0 .8rem; }
+.frame-book .book-title { font: .72rem var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--ink-soft); margin-bottom: 1.5rem; }
+/* The epub frame's own reader bar at the foot of each book pane. */
+.book-pane { display: flex; flex-direction: column; min-height: 100%; background: #fff; }
+.book-pane .frame-book { flex: 1; max-width: none; margin: 0; padding: 1.5rem 2rem; color: #000; font-family: "Times New Roman", Times, serif; }
+.book-bar { position: sticky; bottom: 0; display: flex; align-items: center; gap: .75rem; padding: .55rem .9rem; border-top: 1px solid #ccc; background: #f6f6f6; color: #111; font: .9rem var(--sans); }
+.book-bar span:last-child { margin-left: auto; }
+.book-bar b { padding: .3rem .7rem; border: 1px solid #888; font-weight: 400; background: #eee; }
+/* outline cues, drawn by the frame from mark paths */
+[data-relic-diff] { outline-offset: 2px; }
+[data-relic-diff="added"] { outline: 2px solid rgb(31, 107, 100); background-color: rgba(31, 107, 100, .18); }
+[data-relic-diff="removed"] { outline: 2px dashed rgb(140, 74, 47); background-color: rgba(140, 74, 47, .18); text-decoration: line-through; }
+[data-relic-diff="changed"] { outline: 4px double rgb(138, 109, 31); background-color: rgba(138, 109, 31, .18); }
+[data-relic-change-id].is-current-change { outline: 3px solid rgb(31, 107, 100); outline-offset: 3px; box-shadow: 0 0 0 9px rgba(31, 107, 100, .22); }
+.frame-card { max-width: 30rem; margin: 3rem auto; padding: 1.1rem 1.2rem; border: 1px solid var(--rule-strong); background: var(--surface); font-size: .9rem; }
+.frame-card h2 { margin: 0 0 .35rem; font-size: 1rem; }
+.frame-card p { margin: 0; color: var(--ink-soft); }
+.plate { display: grid; place-items: center; height: 100%; min-height: 10rem; color: var(--ink-soft); font: .82rem var(--mono); }
+.plate span { padding: .5rem .8rem; border: 1px solid var(--rule); background: var(--surface); }
+
+/* Sheet strip and paired grids (new) */
+.sheet-strip { flex: none; display: flex; gap: .25rem; overflow-x: auto; }
+.sheet-tab { flex: none; display: inline-flex; align-items: baseline; padding: .5rem .75rem; border: 1px solid var(--rule-strong);
+  background: var(--surface); color: var(--ink); font: .82rem var(--sans); cursor: pointer; white-space: nowrap; }
+.sheet-tab[aria-selected="true"] { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); font-weight: 700; }
+.sheet-tab:focus-visible, .sheet-tab.kbd-focus { outline: 2px solid var(--patina); outline-offset: -5px; }
+.dt-sheet-meta { margin-inline-start: .4rem; color: var(--ink-soft); font-size: .8em; font-weight: 400; }
+.dt-sheet-meta.is-added, .dt-sheet-meta.is-changes { color: var(--patina-ink); }
+.dt-sheet-meta.is-removed { color: var(--oxide); text-decoration: line-through; }
+.sheet-pane { display: flex; flex-direction: column; height: 100%; min-height: 0; background: var(--surface); }
+.dt-cellbar { flex: none; box-sizing: border-box; height: 5rem; display: grid; grid-template-columns: minmax(4.5rem, auto) minmax(0, 1fr) auto; grid-template-rows: auto minmax(0, 1fr);
+  grid-template-areas: 'addr value copy' 'sub value copy'; align-items: start; gap: .15rem .9rem; padding: .4rem .6rem; border: 1px solid var(--rule-strong); background: var(--surface); }
+/* Over grids the pane labels sit at the foot, clear of the cell bar. */
+.compare-stage.is-grid .compare-label { top: auto; bottom: .6rem; }
+.compare-stage.is-grid[data-layout='split'] .compare-label-before { left: auto; right: calc(50% + .9rem); }
+.compare-stage.is-grid[data-layout='split'] .compare-label-current { left: auto; right: .9rem; }
+.dt-cellbar .addr { grid-area: addr; font: 600 .82rem/1.3 var(--mono); color: var(--patina-ink); }
+.dt-cellbar .sub { grid-area: sub; color: var(--ink-soft); font-size: .8rem; }
+.dt-cellbar .val { grid-area: value; margin: 0; font: .82rem/1.35 var(--mono); white-space: pre-wrap; }
+.dt-cellbar .hint { grid-column: 1 / -1; grid-row: 1 / -1; align-self: center; color: var(--ink-soft); font-size: .8rem; }
+.dt-cellbar .copy { grid-area: copy; padding: .3rem .6rem; border: 1px solid var(--rule-strong); background: var(--surface); color: var(--ink); font: .8rem var(--sans); }
+.dt-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; }
+.dt { border-collapse: separate; border-spacing: 0; font: .82rem/1.2 var(--sans); table-layout: fixed; }
+.dt th, .dt td { height: 1.75rem; padding: 0 .45rem; border-right: 1px solid var(--rule); border-bottom: 1px solid var(--rule); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; position: relative; }
+.dt th { position: sticky; top: 0; z-index: 2; background: var(--ground); color: var(--ink-soft); font: 500 .6rem var(--mono); text-align: left; }
+.dt th.rh { left: 0; z-index: 1; text-align: right; }
+.dt thead th.rh { z-index: 3; }
+.dt tbody th { position: sticky; top: auto; left: 0; }
+.dt td { background: var(--surface); cursor: cell; }
+.dt td.num { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.dt td.is-active { outline: 2px solid var(--patina-ink); outline-offset: -2px; }
+.dt td.is-active.kbd-focus { outline: 2px solid var(--patina-ink); outline-offset: -2px; }
+.dt td.dt-diff-added { background: var(--diff-added); box-shadow: inset 4px 0 0 var(--patina); }
+.dt td.dt-diff-added.is-active { box-shadow: inset 4px 0 0 var(--patina); }
+.dt td.dt-diff-removed { background: var(--diff-removed); text-decoration: line-through; text-decoration-thickness: 1px; }
+.dt td.dt-diff-changed { background: color-mix(in srgb, var(--oxide) 10%, var(--surface)); }
+.dt td.dt-diff-changed::before { content: ""; position: absolute; inset: 2px; border: 2px dotted var(--oxide); pointer-events: none; }
+.dt td.dt-diff-formula { background: color-mix(in srgb, var(--oxide) 6%, var(--surface)); padding-right: 1.5rem; }
+.dt td.dt-diff-formula::after { content: "fx"; position: absolute; top: 0; right: 0; padding: 0 .2rem; background: var(--oxide); color: var(--surface); font: 600 .6rem/1.3 var(--mono); }
+.dt td.is-current-change { outline: 2px solid var(--patina-ink); outline-offset: -2px; }
+.dt-placeholder { display: grid; place-items: center; height: 100%; padding: 2rem; color: var(--ink-soft); font-size: .9rem; text-align: center; background: var(--surface); }
+.dt-placeholder p { max-width: 22rem; margin: 0; padding: .9rem 1rem; border: 1px dashed var(--rule-strong); background: var(--surface); }
+
+/* one version on its own */
+.diff-single { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; gap: 1rem; padding: 1rem 1.25rem; overflow: auto; }
+.diff-single > .notice { margin: 0; max-width: 52rem; }
+.diff-single-label { margin: 0; color: var(--ink-soft); font: .82rem var(--mono); }
+.diff-single .single-frame { flex: 1 1 auto; min-height: 22rem; border: 1px solid var(--rule-strong); background: var(--ground); overflow: auto; }
+
+/* mobile: stack panes, current label to the foot, sidebar becomes the drawer */
+@container viewer (max-width: 44rem) {
+  .diff-toolbar { padding: .75rem .9rem .6rem; gap: .6rem; }
+  .diff-heading { min-width: 0; flex: 1 1 100%; }
+  .diff-summary-bar { flex-direction: column; gap: .2rem; }
+  .diff-summary-bar span { text-align: left; }
+  .diff-shell > .diff-summary-bar, .diff-shell > .compare-controls { margin-left: .6rem; margin-right: .6rem; }
+  .compare-picker { flex-wrap: wrap; }
+  .compare-controls { gap: .5rem .75rem; margin-top: .5rem; }
+  .diff-body { padding: .5rem .6rem .75rem; }
+  .compare-stage[data-layout='split'] { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); }
+  .compare-stage[data-layout='split'] .compare-pane-before { border-right: 0; border-bottom: 1px solid var(--rule-strong); }
+  .compare-stage[data-layout='split'] .compare-label-current { left: auto; right: .6rem; top: auto; bottom: .6rem; }
+  .diff-view-epub .compare-stage[data-layout='split'] .compare-label-current { top: calc(50% + .6rem); bottom: auto; }
+  .diff-row > .thread { position: absolute; z-index: 20; left: 0; right: 0; bottom: 0; width: auto; min-width: 0; max-height: 72%; border-left: 0; border-top: 1px solid var(--rule-strong); box-shadow: 0 -12px 28px rgb(0 0 0 / 22%); }
+  .diff-row > .thread:not(.is-open) { display: none; }
+  .diff-row > .thread-tab { position: relative; z-index: 15; }
+  .docx-page, .compare-stage[data-layout='swipe'] .docx-page { zoom: .34; }
+  .compare-stage[data-layout='swipe'] .docx-page { zoom: .4; }
+  .frame-doc { padding: 1.2rem 0 2rem; }
+  .frame-book { padding: 1.2rem 1rem 3rem; font-size: 15px; }
+  .compare-stage.is-grid[data-layout='split'] .compare-label-before { right: .9rem; bottom: calc(50% + .6rem); }
+}
+</style>
+</head>
+<body>
+<div class="mk-bar" id="mk-bar"></div>
+<div class="mk-floor"><div class="mk-device" id="device" data-frame="full"></div></div>
+<script>
+'use strict';
+const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+const BIDI = /[\u202A-\u202E\u2066-\u2069\u200E\u200F]/;
+function textish(str) {
+  // Untrusted text: always a text node; bidi controls drawn as a visible escape.
+  const s = String(str);
+  if (!BIDI.test(s)) return document.createTextNode(s);
+  const frag = document.createDocumentFragment();
+  for (const ch of s) {
+    if (BIDI.test(ch)) {
+      const e = document.createElement('span');
+      e.className = 'esc';
+      e.textContent = 'U+' + ch.codePointAt(0).toString(16).toUpperCase().padStart(4, '0');
+      frag.append(e);
+    } else frag.append(document.createTextNode(ch));
+  }
+  return frag;
+}
+function h(tag, attrs, ...kids) {
+  const el = document.createElement(tag);
+  if (attrs)
+    for (const [k, v] of Object.entries(attrs)) {
+      if (v == null || v === false) continue;
+      if (k === 'class') el.className = v;
+      else if (k === 'style') el.style.cssText = v;
+      else if (k.startsWith('on') && typeof v === 'function') el.addEventListener(k.slice(2), v);
+      else el.setAttribute(k, v === true ? '' : String(v));
+    }
+  for (const kid of kids.flat(Infinity)) {
+    if (kid == null || kid === false) continue;
+    el.append(kid instanceof Node ? kid : textish(kid));
+  }
+  return el;
+}
+const ICONS = {
+  compare: 'M2.5 3h4.5v10H2.5zM9 3h4.5v10H9zM8 1.5v13',
+  history: 'M2.5 8a5.5 5.5 0 105.5-5.5A5.6 5.6 0 003.5 5M2.5 2.5V5H5M8 5v3.2l2 1.3',
+  share: 'M8 2v8M5 5l3-3 3 3M3 9v4.5h10V9',
+  download: 'M8 2v8M5 7l3 3 3-3M3 13.5h10',
+  warn: 'M8 2l6.5 11.5h-13zM8 6.5v3.5M8 11.5v1',
+  info: 'M8 1.8a6.2 6.2 0 100 12.4A6.2 6.2 0 008 1.8zM8 7.2v4M8 4.9v.4',
+  chevron: 'M4 6l4 4 4-4',
+  next: 'M6 3.5L10.5 8 6 12.5',
+  sun: 'M8 5a3 3 0 100 6 3 3 0 000-6zM8 1v2M8 13v2M1 8h2M13 8h2M3 3l1.4 1.4M11.6 11.6L13 13M3 13l1.4-1.4M11.6 4.4L13 3',
+  list: 'M2.5 4h11M2.5 8h11M2.5 12h11',
+  frame: 'M2 3h12v10H2zM2 5.5h12',
+  eyeoff: 'M2 2l12 12M6.5 6.6a2 2 0 002.9 2.8M4.2 4.6C2.9 5.5 2 6.8 1.5 8c1.2 2.8 3.7 4.5 6.5 4.5 1.2 0 2.3-.3 3.3-.9M7 3.6c.3 0 .7-.1 1-.1 2.8 0 5.3 1.7 6.5 4.5-.4.9-.9 1.7-1.6 2.4',
+  chart: 'M2.5 13.5h11M4.5 11V8M7.5 11V5M10.5 11V7',
+  x: 'M4 4l8 8M12 4l-8 8',
+};
+function icon(name) {
+  const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  s.setAttribute('viewBox', '0 0 16 16'); s.setAttribute('class', 'icon'); s.setAttribute('aria-hidden', 'true');
+  const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  p.setAttribute('d', ICONS[name]); p.setAttribute('fill', 'none'); p.setAttribute('stroke', 'currentColor');
+  p.setAttribute('stroke-width', '1.5'); p.setAttribute('stroke-linejoin', 'round'); p.setAttribute('stroke-linecap', 'round');
+  s.append(p);
+  return s;
+}
+const raf2 = (fn) => requestAnimationFrame(() => requestAnimationFrame(fn));
+const nfmt = (n) => n.toLocaleString('en-US');
+
+/* ---------------- fixtures (plan section 4, S6b) ---------------- */
+const L = 2, R = 3;
+const DOC_FILE = 'quarterly-plan.docx', BOOK_FILE = 'crossings.epub', SHEET_FILE = 'q3-budget.xlsx';
+// A document block: {k:'h'|'p'|'table'|'img', t, m (mark), c (change index)}
+function docV2() {
+  return { header: 'Draft', footer: 'Internal', blocks: [
+    { k: 'h', t: 'Quarterly plan' },
+    { k: 'p', t: 'Revenue grew in every region.', m: 'changed', c: 0 },
+    { k: 'p', t: 'Hiring stays flat.' },
+    { k: 'table', rows: [[{ t: 'Region' }, { t: 'Target' }], [{ t: 'West' }, { t: '120', m: 'changed', c: 1 }]] },
+    { k: 'p', t: 'This sentence is removed in version 2.', m: 'removed', c: 2 },
+    { k: 'img' },
+  ] };
+}
+function docV3() {
+  return { header: 'Final', footer: 'Internal', blocks: [
+    { k: 'h', t: 'Quarterly plan' },
+    { k: 'p', t: 'Revenue grew in every region except the north.', m: 'changed', c: 0 },
+    { k: 'p', t: 'Hiring stays flat.' },
+    { k: 'table', rows: [[{ t: 'Region' }, { t: 'Target' }], [{ t: 'West' }, { t: '135', m: 'changed', c: 1 }]] },
+    { k: 'img' },
+    { k: 'p', t: 'Launch in May.', m: 'added', c: 3 },
+  ] };
+}
+const DOC_CHANGES = [
+  { kind: 'changed', what: 'paragraph', segs: [['', 'Revenue grew in every region'], ['ins', ' except the north'], ['', '.']] },
+  { kind: 'changed', what: 'table cell', segs: [['del', '120'], ['ins', '135']] },
+  { kind: 'removed', what: 'paragraph', segs: [['', 'This sentence is removed in version 2.']] },
+  { kind: 'added', what: 'paragraph', segs: [['', 'Launch in May.']] },
+];
+// DC8: 60 paragraphs, each with one word changed (the visual fixture in real-shots).
+function docStores(after) {
+  return { header: 'Stores', footer: 'Internal', blocks: Array.from({ length: 60 }, (_, i) =>
+    ({ k: 'p', t: `Store ${i + 1} opens in ${after ? 'autumn' : 'spring'}.`, m: 'changed', c: i })) };
+}
+function storeChanges() {
+  return Array.from({ length: 60 }, (_, i) =>
+    ({ kind: 'changed', what: 'paragraph', segs: [['', `Store ${i + 1} opens in `], ['del', 'spring'], ['ins', 'autumn'], ['', '.']] }));
+}
+
+// EPUB: ch1 Opening unchanged; ch2 The crossing one paragraph changed; ch3 Interlude removed; ch4 Afterword added.
+function bookV2(title) {
+  return { title: title || 'Crossings', chapters: [
+    { label: 'Opening', blocks: [{ k: 'h', t: 'Opening' }, { k: 'p', t: 'The first chapter opens the story.' }] },
+    { label: 'The crossing', blocks: [{ k: 'h', t: 'The crossing' }, { k: 'p', t: 'We crossed at dawn.', m: 'changed', c: 0 }, { k: 'p', t: 'Three boats were tied to the post.' }] },
+    { label: 'Interlude', blocks: [{ k: 'h', t: 'Interlude', m: 'removed', c: 1 }, { k: 'p', t: 'A short pause between crossings.', m: 'removed', c: 2 }] },
+  ] };
+}
+function bookV3(title) {
+  return { title: title || 'Crossings', chapters: [
+    { label: 'Opening', blocks: [{ k: 'h', t: 'Opening' }, { k: 'p', t: 'The first chapter opens the story.' }] },
+    { label: 'The crossing', blocks: [{ k: 'h', t: 'The crossing' }, { k: 'p', t: 'We crossed at noon.', m: 'changed', c: 0 }, { k: 'p', t: 'Three boats were tied to the post.' }] },
+    { label: 'Afterword', blocks: [{ k: 'h', t: 'Afterword', m: 'added', c: 3 }, { k: 'p', t: 'The story ends here.', m: 'added', c: 4 }] },
+  ] };
+}
+const BOOK_CHANGES = [
+  { kind: 'changed', what: 'paragraph in The crossing', ch: 1, segs: [['', 'We crossed at '], ['del', 'dawn'], ['ins', 'noon'], ['', '.']] },
+  { kind: 'removed', what: 'heading in Interlude', ch: 2, segs: [['', 'Interlude']] },
+  { kind: 'removed', what: 'paragraph in Interlude', ch: 2, segs: [['', 'A short pause between crossings.']] },
+  { kind: 'added', what: 'heading in Afterword', ch: 3, segs: [['', 'Afterword']] },
+  { kind: 'added', what: 'paragraph in Afterword', ch: 3, segs: [['', 'The story ends here.']] },
+];
+const BOOK_CHAPTERS = [
+  { label: 'The crossing', state: '1 change', status: 'changed', first: 0 },
+  { label: 'Interlude', state: 'removed', status: 'removed', first: 1 },
+  { label: 'Afterword', state: 'added', status: 'added', first: 3 },
+];
+
+// XLSX, the section 6 workbooks. Cells: {v (display text), f (formula), n (number)}; keyed by A1.
+const COLS = 'ABCDEFGH'.split('');
+function q3(after) {
+  const c = {
+    A1: { v: 'Region' }, B1: { v: 'Units' }, C1: { v: 'Revenue' }, E1: { v: 'Check' },
+    A2: { v: 'North' }, B2: { v: '1000', n: 1 },
+    A3: { v: 'South' }, C3: { v: after ? '1250' : '1200', n: 1 },
+    E2: after ? { v: '2250', n: 1, f: 'SUM(B2:C3)' } : { v: '2200', n: 1 },
+    E3: after ? { v: '2000', n: 1, f: 'B2+B2' } : { v: '2000', n: 1, f: 'B2*2' },
+  };
+  if (after) c.D5 = { v: 'Total' };
+  else c.B7 = { v: 'Draft note' };
+  return c;
+}
+const Q3_STATES = { C3: 'changed', E2: 'changed', E3: 'formula', D5: 'added', B7: 'removed' };
+const SHEET_CHANGES_Q3 = [
+  { kind: 'changed', ref: 'E2', what: 'E2', cells: true, segs: [['del', '2200'], ['ins', '2250']] },
+  { kind: 'changed', ref: 'C3', what: 'C3', cells: true, segs: [['del', '1200'], ['ins', '1250']] },
+  { kind: 'changed', ref: 'E3', what: 'E3 formula', cells: true, segs: [['del', '=B2*2'], ['ins', '=B2+B2']] },
+  { kind: 'added', ref: 'D5', what: 'D5', segs: [['', 'Total']] },
+  { kind: 'removed', ref: 'B7', what: 'B7', segs: [['', 'Draft note']] },
+];
+function hiddenSheet(after) { return { A1: { v: after ? 'y' : 'x' }, A2: { v: 'Stable' } }; }
+function summarySheet() { return { A1: { v: 'Summary' }, A2: { v: 'Totals' } }; }
+function oldData() { return { A1: { v: 'Old header' }, A2: { v: 'Old value' } }; }
+// Strip order (S4): the sheets in version R's order, then the sheets only version L has.
+const SHEETS = [
+  { id: 'q3', name: 'Q3 budget', left: 'Q3', badges: [['renamed from Q3', ''], ['5 changes', 'is-changes']], lc: () => q3(false), rc: () => q3(true), states: Q3_STATES, changes: SHEET_CHANGES_Q3 },
+  { id: 'hidden', name: 'Hidden', badges: [['hidden', ''], ['1 change', 'is-changes']], lc: () => hiddenSheet(false), rc: () => hiddenSheet(true), states: { A1: 'changed' },
+    changes: [{ kind: 'changed', ref: 'A1', what: 'A1', cells: true, segs: [['del', 'x'], ['ins', 'y']] }] },
+  { id: 'summary', name: 'Summary', badges: [['added', 'is-added']], lc: null, rc: summarySheet, added: true },
+  { id: 'old', name: 'Old data', badges: [['removed', 'is-removed']], lc: oldData, rc: null, removed: true },
+];
+const CHART_SHEET = { id: 'chart', name: 'Revenue chart', badges: [['not compared', '']], chart: true };
+const HOSTILE = '<img src=x onerror=alert(1)>';
+const HOSTILE_SHEET = { id: 'notes', name: 'Notes\u202Etxt.exe', badges: [['1 change', 'is-changes']], lc: () => ({ A1: { v: 'Comment' }, A2: { v: 'Fine as is' } }), rc: () => ({ A1: { v: 'Comment' }, A2: { v: HOSTILE } }),
+  states: { A2: 'changed' }, changes: [{ kind: 'changed', ref: 'A2', what: 'A2', segs: [['del', 'Fine as is'], ['', ' '], ['ins', HOSTILE]] }] };
+
+/* ---------------- copy (plan 3.5, verbatim) ---------------- */
+const COPY = {
+  heading: `Comparing version ${L} with version ${R}`,
+  loading: `Loading comparison: version ${L} and version ${R}.`,
+  rendering: 'Rendering both versions.',
+  docLabel: 'Document comparison', bookLabel: 'Book comparison', sheetLabel: 'Spreadsheet comparison',
+  docScope: 'Compares the text of paragraphs, lists and tables. Page headers and footers, formatting, layout and image content are not compared.',
+  bookScope: 'Compares the text of each chapter. Formatting, layout and image content are not compared.',
+  sheetScope: 'Cells are compared by position, by the value shown and the formula. Formatting, charts and images are not compared. A row or column inserted early shifts every cell after it.',
+  noText: 'No text changes. Formatting, layout and image content are not compared.',
+  noValue: 'No changes to cell values or formulas. Formatting, charts and images are not compared.',
+  failed: (n) => `Version ${n} could not be shown, so changes are not outlined.`,
+  drm: (n) => `Version ${n} is protected by DRM, so changes are not outlined.`,
+  overBlocks: 'Both versions are shown. They are too long for Relik to outline their changes.',
+  tooMany: 'Both versions are shown. They differ in too many places for Relik to outline the changes.',
+  mismatch: `Version ${L} and version ${R} display differently, so they cannot be shown side by side. Version ${L} is open here on its own.`,
+  tooLarge: (n) => `Version ${n} is too large to compare. Relik compares spreadsheets of up to 2,000,000 cells. Version ${L} is open here on its own.`,
+  unreadable: (n) => `Version ${n} could not be read as a spreadsheet, so it cannot be compared. Version ${L} is open here on its own.`,
+  reading: 'Reading both spreadsheets.',
+  more: (n) => `${n} more changes. Use Next change to reach them.`,
+  sheetGone: (v) => `This sheet is not in version ${v}.`,
+  chart: 'This sheet contains a chart, which is not compared.',
+  oversize: 'This version is larger than the 16 MiB comparison limit, so Relik cannot show it beside another. Earlier versions can still be opened on their own.',
+};
+function resultLine(a, r, c) {
+  const parts = [];
+  if (a) parts.push(`${a} added`); if (r) parts.push(`${r} removed`); if (c) parts.push(`${c} changed`);
+  return parts.join(', ') + '.';
+}
+
+/* ---------------- state registry ---------------- */
+const STATES = [];
+function S(key, group, title, cfg) { STATES.push({ key, group, title, ...cfg }); }
+
+S('TB1', 'Taskbar', 'DOCX at v3, Compare versions', { fmt: 'taskbar' });
+S('TB2', 'Taskbar', 'A 20.4 MB DOCX: the 16 MiB notice and Earlier versions', { fmt: 'taskbar', oversize: true });
+S('DC1', 'DOCX', 'Loading', { fmt: 'docx', phase: 'loading' });
+S('DC2', 'DOCX', 'Side by side, four outlined changes, Change 1 of 4', { fmt: 'docx' });
+S('DC3', 'DOCX', 'Swipe at 40%', { fmt: 'docx', layout: 'swipe', split: 40 });
+S('DC4', 'DOCX', 'No text changes', { fmt: 'docx', variant: 'same' });
+S('DC5', 'DOCX', 'Left version failed', { fmt: 'docx', variant: 'failed' });
+S('DC6', 'DOCX', 'Too many changes', { fmt: 'docx', variant: 'toomany' });
+S('DC7', 'DOCX', 'Too long to outline', { fmt: 'docx', variant: 'toolong' });
+S('DC8', 'DOCX', '60 changes: 40 rows, the more row, count 60', { fmt: 'docx', variant: 'stores' });
+S('DC9', 'DOCX', 'Mismatch: version 2 on its own', { fmt: 'docx', variant: 'mismatch' });
+S('DC10', 'DOCX', '390: stacked panes', { fmt: 'docx', frame: '390' });
+S('DC10b', 'DOCX', '390: the Changes drawer open', { fmt: 'docx', frame: '390', drawer: true });
+S('BC1', 'EPUB', 'Side by side with the Chapters preface', { fmt: 'epub' });
+S('BC2', 'EPUB', 'DRM card in the left pane', { fmt: 'epub', variant: 'drm' });
+S('BC3', 'EPUB', 'Title-change line', { fmt: 'epub', variant: 'title' });
+S('BC4', 'EPUB', '390', { fmt: 'epub', frame: '390' });
+S('SC1', 'XLSX', 'Loading', { fmt: 'xlsx', phase: 'loading' });
+S('SC2', 'XLSX', 'Side by side: strip, cell cues, C3 selected in both panes', { fmt: 'xlsx', select: 'C3' });
+S('SC3', 'XLSX', 'Added sheet placeholder', { fmt: 'xlsx', sheet: 'summary' });
+S('SC4', 'XLSX', 'Removed sheet placeholder', { fmt: 'xlsx', sheet: 'old' });
+S('SC5', 'XLSX', 'Chartsheet, not compared', { fmt: 'xlsx', sheet: 'chart', withChart: true });
+S('SC6', 'XLSX', 'Swipe over aligned grids', { fmt: 'xlsx', layout: 'swipe', split: 55, select: 'C3' });
+S('SC7', 'XLSX', 'No value changes', { fmt: 'xlsx', variant: 'same' });
+S('SC8', 'XLSX', 'Too large: version 2 on its own', { fmt: 'xlsx', variant: 'toolarge' });
+S('SC9', 'XLSX', 'Unreadable version', { fmt: 'xlsx', variant: 'unreadable' });
+S('SC10', 'XLSX', '390: scrolling strip and the drawer', { fmt: 'xlsx', frame: '390', drawer: true, select: 'C3' });
+S('SC11', 'XLSX', 'Keyboard focus on a tab and on the active cell', { fmt: 'xlsx', select: 'C3', kbd: true });
+S('XS1', 'Hostile text', 'Literal markup in a row, U+202E sheet name as a visible escape', { fmt: 'xlsx', variant: 'hostile', sheet: 'notes', select: 'A2' });
+
+/* ---------------- runtime ---------------- */
+let V = null;
+let themeOverride = null, frameOverride = null, mkDrawer = false;
+
+function renderChrome() {
+  const bar = $('#mk-bar');
+  const i = STATES.indexOf(V.st);
+  bar.replaceChildren(
+    h('span', { class: 'mk-tag' }, 'mock'),
+    h('button', { class: 'mk-btn', type: 'button', 'aria-label': 'Previous state', onclick: () => go(STATES[(i - 1 + STATES.length) % STATES.length].key) }, '<'),
+    h('button', { class: 'mk-btn', type: 'button', 'aria-label': 'Next state', onclick: () => go(STATES[(i + 1) % STATES.length].key) }, '>'),
+    h('div', { class: 'mk-title' }, h('b', null, V.st.key), h('span', null, V.st.title)),
+    h('button', { class: 'mk-btn', type: 'button', 'aria-pressed': String(mkDrawer), onclick: () => { mkDrawer = !mkDrawer; renderChrome(); } }, icon('list'), h('span', { class: 'mk-wide' }, 'States')),
+    h('button', { class: 'mk-btn', type: 'button', 'aria-pressed': String(document.documentElement.dataset.theme === 'dark'),
+      onclick: () => { themeOverride = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'; go(V.st.key); } }, icon('sun'), h('span', { class: 'mk-wide' }, 'Theme')),
+    h('button', { class: 'mk-btn', type: 'button', 'aria-pressed': String(V.frame === '390'),
+      onclick: () => { frameOverride = V.frame === '390' ? 'full' : '390'; go(V.st.key); } }, icon('frame'), h('span', { class: 'mk-wide' }, '390')),
+  );
+  if (mkDrawer) {
+    const groups = [...new Set(STATES.map((s) => s.group))];
+    bar.append(h('div', { class: 'mk-drawer' }, groups.map((g) => [h('h3', null, g),
+      h('ol', null, STATES.filter((s) => s.group === g).map((s) => h('li', null,
+        h('button', { class: 'mk-state', type: 'button', 'aria-current': String(s === V.st), onclick: () => { mkDrawer = false; go(s.key); } },
+          h('b', null, s.key), h('span', null, s.title)))))])));
+  }
+}
+
+function band(meta) {
+  const act = (name, label, attrs) => h('button', { class: 'action', type: 'button', ...attrs }, icon(name), h('span', { class: 'lbl' }, label));
+  return h('header', { class: 'bar' },
+    h('div', { class: 'mark' }, 'relik.link'),
+    h('div', { class: 'identity' },
+      h('div', { class: 'filename' }, meta.file),
+      h('div', { class: 'identity-meta' }, h('span', { class: 'accession' }, meta.accession), h('span', { class: 'version-label' }, `Version ${meta.version} of ${meta.version}`))),
+    h('nav', { class: 'actions', 'aria-label': 'Relic actions' },
+      act('list', 'Relics'),
+      meta.oversize ? act('history', 'Earlier versions')
+        : meta.comparing ? act('compare', 'View current', { 'aria-pressed': 'true' }) : act('compare', 'Compare versions'),
+      act('frame', 'Copy link'), act('share', 'Share'), act('download', 'Download'), act('warn', 'Report')));
+}
+
+/* --- document panes --- */
+function drawDoc(doc, marks) {
+  const page = h('div', { class: 'docx-page' }, h('div', { class: 'docx-header' }, doc.header));
+  const markAttrs = (b) => (marks && b.m ? { 'data-relic-diff': b.m, 'data-relic-change-id': 'c' + b.c } : {});
+  for (const b of doc.blocks) {
+    if (b.k === 'h') page.append(h('h1', markAttrs(b), b.t));
+    else if (b.k === 'p') page.append(h('p', markAttrs(b), b.t));
+    else if (b.k === 'img') page.append(h('span', { class: 'docx-img', role: 'img', 'aria-label': 'Image' }));
+    else if (b.k === 'table') page.append(h('table', null, h('tbody', null, b.rows.map((row) => h('tr', null, row.map((cell) => h('td', markAttrs(cell), cell.t)))))));
+  }
+  page.append(h('div', { class: 'docx-footer' }, doc.footer));
+  return h('div', { class: 'frame-doc' }, page);
+}
+function drawBook(book, marks) {
+  const markAttrs = (b) => (marks && b.m ? { 'data-relic-diff': b.m, 'data-relic-change-id': 'c' + b.c } : {});
+  return h('div', { class: 'book-pane' },
+    h('div', { class: 'frame-book' },
+      book.chapters.map((ch, i) => h('article', { 'data-epub-chapter': String(i) }, ch.blocks.map((b) => b.k === 'h' ? h('h2', markAttrs(b), b.t) : h('p', markAttrs(b), b.t))))),
+    h('div', { class: 'book-bar', 'aria-hidden': 'true' }, h('b', null, 'Contents'), h('b', null, 'A\u2212'), h('b', null, 'A+'), h('span', null, `Chapter 1 of ${book.chapters.length} \u00b7 0%`)));
+}
+function frameCard(title, body) { return h('div', { class: 'frame-card', role: 'alert' }, h('h2', null, title), h('p', null, body)); }
+
+/* --- grids --- */
+function colWidths() { return [88, 88, 104, 88, 88, 88, 88, 88]; }
+function drawGrid(cells, side, sheet, rows) {
+  const widths = colWidths();
+  const table = h('table', { class: 'dt', role: 'grid', 'aria-label': `Version ${side === 'before' ? L : R} of ${SHEET_FILE}, sheet ${side === 'before' ? sheet.left || sheet.name : sheet.name}` });
+  table.append(h('colgroup', null, h('col', { style: 'width:2.75rem' }), widths.map((w) => h('col', { style: `width:${w}px` }))));
+  table.append(h('thead', null, h('tr', null, h('th', { class: 'rh' }), COLS.map((c) => h('th', { scope: 'col' }, c)))));
+  const tb = h('tbody');
+  for (let r = 1; r <= rows; r++) {
+    const tr = h('tr', null, h('th', { class: 'rh', scope: 'row' }, String(r)));
+    for (const c of COLS) {
+      const ref = c + r, cell = cells[ref];
+      let st = sheet.states && sheet.states[ref];
+      if (st === 'added' && side === 'before') st = null;
+      if (st === 'removed' && side === 'after') st = null;
+      const td = h('td', { class: [cell && cell.n ? 'num' : '', st ? 'dt-diff-' + st : ''].join(' ').trim() || null, 'data-ref': ref, tabindex: '-1', role: 'gridcell' },
+        cell ? cell.v : '');
+      if (st) td.append(h('span', { class: 'vh' }, { added: ' added', removed: ' removed', changed: ' changed', formula: ' formula changed' }[st]));
+      td.addEventListener('click', () => selectCell(ref, false));
+      td.addEventListener('keydown', (e) => cellKeys(e, ref));
+      tr.append(td);
+    }
+    tb.append(tr);
+  }
+  table.append(tb);
+  return table;
+}
+function cellbar(cells, ref) {
+  const cell = ref && cells ? (cells[ref] || { v: '' }) : null;
+  if (!cell) return h('div', { class: 'dt-cellbar' }, h('p', { class: 'hint' }, 'Select a cell to copy it.'));
+  const kind = cell.n ? 'number' : cell.v ? 'text' : '';
+  return h('div', { class: 'dt-cellbar' }, h('span', { class: 'addr' }, ref), h('span', { class: 'sub' }, `Row ${ref.slice(1)}${kind ? ' \u00b7 ' + kind : ''}`),
+    h('pre', { class: 'val' }, (cell.v || '(blank)') + (cell.f ? `\nFormula: ${cell.f}` : '')), h('button', { class: 'copy', type: 'button' }, 'Copy'));
+}
+function sheetPane(sheet, side) {
+  const v = side === 'before' ? L : R;
+  if (sheet.chart) return h('div', { class: 'dt-placeholder' }, h('p', null, COPY.chart));
+  const fn = side === 'before' ? sheet.lc : sheet.rc;
+  if (!fn) return h('div', { class: 'dt-placeholder' }, h('p', null, COPY.sheetGone(v)));
+  const cells = fn();
+  // Padded to the larger extent, at least 12 rows by A..H, on both sides so geometry matches.
+  const rows = Math.max(12, ...[sheet.lc, sheet.rc].filter(Boolean).map((f) => Math.max(...Object.keys(f()).map((k) => +k.slice(1)))));
+  const sel = V.select;
+  return h('div', { class: 'sheet-pane' }, cellbar(cells, sel), h('div', { class: 'dt-scroll', 'data-side': side }, drawGrid(cells, side, sheet, rows)));
+}
+
+/* --- sidebar --- */
+function changeRows(changes, limit, onPick) {
+  const list = h('ol', { class: 'diff-change-list' });
+  changes.slice(0, limit).forEach((ch, i) => {
+    list.append(h('li', null, h('button', { type: 'button', class: `diff-change diff-change-${ch.kind} is-linked`, 'data-index': String(i), onclick: () => onPick(i) },
+      h('span', { class: 'diff-change-kind' }, ch.kind), h('span', { class: 'diff-change-what' }, ch.what),
+      h('span', { class: 'diff-change-detail' + (ch.cells ? ' is-cells' : '') }, ch.segs.map(([t, s]) => t ? h(t, null, s) : s)))));
+  });
+  return list;
+}
+function sidebar(count, body) {
+  const open = V.frame !== '390' ? count > 0 : V.drawer;
+  const aside = h('aside', { class: 'thread diff-changes-sidebar' + (open ? ' is-open' : ''), 'aria-label': 'Changes' },
+    h('h2', { class: 'thread-title' }, h('button', { class: 'thread-toggle', type: 'button', 'aria-expanded': String(open), onclick: () => { V.drawer = false; buildViewer(); } },
+      h('span', { class: 'diff-tab' }, 'Changes', h('span', { class: 'count' }, nfmt(count))), icon(V.frame === '390' ? 'x' : 'chevron'))),
+    body);
+  const tab = h('button', { class: 'thread-tab', type: 'button', 'aria-expanded': String(open), onclick: () => { V.drawer = true; buildViewer(); } },
+    h('span', { class: 'diff-tab' }, 'Changes ', nfmt(count)));
+  return [aside, tab];
+}
+
+/* --- toolbar --- */
+function toolbar(kindLabel, opts) {
+  const total = opts.navTotal || 0;
+  const tb = h('div', { class: 'diff-toolbar' },
+    h('div', { class: 'diff-heading' },
+      h('div', { class: 'diff-eyebrow' }, 'Version history'),
+      h('h1', { tabindex: '-1' }, COPY.heading),
+      h('p', { class: 'diff-history-note' }, opts.note || `Version ${R} is current. Version ${L} is retained history and may contain content removed from the current artifact.`)),
+    h('div', { class: 'compare-picker' },
+      h('div', { class: 'compare-picker-side' }, h('span', { class: 'compare-picker-caption' }, 'Left'), h('button', { class: 'compare-picker-trigger', type: 'button', 'aria-haspopup': 'listbox' }, `Version ${L}`, icon('chevron'))),
+      h('span', { class: 'compare-picker-separator' }, 'to'),
+      h('div', { class: 'compare-picker-side' }, h('span', { class: 'compare-picker-caption' }, 'Right'), h('button', { class: 'compare-picker-trigger', type: 'button', 'aria-haspopup': 'listbox' }, `Version ${R}, current`, icon('chevron')))));
+  if (opts.controls === false) return tb;
+  // Kind and result under the rule, as main.ts draws .diff-summary.
+  const summary = h('div', { class: 'diff-summary-bar' }, h('strong', null, kindLabel), h('span', null, opts.result || ''));
+  const controls = h('div', { class: 'compare-controls' },
+    h('div', { class: 'compare-layout', role: 'group', 'aria-label': 'Layout' },
+      h('button', { class: 'action', type: 'button', 'aria-pressed': String(V.layout === 'swipe'), onclick: () => { V.layout = 'swipe'; buildViewer(); } }, 'Swipe'),
+      h('button', { class: 'action', type: 'button', 'aria-pressed': String(V.layout === 'split'), onclick: () => { V.layout = 'split'; buildViewer(); } }, 'Side by side')));
+  // Always present: "Comparing" until counted, "No changes" with both buttons off, "N changes" before the first step.
+  const position = opts.loading ? 'Comparing' : total === 0 ? 'No changes'
+    : V.current >= 0 ? `Change ${V.current + 1} of ${total}` : `${total} ${total === 1 ? 'change' : 'changes'}`;
+  controls.append(h('div', { class: 'compare-nav', role: 'group', 'aria-label': 'Changes' },
+    h('button', { class: 'action compare-nav-previous', type: 'button', disabled: total === 0, onclick: () => goChange(V.current < 0 ? total - 1 : V.current - 1) }, icon('next'), 'Previous change'),
+    h('span', { class: 'compare-nav-position', 'aria-live': 'polite' }, position),
+    h('button', { class: 'action compare-nav-next', type: 'button', disabled: total === 0, onclick: () => goChange(V.current + 1) }, 'Next change', icon('next'))));
+  if (V.layout === 'swipe') {
+    controls.append(h('label', { class: 'compare-swipe' }, h('span', null, `Reveal version ${R} over version ${L}`),
+      h('input', { type: 'range', min: '0', max: '100', value: String(V.split), 'aria-label': 'Swipe between versions',
+        oninput: (e) => { V.split = +e.target.value; $('.compare-stage').style.setProperty('--split', V.split + '%'); } })));
+  }
+  return [tb, summary, controls];
+}
+function stage(before, after, file) {
+  const st = h('div', { class: 'compare-stage', 'data-layout': V.layout, style: `--split:${V.split}%` },
+    h('div', { class: 'compare-pane compare-pane-before', title: `Version ${L} of ${file}` }, before),
+    h('div', { class: 'compare-pane compare-pane-current', title: `Version ${R} of ${file}` }, after),
+    h('div', { class: 'compare-divider', 'aria-hidden': 'true' }),
+    h('span', { class: 'compare-label compare-label-before' }, `Version ${L}`),
+    h('span', { class: 'compare-label compare-label-current' }, `Version ${R}, current`));
+  return st;
+}
+
+/* --- navigation --- */
+function goChange(i) {
+  const n = V.changes.length;
+  if (n === 0) return;
+  i = ((i % n) + n) % n;
+  V.current = i;
+  if (V.fmt === 'xlsx') { const ch = V.changes[i]; if (ch.ref) { V.select = ch.ref; } }
+  buildViewer();
+  raf2(() => revealCurrent());
+}
+function revealCurrent() {
+  for (const el of $$('.is-current-change')) el.classList.remove('is-current-change');
+  if (V.current < 0) return;
+  for (const pane of $$('.compare-pane')) {
+    let el;
+    if (V.fmt === 'xlsx') { const ref = V.changes[V.current] && V.changes[V.current].ref; el = ref && pane.querySelector(`td[data-ref="${ref}"]`); }
+    else {
+      // A document change lights in the pane its jump names: removed in the left, the rest in the right.
+      const ch = V.changes[V.current];
+      const side = ch && ch.kind === 'removed' ? 'compare-pane-before' : 'compare-pane-current';
+      el = pane.classList.contains(side) ? pane.querySelector(`[data-relic-change-id="c${V.current}"]`) : null;
+    }
+    if (!el) continue;
+    el.classList.add('is-current-change');
+    const box = pane.getBoundingClientRect(), r = el.getBoundingClientRect();
+    if (r.top < box.top + 30 || r.bottom > box.bottom - 30) pane.scrollTop += r.top - box.top - box.height / 3;
+  }
+  const row = $(`.diff-change[data-index="${V.current}"]`);
+  if (row && row.scrollIntoView) row.scrollIntoView({ block: 'nearest' });
+}
+function selectCell(ref, kbd) {
+  V.select = ref;
+  for (const td of $$('.dt td.is-active')) td.classList.remove('is-active', 'kbd-focus');
+  for (const pane of ['before', 'after']) {
+    const sc = $(`.dt-scroll[data-side="${pane}"]`);
+    if (!sc) continue;
+    const td = sc.querySelector(`td[data-ref="${ref}"]`);
+    if (td) { td.classList.add('is-active'); if (kbd) td.classList.add('kbd-focus'); }
+    const sheet = V.sheetObj, fn = pane === 'before' ? sheet.lc : sheet.rc;
+    sc.parentElement.querySelector('.dt-cellbar').replaceWith(cellbar(fn ? fn() : null, ref));
+  }
+}
+function cellKeys(e, ref) {
+  const ci = COLS.indexOf(ref[0]), ri = +ref.slice(1);
+  const mv = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key];
+  if (!mv) return;
+  e.preventDefault();
+  const nc = COLS[Math.min(COLS.length - 1, Math.max(0, ci + mv[0]))], nr = Math.max(1, ri + mv[1]);
+  selectCell(nc + nr, true);
+  const td = e.currentTarget.closest('.dt-scroll').querySelector(`td[data-ref="${nc + nr}"]`);
+  if (td) td.focus();
+}
+function tabKeys(e, idx, sheets) {
+  const n = sheets.length;
+  const to = { ArrowLeft: (idx - 1 + n) % n, ArrowRight: (idx + 1) % n, Home: 0, End: n - 1 }[e.key];
+  if (to == null) return;
+  e.preventDefault();
+  pickSheet(sheets[to].id, true);
+}
+function pickSheet(id, focus) {
+  V.sheet = id; V.current = -1;
+  buildViewer();
+  if (focus) raf2(() => { const t = $(`.sheet-tab[data-sheet="${id}"]`); if (t) t.focus(); });
+}
+
+/* --- scroll sync: proportional for documents, exact for grids --- */
+function wireSync() {
+  const panes = V.fmt === 'xlsx' ? $$('.dt-scroll') : $$('.compare-pane');
+  if (panes.length !== 2) return;
+  let lock = false;
+  panes.forEach((p, i) => p.addEventListener('scroll', () => {
+    if (lock) return; lock = true;
+    const o = panes[1 - i];
+    if (V.fmt === 'xlsx') { o.scrollTop = p.scrollTop; o.scrollLeft = p.scrollLeft; }
+    else { const f = p.scrollTop / Math.max(1, p.scrollHeight - p.clientHeight); o.scrollTop = f * (o.scrollHeight - o.clientHeight); }
+    requestAnimationFrame(() => { lock = false; });
+  }));
+}
+
+/* --- per format --- */
+function buildTaskbar() {
+  const doc = docV3();
+  const main = h('div', { class: 'viewer-main' }, h('div', { class: 'stage-wrap' }, h('div', { class: 'stage' },
+    V.st.oversize ? h('div', { class: 'notice is-info', role: 'note' }, icon('info'), h('div', null, h('p', null, COPY.oversize),
+      h('button', { class: 'action-inline', type: 'button' }, icon('history'), 'Earlier versions'))) : null,
+    drawDoc(doc, false))));
+  return [band({ file: V.st.oversize ? 'annual-report-scans.docx' : DOC_FILE, version: 3, accession: V.st.oversize ? 'RLK-7Q2M · 20.4 MB' : 'RLK-4H8C · 3 versions', oversize: V.st.oversize }), main];
+}
+function singleView(noticeText, label, content) {
+  return h('div', { class: 'diff-single' },
+    h('div', { class: 'notice', role: 'status' }, icon('warn'), h('p', null, noticeText)),
+    h('p', { class: 'diff-single-label' }, label),
+    h('div', { class: 'single-frame', title: label }, content));
+}
+function buildDocx() {
+  const s = V.st, variant = s.variant;
+  const parts = [band({ file: DOC_FILE, version: 3, accession: 'RLK-4H8C · 3 versions', comparing: true })];
+  if (variant === 'mismatch') {
+    parts.push(h('div', { class: 'diff-shell' }, toolbar(COPY.docLabel, { note: 'Version 2 is a Word document. Version 3 is an EPUB book.', controls: false }),
+      singleView(COPY.mismatch, `Version ${L}: ${DOC_FILE}`, drawDoc(docV2(), false))));
+    return parts;
+  }
+  const loading = s.phase === 'loading';
+  let changes = DOC_CHANGES, before = docV2(), after = docV3(), marks = true, summary = null, notice = null;
+  if (variant === 'same') { changes = []; after = docV2(); marks = false; summary = COPY.noText; }
+  if (variant === 'failed') { marks = false; changes = []; notice = COPY.failed(L); }
+  if (variant === 'toomany') { marks = false; changes = []; notice = COPY.tooMany; }
+  if (variant === 'toolong') { marks = false; changes = []; notice = COPY.overBlocks; }
+  if (variant === 'stores') { changes = storeChanges(); before = docStores(false); after = docStores(true); }
+  if (!summary && changes.length) summary = variant === 'stores' ? resultLine(0, 0, 60) : resultLine(1, 1, 2);
+  V.changes = changes;
+  const body = h('div', { class: 'diff-body' });
+  if (loading) {
+    body.append(stage(h('div', { class: 'plate' }, h('span', null, COPY.rendering)), h('div', { class: 'plate' }, h('span', null, COPY.rendering)), DOC_FILE));
+  } else {
+    if (notice) body.append(h('div', { class: 'notice', role: 'status', style: 'margin:0;max-width:none' }, icon('warn'), h('p', null, notice)));
+    const leftContent = variant === 'failed' ? frameCard('This document could not be shown.', 'The file could not be read as a Word document. Download it to open it elsewhere.') : drawDoc(before, marks);
+    body.append(stage(leftContent, drawDoc(after, marks), DOC_FILE));
+  }
+  // The sidebar holds the scope and the rows; the result sits under the toolbar rule.
+  const side = h('div', null);
+  if (!loading) {
+    side.append(h('p', { class: 'diff-scope' }, COPY.docScope));
+    if (changes.length) {
+      side.append(changeRows(changes, 40, goChange));
+      if (changes.length > 40) side.lastChild.append(h('li', { class: 'diff-change-more' }, COPY.more(changes.length - 40)));
+    }
+  } else side.append(h('p', { class: 'diff-loading' }, COPY.rendering));
+  parts.push(h('div', { class: 'diff-row' },
+    h('div', { class: 'diff-shell' }, toolbar(COPY.docLabel, { note: loading ? COPY.loading : null, loading, result: summary || notice || '', navTotal: loading ? 0 : changes.length }), body),
+    sidebar(changes.length, side)));
+  return parts;
+}
+function buildEpub() {
+  const s = V.st, variant = s.variant;
+  const parts = [band({ file: BOOK_FILE, version: 3, accession: 'RLK-9B1E · 3 versions', comparing: true })];
+  const titled = variant === 'title';
+  const before = bookV2(), after = bookV3(titled ? 'Crossings, revised' : null);
+  const changes = variant === 'drm' ? [] : BOOK_CHANGES;
+  V.changes = changes;
+  const marks = variant !== 'drm';
+  const body = h('div', { class: 'diff-body diff-view-epub' });
+  if (variant === 'drm') body.append(h('div', { class: 'notice', role: 'status', style: 'margin:0;max-width:none' }, icon('warn'), h('p', null, COPY.drm(L))));
+  const left = variant === 'drm' ? frameCard('This book is protected by DRM.', 'Relik cannot show a book whose chapters are encrypted. Download it to open it in a reader that holds the licence.') : drawBook(before, marks);
+  body.append(stage(left, drawBook(after, marks), BOOK_FILE));
+  const side = h('div', null);
+  side.append(h('p', { class: 'diff-scope' }, COPY.bookScope));
+  if (titled) side.append(h('p', { class: 'diff-title-line' }, 'The title changed from Crossings to Crossings, revised.'));
+  if (changes.length) {
+    side.append(h('section', { class: 'diff-chapters', 'aria-labelledby': 'ch-h' }, h('h2', { id: 'ch-h' }, 'Chapters'),
+      h('ul', null, BOOK_CHAPTERS.map((c) => h('li', null, h('button', { class: `diff-chapter-row diff-chapter-${c.status}`, type: 'button', onclick: () => goChange(c.first) },
+        h('span', null, c.label), h('span', { class: 'diff-chapter-state' }, c.state)))),
+        h('li', null, h('div', { class: 'diff-chapter-row diff-chapter-unchanged' }, h('span', null, '1 unchanged chapter'))))));
+    side.append(changeRows(changes, 40, goChange));
+  }
+  parts.push(h('div', { class: 'diff-row' },
+    h('div', { class: 'diff-shell' }, toolbar(COPY.bookLabel, { result: variant === 'drm' ? COPY.drm(L) : resultLine(2, 2, 1), navTotal: changes.length }), body),
+    sidebar(changes.length, side)));
+  return parts;
+}
+function buildXlsx() {
+  const s = V.st, variant = s.variant;
+  const parts = [band({ file: SHEET_FILE, version: 3, accession: 'RLK-2X6P · 3 versions', comparing: true })];
+  if (variant === 'toolarge' || variant === 'unreadable') {
+    const text = variant === 'toolarge' ? COPY.tooLarge(R) : COPY.unreadable(R);
+    const sheet = SHEETS[0];
+    V.sheetObj = { ...sheet, states: {}, rc: sheet.lc };
+    const grid = h('div', { class: 'sheet-pane' }, cellbar(q3(false), 'A1'), h('div', { class: 'dt-scroll', 'data-side': 'single' }, drawGrid(q3(false), 'before', V.sheetObj, 20)));
+    parts.push(h('div', { class: 'diff-shell' }, toolbar(COPY.sheetLabel, { note: 'Version 2 is shown on its own.', controls: false }),
+      singleView(text, `Version ${L}: ${SHEET_FILE}`, grid)));
+    return parts;
+  }
+  const loading = s.phase === 'loading';
+  let sheets = SHEETS.slice();
+  if (variant === 'hostile') sheets = [SHEETS[0], HOSTILE_SHEET];
+  if (variant === 'same') sheets = [
+    { id: 'q3', name: 'Q3', badges: [], lc: () => q3(false), rc: () => q3(false), states: {}, changes: [] },
+    { id: 'old', name: 'Old data', badges: [], lc: oldData, rc: oldData, states: {}, changes: [] },
+    { id: 'hidden', name: 'Hidden', badges: [['hidden', '']], lc: () => hiddenSheet(false), rc: () => hiddenSheet(false), states: {}, changes: [] },
+  ];
+  if (s.withChart) sheets.splice(3, 0, CHART_SHEET);
+  const sheet = sheets.find((x) => x.id === V.sheet) || sheets[0];
+  V.sheet = sheet.id; V.sheetObj = sheet;
+  V.changes = sheet.changes || [];
+  const body = h('div', { class: 'diff-body' });
+  const strip = h('div', { class: 'sheet-strip', role: 'tablist', 'aria-label': `Sheets in version ${L} and version ${R}` });
+  sheets.forEach((sh, i) => {
+    const sel = sh.id === sheet.id;
+    strip.append(h('button', { class: 'sheet-tab' + (s.kbd && sel ? ' kbd-focus' : ''), type: 'button', role: 'tab', id: 'tab-' + sh.id, 'data-sheet': sh.id,
+      'aria-selected': String(sel), 'aria-controls': 'sheet-panel', tabindex: sel ? '0' : '-1',
+      onclick: () => pickSheet(sh.id, false), onkeydown: (e) => tabKeys(e, i, sheets) },
+      h('span', null, textish(sh.name)), sh.badges.map(([t, c]) => h('span', { class: ('dt-sheet-meta ' + c).trim() }, t))));
+  });
+  if (loading) {
+    body.append(stage(h('div', { class: 'plate' }, h('span', null, COPY.reading)), h('div', { class: 'plate' }, h('span', null, COPY.reading)), SHEET_FILE));
+  } else {
+    body.append(strip);
+    const st = stage(sheetPane(sheet, 'before'), sheetPane(sheet, 'after'), SHEET_FILE);
+    st.id = 'sheet-panel'; st.classList.add('is-grid'); st.setAttribute('role', 'tabpanel'); st.setAttribute('aria-labelledby', 'tab-' + sheet.id);
+    body.append(st);
+  }
+  const side = h('div', null);
+  let count = 0, result = '';
+  if (loading) side.append(h('p', { class: 'diff-loading' }, COPY.reading));
+  else if (variant === 'same') result = COPY.noValue;
+  else if (variant === 'hostile') { count = 7; result = '4 cells changed, 1 added, 1 removed. 1 sheet renamed.'; }
+  else { count = 9; result = '4 cells changed, 1 added, 1 removed. 1 sheet added, 1 removed, 1 renamed.'; }
+  if (!loading) {
+    side.append(h('p', { class: 'diff-scope' }, COPY.sheetScope));
+    if (V.changes.length) side.append(changeRows(V.changes, 200, goChange));
+  }
+  parts.push(h('div', { class: 'diff-row' },
+    h('div', { class: 'diff-shell' }, toolbar(COPY.sheetLabel, { note: loading ? COPY.loading : null, loading, result, navTotal: loading ? 0 : V.changes.length }), body),
+    sidebar(count, side)));
+  return parts;
+}
+
+function buildViewer() {
+  const dev = $('#device');
+  dev.dataset.frame = V.frame;
+  const parts = V.fmt === 'taskbar' ? buildTaskbar() : V.fmt === 'docx' ? buildDocx() : V.fmt === 'epub' ? buildEpub() : buildXlsx();
+  dev.replaceChildren(h('div', { class: 'viewer' }, parts));
+  if (V.fmt === 'xlsx' && V.select) selectCell(V.select, !!V.st.kbd);
+  wireSync();
+  requestAnimationFrame(revealCurrent);
+}
+
+function go(key) {
+  const [k] = String(key).split('~');
+  const st = STATES.find((s) => s.key === k) || STATES[0];
+  delete document.body.dataset.ready;
+  document.documentElement.dataset.theme = themeOverride || st.theme || 'light';
+  V = { st, fmt: st.fmt, frame: frameOverride || st.frame || 'full', layout: st.layout || 'split', split: st.split || 50,
+    current: st.phase === 'loading' || st.variant ? -1 : 0, drawer: !!st.drawer, select: st.select || null, sheet: st.sheet || 'q3', changes: [] };
+  if (st.variant === 'stores' || st.variant === 'hostile') V.current = 0;
+  // A selected cell and a stepped-to change are separate states: Next selects the change's cell.
+  if ((st.sheet && st.sheet !== 'q3' && st.variant !== 'hostile') || (st.select && st.variant !== 'hostile')) V.current = -1;
+  history.replaceState(null, '', '#' + st.key);
+  renderChrome();
+  buildViewer();
+  raf2(() => raf2(() => { document.body.dataset.ready = st.key; }));
+}
+// '#KEY' picks a state; '#KEY~dark' and '#KEY~390' set the toggles for shots.
+(function boot() {
+  const raw = location.hash.slice(1);
+  const bits = raw.split('~');
+  if (bits.includes('dark')) themeOverride = 'dark';
+  if (bits.includes('390')) frameOverride = '390';
+  go(bits[0] || 'DC2');
+})();
+</script>
+</body>
+</html>

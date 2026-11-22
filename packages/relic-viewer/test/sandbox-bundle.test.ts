@@ -12,6 +12,30 @@ import { describe, expect, test } from 'bun:test';
 
 const pkgDir = new URL('..', import.meta.url).pathname;
 
+/**
+ * The shell and every chunk it reaches, as one text. A module the shell shares
+ * with a lazy comparison lands in a shared chunk, so the copy is found by
+ * walking the chunk graph rather than by reading `viewer.js` alone.
+ */
+async function shellGraph(shell: string): Promise<string> {
+  const seen = new Set<string>();
+  const pending = [shell];
+  let text = '';
+  while (pending.length > 0) {
+    const code = pending.pop()!;
+    text += code;
+    for (const match of code.matchAll(
+      /(?:from|import\()\s*["']\.\/(chunk-[a-z0-9]+\.js)/g
+    )) {
+      const name = match[1]!;
+      if (seen.has(name)) continue;
+      seen.add(name);
+      pending.push(await Bun.file(`${pkgDir}dist/${name}`).text());
+    }
+  }
+  return text;
+}
+
 describe('the built sandbox.html', () => {
   test('inlines the bundle with React inside and no external script', async () => {
     // Build for real rather than trusting a dist/ that may predate the
@@ -41,14 +65,14 @@ describe('the built sandbox.html', () => {
     // deliberately named `relic:tree` and `relic:annotate`, and neither
     // carries a diff: one reports structure, the other carries paths.
     const diffMarker = 'No changes. These versions have identical content.';
-    expect(viewer).toContain(diffMarker);
+    expect(await shellGraph(viewer)).toContain(diffMarker);
     expect(html).not.toContain(diffMarker);
     expect(html).not.toContain('relic:diff');
 
     // Same again for the rendered comparison's own algorithm. The frame
     // captures its structure and marks its nodes; it never compares.
     const renderedMarker = 'These versions render identically.';
-    expect(viewer).toContain(renderedMarker);
+    expect(await shellGraph(viewer)).toContain(renderedMarker);
     expect(html).not.toContain(renderedMarker);
 
     // The highlight path did ship into the frame, so the absence assertions
@@ -56,6 +80,7 @@ describe('the built sandbox.html', () => {
     expect(html).toContain('data-relic-diff');
     expect(html).toContain('relic:annotate');
     expect(html).toContain('relic:tree');
+    expect(html).toContain('relic:document-blocks');
   });
   test('document renderers stay outside the sandbox and shell', async () => {
     const html = await Bun.file(`${pkgDir}dist/sandbox.html`).text();
@@ -89,5 +114,49 @@ describe('the built sandbox.html', () => {
       }
       expect(carriers).toHaveLength(1);
     }
+
+    // The diff is one lazily loaded chunk of the shell. The sandbox page and
+    // both document frames never carry it, and exactly one chunk does.
+    const diffCopy = 'They differ in too many places';
+    expect(html).not.toContain(diffCopy);
+    expect(shell).not.toContain(diffCopy);
+    for (const name of ['frame-docx', 'frame-epub'] as const)
+      expect(
+        await Bun.file(`${pkgDir}dist-frame/${name}.frame.js`).text()
+      ).not.toContain(diffCopy);
+    const diffCarriers: string[] = [];
+    for (const chunk of reachable) {
+      if ((await Bun.file(`${pkgDir}dist/${chunk}`).text()).includes(diffCopy))
+        diffCarriers.push(chunk);
+    }
+    expect(diffCarriers).toHaveLength(1);
+
+    // The comparison's own copy and the diff library's option name are carried
+    // by the shell alone. Each is found in the shell graph first, so the
+    // absence checks below cannot pass for a missing marker.
+    const blockdiffCopy =
+      'No text changes. Formatting, layout and image content are not compared.';
+    const diffLibrary = 'maxEditLength';
+    const shellCode = await shellGraph(shell);
+    expect(shellCode).toContain(blockdiffCopy);
+    expect(shellCode).toContain(diffLibrary);
+    expect(html).not.toContain(blockdiffCopy);
+    expect(html).not.toContain(diffLibrary);
+    for (const name of ['frame-docx', 'frame-epub'] as const) {
+      const code = await Bun.file(
+        `${pkgDir}dist-frame/${name}.frame.js`
+      ).text();
+      expect(code).not.toContain(blockdiffCopy);
+      expect(code).not.toContain(diffLibrary);
+    }
+
+    // The document block reader ships in both document frames only.
+    const blocksMarker = 'outline-width: 4px !important;';
+    for (const name of ['frame-docx', 'frame-epub'] as const)
+      expect(
+        await Bun.file(`${pkgDir}dist-frame/${name}.frame.js`).text()
+      ).toContain(blocksMarker);
+    expect(html).not.toContain(blocksMarker);
+    expect(shell).not.toContain(blocksMarker);
   });
 });

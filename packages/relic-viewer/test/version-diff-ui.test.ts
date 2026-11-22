@@ -10,8 +10,10 @@ import {
   HEADER_BYTES,
   type OtioAnchorV1,
 } from '@relic/format';
+import type { ChangeReport } from '../src/compare-ui.ts';
 import { commentCipher } from '../src/comments.ts';
 import { MAX_DIFF_BYTES } from '../src/diff.ts';
+import type { RenderedChange } from '../src/domdiff.ts';
 import { createVersionStore } from '../src/version-store.ts';
 import {
   buildBar,
@@ -20,17 +22,23 @@ import {
   buildComparisonScaffold,
   buildCurrentStage,
   buildThread,
+  changeSidebarContent,
   commentRow,
+  compareUiFor,
   comparisonCopy,
+  lazyComparison,
+  renderChangeList,
   renderCodeComparison,
   renderComparison,
   renderImageComparison,
   renderLoadedVersion,
   renderReady,
   renderRenderedComparison,
+  sandboxFrame,
   seedComparisonPair,
   uncomparableReason,
 } from '../src/main.ts';
+import type { TreeNode } from '../src/rendered-tree.ts';
 import type { ReadyView, ViewerDeps } from '../src/viewer.ts';
 
 /**
@@ -160,6 +168,10 @@ class ElementStub {
       listener({ target: this, preventDefault: () => {} });
     }
   }
+
+  dispatchEvent(): boolean {
+    return true;
+  }
 }
 
 const encoder = new TextEncoder();
@@ -225,6 +237,18 @@ function getBody(): ElementStub {
     return globalDoc.body as ElementStub;
   }
   throw new Error('document.body missing');
+}
+
+/**
+ * Yields one macrotask. A lazy comparison module loads through the runtime's
+ * module loader, which fake timers do not drive, so the tests below check
+ * their condition after each yield, with a bound, as document-compare.test.ts
+ * does.
+ */
+function yieldMacrotask(): Promise<void> {
+  const { promise, resolve } = Promise.withResolvers<void>();
+  setTimeout(resolve, 0);
+  return promise;
 }
 function dummyDeps(fetchFn?: typeof globalThis.fetch): ViewerDeps {
   const defaultFetch = (async (input: RequestInfo | URL) => {
@@ -1038,6 +1062,78 @@ describe('version comparison affordance', () => {
     ).toBe(true);
   });
 
+  test('DOCX, EPUB and workbook history offer Compare versions', () => {
+    const current = [
+      { ...view('sandboxed-document', 3), documentKind: 'docx' as const },
+      { ...view('sandboxed-document', 3), documentKind: 'epub' as const },
+      view('spreadsheet', 3),
+    ];
+    for (const version of current) {
+      const bar = buildBar(version, 'aaaaaaaaaaaaaaaaaaaaaaaaaa', {
+        onCompare: () => {},
+      }) as unknown as ElementStub;
+      expect(textOf(bar)).toContain('Compare versions');
+      expect(textOf(bar)).not.toContain('Earlier versions');
+    }
+  });
+
+  test('a document of no recognized kind offers Earlier versions only', () => {
+    const current = view('sandboxed-document', 3);
+    const bar = buildBar(current, 'aaaaaaaaaaaaaaaaaaaaaaaaaa', {
+      onCompare: () => {},
+    }) as unknown as ElementStub;
+    expect(textOf(bar)).toContain('Earlier versions');
+    expect(textOf(bar)).not.toContain('Compare versions');
+  });
+
+  test('a DOCX comparison shows a rendering line, then fills in once its module loads', async () => {
+    const current = {
+      ...view('sandboxed-document', 3, encoder.encode('docx three')),
+      documentKind: 'docx' as const,
+    };
+    const historical = {
+      ...view('sandboxed-document', 2, encoder.encode('docx two'), 3),
+      documentKind: 'docx' as const,
+    };
+    const slot = renderLoadedVersion(
+      current,
+      historical,
+      2,
+      'https://relik-usercontent.example'
+    ) as unknown as ElementStub;
+    expect(textOf(slot)).toContain('Rendering both versions.');
+    Object.assign(slot, { isConnected: true });
+    for (
+      let i = 0;
+      i < 200 && withClass(slot, 'diff-view-docx').length === 0;
+      i++
+    )
+      await yieldMacrotask();
+    expect(withClass(slot, 'diff-view-docx')).toHaveLength(1);
+    expect(textOf(slot)).toContain('Document comparison');
+  });
+
+  test('a comparison module that fails to load leaves the readable version on its own', async () => {
+    const historical = {
+      ...view('sandboxed-document', 2, encoder.encode('docx two'), 3),
+      documentKind: 'docx' as const,
+    };
+    const slot = lazyComparison(
+      () => Promise.reject(new Error('chunk not found')),
+      () => {
+        throw new Error('the module was never loaded');
+      },
+      historical,
+      'https://relik-usercontent.example'
+    ) as unknown as ElementStub;
+    Object.assign(slot, { isConnected: true });
+    for (let i = 0; i < 200 && !textOf(slot).includes('could not load'); i++)
+      await yieldMacrotask();
+    expect(textOf(slot)).toContain(
+      'Relik could not load this comparison. Version 2 is open here on its own.'
+    );
+  });
+
   test('unrecognized documents offer download without extracting or framing', () => {
     const original = view('sandboxed-document', 1);
     let reads = 0;
@@ -1815,5 +1911,375 @@ describe('comment version scoping', () => {
     expect(textOf(element)).toContain('nested reply remains reachable');
     expect(textOf(element)).not.toContain('another version remains filtered');
     expect(count).toBe(2);
+  });
+});
+
+describe('the shell of a comparison', () => {
+  let listeners: Array<(event: unknown) => void> = [];
+
+  beforeEach(() => {
+    listeners = [];
+    const body = new ElementStub('BODY');
+    (globalThis as { document?: unknown }).document = {
+      body,
+      documentElement: {
+        style: { setProperty: () => {}, getPropertyValue: () => '' },
+      },
+      createElement: (tag: string) => new ElementStub(tag),
+      createElementNS: (_namespace: string, tag: string) =>
+        new ElementStub(tag),
+      createTextNode: (text: string) => {
+        const node = new ElementStub('#text');
+        node.textContent = text;
+        return node;
+      },
+      addEventListener: () => {},
+    };
+    (globalThis as { window?: unknown }).window = {
+      innerWidth: 1024,
+      innerHeight: 768,
+      addEventListener: (type: string, listener: (event: unknown) => void) => {
+        if (type === 'message') listeners.push(listener);
+      },
+      removeEventListener: () => {},
+    };
+  });
+
+  afterEach(() => {
+    delete (globalThis as { document?: unknown }).document;
+    delete (globalThis as { window?: unknown }).window;
+  });
+
+  const paragraphs = (prefix: string, count: number): TreeNode => ({
+    tag: 'body',
+    text: '',
+    attrs: [],
+    children: Array.from({ length: count }, (_, i) => ({
+      tag: 'p',
+      text: '',
+      attrs: [],
+      children: [
+        { tag: '#text', text: `${prefix} ${i}.`, attrs: [], children: [] },
+      ],
+    })),
+  });
+
+  /** Gives each frame of a rendered comparison its tree, in order. */
+  function reportTrees(
+    comparison: ElementStub,
+    before: TreeNode,
+    after: TreeNode
+  ): void {
+    const [historical, current] = descendants(comparison).filter(
+      (element) => element.tagName === 'IFRAME'
+    );
+    if (historical === undefined || current === undefined) {
+      throw new Error('comparison frames missing');
+    }
+    for (const [frame, tree] of [
+      [historical, before],
+      [current, after],
+    ] as const) {
+      const source = { postMessage: () => {} };
+      Object.assign(frame, { contentWindow: source });
+      for (const listener of listeners) {
+        listener({ source, data: { type: 'relic:tree', tree } });
+      }
+    }
+  }
+
+  /** A comparison frame, with the messages a test sends it from its window. */
+  function frameUnderTest() {
+    const own = { postMessage: () => {} };
+    const states: string[] = [];
+    const blocks: unknown[] = [];
+    const handle = sandboxFrame(
+      view('sandboxed-html', 2, encoder.encode('<p>old</p>'), 5),
+      'https://relik-usercontent.example',
+      { type: 'relic:render', html: '<p>old</p>' },
+      undefined,
+      [],
+      (state) => states.push(state.state),
+      (received) => blocks.push(received)
+    );
+    Object.assign(handle.frame, { contentWindow: own });
+    const deliver = (source: unknown, data: unknown): void => {
+      for (const listener of listeners) listener({ source, data });
+    };
+    return { own, states, blocks, deliver };
+  }
+
+  const good = {
+    type: 'relic:document-blocks',
+    blocks: [{ kind: 'paragraph', text: 'Revenue grew.', part: 0 }],
+  };
+  const ready = { type: 'relic:document-state', state: 'ready' };
+  const added = (index: number): RenderedChange => ({
+    kind: 'added',
+    label: 'paragraph',
+    before: '',
+    after: `Line ${index}.`,
+    jumpIndex: index,
+  });
+
+  test('sixty changes: the count is exact, forty rows are listed, and a row names the rest', async () => {
+    const { promise: reported, resolve: gotReport } =
+      Promise.withResolvers<ChangeReport>();
+    const comparison = renderRenderedComparison(
+      view('sandboxed-html', 5, encoder.encode('<p>new</p>')),
+      view('sandboxed-html', 2, encoder.encode('<p>old</p>'), 5),
+      'rendered',
+      'https://relik-usercontent.example',
+      gotReport
+    ) as unknown as ElementStub;
+    reportTrees(comparison, paragraphs('Old', 60), paragraphs('New', 60));
+    const report = await reported;
+    expect(report.total).toBe(60);
+    expect(report.changes).toHaveLength(40);
+
+    const sidebar = buildChangesSidebar();
+    sidebar.setChanges(report.total, changeSidebarContent(report));
+    const shell = sidebar.sidebar as unknown as ElementStub;
+    expect(withClass(shell, 'action-count')[0]?.textContent).toBe('60');
+    const list = withClass(shell, 'diff-change-list')[0];
+    if (list === undefined) throw new Error('no change list in the sidebar');
+    expect(list.children).toHaveLength(41);
+    expect(list.children[40]?.className).toBe('diff-change-more');
+    expect(list.children[40]?.textContent).toBe(
+      '20 more changes. Use Next change to reach them.'
+    );
+  });
+
+  test('the more row is text at the end of the list, never a control', () => {
+    const list = renderChangeList(
+      [added(0)],
+      () => {},
+      1
+    ) as unknown as ElementStub;
+    const row = list.children[1];
+    expect(row?.className).toBe('diff-change-more');
+    expect(row?.textContent).toBe(
+      '1 more change. Use Next change to reach them.'
+    );
+    expect(row?.attributes.has('role')).toBe(false);
+    expect(row?.listeners['click']).toBeUndefined();
+  });
+
+  test('every comparison frame is titled with its version and file', () => {
+    const comparison = renderRenderedComparison(
+      view('sandboxed-html', 5, encoder.encode('<p>new</p>')),
+      {
+        ...view('sandboxed-html', 2, encoder.encode('<p>old</p>'), 5),
+        filename: 'page.html',
+      },
+      'rendered',
+      'https://relik-usercontent.example'
+    ) as unknown as ElementStub;
+    const titles = descendants(comparison)
+      .filter((element) => element.tagName === 'IFRAME')
+      .map((frame) => frame.title);
+    expect(titles).toEqual(['Version 2 of page.html', 'Version 5 of notes.ts']);
+  });
+
+  test('a filename with a bidi control is shown escaped in its frame title', () => {
+    const comparison = renderRenderedComparison(
+      view('sandboxed-html', 5, encoder.encode('<p>new</p>')),
+      {
+        ...view('sandboxed-html', 2, encoder.encode('<p>old</p>'), 5),
+        filename: 'page\u202E.html',
+      },
+      'rendered',
+      'https://relik-usercontent.example'
+    ) as unknown as ElementStub;
+    const titles = descendants(comparison)
+      .filter((element) => element.tagName === 'IFRAME')
+      .map((frame) => frame.title);
+    expect(titles).toEqual([
+      'Version 2 of page\\u202e.html',
+      'Version 5 of notes.ts',
+    ]);
+  });
+
+  test('a comparison frame takes its blocks once, from its own window, after it is ready', () => {
+    const { own, states, blocks, deliver } = frameUnderTest();
+    deliver(own, good); // before the frame is ready: ignored
+    deliver(own, { type: 'relic:sandbox-ready' });
+    deliver(own, good); // ready for its payload, not yet reported ready: ignored
+    deliver({ postMessage: () => {} }, ready); // another window: ignored
+    expect(states).toEqual([]);
+
+    deliver(own, ready);
+    deliver({ postMessage: () => {} }, good); // another window: ignored
+    deliver(own, good); // taken
+    deliver(own, good); // a second message is ignored
+    expect(states).toEqual(['ready']);
+    expect(blocks).toEqual([good.blocks]);
+  });
+
+  test('an invalid blocks message is refused once, and nothing after it is taken', () => {
+    const { own, blocks, deliver } = frameUnderTest();
+    deliver(own, { type: 'relic:sandbox-ready' });
+    deliver(own, ready);
+    deliver(own, {
+      type: 'relic:document-blocks',
+      blocks: [{ kind: 'nonsense', text: 'x', part: 0 }],
+    });
+    deliver(own, good);
+    expect(blocks).toEqual(['invalid']);
+  });
+
+  test('a document that failed to render posts no blocks to take', () => {
+    const { own, states, blocks, deliver } = frameUnderTest();
+    deliver(own, { type: 'relic:sandbox-ready' });
+    deliver(own, {
+      type: 'relic:document-state',
+      state: 'failed',
+      reason: 'corrupt',
+    });
+    deliver(own, good);
+    expect(states).toEqual(['failed']);
+    expect(blocks).toEqual([]);
+  });
+
+  test('the changed words sit where the document reads them, removed and added marked', () => {
+    const list = renderChangeList(
+      [
+        {
+          kind: 'changed',
+          label: 'paragraph',
+          before: 'Hello world!',
+          after: 'Hello there!',
+          jumpIndex: 0,
+          segments: {
+            before: [
+              { kind: 'unchanged', text: 'Hello ' },
+              { kind: 'removed', text: 'world' },
+              { kind: 'unchanged', text: '!' },
+            ],
+            after: [
+              { kind: 'unchanged', text: 'Hello ' },
+              { kind: 'added', text: 'there' },
+              { kind: 'unchanged', text: '!' },
+            ],
+          },
+        },
+      ],
+      () => {}
+    ) as unknown as ElementStub;
+    const detail = withClass(list, 'diff-change-words')[0];
+    expect(detail?.children.map((node) => node.tagName)).toEqual([
+      'BDI',
+      'DEL',
+      'INS',
+      'BDI',
+    ]);
+    expect(detail?.children.map((node) => node.textContent)).toEqual([
+      'Hello ',
+      'world',
+      'there',
+      '!',
+    ]);
+  });
+
+  test('a bidi control in a changed paragraph is shown escaped, in a run of its own', () => {
+    const list = renderChangeList(
+      [
+        {
+          kind: 'changed',
+          label: 'paragraph',
+          before: 'Pay \u202E500 now.',
+          after: 'Pay 600 now.',
+          jumpIndex: 0,
+          segments: {
+            before: [
+              { kind: 'unchanged', text: 'Pay ' },
+              { kind: 'removed', text: '\u202E500' },
+              { kind: 'unchanged', text: ' now.' },
+            ],
+            after: [
+              { kind: 'unchanged', text: 'Pay ' },
+              { kind: 'added', text: '600' },
+              { kind: 'unchanged', text: ' now.' },
+            ],
+          },
+        },
+        {
+          kind: 'added',
+          label: 'paragraph',
+          before: '',
+          after: 'Refund \u2066now',
+          jumpIndex: 1,
+        },
+      ],
+      () => {}
+    ) as unknown as ElementStub;
+    const detail = withClass(list, 'diff-change-words')[0];
+    expect(detail?.children.map((node) => node.tagName)).toEqual([
+      'BDI',
+      'DEL',
+      'INS',
+      'BDI',
+    ]);
+    expect(detail?.children.map((node) => node.textContent)).toEqual([
+      'Pay ',
+      '\\u202e500',
+      '600',
+      ' now.',
+    ]);
+    expect(textOf(list)).not.toContain('\u202E');
+    expect(textOf(list)).not.toContain('\u2066');
+    expect(textOf(list)).toContain('Refund \\u2066now');
+  });
+
+  test('a segment that carries markup is text, and no element is made from it', () => {
+    const hostile = '<img src=x onerror="window.__relicPwned=1">';
+    const list = renderChangeList([
+      {
+        kind: 'changed',
+        label: 'paragraph',
+        before: hostile,
+        after: hostile,
+        jumpIndex: 0,
+        segments: {
+          before: [{ kind: 'removed', text: hostile }],
+          after: [{ kind: 'added', text: `<b>${hostile}</b>` }],
+        },
+      },
+    ]) as unknown as ElementStub;
+    expect(descendants(list).some((node) => node.tagName === 'IMG')).toBe(
+      false
+    );
+    expect(descendants(list).some((node) => node.tagName === 'B')).toBe(false);
+    expect(textOf(list)).toContain(hostile);
+    expect(textOf(list)).toContain(`<b>${hostile}</b>`);
+  });
+
+  test('the services a comparison module is given are bound to this viewer origin', () => {
+    const ui = compareUiFor('https://relik-usercontent.example');
+    const single = ui.renderSingleVersion(
+      view('sandboxed-html', 2, encoder.encode('<p>old</p>'), 5),
+      'Version 5 could not be shown.'
+    ) as unknown as ElementStub;
+    expect(withClass(single, 'diff-single-label')[0]?.textContent).toBe(
+      'Version 2: notes.ts'
+    );
+    expect(textOf(single)).toContain('Version 5 could not be shown.');
+
+    const frame = ui.documentFrame(
+      view('sandboxed-html', 2, encoder.encode('<p>old</p>'), 5),
+      {
+        type: 'relic:render-document',
+        format: 'docx',
+        module: '',
+        entries: [],
+      },
+      [],
+      () => {},
+      () => {}
+    );
+    expect(frame.frame.src).toBe(
+      'https://relik-usercontent.example/sandbox.html'
+    );
+    expect(frame.frame.title).toBe('Version 2 of notes.ts');
   });
 });

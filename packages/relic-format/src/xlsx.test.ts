@@ -458,3 +458,49 @@ describe('XLSX workbook', () => {
     ).toEqual({ ok: false, reason: 'too-large' });
   });
 });
+
+describe('XLSX sheetId and cell budget', () => {
+  test('reads a positive sheetId and leaves any other value absent without refusing', async () => {
+    for (const value of ['7', '0', '-1', 'x']) {
+      const parsed = await parseXlsx(
+        fixture(
+          '<worksheet/>',
+          `<workbook><sheets><sheet name="Sales" sheetId="${value}" r:id="r1"/></sheets></workbook>`
+        )
+      );
+      if (!parsed.ok) throw new Error(parsed.reason);
+      const sheet = parsed.workbook.sheets[0]!;
+      expect(sheet.name).toBe('Sales');
+      expect('sheetId' in sheet).toBe(value === '7');
+      expect(sheet.sheetId).toBe(value === '7' ? 7 : undefined);
+    }
+  });
+  test('refuses cells past a caller limit during parse', async () => {
+    const sheet = fixture(
+      '<worksheet><sheetData><row><c/><c/></row></sheetData></worksheet>'
+    );
+    expect(await parseXlsx(sheet, undefined, { cellLimit: 1 })).toEqual({
+      ok: false,
+      reason: 'too-large',
+    });
+    expect((await parseXlsx(sheet, undefined, { cellLimit: 2 })).ok).toBe(true);
+  });
+  test('admits two million cells at the compare limit and refuses the next one', async () => {
+    const row = `<row>${'<c/>'.repeat(16_384)}</row>`;
+    const sheetOf = (cells: number) => {
+      const rest = cells % 16_384;
+      const tail = rest ? `<row>${'<c/>'.repeat(rest)}</row>` : '';
+      return fixture(
+        `<worksheet><sheetData>${row.repeat(Math.floor(cells / 16_384))}${tail}</sheetData></worksheet>`
+      );
+    };
+    const exact = await parseXlsx(sheetOf(2_000_000), undefined, {
+      cellLimit: 2_000_000,
+    });
+    if (!exact.ok) throw new Error(exact.reason);
+    expect(exact.workbook.sheets[0]!.cells.length / 3).toBe(2_000_000);
+    expect(
+      await parseXlsx(sheetOf(2_000_001), undefined, { cellLimit: 2_000_000 })
+    ).toEqual({ ok: false, reason: 'too-large' });
+  }, 60_000);
+});

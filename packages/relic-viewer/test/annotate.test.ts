@@ -336,8 +336,31 @@ interface Scripted {
 let scripted: Scripted;
 export let documentNode: Node;
 
+/**
+ * The globals `installDom` stubs. `clearDom` puts back the descriptor each held
+ * before.
+ */
+const STUBBED_GLOBALS = [
+  'document',
+  'window',
+  'Element',
+  'HTMLElement',
+  'NodeFilter',
+] as const;
+let globalsBefore: (readonly [string, PropertyDescriptor | undefined])[] = [];
+
+/**
+ * Every thread a test mounted. A thread starts timers that outlive the test:
+ * a `mouseout` schedules a close 220 ms later. Each thread is disposed when its
+ * test ends, so no such timer fires into a later test's stubbed page.
+ */
+const mountedThreads: { dispose: () => boolean }[] = [];
+
 export function installDom(): void {
   domWaiters.clear();
+  globalsBefore = STUBBED_GLOBALS.map(
+    (name) => [name, Object.getOwnPropertyDescriptor(globalThis, name)] as const
+  );
   documentNode = new Node('#document');
   scripted = {
     collapsed: true,
@@ -423,10 +446,18 @@ export function installDom(): void {
 
 export function clearDom(): void {
   domWaiters.clear();
-  delete (globalThis as { window?: unknown }).window;
-  delete (globalThis as { Element?: unknown }).Element;
-  delete (globalThis as { HTMLElement?: unknown }).HTMLElement;
-  delete (globalThis as { NodeFilter?: unknown }).NodeFilter;
+  try {
+    for (const handle of mountedThreads.splice(0)) {
+      if (!handle.dispose())
+        throw new Error('a mounted thread refused to dispose');
+    }
+  } finally {
+    for (const [name, descriptor] of globalsBefore) {
+      if (descriptor === undefined) Reflect.deleteProperty(globalThis, name);
+      else Object.defineProperty(globalThis, name, descriptor);
+    }
+    globalsBefore = [];
+  }
 }
 
 const RELIC_ID = 'aaaaaaaaaaaaaaaaaaaaaaaaaa';
@@ -695,6 +726,7 @@ export async function mount(
     reported += 1;
     announce?.();
   });
+  mountedThreads.push(handle);
   // Awaited, so the thread's first load cannot resolve after this test has
   // torn its document down. Unawaited it threw between test files in CI.
   await handle.ready;

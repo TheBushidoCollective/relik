@@ -1,24 +1,29 @@
 import { describe, expect, test } from 'bun:test';
 import { contentFromBytes } from '../src/content.ts';
 import {
+  type ComparableView,
   comparisonAvailability,
   createImageDiff,
   createTextDiff,
   diffCeilingFor,
-  diffModeForRoutes,
+  diffModeForView,
+  diffModeForViews,
   MAX_DIFF_BYTES,
   uncomparableClassNoun,
   unpromptedComparisonNotice,
   versionHistoryCopy,
 } from '../src/diff.ts';
-import type { ReadyView } from '../src/viewer.ts';
+import type { ReadyView, RenderRoute } from '../src/viewer.ts';
 
 const encoder = new TextEncoder();
+
+const viewOf = (route: RenderRoute): ComparableView => ({ route });
 
 function ready(
   route: ReadyView['route'],
   content: Uint8Array,
-  currentVersion = 3
+  currentVersion = 3,
+  documentKind?: 'docx' | 'epub'
 ): ReadyView {
   return {
     filename: 'artifact.txt',
@@ -26,6 +31,7 @@ function ready(
     content: contentFromBytes(content),
     document: { bytes: content, truncated: false },
     route,
+    ...(documentKind === undefined ? {} : { documentKind }),
     downgradeNotice: undefined,
     shareUrl: 'https://relik.example/aaaaaaaaaaaaaaaaaaaaaaaaaa#key',
     version: currentVersion,
@@ -112,25 +118,97 @@ describe('version history labels', () => {
 });
 
 describe('comparison availability', () => {
-  test('maps all five renderable classes onto four comparison modes', () => {
-    expect(diffModeForRoutes('markdown', 'markdown')).toBe('markdown');
-    expect(diffModeForRoutes('code', 'code')).toBe('code');
-    expect(diffModeForRoutes('sandboxed-html', 'sandboxed-html')).toBe(
-      'rendered'
+  test('maps each renderable class onto its comparison mode', () => {
+    expect(diffModeForView(viewOf('markdown'))).toBe('markdown');
+    expect(diffModeForView(viewOf('code'))).toBe('code');
+    expect(diffModeForView(viewOf('notebook'))).toBe('code');
+    expect(diffModeForView(viewOf('sandboxed-html'))).toBe('rendered');
+    expect(diffModeForView(viewOf('sandboxed-jsx'))).toBe('rendered');
+    expect(diffModeForView(viewOf('image'))).toBe('image');
+  });
+
+  test('maps a DOCX, an EPUB and a workbook onto their comparison modes', () => {
+    expect(
+      diffModeForView({ route: 'sandboxed-document', documentKind: 'docx' })
+    ).toBe('docx');
+    expect(
+      diffModeForView({ route: 'sandboxed-document', documentKind: 'epub' })
+    ).toBe('epub');
+    expect(diffModeForView(viewOf('spreadsheet'))).toBe('xlsx');
+  });
+
+  test('gives a document of no recognized kind no mode', () => {
+    expect(diffModeForView(viewOf('sandboxed-document'))).toBeUndefined();
+  });
+
+  test('gives classes that play, show or only download no mode', () => {
+    for (const route of ['otio', 'media', 'pdf', 'model', 'download'] as const)
+      expect(diffModeForView(viewOf(route))).toBeUndefined();
+  });
+
+  test('pairs two versions only when both render in the same mode', () => {
+    expect(diffModeForViews(viewOf('markdown'), viewOf('markdown'))).toBe(
+      'markdown'
     );
-    expect(diffModeForRoutes('sandboxed-jsx', 'sandboxed-jsx')).toBe(
-      'rendered'
+    expect(diffModeForViews(viewOf('code'), viewOf('code'))).toBe('code');
+    expect(diffModeForViews(viewOf('image'), viewOf('image'))).toBe('image');
+    expect(
+      diffModeForViews(viewOf('sandboxed-html'), viewOf('sandboxed-html'))
+    ).toBe('rendered');
+  });
+
+  test('pairs two DOCX, two EPUB or two workbooks, each in its own mode', () => {
+    expect(
+      diffModeForViews(
+        { route: 'sandboxed-document', documentKind: 'docx' },
+        { route: 'sandboxed-document', documentKind: 'docx' }
+      )
+    ).toBe('docx');
+    expect(
+      diffModeForViews(
+        { route: 'sandboxed-document', documentKind: 'epub' },
+        { route: 'sandboxed-document', documentKind: 'epub' }
+      )
+    ).toBe('epub');
+    expect(diffModeForViews(viewOf('spreadsheet'), viewOf('spreadsheet'))).toBe(
+      'xlsx'
     );
-    expect(diffModeForRoutes('image', 'image')).toBe('image');
   });
 
   test('refuses a pair whose two versions render in different modes', () => {
     // Feeding a rendered page to the prose comparison, or an image to
     // either, produces a confident result with no meaning.
-    expect(diffModeForRoutes('markdown', 'sandboxed-html')).toBeUndefined();
-    expect(diffModeForRoutes('code', 'markdown')).toBeUndefined();
-    expect(diffModeForRoutes('image', 'code')).toBeUndefined();
-    expect(diffModeForRoutes('markdown', 'download')).toBeUndefined();
+    expect(
+      diffModeForViews(viewOf('markdown'), viewOf('sandboxed-html'))
+    ).toBeUndefined();
+    expect(
+      diffModeForViews(viewOf('code'), viewOf('markdown'))
+    ).toBeUndefined();
+    expect(diffModeForViews(viewOf('image'), viewOf('code'))).toBeUndefined();
+    expect(
+      diffModeForViews(viewOf('markdown'), viewOf('download'))
+    ).toBeUndefined();
+    expect(
+      diffModeForViews(viewOf('download'), viewOf('markdown'))
+    ).toBeUndefined();
+  });
+
+  test('refuses a DOCX beside an EPUB, and a document beside a workbook or prose', () => {
+    const docx: ComparableView = {
+      route: 'sandboxed-document',
+      documentKind: 'docx',
+    };
+    const epub: ComparableView = {
+      route: 'sandboxed-document',
+      documentKind: 'epub',
+    };
+    expect(diffModeForViews(docx, epub)).toBeUndefined();
+    expect(diffModeForViews(epub, docx)).toBeUndefined();
+    expect(diffModeForViews(docx, viewOf('spreadsheet'))).toBeUndefined();
+    expect(
+      diffModeForViews(viewOf('spreadsheet'), viewOf('markdown'))
+    ).toBeUndefined();
+    expect(diffModeForViews(docx, viewOf('markdown'))).toBeUndefined();
   });
 
   test('does not offer history to a version 1 relic', () => {
@@ -177,6 +255,11 @@ describe('comparison availability', () => {
       expect(result.detail).not.toContain('download-only');
       expect(result.detail).toContain(expectedNoun);
     }
+  });
+
+  test('a document or workbook names no class noun, because it can be compared', () => {
+    expect(uncomparableClassNoun('sandboxed-document')).toBeUndefined();
+    expect(uncomparableClassNoun('spreadsheet')).toBeUndefined();
   });
 
   test('unpromptedComparisonNotice gives notice for download and oversize, undefined for otio, media, pdf and comparable', () => {
@@ -226,5 +309,61 @@ describe('comparison availability', () => {
     expect(result.detail).toContain('16 MiB');
     expect(current.route).toBe('markdown');
     expect(current.content.size).toBe(MAX_DIFF_BYTES + 1);
+  });
+
+  test('offers a DOCX, an EPUB and a workbook side by side at 16 MiB or less', () => {
+    expect(
+      comparisonAvailability(
+        ready('sandboxed-document', encoder.encode('docx'), 2, 'docx')
+      )
+    ).toEqual({ kind: 'available', mode: 'docx' });
+    expect(
+      comparisonAvailability(
+        ready('sandboxed-document', encoder.encode('epub'), 2, 'epub')
+      )
+    ).toEqual({ kind: 'available', mode: 'epub' });
+    expect(
+      comparisonAvailability(ready('spreadsheet', encoder.encode('xlsx'), 2))
+    ).toEqual({ kind: 'available', mode: 'xlsx' });
+  });
+
+  test('a document or workbook of exactly 16 MiB is still comparable', () => {
+    const atLimit = new Uint8Array(MAX_DIFF_BYTES);
+    expect(
+      comparisonAvailability(ready('sandboxed-document', atLimit, 2, 'docx'))
+    ).toEqual({ kind: 'available', mode: 'docx' });
+    expect(comparisonAvailability(ready('spreadsheet', atLimit, 2))).toEqual({
+      kind: 'available',
+      mode: 'xlsx',
+    });
+  });
+
+  test('a DOCX, an EPUB or a workbook over 16 MiB says so, with the existing copy', () => {
+    const over = new Uint8Array(MAX_DIFF_BYTES + 1);
+    for (const [route, kind] of [
+      ['sandboxed-document', 'docx'],
+      ['sandboxed-document', 'epub'],
+      ['spreadsheet', undefined],
+    ] as const) {
+      const result = comparisonAvailability(ready(route, over, 2, kind));
+      expect(result.kind).toBe('unavailable');
+      if (result.kind !== 'unavailable') return;
+      expect(result.code).toBe('comparison_too_large');
+      expect(result.detail).toBe(
+        'This version is larger than the 16 MiB comparison limit, so Relik ' +
+          'cannot show it beside another. Earlier versions can still be ' +
+          'opened on their own.'
+      );
+    }
+  });
+
+  test('a document of no recognized kind is not renderable for comparison', () => {
+    const result = comparisonAvailability(
+      ready('sandboxed-document', encoder.encode('unknown'), 2)
+    );
+    expect(result.kind).toBe('unavailable');
+    if (result.kind !== 'unavailable') return;
+    expect(result.code).toBe('comparison_not_renderable');
+    expect(result.detail).toContain('download-only');
   });
 });

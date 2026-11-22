@@ -2,6 +2,7 @@ import { indexZip, type ZipIndex } from '@relic/format/zip-index';
 import { scanForbiddenDtd } from '@relic/format/xml';
 import type { RelicContent } from './content.ts';
 import type {
+  DocumentBlock,
   DocumentStateMessage,
   EpubBook,
   RenderDocumentMessage,
@@ -21,10 +22,37 @@ export interface DocumentFrame {
   readonly linkRemembered: HTMLElement;
   dispose(): void;
 }
+
+/** How long a comparison frame may take to report its blocks once it is ready. */
+export const DOCUMENT_BLOCKS_WAIT_MS = 10_000;
+
+/** What a comparison learns about one version. */
+export type DocumentSnapshotResult =
+  | {
+      readonly kind: 'blocks';
+      readonly blocks: readonly DocumentBlock[];
+      /** The package the parent read, for an EPUB. */
+      readonly book?: EpubBook;
+    }
+  | {
+      readonly kind: 'unavailable';
+      readonly reason:
+        | 'failed'
+        | 'protected'
+        | 'too-large'
+        | 'invalid'
+        | 'timeout';
+    };
+
+/**
+ * Opens a frame for one document. A comparison frame reports its blocks through
+ * `onBlocks`. A frame that was not asked to compare never calls it.
+ */
 export type CreateDocumentFrame = (
   payload: RenderDocumentMessage,
   transfer: Transferable[],
-  onState: (state: DocumentStateMessage) => void
+  onState: (state: DocumentStateMessage) => void,
+  onBlocks: (blocks: readonly DocumentBlock[] | null | 'invalid') => void
 ) => DocumentFrame;
 
 export interface DocumentParts {
@@ -77,15 +105,25 @@ export function documentWatchdog(
   return finish;
 }
 
+/**
+ * Mounts one document in its own frame. Given `compare`, the frame is asked to
+ * report its blocks, and the mount reports exactly one snapshot: the blocks, or
+ * the reason there are none. A render that fails takes its frame away. Every
+ * other outcome leaves the frame on screen.
+ */
 export async function mountDocumentRoute(
   root: HTMLElement,
   content: RelicContent,
   format: 'docx' | 'epub',
   selectParts: SelectDocumentParts,
   createFrame: CreateDocumentFrame,
-  download: () => void
+  download: () => void,
+  compare?: { readonly onSnapshot: (result: DocumentSnapshotResult) => void }
 ): Promise<void> {
   let disposed = false;
+  let reported = false;
+  let book: EpubBook | undefined;
+  let cancelBlocksWait: (() => void) | undefined;
   const controller = new AbortController();
   let handle: DocumentFrame | undefined;
   let finish: DocumentWatchdog | undefined;
@@ -96,12 +134,22 @@ export async function mountDocumentRoute(
           if (!root.isConnected) dispose();
         });
   observer?.observe(document, { childList: true, subtree: true });
+  // A comparison hears one answer, whatever ends the mount. The first one wins.
+  const report = (result: DocumentSnapshotResult): void => {
+    if (reported || compare === undefined) return;
+    reported = true;
+    cancelBlocksWait?.();
+    compare.onSnapshot(result);
+  };
   function dispose(): void {
     if (disposed) return;
     disposed = true;
+    // A mount that ends before it reports still settles its comparison.
+    report({ kind: 'unavailable', reason: 'failed' });
     controller.abort();
     observer?.disconnect();
     finish?.cancel();
+    cancelBlocksWait?.();
     handle?.dispose();
     handle = undefined;
   }
@@ -131,6 +179,28 @@ export async function mountDocumentRoute(
       new CustomEvent('relic:render-state', { detail: 'error', bubbles: true })
     );
   };
+  // Past this wait, the comparison goes on without outlines and both frames
+  // stay on screen.
+  const awaitBlocks = (): void => {
+    const timer = setTimeout(
+      () => report({ kind: 'unavailable', reason: 'timeout' }),
+      DOCUMENT_BLOCKS_WAIT_MS
+    );
+    cancelBlocksWait = () => clearTimeout(timer);
+  };
+  const onBlocks = (
+    blocks: readonly DocumentBlock[] | null | 'invalid'
+  ): void => {
+    if (blocks === null) report({ kind: 'unavailable', reason: 'too-large' });
+    else if (blocks === 'invalid')
+      report({ kind: 'unavailable', reason: 'invalid' });
+    else
+      report({
+        kind: 'blocks',
+        blocks,
+        ...(book === undefined ? {} : { book }),
+      });
+  };
   try {
     if (!root.isConnected) {
       dispose();
@@ -154,10 +224,17 @@ export async function mountDocumentRoute(
       return;
     }
     if (selection.ok === false) {
+      // A protected book is named as protected. Any other refusal shows the
+      // same card a failed render shows, so the comparison says the same.
+      report({
+        kind: 'unavailable',
+        reason: selection.reason === 'protected' ? 'protected' : 'failed',
+      });
       dispose();
       fail(selection.reason);
       return;
     }
+    book = selection.book;
     const selected = new Set(selection.parts);
     if (
       selected.size !== selection.parts.length ||
@@ -194,6 +271,7 @@ export async function mountDocumentRoute(
       module,
       entries,
       ...(selection.book === undefined ? {} : { book: selection.book }),
+      ...(compare === undefined ? {} : { compare: true as const }),
     };
     finish = documentWatchdog((state) => {
       if (disposed || !root.isConnected) {
@@ -202,14 +280,16 @@ export async function mountDocumentRoute(
       }
       if (state.state === 'failed') {
         const frame = handle?.frame;
+        report({ kind: 'unavailable', reason: 'failed' });
         dispose();
         frame?.remove();
         fail(state.reason);
       } else {
+        if (compare !== undefined) awaitBlocks();
         root.dispatchEvent(new CustomEvent('relic-repaint', { bubbles: true }));
       }
     });
-    const created = createFrame(payload, buffers, finish);
+    const created = createFrame(payload, buffers, finish, onBlocks);
     if (disposed) {
       created.dispose();
       return;
@@ -229,6 +309,7 @@ export async function mountDocumentRoute(
       dispose();
       return;
     }
+    report({ kind: 'unavailable', reason: 'failed' });
     dispose();
     fail();
   }

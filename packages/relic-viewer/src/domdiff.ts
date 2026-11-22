@@ -1,4 +1,5 @@
 import { diffArrays } from 'diff';
+import type { DiffSegment } from './diff.ts';
 import {
   type Anchor,
   labelForTag,
@@ -27,6 +28,11 @@ export interface RenderedChange {
   readonly label: string;
   readonly before: string;
   readonly after: string;
+  /** Word-level pieces of `before` and `after`, for rows that show them. */
+  readonly segments?: {
+    readonly before: readonly DiffSegment[];
+    readonly after: readonly DiffSegment[];
+  };
   /** Where this row sits in `jumps`, so pressing it goes to the thing. */
   readonly jumpIndex?: number;
 }

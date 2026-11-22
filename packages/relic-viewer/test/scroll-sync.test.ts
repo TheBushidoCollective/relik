@@ -9,7 +9,7 @@
 import { contentFromBytes } from '../src/content.ts';
 
 import { describe, expect, test } from 'bun:test';
-import { diffModeForRoute } from '../src/diff.ts';
+import { diffModeForView } from '../src/diff.ts';
 import {
   isFrameScrollMessage,
   isSetScrollMessage,
@@ -1245,37 +1245,37 @@ describe('scroller inventory across rendering modes', () => {
     const modes = [
       {
         route: 'markdown',
-        diffMode: diffModeForRoute('markdown'),
+        diffMode: diffModeForView({ route: 'markdown' }),
         panes: 2,
         scroller: '.compare-pane (container)',
       },
       {
         route: 'code',
-        diffMode: diffModeForRoute('code'),
+        diffMode: diffModeForView({ route: 'code' }),
         panes: 1,
         scroller: '.diff-changes (unified single scroller)',
       },
       {
         route: 'image',
-        diffMode: diffModeForRoute('image'),
+        diffMode: diffModeForView({ route: 'image' }),
         panes: 1,
         scroller: 'none (overlaid canvas with slider)',
       },
       {
         route: 'sandboxed-html',
-        diffMode: diffModeForRoute('sandboxed-html'),
+        diffMode: diffModeForView({ route: 'sandboxed-html' }),
         panes: 2,
         scroller: 'inner frame document',
       },
       {
         route: 'sandboxed-jsx',
-        diffMode: diffModeForRoute('sandboxed-jsx'),
+        diffMode: diffModeForView({ route: 'sandboxed-jsx' }),
         panes: 2,
         scroller: 'inner frame document',
       },
       {
         route: 'pdf',
-        diffMode: diffModeForRoute('pdf'),
+        diffMode: diffModeForView({ route: 'pdf' }),
         panes: 1,
         scroller: 'none (not comparable, single version only)',
       },
@@ -1520,15 +1520,15 @@ describe('scroller inventory across rendering modes', () => {
       expect(frames).toHaveLength(2);
       for (const frame of frames) frame.dispatchEvent({ type: 'load' });
 
-      // A frame's title is its version's filename, so each frame is matched to
+      // A frame's title names its version and file, so each frame is matched to
       // the module it should have been posted.
       const postedTo = (title: string) =>
         frames.find((frame) => frame.title === title)?.postedMessages;
-      expect(postedTo('two.jsx')).toContainEqual({
+      expect(postedTo('Version 2 of two.jsx')).toContainEqual({
         type: 'relic:render-jsx',
         code: 'MODULE_TWO',
       });
-      expect(postedTo('one.jsx')).toContainEqual({
+      expect(postedTo('Version 1 of one.jsx')).toContainEqual({
         type: 'relic:render-jsx',
         code: 'MODULE_ONE',
       });

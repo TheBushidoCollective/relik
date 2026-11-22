@@ -768,133 +768,613 @@ async function browserCases(
 
 const shell = findHeadlessShell();
 
-describe('table view in the browser', () => {
-  test.skipIf(!shell)(
-    'marks, sorting, selection and hostile cells behave in a real DOM',
-    async () => {
-      const build = await Bun.build({
-        entrypoints: [resolve(import.meta.dir, 'data-table-browser-entry.ts')],
-        target: 'browser',
-        format: 'esm',
-        splitting: false,
-      });
-      if (!build.success) throw new Error(build.logs.map(String).join('\n'));
-      const script = await build.outputs[0]!.text();
-      const { promise, resolve: report } = Promise.withResolvers<{
-        passed?: string[];
-        error?: string;
-      }>();
-      const seen: string[] = [];
-      const started: string[] = [];
-      const stderr = { tail: '' };
-      // JSON with `</` escaped, so no string in the page can close its script.
-      const embed = (value: unknown): string =>
-        JSON.stringify(value).replace(/<\//g, '<\\/');
-      const page = `<!doctype html><meta charset="utf-8"><script type="module">
+/**
+ * Runs `cases` in a headless page that imports the bundled table entry as
+ * `api`, then `args`, then a progress reporter, and resolves with the names the
+ * page passed. A page error, a closed browser or a hang fails with the
+ * evidence: the requests seen, the cases started, and stderr. With
+ * `stylesheet`, the page links the real data-table stylesheet before its module
+ * runs, so the grid lays out and scrolls as it does in the viewer.
+ */
+async function runInHeadlessPage(
+  browserPath: string,
+  cases: (...args: never[]) => Promise<string[]>,
+  args: readonly unknown[],
+  stylesheet: boolean
+): Promise<string[] | undefined> {
+  const build = await Bun.build({
+    entrypoints: [resolve(import.meta.dir, 'data-table-browser-entry.ts')],
+    target: 'browser',
+    format: 'esm',
+    splitting: false,
+  });
+  if (!build.success) throw new Error(build.logs.map(String).join('\n'));
+  const script = await build.outputs[0]!.text();
+  const { promise, resolve: report } = Promise.withResolvers<{
+    passed?: string[];
+    error?: string;
+  }>();
+  const seen: string[] = [];
+  const started: string[] = [];
+  const stderr = { tail: '' };
+  // JSON with `</` escaped, so no string in the page can close its script.
+  const embed = (value: unknown): string =>
+    JSON.stringify(value).replace(/<\//g, '<\\/');
+  const page = `<!doctype html><meta charset="utf-8">${stylesheet ? '<link rel="stylesheet" href="/assets/data-table.css" data-dt-css>' : ''}<script type="module">
         import * as api from '/data-table.js';
-        const source = ${embed(csv)};
-        const hostileSource = ${embed(hostile)};
+        const args = ${embed(args)};
         try {
-          const passed = await (${browserCases.toString()})(api, source, hostileSource, (name) => fetch('/progress', {method: 'POST', body: name}).catch(() => {}));
+          const passed = await (${cases.toString()})(api, ...args, (name) => fetch('/progress', {method: 'POST', body: name}).catch(() => {}));
           await fetch('/result', {method: 'POST', body: JSON.stringify({passed})});
         } catch (error) {
           await fetch('/result', {method: 'POST', body: JSON.stringify({error: (error && (error.stack || error.message)) || String(error)})});
         }
       </script>`;
-      const server = Bun.serve({
-        hostname: '127.0.0.1',
-        port: 0,
-        async fetch(request) {
-          const url = new URL(request.url);
-          seen.push(`${request.method} ${url.pathname}`);
-          if (url.pathname === '/progress') {
-            started.push(await request.text());
-            return new Response('ok');
-          }
-          if (url.pathname === '/result') {
-            report(
-              (await request.json()) as { passed?: string[]; error?: string }
-            );
-            return new Response('ok');
-          }
-          if (url.pathname === '/data-table.js') {
-            return new Response(script, {
-              headers: { 'content-type': 'text/javascript' },
-            });
-          }
-          return new Response(page, {
-            headers: { 'content-type': 'text/html' },
-          });
-        },
+  const server = Bun.serve({
+    hostname: '127.0.0.1',
+    port: 0,
+    async fetch(request) {
+      const url = new URL(request.url);
+      seen.push(`${request.method} ${url.pathname}`);
+      if (url.pathname === '/progress') {
+        started.push(await request.text());
+        return new Response('ok');
+      }
+      if (url.pathname === '/result') {
+        report((await request.json()) as { passed?: string[]; error?: string });
+        return new Response('ok');
+      }
+      if (stylesheet && url.pathname === '/assets/data-table.css') {
+        return new Response(
+          Bun.file(resolve(import.meta.dir, '../src/data-table.css')),
+          { headers: { 'content-type': 'text/css' } }
+        );
+      }
+      if (url.pathname === '/data-table.js') {
+        return new Response(script, {
+          headers: { 'content-type': 'text/javascript' },
+        });
+      }
+      return new Response(page, {
+        headers: { 'content-type': 'text/html' },
       });
-      const profile = join(tmpdir(), `relic-data-table-${crypto.randomUUID()}`);
-      // The startup flags the other browser proofs use (see suggest-editor.test.ts).
-      const browser = spawn(
-        shell!,
-        [
-          basename(shell!).includes('headless-shell')
-            ? '--headless'
-            : '--headless=new',
-          '--disable-gpu',
-          '--no-sandbox',
-          `--user-data-dir=${profile}`,
-          '--no-first-run',
-          '--no-default-browser-check',
-          '--disable-background-networking',
-          '--disable-component-update',
-          '--disable-default-apps',
-          '--disable-extensions',
-          '--disable-sync',
-          '--disable-breakpad',
-          '--mute-audio',
-          `http://127.0.0.1:${server.port}/`,
-        ],
-        { stdio: ['ignore', 'ignore', 'pipe'] }
+    },
+  });
+  const profile = join(tmpdir(), `relic-data-table-${crypto.randomUUID()}`);
+  // The startup flags the other browser proofs use (see suggest-editor.test.ts).
+  const browser = spawn(
+    browserPath,
+    [
+      basename(browserPath).includes('headless-shell')
+        ? '--headless'
+        : '--headless=new',
+      '--disable-gpu',
+      '--no-sandbox',
+      `--user-data-dir=${profile}`,
+      '--no-first-run',
+      '--no-default-browser-check',
+      '--disable-background-networking',
+      '--disable-component-update',
+      '--disable-default-apps',
+      '--disable-extensions',
+      '--disable-sync',
+      '--disable-breakpad',
+      '--mute-audio',
+      `http://127.0.0.1:${server.port}/`,
+    ],
+    { stdio: ['ignore', 'ignore', 'pipe'] }
+  );
+  browser.stderr?.on('data', (chunk: Buffer) => {
+    stderr.tail = (stderr.tail + chunk.toString('utf8')).slice(-4096);
+  });
+  try {
+    const exited = Promise.withResolvers<never>();
+    browser.once('error', exited.reject);
+    browser.once('exit', (code) =>
+      exited.reject(
+        new Error(`headless browser exited before reporting: ${code}`)
+      )
+    );
+    // A real timer on purpose: this drives a real browser, and a hang has to
+    // fail with evidence (the requests seen, the cases started) rather than
+    // hide behind the test runner's own limit. Deterministic time control
+    // cannot stand in for a browser's event loop.
+    const stalled = Promise.withResolvers<never>();
+    const timer = setTimeout(() => {
+      stalled.reject(
+        new Error(
+          `the page did not report within 60 s. requests: ${JSON.stringify(seen)}; ` +
+            `cases started: ${JSON.stringify(started)}; stderr: ${JSON.stringify(stderr.tail)}`
+        )
       );
-      browser.stderr?.on('data', (chunk: Buffer) => {
-        stderr.tail = (stderr.tail + chunk.toString('utf8')).slice(-4096);
+    }, 60_000);
+    let result: { passed?: string[]; error?: string };
+    try {
+      result = await Promise.race([promise, exited.promise, stalled.promise]);
+    } finally {
+      clearTimeout(timer);
+    }
+    if (result.error) throw new Error(result.error);
+    return result.passed;
+  } finally {
+    browser.kill('SIGKILL');
+    if (browser.exitCode === null && browser.signalCode === null) {
+      await once(browser, 'exit');
+    }
+    server.stop(true);
+    await rm(profile, { recursive: true, force: true });
+  }
+}
+
+describe('table view in the browser', () => {
+  test.skipIf(!shell)(
+    'marks, sorting, selection and hostile cells behave in a real DOM',
+    async () => {
+      const passed = await runInHeadlessPage(
+        shell!,
+        browserCases,
+        [csv, hostile],
+        false
+      );
+      expect(passed).toHaveLength(15);
+    },
+    90000
+  );
+});
+
+/** The compare grid's entry points, as the page reaches them through the bundle. */
+interface CompareApi {
+  mountCompareTable(
+    root: HTMLElement,
+    table: unknown,
+    options: {
+      filename: string;
+      label: string;
+      widths: readonly number[];
+      state(record: number, column: number): string | undefined;
+      onSelect?(record: number, column: number): void;
+    }
+  ): {
+    readonly scroller: HTMLElement;
+    select(record: number, column: number): void;
+    reveal(record: number, column: number, top: number): void;
+    dispose(): void;
+  };
+  mirrorScrollers(panes: readonly HTMLElement[]): () => void;
+}
+
+// Runs in the page, so it is self-contained like browserCases: it reads its
+// arguments and the DOM only.
+async function compareCases(
+  api: CompareApi,
+  progress: (name: string) => Promise<unknown>
+): Promise<string[]> {
+  const passed: string[] = [];
+  const eq = (actual: unknown, expected: unknown, label: string): void => {
+    const a = JSON.stringify(actual);
+    const b = JSON.stringify(expected);
+    if (a !== b) throw new Error(`${label}: ${a} != ${b}`);
+  };
+  const truth = (value: unknown, label: string): void => {
+    if (!value) throw new Error(label);
+  };
+  const cellAt = (
+    root: HTMLElement,
+    record: number,
+    column: number
+  ): HTMLElement | null =>
+    root.querySelector<HTMLElement>(
+      `.dt-cell[data-r="${record}"][data-c="${column}"]`
+    );
+  const dispatch = (el: Element | null, event: Event): void => {
+    if (!el) throw new Error(`no element for ${event.type}`);
+    el.dispatchEvent(event);
+  };
+  const press = (el: Element | null, type: string): void =>
+    dispatch(
+      el,
+      new MouseEvent(type, { bubbles: true, cancelable: true, button: 0 })
+    );
+  const mount = (
+    rows: readonly (readonly string[])[],
+    options: {
+      widths: readonly number[];
+      label?: string;
+      state?: (record: number, column: number) => string | undefined;
+      onSelect?: (record: number, column: number) => void;
+    }
+  ) => {
+    const root = document.createElement('section');
+    document.body.append(root);
+    // Every value is text, and a value that parses as a number is numeric.
+    const table = {
+      records: rows.length,
+      columns: Math.max(0, ...rows.map((row) => row.length)),
+      text: (record: number, column: number): string =>
+        rows[record]?.[column] ?? '',
+      numeric: (record: number, column: number): number | undefined => {
+        const value = rows[record]?.[column] ?? '';
+        return value !== '' && Number.isFinite(Number(value))
+          ? Number(value)
+          : undefined;
+      },
+      summary: 'fixture',
+    };
+    const part = api.mountCompareTable(root, table, {
+      filename: 'v2.xlsx',
+      label: options.label ?? 'Version 2 of v2.xlsx, sheet Q3',
+      widths: options.widths,
+      state: options.state ?? (() => undefined),
+      ...(options.onSelect === undefined ? {} : { onSelect: options.onSelect }),
+    });
+    const done = (): void => {
+      part.dispose();
+      root.remove();
+      document.getSelection()?.removeAllRanges();
+    };
+    return { root, part, done };
+  };
+  const check = async (
+    name: string,
+    run: () => void | Promise<void>
+  ): Promise<void> => {
+    await progress(name);
+    document.getSelection()?.removeAllRanges();
+    await run();
+    passed.push(name);
+  };
+  // One display frame. The scroll events a write causes arrive in the frame after it.
+  const nextFrame = (): Promise<void> => {
+    const { promise, resolve } = Promise.withResolvers<void>();
+    requestAnimationFrame(() => resolve());
+    return promise;
+  };
+  const frames = async (count: number): Promise<void> => {
+    for (let i = 0; i < count; i++) await nextFrame();
+  };
+  // Polls once per frame until the condition holds, and fails at a deadline
+  // rather than hanging. The clock is read only to report that failure.
+  const until = async (test: () => boolean, label: string): Promise<void> => {
+    const deadline = performance.now() + 3000;
+    while (!test()) {
+      if (performance.now() > deadline) throw new Error(`timed out: ${label}`);
+      await nextFrame();
+    }
+  };
+  const small = [
+    ['Region', 'Target', 'Note'],
+    ['West', '120', 'steady'],
+    ['East', '90', ''],
+    ['North', '75', 'new'],
+  ];
+  const widths = [120, 90, 100];
+
+  await check(
+    'compare cells carry their state as a class and hidden text',
+    () => {
+      const states: Record<string, string> = {
+        '0,0': 'added',
+        '1,1': 'removed',
+        '2,2': 'changed',
+        '3,1': 'formula',
+      };
+      const { root, done } = mount(small, {
+        widths,
+        state: (record, column) => states[`${record},${column}`],
       });
       try {
-        const exited = Promise.withResolvers<never>();
-        browser.once('error', exited.reject);
-        browser.once('exit', (code) =>
-          exited.reject(
-            new Error(`headless browser exited before reporting: ${code}`)
-          )
-        );
-        // A real timer on purpose: this drives a real browser, and a hang has to
-        // fail with evidence (the requests seen, the cases started) rather than
-        // hide behind the test runner's own limit. Deterministic time control
-        // cannot stand in for a browser's event loop.
-        const stalled = Promise.withResolvers<never>();
-        const timer = setTimeout(() => {
-          stalled.reject(
-            new Error(
-              `the page did not report within 60 s. requests: ${JSON.stringify(seen)}; ` +
-                `cases started: ${JSON.stringify(started)}; stderr: ${JSON.stringify(stderr.tail)}`
-            )
+        for (const [record, column, name] of [
+          [0, 0, 'added'],
+          [1, 1, 'removed'],
+          [2, 2, 'changed'],
+          [3, 1, 'formula'],
+        ] as const) {
+          const cell = cellAt(root, record, column);
+          truth(
+            cell?.classList.contains(`dt-diff-${name}`),
+            `${name} at ${record},${column} has its class`
           );
-        }, 60_000);
-        let result: { passed?: string[]; error?: string };
-        try {
-          result = await Promise.race([
-            promise,
-            exited.promise,
-            stalled.promise,
-          ]);
-        } finally {
-          clearTimeout(timer);
+          eq(
+            cell?.querySelector('.dt-sr')?.textContent,
+            name === 'formula' ? ' (formula changed)' : ` (${name})`,
+            `${name} hidden text`
+          );
         }
-        if (result.error) throw new Error(result.error);
-        expect(result.passed).toHaveLength(15);
+        const plain = cellAt(root, 1, 0);
+        truth(
+          !plain?.querySelector('.dt-sr'),
+          'an unchanged cell has no hidden state'
+        );
+        truth(
+          !plain?.className
+            .split(' ')
+            .some((name) => name.startsWith('dt-diff-')),
+          'an unchanged cell has no state class'
+        );
       } finally {
-        browser.kill('SIGKILL');
-        if (browser.exitCode === null && browser.signalCode === null) {
-          await once(browser, 'exit');
-        }
-        server.stop(true);
-        await rm(profile, { recursive: true, force: true });
+        done();
       }
+    }
+  );
+
+  await check(
+    'a header press does not sort, and no find, toggle or comment control is drawn',
+    () => {
+      const { root, done } = mount(small, { widths });
+      try {
+        const header = root.querySelector('.dt-hcell');
+        press(header, 'mousedown');
+        press(header, 'click');
+        truth(
+          !root.querySelector('.dt-sort'),
+          'a header press drew a sort marker'
+        );
+        eq(
+          cellAt(root, 0, 0)?.textContent,
+          'Region',
+          'the rows keep their order'
+        );
+        truth(
+          root.querySelector(
+            'input, .dt-find, .dt-toggle, .dt-hc-comment, .dt-suggest, .dt-suggestion-indicator, .dt-suggest-editor, [data-comment-id]'
+          ) === null,
+          'a control from the table view is drawn'
+        );
+        eq(
+          root.querySelectorAll('button').length,
+          0,
+          'no button before a choice'
+        );
+      } finally {
+        done();
+      }
+    }
+  );
+
+  await check('rows number from 1 under column letters, past Z too', () => {
+    const wide = [
+      Array.from({ length: 28 }, (_, c) => `c${c}`),
+      Array.from({ length: 28 }, (_, c) => String(c)),
+    ];
+    const { root, done } = mount(wide, {
+      widths: Array.from({ length: 28 }, () => 60),
+    });
+    try {
+      eq(
+        Array.from(
+          root.querySelectorAll('.dt-letter'),
+          (el) => el.textContent
+        ).slice(-3),
+        ['Z', 'AA', 'AB'],
+        'column letters'
+      );
+      eq(
+        Array.from(root.querySelectorAll('.dt-rn'), (el) => el.textContent),
+        ['1', '2'],
+        'row numbers'
+      );
+      eq(
+        root.querySelector('.dt-row')?.getAttribute('aria-rowindex'),
+        '2',
+        'the letter row counts as row 1'
+      );
+    } finally {
+      done();
+    }
+  });
+
+  await check(
+    'shared widths set the same tracks on the grid and its header',
+    () => {
+      const { root, done } = mount(small, { widths });
+      try {
+        const grid = root.querySelector<HTMLElement>('.dt-grid');
+        eq(
+          grid?.style.getPropertyValue('--dt-tracks'),
+          '56px 120px 90px 100px',
+          'tracks'
+        );
+        eq(grid?.dataset['file'], 'v2.xlsx', 'the grid names its file');
+        eq(
+          root.querySelector<HTMLElement>('.dt-head')?.style.width,
+          '366px',
+          'header width'
+        );
+        eq(
+          root.querySelector<HTMLElement>('.dt-body')?.style.width,
+          '366px',
+          'body width'
+        );
+      } finally {
+        done();
+      }
+    }
+  );
+
+  await check(
+    'select reports each new cell through onSelect and draws the cellbar',
+    () => {
+      const calls: number[][] = [];
+      const { root, part, done } = mount(small, {
+        widths,
+        onSelect: (record, column) => {
+          calls.push([record, column]);
+        },
+      });
+      try {
+        part.select(2, 1);
+        part.select(2, 1);
+        eq(calls, [[2, 1]], 'a repeat choice is silent');
+        truth(
+          cellAt(root, 2, 1)?.classList.contains('is-active'),
+          'the chosen cell is active'
+        );
+        eq(
+          cellAt(root, 2, 1)?.getAttribute('aria-selected'),
+          'true',
+          'aria-selected'
+        );
+        eq(
+          root.querySelector('.dt-addr')?.textContent,
+          'B3',
+          'the cellbar names the cell'
+        );
+        press(cellAt(root, 0, 2), 'mousedown');
+        eq(
+          calls,
+          [
+            [2, 1],
+            [0, 2],
+          ],
+          'a reader choice reports through onSelect'
+        );
+        eq(
+          root.querySelector('.dt-addr')?.textContent,
+          'C1',
+          'the cellbar follows the reader'
+        );
+        dispatch(
+          cellAt(root, 0, 2),
+          new KeyboardEvent('keydown', {
+            key: 'ArrowDown',
+            bubbles: true,
+            cancelable: true,
+          })
+        );
+        eq(
+          calls[calls.length - 1],
+          [1, 2],
+          'an arrow key moves the choice and reports it'
+        );
+        eq(
+          Array.from(root.querySelectorAll('button'), (b) => b.className),
+          ['dt-copy'],
+          'Copy is the only button'
+        );
+      } finally {
+        done();
+      }
+    }
+  );
+
+  await check(
+    'reveal puts the cell top at the requested offset, without selecting it',
+    () => {
+      const tall = Array.from({ length: 200 }, (_, r) => [
+        `r${r}`,
+        `v${r}`,
+        'x',
+      ]);
+      const { root, part, done } = mount(tall, { widths });
+      try {
+        part.reveal(120, 1, 100);
+        const grid = part.scroller;
+        eq(grid.scrollTop, 36 + 120 * 28 - 100, 'scrollTop');
+        const cell = cellAt(root, 120, 1);
+        truth(cell, 'the revealed cell is drawn');
+        const offset = Math.round(
+          cell!.getBoundingClientRect().top -
+            grid.getBoundingClientRect().top -
+            grid.clientTop
+        );
+        eq(offset, 100, 'the cell top offset in the grid');
+        truth(!cell?.classList.contains('is-active'), 'reveal does not select');
+      } finally {
+        done();
+      }
+    }
+  );
+
+  await check(
+    'mirrored grids follow each other on both axes, and stop when torn down',
+    async () => {
+      const wide = Array.from({ length: 200 }, (_, r) =>
+        Array.from({ length: 12 }, (_, c) => `${r}:${c}`)
+      );
+      const twelve = Array.from({ length: 12 }, () => 200);
+      const left = mount(wide, { widths: twelve });
+      const right = mount(wide, { widths: twelve });
+      const a = left.part.scroller;
+      const b = right.part.scroller;
+      const unbind = api.mirrorScrollers([a, b]);
+      try {
+        a.scrollTop = 500;
+        a.scrollLeft = 40;
+        await until(
+          () => b.scrollTop === 500 && b.scrollLeft === 40,
+          'the second grid follows the first'
+        );
+        await frames(4);
+        eq(
+          [a.scrollTop, a.scrollLeft, b.scrollTop, b.scrollLeft],
+          [500, 40, 500, 40],
+          'both grids hold one position'
+        );
+        b.scrollTop = 900;
+        await until(
+          () => a.scrollTop === 900,
+          'the first grid follows the second'
+        );
+        await frames(4);
+        eq(
+          [a.scrollTop, a.scrollLeft, b.scrollTop, b.scrollLeft],
+          [900, 40, 900, 40],
+          'the reverse holds'
+        );
+        unbind();
+        a.scrollTop = 1200;
+        await frames(4);
+        eq(b.scrollTop, 900, 'a torn-down mirror stops');
+      } finally {
+        unbind();
+        left.done();
+        right.done();
+      }
+    }
+  );
+
+  await check(
+    'a value with markup stays text, and a bidi sheet name shows as an escape',
+    () => {
+      const markup = [
+        ['<img src=x onerror="window.__cmpPwned=1">', '<b>bold</b>'],
+      ];
+      const { root, done } = mount(markup, {
+        widths: [200, 200],
+        label: 'Version 2, sheet Q\u202E3',
+      });
+      try {
+        truth(
+          root.querySelector('img, b') === null,
+          'markup became an element'
+        );
+        eq(
+          cellAt(root, 0, 0)?.textContent,
+          '<img src=x onerror="window.__cmpPwned=1">',
+          'the value shows as text'
+        );
+        eq(Reflect.get(window, '__cmpPwned'), undefined, 'nothing ran');
+        const label =
+          root.querySelector('.dt-grid')?.getAttribute('aria-label') ?? '';
+        truth(
+          label.includes('\\u{202E}') && !label.includes('\u202E'),
+          'the bidi control shows as an escape in the label'
+        );
+      } finally {
+        done();
+      }
+    }
+  );
+
+  return passed;
+}
+
+describe('compare grid in the browser', () => {
+  test.skipIf(!shell)(
+    'compare cells, selection, reveal and mirrored scrolling behave in a real DOM',
+    async () => {
+      const passed = await runInHeadlessPage(shell!, compareCases, [], true);
+      expect(passed).toHaveLength(8);
     },
     90000
   );
