@@ -109,7 +109,7 @@ export interface RelicRow {
   readonly ownerIdentityId?: string | undefined;
   /** Bumped by every grant and revocation. A seal or grant that read an older value loses. */
   readonly accessEpoch?: number | undefined;
-  /** The highest version whose seal the server accepted. */
+  /** The highest version whose seal the server recorded. It is provisional until the owner-epoch recheck passes. */
   readonly sealedVersion?: number | undefined;
   /** Versions the owner deleted. The row keeps the number so it is never reused. */
   readonly deletedVersions?: readonly number[] | undefined;
@@ -591,6 +591,8 @@ export interface DedupEntry {
 export interface RelicStore {
   getRelic(id: string): Promise<RelicRow | undefined>;
   putRelic(row: RelicRow): Promise<void>;
+  /** Atomically reserve a relic ID without replacing an existing row. */
+  createRelic(row: RelicRow): Promise<boolean>;
   markPublished(
     id: string,
     at: number,
@@ -855,7 +857,11 @@ export interface RelicStore {
     change: (r: AccessRequestRow) => AccessRequestRow
   ): Promise<AccessRequestRow | undefined>;
   deleteAccessRequestsForRelic(relicId: string): Promise<number>;
-  putOwnedRelic(row: OwnedRelicRow): Promise<void>;
+  /** Supplying options pins the private index expiry, including its absence. */
+  putOwnedRelic(
+    row: OwnedRelicRow,
+    options?: { readonly expiresAt: number | undefined }
+  ): Promise<void>;
   listOwnedRelics(ownerIdentityId: string): Promise<readonly OwnedRelicRow[]>;
   deleteOwnedRelic(ownerIdentityId: string, relicId: string): Promise<void>;
   appendAccessEvent(event: AccessEvent): Promise<void>;
@@ -1069,6 +1075,12 @@ export class MemoryStore implements RelicStore {
 
   async putRelic(row: RelicRow): Promise<void> {
     this.relics.set(row.id, row);
+  }
+
+  async createRelic(row: RelicRow): Promise<boolean> {
+    if (this.relics.has(row.id) || this.tombstones.has(row.id)) return false;
+    this.relics.set(row.id, row);
+    return true;
   }
 
   async markPublished(
@@ -1899,7 +1911,10 @@ export class MemoryStore implements RelicStore {
     return removed;
   }
 
-  async putOwnedRelic(row: OwnedRelicRow): Promise<void> {
+  async putOwnedRelic(
+    row: OwnedRelicRow,
+    _options?: { readonly expiresAt: number | undefined }
+  ): Promise<void> {
     this.ownedRelics.set(compositeKey(row.ownerIdentityId, row.relicId), row);
   }
 

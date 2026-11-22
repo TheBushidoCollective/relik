@@ -12,12 +12,16 @@ import {
   decodeBase64url,
   parseStatement,
   statementBytes,
+  ownerPublishBodySha256,
   verifyStatement,
   InvalidStatementError,
 } from '@relic/format/private';
 import { ProblemError } from '../problems.ts';
-import type { IdentityRecord } from '../store.ts';
+import { normalizeEmail } from '@relic/format';
+import type { IdentityRecord, PasskeyRecord } from '../store.ts';
 import { DAY_MS, type PrivateEnv } from './context.ts';
+import { verifyAttestation } from './attest.ts';
+import { currentIdentity, identitySigner } from './identity.ts';
 
 /** Refuses every field the regulated profile forbids (plan 4.13). */
 export function refusePrivatePolicy(body: Record<string, unknown>): void {
@@ -160,4 +164,92 @@ export async function checkPrivatePublish(
     throw new ProblemError('owner_required', { relic_id: input.relicId });
   }
   return { owner, expiresAt: env.now + ttlDays * DAY_MS, ttlDays };
+}
+
+/**
+ * Browser owners authorize the exact JSON grant with a current identity
+ * signature and a fresh assertion from a credential bound to that identity.
+ */
+export async function checkOwnerPublish(
+  env: PrivateEnv,
+  input: {
+    readonly body: Record<string, unknown>;
+    readonly relicId: string;
+    readonly declaredSizeBytes: number;
+    readonly email: string;
+    readonly passkeys: PasskeyRecord | undefined;
+  }
+): Promise<{ owner: IdentityRecord; expiresAt: number }> {
+  for (const field of [
+    'title',
+    'cover',
+    'owner_email',
+    'share_verifier',
+  ] as const) {
+    if (Object.hasOwn(input.body, field)) {
+      throw new ProblemError('private_policy_violation', {
+        policy_check: field,
+      });
+    }
+  }
+  if (
+    Object.hasOwn(input.body, 'owner') ||
+    Object.hasOwn(input.body, 'device_auth')
+  ) {
+    throw new ProblemError('private_policy_violation');
+  }
+  if (input.declaredSizeBytes <= 0) {
+    throw new ProblemError('invalid_publish_metadata', {
+      detail: 'A private relic needs content.',
+    });
+  }
+  refusePrivateTtl(input.body, env.config.privateMaxTtlDays);
+  const ttl = input.body['ttl_days'];
+  const ttlDays =
+    typeof ttl === 'number' ? ttl : env.config.privateDefaultTtlDays;
+  const email = normalizeEmail(input.email);
+  const owner = await currentIdentity(env, email);
+  if (owner === undefined || owner.retiredAt !== undefined) {
+    throw new ProblemError('identity_required');
+  }
+  let bodyHash: string;
+  try {
+    bodyHash = await ownerPublishBodySha256(input.body);
+  } catch {
+    throw new ProblemError('invalid_publish_metadata');
+  }
+  const verified = await verifyAttestation(env, {
+    bundle: input.body['owner_attestation'],
+    purpose: 'owner_publish',
+    email,
+    passkeys: input.passkeys,
+    signerKey: identitySigner(owner),
+    relicId: input.relicId,
+  });
+  const statement = verified.statements[0]?.statement;
+  if (
+    statement === undefined ||
+    statement['owner_identity_id'] !== owner.identityId ||
+    statement['challenge_nonce'] !== input.body['challenge_nonce'] ||
+    statement['body_sha256'] !== bodyHash ||
+    !owner.credentials.some(
+      (binding) => binding.credentialId === verified.credentialId
+    )
+  ) {
+    throw new ProblemError('invalid_statement', {
+      statement_check: 'owner_publish',
+    });
+  }
+  const current = await currentIdentity(env, email);
+  if (
+    current === undefined ||
+    current.identityId !== owner.identityId ||
+    current.retiredAt !== undefined ||
+    !current.credentials.some(
+      (binding) => binding.credentialId === verified.credentialId
+    )
+  ) {
+    throw new ProblemError('identity_required');
+  }
+  return { owner: current, expiresAt: env.now + ttlDays * DAY_MS };
 }

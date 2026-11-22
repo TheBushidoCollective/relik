@@ -544,7 +544,8 @@ export function gcsStorage(options: GcsOptions): ObjectStorage {
       relicId: string,
       contentLength: number,
       validitySeconds: number,
-      now: number
+      now: number,
+      customTime?: number
     ): Promise<SignedUpload> {
       // `Content-Length` is signed, so the upload must be exactly this many
       // bytes or the signature fails. That is stronger than a cap: it pins
@@ -553,7 +554,12 @@ export function gcsStorage(options: GcsOptions): ObjectStorage {
       //
       // No `x-goog-meta-*` is signed, because nothing needs custom object
       // metadata and anything content-descriptive is barred from living there.
-      const headers = { 'content-length': String(contentLength) };
+      const headers = {
+        'content-length': String(contentLength),
+        ...(customTime === undefined
+          ? {}
+          : { 'x-goog-custom-time': new Date(customTime).toISOString() }),
+      };
       const url = await sign('PUT', relicId, validitySeconds, now, headers);
 
       return {

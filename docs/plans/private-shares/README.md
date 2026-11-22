@@ -465,7 +465,7 @@ Required recipient set R for a relic at seal time: the owner identity's `kemKeyI
 4. The wraps' recipient set equals R and equals `recipient_key_ids`, and `owner_epoch` equals the owner identity's `recipientsEpoch`; else `recipients_changed` with both epochs. The seal carries `key_commitment` (the key commitment of 4.1), which the server stores and cannot check, because it never holds a key.
 5. Delete any wraps already stored for this unsealed version, write the new wraps and the seal (create-only).
 6. `updateRelic`: require `accessEpoch === statement.access_epoch`, `version === row.version`; set `sealedVersion`. On failure delete what step 5 wrote and refuse `recipients_changed` or `version_conflict`.
-7. Then today's `markPublished`, digest record and change notice.
+7. Then today's `markPublished`, digest record and change notice. Between steps 6 and 7 the seal is provisional: see `docs/spec/service.md` section 10.3 for the owner-epoch recheck and rollback window.
 
 Grant: verify attestation and owner; grantee identity current; `fingerprint_typed` equals the grantee's fingerprint (else `fingerprint_mismatch`); every version sealed and not deleted; wraps exactly cover `versions` × grantee key. Write wraps, write or replace the grant, then `updateRelic` requiring `row.sealedVersion` to be in `versions` and incrementing `accessEpoch`; on failure delete what was written and refuse `grant_stale_version` with `current_version`. Mark the request granted, mail the grantee, log `grant`.
 

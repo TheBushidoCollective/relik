@@ -1838,6 +1838,105 @@ describe('gcsStore', () => {
 });
 
 describe('gcsStore private-share objects', () => {
+  async function ownerReissueFixture(expiresAt: number | undefined) {
+    const gcs = fakeGcs();
+    const store = storeOn(gcs);
+    const token = 'owner-session-token';
+    await store.createIdentity(identity());
+    await store.putRelic(privateRelic({ expiresAt }));
+    await store.putOwnedRelic(ownedRelic());
+    await store.putSession({
+      tokenHash: await sha256Hex(token),
+      email: OWNER_EMAIL,
+      createdAt: NOW,
+      expiresAt: NOW + DAY,
+      via: 'passkey',
+    });
+    const app = createApp({
+      store,
+      storage: new MemoryStorage(),
+      now: () => NOW,
+    });
+    const reissue = () =>
+      app.fetch(
+        new Request(
+          `https://relic.example/api/relics/${RELIC_ID}/versions/1/upload-grant`,
+          {
+            method: 'POST',
+            headers: {
+              cookie: `relic_session=${token}`,
+              origin: 'https://relic.example',
+              'x-forwarded-for': '198.51.100.30, 130.211.0.1',
+            },
+          }
+        )
+      );
+    return { gcs, store, reissue };
+  }
+
+  test('reissue preserves owner-index expiry when owner deletion wins the race', async () => {
+    const expiry = NOW + 30 * DAY;
+    const { gcs, store, reissue } = await ownerReissueFixture(expiry);
+    const indexName = `m/owner-relic/${OWNER_ID}/${RELIC_ID}.json`;
+    const relicName = `m/relic/${RELIC_ID}.json`;
+    expect(gcs.objects.get(indexName)?.customTime).toBe(
+      new Date(expiry).toISOString()
+    );
+
+    const writeIndex = store.putOwnedRelic.bind(store);
+    let deletionFinished = false;
+    store.putOwnedRelic = async (...args) => {
+      // The reissue already verified the row. Complete the owner delete's
+      // tombstone and final two deletions before its index repair writes.
+      await store.putTombstone({
+        kind: 'owner',
+        id: RELIC_ID,
+        deletedAt: NOW,
+      });
+      await store.deleteOwnedRelic(OWNER_ID, RELIC_ID);
+      await store.deleteRelicRow(RELIC_ID);
+      deletionFinished =
+        !gcs.objects.has(indexName) && !gcs.objects.has(relicName);
+      await writeIndex(...args);
+    };
+
+    const response = await reissue();
+    expect(response.status).toBe(200);
+    expect(deletionFinished).toBe(true);
+    expect(gcs.objects.has(relicName)).toBe(false);
+    const repaired = gcs.objects.get(indexName);
+    expect(repaired).toBeDefined();
+    expect(repaired?.customTime).toBe(new Date(expiry).toISOString());
+    expect(JSON.parse(repaired?.body ?? 'null')).toEqual(ownedRelic());
+    const body = (await response.json()) as Record<string, unknown>;
+    expect(body['relic_expires_at']).toBe(new Date(expiry).toISOString());
+  });
+
+  test('reissue preserves an undefined verified expiry when the row changes', async () => {
+    const { gcs, store, reissue } = await ownerReissueFixture(undefined);
+    const indexName = `m/owner-relic/${OWNER_ID}/${RELIC_ID}.json`;
+    const writeIndex = store.putOwnedRelic.bind(store);
+    let rowChanged = false;
+    store.putOwnedRelic = async (...args) => {
+      const updated = await store.updateRelic(RELIC_ID, (row) => ({
+        ...row,
+        expiresAt: NOW + DAY,
+      }));
+      rowChanged = updated?.expiresAt === NOW + DAY;
+      await writeIndex(...args);
+    };
+
+    const response = await reissue();
+    expect(response.status).toBe(200);
+    expect(rowChanged).toBe(true);
+    const repaired = gcs.objects.get(indexName);
+    expect(repaired).toBeDefined();
+    expect(repaired?.customTime).toBeUndefined();
+    expect(JSON.parse(repaired?.body ?? 'null')).toEqual(ownedRelic());
+    const body = (await response.json()) as Record<string, unknown>;
+    expect(body['relic_expires_at']).toBeNull();
+  });
+
   test("a private relic's objects carry its expiry as customTime, so the lifecycle rule can erase them", async () => {
     const gcs = fakeGcs();
     const store = storeOn(gcs);

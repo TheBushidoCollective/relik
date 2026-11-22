@@ -21,6 +21,7 @@ type File = {
   comment?: string;
   descriptor?: boolean;
   deflated?: boolean;
+  compressed?: Uint8Array;
 };
 function zip(files: File[], archiveComment = ''): Uint8Array {
   const encoder = new TextEncoder();
@@ -32,7 +33,8 @@ function zip(files: File[], archiveComment = ''): Uint8Array {
       data = encoder.encode(file.data ?? ''),
       extra = file.extra ?? new Uint8Array(),
       comment = encoder.encode(file.comment ?? '');
-    const compressed = file.deflated ? deflateRawSync(data) : data;
+    const compressed =
+      file.compressed ?? (file.deflated ? deflateRawSync(data) : data);
     const checksum = crc32(data);
     const local = new Uint8Array(
         30 +
@@ -101,6 +103,18 @@ function zip(files: File[], archiveComment = ''): Uint8Array {
   out.set(archiveCommentBytes, pos + 22);
   return out;
 }
+/** A valid raw DEFLATE stream of empty stored blocks, ending with BFINAL. */
+function emptyStoredBlocks(count: number): Uint8Array {
+  const bytes = new Uint8Array(count * 5);
+  for (let i = 0; i < count; i++) {
+    const offset = i * 5;
+    bytes[offset] = i === count - 1 ? 1 : 0;
+    bytes[offset + 3] = 255;
+    bytes[offset + 4] = 255;
+  }
+  return bytes;
+}
+
 async function reason(bytes: Uint8Array, custom = limits) {
   const result = await indexZip(bytes, custom);
   return result.ok ? 'accepted' : result.reason;
@@ -425,5 +439,236 @@ describe('general ZIP index', () => {
     const read = await result.index.read('folder');
     expect(read.ok).toBe(false);
     if (!read.ok) expect(read.reason).toBe('not-a-file');
+  });
+  test('bounds compressed writes and stops inflation when the declared size is exceeded', async () => {
+    const archive = zip([
+      { name: 'bomb.txt', data: 'x'.repeat(20 * 1024 * 1024), deflated: true },
+    ]);
+    const view = new DataView(archive.buffer);
+    const central = view.getUint32(archive.length - 6, true);
+    view.setUint32(22, 4096, true);
+    view.setUint32(central + 24, 4096, true);
+
+    const original = globalThis.DecompressionStream;
+    const writes: number[] = [];
+    let outstanding = 0;
+    let mostOutstanding = 0;
+    globalThis.DecompressionStream = new Proxy(original, {
+      construct(target, args) {
+        const stream = Reflect.construct(target, args) as DecompressionStream;
+        const writer = stream.writable.getWriter();
+        return {
+          readable: stream.readable,
+          writable: {
+            getWriter() {
+              return {
+                get ready() {
+                  return writer.ready;
+                },
+                write(chunk: BufferSource) {
+                  writes.push(chunk.byteLength);
+                  outstanding++;
+                  mostOutstanding = Math.max(mostOutstanding, outstanding);
+                  return writer.write(chunk).finally(() => {
+                    outstanding--;
+                  });
+                },
+                close: () => writer.close(),
+                abort: (reason: unknown) => writer.abort(reason),
+              };
+            },
+          },
+        };
+      },
+    });
+    try {
+      const indexed = await indexZip(archive, limits);
+      expect(indexed.ok).toBe(true);
+      if (!indexed.ok) throw new Error(indexed.message);
+      expect(await indexed.index.read('bomb.txt')).toEqual({
+        ok: false,
+        reason: 'entry-too-large',
+        message: 'Inflated entry exceeds its bound',
+      });
+      expect(writes.length).toBeGreaterThan(0);
+      expect(Math.max(...writes)).toBeLessThanOrEqual(16 * 1024);
+      expect(mostOutstanding).toBe(1);
+      expect(writes.reduce((sum, size) => sum + size, 0)).toBeLessThanOrEqual(
+        32 * 1024
+      );
+    } finally {
+      globalThis.DecompressionStream = original;
+    }
+  });
+  test('reads a valid deflated entry with the default inflater', async () => {
+    const indexed = await indexZip(
+      zip([{ name: 'a.txt', data: 'hello', deflated: true }]),
+      limits
+    );
+    expect(indexed.ok).toBe(true);
+    if (!indexed.ok) throw new Error(indexed.message);
+    expect(await indexed.index.read('a.txt')).toEqual({
+      ok: true,
+      bytes: new TextEncoder().encode('hello'),
+    });
+  });
+
+  test('cancels a default inflater without waiting for its pending write', async () => {
+    const archive = zip([{ name: 'a.txt', data: 'hello', deflated: true }]);
+    const controller = new AbortController();
+    const started = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const original = globalThis.DecompressionStream;
+    let writes = 0;
+    globalThis.DecompressionStream = new Proxy(original, {
+      construct(target, args) {
+        const stream = Reflect.construct(target, args) as DecompressionStream;
+        const writer = stream.writable.getWriter();
+        return {
+          readable: stream.readable,
+          writable: new WritableStream<BufferSource>({
+            async write(chunk) {
+              writes++;
+              started.resolve();
+              await release.promise;
+              await writer.write(chunk);
+            },
+            async close() {
+              await writer.close();
+            },
+            async abort(reason) {
+              await writer.abort(reason);
+            },
+          }),
+        };
+      },
+    });
+    try {
+      const indexed = await indexZip(
+        archive,
+        limits,
+        undefined,
+        controller.signal
+      );
+      expect(indexed.ok).toBe(true);
+      if (!indexed.ok) throw new Error(indexed.message);
+      const read = indexed.index.read('a.txt');
+      await started.promise;
+      controller.abort();
+      expect(await read).toEqual({
+        ok: false,
+        reason: 'corrupt',
+        message: 'ZIP operation aborted',
+      });
+      expect(writes).toBe(1);
+    } finally {
+      release.resolve();
+      globalThis.DecompressionStream = original;
+    }
+  });
+  test('feeds empty-output DEFLATE in bounded chunks rather than byte writes', async () => {
+    const compressed = emptyStoredBlocks(16_000);
+    const archive = zip([{ name: 'empty', deflated: true, compressed }]);
+    const original = globalThis.DecompressionStream;
+    const sizes: number[] = [];
+    globalThis.DecompressionStream = new Proxy(original, {
+      construct(target, args) {
+        const stream = Reflect.construct(target, args) as DecompressionStream;
+        const writer = stream.writable.getWriter();
+        return {
+          readable: stream.readable,
+          writable: {
+            getWriter() {
+              return {
+                get ready() {
+                  return writer.ready;
+                },
+                write(chunk: BufferSource) {
+                  sizes.push(chunk.byteLength);
+                  return writer.write(chunk);
+                },
+                close: () => writer.close(),
+                abort: (reason: unknown) => writer.abort(reason),
+              };
+            },
+          },
+        };
+      },
+    });
+    try {
+      const indexed = await indexZip(archive, limits);
+      expect(indexed.ok).toBe(true);
+      if (!indexed.ok) throw new Error(indexed.message);
+      expect(await indexed.index.read('empty')).toEqual({
+        ok: true,
+        bytes: new Uint8Array(),
+      });
+      expect(sizes).toHaveLength(Math.ceil(compressed.length / (16 * 1024)));
+      expect(Math.max(...sizes)).toBeLessThanOrEqual(16 * 1024);
+    } finally {
+      globalThis.DecompressionStream = original;
+    }
+  });
+
+  test('yields during a long empty-output inflate so cancellation runs', async () => {
+    const compressed = emptyStoredBlocks(100_000);
+    const archive = zip([{ name: 'empty', deflated: true, compressed }]);
+    const controller = new AbortController();
+    const original = globalThis.DecompressionStream;
+    const result =
+      Promise.withResolvers<ReadableStreamReadResult<Uint8Array>>();
+    let writes = 0;
+    globalThis.DecompressionStream = new Proxy(original, {
+      construct() {
+        return {
+          readable: {
+            getReader() {
+              return {
+                read: () => result.promise,
+                async cancel() {
+                  result.resolve({ done: true, value: undefined });
+                },
+              };
+            },
+          },
+          writable: {
+            getWriter() {
+              return {
+                ready: Promise.resolve(),
+                async write() {
+                  writes++;
+                },
+                async close() {
+                  result.resolve({ done: true, value: undefined });
+                },
+                async abort() {},
+              };
+            },
+          },
+        };
+      },
+    });
+    try {
+      const indexed = await indexZip(
+        archive,
+        { ...limits, maxArchiveBytes: 1_000_000 },
+        undefined,
+        controller.signal
+      );
+      expect(indexed.ok).toBe(true);
+      if (!indexed.ok) throw new Error(indexed.message);
+      const pending = indexed.index.read('empty');
+      // A real task boundary is required to detect event-loop starvation.
+      setTimeout(() => controller.abort(), 0);
+      expect(await pending).toEqual({
+        ok: false,
+        reason: 'corrupt',
+        message: 'ZIP operation aborted',
+      });
+      expect(writes).toBeGreaterThan(0);
+      expect(writes).toBeLessThan(Math.ceil(compressed.length / (16 * 1024)));
+    } finally {
+      globalThis.DecompressionStream = original;
+    }
   });
 });

@@ -14,6 +14,7 @@ import type {
   PasskeyDescriptorJSON,
   RequestOptionsJSON,
 } from '@relic/format';
+import { normalizeEmail } from '@relic/format';
 import {
   type AttestationBundleJSON,
   type AttestPurpose,
@@ -70,6 +71,12 @@ export interface UnlockedIdentity {
   sign(bytes: Uint8Array): Promise<Uint8Array>;
 }
 
+/** The private owner displayed and accepted during publish review. */
+export interface ReviewedPrivateOwner {
+  readonly identityId: string;
+  readonly email: string;
+}
+
 /** A statement to sign, as the server will rebuild and verify it. */
 export interface StatementDraft {
   readonly kind: StatementKind;
@@ -81,6 +88,7 @@ export interface AttestRequest {
   readonly purpose: AttestPurpose;
   readonly relicId?: string;
   readonly credentialId?: string;
+  readonly reviewedOwner?: ReviewedPrivateOwner;
   build(identityId: string): readonly StatementDraft[];
 }
 
@@ -241,15 +249,52 @@ function isIdentityState(value: unknown): value is IdentityStateJSON {
 
 /** The identity this session holds, its bound passkeys and their bundles. */
 export async function loadIdentityState(
-  deps: ViewerDeps
+  deps: ViewerDeps,
+  signal?: AbortSignal
 ): Promise<IdentityStateJSON> {
-  const response = await deps.fetch(`${deps.serviceOrigin}/api/identity`);
+  const response = await deps.fetch(`${deps.serviceOrigin}/api/identity`, {
+    ...(signal === undefined ? {} : { signal }),
+  });
   if (!response.ok) throw await requestFailure(response);
   const body: unknown = await response.json();
   if (!isIdentityState(body)) {
     throw new PrivateRequestError('invalid_identity_state', response.status);
   }
   return body;
+}
+
+/** Refuse a private publish if the signed-in owner differs from the review. */
+export async function loadReviewedIdentity(
+  deps: ViewerDeps,
+  owner: ReviewedPrivateOwner,
+  signal?: AbortSignal
+): Promise<IdentityStateJSON> {
+  let state: IdentityStateJSON;
+  try {
+    state = await loadIdentityState(deps, signal);
+  } catch (error) {
+    if (
+      error instanceof PrivateRequestError &&
+      ([401, 403, 404].includes(error.status) ||
+        error.code === 'invalid_identity_state')
+    )
+      throw new PrivateRequestError('private_owner_changed', 0);
+    throw error;
+  }
+  signal?.throwIfAborted();
+  const identity = state.identity;
+  if (
+    identity === null ||
+    !owner.identityId ||
+    !owner.email ||
+    identity.identity_id !== owner.identityId ||
+    typeof identity.email !== 'string' ||
+    !identity.email ||
+    normalizeEmail(identity.email) !== normalizeEmail(owner.email)
+  ) {
+    throw new PrivateRequestError('private_owner_changed', 0);
+  }
+  return state;
 }
 
 export function randomBase64url(bytes: number): string {
@@ -487,7 +532,10 @@ export async function attest(
   request: AttestRequest,
   signal?: AbortSignal
 ): Promise<{ identity: UnlockedIdentity; bundle: AttestationBundleJSON }> {
-  const state = await loadIdentityState(deps);
+  const state =
+    request.reviewedOwner === undefined
+      ? await loadIdentityState(deps, signal)
+      : await loadReviewedIdentity(deps, request.reviewedOwner, signal);
   const identity = state.identity;
   if (identity === null) throw new NoIdentityError('identity_required');
   const issued = await issueNonce(

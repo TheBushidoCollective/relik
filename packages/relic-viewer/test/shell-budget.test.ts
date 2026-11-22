@@ -435,31 +435,40 @@ describe('the app shell', () => {
     }
   });
 
-  test('keeps the private reader out of the shell, in exactly one lazy chunk', async () => {
+  test('keeps private reader code out of the eagerly imported shell graph', async () => {
     const built = Bun.spawnSync([process.execPath, 'build.ts'], {
       cwd: pkgDir,
     });
     expect(built.exitCode).toBe(0);
-
-    // The private-share copy and the owner pin storage key. The shell must
-    // carry none of them, and exactly one lazy chunk must carry them: the
-    // reader that loads on a private relic.
+    // Publisher and reader share private-key code in potentially multiple
+    // lazy chunks. None may enter the shell's static dependency graph.
     const markers = [
       'Read this fingerprint',
       'private-share key',
       'relic:owner-pins',
     ];
-    const shell = await Bun.file(`${pkgDir}dist/viewer.js`).text();
-    expect(markers.filter((marker) => shell.includes(marker))).toEqual([]);
-
-    const chunks = [...new Bun.Glob('chunk-*.js').scanSync(`${pkgDir}dist`)];
-    const carriers: string[] = [];
-    for (const chunk of chunks) {
-      const content = await Bun.file(`${pkgDir}dist/${chunk}`).text();
-      if (markers.some((marker) => content.includes(marker))) {
-        carriers.push(chunk);
+    const pending = ['viewer.js'];
+    const visited = new Set<string>();
+    while (pending.length > 0) {
+      const name = pending.pop();
+      if (name === undefined || visited.has(name)) continue;
+      visited.add(name);
+      const content = await Bun.file(`${pkgDir}dist/${name}`).text();
+      expect(markers.filter((marker) => content.includes(marker))).toEqual([]);
+      for (const match of content.matchAll(
+        /\b(?:import|export)\s*(?:(?:[^;"']*?)\sfrom\s*)?["']\.\/([^"']+)["']/g
+      )) {
+        if (match[1] !== undefined) pending.push(match[1]);
       }
     }
-    expect(carriers).toHaveLength(1);
+    const chunks = [...new Bun.Glob('chunk-*.js').scanSync(`${pkgDir}dist`)];
+    let lazyCarrier = false;
+    for (const chunk of chunks) {
+      if (visited.has(chunk)) continue;
+      const content = await Bun.file(`${pkgDir}dist/${chunk}`).text();
+      if (markers.some((marker) => content.includes(marker)))
+        lazyCarrier = true;
+    }
+    expect(lazyCarrier).toBe(true);
   });
 });

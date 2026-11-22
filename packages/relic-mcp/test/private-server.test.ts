@@ -304,6 +304,7 @@ describe('the private publish against the real service', () => {
     );
     const body = (await response.json()) as Record<string, unknown>;
     expect(body['private_shares']).toEqual({
+      browser_owner_publish: true,
       default_ttl_days: 30,
       max_ttl_days: 365,
     });

@@ -19,6 +19,7 @@ import {
   type PublishSource,
   publishFile,
 } from '../src/publish.ts';
+import { preparePublishSource } from '../src/publish-source.ts';
 import { load, type ViewerDeps } from '../src/viewer.ts';
 
 const SERVICE = 'https://relic.example';
@@ -32,7 +33,8 @@ let sent: Array<{ path: string; body: string }>;
 let uploadMode: number | 'throw' | 'corrupt';
 
 function build(config: AppOptions = {}): void {
-  storage = new MemoryStorage();
+  // This host is intercepted by the in-memory upload and fetch seams below.
+  storage = new MemoryStorage('https://storage.googleapis.com');
   sent = [];
   uploadMode = 200;
   app = createApp({
@@ -55,7 +57,9 @@ function publishDeps(): PublishDeps {
     }) as typeof globalThis.fetch,
     upload: async (url, body, onProgress) => {
       if (uploadMode === 'throw') throw new Error('network down');
-      onProgress(body.length, body.length);
+      const bytes =
+        body instanceof Blob ? new Uint8Array(await body.arrayBuffer()) : body;
+      onProgress(bytes.length, bytes.length);
       const status = typeof uploadMode === 'number' ? uploadMode : 200;
       if (status >= 200 && status < 300) {
         const id = new URL(url).pathname
@@ -64,7 +68,7 @@ function publishDeps(): PublishDeps {
         // A byte flipped in transit, which only the digest check can see.
         storage.put(
           id,
-          uploadMode === 'corrupt' ? body.map((b) => b ^ 1) : body
+          uploadMode === 'corrupt' ? bytes.map((b) => b ^ 1) : bytes
         );
       }
       return status;
@@ -136,6 +140,91 @@ describe('publishing from the page', () => {
     const read = await state.view.content.readWhole(1024 * 1024);
     expect([...(read ?? [])]).toEqual([...content]);
   });
+
+  test('uses the selected encrypted filename, lifetime and decisions setting', async () => {
+    const content = utf8('report contents');
+    const result = await publishFile(
+      source('original.txt', content),
+      { filename: 'renamed.txt', title: '', ttlDays: 7, decisions: true },
+      publishDeps()
+    );
+    expect(result.relicExpiresAt).toBe('2026-08-09T12:00:00.000Z');
+    const row = await app.store.getRelic(result.relicId);
+    expect(row?.decisionsOpen).toBe(true);
+    const grant = sent.find((request) => request.path === '/api/grant');
+    expect(grant?.body).not.toContain('renamed.txt');
+    const state = await load(
+      result.relicId,
+      viewerDeps(new URL(result.url).hash)
+    );
+    expect(state.kind).toBe('ready');
+    if (state.kind !== 'ready') throw new Error('published relic did not open');
+    expect(state.view.filename).toBe('renamed.txt');
+    expect(await state.view.content.readWhole(1024)).toEqual(content);
+  });
+
+  test('publishes the reviewed source without rereading the selected file', async () => {
+    const content = utf8('reviewed bytes');
+    const reviewed = await preparePublishSource(
+      new File([content], 'source.txt'),
+      {
+        filename: 'reviewed.txt',
+      }
+    );
+    const result = await publishFile(
+      {
+        name: 'source.txt',
+        size: content.length,
+        read: async () => {
+          throw new Error('reviewed source must not be read twice');
+        },
+      },
+      { title: '', prepared: reviewed },
+      publishDeps()
+    );
+    const state = await load(
+      result.relicId,
+      viewerDeps(new URL(result.url).hash)
+    );
+    expect(state.kind).toBe('ready');
+    if (state.kind !== 'ready') throw new Error('published relic did not open');
+    expect(state.view.filename).toBe('reviewed.txt');
+    expect(await state.view.content.readWhole(1024)).toEqual(content);
+  });
+
+  for (const field of ['target', 'id', 'method', 'length'] as const) {
+    test(`refuses a grant with a mismatched ${field} before uploading`, async () => {
+      const base = publishDeps();
+      let uploads = 0;
+      const deps: PublishDeps = {
+        ...base,
+        fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+          const response = await base.fetch(input, init);
+          if (!String(input).endsWith('/api/grant')) return response;
+          const grant = (await response.json()) as Record<string, unknown>;
+          if (field === 'target')
+            grant['upload_url'] = 'https://other.invalid/upload/file';
+          if (field === 'id') grant['relic_id'] = 'wrong';
+          if (field === 'method') grant['upload_method'] = 'GET';
+          if (field === 'length')
+            grant['upload_headers'] = { 'content-length': '1' };
+          return Response.json(grant);
+        }) as typeof globalThis.fetch,
+        upload: async () => {
+          uploads++;
+          return 200;
+        },
+      };
+      const error = await publishFile(
+        source('a.txt', utf8('a')),
+        defaults,
+        deps
+      ).catch((value) => value);
+      expect(error).toBeInstanceOf(PublishFailure);
+      expect(error.code).toBe('service_response_unusable');
+      expect(uploads).toBe(0);
+    });
+  }
 
   test('the key never crosses, and the filename crosses only as the title the publisher kept', async () => {
     const result = await publishFile(

@@ -104,6 +104,8 @@ const STATEMENT_SHA256: { readonly [K in StatementKind]: string } = {
     '1ad3d9327bb97b46beeaa3554045fe7fef66e115b79149ab6bfed4dcb2c7df63',
   private_publish:
     '8b28eacc8c614029e6c3d3d4f496a3a2453a4655f598e4c527ae591fee743f5e',
+  owner_publish:
+    '9783c6c37e58b0e2cbc853716b9644cb35d7a26d25a38aee1c382013b5cea508',
 };
 
 const H = KAT.identityId;
@@ -223,6 +225,14 @@ const SAMPLES: { readonly [K in StatementKind]: StatementMap[K] } = {
     relic_id: RELIC,
     ttl_days: 30,
   },
+  owner_publish: {
+    at: 1767225600016,
+    body_sha256:
+      '44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',
+    challenge_nonce: NONCE_B64,
+    owner_identity_id: H,
+    relic_id: RELIC,
+  },
 };
 
 const sha256Hex = async (bytes: Uint8Array): Promise<string> =>
@@ -308,7 +318,7 @@ describe('statementBytes', () => {
   test('covers every statement kind in the contract', () => {
     const expected: string[] = Object.keys(STATEMENT_SHA256).sort();
     expect([...STATEMENT_KINDS].map(String).sort()).toEqual(expected);
-    expect(STATEMENT_KINDS.length).toBe(16);
+    expect(STATEMENT_KINDS.length).toBe(17);
   });
 });
 

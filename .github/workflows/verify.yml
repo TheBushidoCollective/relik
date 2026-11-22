@@ -122,6 +122,10 @@ jobs:
           env -u DISPLAY -u WAYLAND_DISPLAY RELIC_CHROME_PATH="$(command -v google-chrome)" bun test packages/relic-viewer/test/epub-sanitize.test.ts
       - name: Multi-file path
         run: env -u DISPLAY -u WAYLAND_DISPLAY RELIC_REQUIRE_CHROME=1 RELIC_CHROME_PATH="$(command -v google-chrome)" bun packages/relic-mcp/test/multi-file-path.ts
+      - name: Browser publisher options path
+        run: env -u DISPLAY -u WAYLAND_DISPLAY RELIC_CHROME_PATH="$(command -v google-chrome)" bun packages/relic-mcp/test/browser-publish-path.ts
+      - name: Browser private publisher path
+        run: env -u DISPLAY -u WAYLAND_DISPLAY RELIC_CHROME_PATH="$(command -v google-chrome)" bun packages/relic-mcp/test/browser-private-publish-path.ts
       - name: Suggestion surface browser tests
         run: |
           RELIC_REQUIRE_CHROME=1 RELIC_CHROME_PATH="$(command -v google-chrome)" env -u DISPLAY -u WAYLAND_DISPLAY bun test \

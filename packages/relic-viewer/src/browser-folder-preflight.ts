@@ -3,121 +3,411 @@ import {
   chooseDefaultEntry,
   compareEntryPaths,
   deriveRendererClass,
-  folderPlaintext,
+  encodeManifest,
+  encryptFolderStream,
+  foldEntryPath,
+  encryptedSize,
   guessMimetype,
+  isRenderable,
   MAX_ENTRIES,
+  MAX_FILENAME_BYTES,
+  MAX_MANIFEST_BYTES,
   normaliseEntryPath,
-  RENDERABLE_CLASSES,
-  type FolderByteSource,
+  type RendererClass,
 } from '@relic/format';
-import { BROWSER_PUBLISH_LIMIT_BYTES } from './publish.ts';
 
-export interface BrowserOmission {
+/** The browser caps both the selected input and the plaintext it will publish. */
+export const BROWSER_PUBLISH_LIMIT_BYTES = 100_000_000;
+
+/** Reserved metadata is excluded by segment, identically for folders and ZIPs. */
+export function reservedSegmentReason(name: string): string | undefined {
+  const folded = foldEntryPath(name);
+  if (folded === '.git') return 'git_metadata';
+  if (folded === 'node_modules') return 'node_modules';
+  if (
+    folded === '.ds_store' ||
+    folded === '__macosx' ||
+    folded.startsWith('._')
+  )
+    return 'os_metadata';
+  return undefined;
+}
+
+export function throwIfAborted(signal?: AbortSignal): void {
+  signal?.throwIfAborted();
+}
+
+/** Stop waiting on an in-flight read, even when its browser callback never fires. */
+export function abortable<T>(
+  pending: Promise<T>,
+  signal?: AbortSignal
+): Promise<T> {
+  if (!signal) return pending;
+  const { promise, resolve, reject } = Promise.withResolvers<T>();
+  let settled = false;
+  const abort = () => {
+    if (settled) return;
+    settled = true;
+    signal.removeEventListener('abort', abort);
+    reject(signal.reason);
+  };
+  signal.addEventListener('abort', abort, { once: true });
+  void pending.then(
+    (value) => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener('abort', abort);
+      resolve(value);
+    },
+    (error: unknown) => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener('abort', abort);
+      reject(error);
+    }
+  );
+  if (signal.aborted) abort();
+  return promise;
+}
+
+export function rethrowAbort(error: unknown, signal?: AbortSignal): void {
+  throwIfAborted(signal);
+  if (
+    typeof error === 'object' &&
+    error !== null &&
+    'name' in error &&
+    error.name === 'AbortError'
+  )
+    throw error;
+}
+const encoder = new TextEncoder();
+
+export type PublishSourceFailureCode =
+  | 'source_unreadable'
+  | 'size_over_cap'
+  | 'filename_too_long'
+  | 'zip_not_supported'
+  | 'zip_invalid'
+  | 'folder_empty'
+  | 'path_collision'
+  | 'too_many_files'
+  | 'manifest_too_large'
+  | 'open_first_not_found'
+  | 'encryption_failed';
+
+export class PublishSourceFailure extends Error {
+  override readonly name = 'PublishSourceFailure';
+
+  constructor(
+    readonly code: PublishSourceFailureCode,
+    message: string,
+    readonly details: Readonly<Record<string, unknown>> = {}
+  ) {
+    super(message);
+  }
+}
+
+/** Bytes available for an inert cover renderer, named from the original input. */
+export interface PublishPreviewSource {
+  readonly name: string;
+  readonly mimetype: string;
+  readonly size: number;
+  /** Returns undefined without reading the entry when it exceeds maxBytes. */
+  read(maxBytes: number): Promise<Blob | undefined>;
+}
+
+export interface PublishFolderEntry {
+  readonly path: string;
+  readonly size: number;
+  readonly mimetype: string;
+  readonly rendererClass: RendererClass;
+}
+
+export interface PublishFolderOmission {
   readonly path: string;
   readonly reason: string;
 }
+
+interface ReviewedSourceBase {
+  readonly filename: string;
+  readonly rendererClass: RendererClass;
+  /** The exact grant size: file bytes, or folder manifest plus entry bytes. */
+  readonly plaintextLength: number;
+  readonly preview: PublishPreviewSource;
+  encrypt(key: Uint8Array): Promise<Uint8Array | Blob>;
+}
+
+export interface ReviewedFileSource extends ReviewedSourceBase {
+  readonly shape: 'file';
+  encrypt(key: Uint8Array): Promise<Uint8Array>;
+}
+
+export interface ReviewedFolderSource extends ReviewedSourceBase {
+  readonly shape: 'folder';
+  readonly source: 'zip' | 'directory';
+  readonly rendererClass: 'folder';
+  readonly entries: readonly PublishFolderEntry[];
+  readonly defaultEntry: string;
+  readonly omissions: readonly PublishFolderOmission[];
+  encrypt(key: Uint8Array): Promise<Blob>;
+  withSelection(filename: string, openFirst?: string): ReviewedFolderSource;
+}
+
+export type ReviewedPublishSource = ReviewedFileSource | ReviewedFolderSource;
+export type BrowserOmission = PublishFolderOmission;
+export type BrowserFolder = ReviewedFolderSource;
+
 export interface BrowserFolderFile {
   readonly path: string;
   readonly size: number;
   read(): Promise<Uint8Array>;
   chunks(): AsyncIterable<Uint8Array>;
 }
-export interface BrowserFolder {
-  readonly name: string;
-  readonly source: 'zip' | 'directory';
-  readonly entries: readonly {
-    path: string;
-    mimetype: string;
-    bytes: FolderByteSource;
-  }[];
-  readonly defaultIndex: number;
-  readonly totalBytes: number;
-  readonly contentLength: number;
-  readonly leftOut: readonly BrowserOmission[];
+
+export function requireBoundedSize(size: number): void {
+  if (
+    !Number.isSafeInteger(size) ||
+    size < 0 ||
+    size > BROWSER_PUBLISH_LIMIT_BYTES
+  ) {
+    throw new PublishSourceFailure(
+      'size_over_cap',
+      'This source exceeds the browser publishing size limit.',
+      {
+        declared_size_bytes: size,
+        size_limit_bytes: BROWSER_PUBLISH_LIMIT_BYTES,
+      }
+    );
+  }
 }
 
+export function checkFilename(filename: string): void {
+  const bytes = encoder.encode(filename).length;
+  if (bytes > MAX_FILENAME_BYTES) {
+    throw new PublishSourceFailure(
+      'filename_too_long',
+      `The filename is ${bytes} UTF-8 bytes; the limit is ${MAX_FILENAME_BYTES}.`,
+      { filename_bytes: bytes, limit: MAX_FILENAME_BYTES }
+    );
+  }
+}
+
+export function checkPreviewLimit(maxBytes: number): void {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) {
+    throw new RangeError(
+      'Preview size limit must be a nonnegative safe integer'
+    );
+  }
+}
+
+/** Normalize, classify and validate either input adapter before any upload. */
 export async function prepareBrowserFolder(
   name: string,
   source: 'zip' | 'directory',
   files: BrowserFolderFile[],
-  leftOut: BrowserOmission[]
-): Promise<BrowserFolder> {
+  leftOut: BrowserOmission[],
+  options: { readonly openFirst?: string; readonly signal?: AbortSignal } = {}
+): Promise<ReviewedFolderSource> {
+  const { openFirst, signal } = options;
+  throwIfAborted(signal);
   const fix = source === 'zip' ? ' Publish as one file instead.' : '';
+  checkFilename(name);
   const normalized = files.map((file) => {
+    throwIfAborted(signal);
     const result = normaliseEntryPath(file.path);
-    if (!result.ok)
-      throw new Error(
-        `Invalid file path ${file.path}: ${result.rule.replaceAll('_', ' ')} (${result.rule}).${fix}`
+    if (!result.ok) {
+      throw new PublishSourceFailure(
+        source === 'zip' ? 'zip_invalid' : 'source_unreadable',
+        `Invalid file path ${file.path}: ${result.rule.replaceAll('_', ' ')} (${result.rule}).${fix}`,
+        { name: file.path, rule: result.rule }
       );
+    }
+    requireBoundedSize(file.size);
     return { ...file, path: result.path };
   });
   normalized.sort((a, b) => compareEntryPaths(a.path, b.path));
-  if (normalized.length > MAX_ENTRIES)
-    throw new Error(`Too many files. The limit is ${MAX_ENTRIES}.${fix}`);
-  if (!normalized.length)
-    throw new Error(
-      `${leftOut.length ? 'All files were excluded' : 'The folder is empty'}.${fix}`
+  if (normalized.length > MAX_ENTRIES) {
+    throw new PublishSourceFailure(
+      'too_many_files',
+      `Too many files. The limit is ${MAX_ENTRIES}.${fix}`,
+      { file_count: normalized.length, limit: MAX_ENTRIES }
     );
+  }
+  if (!normalized.length) {
+    throw new PublishSourceFailure(
+      'folder_empty',
+      `${leftOut.length ? 'All files were excluded' : 'The folder is empty'}.${fix}`,
+      { omissions: leftOut }
+    );
+  }
   const checked = checkEntrySet(normalized.map((file) => file.path));
-  if (!checked.ok)
-    throw new Error(
-      `File paths collide (${checked.rule}): ${checked.paths.join(', ')}.${fix}`
+  if (!checked.ok) {
+    throw new PublishSourceFailure(
+      'path_collision',
+      `File paths collide (${checked.rule}): ${checked.paths.join(', ')}.${fix}`,
+      { rule: checked.rule, paths: checked.paths }
     );
+  }
   const totalBytes = normalized.reduce((sum, file) => sum + file.size, 0);
-  if (
-    !Number.isSafeInteger(totalBytes) ||
-    totalBytes > BROWSER_PUBLISH_LIMIT_BYTES
-  )
-    throw new Error(`Files exceed this page's 100 MB limit.${fix}`);
-  const entries: { path: string; mimetype: string; bytes: FolderByteSource }[] =
-    [];
-  const renderable: { path: string; renderable: boolean }[] = [];
+  const minimumManifestBytes =
+    4 +
+    normalized.reduce(
+      (sum, file) => sum + 12 + encoder.encode(file.path).length,
+      0
+    );
+  if (minimumManifestBytes > MAX_MANIFEST_BYTES) {
+    throw new PublishSourceFailure(
+      'manifest_too_large',
+      `The file list exceeds the manifest limit.${fix}`,
+      { limit: MAX_MANIFEST_BYTES }
+    );
+  }
+  requireBoundedSize(totalBytes + minimumManifestBytes);
+
+  const entries: PublishFolderEntry[] = [];
   for (const file of normalized) {
-    let sample: Uint8Array;
+    let bytes: Uint8Array;
     try {
-      sample = await file.read();
+      throwIfAborted(signal);
+      bytes = await abortable(file.read(), signal);
+      throwIfAborted(signal);
     } catch (error) {
-      throw new Error(
+      rethrowAbort(error, signal);
+      if (error instanceof PublishSourceFailure) throw error;
+      throw new PublishSourceFailure(
+        'source_unreadable',
         `Could not read ${file.path}: ${error instanceof Error ? error.message : 'file unavailable'}.${fix}`
       );
     }
+    if (!(bytes instanceof Uint8Array) || bytes.length !== file.size) {
+      throw new PublishSourceFailure(
+        'source_unreadable',
+        `The selected file ${file.path} changed while it was read.${fix}`
+      );
+    }
     const basename = file.path.split('/').pop() ?? file.path;
-    const cls = deriveRendererClass(sample, basename);
-    renderable.push({
-      path: file.path,
-      renderable: RENDERABLE_CLASSES.includes(cls),
-    });
+    const rendererClass = deriveRendererClass(bytes, basename);
     entries.push({
       path: file.path,
-      mimetype: guessMimetype(basename, cls),
-      bytes: { size: file.size, chunks: file.chunks },
+      size: file.size,
+      mimetype: guessMimetype(basename, rendererClass),
+      rendererClass,
     });
   }
-  const selected = chooseDefaultEntry(renderable);
-  if (!selected.ok) throw new Error(`Could not choose the first file.${fix}`);
-  let contentLength: number;
-  try {
-    contentLength = folderPlaintext({
-      name,
-      defaultIndex: selected.index,
+  const choices = entries.map((entry) => ({
+    path: entry.path,
+    renderable: isRenderable(entry.rendererClass),
+  }));
+  const sources = entries.map((entry, index) => ({
+    path: entry.path,
+    mimetype: entry.mimetype,
+    bytes: {
+      size: entry.size,
+      chunks: () => normalized[index]!.chunks(),
+    },
+  }));
+
+  const withSelection = (
+    filename: string,
+    openFirst?: string
+  ): ReviewedFolderSource => {
+    checkFilename(filename);
+    const selected = chooseDefaultEntry(choices, openFirst);
+    if (!selected.ok) {
+      throw new PublishSourceFailure(
+        'open_first_not_found',
+        `The selected default entry is not in this ${source === 'zip' ? 'ZIP' : 'folder'}.`,
+        { open_first: openFirst }
+      );
+    }
+    let manifest: Uint8Array;
+    try {
+      manifest = encodeManifest(
+        selected.index,
+        entries.map((entry) => ({
+          path: entry.path,
+          mimetype: entry.mimetype,
+          length: entry.size,
+        }))
+      );
+    } catch (error) {
+      throw new PublishSourceFailure(
+        'manifest_too_large',
+        `Cannot publish the file list: ${error instanceof Error ? error.message : 'invalid folder'}.${fix}`,
+        { limit: MAX_MANIFEST_BYTES }
+      );
+    }
+    const plaintextLength = totalBytes + manifest.length;
+    requireBoundedSize(plaintextLength);
+    const defaultEntry = entries[selected.index]!;
+    const selectedFile = normalized[selected.index]!;
+    return {
+      shape: 'folder',
+      source,
+      filename,
+      rendererClass: 'folder',
+      plaintextLength,
       entries,
-    }).header.contentLength;
-  } catch (error) {
-    throw new Error(
-      `Cannot publish the file list: ${error instanceof Error ? error.message : 'invalid folder'}.${fix}`
-    );
-  }
-  if (contentLength > BROWSER_PUBLISH_LIMIT_BYTES)
-    throw new Error(
-      `Files and their list exceed this page's 100 MB limit.${fix}`
-    );
-  return {
-    name,
-    source,
-    entries,
-    defaultIndex: selected.index,
-    totalBytes,
-    contentLength,
-    leftOut,
+      defaultEntry: defaultEntry.path,
+      omissions: leftOut,
+      withSelection,
+      preview: {
+        name: defaultEntry.path,
+        mimetype: defaultEntry.mimetype,
+        size: defaultEntry.size,
+        async read(maxBytes) {
+          checkPreviewLimit(maxBytes);
+          if (defaultEntry.size > maxBytes) return undefined;
+          const bytes = await selectedFile.read();
+          if (bytes.length !== defaultEntry.size) {
+            throw new PublishSourceFailure(
+              'source_unreadable',
+              `The selected file ${defaultEntry.path} changed while it was read.${fix}`
+            );
+          }
+          return new Blob([bytes as BlobPart], { type: defaultEntry.mimetype });
+        },
+      },
+      async encrypt(key) {
+        const reader = encryptFolderStream({
+          name: filename,
+          defaultIndex: selected.index,
+          entries: sources,
+          originalManifest: manifest,
+          key,
+        }).getReader();
+        const expected = encryptedSize(plaintextLength);
+        const chunks: BlobPart[] = [];
+        let length = 0;
+        try {
+          for (;;) {
+            const next = await reader.read();
+            if (next.done) break;
+            length += next.value.length;
+            if (length > expected) {
+              throw new PublishSourceFailure(
+                'encryption_failed',
+                'The encrypted folder exceeded its expected size.'
+              );
+            }
+            chunks.push(next.value as BlobPart);
+          }
+          if (length !== expected) {
+            throw new PublishSourceFailure(
+              'encryption_failed',
+              'The encrypted folder has an unexpected size.'
+            );
+          }
+          return new Blob(chunks, { type: 'application/octet-stream' });
+        } catch (error) {
+          await reader.cancel().catch(() => undefined);
+          throw error;
+        } finally {
+          reader.releaseLock();
+        }
+      },
+    };
   };
+  throwIfAborted(signal);
+  return withSelection(name, openFirst);
 }

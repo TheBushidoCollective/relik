@@ -714,7 +714,7 @@ describe('the shell', () => {
 
 /** The homepage's policy: its own script and stylesheet, and https for the upload. */
 const LANDING_CSP =
-  "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' https:; img-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'";
+  "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' https:; img-src 'self' blob:; manifest-src 'self'; base-uri 'none'; form-action 'none'";
 
 describe('reserved segments beat ids at the router', () => {
   for (const word of RESERVED_SEGMENTS) {
