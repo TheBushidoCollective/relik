@@ -347,6 +347,32 @@ describe('EPUB comparison', () => {
       { path: 'b.xhtml', label: 'Bravo', status: 'unchanged', changes: 0 },
     ]);
   });
+
+  test('a chapter that moved keeps its new place, and its blocks count as changes', () => {
+    const toc = [
+      { path: 'a.xhtml', label: 'Alpha' },
+      { path: 'b.xhtml', label: 'Bravo' },
+      { path: 'c.xhtml', label: 'Charlie' },
+    ];
+    const beforeBook = book(['a.xhtml', 'b.xhtml', 'c.xhtml'], toc);
+    const afterBook = book(['c.xhtml', 'a.xhtml', 'b.xhtml'], toc);
+    const before = [p('alpha', 0), p('bravo', 1), p('charlie', 2)];
+    const after = [p('charlie', 0), p('alpha', 1), p('bravo', 2)];
+    const diff = diffOf(before, after, epubDiffOptions(beforeBook, afterBook));
+    expect(diff.summary).toBe('1 added, 1 removed.');
+    const rows = chapterRows(
+      { blocks: before, book: beforeBook },
+      { blocks: after, book: afterBook },
+      diff
+    );
+    expect(
+      rows.map(({ path, status, changes }) => [path, status, changes])
+    ).toEqual([
+      ['c.xhtml', 'changed', 2],
+      ['a.xhtml', 'unchanged', 0],
+      ['b.xhtml', 'unchanged', 0],
+    ]);
+  });
 });
 
 describe('the edit cap', () => {
