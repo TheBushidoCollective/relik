@@ -26,9 +26,23 @@ export const RENDERED_DIFF_LIMIT_LABEL = DIFF_LIMIT_LABEL;
 /**
  * How a pair of versions is compared. `code` is the one text mode left: a
  * line diff is the visual form of code, because code is text. Everything
- * else is compared as it renders.
+ * else is compared as it renders. `docx`, `epub` and `xlsx` name the document
+ * and workbook comparisons, which no route maps to yet.
  */
-export type DiffMode = 'markdown' | 'code' | 'rendered' | 'image';
+export type DiffMode =
+  | 'markdown'
+  | 'code'
+  | 'rendered'
+  | 'image'
+  | 'docx'
+  | 'epub'
+  | 'xlsx';
+
+/** What a comparison needs from one version. A `ReadyView` has it. */
+export interface ComparableView {
+  readonly route: RenderRoute;
+  readonly documentKind?: 'docx' | 'epub' | undefined;
+}
 
 export interface DiffCeiling {
   readonly bytes: number;
@@ -256,8 +270,8 @@ export function createImageDiff(
  * refuses against a ceiling before it fetches anything, and that ceiling is
  * per mode.
  */
-export function diffModeForRoute(route: RenderRoute): DiffMode | undefined {
-  switch (route) {
+export function diffModeForView(view: ComparableView): DiffMode | undefined {
+  switch (view.route) {
     case 'markdown':
       return 'markdown';
     case 'code':
@@ -286,15 +300,13 @@ export function diffModeForRoute(route: RenderRoute): DiffMode | undefined {
  * Feeding one mode the other's bytes would produce a confident result with no
  * meaning, so a pair that disagrees is refused and the recipient is told why.
  */
-export function diffModeForRoutes(
-  currentRoute: RenderRoute,
-  historicalRoute: RenderRoute
+export function diffModeForViews(
+  current: ComparableView,
+  historical: ComparableView
 ): DiffMode | undefined {
-  const currentMode = diffModeForRoute(currentRoute);
+  const currentMode = diffModeForView(current);
   if (currentMode === undefined) return undefined;
-  return currentMode === diffModeForRoute(historicalRoute)
-    ? currentMode
-    : undefined;
+  return currentMode === diffModeForView(historical) ? currentMode : undefined;
 }
 
 /**
@@ -408,7 +420,7 @@ export function comparisonAvailability(
     };
   }
 
-  const mode = diffModeForRoute(view.route);
+  const mode = diffModeForView(view);
   if (mode === undefined) {
     return {
       kind: 'unavailable',

@@ -33,6 +33,21 @@ export interface EpubBook {
     readonly fragment?: string;
   }[];
 }
+
+/**
+ * The order a book's spine renders in: linear items first, then the rest, each
+ * group in spine order. A chapter's position in this list is its render index,
+ * so every reader of a `part` must agree on this order.
+ */
+export function epubRenderOrder(
+  book: Pick<EpubBook, 'spine'>
+): readonly { readonly path: string; readonly linear: boolean }[] {
+  return [
+    ...book.spine.filter((item) => item.linear),
+    ...book.spine.filter((item) => !item.linear),
+  ];
+}
+
 export type EpubPackageResult =
   | {
       readonly ok: true;

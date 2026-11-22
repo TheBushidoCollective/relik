@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { readEpubPackage } from './epub-package.ts';
+import { epubRenderOrder, readEpubPackage } from './epub-package.ts';
 import type { ZipEntryInfo, ZipIndex } from './zip-index.ts';
 
 function book(extra: Record<string, string> = {}): ZipIndex {
@@ -198,4 +198,20 @@ test('limits navigation records before sending a book to the frame', async () =>
     ok: false,
     reason: 'too-large',
   });
+});
+
+test('keeps every spine entry, linear items first, each group in spine order', () => {
+  const spine = [
+    { path: 'a.xhtml', linear: false },
+    { path: 'b.xhtml', linear: true },
+    { path: 'c.xhtml', linear: false },
+    { path: 'b.xhtml', linear: true },
+  ];
+  expect(epubRenderOrder({ spine })).toEqual([
+    { path: 'b.xhtml', linear: true },
+    { path: 'b.xhtml', linear: true },
+    { path: 'a.xhtml', linear: false },
+    { path: 'c.xhtml', linear: false },
+  ]);
+  expect(epubRenderOrder({ spine: [] })).toEqual([]);
 });
