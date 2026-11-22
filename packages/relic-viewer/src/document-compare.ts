@@ -29,6 +29,7 @@ import {
 } from './document-route.ts';
 import type { DocumentBlock, EpubBook } from './frame-document-protocol.ts';
 import type { ReadyView } from './viewer.ts';
+import { visibleLabel } from './visible-label.ts';
 
 /** One version as the comparison reads it: its blocks, and for a book its package. */
 export interface DocumentSnapshot {
@@ -195,7 +196,10 @@ function titleLine(before: string, after: string): HTMLElement | undefined {
   if (from === to || from === '' || to === '') return undefined;
   const line = document.createElement('p');
   line.className = 'diff-title-line';
-  line.textContent = `The title changed from ${from} to ${to}.`;
+  // The titles come from the package, so they are escaped and cut as labels are.
+  const shownFrom = visibleLabel(from);
+  const shownTo = visibleLabel(to);
+  line.textContent = `The title changed from ${shownFrom} to ${shownTo}.`;
   return line;
 }
 

@@ -2081,6 +2081,25 @@ describe('the shell of a comparison', () => {
     expect(titles).toEqual(['Version 2 of page.html', 'Version 5 of notes.ts']);
   });
 
+  test('a filename with a bidi control is shown escaped in its frame title', () => {
+    const comparison = renderRenderedComparison(
+      view('sandboxed-html', 5, encoder.encode('<p>new</p>')),
+      {
+        ...view('sandboxed-html', 2, encoder.encode('<p>old</p>'), 5),
+        filename: 'page\u202E.html',
+      },
+      'rendered',
+      'https://relik-usercontent.example'
+    ) as unknown as ElementStub;
+    const titles = descendants(comparison)
+      .filter((element) => element.tagName === 'IFRAME')
+      .map((frame) => frame.title);
+    expect(titles).toEqual([
+      'Version 2 of page\\u202e.html',
+      'Version 5 of notes.ts',
+    ]);
+  });
+
   test('a comparison frame takes its blocks once, from its own window, after it is ready', () => {
     const { own, states, blocks, deliver } = frameUnderTest();
     deliver(own, good); // before the frame is ready: ignored
@@ -2149,10 +2168,10 @@ describe('the shell of a comparison', () => {
     ) as unknown as ElementStub;
     const detail = withClass(list, 'diff-change-words')[0];
     expect(detail?.children.map((node) => node.tagName)).toEqual([
-      '#TEXT',
+      'BDI',
       'DEL',
       'INS',
-      '#TEXT',
+      'BDI',
     ]);
     expect(detail?.children.map((node) => node.textContent)).toEqual([
       'Hello ',
@@ -2160,6 +2179,56 @@ describe('the shell of a comparison', () => {
       'there',
       '!',
     ]);
+  });
+
+  test('a bidi control in a changed paragraph is shown escaped, in a run of its own', () => {
+    const list = renderChangeList(
+      [
+        {
+          kind: 'changed',
+          label: 'paragraph',
+          before: 'Pay \u202E500 now.',
+          after: 'Pay 600 now.',
+          jumpIndex: 0,
+          segments: {
+            before: [
+              { kind: 'unchanged', text: 'Pay ' },
+              { kind: 'removed', text: '\u202E500' },
+              { kind: 'unchanged', text: ' now.' },
+            ],
+            after: [
+              { kind: 'unchanged', text: 'Pay ' },
+              { kind: 'added', text: '600' },
+              { kind: 'unchanged', text: ' now.' },
+            ],
+          },
+        },
+        {
+          kind: 'added',
+          label: 'paragraph',
+          before: '',
+          after: 'Refund \u2066now',
+          jumpIndex: 1,
+        },
+      ],
+      () => {}
+    ) as unknown as ElementStub;
+    const detail = withClass(list, 'diff-change-words')[0];
+    expect(detail?.children.map((node) => node.tagName)).toEqual([
+      'BDI',
+      'DEL',
+      'INS',
+      'BDI',
+    ]);
+    expect(detail?.children.map((node) => node.textContent)).toEqual([
+      'Pay ',
+      '\\u202e500',
+      '600',
+      ' now.',
+    ]);
+    expect(textOf(list)).not.toContain('\u202E');
+    expect(textOf(list)).not.toContain('\u2066');
+    expect(textOf(list)).toContain('Refund \\u2066now');
   });
 
   test('a segment that carries markup is text, and no element is made from it', () => {

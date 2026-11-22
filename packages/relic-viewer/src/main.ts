@@ -264,7 +264,9 @@ import {
   versionHistoryAvailability,
 } from './diff.ts';
 import { type ChangeJump, diffTrees, type RenderedChange } from './domdiff.ts';
+import { visibleText } from './json-tree-rows.ts';
 import { renderMarkdown } from './markdown.ts';
+import { visibleLabel } from './visible-label.ts';
 import type { DashboardSearch, RowMatch } from './dashboard-search.ts';
 import {
   buildCommentedDashboardRows,
@@ -1597,7 +1599,7 @@ export function sandboxFrame(
   frame.setAttribute('sandbox', 'allow-scripts');
   frame.setAttribute('referrerpolicy', 'no-referrer');
   frame.src = `${usercontentOrigin}/sandbox.html`;
-  frame.title = `Version ${view.version} of ${view.filename}`;
+  frame.title = `Version ${view.version} of ${visibleLabel(view.filename)}`;
 
   // The frame is opaque, so no targetOrigin can name it and '*' is the only
   // value that reaches it. What limits who receives a post is the handshake: the
@@ -2592,8 +2594,10 @@ export function renderChangeList(
  * A changed row with word segments reads as one sentence: unchanged words as
  * text, removed words in `del`, added words in `ins`, in the order the document
  * reads them. A changed row without segments keeps two lines, the old text and
- * the new. Rendered text reaches the DOM as text nodes or as the text of a
- * mark, never as markup.
+ * the new. Every piece is its own element, isolated for bidi, so a control or
+ * bidi character in one piece cannot reorder the words beside it. Each piece is
+ * shown escaped, as the JSON and spreadsheet views show their text. Rendered
+ * text reaches the DOM as text nodes or as the text of a mark, never as markup.
  */
 function appendChangeDetail(detail: HTMLElement, change: RenderedChange): void {
   if (change.kind === 'changed' && change.segments !== undefined) {
@@ -2601,27 +2605,25 @@ function appendChangeDetail(detail: HTMLElement, change: RenderedChange): void {
       change.segments.before,
       change.segments.after
     )) {
-      if (segment.kind === 'unchanged') {
-        detail.appendChild(document.createTextNode(segment.text));
-        continue;
-      }
-      const mark = document.createElement(
-        segment.kind === 'removed' ? 'del' : 'ins'
-      );
-      mark.textContent = segment.text;
-      detail.appendChild(mark);
+      let tag = 'bdi';
+      if (segment.kind === 'removed') tag = 'del';
+      else if (segment.kind === 'added') tag = 'ins';
+      const run = document.createElement(tag);
+      run.textContent = visibleText(segment.text);
+      detail.appendChild(run);
     }
     return;
   }
   if (change.kind === 'changed') {
     const before = document.createElement('del');
-    before.textContent = change.before;
+    before.textContent = visibleText(change.before);
     const after = document.createElement('ins');
-    after.textContent = change.after;
+    after.textContent = visibleText(change.after);
     detail.append(before, after);
     return;
   }
-  detail.textContent = change.kind === 'added' ? change.after : change.before;
+  const shown = change.kind === 'added' ? change.after : change.before;
+  detail.textContent = visibleText(shown);
 }
 
 /**
@@ -3811,7 +3813,7 @@ export function renderSingleVersion(
 
   const label = document.createElement('p');
   label.className = 'diff-single-label';
-  label.textContent = `Version ${view.version}: ${view.filename}`;
+  label.textContent = `Version ${view.version}: ${visibleLabel(view.filename)}`;
   wrap.appendChild(label);
 
   wrap.appendChild(

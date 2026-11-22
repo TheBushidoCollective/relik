@@ -57,7 +57,8 @@ A reader opens `relik.link/<id>` for a DOCX, EPUB or XLSX relic. The link may be
 |---|---|
 | `MAX_DOCUMENT_BLOCKS` | 50,000 per version |
 | `MAX_DOCUMENT_BLOCK_BYTES` | 16 MiB of block text (UTF-8) per version. Over either budget the frame posts `null`, never a partial snapshot. |
-| `MAX_BLOCK_EDITS` | 5,000 (deterministic `maxEditLength`, no time-based abort) |
+| `MAX_BLOCK_EDITS` | 3,000 (deterministic `maxEditLength`, no time-based abort). Lowered from 5,000 on the measurements in section 7. |
+| `MAX_PAIR_WINDOW` | 4,000 characters per side for one changed pair's word diff: its differing span plus the context around it. Past it the pair quotes plainly. |
 | `MAX_DOCUMENT_ANCHORS` | 1,000 per side |
 | Listed changes | 40 (the existing `MAX_LISTED_CHANGES`, plus a "more" row) |
 | Render watchdog | 30 s per frame (existing) |
@@ -189,7 +190,7 @@ export async function mountDocumentRoute(root, content, format, selectParts, cre
   compare?: { readonly onSnapshot: (r: DocumentSnapshotResult) => void }): Promise<void>;
 
 // blockdiff.ts (S3a, new, service-origin lazy chunk)
-export const MAX_BLOCK_EDITS = 5_000; export const MAX_DOCUMENT_ANCHORS = 1_000;
+export const MAX_BLOCK_EDITS = 3_000; export const MAX_DOCUMENT_ANCHORS = 1_000;
 export interface BlockDiff extends TreeDiff { readonly total: number; readonly jumpParts: readonly { readonly side: 'before'|'after'; readonly part: number }[] }
 export function diffBlocks(before: readonly DocumentBlock[], after: readonly DocumentBlock[], options?: {
   partKey?: (side: 'before'|'after', part: number) => string; partLabel?: (side: 'before'|'after', part: number) => string | undefined
@@ -263,7 +264,8 @@ export function renderSpreadsheetComparison(current: ReadyView, historical: Read
 - Ids use the existing namespaces: `d` for paired changes, `a` for anchors, `c` for jumps. They are validated by `isAnnotateMessage` (`rendered-tree.ts:558-604`) and the frame scroll regex `^[da][0-9]+$`.
 - **Anchors:** the equal block on each side of every change run, plus a stride sample, capped at 1,000 per side.
 - **Change quotes:**
-  - Changed pairs use `diffWordsWithSpace(…, { maxEditLength: 1_000 })`. If that returns `undefined`, show plain quotes.
+  - Changed pairs are not diffed whole. The common start and end are set aside, and the word diff reads a window: the differing span widened to token edges, with up to 81 characters of unchanged text on each side. A window longer than `MAX_PAIR_WINDOW` (4,000 characters) quotes plainly, and so does a pair whose `diffWordsWithSpace(…, { maxEditLength: 1_000 })` returns `undefined`.
+  - Token edges are where the word tokenizer splits, so a window tokenizes as the whole text does. In the spike, a 3,900-character window with every other word changed took 40 to 50 ms.
   - An unchanged segment longer than 80 characters keeps 40 characters of context on the side next to the change.
   - Each side is capped at 400 characters.
   - Added and removed blocks use the existing 160-character `quote`.
@@ -410,10 +412,11 @@ Every slice runs `bun install --frozen-lockfile` first. In ovnfs checkouts, run 
 - **Acceptance:** `bun test packages/relic-viewer/test/blockdiff.test.ts` passes, with these cases:
   - The §6 DOCX fixture keys give "1 added, 1 removed, 2 changed.", jumps in reading order, mark paths `[i]`, shared `d` ids on pairs, anchors capped at 1,000 that include each change's neighbours.
   - In the EPUB fixture a removed chapter does not pair with an added chapter, giving "2 added, 2 removed, 1 changed.", with the expected chapter rows, the "Section 3" fallback, and repeated spine paths aggregated.
-  - 5,001 edits give `'too-many-changes'`; exactly 5,000 still diff.
+  - 3,001 edits give `'too-many-changes'`; exactly 3,000 still diff.
   - Identical input returns the no-text-change summary.
   - A 3,000-character paragraph changed at character 2,500 shows the difference within the 400-character excerpt.
-  - Timing on 50,000 blocks with 5,000 edits is logged as evidence, not used as a gate.
+  - Timing on 50,000 blocks at 2,942 edits, and on the periodic fixture at 3,000 and 3,001 edits, is logged as evidence, not used as a gate.
+  - A 16 MiB block with 1,200 sparse word edits quotes plainly and quickly, twice to the same result. A 16 MiB block with one edit at its end shows that edit with its context, quickly.
 
 **S3b: Document comparison**
 - **Acceptance:** `bun test packages/relic-viewer/test/document-compare.test.ts packages/relic-viewer/test/document-route.test.ts` passes, with these cases:
@@ -556,7 +559,7 @@ Run both reviews on the PR diff before merge, per ship-relic-change.
 ## 7. What would prove this spec wrong, and open unknowns
 
 - **Extraction misses text.** Block extraction recovers less than 95% of the `w:t` text on real Word files with text boxes or content controls. Then the leaf-block rule or the DOCX scope is wrong.
-- **The diff is too slow.** `diffBlocks` at 5,000 edits on 50,000 blocks takes over 1 s on the CI runner. Then lower the caps, or move the diff into a worker, which needs a server CSP entry.
+- **The diff is too slow.** Measured on 2026-11-22 on the development machine, with a load average near 46, so these are high readings. `diffBlocks` on 50,000 periodic blocks took 4.1 to 5.7 s at 5,000 edits, 1.7 to 3.3 s at 4,000, and 1.1 to 1.2 s at 3,000 in the bench. The refusal at 5,001 took 4.8 to 5.1 s, because the diff explores to the cap before it gives up. A plain 50,000-block fixture with 5,000 edits took 3.7 to 4.3 s. That is well over the 1 s this section sets as the trigger, so the cap is now 3,000. Across the test runs, 3,000 edits and the 3,001 refusal took 0.8 to 1.4 s. The CI runner is not measured yet. If the 3,000-edit case is over 1 s there, lower the cap again, or move the diff into a worker, which needs a server CSP entry.
 - **Two renders time out.** Two 16 MiB documents rendering concurrently hit the 30 s watchdog in CI. Then stagger the second frame.
 - **Renames misfire.** LibreOffice or Google Sheets exports reuse `sheetId` and produce false renames despite the 50% guard. Then drop `sheetId` pairing.
 - **Positional comparison floods.** Real users see walls of changed cells after a row insert. Then add row alignment.
@@ -571,7 +574,7 @@ Run both reviews on the PR diff before merge, per ship-relic-change.
   - Spreadsheets compare by position.
   - Images compare by presence only.
   - DOCX page headers and footers are excluded.
-  - The 2,000,000-cell, 50,000-block and 5,000-edit limits.
+  - The 2,000,000-cell, 50,000-block and 3,000-edit limits.
   - Compare panes keep no comment or suggestion surfaces, as for every other class today.
 
 ## 8. Mock brief (S0, designer agent)

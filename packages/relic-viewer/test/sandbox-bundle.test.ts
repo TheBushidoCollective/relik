@@ -131,6 +131,25 @@ describe('the built sandbox.html', () => {
     }
     expect(diffCarriers).toHaveLength(1);
 
+    // The comparison's own copy and the diff library's option name are carried
+    // by the shell alone. Each is found in the shell graph first, so the
+    // absence checks below cannot pass for a missing marker.
+    const blockdiffCopy =
+      'No text changes. Formatting, layout and image content are not compared.';
+    const diffLibrary = 'maxEditLength';
+    const shellCode = await shellGraph(shell);
+    expect(shellCode).toContain(blockdiffCopy);
+    expect(shellCode).toContain(diffLibrary);
+    expect(html).not.toContain(blockdiffCopy);
+    expect(html).not.toContain(diffLibrary);
+    for (const name of ['frame-docx', 'frame-epub'] as const) {
+      const code = await Bun.file(
+        `${pkgDir}dist-frame/${name}.frame.js`
+      ).text();
+      expect(code).not.toContain(blockdiffCopy);
+      expect(code).not.toContain(diffLibrary);
+    }
+
     // The document block reader ships in both document frames only.
     const blocksMarker = 'outline-width: 4px !important;';
     for (const name of ['frame-docx', 'frame-epub'] as const)

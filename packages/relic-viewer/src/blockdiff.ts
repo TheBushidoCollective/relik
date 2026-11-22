@@ -27,14 +27,18 @@ import type {
   DocumentBlockKind,
 } from './frame-document-protocol.ts';
 import type { Anchor, Mark, MarkKind } from './rendered-tree.ts';
+import { visibleLabel } from './visible-label.ts';
 
 /**
  * Most edits one comparison may make: blocks removed plus blocks added.
  *
  * A count, not a clock. The same two documents give the same answer on every
- * machine, which a timeout would not.
+ * machine, which a timeout would not. The diff runs on the main thread, and its
+ * cost climbs faster than the count: 3,000 periodic edits over 50,000 blocks
+ * took about 1.1 s on the development machine, and 5,000 took 4 to 6 s (plan
+ * section 7). Hence 3,000.
  */
-export const MAX_BLOCK_EDITS = 5_000;
+export const MAX_BLOCK_EDITS = 3_000;
 
 /** Matched blocks handed to the scroll sync, on each side. */
 export const MAX_DOCUMENT_ANCHORS = 1_000;
@@ -49,6 +53,20 @@ const MAX_PAIR_SIDE = 400;
 const CONTEXT_THRESHOLD = 80;
 /** The context kept from unchanged text that touches a change. */
 const CONTEXT = 40;
+/**
+ * The most characters per side one changed pair's word diff reads: its
+ * differing span, widened to whole words, with the context around it. A pair
+ * past this bound quotes plainly. The diff runs on the main thread, and its
+ * cost grows with this bound times the edits it finds, at most
+ * `MAX_WORD_EDITS`.
+ */
+const MAX_PAIR_WINDOW = 4_000;
+/**
+ * The unchanged text a window keeps beside its change: one more than
+ * `CONTEXT_THRESHOLD`, so `excerpt` cuts a window run exactly when it would
+ * cut the whole run.
+ */
+const CONTEXT_WINDOW = CONTEXT_THRESHOLD + 1;
 const ELLIPSIS = '\u2026';
 
 const NO_TEXT_CHANGES =
@@ -471,16 +489,25 @@ interface PairQuotes {
 /**
  * What a changed pair shows: its word diff cut to the context beside each
  * change, or plain quotes when the words differ too much to pair up.
+ *
+ * Neither block is diffed whole. The word diff reads one window per side: the
+ * differing span, widened to whole words and to a little unchanged text. A
+ * block of any length therefore costs what its changed words cost, and a pair
+ * whose window passes `MAX_PAIR_WINDOW` quotes plainly without a diff.
  */
 function pairQuotes(before: string, after: string): PairQuotes {
-  const words = diffWordsWithSpace(before, after, {
-    maxEditLength: MAX_WORD_EDITS,
-  });
+  if (before === after) return sameQuotes(before);
+  const bounds = pairBounds(before, after);
+  const words =
+    bounds === undefined
+      ? undefined
+      : diffWordsWithSpace(
+          before.slice(bounds.from, bounds.to),
+          after.slice(bounds.from, bounds.afterTo),
+          { maxEditLength: MAX_WORD_EDITS }
+        );
   if (words === undefined) {
-    return {
-      before: textOf(capSide([{ kind: 'unchanged', text: before }])),
-      after: textOf(capSide([{ kind: 'unchanged', text: after }])),
-    };
+    return { before: capText(before), after: capText(after) };
   }
   const pieces = excerpt(words.map(segmentOf));
   const beforeSide = capSide(pieces.filter((piece) => piece.kind !== 'added'));
@@ -503,7 +530,7 @@ function segmentOf(change: Change): DiffSegment {
  * beside the changes that touch it. A paragraph with one edit at character
  * 2,500 then shows that edit, not its first 400 characters.
  *
- * Decided on the whole diff, so text removed from one side still leaves its
+ * Decided on the window's diff, so text removed from one side still leaves its
  * gap marked on the other.
  */
 function excerpt(pieces: readonly DiffSegment[]): DiffSegment[] {
@@ -549,6 +576,167 @@ function capSide(pieces: readonly DiffSegment[]): DiffSegment[] {
   return kept;
 }
 
+/** The window a changed pair's word diff reads, as offsets into the texts. */
+interface PairBounds {
+  /** Where the window starts in both texts. */
+  readonly from: number;
+  /** Where it ends in `before`. */
+  readonly to: number;
+  /** Where it ends in `after`. */
+  readonly afterTo: number;
+}
+
+/**
+ * The window a changed pair's word diff reads. Each end is a token edge, so
+ * the window tokenizes as the whole text does, and each side keeps
+ * `CONTEXT_WINDOW` characters of unchanged text beside its change. Undefined
+ * when an edge is too far away, or the window passes `MAX_PAIR_WINDOW`.
+ */
+function pairBounds(before: string, after: string): PairBounds | undefined {
+  const offset = after.length - before.length;
+  const { head, tail } = sharedEnds(before, after);
+  // The first change begins at or after the nearest edge at or before the
+  // first difference, so the context reaches `CONTEXT_WINDOW` before it.
+  const start = nearestEdge(before, after, head, 0, -1);
+  if (start === undefined) return undefined;
+  const from =
+    start <= CONTEXT_WINDOW
+      ? 0
+      : nearestEdge(before, after, start - CONTEXT_WINDOW, 0, -1);
+  // The last change ends at or before the nearest edge after the shared tail.
+  const end = nearestEdge(before, after, before.length - tail, offset, 1);
+  if (from === undefined || end === undefined) return undefined;
+  const to =
+    end + CONTEXT_WINDOW >= before.length
+      ? before.length
+      : nearestEdge(before, after, end + CONTEXT_WINDOW, offset, 1);
+  if (to === undefined) return undefined;
+  const afterTo = to + offset;
+  if (to - from > MAX_PAIR_WINDOW || afterTo - from > MAX_PAIR_WINDOW) {
+    return undefined;
+  }
+  return { from, to, afterTo };
+}
+
+/** The code units two texts share at their start and at their end. */
+function sharedEnds(
+  before: string,
+  after: string
+): { readonly head: number; readonly tail: number } {
+  const limit = Math.min(before.length, after.length);
+  let head = 0;
+  while (head < limit && before.charCodeAt(head) === after.charCodeAt(head)) {
+    head += 1;
+  }
+  let tail = 0;
+  while (
+    tail < limit - head &&
+    before.charCodeAt(before.length - 1 - tail) ===
+      after.charCodeAt(after.length - 1 - tail)
+  ) {
+    tail += 1;
+  }
+  return { head, tail };
+}
+
+/**
+ * The token edge nearest `at`, moving one code unit at a time in direction
+ * `step`, for at most `MAX_PAIR_WINDOW` code units. `offset` maps `at` onto
+ * `after`: 0 when `at` counts from the start, the length difference when it
+ * counts from the end.
+ */
+function nearestEdge(
+  before: string,
+  after: string,
+  at: number,
+  offset: number,
+  step: 1 | -1
+): number | undefined {
+  let x = at;
+  for (let moved = 0; moved <= MAX_PAIR_WINDOW; moved += 1) {
+    const y = x + offset;
+    if (x < 0 || x > before.length || y < 0 || y > after.length) {
+      return undefined;
+    }
+    if (isTokenEdge(before, x) && isTokenEdge(after, y)) return x;
+    x += step;
+  }
+  return undefined;
+}
+
+/**
+ * Whether the word tokenizer splits between `at - 1` and `at`. The start and
+ * the end of a text always do. The tokenizer keeps a run of word characters
+ * together, a run of blanks, a CRLF and one astral character, and splits
+ * everywhere else. Exported so a test can hold it to the tokenizer.
+ */
+export function isTokenEdge(text: string, at: number): boolean {
+  if (at <= 0 || at >= text.length) return true;
+  const a = text.charCodeAt(at - 1);
+  const b = text.charCodeAt(at);
+  if (isHighSurrogate(a) && isLowSurrogate(b)) return false;
+  if (isWordCode(a) && isWordCode(b)) return false;
+  if (a === 0x0d && b === 0x0a) return false;
+  // A run of blanks stays one token; a line break is a token of its own.
+  const blankA = isSpaceCode(a) && a !== 0x0a && a !== 0x0d;
+  const blankB = isSpaceCode(b) && b !== 0x0a && b !== 0x0d;
+  return !(blankA && blankB);
+}
+
+/** The word characters the tokenizer keeps together. */
+function isWordCode(code: number): boolean {
+  return (
+    (code >= 0x30 && code <= 0x39) ||
+    (code >= 0x41 && code <= 0x5a) ||
+    (code >= 0x61 && code <= 0x7a) ||
+    code === 0x5f ||
+    code === 0xad ||
+    (code >= 0xc0 && code <= 0xd6) ||
+    (code >= 0xd8 && code <= 0xf6) ||
+    (code >= 0xf8 && code <= 0x2c6) ||
+    (code >= 0x2c8 && code <= 0x2d7) ||
+    (code >= 0x2de && code <= 0x2ff) ||
+    (code >= 0x1e00 && code <= 0x1eff)
+  );
+}
+
+/** Whitespace as `\s` matches it, one code unit at a time. */
+function isSpaceCode(code: number): boolean {
+  return (
+    (code >= 0x09 && code <= 0x0d) ||
+    code === 0x20 ||
+    code === 0xa0 ||
+    code === 0x1680 ||
+    (code >= 0x2000 && code <= 0x200a) ||
+    code === 0x2028 ||
+    code === 0x2029 ||
+    code === 0x202f ||
+    code === 0x205f ||
+    code === 0x3000 ||
+    code === 0xfeff
+  );
+}
+
+/** A pair whose text did not change: its one unchanged run, cut as a run is. */
+function sameQuotes(text: string): PairQuotes {
+  const shown = capText(text);
+  return {
+    before: shown,
+    after: shown,
+    segments: {
+      before: [{ kind: 'unchanged', text: shown }],
+      after: [{ kind: 'unchanged', text: shown }],
+    },
+  };
+}
+
+/** One side as plain text, cut to `MAX_PAIR_SIDE` with an ellipsis. */
+function capText(text: string): string {
+  if (text.length <= MAX_PAIR_SIDE) return text;
+  const cut = text.slice(0, cutEnd(text, MAX_PAIR_SIDE - ELLIPSIS.length));
+  return `${cut}${ELLIPSIS}`;
+}
+
 function textOf(pieces: readonly DiffSegment[]): string {
   return pieces.map((piece) => piece.text).join('');
 }
@@ -587,7 +775,10 @@ function cutStart(text: string, count: number): number {
 export interface RenderedChapter {
   /** The spine path the render part reads from. */
   readonly path: string;
-  /** The contents title, or "Section {n}" when the book names none. */
+  /**
+   * The contents title, escaped and cut as `visibleLabel` shows it, or
+   * "Section {n}" when the book names none.
+   */
   readonly label: string;
 }
 
@@ -601,7 +792,8 @@ export function renderedChapters(
   const titles = new Map<string, string>();
   const offer = (entry: { readonly path: string; readonly label: string }) => {
     const label = entry.label.replace(/\s+/g, ' ').trim();
-    if (label !== '' && !titles.has(entry.path)) titles.set(entry.path, label);
+    if (label !== '' && !titles.has(entry.path))
+      titles.set(entry.path, visibleLabel(label));
   };
   // An entry for the whole file names it. A fragment entry names it only when
   // no whole-file entry does.

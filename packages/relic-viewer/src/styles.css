@@ -2642,6 +2642,17 @@ canvas.relic-page {
   margin-left: 0.18em;
 }
 
+/*
+ * Each piece of a changed sentence is an isolated run, so a bidi control in one
+ * piece cannot reorder the words beside it. A bdi isolates already; del and ins
+ * are made to.
+ */
+.diff-change-words > bdi,
+.diff-change-words > del,
+.diff-change-words > ins {
+  unicode-bidi: isolate;
+}
+
 /* The row that says there are more changes than the list holds. */
 .diff-change-more {
   padding: 0.55rem 0.75rem;

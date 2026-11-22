@@ -1,10 +1,12 @@
 import { describe, expect, test } from 'bun:test';
+import { wordsWithSpaceDiff } from 'diff';
 import type { EpubBook } from '../../relic-format/src/epub-package.ts';
 import {
   type BlockDiff,
   chapterRows,
   diffBlocks,
   epubDiffOptions,
+  isTokenEdge,
   MAX_BLOCK_EDITS,
   MAX_DOCUMENT_ANCHORS,
   renderedChapters,
@@ -379,22 +381,22 @@ describe('the edit cap', () => {
   const distinct = (count: number, stem: string): DocumentBlock[] =>
     Array.from({ length: count }, (_, at) => p(`${stem} ${at}`));
 
-  test('5,001 edits are refused and 5,000 still diff', () => {
-    expect(MAX_BLOCK_EDITS).toBe(5_000);
-    const olds = distinct(2_500, 'old');
-    const news = distinct(2_500, 'new');
-    // 2,500 changed pairs: each is one removal and one addition, 5,000 edits.
+  test('3,001 edits are refused and 3,000 still diff', () => {
+    expect(MAX_BLOCK_EDITS).toBe(3_000);
+    const olds = distinct(1_500, 'old');
+    const news = distinct(1_500, 'new');
+    // 1,500 changed pairs: each is one removal and one addition, 3,000 edits.
     const atLimit = diffBlocks(olds, news);
     expect(atLimit).not.toBe('too-many-changes');
-    expect((atLimit as BlockDiff).total).toBe(2_500);
-    // One more removal makes 5,001.
+    expect((atLimit as BlockDiff).total).toBe(1_500);
+    // One more removal makes 3,001.
     expect(diffBlocks([...olds, p('extra')], news)).toBe('too-many-changes');
   });
 
   test('a removal counts one edit per block, on either side', () => {
-    expect(diffBlocks(distinct(5_001, 'gone'), [])).toBe('too-many-changes');
-    expect(diffBlocks([], distinct(5_001, 'added'))).toBe('too-many-changes');
-    expect(diffOf(distinct(5_000, 'gone'), []).summary).toBe('5000 removed.');
+    expect(diffBlocks(distinct(3_001, 'gone'), [])).toBe('too-many-changes');
+    expect(diffBlocks([], distinct(3_001, 'added'))).toBe('too-many-changes');
+    expect(diffOf(distinct(3_000, 'gone'), []).summary).toBe('3000 removed.');
   });
 });
 
@@ -506,21 +508,238 @@ describe('anchors', () => {
 });
 
 describe('scale', () => {
-  test('50,000 blocks with 5,000 edits: the time is logged as evidence, never gated', () => {
+  test('50,000 blocks with 2,942 edits, just under the cap: the time is logged, never gated', () => {
     const count = 50_000;
     const before = Array.from({ length: count }, (_, at) =>
       p(`Paragraph ${at} keeps its words.`)
     );
     const after = before.map((block, at) =>
-      at % 20 === 0 ? p(`Paragraph ${at} changed its words.`) : block
+      at % 34 === 0 ? p(`Paragraph ${at} changed its words.`) : block
     );
+    const pairs = Math.ceil(count / 34);
     const started = performance.now();
     const diff = diffBlocks(before, after);
     const elapsed = performance.now() - started;
     console.log(
-      `blockdiff: ${count} blocks, 5,000 edits (2,500 changed pairs): ${elapsed.toFixed(1)} ms`
+      `blockdiff: ${count} blocks, ${2 * pairs} edits (${pairs} changed pairs): ${elapsed.toFixed(1)} ms`
     );
     expect(diff).not.toBe('too-many-changes');
-    expect((diff as BlockDiff).total).toBe(2_500);
+    expect((diff as BlockDiff).total).toBe(pairs);
   }, 120_000);
+});
+
+describe('package labels', () => {
+  test('a contents title is shown escaped and cut to 120 characters', () => {
+    const label = `Chapter \u202E${'x'.repeat(200)}`;
+    const [chapter] = renderedChapters(
+      book(['ch1.xhtml'], [{ path: 'ch1.xhtml', label }])
+    );
+    expect(chapter?.label.startsWith('Chapter \\u202e')).toBe(true);
+    expect(chapter?.label).not.toContain('\u202E');
+    expect(chapter?.label.endsWith('\u2026')).toBe(true);
+    expect(chapter?.label.length).toBeLessThanOrEqual(121);
+  });
+
+  test('a change row names its chapter in the escaped form the chapter list uses', () => {
+    const labelled = book(
+      ['ch1.xhtml', 'ch2.xhtml'],
+      [
+        { path: 'ch1.xhtml', label: 'Opening' },
+        { path: 'ch2.xhtml', label: 'The\u202E crossing' },
+      ]
+    );
+    const before = [
+      h('Opening', 0),
+      p('It began.', 0),
+      h('The crossing', 1),
+      p('We crossed at dawn.', 1),
+    ];
+    const after = [
+      h('Opening', 0),
+      p('It began.', 0),
+      h('The crossing', 1),
+      p('We crossed at noon.', 1),
+    ];
+    const diff = diffOf(before, after, epubDiffOptions(labelled, labelled));
+    expect(diff.changes[0]?.label).toBe('paragraph in The\\u202e crossing');
+    const [row] = chapterRows(
+      { blocks: before, book: labelled },
+      { blocks: after, book: labelled },
+      diff
+    ).filter(({ status }) => status === 'changed');
+    expect(row?.label).toBe('The\\u202e crossing');
+  });
+});
+
+describe('a long block', () => {
+  test('16 MiB with 1,200 sparse word edits quotes plainly, quickly, and the same way twice', () => {
+    const edits = 1_200;
+    const chunk = Math.floor((16 * 1024 * 1024) / edits);
+    const block = (word: string): string =>
+      Array.from(
+        { length: edits },
+        (_, at) => `${filler(chunk)}${word}${at} `
+      ).join('');
+    const before = block('old');
+    const after = block('new');
+    const started = performance.now();
+    const first = diffOf([p(before)], [p(after)]);
+    const elapsed = performance.now() - started;
+    console.log(
+      `blockdiff: ${before.length} characters, ${edits} sparse word edits: ${elapsed.toFixed(1)} ms`
+    );
+    expect(elapsed).toBeLessThan(10_000);
+    expect(diffOf([p(before)], [p(after)])).toEqual(first);
+    const [change] = first.changes;
+    expect(change?.segments).toBeUndefined();
+    expect(change?.before.length).toBe(400);
+    expect(change?.before.startsWith('lorem ipsum dolor')).toBe(true);
+  }, 120_000);
+
+  test('16 MiB with one edit at its end shows that edit and its context, quickly', () => {
+    const body = filler(16 * 1024 * 1024);
+    const started = performance.now();
+    const diff = diffOf([p(`${body}old end.`)], [p(`${body}new end.`)]);
+    const elapsed = performance.now() - started;
+    console.log(
+      `blockdiff: 16 MiB block, one edit at its end: ${elapsed.toFixed(1)} ms`
+    );
+    expect(elapsed).toBeLessThan(10_000);
+    const [change] = diff.changes;
+    expect(change?.before.startsWith('\u2026')).toBe(true);
+    expect(change?.before.endsWith('old end.')).toBe(true);
+    expect(change?.after.endsWith('new end.')).toBe(true);
+    const removed = change?.segments?.before
+      .filter((segment) => segment.kind === 'removed')
+      .map((segment) => segment.text);
+    expect(removed).toEqual(['old']);
+  }, 120_000);
+
+  test('a change inside a word is shown as the whole word', () => {
+    const context = filler(300);
+    const [change] = diffOf(
+      [p(`${context}Revenues grew.`)],
+      [p(`${context}Revenue grew.`)]
+    ).changes;
+    const removed = change?.segments?.before
+      .filter((segment) => segment.kind === 'removed')
+      .map((segment) => segment.text);
+    const added = change?.segments?.after
+      .filter((segment) => segment.kind === 'added')
+      .map((segment) => segment.text);
+    expect(removed).toEqual(['Revenues']);
+    expect(added).toEqual(['Revenue']);
+  });
+});
+
+describe('the periodic worst case', () => {
+  /** Two blocks alternate, so every other key repeats; `unique` overrides a position. */
+  const periodic = (
+    count: number,
+    unique: (at: number) => string | undefined
+  ): DocumentBlock[] =>
+    Array.from({ length: count }, (_, at) =>
+      p(
+        unique(at) ??
+          (at % 2 === 0 ? 'Repeated paragraph.' : 'Another repeated paragraph.')
+      )
+    );
+  const count = 50_000;
+  // Spots spread evenly, so the two sides differ in exactly MAX_BLOCK_EDITS.
+  const spots = new Set(
+    Array.from(
+      { length: MAX_BLOCK_EDITS / 2 },
+      (_, k) => Math.floor((k * count) / (MAX_BLOCK_EDITS / 2)) + 1
+    )
+  );
+  const uniqueBefore = (at: number) =>
+    spots.has(at) ? `Before ${at}.` : undefined;
+  const uniqueAfter = (at: number) =>
+    spots.has(at) ? `After ${at}.` : undefined;
+
+  test('3,000 edits at the ceiling: the time is logged, never gated', () => {
+    const started = performance.now();
+    const diff = diffBlocks(
+      periodic(count, uniqueBefore),
+      periodic(count, uniqueAfter)
+    );
+    const elapsed = performance.now() - started;
+    console.log(
+      `blockdiff: ${count} periodic blocks, ${MAX_BLOCK_EDITS} edits (${spots.size} unique per side): ${elapsed.toFixed(1)} ms`
+    );
+    expect(diff).not.toBe('too-many-changes');
+    expect((diff as BlockDiff).total).toBe(spots.size);
+  }, 120_000);
+
+  test('3,001 edits, one past the ceiling: the refusal time is logged, never gated', () => {
+    const started = performance.now();
+    // The after side loses its last block: one edit past the ceiling.
+    const diff = diffBlocks(
+      periodic(count, uniqueBefore),
+      periodic(count - 1, uniqueAfter)
+    );
+    const elapsed = performance.now() - started;
+    console.log(
+      `blockdiff: ${count} periodic blocks, ${MAX_BLOCK_EDITS + 1} edits: ${elapsed.toFixed(1)} ms`
+    );
+    expect(diff).toBe('too-many-changes');
+  }, 120_000);
+});
+
+describe('token edges', () => {
+  // The kinds of character the word tokenizer treats differently: word
+  // characters from each Latin range, blanks, line breaks, punctuation,
+  // astral characters, a lone surrogate and bidi controls.
+  const alphabet = [
+    'a',
+    'Z',
+    '7',
+    '_',
+    '\u00ad',
+    '\u00e9',
+    '\u0101',
+    '\u1e03',
+    '\u02c7',
+    '\u02d8',
+    ' ',
+    '\t',
+    '\u00a0',
+    '\u2028',
+    '\u3000',
+    '\n',
+    '\r',
+    '.',
+    '-',
+    '(',
+    '\u{1F600}',
+    '\ud800',
+    '\udc00',
+    '\u202e',
+    '\u2066',
+    'x',
+  ];
+
+  test('an edge is exactly a place the word tokenizer splits', () => {
+    let seed = 12345;
+    const pick = (n: number): number => {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      return seed % n;
+    };
+    for (let round = 0; round < 2_000; round += 1) {
+      let text = '';
+      for (let i = 1 + pick(14); i > 0; i -= 1) {
+        text += alphabet[pick(alphabet.length)];
+      }
+      const splits = new Set<number>();
+      let at = 0;
+      for (const token of wordsWithSpaceDiff.tokenize(text)) {
+        at += token.length;
+        splits.add(at);
+      }
+      for (let x = 0; x <= text.length; x += 1) {
+        const split = x === 0 || x === text.length || splits.has(x);
+        expect(isTokenEdge(text, x)).toBe(split);
+      }
+    }
+  });
 });

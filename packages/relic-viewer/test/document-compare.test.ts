@@ -724,6 +724,40 @@ test('a retitled book with unchanged text shows the title line and no chapter li
   }
 });
 
+test('a package title with a bidi control is shown escaped and cut, as labels are', () => {
+  const dom = installDom();
+  try {
+    const { ui } = probeUi();
+    const retitled: EpubBook = {
+      ...BOOK_V2,
+      title: `River\u202E ${'journal '.repeat(40)}second`,
+    };
+    const result = diffed(
+      documentComparisonSpec('epub', ui).diff(
+        { blocks: BOOK_V2_BLOCKS, book: BOOK_V2 },
+        { blocks: BOOK_V2_BLOCKS, book: retitled }
+      )
+    );
+    const preface = el(result.preface as HTMLElement);
+    expect(preface.children).toHaveLength(1);
+    const shown = preface.children[0]?.textContent ?? '';
+    expect(
+      shown.startsWith(
+        'The title changed from River journal to River\\u202e journal'
+      )
+    ).toBe(true);
+    expect(shown).not.toContain('\u202E');
+    expect(shown.endsWith('\u2026.')).toBe(true);
+    const to = shown.slice(
+      'The title changed from River journal to '.length,
+      -1
+    );
+    expect(to.length).toBeLessThanOrEqual(121);
+  } finally {
+    dom.restore();
+  }
+});
+
 test('a title line needs a title on both sides, so a missing one adds no line', () => {
   const dom = installDom();
   try {
