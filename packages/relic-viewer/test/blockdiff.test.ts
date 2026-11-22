@@ -214,7 +214,7 @@ const crossingBlocksBefore: DocumentBlock[] = [
   h('Opening', 0),
   p('It began.', 0),
   h('The crossing', 1),
-  p('The boat left at dawn.', 1),
+  p('We crossed at dawn.', 1),
   h('Interlude', 2),
   p('Nothing happened.', 2),
 ];
@@ -222,7 +222,7 @@ const crossingBlocksAfter: DocumentBlock[] = [
   h('Opening', 0),
   p('It began.', 0),
   h('The crossing', 1),
-  p('The boat left at noon.', 1),
+  p('We crossed at noon.', 1),
   h('Afterword', 2),
   p('Thanks for reading.', 2),
 ];
