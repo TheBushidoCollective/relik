@@ -4106,7 +4106,12 @@ export function buildChangesSidebar(): ChangesSidebarHandle {
       } else {
         body.replaceChildren(noChanges('No changes between these versions.'));
       }
-      setOpen(count > 0);
+      // On a narrow screen the list is a drawer over the panes, so it waits
+      // for its tab rather than covering the comparison it lists.
+      const narrow =
+        typeof window.matchMedia === 'function' &&
+        window.matchMedia('(max-width: 44rem)').matches;
+      setOpen(count > 0 && !narrow);
     },
   };
 }
