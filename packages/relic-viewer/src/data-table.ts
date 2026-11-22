@@ -1650,7 +1650,12 @@ export function mountCompareTable(
   table: TableSource,
   options: CompareTableOptions
 ): CompareTablePart {
-  ensureDataTableStyles();
+  if (!tableStylesReady) {
+    root.style.visibility = 'hidden';
+    void loadTableStyles().then(() => {
+      root.style.visibility = '';
+    });
+  }
   const drawn = Math.min(
     table.columns,
     options.widths.length,
