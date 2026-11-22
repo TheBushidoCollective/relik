@@ -129,6 +129,24 @@ describe('moving through the changes', () => {
       positionText(handle.element as unknown as { children: Node[] })
     ).toBe('Change 3 of 3');
   });
+
+  test('it takes an array-like list of stops, as a comparison hands them over', () => {
+    // The diff's stops arrive as they are, which need not be a plain array.
+    const jumps: ArrayLike<ChangeJump> = {
+      length: 2,
+      0: { side: 'after', changeId: 'c0', kind: 'added' },
+      1: { side: 'before', changeId: 'c1', kind: 'removed' },
+    };
+    const { handle, asked } = nav([]);
+    handle.setJumps(jumps);
+    expect(
+      positionText(handle.element as unknown as { children: Node[] })
+    ).toBe('2 changes');
+    handle.step(1);
+    handle.step(1);
+    handle.step(1);
+    expect(asked.map((ask) => ask.id)).toEqual(['c0', 'c1', 'c0']);
+  });
 });
 
 describe('which pane a stop belongs to', () => {

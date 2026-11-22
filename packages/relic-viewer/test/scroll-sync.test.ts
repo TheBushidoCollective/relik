@@ -1520,15 +1520,15 @@ describe('scroller inventory across rendering modes', () => {
       expect(frames).toHaveLength(2);
       for (const frame of frames) frame.dispatchEvent({ type: 'load' });
 
-      // A frame's title is its version's filename, so each frame is matched to
+      // A frame's title names its version and file, so each frame is matched to
       // the module it should have been posted.
       const postedTo = (title: string) =>
         frames.find((frame) => frame.title === title)?.postedMessages;
-      expect(postedTo('two.jsx')).toContainEqual({
+      expect(postedTo('Version 2 of two.jsx')).toContainEqual({
         type: 'relic:render-jsx',
         code: 'MODULE_TWO',
       });
-      expect(postedTo('one.jsx')).toContainEqual({
+      expect(postedTo('Version 1 of one.jsx')).toContainEqual({
         type: 'relic:render-jsx',
         code: 'MODULE_ONE',
       });
