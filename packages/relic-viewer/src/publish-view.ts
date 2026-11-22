@@ -1313,7 +1313,9 @@ function createPublisher(
   ): void => {
     dispose();
     busy = false;
-    status.textContent = 'Published. Your link is ready.';
+    status.textContent = submission.private
+      ? 'Published. Open the link before you share it.'
+      : 'Published. Your link is ready.';
 
     const card = el('div', 'pub-card');
     card.appendChild(el('h1', 'pub-card-title', 'Published'));
