@@ -13,8 +13,9 @@
  * on mouseup and keyup, so a cell or a range is offered exactly as text is.
  *
  * Every cell's text goes in through `textContent`. No attacker text reaches
- * `innerHTML` or an attribute: the only attributes set are record and column
- * numbers, and classes and ARIA values this module chooses.
+ * `innerHTML`. Attributes hold record and column numbers, classes and ARIA
+ * values this module chooses, and a file or sheet name as a value (`aria-label`,
+ * `data-file`), never parsed as markup.
  *
  * `mountCompareTable` draws one side of a spreadsheet comparison (plan B5). It
  * sorts nothing, has no header toggle, find, comment or editor, and selects one
