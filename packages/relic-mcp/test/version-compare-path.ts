@@ -184,14 +184,18 @@ export async function startHarness(): Promise<Harness> {
   } = {};
   let handle: (request: Request) => Promise<Response> = async () =>
     new Response('starting', { status: 503 });
+  // Bun's default 10 s idle timeout cut a viewer request under load, and the
+  // browser saw an empty response. 255 is the largest value Bun accepts.
   const service = Bun.serve({
     hostname: '127.0.0.1',
     port: 0,
+    idleTimeout: 255,
     fetch: (request) => handle(request),
   });
   const usercontent = Bun.serve({
     hostname: '127.0.0.1',
     port: 0,
+    idleTimeout: 255,
     fetch: (request) =>
       routes.app?.fetch(request) ?? new Response('starting', { status: 503 }),
   });
