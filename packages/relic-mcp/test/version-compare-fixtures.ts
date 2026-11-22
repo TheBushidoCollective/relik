@@ -128,10 +128,14 @@ function escapeXml(text: string): string {
 
 // ---------------------------------------------------------------- DOCX
 
-/** The 1x1 PNG docx-frame-path.mjs embeds. */
-const PNG = Uint8Array.from(
+/**
+ * A 1x1 RGB PNG, one red pixel, with every chunk length and CRC correct. The
+ * viewer reads it through ImageBudget (frame-zip-entries.ts), as it reads a
+ * reader's own picture. version-compare-fixtures.test.ts checks each chunk.
+ */
+export const PNG_1X1 = Uint8Array.from(
   Buffer.from(
-    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEUgAAAAASUVORK5CYII=',
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC',
     'base64'
   )
 );
@@ -153,7 +157,7 @@ const imageParagraph = () =>
     children: [
       new docx.ImageRun({
         type: 'png',
-        data: PNG,
+        data: PNG_1X1,
         transformation: { width: 20, height: 20 },
       }),
     ],

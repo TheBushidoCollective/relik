@@ -11,8 +11,9 @@ import {
   parseXml,
   type XmlElement,
 } from '@relic/format/xml';
-import type { ZipIndex } from '@relic/format/zip-index';
+import { crc32, type ZipIndex } from '@relic/format/zip-index';
 import { selectDocxParts } from '../../relic-viewer/src/document-payload-docx.ts';
+import { ImageBudget } from '../../relic-viewer/src/frame-zip-entries.ts';
 import {
   COMPARE_LIMIT_BYTES,
   DOCX_V1_HEADER,
@@ -23,6 +24,7 @@ import {
   EPUB_HOSTILE_TEXT,
   EPUB_TITLE,
   PADDING_BYTES,
+  PNG_1X1,
   docxPadded,
   docxV1,
   docxV1CoreOnly,
@@ -106,14 +108,6 @@ function cellAt(sheet: WorkbookSheet, a1: string): CellView | undefined {
   return undefined;
 }
 
-async function workbookSheetIds(bytes: Uint8Array): Promise<string[]> {
-  const index = await indexFixture(bytes);
-  const root = await xmlOf(index, 'xl/workbook.xml');
-  return elementsNamed(root, 'sheet').map(
-    (sheet) => sheet.attrs.get('sheetId') ?? ''
-  );
-}
-
 describe('DOCX fixtures', () => {
   test('v1 and v2 pass the viewer ZIP and part checks with the expected paragraphs', async () => {
     for (const [bytes, expected] of [
@@ -184,6 +178,51 @@ describe('DOCX fixtures', () => {
     expect(selection.parts).toEqual(
       (await selectDocxParts(await indexFixture(await docxV1()))).parts
     );
+  });
+
+  test('the fixture PNG has a correct signature and CRC on every chunk', () => {
+    const view = new DataView(
+      PNG_1X1.buffer,
+      PNG_1X1.byteOffset,
+      PNG_1X1.byteLength
+    );
+    expect([...PNG_1X1.subarray(0, 8)]).toEqual([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+    ]);
+    const kinds: string[] = [];
+    for (let at = 8; at < PNG_1X1.length; ) {
+      const length = view.getUint32(at);
+      const typeAndData = PNG_1X1.subarray(at + 4, at + 8 + length);
+      expect(view.getUint32(at + 8 + length)).toBe(crc32(typeAndData));
+      kinds.push(new TextDecoder().decode(typeAndData.subarray(0, 4)));
+      at += 12 + length;
+    }
+    expect(kinds).toEqual(['IHDR', 'IDAT', 'IEND']);
+    // IHDR: width 1, height 1; its CRC is the value every 1x1 8-bit RGB PNG carries.
+    expect(view.getUint32(16)).toBe(1);
+    expect(view.getUint32(20)).toBe(1);
+    expect(view.getUint32(29)).toBe(0x907753de);
+  });
+
+  test('the embedded picture passes the viewer image check the reader uses', async () => {
+    const standalone = new ImageBudget();
+    expect(standalone.admit('picture.png', PNG_1X1)).toBe(true);
+    expect(standalone.type('picture.png')).toBe('image/png');
+    for (const bytes of [await docxV1(), await docxV2()]) {
+      const index = await indexFixture(bytes);
+      const media = [...index.entries.keys()].filter((name) =>
+        name.startsWith('word/media/')
+      );
+      expect(media.length).toBe(1);
+      const read = await index.read(media[0]!);
+      expect(read.ok).toBe(true);
+      if (!read.ok) return;
+      expect(Array.from(read.bytes)).toEqual(Array.from(PNG_1X1));
+      const budget = new ImageBudget();
+      expect(budget.admit(media[0]!, read.bytes)).toBe(true);
+      expect(budget.reason).toBeUndefined();
+      expect(budget.type(media[0]!)).toBe('image/png');
+    }
   });
 });
 
@@ -285,7 +324,7 @@ describe('XLSX fixtures', () => {
       'visible',
       'hidden',
     ]);
-    expect(await workbookSheetIds(xlsxV1())).toEqual(['1', '2', '3']);
+    expect(sheets.map((s) => s.sheetId)).toEqual([1, 2, 3]);
   });
 
   test('v2 sheets: the rename keeps sheetId 1, Summary is added with sheetId 4', async () => {
@@ -303,7 +342,7 @@ describe('XLSX fixtures', () => {
       'hidden',
       'visible',
     ]);
-    expect(await workbookSheetIds(xlsxV2())).toEqual(['1', '3', '4']);
+    expect(sheets.map((s) => s.sheetId)).toEqual([1, 3, 4]);
   });
 
   test('cell facts for the paired and the changed sheets', async () => {
