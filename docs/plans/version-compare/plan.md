@@ -610,3 +610,10 @@ Run both reviews on the PR diff before merge, per ship-relic-change.
 - Every key resolves through its hash.
 - A search for `<script src` or `<link href` in the page finds nothing.
 - Every listed shot exists.
+
+## 9. Decisions after the mock (2026-11-22)
+
+1. **Single-version fallback names the readable version.** The too-large, unreadable and timeout lines in section 3.5 end "Version {l} is open here on its own". `{l}` is the version number actually shown: the readable side. When the older (left) version is the unreadable or oversize one, the newer version is shown and named; when both fail, the left version shows its own failure card. `renderSingleVersion(view, reason)` takes the readable view, and `reason` names the failed version, so the two numbers can differ.
+2. **Formula-only edits count as changed.** `WorkbookComparison.cells.changed` and the sidebar count include a cell whose display text is equal but whose formula differs, as section 3.4 says. For the section 6 workbooks the summary is "4 cells changed, 1 added, 1 removed." with a sidebar count of 9 (6 cell changes plus 3 sheet changes: added, removed, renamed).
+3. **EPUB fixture words.** Chapter 2 "The crossing" changes "We crossed at dawn." to "We crossed at noon.".
+4. **Copy the mock wrote that the spec did not give** (placeholders until reviewed, in `mockup.html`): the DRM card title and body, the mismatch history note, the title-change old and new titles, the 60-change table fixture and the SC5 chart tab name. The "Section {n}" fallback has no mock state; it is covered by `blockdiff.test.ts`.
