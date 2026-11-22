@@ -23,6 +23,7 @@
     "./structured-text": "./src/structured-text.ts",
     "./wordlist": "./src/wordlist.ts",
     "./xlsx": "./src/xlsx.ts",
+    "./xlsx-diff": "./src/xlsx-diff.ts",
     "./xml": "./src/xml.ts",
     "./zip-index": "./src/zip-index.ts"
   },

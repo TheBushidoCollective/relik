@@ -13,6 +13,8 @@ export interface WorkbookSheet {
   readonly name: string;
   readonly state: 'visible' | 'hidden' | 'veryHidden';
   readonly kind: 'worksheet' | 'chartsheet';
+  /** The sheet's `sheetId`: a positive safe integer, or absent when missing or invalid. */
+  readonly sheetId?: number;
   readonly rows: number;
   readonly columns: number;
   readonly refused?: 'too-large';
@@ -66,6 +68,27 @@ function attrsValue(
   name: string
 ): string | undefined {
   return attrs.get(name);
+}
+
+/** A sheet's `sheetId` when it is a positive safe integer. Any other value is absent and never refuses the workbook. */
+function sheetIdOf(value: string | undefined): number | undefined {
+  if (value === undefined || !/^\d+$/.test(value)) return undefined;
+  const id = Number(value);
+  return Number.isSafeInteger(id) && id > 0 ? id : undefined;
+}
+
+/** The parse budget: the default, lowered by a caller's `cellLimit`. A limit above the default is capped, and a limit that is not a safe integer admits no cells. */
+function cellBudget(requested: number | undefined): number {
+  if (requested === undefined) return XLSX_CELL_LIMIT;
+  if (!Number.isSafeInteger(requested)) return 0;
+  return Math.min(Math.max(requested, 0), XLSX_CELL_LIMIT);
+}
+
+/** Carries a valid `sheetId` onto a parsed sheet. */
+function withSheetId(sheet: WorkbookSheet, spec: SheetSpec): WorkbookSheet {
+  return spec.sheetId === undefined
+    ? sheet
+    : { ...sheet, sheetId: spec.sheetId };
 }
 const SPREADSHEET_NS = [
   'http://schemas.openxmlformats.org/spreadsheetml/2006/main',
@@ -153,13 +176,16 @@ interface SheetSpec {
   name: string;
   state: WorkbookSheet['state'];
   id: string;
+  sheetId?: number;
 }
 
 /** Parse XLSX without evaluating formulas, following external links, or using DOMParser. */
 export async function parseXlsx(
   bytes: Uint8Array,
-  inflater?: InflaterFn
+  inflater?: InflaterFn,
+  options?: { readonly cellLimit?: number }
 ): Promise<WorkbookResult> {
+  const budget = cellBudget(options?.cellLimit);
   try {
     const indexed = await indexZip(bytes, XLSX_LIMITS, inflater);
     if (!indexed.ok)
@@ -216,6 +242,7 @@ export async function parseXlsx(
           }
         }
         const state = attrs.get('state') ?? 'visible';
+        const sheetId = sheetIdOf(attrs.get('sheetId'));
         if (
           !sheetName ||
           !id ||
@@ -228,6 +255,7 @@ export async function parseXlsx(
           name: sheetName,
           id,
           state: state as SheetSpec['state'],
+          ...(sheetId === undefined ? {} : { sheetId }),
         });
         if (sheets.length > XLSX_SHEET_LIMIT) throw new Error('too-large');
       })
@@ -300,19 +328,24 @@ export async function parseXlsx(
       if (seenParts.has(rel.path)) throw new Error('corrupt');
       seenParts.add(rel.path);
       if (rel.kind === 'chartsheet') {
-        result.push({
-          name: spec.name,
-          state: spec.state,
-          kind: 'chartsheet',
-          rows: 0,
-          columns: 0,
-          rowNumbers: new Uint32Array(),
-          rowStart: new Uint32Array(1),
-          cells: new Uint32Array(),
-          numbers: new Float64Array(),
-          texts: [],
-          details: [],
-        });
+        result.push(
+          withSheetId(
+            {
+              name: spec.name,
+              state: spec.state,
+              kind: 'chartsheet',
+              rows: 0,
+              columns: 0,
+              rowNumbers: new Uint32Array(),
+              rowStart: new Uint32Array(1),
+              cells: new Uint32Array(),
+              numbers: new Float64Array(),
+              texts: [],
+              details: [],
+            },
+            spec
+          )
+        );
       } else {
         const parsed = parseWorksheet(await read(index, rel.path), {
           name: spec.name,
@@ -321,12 +354,12 @@ export async function parseXlsx(
           textPool,
           styles,
           date1904,
-          remaining: XLSX_CELL_LIMIT - totalCells,
+          remaining: budget - totalCells,
           remainingDetailBytes: 16 * 1024 * 1024 - detailBytes,
         });
         totalCells += parsed.cellCount;
         detailBytes += parsed.detailBytes;
-        result.push(parsed.sheet);
+        result.push(withSheetId(parsed.sheet, spec));
       }
     }
     return { ok: true, workbook: { sheets: result, date1904 } };
