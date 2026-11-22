@@ -1283,3 +1283,19 @@ What is not proven:
 - The MCP resolver keeps a `cell` or `path` comment in the thread with its location. It does not invent a resolution until the resolver slice lands.
 - A notebook's cover is the generic title and format label, as a model's is. Its cells and outputs are the author's, and a cover is public.
 - `RENDERABLE_CLASSES` now includes `notebook`. This supersedes the earlier statement in this file that it stays `{markdown, code, html, jsx, image, pdf}`, because Jason decided on 2026-11-19 that notebooks, spreadsheets and documents join the renderable classes. The taxonomy is now twelve classes in `RENDERER_CLASSES`, and the agreement test in `class-behaviour.test.ts` is driven from that list, so it covers the notebook without a change to the test.
+
+## 2026-11-22: Side-by-side comparison for DOCX, EPUB and XLSX
+
+The comparison design is in `docs/plans/version-compare/plan.md`, and section 9 of that plan records the decisions made after the mock. The product calls below are in force in this build. Each is cheap to change if it is wrong.
+
+- **Spreadsheets compare by position.** A cell is matched by its A1 coordinate, so a row or column inserted early shifts every cell after it. Row alignment is separate work.
+- **Images compare by presence only.** A DOCX or EPUB image counts as one block, at its place in the text. Its pixels are not compared, and the scope line says so.
+- **DOCX headers and footers are excluded.** Page headers and footers are chrome, so the comparison leaves them out and the scope line says so.
+- **Limits:** 16 MiB per version on each side, 2,000,000 cells per workbook version, 50,000 blocks per document version, 16 MiB of block text per version, and 5,000 block edits per pair. Past a document's limit both versions are shown without outlines. Past a workbook's limit the readable version is shown on its own.
+- **No comments or suggestions in compare panes.** Every other class already leaves them out of its comparison, and a comparison adds no surface for them.
+- **A formula-only edit counts as changed.** A cell whose shown text is equal and whose formula differs is a change and counts in the Changes sidebar. The section 6 workbooks read "4 cells changed, 1 added, 1 removed." with a sidebar count of 9.
+- **The readable version is the one shown.** When the older version cannot be shown, the newer one is shown and named. The reason names the version that failed.
+- **A line break reads as a space.** `one<br>Line` is one block reading "one Line", so the words of a paragraph are not joined.
+- **The title line needs both titles.** A book whose title is missing on one side shows no title line.
+- **Byte-identical versions are answered first.** The identical-content sentence is shown, with the left version on its own, before any frame or worker starts.
+- **No server change and no relic-mcp release.** The comparison runs in the viewer, on the same version loader as every other class.

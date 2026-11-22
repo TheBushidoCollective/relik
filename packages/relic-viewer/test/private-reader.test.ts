@@ -37,6 +37,7 @@ import {
   statementBytes,
   wrapVersionKey,
 } from '@relic/format/private';
+import { comparisonAvailability } from '../src/diff.ts';
 import { setUpIdentity } from '../src/private/identity.ts';
 import {
   fetchAndDecryptVersion,
@@ -1174,12 +1175,20 @@ describe('the private reader opens a sealed version', () => {
       );
       const prior = reopened.views[0]!;
       expect(prior.currentVersion).toBe(2);
+      expect(comparisonAvailability(prior)).toEqual({
+        kind: 'available',
+        mode: item.kind,
+      });
       expect(prior.openVersion).toBeDefined();
       const historical = await prior.openVersion!(1);
       expect(historical.kind).toBe('ready');
       if (historical.kind === 'ready') {
         expect(historical.view.version).toBe(1);
         expect(historical.view.documentKind).toBe(item.kind);
+        expect(comparisonAvailability(historical.view)).toEqual({
+          kind: 'available',
+          mode: item.kind,
+        });
       }
     }
   });

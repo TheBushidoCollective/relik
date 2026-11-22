@@ -250,6 +250,7 @@ import {
   DIFF_LIMIT_LABEL,
   FOLDER_COMPARE_MAX_BYTES,
   FOLDER_COMPARE_LIMIT_COPY,
+  IDENTICAL_CONTENT_COPY,
   bytesEqual,
   comparisonAvailability,
   createImageDiff,
@@ -3318,9 +3319,7 @@ export function renderImageComparison(
       }
       if (bytesEqual(beforeBytes, currentBytes)) {
         status.textContent = 'No changed pixels or metadata bytes.';
-        wrapper.appendChild(
-          noChanges('No changes. These versions have identical content.')
-        );
+        wrapper.appendChild(noChanges(IDENTICAL_CONTENT_COPY));
         return;
       }
 
@@ -3869,6 +3868,65 @@ function oversizeReason(failed: number, shown: number): string {
 }
 
 /**
+ * A comparison whose module loads on first use, so the shell never carries it.
+ *
+ * The slot says it is rendering at once. When the module arrives, the
+ * comparison is built and put in the slot within the same turn: a pane mounts
+ * on the next microtask, and only a pane already on the page mounts. A module
+ * that fails to load leaves the readable version on its own, with the reason.
+ */
+export function lazyComparison<M>(
+  load: () => Promise<M>,
+  build: (loaded: M) => HTMLElement,
+  historical: ReadyView,
+  usercontentOrigin: string
+): HTMLElement {
+  const slot = document.createElement('div');
+  const rendering = document.createElement('p');
+  rendering.className = 'diff-loading';
+  rendering.setAttribute('role', 'status');
+  rendering.textContent = 'Rendering both versions.';
+  slot.append(rendering);
+  void load()
+    .then((loaded) => {
+      if (!slot.isConnected) return;
+      slot.replaceChildren(build(loaded));
+    })
+    .catch(() => {
+      if (!slot.isConnected) return;
+      slot.replaceChildren(
+        renderSingleVersion(
+          historical,
+          usercontentOrigin,
+          `Relik could not load this comparison. Version ${historical.version} is open here on its own.`
+        )
+      );
+    });
+  return slot;
+}
+
+/**
+ * Whether two versions hold the same bytes. Sizes settle most pairs before a
+ * byte is read. A version that cannot be read is left to the comparison that
+ * follows, which says what failed.
+ */
+async function identicalBytes(
+  before: ReadyView,
+  after: ReadyView
+): Promise<boolean> {
+  if (before.content.size !== after.content.size) return false;
+  try {
+    const [left, right] = await Promise.all([
+      before.content.readWhole(MAX_DIFF_BYTES),
+      after.content.readWhole(MAX_DIFF_BYTES),
+    ]);
+    return left !== undefined && right !== undefined && bytesEqual(left, right);
+  } catch {
+    return false;
+  }
+}
+
+/**
  * How a historical version that loaded is presented.
  *
  * Side by side when the two versions can be diffed, the version on its own
@@ -3899,6 +3957,34 @@ export function renderLoadedVersion(
       mode,
       usercontentOrigin,
       onChanges
+    );
+  }
+  if (mode === 'docx' || mode === 'epub') {
+    return lazyComparison(
+      () => import('./document-compare.ts'),
+      ({ documentComparisonSpec }) =>
+        renderPairedComparison(
+          documentComparisonSpec(mode, compareUiFor(usercontentOrigin)),
+          current,
+          historical,
+          onChanges
+        ),
+      historical,
+      usercontentOrigin
+    );
+  }
+  if (mode === 'xlsx') {
+    return lazyComparison(
+      () => import('./spreadsheet-compare.ts'),
+      ({ renderSpreadsheetComparison }) =>
+        renderSpreadsheetComparison(
+          current,
+          historical,
+          compareUiFor(usercontentOrigin),
+          onChanges
+        ),
+      historical,
+      usercontentOrigin
     );
   }
   // Anything else has no side-by-side comparison, so it is shown on its own.
@@ -4331,9 +4417,7 @@ export function renderComparison(
         container.append(fileList);
         if (unchangedCount) container.append(unchanged);
         if (!files.some((file) => file.kind !== 'unchanged'))
-          container.appendChild(
-            noChanges('No changes. These versions have identical content.')
-          );
+          container.appendChild(noChanges(IDENTICAL_CONTENT_COPY));
         container.appendChild(detail);
         scaffold.result.replaceChildren(container);
         changesSidebar.setChanges(
@@ -4372,6 +4456,24 @@ export function renderComparison(
       current.currentVersion,
       comparable
     ).headline;
+
+    // Identical bytes need no comparison, so they are answered before any
+    // frame or worker starts, and the left version is shown on its own.
+    if (
+      (mode === 'docx' || mode === 'epub' || mode === 'xlsx') &&
+      (await identicalBytes(leftRes.view, rightRes.view))
+    ) {
+      if (thisRequest !== request) return;
+      scaffold.result.replaceChildren(
+        renderSingleVersion(
+          leftRes.view,
+          usercontentOrigin,
+          IDENTICAL_CONTENT_COPY
+        )
+      );
+      changesSidebar.setChanges(0, undefined);
+      return;
+    }
 
     if (mode === 'code') {
       const textDiff = createTextDiff(

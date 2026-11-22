@@ -724,6 +724,29 @@ test('a retitled book with unchanged text shows the title line and no chapter li
   }
 });
 
+test('a title line needs a title on both sides, so a missing one adds no line', () => {
+  const dom = installDom();
+  try {
+    const { ui } = probeUi();
+    for (const [from, to] of [
+      ['', 'River journal: second edition'],
+      ['River journal', ''],
+      ['   ', 'River journal: second edition'],
+    ] as const) {
+      const result = diffed(
+        documentComparisonSpec('epub', ui).diff(
+          { blocks: BOOK_V2_BLOCKS, book: { ...BOOK_V2, title: from } },
+          { blocks: BOOK_V2_BLOCKS, book: { ...BOOK_V2, title: to } }
+        )
+      );
+      expect(result.changed).toBe(false);
+      expect(result.preface).toBeUndefined();
+    }
+  } finally {
+    dom.restore();
+  }
+});
+
 test('a chapter without a contents title is named by its position', () => {
   const dom = installDom();
   try {

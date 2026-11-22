@@ -188,11 +188,11 @@ function bookPreface(
   return preface;
 }
 
-/** The title line, when the title changed between the two versions. */
+/** The title line, when both versions have a title and the titles differ. */
 function titleLine(before: string, after: string): HTMLElement | undefined {
   const from = before.replace(/\s+/g, ' ').trim();
   const to = after.replace(/\s+/g, ' ').trim();
-  if (from === to) return undefined;
+  if (from === to || from === '' || to === '') return undefined;
   const line = document.createElement('p');
   line.className = 'diff-title-line';
   line.textContent = `The title changed from ${from} to ${to}.`;

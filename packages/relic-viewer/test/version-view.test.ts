@@ -17,6 +17,7 @@ import { describe, expect, test } from 'bun:test';
 import { contentFromBytes } from '../src/content.ts';
 import {
   comparisonAvailability,
+  diffModeForViews,
   MAX_DIFF_BYTES,
   versionHistoryAvailability,
 } from '../src/diff.ts';
@@ -165,5 +166,67 @@ describe('which version stands alone when one is over the limit', () => {
     expect(
       oversizeSingle(view('markdown', 3, 3), view('markdown', 2, 3))
     ).toBeUndefined();
+  });
+});
+
+describe('documents and workbooks beside each other', () => {
+  /** A ready view of one document class, with the kind a document carries. */
+  function docOf(
+    version: number,
+    currentVersion: number,
+    documentKind: 'docx' | 'epub' | undefined,
+    content?: Uint8Array<ArrayBuffer>
+  ): ReadyView {
+    const base = view(
+      'sandboxed-document',
+      version,
+      currentVersion,
+      `book.${documentKind ?? 'bin'}`,
+      content
+    );
+    return documentKind === undefined ? base : { ...base, documentKind };
+  }
+
+  test('a DOCX beside an EPUB displays differently, and says so', () => {
+    const docx = docOf(3, 3, 'docx');
+    const epub = docOf(2, 3, 'epub');
+    expect(diffModeForViews(docx, epub)).toBeUndefined();
+    expect(uncomparableReason(docx, epub, 2)).toBe(
+      'Version 2 and version 3 display differently, so they cannot be shown ' +
+        'side by side. Version 2 is open here on its own.'
+    );
+  });
+
+  test('a DOCX beside prose displays differently too', () => {
+    const reason = uncomparableReason(
+      docOf(3, 3, 'docx'),
+      view('markdown', 2, 3),
+      2
+    );
+    expect(reason).toContain('display differently');
+    expect(reason).toContain('Version 2 is open here on its own.');
+  });
+
+  test('a document of no recognized kind is download-only beside a DOCX', () => {
+    const reason = uncomparableReason(
+      docOf(3, 3, 'docx'),
+      docOf(2, 3, undefined),
+      2
+    );
+    expect(reason).toContain('Version 2 is download-only');
+    expect(reason).toContain('open here on its own');
+  });
+
+  test('an oversize DOCX older version gives way to the newer one, which is named', () => {
+    const oversize = new Uint8Array(MAX_DIFF_BYTES + 1);
+    const picked = oversizeSingle(
+      docOf(3, 3, 'docx'),
+      docOf(2, 3, 'docx', oversize)
+    );
+    expect(picked?.shown.version).toBe(3);
+    expect(picked?.reason).toContain(
+      'Version 2 is larger than the 16 MiB comparison limit'
+    );
+    expect(picked?.reason).toContain('Version 3 is open here on its own.');
   });
 });

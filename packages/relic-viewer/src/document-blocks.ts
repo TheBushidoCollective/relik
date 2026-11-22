@@ -367,6 +367,12 @@ class Reader {
     if (depth > MAX_NESTING) throw new Unreadable();
     const tag = tagOf(node);
     if (SKIPPED_TAGS[tag] === true) return;
+    // A line break reads as the space it stands for in running text, so
+    // "one<br>Line" is "one Line", not "oneLine".
+    if (tag === 'br') {
+      this.pieces.push({ raw: ' ' });
+      return;
+    }
     const own = Object.hasOwn(OWN_KINDS, tag) ? OWN_KINDS[tag] : undefined;
     if (own === 'image' || own === 'media') {
       this.structure += 1;

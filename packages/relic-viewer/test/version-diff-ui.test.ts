@@ -26,6 +26,7 @@ import {
   commentRow,
   compareUiFor,
   comparisonCopy,
+  lazyComparison,
   renderChangeList,
   renderCodeComparison,
   renderComparison,
@@ -236,6 +237,18 @@ function getBody(): ElementStub {
     return globalDoc.body as ElementStub;
   }
   throw new Error('document.body missing');
+}
+
+/**
+ * Yields one macrotask. A lazy comparison module loads through the runtime's
+ * module loader, which fake timers do not drive, so the tests below check
+ * their condition after each yield, with a bound, as document-compare.test.ts
+ * does.
+ */
+function yieldMacrotask(): Promise<void> {
+  const { promise, resolve } = Promise.withResolvers<void>();
+  setTimeout(resolve, 0);
+  return promise;
 }
 function dummyDeps(fetchFn?: typeof globalThis.fetch): ViewerDeps {
   const defaultFetch = (async (input: RequestInfo | URL) => {
@@ -1047,6 +1060,78 @@ describe('version comparison affordance', () => {
         (element) => element.className === 'doc doc-download'
       )
     ).toBe(true);
+  });
+
+  test('DOCX, EPUB and workbook history offer Compare versions', () => {
+    const current = [
+      { ...view('sandboxed-document', 3), documentKind: 'docx' as const },
+      { ...view('sandboxed-document', 3), documentKind: 'epub' as const },
+      view('spreadsheet', 3),
+    ];
+    for (const version of current) {
+      const bar = buildBar(version, 'aaaaaaaaaaaaaaaaaaaaaaaaaa', {
+        onCompare: () => {},
+      }) as unknown as ElementStub;
+      expect(textOf(bar)).toContain('Compare versions');
+      expect(textOf(bar)).not.toContain('Earlier versions');
+    }
+  });
+
+  test('a document of no recognized kind offers Earlier versions only', () => {
+    const current = view('sandboxed-document', 3);
+    const bar = buildBar(current, 'aaaaaaaaaaaaaaaaaaaaaaaaaa', {
+      onCompare: () => {},
+    }) as unknown as ElementStub;
+    expect(textOf(bar)).toContain('Earlier versions');
+    expect(textOf(bar)).not.toContain('Compare versions');
+  });
+
+  test('a DOCX comparison shows a rendering line, then fills in once its module loads', async () => {
+    const current = {
+      ...view('sandboxed-document', 3, encoder.encode('docx three')),
+      documentKind: 'docx' as const,
+    };
+    const historical = {
+      ...view('sandboxed-document', 2, encoder.encode('docx two'), 3),
+      documentKind: 'docx' as const,
+    };
+    const slot = renderLoadedVersion(
+      current,
+      historical,
+      2,
+      'https://relik-usercontent.example'
+    ) as unknown as ElementStub;
+    expect(textOf(slot)).toContain('Rendering both versions.');
+    Object.assign(slot, { isConnected: true });
+    for (
+      let i = 0;
+      i < 200 && withClass(slot, 'diff-view-docx').length === 0;
+      i++
+    )
+      await yieldMacrotask();
+    expect(withClass(slot, 'diff-view-docx')).toHaveLength(1);
+    expect(textOf(slot)).toContain('Document comparison');
+  });
+
+  test('a comparison module that fails to load leaves the readable version on its own', async () => {
+    const historical = {
+      ...view('sandboxed-document', 2, encoder.encode('docx two'), 3),
+      documentKind: 'docx' as const,
+    };
+    const slot = lazyComparison(
+      () => Promise.reject(new Error('chunk not found')),
+      () => {
+        throw new Error('the module was never loaded');
+      },
+      historical,
+      'https://relik-usercontent.example'
+    ) as unknown as ElementStub;
+    Object.assign(slot, { isConnected: true });
+    for (let i = 0; i < 200 && !textOf(slot).includes('could not load'); i++)
+      await yieldMacrotask();
+    expect(textOf(slot)).toContain(
+      'Relik could not load this comparison. Version 2 is open here on its own.'
+    );
   });
 
   test('unrecognized documents offer download without extracting or framing', () => {

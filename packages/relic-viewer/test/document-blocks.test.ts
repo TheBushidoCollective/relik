@@ -157,6 +157,29 @@ describe('collectBlocks on a DOCX page', () => {
   });
 });
 
+describe('collectBlocks reads a line break as a space', () => {
+  test('one<br>Line reads as one Line, and a break alone makes no block', () => {
+    const root = docxPage([
+      el('p', {}, [text('one'), el('br'), text('Line')]),
+      el('p', {}, [el('br')]),
+      el('p', {}, [text('Two'), el('br'), el('br'), text('lines')]),
+    ]);
+    expect(mustRead(root, 'docx').blocks.map((block) => block.text)).toEqual([
+      'one Line',
+      'Two lines',
+    ]);
+  });
+
+  test('a break inside a list item joins its words', () => {
+    const root = docxPage([
+      el('ul', {}, [el('li', {}, [text('first'), el('br'), text('second')])]),
+    ]);
+    expect(mustRead(root, 'docx').blocks).toEqual([
+      { kind: 'list-item', text: 'first second', part: 0 },
+    ]);
+  });
+});
+
 describe('collectBlocks on an EPUB', () => {
   const root = el('div', { id: 'relic-document' }, [
     el('p', { role: 'status' }, [

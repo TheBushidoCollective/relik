@@ -23,11 +23,15 @@ export const FOLDER_COMPARE_LIMIT_COPY =
 export const MAX_RENDERED_DIFF_BYTES = MAX_DIFF_BYTES;
 export const RENDERED_DIFF_LIMIT_LABEL = DIFF_LIMIT_LABEL;
 
+/** The copy when two versions hold the same content. */
+export const IDENTICAL_CONTENT_COPY =
+  'No changes. These versions have identical content.';
+
 /**
- * How a pair of versions is compared. `code` is the one text mode left: a
- * line diff is the visual form of code, because code is text. Everything
- * else is compared as it renders. `docx`, `epub` and `xlsx` name the document
- * and workbook comparisons, which no route maps to yet.
+ * How a pair of versions is compared. `code` is a line diff, because code is
+ * text. Every other mode compares what a reader sees: rendered prose, a page,
+ * an image, the text blocks of a document (`docx`, `epub`) or the cells of a
+ * workbook (`xlsx`).
  */
 export type DiffMode =
   | 'markdown'
@@ -164,7 +168,7 @@ export function createTextDiff(before: string, current: string): TextDiff {
       additions: 0,
       deletions: 0,
       parts: [],
-      summary: 'No changes. These versions have identical content.',
+      summary: IDENTICAL_CONTENT_COPY,
     };
   }
 
@@ -249,7 +253,7 @@ export function createImageDiff(
     return {
       mode: 'image',
       changed: false,
-      summary: 'No changes. These versions have identical content.',
+      summary: IDENTICAL_CONTENT_COPY,
     };
   }
 
@@ -281,10 +285,12 @@ export function diffModeForView(view: ComparableView): DiffMode | undefined {
     case 'sandboxed-html':
     case 'sandboxed-jsx':
       return 'rendered';
-    // Document and spreadsheet comparison is implemented by a later slice.
     case 'sandboxed-document':
-    case 'spreadsheet':
+      if (view.documentKind === 'docx') return 'docx';
+      if (view.documentKind === 'epub') return 'epub';
       return undefined;
+    case 'spreadsheet':
+      return 'xlsx';
     case 'image':
       return 'image';
     default:
@@ -296,7 +302,8 @@ export function diffModeForView(view: ComparableView): DiffMode | undefined {
  * Both versions have to reach the same mode, and the rule is equality rather
  * than a fallback to the current version's mode. Each mode compares a
  * different kind of thing: rendered prose the viewer builds, a page the
- * usercontent frame builds, an image the browser decodes, or lines of text.
+ * usercontent frame builds, an image the browser decodes, lines of text, the
+ * text blocks of a document, or the cells of a workbook.
  * Feeding one mode the other's bytes would produce a confident result with no
  * meaning, so a pair that disagrees is refused and the recipient is told why.
  */
@@ -344,10 +351,6 @@ export function uncomparableClassNoun(route: RenderRoute): string | undefined {
       return 'PDF';
     case 'model':
       return '3D model';
-    case 'sandboxed-document':
-      return 'document';
-    case 'spreadsheet':
-      return 'spreadsheet';
     default:
       return undefined;
   }
