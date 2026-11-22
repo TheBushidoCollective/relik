@@ -12,6 +12,7 @@ import {
   CUE_TEXT_LIMIT_BYTES,
   PATH_EXCERPT_LIMIT_BYTES,
   type CellResolved,
+  type WorkbookCellResolved,
   type PathResolved,
   type TimeCuesResolved,
   subtitleClock,
@@ -21,17 +22,23 @@ function cutNote(truncated: boolean, limit: number): string {
   return truncated ? ` (cut to ${limit} bytes)` : '';
 }
 
-export function cellResolutionLine(resolved: CellResolved): string {
+export function cellResolutionLine(
+  resolved: CellResolved | WorkbookCellResolved
+): string {
   const range =
     resolved.range === undefined
       ? ''
       : `; range to ${cellName(resolved.range.row_end, resolved.range.col_end)}`;
+  const place =
+    'sheet' in resolved
+      ? `sheet ${jsonLine(resolved.sheet)}, cell ${resolved.address}`
+      : `top-left line ${resolved.line}`;
   return (
     `[Resolution: cell text ${jsonLine(resolved.text)}` +
     `${cutNote(resolved.text_truncated, CELL_TEXT_LIMIT_BYTES)}; ` +
     `column header ${jsonLine(resolved.header)}` +
     `${cutNote(resolved.header_truncated, CELL_HEADER_LIMIT_BYTES)}; ` +
-    `top-left line ${resolved.line}${range}]\n`
+    `${place}${range}]\n`
   );
 }
 

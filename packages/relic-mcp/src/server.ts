@@ -1222,7 +1222,7 @@ export const READ_COMMENTS_TOOL_DEFINITION = {
     'comments the scope did not return, so a scoped thread never reads as the ' +
     'whole one. ' +
     'Pass `resolve_anchors: true` to fetch and decrypt the relic content and ' +
-    'resolve anchors against the actual content (source context runs for quotes, ' +
+    'resolve anchors against the actual content (source context runs for quotes, including quotes in Word documents and EPUB ebooks; a spreadsheet cell resolves to its sheet, A1 address, displayed value and column header; ' +
     'crops and annotated views for image regions, extracted video frames, and ' +
     'for OTIO the original revision\u2019s source intervals plus a separate ' +
     'current-revision projection). HTML image anchors require browser rendering ' +
@@ -1264,7 +1264,7 @@ export const READ_COMMENTS_TOOL_DEFINITION = {
         type: 'boolean',
         description:
           'Whether to fetch and decrypt the relic to resolve anchors against the actual content ' +
-          '(e.g. text quotes with surrounding source context, image region crops and annotated views, video frames). ' +
+          '(e.g. text quotes with surrounding source context, including Word and EPUB quotes, spreadsheet cells with their sheet and address, image region crops and annotated views, video frames). ' +
           'OTIO source context is returned only after its service-stamped comment revision and sealed document digest validate. ' +
           'Defaults to false because resolving content mints a signed download URL and fetches the ciphertext, ' +
           'which consumes download quota and bandwidth.',

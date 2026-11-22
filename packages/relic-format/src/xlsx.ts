@@ -37,6 +37,27 @@ export function worksheetRowIndex(sheet: WorkbookSheet, row: number): number {
   return sheet.rowNumbers[low] === row ? low : -1;
 }
 
+/** Index of the populated cell at a zero-based row and column, or -1. */
+export function worksheetCellIndex(
+  sheet: WorkbookSheet,
+  row: number,
+  column: number
+): number {
+  const rowIndex = worksheetRowIndex(sheet, row);
+  if (rowIndex < 0) return -1;
+  let low = sheet.rowStart[rowIndex] ?? 0,
+    high = sheet.rowStart[rowIndex + 1] ?? low;
+  while (low < high) {
+    const mid = (low + high) >>> 1;
+    if (sheet.cells[mid * 3]! < column) low = mid + 1;
+    else high = mid;
+  }
+  return low < (sheet.rowStart[rowIndex + 1] ?? 0) &&
+    sheet.cells[low * 3] === column
+    ? low
+    : -1;
+}
+
 export interface Workbook {
   readonly sheets: WorkbookSheet[];
   readonly date1904: boolean;

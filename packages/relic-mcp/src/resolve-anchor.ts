@@ -26,13 +26,11 @@ import { type ChildProcess, spawn } from 'node:child_process';
 import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { inflateRaw } from 'node:zlib';
 import { basename } from 'node:path';
 import {
   type AnchorRect,
   decodeKey,
   deriveRendererClass,
-  type InflaterFn,
   indexOtioZip,
   isOtioz,
   isRawOtio,
@@ -61,6 +59,8 @@ import { boxPosition, type CommentRecord, formatTimecode } from './comments.ts';
 import { privateVersionKey } from './private.ts';
 import type { PublishDeps } from './publish.ts';
 import { loadPrivatePublishState, loadPublishState } from './state.ts';
+import { resolveDocumentQuote } from './document-text.ts';
+import { nodeInflater } from './node-inflater.ts';
 import {
   readerForVersion,
   resolveStructuredComment,
@@ -1032,51 +1032,6 @@ function findTextOccurrence(
   return { matchIndex: bestIndex, line };
 }
 
-const nodeInflater: InflaterFn = (compressed, uncompressedSize, maxBytes) => {
-  if (
-    !Number.isSafeInteger(uncompressedSize) ||
-    uncompressedSize < 0 ||
-    !Number.isSafeInteger(maxBytes) ||
-    maxBytes < 0
-  ) {
-    return Promise.reject(
-      new Error('decompression sizes must be non-negative safe integers')
-    );
-  }
-  if (uncompressedSize > maxBytes) {
-    return Promise.reject(
-      new Error(
-        `declared decompressed size ${uncompressedSize} exceeds ${maxBytes}`
-      )
-    );
-  }
-
-  const { promise, resolve, reject } = defer<Uint8Array>();
-  try {
-    // zlib requires a positive cap; an empty entry still has a zero-byte result budget.
-    inflateRaw(
-      compressed,
-      { maxOutputLength: Math.max(1, maxBytes) },
-      (error, result) => {
-        if (error) {
-          reject(error);
-          return;
-        }
-        if (result.length > maxBytes) {
-          reject(
-            new Error(`inflated size ${result.length} exceeds ${maxBytes}`)
-          );
-          return;
-        }
-        resolve(result);
-      }
-    );
-  } catch (error) {
-    reject(error);
-  }
-  return promise;
-};
-
 type OtioParse =
   | { readonly ok: true; readonly document: OtioDocumentV1 }
   | { readonly ok: false; readonly error: string };
@@ -1723,6 +1678,16 @@ export async function resolveAnchors(
               explanation: `A text quote anchor cannot be resolved against a ${rendererClass} relic.`,
             },
           });
+          break;
+        }
+
+        const documentQuote = await resolveDocumentQuote(
+          opened.content,
+          filename,
+          { kind: anchor.kind, exact: target, prefix, suffix }
+        );
+        if (documentQuote !== undefined) {
+          updatedComments.push({ ...comment, resolved: documentQuote });
           break;
         }
 

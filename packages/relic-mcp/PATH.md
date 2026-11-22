@@ -875,3 +875,29 @@ Success ends with:
 ```text
 SVG_PATH_OK
 ```
+
+## Documents: spreadsheet cells, Word quotes and EPUB quotes
+
+Build the viewer and the MCP bundle first, then run the proof from the repository root with an isolated headless browser:
+
+```bash
+bun run build
+bun run --cwd packages/relic-mcp build
+RELIC_CHROME_PATH=/absolute/path/to/chrome-headless-shell bun packages/relic-mcp/test/documents-path.ts
+```
+
+The command publishes a workbook, a Word document and an EPUB through a fresh relic-mcp stdio process. In a headless page it comments with real mouse input on a cell of the workbook's first sheet and on a cell of its second sheet. It also double-clicks a word inside the Word frame and a word inside the EPUB frame, and types a comment for each. The page posts the comments through the service's comment route, and `relic_read_comments` reads them back with `resolve_anchors` on.
+
+The stages assert the resolved context, not the anchors the page sent. A cell resolves to its sheet name, its A1 address, its displayed value and the value in row 1 of its column. A quote resolves to the quoted word, its paragraph line and the words before it. The EPUB quote also shows that `&amp;` in the chapter reads as `&` in the context. A negative control shows that the checker rejects a wrong expected value and a wrong expected line.
+
+The same command runs in full Chromium with `--headless=new`, as CI does on Linux, and both browsers must pass. Every write goes to the loopback in-memory service.
+
+Negative control (b) is run by hand and reverted afterwards, because it changes product code. In `packages/relic-mcp/src/resolve-workbook.ts`, return the header's value in place of the cell's value, rebuild the bundle with `bun run --cwd packages/relic-mcp build`, and run the command above. The `xlsx` stage must fail at its cell-value assertion. Then restore the file, rebuild, and run the default command again.
+
+Success ends with:
+
+```text
+DOCUMENTS_PATH_OK
+```
+
+A failed assertion exits non-zero after printing the stage it stopped at. Each stage also prints the resolved JSON it read back, so the resolution can be checked without a browser.
