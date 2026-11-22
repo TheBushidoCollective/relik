@@ -304,7 +304,7 @@ async function world(
   };
 }
 
-test('private browser publish returns a keyless link only after an authenticated seal readback', async () => {
+test('private browser publish returns a keyless link after a verified seal readback', async () => {
   const w = await world();
   const result = await w.publisher.publish();
   expect(result.access).toBe('private');
@@ -455,7 +455,7 @@ test('a second publish cannot issue completion while the first is in flight', as
   expect((await first).access).toBe('private');
 });
 
-test('an ambiguous completion is only read back until its original seal is accepted', async () => {
+test('an ambiguous completion is read back without issuing another completion', async () => {
   const w = await world({ lostBeforeSeal: true });
   await expect(w.publisher.publish()).rejects.toThrow();
   await expect(w.publisher.retry()).rejects.toThrow(
@@ -473,7 +473,7 @@ test('an ambiguous completion is only read back until its original seal is accep
   expect(w.uploads).toBe(1);
 });
 
-test('a completion conflict returns the verified accepted seal without a second completion', async () => {
+test('a completion conflict returns the verified seal readback without a second completion', async () => {
   const w = await world({ completionConflict: true });
   const result = await w.publisher.publish();
   expect(result.access).toBe('private');

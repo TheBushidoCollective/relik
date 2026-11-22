@@ -23,6 +23,8 @@ export const MAX_BROWSER_IGNORE_BYTES = 1024 * 1024;
 export const MAX_BROWSER_IGNORE_RULES = MAX_IGNORE_RULES;
 export const MAX_BROWSER_IGNORE_WORK = 2_000_000_000;
 const MAX_BROWSER_IGNORE_MATCH_WORK = 1_000_000;
+const MAX_BROWSER_IGNORE_PATH_WORK = 100_000_000;
+const BROWSER_IGNORE_PAUSE_WORK = 10_000_000;
 const encoder = new TextEncoder();
 
 type PickerEntry =
@@ -95,6 +97,8 @@ export async function prepareBrowserDirectory(
   const matcher = createIgnoreMatcher([], {
     maxWork: MAX_BROWSER_IGNORE_WORK,
     maxMatchWork: MAX_BROWSER_IGNORE_MATCH_WORK,
+    maxPathWork: MAX_BROWSER_IGNORE_PATH_WORK,
+    pauseWork: BROWSER_IGNORE_PAUSE_WORK,
   });
   let visited = 0;
   let processed = 0;
@@ -142,10 +146,16 @@ export async function prepareBrowserDirectory(
       });
     throw error;
   };
-  const isIgnored = (path: string, directory: boolean): boolean => {
+  const isIgnored = async (
+    path: string,
+    directory: boolean
+  ): Promise<boolean> => {
     try {
-      return matcher(path, directory);
+      return await matcher.matchAsync(path, directory, () =>
+        yieldToEventLoop(signal)
+      );
     } catch (error) {
+      rethrowAbort(error, signal);
       return convertIgnoreError(error);
     }
   };
@@ -229,7 +239,7 @@ export async function prepareBrowserDirectory(
         omit(path, reason);
         continue;
       }
-      if (isIgnored(path, entry.isDirectory)) {
+      if (await isIgnored(path, entry.isDirectory)) {
         omit(path, 'gitignore');
         continue;
       }
@@ -283,7 +293,7 @@ export async function prepareBrowserDirectory(
         continue;
       }
       const directory = entry.kind === 'directory';
-      if (isIgnored(path, directory)) {
+      if (await isIgnored(path, directory)) {
         omit(path, 'gitignore');
         continue;
       }

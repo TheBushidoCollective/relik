@@ -805,7 +805,7 @@ Two counters order every change to who can read a relic:
 - `accessEpoch` is per relic. A grant increments it, and so does a revocation, which also opens the next version.
 - `recipientsEpoch` is per owner identity. Device approval, device revocation and recovery changes increment it.
 
-The seal and grant checks compare these counters, so a seal or grant made against an outdated set of readers is refused, not stored.
+The seal and grant checks compare these counters. The owner-epoch recheck occurs after `sealedVersion` is visible, leaving the rollback window described below.
 
 The required recipient set R for a relic at seal time is:
 
@@ -822,7 +822,10 @@ The required recipient set R for a relic at seal time is:
 4. The wraps cover exactly R, the `recipient_key_ids` match R, and the statement's `owner_epoch` equals the owner identity's `recipientsEpoch`. Otherwise the request refuses with `recipients_changed` and both epochs.
 5. Wraps already stored for this unsealed version are deleted, then the new wraps and the seal are written create-only.
 6. In one `updateRelic`, the store requires `accessEpoch` to equal the statement's `access_epoch` and `version` to equal `row.version`, and sets `sealedVersion`. On failure, what step 5 wrote is deleted and the request refuses with `recipients_changed` or `version_conflict`.
-7. The version is marked published as for a public relic, its digest is recorded, and the change notice is sent.
+7. The server rechecks the owner's `recipientsEpoch`. If it changed, the server restores the previous `sealedVersion`, deletes the wraps and seal, and returns `recipients_changed`.
+8. The version is marked published as for a public relic, its digest is recorded, and the change notice is sent.
+
+`sealedVersion` is visible between steps 6 and 7. After a lost completion response, if the owner's recipients change during completion, the browser can show a link for a seal the server then rolls back after the browser has discarded the version key. Recovery is to publish again. The lease and marker fix is tracked in [issue #245](https://github.com/TheBushidoCollective/relik/issues/245).
 
 Device revocation and recovery replacement delete that key's wraps across every relic the owner holds. A version sealed between a designation and its backfill can miss the new recipient. `GET /api/identity/relics?coverage=1` reports such gaps, and the owner's dashboard repairs them through `POST /api/identity/backfill`, which accepts at most `privateBackfillMaxWraps` wraps per request.
 

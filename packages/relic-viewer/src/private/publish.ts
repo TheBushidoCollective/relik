@@ -244,7 +244,7 @@ async function checkOwner(
   await verifiedPartyKeys(party);
 }
 
-/** Read the accepted owner seal, verify its signature and check our own wrap. */
+/** Read the owner seal, verify its signature and check our own wrap. */
 async function readBack(
   p: Pending,
   options: PrivatePublisherOptions

@@ -1,5 +1,10 @@
 import { describe, expect, test } from 'bun:test';
-import { MAX_PATH_DEPTH, openAnyRelic, openFolder } from '@relic/format';
+import {
+  IgnoreLimitError,
+  MAX_PATH_DEPTH,
+  openAnyRelic,
+  openFolder,
+} from '@relic/format';
 import {
   MAX_BROWSER_DIRECTORY_ENTRIES,
   MAX_BROWSER_IGNORE_BYTES,
@@ -567,19 +572,19 @@ describe('browser folder preflight', () => {
 
     const reading = new AbortController();
     const readingReason = new Error('stop pending file callback');
-    let readingStarted = false;
+    const readingStarted = Promise.withResolvers<void>();
     const entry = {
       name: 'file.txt',
       isDirectory: false,
       isFile: true,
       file() {
-        readingStarted = true;
+        readingStarted.resolve();
       },
     } as unknown as FileSystemFileEntry;
     const pendingFile = prepareBrowserDirectory([entry], [], {
       signal: reading.signal,
     });
-    expect(readingStarted).toBe(true);
+    await readingStarted.promise;
     reading.abort(readingReason);
     await expect(pendingFile).rejects.toBe(readingReason);
   });
@@ -626,6 +631,79 @@ describe('browser folder preflight', () => {
       code: 'source_unreadable',
       details: { limit: 1_000_000, kind: 'work' },
     });
+  });
+
+  test('refuses excessive work on one path before reading its file', async () => {
+    let reads = 0;
+    const heavyName = 'a'.repeat(250);
+    const heavy = {
+      name: heavyName,
+      isDirectory: false,
+      isFile: true,
+      file(resolve: (file: File) => void) {
+        reads++;
+        resolve(new File(['data'], heavyName));
+      },
+    } as unknown as FileSystemFileEntry;
+    const rules = `${'*a'.repeat(500)}\n`.repeat(400);
+    const root = dropDirectory('project', [
+      heavy,
+      dropFile('.gitignore', rules),
+    ]);
+    await expect(prepareBrowserDirectory([root], [])).rejects.toMatchObject({
+      code: 'source_unreadable',
+      details: { limit: 100_000_000, kind: 'work' },
+    });
+    expect(reads).toBe(0);
+  });
+
+  test('aborts while matching one expensive path before later file reads', async () => {
+    const controller = new AbortController();
+    const reason = new IgnoreLimitError('work', 33);
+    const rules = `${'*a'.repeat(500)}\n`.repeat(100);
+    const ignoreFile = new File([rules], '.gitignore');
+    Object.defineProperty(ignoreFile, 'text', {
+      value: async () => {
+        // A real timer verifies that matching yields to browser events.
+        setTimeout(() => controller.abort(reason), 0);
+        return rules;
+      },
+    });
+    const ignoreEntry = {
+      name: '.gitignore',
+      isDirectory: false,
+      isFile: true,
+      file(resolve: (file: File) => void) {
+        resolve(ignoreFile);
+      },
+    } as unknown as FileSystemFileEntry;
+    let heavyReads = 0;
+    let laterReads = 0;
+    const heavyName = 'a'.repeat(250);
+    const heavy = {
+      name: heavyName,
+      isDirectory: false,
+      isFile: true,
+      file(resolve: (file: File) => void) {
+        heavyReads++;
+        resolve(new File(['data'], heavyName));
+      },
+    } as unknown as FileSystemFileEntry;
+    const later = {
+      name: 'later.txt',
+      isDirectory: false,
+      isFile: true,
+      file(resolve: (file: File) => void) {
+        laterReads++;
+        resolve(new File(['data'], 'later.txt'));
+      },
+    } as unknown as FileSystemFileEntry;
+    const root = dropDirectory('project', [heavy, later, ignoreEntry]);
+    await expect(
+      prepareBrowserDirectory([root], [], { signal: controller.signal })
+    ).rejects.toBe(reason);
+    expect(heavyReads).toBe(0);
+    expect(laterReads).toBe(0);
   });
 
   test('yields during large directory enumeration so cancellation can run', async () => {

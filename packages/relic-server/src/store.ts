@@ -857,7 +857,11 @@ export interface RelicStore {
     change: (r: AccessRequestRow) => AccessRequestRow
   ): Promise<AccessRequestRow | undefined>;
   deleteAccessRequestsForRelic(relicId: string): Promise<number>;
-  putOwnedRelic(row: OwnedRelicRow): Promise<void>;
+  /** Supplying options pins the private index expiry, including its absence. */
+  putOwnedRelic(
+    row: OwnedRelicRow,
+    options?: { readonly expiresAt: number | undefined }
+  ): Promise<void>;
   listOwnedRelics(ownerIdentityId: string): Promise<readonly OwnedRelicRow[]>;
   deleteOwnedRelic(ownerIdentityId: string, relicId: string): Promise<void>;
   appendAccessEvent(event: AccessEvent): Promise<void>;
@@ -1907,7 +1911,10 @@ export class MemoryStore implements RelicStore {
     return removed;
   }
 
-  async putOwnedRelic(row: OwnedRelicRow): Promise<void> {
+  async putOwnedRelic(
+    row: OwnedRelicRow,
+    _options?: { readonly expiresAt: number | undefined }
+  ): Promise<void> {
     this.ownedRelics.set(compositeKey(row.ownerIdentityId, row.relicId), row);
   }
 

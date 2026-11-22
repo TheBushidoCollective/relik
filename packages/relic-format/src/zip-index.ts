@@ -177,17 +177,12 @@ async function inflate(
   // Limit each input write as well as the output retained below. A compressed
   // slice can expand inside the browser before its readable stream yields.
   const writing = (async () => {
+    let sinceYield = 0;
     for (let offset = 0; offset < data.length; ) {
       if (stopped) return;
       await writer.ready;
       if (stopped) return;
-      // DEFLATE's maximum expansion is approximately 1032:1. Keep a small
-      // output allowance even when the claimed entry size is close to zero.
-      const size = Math.min(
-        16 * 1024,
-        Math.max(1, Math.ceil((out.length - total + 1) / 1032)),
-        data.length - offset
-      );
+      const size = Math.min(16 * 1024, data.length - offset);
       const slice = data.subarray(offset, offset + size);
       const chunk =
         slice.buffer instanceof ArrayBuffer
@@ -195,6 +190,11 @@ async function inflate(
           : new Uint8Array(slice);
       await writer.write(chunk);
       offset += size;
+      sinceYield += size;
+      if (sinceYield >= 256 * 1024 && offset < data.length) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        sinceYield = 0;
+      }
     }
     if (!stopped) await writer.close();
   })().catch((error: unknown) => {

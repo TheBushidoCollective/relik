@@ -26,6 +26,11 @@ export class IgnoreLimitError extends Error {
 
 export interface IgnoreMatcher {
   (path: string, isDirectory: boolean): boolean;
+  matchAsync(
+    path: string,
+    isDirectory: boolean,
+    pause: () => Promise<void>
+  ): Promise<boolean>;
   add(file: { readonly dir: string; readonly text: string }): void;
   readonly work: number;
 }
@@ -276,9 +281,19 @@ function trimTrailingSpaces(line: string): string {
  */
 export function createIgnoreMatcher(
   files: readonly { dir: string; text: string }[],
-  options: { readonly maxWork?: number; readonly maxMatchWork?: number } = {}
+  options: {
+    readonly maxWork?: number;
+    readonly maxMatchWork?: number;
+    readonly maxPathWork?: number;
+    readonly pauseWork?: number;
+  } = {}
 ): IgnoreMatcher {
-  for (const limit of [options.maxWork, options.maxMatchWork]) {
+  for (const limit of [
+    options.maxWork,
+    options.maxMatchWork,
+    options.maxPathWork,
+    options.pauseWork,
+  ]) {
     if (limit !== undefined && (!Number.isSafeInteger(limit) || limit < 0))
       throw new RangeError(
         'Ignore work limit must be a nonnegative safe integer'
@@ -286,10 +301,14 @@ export function createIgnoreMatcher(
   }
   const maxWork = options.maxWork ?? Number.POSITIVE_INFINITY;
   const maxMatchWork = options.maxMatchWork ?? Number.POSITIVE_INFINITY;
+  const maxPathWork = options.maxPathWork ?? Number.POSITIVE_INFINITY;
+  const pauseWork = options.pauseWork ?? Number.POSITIVE_INFINITY;
   const rules: Rule[] = [];
   const directoryCache = new Map<string, boolean>();
   let ruleCount = 0;
   let used = 0;
+  let workSincePause = 0;
+  let pendingMatches = 0;
   let failure: IgnoreLimitError | undefined;
   const fail = (
     kind: 'rules' | 'pattern_bytes' | 'work',
@@ -298,12 +317,10 @@ export function createIgnoreMatcher(
     failure = new IgnoreLimitError(kind, limit);
     throw failure;
   };
-  const charge = (amount: number) => {
-    if (amount > maxWork - used) fail('work', maxWork);
-    used += amount;
-  };
   const addRules = (file: { readonly dir: string; readonly text: string }) => {
     if (failure) throw failure;
+    if (pendingMatches)
+      throw new Error('Cannot add ignore rules while matching');
     directoryCache.clear();
     const depth = file.dir ? file.dir.split('/').length : 0;
     for (const raw of file.text.split('\n')) {
@@ -357,9 +374,27 @@ export function createIgnoreMatcher(
     }
     rules.sort((a, b) => a.depth - b.depth);
   };
-  const match = (path: string, isDirectory: boolean): boolean => {
+  function* decide(
+    path: string,
+    isDirectory: boolean,
+    cooperative: boolean
+  ): Generator<void, boolean, void> {
     if (failure) throw failure;
     if (!rules.length) return false;
+    let pathWork = 0;
+    const charge = (amount: number) => {
+      if (amount > maxPathWork - pathWork) fail('work', maxPathWork);
+      if (amount > maxWork - used) fail('work', maxWork);
+      pathWork += amount;
+      used += amount;
+      workSincePause += amount;
+    };
+    const pendingDirectories: [string, boolean][] = [];
+    const complete = (ignored: boolean) => {
+      for (const [directory, result] of pendingDirectories)
+        directoryCache.set(directory, result);
+      return ignored;
+    };
     const parts = path.split('/');
     let candidate = '';
     for (let i = 0; i < parts.length; i++) {
@@ -368,13 +403,18 @@ export function createIgnoreMatcher(
       if (directory) {
         const cached = directoryCache.get(candidate);
         if (cached !== undefined) {
-          if (cached) return true;
+          if (cached) return complete(true);
           continue;
         }
       }
       let ignored = false;
       const encoded = new Map<string, Uint8Array>();
       for (const rule of rules) {
+        if (cooperative && workSincePause >= pauseWork) {
+          workSincePause = 0;
+          yield;
+          if (failure) throw failure;
+        }
         charge(1);
         if (rule.directoryOnly && !directory) continue;
         if (rule.dir && !candidate.startsWith(`${rule.dir}/`)) continue;
@@ -410,12 +450,32 @@ export function createIgnoreMatcher(
         }
         if (matches) ignored = !rule.negate;
       }
-      if (directory) directoryCache.set(candidate, ignored);
-      if (ignored) return true;
+      if (directory) pendingDirectories.push([candidate, ignored]);
+      if (ignored) return complete(true);
     }
-    return false;
+    return complete(false);
+  }
+  const match = (path: string, isDirectory: boolean): boolean =>
+    decide(path, isDirectory, false).next().value as boolean;
+  const matchAsync = async (
+    path: string,
+    isDirectory: boolean,
+    pause: () => Promise<void>
+  ): Promise<boolean> => {
+    pendingMatches++;
+    const decision = decide(path, isDirectory, true);
+    try {
+      for (;;) {
+        const result = decision.next();
+        if (result.done) return result.value;
+        await pause();
+      }
+    } finally {
+      decision.return(false);
+      pendingMatches--;
+    }
   };
-  const matcher = Object.assign(match, { add: addRules });
+  const matcher = Object.assign(match, { add: addRules, matchAsync });
   Object.defineProperty(matcher, 'work', { get: () => used });
   for (const file of files) addRules(file);
   return matcher as IgnoreMatcher;

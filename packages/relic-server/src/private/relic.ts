@@ -661,12 +661,15 @@ export async function reissueUpload(
     throw new ProblemError('version_conflict');
   }
   // A failed initial index write must be repaired before any retry gets a PUT.
-  await env.store.putOwnedRelic({
-    relicId: row.id,
-    ownerIdentityId: owner.identityId,
-    access: 'private',
-    at: row.grantedAt,
-  });
+  await env.store.putOwnedRelic(
+    {
+      relicId: row.id,
+      ownerIdentityId: owner.identityId,
+      access: 'private',
+      at: row.grantedAt,
+    },
+    { expiresAt: row.expiresAt }
+  );
   return uploadFor(env, row.id, version, row.declaredSizeBytes, row.expiresAt);
 }
 

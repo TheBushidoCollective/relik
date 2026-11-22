@@ -1991,12 +1991,21 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
       return names.length;
     },
 
-    async putOwnedRelic(row: OwnedRelicRow): Promise<void> {
+    async putOwnedRelic(
+      row: OwnedRelicRow,
+      options?: { readonly expiresAt: number | undefined }
+    ): Promise<void> {
+      const customTime =
+        options === undefined
+          ? await privateCustomTime(row.relicId)
+          : row.access === 'private'
+            ? customTimeOf({ access: 'private', expiresAt: options.expiresAt })
+            : undefined;
       await put(
         key('owner-relic', row.ownerIdentityId, `${row.relicId}.json`),
         row,
         undefined,
-        await privateCustomTime(row.relicId)
+        customTime
       );
     },
 
