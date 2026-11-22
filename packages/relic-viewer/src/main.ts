@@ -2533,7 +2533,8 @@ export function renderCodeComparison(
 export function renderChangeList(
   changes: readonly RenderedChange[],
   onJump?: (index: number) => void,
-  more = 0
+  more = 0,
+  moreCopy: (n: number) => string = moreChangesCopy
 ): HTMLElement {
   const list = document.createElement('ul');
   list.className = 'diff-change-list';
@@ -2578,7 +2579,7 @@ export function renderChangeList(
   if (more > 0) {
     const row = document.createElement('li');
     row.className = 'diff-change-more';
-    row.textContent = moreChangesCopy(more);
+    row.textContent = moreCopy(more);
     list.appendChild(row);
   }
   return list;
@@ -3233,10 +3234,13 @@ function prefaceFor(
 export function changeSidebarContent(
   report: ChangeReport
 ): HTMLElement | undefined {
-  const more = report.total - report.changes.length;
+  const beyond = report.more;
+  const more = beyond?.count ?? report.total - report.changes.length;
+  const moreCopy =
+    beyond === undefined ? undefined : (n: number): string => beyond.copy(n);
   const list =
     report.changes.length > 0 || more > 0
-      ? renderChangeList(report.changes, report.onJump, more)
+      ? renderChangeList(report.changes, report.onJump, more, moreCopy)
       : undefined;
   if (report.preface === undefined) return list;
   if (list === undefined) return report.preface;
