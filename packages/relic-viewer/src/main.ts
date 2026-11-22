@@ -10514,6 +10514,10 @@ export function buildThread(
     dispose: () => {
       if (suggestionController && !suggestionController.destroy()) return false;
       suggestionDisposed = true;
+      // A hover still counting down would open or close a card on a thread
+      // that has gone. Nothing may fire into it once it is disposed.
+      clearTimeout(hoverTimer);
+      clearTimeout(leaveTimer);
       stopPresence();
       presenceWindow?.removeEventListener('pagehide', hidePresence);
       presenceWindow?.removeEventListener('pageshow', showPresence);
