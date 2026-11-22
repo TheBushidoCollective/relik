@@ -3131,7 +3131,7 @@ export function renderPairedComparison<S>(
       result.replaceChildren(...(scope === undefined ? [] : [scope]));
       return;
     }
-    const diff = spec.diff(beforeSnapshot, afterSnapshot);
+    const diff = spec.diff(beforeSnapshot, afterSnapshot, nav.goTo);
     if ('unavailable' in diff) {
       counts.textContent = diff.unavailable;
       result.replaceChildren(...(scope === undefined ? [] : [scope]));

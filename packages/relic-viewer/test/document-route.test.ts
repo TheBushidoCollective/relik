@@ -4,11 +4,18 @@ import type { ZipIndex } from '@relic/format/zip-index';
 import { contentFromBytes } from '../src/content.ts';
 import {
   type CreateDocumentFrame,
+  DOCUMENT_BLOCKS_WAIT_MS,
   type DocumentFrame,
+  type DocumentSnapshotResult,
   documentWatchdog,
   mountDocumentRoute,
 } from '../src/document-route.ts';
-import type { DocumentStateMessage } from '../src/frame-document-protocol.ts';
+import type {
+  DocumentBlock,
+  DocumentStateMessage,
+  EpubBook,
+  RenderDocumentMessage,
+} from '../src/frame-document-protocol.ts';
 
 afterEach(() => jest.useRealTimers());
 
@@ -476,5 +483,409 @@ test('detaching during ZIP indexing stops reads and never mounts a frame', async
     if (previousObserver)
       Object.defineProperty(globalThis, 'MutationObserver', previousObserver);
     else Reflect.deleteProperty(globalThis, 'MutationObserver');
+  }
+});
+
+/** Stands in for the viewer's DOM and mutation observer for one test. */
+function installDom(): { mutate(): void; restore(): void } {
+  const previousDocument = Object.getOwnPropertyDescriptor(
+    globalThis,
+    'document'
+  );
+  const previousObserver = Object.getOwnPropertyDescriptor(
+    globalThis,
+    'MutationObserver'
+  );
+  const observed: { onMutation?: () => void } = {};
+  Object.defineProperty(globalThis, 'MutationObserver', {
+    configurable: true,
+    value: class {
+      constructor(callback: () => void) {
+        observed.onMutation = callback;
+      }
+      observe() {}
+      disconnect() {}
+    },
+  });
+  Object.defineProperty(globalThis, 'document', {
+    configurable: true,
+    value: { createElement: () => new ElementStub() },
+  });
+  return {
+    mutate: () => observed.onMutation?.(),
+    restore: () => {
+      if (previousDocument)
+        Object.defineProperty(globalThis, 'document', previousDocument);
+      else Reflect.deleteProperty(globalThis, 'document');
+      if (previousObserver)
+        Object.defineProperty(globalThis, 'MutationObserver', previousObserver);
+      else Reflect.deleteProperty(globalThis, 'MutationObserver');
+    },
+  };
+}
+
+interface FrameRecord {
+  readonly payload: RenderDocumentMessage;
+  readonly frame: ElementStub;
+  disposals: number;
+  state(state: DocumentStateMessage): void;
+  blocks(blocks: readonly DocumentBlock[] | null | 'invalid'): void;
+}
+
+/** Records each frame a mount creates, with the callbacks it was given. */
+function recordFrames(): {
+  frames: FrameRecord[];
+  createFrame: CreateDocumentFrame;
+} {
+  const frames: FrameRecord[] = [];
+  const createFrame: CreateDocumentFrame = (
+    payload,
+    _transfer,
+    onState,
+    onBlocks
+  ) => {
+    const record: FrameRecord = {
+      payload,
+      frame: new ElementStub(),
+      disposals: 0,
+      state: onState,
+      blocks: onBlocks,
+    };
+    frames.push(record);
+    return {
+      frame: record.frame,
+      linkConfirm: new ElementStub(),
+      linkRemembered: new ElementStub(),
+      dispose: () => {
+        record.disposals++;
+      },
+    } as unknown as DocumentFrame;
+  };
+  return { frames, createFrame };
+}
+
+async function selectAll(index: ZipIndex) {
+  const parts = [...index.entries.keys()];
+  return { parts, xmlParts: new Set(parts) };
+}
+
+const READY: DocumentStateMessage = {
+  type: 'relic:document-state',
+  state: 'ready',
+};
+
+const BOOK: EpubBook = {
+  title: 'River journal',
+  progression: 'default',
+  layout: 'reflowable',
+  resources: [],
+  spine: [{ path: 'ch1.xhtml', linear: true }],
+  toc: [],
+  pageList: [],
+};
+
+const DOCX_CONTENT = () =>
+  contentFromBytes(zip([['word/document.xml', '<root/>']]));
+
+test('a comparison mount marks its frame and reports its blocks and book once', async () => {
+  const dom = installDom();
+  try {
+    const root = new ElementStub();
+    const { frames, createFrame } = recordFrames();
+    const reports: DocumentSnapshotResult[] = [];
+    await mountDocumentRoute(
+      root as unknown as HTMLElement,
+      contentFromBytes(zip([['chapter', '<html/>']])),
+      'epub',
+      async (index) => ({ ...(await selectAll(index)), book: BOOK }),
+      createFrame,
+      () => {},
+      { onSnapshot: (result) => reports.push(result) }
+    );
+    expect(frames).toHaveLength(1);
+    const frame = frames[0]!;
+    expect(frame.payload.compare).toBe(true);
+    frame.state(READY);
+    const blocks: DocumentBlock[] = [
+      { kind: 'paragraph', text: 'We crossed at dawn.', part: 0 },
+    ];
+    frame.blocks(blocks);
+    frame.blocks([]);
+    frame.blocks(null);
+    expect(reports).toEqual([{ kind: 'blocks', blocks, book: BOOK }]);
+    expect(frame.frame.removed).toBe(false);
+  } finally {
+    dom.restore();
+  }
+});
+
+test('a plain mount carries no compare flag and reports nothing', async () => {
+  const dom = installDom();
+  try {
+    const root = new ElementStub();
+    const { frames, createFrame } = recordFrames();
+    await mountDocumentRoute(
+      root as unknown as HTMLElement,
+      DOCX_CONTENT(),
+      'docx',
+      selectAll,
+      createFrame,
+      () => {}
+    );
+    const frame = frames[0]!;
+    expect('compare' in frame.payload).toBe(false);
+    frame.state(READY);
+    frame.blocks([]);
+    expect(frame.frame.removed).toBe(false);
+  } finally {
+    dom.restore();
+  }
+});
+
+test('a protected book is reported as protected and never framed', async () => {
+  const dom = installDom();
+  try {
+    const root = new ElementStub();
+    const { frames, createFrame } = recordFrames();
+    const reports: DocumentSnapshotResult[] = [];
+    await mountDocumentRoute(
+      root as unknown as HTMLElement,
+      contentFromBytes(zip([['META-INF/rights.xml', '<rights/>']])),
+      'epub',
+      async () => ({ ok: false, reason: 'protected' }),
+      createFrame,
+      () => {},
+      { onSnapshot: (result) => reports.push(result) }
+    );
+    expect(frames).toHaveLength(0);
+    expect(reports).toEqual([{ kind: 'unavailable', reason: 'protected' }]);
+    expect(root.children[0]?.children[0]?.textContent).toBe(
+      'This ebook is protected by DRM and cannot be shown.'
+    );
+  } finally {
+    dom.restore();
+  }
+});
+
+test('a refused selection other than DRM is reported as failed', async () => {
+  const dom = installDom();
+  try {
+    for (const reason of ['corrupt', 'too-large'] as const) {
+      const root = new ElementStub();
+      const { frames, createFrame } = recordFrames();
+      const reports: DocumentSnapshotResult[] = [];
+      await mountDocumentRoute(
+        root as unknown as HTMLElement,
+        DOCX_CONTENT(),
+        'docx',
+        async () => ({ ok: false, reason }),
+        createFrame,
+        () => {},
+        { onSnapshot: (result) => reports.push(result) }
+      );
+      expect(frames).toHaveLength(0);
+      expect(reports).toEqual([{ kind: 'unavailable', reason: 'failed' }]);
+      expect(root.children[0]?.children[0]?.textContent).toBe(
+        'This document could not be shown.'
+      );
+    }
+  } finally {
+    dom.restore();
+  }
+});
+
+test('a render that fails is reported as failed, and its frame goes', async () => {
+  const dom = installDom();
+  try {
+    const root = new ElementStub();
+    const { frames, createFrame } = recordFrames();
+    const reports: DocumentSnapshotResult[] = [];
+    await mountDocumentRoute(
+      root as unknown as HTMLElement,
+      DOCX_CONTENT(),
+      'docx',
+      selectAll,
+      createFrame,
+      () => {},
+      { onSnapshot: (result) => reports.push(result) }
+    );
+    const frame = frames[0]!;
+    frame.state({
+      type: 'relic:document-state',
+      state: 'failed',
+      reason: 'corrupt',
+    });
+    frame.blocks([{ kind: 'paragraph', text: 'late', part: 0 }]);
+    expect(reports).toEqual([{ kind: 'unavailable', reason: 'failed' }]);
+    expect(frame.frame.removed).toBe(true);
+    expect(frame.disposals).toBe(1);
+    expect(root.children[0]?.children[0]?.textContent).toBe(
+      'This document could not be shown.'
+    );
+  } finally {
+    dom.restore();
+  }
+});
+
+test('a frame that cannot send its blocks is too large, and its render stays', async () => {
+  const dom = installDom();
+  try {
+    const root = new ElementStub();
+    const { frames, createFrame } = recordFrames();
+    const reports: DocumentSnapshotResult[] = [];
+    await mountDocumentRoute(
+      root as unknown as HTMLElement,
+      DOCX_CONTENT(),
+      'docx',
+      selectAll,
+      createFrame,
+      () => {},
+      { onSnapshot: (result) => reports.push(result) }
+    );
+    const frame = frames[0]!;
+    frame.state(READY);
+    frame.blocks(null);
+    expect(reports).toEqual([{ kind: 'unavailable', reason: 'too-large' }]);
+    expect(frame.frame.removed).toBe(false);
+    expect(frame.disposals).toBe(0);
+  } finally {
+    dom.restore();
+  }
+});
+
+test('blocks the frame refuses are reported as invalid, and the render stays', async () => {
+  const dom = installDom();
+  try {
+    const root = new ElementStub();
+    const { frames, createFrame } = recordFrames();
+    const reports: DocumentSnapshotResult[] = [];
+    await mountDocumentRoute(
+      root as unknown as HTMLElement,
+      DOCX_CONTENT(),
+      'docx',
+      selectAll,
+      createFrame,
+      () => {},
+      { onSnapshot: (result) => reports.push(result) }
+    );
+    const frame = frames[0]!;
+    frame.state(READY);
+    frame.blocks('invalid');
+    expect(reports).toEqual([{ kind: 'unavailable', reason: 'invalid' }]);
+    expect(frame.frame.removed).toBe(false);
+  } finally {
+    dom.restore();
+  }
+});
+
+test('a frame that never reports its blocks times out ten seconds after it is ready', async () => {
+  const dom = installDom();
+  jest.useFakeTimers();
+  try {
+    const root = new ElementStub();
+    const { frames, createFrame } = recordFrames();
+    const reports: DocumentSnapshotResult[] = [];
+    await mountDocumentRoute(
+      root as unknown as HTMLElement,
+      DOCX_CONTENT(),
+      'docx',
+      selectAll,
+      createFrame,
+      () => {},
+      { onSnapshot: (result) => reports.push(result) }
+    );
+    const frame = frames[0]!;
+    jest.advanceTimersByTime(20_000);
+    frame.state(READY);
+    jest.advanceTimersByTime(DOCUMENT_BLOCKS_WAIT_MS - 1);
+    expect(reports).toEqual([]);
+    jest.advanceTimersByTime(1);
+    expect(reports).toEqual([{ kind: 'unavailable', reason: 'timeout' }]);
+    expect(frame.frame.removed).toBe(false);
+    frame.blocks([{ kind: 'paragraph', text: 'late', part: 0 }]);
+    expect(reports).toHaveLength(1);
+  } finally {
+    jest.useRealTimers();
+    dom.restore();
+  }
+});
+
+test('disconnecting a comparison disposes its frame and settles it once', async () => {
+  const dom = installDom();
+  jest.useFakeTimers();
+  try {
+    const root = new ElementStub();
+    const { frames, createFrame } = recordFrames();
+    const reports: DocumentSnapshotResult[] = [];
+    await mountDocumentRoute(
+      root as unknown as HTMLElement,
+      DOCX_CONTENT(),
+      'docx',
+      selectAll,
+      createFrame,
+      () => {},
+      { onSnapshot: (result) => reports.push(result) }
+    );
+    const frame = frames[0]!;
+    frame.state(READY);
+    root.isConnected = false;
+    dom.mutate();
+    expect(frame.disposals).toBe(1);
+    expect(reports).toEqual([{ kind: 'unavailable', reason: 'failed' }]);
+    jest.advanceTimersByTime(DOCUMENT_BLOCKS_WAIT_MS);
+    frame.blocks([]);
+    expect(reports).toHaveLength(1);
+    expect(frame.disposals).toBe(1);
+  } finally {
+    jest.useRealTimers();
+    dom.restore();
+  }
+});
+
+test('a comparison whose root is detached before it mounts never creates a frame', async () => {
+  const dom = installDom();
+  try {
+    const root = new ElementStub();
+    root.isConnected = false;
+    const { frames, createFrame } = recordFrames();
+    const reports: DocumentSnapshotResult[] = [];
+    await mountDocumentRoute(
+      root as unknown as HTMLElement,
+      DOCX_CONTENT(),
+      'docx',
+      selectAll,
+      createFrame,
+      () => {},
+      { onSnapshot: (result) => reports.push(result) }
+    );
+    expect(frames).toHaveLength(0);
+    expect(reports).toEqual([{ kind: 'unavailable', reason: 'failed' }]);
+  } finally {
+    dom.restore();
+  }
+});
+
+test('a frame that cannot be created is reported as failed', async () => {
+  const dom = installDom();
+  try {
+    const root = new ElementStub();
+    const reports: DocumentSnapshotResult[] = [];
+    await mountDocumentRoute(
+      root as unknown as HTMLElement,
+      DOCX_CONTENT(),
+      'docx',
+      selectAll,
+      () => {
+        throw new Error('no frame');
+      },
+      () => {},
+      { onSnapshot: (result) => reports.push(result) }
+    );
+    expect(reports).toEqual([{ kind: 'unavailable', reason: 'failed' }]);
+    expect(root.children[0]?.children[0]?.textContent).toBe(
+      'This document could not be shown.'
+    );
+  } finally {
+    dom.restore();
   }
 });

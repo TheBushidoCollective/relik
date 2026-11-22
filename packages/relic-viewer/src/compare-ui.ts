@@ -54,7 +54,12 @@ export interface PairedComparisonSpec<S> {
   /** Whether the panes keep their scroll in step by landmarks or by frames. */
   readonly sync: 'landmark' | 'frame';
   pane(view: ReadyView): ComparisonPane<S>;
-  diff(before: S, after: S): PairedResult;
+  /**
+   * Compares the two snapshots. `goTo` moves to one of the diff's changes, by
+   * its index in `jumps`. A diff that offers its own jumps, such as a book's
+   * chapter list, needs it; the other diffs ignore it.
+   */
+  diff(before: S, after: S, goTo?: (index: number) => void): PairedResult;
 }
 
 /** Previous and next change controls, with the current position. */
