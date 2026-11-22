@@ -23,6 +23,11 @@ export interface ChangeReport {
   readonly summary: string;
   readonly onJump?: (index: number) => void;
   readonly preface?: HTMLElement;
+  /**
+   * Changes the list does not show, with the copy for them. Absent, the
+   * sidebar says `total - changes.length` more changes in the document copy.
+   */
+  readonly more?: { readonly count: number; copy(n: number): string };
 }
 
 /** One side of a paired comparison, with its snapshot and its marks. */
