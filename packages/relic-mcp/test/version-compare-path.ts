@@ -157,6 +157,7 @@ export interface FrameRef {
   readonly frameId: string;
   readonly title: string;
   readonly session: string;
+  readonly outOfProcess: boolean;
 }
 
 interface Recorded {
@@ -538,10 +539,12 @@ export class Browser {
       )
       .map((node) => {
         const frameId = node.frameId ?? '';
+        const session = this.frameSessions.get(frameId)?.session ?? this.page;
         return {
           frameId,
           title: attribute(node, 'title') ?? '',
-          session: this.frameSessions.get(frameId)?.session ?? this.page,
+          session,
+          outOfProcess: session !== this.page,
         };
       });
   }
@@ -1001,7 +1004,20 @@ async function expectFrameSync(
     `${label}: a frame has nothing to scroll (${JSON.stringify({ before0, after0 })})`
   );
   const deltaY = after0.top < after0.travel ? 300 : -300;
-  await b.wheel(frameElement(2), 'the after frame', 0, deltaY);
+  console.log(
+    `${label}: sync input is ${frames.after.outOfProcess ? 'a frame scroll, because the frame is out of process' : 'a wheel turn, in process'}`
+  );
+  if (frames.after.outOfProcess) {
+    // A headless wheel turn over an out-of-process frame reaches the parent
+    // document, not the frame, so the frame scrolls itself. Its scroll event
+    // drives the same sync that a reader's wheel does.
+    await b.inFrame<string>(
+      frames.after,
+      `function () { const el = this.scrollingElement || this.documentElement; el.scrollTop += ${deltaY}; return 'scrolled'; }`
+    );
+  } else {
+    await b.wheel(frameElement(2), 'the after frame', 0, deltaY);
+  }
   let after = after0;
   for (let attempt = 0; attempt < 100 && after.top === after0.top; attempt++) {
     await Bun.sleep(20);
@@ -1390,11 +1406,12 @@ async function expectGridMirror(b: Browser, label: string): Promise<void> {
     after0.travelY > 0 || after0.travelX > 0,
     `${label}: the after grid cannot scroll, so the mirror is not exercised (${JSON.stringify(after0)})`
   );
-  await b.wheel(
-    `document.querySelector('.compare-pane-current [role=grid]')`,
-    'the after grid',
-    after0.travelX > 0 ? 120 : 0,
-    after0.travelY > 0 ? 160 : 0
+  // A wheel turn over a grid did not scroll it under Chrome for Testing in
+  // headless=new: the document received the event and the grid stayed put. So
+  // the after grid's own scroll position is set instead. Setting a scroll
+  // position fires the same scroll event the grids' mirroring listens for.
+  await b.evaluate<boolean>(
+    `(() => { const g = document.querySelector('.compare-pane-current [role=grid]'); if (!g) return false; g.scrollLeft += ${after0.travelX > 0 ? 120 : 0}; g.scrollTop += ${after0.travelY > 0 ? 160 : 0}; return true; })()`
   );
   const moved = await settle<GridScroll | null>(
     b,
