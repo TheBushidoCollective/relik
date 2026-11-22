@@ -1330,7 +1330,7 @@ function createPublisher(
         'p',
         'pub-help',
         submission.private
-          ? 'This link contains no key. Open the relic with your passkey to manage who can read it.'
+          ? 'This link contains no key. Open the relic with your passkey to manage who can read it. Open the link before you share it. If it does not open, publish again.'
           : 'This link holds the key. Copy it now: this page does not keep it, and we cannot recover it for you.'
       )
     );

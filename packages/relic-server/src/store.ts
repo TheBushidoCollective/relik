@@ -109,7 +109,7 @@ export interface RelicRow {
   readonly ownerIdentityId?: string | undefined;
   /** Bumped by every grant and revocation. A seal or grant that read an older value loses. */
   readonly accessEpoch?: number | undefined;
-  /** The highest version whose seal the server accepted. */
+  /** The highest version whose seal the server recorded. It is provisional until the owner-epoch recheck passes. */
   readonly sealedVersion?: number | undefined;
   /** Versions the owner deleted. The row keeps the number so it is never reused. */
   readonly deletedVersions?: readonly number[] | undefined;
