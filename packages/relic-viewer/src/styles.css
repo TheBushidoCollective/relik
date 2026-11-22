@@ -2334,6 +2334,17 @@ canvas.relic-page {
   height: 100%;
   border: 0;
 }
+
+/*
+ * A document pane holds the document route's .doc wrapper. In a pane it is
+ * the frame's container, not a reading column: the 46rem cap would centre a
+ * narrow page in swipe mode, and without a height the frame stays 150 px.
+ */
+.compare-pane > .doc {
+  max-width: none;
+  height: 100%;
+  margin: 0;
+}
 .compare-divider {
   position: absolute;
   top: 0;
@@ -2380,6 +2391,21 @@ canvas.relic-page {
 .compare-stage[data-layout='split'] .compare-label-current {
   left: auto;
   right: 0.6rem;
+}
+
+/*
+ * Over grids the labels sit at the foot, each at its pane's right edge: at the
+ * top they covered the cell bar and a sheet's placeholder, and at the left
+ * they covered the row numbers.
+ */
+.diff-view-xlsx .compare-label {
+  top: auto;
+  bottom: 0.6rem;
+}
+
+.diff-view-xlsx .compare-stage[data-layout='split'] .compare-label-before {
+  left: auto;
+  right: calc(50% + 0.6rem);
 }
 
 .compare-controls {
@@ -2679,6 +2705,7 @@ canvas.relic-page {
   max-width: none;
 }
 
+.diff-lazy,
 .diff-view,
 .diff-view-markdown,
 .diff-view-rendered,
@@ -2973,6 +3000,13 @@ button.diff-chapter-row:focus-visible {
   .compare-stage[data-layout='split'] .compare-label-current {
     top: auto;
     bottom: 0.6rem;
+  }
+
+  /* Over grids both labels sit at their pane's foot: the historical one at
+     the foot of the top pane, the current one at the foot of the stage. */
+  .diff-view-xlsx .compare-stage[data-layout='split'] .compare-label-before {
+    right: 0.6rem;
+    bottom: calc(50% + 0.6rem);
   }
 
   .compare-pane,

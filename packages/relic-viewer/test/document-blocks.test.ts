@@ -383,5 +383,10 @@ describe('installHighlightCss', () => {
     expect(DOCUMENT_HIGHLIGHT_CSS).toContain('dashed');
     expect(DOCUMENT_HIGHLIGHT_CSS).toContain('line-through');
     expect(DOCUMENT_HIGHLIGHT_CSS).toContain('double');
+    // Next change must light the block it moved to; the comment stylesheet
+    // that carries this rule elsewhere is not in a compare frame.
+    expect(DOCUMENT_HIGHLIGHT_CSS).toContain(
+      '[data-relic-change-id].is-current-change'
+    );
   });
 });

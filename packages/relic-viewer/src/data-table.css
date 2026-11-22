@@ -538,6 +538,8 @@
 /* Formula: the shown value is equal and the formula differs. */
 .dt-cell.dt-diff-formula {
   background: color-mix(in srgb, var(--oxide, #8c4a2f) 6%, var(--surface, #fff));
+  /* Room for the fx corner, so it never covers the value's last digits. */
+  padding-inline-end: 1.5rem;
 }
 
 .dt-cell.dt-diff-formula::after {
@@ -550,6 +552,20 @@
   color: var(--surface, #fff);
   background: var(--oxide, #8c4a2f);
   pointer-events: none;
+}
+
+/*
+ * Empty cells are drawn empty in a comparison. The grid is padded past the
+ * data to a common size, and a "blank" in every padded cell would bury the
+ * changes under the word. The word stays for a screen reader.
+ */
+.dt-compare .dt-blank {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 /* What a screen reader hears for a state: " (added)" and so on. */
@@ -581,6 +597,18 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* The badge's words carry the state; the tint repeats it and removed sheets
+   are struck through as their cells are. */
+.spreadsheet-tabs .dt-sheet-meta.is-added,
+.spreadsheet-tabs .dt-sheet-meta.is-changes {
+  color: var(--patina-ink, #1f4f43);
+}
+
+.spreadsheet-tabs .dt-sheet-meta.is-removed {
+  color: var(--oxide, #8c4a2f);
+  text-decoration: line-through;
+}
+
 /* A sheet with nothing to draw on one side, or too large to grid. */
 .dt-placeholder {
   margin: 0;
@@ -588,6 +616,26 @@
   border: 1px dashed var(--rule-strong, #888);
   background: var(--surface, #fff);
   color: var(--ink-soft, #555);
+}
+
+/* Each pane of a spreadsheet comparison: a grid that fills it, or a
+   placeholder centred in it, clear of the version label at the foot. */
+.spreadsheet-compare-slot {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.spreadsheet-compare-slot > .dt {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.spreadsheet-compare-slot > .dt-placeholder {
+  max-width: 22rem;
+  margin: auto;
+  text-align: center;
 }
 
 /* On a phone each pane keeps its cellbar in flow, so two selections never

@@ -23,6 +23,11 @@ import { type Anchor, HIGHLIGHT_CSS, type Mark } from './rendered-tree.ts';
  * keeps the solid outline from HIGHLIGHT_CSS, removed is dashed and struck
  * through, and changed is double. Both rules are `!important` like the rules
  * they follow, so the later one wins.
+ *
+ * The change Next change moved to is drawn as the shell draws it in a
+ * same-origin pane: a heavier patina outline, here with a halo so it reads
+ * against the changed block's own double outline. Comment styles are not in a
+ * compare frame, so without this rule the current change looked like the rest.
  */
 export const DOCUMENT_HIGHLIGHT_CSS = `
 [data-relic-diff='removed'] {
@@ -32,6 +37,11 @@ export const DOCUMENT_HIGHLIGHT_CSS = `
 [data-relic-diff='changed'] {
   outline-style: double !important;
   outline-width: 4px !important;
+}
+[data-relic-change-id].is-current-change {
+  outline: 3px solid rgb(31, 107, 100) !important;
+  outline-offset: 3px !important;
+  box-shadow: 0 0 0 9px rgba(31, 107, 100, 0.22) !important;
 }
 `;
 
