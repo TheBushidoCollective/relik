@@ -9,7 +9,7 @@
 import { contentFromBytes } from '../src/content.ts';
 
 import { describe, expect, test } from 'bun:test';
-import { diffModeForRoute } from '../src/diff.ts';
+import { diffModeForView } from '../src/diff.ts';
 import {
   isFrameScrollMessage,
   isSetScrollMessage,
@@ -1245,37 +1245,37 @@ describe('scroller inventory across rendering modes', () => {
     const modes = [
       {
         route: 'markdown',
-        diffMode: diffModeForRoute('markdown'),
+        diffMode: diffModeForView({ route: 'markdown' }),
         panes: 2,
         scroller: '.compare-pane (container)',
       },
       {
         route: 'code',
-        diffMode: diffModeForRoute('code'),
+        diffMode: diffModeForView({ route: 'code' }),
         panes: 1,
         scroller: '.diff-changes (unified single scroller)',
       },
       {
         route: 'image',
-        diffMode: diffModeForRoute('image'),
+        diffMode: diffModeForView({ route: 'image' }),
         panes: 1,
         scroller: 'none (overlaid canvas with slider)',
       },
       {
         route: 'sandboxed-html',
-        diffMode: diffModeForRoute('sandboxed-html'),
+        diffMode: diffModeForView({ route: 'sandboxed-html' }),
         panes: 2,
         scroller: 'inner frame document',
       },
       {
         route: 'sandboxed-jsx',
-        diffMode: diffModeForRoute('sandboxed-jsx'),
+        diffMode: diffModeForView({ route: 'sandboxed-jsx' }),
         panes: 2,
         scroller: 'inner frame document',
       },
       {
         route: 'pdf',
-        diffMode: diffModeForRoute('pdf'),
+        diffMode: diffModeForView({ route: 'pdf' }),
         panes: 1,
         scroller: 'none (not comparable, single version only)',
       },

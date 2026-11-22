@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  isDocumentBlocksMessage,
   isDocumentStateMessage,
   isRenderDocumentMessage,
 } from '../src/frame-document-protocol.ts';
@@ -11,6 +12,12 @@ const doc = {
   module: 'export function render() {}',
   entries: [['word/document.xml', new Uint8Array([1])]],
 };
+
+const block = { kind: 'paragraph', text: 'Hiring stays flat.', part: 0 };
+const message = (entries: readonly unknown[]) => ({
+  type: 'relic:document-blocks',
+  blocks: entries,
+});
 
 describe('document frame protocol', () => {
   test('refuses malformed and oversized render messages', () => {
@@ -140,5 +147,89 @@ describe('document frame protocol', () => {
       for (const second of messages) expect(handle(second)).toBe(false);
       expect(rendered).toHaveLength(1);
     }
+  });
+  test('accepts the compare flag only when it is true', () => {
+    expect(isRenderDocumentMessage({ ...doc, compare: true })).toBe(true);
+    expect(isRenderDocumentMessage({ ...doc, compare: undefined })).toBe(true);
+    for (const bad of [
+      { ...doc, compare: false },
+      { ...doc, compare: 'true' },
+      { ...doc, compare: 1 },
+      { ...doc, compare: null },
+    ])
+      expect(isRenderDocumentMessage(bad)).toBe(false);
+  });
+  test('accepts a valid block set and an explicit null', () => {
+    expect(
+      isDocumentBlocksMessage({ type: 'relic:document-blocks', blocks: null })
+    ).toBe(true);
+    expect(isDocumentBlocksMessage(message([block]))).toBe(true);
+    expect(
+      isDocumentBlocksMessage(
+        message([
+          { kind: 'heading', text: 'Quarterly plan', part: 0 },
+          { kind: 'image', text: '', part: 0 },
+          { kind: 'text', text: 'Revenue grew.', part: 1999 },
+        ])
+      )
+    ).toBe(true);
+  });
+  test('refuses extra or missing keys on the message and on a block', () => {
+    for (const bad of [
+      { type: 'relic:document-blocks', blocks: null, extra: true },
+      { type: 'relic:document-blocks' },
+      { type: 'relic:document-blocks', blocks: undefined },
+      { type: 'relic:document-state', blocks: null },
+      message([{ ...block, extra: true }]),
+      message([{ kind: block.kind, text: block.text }]),
+    ])
+      expect(isDocumentBlocksMessage(bad)).toBe(false);
+  });
+  test('refuses a sparse array, a non-object block, or one bad entry', () => {
+    const sparse: unknown[] = [block];
+    sparse.length = 2;
+    expect(isDocumentBlocksMessage(message(sparse))).toBe(false);
+    for (const bad of [null, 'paragraph', [], [block]])
+      expect(isDocumentBlocksMessage(message([bad]))).toBe(false);
+    expect(
+      isDocumentBlocksMessage(message([block, { ...block, kind: 'nope' }]))
+    ).toBe(false);
+  });
+  test('refuses an unknown kind and a part outside the spine cap', () => {
+    for (const kind of ['div', 'Paragraph', 'constructor', '__proto__', ''])
+      expect(isDocumentBlocksMessage(message([{ ...block, kind }]))).toBe(
+        false
+      );
+    for (const part of [2000, -1, 1.5, '0', NaN, Infinity])
+      expect(isDocumentBlocksMessage(message([{ ...block, part }]))).toBe(
+        false
+      );
+    expect(isDocumentBlocksMessage(message([{ ...block, part: 1999 }]))).toBe(
+      true
+    );
+  });
+  test('bounds the block count at 50,000', () => {
+    const many = (count: number) =>
+      message(Array.from({ length: count }, () => block));
+    expect(isDocumentBlocksMessage(many(50_000))).toBe(true);
+    expect(isDocumentBlocksMessage(many(50_001))).toBe(false);
+  });
+  test('bounds block text at 16 MiB of UTF-8 across the whole message', () => {
+    const MiB = 1024 * 1024;
+    const text = (value: string) => message([{ ...block, text: value }]);
+    expect(isDocumentBlocksMessage(text('a'.repeat(16 * MiB)))).toBe(true);
+    expect(isDocumentBlocksMessage(text('a'.repeat(16 * MiB + 1)))).toBe(false);
+    expect(isDocumentBlocksMessage(text('é'.repeat(8 * MiB)))).toBe(true);
+    expect(isDocumentBlocksMessage(text('é'.repeat(8 * MiB + 1)))).toBe(false);
+    expect(isDocumentBlocksMessage(text('😀'.repeat(4 * MiB)))).toBe(true);
+    expect(isDocumentBlocksMessage(text('😀'.repeat(4 * MiB + 1)))).toBe(false);
+    expect(
+      isDocumentBlocksMessage(
+        message([
+          { ...block, text: 'a'.repeat(9 * MiB) },
+          { ...block, text: 'a'.repeat(9 * MiB) },
+        ])
+      )
+    ).toBe(false);
   });
 });

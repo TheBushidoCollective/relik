@@ -243,8 +243,8 @@ import {
   comparisonAvailability,
   createImageDiff,
   createTextDiff,
-  diffModeForRoute,
-  diffModeForRoutes,
+  diffModeForView,
+  diffModeForViews,
   type TextDiffPart,
   uncomparableClassNoun,
   unpromptedComparisonNotice,
@@ -3557,13 +3557,13 @@ export function uncomparableReason(
       'open here on its own.'
     );
   }
-  if (diffModeForRoute(historical.route) === undefined) {
+  if (diffModeForView(historical) === undefined) {
     return (
       `Version ${selectedVersion} is download-only, so it cannot be shown ` +
       `beside version ${current.version}. It is open here on its own.`
     );
   }
-  if (diffModeForRoute(current.route) === undefined) {
+  if (diffModeForView(current) === undefined) {
     return (
       `Version ${current.version} is download-only, so it cannot be shown ` +
       `beside version ${selectedVersion}. Version ${selectedVersion} is ` +
@@ -3635,22 +3635,23 @@ export function renderLoadedVersion(
       `This version is larger than the ${DIFF_LIMIT_LABEL} comparison limit.`
     );
   }
-  const mode = diffModeForRoutes(current.route, historical.route);
-  if (mode === undefined) {
-    return renderSingleVersion(
-      historical,
-      usercontentOrigin,
-      uncomparableReason(current, historical, selectedVersion)
-    );
-  }
+  const mode = diffModeForViews(current, historical);
   if (mode === 'image') return renderImageComparison(current, historical);
   if (mode === 'code') return renderCodeComparison(current, historical);
-  return renderRenderedComparison(
-    current,
+  if (mode === 'markdown' || mode === 'rendered') {
+    return renderRenderedComparison(
+      current,
+      historical,
+      mode,
+      usercontentOrigin,
+      onChanges
+    );
+  }
+  // Anything else has no side-by-side comparison, so it is shown on its own.
+  return renderSingleVersion(
     historical,
-    mode,
     usercontentOrigin,
-    onChanges
+    uncomparableReason(current, historical, selectedVersion)
   );
 }
 
@@ -4109,7 +4110,7 @@ export function renderComparison(
       return;
     }
 
-    const mode = diffModeForRoutes(leftRes.view.route, rightRes.view.route);
+    const mode = diffModeForViews(leftRes.view, rightRes.view);
     const comparable = mode !== undefined;
     scaffold.headline.textContent = comparisonCopy(
       leftVersion,

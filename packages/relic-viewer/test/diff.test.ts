@@ -1,19 +1,23 @@
 import { describe, expect, test } from 'bun:test';
 import { contentFromBytes } from '../src/content.ts';
 import {
+  type ComparableView,
   comparisonAvailability,
   createImageDiff,
   createTextDiff,
   diffCeilingFor,
-  diffModeForRoutes,
+  diffModeForView,
+  diffModeForViews,
   MAX_DIFF_BYTES,
   uncomparableClassNoun,
   unpromptedComparisonNotice,
   versionHistoryCopy,
 } from '../src/diff.ts';
-import type { ReadyView } from '../src/viewer.ts';
+import type { ReadyView, RenderRoute } from '../src/viewer.ts';
 
 const encoder = new TextEncoder();
+
+const viewOf = (route: RenderRoute): ComparableView => ({ route });
 
 function ready(
   route: ReadyView['route'],
@@ -112,25 +116,57 @@ describe('version history labels', () => {
 });
 
 describe('comparison availability', () => {
-  test('maps all five renderable classes onto four comparison modes', () => {
-    expect(diffModeForRoutes('markdown', 'markdown')).toBe('markdown');
-    expect(diffModeForRoutes('code', 'code')).toBe('code');
-    expect(diffModeForRoutes('sandboxed-html', 'sandboxed-html')).toBe(
-      'rendered'
+  test('maps each renderable class onto its comparison mode', () => {
+    expect(diffModeForView(viewOf('markdown'))).toBe('markdown');
+    expect(diffModeForView(viewOf('code'))).toBe('code');
+    expect(diffModeForView(viewOf('notebook'))).toBe('code');
+    expect(diffModeForView(viewOf('sandboxed-html'))).toBe('rendered');
+    expect(diffModeForView(viewOf('sandboxed-jsx'))).toBe('rendered');
+    expect(diffModeForView(viewOf('image'))).toBe('image');
+  });
+
+  test('leaves documents and workbooks without a mode until they are on', () => {
+    expect(
+      diffModeForView({ route: 'sandboxed-document', documentKind: 'docx' })
+    ).toBeUndefined();
+    expect(
+      diffModeForView({ route: 'sandboxed-document', documentKind: 'epub' })
+    ).toBeUndefined();
+    expect(diffModeForView(viewOf('spreadsheet'))).toBeUndefined();
+  });
+
+  test('gives classes that play, show or only download no mode', () => {
+    for (const route of ['otio', 'media', 'pdf', 'model', 'download'] as const)
+      expect(diffModeForView(viewOf(route))).toBeUndefined();
+  });
+
+  test('pairs two versions only when both render in the same mode', () => {
+    expect(diffModeForViews(viewOf('markdown'), viewOf('markdown'))).toBe(
+      'markdown'
     );
-    expect(diffModeForRoutes('sandboxed-jsx', 'sandboxed-jsx')).toBe(
-      'rendered'
-    );
-    expect(diffModeForRoutes('image', 'image')).toBe('image');
+    expect(diffModeForViews(viewOf('code'), viewOf('code'))).toBe('code');
+    expect(diffModeForViews(viewOf('image'), viewOf('image'))).toBe('image');
+    expect(
+      diffModeForViews(viewOf('sandboxed-html'), viewOf('sandboxed-html'))
+    ).toBe('rendered');
   });
 
   test('refuses a pair whose two versions render in different modes', () => {
     // Feeding a rendered page to the prose comparison, or an image to
     // either, produces a confident result with no meaning.
-    expect(diffModeForRoutes('markdown', 'sandboxed-html')).toBeUndefined();
-    expect(diffModeForRoutes('code', 'markdown')).toBeUndefined();
-    expect(diffModeForRoutes('image', 'code')).toBeUndefined();
-    expect(diffModeForRoutes('markdown', 'download')).toBeUndefined();
+    expect(
+      diffModeForViews(viewOf('markdown'), viewOf('sandboxed-html'))
+    ).toBeUndefined();
+    expect(
+      diffModeForViews(viewOf('code'), viewOf('markdown'))
+    ).toBeUndefined();
+    expect(diffModeForViews(viewOf('image'), viewOf('code'))).toBeUndefined();
+    expect(
+      diffModeForViews(viewOf('markdown'), viewOf('download'))
+    ).toBeUndefined();
+    expect(
+      diffModeForViews(viewOf('download'), viewOf('markdown'))
+    ).toBeUndefined();
   });
 
   test('does not offer history to a version 1 relic', () => {
