@@ -58,6 +58,10 @@ function docx(body: string, options: DocxOptions = {}): Uint8Array {
 interface Chapter {
   readonly id: string;
   readonly xhtml: string;
+  /** The manifest's media type. An XHTML chapter unless a test says otherwise. */
+  readonly mediaType?: string;
+  /** Whether the spine reads the chapter in order. It does unless a test says otherwise. */
+  readonly linear?: boolean;
 }
 
 /** An EPUB whose manifest lists `chapters`, and whose spine names `spine` in order. */
@@ -66,13 +70,21 @@ function epub(
   spine: readonly string[],
   extra: readonly FixtureEntry[] = []
 ): Uint8Array {
+  const byId = new Map(
+    chapters.map((chapter) => [chapter.id, chapter] as const)
+  );
   const manifest = chapters
     .map(
       (chapter) =>
-        `<item id="${chapter.id}" href="${chapter.id}.xhtml" media-type="application/xhtml+xml"/>`
+        `<item id="${chapter.id}" href="${chapter.id}.xhtml" media-type="${chapter.mediaType ?? 'application/xhtml+xml'}"/>`
     )
     .join('');
-  const itemrefs = spine.map((id) => `<itemref idref="${id}"/>`).join('');
+  const itemrefs = spine
+    .map(
+      (id) =>
+        `<itemref idref="${id}"${byId.get(id)?.linear === false ? ' linear="no"' : ''}/>`
+    )
+    .join('');
   return zipFixture([
     { name: 'mimetype', text: 'application/epub+zip' },
     {
@@ -441,29 +453,53 @@ describe('a Word document', () => {
     ).toMatchObject({ line: 1 });
   });
 
-  test('an alternate-content block shows its choice, not its fallback copy', async () => {
+  test('an alternate-content block in a run shows the first element of its fallback, never its choice', async () => {
     const book = docx(
       paragraph(
-        '<mc:AlternateContent><mc:Choice Requires="wps"><w:r><w:t>Choice words</w:t></w:r></mc:Choice>' +
-          '<mc:Fallback><w:r><w:t>Fallback words</w:t></w:r></mc:Fallback></mc:AlternateContent>'
+        '<w:r><mc:AlternateContent><mc:Choice Requires="wps"><w:t>Choice words</w:t></mc:Choice>' +
+          '<mc:Fallback><w:t>Fallback words</w:t><w:t>Second fallback</w:t></mc:Fallback>' +
+          '</mc:AlternateContent></w:r>'
       )
     );
+    for (const exact of ['Choice words', 'Second fallback']) {
+      expect(
+        unresolvableOf(
+          await resolveDocumentQuote(book, DOCX, { kind: 'quote', exact })
+        )
+      ).toContain('was not found');
+    }
     expect(
-      unresolvableOf(
+      resolvedOf(
         await resolveDocumentQuote(book, DOCX, {
           kind: 'quote',
           exact: 'Fallback words',
         })
       )
-    ).toContain('was not found');
+    ).toMatchObject({ line: 1 });
+  });
+
+  test('alternate content outside a run is not shown', async () => {
+    const book = docx(
+      paragraph(
+        '<mc:AlternateContent><mc:Choice Requires="wps"><w:r><w:t>Outside choice</w:t></w:r></mc:Choice>' +
+          '<mc:Fallback><w:r><w:t>Outside fallback</w:t></w:r></mc:Fallback></mc:AlternateContent>'
+      ) + paragraph(run('Plain words.'))
+    );
+    for (const exact of ['Outside choice', 'Outside fallback']) {
+      expect(
+        unresolvableOf(
+          await resolveDocumentQuote(book, DOCX, { kind: 'quote', exact })
+        )
+      ).toContain('was not found');
+    }
     expect(
       resolvedOf(
         await resolveDocumentQuote(book, DOCX, {
           kind: 'quote',
-          exact: 'Choice words',
+          exact: 'Plain words.',
         })
       )
-    ).toMatchObject({ line: 1 });
+    ).toMatchObject({ exact: 'Plain words.' });
   });
 
   test('a main part past the part limit is refused as too large', async () => {
@@ -617,32 +653,62 @@ describe('an EPUB', () => {
     ).toMatchObject({ line: 1 });
   });
 
-  test('elements the frame hides are not searched: hidden, aria-hidden and inline display:none', async () => {
+  test('hidden and aria-hidden attributes hide nothing in the frame, so their text is searched', async () => {
     const book = epub(
       [
         {
           id: 'h',
           xhtml: xhtml(
-            '<p hidden="">Hidden paragraph words.</p>' +
-              '<p aria-hidden="true">Aria words.</p>' +
-              '<p style="display: none">Styled words.</p>' +
-              '<p>Visible words.</p>'
+            '<p hidden="">Hidden paragraph words.</p><p aria-hidden="true">Aria words.</p>'
           ),
         },
       ],
       ['h']
     );
-    for (const hidden of [
-      'Hidden paragraph words',
-      'Aria words',
-      'Styled words',
+    for (const exact of ['Hidden paragraph words.', 'Aria words.']) {
+      expect(
+        resolvedOf(
+          await resolveDocumentQuote(book, BOOK, { kind: 'quote', exact })
+        )
+      ).toMatchObject({ exact });
+    }
+  });
+
+  test('text the frame does not show is not searched', async () => {
+    const book = epub(
+      [
+        {
+          id: 'h',
+          xhtml: xhtml(
+            '<p style="display: none">Styled words.</p>' +
+              '<p style="visibility: hidden">Unseen words.</p>' +
+              '<form>Form words.</form>' +
+              '<button>Button words.</button>' +
+              '<select><option>Option words.</option></select>' +
+              '<textarea>Area words.</textarea>' +
+              '<iframe>Frame words.</iframe>' +
+              '<svg xmlns="http://www.w3.org/2000/svg"><foreignObject>Foreign words.</foreignObject></svg>' +
+              '<p>Visible words.</p>',
+            '<title>Head words.</title>'
+          ),
+        },
+      ],
+      ['h']
+    );
+    for (const exact of [
+      'Styled words.',
+      'Unseen words.',
+      'Form words.',
+      'Button words.',
+      'Option words.',
+      'Area words.',
+      'Frame words.',
+      'Foreign words.',
+      'Head words.',
     ]) {
       expect(
         unresolvableOf(
-          await resolveDocumentQuote(book, BOOK, {
-            kind: 'quote',
-            exact: hidden,
-          })
+          await resolveDocumentQuote(book, BOOK, { kind: 'quote', exact })
         )
       ).toContain('was not found');
     }
@@ -650,10 +716,147 @@ describe('an EPUB', () => {
       resolvedOf(
         await resolveDocumentQuote(book, BOOK, {
           kind: 'quote',
-          exact: 'Visible words',
+          exact: 'Visible words.',
         })
       )
     ).toMatchObject({ line: 1 });
+  });
+
+  test('in SVG, title and desc are not drawn, and a display attribute hides its element', async () => {
+    const book = epub(
+      [
+        {
+          id: 'art',
+          mediaType: 'image/svg+xml',
+          xhtml:
+            '<svg xmlns="http://www.w3.org/2000/svg"><title>Title words.</title>' +
+            '<desc>Desc words.</desc><g display="none"><text>Unshown vector.</text></g>' +
+            '<text>Shown vector.</text></svg>',
+        },
+      ],
+      ['art']
+    );
+    for (const exact of ['Title words.', 'Desc words.', 'Unshown vector.']) {
+      expect(
+        unresolvableOf(
+          await resolveDocumentQuote(book, BOOK, { kind: 'quote', exact })
+        )
+      ).toContain('was not found');
+    }
+    expect(
+      resolvedOf(
+        await resolveDocumentQuote(book, BOOK, {
+          kind: 'quote',
+          exact: 'Shown vector.',
+        })
+      )
+    ).toMatchObject({ line: 1 });
+  });
+
+  test('text the frame shows is searched, including noscript, template and an HTML display attribute', async () => {
+    const book = epub(
+      [
+        {
+          id: 'h',
+          xhtml: xhtml(
+            '<noscript><p>Noscript words.</p></noscript>' +
+              '<template><p>Template words.</p></template>' +
+              '<p display="none">Attribute words.</p>'
+          ),
+        },
+      ],
+      ['h']
+    );
+    for (const exact of [
+      'Noscript words.',
+      'Template words.',
+      'Attribute words.',
+    ]) {
+      expect(
+        resolvedOf(
+          await resolveDocumentQuote(book, BOOK, { kind: 'quote', exact })
+        )
+      ).toMatchObject({ exact });
+    }
+  });
+
+  test('an SVG chapter in the spine is searched, as the frame draws it', async () => {
+    const book = epub(
+      [
+        {
+          id: 'art',
+          mediaType: 'image/svg+xml',
+          xhtml:
+            '<svg xmlns="http://www.w3.org/2000/svg"><text>Vector words.</text></svg>',
+        },
+      ],
+      ['art']
+    );
+    expect(
+      resolvedOf(
+        await resolveDocumentQuote(book, BOOK, {
+          kind: 'quote',
+          exact: 'Vector words.',
+        })
+      )
+    ).toMatchObject({ line: 1, unreadable_chapters: 0 });
+  });
+
+  test('a spine item the frame does not render as a chapter is counted as unreadable, not searched', async () => {
+    const book = epub(
+      [
+        { id: 'style', mediaType: 'text/css', xhtml: 'p { margin: 0 }' },
+        {
+          id: 'pic',
+          mediaType: 'image/png',
+          xhtml: xhtml('<p>Picture words.</p>'),
+        },
+        { id: 'body', xhtml: xhtml('<p>Body words.</p>') },
+      ],
+      ['style', 'pic', 'body']
+    );
+    expect(
+      resolvedOf(
+        await resolveDocumentQuote(book, BOOK, {
+          kind: 'quote',
+          exact: 'Body words.',
+        })
+      )
+    ).toMatchObject({ line: 1, unreadable_chapters: 2 });
+    expect(
+      unresolvableOf(
+        await resolveDocumentQuote(book, BOOK, {
+          kind: 'quote',
+          exact: 'Picture words.',
+        })
+      )
+    ).toContain('was not found');
+  });
+
+  test('the spine is read linear items first, as the frame reads it', async () => {
+    const book = epub(
+      [
+        { id: 'notes', linear: false, xhtml: xhtml('<p>Footnote words.</p>') },
+        { id: 'body', xhtml: xhtml('<p>Body words.</p>') },
+      ],
+      ['notes', 'body']
+    );
+    expect(
+      resolvedOf(
+        await resolveDocumentQuote(book, BOOK, {
+          kind: 'quote',
+          exact: 'Body words.',
+        })
+      )
+    ).toMatchObject({ line: 1 });
+    expect(
+      resolvedOf(
+        await resolveDocumentQuote(book, BOOK, {
+          kind: 'quote',
+          exact: 'Footnote words.',
+        })
+      )
+    ).toMatchObject({ line: 2 });
   });
 
   test('a chapter that cannot be read is counted, and a placement in the readable text says so', async () => {
@@ -813,13 +1016,50 @@ describe('placing a quote', () => {
     const text = await textOf(docx(paragraph(run('x x x x x'))), 'docx');
     const resolution = resolveQuote(
       text,
-      { exact: 'x' },
+      { exact: 'x', prefix: 'zzz' },
       { ...DOCUMENT_LIMITS, steps: 3 }
     );
     expect(resolution).toMatchObject({ status: 'unresolvable' });
     expect('explanation' in resolution ? resolution.explanation : '').toContain(
       'occurs too often'
     );
+  });
+
+  test('a repeated quote with no surroundings stops at its second exact match, and says at least', async () => {
+    const sentence =
+      'Every paragraph here repeats one long sentence about harbors, depots, ferries and tides.';
+    const text = await textOf(
+      docx(Array.from({ length: 50 }, () => paragraph(run(sentence))).join('')),
+      'docx'
+    );
+    const resolution = resolveQuote(
+      text,
+      { exact: sentence },
+      { ...DOCUMENT_LIMITS, steps: 2 * sentence.length + 1 }
+    );
+    expect(resolution).toMatchObject({ status: 'unresolvable' });
+    const explanation =
+      'explanation' in resolution ? resolution.explanation : '';
+    expect(explanation).toContain('occurs at least 2 times');
+    expect(explanation).toContain('Candidate lines: 1, 2.');
+  });
+
+  test('a repeated quote whose surroundings never match stops within its step limit', async () => {
+    const sentence =
+      'Every paragraph here repeats one long sentence about harbors, depots, ferries and tides.';
+    const text = await textOf(
+      docx(Array.from({ length: 50 }, () => paragraph(run(sentence))).join('')),
+      'docx'
+    );
+    const resolution = resolveQuote(
+      text,
+      { exact: sentence, prefix: 'zzz' },
+      { ...DOCUMENT_LIMITS, steps: 2 * sentence.length + 1 }
+    );
+    expect(resolution).toMatchObject({ status: 'unresolvable' });
+    const explanation =
+      'explanation' in resolution ? resolution.explanation : '';
+    expect(explanation).toContain('occurs too often');
   });
 
   test('context is cut on whole characters', async () => {

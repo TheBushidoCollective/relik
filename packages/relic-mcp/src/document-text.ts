@@ -6,10 +6,15 @@
  *
  * A DOCX yields its main story, one line per paragraph. Its main part is the one
  * `_rels/.rels` names as the office document, and that must be word/document.xml.
- * Tracked deletions, hidden runs and the fallback copy of an alternate-content
- * block are not shown, so they are not searched. An EPUB yields its spine in
- * order, once per distinct chapter, one line per block. Elements the frame hides
- * (`hidden`, `aria-hidden`, inline `display:none`) are not searched.
+ * Tracked deletions and hidden runs are not shown, so they are not searched. A
+ * run's alternate-content block shows the first element of its fallback, as the
+ * viewer does, and never its choice. An EPUB yields its spine in reading order,
+ * linear items first, once per distinct chapter, one line per block. Text the
+ * frame does not show is not searched: what the sanitizer removes, the head, SVG
+ * titles and descriptions, inline `display:none` or `visibility:hidden`, and an
+ * SVG `display="none"`. A `hidden` or `aria-hidden` attribute hides nothing in
+ * the frame, so that text is searched. A spine item the frame does not render as
+ * a chapter is counted as unreadable.
  *
  * Read-only and bounded. Every limit in DOCUMENT_LIMITS is counted across the
  * whole document, and a part that passes a limit ends the search as too large.
@@ -25,6 +30,10 @@
 import { deriveRendererClass } from '@relic/format';
 import { zipContainerKindSync } from '@relic/format/containers';
 import { readEpubPackage } from '@relic/format/epub-package';
+import {
+  isDroppedEpubElement,
+  RENDERED_EPUB_MEDIA,
+} from '@relic/format/epub-render';
 import { packagePath } from '@relic/format/xlsx';
 import {
   decodeXmlBytes,
@@ -82,7 +91,6 @@ const RELATIONSHIPS = '_rels/.rels';
 const DOCX_MAIN = 'word/document.xml';
 const SPACE = 32;
 const SPACE_CHAR = /\s/;
-const NO_TEXT_MEDIA = /^(image|audio|video|font)\//;
 
 const ZIP_TOO_LARGE: Record<string, true> = {
   'total-too-large': true,
@@ -145,6 +153,8 @@ export type Placement =
       readonly kind: 'ambiguous';
       readonly occurrences: number;
       readonly exactMatches: number;
+      /** Whether every occurrence was counted. False when the search stopped at a second exact match. */
+      readonly complete: boolean;
       readonly lines: readonly number[];
     };
 
@@ -398,62 +408,62 @@ function isHiddenRun(run: XmlElement): boolean {
   );
 }
 
-/** An alternate-content block shows its choice, or its fallback when it has none. */
-function collectAlternate(block: XmlElement, flow: Flow): void {
-  const parts = elements(block);
-  const shown =
-    parts.find((node) => localName(node.name) === 'Choice') ??
-    parts.find((node) => localName(node.name) === 'Fallback');
-  if (shown !== undefined) collectDocx(shown, flow);
-}
-
-function collectDocx(node: XmlElement, flow: Flow): void {
-  for (const child of node.children) {
-    if (typeof child === 'string') continue;
-    const name = localName(child.name);
-    if (DOCX_UNSHOWN[name] === true) continue;
-    switch (name) {
-      case 'AlternateContent':
-        collectAlternate(child, flow);
-        break;
-      case 'r':
-        if (!isHiddenRun(child)) collectDocx(child, flow);
-        break;
-      case 't':
-        flow.text(textOf(child));
-        break;
-      case 'tab':
-      case 'ptab':
-        flow.text('\t');
-        break;
-      case 'br':
-      case 'cr':
-        flow.hardBreak();
-        break;
-      case 'noBreakHyphen':
-        flow.text('-');
-        break;
-      case 'p':
-        flow.endBlock();
-        collectDocx(child, flow);
-        flow.endBlock();
-        break;
-      default:
-        collectDocx(child, flow);
+/**
+ * A run's alternate-content block shows the first element of its fallback, as
+ * the viewer does, and never its choice. Alternate content anywhere else is not
+ * shown.
+ */
+function collectRun(run: XmlElement, flow: Flow): void {
+  for (const child of elements(run)) {
+    if (localName(child.name) !== 'AlternateContent') {
+      collectDocxElement(child, flow);
+      continue;
     }
+    const fallback = elements(child).find(
+      (node) => localName(node.name) === 'Fallback'
+    );
+    const shown = fallback === undefined ? undefined : elements(fallback)[0];
+    if (shown !== undefined) collectDocxElement(shown, flow);
   }
 }
 
-/** Elements the frame hides, or that hold no visible text. */
-const XHTML_HIDDEN: Record<string, true> = {
-  desc: true,
-  head: true,
-  noscript: true,
-  script: true,
-  style: true,
-  template: true,
-  title: true,
-};
+function collectDocx(node: XmlElement, flow: Flow): void {
+  for (const child of elements(node)) collectDocxElement(child, flow);
+}
+
+function collectDocxElement(child: XmlElement, flow: Flow): void {
+  const name = localName(child.name);
+  if (DOCX_UNSHOWN[name] === true) return;
+  switch (name) {
+    case 'AlternateContent':
+      // Shown only as a run's own child, which collectRun reads.
+      break;
+    case 'r':
+      if (!isHiddenRun(child)) collectRun(child, flow);
+      break;
+    case 't':
+      flow.text(textOf(child));
+      break;
+    case 'tab':
+    case 'ptab':
+      flow.text('\t');
+      break;
+    case 'br':
+    case 'cr':
+      flow.hardBreak();
+      break;
+    case 'noBreakHyphen':
+      flow.text('-');
+      break;
+    case 'p':
+      flow.endBlock();
+      collectDocx(child, flow);
+      flow.endBlock();
+      break;
+    default:
+      collectDocx(child, flow);
+  }
+}
 
 const XHTML_BLOCK: Record<string, true> = {
   address: true,
@@ -493,10 +503,21 @@ const XHTML_BLOCK: Record<string, true> = {
   ul: true,
 };
 
-function isHiddenXhtml(element: XmlElement): boolean {
-  if (XHTML_HIDDEN[localName(element.name)] === true) return true;
-  if (element.attrs.has('hidden')) return true;
-  if ((element.attrs.get('aria-hidden') ?? '').trim().toLowerCase() === 'true')
+/**
+ * Whether the frame shows nothing of an element. The sanitizer removes the
+ * elements `isDroppedEpubElement` names, and keeps a head only for its styles
+ * and links. It unwraps elements it does not know, so their text is shown. In
+ * SVG, `title` and `desc` are kept but never drawn, and the `display`
+ * presentation attribute hides an SVG element but not an HTML one.
+ */
+function isHiddenXhtml(element: XmlElement, svg: boolean): boolean {
+  const name = localName(element.name);
+  if (name === 'head' || isDroppedEpubElement(name)) return true;
+  if (svg && (name === 'title' || name === 'desc')) return true;
+  if (
+    svg &&
+    (element.attrs.get('display') ?? '').trim().toLowerCase() === 'none'
+  )
     return true;
   const style = (element.attrs.get('style') ?? '')
     .toLowerCase()
@@ -504,21 +525,22 @@ function isHiddenXhtml(element: XmlElement): boolean {
   return style.includes('display:none') || style.includes('visibility:hidden');
 }
 
-function collectXhtml(node: XmlElement, flow: Flow): void {
+function collectXhtml(node: XmlElement, flow: Flow, svg: boolean): void {
   for (const child of node.children) {
     if (typeof child === 'string') {
       flow.text(child);
       continue;
     }
-    if (isHiddenXhtml(child)) continue;
     const name = localName(child.name);
+    const inSvg = svg || name === 'svg';
+    if (isHiddenXhtml(child, inSvg)) continue;
     if (name === 'br') {
       flow.hardBreak();
       continue;
     }
     const block = XHTML_BLOCK[name] === true;
     if (block) flow.endBlock();
-    collectXhtml(child, flow);
+    collectXhtml(child, flow, inSvg);
     if (block) flow.endBlock();
     else if (name === 'td' || name === 'th') flow.text('\t');
   }
@@ -575,11 +597,20 @@ async function epubText(zip: ZipIndex, budget: Budget): Promise<Extracted> {
   const seen = new Set<string>();
   const chapters: string[] = [];
   let unreadable = 0;
-  for (const item of spine) {
+  // The frame reads linear items first, then the rest, and the search does the same.
+  const reading = [
+    ...spine.filter((item) => item.linear),
+    ...spine.filter((item) => !item.linear),
+  ];
+  for (const item of reading) {
     // A repeated spine item shows the same text again. It is read and searched once.
     if (seen.has(item.path)) continue;
     seen.add(item.path);
-    if (NO_TEXT_MEDIA.test(media.get(item.path) ?? '')) continue;
+    // Only what the frame renders as a chapter is read. Any other item is unreadable.
+    if (!RENDERED_EPUB_MEDIA.has(media.get(item.path) ?? '')) {
+      unreadable++;
+      continue;
+    }
     const part = await budget.part(zip, item.path);
     if (!part.ok) {
       if (part.reason === 'too-large') return part;
@@ -593,7 +624,9 @@ async function epubText(zip: ZipIndex, budget: Budget): Promise<Extracted> {
       continue;
     }
     const flow = new Flow();
-    if (!isHiddenXhtml(root.value)) collectXhtml(root.value, flow);
+    const svgRoot = localName(root.value.name) === 'svg';
+    if (!isHiddenXhtml(root.value, svgRoot))
+      collectXhtml(root.value, flow, svgRoot);
     const chapter = flow.toString();
     const line =
       chapter === '' || chapter.endsWith('\n') ? chapter : `${chapter}\n`;
@@ -710,6 +743,7 @@ function matchAfter(flat: string, from: number, reference: string): Match {
  * - One occurrence whose surroundings match exactly is the place.
  * - Several occurrences with exact surroundings are ambiguous, and so is a quote
  *   whose surroundings are no closer to one occurrence than to another.
+ *   Two exact matches end the count early, and the count is then a lower bound.
  * - A quote with one occurrence is placed even when its surroundings differ;
  *   the result says so.
  * - A quote whose occurrences together need more comparisons than the limit is
@@ -729,6 +763,7 @@ export function placeQuote(
   let occurrences = 0;
   let firstAt = -1;
   let exactMatches = 0;
+  let complete = true;
   const exactAt: number[] = [];
   let bestScore = -1;
   let bestCount = 0;
@@ -742,11 +777,17 @@ export function placeQuote(
     if (firstAt === -1) firstAt = at;
     const back = matchBefore(flat, at, before);
     const forward = matchAfter(flat, at + exact.length, after);
-    steps += 1 + back.steps + forward.steps;
+    // Finding an occurrence costs its length, so a long quote that repeats runs out of steps.
+    steps += exact.length + back.steps + forward.steps;
     if (steps > limits.steps) return { kind: 'exhausted' };
     if (back.exact && forward.exact) {
       exactMatches++;
       if (exactAt.length < LISTED) exactAt.push(at);
+      if (exactMatches > 1) {
+        // A second exact match settles the answer, so the count can stop here.
+        complete = flat.indexOf(exact, at + 1) === -1;
+        break;
+      }
     }
     const score = back.matched + forward.matched;
     if (score > bestScore) {
@@ -773,6 +814,7 @@ export function placeQuote(
       kind: 'ambiguous',
       occurrences,
       exactMatches,
+      complete,
       lines: exactAt.map((at) => lineAt(text, at)),
     };
   if (occurrences === 1)
@@ -795,6 +837,7 @@ export function placeQuote(
     kind: 'ambiguous',
     occurrences,
     exactMatches: 0,
+    complete: true,
     lines: bestAt.map((at) => lineAt(text, at)),
   };
 }
@@ -844,20 +887,26 @@ export function resolveQuote(
         `The quoted text occurs too often for its surroundings to place it within the search limit.${skipped}`
       );
     case 'ambiguous': {
+      const counted = placement.complete
+        ? `${placement.occurrences} times`
+        : `at least ${placement.occurrences} times`;
       const shown =
-        placement.lines.length < placement.occurrences
+        placement.complete && placement.lines.length < placement.occurrences
           ? ` (first ${placement.lines.length} of ${placement.occurrences})`
           : '';
       const bare =
         (query.prefix ?? '').trim() === '' &&
         (query.suffix ?? '').trim() === '';
+      const matches = placement.complete
+        ? `${placement.exactMatches} of them`
+        : `at least ${placement.exactMatches} of them`;
       const why = bare
         ? 'the quote has no surrounding text to tell them apart'
         : placement.exactMatches > 1
-          ? `its surrounding text matches ${placement.exactMatches} of them exactly`
+          ? `its surrounding text matches ${matches} exactly`
           : 'its surrounding text is no closer to any one of them than to the others';
       return unresolved(
-        `The quoted text occurs ${placement.occurrences} times, and ${why}, so it cannot be placed. Candidate lines: ${placement.lines.join(', ')}${shown}.${skipped}`
+        `The quoted text occurs ${counted}, and ${why}, so it cannot be placed. Candidate lines: ${placement.lines.join(', ')}${shown}.${skipped}`
       );
     }
     case 'placed': {

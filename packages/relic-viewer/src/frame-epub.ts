@@ -1,3 +1,4 @@
+import { RENDERED_EPUB_MEDIA } from '../../relic-format/src/epub-render.ts';
 import { decodeXmlBytes } from '../../relic-format/src/xml.ts';
 import type { EpubResources } from './epub-css.ts';
 import { mountEpubChrome } from './epub-chrome.ts';
@@ -32,9 +33,7 @@ export async function render(
       const bytes = input.entries.get(item.path);
       const type = mediaTypes.get(item.path);
       if (!bytes || !type) return { state: 'failed', reason: 'corrupt' };
-      if (
-        !['application/xhtml+xml', 'text/html', 'image/svg+xml'].includes(type)
-      )
+      if (!RENDERED_EPUB_MEDIA.has(type))
         return { state: 'failed', reason: 'unsupported' };
       chapterBytes += bytes.length;
       if (bytes.length > 16 * 1024 * 1024 || chapterBytes > 64 * 1024 * 1024)
