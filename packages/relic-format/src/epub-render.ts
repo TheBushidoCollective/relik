@@ -31,8 +31,9 @@ export function isDroppedEpubElement(localName: string): boolean {
 }
 
 /**
- * The content types the frame renders as chapters. It refuses an ebook whose spine
- * holds any other type, so none of its text is shown.
+ * The content types the frame renders as chapters. The frame refuses an ebook
+ * whose spine holds any other type, and so does the text search, so none of its
+ * text is shown or searched.
  */
 export const RENDERED_EPUB_MEDIA: ReadonlySet<string> = new Set([
   'application/xhtml+xml',

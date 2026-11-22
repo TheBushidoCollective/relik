@@ -802,35 +802,27 @@ describe('an EPUB', () => {
     ).toMatchObject({ line: 1, unreadable_chapters: 0 });
   });
 
-  test('a spine item the frame does not render as a chapter is counted as unreadable, not searched', async () => {
-    const book = epub(
-      [
-        { id: 'style', mediaType: 'text/css', xhtml: 'p { margin: 0 }' },
-        {
-          id: 'pic',
-          mediaType: 'image/png',
-          xhtml: xhtml('<p>Picture words.</p>'),
-        },
-        { id: 'body', xhtml: xhtml('<p>Body words.</p>') },
-      ],
-      ['style', 'pic', 'body']
-    );
+  test('an ebook with a spine item the viewer does not render is refused whole, as the viewer refuses it', async () => {
+    const chapters = [
+      { id: 'style', mediaType: 'text/css', xhtml: 'p { margin: 0 }' },
+      { id: 'body', xhtml: xhtml('<p>Body words.</p>') },
+    ];
     expect(
-      resolvedOf(
-        await resolveDocumentQuote(book, BOOK, {
+      unresolvableOf(
+        await resolveDocumentQuote(epub(chapters, ['style', 'body']), BOOK, {
           kind: 'quote',
           exact: 'Body words.',
         })
       )
-    ).toMatchObject({ line: 1, unreadable_chapters: 2 });
+    ).toContain('cannot show this ebook');
     expect(
-      unresolvableOf(
-        await resolveDocumentQuote(book, BOOK, {
+      resolvedOf(
+        await resolveDocumentQuote(epub(chapters.slice(1), ['body']), BOOK, {
           kind: 'quote',
-          exact: 'Picture words.',
+          exact: 'Body words.',
         })
       )
-    ).toContain('was not found');
+    ).toMatchObject({ line: 1, unreadable_chapters: 0 });
   });
 
   test('the spine is read linear items first, as the frame reads it', async () => {

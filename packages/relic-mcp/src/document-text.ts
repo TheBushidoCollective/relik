@@ -13,8 +13,8 @@
  * frame does not show is not searched: what the sanitizer removes, the head, SVG
  * titles and descriptions, inline `display:none` or `visibility:hidden`, and an
  * SVG `display="none"`. A `hidden` or `aria-hidden` attribute hides nothing in
- * the frame, so that text is searched. A spine item the frame does not render as
- * a chapter is counted as unreadable.
+ * the frame, so that text is searched. An ebook with a spine item the viewer
+ * does not render as a chapter is refused whole, as the viewer refuses it.
  *
  * Read-only and bounded. Every limit in DOCUMENT_LIMITS is counted across the
  * whole document, and a part that passes a limit ends the search as too large.
@@ -50,7 +50,12 @@ import {
 import { nodeInflater } from './node-inflater.ts';
 
 export type DocumentKind = 'docx' | 'epub';
-export type DocumentRefusal = 'protected' | 'corrupt' | 'too-large';
+/** Why a document cannot be searched. `unsupported` is an ebook the viewer refuses to show. */
+export type DocumentRefusal =
+  | 'protected'
+  | 'corrupt'
+  | 'too-large'
+  | 'unsupported';
 
 export interface DocumentLimits {
   /** Inflated bytes read from the document's parts, in total. */
@@ -119,6 +124,7 @@ type Extracted =
 
 const CORRUPT: Failure = { ok: false, reason: 'corrupt' };
 const TOO_LARGE: Failure = { ok: false, reason: 'too-large' };
+const UNSUPPORTED: Failure = { ok: false, reason: 'unsupported' };
 
 export type IndexedDocument =
   | {
@@ -594,6 +600,11 @@ async function epubText(zip: ZipIndex, budget: Budget): Promise<Extracted> {
   const media = new Map(
     resources.map((resource) => [resource.path, resource.mediaType] as const)
   );
+  // The viewer refuses the whole ebook when a spine item is not a chapter it renders.
+  if (
+    spine.some((item) => !RENDERED_EPUB_MEDIA.has(media.get(item.path) ?? ''))
+  )
+    return UNSUPPORTED;
   const seen = new Set<string>();
   const chapters: string[] = [];
   let unreadable = 0;
@@ -606,11 +617,6 @@ async function epubText(zip: ZipIndex, budget: Budget): Promise<Extracted> {
     // A repeated spine item shows the same text again. It is read and searched once.
     if (seen.has(item.path)) continue;
     seen.add(item.path);
-    // Only what the frame renders as a chapter is read. Any other item is unreadable.
-    if (!RENDERED_EPUB_MEDIA.has(media.get(item.path) ?? '')) {
-      unreadable++;
-      continue;
-    }
     const part = await budget.part(zip, item.path);
     if (!part.ok) {
       if (part.reason === 'too-large') return part;
@@ -937,6 +943,8 @@ function refusalText(reason: DocumentRefusal): string {
       return 'The document is too large to search for the quoted text.';
     case 'corrupt':
       return 'The document could not be read, so the quoted text cannot be checked.';
+    case 'unsupported':
+      return 'The viewer cannot show this ebook, because one of its spine items is not XHTML, HTML or SVG, so the quoted text cannot be checked against it.';
   }
 }
 
