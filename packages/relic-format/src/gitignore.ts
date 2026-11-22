@@ -139,7 +139,7 @@ function characterClass(
   }
   if (end >= pattern.length) return undefined;
   let index = start + 1;
-  const negate = pattern[index] === '!';
+  const negate = pattern[index] === '!' || pattern[index] === '^';
   if (negate) index++;
   const atoms: { value: number | Uint32Array; escaped: boolean }[] = [];
   let hasMorePosixClose = true;

@@ -816,20 +816,15 @@ The required recipient set R for a relic at seal time is:
 
 `POST /api/relics/{id}/complete` for a private version runs these checks in order:
 
-1. The seal statement parses, its `relic_id` matches, and its `version` equals `row.version`. A new seal must be later than `sealedVersion`.
-2. The signer is the owner identity or an owner device, and the signature verifies. A device signing a new seal must be unrevoked and have `notAfter` at least the statement's `at`.
+1. The seal statement parses, its `relic_id` matches, its `version` equals `row.version`, and it is later than the last sealed version.
+2. The signer is the owner identity. When the signer is a device, that device is an owner device that is not revoked and whose `notAfter` is at least the statement's `at`. The signature verifies.
 3. `ciphertext_sha256` equals the server's digest of the stored object, else `seal_digest_mismatch`.
-4. A replay of the committed seal, with the same canonical statement, signer kind and signature, succeeds without changing wraps. Its signature and digest are still checked, even if the signing device was subsequently revoked. If publication metadata or the digest is missing, the replay repairs it using the accepted seal's timestamp. A competing seal for a committed version returns `version_conflict`.
-5. For a new seal, the wraps cover exactly R, `recipient_key_ids` match R, and `owner_epoch` equals the owner identity's `recipientsEpoch`. Otherwise the request refuses with `recipients_changed`.
-6. The server creates the seal record with create-only semantics as a claim before deleting or writing any wraps. Another completion holding a pending claim returns `version_conflict` with a five-second retry interval and changes nothing. A request whose initial row was stale checks for an exact committed replay if its claim fails.
-7. The claimant rechecks the owner and access epochs, removes stale wraps for the open version, and writes the new wraps create-only. It checks that the stored wraps exactly match the request. Its relic-row compare-and-swap checks the owner, access epoch, version and previous `sealedVersion`, then sets `sealedVersion`, the digest and publication metadata together. It rechecks the owner epoch after the CAS; a changed epoch triggers a guarded rollback when the relic state still permits it.
-8. If the commit response is indeterminate, a second relic-row CAS advances the generation and establishes whether the first commit landed. A committed result succeeds; an uncommitted result is cleaned up. If the fence also fails, the seal and wraps remain intact. Only the claimant may clean up; it deletes wraps first and releases the seal claim last.
+4. The wraps cover exactly R, the `recipient_key_ids` match R, and the statement's `owner_epoch` equals the owner identity's `recipientsEpoch`. Otherwise the request refuses with `recipients_changed` and both epochs.
+5. Wraps already stored for this unsealed version are deleted, then the new wraps and the seal are written create-only.
+6. In one `updateRelic`, the store requires `accessEpoch` to equal the statement's `access_epoch` and `version` to equal `row.version`, and sets `sealedVersion`. On failure, what step 5 wrote is deleted and the request refuses with `recipients_changed` or `version_conflict`.
+7. The version is marked published as for a public relic, its digest is recorded, and the change notice is sent.
 
-A process crash or an indeterminate claim, commit fence or rollback error can leave an uncommitted seal claim that blocks later completions. The current store has no claim lease or automatic recovery. Resuming that version requires operator repair; a publisher can instead start a new relic.
-
-The owner epoch and relic row are separate records. A reader or identical replay can observe a version between its relic-row CAS and a post-CAS rollback caused by a racing owner change. Closing this window requires a transactional fence, either one record or a conditional write covering both the owner epoch and `sealedVersion`.
-
-Device revocation and recovery replacement delete that key's wraps across every relic the owner holds. A version sealed between a designation and its backfill can miss the new recipient. `GET /api/identity/relics?coverage=1` reports such gaps, and the owner's dashboard repairs them through `POST /api/identity/backfill`, which accepts at most `privateBackfillMaxWraps` wraps per request. Backfill requires both a seal record and a version no later than `sealedVersion`; a pending claim alone is insufficient.
+Device revocation and recovery replacement delete that key's wraps across every relic the owner holds. A version sealed between a designation and its backfill can miss the new recipient. `GET /api/identity/relics?coverage=1` reports such gaps, and the owner's dashboard repairs them through `POST /api/identity/backfill`, which accepts at most `privateBackfillMaxWraps` wraps per request.
 
 ### 10.4 Grants and revocation
 
