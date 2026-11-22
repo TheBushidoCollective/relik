@@ -33,9 +33,7 @@ async function world(
     lostBeforeSeal?: boolean;
     holdCompletion?: boolean;
     completionConflict?: boolean;
-    claimOpen?: boolean;
     unsupported?: boolean;
-    keyLagOnce?: boolean;
   } = {}
 ) {
   const keys = await generateIdentityKeys();
@@ -101,7 +99,6 @@ async function world(
     | undefined;
   let lost = false;
   let changed = false;
-  let keyLagged = false;
   let currentIdentity: typeof identity | null = identity;
   let delayed:
     | { seal: Record<string, unknown>; wraps: Record<string, unknown>[] }
@@ -180,7 +177,7 @@ async function world(
         access_epoch: 0,
         owner_epoch: 0,
         current_version: 1,
-        sealed_version: stored === undefined ? null : 1,
+        sealed_version: null,
         owner: party,
         devices: [],
         grants: [],
@@ -203,7 +200,6 @@ async function world(
         throw new Error('connection lost while seal may still be in flight');
       }
       if (options.holdCompletion) await held.promise;
-      if (options.claimOpen) return json({ code: 'version_conflict' }, 409);
       stored = delayed;
       if (options.completionConflict)
         return json({ code: 'version_conflict' }, 409);
@@ -224,10 +220,6 @@ async function world(
     if (path === `/api/relics/${relicId}/versions/1/key`) {
       if (stored === undefined)
         return json({ code: 'relic_not_yet_published' }, 409);
-      if (options.keyLagOnce && !keyLagged) {
-        keyLagged = true;
-        return json({ code: 'relic_not_yet_published' }, 409);
-      }
       const statement = stored.seal['statement'] as Record<string, unknown>;
       return json({
         relic_id: relicId,
@@ -292,6 +284,10 @@ async function world(
     },
     clearIdentity() {
       currentIdentity = null;
+    },
+    acceptDelayedSeal() {
+      if (delayed === undefined) throw new Error('no completion was sent');
+      stored = delayed;
     },
     releaseCompletion() {
       held.resolve();
@@ -459,35 +455,16 @@ test('a second publish cannot issue completion while the first is in flight', as
   expect((await first).access).toBe('private');
 });
 
-test('a retry after a lost completion sends a new completion and completes without a second upload', async () => {
+test('an ambiguous completion is only read back until its original seal is accepted', async () => {
   const w = await world({ lostBeforeSeal: true });
   await expect(w.publisher.publish()).rejects.toThrow();
-  const result = await w.publisher.retry();
-  expect(result.access).toBe('private');
-  expect(
-    w.calls.filter((call) => call.path.endsWith('/complete'))
-  ).toHaveLength(2);
-  expect(w.uploads).toBe(1);
-});
-
-test('a completion refused by an open claim reports in progress until a later retry completes', async () => {
-  const options = { claimOpen: true };
-  const w = await world(options);
-  await expect(w.publisher.publish()).rejects.toThrow(
+  await expect(w.publisher.retry()).rejects.toThrow(
     'private_publish_in_progress'
   );
-  options.claimOpen = false;
-  const result = await w.publisher.retry();
-  expect(result.access).toBe('private');
   expect(
     w.calls.filter((call) => call.path.endsWith('/complete'))
-  ).toHaveLength(2);
-  expect(w.uploads).toBe(1);
-});
-
-test('a seal that commits between the readback and the roster is accepted by reading it back', async () => {
-  const w = await world({ loseCompletion: true, keyLagOnce: true });
-  await expect(w.publisher.publish()).rejects.toThrow();
+  ).toHaveLength(1);
+  w.acceptDelayedSeal();
   const result = await w.publisher.retry();
   expect(result.access).toBe('private');
   expect(

@@ -104,6 +104,7 @@ interface Pending {
   readonly identity: UnlockedIdentity;
   expiresAt?: string;
   stage: 'grant' | 'upload' | 'seal';
+  completionAttempted: boolean;
 }
 
 interface UploadGrant {
@@ -315,19 +316,13 @@ async function sealPending(
       !Number.isSafeInteger(answer.owner_epoch) ||
       answer.owner_epoch < 0 ||
       answer.current_version !== 1 ||
-      (answer.sealed_version !== null && answer.sealed_version !== 1) ||
+      answer.sealed_version !== null ||
       !Array.isArray(answer.devices) ||
       !Array.isArray(answer.grants) ||
       !Array.isArray(answer.recipient_key_ids) ||
       !('recovery' in answer)
     ) {
       throw new PrivateRequestError('invalid_private_roster', 0);
-    }
-    if (answer.sealed_version === 1) {
-      // An earlier completion committed between the readback and this
-      // request. Accept the seal it left, after the same verification.
-      await readBack(p, options);
-      return;
     }
     await checkOwner(answer.owner, p.identity);
     const recipients = await verifiedRecipients(
@@ -382,9 +377,8 @@ async function sealPending(
       signer_kind: 'identity',
     };
     await loadReviewedIdentity(options.deps, options.owner, options.signal);
-    // A retry after an unresolved request is safe. The server refuses a
-    // completion made while another claim for this version is open, and
-    // writes nothing.
+    // A lost response can leave the server finishing this exact request.
+    p.completionAttempted = true;
     let response: Record<string, unknown>;
     try {
       response = record(
@@ -400,25 +394,14 @@ async function sealPending(
         error instanceof PrivateRequestError &&
         error.code === 'recipients_changed'
       ) {
+        p.completionAttempted = false;
         continue;
       }
       if (
         error instanceof PrivateRequestError &&
         error.code === 'version_conflict'
       ) {
-        // The server refuses a completion made while another claim for this
-        // version is open, and writes nothing. Accept the seal that claim left,
-        // or report that it is still in progress.
-        try {
-          await readBack(p, options);
-        } catch (readError) {
-          if (
-            readError instanceof PrivateRequestError &&
-            readError.code === 'relic_not_yet_published'
-          )
-            throw new PrivateRequestError('private_publish_in_progress', 0);
-          throw readError;
-        }
+        await readBack(p, options);
         return;
       }
       throw error;
@@ -621,6 +604,7 @@ export function createPrivatePublisher(
         digest: await ciphertextDigest(ciphertext),
         identity: signed.identity,
         stage: 'grant',
+        completionAttempted: false,
       };
       if (abort.signal.aborted) {
         key.fill(0);
@@ -683,6 +667,8 @@ export function createPrivatePublisher(
           error.code !== 'relic_not_yet_published'
         )
           throw error;
+        if (p.completionAttempted)
+          throw new PrivateRequestError('private_publish_in_progress', 0);
       }
       return finish(p);
     }
