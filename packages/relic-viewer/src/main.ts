@@ -2697,6 +2697,7 @@ export function buildChangeNav(deps: {
   const element = document.createElement('div');
   element.className = 'compare-nav';
   let jumps: ArrayLike<ChangeJump> = [];
+  let emptyNote = 'No changes';
   let at = -1;
   /**
    * Whether the comparison has been computed yet.
@@ -2719,7 +2720,7 @@ export function buildChangeNav(deps: {
     position.textContent = !counted
       ? 'Comparing'
       : jumps.length === 0
-        ? 'No changes'
+        ? emptyNote
         : at < 0
           ? `${jumps.length} ${jumps.length === 1 ? 'change' : 'changes'}`
           : `Change ${at + 1} of ${jumps.length}`;
@@ -2755,8 +2756,9 @@ export function buildChangeNav(deps: {
 
   return {
     element,
-    setJumps: (value) => {
+    setJumps: (value, note) => {
       jumps = value;
+      emptyNote = note ?? 'No changes';
       at = -1;
       counted = true;
       show();
