@@ -901,3 +901,43 @@ DOCUMENTS_PATH_OK
 ```
 
 A failed assertion exits non-zero after printing the stage it stopped at. Each stage also prints the resolved JSON it read back, so the resolution can be checked without a browser.
+
+## Version comparison in a browser
+
+Build the viewer and the MCP bundle first, then run the stage from the repository root with an isolated headless browser:
+
+```bash
+bun run build
+bun run --cwd packages/relic-mcp build
+RELIC_CHROME_PATH=/absolute/path/to/chrome-headless-shell bun packages/relic-mcp/test/version-compare-path.ts
+```
+
+The stage publishes three relics, a DOCX, an EPUB and an XLSX, each at version 1 and republished at version 2, through a fresh relic-mcp stdio process for each call. It opens each share URL, clicks Compare versions with real mouse input, and reads the result at 1440x900 and 390x844. Every reading comes from the page: the frames' outlines and heights, the Changes count, the change list and chapter rows, the sheet strip and the cell states.
+
+The expectations are the spec's. DOCX reads 1 added, 1 removed, 2 changed. EPUB reads 2 added, 2 removed, 1 changed, with chapters The crossing (1 change), Interlude (removed), Afterword (added) and 1 unchanged chapter. XLSX reads 4 cells changed, 1 added, 1 removed, and 1 sheet added, 1 removed, 1 renamed, with C3 changed in both grids and D5 added in version 2 only.
+
+The five negatives each publish their own relics: a core.xml-only version, a DOCX republished as an EPUB, a version over 16 MiB, hostile EPUB markup with a U+202E sheet name, and a frame's request check. Their expectations are in the root `PATH.md`.
+
+Two inputs are simulated, and the run output names the input each frame uses. Under Chrome for Testing 156 with `--headless=new`, a wheel turn over a grid or over an out-of-process frame reaches the document, not the element, so the stage sets the element's own scroll position. That fires the scroll event a wheel would, which the sync and the grid mirroring listen for. In-process frames take a real wheel turn.
+
+Success ends with:
+
+```text
+VERSION_COMPARE_PATH_OK formats=docx,epub,xlsx widths=1440,390 negatives=5
+```
+
+### Live probe after a deploy
+
+`version-compare-live-probe.ts` checks the same result lines and Changes counts on the live service. It publishes one untitled relic per format with a one-day lifetime and no cover, republishes each as version 2, and opens each share URL in the owned headless shell at 1440x900 and 390x844. It requires an explicit confirmation, so it cannot publish by accident:
+
+```bash
+RELIC_COMPARE_PROBE_CONFIRM=publish-three-1-day-relics \
+RELIC_CHROME_PATH=/absolute/path/to/owned-headless-shell \
+  bun packages/relic-mcp/test/version-compare-live-probe.ts
+```
+
+`RELIC_SERVICE_ORIGIN` defaults to `https://relik.link`. The probe prints no share URL and no key. Success ends with:
+
+```text
+VERSION_COMPARE_LIVE_OK docx=<id> epub=<id> xlsx=<id>
+```

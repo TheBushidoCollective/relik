@@ -362,3 +362,25 @@ Not proven here: the loopback upload is same-origin, so the browser's cross-orig
 Run `mise exec -- bun packages/relic-mcp/test/multi-file-path.ts`. The `codec` stage opens the fixed encrypted folder vector, checks its entries and byte-identical re-encryption, and confirms that the unchanged v1 decoder refuses it. Success prints `MULTI_FILE_STAGE codec OK` and `MULTI_FILE_PATH_OK`.
 
 The two `MULTI_FILE_TIMING` lines report manifest decode and set-validation time for 1,000 and 5,000 entries in Bun. They are observations, not pass/fail thresholds or browser measurements.
+
+# Version comparison: DOCX, EPUB and XLSX side by side
+
+A reader opens a relic that has two versions and chooses Compare versions. DOCX and EPUB show both versions in their own frames, with the changes outlined in place beside a Changes list. XLSX shows both workbooks as grids with each changed cell marked. The stage publishes version 1 with `relic_publish` and version 2 with `relic_republish`, both through the built MCP over stdio, opens the share URL as a visitor does, and clicks the control with real mouse input.
+
+## Acceptance command
+
+```sh
+bun run build
+bun run --cwd packages/relic-mcp build
+RELIC_CHROME_PATH=<isolated-headless-shell> bun packages/relic-mcp/test/version-compare-path.ts
+```
+
+Success ends with `VERSION_COMPARE_PATH_OK formats=docx,epub,xlsx widths=1440,390 negatives=5`. The same command must also pass with `RELIC_CHROME_PATH` set to full Chromium, run with `--headless=new`, which CI runs on Linux as `google-chrome`. `RELIC_COMPARE_PATH_SHOTS=<dir>` keeps a screenshot of each state.
+
+At 1440x900 the stage checks the result line, the Changes count, each frame's outlines and height, the DOCX change rows and EPUB chapter rows, Next change with the visible outline on the change it lights, the layout round trip, and the scroll sync. At 390x844 it checks that the panes stack, that the page does not scroll sideways, and that the Changes drawer opens from its tab. XLSX adds the sheet strip, the cell states by position, Next change through the changed cells, and grid mirroring.
+
+The five negatives are: a version that differs only in core.xml shows no text changes and no marks; a DOCX republished as an EPUB displays differently and is shown alone; a version over 16 MiB gets the notice and Earlier versions; hostile markup in an EPUB and a U+202E sheet name show as text and as an escape, and create no element and run nothing; and a frame makes no request beyond its own sandbox document and the assets its origin serves.
+
+Two inputs are simulated, and the run output says which one each frame used. Under Chrome for Testing in `--headless=new`, a wheel turn over a grid or over an out-of-process frame reaches the document rather than the element, so the stage sets that element's scroll position itself. The scroll event is the one a reader's wheel fires, and the sync listens for it. In-process frames take a real wheel turn.
+
+Not proven here: Safari and Firefox, touch and IME input, phone memory, a reader's wheel over an out-of-process frame in headed Chrome, and the live service. `version-compare-live-probe.ts`, described in `packages/relic-mcp/PATH.md`, checks the live service after a deploy and is run by hand, not in CI.
