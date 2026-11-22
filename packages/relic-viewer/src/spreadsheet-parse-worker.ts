@@ -29,21 +29,25 @@ function checkedVersion(value: unknown): ArrayBuffer | 'corrupt' | 'too-large' {
   return value.byteLength > XLSX_COMPARE_MAX_BYTES ? 'too-large' : value;
 }
 
+/** Posts one reply, moving the buffers in `transfers` to the page rather than copying them. */
+type Post = (message: unknown, transfers?: Transferable[]) => void;
+
 /**
  * Checks both versions, then parses and compares them. A version that cannot
  * be checked or read is refused with its side named, and the other is not parsed.
  */
 async function compareVersions(
-  request: Record<string, unknown>
+  request: Record<string, unknown>,
+  post: Post
 ): Promise<void> {
   const before = checkedVersion(request['before']);
   if (typeof before === 'string') {
-    self.postMessage({ ok: false, side: 'before', reason: before });
+    post({ ok: false, side: 'before', reason: before });
     return;
   }
   const after = checkedVersion(request['after']);
   if (typeof after === 'string') {
-    self.postMessage({ ok: false, side: 'after', reason: after });
+    post({ ok: false, side: 'after', reason: after });
     return;
   }
   const options = { cellLimit: XLSX_COMPARE_CELL_LIMIT };
@@ -53,11 +57,7 @@ async function compareVersions(
     options
   );
   if (!parsedBefore.ok) {
-    self.postMessage({
-      ok: false,
-      side: 'before',
-      reason: parsedBefore.reason,
-    });
+    post({ ok: false, side: 'before', reason: parsedBefore.reason });
     return;
   }
   const parsedAfter = await parseXlsx(
@@ -66,7 +66,7 @@ async function compareVersions(
     options
   );
   if (!parsedAfter.ok) {
-    self.postMessage({ ok: false, side: 'after', reason: parsedAfter.reason });
+    post({ ok: false, side: 'after', reason: parsedAfter.reason });
     return;
   }
   const comparison = compareWorkbooks(
@@ -76,7 +76,7 @@ async function compareVersions(
   const transfers = sheetBuffers([parsedBefore.workbook, parsedAfter.workbook]);
   for (const sheet of comparison.sheets)
     transfers.push(sheet.positions.buffer as ArrayBuffer);
-  self.postMessage(
+  post(
     {
       ok: true,
       before: parsedBefore.workbook,
@@ -87,16 +87,27 @@ async function compareVersions(
   );
 }
 
-self.addEventListener('message', async (event: MessageEvent<unknown>) => {
-  const request = event.data;
+/**
+ * Answers one request. A throw while answering, such as an allocation that
+ * fails or a reply the page cannot receive, becomes a corrupt reply with no
+ * side. Without that the page would learn of the failure only from its timeout.
+ */
+export async function answer(request: unknown, post: Post): Promise<void> {
   if (!isRecord(request)) return;
-  if (request.type === 'compare') return compareVersions(request);
-  if (request.type !== 'parse' || !(request.bytes instanceof ArrayBuffer))
-    return;
-  const result = await parseXlsx(new Uint8Array(request.bytes));
-  if (!result.ok) {
-    self.postMessage(result);
-    return;
+  try {
+    if (request.type === 'compare') return await compareVersions(request, post);
+    if (request.type !== 'parse' || !(request.bytes instanceof ArrayBuffer))
+      return;
+    const result = await parseXlsx(new Uint8Array(request.bytes));
+    if (result.ok) post(result, sheetBuffers([result.workbook]));
+    else post(result);
+  } catch {
+    post({ ok: false, reason: 'corrupt' });
   }
-  self.postMessage(result, sheetBuffers([result.workbook]));
-});
+}
+
+self.addEventListener('message', (event: MessageEvent<unknown>) =>
+  answer(event.data, (message, transfers) =>
+    self.postMessage(message, transfers ?? [])
+  )
+);

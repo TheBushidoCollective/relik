@@ -344,6 +344,7 @@ class StubWorker {
   readonly url: string;
   onmessage: ((event: { data: unknown }) => void) | undefined;
   onerror: ((event: unknown) => void) | undefined;
+  onmessageerror: ((event: unknown) => void) | undefined;
   readonly posted: {
     readonly message: unknown;
     readonly transfer: unknown[];
@@ -476,6 +477,7 @@ class FakeNav implements ChangeNav {
   readonly element: HTMLElement;
   jumps: ArrayLike<ChangeJump> = [];
   position = -1;
+  emptyNote: string | undefined;
   private readonly reveal: (jump: ChangeJump, top: number) => boolean;
 
   constructor(
@@ -486,9 +488,10 @@ class FakeNav implements ChangeNav {
     this.reveal = reveal;
   }
 
-  setJumps(jumps: ArrayLike<ChangeJump>): void {
+  setJumps(jumps: ArrayLike<ChangeJump>, emptyNote?: string): void {
     this.jumps = jumps;
     this.position = -1;
+    this.emptyNote = emptyNote;
   }
 
   goTo(index: number): void {
@@ -1549,5 +1552,235 @@ describe('spreadsheet comparison: the real worker', () => {
           'Version 3 could not be read as a spreadsheet, so it cannot be compared. Version 2 is open here on its own.',
       },
     ]);
+  });
+});
+
+describe('spreadsheet comparison: text the Changes list shows', () => {
+  test('escapes a bidi override and an escape character in a listed value and formula, as the grid does', async () => {
+    const shell = harness();
+    const reports: ChangeReport[] = [];
+    const before = await workbook([
+      {
+        name: 'Ledger',
+        sheetId: 1,
+        cells: { A1: 'ok', B1: { f: 'SUM(1,2)', v: 3 } },
+      },
+    ]);
+    const after = await workbook([
+      {
+        name: 'Ledger',
+        sheetId: 1,
+        cells: {
+          A1: 'ok\u202Eabc\u001B',
+          B1: { f: 'SUM(1,2)\u202E\u001B', v: 3 },
+        },
+      },
+    ]);
+    const root = start(
+      viewOf(3, contentFromBytes(after)),
+      viewOf(2, contentFromBytes(before)),
+      shell,
+      reports
+    );
+    await sheetsReady(root);
+
+    const report = reports.at(-1)!;
+    expect(
+      report.changes.map((change) => [
+        change.label,
+        change.before,
+        change.after,
+      ])
+    ).toEqual([
+      ['A1', 'ok', 'ok\\u{202E}abc\\u{1B}'],
+      ['B1 formula', '=SUM(1,2)', '=SUM(1,2)\\u{202E}\\u{1B}'],
+    ]);
+    const list = sidebarRows(report).textContent;
+    expect(list).toContain('ok\\u{202E}abc\\u{1B}');
+    expect(list).toContain('=SUM(1,2)\\u{202E}\\u{1B}');
+    expect(list).not.toContain('\u202E');
+    expect(list).not.toContain('\u001B');
+  });
+
+  test('names changes past the drawn columns, and the nav says so when none can be reached', async () => {
+    const shell = harness();
+    const reports: ChangeReport[] = [];
+    const before = await workbook([
+      { name: 'Wide', sheetId: 1, cells: { JA1: 'a', JB1: 'b', JC1: 'c' } },
+    ]);
+    const after = await workbook([
+      { name: 'Wide', sheetId: 1, cells: { JA1: 'x', JB1: 'y', JC1: 'z' } },
+    ]);
+    const root = start(
+      viewOf(3, contentFromBytes(after)),
+      viewOf(2, contentFromBytes(before)),
+      shell,
+      reports
+    );
+    await sheetsReady(root);
+
+    const report = reports.at(-1)!;
+    expect(report.total).toBe(3);
+    expect(report.changes.map((change) => change.label)).toEqual([
+      'JA1',
+      'JB1',
+      'JC1',
+    ]);
+    expect(report.more?.count).toBe(0);
+    expect(shell.navs.at(-1)?.emptyNote).toBe(
+      '3 changes past the 256 columns drawn here'
+    );
+  });
+
+  test('counts the unlisted changes past the drawn columns apart from the reachable ones', async () => {
+    const shell = harness();
+    const reports: ChangeReport[] = [];
+    const before = await workbook([
+      {
+        name: 'Big',
+        sheetId: 1,
+        cells: {
+          ...changedColumn(205, 'a'),
+          JA206: 'old',
+          JA207: 'old',
+          JA208: 'old',
+          JA209: 'old',
+        },
+      },
+    ]);
+    const after = await workbook([
+      {
+        name: 'Big',
+        sheetId: 1,
+        cells: {
+          ...changedColumn(205, 'b'),
+          JA206: 'new',
+          JA207: 'new',
+          JA208: 'new',
+          JA209: 'new',
+        },
+      },
+    ]);
+    const root = start(
+      viewOf(3, contentFromBytes(after)),
+      viewOf(2, contentFromBytes(before)),
+      shell,
+      reports
+    );
+    await sheetsReady(root);
+
+    const report = reports.at(-1)!;
+    expect(report.total).toBe(209);
+    expect(report.changes).toHaveLength(200);
+    expect(report.more?.count).toBe(9);
+    const copy =
+      '5 more changed cells on this sheet. Use Next change to reach them. 4 changed cells are past the 256 columns drawn here.';
+    expect(report.more?.copy(9)).toBe(copy);
+    expect(
+      withClass(sidebarRows(report), 'diff-change-more').map(
+        (row) => row.textContent
+      )
+    ).toEqual([copy]);
+    expect(shell.navs.at(-1)?.emptyNote).toBeUndefined();
+  });
+});
+
+describe('spreadsheet comparison: lone sheets and replies that cannot be read', () => {
+  test('shows an added chartsheet as added and not compared, and opens it', async () => {
+    const shell = harness();
+    const reports: ChangeReport[] = [];
+    const before = await workbook([
+      { name: 'Main', sheetId: 1, cells: { A1: 'x' } },
+    ]);
+    const after = await workbook([
+      { name: 'Main', sheetId: 1, cells: { A1: 'x' } },
+      { name: 'Chart', sheetId: 2, chart: true },
+    ]);
+    const root = start(
+      viewOf(3, contentFromBytes(after)),
+      viewOf(2, contentFromBytes(before)),
+      shell,
+      reports
+    );
+    await sheetsReady(root);
+
+    const tabs = tabsOf(root);
+    expect(tabs[1]?.textContent).toBe('Chartaddednot compared');
+    expect(tabs[1]?.getAttribute('aria-selected')).toBe('true');
+    expect(paneText(root, 'after')).toBe(
+      'This sheet contains a chart, which is not compared.'
+    );
+    expect(paneText(root, 'before')).toBe('This sheet is not in version 2.');
+    expect(reports.at(-1)?.summary).toBe('1 sheet added.');
+  });
+
+  test('shows a removed oversize sheet as removed and not compared, and opens it', async () => {
+    const shell = harness();
+    const before = await workbook([
+      { name: 'Main', sheetId: 1, cells: { A1: 'x' } },
+      { name: 'Long', sheetId: 2, cells: { A1: 'start', A600001: 'end' } },
+    ]);
+    const after = await workbook([
+      { name: 'Main', sheetId: 1, cells: { A1: 'x' } },
+    ]);
+    const root = start(
+      viewOf(3, contentFromBytes(after)),
+      viewOf(2, contentFromBytes(before)),
+      shell
+    );
+    await sheetsReady(root);
+
+    const tabs = tabsOf(root);
+    expect(tabs[1]?.textContent).toBe('Longremovednot compared');
+    expect(tabs[1]?.getAttribute('aria-selected')).toBe('true');
+    expect(paneText(root, 'before')).toBe(
+      'This sheet has more than 600,000 rows and cannot be compared.'
+    );
+    expect(paneText(root, 'after')).toBe('This sheet is not in version 3.');
+  });
+
+  test('shows the older version alone when the worker replies corrupt without naming a side', async () => {
+    const shell = harness();
+    answer = (worker) =>
+      void Promise.resolve().then(() =>
+        worker.reply({ ok: false, reason: 'corrupt' })
+      );
+    start(
+      viewOf(3, contentFromBytes(await workbook(QUARTER_V2))),
+      viewOf(2, contentFromBytes(await workbook(QUARTER_V1))),
+      shell
+    );
+    await until(() => shell.singles.length > 0);
+    expect(shell.singles).toEqual([
+      {
+        version: 2,
+        reason:
+          'Relik could not load this comparison. Version 2 is open here on its own.',
+      },
+    ]);
+    expect(StubWorker.spawned[0]?.terminated).toBe(true);
+  });
+
+  test('shows the older version alone when the worker reply cannot be read', async () => {
+    const shell = harness();
+    answer = (worker) =>
+      void Promise.resolve().then(() => {
+        worker.onmessageerror?.({ type: 'messageerror' });
+        changed();
+      });
+    start(
+      viewOf(3, contentFromBytes(await workbook(QUARTER_V2))),
+      viewOf(2, contentFromBytes(await workbook(QUARTER_V1))),
+      shell
+    );
+    await until(() => shell.singles.length > 0);
+    expect(shell.singles).toEqual([
+      {
+        version: 2,
+        reason:
+          'Relik could not load this comparison. Version 2 is open here on its own.',
+      },
+    ]);
+    expect(StubWorker.spawned[0]?.terminated).toBe(true);
   });
 });
