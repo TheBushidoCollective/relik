@@ -2739,6 +2739,12 @@ canvas.relic-page {
   font-size: 0.8rem;
 }
 
+/* A book whose title changed says so once, in the sidebar's type size. */
+.diff-title-line {
+  margin: 0 0 0.75rem;
+  font-size: 0.85rem;
+}
+
 /*
  * The chapters of a book comparison, above its list of changes. Each chapter
  * is a row: its label, then how it changed.
@@ -2976,6 +2982,13 @@ button.diff-chapter-row:focus-visible {
     flex-direction: column;
     gap: 0.85rem;
   }
+
+  /* In a column the heading's 16rem basis became 16rem of height, leaving a
+     gap under the history note. It takes its content's height instead. */
+  .diff-heading {
+    flex: none;
+    min-width: 0;
+  }
   .compare-picker {
     flex-wrap: wrap;
     gap: 0.5rem;
@@ -3007,6 +3020,13 @@ button.diff-chapter-row:focus-visible {
   .diff-view-xlsx .compare-stage[data-layout='split'] .compare-label-before {
     right: 0.6rem;
     bottom: calc(50% + 0.6rem);
+  }
+
+  /* A book pane ends in its reader bar (Contents, A-, A+), so the current
+     label sits at the head of the lower pane instead of over those controls. */
+  .diff-view-epub .compare-stage[data-layout='split'] .compare-label-current {
+    top: calc(50% + 0.6rem);
+    bottom: auto;
   }
 
   .compare-pane,
@@ -3336,6 +3356,23 @@ button.diff-chapter-row:focus-visible {
   }
   .thread.is-open ~ .thread-resizer {
     display: none;
+  }
+
+  /*
+   * A comparison needs both panes on the screen, so its Changes list does not
+   * take the row. It is a drawer over the foot of the stage, opened from its
+   * tab; side by side it left the panes 245 px and clipped its own rows.
+   */
+  .diff-row > .diff-changes-sidebar.is-open {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 20;
+    max-height: 72%;
+    border-top: 1px solid var(--rule-strong);
+    border-left: 0;
+    box-shadow: 0 -12px 28px rgb(0 0 0 / 22%);
   }
 }
 

@@ -125,11 +125,17 @@ button { font: inherit; }
   padding: 1rem 1.25rem .75rem; background: var(--ground); border-bottom: 1px solid var(--rule-strong); }
 .diff-heading { flex: 1 1 16rem; min-width: 14rem; }
 .diff-eyebrow { margin-bottom: .25rem; color: var(--patina-ink); font: 700 .68rem var(--mono); letter-spacing: .14em; text-transform: uppercase; }
-.diff-heading h1 { margin: 0; font-size: clamp(1.3rem, 2.5vw, 1.9rem); line-height: 1.2; letter-spacing: -.02em; font-family: var(--serif); font-weight: 600; }
+.diff-heading h1 { margin: 0; font-size: clamp(1.3rem, 2.5vw, 1.9rem); line-height: 1.2; letter-spacing: -.02em; font-family: var(--sans); font-weight: 700; }
 .diff-heading h1:focus { outline: none; }
 .diff-heading h1:focus-visible { outline: 2px solid var(--patina); outline-offset: 4px; }
 .diff-history-note { max-width: 52rem; margin: .45rem 0 0; color: var(--ink-soft); font-size: .88rem; }
-.diff-kind { display: inline-flex; align-items: center; gap: .35rem; margin-left: .1rem; color: var(--ink-soft); font: .7rem var(--mono); letter-spacing: .06em; text-transform: uppercase; }
+/* The comparison's kind and its result, under the toolbar rule (main.ts .diff-summary). */
+.diff-summary-bar { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; width: 100%; margin: .25rem 0 0; font: .76rem var(--mono); }
+.diff-summary-bar span { color: var(--ink-soft); text-align: right; }
+.diff-shell > .diff-summary-bar, .diff-shell > .compare-controls { width: auto; margin: .75rem 1.25rem 0; }
+.diff-shell > .diff-summary-bar + .compare-controls { margin-top: .75rem; }
+.book-pane .frame-book h2 { font: 700 1.9rem/1.2 "Times New Roman", Times, serif; margin: 0 0 1rem; }
+.book-pane .frame-book article { border-bottom: 0; padding-bottom: 0; }
 .compare-picker { display: flex; align-items: center; gap: .6rem; flex: none; }
 .compare-picker-side { display: flex; align-items: center; gap: .4rem; position: relative; }
 .compare-picker-caption { font: .68rem var(--mono); color: var(--ink-soft); text-transform: uppercase; letter-spacing: .08em; }
@@ -167,7 +173,7 @@ button { font: inherit; }
 .compare-label-before { right: .6rem; }
 .compare-label-current { left: .6rem; }
 .compare-stage[data-layout='split'] .compare-label-before { left: .6rem; right: auto; }
-.compare-stage[data-layout='split'] .compare-label-current { left: calc(50% + .6rem); right: auto; }
+.compare-stage[data-layout='split'] .compare-label-current { left: auto; right: .6rem; }
 .diff-loading { margin: 2rem 0; color: var(--ink-soft); font: .82rem var(--mono); }
 .diff-scope { margin: 0; color: var(--ink-soft); font-size: .8rem; }
 
@@ -178,10 +184,13 @@ button { font: inherit; }
 .thread-toggle { display: flex; align-items: center; justify-content: space-between; width: 100%; min-height: 2.75rem; padding: .65rem 1.25rem;
   color: var(--ink); font: 600 .95rem var(--sans); text-align: left; background: transparent; border: 0; cursor: pointer; }
 .thread-toggle:focus-visible { outline: 2px solid var(--patina); outline-offset: -2px; }
-.count { display: inline-grid; place-items: center; min-width: 1.6rem; padding: 0 .35rem; margin-left: .5rem; border: 1px solid var(--rule-strong); font: .72rem var(--mono); color: var(--ink-soft); }
+.count { display: inline-grid; place-items: center; min-width: 1.6rem; padding: 0 .35rem; margin-left: auto; margin-right: .75rem; border: 1px solid var(--rule-strong); font: .72rem var(--mono); color: var(--ink-soft); }
+.thread-toggle .diff-tab { display: flex; flex: 1; align-items: center; }
+.thread-toggle > svg { transform: rotate(-90deg); }
 .thread-tab { position: relative; flex: 0 0 auto; align-self: center; z-index: 5; padding: .85rem .4rem; color: var(--ink); font: 600 .76rem var(--sans);
   letter-spacing: .06em; text-transform: uppercase; writing-mode: vertical-rl; background: var(--surface); border: 1px solid var(--rule-strong); border-right: 0; cursor: pointer; }
 .thread-tab:focus-visible { outline: 2px solid var(--patina); outline-offset: 2px; }
+.thread.is-open ~ .thread-tab { display: none; }
 .diff-summary { margin: .75rem 0 .3rem; font-size: .92rem; font-weight: 600; }
 .diff-title-line { margin: .3rem 0; font-size: .85rem; }
 .diff-change-list { margin: .75rem 0 0; padding: 0; list-style: none; border: 1px solid var(--rule); background: var(--surface); font-size: .84rem; }
@@ -191,7 +200,6 @@ button { font: inherit; }
 .diff-change.is-linked { cursor: pointer; }
 .diff-change.is-linked:hover, .diff-change.is-linked:focus-visible { background: color-mix(in srgb, var(--patina) 10%, transparent); outline: none; }
 .diff-change.is-linked:focus-visible { box-shadow: inset 0 0 0 2px var(--patina); }
-.diff-change[aria-current="true"] { box-shadow: inset 3px 0 0 var(--patina); background: color-mix(in srgb, var(--patina) 7%, transparent); }
 .diff-change-kind { font: .68rem var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--ink-soft); padding-top: .12rem; }
 .diff-change-added .diff-change-kind { color: var(--patina-ink); }
 .diff-change-removed .diff-change-kind { color: var(--oxide); }
@@ -200,48 +208,55 @@ button { font: inherit; }
 .diff-change-detail del { background: var(--diff-removed); text-decoration-thickness: 1px; }
 .diff-change-detail ins { background: var(--diff-added); text-decoration: none; border-bottom: 1px solid var(--patina); }
 .diff-change-detail del + ins { margin-left: .18em; }
+/* A changed cell lists its old and new text on two lines (styles.css .diff-change-detail). */
+.diff-change-detail.is-cells del, .diff-change-detail.is-cells ins { display: block; margin: 0; border-bottom: 0; }
 .diff-change-more { padding: .55rem .75rem; color: var(--ink-soft); font-size: .8rem; border-top: 1px solid var(--rule); }
 .esc { display: inline-block; padding: 0 .2rem; margin: 0 .1rem; border: 1px solid var(--oxide); color: var(--oxide); font: .7rem/1.3 var(--mono); vertical-align: .05em; }
 
-/* Chapters preface (new) */
-.chapters { margin: .75rem 0 0; border: 1px solid var(--rule); }
-.chapters h2 { margin: 0; padding: .45rem .75rem; font: 700 .68rem var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--patina-ink); border-bottom: 1px solid var(--rule); }
-.chapters ul { margin: 0; padding: 0; list-style: none; }
-.chapter-row { display: flex; justify-content: space-between; gap: .75rem; width: 100%; padding: .45rem .75rem; border: 0; border-top: 1px solid var(--rule);
-  background: transparent; color: var(--ink); font: .84rem var(--sans); text-align: left; cursor: pointer; }
-li:first-child > .chapter-row { border-top: 0; }
-.chapter-row:hover, .chapter-row:focus-visible { background: color-mix(in srgb, var(--patina) 10%, transparent); outline: none; }
-.chapter-row:focus-visible { box-shadow: inset 0 0 0 2px var(--patina); }
-.chapter-row .state { flex: none; font: .7rem var(--mono); color: var(--ink-soft); letter-spacing: .04em; }
-.chapter-row .state.is-removed { color: var(--oxide); }
-.chapter-row .state.is-added { color: var(--patina-ink); }
-.chapter-row.is-unchanged { color: var(--ink-soft); cursor: default; }
+/* Chapters preface (document-compare.ts class names) */
+.diff-chapters { margin: .75rem 0 0; border: 1px solid var(--rule); background: var(--surface); }
+.diff-chapters h2 { margin: 0; padding: .45rem .75rem; font: 700 .68rem var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--patina-ink); border-bottom: 1px solid var(--rule); }
+.diff-chapters ul { margin: 0; padding: 0; list-style: none; }
+.diff-chapters li + li { border-top: 1px solid var(--rule); }
+.diff-chapter-row { display: flex; justify-content: space-between; gap: .75rem; width: 100%; padding: .45rem .75rem; border: 0;
+  background: transparent; color: var(--ink); font: .84rem var(--sans); text-align: left; }
+button.diff-chapter-row { cursor: pointer; }
+button.diff-chapter-row:hover, button.diff-chapter-row:focus-visible { background: color-mix(in srgb, var(--patina) 10%, transparent); outline: none; }
+button.diff-chapter-row:focus-visible { box-shadow: inset 0 0 0 2px var(--patina); }
+.diff-chapter-state { flex: none; font: .7rem var(--mono); color: var(--ink-soft); letter-spacing: .04em; }
+.diff-chapter-removed .diff-chapter-state { color: var(--oxide); }
+.diff-chapter-added .diff-chapter-state { color: var(--patina-ink); }
 
 /* Document panes: docx-preview pages inside each frame */
-.frame-doc { padding: 1.25rem 1rem 3rem; }
-.docx-page { position: relative; max-width: 40rem; margin: 0 auto; padding: 3.25rem 3.25rem 3.5rem; background: var(--page); color: var(--page-ink);
-  box-shadow: 0 0 0 1px rgb(0 0 0 / 8%), 0 2px 10px rgb(0 0 0 / 12%); font: 15px/1.5 Calibri, Carlito, "Segoe UI", var(--sans); }
-.docx-header, .docx-footer { position: absolute; left: 3.25rem; right: 3.25rem; color: #6b6b6b; font-size: 11px; }
-.docx-header { top: 1.3rem; } .docx-footer { bottom: 1.2rem; }
-.docx-page h1 { margin: 0 0 .8rem; font-size: 26px; font-weight: 400; color: #1f3763; }
-.docx-page p { margin: 0 0 .7rem; }
-.docx-page table { border-collapse: collapse; margin: .4rem 0 1rem; min-width: 14rem; }
-.docx-page td { border: 1px solid #8a8a8a; padding: .25rem .6rem; }
-.docx-page .docx-img { display: block; width: 72px; height: 48px; margin: .5rem 0 1rem; background: repeating-linear-gradient(45deg, #c8d3d1 0 6px, #e4eae9 6px 12px); }
+/* Document panes: docx-preview renders a letter page on grey and scales it to the pane. */
+.frame-doc { min-height: 100%; padding: 1.9rem 0 3rem; background: #808080; }
+.docx-page { position: relative; width: 8.5in; min-height: 11in; max-width: none; margin: 0 auto; padding: 3.25rem 6rem 3.5rem; background: #fff; color: #000;
+  font: 16px/1.15 "Times New Roman", Times, serif; zoom: .58; }
+.compare-stage[data-layout='swipe'] .docx-page { zoom: .97; }
+.docx-header, .docx-footer { position: absolute; left: 6rem; right: 6rem; color: #000; font-size: 14px; }
+.docx-header { top: 2rem; } .docx-footer { bottom: 1.6rem; }
+.docx-page h1 { margin: 1.2rem 0 0; font-size: 21px; font-weight: 400; color: #2e74b5; }
+.docx-page p { margin: 0; }
+.docx-page table { border-collapse: collapse; width: 100%; margin: 0; }
+.docx-page td { border: 1px solid #000; padding: 0 .15rem; }
+.docx-page .docx-img { display: block; width: 60px; height: 48px; margin: 0; background: #8080ff; }
 .frame-book { max-width: 36rem; margin: 0 auto; padding: 2rem 1.5rem 4rem; font: 17px/1.7 var(--serif); color: var(--ink); }
 .frame-book article { padding-bottom: 1.5rem; margin-bottom: 1.5rem; border-bottom: 1px solid var(--rule); }
 .frame-book h2 { font: 600 1.25rem/1.3 var(--serif); margin: 0 0 .6rem; }
 .frame-book p { margin: 0 0 .8rem; }
 .frame-book .book-title { font: .72rem var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--ink-soft); margin-bottom: 1.5rem; }
+/* The epub frame's own reader bar at the foot of each book pane. */
+.book-pane { display: flex; flex-direction: column; min-height: 100%; background: #fff; }
+.book-pane .frame-book { flex: 1; max-width: none; margin: 0; padding: 1.5rem 2rem; color: #000; font-family: "Times New Roman", Times, serif; }
+.book-bar { position: sticky; bottom: 0; display: flex; align-items: center; gap: .75rem; padding: .55rem .9rem; border-top: 1px solid #ccc; background: #f6f6f6; color: #111; font: .9rem var(--sans); }
+.book-bar span:last-child { margin-left: auto; }
+.book-bar b { padding: .3rem .7rem; border: 1px solid #888; font-weight: 400; background: #eee; }
 /* outline cues, drawn by the frame from mark paths */
-[data-relic-diff] { outline-offset: 3px; }
-[data-relic-diff="added"] { outline: 2px solid #1f6b64; }
-[data-relic-diff="removed"] { outline: 2px dashed #8c4a2f; text-decoration: line-through; text-decoration-color: #8c4a2f; }
-[data-relic-diff="changed"] { outline: 4px double #1f6b64; }
-.frame-book [data-relic-diff="added"], .frame-book [data-relic-diff="changed"] { outline-color: var(--patina); }
-.frame-book [data-relic-diff="removed"] { outline-color: var(--oxide); text-decoration-color: var(--oxide); }
-td[data-relic-diff] { outline-offset: -4px; }
-.is-current-change { box-shadow: 0 0 0 7px color-mix(in srgb, #1f6b64 22%, transparent); }
+[data-relic-diff] { outline-offset: 2px; }
+[data-relic-diff="added"] { outline: 2px solid rgb(31, 107, 100); background-color: rgba(31, 107, 100, .18); }
+[data-relic-diff="removed"] { outline: 2px dashed rgb(140, 74, 47); background-color: rgba(140, 74, 47, .18); text-decoration: line-through; }
+[data-relic-diff="changed"] { outline: 4px double rgb(138, 109, 31); background-color: rgba(138, 109, 31, .18); }
+[data-relic-change-id].is-current-change { outline: 3px solid rgb(31, 107, 100); outline-offset: 3px; box-shadow: 0 0 0 9px rgba(31, 107, 100, .22); }
 .frame-card { max-width: 30rem; margin: 3rem auto; padding: 1.1rem 1.2rem; border: 1px solid var(--rule-strong); background: var(--surface); font-size: .9rem; }
 .frame-card h2 { margin: 0 0 .35rem; font-size: 1rem; }
 .frame-card p { margin: 0; color: var(--ink-soft); }
@@ -249,45 +264,46 @@ td[data-relic-diff] { outline-offset: -4px; }
 .plate span { padding: .5rem .8rem; border: 1px solid var(--rule); background: var(--surface); }
 
 /* Sheet strip and paired grids (new) */
-.sheet-strip { flex: none; display: flex; gap: 0; overflow-x: auto; border: 1px solid var(--rule-strong); background: var(--surface); scrollbar-width: thin; }
-.sheet-tab { flex: none; display: inline-flex; align-items: center; gap: .45rem; padding: .45rem .8rem; border: 0; border-right: 1px solid var(--rule);
-  background: transparent; color: var(--ink); font: .82rem var(--sans); cursor: pointer; white-space: nowrap; }
-.sheet-tab[aria-selected="true"] { background: var(--ground); box-shadow: inset 0 -3px 0 var(--patina); font-weight: 600; }
-.sheet-tab:focus-visible, .sheet-tab.kbd-focus { outline: 2px solid var(--patina); outline-offset: -3px; }
-.sheet-tab .icon { color: var(--ink-soft); }
-.badge { display: inline-flex; align-items: center; padding: .02rem .35rem; border: 1px solid var(--rule-strong); font: 500 .66rem var(--mono); color: var(--ink-soft); letter-spacing: .02em; }
-.badge.is-added { border-color: var(--patina); color: var(--patina-ink); border-style: solid; }
-.badge.is-removed { border-color: var(--oxide); color: var(--oxide); border-style: dashed; text-decoration: line-through; }
-.badge.is-changes { border-color: var(--patina); color: var(--patina-ink); }
+.sheet-strip { flex: none; display: flex; gap: .25rem; overflow-x: auto; }
+.sheet-tab { flex: none; display: inline-flex; align-items: baseline; padding: .5rem .75rem; border: 1px solid var(--rule-strong);
+  background: var(--surface); color: var(--ink); font: .82rem var(--sans); cursor: pointer; white-space: nowrap; }
+.sheet-tab[aria-selected="true"] { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); font-weight: 700; }
+.sheet-tab:focus-visible, .sheet-tab.kbd-focus { outline: 2px solid var(--patina); outline-offset: -5px; }
+.dt-sheet-meta { margin-inline-start: .4rem; color: var(--ink-soft); font-size: .8em; font-weight: 400; }
+.dt-sheet-meta.is-added, .dt-sheet-meta.is-changes { color: var(--patina-ink); }
+.dt-sheet-meta.is-removed { color: var(--oxide); text-decoration: line-through; }
 .sheet-pane { display: flex; flex-direction: column; height: 100%; min-height: 0; background: var(--surface); }
-.dt-cellbar { flex: none; display: flex; align-items: center; gap: .6rem; min-height: 2rem; padding: .3rem .6rem; border-bottom: 1px solid var(--rule-strong); font: .78rem var(--mono); background: var(--surface); }
+.dt-cellbar { flex: none; box-sizing: border-box; height: 5rem; display: grid; grid-template-columns: minmax(4.5rem, auto) minmax(0, 1fr) auto; grid-template-rows: auto minmax(0, 1fr);
+  grid-template-areas: 'addr value copy' 'sub value copy'; align-items: start; gap: .15rem .9rem; padding: .4rem .6rem; border: 1px solid var(--rule-strong); background: var(--surface); }
 /* Over grids the pane labels sit at the foot, clear of the cell bar. */
 .compare-stage.is-grid .compare-label { top: auto; bottom: .6rem; }
 .compare-stage.is-grid[data-layout='split'] .compare-label-before { left: auto; right: calc(50% + .9rem); }
 .compare-stage.is-grid[data-layout='split'] .compare-label-current { left: auto; right: .9rem; }
-.dt-cellbar b { flex: none; min-width: 2.6rem; padding: .05rem .35rem; border: 1px solid var(--rule-strong); text-align: center; font-weight: 600; }
-.dt-cellbar .val { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dt-cellbar .f { color: var(--ink-soft); }
+.dt-cellbar .addr { grid-area: addr; font: 600 .82rem/1.3 var(--mono); color: var(--patina-ink); }
+.dt-cellbar .sub { grid-area: sub; color: var(--ink-soft); font-size: .8rem; }
+.dt-cellbar .val { grid-area: value; margin: 0; font: .82rem/1.35 var(--mono); white-space: pre-wrap; }
+.dt-cellbar .hint { grid-column: 1 / -1; grid-row: 1 / -1; align-self: center; color: var(--ink-soft); font-size: .8rem; }
+.dt-cellbar .copy { grid-area: copy; padding: .3rem .6rem; border: 1px solid var(--rule-strong); background: var(--surface); color: var(--ink); font: .8rem var(--sans); }
 .dt-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .dt { border-collapse: separate; border-spacing: 0; font: .82rem/1.2 var(--sans); table-layout: fixed; }
 .dt th, .dt td { height: 1.75rem; padding: 0 .45rem; border-right: 1px solid var(--rule); border-bottom: 1px solid var(--rule); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; position: relative; }
-.dt th { position: sticky; top: 0; z-index: 2; background: var(--ground); color: var(--ink-soft); font: 500 .72rem var(--mono); text-align: center; }
+.dt th { position: sticky; top: 0; z-index: 2; background: var(--ground); color: var(--ink-soft); font: 500 .6rem var(--mono); text-align: left; }
 .dt th.rh { left: 0; z-index: 1; text-align: right; }
 .dt thead th.rh { z-index: 3; }
 .dt tbody th { position: sticky; top: auto; left: 0; }
 .dt td { background: var(--surface); cursor: cell; }
-.dt td.num { text-align: right; font-variant-numeric: tabular-nums; }
-.dt td.is-active { box-shadow: inset 0 0 0 2px var(--patina); }
-.dt td.is-active.kbd-focus { outline: 2px solid var(--patina-ink); outline-offset: -5px; }
+.dt td.num { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.dt td.is-active { outline: 2px solid var(--patina-ink); outline-offset: -2px; }
+.dt td.is-active.kbd-focus { outline: 2px solid var(--patina-ink); outline-offset: -2px; }
 .dt td.dt-diff-added { background: var(--diff-added); box-shadow: inset 4px 0 0 var(--patina); }
-.dt td.dt-diff-added.is-active { box-shadow: inset 4px 0 0 var(--patina), inset 0 0 0 2px var(--patina); }
-.dt td.dt-diff-removed { background: var(--diff-removed); text-decoration: line-through; text-decoration-color: var(--oxide); }
-.dt td.dt-diff-changed { background: var(--diff-added); }
-.dt td.dt-diff-changed::before { content: ""; position: absolute; inset: 2px; border: 2px dotted var(--patina-ink); pointer-events: none; }
-.dt td.dt-diff-formula::after { content: "fx"; position: absolute; top: 0; right: 0; padding: 0 .2rem; background: var(--patina); color: var(--surface); font: 600 .58rem/1.3 var(--mono); }
-.dt td.dt-diff-formula { padding-right: 1.4rem; }
-.dt td.is-current-change { box-shadow: inset 0 0 0 3px var(--patina); }
-.dt-placeholder { display: grid; place-items: center; height: 100%; padding: 2rem; color: var(--ink-soft); font-size: .9rem; text-align: center; background: var(--ground); }
+.dt td.dt-diff-added.is-active { box-shadow: inset 4px 0 0 var(--patina); }
+.dt td.dt-diff-removed { background: var(--diff-removed); text-decoration: line-through; text-decoration-thickness: 1px; }
+.dt td.dt-diff-changed { background: color-mix(in srgb, var(--oxide) 10%, var(--surface)); }
+.dt td.dt-diff-changed::before { content: ""; position: absolute; inset: 2px; border: 2px dotted var(--oxide); pointer-events: none; }
+.dt td.dt-diff-formula { background: color-mix(in srgb, var(--oxide) 6%, var(--surface)); padding-right: 1.5rem; }
+.dt td.dt-diff-formula::after { content: "fx"; position: absolute; top: 0; right: 0; padding: 0 .2rem; background: var(--oxide); color: var(--surface); font: 600 .6rem/1.3 var(--mono); }
+.dt td.is-current-change { outline: 2px solid var(--patina-ink); outline-offset: -2px; }
+.dt-placeholder { display: grid; place-items: center; height: 100%; padding: 2rem; color: var(--ink-soft); font-size: .9rem; text-align: center; background: var(--surface); }
 .dt-placeholder p { max-width: 22rem; margin: 0; padding: .9rem 1rem; border: 1px dashed var(--rule-strong); background: var(--surface); }
 
 /* one version on its own */
@@ -299,19 +315,23 @@ td[data-relic-diff] { outline-offset: -4px; }
 /* mobile: stack panes, current label to the foot, sidebar becomes the drawer */
 @container viewer (max-width: 44rem) {
   .diff-toolbar { padding: .75rem .9rem .6rem; gap: .6rem; }
-  .diff-heading { min-width: 0; flex-basis: 100%; }
+  .diff-heading { min-width: 0; flex: 1 1 100%; }
+  .diff-summary-bar { flex-direction: column; gap: .2rem; }
+  .diff-summary-bar span { text-align: left; }
+  .diff-shell > .diff-summary-bar, .diff-shell > .compare-controls { margin-left: .6rem; margin-right: .6rem; }
   .compare-picker { flex-wrap: wrap; }
   .compare-controls { gap: .5rem .75rem; margin-top: .5rem; }
   .diff-body { padding: .5rem .6rem .75rem; }
   .compare-stage[data-layout='split'] { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); }
   .compare-stage[data-layout='split'] .compare-pane-before { border-right: 0; border-bottom: 1px solid var(--rule-strong); }
-  .compare-stage[data-layout='split'] .compare-label-current { left: .6rem; top: auto; bottom: .6rem; }
+  .compare-stage[data-layout='split'] .compare-label-current { left: auto; right: .6rem; top: auto; bottom: .6rem; }
+  .diff-view-epub .compare-stage[data-layout='split'] .compare-label-current { top: calc(50% + .6rem); bottom: auto; }
   .diff-row > .thread { position: absolute; z-index: 20; left: 0; right: 0; bottom: 0; width: auto; min-width: 0; max-height: 72%; border-left: 0; border-top: 1px solid var(--rule-strong); box-shadow: 0 -12px 28px rgb(0 0 0 / 22%); }
   .diff-row > .thread:not(.is-open) { display: none; }
-  .diff-row > .thread-tab { position: absolute; z-index: 15; right: 0; bottom: 1.25rem; }
-  .docx-page { padding: 2.4rem 1.4rem 2.6rem; font-size: 14px; }
-  .docx-header, .docx-footer { left: 1.4rem; right: 1.4rem; }
-  .frame-doc { padding: .75rem .5rem 2rem; }
+  .diff-row > .thread-tab { position: relative; z-index: 15; }
+  .docx-page, .compare-stage[data-layout='swipe'] .docx-page { zoom: .34; }
+  .compare-stage[data-layout='swipe'] .docx-page { zoom: .4; }
+  .frame-doc { padding: 1.2rem 0 2rem; }
   .frame-book { padding: 1.2rem 1rem 3rem; font-size: 15px; }
   .compare-stage.is-grid[data-layout='split'] .compare-label-before { right: .9rem; bottom: calc(50% + .6rem); }
 }
@@ -386,7 +406,7 @@ const nfmt = (n) => n.toLocaleString('en-US');
 
 /* ---------------- fixtures (plan section 4, S6b) ---------------- */
 const L = 2, R = 3;
-const DOC_FILE = 'quarterly-plan.docx', BOOK_FILE = 'river-journal.epub', SHEET_FILE = 'q3-budget.xlsx';
+const DOC_FILE = 'quarterly-plan.docx', BOOK_FILE = 'crossings.epub', SHEET_FILE = 'q3-budget.xlsx';
 // A document block: {k:'h'|'p'|'table'|'img', t, m (mark), c (change index)}
 function docV2() {
   return { header: 'Draft', footer: 'Internal', blocks: [
@@ -409,96 +429,83 @@ function docV3() {
   ] };
 }
 const DOC_CHANGES = [
-  { kind: 'changed', what: 'paragraph', segs: [['', 'Revenue grew in every region'], ['del', '.'], ['ins', ' except the north.']] },
-  { kind: 'changed', what: 'table cell', segs: [['del', '120'], ['', ' '], ['ins', '135']] },
-  { kind: 'removed', what: 'paragraph', segs: [['del', 'This sentence is removed in version 2.']] },
-  { kind: 'added', what: 'paragraph', segs: [['ins', 'Launch in May.']] },
+  { kind: 'changed', what: 'paragraph', segs: [['', 'Revenue grew in every region'], ['ins', ' except the north'], ['', '.']] },
+  { kind: 'changed', what: 'table cell', segs: [['del', '120'], ['ins', '135']] },
+  { kind: 'removed', what: 'paragraph', segs: [['', 'This sentence is removed in version 2.']] },
+  { kind: 'added', what: 'paragraph', segs: [['', 'Launch in May.']] },
 ];
-const STORES = ['Aurora', 'Boulder', 'Brighton', 'Broomfield', 'Castle Rock', 'Centennial', 'Commerce City', 'Durango', 'Englewood', 'Erie',
-  'Evans', 'Fort Collins', 'Fountain', 'Golden', 'Grand Junction', 'Greeley', 'Lafayette', 'Lakewood', 'Littleton', 'Longmont',
-  'Louisville', 'Loveland', 'Montrose', 'Northglenn', 'Parker', 'Pueblo', 'Steamboat Springs', 'Sterling', 'Thornton', 'Westminster'];
-function storeRows() {
-  // 30 stores, target and floor each revised: 60 changed table cells.
-  return STORES.map((s, i) => ({ s, a: 80 + ((i * 7) % 50), b: 40 + ((i * 3) % 30) }));
-}
+// DC8: 60 paragraphs, each with one word changed (the visual fixture in real-shots).
 function docStores(after) {
-  const rows = [[{ t: 'Store' }, { t: 'Target' }, { t: 'Floor' }]];
-  storeRows().forEach((r, i) => rows.push([{ t: r.s }, { t: String(after ? r.a + 15 : r.a), m: 'changed', c: i * 2 }, { t: String(after ? r.b + 5 : r.b), m: 'changed', c: i * 2 + 1 }]));
-  return { header: after ? 'Final' : 'Draft', footer: 'Internal', blocks: [
-    { k: 'h', t: 'Quarterly plan' }, { k: 'p', t: 'Store targets for the quarter.' }, { k: 'table', rows } ] };
+  return { header: 'Stores', footer: 'Internal', blocks: Array.from({ length: 60 }, (_, i) =>
+    ({ k: 'p', t: `Store ${i + 1} opens in ${after ? 'autumn' : 'spring'}.`, m: 'changed', c: i })) };
 }
 function storeChanges() {
-  const out = [];
-  storeRows().forEach((r) => {
-    out.push({ kind: 'changed', what: 'table cell', segs: [['del', String(r.a)], ['', ' '], ['ins', String(r.a + 15)]] });
-    out.push({ kind: 'changed', what: 'table cell', segs: [['del', String(r.b)], ['', ' '], ['ins', String(r.b + 5)]] });
-  });
-  return out;
+  return Array.from({ length: 60 }, (_, i) =>
+    ({ kind: 'changed', what: 'paragraph', segs: [['', `Store ${i + 1} opens in `], ['del', 'spring'], ['ins', 'autumn'], ['', '.']] }));
 }
 
 // EPUB: ch1 Opening unchanged; ch2 The crossing one paragraph changed; ch3 Interlude removed; ch4 Afterword added.
 function bookV2(title) {
-  return { title: title || 'River journal', chapters: [
-    { label: 'Opening', blocks: [{ k: 'h', t: 'Opening' }, { k: 'p', t: 'The ferry had stopped running by the time we reached the bank, so we made camp under the cottonwoods and waited for the river to drop.' }] },
-    { label: 'The crossing', blocks: [{ k: 'h', t: 'The crossing' }, { k: 'p', t: 'We crossed at dawn while the water was low.', m: 'changed', c: 0 }, { k: 'p', t: 'Nobody spoke until the far bank was under our boots.' }] },
-    { label: 'Interlude', blocks: [{ k: 'h', t: 'Interlude', m: 'removed', c: 1 }, { k: 'p', t: 'A short letter home, written on the back of a feed receipt.', m: 'removed', c: 2 }] },
+  return { title: title || 'Crossings', chapters: [
+    { label: 'Opening', blocks: [{ k: 'h', t: 'Opening' }, { k: 'p', t: 'The first chapter opens the story.' }] },
+    { label: 'The crossing', blocks: [{ k: 'h', t: 'The crossing' }, { k: 'p', t: 'We crossed at dawn.', m: 'changed', c: 0 }, { k: 'p', t: 'Three boats were tied to the post.' }] },
+    { label: 'Interlude', blocks: [{ k: 'h', t: 'Interlude', m: 'removed', c: 1 }, { k: 'p', t: 'A short pause between crossings.', m: 'removed', c: 2 }] },
   ] };
 }
 function bookV3(title) {
-  return { title: title || 'River journal', chapters: [
-    { label: 'Opening', blocks: [{ k: 'h', t: 'Opening' }, { k: 'p', t: 'The ferry had stopped running by the time we reached the bank, so we made camp under the cottonwoods and waited for the river to drop.' }] },
-    { label: 'The crossing', blocks: [{ k: 'h', t: 'The crossing' }, { k: 'p', t: 'We crossed at noon while the water was low.', m: 'changed', c: 0 }, { k: 'p', t: 'Nobody spoke until the far bank was under our boots.' }] },
-    { label: 'Afterword', blocks: [{ k: 'h', t: 'Afterword', m: 'added', c: 3 }, { k: 'p', t: 'The bridge went in two years later. I still take the long way round.', m: 'added', c: 4 }] },
+  return { title: title || 'Crossings', chapters: [
+    { label: 'Opening', blocks: [{ k: 'h', t: 'Opening' }, { k: 'p', t: 'The first chapter opens the story.' }] },
+    { label: 'The crossing', blocks: [{ k: 'h', t: 'The crossing' }, { k: 'p', t: 'We crossed at noon.', m: 'changed', c: 0 }, { k: 'p', t: 'Three boats were tied to the post.' }] },
+    { label: 'Afterword', blocks: [{ k: 'h', t: 'Afterword', m: 'added', c: 3 }, { k: 'p', t: 'The story ends here.', m: 'added', c: 4 }] },
   ] };
 }
 const BOOK_CHANGES = [
-  { kind: 'changed', what: 'paragraph in The crossing', ch: 1, segs: [['', 'We crossed at '], ['del', 'dawn'], ['ins', 'noon'], ['', ' while the water was low.']] },
-  { kind: 'removed', what: 'heading in Interlude', ch: 2, segs: [['del', 'Interlude']] },
-  { kind: 'removed', what: 'paragraph in Interlude', ch: 2, segs: [['del', 'A short letter home, written on the back of a feed receipt.']] },
-  { kind: 'added', what: 'heading in Afterword', ch: 3, segs: [['ins', 'Afterword']] },
-  { kind: 'added', what: 'paragraph in Afterword', ch: 3, segs: [['ins', 'The bridge went in two years later. I still take the long way round.']] },
+  { kind: 'changed', what: 'paragraph in The crossing', ch: 1, segs: [['', 'We crossed at '], ['del', 'dawn'], ['ins', 'noon'], ['', '.']] },
+  { kind: 'removed', what: 'heading in Interlude', ch: 2, segs: [['', 'Interlude']] },
+  { kind: 'removed', what: 'paragraph in Interlude', ch: 2, segs: [['', 'A short pause between crossings.']] },
+  { kind: 'added', what: 'heading in Afterword', ch: 3, segs: [['', 'Afterword']] },
+  { kind: 'added', what: 'paragraph in Afterword', ch: 3, segs: [['', 'The story ends here.']] },
 ];
 const BOOK_CHAPTERS = [
-  { label: 'The crossing', state: '1 change', cls: '', first: 0 },
-  { label: 'Interlude', state: 'removed', cls: 'is-removed', first: 1 },
-  { label: 'Afterword', state: 'added', cls: 'is-added', first: 3 },
+  { label: 'The crossing', state: '1 change', status: 'changed', first: 0 },
+  { label: 'Interlude', state: 'removed', status: 'removed', first: 1 },
+  { label: 'Afterword', state: 'added', status: 'added', first: 3 },
 ];
 
-// XLSX. Cells: {v (display), f (formula)}; keyed by A1.
-const COLS = 'ABCDE'.split('');
+// XLSX, the section 6 workbooks. Cells: {v (display text), f (formula), n (number)}; keyed by A1.
+const COLS = 'ABCDEFGH'.split('');
 function q3(after) {
   const c = {
-    A1: { v: 'Line' }, B1: { v: 'Base' }, C1: { v: 'Q3' }, E1: { v: 'Check' },
-    A2: { v: 'Payroll' }, B2: { v: '1,000', n: 1 },
-    A3: { v: 'Tools' }, C3: { v: after ? '1,250' : '1,200', n: 1 },
-    E2: after ? { v: '2,250', n: 1, f: '=B2+C3' } : { v: '2,200', n: 1, f: '=SUM(B2:C3)' },
-    E3: after ? { v: '2,000', n: 1, f: '=B2+B2' } : { v: '2,000', n: 1, f: '=B2*2' },
-    A5: { v: 'Q3 close' }, A7: { v: 'Notes' },
+    A1: { v: 'Region' }, B1: { v: 'Units' }, C1: { v: 'Revenue' }, E1: { v: 'Check' },
+    A2: { v: 'North' }, B2: { v: '1000', n: 1 },
+    A3: { v: 'South' }, C3: { v: after ? '1250' : '1200', n: 1 },
+    E2: after ? { v: '2250', n: 1, f: 'SUM(B2:C3)' } : { v: '2200', n: 1 },
+    E3: after ? { v: '2000', n: 1, f: 'B2+B2' } : { v: '2000', n: 1, f: 'B2*2' },
   };
   if (after) c.D5 = { v: 'Total' };
   else c.B7 = { v: 'Draft note' };
   return c;
 }
 const Q3_STATES = { C3: 'changed', E2: 'changed', E3: 'formula', D5: 'added', B7: 'removed' };
-const Q3_ORDER = ['E2', 'C3', 'E3', 'D5', 'B7'];
 const SHEET_CHANGES_Q3 = [
-  { kind: 'changed', ref: 'E2', what: 'E2', segs: [['del', '2,200'], ['', ' '], ['ins', '2,250']] },
-  { kind: 'changed', ref: 'C3', what: 'C3', segs: [['del', '1,200'], ['', ' '], ['ins', '1,250']] },
-  { kind: 'changed', ref: 'E3', what: 'E3 formula', segs: [['del', '=B2*2'], ['', ' '], ['ins', '=B2+B2']] },
-  { kind: 'added', ref: 'D5', what: 'D5', segs: [['ins', 'Total']] },
-  { kind: 'removed', ref: 'B7', what: 'B7', segs: [['del', 'Draft note']] },
+  { kind: 'changed', ref: 'E2', what: 'E2', cells: true, segs: [['del', '2200'], ['ins', '2250']] },
+  { kind: 'changed', ref: 'C3', what: 'C3', cells: true, segs: [['del', '1200'], ['ins', '1250']] },
+  { kind: 'changed', ref: 'E3', what: 'E3 formula', cells: true, segs: [['del', '=B2*2'], ['ins', '=B2+B2']] },
+  { kind: 'added', ref: 'D5', what: 'D5', segs: [['', 'Total']] },
+  { kind: 'removed', ref: 'B7', what: 'B7', segs: [['', 'Draft note']] },
 ];
-function hiddenSheet(after) { return { A1: { v: after ? 'y' : 'x' } }; }
-function summarySheet() { return { A1: { v: 'Quarter' }, B1: { v: 'Spend' }, A2: { v: 'Q3' }, B2: { v: '4,250', n: 1, f: "='Q3 budget'!E2+'Q3 budget'!E3" } }; }
-function oldData() { return { A1: { v: 'Line' }, B1: { v: 'Q2' }, A2: { v: 'Payroll' }, B2: { v: '980', n: 1 }, A3: { v: 'Tools' }, B3: { v: '1,140', n: 1 } }; }
+function hiddenSheet(after) { return { A1: { v: after ? 'y' : 'x' }, A2: { v: 'Stable' } }; }
+function summarySheet() { return { A1: { v: 'Summary' }, A2: { v: 'Totals' } }; }
+function oldData() { return { A1: { v: 'Old header' }, A2: { v: 'Old value' } }; }
+// Strip order (S4): the sheets in version R's order, then the sheets only version L has.
 const SHEETS = [
   { id: 'q3', name: 'Q3 budget', left: 'Q3', badges: [['renamed from Q3', ''], ['5 changes', 'is-changes']], lc: () => q3(false), rc: () => q3(true), states: Q3_STATES, changes: SHEET_CHANGES_Q3 },
+  { id: 'hidden', name: 'Hidden', badges: [['hidden', ''], ['1 change', 'is-changes']], lc: () => hiddenSheet(false), rc: () => hiddenSheet(true), states: { A1: 'changed' },
+    changes: [{ kind: 'changed', ref: 'A1', what: 'A1', cells: true, segs: [['del', 'x'], ['ins', 'y']] }] },
   { id: 'summary', name: 'Summary', badges: [['added', 'is-added']], lc: null, rc: summarySheet, added: true },
   { id: 'old', name: 'Old data', badges: [['removed', 'is-removed']], lc: oldData, rc: null, removed: true },
-  { id: 'hidden', name: 'Hidden', hidden: true, badges: [['hidden', ''], ['1 change', 'is-changes']], lc: () => hiddenSheet(false), rc: () => hiddenSheet(true), states: { A1: 'changed' },
-    changes: [{ kind: 'changed', ref: 'A1', what: 'A1', segs: [['del', 'x'], ['', ' '], ['ins', 'y']] }] },
 ];
-const CHART_SHEET = { id: 'chart', name: 'Chart1', badges: [['not compared', '']], chart: true };
+const CHART_SHEET = { id: 'chart', name: 'Revenue chart', badges: [['not compared', '']], chart: true };
 const HOSTILE = '<img src=x onerror=alert(1)>';
 const HOSTILE_SHEET = { id: 'notes', name: 'Notes\u202Etxt.exe', badges: [['1 change', 'is-changes']], lc: () => ({ A1: { v: 'Comment' }, A2: { v: 'Fine as is' } }), rc: () => ({ A1: { v: 'Comment' }, A2: { v: HOSTILE } }),
   states: { A2: 'changed' }, changes: [{ kind: 'changed', ref: 'A2', what: 'A2', segs: [['del', 'Fine as is'], ['', ' '], ['ins', HOSTILE]] }] };
@@ -595,17 +602,17 @@ function renderChrome() {
 }
 
 function band(meta) {
+  const act = (name, label, attrs) => h('button', { class: 'action', type: 'button', ...attrs }, icon(name), h('span', { class: 'lbl' }, label));
   return h('header', { class: 'bar' },
-    h('div', { class: 'mark' }, 'relik'),
+    h('div', { class: 'mark' }, 'relik.link'),
     h('div', { class: 'identity' },
       h('div', { class: 'filename' }, meta.file),
-      h('div', { class: 'identity-meta' }, h('span', { class: 'version-label' }, `v${meta.version}`), h('span', { class: 'accession' }, meta.accession))),
+      h('div', { class: 'identity-meta' }, h('span', { class: 'accession' }, meta.accession), h('span', { class: 'version-label' }, `Version ${meta.version} of ${meta.version}`))),
     h('nav', { class: 'actions', 'aria-label': 'Relic actions' },
-      meta.oversize
-        ? h('button', { class: 'action', type: 'button' }, icon('history'), h('span', { class: 'lbl' }, 'Earlier versions'))
-        : h('button', { class: 'action', type: 'button', 'aria-pressed': String(!!meta.comparing) }, icon('compare'), h('span', { class: 'lbl' }, 'Compare versions')),
-      h('button', { class: 'action', type: 'button' }, icon('share'), h('span', { class: 'lbl' }, 'Share')),
-      h('button', { class: 'action', type: 'button' }, icon('download'), h('span', { class: 'lbl' }, 'Download'))));
+      act('list', 'Relics'),
+      meta.oversize ? act('history', 'Earlier versions')
+        : meta.comparing ? act('compare', 'View current', { 'aria-pressed': 'true' }) : act('compare', 'Compare versions'),
+      act('frame', 'Copy link'), act('share', 'Share'), act('download', 'Download'), act('warn', 'Report')));
 }
 
 /* --- document panes --- */
@@ -623,13 +630,15 @@ function drawDoc(doc, marks) {
 }
 function drawBook(book, marks) {
   const markAttrs = (b) => (marks && b.m ? { 'data-relic-diff': b.m, 'data-relic-change-id': 'c' + b.c } : {});
-  return h('div', { class: 'frame-book' }, h('div', { class: 'book-title' }, book.title),
-    book.chapters.map((ch, i) => h('article', { 'data-epub-chapter': String(i) }, ch.blocks.map((b) => b.k === 'h' ? h('h2', markAttrs(b), b.t) : h('p', markAttrs(b), b.t)))));
+  return h('div', { class: 'book-pane' },
+    h('div', { class: 'frame-book' },
+      book.chapters.map((ch, i) => h('article', { 'data-epub-chapter': String(i) }, ch.blocks.map((b) => b.k === 'h' ? h('h2', markAttrs(b), b.t) : h('p', markAttrs(b), b.t))))),
+    h('div', { class: 'book-bar', 'aria-hidden': 'true' }, h('b', null, 'Contents'), h('b', null, 'A\u2212'), h('b', null, 'A+'), h('span', null, `Chapter 1 of ${book.chapters.length} \u00b7 0%`)));
 }
 function frameCard(title, body) { return h('div', { class: 'frame-card', role: 'alert' }, h('h2', null, title), h('p', null, body)); }
 
 /* --- grids --- */
-function colWidths() { return [104, 96, 96, 96, 104]; }
+function colWidths() { return [88, 88, 104, 88, 88, 88, 88, 88]; }
 function drawGrid(cells, side, sheet, rows) {
   const widths = colWidths();
   const table = h('table', { class: 'dt', role: 'grid', 'aria-label': `Version ${side === 'before' ? L : R} of ${SHEET_FILE}, sheet ${side === 'before' ? sheet.left || sheet.name : sheet.name}` });
@@ -656,9 +665,11 @@ function drawGrid(cells, side, sheet, rows) {
   return table;
 }
 function cellbar(cells, ref) {
-  const cell = cells && cells[ref];
-  return h('div', { class: 'dt-cellbar' }, h('b', null, ref || ''), cell && cell.f ? h('span', { class: 'f' }, cell.f) : null,
-    h('span', { class: 'val' }, cell ? (cell.f ? '= ' + cell.v : cell.v) : ''));
+  const cell = ref && cells ? (cells[ref] || { v: '' }) : null;
+  if (!cell) return h('div', { class: 'dt-cellbar' }, h('p', { class: 'hint' }, 'Select a cell to copy it.'));
+  const kind = cell.n ? 'number' : cell.v ? 'text' : '';
+  return h('div', { class: 'dt-cellbar' }, h('span', { class: 'addr' }, ref), h('span', { class: 'sub' }, `Row ${ref.slice(1)}${kind ? ' \u00b7 ' + kind : ''}`),
+    h('pre', { class: 'val' }, (cell.v || '(blank)') + (cell.f ? `\nFormula: ${cell.f}` : '')), h('button', { class: 'copy', type: 'button' }, 'Copy'));
 }
 function sheetPane(sheet, side) {
   const v = side === 'before' ? L : R;
@@ -666,8 +677,8 @@ function sheetPane(sheet, side) {
   const fn = side === 'before' ? sheet.lc : sheet.rc;
   if (!fn) return h('div', { class: 'dt-placeholder' }, h('p', null, COPY.sheetGone(v)));
   const cells = fn();
-  // Padded to the same dimensions on both sides so geometry matches.
-  const rows = Math.max(...[sheet.lc, sheet.rc].filter(Boolean).map((f) => Math.max(...Object.keys(f()).map((k) => +k.slice(1)))), 1) + 14;
+  // Padded to the larger extent, at least 12 rows by A..H, on both sides so geometry matches.
+  const rows = Math.max(12, ...[sheet.lc, sheet.rc].filter(Boolean).map((f) => Math.max(...Object.keys(f()).map((k) => +k.slice(1)))));
   const sel = V.select;
   return h('div', { class: 'sheet-pane' }, cellbar(cells, sel), h('div', { class: 'dt-scroll', 'data-side': side }, drawGrid(cells, side, sheet, rows)));
 }
@@ -676,15 +687,14 @@ function sheetPane(sheet, side) {
 function changeRows(changes, limit, onPick) {
   const list = h('ol', { class: 'diff-change-list' });
   changes.slice(0, limit).forEach((ch, i) => {
-    list.append(h('li', null, h('button', { type: 'button', class: `diff-change diff-change-${ch.kind} is-linked`, 'data-index': String(i),
-      'aria-current': String(i === V.current), onclick: () => onPick(i) },
+    list.append(h('li', null, h('button', { type: 'button', class: `diff-change diff-change-${ch.kind} is-linked`, 'data-index': String(i), onclick: () => onPick(i) },
       h('span', { class: 'diff-change-kind' }, ch.kind), h('span', { class: 'diff-change-what' }, ch.what),
-      h('span', { class: 'diff-change-detail' }, ch.segs.map(([t, s]) => t ? h(t, null, s) : s)))));
+      h('span', { class: 'diff-change-detail' + (ch.cells ? ' is-cells' : '') }, ch.segs.map(([t, s]) => t ? h(t, null, s) : s)))));
   });
   return list;
 }
 function sidebar(count, body) {
-  const open = V.frame !== '390' || V.drawer;
+  const open = V.frame !== '390' ? count > 0 : V.drawer;
   const aside = h('aside', { class: 'thread diff-changes-sidebar' + (open ? ' is-open' : ''), 'aria-label': 'Changes' },
     h('h2', { class: 'thread-title' }, h('button', { class: 'thread-toggle', type: 'button', 'aria-expanded': String(open), onclick: () => { V.drawer = false; buildViewer(); } },
       h('span', { class: 'diff-tab' }, 'Changes', h('span', { class: 'count' }, nfmt(count))), icon(V.frame === '390' ? 'x' : 'chevron'))),
@@ -701,30 +711,31 @@ function toolbar(kindLabel, opts) {
     h('div', { class: 'diff-heading' },
       h('div', { class: 'diff-eyebrow' }, 'Version history'),
       h('h1', { tabindex: '-1' }, COPY.heading),
-      h('p', { class: 'diff-history-note' }, opts.note, ' ', h('span', { class: 'diff-kind' }, kindLabel))),
+      h('p', { class: 'diff-history-note' }, opts.note || `Version ${R} is current. Version ${L} is retained history and may contain content removed from the current artifact.`)),
     h('div', { class: 'compare-picker' },
-      h('div', { class: 'compare-picker-side' }, h('span', { class: 'compare-picker-caption' }, 'Left'), h('button', { class: 'compare-picker-trigger', type: 'button', 'aria-haspopup': 'listbox' }, `v${L}`, icon('chevron'))),
+      h('div', { class: 'compare-picker-side' }, h('span', { class: 'compare-picker-caption' }, 'Left'), h('button', { class: 'compare-picker-trigger', type: 'button', 'aria-haspopup': 'listbox' }, `Version ${L}`, icon('chevron'))),
       h('span', { class: 'compare-picker-separator' }, 'to'),
-      h('div', { class: 'compare-picker-side' }, h('span', { class: 'compare-picker-caption' }, 'Right'), h('button', { class: 'compare-picker-trigger', type: 'button', 'aria-haspopup': 'listbox' }, `v${R}`, icon('chevron')))));
+      h('div', { class: 'compare-picker-side' }, h('span', { class: 'compare-picker-caption' }, 'Right'), h('button', { class: 'compare-picker-trigger', type: 'button', 'aria-haspopup': 'listbox' }, `Version ${R}, current`, icon('chevron')))));
   if (opts.controls === false) return tb;
+  // Kind and result under the rule, as main.ts draws .diff-summary.
+  const summary = h('div', { class: 'diff-summary-bar' }, h('strong', null, kindLabel), h('span', null, opts.result || ''));
   const controls = h('div', { class: 'compare-controls' },
     h('div', { class: 'compare-layout', role: 'group', 'aria-label': 'Layout' },
       h('button', { class: 'action', type: 'button', 'aria-pressed': String(V.layout === 'swipe'), onclick: () => { V.layout = 'swipe'; buildViewer(); } }, 'Swipe'),
       h('button', { class: 'action', type: 'button', 'aria-pressed': String(V.layout === 'split'), onclick: () => { V.layout = 'split'; buildViewer(); } }, 'Side by side')));
-  if (total > 0) {
-    controls.append(h('div', { class: 'compare-nav', role: 'group', 'aria-label': 'Changes' },
-      h('button', { class: 'action compare-nav-previous', type: 'button', disabled: V.current <= 0, onclick: () => goChange(V.current - 1) }, icon('next'), 'Previous change'),
-      h('span', { class: 'compare-nav-position', 'aria-live': 'polite' }, V.current >= 0 ? `Change ${V.current + 1} of ${total}` : `${total} changes`),
-      h('button', { class: 'action compare-nav-next', type: 'button', disabled: V.current >= total - 1, onclick: () => goChange(V.current + 1) }, 'Next change', icon('next'))));
-  }
+  // Always present: "Comparing" until counted, "No changes" with both buttons off, "N changes" before the first step.
+  const position = opts.loading ? 'Comparing' : total === 0 ? 'No changes'
+    : V.current >= 0 ? `Change ${V.current + 1} of ${total}` : `${total} ${total === 1 ? 'change' : 'changes'}`;
+  controls.append(h('div', { class: 'compare-nav', role: 'group', 'aria-label': 'Changes' },
+    h('button', { class: 'action compare-nav-previous', type: 'button', disabled: total === 0, onclick: () => goChange(V.current < 0 ? total - 1 : V.current - 1) }, icon('next'), 'Previous change'),
+    h('span', { class: 'compare-nav-position', 'aria-live': 'polite' }, position),
+    h('button', { class: 'action compare-nav-next', type: 'button', disabled: total === 0, onclick: () => goChange(V.current + 1) }, 'Next change', icon('next'))));
   if (V.layout === 'swipe') {
-    controls.append(h('label', { class: 'compare-swipe' }, h('span', null, `Version ${R}`),
+    controls.append(h('label', { class: 'compare-swipe' }, h('span', null, `Reveal version ${R} over version ${L}`),
       h('input', { type: 'range', min: '0', max: '100', value: String(V.split), 'aria-label': 'Swipe between versions',
-        oninput: (e) => { V.split = +e.target.value; $('.compare-stage').style.setProperty('--split', V.split + '%'); } }),
-      h('span', null, `Version ${L}`)));
+        oninput: (e) => { V.split = +e.target.value; $('.compare-stage').style.setProperty('--split', V.split + '%'); } })));
   }
-  tb.append(controls);
-  return tb;
+  return [tb, summary, controls];
 }
 function stage(before, after, file) {
   const st = h('div', { class: 'compare-stage', 'data-layout': V.layout, style: `--split:${V.split}%` },
@@ -732,13 +743,15 @@ function stage(before, after, file) {
     h('div', { class: 'compare-pane compare-pane-current', title: `Version ${R} of ${file}` }, after),
     h('div', { class: 'compare-divider', 'aria-hidden': 'true' }),
     h('span', { class: 'compare-label compare-label-before' }, `Version ${L}`),
-    h('span', { class: 'compare-label compare-label-current' }, `Version ${R} (current)`));
+    h('span', { class: 'compare-label compare-label-current' }, `Version ${R}, current`));
   return st;
 }
 
 /* --- navigation --- */
 function goChange(i) {
-  if (i < 0 || i >= V.changes.length) return;
+  const n = V.changes.length;
+  if (n === 0) return;
+  i = ((i % n) + n) % n;
   V.current = i;
   if (V.fmt === 'xlsx') { const ch = V.changes[i]; if (ch.ref) { V.select = ch.ref; } }
   buildViewer();
@@ -750,7 +763,12 @@ function revealCurrent() {
   for (const pane of $$('.compare-pane')) {
     let el;
     if (V.fmt === 'xlsx') { const ref = V.changes[V.current] && V.changes[V.current].ref; el = ref && pane.querySelector(`td[data-ref="${ref}"]`); }
-    else el = pane.querySelector(`[data-relic-change-id="c${V.current}"]`);
+    else {
+      // A document change lights in the pane its jump names: removed in the left, the rest in the right.
+      const ch = V.changes[V.current];
+      const side = ch && ch.kind === 'removed' ? 'compare-pane-before' : 'compare-pane-current';
+      el = pane.classList.contains(side) ? pane.querySelector(`[data-relic-change-id="c${V.current}"]`) : null;
+    }
     if (!el) continue;
     el.classList.add('is-current-change');
     const box = pane.getBoundingClientRect(), r = el.getBoundingClientRect();
@@ -840,7 +858,6 @@ function buildDocx() {
   if (variant === 'stores') { changes = storeChanges(); before = docStores(false); after = docStores(true); }
   if (!summary && changes.length) summary = variant === 'stores' ? resultLine(0, 0, 60) : resultLine(1, 1, 2);
   V.changes = changes;
-  const note = loading ? COPY.loading : `The left pane is version ${L}, the right pane is version ${R}, the current version.`;
   const body = h('div', { class: 'diff-body' });
   if (loading) {
     body.append(stage(h('div', { class: 'plate' }, h('span', null, COPY.rendering)), h('div', { class: 'plate' }, h('span', null, COPY.rendering)), DOC_FILE));
@@ -849,46 +866,45 @@ function buildDocx() {
     const leftContent = variant === 'failed' ? frameCard('This document could not be shown.', 'The file could not be read as a Word document. Download it to open it elsewhere.') : drawDoc(before, marks);
     body.append(stage(leftContent, drawDoc(after, marks), DOC_FILE));
   }
+  // The sidebar holds the scope and the rows; the result sits under the toolbar rule.
   const side = h('div', null);
   if (!loading) {
-    if (summary) side.append(h('p', { class: 'diff-summary' }, summary));
-    else if (notice) side.append(h('p', { class: 'diff-summary' }, notice));
     side.append(h('p', { class: 'diff-scope' }, COPY.docScope));
     if (changes.length) {
       side.append(changeRows(changes, 40, goChange));
       if (changes.length > 40) side.lastChild.append(h('li', { class: 'diff-change-more' }, COPY.more(changes.length - 40)));
     }
   } else side.append(h('p', { class: 'diff-loading' }, COPY.rendering));
-  parts.push(h('div', { class: 'diff-shell' }, toolbar(COPY.docLabel, { note, navTotal: loading ? 0 : changes.length }),
-    h('div', { class: 'diff-row' }, body, sidebar(changes.length, side))));
+  parts.push(h('div', { class: 'diff-row' },
+    h('div', { class: 'diff-shell' }, toolbar(COPY.docLabel, { note: loading ? COPY.loading : null, loading, result: summary || notice || '', navTotal: loading ? 0 : changes.length }), body),
+    sidebar(changes.length, side)));
   return parts;
 }
 function buildEpub() {
   const s = V.st, variant = s.variant;
   const parts = [band({ file: BOOK_FILE, version: 3, accession: 'RLK-9B1E · 3 versions', comparing: true })];
   const titled = variant === 'title';
-  const before = bookV2(), after = bookV3(titled ? 'River journal: second edition' : null);
+  const before = bookV2(), after = bookV3(titled ? 'Crossings, revised' : null);
   const changes = variant === 'drm' ? [] : BOOK_CHANGES;
   V.changes = changes;
   const marks = variant !== 'drm';
-  const body = h('div', { class: 'diff-body' });
+  const body = h('div', { class: 'diff-body diff-view-epub' });
   if (variant === 'drm') body.append(h('div', { class: 'notice', role: 'status', style: 'margin:0;max-width:none' }, icon('warn'), h('p', null, COPY.drm(L))));
   const left = variant === 'drm' ? frameCard('This book is protected by DRM.', 'Relik cannot show a book whose chapters are encrypted. Download it to open it in a reader that holds the licence.') : drawBook(before, marks);
   body.append(stage(left, drawBook(after, marks), BOOK_FILE));
   const side = h('div', null);
-  if (variant === 'drm') side.append(h('p', { class: 'diff-summary' }, COPY.drm(L)));
-  else side.append(h('p', { class: 'diff-summary' }, resultLine(2, 2, 1)));
-  if (titled) side.append(h('p', { class: 'diff-title-line' }, 'The title changed from River journal to River journal: second edition.'));
   side.append(h('p', { class: 'diff-scope' }, COPY.bookScope));
+  if (titled) side.append(h('p', { class: 'diff-title-line' }, 'The title changed from Crossings to Crossings, revised.'));
   if (changes.length) {
-    side.append(h('section', { class: 'chapters', 'aria-labelledby': 'ch-h' }, h('h2', { id: 'ch-h' }, 'Chapters'),
-      h('ul', null, BOOK_CHAPTERS.map((c) => h('li', null, h('button', { class: 'chapter-row', type: 'button', onclick: () => goChange(c.first) },
-        h('span', null, c.label), h('span', { class: 'state ' + c.cls }, c.state)))),
-        h('li', null, h('div', { class: 'chapter-row is-unchanged' }, h('span', null, '1 unchanged chapter'))))));
+    side.append(h('section', { class: 'diff-chapters', 'aria-labelledby': 'ch-h' }, h('h2', { id: 'ch-h' }, 'Chapters'),
+      h('ul', null, BOOK_CHAPTERS.map((c) => h('li', null, h('button', { class: `diff-chapter-row diff-chapter-${c.status}`, type: 'button', onclick: () => goChange(c.first) },
+        h('span', null, c.label), h('span', { class: 'diff-chapter-state' }, c.state)))),
+        h('li', null, h('div', { class: 'diff-chapter-row diff-chapter-unchanged' }, h('span', null, '1 unchanged chapter'))))));
     side.append(changeRows(changes, 40, goChange));
   }
-  parts.push(h('div', { class: 'diff-shell' }, toolbar(COPY.bookLabel, { note: `The left pane is version ${L}, the right pane is version ${R}, the current version.`, navTotal: changes.length }),
-    h('div', { class: 'diff-row' }, body, sidebar(changes.length, side))));
+  parts.push(h('div', { class: 'diff-row' },
+    h('div', { class: 'diff-shell' }, toolbar(COPY.bookLabel, { result: variant === 'drm' ? COPY.drm(L) : resultLine(2, 2, 1), navTotal: changes.length }), body),
+    sidebar(changes.length, side)));
   return parts;
 }
 function buildXlsx() {
@@ -905,9 +921,13 @@ function buildXlsx() {
   }
   const loading = s.phase === 'loading';
   let sheets = SHEETS.slice();
-  if (s.withChart) sheets = sheets.concat(CHART_SHEET);
   if (variant === 'hostile') sheets = [SHEETS[0], HOSTILE_SHEET];
-  if (variant === 'same') sheets = [{ id: 'q3', name: 'Q3', badges: [], lc: () => q3(false), rc: () => q3(false), states: {}, changes: [] }];
+  if (variant === 'same') sheets = [
+    { id: 'q3', name: 'Q3', badges: [], lc: () => q3(false), rc: () => q3(false), states: {}, changes: [] },
+    { id: 'old', name: 'Old data', badges: [], lc: oldData, rc: oldData, states: {}, changes: [] },
+    { id: 'hidden', name: 'Hidden', badges: [['hidden', '']], lc: () => hiddenSheet(false), rc: () => hiddenSheet(false), states: {}, changes: [] },
+  ];
+  if (s.withChart) sheets.splice(3, 0, CHART_SHEET);
   const sheet = sheets.find((x) => x.id === V.sheet) || sheets[0];
   V.sheet = sheet.id; V.sheetObj = sheet;
   V.changes = sheet.changes || [];
@@ -918,8 +938,7 @@ function buildXlsx() {
     strip.append(h('button', { class: 'sheet-tab' + (s.kbd && sel ? ' kbd-focus' : ''), type: 'button', role: 'tab', id: 'tab-' + sh.id, 'data-sheet': sh.id,
       'aria-selected': String(sel), 'aria-controls': 'sheet-panel', tabindex: sel ? '0' : '-1',
       onclick: () => pickSheet(sh.id, false), onkeydown: (e) => tabKeys(e, i, sheets) },
-      sh.hidden ? icon('eyeoff') : sh.chart ? icon('chart') : null,
-      h('span', null, sh.name), sh.badges.map(([t, c]) => h('span', { class: 'badge ' + c }, t))));
+      h('span', null, textish(sh.name)), sh.badges.map(([t, c]) => h('span', { class: ('dt-sheet-meta ' + c).trim() }, t))));
   });
   if (loading) {
     body.append(stage(h('div', { class: 'plate' }, h('span', null, COPY.reading)), h('div', { class: 'plate' }, h('span', null, COPY.reading)), SHEET_FILE));
@@ -930,19 +949,18 @@ function buildXlsx() {
     body.append(st);
   }
   const side = h('div', null);
-  let count = 0;
+  let count = 0, result = '';
   if (loading) side.append(h('p', { class: 'diff-loading' }, COPY.reading));
-  else if (variant === 'same') side.append(h('p', { class: 'diff-summary' }, COPY.noValue));
-  else if (variant === 'hostile') { count = 7; side.append(h('p', { class: 'diff-summary' }, '4 cells changed, 1 added, 1 removed. 1 sheet renamed.')); }
-  else { count = 9; side.append(h('p', { class: 'diff-summary' }, '4 cells changed, 1 added, 1 removed. 1 sheet added, 1 removed, 1 renamed.')); }
+  else if (variant === 'same') result = COPY.noValue;
+  else if (variant === 'hostile') { count = 7; result = '4 cells changed, 1 added, 1 removed. 1 sheet renamed.'; }
+  else { count = 9; result = '4 cells changed, 1 added, 1 removed. 1 sheet added, 1 removed, 1 renamed.'; }
   if (!loading) {
     side.append(h('p', { class: 'diff-scope' }, COPY.sheetScope));
     if (V.changes.length) side.append(changeRows(V.changes, 200, goChange));
   }
-  const sheetName = sheet.name;
-  parts.push(h('div', { class: 'diff-shell' }, toolbar(COPY.sheetLabel, { note: loading ? COPY.loading : `The left grid is version ${L}, the right grid is version ${R}, the current version.`, navTotal: loading ? 0 : V.changes.length }),
-    h('div', { class: 'diff-row' }, body, sidebar(count, side))));
-  void sheetName;
+  parts.push(h('div', { class: 'diff-row' },
+    h('div', { class: 'diff-shell' }, toolbar(COPY.sheetLabel, { note: loading ? COPY.loading : null, loading, result, navTotal: loading ? 0 : V.changes.length }), body),
+    sidebar(count, side)));
   return parts;
 }
 
@@ -964,7 +982,8 @@ function go(key) {
   V = { st, fmt: st.fmt, frame: frameOverride || st.frame || 'full', layout: st.layout || 'split', split: st.split || 50,
     current: st.phase === 'loading' || st.variant ? -1 : 0, drawer: !!st.drawer, select: st.select || null, sheet: st.sheet || 'q3', changes: [] };
   if (st.variant === 'stores' || st.variant === 'hostile') V.current = 0;
-  if (st.sheet && st.sheet !== 'q3' && st.variant !== 'hostile') V.current = -1;
+  // A selected cell and a stepped-to change are separate states: Next selects the change's cell.
+  if ((st.sheet && st.sheet !== 'q3' && st.variant !== 'hostile') || (st.select && st.variant !== 'hostile')) V.current = -1;
   history.replaceState(null, '', '#' + st.key);
   renderChrome();
   buildViewer();
