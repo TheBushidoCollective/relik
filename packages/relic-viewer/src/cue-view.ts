@@ -382,7 +382,8 @@ function drawCues(
         file.format,
         text,
         source.slice(first.start, start),
-        source.slice(end, last.end)
+        source.slice(end, last.end),
+        source.slice(first.start, last.end)
       );
       return typeof result === 'string'
         ? { ok: true, source: result }

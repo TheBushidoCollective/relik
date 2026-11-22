@@ -1,0 +1,422 @@
+import type { Notebook, NotebookCell } from '@relic/format/notebook';
+import { isInvisible } from '@relic/format/structured-text';
+import {
+  renderMarkdownWithSource,
+  type SourceSegment,
+} from './markdown-source.ts';
+import type { SuggestionSurface } from './suggestion-surface.ts';
+import type { SuggestBlockKind, SuggestRefusal } from './suggest-draft.ts';
+
+interface Unit {
+  readonly text: string;
+  readonly start: number;
+  readonly end: number;
+  readonly token: number;
+  readonly offset: number;
+}
+
+export function escapeNotebookText(text: string): string {
+  return JSON.stringify(text).slice(1, -1);
+}
+export function decodeNotebookText(source: string): string {
+  try {
+    return JSON.parse(`"${source}"`) as string;
+  } catch {
+    return source;
+  }
+}
+
+/** Encode a complete draft only when its replaced range stays in one string. */
+export function encodeNotebookDraft(
+  text: string,
+  start: number,
+  end: number,
+  token: { readonly start: number; readonly end: number } | undefined
+): { ok: true; source: string } | { ok: false; refusal: SuggestRefusal } {
+  if (!token || start < token.start + 1 || end > token.end - 1 || start > end)
+    return { ok: false, refusal: notebookNotEditable() };
+  return { ok: true, source: escapeNotebookText(text) };
+}
+
+export function notebookNotEditable(): SuggestRefusal {
+  return {
+    kind: 'refused',
+    code: 'not-editable',
+    message: 'Only notebook cell source can be edited.',
+  };
+}
+
+export function notebookAcceptsSelection(
+  root: HTMLElement,
+  node: Node,
+  mappingReady = false
+): true | SuggestRefusal {
+  const element = node.nodeType === 1 ? (node as Element) : node.parentElement;
+  const target = element?.closest(
+    '.nb-box > article.prose, .nb-box > pre.nb-src'
+  );
+  if (!target || !root.contains(target)) return notebookNotEditable();
+  if (
+    element === target &&
+    target.childNodes.length === 1 &&
+    target.firstElementChild?.hasAttribute('data-seg') &&
+    target.textContent === ''
+  )
+    return true;
+  if (
+    (mappingReady || target.querySelector('[data-seg]')) &&
+    !element?.closest('[data-seg]')
+  )
+    return notebookNotEditable();
+  return true;
+}
+
+/** Decode source strings while retaining their exact UTF-16 offsets. */
+export function notebookSourceUnits(
+  source: string,
+  cell: NotebookCell
+): Unit[] {
+  const units: Unit[] = [];
+  let offset = 0;
+  for (const [token, range] of cell.sourceTokens.entries()) {
+    let at = range.start + 1;
+    if (at === range.end - 1)
+      units.push({ text: '', start: at, end: at, token, offset });
+    while (at < range.end - 1) {
+      const start = at;
+      if (source[at] === '\\') {
+        at += source[at + 1] === 'u' ? 6 : 2;
+        if (
+          /^\\u[dD][89aAbB][0-9a-fA-F]{2}$/.test(source.slice(start, at)) &&
+          /^\\u[dD][c-fC-F][0-9a-fA-F]{2}/.test(source.slice(at, at + 6))
+        )
+          at += 6;
+      } else {
+        while (at < range.end - 1 && source[at] !== '\\') at++;
+      }
+      const raw = source.slice(start, at);
+      const text = JSON.parse(`"${raw}"`) as string;
+      units.push({ text, start, end: at, token, offset });
+      offset += text.length;
+    }
+  }
+  const normalized: Unit[] = [];
+  let shown = 0;
+  for (let i = 0; i < units.length; i++) {
+    const unit = units[i]!;
+    const next = units[i + 1];
+    const contiguous =
+      next &&
+      (unit.token === next.token
+        ? unit.end === next.start
+        : next.token === unit.token + 1 &&
+          unit.end === cell.sourceTokens[unit.token]!.end - 1 &&
+          next.start === cell.sourceTokens[next.token]!.start + 1 &&
+          /^"\s*,\s*"$/.test(source.slice(unit.end, next.start)));
+    if (unit.text === '\r' && next?.text === '\n' && contiguous) {
+      normalized.push({ ...unit, text: '\n', end: next.end, offset: shown++ });
+      i++;
+    } else {
+      normalized.push({ ...unit, offset: shown });
+      shown += unit.text.length;
+    }
+  }
+  for (let i = 0; i + 1 < normalized.length; i++) {
+    const unit = normalized[i]!;
+    const next = normalized[i + 1]!;
+    if (unit.text !== '\n' || next.token !== unit.token + 1) continue;
+    const currentToken = cell.sourceTokens[unit.token]!;
+    const nextToken = cell.sourceTokens[next.token]!;
+    if (unit.end !== currentToken.end - 1 || next.start !== nextToken.start + 1)
+      continue;
+    if (!/^"\s*,\s*"$/.test(source.slice(unit.end, next.start))) continue;
+    normalized[i] = { ...unit, end: next.start };
+  }
+  return normalized;
+}
+
+export function notebookSuggestionSurface(
+  root: HTMLElement,
+  notebook: Notebook
+): SuggestionSurface {
+  const kinds = new Map<number, SuggestBlockKind>();
+  const allowed = new Set<number>();
+  const tokens = new Map<
+    number,
+    { readonly start: number; readonly end: number }
+  >();
+  const emptyArrays = new Map<
+    number,
+    { readonly start: number; readonly end: number }
+  >();
+  const cellTokens = new Map<number, NotebookCell['sourceTokens']>();
+  let documentSource = '';
+  let mapped: readonly SourceSegment[] = [];
+  let mappingReady = false;
+  let nextBlock = 0;
+  return {
+    root,
+    segments(source) {
+      documentSource = source;
+      cellTokens.clear();
+      emptyArrays.clear();
+      const result: SourceSegment[] = [];
+      kinds.clear();
+      allowed.clear();
+      tokens.clear();
+      nextBlock = 0;
+      for (const cell of notebook.cells) {
+        const box = root.querySelector<HTMLElement>(
+          `.nb-cell[data-cell="${cell.index}"] .nb-box`
+        );
+        const target = box?.querySelector<HTMLElement>(
+          cell.kind === 'markdown' ? 'article.prose' : 'pre.nb-src'
+        );
+        if (!target) continue;
+        if (cell.emptySourceArray) {
+          const block = nextBlock++;
+          const position = cell.emptySourceArray.start + 1;
+          const span = root.ownerDocument.createElement('span');
+          span.dataset['seg'] = String(result.length);
+          target.replaceChildren(span);
+          result.push({
+            text: '',
+            start: position,
+            end: position,
+            block,
+            kind: 'text',
+          });
+          kinds.set(block, `nb-${cell.kind}` as SuggestBlockKind);
+          allowed.add(block);
+          emptyArrays.set(block, cell.emptySourceArray);
+          continue;
+        }
+        const units = notebookSourceUnits(source, cell);
+        const decoded = units.map((unit) => unit.text).join('');
+        if (decoded !== cell.source.text || cell.source.truncated) continue;
+        const joins = new Set(
+          units
+            .filter((unit) => unit.end > cell.sourceTokens[unit.token]!.end - 1)
+            .map((unit) => unit.token)
+        );
+        const groups: number[] = [];
+        const groupRanges = new Map<number, { start: number; end: number }>();
+        for (const [index, range] of cell.sourceTokens.entries()) {
+          const group =
+            index > 0 && joins.has(index - 1) ? groups[index - 1]! : index;
+          groups.push(group);
+          const prior = groupRanges.get(group);
+          groupRanges.set(group, {
+            start: prior?.start ?? range.start,
+            end: range.end,
+          });
+        }
+        const tokenBlocks = new Map<string, number>();
+        const blockFor = (token: number, markdownBlock: number): number => {
+          const group = groups[token]!;
+          const key = `${group}:${markdownBlock}`;
+          let block = tokenBlocks.get(key);
+          if (block === undefined) {
+            block = nextBlock++;
+            tokenBlocks.set(key, block);
+            kinds.set(block, `nb-${cell.kind}` as SuggestBlockKind);
+            const range = groupRanges.get(group);
+            cellTokens.set(block, cell.sourceTokens);
+            if (range) tokens.set(block, range);
+            allowed.add(block);
+          }
+          return block;
+        };
+        const appendUnit = (
+          parent: ParentNode,
+          unit: Unit,
+          markdownBlock: number
+        ): void => {
+          const span = root.ownerDocument.createElement('span');
+          span.dataset['seg'] = String(result.length);
+          span.textContent = unit.text;
+          parent.append(span);
+          const raw = source.slice(unit.start, unit.end);
+          result.push({
+            text: unit.text,
+            start: unit.start,
+            end: unit.end,
+            block: blockFor(unit.token, markdownBlock),
+            kind: raw === unit.text ? 'text' : 'escape',
+          });
+        };
+        if (cell.kind !== 'markdown') {
+          target.replaceChildren();
+          for (const unit of units) appendUnit(target, unit, 0);
+        } else {
+          const mapped = renderMarkdownWithSource(decoded);
+          target.innerHTML = mapped.html;
+          const spans = Array.from(
+            target.querySelectorAll<HTMLElement>('[data-seg]')
+          );
+          if (decoded === '' && units.length > 0)
+            appendUnit(target, units[0]!, 0);
+          let cursor = 0;
+          for (const [index, span] of spans.entries()) {
+            const segment = mapped.segments[index];
+            if (!segment) continue;
+            while (
+              cursor < units.length &&
+              units[cursor]!.offset + units[cursor]!.text.length <=
+                segment.start
+            )
+              cursor++;
+            const subset: Unit[] = [];
+            for (
+              let j = cursor;
+              j < units.length && units[j]!.offset < segment.end;
+              j++
+            ) {
+              const unit = units[j]!;
+              const from = Math.max(0, segment.start - unit.offset);
+              const to = Math.min(unit.text.length, segment.end - unit.offset);
+              const raw = source.slice(unit.start, unit.end);
+              if ((from !== 0 || to !== unit.text.length) && raw !== unit.text)
+                continue;
+              subset.push(
+                raw === unit.text
+                  ? {
+                      ...unit,
+                      text: unit.text.slice(from, to),
+                      offset: unit.offset + from,
+                      start: unit.start + from,
+                      end: unit.start + to,
+                    }
+                  : unit
+              );
+            }
+            if (
+              segment.kind === 'join' &&
+              segment.text === ' ' &&
+              subset.length > 0 &&
+              /^\s*\n\s*$/.test(subset.map((unit) => unit.text).join('')) &&
+              subset.every(
+                (unit, i) =>
+                  i === 0 ||
+                  (subset[i - 1]!.end === unit.start &&
+                    groups[unit.token] === groups[subset[0]!.token])
+              )
+            ) {
+              subset.splice(0, subset.length, {
+                ...subset[0]!,
+                text: ' ',
+                end: subset[subset.length - 1]!.end,
+              });
+            }
+            if (subset.map((unit) => unit.text).join('') !== segment.text) {
+              span.removeAttribute('data-seg');
+              continue;
+            }
+            const fragment = root.ownerDocument.createDocumentFragment();
+            for (const unit of subset)
+              appendUnit(fragment, unit, segment.block);
+            span.replaceWith(fragment);
+          }
+        }
+      }
+      mapped = result;
+      mappingReady = true;
+      return result;
+    },
+    blockKind(block) {
+      return kinds.get(block) ?? 'nb-raw';
+    },
+    editable(block) {
+      return allowed.has(block)
+        ? true
+        : {
+            kind: 'refused',
+            code: 'not-editable',
+            message: 'Only notebook cell source can be edited.',
+          };
+    },
+    covers(start, end, replacement) {
+      const first = mapped.find(
+        (part) =>
+          part.start <= start &&
+          (start === end ? start <= part.end : start < part.end)
+      );
+      if (!first) return false;
+      if (replacement !== undefined) {
+        let decoded = decodeNotebookText(replacement);
+        if (emptyArrays.has(first.block)) {
+          try {
+            const value: unknown = JSON.parse(replacement);
+            if (typeof value !== 'string') return false;
+            decoded = value;
+          } catch {
+            return false;
+          }
+        }
+        for (const character of decoded.replaceAll('\r\n', '\n'))
+          if (isInvisible(character.codePointAt(0)!)) return false;
+      }
+      if (start === end)
+        return (
+          first.kind !== 'escape' ||
+          start === first.start ||
+          start === first.end
+        );
+      let covered = start;
+      for (const part of mapped) {
+        if (part.end <= covered) continue;
+        if (part.start > covered || part.block !== first.block) return false;
+        if (part.kind === 'escape' && covered !== part.start) return false;
+        if (part.end >= end) return part.kind !== 'escape' || end === part.end;
+        covered = part.end;
+      }
+      return false;
+    },
+    encode(block, text, start, end) {
+      const array = emptyArrays.get(block);
+      if (array) {
+        const position = array.start + 1;
+        return start === position && end === position
+          ? { ok: true, source: text === '' ? '' : JSON.stringify(text) }
+          : { ok: false, refusal: notebookNotEditable() };
+      }
+      return encodeNotebookDraft(text, start, end, tokens.get(block));
+    },
+    decode(block, source) {
+      if (emptyArrays.has(block)) {
+        try {
+          const value: unknown = JSON.parse(source);
+          return typeof value === 'string' ? value : source;
+        } catch {
+          return source;
+        }
+      }
+      return decodeNotebookText(source);
+    },
+    decodeRange(block, start, end) {
+      let result = '';
+      for (const token of cellTokens.get(block) ?? []) {
+        const from = Math.max(start, token.start + 1);
+        const to = Math.min(end, token.end - 1);
+        if (from < to)
+          result += JSON.parse(`"${documentSource.slice(from, to)}"`) as string;
+      }
+      return result;
+    },
+    emptyAnchor(block, position) {
+      const array = emptyArrays.get(block);
+      if (array && position === array.start + 1)
+        return { start: array.start, end: position, mode: 'after' };
+      const token = tokens.get(block);
+      return token &&
+        token.end === token.start + 2 &&
+        position === token.start + 1
+        ? { start: token.start, end: position, mode: 'after' }
+        : undefined;
+    },
+    acceptsSelection(node) {
+      return notebookAcceptsSelection(root, node, mappingReady);
+    },
+    repaint() {},
+  };
+}

@@ -24,6 +24,10 @@ import {
 import { handleMessage } from '../../src/server.ts';
 import { loadPrivatePublishState } from '../../src/state.ts';
 import {
+  cachedEntryFormat,
+  loadCachedVersionFormat,
+} from '../../src/suggestion-format.ts';
+import {
   DAY_MS,
   makeCert,
   makeDevice,
@@ -217,6 +221,39 @@ try {
   const state = await loadPrivatePublishState(first.relic_id),
     ciphertext = await storage.read(first.relic_id);
   assert.ok(state && ciphertext);
+  const firstKey = decodeKey(state.version_keys['1']!);
+  const firstFormat = await loadCachedVersionFormat(
+    first.relic_id,
+    1,
+    firstKey
+  );
+  assert.ok(firstFormat);
+  assert.deepEqual(
+    cachedEntryFormat(
+      firstFormat,
+      'secret-entry.md',
+      firstKey,
+      first.relic_id,
+      1
+    ),
+    {
+      found: true,
+      extension: 'md',
+    }
+  );
+  assert.deepEqual(
+    cachedEntryFormat(
+      firstFormat,
+      '__MACOSX/._hidden',
+      firstKey,
+      first.relic_id,
+      1
+    ),
+    {
+      found: false,
+      extension: null,
+    }
+  );
   const chunks: Uint8Array[] = [];
   const header = await streamAnyRelicContent(
     new Blob([ciphertext as BlobPart]).stream(),
@@ -252,6 +289,39 @@ try {
     nextBytes = await storage.read(lastObjectKey);
   assert.ok(nextState && nextBytes);
   assert.notEqual(nextState.version_keys['1'], nextState.version_keys['2']);
+  assert.deepEqual(nextState.version_formats, {
+    '1': { shape: 'folder' },
+    '2': { shape: 'folder' },
+  });
+  const nextKey = decodeKey(nextState.version_keys['2']!);
+  const nextFormat = await loadCachedVersionFormat(first.relic_id, 2, nextKey);
+  assert.ok(nextFormat);
+  assert.deepEqual(
+    cachedEntryFormat(
+      nextFormat,
+      'private-data.txt',
+      nextKey,
+      first.relic_id,
+      2
+    ),
+    {
+      found: false,
+      extension: null,
+    }
+  );
+  assert.deepEqual(
+    cachedEntryFormat(
+      firstFormat,
+      'private-data.txt',
+      firstKey,
+      first.relic_id,
+      1
+    ),
+    {
+      found: true,
+      extension: 'txt',
+    }
+  );
   assert.equal(
     (
       await openAnyRelic(nextBytes, decodeKey(nextState.version_keys['2']!), {

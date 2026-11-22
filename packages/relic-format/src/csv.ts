@@ -5,7 +5,8 @@
  *
  * - CRLF, LF and a lone CR outside quotes each end a record, so a file with
  *   mixed line endings reads the same as one with a single kind.
- * - A byte order mark is skipped and reported, never read as data.
+ * - By default a leading byte order mark is skipped and reported. Set
+ *   `skipBom: false` when a decoder has already removed the file's BOM.
  * - A blank line is a record of one empty field. Record numbers are therefore
  *   the file's own row numbers, which is what a cell comment's `row` means.
  * - A quoted field may hold delimiters, quotes (doubled) and line breaks.
@@ -92,6 +93,8 @@ export type TableParse =
 export interface ParseTableOptions {
   /** A delimiter to use as given, or `'auto'` to choose from the text. */
   readonly delimiter?: TableDelimiter | 'auto';
+  /** Set false when a decoder already removed the file's BOM. */
+  readonly skipBom?: boolean;
 }
 
 /** A growable typed array, so a 5,000,000-field scan does not box every number. */
@@ -213,6 +216,14 @@ function sniffDelimiter(text: string, start: number): TableDelimiter {
     }
   }
   return best;
+}
+
+/** The delimiter an auto-detected table would use for this source. */
+export function detectTableDelimiter(
+  text: string,
+  skipBom = true
+): TableDelimiter {
+  return sniffDelimiter(text, skipBom && text.charCodeAt(0) === 0xfeff ? 1 : 0);
 }
 
 type ScanOutcome =
@@ -352,7 +363,7 @@ export function parseTable(
   text: string,
   options: ParseTableOptions = {}
 ): TableParse {
-  const bom = text.charCodeAt(0) === 0xfeff;
+  const bom = options.skipBom !== false && text.charCodeAt(0) === 0xfeff;
   const start = bom ? 1 : 0;
   if (start >= text.length) return { ok: false, reason: 'empty' };
   if (text.indexOf('\0') >= 0) return { ok: false, reason: 'binary' };

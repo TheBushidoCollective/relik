@@ -1,5 +1,7 @@
 import { suggestionSourceFor } from '@relic/format/suggestions';
+import { emptyNotebookSourceOffsets } from '@relic/format/notebook';
 import type { CommentPlaintext } from '@relic/format';
+import { escapeInvisible } from '@relic/format/structured-text';
 import type { CommentCipher, CommentEntry, SessionState } from './comments.ts';
 import type { ReadyView, ViewerDeps } from './viewer.ts';
 import type { SuggestCommit, SuggestDraft } from './suggest-draft.ts';
@@ -27,6 +29,7 @@ import type {
 } from './markdown-source.ts';
 import type { LocalPresence } from './presence.ts';
 import { suggestionSurfaceFor } from './suggestion-surface.ts';
+import { placeableSuggestionPaint } from './suggestion-views.ts';
 
 export interface SuggestControllerOptions {
   readonly view: ReadyView;
@@ -103,9 +106,17 @@ function selectionOffsets(
     const prefix = root.ownerDocument.createRange();
     prefix.selectNodeContents(root);
     prefix.setEnd(range.startContainer, range.startOffset);
-    const start = prefix.toString().length;
+    const sourceLength = (): number => {
+      const fragment = prefix.cloneContents();
+      for (const excluded of fragment.querySelectorAll(
+        'ins[data-sg], [data-sg-decoration]'
+      ))
+        excluded.remove();
+      return fragment.textContent?.length ?? 0;
+    };
+    const start = sourceLength();
     prefix.setEnd(range.endContainer, range.endOffset);
-    return [start, prefix.toString().length];
+    return [start, sourceLength()];
   } catch {
     return null;
   }
@@ -128,11 +139,12 @@ function restoreOffsets(
     const element = node.parentElement;
     if (element?.closest('ins[data-sg], [data-sg-decoration]')) continue;
     const length = node.textContent?.length ?? 0;
-    if (!start && offsets[0] <= count + length)
+    if (!start && offsets[0] < count + length)
       start = [node, offsets[0] - count];
     if (!end && offsets[1] <= count + length) end = [node, offsets[1] - count];
     count += length;
   }
+  if (!start && offsets[0] === count && end) start = end;
   if (!start || !end) return;
   const range = root.ownerDocument.createRange();
   range.setStart(...start);
@@ -250,6 +262,10 @@ export function mountSuggestionController(
         )
       : { ok: false as const, reason: 'too_large' as const };
   const source = sourceResult.ok ? sourceResult.source : '';
+  const exclusiveInsertions =
+    view.route === 'notebook' && sourceResult.ok
+      ? emptyNotebookSourceOffsets(source)
+      : undefined;
   let segments: readonly SourceSegment[] = [];
   let delimiters: readonly MarkdownDelimiterPair[] = [];
   let editor: SuggestEditor | undefined;
@@ -544,6 +560,15 @@ export function mountSuggestionController(
     }
     gutter.textContent = lines.join('\n');
   };
+  const editablePending = () => {
+    const pending = views?.pending ?? [];
+    return surface?.covers
+      ? pending.filter(
+          (item) =>
+            surface?.covers?.(item.start, item.end, item.inserted) === true
+        )
+      : pending;
+  };
 
   const ensureEditor = (): void => {
     const session = options.session();
@@ -577,7 +602,7 @@ export function mountSuggestionController(
       crlf: sourceResult.crlf,
       surface,
       displayName: options.displayName(),
-      pending: views?.pending ?? [],
+      pending: editablePending(),
       chrome: editorChrome,
       receiptHost: host,
       unavailable: view.version !== currentVersion ? 'older' : null,
@@ -682,8 +707,14 @@ export function mountSuggestionController(
       rows(),
       view.version,
       currentVersion,
-      session.kind === 'verified' ? session.email : null
+      session.kind === 'verified' ? session.email : null,
+      exclusiveInsertions
     );
+    host
+      .querySelector('.structured-table')
+      ?.dispatchEvent(
+        new CustomEvent('relic:table-suggestion-views', { detail: views })
+      );
     ensureEditor();
     updateControls();
     resumePresenceRefresh();
@@ -708,10 +739,25 @@ export function mountSuggestionController(
       clearSuggestionPaint(target);
       surface?.repaint();
       ordinary();
+      const paintedViews = surface?.covers
+        ? {
+            ...views!,
+            paint: placeableSuggestionPaint(
+              views!,
+              (item) =>
+                item.location.status === 'resolved' &&
+                surface?.covers?.(
+                  item.location.start,
+                  item.location.end,
+                  item.input?.suggestion.replacement
+                ) === true
+            ),
+          }
+        : views!;
       const result = paintSuggestions(
         target,
         segments,
-        views!,
+        paintedViews,
         surface ? 'markdown' : kind,
         surface?.decode?.bind(surface)
       );
@@ -726,7 +772,7 @@ export function mountSuggestionController(
       }
       updateGutter();
     };
-    if (editor) editor.updatePending(views.pending, draw);
+    if (editor) editor.updatePending(editablePending(), draw);
     else draw();
     if (failed && editor?.suggesting) setEditorSuggesting(false);
     updateControls();
@@ -755,6 +801,25 @@ export function mountSuggestionController(
     original = undefined;
     surface = undefined;
     options.onSurfaceReleased?.();
+  };
+  const adoptCurrentSurface = (): boolean => {
+    const next = suggestionSurfaceFor(host);
+    if (!next || next === surface) return true;
+    if (editor?.draft || transport?.shouldWarnBeforeUnload) return false;
+    editor?.destroy();
+    editor = undefined;
+    editorReader = undefined;
+    for (const type of ['beforeinput', 'paste', 'drop', 'keydown'])
+      root?.removeEventListener(type, stopInputDuringSend, true);
+    surface = next;
+    root = next.root;
+    original = next.root;
+    segments = sourceResult.ok ? next.segments(source) : [];
+    delimiters = [];
+    failed = false;
+    for (const type of ['beforeinput', 'paste', 'drop', 'keydown'])
+      root.addEventListener(type, stopInputDuringSend, true);
+    return true;
   };
   root?.addEventListener('beforeinput', stopInputDuringSend, true);
   root?.addEventListener('paste', stopInputDuringSend, true);
@@ -927,6 +992,16 @@ export function mountSuggestionController(
       const found = views.byId.get(entry.id);
       if (!found) return null;
       const card = renderSuggestionCard(found, views, doc, kind);
+      if (
+        view.route === 'notebook' ||
+        host.querySelector('.structured-table')
+      ) {
+        for (const part of card.querySelectorAll<HTMLElement>(
+          '.sg-del, .sg-ins'
+        )) {
+          part.textContent = escapeInvisible(part.textContent ?? '');
+        }
+      }
       card.addEventListener('click', (event) => {
         if (!(event.target instanceof Element)) return;
         const target = event.target.closest<HTMLElement>('[data-sg-open]');
@@ -943,7 +1018,9 @@ export function mountSuggestionController(
         options.signIn();
         return;
       }
+      if (on && !adoptCurrentSurface()) return;
       ensureEditor();
+      if (on && surface?.clipPaint && !editor?.draft) repaint(() => {});
       if (on && guard()) {
         updateControls();
         return;

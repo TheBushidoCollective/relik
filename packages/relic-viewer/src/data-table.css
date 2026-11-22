@@ -155,6 +155,29 @@
   white-space: nowrap;
 }
 
+.dt-text .sg-del,
+.dt-text .sg-ins {
+  white-space: nowrap;
+}
+
+.dt-cell:has(> .dt-suggestion-indicator) .dt-text {
+  padding-right: 2.4rem;
+}
+
+.dt-suggestion-indicator {
+  position: absolute;
+  right: 0;
+  z-index: 1;
+  max-width: 2.4rem;
+  flex: none;
+  padding: 0.1rem 0.3rem;
+  border: 1px solid currentColor;
+  background: var(--surface, #fff);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
 .dt-blank {
   color: var(--ink-soft, #555);
   font-style: italic;
@@ -295,11 +318,11 @@
   box-sizing: border-box;
   height: 5rem;
   display: grid;
-  grid-template-columns: minmax(4.5rem, auto) minmax(0, 1fr) auto;
+  grid-template-columns: minmax(4.5rem, auto) minmax(0, 1fr) auto auto;
   grid-template-rows: auto minmax(0, 1fr);
   grid-template-areas:
-    'addr value copy'
-    'sub value copy';
+    'addr value suggest copy'
+    'sub value suggest copy';
   align-items: start;
   gap: 0.15rem 0.9rem;
   padding: 0.4rem 0.6rem;
@@ -364,6 +387,33 @@
   outline-offset: 1px;
 }
 
+.dt-suggest-editor {
+  position: sticky;
+  bottom: 0;
+  z-index: 12;
+  padding: 0.75rem;
+  background: var(--paper, white);
+  border: 1px solid var(--rule-strong, #888);
+}
+
+.dt-suggest-title {
+  margin: 0 0 0.5rem;
+}
+
+.dt-suggest-text {
+  min-height: 2.5rem;
+  padding: 0.5rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  border: 1px solid var(--rule-strong, #888);
+}
+
+.dt-cellbar > .dt-suggest {
+  grid-area: suggest;
+  justify-self: start;
+  min-height: 44px;
+}
+
 @media (max-width: 480px) {
   .dt-grid {
     height: min(60vh, 32rem);
@@ -407,11 +457,11 @@
     height: auto;
     max-height: 45vh;
     overflow: auto;
-    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
     grid-template-rows: auto auto;
     grid-template-areas:
-      'addr sub copy'
-      'value value value';
+      'addr sub suggest copy'
+      'value value value value';
     align-items: center;
     padding: 0.6rem 0.9rem 0.9rem;
     border-radius: 12px 12px 0 0;

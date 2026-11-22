@@ -59,6 +59,12 @@ import {
   type PublishState,
   savePublishState,
 } from './state.ts';
+import {
+  buildCachedFormat,
+  nextVersionFormats,
+  saveCachedVersionFormat,
+  versionFormatFor,
+} from './suggestion-format.ts';
 
 export interface RepublishAddressEntry {
   readonly comment_id: string;
@@ -109,6 +115,11 @@ export interface RepublishInput {
   readonly decisions?: boolean | undefined;
 }
 
+export interface RepublishWarning {
+  readonly code: 'suggestion_format_cache_failed';
+  readonly message: string;
+}
+
 export interface RepublishResult {
   readonly shape: 'file' | 'folder';
   readonly folder?: FolderReport | undefined;
@@ -138,6 +149,7 @@ export interface RepublishResult {
    * Acknowledgement comments posted for comments addressed by this update.
    */
   readonly acknowledgements?: readonly CommentResult[] | undefined;
+  readonly warnings?: readonly RepublishWarning[] | undefined;
   /**
    * Deliberately no `url` member. The share URL is unchanged by a new
    * version, and reprinting it would reprint the key for no new benefit;
@@ -640,6 +652,12 @@ export async function republish(
   }
   const resolvedVersionDigest =
     typeof serverDigest === 'string' ? serverDigest : localVersionDigest;
+  const versionFormats = nextVersionFormats(
+    state,
+    version,
+    versionFormatFor(folderSource ? 'folder' : 'file', filename)
+  );
+  const warnings: RepublishWarning[] = [];
   try {
     // The filename tracks the newest version, because that is the one the
     // link now serves and the one an inventory should name. `published_at`
@@ -649,6 +667,7 @@ export async function republish(
       ...state,
       version,
       shape: folderSource ? 'folder' : 'file',
+      version_formats: versionFormats,
       filename,
       content_sha256: digest,
       updated_at: new Date().toISOString(),
@@ -662,6 +681,34 @@ export async function republish(
         `report a stale version number: ${(error as Error).message}`,
       { relic_id: input.relic_id, version }
     );
+  }
+
+  if (folderSource) {
+    try {
+      const key = decodeKey(state.key);
+      await saveCachedVersionFormat(
+        input.relic_id,
+        version,
+        key,
+        buildCachedFormat(
+          { shape: 'folder' },
+          folderSource.folder.entries.map((entry) => entry.path),
+          key,
+          input.relic_id,
+          version
+        )
+      );
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      warnings.push({
+        code: 'suggestion_format_cache_failed',
+        message:
+          `Version ${version} is live, but this machine could not record its encrypted folder format cache: ` +
+          `${reason.replace(/[.!?]+$/, '')}. ` +
+          `Applying a suggestion made on version ${version} is refused while the cache cannot be verified or recorded. ` +
+          "If the cache is absent, recovering its file formats spends one of the relic's downloads.",
+      });
+    }
   }
 
   let coverReport: CoverReport;
@@ -688,6 +735,7 @@ export async function republish(
           ...state,
           version,
           shape: folderSource ? 'folder' : 'file',
+          version_formats: versionFormats,
           filename,
           content_sha256: digest,
           updated_at: new Date().toISOString(),
@@ -736,6 +784,7 @@ export async function republish(
     disclosure_url: String(grant['disclosure_url']),
     key_phrase: keyToMnemonic(decodeKey(state.key)).join(' '),
     ...(acknowledgements.length > 0 ? { acknowledgements } : {}),
+    ...(warnings.length > 0 ? { warnings } : {}),
     cover: coverReport,
     notify: input.notify !== false,
     ...(programBuild.report.status === 'not_applicable'

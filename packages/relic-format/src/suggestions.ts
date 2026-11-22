@@ -91,10 +91,15 @@ function compareCandidates(a: Candidate, b: Candidate): number {
   );
 }
 
-function conflicts(a: Candidate, b: Candidate): boolean {
+function conflicts(
+  a: Candidate,
+  b: Candidate,
+  exclusiveInsertions?: ReadonlySet<number>
+): boolean {
   const aInsertion = a.start === a.end;
   const bInsertion = b.start === b.end;
-  if (aInsertion && bInsertion) return false;
+  if (aInsertion && bInsertion)
+    return a.start === b.start && exclusiveInsertions?.has(a.start) === true;
   if (aInsertion) return b.start < a.start && a.start < b.end;
   if (bInsertion) return a.start < b.start && b.start < a.end;
   return a.start < b.end && b.start < a.end;
@@ -102,7 +107,8 @@ function conflicts(a: Candidate, b: Candidate): boolean {
 
 export function resolveSuggestions(
   source: string,
-  inputs: readonly SuggestionInput[]
+  inputs: readonly SuggestionInput[],
+  exclusiveInsertions?: ReadonlySet<number>
 ): readonly ResolvedSuggestion[] {
   const candidates: Candidate[] = [];
   const unresolved: ResolvedSuggestion[] = [];
@@ -149,7 +155,7 @@ export function resolveSuggestions(
     if (!first) continue;
     for (let j = i + 1; j < unique.length; j++) {
       const second = unique[j];
-      if (!second || !conflicts(first, second)) continue;
+      if (!second || !conflicts(first, second, exclusiveInsertions)) continue;
       const a = root(i);
       const b = root(j);
       if (a !== b) parents[Math.max(a, b)] = Math.min(a, b);
