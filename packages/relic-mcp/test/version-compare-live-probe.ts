@@ -72,7 +72,7 @@ async function main(): Promise<void> {
       ids[format] = pair.relicId;
       for (const viewport of [DESKTOP, PHONE]) {
         const label = `${format} ${viewport.width}x${viewport.height}`;
-        const b = await Browser.open(viewport, scratch);
+        const b = await Browser.open(viewport, scratch, { live: true });
         try {
           assert.equal(
             await openRelic(b, pair.url),

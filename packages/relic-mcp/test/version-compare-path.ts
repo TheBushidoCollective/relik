@@ -374,13 +374,23 @@ export class Browser {
   ) {}
 
   /** Starts the browser named by RELIC_CHROME_PATH, attests that it is headless, and sizes its page. */
-  static async open(viewport: Viewport, scratch: string): Promise<Browser> {
+  static async open(
+    viewport: Viewport,
+    scratch: string,
+    options: { readonly live?: boolean } = {}
+  ): Promise<Browser> {
     const found = await discoverChrome(process.env['RELIC_CHROME_PATH']);
     if (found.kind !== 'found')
       throw new Error(`Chrome is unavailable: ${found.kind}`);
     const profile = await mkdtemp(join(scratch, 'chrome-'));
+    // The local path resolves only loopback. The live probe talks to the real
+    // service, so it drops the resolver rule and keeps every other flag.
     const argv = chromeArgs(found.path, profile)
       .filter((arg) => !arg.startsWith('--proxy-'))
+      .filter(
+        (arg) =>
+          options.live !== true || !arg.startsWith('--host-resolver-rules=')
+      )
       .map((arg) =>
         arg === '--host-resolver-rules=MAP * ~NOTFOUND'
           ? '--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1'
