@@ -92,7 +92,31 @@ export interface CellResolved {
   readonly range?: CellRange;
 }
 
-export type CellResolution = CellResolved | NotFound<'cell'>;
+/**
+ * A cell on a spreadsheet. The sheet and the A1 address stand where a CSV
+ * resolution gives its line, because a workbook has no physical line to name.
+ */
+export interface WorkbookCellResolved {
+  readonly kind: 'cell';
+  readonly status: 'resolved';
+  /** The sheet's name, exactly as the workbook spells it. */
+  readonly sheet: string;
+  /** The top-left cell in A1 notation. */
+  readonly address: string;
+  /** The top-left cell's displayed value, cut to `CELL_TEXT_LIMIT_BYTES`. */
+  readonly text: string;
+  readonly text_truncated: boolean;
+  /** The first row's value in the same column, cut to `CELL_HEADER_LIMIT_BYTES`. */
+  readonly header: string;
+  readonly header_truncated: boolean;
+  /** The inclusive extent of a range, as the comment wrote it. */
+  readonly range?: CellRange;
+}
+
+export type CellResolution =
+  | CellResolved
+  | WorkbookCellResolved
+  | NotFound<'cell'>;
 
 export type PathType =
   | 'object'

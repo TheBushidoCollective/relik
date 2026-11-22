@@ -13,6 +13,8 @@ import type {
   PathCommentAnchor,
 } from '@relic/format';
 import type { CommentRecord } from './comments.ts';
+import { deriveRendererClass } from '@relic/format';
+import { resolveWorkbookCell } from './resolve-workbook.ts';
 import {
   type CellResolution,
   type PathResolution,
@@ -80,6 +82,18 @@ export async function resolveStructuredComment(
   if (!fetched.ok) {
     return { ...comment, resolved: notFound(anchor.kind, fetched.error) };
   }
+  const entry = fetched.opened.envelope.entries[0];
+  if (
+    anchor.kind === 'cell' &&
+    deriveRendererClass(fetched.opened.content, entry?.filename ?? '') ===
+      'spreadsheet'
+  ) {
+    return {
+      ...comment,
+      resolved: await resolveWorkbookCell(fetched.opened.content, anchor),
+    };
+  }
+
   const reader = readerForVersion(fetched.opened);
   return {
     ...comment,

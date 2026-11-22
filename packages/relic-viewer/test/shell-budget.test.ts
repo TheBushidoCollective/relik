@@ -38,6 +38,13 @@ const pkgDir = new URL('..', import.meta.url).pathname;
  */
 const SHELL_CEILING_BYTES = 475 * 1024;
 
+/**
+ * The frame page (`sandbox.html`) loads on every HTML and JSX open. It measured
+ * 268,128 bytes when this guard was written. The Word renderer alone is about
+ * 115 KB, so inlining it would cross this line.
+ */
+const SANDBOX_CEILING_BYTES = 280 * 1024;
+
 /** Strings only the windowed source renderer emits, never its shell bridge. */
 const TEXT_WINDOW_MARKERS = [
   'relic:text-window-paint',
@@ -470,5 +477,39 @@ describe('the app shell', () => {
         lazyCarrier = true;
     }
     expect(lazyCarrier).toBe(true);
+  });
+
+  test('keeps the Word and EPUB renderers out of the eager shell and the frame page', async () => {
+    const built = Bun.spawnSync([process.execPath, 'build.ts'], {
+      cwd: pkgDir,
+    });
+    expect(built.exitCode).toBe(0);
+    // The Word and EPUB renderers run only inside the usercontent frame, which
+    // is posted its module. One that reaches the shell's static graph, or the
+    // frame page, is downloaded by every reader of every relic.
+    const markers = [
+      'commentEx',
+      'docx-wrapper',
+      'This ebook is protected by DRM',
+    ];
+    const pending = ['viewer.js'];
+    const visited = new Set<string>();
+    while (pending.length > 0) {
+      const name = pending.pop();
+      if (name === undefined || visited.has(name)) continue;
+      visited.add(name);
+      const content = await Bun.file(`${pkgDir}dist/${name}`).text();
+      expect(markers.filter((marker) => content.includes(marker))).toEqual([]);
+      for (const match of content.matchAll(
+        /\b(?:import|export)\s*(?:(?:[^;"']*?)\sfrom\s*)?["']\.\/([^"']+)["']/g
+      )) {
+        if (match[1] !== undefined) pending.push(match[1]);
+      }
+    }
+    const frame = await Bun.file(`${pkgDir}dist/sandbox.html`).text();
+    expect(markers.filter((marker) => frame.includes(marker))).toEqual([]);
+    expect(Bun.file(`${pkgDir}dist/sandbox.html`).size).toBeLessThan(
+      SANDBOX_CEILING_BYTES
+    );
   });
 });

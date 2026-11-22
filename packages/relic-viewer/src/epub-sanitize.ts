@@ -1,4 +1,5 @@
 import { resolveEpubPath } from '../../relic-format/src/epub-package.ts';
+import { isDroppedEpubElement } from '../../relic-format/src/epub-render.ts';
 import {
   epubCss,
   epubDataUrl,
@@ -18,11 +19,6 @@ const SVG_TAGS = new Set(
 );
 const MATH_TAGS = new Set(
   'math mrow mi mn mo mtext mspace ms mfrac msqrt mroot mstyle merror mpadded mphantom mfenced menclose msub msup msubsup munder mover munderover mmultiscripts mtable mtr mtd semantics annotation'.split(
-    ' '
-  )
-);
-const DROP = new Set(
-  'script style iframe embed portal frame form input button select textarea meta base link foreignobject animate set'.split(
     ' '
   )
 );
@@ -246,7 +242,7 @@ export function sanitizeEpubChapter(
       }
       return;
     }
-    if (DROP.has(tag)) return;
+    if (isDroppedEpubElement(tag)) return;
     const svg = input.namespaceURI === SVG_NS || tag === 'svg';
     const math = input.namespaceURI === MATH_NS || tag === 'math';
     if (!(svg ? SVG_TAGS : math ? MATH_TAGS : HTML_TAGS).has(tag)) {

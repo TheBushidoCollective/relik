@@ -4,7 +4,7 @@ import type {
   WorkbookResult,
   WorkbookSheet,
 } from '@relic/format/xlsx';
-import { worksheetRowIndex } from '@relic/format/xlsx';
+import { worksheetCellIndex, worksheetRowIndex } from '@relic/format/xlsx';
 import { drawnColumnCount, markFits, mountDataTable } from './data-table.ts';
 import {
   registerStructuredHandle,
@@ -20,19 +20,7 @@ const EMPTY_COLUMNS: readonly number[] = [];
 
 export function sourceFor(sheet: WorkbookSheet): TableSource {
   function index(row: number, column: number): number {
-    const rowIndex = worksheetRowIndex(sheet, row);
-    if (rowIndex < 0) return -1;
-    let low = sheet.rowStart[rowIndex] ?? 0,
-      high = sheet.rowStart[rowIndex + 1] ?? low;
-    while (low < high) {
-      const mid = (low + high) >>> 1;
-      if (sheet.cells[mid * 3]! < column) low = mid + 1;
-      else high = mid;
-    }
-    return low < (sheet.rowStart[rowIndex + 1] ?? 0) &&
-      sheet.cells[low * 3] === column
-      ? low
-      : -1;
+    return worksheetCellIndex(sheet, row, column);
   }
   let numericKinds: { all: Uint8Array; body: Uint8Array } | undefined;
   let cachedNeedle = '';

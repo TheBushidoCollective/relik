@@ -116,6 +116,8 @@ jobs:
         run: env -u DISPLAY -u WAYLAND_DISPLAY RELIC_CHROME_PATH="$(command -v google-chrome)" bun packages/relic-mcp/test/spreadsheet-path.ts
       - name: EPUB viewer desktop and mobile path
         run: env -u DISPLAY -u WAYLAND_DISPLAY RELIC_CHROME_PATH="$(command -v google-chrome)" bun packages/relic-mcp/test/epub-viewer-path.ts
+      - name: Documents path
+        run: env -u DISPLAY -u WAYLAND_DISPLAY RELIC_CHROME_PATH="$(command -v google-chrome)" bun packages/relic-mcp/test/documents-path.ts
       - name: EPUB sanitizer browser regressions
         run: |
           test -x "$(command -v google-chrome)"
