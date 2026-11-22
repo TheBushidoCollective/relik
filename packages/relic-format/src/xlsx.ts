@@ -145,7 +145,13 @@ async function read(index: ZipIndex, path: string): Promise<string> {
     );
   return decode(result.bytes);
 }
-function targetPath(target: string): string {
+/**
+ * A relationship target resolved against the directory that holds its .rels
+ * part: `base` is that directory without a trailing slash, or '' for the
+ * package root. An absolute target starts at the package root. A target that is
+ * not a plain path (a URL, a query, a fragment, a backslash) is refused.
+ */
+export function packagePath(base: string, target: string): string {
   if (
     target.includes('\\') ||
     target.includes('?') ||
@@ -154,10 +160,12 @@ function targetPath(target: string): string {
   )
     throw new Error('corrupt');
   const pieces: string[] = [];
-  for (const part of (target.startsWith('/')
+  const joined = target.startsWith('/')
     ? target.slice(1)
-    : `xl/${target}`
-  ).split('/')) {
+    : base === ''
+      ? target
+      : `${base}/${target}`;
+  for (const part of joined.split('/')) {
     if (!part || part === '.') continue;
     if (part === '..') {
       if (!pieces.length) throw new Error('corrupt');
@@ -165,6 +173,9 @@ function targetPath(target: string): string {
     } else pieces.push(part);
   }
   return pieces.join('/');
+}
+function targetPath(target: string): string {
+  return packagePath('xl', target);
 }
 interface Relationship {
   path: string;

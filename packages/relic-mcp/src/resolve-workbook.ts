@@ -7,6 +7,12 @@
  * formula, and no external link or connection is opened: the parser skips
  * external relationships and reads only the parts the workbook names. Every
  * limit is the parser's own, so a workbook it refuses is not resolved either.
+ *
+ * The parse runs on the MCP's main thread, where the viewer runs it in a worker,
+ * so a large workbook holds the event loop while it parses. The limits are the
+ * viewer's, the parse is cached per decrypted version, and it cannot be
+ * interrupted. That is accepted for now; running it in a worker with a deadline
+ * is the follow-up.
  */
 
 import type { CellCommentAnchor } from '@relic/format';

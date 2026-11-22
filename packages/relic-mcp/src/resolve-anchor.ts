@@ -169,6 +169,11 @@ export type ResolvedAnchor =
       readonly line: number;
       readonly context_before: string;
       readonly context_after: string;
+      /** Set on a Word document or an EPUB, whose line counts its own text lines. */
+      readonly format?: 'docx' | 'epub' | undefined;
+      readonly context_matched?: boolean | undefined;
+      readonly occurrences?: number | undefined;
+      readonly unreadable_chapters?: number | undefined;
     }
   | {
       readonly kind: 'quote' | 'text';

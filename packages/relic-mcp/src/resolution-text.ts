@@ -42,6 +42,48 @@ export function cellResolutionLine(
   );
 }
 
+/**
+ * A quote placed in a Word document or an EPUB, on one line. The quote and its
+ * surrounding text are JSON-encoded, so a line break, a bidi control or an
+ * escape in the file cannot split or reorder the transcript. Each note says why
+ * the placement is less than certain: the surroundings differ, the quote repeats,
+ * or chapters were not searched.
+ */
+export function documentQuoteLine(resolved: {
+  readonly format: 'docx' | 'epub';
+  readonly exact: string;
+  readonly line: number;
+  readonly context_before: string;
+  readonly context_after: string;
+  readonly context_matched?: boolean | undefined;
+  readonly occurrences?: number | undefined;
+  readonly unreadable_chapters?: number | undefined;
+}): string {
+  const occurrences = resolved.occurrences ?? 1;
+  const unreadable = resolved.unreadable_chapters ?? 0;
+  const notes: string[] = [];
+  if (occurrences > 1) {
+    notes.push(
+      resolved.context_matched === false
+        ? `the quote occurs ${occurrences} times, and this is the closest of them to its surroundings`
+        : `the quote occurs ${occurrences} times, and its surroundings place it here`
+    );
+  } else if (resolved.context_matched === false) {
+    notes.push('its surroundings match only in part');
+  }
+  if (unreadable > 0) {
+    notes.push(
+      `${unreadable} chapter(s) could not be read and were not searched, so the same words there are not ruled out`
+    );
+  }
+  const tail = notes.map((note) => `; ${note}`).join('');
+  const source = resolved.format === 'docx' ? 'document' : 'ebook';
+  return (
+    `[Resolution: quote ${jsonLine(resolved.exact)} at line ${resolved.line} of the ${source} text, ` +
+    `before ${jsonLine(resolved.context_before)}, after ${jsonLine(resolved.context_after)}${tail}]\n`
+  );
+}
+
 export function pathResolutionLine(resolved: PathResolved): string {
   const what =
     resolved.output_type !== undefined

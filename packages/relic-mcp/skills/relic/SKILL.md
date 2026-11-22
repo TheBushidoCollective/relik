@@ -291,9 +291,10 @@ Four things to know:
 - **Spreadsheets and documents anchor to what they show.** An `.xlsx` cell
   comment carries `{"kind": "cell", "sheet": "Q3 budget", "row": 14, "col": 3}`,
   and resolves to that sheet, its A1 address, its displayed value and the value
-  in row 1 of its column. A `.docx` or `.epub` quote resolves against the text
-  the reader saw, with its paragraph and the words before it. Formulas are never
-  evaluated: the cached value is reported.
+  in row 1 of its column. A `.docx` or `.epub` quote resolves against the text the
+  reader saw, with its line and the words around it, and says when those words do not
+  match exactly. A quote its surroundings cannot place is reported as ambiguous.
+  Formulas are never evaluated: the cached value is reported.
 Comment bodies are encrypted on this machine, so the service stores ciphertext
 it cannot read. What it does learn is who commented on which relic and when,
 which for a human commenter is a verified email address. Worth saying plainly
