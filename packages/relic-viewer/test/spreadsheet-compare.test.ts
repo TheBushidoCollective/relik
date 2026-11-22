@@ -1,12 +1,4 @@
-import {
-  afterAll,
-  afterEach,
-  beforeAll,
-  beforeEach,
-  describe,
-  expect,
-  test,
-} from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import JSZip from 'jszip';
 import { parseXlsx } from '@relic/format/xlsx';
 import {
@@ -422,17 +414,6 @@ const saved = {
   Worker: globalThis.Worker,
 };
 
-beforeAll(() => {
-  Object.assign(globalThis, {
-    Element: StubElement,
-    MutationObserver: StubObserver,
-  });
-});
-
-afterAll(() => {
-  Object.assign(globalThis, saved);
-});
-
 beforeEach(() => {
   timers.length = 0;
   wakers.length = 0;
@@ -442,6 +423,8 @@ beforeEach(() => {
   answer = answerWithComparison;
   realMode = false;
   Object.assign(globalThis, {
+    Element: StubElement,
+    MutationObserver: StubObserver,
     document: stubDocument(),
     window: {
       setTimeout: (run: () => void, ms: number): number => {
@@ -459,11 +442,7 @@ beforeEach(() => {
 
 afterEach(() => {
   for (const worker of realWorkers.splice(0)) worker.terminate();
-  Object.assign(globalThis, {
-    document: saved.document,
-    window: saved.window,
-    Worker: saved.Worker,
-  });
+  Object.assign(globalThis, saved);
 });
 
 /** The shell's services for this suite: the real Changes list, a plain stage, and recorded single versions. */
