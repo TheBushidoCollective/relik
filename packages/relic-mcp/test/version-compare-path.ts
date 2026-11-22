@@ -66,7 +66,7 @@ export const TOTAL: Record<Format, string> = {
   epub: '5',
   xlsx: '9',
 };
-const HEADING: Record<Format, string> = {
+export const HEADING: Record<Format, string> = {
   docx: 'Document comparison',
   epub: 'Book comparison',
   xlsx: 'Spreadsheet comparison',
@@ -307,7 +307,8 @@ export async function publishPair(
   h: Harness,
   label: string,
   first: Upload,
-  second: Upload
+  second: Upload,
+  options: { readonly extra?: Json; readonly publishOnly?: Json } = {}
 ): Promise<RelicPair> {
   const firstDir = join(h.scratch, label, 'v1');
   const secondDir = join(h.scratch, label, 'v2');
@@ -318,6 +319,8 @@ export async function publishPair(
   const created = await callTool(h, 'relic_publish', {
     path: firstPath,
     cover: false,
+    ...options.publishOnly,
+    ...options.extra,
   });
   assert.equal(
     created['version'],
@@ -332,6 +335,7 @@ export async function publishPair(
     path: secondPath,
     cover: false,
     notify: false,
+    ...options.extra,
   });
   assert.equal(
     republished['version'],
@@ -645,7 +649,11 @@ export class Browser {
       });
   }
 
-  /** A wheel turn over the element's centre, so it scrolls under the pointer. */
+  /**
+   * A wheel turn over the element's centre, so it scrolls under the pointer.
+   * The pointer moves onto the element first, as a reader's does: Chromium
+   * sends a turn to an out-of-process frame only where the pointer has been.
+   */
   async wheel(
     element: string,
     label: string,
@@ -653,6 +661,13 @@ export class Browser {
     deltaY: number
   ): Promise<void> {
     const point = await this.center(element, label);
+    await this.send('Input.dispatchMouseEvent', {
+      type: 'mouseMoved',
+      x: point.x,
+      y: point.y,
+      button: 'none',
+      clickCount: 0,
+    });
     await this.send('Input.dispatchMouseEvent', {
       type: 'mouseWheel',
       x: point.x,
@@ -702,22 +717,22 @@ const NEXT_CHANGE = `document.querySelector('.compare-nav-next')`;
 const TASKBAR_LABEL = `(() => { const el = [...document.querySelectorAll('button')].find((button) => ['Compare versions', 'Earlier versions'].includes(button.textContent.trim())); return el ? el.textContent.trim() : ''; })()`;
 
 /** Opens the share URL as a visitor does, and returns the taskbar's comparison label. */
-async function openRelic(b: Browser, url: string): Promise<string> {
+export async function openRelic(b: Browser, url: string): Promise<string> {
   await b.navigate(url);
   return settle<string>(b, TASKBAR_LABEL, (label) => label !== '');
 }
 
-async function startComparison(b: Browser): Promise<void> {
+export async function startComparison(b: Browser): Promise<void> {
   await b.click(buttonNamed('Compare versions'), 'Compare versions');
 }
 
-async function text(b: Browser, selector: string): Promise<string> {
+export async function text(b: Browser, selector: string): Promise<string> {
   return b.evaluate<string>(
     `document.querySelector(${JSON.stringify(selector)})?.textContent?.trim() ?? ''`
   );
 }
 
-async function settledSummary(b: Browser): Promise<string> {
+export async function settledSummary(b: Browser): Promise<string> {
   return settle<string>(
     b,
     SUMMARY_TEXT,
@@ -778,7 +793,7 @@ async function frameBox(
 }
 
 /** The sidebar and the Changes tab show the same total as the report. */
-async function expectTotal(
+export async function expectTotal(
   b: Browser,
   total: string,
   label: string
@@ -946,9 +961,10 @@ async function expectNavigation(
       'none',
       `${label}: the lit change has no outline`
     );
+    // Computed widths include the page zoom, so this is the width on screen.
     assert.ok(
-      Number.parseFloat(current.outlineWidth) >= 3,
-      `${label}: the lit change's outline is ${current.outlineWidth}, under 3px`
+      Number.parseFloat(current.outlineWidth) >= 2.5,
+      `${label}: the lit change's outline is ${current.outlineWidth} on screen, under 2.5px`
     );
     const elsewhere = await b.inFrame<Lit[]>(other, LIT_CHANGES);
     assert.equal(
@@ -965,7 +981,10 @@ interface FrameScroll {
   readonly travel: number;
 }
 
-/** A wheel turn over the after frame moves the before frame within two seconds. */
+/**
+ * A wheel turn over the after frame moves the before frame within two seconds.
+ * The turn goes toward the room the frame has, so it always moves it.
+ */
 async function expectFrameSync(
   b: Browser,
   frames: { readonly before: FrameRef; readonly after: FrameRef },
@@ -977,21 +996,27 @@ async function expectFrameSync(
     before0.travel > 0 && after0.travel > 0,
     `${label}: a frame has nothing to scroll (${JSON.stringify({ before0, after0 })})`
   );
-  await b.wheel(frameElement(2), 'the after frame', 0, 300);
+  const deltaY = after0.top < after0.travel ? 300 : -300;
+  await b.wheel(frameElement(2), 'the after frame', 0, deltaY);
   let after = after0;
-  for (let attempt = 0; attempt < 100 && after.top <= after0.top; attempt++) {
+  for (let attempt = 0; attempt < 100 && after.top === after0.top; attempt++) {
     await Bun.sleep(20);
     after = await b.inFrame<FrameScroll>(frames.after, SCROLL);
   }
-  assert.ok(after.top > after0.top, `${label}: the after frame did not scroll`);
+  assert.notEqual(
+    after.top,
+    after0.top,
+    `${label}: the after frame did not scroll`
+  );
   const started = Date.now();
   let before = before0;
-  while (before.top <= before0.top && Date.now() - started < 2000) {
+  while (before.top === before0.top && Date.now() - started < 2000) {
     await Bun.sleep(50);
     before = await b.inFrame<FrameScroll>(frames.before, SCROLL);
   }
-  assert.ok(
-    before.top > before0.top,
+  assert.notEqual(
+    before.top,
+    before0.top,
     `${label}: scrolling the after frame did not move the before frame within 2 s`
   );
 }
@@ -1086,6 +1111,23 @@ async function expectStacked(
     `${label}: the Changes tab is not visible`
   );
   assert.equal(stack.tabCount, total, `${label}: the Changes tab count`);
+  // On a phone the sidebar is a drawer, closed on load. The Changes tab opens it.
+  await b.click(
+    `document.querySelector('.diff-tab')`,
+    `${label}: the Changes tab`
+  );
+  const drawer = await settle<{
+    readonly open: boolean;
+    readonly visible: boolean;
+  } | null>(
+    b,
+    `(() => { const sidebar = document.querySelector('.diff-changes-sidebar'); if (!sidebar) return null; const body = sidebar.querySelector('.diff-changes-body'); const rect = body ? body.getBoundingClientRect() : null; return { open: sidebar.classList.contains('is-open'), visible: Boolean(rect && rect.width > 0 && rect.height > 0) }; })()`,
+    (value) => value?.open === true && value.visible
+  );
+  assert.ok(
+    drawer?.open && drawer.visible,
+    `${label}: the Changes drawer did not open`
+  );
 }
 
 async function shot(b: Browser, name: string): Promise<void> {
@@ -1155,6 +1197,11 @@ async function proveDocument(
       `VERSION_COMPARE ${label} summary=${JSON.stringify(SUMMARY[format])} frame_requests=${urls.length} in_memory=${inMemory}`
     );
     if (viewport.width === DESKTOP.width) {
+      await layoutRoundTrip(b, label);
+      // Sync runs first, from the top of both frames. The navigation reveals a
+      // change near the end of the EPUB, and a sync after it would leave the
+      // after frame at its bottom with nowhere to scroll.
+      await expectFrameSync(b, frames, label);
       await expectNavigation(
         b,
         frames,
@@ -1162,8 +1209,6 @@ async function proveDocument(
         format === 'docx' ? DOCX_STEPS : EPUB_STEPS,
         label
       );
-      await layoutRoundTrip(b, label);
-      await expectFrameSync(b, frames, label);
     } else {
       await expectStacked(b, label, TOTAL[format]);
     }
@@ -1185,7 +1230,10 @@ const EXPECTED_TABS = [
   {
     name: 'Hidden',
     selected: 'false',
-    badges: [{ text: '1 change', tone: 'is-changes' }],
+    badges: [
+      { text: 'hidden', tone: '' },
+      { text: '1 change', tone: 'is-changes' },
+    ],
   },
   {
     name: 'Old data',
@@ -1422,7 +1470,9 @@ async function proveSpreadsheet(
   }
 }
 
-async function uploadsFor(format: Format): Promise<readonly [Upload, Upload]> {
+export async function uploadsFor(
+  format: Format
+): Promise<readonly [Upload, Upload]> {
   switch (format) {
     case 'docx':
       return [
@@ -1459,6 +1509,20 @@ async function negativeCoreOnly(h: Harness): Promise<void> {
       await settledSummary(b),
       NO_TEXT_CHANGES,
       'core-only: the result line'
+    );
+    // With no changes, navigation says so and its buttons are off.
+    const nav = await settle<{
+      readonly position: string;
+      readonly next: boolean;
+    }>(
+      b,
+      `({ position: document.querySelector('.compare-nav-position')?.textContent?.trim() ?? '', next: Boolean(document.querySelector('.compare-nav-next')?.disabled) })`,
+      (value) => value.position === 'No changes'
+    );
+    assert.deepEqual(
+      nav,
+      { position: 'No changes', next: true },
+      'core-only: the navigation'
     );
     const frames = await comparisonFrames(b);
     await expectMarks(b, frames.before, NONE, 'core-only');
@@ -1540,13 +1604,17 @@ async function negativeHostileAndBidi(h: Harness): Promise<void> {
       SUMMARY.epub,
       'hostile: the result line'
     );
+    // The word diff keeps unchanged spaces between the inserted words, so the
+    // markup reads as text in pieces. Each piece must be present as text, and
+    // no element or handler may come from it.
     const parent = await settle<{
       readonly pwned: string;
       readonly literal: boolean;
       readonly images: number;
+      readonly handlers: number;
     }>(
       b,
-      `(() => ({ pwned: typeof window.__relicPwned, literal: (document.querySelector('.diff-change-list')?.textContent ?? '').includes(${JSON.stringify(HOSTILE)}), images: document.querySelectorAll('.diff-changes-sidebar img').length }))()`,
+      `(() => { const list = document.querySelector('.diff-change-list'); const text = list ? list.textContent : ''; return { pwned: typeof window.__relicPwned, literal: text.includes('<img') && text.includes('src=x') && text.includes('onerror="window.__relicPwned=1">'), images: document.querySelectorAll('.diff-changes-sidebar img').length, handlers: document.querySelectorAll('.diff-changes-sidebar [onerror]').length }; })()`,
       (value) => value.literal
     );
     assert.equal(
@@ -1560,6 +1628,11 @@ async function negativeHostileAndBidi(h: Harness): Promise<void> {
       'hostile: an img was created in the sidebar'
     );
     assert.equal(
+      parent.handlers,
+      0,
+      'hostile: an onerror handler was created in the sidebar'
+    );
+    assert.equal(
       parent.pwned,
       'undefined',
       'hostile: the page ran the onerror handler'
@@ -1571,17 +1644,19 @@ async function negativeHostileAndBidi(h: Harness): Promise<void> {
         images: number;
         pwned: string;
       }>(frame, FRAME_STATE);
-      assert.equal(
-        state.literal,
-        true,
-        `hostile: ${frame.title} lacks the literal markup`
-      );
       assert.equal(state.images, 0, `hostile: ${frame.title} created an img`);
       assert.equal(
         state.pwned,
         'undefined',
         `hostile: ${frame.title} ran the handler`
       );
+      // Only version 2 carries the markup, so only its frame shows it.
+      if (frame === frames.after)
+        assert.equal(
+          state.literal,
+          true,
+          `hostile: ${frame.title} does not show the markup as text`
+        );
     }
     const urls = frameRequests(b, [frames.before, frames.after]);
     const inMemory = expectNoExternalFrameRequests(h, urls, 'hostile');

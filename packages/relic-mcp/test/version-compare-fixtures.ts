@@ -291,10 +291,21 @@ export interface EpubChapter {
 export const EPUB_TITLE = 'Crossings';
 export const EPUB_HOSTILE_TEXT = '<img src=x onerror="window.__relicPwned=1">';
 
+/**
+ * The unchanged chapter. The filler paragraphs keep it long enough for the
+ * EPUB frames to scroll, so the sync check has room to move. Both versions
+ * carry the same text, so the filler adds no change.
+ */
 const OPENING: EpubChapter = {
   file: 'ch1.xhtml',
   label: 'Opening',
-  paragraphs: ['The first chapter opens the story.'],
+  paragraphs: [
+    'The first chapter opens the story.',
+    ...Array.from(
+      { length: 40 },
+      (_, index) => `The opening continues, paragraph ${index + 2}.`
+    ),
+  ],
 };
 const CROSSING_V1: EpubChapter = {
   file: 'ch2.xhtml',
