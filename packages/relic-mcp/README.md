@@ -153,6 +153,13 @@ Structured files take anchors on the part they show. A `.csv` or `.tsv` takes a
 and `col_end` for a range). A `.json` takes a `path` anchor, an RFC 6901 pointer
 such as `/order/lines/1/sku`. An `.srt` or `.vtt` cue takes a `time` span. An
 `.ipynb` takes a `path` anchor to `/cells/N` or `/cells/N/outputs/M`.
+An `.xlsx` takes a `cell` anchor that names its `sheet`. It resolves to that
+sheet's name, the A1 address, the value shown in the cell and the value in row
+1 of its column. Formulas are never evaluated: the value the file caches is
+what is reported. A `.docx` or `.epub` takes a `quote` anchor. It resolves against
+the text the reader saw, with the line it sits on and the words around it. A quote
+that its surroundings cannot place is reported as ambiguous, and a chapter that could
+not be read is named in the result rather than skipped silently.
 `relic_read_comments` with `resolve_anchors` checks each one against the file as
 it was when the comment was written, and reports the text it names. A position
 the file does not have is reported as not found, not guessed at, and a malformed

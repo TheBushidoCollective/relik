@@ -37,6 +37,27 @@ export function worksheetRowIndex(sheet: WorkbookSheet, row: number): number {
   return sheet.rowNumbers[low] === row ? low : -1;
 }
 
+/** Index of the populated cell at a zero-based row and column, or -1. */
+export function worksheetCellIndex(
+  sheet: WorkbookSheet,
+  row: number,
+  column: number
+): number {
+  const rowIndex = worksheetRowIndex(sheet, row);
+  if (rowIndex < 0) return -1;
+  let low = sheet.rowStart[rowIndex] ?? 0,
+    high = sheet.rowStart[rowIndex + 1] ?? low;
+  while (low < high) {
+    const mid = (low + high) >>> 1;
+    if (sheet.cells[mid * 3]! < column) low = mid + 1;
+    else high = mid;
+  }
+  return low < (sheet.rowStart[rowIndex + 1] ?? 0) &&
+    sheet.cells[low * 3] === column
+    ? low
+    : -1;
+}
+
 export interface Workbook {
   readonly sheets: WorkbookSheet[];
   readonly date1904: boolean;
@@ -124,7 +145,13 @@ async function read(index: ZipIndex, path: string): Promise<string> {
     );
   return decode(result.bytes);
 }
-function targetPath(target: string): string {
+/**
+ * A relationship target resolved against the directory that holds its .rels
+ * part: `base` is that directory without a trailing slash, or '' for the
+ * package root. An absolute target starts at the package root. A target that is
+ * not a plain path (a URL, a query, a fragment, a backslash) is refused.
+ */
+export function packagePath(base: string, target: string): string {
   if (
     target.includes('\\') ||
     target.includes('?') ||
@@ -133,10 +160,12 @@ function targetPath(target: string): string {
   )
     throw new Error('corrupt');
   const pieces: string[] = [];
-  for (const part of (target.startsWith('/')
+  const joined = target.startsWith('/')
     ? target.slice(1)
-    : `xl/${target}`
-  ).split('/')) {
+    : base === ''
+      ? target
+      : `${base}/${target}`;
+  for (const part of joined.split('/')) {
     if (!part || part === '.') continue;
     if (part === '..') {
       if (!pieces.length) throw new Error('corrupt');
@@ -144,6 +173,9 @@ function targetPath(target: string): string {
     } else pieces.push(part);
   }
   return pieces.join('/');
+}
+function targetPath(target: string): string {
+  return packagePath('xl', target);
 }
 interface Relationship {
   path: string;
