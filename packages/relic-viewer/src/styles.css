@@ -2590,6 +2590,40 @@ canvas.relic-page {
   text-decoration: none;
 }
 
+/*
+ * A changed row with word segments reads as one sentence, as the mock draws
+ * it: removed words struck through, added words underlined, unchanged words
+ * plain. The clamp above is for rows that show the old and new text whole.
+ */
+.diff-change-words {
+  display: block;
+  overflow: visible;
+}
+
+.diff-change-words del,
+.diff-change-words ins {
+  display: inline;
+  overflow: visible;
+  -webkit-line-clamp: none;
+  line-clamp: none;
+}
+
+.diff-change-words ins {
+  border-bottom: 1px solid var(--patina);
+}
+
+.diff-change-words del + ins {
+  margin-left: 0.18em;
+}
+
+/* The row that says there are more changes than the list holds. */
+.diff-change-more {
+  padding: 0.55rem 0.75rem;
+  border-top: 1px solid var(--rule);
+  color: var(--ink-soft);
+  font-size: 0.8rem;
+}
+
 .diff-result {
   display: flex;
   flex-direction: column;
@@ -2618,10 +2652,13 @@ canvas.relic-page {
   flex: 1 1 auto;
   min-height: 0;
   gap: 1rem;
+  padding: 1rem 1.25rem;
+  overflow: auto;
 }
 
 .diff-single > .notice {
   margin: 0;
+  max-width: 52rem;
 }
 
 .diff-single-label {
@@ -2666,6 +2703,88 @@ canvas.relic-page {
 .diff-summary span {
   color: var(--ink-soft);
   text-align: right;
+}
+
+/* What the comparison compares, and what it leaves out. */
+.diff-scope {
+  margin: 0 0 0.75rem;
+  color: var(--ink-soft);
+  font-size: 0.8rem;
+}
+
+/*
+ * The chapters of a book comparison, above its list of changes. Each chapter
+ * is a row: its label, then how it changed.
+ */
+.diff-chapters {
+  margin: 0 0 0.75rem;
+  border: 1px solid var(--rule);
+  background: var(--surface);
+}
+
+.diff-chapters h2 {
+  margin: 0;
+  padding: 0.45rem 0.75rem;
+  border-bottom: 1px solid var(--rule);
+  color: var(--patina-ink);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.diff-chapters ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.diff-chapters li + li {
+  border-top: 1px solid var(--rule);
+}
+
+.diff-chapter-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.45rem 0.75rem;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.84rem;
+  text-align: left;
+}
+
+button.diff-chapter-row {
+  cursor: pointer;
+}
+
+button.diff-chapter-row:hover {
+  background: color-mix(in srgb, var(--patina) 10%, transparent);
+}
+
+button.diff-chapter-row:focus-visible {
+  outline: 2px solid var(--patina);
+  outline-offset: -2px;
+}
+
+.diff-chapter-state {
+  flex: none;
+  color: var(--ink-soft);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+.diff-chapter-added .diff-chapter-state {
+  color: var(--patina-ink);
+}
+
+.diff-chapter-removed .diff-chapter-state {
+  color: var(--oxide);
 }
 
 .diff-empty {

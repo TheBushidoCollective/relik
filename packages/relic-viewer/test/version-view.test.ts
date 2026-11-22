@@ -17,9 +17,10 @@ import { describe, expect, test } from 'bun:test';
 import { contentFromBytes } from '../src/content.ts';
 import {
   comparisonAvailability,
+  MAX_DIFF_BYTES,
   versionHistoryAvailability,
 } from '../src/diff.ts';
-import { uncomparableReason } from '../src/main.ts';
+import { oversizeSingle, uncomparableReason } from '../src/main.ts';
 import type { ReadyView } from '../src/viewer.ts';
 
 function view(
@@ -121,5 +122,48 @@ describe('the reason a version stands alone', () => {
         'on its own'
       );
     }
+  });
+});
+
+describe('which version stands alone when one is over the limit', () => {
+  const oversize = new Uint8Array(MAX_DIFF_BYTES + 1);
+
+  test('an oversize older version gives way to the newer one, which is named', () => {
+    const picked = oversizeSingle(
+      view('markdown', 3, 3, 'notes.md'),
+      view('markdown', 2, 3, 'notes.md', oversize)
+    );
+    expect(picked?.shown.version).toBe(3);
+    expect(picked?.reason).toContain(
+      'Version 2 is larger than the 16 MiB comparison limit'
+    );
+    expect(picked?.reason).toContain('Version 3 is open here on its own.');
+  });
+
+  test('an oversize newer version is not shown, and the older one is', () => {
+    const picked = oversizeSingle(
+      view('markdown', 3, 3, 'notes.md', oversize),
+      view('markdown', 2, 3, 'notes.md')
+    );
+    expect(picked?.shown.version).toBe(2);
+    expect(picked?.reason).toContain(
+      'Version 3 is larger than the 16 MiB comparison limit'
+    );
+    expect(picked?.reason).toContain('Version 2 is open here on its own.');
+  });
+
+  test('when both are over, the older one is shown and the reason names both', () => {
+    const picked = oversizeSingle(
+      view('markdown', 3, 3, 'notes.md', oversize),
+      view('markdown', 2, 3, 'notes.md', oversize)
+    );
+    expect(picked?.shown.version).toBe(2);
+    expect(picked?.reason).toContain('Versions 2 and 3 are larger');
+  });
+
+  test('when neither is over, there is no single version to show', () => {
+    expect(
+      oversizeSingle(view('markdown', 3, 3), view('markdown', 2, 3))
+    ).toBeUndefined();
   });
 });
