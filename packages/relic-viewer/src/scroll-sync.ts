@@ -64,6 +64,23 @@ export function applyScrollFraction(el: Scroller, fraction: number): void {
 const SETTLED_PIXELS = 1;
 
 /**
+ * The default scheduler: the next animation frame, or a timer where there is
+ * no window. Every syncer here runs its writes through it.
+ */
+function nextFrame(run: () => void): void {
+  if (
+    typeof window !== 'undefined' &&
+    typeof window.requestAnimationFrame === 'function'
+  ) {
+    window.requestAnimationFrame(run);
+  } else if (typeof requestAnimationFrame === 'function') {
+    requestAnimationFrame(run);
+  } else {
+    setTimeout(run, 0);
+  }
+}
+
+/**
  * Bind scrollers so that scrolling any one moves the rest to the same relative
  * position. Returns a teardown that unbinds every listener.
  *
@@ -75,18 +92,7 @@ const SETTLED_PIXELS = 1;
  */
 export function syncScrollers<T extends Scroller>(
   panes: readonly T[],
-  schedule: (run: () => void) => void = (run) => {
-    if (
-      typeof window !== 'undefined' &&
-      typeof window.requestAnimationFrame === 'function'
-    ) {
-      window.requestAnimationFrame(run);
-    } else if (typeof requestAnimationFrame === 'function') {
-      requestAnimationFrame(run);
-    } else {
-      setTimeout(run, 0);
-    }
-  },
+  schedule: (run: () => void) => void = nextFrame,
   landmarks?: LandmarkSync<T>
 ): () => void {
   if (panes.length < 2) return () => {};
@@ -204,18 +210,7 @@ function positionsMatch(
  */
 export function syncFrameScrollers(
   panes: readonly FrameScroller[],
-  schedule: (run: () => void) => void = (run) => {
-    if (
-      typeof window !== 'undefined' &&
-      typeof window.requestAnimationFrame === 'function'
-    ) {
-      window.requestAnimationFrame(run);
-    } else if (typeof requestAnimationFrame === 'function') {
-      requestAnimationFrame(run);
-    } else {
-      setTimeout(run, 0);
-    }
-  }
+  schedule: (run: () => void) => void = nextFrame
 ): () => void {
   if (panes.length < 2) return () => {};
 
@@ -283,6 +278,95 @@ export function syncFrameScrollers(
   return () => {
     for (const { pane, listener } of bound) {
       pane.removeEventListener('relic:frame-scroll', listener);
+    }
+  };
+}
+
+/** A scroll position, as a mirror records what it wrote. */
+interface ScrollOffset {
+  readonly top: number;
+  readonly left: number;
+}
+
+/**
+ * Keeps identical scrollers at the same `scrollTop` and `scrollLeft`.
+ *
+ * Two grids drawn from one width plan have the same geometry, so the exact
+ * position is the right correspondence. `syncScrollers` maps proportionally,
+ * because its two sides are different documents.
+ *
+ * The feedback guards are those of `syncScrollers`. The first pane to report a
+ * scroll drives the frame, and the other panes' events are ignored until that
+ * frame has written. A write is remembered as the position the pane landed at,
+ * so the scroll event the write causes is not taken for a reader's gesture. The
+ * landed position is read back, so a pane the browser clamps still recognises
+ * its own echo. The teardown unbinds every listener and drops a write still
+ * pending.
+ */
+export function mirrorScrollers(
+  panes: readonly HTMLElement[],
+  schedule: (run: () => void) => void = nextFrame
+): () => void {
+  if (panes.length < 2) return () => {};
+
+  let driver: HTMLElement | undefined;
+  let queued = false;
+  let disposed = false;
+  const echoes = new Map<HTMLElement, ScrollOffset>();
+
+  const follow = (): void => {
+    queued = false;
+    const leader = driver;
+    driver = undefined;
+    if (leader === undefined || disposed) return;
+    const top = leader.scrollTop;
+    const left = leader.scrollLeft;
+    for (const pane of panes) {
+      if (pane === leader) continue;
+      const fromTop = pane.scrollTop;
+      const fromLeft = pane.scrollLeft;
+      if (fromTop === top && fromLeft === left) {
+        echoes.delete(pane);
+        continue;
+      }
+      pane.scrollTop = top;
+      pane.scrollLeft = left;
+      const landedTop = pane.scrollTop;
+      const landedLeft = pane.scrollLeft;
+      if (landedTop !== fromTop || landedLeft !== fromLeft) {
+        echoes.set(pane, { top: landedTop, left: landedLeft });
+      } else {
+        echoes.delete(pane);
+      }
+    }
+  };
+
+  const bound = panes.map((pane) => {
+    const listener = (): void => {
+      const echo = echoes.get(pane);
+      if (echo !== undefined) {
+        echoes.delete(pane);
+        if (pane.scrollTop === echo.top && pane.scrollLeft === echo.left) {
+          return;
+        }
+      }
+      // While a frame is pending its driver owns the wheel. Other panes'
+      // events in that window are the echoes of the frame's own writes.
+      if (driver !== undefined && driver !== pane) return;
+      driver = pane;
+      if (queued) return;
+      queued = true;
+      schedule(follow);
+    };
+    pane.addEventListener('scroll', listener);
+    return { pane, listener };
+  });
+
+  return () => {
+    disposed = true;
+    echoes.clear();
+    for (const { pane, listener } of bound) {
+      pane.removeEventListener('scroll', listener);
     }
   };
 }

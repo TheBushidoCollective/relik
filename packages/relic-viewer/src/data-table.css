@@ -491,3 +491,117 @@
   font-weight: 700;
   border-bottom: 2px solid currentColor;
 }
+
+/* ---- Compare grids (plan B5) ----------------------------------------------
+   Two read-only grids of one geometry sit side by side. Each state has a shape
+   as well as a tint, and its visually hidden text names it, so colour is never
+   the only cue. */
+
+.dt-compare .dt-hcell {
+  cursor: default;
+}
+
+.dt-compare .dt-grid:focus-visible {
+  outline: 2px solid var(--patina-ink, #1f4f43);
+  outline-offset: -2px;
+}
+
+/* Added: a solid stripe down the leading edge. */
+.dt-cell.dt-diff-added {
+  background: var(--diff-added, #dfeeea);
+  box-shadow: inset 4px 0 0 var(--patina, #1f6b64);
+}
+
+/* Removed: the text is struck through on a removed tint. */
+.dt-cell.dt-diff-removed {
+  background: var(--diff-removed, #f3e5df);
+}
+
+.dt-cell.dt-diff-removed .dt-text {
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+
+/* Changed: a dotted frame inside the cell. */
+.dt-cell.dt-diff-changed {
+  background: color-mix(in srgb, var(--oxide, #8c4a2f) 10%, var(--surface, #fff));
+}
+
+.dt-cell.dt-diff-changed::before {
+  content: '';
+  position: absolute;
+  inset: 2px;
+  border: 2px dotted var(--oxide, #8c4a2f);
+  pointer-events: none;
+}
+
+/* Formula: the shown value is equal and the formula differs. */
+.dt-cell.dt-diff-formula {
+  background: color-mix(in srgb, var(--oxide, #8c4a2f) 6%, var(--surface, #fff));
+}
+
+.dt-cell.dt-diff-formula::after {
+  content: 'fx';
+  position: absolute;
+  top: 0;
+  right: 0;
+  padding: 0 0.2rem;
+  font: 600 0.6rem/1.3 var(--mono, ui-monospace, monospace);
+  color: var(--surface, #fff);
+  background: var(--oxide, #8c4a2f);
+  pointer-events: none;
+}
+
+/* What a screen reader hears for a state: " (added)" and so on. */
+.dt-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* The sheet strip reuses .spreadsheet-tabs. A badge follows the sheet name in
+   muted ink. */
+.spreadsheet-tabs button:focus-visible {
+  outline: 2px solid var(--patina-ink, #1f4f43);
+  outline-offset: -2px;
+}
+
+.spreadsheet-tabs .dt-sheet-meta {
+  margin-inline-start: 0.4rem;
+  color: var(--ink-soft, #555);
+  font-size: 0.8em;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+/* A sheet with nothing to draw on one side, or too large to grid. */
+.dt-placeholder {
+  margin: 0;
+  padding: 1rem;
+  border: 1px dashed var(--rule-strong, #888);
+  background: var(--surface, #fff);
+  color: var(--ink-soft, #555);
+}
+
+/* On a phone each pane keeps its cellbar in flow, so two selections never
+   stack two bottom sheets on the screen. */
+@media (max-width: 480px) {
+  .dt-compare .dt-cellbar:has(> .dt-addr) {
+    position: static;
+    max-height: none;
+    overflow: visible;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .dt-compare:has(> .dt-cellbar > .dt-addr) {
+    padding-bottom: 0;
+  }
+}
