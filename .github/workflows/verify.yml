@@ -118,6 +118,16 @@ jobs:
         run: env -u DISPLAY -u WAYLAND_DISPLAY RELIC_CHROME_PATH="$(command -v google-chrome)" bun packages/relic-mcp/test/epub-viewer-path.ts
       - name: Documents path
         run: env -u DISPLAY -u WAYLAND_DISPLAY RELIC_CHROME_PATH="$(command -v google-chrome)" bun packages/relic-mcp/test/documents-path.ts
+      - name: Version comparison path
+        run: env -u DISPLAY -u WAYLAND_DISPLAY RELIC_COMPARE_PATH_SHOTS=version-compare-path-shots RELIC_CHROME_PATH="$(command -v google-chrome)" bun packages/relic-mcp/test/version-compare-path.ts
+      - name: Upload version comparison shots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: version-compare-path-shots
+          path: version-compare-path-shots/
+          if-no-files-found: warn
+          retention-days: 7
       - name: EPUB sanitizer browser regressions
         run: |
           test -x "$(command -v google-chrome)"
