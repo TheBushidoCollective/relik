@@ -8,6 +8,7 @@ import {
   XLSX_LISTED_TEXT_CHARS,
 } from '@relic/format/xlsx-diff';
 import { MAX_DIFF_BYTES } from '../src/diff.ts';
+import { answer } from '../src/spreadsheet-parse-worker.ts';
 
 const SPREADSHEET = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
 const RELATIONSHIPS =
@@ -167,5 +168,46 @@ describe('spreadsheet compare worker', () => {
     expect(
       await ask({ type: 'compare', before, after }, [before, after])
     ).toEqual({ ok: false, side: 'before', reason: 'corrupt' });
+  });
+});
+
+describe('spreadsheet compare worker: a reply that cannot be posted', () => {
+  test('answers corrupt, with no side, when the comparison cannot be posted', async () => {
+    const before = await workbook([['x']]);
+    const after = await workbook([['y']]);
+    const posted: unknown[] = [];
+    await answer({ type: 'compare', before, after }, (message) => {
+      posted.push(message);
+      if (posted.length === 1)
+        throw new DOMException('not cloneable', 'DataCloneError');
+    });
+    expect(posted).toHaveLength(2);
+    expect(posted[1]).toEqual({ ok: false, reason: 'corrupt' });
+  });
+
+  test('answers corrupt when a parsed workbook cannot be posted', async () => {
+    const bytes = await workbook([['x']]);
+    const posted: unknown[] = [];
+    await answer({ type: 'parse', bytes }, (message) => {
+      posted.push(message);
+      if (posted.length === 1)
+        throw new DOMException('not cloneable', 'DataCloneError');
+    });
+    expect(posted).toHaveLength(2);
+    expect(posted[1]).toEqual({ ok: false, reason: 'corrupt' });
+  });
+
+  test('answers a parse request that is not a workbook with the parser reason', async () => {
+    const posted: unknown[] = [];
+    await answer(
+      {
+        type: 'parse',
+        bytes: new TextEncoder().encode('not a workbook').buffer,
+      },
+      (message) => {
+        posted.push(message);
+      }
+    );
+    expect(posted).toEqual([{ ok: false, reason: 'corrupt' }]);
   });
 });

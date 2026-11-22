@@ -40,6 +40,10 @@ export interface CellChange {
 }
 
 export interface SheetComparison {
+  /**
+   * `not-compared` marks a paired sheet whose cells are not compared. A sheet
+   * in one version only keeps `added` or `removed`, and `notCompared` says why.
+   */
   readonly status:
     | 'unchanged'
     | 'changed'
@@ -57,7 +61,10 @@ export interface SheetComparison {
     readonly before: WorkbookSheet['state'];
     readonly after: WorkbookSheet['state'];
   };
-  /** Why cells are not compared: a chart, or more rows than the limit. */
+  /**
+   * Why cells are not compared: a chart, or more rows than the limit. A lone
+   * sheet keeps its added or removed status and carries this too.
+   */
   readonly notCompared?: 'chartsheet' | 'too-large';
   readonly added: number;
   readonly removed: number;
@@ -98,8 +105,20 @@ interface Pairing {
   readonly ofBefore: Int32Array;
   /** For each after sheet, the before sheet it pairs with, or -1. */
   readonly ofAfter: Int32Array;
-  /** Walks found while pairing by `sheetId`, keyed by after index. */
-  readonly walks: Map<number, CellWalk>;
+}
+
+/** What a trial walk needs: the filled cells on each side, and the unchanged cells that pass. */
+interface Trial {
+  readonly beforeFilled: number;
+  readonly afterFilled: number;
+  /** Unchanged cells that pair the sheets: half the larger sheet's filled cells, rounded up. */
+  readonly needed: number;
+}
+
+/** Options for one comparison. */
+export interface CompareOptions {
+  /** Called once per walk of cells, so a test can count the work a comparison does. */
+  readonly onWalk?: () => void;
 }
 
 /** Why cells are not compared for these sheets. A chart outranks an oversize sheet. */
@@ -153,12 +172,24 @@ function listedText(text: string): string {
  * Walks two readable sheets row by row, then column by column, and records
  * each changed cell. Rows and columns are sorted by the parser, so this is one
  * merge with no allocation per cell.
+ *
+ * A trial walk only counts unchanged cells, to choose a `sheetId` pair. It
+ * records nothing and stops once the unchanged cells cannot reach `needed`.
+ * Each filled cell pairs with at most one cell of the other side, so the count
+ * can grow by no more than the smaller side's unvisited filled cells.
  */
-function walkCells(before: WorkbookSheet, after: WorkbookSheet): CellWalk {
+function walkCells(
+  before: WorkbookSheet,
+  after: WorkbookSheet,
+  trial?: Trial
+): CellWalk {
   const counts = { same: 0, added: 0, removed: 0, changed: 0, formula: 0 };
-  let positions = new Uint32Array(3 * 64);
+  let positions = new Uint32Array(trial === undefined ? 3 * 64 : 0);
   let triples = 0;
   const listed: CellChange[] = [];
+  // Filled cells not yet visited on each side. Only a trial reads them.
+  let unvisitedBefore = trial?.beforeFilled ?? 0;
+  let unvisitedAfter = trial?.afterFilled ?? 0;
   const record = (
     row: number,
     col: number,
@@ -166,6 +197,7 @@ function walkCells(before: WorkbookSheet, after: WorkbookSheet): CellWalk {
     beforeCell: number,
     afterCell: number
   ): void => {
+    if (trial !== undefined) return;
     counts[kind]++;
     if (col < TABLE_DRAWN_COLUMN_LIMIT) {
       if (triples * 3 === positions.length) {
@@ -195,41 +227,57 @@ function walkCells(before: WorkbookSheet, after: WorkbookSheet): CellWalk {
       });
     }
   };
+  const hopeless = (): boolean =>
+    trial !== undefined &&
+    counts.same + Math.min(unvisitedBefore, unvisitedAfter) < trial.needed;
   const beforeRows = before.rowNumbers.length;
   const afterRows = after.rowNumbers.length;
   let i = 0;
   let j = 0;
-  while (i < beforeRows || j < afterRows) {
+  while ((i < beforeRows || j < afterRows) && !hopeless()) {
     const rowB =
       i < beforeRows ? before.rowNumbers[i]! : Number.POSITIVE_INFINITY;
     const rowA =
       j < afterRows ? after.rowNumbers[j]! : Number.POSITIVE_INFINITY;
     if (rowB < rowA) {
       for (let k = before.rowStart[i]!; k < before.rowStart[i + 1]!; k++)
-        if (filled(before, k))
+        if (filled(before, k)) {
+          unvisitedBefore--;
           record(rowB, before.cells[k * 3]!, 'removed', k, -1);
+        }
       i++;
     } else if (rowA < rowB) {
       for (let k = after.rowStart[j]!; k < after.rowStart[j + 1]!; k++)
-        if (filled(after, k)) record(rowA, after.cells[k * 3]!, 'added', -1, k);
+        if (filled(after, k)) {
+          unvisitedAfter--;
+          record(rowA, after.cells[k * 3]!, 'added', -1, k);
+        }
       j++;
     } else {
       let p = before.rowStart[i]!;
       const pEnd = before.rowStart[i + 1]!;
       let q = after.rowStart[j]!;
       const qEnd = after.rowStart[j + 1]!;
-      while (p < pEnd || q < qEnd) {
+      while ((p < pEnd || q < qEnd) && !hopeless()) {
         const colB = p < pEnd ? before.cells[p * 3]! : Number.POSITIVE_INFINITY;
         const colA = q < qEnd ? after.cells[q * 3]! : Number.POSITIVE_INFINITY;
         if (colB < colA) {
-          if (filled(before, p)) record(rowB, colB, 'removed', p, -1);
+          if (filled(before, p)) {
+            unvisitedBefore--;
+            record(rowB, colB, 'removed', p, -1);
+          }
           p++;
         } else if (colA < colB) {
-          if (filled(after, q)) record(rowB, colA, 'added', -1, q);
+          if (filled(after, q)) {
+            unvisitedAfter--;
+            record(rowB, colA, 'added', -1, q);
+          }
           q++;
         } else {
           const wasFilled = filled(before, p);
           const nowFilled = filled(after, q);
+          if (wasFilled) unvisitedBefore--;
+          if (nowFilled) unvisitedAfter--;
           if (wasFilled && nowFilled) {
             const was = before.details[before.cells[p * 3 + 2]! - 1]!;
             const now = after.details[after.cells[q * 3 + 2]! - 1]!;
@@ -269,14 +317,18 @@ function walkCells(before: WorkbookSheet, after: WorkbookSheet): CellWalk {
  * Pairs sheets in this order: the same name; the same name ignoring case (a
  * rename); the same `sheetId` where at least half of the larger sheet's filled
  * cells are unchanged (a rename). Anything left is added or removed.
+ *
+ * A `sheetId` that more than one sheet carries in either version identifies no
+ * sheet, so it pairs nothing. Each sheet then has at most one candidate, and
+ * each candidate costs one trial walk, so the work stays linear in the cells.
  */
 function pairSheets(
   before: readonly WorkbookSheet[],
-  after: readonly WorkbookSheet[]
+  after: readonly WorkbookSheet[],
+  onWalk: (() => void) | undefined
 ): Pairing {
   const ofBefore = new Int32Array(before.length).fill(-1);
   const ofAfter = new Int32Array(after.length).fill(-1);
-  const walks = new Map<number, CellWalk>();
   const link = (b: number, a: number): void => {
     ofBefore[b] = a;
     ofAfter[a] = b;
@@ -309,53 +361,71 @@ function pairSheets(
     }
     return count;
   };
-  for (let b = 0; b < before.length; b++) {
-    const sheet = before[b]!;
+  const sharesHalf = (
+    previous: WorkbookSheet,
+    current: WorkbookSheet
+  ): boolean => {
+    const beforeFilled = filledIn(previous);
+    const afterFilled = filledIn(current);
+    const needed = Math.ceil(Math.max(beforeFilled, afterFilled) / 2);
+    if (Math.min(beforeFilled, afterFilled) < needed) return false;
+    onWalk?.();
+    const walk = walkCells(previous, current, {
+      beforeFilled,
+      afterFilled,
+      needed,
+    });
+    return walk.same >= needed;
+  };
+
+  const idCounts = (sheets: readonly WorkbookSheet[]): Map<number, number> => {
+    const counts = new Map<number, number>();
+    for (const sheet of sheets)
+      if (sheet.sheetId !== undefined)
+        counts.set(sheet.sheetId, (counts.get(sheet.sheetId) ?? 0) + 1);
+    return counts;
+  };
+  const beforeIds = idCounts(before);
+  const afterIds = idCounts(after);
+  /** The sheet's `sheetId`, when the sheet can pair by it: a worksheet, unique in both versions. */
+  const pairingId = (sheet: WorkbookSheet): number | undefined => {
+    const id = sheet.sheetId;
     if (
-      ofBefore[b] !== -1 ||
+      id === undefined ||
       sheet.kind !== 'worksheet' ||
       sheet.refused !== undefined ||
-      sheet.sheetId === undefined
+      beforeIds.get(id) !== 1 ||
+      afterIds.get(id) !== 1
     )
-      continue;
-    const sheetFilled = filledIn(sheet);
-    let best: { readonly a: number; readonly walk: CellWalk } | undefined;
-    for (let a = 0; a < after.length; a++) {
-      const candidate = after[a]!;
-      if (
-        ofAfter[a] !== -1 ||
-        candidate.kind !== 'worksheet' ||
-        candidate.refused !== undefined ||
-        candidate.sheetId !== sheet.sheetId
-      )
-        continue;
-      const candidateFilled = filledIn(candidate);
-      const larger = Math.max(sheetFilled, candidateFilled);
-      if (2 * Math.min(sheetFilled, candidateFilled) < larger) continue;
-      const walk = walkCells(sheet, candidate);
-      if (2 * walk.same < larger) continue;
-      if (best === undefined || walk.same > best.walk.same) best = { a, walk };
-    }
-    if (best !== undefined) {
-      link(b, best.a);
-      walks.set(best.a, best.walk);
-    }
+      return undefined;
+    return id;
+  };
+  const afterById = new Map<number, number>();
+  for (let a = 0; a < after.length; a++) {
+    const id = pairingId(after[a]!);
+    if (id !== undefined && ofAfter[a] === -1) afterById.set(id, a);
   }
-  return { ofBefore, ofAfter, walks };
+  for (let b = 0; b < before.length; b++) {
+    const id = pairingId(before[b]!);
+    if (id === undefined || ofBefore[b] !== -1) continue;
+    const a = afterById.get(id);
+    if (a !== undefined && sharesHalf(before[b]!, after[a]!)) link(b, a);
+  }
+  return { ofBefore, ofAfter };
 }
 
-/** A sheet that exists in one version only. */
+/**
+ * A sheet that exists in one version only. It keeps its added or removed
+ * status even when its cells are not compared, and `notCompared` says why.
+ */
 function lone(
   sheet: WorkbookSheet,
   side: 'before' | 'after',
   index: number
 ): SheetComparison {
   const notCompared = notComparedFor([sheet]);
-  let status: SheetComparison['status'] =
-    side === 'after' ? 'added' : 'removed';
-  if (notCompared !== undefined) status = 'not-compared';
   return {
-    status,
+    status: side === 'after' ? 'added' : 'removed',
     ...(side === 'after' ? { after: index } : { before: index }),
     ...(notCompared === undefined ? {} : { notCompared }),
     added: 0,
@@ -369,13 +439,19 @@ function lone(
 
 /**
  * Compares two parsed workbooks. Sheets are listed in the after version's
- * order, followed by the sheets only the before version has.
+ * order, followed by the sheets only the before version has. `options.onWalk`
+ * is called once per walk of cells.
  */
 export function compareWorkbooks(
   before: Workbook,
-  after: Workbook
+  after: Workbook,
+  options: CompareOptions = {}
 ): WorkbookComparison {
-  const { ofBefore, ofAfter, walks } = pairSheets(before.sheets, after.sheets);
+  const { ofBefore, ofAfter } = pairSheets(
+    before.sheets,
+    after.sheets,
+    options.onWalk
+  );
   const sheets: SheetComparison[] = [];
   const cells = { added: 0, removed: 0, changed: 0 };
   const sheetCounts = { added: 0, removed: 0, renamed: 0, hidden: 0, shown: 0 };
@@ -389,10 +465,11 @@ export function compareWorkbooks(
     }
     const previous = before.sheets[b]!;
     const notCompared = notComparedFor([previous, current]);
-    const walk =
-      notCompared === undefined
-        ? (walks.get(a) ?? walkCells(previous, current))
-        : undefined;
+    let walk: CellWalk | undefined;
+    if (notCompared === undefined) {
+      options.onWalk?.();
+      walk = walkCells(previous, current);
+    }
     const renamed = previous.name !== current.name;
     const wasVisible = previous.state === 'visible';
     const isVisible = current.state === 'visible';

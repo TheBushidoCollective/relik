@@ -43,7 +43,7 @@ A reader opens `relik.link/<id>` for a DOCX, EPUB or XLSX relic. The link may be
 |---|---|---|---|---|
 | **DOCX** | Leaf text block of the rendered DOM (§3.4). Search is limited to `section.docx` children other than `header` and `footer`. | Myers diff (`diffArrays`, `maxEditLength`) over interned `kind + normalised text` keys. A removed run immediately followed by an added run pairs positionally as "changed". Word-level diff only on listed pairs. | Outlines on block elements in each frame, change rows with `<del>`/`<ins>` word segments, change navigation, landmark scroll sync. | Page headers and footers; formatting and styles; layout and pagination; image pixels (images count by presence and position only); comments (not rendered). Tracked changes are compared as rendered, with insertions kept and deletions omitted (`renderChanges:false`; docx-preview `renderInserted`/`renderDeleted`, dist lines 3637-3646). List numbers are CSS counters, not text. |
 | **EPUB** | The same blocks, but only inside `article[data-epub-chapter]`. `part` is the render-order chapter index. | As DOCX, except removed and added blocks pair only when their chapter paths match. A chapter replaced by another reads as removed plus added. | As DOCX, plus a Chapters preface and a title-change line. | Reader chrome (it lives in a shadow host), CSS, image pixels, and metadata other than the title. A moved chapter reads as removed plus added. |
-| **XLSX** | One cell at an A1 coordinate, per paired sheet. A cell is filled when its display text is non-empty or it has a formula. Its value is the display text (the `texts` pool) plus the formula and shared-from text. | Sheets pair in this order: exact name; name ignoring case (a rename); equal `sheetId` where at least 50% of the larger sheet's filled cells are unchanged (a rename); otherwise added or removed. Cells merge-walk row by row, then column by column. | Two grids with one shared width plan and padded dimensions. Cell states are added, removed, changed, and formula (display equal, formula different). Sheet-level states are added, removed, renamed, hidden and shown. | Number-format codes except through the shown text; charts and chartsheets; images; merged cells; defined names; comments. **There is no row or column alignment**: a row inserted early shows every later cell as changed. Sheets over 600,000 rows are not compared. Cells past the 256 drawn columns are listed but cannot be jumped to. |
+| **XLSX** | One cell at an A1 coordinate, per paired sheet. A cell is filled when its display text is non-empty or it has a formula. Its value is the display text (the `texts` pool) plus the formula and shared-from text. | Sheets pair in this order: exact name; name ignoring case (a rename); equal `sheetId` that only one sheet carries in each version, where at least 50% of the larger sheet's filled cells are unchanged (a rename); otherwise added or removed. Cells merge-walk row by row, then column by column. | Two grids with one shared width plan and padded dimensions. Cell states are added, removed, changed, and formula (display equal, formula different). Sheet-level states are added, removed, renamed, hidden and shown. | Number-format codes except through the shown text; charts and chartsheets; images; merged cells; defined names; comments. **There is no row or column alignment**: a row inserted early shows every later cell as changed. Sheets over 600,000 rows are not compared. Cells past the 256 drawn columns are listed but cannot be jumped to. Shared formulas are compared as stored, so a save that regroups them can count cells as formula changed (section 7). |
 
 ### 3.2 Ceilings and fallbacks
 
@@ -301,10 +301,11 @@ export function renderSpreadsheetComparison(current: ReadyView, historical: Read
 | Too large | "Version {n} is too large to compare. Relik compares spreadsheets of up to 2,000,000 cells. Version {l} is open here on its own." |
 | Unreadable | "Version {n} could not be read as a spreadsheet, so it cannot be compared. Version {l} is open here on its own." |
 | Worker timeout | "This comparison took too long to prepare. Version {l} is open here on its own." |
-| Sheet badges | "{n} changes", "added", "removed", "renamed from {old}", "hidden", "shown", "not compared" |
+| Sheet badges | "{n} changes", "added", "removed", "renamed from {old}", "hidden", "shown", "not compared". "hidden" shows the sheet's current visibility, so a sheet hidden in both versions carries it; "shown" marks only a change. A sheet present in one version only keeps "added" or "removed" beside "not compared" when its cells are not compared. |
 | Sheet placeholders | "This sheet is not in version {l}." / "This sheet is not in version {r}." / "This sheet contains a chart, which is not compared." / "This sheet has more than 600,000 rows and cannot be compared." |
 | Cell rows | what = "C14" or "C14 formula"; detail = before (`del`) and after (`ins`); past 256 columns: "{ref} is past the 256 columns drawn here." |
-| Cell more row | "{n} more changed cells on this sheet. Use Next change to reach them." |
+| Cell more row | "{n} more changed cells on this sheet. Use Next change to reach them." Changes past the 256 drawn columns that the list does not carry add "{m} changed cells are past the 256 columns drawn here." ("1 changed cell is past the 256 columns drawn here." for one.) |
+| Nav with no reachable change | "{n} changes past the 256 columns drawn here" in place of "No changes", when no change is drawn but some are past the drawn columns ("1 change" for one). |
 
 Sidebar count for spreadsheets is the workbook total: cell changes plus sheet-level changes. Navigation counts the active sheet's cells.
 
@@ -559,6 +560,7 @@ Run both reviews on the PR diff before merge, per ship-relic-change.
 - **The diff is too slow.** `diffBlocks` at 5,000 edits on 50,000 blocks takes over 1 s on the CI runner. Then lower the caps, or move the diff into a worker, which needs a server CSP entry.
 - **Two renders time out.** Two 16 MiB documents rendering concurrently hit the 30 s watchdog in CI. Then stagger the second frame.
 - **Renames misfire.** LibreOffice or Google Sheets exports reuse `sheetId` and produce false renames despite the 50% guard. Then drop `sheetId` pairing.
+- **Shared formulas regroup on save.** A save that moves a shared formula's master, splits its group, or writes explicit formulas marks each affected cell formula changed, though its effective formula is the same. Formula-only counts can then be inflated, and the listed text shows the master's formula. This is a known limitation and is not normalised. Normalise each shared formula to its cell's effective formula before comparing if it proves common in real files.
 - **Positional comparison floods.** Real users see walls of changed cells after a row insert. Then add row alignment.
 - **Large messages stall the parent.** A 16 MiB blocks message noticeably stalls the parent while it is cloned. Then lower the text budget.
 - **B4 conflict.** If B4 lands a byte-for-byte `sandbox.html` assertion, S2 must update it.
@@ -569,6 +571,8 @@ Run both reviews on the PR diff before merge, per ship-relic-change.
   - Scroll-landmark cost: up to about 2,000 `[data-relic-sync-id]` rect reads per scroll report in each frame.
 - **Product calls made here that are cheap to change if Jason disagrees:**
   - Spreadsheets compare by position.
+  - A `sheetId` that more than one sheet carries in one version pairs nothing.
+  - The sheet badge `hidden` shows the sheet's current visibility, so it can appear on a sheet hidden in both versions. `shown` marks only a change.
   - Images compare by presence only.
   - DOCX page headers and footers are excluded.
   - The 2,000,000-cell, 50,000-block and 5,000-edit limits.

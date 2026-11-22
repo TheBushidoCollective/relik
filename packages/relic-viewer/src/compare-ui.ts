@@ -70,7 +70,12 @@ export interface PairedComparisonSpec<S> {
 /** Previous and next change controls, with the current position. */
 export interface ChangeNav {
   readonly element: HTMLElement;
-  setJumps(jumps: ArrayLike<ChangeJump>): void;
+  /**
+   * Sets the changes that Next change steps through. `emptyNote` replaces
+   * "No changes" when there are none to step through, which is the case when
+   * every change lies past the columns a grid can reach.
+   */
+  setJumps(jumps: ArrayLike<ChangeJump>, emptyNote?: string): void;
   goTo(index: number): void;
   /** Moves by one change and returns where it landed, if there is one. */
   step(delta: 1 | -1): number | undefined;

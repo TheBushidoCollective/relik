@@ -139,14 +139,15 @@ function workbookBytes(sheets: readonly SheetFixture[]): Uint8Array {
 
 async function compare(
   before: readonly SheetFixture[],
-  after: readonly SheetFixture[]
+  after: readonly SheetFixture[],
+  options?: { readonly onWalk?: () => void }
 ): Promise<WorkbookComparison> {
   const [parsedBefore, parsedAfter] = await Promise.all([
     parseXlsx(workbookBytes(before)),
     parseXlsx(workbookBytes(after)),
   ]);
   if (!parsedBefore.ok || !parsedAfter.ok) throw new Error('fixture refused');
-  return compareWorkbooks(parsedBefore.workbook, parsedAfter.workbook);
+  return compareWorkbooks(parsedBefore.workbook, parsedAfter.workbook, options);
 }
 
 /** Version 1 of the B5 spec fixture: Q3, Old data and Hidden. */
@@ -408,7 +409,7 @@ describe('XLSX workbook comparison', () => {
     );
     expect(lone.sheets).toMatchObject([
       { status: 'unchanged', before: 0, after: 0 },
-      { status: 'not-compared', notCompared: 'chartsheet', after: 1 },
+      { status: 'added', notCompared: 'chartsheet', after: 1 },
     ]);
     expect(lone.sheetsAdded).toBe(1);
     expect(lone.changed).toBe(true);
@@ -554,5 +555,150 @@ describe('XLSX workbook comparison', () => {
         after: '=B1*2',
       },
     ]);
+  });
+});
+
+describe('XLSX sheet pairing and lone sheets', () => {
+  test('a lone chartsheet or oversize sheet keeps its added or removed status', async () => {
+    const comparison = await compare(
+      [
+        { name: 'Keep', cells: { A1: 'x' } },
+        { name: 'Old chart', chart: true },
+        { name: 'Long', cells: { A600001: 'end' } },
+      ],
+      [
+        { name: 'Keep', cells: { A1: 'x' } },
+        { name: 'New chart', chart: true },
+      ]
+    );
+    expect(comparison.sheets.slice(1)).toMatchObject([
+      { status: 'added', notCompared: 'chartsheet', after: 1, added: 0 },
+      { status: 'removed', notCompared: 'chartsheet', before: 1 },
+      { status: 'removed', notCompared: 'too-large', before: 2 },
+    ]);
+    expect(
+      comparison.sheets.every((sheet) => sheet.positions.length === 0)
+    ).toBe(true);
+    expect([comparison.sheetsAdded, comparison.sheetsRemoved]).toEqual([1, 2]);
+  });
+
+  test('a sheetId that two sheets share pairs with neither, in either version', async () => {
+    const cells = numbered(10, (r) => `v${r}`);
+    const shared = await compare(
+      [
+        { name: 'Alpha', sheetId: '5', cells },
+        { name: 'Beta', sheetId: '5', cells },
+      ],
+      [{ name: 'Gamma', sheetId: '5', cells }]
+    );
+    expect(shared.sheetsRenamed).toBe(0);
+    expect(shared.sheets.map((sheet) => sheet.status)).toEqual([
+      'added',
+      'removed',
+      'removed',
+    ]);
+    const duplicated = await compare(
+      [{ name: 'Alpha', sheetId: '5', cells }],
+      [
+        { name: 'Gamma', sheetId: '5', cells },
+        { name: 'Delta', sheetId: '5', cells },
+      ]
+    );
+    expect(duplicated.sheetsRenamed).toBe(0);
+    expect(duplicated.sheets.map((sheet) => sheet.status)).toEqual([
+      'added',
+      'added',
+      'removed',
+    ]);
+  });
+
+  test('many sheets that share one sheetId do no walks of cells', async () => {
+    const before = Array.from({ length: 200 }, (_, n) => ({
+      name: `Before ${n}`,
+      sheetId: '1',
+      cells: numbered(20, (r) => `b${n}-${r}`),
+    }));
+    const after = Array.from({ length: 200 }, (_, n) => ({
+      name: `After ${n}`,
+      sheetId: '1',
+      cells: numbered(20, (r) => `a${n}-${r}`),
+    }));
+    let walks = 0;
+    const comparison = await compare(before, after, {
+      onWalk: () => {
+        walks++;
+      },
+    });
+    expect(walks).toBe(0);
+    expect([
+      comparison.sheetsAdded,
+      comparison.sheetsRemoved,
+      comparison.sheetsRenamed,
+    ]).toEqual([200, 200, 0]);
+  });
+
+  test('a sheetId unique in both versions costs one trial walk and one full walk per sheet', async () => {
+    const cells = numbered(12, (r) => `v${r}`);
+    const count = 64;
+    let walks = 0;
+    const comparison = await compare(
+      Array.from({ length: count }, (_, n) => ({
+        name: `Old ${n}`,
+        sheetId: String(n + 1),
+        cells,
+      })),
+      Array.from({ length: count }, (_, n) => ({
+        name: `New ${n}`,
+        sheetId: String(n + 1),
+        cells,
+      })),
+      {
+        onWalk: () => {
+          walks++;
+        },
+      }
+    );
+    expect(comparison.sheetsRenamed).toBe(count);
+    expect(walks).toBe(2 * count);
+  });
+
+  test('a rename needs half of the larger sheet unchanged, rounded up', async () => {
+    const before = [
+      { name: 'Alpha', sheetId: '9', cells: numbered(9, (r) => `a${r}`) },
+    ];
+    const enough = await compare(before, [
+      {
+        name: 'Beta',
+        sheetId: '9',
+        cells: numbered(9, (r) => (r <= 5 ? `a${r}` : `z${r}`)),
+      },
+    ]);
+    const short = await compare(before, [
+      {
+        name: 'Beta',
+        sheetId: '9',
+        cells: numbered(9, (r) => (r <= 4 ? `a${r}` : `z${r}`)),
+      },
+    ]);
+    expect(enough.sheetsRenamed).toBe(1);
+    expect(short.sheetsRenamed).toBe(0);
+  });
+
+  test('a rename whose unchanged cells come last still pairs', async () => {
+    const comparison = await compare(
+      [{ name: 'Alpha', sheetId: '3', cells: numbered(10, (r) => `a${r}`) }],
+      [
+        {
+          name: 'Beta',
+          sheetId: '3',
+          cells: numbered(10, (r) => (r <= 5 ? `z${r}` : `a${r}`)),
+        },
+      ]
+    );
+    expect(comparison.sheets[0]).toMatchObject({
+      status: 'changed',
+      renamedFrom: 'Alpha',
+      changed: 5,
+    });
   });
 });

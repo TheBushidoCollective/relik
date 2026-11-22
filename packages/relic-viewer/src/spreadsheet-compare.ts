@@ -32,6 +32,7 @@ import type { ChangeReport, CompareUi } from './compare-ui.ts';
 import {
   type CompareCellState,
   type CompareTablePart,
+  displayText,
   mountCompareTable,
 } from './data-table.ts';
 import { MAX_DIFF_BYTES } from './diff.ts';
@@ -119,6 +120,54 @@ function moreCells(count: number): string {
   return count === 1
     ? '1 more changed cell on this sheet. Use Next change to reach them.'
     : `${count} more changed cells on this sheet. Use Next change to reach them.`;
+}
+
+/** The copy for changes past the drawn columns: they are counted and named, and Next change cannot reach them. */
+function pastDrawnCells(count: number): string {
+  return count === 1
+    ? `1 changed cell is past the ${DRAWN_COLUMNS} columns drawn here.`
+    : `${count} changed cells are past the ${DRAWN_COLUMNS} columns drawn here.`;
+}
+
+/**
+ * The changes the Changes list leaves out. Those inside the drawn columns are
+ * reached by Next change. Those past the drawn columns are named but cannot be
+ * reached, and a change the list already carries is not counted again. `copy`
+ * takes the count the shell shows and names each group inside it.
+ */
+function moreChanges(entry: SheetComparison): {
+  readonly count: number;
+  copy(n: number): string;
+} {
+  const drawn = entry.positions.length / 3;
+  const listedDrawn = entry.listed.filter(
+    (change) => change.col < DRAWN_COLUMNS
+  ).length;
+  const unlistedPast =
+    cellCountOf(entry) - drawn - (entry.listed.length - listedDrawn);
+  return {
+    count: drawn - listedDrawn + unlistedPast,
+    copy: (n) => {
+      const reachable = n - unlistedPast;
+      const parts: string[] = [];
+      if (reachable > 0) parts.push(moreCells(reachable));
+      if (unlistedPast > 0) parts.push(pastDrawnCells(unlistedPast));
+      return parts.join(' ');
+    },
+  };
+}
+
+/**
+ * What Next change says when no change is drawn but the sheet has changes past
+ * the drawn columns. It stands in for "No changes", so the nav does not
+ * contradict the summary. `undefined` when a change can be reached.
+ */
+function pastDrawnNote(entry: SheetComparison): string | undefined {
+  const count = cellCountOf(entry);
+  if (entry.positions.length > 0 || count === 0) return undefined;
+  return count === 1
+    ? `1 change past the ${DRAWN_COLUMNS} columns drawn here`
+    : `${count} changes past the ${DRAWN_COLUMNS} columns drawn here`;
 }
 
 /** The cells that changed on one sheet: value, formula-only, added and removed. */
@@ -371,7 +420,9 @@ function jumpsOf(positions: Uint32Array): ArrayLike<ChangeJump> {
 
 /**
  * One listed change as a row of the Changes list. A cell past the drawn columns
- * has no jump and shows the reason instead of its text.
+ * has no jump and shows the reason instead of its text. The text is escaped as
+ * the grid escapes it, so a bidi or control character reads as an escape here
+ * too, and copying the list copies the escape rather than the character.
  */
 function rowFor(change: CellChange, positions: Uint32Array): RenderedChange {
   const kind: MarkKind = change.kind === 'formula' ? 'changed' : change.kind;
@@ -398,8 +449,8 @@ function rowFor(change: CellChange, positions: Uint32Array): RenderedChange {
   return {
     kind,
     label,
-    before: change.before,
-    after: change.after,
+    before: displayText(change.before),
+    after: displayText(change.after),
     ...(jumpIndex < 0 ? {} : { jumpIndex }),
   };
 }
@@ -531,13 +582,13 @@ function changeList(
   ui: CompareUi,
   rows: readonly RenderedChange[],
   onJump: (index: number) => void,
-  more: number
+  more: { readonly count: number; copy(n: number): string }
 ): HTMLElement {
   const list = ui.renderChangeList(rows, onJump);
-  if (more > 0) {
+  if (more.count > 0) {
     const row = document.createElement('li');
     row.className = 'diff-change-more';
-    row.textContent = moreCells(more);
+    row.textContent = more.copy(more.count);
     list.appendChild(row);
   }
   return list;
@@ -709,6 +760,10 @@ export function renderSpreadsheetComparison(
     const spawned = worker;
     spawned.onmessage = (event: MessageEvent<unknown>) => onReply(event.data);
     spawned.onerror = () => {
+      if (settled || disposed) return;
+      loadFailed();
+    };
+    spawned.onmessageerror = () => {
       if (settled || disposed) return;
       loadFailed();
     };
@@ -901,7 +956,7 @@ export function renderSpreadsheetComparison(
     if (leftPart !== undefined && rightPart !== undefined)
       releaseMirror = mirrorScrollers([leftPart.scroller, rightPart.scroller]);
     activePositions = entry.positions;
-    nav.setJumps(jumpsOf(entry.positions));
+    nav.setJumps(jumpsOf(entry.positions), pastDrawnNote(entry));
     deliver(entry);
   }
 
@@ -909,7 +964,7 @@ export function renderSpreadsheetComparison(
   function deliver(entry: SheetComparison): void {
     counts.textContent = totals.summary;
     const rows = entry.listed.map((change) => rowFor(change, entry.positions));
-    const more = cellCountOf(entry) - entry.listed.length;
+    const more = moreChanges(entry);
     const scope = paragraph('diff-scope', COPY.scope);
     if (onChanges !== undefined) {
       onChanges({
@@ -918,12 +973,12 @@ export function renderSpreadsheetComparison(
         summary: totals.summary,
         onJump: nav.goTo,
         preface: scope,
-        more: { count: more, copy: moreCells },
+        more,
       });
       return;
     }
     const parts: HTMLElement[] = [scope];
-    if (rows.length > 0 || more > 0)
+    if (rows.length > 0 || more.count > 0)
       parts.push(changeList(ui, rows, nav.goTo, more));
     result.replaceChildren(...parts);
   }
