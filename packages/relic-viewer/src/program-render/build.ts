@@ -14,7 +14,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 
 const INDEX_HTML = `<!doctype html>
 <meta charset="utf-8">
-<title>Relic program render</title>
+<title>Relik program render</title>
 <script type="module" src="./index.js"></script>
 `;
 

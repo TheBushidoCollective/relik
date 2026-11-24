@@ -274,7 +274,7 @@ describe('the service worker caches the shell and nothing else', () => {
     }
   });
 
-  test('never caches relic ciphertext from storage', () => {
+  test('never caches relik ciphertext from storage', () => {
     // A cache entry would outlive the TTL and the per-object cap, on the
     // recipient's disk, past a takedown.
     expect(
@@ -288,7 +288,7 @@ describe('the service worker caches the shell and nothing else', () => {
     expect(isCacheable(origin('/api/anything-added-later'), true)).toBe(false);
   });
 
-  test('never caches a relic shell, so a takedown is not papered over', () => {
+  test('never caches a relik shell, so a takedown is not papered over', () => {
     expect(isCacheable(origin('/aaaaaaaaaaaaaaaaaaaaaaaaaa'), true)).toBe(
       false
     );
@@ -928,14 +928,14 @@ export function annotate(snapshot, marks, anchors) {
     expect(name).toContain(visible);
   });
 
-  test('the bar carries the relics link targeting a new tab with rel="noopener"', () => {
+  test('the bar carries the reliks link targeting a new tab with rel="noopener"', () => {
     buildBar(view('sandboxed-html', '<p>hi</p>'), 'aaaaaaaaaaaaaaaaaaaaaaaaaa');
 
     const relicsLink = created.find((element) =>
       element.className.split(' ').includes('action-relics')
     );
     if (relicsLink === undefined)
-      throw new Error('the bar built no relics link');
+      throw new Error('the bar built no reliks link');
 
     expect(relicsLink.tagName).toBe('A');
     expect(relicsLink.attributes.get('href')).toBe('/dashboard');
@@ -947,11 +947,11 @@ export function annotate(snapshot, marks, anchors) {
       .map((child) => child.textContent)
       .join('')
       .trim();
-    expect(visible).toBe('Relics');
+    expect(visible).toBe('Reliks');
     expect(ariaLabel).toContain(visible);
   });
 
-  test('stylesheet collapses relics link at narrow widths along with other actions', async () => {
+  test('stylesheet collapses reliks link at narrow widths along with other actions', async () => {
     const css = await Bun.file(
       new URL('../src/styles.css', import.meta.url)
     ).text();

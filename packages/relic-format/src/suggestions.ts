@@ -432,5 +432,5 @@ export function suggestionFallbackBody(
         ? `delete ${quoted}`
         : `replace ${quoted} with ${replacement}`
       : `insert ${replacement} ${s.mode} ${quoted}`;
-  return `Suggested edit: ${edit}. A current Relic viewer shows it in place.`;
+  return `Suggested edit: ${edit}. A current Relik viewer shows it in place.`;
 }

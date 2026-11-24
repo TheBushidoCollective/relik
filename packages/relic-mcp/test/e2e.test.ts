@@ -46,7 +46,7 @@ import { publishStateModes, publishStatePath } from '../src/state.ts';
 
 const SERVICE = 'https://relic.example';
 const VERSION_HISTORY_DISCLOSURE =
-  "Anyone holding a relic's link can fetch every version it has ever held, " +
+  "Anyone holding a relik's link can fetch every version it has ever held, " +
   'so republishing does not withdraw earlier content.';
 
 let now = Date.parse('2026-08-02T12:00:00.000Z');
@@ -845,8 +845,8 @@ describe('server refusals reach the caller with their code', () => {
   });
 });
 
-describe('the recipient experience on a dead relic', () => {
-  test('a removed relic reads as removed, never as a decrypt failure', async () => {
+describe('the recipient experience on a dead relik', () => {
+  test('a removed relik reads as removed, never as a decrypt failure', async () => {
     writeFile('/work/notes.md', 'hello');
     const result = await publish({ path: 'notes.md' }, deps);
 
@@ -863,7 +863,7 @@ describe('the recipient experience on a dead relic', () => {
     expect(viewed.problem.report_url).toBe(`${SERVICE}/abuse`);
   });
 
-  test('an expired relic reads as expired', async () => {
+  test('an expired relik reads as expired', async () => {
     // Expiry is opt-in now, so this relic only dies because its publisher
     // said it should.
     writeFile('/work/notes.md', 'hello');
@@ -895,7 +895,7 @@ describe('publisher-chosen lifetimes', () => {
     expect(row?.expiresAt).toBe(now + 3 * 86_400 * 1000);
   });
 
-  test('omits ttl_days when none was supplied, and the relic never expires', async () => {
+  test('omits ttl_days when none was supplied, and the relik never expires', async () => {
     writeFile('/work/notes.md', 'hello');
     const grants: Record<string, unknown>[] = [];
 
@@ -914,7 +914,7 @@ describe('publisher-chosen lifetimes', () => {
     expect(row?.expiresAt).toBeUndefined();
   });
 
-  test('a relic without a lifetime is still readable after any wait', async () => {
+  test('a relik without a lifetime is still readable after any wait', async () => {
     writeFile('/work/notes.md', 'hello');
     const result = await publish({ path: 'notes.md' }, deps);
     now += 3650 * 86_400 * 1000;
@@ -996,7 +996,7 @@ describe('the MCP surface', () => {
       'picture of the first screen'
     );
     expect(result.structuredContent['plaintext_title']).toBe(
-      'relic title, defaulting to the source filename, stored by the service in the clear and shown by every link preview'
+      'relik title, defaulting to the source filename, stored by the service in the clear and shown by every link preview'
     );
   });
   test('describe_client states the transcript leak, not just the good news', async () => {
@@ -1556,7 +1556,7 @@ describe('local publish state', () => {
     expect(calls).toBe(0);
   });
 
-  test('an id that is not a relic id is named as such, not as another machine', async () => {
+  test('an id that is not a relik id is named as such, not as another machine', async () => {
     writeFile('/work/notes.md', 'hello');
     let refusal: PublishError | undefined;
     try {
@@ -1566,7 +1566,7 @@ describe('local publish state', () => {
     }
 
     expect(refusal?.code).toBe('no_local_publish_state');
-    expect(refusal?.message).toContain('is not a relic id');
+    expect(refusal?.message).toContain('is not a relik id');
     expect(refusal?.message).not.toContain('another machine');
   });
 
@@ -1578,7 +1578,7 @@ describe('local publish state', () => {
     // happens to be readable text.
     await writeStateFile(
       publishStatePath(),
-      '{"relics": {"broken-half": tru',
+      '{"reliks": {"broken-half": tru',
       'utf8'
     );
 
@@ -1795,7 +1795,7 @@ describe('republish refusals', () => {
     expect(text).not.toContain('takedown');
   });
 
-  test('a removed relic is terminal, and the words say so', async () => {
+  test('a removed relik is terminal, and the words say so', async () => {
     writeFile('/work/notes.md', 'first');
     const first = await publish({ path: 'notes.md' }, deps);
 
@@ -1833,7 +1833,7 @@ describe('republish refusals', () => {
     const text = result.content[0]?.text ?? '';
     expect(text).toContain('permanent');
     expect(text).toContain('cannot revive it');
-    expect(text).toContain('Publish the content as a new relic');
+    expect(text).toContain('Publish the content as a new relik');
     // The token refusal is about this machine's standing; this one is
     // about nobody's, ever again.
     expect(text).not.toContain('publish token this machine holds');
@@ -2038,7 +2038,7 @@ describe('plaintext title in link previews', () => {
     const result2 = resp2?.result as { content: { text: string }[] };
     const text2 = result2.content[0]?.text ?? '';
     expect(text2).toContain(
-      'Published without a title, so a link preview shows only that it is a relic.'
+      'Published without a title, so a link preview shows only that it is a relik.'
     );
 
     // Titled republish.
@@ -2081,7 +2081,7 @@ describe('plaintext title in link previews', () => {
     const result4 = resp4?.result as { content: { text: string }[] };
     const text4 = result4.content[0]?.text ?? '';
     expect(text4).toContain(
-      'Published without a title, so a link preview shows only that it is a relic.'
+      'Published without a title, so a link preview shows only that it is a relik.'
     );
   });
 
@@ -2093,7 +2093,7 @@ describe('plaintext title in link previews', () => {
 
   test('INSTRUCTIONS carries the title fact', () => {
     expect(INSTRUCTIONS).toMatch(/plaintext title/i);
-    expect(INSTRUCTIONS).toContain('A relic carries a plaintext title');
+    expect(INSTRUCTIONS).toContain('A relik carries a plaintext title');
   });
 
   test('validates that title must be a string if provided', async () => {

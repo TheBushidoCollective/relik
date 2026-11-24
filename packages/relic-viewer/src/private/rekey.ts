@@ -134,7 +134,7 @@ export async function verifiedRecovery(
 }> {
   if (holder.designation === undefined || holder.designation === null) {
     throw new VerificationRefusedError(
-      'the recovery holder has no designation, so Relic cannot check it. Nothing was sent.'
+      'the recovery holder has no designation, so Relik cannot check it. Nothing was sent.'
     );
   }
   const statement = parsedOrRefused(
@@ -371,7 +371,7 @@ async function verifiedLiveGrant(
     ))
   ) {
     throw new VerificationRefusedError(
-      'a reader\u2019s grant did not verify for this relic. Nothing was sent.'
+      'a reader\u2019s grant did not verify for this relik. Nothing was sent.'
     );
   }
   const keys = await verifiedPartyKeys(grantee);
@@ -654,7 +654,7 @@ export function createRevokeDialog(ctx: RevokeContext): RevokeDialog {
       h(
         'p',
         { class: 'sheet-always' },
-        'This changes who can read this relic, so it always asks.'
+        'This changes who can read this relik, so it always asks.'
       ),
       rekey,
       revokeActions,
@@ -884,7 +884,7 @@ export function createRevokeDialog(ctx: RevokeContext): RevokeDialog {
     state = {};
     setChildren(
       outcome,
-      `Done. ${who()} can no longer open this relic. Version ${previous + 1} is sealed and readable by the remaining readers.`
+      `Done. ${who()} can no longer open this relik. Version ${previous + 1} is sealed and readable by the remaining readers.`
     );
     paint('done');
     ctx.onSettled();
@@ -924,7 +924,7 @@ export function createRevokeDialog(ctx: RevokeContext): RevokeDialog {
     } catch (error) {
       fail(
         'uploading',
-        `Relic has already stopped serving ${who()} and deleted their keys. Version ${version} isn\u2019t sealed yet, so readers still open version ${previous}. ${problemMessage(error)}`,
+        `Relik has already stopped serving ${who()} and deleted their keys. Version ${version} isn\u2019t sealed yet, so readers still open version ${previous}. ${problemMessage(error)}`,
         reissueUpload
       );
       return;
@@ -943,7 +943,7 @@ export function createRevokeDialog(ctx: RevokeContext): RevokeDialog {
       }
       fail(
         'uploading',
-        `Republishing stopped while uploading. Relic has already stopped serving ${who()} and deleted their keys. Version ${previous + 1} isn\u2019t sealed yet, so readers still open version ${previous}.`,
+        `Republishing stopped while uploading. Relik has already stopped serving ${who()} and deleted their keys. Version ${previous + 1} isn\u2019t sealed yet, so readers still open version ${previous}.`,
         uploadAndFinish
       );
       return;
@@ -966,7 +966,7 @@ export function createRevokeDialog(ctx: RevokeContext): RevokeDialog {
     } catch {
       fail(
         'decrypting',
-        `Nothing was sent. Relic still serves ${who()} and version ${previous} is unchanged.`,
+        `Nothing was sent. Relik still serves ${who()} and version ${previous} is unchanged.`,
         tapAndRepublish
       );
       return;
@@ -980,7 +980,7 @@ export function createRevokeDialog(ctx: RevokeContext): RevokeDialog {
     } catch (error) {
       fail(
         'uploading',
-        `Nothing was revoked. ${problemMessage(error)} Relic still serves ${who()} and version ${previous} is unchanged.`,
+        `Nothing was revoked. ${problemMessage(error)} Relik still serves ${who()} and version ${previous} is unchanged.`,
         tapAndRepublish
       );
       return;
@@ -1072,7 +1072,7 @@ export function createRevokeDialog(ctx: RevokeContext): RevokeDialog {
       const n = previous + 1;
       setChildren(
         warning,
-        `Revoke ${next.email}? Relic stops serving them this relic now and deletes their keys for it. Anything they already opened may still be on their device. The current content is republished as version ${n} under a new key that only the remaining readers can open.`
+        `Revoke ${next.email}? Relik stops serving them this relik now and deletes their keys for it. Anything they already opened may still be on their device. The current content is republished as version ${n} under a new key that only the remaining readers can open.`
       );
       setChildren(
         fine,

@@ -4,7 +4,7 @@ After `bun run build`, run `bun scripts/deploy-smoke-path.ts`. It executes both 
 
 # Email code sign-in
 
-A reader who asks to sign in on a relic gets one email with a six-digit code and a link, types the code into the same page, and is signed in without leaving it: the key stays in the tab, the comment they post carries their address, and the link in that email stops working.
+A reader who asks to sign in on a relik gets one email with a six-digit code and a link, types the code into the same page, and is signed in without leaving it: the key stays in the tab, the comment they post carries their address, and the link in that email stops working.
 
 ## Acceptance command
 
@@ -35,7 +35,7 @@ The probe prints `PROBE_AWAIT_SIGN_IN_CODE email=<addr>` and blocks on stdin for
 
 # Passkey sign-in for returning readers
 
-A reader who verified their email once and added a passkey can open a relic later, tap 'Sign in with passkey' (or pick the passkey from the email field's autofill), and post a comment without receiving any email.
+A reader who verified their email once and added a passkey can open a relik later, tap 'Sign in with passkey' (or pick the passkey from the email field's autofill), and post a comment without receiving any email.
 
 ## Acceptance command
 
@@ -100,7 +100,7 @@ The complete source path passed locally at `5a4bd6d` with Node 24.15.0, Bun 1.4.
 
 # Anchored comment popovers on every class
 
-A verified reader who selects, points at or marks a target on any relic class writes the comment in a panel attached to it, and after Post the same place shows the posted comment's card while the sidebar stays as it was.
+A verified reader who selects, points at or marks a target on any relik class writes the comment in a panel attached to it, and after Post the same place shows the posted comment's card while the sidebar stays as it was.
 
 ## Acceptance command
 
@@ -117,7 +117,7 @@ Saved comment cards and timeline cluster cards expose **Dismiss** (`.popover-dis
 
 # Production CSP proof for the render frame
 
-The probe publishes each relic through the built MCP bundle and opens it in the production viewer and shim, in an isolated headless shell with a throwaway profile, in two process models. Each case has a plain-shim control on the same relic bytes, and a row counts as blocked only where that control shows the channel. It exits 1 on any production egress or any relic that does not run.
+The probe publishes each relik through the built MCP bundle and opens it in the production viewer and shim, in an isolated headless shell with a throwaway profile, in two process models. Each case has a plain-shim control on the same relik bytes, and a row counts as blocked only where that control shows the channel. It exits 1 on any production egress or any relik that does not run.
 
 ## Acceptance command
 
@@ -131,7 +131,7 @@ A clean run prints `CSP_PROD_OK` and no `CSP_PROD_FAIL`. The unproven rows follo
 
 # Frame egress from the sandboxed render frame
 
-The probe measures which channels a relic's own script reaches from the sandboxed frame, using the real MCP bundle, the real app and the production policy, in an isolated headless shell with a throwaway profile. Every channel has its own loopback listener and UDP socket. It proves the channels it observes blocked and states the rest as unproven. It does not prove that no other channel exists. The per-route proof with controls is the section above.
+The probe measures which channels a relik's own script reaches from the sandboxed frame, using the real MCP bundle, the real app and the production policy, in an isolated headless shell with a throwaway profile. Every channel has its own loopback listener and UDP socket. It proves the channels it observes blocked and states the rest as unproven. It does not prove that no other channel exists. The per-route proof with controls is the section above.
 
 ## Acceptance command
 
@@ -147,7 +147,7 @@ Last run on `fix/csp-build`, 2026-11-19: the four Review2 routes (cases 1, 1b, 2
 
 # Link bar stages and top-frame navigation (manual, not CI)
 
-The stress probe, `svg-top-nav-stress.ts`, runs the link bar stages with trusted CDP input: a gesture with no Open, a gesture with Open, a remembered choice on a later load, a republished version, and frame claims that try to set or clear all three confirmation kinds for the actual relic. It then runs the top-frame navigation attacks against the production viewer and a positive control. It is manual and is not a CI gate: `verify.yml` does not run it.
+The stress probe, `svg-top-nav-stress.ts`, runs the link bar stages with trusted CDP input: a gesture with no Open, a gesture with Open, a remembered choice on a later load, a republished version, and frame claims that try to set or clear all three confirmation kinds for the actual relik. It then runs the top-frame navigation attacks against the production viewer and a positive control. It is manual and is not a CI gate: `verify.yml` does not run it.
 
 ```sh
 mise exec -- bun run --cwd packages/relic-viewer build
@@ -196,7 +196,7 @@ operating-system IME, real clipboard or drag-and-drop behavior.
 that version. If republish completes but its local state update fails before a
 new-version comment exists, suggestion preview and apply can validate against
 the old version's format instead. The `local_state_write_failed` response names
-the live version. Do not preview or apply suggestions for that relic until its
+the live version. Do not preview or apply suggestions for that relik until its
 local publish record has been repaired; this path does not detect that stale
 state on its own.
 
@@ -241,7 +241,7 @@ RELIC_CHROME_PATH=/absolute/path/to/chrome-headless-shell mise exec -- bun packa
 
 Success requires `DOCX_IMAGE_REOPEN_OK`, `DOCX_READER_PATH_OK` and `DOCX_FRAME_PATH_OK`. The image-comment stage posts encrypted comments on two image parts and a repeated image, then reopens the same version and checks their badges against the original images. It uses an in-memory loopback service.
 
-# Large relic upload and preview
+# Large relik upload and preview
 
 Build the viewer and MCP bundle, then run the loopback proof from the repository root:
 
@@ -265,7 +265,7 @@ These are post-pressure growth gates, not bounds on transient renderer peaks or 
 
 # Private shares
 
-A reader is let into a private relic by its owner, who sees who asked and their fingerprint, then grants with one passkey tap. The link carries no key, the owner's device publishes without a tap, a provider that cannot hold a key is refused, a revocation republishes under a fresh key the revoked reader cannot use, and deletion removes everything the service held for the relic.
+A reader is let into a private relik by its owner, who sees who asked and their fingerprint, then grants with one passkey tap. The link carries no key, the owner's device publishes without a tap, a provider that cannot hold a key is refused, a revocation republishes under a fresh key the revoked reader cannot use, and deletion removes everything the service held for the relik.
 
 ## Acceptance command
 
@@ -316,7 +316,7 @@ All proof writes target the local in-memory service. The browser is an isolated 
 
 # Publish from the browser
 
-A visitor opens `/publish`, drops a file or folder, reviews it and its link-preview title, and gets a link whose key never reached the service. The public title defaults to the original source name and stays separate from the editable encrypted filename, including when ZIP expansion is toggled. A cleared title sends no title and no filename. Folder and ZIP enumeration can be cancelled. A file over the page's ceiling is refused before any grant. A file dropped on any relic page, including one that fills the window with a sandboxed frame, opens the same publisher in a dialog over it and makes a new relic, and a relic that takes file drops itself keeps them. The homepage takes a drop the same way, and every page's top bar ends in an Upload button that opens a file chooser and the same dialog.
+A visitor opens `/publish`, drops a file or folder, reviews it and its link-preview title, and gets a link whose key never reached the service. The public title defaults to the original source name and stays separate from the editable encrypted filename, including when ZIP expansion is toggled. A cleared title sends no title and no filename. Folder and ZIP enumeration can be cancelled. A file over the page's ceiling is refused before any grant. A file dropped on any relik page, including one that fills the window with a sandboxed frame, opens the same publisher in a dialog over it and makes a new relik, and a relik that takes file drops itself keeps them. The homepage takes a drop the same way, and every page's top bar ends in an Upload button that opens a file chooser and the same dialog.
 
 ## Acceptance command
 
@@ -351,7 +351,7 @@ RELIC_CHROME_PATH=<isolated-headless-shell> bun packages/relic-mcp/test/browser-
 
 `BROWSER_PRIVATE_PUBLISH_PATH_OK` requires in-place email-code sign-in, a virtual PRF passkey, a displayed owner, and a missing-identity refusal before nonce, grant, or upload. It then requires a fresh private review and click, a sealed version with no public title or cover, a fragmentless link, and an owner open. The path does not prove a second identity's access grant or the production storage preflight.
 
-Steps 8 and 9 use the browser's own drag path (`Input.dispatchDragEvent` with a file on disk) over a relic whose frame is a real cross-origin document, so the drag is routed by the browser rather than dispatched by the script. The frame's origin is `127.0.0.1` against the service's `localhost`. With the shim's drag signal removed, step 8 fails at the curtain, which is the negative control that was run.
+Steps 8 and 9 use the browser's own drag path (`Input.dispatchDragEvent` with a file on disk) over a relik whose frame is a real cross-origin document, so the drag is routed by the browser rather than dispatched by the script. The frame's origin is `127.0.0.1` against the service's `localhost`. With the shim's drag signal removed, step 8 fails at the curtain, which is the negative control that was run.
 
 Step 10 asserts the homepage names exactly `/assets/landing.js`, and that the dialog it opens is styled although the homepage has none of the viewer's stylesheet (a button with no fill or padding fails). Step 11 uses a real trusted click and Chrome's file-chooser interception (`Page.setInterceptFileChooserDialog`, then `DOM.setFileInputFiles`), because a chooser only opens for a click the browser treats as the visitor's. Step 12 checks the last action of every bar and that its right edge and the page's scroll width fit at 1280, 390 and 320px. The negative control that was run removed the Upload button from the policy page's bar, and step 12 failed there. Steps 10 and 11 wait for the page's `load` event first: the Upload link is in the HTML before the script that arms it, and a drop or click in that gap goes nowhere. The proof raced there until it waited, and passes eight runs in eight with the wait.
 
@@ -365,7 +365,7 @@ The two `MULTI_FILE_TIMING` lines report manifest decode and set-validation time
 
 # Version comparison: DOCX, EPUB and XLSX side by side
 
-A reader opens a relic that has two versions and chooses Compare versions. DOCX and EPUB show both versions in their own frames, with the changes outlined in place beside a Changes list. XLSX shows both workbooks as grids with each changed cell marked. The stage publishes version 1 with `relic_publish` and version 2 with `relic_republish`, both through the built MCP over stdio, opens the share URL as a visitor does, and clicks the control with real mouse input.
+A reader opens a relik that has two versions and chooses Compare versions. DOCX and EPUB show both versions in their own frames, with the changes outlined in place beside a Changes list. XLSX shows both workbooks as grids with each changed cell marked. The stage publishes version 1 with `relic_publish` and version 2 with `relic_republish`, both through the built MCP over stdio, opens the share URL as a visitor does, and clicks the control with real mouse input.
 
 ## Acceptance command
 

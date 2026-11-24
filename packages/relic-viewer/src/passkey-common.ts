@@ -435,7 +435,7 @@ export const COPY_LINK_FINE =
   'This stops anyone holding an older sign-in from adding a passkey as you.';
 export const COPY_LINK_SEND = 'Email me a new code';
 export const COPY_LINK_FAILED =
-  'Relic could not send the email just now. Try again later.';
+  'Relik could not send the email just now. Try again later.';
 
 /** The shell's answer after emailing a new link on a surface's behalf. Resolves, never rejects. */
 export type LinkRequestOutcome =

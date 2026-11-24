@@ -17,7 +17,7 @@ const folder = {
 } as unknown as FolderRelic;
 
 describe('folder Markdown references', () => {
-  test('resolves from the current directory or the relic root, never the host', () => {
+  test('resolves from the current directory or the relik root, never the host', () => {
     expect(resolveFolderReference(folder, './a.md#section')).toEqual({
       index: 1,
       fragment: 'section',

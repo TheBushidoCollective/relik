@@ -517,7 +517,7 @@ describe('the share panel', () => {
     expect(shareCalls(calls)).toHaveLength(0);
   });
 
-  test('the proof is derived from the key in this relic\u2019s own link', async () => {
+  test('the proof is derived from the key in this relik\u2019s own link', async () => {
     for (const key of [KEY_BYTES, OTHER_KEY]) {
       const calls: Call[] = [];
       const { panel, handle } = await open(
@@ -542,8 +542,8 @@ describe('the share panel', () => {
 
     const text = textOf(panel);
     expect(text).toContain(
-      'Added to this relic\u2019s emails about new comments and versions: 2 new, 0 already there. ' +
-        'Its list holds 7 of 50. Relic has emailed nobody.'
+      'Added to this relik\u2019s emails about new comments and versions: 2 new, 0 already there. ' +
+        'Its list holds 7 of 50. Relik has emailed nobody.'
     );
     // Addressed as the service normalized them, titled as it has the relic.
     const head = only(panel, 'share-email-head');
@@ -600,7 +600,7 @@ describe('the share panel', () => {
     {
       code: 'invalid_share_proof',
       status: 403,
-      says: 'does not match the one this relic\u2019s publisher registered',
+      says: 'does not match the one this relik\u2019s publisher registered',
       formStays: false,
     },
     {
@@ -675,7 +675,7 @@ describe('the share panel', () => {
     expect(dom.active).toBe(opener);
   });
 
-  test('Share is offered on a relic that only downloads, too', () => {
+  test('Share is offered on a relik that only downloads, too', () => {
     const shared: unknown[] = [];
     const bar = buildBar({ ...view(), route: 'download' }, RELIC_ID, {
       onShare: (opener) => shared.push(opener),

@@ -235,7 +235,7 @@ function schemaErrors(schema: unknown, value: unknown, path = '$'): string[] {
 }
 
 describe('republish comments gate', () => {
-  test('a relic with no comments republishes unchanged', async () => {
+  test('a relik with no comments republishes unchanged', async () => {
     const filePath = join(scratch, 'clean.md');
     await writeFile(filePath, '# clean draft\n');
     const published = await publish({ path: filePath }, deps);
@@ -296,7 +296,7 @@ describe('republish comments gate', () => {
     expect(thrown).toBeDefined();
     expect(thrown?.code).toBe('unaddressed_comments');
     expect(thrown?.message).toContain(
-      `cannot republish relic ${published.relic_id} while comments remain unaddressed`
+      `cannot republish relik ${published.relic_id} while comments remain unaddressed`
     );
     expect(thrown?.message).toContain(commentData.comment_id);
     expect(thrown?.message).toContain(commentData.author);

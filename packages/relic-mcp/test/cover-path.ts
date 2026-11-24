@@ -852,7 +852,7 @@ startxref
   assert.equal(
     tombstoneCoverRes.status,
     404,
-    'tombstoned relic cover must return 404'
+    'tombstoned relik cover must return 404'
   );
   if (typeof storeExtended.listCovers === 'function') {
     const list = await storeExtended.listCovers(tombstoneId);
@@ -881,7 +881,7 @@ startxref
   assert.equal(
     postExpiryRes.status,
     404,
-    'expired relic cover must return 404'
+    'expired relik cover must return 404'
   );
 
   const postExpiryShell = await fetch(`${origin}/${expiryId}`);
@@ -889,7 +889,7 @@ startxref
   const postExpiryHtml = await postExpiryShell.text();
   assert.ok(
     postExpiryHtml.includes(`${origin}/assets/card.v1.png`),
-    'expired relic shell must fall back to card.v1.png'
+    'expired relik shell must fall back to card.v1.png'
   );
   // --- Mint invariants ---------------------------------------------------
   const mintLog = await store.readMintLog();

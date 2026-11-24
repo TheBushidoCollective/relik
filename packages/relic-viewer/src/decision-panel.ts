@@ -62,7 +62,7 @@ export const DECISION_TOFU =
 export const DECISION_LINK_REQUIRED = `${COPY_LINK_REQUIRED_LEAD} Email a new code, type it here, and setting up the passkey carries on. Nothing was recorded.`;
 export const DECISION_CANCELLED = 'Cancelled. Nothing was recorded.';
 export const DECISION_UNAVAILABLE =
-  'The publisher has not asked for decisions on this relic.';
+  'The publisher has not asked for decisions on this relik.';
 
 export function staleCopy(shown: number, newest: number): string {
   return (
@@ -563,7 +563,7 @@ export function openDecisionPanel(
         asking === undefined
           ? 'You choose here, then confirm with your passkey. A later ' +
               'decision replaces this one as yours; both stay on the record.'
-          : 'Asking Relic for a passkey challenge.'
+          : 'Asking Relik for a passkey challenge.'
       )
     );
     return box;
@@ -792,7 +792,7 @@ export function openDecisionPanel(
     if (passkey.phase === 'loading') {
       box.append(
         el('h3', '', 'Set up a passkey to decide'),
-        el('p', 'decision-fine', 'Asking Relic.')
+        el('p', 'decision-fine', 'Asking Relik.')
       );
       return box;
     }
@@ -889,7 +889,7 @@ export function openDecisionPanel(
       el(
         'p',
         'decision-fine',
-        'Your device keeps the private key. Relic stores the public key, ' +
+        'Your device keeps the private key. Relik stores the public key, ' +
           'under a hash of your address, and never receives the private one.'
       ),
       notNow
@@ -917,7 +917,7 @@ export function openDecisionPanel(
       el(
         'p',
         'decision-fine',
-        'The decision is bound to this file. If the relic is republished, ' +
+        'The decision is bound to this file. If the relik is republished, ' +
           'it stays with this version and does not carry over.'
       )
     );
@@ -991,7 +991,7 @@ export function openDecisionPanel(
                 ]),
               }),
           after:
-            'Reload the relic and look again. If they still differ, tell ' +
+            'Reload the relik and look again. If they still differ, tell ' +
             'the publisher before anyone decides.',
           action: retry('Check again'),
         };
@@ -999,7 +999,7 @@ export function openDecisionPanel(
         return {
           title: 'Your passkey did not verify',
           detail:
-            'Relic could not confirm the answer from your passkey. Nothing ' +
+            'Relik could not confirm the answer from your passkey. Nothing ' +
             'was recorded.',
           action: retry('Try again'),
         };
@@ -1014,13 +1014,13 @@ export function openDecisionPanel(
         return {
           title: 'Too many requests from here just now',
           detail:
-            'Relic limits how many decisions and passkey requests one ' +
+            'Relik limits how many decisions and passkey requests one ' +
             `network can make in an hour. Nothing was recorded. ${wait}`,
         };
       }
       case 'network':
         return {
-          title: 'Relic could not be reached',
+          title: 'Relik could not be reached',
           detail:
             'The request did not complete, so it may or may not have been ' +
             'recorded. The list above is current; check it before trying ' +
@@ -1043,14 +1043,14 @@ export function openDecisionPanel(
         };
       case 'service_paused':
         return {
-          title: 'Relic is paused',
+          title: 'Relik is paused',
           detail:
-            'Relic is not taking decisions right now. Nothing was recorded.',
+            'Relik is not taking decisions right now. Nothing was recorded.',
         };
       default:
         return {
           title: 'The decision was refused',
-          detail: `Relic refused it with ${outcome.code}. Nothing was recorded.`,
+          detail: `Relik refused it with ${outcome.code}. Nothing was recorded.`,
           action: {
             label: 'Choose again',
             run: () => {

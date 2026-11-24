@@ -216,7 +216,7 @@ if (!chrome) {
     );
     assert.ok(
       typeof text === 'string' &&
-        text.includes('Whole relic') &&
+        text.includes('Whole relik') &&
         text.includes('Whole note') &&
         text.includes('B note') &&
         !text.includes('A note')

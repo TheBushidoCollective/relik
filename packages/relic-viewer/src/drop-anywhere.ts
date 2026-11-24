@@ -81,7 +81,7 @@ function buildCurtain(): HTMLElement {
     textAlign: 'center',
   });
   const title = document.createElement('div');
-  title.textContent = 'Drop to publish as a new relic';
+  title.textContent = 'Drop to publish as a new relik';
   Object.assign(title.style, { fontSize: '1.6rem', fontWeight: '600' });
   const note = document.createElement('div');
   note.textContent = 'A file or folder. Review it before anything is sent.';

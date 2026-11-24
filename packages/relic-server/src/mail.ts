@@ -61,9 +61,9 @@ export interface OutboundMail {
  * message a spam filter treats like one.
  */
 export function signInMail(link: string, code: string): OutboundMail {
-  const subject = `${code} is your Relic sign-in code`;
+  const subject = `${code} is your Relik sign-in code`;
   const text = [
-    'Your Relic sign-in code:',
+    'Your Relik sign-in code:',
     '',
     code,
     '',
@@ -73,7 +73,7 @@ export function signInMail(link: string, code: string): OutboundMail {
     '',
     link,
     '',
-    'The code and the link are single use and expire shortly, and using either one spends both. Relic never asks you for this code, so do not give it to anyone. If you did not ask to sign in, nothing has happened and you can ignore this message.',
+    'The code and the link are single use and expire shortly, and using either one spends both. Relik never asks you for this code, so do not give it to anyone. If you did not ask to sign in, nothing has happened and you can ignore this message.',
   ].join('\n');
   // Escaping matters even here: the link carries a token this service
   // generated, but it is still interpolated into markup, and a mail client is
@@ -81,12 +81,12 @@ export function signInMail(link: string, code: string): OutboundMail {
   const href = escapeHtml(link);
   const codeHtml = escapeHtml(code);
   const html = [
-    '<p>Your Relic sign-in code:</p>',
+    '<p>Your Relik sign-in code:</p>',
     `<p style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:28px;font-weight:600;letter-spacing:6px;margin:16px 0">${codeHtml}</p>`,
     '<p>Type it on the page where you asked to sign in. It works only in the browser that asked for it.</p>',
     '<p>Or open this link to sign in instead:</p>',
     `<p><a href="${href}">${href}</a></p>`,
-    '<p>The code and the link are single use and expire shortly, and using either one spends both. Relic never asks you for this code, so do not give it to anyone. If you did not ask to sign in, nothing has happened and you can ignore this message.</p>',
+    '<p>The code and the link are single use and expire shortly, and using either one spends both. Relik never asks you for this code, so do not give it to anyone. If you did not ask to sign in, nothing has happened and you can ignore this message.</p>',
   ].join('');
   return { subject, text, html };
 }
@@ -130,25 +130,25 @@ export function commentNotificationMail(
 
   const subject = title
     ? `New comment on "${title}"`
-    : 'New comment on your relic';
+    : 'New comment on your relik';
 
   const text = [
     title
       ? `${commenter} left a comment on "${title}".`
-      : `${commenter} left a comment on your relic.`,
+      : `${commenter} left a comment on your relik.`,
     '',
     ...(relicUrl !== undefined
       ? [
-          'Open the link you hold for this relic to read and answer the comment. If you have opened the relic in this browser before, this link works too:',
+          'Open the link you hold for this relik to read and answer the comment. If you have opened the relik in this browser before, this link works too:',
           relicUrl,
         ]
       : [
-          'Open the link you hold for this relic to read and answer the comment.',
+          'Open the link you hold for this relik to read and answer the comment.',
         ]),
     '',
-    'Relic does not store the decryption key on its servers, so comments cannot be read from this email.',
+    'Relik does not store the decryption key on its servers, so comments cannot be read from this email.',
     ...(stopUrl !== undefined
-      ? ['', 'To stop emails about this relic, open:', stopUrl]
+      ? ['', 'To stop emails about this relik, open:', stopUrl]
       : []),
   ].join('\n');
 
@@ -158,13 +158,13 @@ export function commentNotificationMail(
   const safeStopUrl = stopUrl ? escapeHtml(stopUrl) : undefined;
 
   const html = [
-    `<p>${safeCommenter} left a comment on ${safeTitle ? `<strong>${safeTitle}</strong>` : 'your relic'}.</p>`,
+    `<p>${safeCommenter} left a comment on ${safeTitle ? `<strong>${safeTitle}</strong>` : 'your relik'}.</p>`,
     relicUrl !== undefined
-      ? `<p>Open the link you hold for this relic to read and answer the comment. If you have opened the relic in this browser before, this link works too:</p><p><a href="${safeRelicUrl}">${safeRelicUrl}</a></p>`
-      : '<p>Open the link you hold for this relic to read and answer the comment.</p>',
-    '<p>Relic does not store the decryption key on its servers, so comments cannot be read from this email.</p>',
+      ? `<p>Open the link you hold for this relik to read and answer the comment. If you have opened the relik in this browser before, this link works too:</p><p><a href="${safeRelicUrl}">${safeRelicUrl}</a></p>`
+      : '<p>Open the link you hold for this relik to read and answer the comment.</p>',
+    '<p>Relik does not store the decryption key on its servers, so comments cannot be read from this email.</p>',
     stopUrl !== undefined
-      ? `<p>To stop emails about this relic, open:</p><p><a href="${safeStopUrl}">${safeStopUrl}</a></p>`
+      ? `<p>To stop emails about this relik, open:</p><p><a href="${safeStopUrl}">${safeStopUrl}</a></p>`
       : '',
   ].join('');
 
@@ -217,23 +217,23 @@ export function replyNotificationMail(
 
   const subject = title
     ? `Your comment on "${title}" was answered`
-    : 'Your comment on a relic was answered';
+    : 'Your comment on a relik was answered';
 
   const text = [
     title
       ? `${replier} answered your comment on "${title}".`
-      : `${replier} answered your comment on a relic.`,
+      : `${replier} answered your comment on a relik.`,
     '',
     ...(relicUrl !== undefined
       ? [
-          'Open the link you hold for this relic to read the reply. If you have opened the relic in this browser before, this link works too:',
+          'Open the link you hold for this relik to read the reply. If you have opened the relik in this browser before, this link works too:',
           relicUrl,
         ]
-      : ['Open the link you hold for this relic to read the reply.']),
+      : ['Open the link you hold for this relik to read the reply.']),
     '',
-    'Relic does not store the decryption key on its servers, so comments cannot be read from this email.',
+    'Relik does not store the decryption key on its servers, so comments cannot be read from this email.',
     ...(stopUrl !== undefined
-      ? ['', 'To stop emails about this relic, open:', stopUrl]
+      ? ['', 'To stop emails about this relik, open:', stopUrl]
       : []),
   ].join('\n');
 
@@ -243,13 +243,13 @@ export function replyNotificationMail(
   const safeStopUrl = stopUrl ? escapeHtml(stopUrl) : undefined;
 
   const html = [
-    `<p>${safeReplier} answered your comment on ${safeTitle ? `<strong>${safeTitle}</strong>` : 'a relic'}.</p>`,
+    `<p>${safeReplier} answered your comment on ${safeTitle ? `<strong>${safeTitle}</strong>` : 'a relik'}.</p>`,
     relicUrl !== undefined
-      ? `<p>Open the link you hold for this relic to read the reply. If you have opened the relic in this browser before, this link works too:</p><p><a href="${safeRelicUrl}">${safeRelicUrl}</a></p>`
-      : '<p>Open the link you hold for this relic to read the reply.</p>',
-    '<p>Relic does not store the decryption key on its servers, so comments cannot be read from this email.</p>',
+      ? `<p>Open the link you hold for this relik to read the reply. If you have opened the relik in this browser before, this link works too:</p><p><a href="${safeRelicUrl}">${safeRelicUrl}</a></p>`
+      : '<p>Open the link you hold for this relik to read the reply.</p>',
+    '<p>Relik does not store the decryption key on its servers, so comments cannot be read from this email.</p>',
     stopUrl !== undefined
-      ? `<p>To stop emails about this relic, open:</p><p><a href="${safeStopUrl}">${safeStopUrl}</a></p>`
+      ? `<p>To stop emails about this relik, open:</p><p><a href="${safeStopUrl}">${safeStopUrl}</a></p>`
       : '',
   ].join('');
 
@@ -282,42 +282,42 @@ export interface CommentNoticeMailParams {
 export function commentNoticeMail(p: CommentNoticeMailParams): OutboundMail {
   const subject = p.title
     ? `New comment on "${p.title}"`
-    : 'New comment on a relic';
+    : 'New comment on a relik';
 
   let reasonText: string;
   if (p.reason === 'commented') {
-    reasonText = 'you commented on this relic';
+    reasonText = 'you commented on this relik';
   } else if (p.reason === 'owner') {
     reasonText = 'you are its owner';
   } else if (p.sharedBy === 'reader') {
-    reasonText = "someone with this relic's link shared it with you";
+    reasonText = "someone with this relik's link shared it with you";
   } else {
-    reasonText = 'the person who published this relic shared it with you';
+    reasonText = 'the person who published this relik shared it with you';
   }
 
-  const titleText = p.title ? `"${p.title}"` : 'a relic';
+  const titleText = p.title ? `"${p.title}"` : 'a relik';
   const text = [
     `${p.commenter} left a comment on ${titleText}.`,
     '',
-    'Open the link you were given for this relic to read the thread. If you have opened the relic in this browser before, this link works too:',
+    'Open the link you were given for this relik to read the thread. If you have opened the relik in this browser before, this link works too:',
     p.relicUrl,
     '',
-    'Relic never has the key that decrypts it, so this email cannot include it. If you no longer have your link, ask the person who shared it.',
+    'Relik never has the key that decrypts it, so this email cannot include it. If you no longer have your link, ask the person who shared it.',
     '',
-    `You are getting this because ${reasonText}. To stop emails about this relic, open:`,
+    `You are getting this because ${reasonText}. To stop emails about this relik, open:`,
     p.stopUrl,
   ].join('\n');
 
   const safeCommenter = escapeHtml(p.commenter);
-  const safeTitle = p.title ? `"${escapeHtml(p.title)}"` : 'a relic';
+  const safeTitle = p.title ? `"${escapeHtml(p.title)}"` : 'a relik';
   const safeRelicUrl = escapeHtml(p.relicUrl);
   const safeStopUrl = escapeHtml(p.stopUrl);
   const html = [
     `<p>${safeCommenter} left a comment on ${safeTitle}.</p>`,
-    '<p>Open the link you were given for this relic to read the thread. If you have opened the relic in this browser before, this link works too:</p>',
+    '<p>Open the link you were given for this relik to read the thread. If you have opened the relik in this browser before, this link works too:</p>',
     `<p><a href="${safeRelicUrl}">${safeRelicUrl}</a></p>`,
-    '<p>Relic never has the key that decrypts it, so this email cannot include it. If you no longer have your link, ask the person who shared it.</p>',
-    `<p>You are getting this because ${escapeHtml(reasonText)}. To stop emails about this relic, open:</p>`,
+    '<p>Relik never has the key that decrypts it, so this email cannot include it. If you no longer have your link, ask the person who shared it.</p>',
+    `<p>You are getting this because ${escapeHtml(reasonText)}. To stop emails about this relik, open:</p>`,
     `<p><a href="${safeStopUrl}">${safeStopUrl}</a></p>`,
   ].join('');
 
@@ -350,41 +350,41 @@ export function changeNoticeMail(p: {
 }): OutboundMail {
   const subject = p.title
     ? `New version of "${p.title}"`
-    : 'New version of a relic';
+    : 'New version of a relik';
 
   let reasonText: string;
   if (p.reason === 'commented') {
-    reasonText = 'you commented on this relic';
+    reasonText = 'you commented on this relik';
   } else if (p.reason === 'owner') {
     reasonText = 'you are its owner';
   } else if (p.sharedBy === 'reader' || p.reason === 'shared_by_reader') {
-    reasonText = "someone with this relic's link shared it with you";
+    reasonText = "someone with this relik's link shared it with you";
   } else {
-    reasonText = 'the person who published this relic shared it with you';
+    reasonText = 'the person who published this relik shared it with you';
   }
 
-  const titleText = p.title ? `"${p.title}"` : 'A relic';
+  const titleText = p.title ? `"${p.title}"` : 'A relik';
   const text = [
     `${titleText} has a new version: version ${p.version}.`,
     '',
-    'Open the link you were given for this relic to read it. If you have opened the relic in this browser before, this link works too:',
+    'Open the link you were given for this relik to read it. If you have opened the relik in this browser before, this link works too:',
     p.relicUrl,
     '',
-    'Relic never has the key that decrypts it, so this email cannot include it. If you no longer have your link, ask the person who shared it.',
+    'Relik never has the key that decrypts it, so this email cannot include it. If you no longer have your link, ask the person who shared it.',
     '',
-    `You are getting this because ${reasonText}. To stop emails about this relic, open:`,
+    `You are getting this because ${reasonText}. To stop emails about this relik, open:`,
     p.stopUrl,
   ].join('\n');
 
-  const safeTitle = p.title ? `"${escapeHtml(p.title)}"` : 'A relic';
+  const safeTitle = p.title ? `"${escapeHtml(p.title)}"` : 'A relik';
   const safeRelicUrl = escapeHtml(p.relicUrl);
   const safeStopUrl = escapeHtml(p.stopUrl);
   const html = [
     `<p>${safeTitle} has a new version: version ${p.version}.</p>`,
-    '<p>Open the link you were given for this relic to read it. If you have opened the relic in this browser before, this link works too:</p>',
+    '<p>Open the link you were given for this relik to read it. If you have opened the relik in this browser before, this link works too:</p>',
     `<p><a href="${safeRelicUrl}">${safeRelicUrl}</a></p>`,
-    '<p>Relic never has the key that decrypts it, so this email cannot include it. If you no longer have your link, ask the person who shared it.</p>',
-    `<p>You are getting this because ${escapeHtml(reasonText)}. To stop emails about this relic, open:</p>`,
+    '<p>Relik never has the key that decrypts it, so this email cannot include it. If you no longer have your link, ask the person who shared it.</p>',
+    `<p>You are getting this because ${escapeHtml(reasonText)}. To stop emails about this relik, open:</p>`,
     `<p><a href="${safeStopUrl}">${safeStopUrl}</a></p>`,
   ].join('');
 
@@ -425,7 +425,7 @@ export function passkeyAddedMail(p: {
   const mm = String(d.getUTCMinutes()).padStart(2, '0');
   const when = `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()} at ${hh}:${mm} UTC`;
 
-  const subject = 'A passkey was added for your address on Relic';
+  const subject = 'A passkey was added for your address on Relik';
 
   const countText =
     p.passkeys === 1
@@ -435,15 +435,15 @@ export function passkeyAddedMail(p: {
   const paragraphs: string[] = p.first
     ? [
         `A passkey was added for ${p.address} on ${when}.`,
-        `It signs in to Relic as this address without a link, and it confirms decisions. ${countText}`,
+        `It signs in to Relik as this address without a link, and it confirms decisions. ${countText}`,
         'If you added it, you can ignore this message.',
-        'If you did not, whoever added it can read this mailbox, or used a browser that had just signed in with a link or code sent here. Relic has no way to remove a passkey.',
+        'If you did not, whoever added it can read this mailbox, or used a browser that had just signed in with a link or code sent here. Relik has no way to remove a passkey.',
       ]
     : [
         `A passkey was added for ${p.address} on ${when}.`,
-        `It signs in to Relic as this address without a link, and it confirms decisions. A passkey this address already had confirmed it. ${countText}`,
+        `It signs in to Relik as this address without a link, and it confirms decisions. A passkey this address already had confirmed it. ${countText}`,
         'If you added it, you can ignore this message.',
-        'If you did not, whoever added it could use a passkey this address already had. Relic has no way to remove a passkey.',
+        'If you did not, whoever added it could use a passkey this address already had. Relik has no way to remove a passkey.',
       ];
 
   const text = paragraphs.join('\n\n');
@@ -472,13 +472,13 @@ export function accessRequestedMail(p: {
   readonly requestUrl: string;
 }): OutboundMail {
   const paragraphs = [
-    `${p.requesterAddress} asked for access to a relic you own on Relic.`,
+    `${p.requesterAddress} asked for access to a relik you own on Relik.`,
     `Their fingerprint: ${p.fingerprint}`,
     `Review and grant: ${p.requestUrl}`,
     'Open the link, check the fingerprint on the page matches the one above, and tap your passkey to grant access.',
   ];
   return {
-    subject: `${p.requesterAddress} asked for access to a relic`,
+    subject: `${p.requesterAddress} asked for access to a relik`,
     text: paragraphs.join('\n\n'),
     html: htmlParagraphs(paragraphs, [p.requestUrl]),
   };
@@ -488,12 +488,12 @@ export function accessGrantedMail(p: {
   readonly relicUrl: string;
 }): OutboundMail {
   const paragraphs = [
-    'You can now open a relic on Relic.',
+    'You can now open a relik on Relik.',
     `Open it: ${p.relicUrl}`,
     "You'll confirm with your passkey.",
   ];
   return {
-    subject: 'You have access to a relic',
+    subject: 'You have access to a relik',
     text: paragraphs.join('\n\n'),
     html: htmlParagraphs(paragraphs, [p.relicUrl]),
   };
@@ -504,12 +504,12 @@ export function privateActivityMail(p: {
   readonly stopUrl: string;
 }): OutboundMail {
   const paragraphs = [
-    "There's new activity on a relic you follow on Relic.",
+    "There's new activity on a relik you follow on Relik.",
     p.relicUrl,
     `Stop these emails: ${p.stopUrl}`,
   ];
   return {
-    subject: 'Activity on a relic',
+    subject: 'Activity on a relik',
     text: paragraphs.join('\n\n'),
     html: htmlParagraphs(paragraphs, [p.relicUrl, p.stopUrl]),
     headers: {
@@ -528,12 +528,12 @@ export function identityReplacedMail(p: {
   const mm = String(d.getUTCMinutes()).padStart(2, '0');
   const when = `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()} at ${hh}:${mm} UTC`;
   const paragraphs = [
-    `A new private-share key was set up for ${p.address} on Relic at ${when}.`,
-    "Relics shared with your old key can't be opened with the new one until each owner shares them again.",
+    `A new private-share key was set up for ${p.address} on Relik at ${when}.`,
+    "Reliks shared with your old key can't be opened with the new one until each owner shares them again.",
     "If this wasn't you, someone can read mail sent to this address. Secure your mailbox.",
   ];
   return {
-    subject: 'Your Relic private-share key was replaced',
+    subject: 'Your Relik private-share key was replaced',
     text: paragraphs.join('\n\n'),
     html: htmlParagraphs(paragraphs, []),
   };

@@ -61,7 +61,7 @@ export async function runEmailCodeSignInSequence(
   const docPath = join(scratchDir, 'proof-email-code-sign-in.txt');
   await writeFile(
     docPath,
-    'Relic Email Code Sign-In Proof Document\nA reader signs in with a 6-digit code typed in-place.\n'
+    'Relik Email Code Sign-In Proof Document\nA reader signs in with a 6-digit code typed in-place.\n'
   );
 
   const pubRes = await callMcp(
@@ -85,7 +85,7 @@ export async function runEmailCodeSignInSequence(
     relics?: Record<string, { key?: string; publish_token?: string }>;
   };
   const relicState = stateRaw.relics?.[relicId];
-  assert.ok(relicState?.key, 'state file did not contain relic key');
+  assert.ok(relicState?.key, 'state file did not contain relik key');
   const key = relicState.key;
 
   console.log(`EMAIL_CODE_STEP_1_PUBLISH_OK relic_id=${relicId}`);
@@ -158,7 +158,7 @@ export async function runEmailCodeSignInSequence(
       const mail = await awaitSignInMail(readerEmail);
       assert.ok(mail, 'mail did not arrive');
       const subjectMatch = mail.subject.match(
-        /^(\d{6}) is your Relic sign-in code$/
+        /^(\d{6}) is your Relik sign-in code$/
       );
       assert.ok(
         subjectMatch,

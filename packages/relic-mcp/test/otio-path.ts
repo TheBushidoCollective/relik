@@ -869,7 +869,7 @@ def close(a, b):
     return abs(left - right) <= 1e-4 * max(1.0, abs(left), abs(right))
 
 def relic_id(item):
-    meta = item.metadata.get("relic") if item.metadata else None
+    meta = item.metadata.get("relik") if item.metadata else None
     if isinstance(meta, Mapping):
         return meta.get("id")
     return None
@@ -1163,7 +1163,7 @@ def derive(archive, out_dir):
         raise SystemExit("timewarp clip is not an immediate child of track-v2-main")
     timewarp_track_id = relic_id(other)
     if timewarp_track_id is None:
-        raise SystemExit("timewarp track needs a relic id")
+        raise SystemExit("timewarp track needs a relik id")
     timewarp_range = timewarp.trimmed_range_in_parent()
     if timewarp_range is None:
         raise SystemExit("timewarp clip has no editorial range")
@@ -1423,9 +1423,9 @@ def load_dir(path):
 def write_dir(timeline, path):
     otio.adapters.write_to_file(timeline, str(Path(path) / "content.otio"))
 
-def project(path, relic, source_range):
+def project(path, relik, source_range):
     timeline = load_dir(path)
-    matches = [item for item in walk(timeline) if relic_id(item) == relic and isinstance(item, otio.schema.Clip)]
+    matches = [item for item in walk(timeline) if relic_id(item) == relik and isinstance(item, otio.schema.Clip)]
     if len(matches) != 1:
         return {"status": "ambiguous" if len(matches) > 1 else "missing", "mapped_range": None}
     clip = matches[0]
@@ -1529,7 +1529,7 @@ def mutate(op, src, dest, extra):
         one = otio.opentime.RationalTime(1, 24)
         black = otio.schema.Clip(name="Black Policy Probe", media_reference=black_ref, source_range=otio.opentime.TimeRange(
             otio.opentime.RationalTime(0, 24), one))
-        black.metadata["relic"] = {"id": "clip-black-policy-probe"}
+        black.metadata["relik"] = {"id": "clip-black-policy-probe"}
         under = next(item for item in walk(timeline) if relic_id(item) == "clip-v1-primary-a")
         if not under.enabled or under.parent().parent() is not timeline.tracks:
             raise SystemExit("black probe needs an enabled top-level clip beneath it")
@@ -1543,10 +1543,10 @@ def mutate(op, src, dest, extra):
             target_url=prores,
             available_range=otio.opentime.TimeRange(otio.opentime.RationalTime(0, 24), otio.opentime.RationalTime(24, 24))),
             source_range=otio.opentime.TimeRange(otio.opentime.RationalTime(0, 24), one))
-        codec.metadata["relic"] = {"id": "clip-codec-probe"}
+        codec.metadata["relik"] = {"id": "clip-codec-probe"}
         duration = timeline.duration().rescaled_to(24)
         track = otio.schema.Track(name="State Probes", kind=otio.schema.TrackKind.Video)
-        track.metadata["relic"] = {"id": "track-state-probes"}
+        track.metadata["relik"] = {"id": "track-state-probes"}
         if black_at.value > 0:
             track.append(otio.schema.Gap(source_range=otio.opentime.TimeRange(otio.opentime.RationalTime(0, 24), black_at)))
         track.append(black)
@@ -6671,7 +6671,7 @@ async function runAuxiliaryCoincidentCommentRevealScenario(
     assert.equal(
       await waitReady(browser),
       'true',
-      'auxiliary coincident-comment relic did not become ready'
+      'auxiliary coincident-comment relik did not become ready'
     );
     await assertLegacyProgramState(browser, 'auxiliary-coincident-comment');
     await browser.send('Emulation.setDeviceMetricsOverride', {
@@ -15485,7 +15485,7 @@ async function calibratePostGainTap(
     );
   }
   const relicId = new URL(url).pathname.split('/').filter(Boolean).at(-1);
-  assert.ok(relicId, 'boundary fixture relic ID missing');
+  assert.ok(relicId, 'boundary fixture relik ID missing');
   // The fixture is 48 kHz. A context at any other rate makes the viewer play natively with the
   // reason "sample-rate conversion is required", and the dropout and agreement checks below are
   // claims about scheduled audio only. Linux headless Chrome defaults to 44.1 kHz, so the rate is
@@ -22163,7 +22163,7 @@ try {
   pass('published');
 
   const stored = await storage.read(relicId);
-  assert.ok(stored, 'nothing stored for the published relic');
+  assert.ok(stored, 'nothing stored for the published relik');
   process.env['RELIC_PUBLISH_STATE'] = statePath;
   const localState = await loadPublishState(relicId);
   assert.ok(localState, 'local publish state missing');
@@ -22175,12 +22175,12 @@ try {
   assert.equal(
     storedText.includes('media/primary_a.mp4'),
     false,
-    'relic ciphertext contains a source path'
+    'relik ciphertext contains a source path'
   );
   assert.equal(
     storedText.includes('track-v1-main'),
     false,
-    'relic ciphertext contains a track id'
+    'relik ciphertext contains a track id'
   );
   pass('decrypted');
 
@@ -24799,14 +24799,14 @@ try {
     assert.equal(
       downloadOnlyMatches,
       false,
-      'OTIO relic at version 2 opens with "download-only" text in DOM'
+      'OTIO relik at version 2 opens with "download-only" text in DOM'
     );
     console.log(
       `OTIO_V2_DOM_NO_DOWNLOAD_ONLY_OK downloadOnlyMatches=${downloadOnlyMatches}`
     );
 
     await insertBrowser.evaluate<void>(`(() => {
-      const button = document.querySelector('[aria-label="Open an earlier version of this relic"]');
+      const button = document.querySelector('[aria-label="Open an earlier version of this relik"]');
       if (button instanceof HTMLElement) button.click();
     })()`);
 

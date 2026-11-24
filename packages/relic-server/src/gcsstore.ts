@@ -517,7 +517,7 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
       if (!stored) {
         await remove(objectName);
         throw new Error(
-          `gcs relic ${id} lost ${casAttempts} compare-and-swap races; ` +
+          `gcs relik ${id} lost ${casAttempts} compare-and-swap races; ` +
             'refusing to write cover derived from stale state'
         );
       }
@@ -634,7 +634,7 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
         }
       }
       throw new Error(
-        `gcs relic ${id} lost ${casAttempts} compare-and-swap races; refusing to claim version notice`
+        `gcs relik ${id} lost ${casAttempts} compare-and-swap races; refusing to claim version notice`
       );
     },
 
@@ -792,7 +792,7 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
           customTime
         );
       } catch (error) {
-        console.error('Failed to update author relic index in GCS', error);
+        console.error('Failed to update author relik index in GCS', error);
       }
     },
 
@@ -1116,7 +1116,7 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
       }
 
       throw new Error(
-        `gcs relic ${relicId} lost ${casAttempts} compare-and-swap races; ` +
+        `gcs relik ${relicId} lost ${casAttempts} compare-and-swap races; ` +
           'refusing to write share reservation derived from stale state'
       );
     },
@@ -1216,7 +1216,7 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
         }
       }
       throw new Error(
-        `gcs relic ${id} lost ${casAttempts} compare-and-swap races; refusing to record version digest`
+        `gcs relik ${id} lost ${casAttempts} compare-and-swap races; refusing to record version digest`
       );
     },
 
@@ -2090,7 +2090,7 @@ export function gcsStore(options: GcsStoreOptions): RelicStore {
     }
 
     throw new Error(
-      `gcs relic ${id} lost ${casAttempts} compare-and-swap races; ` +
+      `gcs relik ${id} lost ${casAttempts} compare-and-swap races; ` +
         'refusing to write a count derived from stale state'
     );
   }

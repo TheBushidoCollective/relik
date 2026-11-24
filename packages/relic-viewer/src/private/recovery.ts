@@ -259,7 +259,7 @@ export function recoverySection(ctx: RecoveryContext): HTMLElement {
       void designateWith(
         button,
         null,
-        'Removed. The recovery key holder can\u2019t read your private relics any more, and its keys for them are deleted.'
+        'Removed. The recovery key holder can\u2019t read your private reliks any more, and its keys for them are deleted.'
       );
     });
     return button;
@@ -287,8 +287,8 @@ export function recoverySection(ctx: RecoveryContext): HTMLElement {
             'span',
             { class: 'row-meta' },
             identity.recovery
-              ? 'Designated. Can read every private relic you own.'
-              : 'If you lose every passkey, no one can open your private relics.'
+              ? 'Designated. Can read every private relik you own.'
+              : 'If you lose every passkey, no one can open your private reliks.'
           )
         ),
         identity.recovery ? removeButton() : null
@@ -316,7 +316,7 @@ export function recoverySection(ctx: RecoveryContext): HTMLElement {
         lookupOutcome.className = 'dash-outcome is-bad';
         setChildren(
           lookupOutcome,
-          `${email || 'That address'} has no private-share key. They need to open a private relic and set one up first.`
+          `${email || 'That address'} has no private-share key. They need to open a private relik and set one up first.`
         );
         return;
       }
@@ -371,7 +371,7 @@ export function recoverySection(ctx: RecoveryContext): HTMLElement {
     void designateWith(
       designate,
       holder,
-      `${holder.email} can now read every private relic you own.`,
+      `${holder.email} can now read every private relik you own.`,
       typed
     );
   });
@@ -447,7 +447,7 @@ export function recoverySection(ctx: RecoveryContext): HTMLElement {
     h(
       'p',
       { class: 'dashboard-section-note' },
-      'A recovery key holder can read every private relic you own, so losing your passkeys doesn\u2019t lose them. Use a person you trust, or your own security key kept somewhere safe. Every reader can see who it is.'
+      'A recovery key holder can read every private relik you own, so losing your passkeys doesn\u2019t lose them. Use a person you trust, or your own security key kept somewhere safe. Every reader can see who it is.'
     ),
     current,
     form,

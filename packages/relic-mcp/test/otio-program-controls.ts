@@ -405,7 +405,7 @@ const SEPARATE_RELIC = { forceNew: true } as const;
   });
   try {
     const state = await page.waitFor(
-      'viewer state for the tampered relic',
+      'viewer state for the tampered relik',
       async () => {
         const value = await page.evaluate<string | null>(
           `document.querySelector('.otio-view')?.getAttribute('${VIEWER_CONTRACT.stateAttribute}') ?? null`

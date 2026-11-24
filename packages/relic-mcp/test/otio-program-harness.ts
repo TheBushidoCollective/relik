@@ -103,7 +103,7 @@ elif mode == "rewrite":
             data = open(path, "rb").read() if os.path.exists(path) else zin.read(name)
             zout.writestr(info, data, compress_type=info.compress_type)
         # zipfile gives an entry without attributes the mode 0600 and no file type, which
-        # Relic's reader refuses as corrupt before it reads a manifest. The publisher writes
+        # Relik's reader refuses as corrupt before it reads a manifest. The publisher writes
         # no attributes, so the rewritten directory carries none either.
         for info in zout.filelist:
             info.external_attr = 0

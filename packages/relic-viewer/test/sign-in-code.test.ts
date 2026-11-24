@@ -301,7 +301,7 @@ describe('signedInCopy', () => {
 });
 
 describe('submitSignInCode', () => {
-  test('sends exact JSON body with code, no address, no relic id, no fragment', async () => {
+  test('sends exact JSON body with code, no address, no relik id, no fragment', async () => {
     let capturedUrl = '';
     let capturedMethod = '';
     let capturedHeaders: HeadersInit | undefined;

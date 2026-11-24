@@ -1058,7 +1058,7 @@ describe('Spec B: V3 Render State, Version Progress, and Comparison Bytes', () =
           if (replacement === 'other-handler') window.onpopstate = otherHandler;
           renderDead({
             headline: 'Unavailable',
-            detail: 'This relic is unavailable.',
+            detail: 'This relik is unavailable.',
             action: 'none',
             code: 'service_unreachable',
           });

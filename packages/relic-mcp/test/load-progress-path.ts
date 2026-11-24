@@ -1044,7 +1044,7 @@ const compareRelicId = String(compareRes['relic_id'] ?? '');
 const compareUrl = String(compareRes['url'] ?? compareRes['share_url'] ?? '');
 assert.ok(
   compareRelicId !== '' && compareUrl.includes('#'),
-  'JSX compare publish must return a relic id and key'
+  'JSX compare publish must return a relik id and key'
 );
 await writeFile(
   comparePath,
@@ -2326,7 +2326,7 @@ try {
     }
     assert.ok(
       reopened,
-      'Relic must open successfully after submitting right key'
+      'Relik must open successfully after submitting right key'
     );
 
     // 6. Server mint count unchanged
@@ -2455,7 +2455,7 @@ try {
         break;
       }
     }
-    assert.ok(retriedReady, 'Markdown relic must render after Try again');
+    assert.ok(retriedReady, 'Markdown relik must render after Try again');
     assert.equal(
       frameNavigated,
       false,
@@ -2500,7 +2500,7 @@ try {
     // Use tone.wav which has > 3 records
     const wavRelicId = fixtures[8]!.relicId;
     const rawStored = await storage.read(wavRelicId);
-    assert.ok(rawStored, 'wav relic bytes must be stored');
+    assert.ok(rawStored, 'wav relik bytes must be stored');
     const originalBytes = new Uint8Array(rawStored);
     const corrupted = new Uint8Array(originalBytes);
     // Flip byte in record 2 (record 0 = 21..65557, record 1 = 65557..131093, record 2 = 131093..)
@@ -2594,7 +2594,7 @@ try {
 
     const wavRelicId = fixtures[8]!.relicId;
     const rawStored = await storage.read(wavRelicId);
-    assert.ok(rawStored, 'wav relic bytes must be stored');
+    assert.ok(rawStored, 'wav relik bytes must be stored');
     const originalBytes = new Uint8Array(rawStored);
     const truncated = originalBytes.subarray(0, originalBytes.length - 65536);
     storage.put(wavRelicId, truncated);
@@ -2747,7 +2747,7 @@ try {
     assert.equal(
       relicMintCounts.get(targetFix.relicId) ?? 0,
       relicMintBefore,
-      'Relic mint count must be 0 when viewer.js blocked'
+      'Relik mint count must be 0 when viewer.js blocked'
     );
     assert.equal(
       serverMintCount,
@@ -2974,7 +2974,7 @@ try {
     onlyFilter === 'jsx'
   ) {
     console.log(
-      '\n--- Run 10: JSX component relic (frame, comparison, compiler-load recovery) ---'
+      '\n--- Run 10: JSX component relik (frame, comparison, compiler-load recovery) ---'
     );
     const t0 = Date.now();
     const viewport = { width: 1440, height: 900 };
@@ -3980,7 +3980,7 @@ try {
 
     const dur = Date.now() - t0;
     runSummary.push({
-      name: 'Run 10: JSX component relic frame, comparison, compiler-load recovery',
+      name: 'Run 10: JSX component relik frame, comparison, compiler-load recovery',
       durationMs: dur,
       status: 'pass',
     });

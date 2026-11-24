@@ -582,7 +582,7 @@ function creationOptions() {
   return {
     public_key: {
       challenge: encodeBase64url(randomBytes(32)),
-      rp: { id: 'relik.test', name: 'Relic' },
+      rp: { id: 'relik.test', name: 'Relik' },
       user: {
         id: encodeBase64url(randomBytes(16)),
         name: READER_EMAIL,
@@ -1122,7 +1122,7 @@ describe('the private reader opens a sealed version', () => {
       1,
       identity
     );
-    if (!('content' in opened)) throw new Error('expected a single-file relic');
+    if (!('content' in opened)) throw new Error('expected a single-file relik');
 
     expect(Array.from(opened.content)).toEqual(Array.from(world.plaintext));
     expect(opened.digest).toBe(world.digest);
@@ -1335,7 +1335,7 @@ describe('a version that does not verify is refused', () => {
     const identity = await unlock(deps, await loadIdentityState(deps));
 
     const opened = await fetchAndDecryptVersion(deps, relicId, 2, identity);
-    if (!('content' in opened)) throw new Error('expected a single-file relic');
+    if (!('content' in opened)) throw new Error('expected a single-file relik');
     expect(opened.content).toEqual(world.plaintext);
   });
 
@@ -1512,7 +1512,7 @@ describe('the reader drives every state of plan 4.15', () => {
     expect(stateOf(root)).toBe('signin');
     expect(visibleStages(root)).toEqual(['signin']);
     expect(stageOf(root, 'signin').querySelector('h1')?.textContent).toBe(
-      'This relic is private'
+      'This relik is private'
     );
   });
 
@@ -1642,7 +1642,7 @@ describe('the reader drives every state of plan 4.15', () => {
     expect(
       stageOf(root, 'setup-refused').querySelector('.load-bearing')?.textContent
     ).toBe(
-      "Your passkey provider can't hold a private-share key. Private relics need a provider or security key that supports the WebAuthn PRF extension."
+      "Your passkey provider can't hold a private-share key. Private reliks need a provider or security key that supports the WebAuthn PRF extension."
     );
     expect(seen).toEqual(['passkeys']);
   });
@@ -1832,7 +1832,7 @@ describe('the reader drives every state of plan 4.15', () => {
       stageOf(root, 'requested').querySelector('[data-request-note]')
         ?.textContent
     ).toBe(
-      `When the owner lets you in, Relic emails ${READER_EMAIL}. Open that link and confirm with your passkey.`
+      `When the owner lets you in, Relik emails ${READER_EMAIL}. Open that link and confirm with your passkey.`
     );
     expect(seen.map((entry) => entry.route)).toContain(
       `POST /api/relics/${relicId}/requests`
@@ -1926,7 +1926,7 @@ describe('the reader drives every state of plan 4.15', () => {
     );
   });
 
-  test('unlock to ready: unlocking opens the sealed version, mounts the relic, and pins the strip', async () => {
+  test('unlock to ready: unlocking opens the sealed version, mounts the relik, and pins the strip', async () => {
     const relicId = freshRelicId();
     const world = await sealedWorld(relicId);
     const { deps } = readerDeps(world);
@@ -1967,14 +1967,14 @@ describe('the reader drives every state of plan 4.15', () => {
     await until(() => stateOf(root) === 'denied', 'the denied state');
     expect(views).toHaveLength(0);
     expect(stageOf(root, 'denied').querySelector('h1')?.textContent).toBe(
-      "You don't have access to this relic"
+      "You don't have access to this relik"
     );
 
     press(root, '#denied-switch');
     expect(stateOf(root)).toBe('signin');
   });
 
-  test('unlock to seal-mismatch: a tampered seal shows the mismatch copy and no relic', async () => {
+  test('unlock to seal-mismatch: a tampered seal shows the mismatch copy and no relik', async () => {
     const relicId = freshRelicId();
     const world = await sealedWorld(relicId, { tamperSeal: true });
     const { root, views } = await mountReader(readerDeps(world).deps, relicId);
@@ -1989,11 +1989,11 @@ describe('the reader drives every state of plan 4.15', () => {
     expect(
       stageOf(root, 'seal-mismatch').querySelector('.load-bearing')?.textContent
     ).toBe(
-      "This version doesn't match the owner's signature. Relic won't show it."
+      "This version doesn't match the owner's signature. Relik won't show it."
     );
   });
 
-  test('unlock to owner-changed: a different owner key for a pinned relic shows both fingerprints', async () => {
+  test('unlock to owner-changed: a different owner key for a pinned relik shows both fingerprints', async () => {
     const relicId = freshRelicId();
     const first = await sealedWorld(relicId);
     const opened = await mountReader(readerDeps(first).deps, relicId);
@@ -2025,7 +2025,7 @@ describe('the reader drives every state of plan 4.15', () => {
       ).split(' ')
     );
     expect(stage.querySelector('.load-bearing')?.textContent).toBe(
-      "The owner's key for this relic isn't the one you saw when you first opened it. Relic won't open it. Contact the person who shared it."
+      "The owner's key for this relik isn't the one you saw when you first opened it. Relik won't open it. Contact the person who shared it."
     );
   });
 });
@@ -2384,7 +2384,7 @@ describe('a version key the seal does not commit to is refused before use', () =
     ).rejects.toBeInstanceOf(SealMismatchError);
   });
 
-  test('a reader shows the mismatch copy and no relic when the service substitutes the key', async () => {
+  test('a reader shows the mismatch copy and no relik when the service substitutes the key', async () => {
     const relicId = freshRelicId();
     const world = await sealedWorld(relicId, { substituteKey: true });
     const { root, views } = await mountReader(readerDeps(world).deps, relicId);

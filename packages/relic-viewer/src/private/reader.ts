@@ -107,7 +107,7 @@ type ReaderStage =
 const STAGES_HTML = `
 <div class="stage" data-for="signin">
   <div class="card">
-    <h1 class="card-title" tabindex="-1">This relic is private</h1>
+    <h1 class="card-title" tabindex="-1">This relik is private</h1>
     <p class="card-meta">Its link carries no key.</p>
     <div class="card-body">
       <p>Only people the owner lets in can open it. Enter your email address to ask the owner for access.</p>
@@ -116,7 +116,7 @@ const STAGES_HTML = `
       <form class="signin-form" id="signin-email-form">
         <label class="compose-field"><span>Email address</span><input class="compose-input" type="email" id="signin-email" autocomplete="email" placeholder="you@example.com" required></label>
         <button type="submit" class="action primary">Request access</button>
-        <p class="card-fine">Relic emails you a code to confirm the address. Then the owner is asked.</p>
+        <p class="card-fine">Relik emails you a code to confirm the address. Then the owner is asked.</p>
       </form>
       <form class="signin-form" id="signin-code-form" hidden>
         <label class="compose-field"><span>Code from the email</span><input class="compose-input code-input" inputmode="numeric" autocomplete="one-time-code" id="signin-code" maxlength="6"></label>
@@ -126,8 +126,8 @@ const STAGES_HTML = `
       <div class="passkey-sign-in" id="signin-passkey-host"></div>
     </div>
     <details class="disclosure">
-      <summary>What Relic records about private relics</summary>
-      <blockquote>Relic records who asked for access and who granted it, their email addresses and public keys, and an access log the owner can read. Your key is stored only encrypted under your passkey. <a href="/policy" target="_blank" rel="noopener">Read the full statement.</a></blockquote>
+      <summary>What Relik records about private reliks</summary>
+      <blockquote>Relik records who asked for access and who granted it, their email addresses and public keys, and an access log the owner can read. Your key is stored only encrypted under your passkey. <a href="/policy" target="_blank" rel="noopener">Read the full statement.</a></blockquote>
     </details>
   </div>
 </div>
@@ -137,7 +137,7 @@ const STAGES_HTML = `
     <h1 class="card-title" tabindex="-1">Set up your private-share key</h1>
     <p class="card-meta" data-signed-in></p>
     <div class="card-body">
-      <p>Private relics are encrypted to each reader's own key. Yours is made in this browser and stored encrypted under a secret only your passkey can produce, so Relic never sees it.</p>
+      <p>Private reliks are encrypted to each reader's own key. Yours is made in this browser and stored encrypted under a secret only your passkey can produce, so Relik never sees it.</p>
       <p>Setting it up takes one tap.</p>
     </div>
     <div class="card-actions">
@@ -150,8 +150,8 @@ const STAGES_HTML = `
   <div class="card is-refusal">
     <h1 class="card-title" tabindex="-1">This passkey can't hold a key</h1>
     <p class="card-meta" data-signed-in></p>
-    <p class="load-bearing">Your passkey provider can't hold a private-share key. Private relics need a provider or security key that supports the WebAuthn PRF extension.</p>
-    <p class="card-note">Nothing was registered. Public relics still open as before.</p>
+    <p class="load-bearing">Your passkey provider can't hold a private-share key. Private reliks need a provider or security key that supports the WebAuthn PRF extension.</p>
+    <p class="card-note">Nothing was registered. Public reliks still open as before.</p>
   </div>
 </div>
 
@@ -164,7 +164,7 @@ const STAGES_HTML = `
       <button type="button" class="action primary" data-action="private-replace-passkey">Make a replacement passkey</button>
       <button type="button" class="btn" id="replace-not-now">Not now</button>
     </div>
-    <p class="card-note">Your passkey provider asks before it saves the new one. Nothing is registered with Relic until it can hold your key.</p>
+    <p class="card-note">Your passkey provider asks before it saves the new one. Nothing is registered with Relik until it can hold your key.</p>
   </div>
 </div>
 
@@ -173,7 +173,7 @@ const STAGES_HTML = `
     <h1 class="card-title" tabindex="-1">Ask the owner for access</h1>
     <p class="card-meta" data-signed-in></p>
     <div class="card-body">
-      <p>Relic emails the owner your address and your fingerprint, with a link to let you in.</p>
+      <p>Relik emails the owner your address and your fingerprint, with a link to let you in.</p>
       <p>You'll see the same fingerprint on the next screen. Nobody needs to call you.</p>
     </div>
     <div class="card-actions">
@@ -189,7 +189,7 @@ const STAGES_HTML = `
     <p class="card-meta" data-signed-in></p>
     <p class="fp-caption" id="fp-mine-caption">Your fingerprint</p>
     <p class="fingerprint" data-fingerprint="mine" aria-labelledby="fp-mine-caption"></p>
-    <p class="fp-instruction">The owner sees your email and this fingerprint in the email Relic sends them, and can grant you access from there. You don't need to call anyone.</p>
+    <p class="fp-instruction">The owner sees your email and this fingerprint in the email Relik sends them, and can grant you access from there. You don't need to call anyone.</p>
     <p class="card-note" data-request-note></p>
   </div>
 </div>
@@ -199,7 +199,7 @@ const STAGES_HTML = `
     <h1 class="card-title" tabindex="-1">Request sent</h1>
     <p class="card-meta" data-signed-in></p>
     <div class="card-body">
-      <p>Your fingerprint shows here once your passkey unlocks it in this browser. The owner sees it in the email Relic sends them.</p>
+      <p>Your fingerprint shows here once your passkey unlocks it in this browser. The owner sees it in the email Relik sends them.</p>
     </div>
     <div class="card-actions">
       <button type="button" class="action primary" data-action="private-unlock-requested">Unlock with passkey</button>
@@ -211,7 +211,7 @@ const STAGES_HTML = `
   <div class="card is-refusal">
     <h1 class="card-title" tabindex="-1">The owner declined your request</h1>
     <p class="card-meta" data-signed-in></p>
-    <p>Relic won't open this relic for you. If you think that's a mistake, contact the person who shared it.</p>
+    <p>Relik won't open this relik for you. If you think that's a mistake, contact the person who shared it.</p>
   </div>
 </div>
 
@@ -219,7 +219,7 @@ const STAGES_HTML = `
   <div class="card">
     <h1 class="card-title" tabindex="-1">You have access</h1>
     <p class="card-meta" data-signed-in data-expiry></p>
-    <p>Your passkey unlocks your key in this browser. The relic is decrypted here; the key never leaves.</p>
+    <p>Your passkey unlocks your key in this browser. The relik is decrypted here; the key never leaves.</p>
     <div class="card-actions">
       <button type="button" class="action primary" data-action="private-unlock">Unlock with passkey</button>
     </div>
@@ -230,15 +230,15 @@ const STAGES_HTML = `
   <div class="card is-refusal">
     <h1 class="card-title" tabindex="-1">Your access was removed</h1>
     <p class="card-meta" data-signed-in></p>
-    <p>The owner removed your access to this relic. Relic no longer serves it to you, and the keys it held for you are deleted.</p>
+    <p>The owner removed your access to this relik. Relik no longer serves it to you, and the keys it held for you are deleted.</p>
   </div>
 </div>
 
 <div class="stage" data-for="denied" hidden>
   <div class="card is-refusal">
-    <h1 class="card-title" tabindex="-1">You don't have access to this relic</h1>
+    <h1 class="card-title" tabindex="-1">You don't have access to this relik</h1>
     <p class="card-meta" data-signed-in></p>
-    <p>Relic won't serve this relic to this address. If the owner shared it with a different one, sign in with that address instead.</p>
+    <p>Relik won't serve this relik to this address. If the owner shared it with a different one, sign in with that address instead.</p>
     <div class="card-actions">
       <button type="button" class="btn" id="denied-switch">Sign in with another address</button>
     </div>
@@ -247,9 +247,9 @@ const STAGES_HTML = `
 
 <div class="stage" data-for="owner-changed" hidden>
   <div class="card is-refusal">
-    <h1 class="card-title" tabindex="-1">Relic won't open this relic</h1>
+    <h1 class="card-title" tabindex="-1">Relik won't open this relik</h1>
     <p class="card-meta" data-signed-in></p>
-    <p class="load-bearing">The owner's key for this relic isn't the one you saw when you first opened it. Relic won't open it. Contact the person who shared it.</p>
+    <p class="load-bearing">The owner's key for this relik isn't the one you saw when you first opened it. Relik won't open it. Contact the person who shared it.</p>
     <div class="dash-grid">
       <div>
         <p class="fp-caption" data-first-seen-caption></p>
@@ -265,9 +265,9 @@ const STAGES_HTML = `
 
 <div class="stage" data-for="seal-mismatch" hidden>
   <div class="card is-refusal">
-    <h1 class="card-title" tabindex="-1">Relic won't show this version</h1>
+    <h1 class="card-title" tabindex="-1">Relik won't show this version</h1>
     <p class="card-meta" data-version-meta></p>
-    <p class="load-bearing">This version doesn't match the owner's signature. Relic won't show it.</p>
+    <p class="load-bearing">This version doesn't match the owner's signature. Relik won't show it.</p>
     <p class="card-note">Nothing from it was displayed. Tell the person who shared it, so they can check what was published.</p>
   </div>
 </div>`;
@@ -278,15 +278,15 @@ const COPY_GENERIC_FAILURE = 'Something went wrong reaching the service.';
 /** What the reader sees when the browser refuses a passkey step, by the code the ceremony raised. */
 const CEREMONY_COPY: Readonly<Record<string, string>> = {
   passkey_exists:
-    'This device already has a passkey for Relic. Use it, or choose a different one.',
+    'This device already has a passkey for Relik. Use it, or choose a different one.',
   passkey_security: 'Your browser blocked the passkey step on this page.',
   passkey_failed:
     'Your browser could not finish the passkey step. Try again, or use another browser or a security key.',
 };
-const COPY_REQUEST_SENT = 'When the owner lets you in, Relic emails';
+const COPY_REQUEST_SENT = 'When the owner lets you in, Relik emails';
 const COPY_REQUEST_SENT_TAIL = 'Open that link and confirm with your passkey.';
 const COPY_SEAL_DETAIL =
-  "This version doesn't match the owner's signature. Relic won't show it.";
+  "This version doesn't match the owner's signature. Relik won't show it.";
 
 /** The element a stage or the host must contain, or the reader fails loudly. */
 function required<T extends Element>(scope: ParentNode, selector: string): T {
@@ -350,7 +350,7 @@ class PrivateReader {
   constructor(private readonly mount: PrivateReaderMount) {
     this.host = document.createElement('section');
     this.host.id = 'relic-private';
-    this.host.setAttribute('aria-label', 'Private relic');
+    this.host.setAttribute('aria-label', 'Private relik');
     this.host.innerHTML = STAGES_HTML;
   }
 
@@ -1012,13 +1012,13 @@ class PrivateReader {
       this.showDead(
         newer
           ? {
-              headline: 'This relic uses a newer format',
+              headline: 'This relik uses a newer format',
               detail: 'Reload this page to get the current viewer.',
               action: 'none',
               code: 'unsupported_format',
             }
           : {
-              headline: 'This relic could not be read',
+              headline: 'This relik could not be read',
               detail:
                 'Its file list is damaged or names a file in a way Relik does not accept.',
               action: 'none',
@@ -1033,7 +1033,7 @@ class PrivateReader {
         : error instanceof TransferError
           ? deadFromProblem('service_unreachable')
           : {
-              headline: 'This relic could not be opened',
+              headline: 'This relik could not be opened',
               detail: COPY_GENERIC_FAILURE,
               action: 'retry' as const,
               code: 'service_unreachable',

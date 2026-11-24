@@ -758,7 +758,7 @@ describe('version key wraps', () => {
     expect(wrap.recipientKeyId).toBe(Buffer.from(digest).toString('hex'));
   });
 
-  test('the wrap is bound to "relic/wrap/v1", the relic ID, the version, and the key ID as AAD', async () => {
+  test('the wrap is bound to "relic/wrap/v1", the relik ID, the version, and the key ID as AAD', async () => {
     const keys = await generateIdentityKeys();
     const key = crypto.getRandomValues(new Uint8Array(16));
     const wrap = await wrapVersionKey({
@@ -786,7 +786,7 @@ describe('version key wraps', () => {
     expect(opened).toEqual(key);
   });
 
-  test('refuses a wrong relic ID, a wrong version, a different recipient, and a tampered wrap', async () => {
+  test('refuses a wrong relik ID, a wrong version, a different recipient, and a tampered wrap', async () => {
     const keys = await generateIdentityKeys();
     const other = await generateIdentityKeys();
     const key = crypto.getRandomValues(new Uint8Array(16));
@@ -1106,7 +1106,7 @@ describe('keyCommitment', () => {
     );
   });
 
-  test('binds the relic, the version and the key: each change gives another commitment', async () => {
+  test('binds the relik, the version and the key: each change gives another commitment', async () => {
     const base = await keyCommitment({ relicId: RELIC, version: 5, key: KEY });
     const otherRelic = await keyCommitment({
       relicId: '0'.repeat(26),

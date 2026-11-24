@@ -47,7 +47,7 @@ const COPY_EMAIL_FIRST_EMPTY =
 const COPY_CONFIRM = 'Confirm with your passkey';
 const COPY_RATE_LIMITED =
   'Too many passkey attempts from this network. Wait a few minutes, or send yourself a link.';
-const COPY_UNREACHABLE = 'Relic could not be reached. Try again.';
+const COPY_UNREACHABLE = 'Relik could not be reached. Try again.';
 const COPY_SUCCESS = 'Signed in with your passkey. No email was sent.';
 
 const COPY_OFFER_TITLE = 'Skip the email next time';
@@ -68,7 +68,7 @@ const COPY_OFFER_EXISTS =
   'This device already has your passkey. Next time, choose Sign in with passkey.';
 const COPY_OFFER_CANCELLED = 'No passkey was added.';
 const COPY_OFFER_ERROR =
-  'Relic could not set up a passkey just now. You can add one the next time you sign in from an email.';
+  'Relik could not set up a passkey just now. You can add one the next time you sign in from an email.';
 const COPY_OFFER_CLOSE = 'Close';
 
 function setOutcome(

@@ -123,15 +123,15 @@ interface Actor {
 export const FILE_NAME = 'private-proof.txt';
 export const COMMENT_TEXT = 'The reader comment for the private shares proof.';
 const DOCUMENT_TEXT =
-  'Relic private shares proof document\nOne reader, one grant, one revocation.\n';
+  'Relik private shares proof document\nOne reader, one grant, one revocation.\n';
 const DEVICE_CERT_MS = 30 * 24 * 60 * 60 * 1000;
 /**
  * The relic notification subjects from plan 4.14 that stay generic. Account mail (passkey and key notices) is not
  * one of them, and the access request notice is not either: it names the requester on purpose (step 4 checks it).
  */
 const RELIC_NOTICE_SUBJECTS: readonly string[] = [
-  'You have access to a relic',
-  'Activity on a relic',
+  'You have access to a relik',
+  'Activity on a relik',
 ];
 
 /** D1: the private identity section is missing from the dashboard after it renders. */
@@ -271,7 +271,7 @@ async function waitForOpened(
   browser: RunningProofBrowser,
   label: string
 ): Promise<void> {
-  await poll(`${label} opened relic`, 25000, async () => {
+  await poll(`${label} opened relik`, 25000, async () => {
     const shown = await browser.evaluate<boolean>(
       `document.body.innerText.includes(${JSON.stringify(FILE_NAME)})`
     );
@@ -1416,7 +1416,7 @@ async function stepsFourAndFive(
   const askMail = await env.mailbox.await(
     env.owner,
     mailMark,
-    (m) => m.subject === `${env.reader} asked for access to a relic`,
+    (m) => m.subject === `${env.reader} asked for access to a relik`,
     'access request mail'
   );
   // The mail names the requester and carries their fingerprint and a link that opens their request. It does not
@@ -1431,7 +1431,7 @@ async function stepsFourAndFive(
     4,
     `PRIVATE_STEP_4_REQUESTED mail_names_relic=${namesRelic} mail_names_requester=${namesRequester} mail_fingerprint=${carriesFingerprint} mail_grant_link=${grantLink}`
   );
-  assert.equal(namesRelic, false, 'the request mail names the relic');
+  assert.equal(namesRelic, false, 'the request mail names the relik');
   assert.equal(
     namesRequester,
     true,
@@ -1590,13 +1590,13 @@ async function stepSeven(
   const grantMail = await env.mailbox.await(
     env.reader,
     0,
-    (m) => m.subject === 'You have access to a relic',
+    (m) => m.subject === 'You have access to a relik',
     'grant mail'
   );
   assert.equal(
     grantMail.text.includes(FILE_NAME),
     false,
-    'the grant mail names the relic'
+    'the grant mail names the relik'
   );
   await goto(reader.browser, relicUrl);
   await waitForState(reader.browser, ['unlock'], 'reader unlock');
@@ -1680,7 +1680,7 @@ async function stepEight(
   await assertPrivateConfirmation(
     owner.browser,
     '#revoke-dialog',
-    'This changes who can read this relic, so it always asks.'
+    'This changes who can read this relik, so it always asks.'
   );
   await click(owner.browser, '[data-action="confirm-revoke"]');
   await owner.browser.waitForSelector('#rekey[data-rekey-state="done"]', 90000);
@@ -1836,18 +1836,18 @@ async function stepTen(
   assert.equal(
     cover.status,
     400,
-    `a private relic accepted a cover (${cover.status})`
+    `a private relik accepted a cover (${cover.status})`
   );
   assert.equal(ttlRefused, true, 'a lifetime over the maximum was accepted');
   assert.equal(
     shellTitleAbsent,
     true,
-    'the private shell names the relic or its file'
+    'the private shell names the relik or its file'
   );
   assert.equal(
     noticesGeneric,
     true,
-    'a notification names the relic or its file'
+    'a notification names the relik or its file'
   );
 }
 
@@ -1905,7 +1905,7 @@ async function stepEleven(
     0,
     'the delete left data behind'
   );
-  assert.equal(row, undefined, 'the relic row survived the delete');
+  assert.equal(row, undefined, 'the relik row survived the delete');
   assert.equal(stone?.kind, 'owner', 'the tombstone is not an owner tombstone');
 }
 

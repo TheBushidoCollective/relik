@@ -114,7 +114,7 @@ async function publishRelic(
   };
 
   const container = await encryptRelic({
-    content: new TextEncoder().encode('hello relic'),
+    content: new TextEncoder().encode('hello relik'),
     filename: 'test.md',
     mimetype: 'text/markdown',
     key,
@@ -1670,9 +1670,9 @@ describe('S1 Server passkey sign-in', () => {
     const when1 = `${d1.getUTCDate()} Oct ${d1.getUTCFullYear()} at ${hh1}:${mm1} UTC`;
     expect(notices[0]?.mail.text).toBe(
       `A passkey was added for enroll@example.com on ${when1}.\n\n` +
-        'It signs in to Relic as this address without a link, and it confirms decisions. This address has 1 passkey.\n\n' +
+        'It signs in to Relik as this address without a link, and it confirms decisions. This address has 1 passkey.\n\n' +
         'If you added it, you can ignore this message.\n\n' +
-        'If you did not, whoever added it can read this mailbox, or used a browser that had just signed in with a link or code sent here. Relic has no way to remove a passkey.'
+        'If you did not, whoever added it can read this mailbox, or used a browser that had just signed in with a link or code sent here. Relik has no way to remove a passkey.'
     );
 
     // Advance now by 2 hours (7_200_000 ms)
@@ -1728,9 +1728,9 @@ describe('S1 Server passkey sign-in', () => {
     const when2 = `${d2.getUTCDate()} Oct ${d2.getUTCFullYear()} at ${hh2}:${mm2} UTC`;
     expect(notices[1]?.mail.text).toBe(
       `A passkey was added for enroll@example.com on ${when2}.\n\n` +
-        'It signs in to Relic as this address without a link, and it confirms decisions. A passkey this address already had confirmed it. This address has 2 passkeys.\n\n' +
+        'It signs in to Relik as this address without a link, and it confirms decisions. A passkey this address already had confirmed it. This address has 2 passkeys.\n\n' +
         'If you added it, you can ignore this message.\n\n' +
-        'If you did not, whoever added it could use a passkey this address already had. Relic has no way to remove a passkey.'
+        'If you did not, whoever added it could use a passkey this address already had. Relik has no way to remove a passkey.'
     );
   });
 
@@ -1913,7 +1913,7 @@ describe('S1 Server passkey sign-in', () => {
       'only a session that a sign-in email started in the previous 15 minutes, by its link or its code, can begin adding it'
     );
     expect(text).toContain(
-      'That email has no stop link, because it is about the address rather than a relic.'
+      'That email has no stop link, because it is about the address rather than a relik.'
     );
   });
   test('28. M1: Exhausting the email-first budget for an address does not block usernameless sign-in', async () => {

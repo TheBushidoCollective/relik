@@ -158,7 +158,7 @@ describe('publishing from the page', () => {
       viewerDeps(new URL(result.url).hash)
     );
     expect(state.kind).toBe('ready');
-    if (state.kind !== 'ready') throw new Error('published relic did not open');
+    if (state.kind !== 'ready') throw new Error('published relik did not open');
     expect(state.view.filename).toBe('renamed.txt');
     expect(await state.view.content.readWhole(1024)).toEqual(content);
   });
@@ -187,7 +187,7 @@ describe('publishing from the page', () => {
       viewerDeps(new URL(result.url).hash)
     );
     expect(state.kind).toBe('ready');
-    if (state.kind !== 'ready') throw new Error('published relic did not open');
+    if (state.kind !== 'ready') throw new Error('published relik did not open');
     expect(state.view.filename).toBe('reviewed.txt');
     expect(await state.view.content.readWhole(1024)).toEqual(content);
   });
@@ -406,7 +406,7 @@ describe('publishing from the page', () => {
     expect(failure.code).toBe('digest_mismatch');
   });
 
-  test('an empty file publishes and opens as an empty relic', async () => {
+  test('an empty file publishes and opens as an empty relik', async () => {
     const result = await publishFile(
       source('empty.txt', new Uint8Array(0)),
       defaults,

@@ -277,8 +277,8 @@ function depsWith(
   };
 }
 
-describe('the republish recipient set only includes what the owner signed for this relic', () => {
-  test('a grant the owner signed for another relic is refused, not wrapped', async () => {
+describe('the republish recipient set only includes what the owner signed for this relik', () => {
+  test('a grant the owner signed for another relik is refused, not wrapped', async () => {
     const owner = await personOf('sam@example.com');
     const reader = await personOf('ada@example.com');
     const grant = await grantOf(owner, reader, RELIC_A, { relicId: RELIC_B });
@@ -331,7 +331,7 @@ describe('the republish recipient set only includes what the owner signed for th
     ).rejects.toBeInstanceOf(VerificationRefusedError);
   });
 
-  test('a grant for this relic, with matching email and fingerprint, is wrapped to its grantee', async () => {
+  test('a grant for this relik, with matching email and fingerprint, is wrapped to its grantee', async () => {
     const owner = await personOf('sam@example.com');
     const reader = await personOf('ada@example.com');
     const grant = await grantOf(owner, reader, RELIC_A);
@@ -538,7 +538,7 @@ describe('a repair wraps only to a recovery holder the owner designated', () => 
     );
   });
 
-  test('a relic whose version names another owner is refused, and nothing is wrapped for it (PS2-03)', async () => {
+  test('a relik whose version names another owner is refused, and nothing is wrapped for it (PS2-03)', async () => {
     const owner = await personOf('sam@example.com');
     const holder = await personOf('ops@example.com');
     const designated = await recoveryOf(owner, holder);

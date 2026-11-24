@@ -109,7 +109,7 @@ async function makeAuthenticator() {
   await auth.register(
     {
       challenge: encodeBase64url(randomBytes(32)),
-      rp: { id: RP, name: 'Relic' },
+      rp: { id: RP, name: 'Relik' },
       user: { id: 'dXNlcg', name: EMAIL, displayName: EMAIL },
       pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
       extensions: { prf: {} },
@@ -501,7 +501,7 @@ test('GCS PUT signs the private lifecycle header and exact length', async () => 
   expect(signed).toBe('content-length;host;x-goog-custom-time');
 });
 
-test('relic reservation is create-only in memory and GCS', async () => {
+test('relik reservation is create-only in memory and GCS', async () => {
   const id = generateRelicId();
   const first = relic({ id });
   const second = relic({ id, publishingClient: 'other' });

@@ -92,7 +92,7 @@ export async function checkPrivatePublish(
     // A zero-byte private relic would need its header size to pin the upload,
     // which the row does not keep, so it is refused rather than signed as a guess.
     throw new ProblemError('invalid_publish_metadata', {
-      detail: 'A private relic needs content.',
+      detail: 'A private relik needs content.',
     });
   }
   const ttl = input.body['ttl_days'];
@@ -200,7 +200,7 @@ export async function checkOwnerPublish(
   }
   if (input.declaredSizeBytes <= 0) {
     throw new ProblemError('invalid_publish_metadata', {
-      detail: 'A private relic needs content.',
+      detail: 'A private relik needs content.',
     });
   }
   refusePrivateTtl(input.body, env.config.privateMaxTtlDays);

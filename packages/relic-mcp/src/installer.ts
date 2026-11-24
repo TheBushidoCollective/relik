@@ -32,9 +32,9 @@ export const USAGE = `relic-mcp - publish a file as an encrypted, shareable link
 Install options:
   --client <id>     ${HARNESSES.map((h) => h.id).join(', ')}
                     Omit to see which of these are installed here.
-  --origin <url>    The Relic service to publish to. Falls back to
+  --origin <url>    The Relik service to publish to. Falls back to
                     RELIC_SERVICE_ORIGIN.
-  --name <name>     Server name in the config. Default: relic.
+  --name <name>     Server name in the config. Default: relik.
   --print           Write nothing; print the config to paste.
   --force           Replace an existing entry of the same name.
   --dry-run         Show the file and what would change, without writing.

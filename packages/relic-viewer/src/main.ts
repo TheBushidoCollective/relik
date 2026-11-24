@@ -694,7 +694,7 @@ export function confirmLargeOpen(
           version: metadata.version,
         },
         open,
-        "Don't ask again for this relic"
+        "Don't ask again for this relik"
       )
     );
   actions.append(cancel, open);
@@ -1037,7 +1037,7 @@ export function buildBar(
   // this relic does rather than what the riskiest relic would.
   const markerLabel = markerLabelFor(view.route, view.documentKind);
   marker.setAttribute('aria-label', markerLabel);
-  marker.title = `${markerLabel}. What Relic knows.`;
+  marker.title = `${markerLabel}. What Relik knows.`;
   marker.appendChild(icon(ICONS.source));
   const markerText = document.createElement('span');
   markerText.textContent = markerLabel;
@@ -1052,12 +1052,12 @@ export function buildBar(
   relicsLink.href = `${SERVICE_ORIGIN}/dashboard`;
   relicsLink.target = '_blank';
   relicsLink.rel = 'noopener';
-  relicsLink.setAttribute('aria-label', 'Relics list');
+  relicsLink.setAttribute('aria-label', 'Reliks list');
   relicsLink.title =
-    'Relics list. Open your saved and commented relics in a new tab.';
+    'Reliks list. Open your saved and commented reliks in a new tab.';
   relicsLink.appendChild(icon(ICONS.grid));
   const relicsText = document.createElement('span');
-  relicsText.textContent = 'Relics';
+  relicsText.textContent = 'Reliks';
   relicsLink.appendChild(relicsText);
   actions.appendChild(relicsLink);
 
@@ -1086,7 +1086,7 @@ export function buildBar(
       comments.appendChild(count);
       comments.title = threadCountLabel(options.commentCount);
     } else {
-      comments.title = 'Comments on this relic';
+      comments.title = 'Comments on this relik';
     }
     actions.appendChild(comments);
   }
@@ -1128,14 +1128,14 @@ export function buildBar(
         ? `Return to viewing version ${view.version}`
         : canCompare
           ? `Compare version ${view.version} with its history`
-          : 'Open an earlier version of this relic'
+          : 'Open an earlier version of this relik'
     );
     compare.title =
       options.comparisonOpen === true
         ? `Return to viewing version ${view.version}`
         : canCompare
           ? `Compare version ${view.version} with its history`
-          : 'Open an earlier version of this relic';
+          : 'Open an earlier version of this relik';
     compare.classList.add('action-history');
     actions.appendChild(compare);
   }
@@ -1175,7 +1175,7 @@ export function buildBar(
     const share = button('Share', ICONS.share, () => onShare(share));
     share.classList.add('action-share');
     share.setAttribute('aria-haspopup', 'dialog');
-    share.title = 'Share this relic with people by email';
+    share.title = 'Share this relik with people by email';
     actions.appendChild(share);
   }
 
@@ -1234,7 +1234,7 @@ export function buildBar(
   moreMarker.href = `${SERVICE_ORIGIN}/policy`;
   moreMarker.rel = 'noopener noreferrer';
   moreMarker.setAttribute('aria-label', markerLabel);
-  moreMarker.title = `${markerLabel}. What Relic knows.`;
+  moreMarker.title = `${markerLabel}. What Relik knows.`;
   moreMarker.appendChild(icon(ICONS.source));
   const moreMarkerText = document.createElement('span');
   moreMarkerText.textContent = markerLabel;
@@ -1246,10 +1246,10 @@ export function buildBar(
   moreRelics.target = '_blank';
   moreRelics.rel = 'noopener';
   moreRelics.title =
-    'Relics list. Open your saved and commented relics in a new tab.';
+    'Reliks list. Open your saved and commented reliks in a new tab.';
   moreRelics.appendChild(icon(ICONS.grid));
   const moreRelicsText = document.createElement('span');
-  moreRelicsText.textContent = 'Relics';
+  moreRelicsText.textContent = 'Reliks';
   moreRelics.appendChild(moreRelicsText);
 
   const moreDownload = button('Download', ICONS.download, () => {
@@ -4581,7 +4581,7 @@ function field(
 
 /** Said when the session could not be read, so the address is asked for. */
 const UNKNOWN_SESSION_NOTE =
-  'Relic could not tell whether this browser is already verified, so it is ' +
+  'Relik could not tell whether this browser is already verified, so it is ' +
   'asking. Entering an address you have used before costs nothing but the ' +
   'email.';
 
@@ -4591,7 +4591,7 @@ function policyLink(): HTMLElement {
   link.className = 'thread-policy';
   link.href = `${SERVICE_ORIGIN}/policy`;
   link.rel = 'noopener noreferrer';
-  link.textContent = 'What Relic knows';
+  link.textContent = 'What Relik knows';
   return link;
 }
 
@@ -4818,7 +4818,7 @@ export function commentRow(
     // holds one.
     const badge = document.createElement('span');
     badge.className = 'comment-badge';
-    badge.textContent = 'Published this relic';
+    badge.textContent = 'Published this relik';
     head.appendChild(badge);
   }
   if (entry.version === null || entry.version === undefined) {
@@ -4898,7 +4898,7 @@ export function commentRow(
       line(
         'comment-body comment-sealed',
         'This comment did not decrypt. It was either written under a ' +
-          'different key for this relic or altered in storage, and there is ' +
+          'different key for this relik or altered in storage, and there is ' +
           'no way to tell which from here. It is shown rather than dropped, ' +
           'because a thread that quietly hides what it cannot read is one ' +
           'you cannot trust the length of.'
@@ -4957,7 +4957,7 @@ export function threadRefusal(
 /** Copy for a thread with nothing in it yet, which is not an error. */
 export const THREAD_EMPTY_NOTE =
   'No comments yet. Anyone holding this link can leave one, and the text is ' +
-  'encrypted the same way the file is, so Relic stores it without being ' +
+  'encrypted the same way the file is, so Relik stores it without being ' +
   'able to read it.';
 
 /**
@@ -8793,7 +8793,7 @@ export function buildThread(
         confirmPrefs(),
         { kind: 'delete-comment', relicId },
         remove,
-        "Don't ask again for my comments on this relic"
+        "Don't ask again for my comments on this relik"
       )
     );
     const cleanUp = (): void => {
@@ -10113,7 +10113,7 @@ export function buildThread(
       const rows: HTMLElement[] = [];
       if (whole.length) {
         const heading = document.createElement('li');
-        heading.textContent = 'Whole relic';
+        heading.textContent = 'Whole relik';
         rows.push(
           heading,
           ...whole.map((node) => {
@@ -11067,7 +11067,7 @@ export function openSharePanel(
   title.className = 'share-title';
   title.id = 'share-title';
   title.tabIndex = -1;
-  title.textContent = 'Share this relic';
+  title.textContent = 'Share this relik';
   const dismiss = document.createElement('button');
   dismiss.type = 'button';
   dismiss.className = 'share-close';
@@ -12515,7 +12515,7 @@ export function renderDead(
     const submit = document.createElement('button');
     submit.type = 'submit';
     submit.className = 'action primary key-entry-submit';
-    submit.textContent = 'Open relic';
+    submit.textContent = 'Open relik';
 
     inputRow.append(input, submit);
 
@@ -12618,7 +12618,7 @@ function dashboardThumbnail(row: DashboardRelicRow): HTMLElement {
   const thumb = document.createElement('span');
   thumb.className = `relic-thumbnail relic-thumbnail-${row.previewKind}`;
   thumb.setAttribute('role', 'img');
-  thumb.setAttribute('aria-label', `${row.previewLabel} relic`);
+  thumb.setAttribute('aria-label', `${row.previewLabel} relik`);
 
   const rule = document.createElement('span');
   rule.className = 'relic-thumbnail-rule';
@@ -12700,7 +12700,7 @@ export async function renderDashboard(deps: ViewerDeps): Promise<void> {
 
   const h1 = document.createElement('h1');
   h1.className = 'dashboard-title';
-  h1.textContent = 'Relic Dashboard';
+  h1.textContent = 'Relik Dashboard';
   container.appendChild(h1);
 
   // Search over titles and contents. The search itself loads on the first
@@ -12717,7 +12717,7 @@ export async function renderDashboard(deps: ViewerDeps): Promise<void> {
   searchInput.type = 'search';
   searchInput.className = 'compose-input dashboard-search-input';
   searchInput.placeholder = 'Search titles and contents';
-  searchInput.setAttribute('aria-label', 'Search relics by title and contents');
+  searchInput.setAttribute('aria-label', 'Search reliks by title and contents');
   searchInput.autocomplete = 'off';
   const searchStatus = document.createElement('p');
   searchStatus.className = 'dashboard-search-status';
@@ -12771,12 +12771,12 @@ export async function renderDashboard(deps: ViewerDeps): Promise<void> {
 
   const localHeading = document.createElement('h2');
   localHeading.className = 'dashboard-section-title';
-  localHeading.textContent = 'Relics this browser can open';
+  localHeading.textContent = 'Reliks this browser can open';
 
   const localNote = document.createElement('p');
   localNote.className = 'dashboard-section-note';
   localNote.textContent =
-    'These keys are saved in this browser. You can open these relics without signing in.';
+    'These keys are saved in this browser. You can open these reliks without signing in.';
 
   localSection.append(localHeading, localNote);
 
@@ -12792,8 +12792,8 @@ export async function renderDashboard(deps: ViewerDeps): Promise<void> {
       empty.className = 'relic-list-empty';
       empty.textContent =
         localRows.length === 0
-          ? 'No relics currently saved in this browser.'
-          : 'No relics saved in this browser match your search.';
+          ? 'No reliks currently saved in this browser.'
+          : 'No reliks saved in this browser match your search.';
       localListContainer.appendChild(empty);
       return;
     }
@@ -12854,7 +12854,7 @@ export async function renderDashboard(deps: ViewerDeps): Promise<void> {
   const toolsNote = document.createElement('p');
   toolsNote.className = 'vault-tools-note';
   toolsNote.textContent =
-    'Exporting creates a backup file containing the decryption keys for every relic listed above. Anyone holding this backup can open your relics. Keep it safe and treat it as a credential.';
+    'Exporting creates a backup file containing the decryption keys for every relik listed above. Anyone holding this backup can open your reliks. Keep it safe and treat it as a credential.';
 
   const toolsRow = document.createElement('div');
   toolsRow.className = 'vault-tools-actions';
@@ -12937,7 +12937,7 @@ export async function renderDashboard(deps: ViewerDeps): Promise<void> {
 
     const commentedHeading = document.createElement('h2');
     commentedHeading.className = 'dashboard-section-title';
-    commentedHeading.textContent = 'Relics you have commented on';
+    commentedHeading.textContent = 'Reliks you have commented on';
 
     const sessionInfo = document.createElement('p');
     sessionInfo.className = 'dashboard-session-info';
@@ -12996,7 +12996,7 @@ export async function renderDashboard(deps: ViewerDeps): Promise<void> {
 
     const commentedList = document.createElement('div');
     commentedList.className = 'commented-relics-list-container';
-    commentedList.textContent = 'Loading commented relics...';
+    commentedList.textContent = 'Loading commented reliks...';
     commentedSection.appendChild(commentedList);
 
     container.appendChild(commentedSection);
@@ -13011,8 +13011,8 @@ export async function renderDashboard(deps: ViewerDeps): Promise<void> {
         empty.className = 'relic-list-empty';
         empty.textContent =
           commentedLoaded === null
-            ? 'Could not load commented relics.'
-            : 'You have not commented on any relics yet.';
+            ? 'Could not load commented reliks.'
+            : 'You have not commented on any reliks yet.';
         commentedList.appendChild(empty);
         return;
       }
@@ -13022,7 +13022,7 @@ export async function renderDashboard(deps: ViewerDeps): Promise<void> {
         const empty = document.createElement('p');
         empty.className = 'relic-list-empty';
         empty.textContent =
-          'No relics you have commented on match your search.';
+          'No reliks you have commented on match your search.';
         commentedList.appendChild(empty);
         return;
       }
@@ -13052,7 +13052,7 @@ export async function renderDashboard(deps: ViewerDeps): Promise<void> {
           const unopenableNote = document.createElement('p');
           unopenableNote.className = 'relic-unopenable-note';
           unopenableNote.textContent =
-            'This browser does not hold the key for this relic. The original link is the only way in.';
+            'This browser does not hold the key for this relik. The original link is the only way in.';
 
           info.append(titleSpan, unopenableNote);
         }
@@ -13083,12 +13083,12 @@ export async function renderDashboard(deps: ViewerDeps): Promise<void> {
 
     const authHeading = document.createElement('h2');
     authHeading.className = 'dashboard-section-title';
-    authHeading.textContent = 'Relics you have commented on';
+    authHeading.textContent = 'Reliks you have commented on';
 
     const authPrompt = document.createElement('p');
     authPrompt.className = 'dashboard-section-note';
     authPrompt.textContent =
-      'Sign in with your email address to view relics you have commented on.';
+      'Sign in with your email address to view reliks you have commented on.';
 
     const form = document.createElement('form');
     form.className = 'compose compose-identity-dashboard';
@@ -13260,7 +13260,7 @@ export async function renderDocument(
   const heading = /^#\s+(.+)$/m.exec(source)?.[1]?.trim();
   if (heading !== undefined && heading.length > 0) {
     title.textContent = heading;
-    document.title = `${heading} · Relic`;
+    document.title = `${heading} · Relik`;
   }
   main.appendChild(renderMarkdownSource(source, `${heading ?? 'document'}.md`));
 }
@@ -13342,7 +13342,7 @@ export async function boot(
       plate.remove();
       renderDead(
         {
-          headline: 'This relic could not be opened',
+          headline: 'This relik could not be opened',
           detail: 'Something went wrong reaching the service.',
           action: 'retry',
           code: 'service_unreachable',
@@ -13391,7 +13391,7 @@ export async function boot(
       plate.remove();
       renderDead(
         {
-          headline: 'This relic could not be opened',
+          headline: 'This relik could not be opened',
           detail: 'Something went wrong rendering the document.',
           action: 'retry',
           code: 'render_failed',

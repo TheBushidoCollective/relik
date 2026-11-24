@@ -228,7 +228,7 @@ function memoryStorage(): Storage {
   } as Storage;
 }
 
-describe('the display name, remembered across relics', () => {
+describe('the display name, remembered across reliks', () => {
   // Reported as signing in per relic. The session was already global; this
   // was the part that genuinely was not, and it was worse than per relic: the
   // composer cleared the name after every single comment.
@@ -253,7 +253,7 @@ describe('the display name, remembered across relics', () => {
     expect(readDisplayName()).toBe('');
   });
 
-  test('a name survives to the next read, under a key with no relic in it', () => {
+  test('a name survives to the next read, under a key with no relik in it', () => {
     const store = install();
     writeDisplayName('Ada');
     expect(readDisplayName()).toBe('Ada');
@@ -600,7 +600,7 @@ describe('the thread', () => {
       displayName: null,
       anchor: null,
     }) as unknown as ElementStub;
-    expect(textOf(row)).toContain('Published this relic');
+    expect(textOf(row)).toContain('Published this relik');
   });
 });
 
@@ -690,7 +690,7 @@ describe('refusal states', () => {
     const docStub = { cookie: 'other_cookie=abc' };
     expect(takeFreshPasskeyOfferMarker(docStub)).toBe(false);
   });
-  test('a network failure is not reported as a problem with the relic', async () => {
+  test('a network failure is not reported as a problem with the relik', async () => {
     const deps: ViewerDeps = {
       ...stubDeps(() => json([])),
       // A rejecting fetch is not shaped like `fetch`, and it does not need to
@@ -853,7 +853,7 @@ describe('posting a comment', () => {
 });
 
 describe('the magic-link round trip', () => {
-  test('the request carries an address and a relic id, and no key', () => {
+  test('the request carries an address and a relik id, and no key', () => {
     const body = authRequestBody('ada@example.com', RELIC_ID);
     expect(body).toEqual({
       email: 'ada@example.com',
@@ -966,12 +966,12 @@ describe('the disclosure, at the point of commenting', () => {
     expect(withClass(bar, 'action-comments')).toHaveLength(1);
   });
 
-  test('a relic with no thread has no control for one', () => {
+  test('a relik with no thread has no control for one', () => {
     const bar = buildBar(view(), RELIC_ID, {}) as unknown as ElementStub;
     expect(withClass(bar, 'action-comments')).toHaveLength(0);
   });
 
-  test('the relic and the conversation are siblings in one row', () => {
+  test('the relik and the conversation are siblings in one row', () => {
     // The regression this defends: a thread that is a child of the stage, or
     // a body sibling after it, is a thread that covers the relic or sits
     // under it. Beside it is the whole point.
@@ -999,7 +999,7 @@ describe('the disclosure, at the point of commenting', () => {
     expect(row.children).toEqual([stage, sidebar, resizer, tab]);
   });
 
-  test('a row without a thread is the relic alone', () => {
+  test('a row without a thread is the relik alone', () => {
     const stage = buildStageWrap(
       view(),
       'https://relik-usercontent.example'
@@ -1049,7 +1049,7 @@ describe('the disclosure, at the point of commenting', () => {
     );
   });
 
-  test('a mark outside the relic is not a mark', () => {
+  test('a mark outside the relik is not a mark', () => {
     const box = {
       left: 40,
       top: 60,
@@ -1085,10 +1085,10 @@ describe('the disclosure, at the point of commenting', () => {
 
     if (!/display:\s*flex/.test(row)) faults.push('the row is not a flex row');
     if (/position:\s*(absolute|fixed)/.test(sidebar)) {
-      faults.push('the sidebar is out of flow, so it covers the relic');
+      faults.push('the sidebar is out of flow, so it covers the relik');
     }
     if (/\bbottom:/.test(sidebar)) {
-      faults.push('the sidebar is pinned to the bottom of the relic');
+      faults.push('the sidebar is pinned to the bottom of the relik');
     }
     if (!/width:\s*var\(--thread-width/.test(sidebar)) {
       faults.push('the sidebar takes no width from the row');
@@ -1099,7 +1099,7 @@ describe('the disclosure, at the point of commenting', () => {
     return faults;
   }
 
-  test('the stylesheet puts the conversation beside the relic', async () => {
+  test('the stylesheet puts the conversation beside the relik', async () => {
     const css = await Bun.file(
       new URL('../src/styles.css', import.meta.url)
     ).text();
@@ -1116,8 +1116,8 @@ describe('the disclosure, at the point of commenting', () => {
     `;
     expect(sidebarLayoutFaults(tray)).toEqual([
       'the row is not a flex row',
-      'the sidebar is out of flow, so it covers the relic',
-      'the sidebar is pinned to the bottom of the relic',
+      'the sidebar is out of flow, so it covers the relik',
+      'the sidebar is pinned to the bottom of the relik',
       'the sidebar takes no width from the row',
       'the open sidebar never enters the row',
     ]);
@@ -1281,7 +1281,7 @@ describe('reply threading under target', () => {
   beforeEach(installDom);
   afterEach(clearDom);
 
-  test('folder thread shows its own file and whole relic comments, with per-file counts', async () => {
+  test('folder thread shows its own file and whole relik comments, with per-file counts', async () => {
     const cipher = commentCipher(await deriveCommentKey(KEY_BYTES));
     const records = await Promise.all(
       [
@@ -1351,7 +1351,7 @@ describe('reply threading under target', () => {
       const text = textOf(list);
       expect(text).toContain(index === 0 ? 'A only' : 'B only');
       expect(text).not.toContain(index === 0 ? 'B only' : 'A only');
-      expect(text).toContain('Whole relic');
+      expect(text).toContain('Whole relik');
       expect(text).toContain('Whole note');
       expect(text).toContain('Missing file note');
       expect(text).toContain('This file is not in version 1');

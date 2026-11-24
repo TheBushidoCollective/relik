@@ -313,7 +313,7 @@ export function createDashboardSearch(
       hooks.status(`Reading contents, ${pending} left.`);
     } else if (titleOnly > 0) {
       hooks.status(
-        `${titleOnly} of ${rows.length} relics were searched by title only: ` +
+        `${titleOnly} of ${rows.length} reliks were searched by title only: ` +
           'no key in this browser, too large, or not text.'
       );
     } else {

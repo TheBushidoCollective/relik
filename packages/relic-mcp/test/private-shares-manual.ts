@@ -117,7 +117,7 @@ try {
       )
     ).trim();
     const unlock = (
-      await rl.question('Unlock opened the relic? (yes/no): ')
+      await rl.question('Unlock opened the relik? (yes/no): ')
     ).trim();
     const steps = (
       await rl.question('Steps completed (1-6, comma separated): ')

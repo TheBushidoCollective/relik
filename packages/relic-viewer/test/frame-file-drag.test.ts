@@ -63,7 +63,7 @@ describe('a file dragged over a sandboxed frame', () => {
     expect(posted).toEqual([{ type: FRAME_FILE_DRAG_MESSAGE }]);
   });
 
-  test('is left to a relic that cancels the dragover, because that relic takes file drops itself', () => {
+  test('is left to a relik that cancels the dragover, because that relik takes file drops itself', () => {
     const { win, posted, fire } = fakeWindow();
     announceUnclaimedFileDrags(win);
 

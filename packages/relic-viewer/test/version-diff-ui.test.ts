@@ -403,7 +403,7 @@ describe('version comparison affordance', () => {
     expect(buttons.map(textOf).join(' ')).toContain('Compare versions');
   });
 
-  test('the taskbar carries the version beside the relic id', () => {
+  test('the taskbar carries the version beside the relik id', () => {
     const bar = buildBar(view('code', 4), 'aaaaaaaaaaaaaaaaaaaaaaaaaa', {
       onCompare: () => {},
     }) as unknown as ElementStub;
@@ -417,7 +417,7 @@ describe('version comparison affordance', () => {
     expect(textOf(meta)).toContain('v4/4');
   });
 
-  test('a freshly opened relic renders no comparison surface at all', () => {
+  test('a freshly opened relik renders no comparison surface at all', () => {
     const current = view('code', 3);
     renderReady(
       current,
@@ -433,7 +433,7 @@ describe('version comparison affordance', () => {
     expect(withClass(docBody, 'stage-code')).toHaveLength(1);
   });
 
-  test('a public relic renders the taskbar and stage as the body children, as main does', () => {
+  test('a public relik renders the taskbar and stage as the body children, as main does', () => {
     const current = view('code', 3);
     renderReady(
       current,
@@ -1593,7 +1593,7 @@ describe('comment version scoping', () => {
     return { key, shareUrl, records, makeDeps };
   }
 
-  test('viewing v3 on a multi-version relic shows v3 comments but not v1 or unversioned comments', async () => {
+  test('viewing v3 on a multi-version relik shows v3 comments but not v1 or unversioned comments', async () => {
     const { shareUrl, makeDeps } = await createCommentFixture();
     const readyView = view('code', 3, undefined, 3, shareUrl);
     let taskbarCount = -1;
@@ -1630,7 +1630,7 @@ describe('comment version scoping', () => {
     expect(countSpan?.textContent).toBe(String(taskbarCount));
   });
 
-  test('viewing v1 on a multi-version relic shows v1 comments and unversioned comments with badge', async () => {
+  test('viewing v1 on a multi-version relik shows v1 comments and unversioned comments with badge', async () => {
     const { shareUrl, makeDeps } = await createCommentFixture();
     const readyView = view('code', 1, undefined, 3, shareUrl);
     let taskbarCount = -1;
@@ -1669,7 +1669,7 @@ describe('comment version scoping', () => {
     expect(countSpan?.textContent).toBe(String(taskbarCount));
   });
 
-  test('viewing v2 on a multi-version relic shows only v2 comments', async () => {
+  test('viewing v2 on a multi-version relik shows only v2 comments', async () => {
     const { shareUrl, makeDeps } = await createCommentFixture();
     const readyView = view('code', 2, undefined, 3, shareUrl);
     let taskbarCount = -1;
@@ -1703,7 +1703,7 @@ describe('comment version scoping', () => {
     expect(countSpan?.textContent).toBe(String(taskbarCount));
   });
 
-  test('a relic with a single version shows unversioned comments', async () => {
+  test('a relik with a single version shows unversioned comments', async () => {
     const { shareUrl, makeDeps } = await createCommentFixture();
     const readyView = view('code', 1, undefined, 1, shareUrl);
     let taskbarCount = -1;

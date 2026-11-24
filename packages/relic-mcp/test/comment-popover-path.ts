@@ -89,7 +89,7 @@ const otioFixtureDir = join(
 const publishedRelics: Record<string, string> = {};
 function getRelic(key: string): string {
   const url = publishedRelics[key];
-  assert.ok(url !== undefined, `relic url missing for ${key}`);
+  assert.ok(url !== undefined, `relik url missing for ${key}`);
   return url;
 }
 
@@ -940,7 +940,7 @@ const markdownContent = `# Long Markdown Document
 
 Introduction to the review document with architectural findings.
 
-A verified reader who selects, points at or marks a target on any relic class writes the comment in a panel attached to it.
+A verified reader who selects, points at or marks a target on any relik class writes the comment in a panel attached to it.
 
 ${tallText}
 `;
@@ -1002,7 +1002,7 @@ const htmlContent = `<!DOCTYPE html>
 </head>
 <body>
   <h1>HTML Engineering Article</h1>
-  <p class="lead" id="target-lead">A verified reader who selects, points at or marks a target on any relic class writes the comment in a panel attached to it.</p>
+  <p class="lead" id="target-lead">A verified reader who selects, points at or marks a target on any relik class writes the comment in a panel attached to it.</p>
   <div class="spacer">
     <p>Scrollable body extending downward for follow testing.</p>
     <p style="margin-top: 1000px;">Midpoint milestone in the document content.</p>
@@ -2384,7 +2384,7 @@ console.log('Testing Class 9: OTIO...');
       .split('/')
       .filter(Boolean)
       .at(-1);
-    assert.ok(otioId, 'OTIO relic ID missing');
+    assert.ok(otioId, 'OTIO relik ID missing');
     const otioRows = await store.listComments(otioId);
     assert.equal(otioRows.length, 1);
     const otioComment = otioRows[0]!;
@@ -2429,7 +2429,7 @@ console.log('Testing comment deletion...');
     .split('/')
     .filter(Boolean)
     .at(-1);
-  assert.ok(relicId, 'markdown relic ID missing');
+  assert.ok(relicId, 'markdown relik ID missing');
   const initial = await store.listComments(relicId);
   assert.equal(
     initial.length,

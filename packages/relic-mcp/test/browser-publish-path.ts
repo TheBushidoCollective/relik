@@ -427,7 +427,7 @@ try {
   );
   await browser.evaluate<void>(`(() => {
     const dt = new DataTransfer();
-    dt.items.add(new File(['# From a relic page\\n\\nDropped over another relic.\\n'], 'second.md'));
+    dt.items.add(new File(['# From a relik page\\n\\nDropped over another relik.\\n'], 'second.md'));
     document.body.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
   })()`);
   await browser.waitForSelector('dialog.pub-dialog .pub-title');
@@ -442,7 +442,7 @@ try {
   assert.equal(
     apiRequests().length,
     0,
-    'a drop over a relic must not contact the service'
+    'a drop over a relik must not contact the service'
   );
   await browser.clickSelector('dialog.pub-dialog .pub-row .action.primary');
   await browser.waitForSelector('dialog.pub-dialog .pub-link');
@@ -454,7 +454,7 @@ try {
   assert.notEqual(
     second.pathname.slice(1),
     relicId,
-    'the drop did not make a new relic'
+    'the drop did not make a new relik'
   );
   await browser.clickSelector('dialog.pub-dialog .pub-card > .action');
   await Bun.sleep(150);
@@ -631,7 +631,7 @@ try {
       `!document.querySelector('[data-file-curtain]')`
     ),
     true,
-    'the page took a drag the relic had claimed'
+    'the page took a drag the relik had claimed'
   );
   await sendDrag('dragOver', claimed.x, claimed.y, claimedPath);
   await sendDrag('drop', claimed.x, claimed.y, claimedPath);
@@ -640,14 +640,14 @@ try {
     (await browser.evaluate<string[]>(`window.__got`)).includes(
       'relic-got-file'
     ),
-    'the relic did not receive its own drop'
+    'the relik did not receive its own drop'
   );
   assert.equal(
     await browser.evaluate<boolean>(
       `!document.querySelector('dialog.pub-dialog')`
     ),
     true,
-    'a publish dialog opened over a relic that took the file'
+    'a publish dialog opened over a relik that took the file'
   );
   console.log(
     'PUBLISH_STEP_9_RELIC_CLAIMS curtain=none relic_got_drop=true dialog=none'

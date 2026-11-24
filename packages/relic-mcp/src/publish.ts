@@ -436,7 +436,7 @@ export function challengeSizeLimit(
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0) {
     throw new PublishError(
       'app_response_unusable',
-      'The Relic service returned a challenge with no usable size limit.',
+      'The Relik service returned a challenge with no usable size limit.',
       { leg: 'challenge' }
     );
   }
@@ -501,9 +501,9 @@ export async function publish(
     throw new PublishError(
       'source_already_published',
       `${match.source.description} is already version ${match.version} of ` +
-        `relic ${match.relic_id}. Publishing it as new would cost ${cost}. ` +
+        `relik ${match.relic_id}. Publishing it as new would cost ${cost}. ` +
         `Call relic_republish(${JSON.stringify(republishCall.arguments)}) ` +
-        'instead. Set force_new to true only when you intend a separate relic.',
+        'instead. Set force_new to true only when you intend a separate relik.',
       {
         relic_id: match.relic_id,
         version: match.version,
@@ -713,7 +713,7 @@ export async function publish(
     if (typeof publishToken !== 'string' || publishToken.length === 0) {
       throw new PublishError(
         'grant_missing_publish_token',
-        'the grant carried no publish_token, so the relic would never be ' +
+        'the grant carried no publish_token, so the relik would never be ' +
           'republishable from this machine',
         { relic_id: relicId }
       );
@@ -793,7 +793,7 @@ export async function publish(
       // machine, so it is reported as a failure.
       throw new PublishError(
         'local_state_write_failed',
-        'the relic is published and the link works, but recording it for ' +
+        'the relik is published and the link works, but recording it for ' +
           `later republishing failed, so it cannot be republished from this ` +
           `machine: ${(error as Error).message}`,
         { relic_id: relicId, url }
@@ -817,7 +817,7 @@ export async function publish(
       } catch (error) {
         throw new PublishError(
           'local_state_write_failed',
-          'the relic is published, but its encrypted folder format cache could not be recorded: ' +
+          'the relik is published, but its encrypted folder format cache could not be recorded: ' +
             (error as Error).message,
           { relic_id: relicId, url, version: 1 }
         );

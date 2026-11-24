@@ -150,7 +150,7 @@ const THROWAWAY_JS = `addEventListener('message', function (event) {
 });
 parent.postMessage({ type: 'relic:sandbox-ready' }, '*');`;
 const THROWAWAY_HASH = `sha256-${createHash('sha256').update(THROWAWAY_JS).digest('base64')}`;
-const THROWAWAY_SHIM = `<!doctype html><meta charset="utf-8"><title>Relic content</title><script>${THROWAWAY_JS}</script>`;
+const THROWAWAY_SHIM = `<!doctype html><meta charset="utf-8"><title>Relik content</title><script>${THROWAWAY_JS}</script>`;
 
 /** Installed in the host page before navigation, so no probe message is missed. */
 const CAPTURE_JS = `(function () {
@@ -1057,7 +1057,7 @@ const variants: Variant[] = [
   // arrived. The sandbox attribute stays on, so navigation controls are limited to
   // what the frame itself may do.
   {
-    name: 'POSITIVE CONTROL · no CSP, no containment · main relic',
+    name: 'POSITIVE CONTROL · no CSP, no containment · main relik',
     relic: 'main',
     isolation: false,
     harnessPolicy: false,
@@ -1066,7 +1066,7 @@ const variants: Variant[] = [
     positive: true,
   },
   {
-    name: 'POSITIVE CONTROL · no CSP, no containment · write relic',
+    name: 'POSITIVE CONTROL · no CSP, no containment · write relik',
     relic: 'write',
     isolation: false,
     harnessPolicy: false,
@@ -1103,7 +1103,7 @@ function relicFor(key: string): Relic {
       : key === 'write'
         ? writeRelic
         : (navRelics.get(key) ?? staticRelics.get(key));
-  assert.ok(found !== undefined, `no relic for ${key}`);
+  assert.ok(found !== undefined, `no relik for ${key}`);
   return found;
 }
 

@@ -103,8 +103,8 @@ const SRT = [
   '',
 ].join('\n');
 
-describe('structured anchors through a published relic', () => {
-  test('a time anchor on an SRT relic resolves to its cues, not to the non-video refusal', async () => {
+describe('structured anchors through a published relik', () => {
+  test('a time anchor on an SRT relik resolves to its cues, not to the non-video refusal', async () => {
     const relicId = await publishText('lines.srt', SRT);
     await postComment(
       {
@@ -132,7 +132,7 @@ describe('structured anchors through a published relic', () => {
     ]);
   });
 
-  test('a cell anchor on a CSV relic resolves against the published file', async () => {
+  test('a cell anchor on a CSV relik resolves against the published file', async () => {
     const relicId = await publishText('parts.csv', 'name,qty\nwidget,3\n');
     await postComment(
       {
@@ -170,7 +170,7 @@ describe('structured anchors through a published relic', () => {
     });
   });
 
-  test('a path anchor on a notebook relic resolves with its cell type', async () => {
+  test('a path anchor on a notebook relik resolves with its cell type', async () => {
     const notebook = JSON.stringify({
       nbformat: 4,
       nbformat_minor: 5,

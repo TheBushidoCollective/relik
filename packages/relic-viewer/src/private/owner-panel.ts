@@ -167,7 +167,7 @@ export function openAccessPanel(
   const deleteOpen = h(
     'button',
     { type: 'button', class: 'btn is-danger', 'data-action': 'delete-relic' },
-    'Delete versions or the relic'
+    'Delete versions or the relik'
   );
 
   const revoke: RevokeDialog = createRevokeDialog({
@@ -245,7 +245,7 @@ export function openAccessPanel(
         h(
           'p',
           { class: 'panel-empty' },
-          'Remove chosen versions or the whole relic, with every reader\u2019s keys for them. It can\u2019t be undone.'
+          'Remove chosen versions or the whole relik, with every reader\u2019s keys for them. It can\u2019t be undone.'
         ),
         h('div', {}, deleteOpen)
       ),
@@ -449,7 +449,7 @@ export function openAccessPanel(
         {}
       );
       await refresh(
-        `Declined ${request.requester.email}. They see that when they next open the link; Relic doesn\u2019t email them.`,
+        `Declined ${request.requester.email}. They see that when they next open the link; Relik doesn\u2019t email them.`,
         true
       );
     } catch (error) {
@@ -511,7 +511,7 @@ export function openAccessPanel(
           tapped.identity.identityId
         ) {
           throw new VerificationRefusedError(
-            'a version of this relic belongs to another owner, so nothing was granted. Nothing was sent.'
+            'a version of this relik belongs to another owner, so nothing was granted. Nothing was sent.'
           );
         }
         const wrap = await wrapVersionKey({
@@ -533,7 +533,7 @@ export function openAccessPanel(
       });
       ctx.onChanged();
       await refresh(
-        `${requester.email} can open ${describeVersions(versions)} and every later version. Relic emailed them.`,
+        `${requester.email} can open ${describeVersions(versions)} and every later version. Relik emailed them.`,
         true
       );
     } catch (error) {

@@ -1206,7 +1206,7 @@ function relicVersionInfo(
 ): Uint8Array {
   if (!RELIC_ID_RE.test(relicId)) {
     throw new RelicFormatError(
-      'relic id must be 26 characters of the alphabet'
+      'relik id must be 26 characters of the alphabet'
     );
   }
   if (!Number.isSafeInteger(version) || version < 1 || version > 0xffff_ffff) {

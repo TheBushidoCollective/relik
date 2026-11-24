@@ -385,7 +385,7 @@ export async function loadPrivateInventory(): Promise<
   if (bucket === undefined) return [];
   if (!isPlainObject(bucket)) {
     throw new Error(
-      `publish state at ${publishStatePath()} holds malformed private relics.`
+      `publish state at ${publishStatePath()} holds malformed private reliks.`
     );
   }
   const rows: { relic_id: string; state: PrivatePublishState }[] = [];
@@ -412,7 +412,7 @@ function validatePrivateStateEntry(
   const malformed = () =>
     new Error(
       `publish state at ${publishStatePath()} holds a malformed private ` +
-        `entry for relic ${relicId}.`
+        `entry for relik ${relicId}.`
     );
   if (!isPlainObject(entry)) throw malformed();
   const versionKeys = entry['version_keys'];
@@ -465,7 +465,7 @@ function validatePublishStateEntry(
   if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) {
     throw new Error(
       `publish state at ${publishStatePath()} holds a malformed entry for ` +
-        `relic ${relicId}.`
+        `relik ${relicId}.`
     );
   }
   const candidate = entry as Record<string, unknown>;
@@ -492,7 +492,7 @@ function validatePublishStateEntry(
   ) {
     throw new Error(
       `publish state at ${publishStatePath()} holds a malformed entry for ` +
-        `relic ${relicId}.`
+        `relik ${relicId}.`
     );
   }
   return candidate as unknown as PublishState;
@@ -532,7 +532,7 @@ export async function loadPublishedSource(
     if (published.source?.identity !== source.identity) {
       throw new Error(
         `publish state at ${publishStatePath()} holds a source match without ` +
-          'its relic entry.'
+          'its relik entry.'
       );
     }
     return {
@@ -551,7 +551,7 @@ export async function loadPublishedSource(
   if (priv?.source?.identity !== source.identity) {
     throw new Error(
       `publish state at ${publishStatePath()} holds a source match without ` +
-        'its relic entry.'
+        'its relik entry.'
     );
   }
   return {
@@ -601,7 +601,7 @@ export async function loadPublishInventory(): Promise<{
   const relics = parsed?.relics;
   if (relics === undefined) return { records: [], malformed: [] };
   if (relics === null || typeof relics !== 'object' || Array.isArray(relics)) {
-    throw new Error(`publish state at ${path} holds malformed relic entries.`);
+    throw new Error(`publish state at ${path} holds malformed relik entries.`);
   }
 
   const rawSources = parsed?.sources;
@@ -800,7 +800,7 @@ async function readWholeFile(path: string): Promise<StateFile | undefined> {
   } catch {
     throw new Error(
       `publish state at ${path} is not valid JSON. It cannot be updated, so ` +
-        'this publish cannot be recorded and this relic cannot later be ' +
+        'this publish cannot be recorded and this relik cannot later be ' +
         'republished from this machine until the file is fixed or removed.'
     );
   }

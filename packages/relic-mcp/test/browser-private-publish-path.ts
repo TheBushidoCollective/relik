@@ -220,7 +220,7 @@ try {
   await wait(`document.body.innerText.includes('2 files included')`);
   await click('.pub-private');
   await wait(`!document.querySelector('.pub-row .action.primary').disabled`);
-  assert.equal(grants, beforeGrant, 'private setup must not reserve a relic');
+  assert.equal(grants, beforeGrant, 'private setup must not reserve a relik');
   assert.equal(puts, beforePut, 'private setup must not upload');
   await click('.pub-row .action.primary');
   try {

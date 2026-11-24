@@ -57,7 +57,7 @@ async function person(email: string): Promise<Person> {
   await auth.register(
     {
       challenge: encodeBase64url(randomBytes(32)),
-      rp: { id: RP, name: 'Relic' },
+      rp: { id: RP, name: 'Relik' },
       user: { id: 'dXNlcg', name: email, displayName: email },
       pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
       extensions: { prf: {} },
@@ -675,7 +675,7 @@ describe('access requests', () => {
     expect(full.body['code']).toBe('request_limit_reached');
   });
 
-  test('the request mail names the requester and not the relic, and the grant mail goes to the grantee without a title', async () => {
+  test('the request mail names the requester and not the relik, and the grant mail goes to the grantee without a title', async () => {
     const sent: { to: string; subject: string; text: string }[] = [];
     store = new HookStore();
     app = createApp({
@@ -715,7 +715,7 @@ describe('access requests', () => {
     );
     const requestMail = sent.find((m) => m.to === owner.email);
     expect(requestMail?.subject).toBe(
-      `${reader.email} asked for access to a relic`
+      `${reader.email} asked for access to a relik`
     );
     expect(requestMail?.text).toContain(reader.email);
     expect(requestMail?.text).toContain(`grant=${reader.identityId}`);
@@ -724,7 +724,7 @@ describe('access requests', () => {
     const granted = await grantTo(owner, reader, [1], sealed.versionKey);
     expect(granted.status).toBe(201);
     const grantMail = sent.find((m) => m.to === reader.email);
-    expect(grantMail?.subject).toBe('You have access to a relic');
+    expect(grantMail?.subject).toBe('You have access to a relik');
     expect(grantMail?.text).not.toContain('Secret');
   });
 });
@@ -1040,7 +1040,7 @@ describe('device enrollment and context', () => {
     expect(after.body['code']).toBe('device_revoked');
   });
 });
-describe('decisions and share on a private relic', () => {
+describe('decisions and share on a private relik', () => {
   test('a reader with access lists decisions with no share proof, an outsider is refused, and the publish token lists too', async () => {
     const owner = await person('owner@example.com');
     await registerIdentity(owner);
@@ -1073,7 +1073,7 @@ describe('decisions and share on a private relic', () => {
     expect(byToken.status).toBe(200);
   });
 
-  test('a private relic whose author did not ask for decisions refuses the list', async () => {
+  test('a private relik whose author did not ask for decisions refuses the list', async () => {
     const owner = await person('owner@example.com');
     await registerIdentity(owner);
     const sealed = await sealedPrivateRelic(owner);
@@ -1118,7 +1118,7 @@ describe('decisions and share on a private relic', () => {
   });
 });
 
-describe('notifications for a private relic', () => {
+describe('notifications for a private relik', () => {
   test('comment fan-out sends only the generic activity mail, with List-Unsubscribe and no title or commenter', async () => {
     const sent: {
       to: string;
@@ -1180,7 +1180,7 @@ describe('notifications for a private relic', () => {
     const toOwner = sent.filter((m) => m.to === owner.email);
     expect(toOwner.length).toBeGreaterThan(0);
     for (const mail of sent) {
-      expect(mail.subject).toBe('Activity on a relic');
+      expect(mail.subject).toBe('Activity on a relik');
       expect(mail.text).not.toContain(reader.email);
       expect(mail.text).not.toContain('Secret');
       expect(mail.headers?.['List-Unsubscribe']).toBeDefined();

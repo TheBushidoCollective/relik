@@ -52,13 +52,13 @@ export { composeShareEmail, shareMailtoUrl, type ShareEmail, type ShareSender };
 function privateInvitation(input: ShareInput, deps: PublishDeps): ShareResult {
   const email: ShareEmail = {
     to: [...input.emails],
-    subject: 'A private file shared with you on Relic',
+    subject: 'A private file shared with you on Relik',
     text: [
-      "I've shared a private file with you on Relic. Open the link below and sign in. The link alone opens nothing: ask for access on the page, and I will grant it.",
+      "I've shared a private file with you on Relik. Open the link below and sign in. The link alone opens nothing: ask for access on the page, and I will grant it.",
       '',
       `${deps.relicOrigin}/${input.relic_id}`,
       '',
-      'Relic emails you about activity on the file. Those emails never name the file or who wrote on it, and they have a link to stop them.',
+      'Relik emails you about activity on the file. Those emails never name the file or who wrote on it, and they have a link to stop them.',
     ].join('\n'),
   };
   return {
@@ -81,7 +81,7 @@ export async function shareRelic(
   if (!isValidRelicId(input.relic_id)) {
     throw new PublishError(
       'no_local_publish_state',
-      `"${input.relic_id}" is not a relic id. These tools take the 26-character id ` +
+      `"${input.relic_id}" is not a relik id. These tools take the 26-character id ` +
         'the original publish returned, never the share URL: the URL carries ' +
         'the key in its fragment, and passing it would put the key in this ' +
         'transcript for nothing.'
@@ -101,7 +101,7 @@ export async function shareRelic(
     if (loaded === undefined) {
       throw new PublishError(
         'no_local_publish_state',
-        `relic ${input.relic_id} was published from another machine and ` +
+        `relik ${input.relic_id} was published from another machine and ` +
           'can only be shared from the machine that published it.'
       );
     }
@@ -144,7 +144,7 @@ export async function shareRelic(
     ) {
       throw new PublishError(
         'app_response_unusable',
-        'This Relic service does not support relic_share yet.',
+        'This Relik service does not support relic_share yet.',
         { relic_id: input.relic_id }
       );
     }

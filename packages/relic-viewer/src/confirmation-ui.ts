@@ -55,7 +55,7 @@ export function deleteRememberedStrip(
   strip.className = 'confirm-delete-strip';
   const text = document.createElement('span');
   text.textContent =
-    'Your comments on this relic delete without asking. Relik has no undo.';
+    'Your comments on this relik delete without asking. Relik has no undo.';
   const ask = document.createElement('button');
   ask.type = 'button';
   ask.className = 'confirm-strip-ask';

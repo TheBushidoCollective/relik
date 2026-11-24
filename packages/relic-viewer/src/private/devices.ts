@@ -59,7 +59,7 @@ export function devicesSection(ctx: DevicesContext): HTMLElement {
     h(
       'p',
       { class: 'dashboard-section-note' },
-      'Agents such as relic-mcp that publish private relics for you without a passkey tap. Each one can read every private relic you own. Revoking one deletes its keys.'
+      'Agents such as relic-mcp that publish private reliks for you without a passkey tap. Each one can read every private relik you own. Revoking one deletes its keys.'
     ),
     list,
     outcome
@@ -392,7 +392,7 @@ async function approveDevice(
       h(
         'p',
         { class: 'dashboard-section-note', id: 'approval-step-2-note' },
-        'Type it into relic_confirm_device. relic-mcp compares it with the owner Relic reports and won\u2019t publish until they match.'
+        'Type it into relic_confirm_device. relic-mcp compares it with the owner Relik reports and won\u2019t publish until they match.'
       )
     );
     step2.hidden = false;

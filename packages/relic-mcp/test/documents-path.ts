@@ -318,7 +318,7 @@ async function awaitStored(relicId: string, count: number): Promise<void> {
     await Bun.sleep(50);
   }
   throw new Error(
-    `relic ${relicId} stores ${(await store.listComments(relicId)).length} comments, expected ${count}`
+    `relik ${relicId} stores ${(await store.listComments(relicId)).length} comments, expected ${count}`
   );
 }
 

@@ -1251,7 +1251,7 @@ describe('pairing a comment with the thing it points at', () => {
   });
 });
 
-describe('a relic that renders in a sandboxed frame', () => {
+describe('a relik that renders in a sandboxed frame', () => {
   beforeEach(installDom);
   afterEach(clearDom);
 

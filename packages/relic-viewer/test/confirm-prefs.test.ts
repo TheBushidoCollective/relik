@@ -64,7 +64,7 @@ describe('reader confirmations', () => {
     expect(store.has('link', 'r1', 1)).toBe(false);
   });
 
-  test('a link choice is honoured for the same relic and version only', () => {
+  test('a link choice is honoured for the same relik and version only', () => {
     const store = createConfirmPrefs(undefined);
     expect(
       store.remember(trustedProof(), {
@@ -172,7 +172,7 @@ describe('reader confirmations', () => {
     expect(store.has('delete-comment', `r${CONFIRM_PREFS_CAP}`)).toBe(true);
   });
 
-  test('forget clears one choice and clearRelic clears a relic', () => {
+  test('forget clears one choice and clearRelic clears a relik', () => {
     const store = createConfirmPrefs(undefined);
     const proof = trustedProof();
     store.remember(proof, { kind: 'link', relicId: 'r1', version: 1 });

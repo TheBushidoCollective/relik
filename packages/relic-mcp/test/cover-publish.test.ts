@@ -774,7 +774,7 @@ describe('state validation of cover_uploaded', () => {
     );
 
     await expect(loadPublishState('badrelic')).rejects.toThrow(
-      'holds a malformed entry for relic badrelic'
+      'holds a malformed entry for relik badrelic'
     );
 
     const inventory = await loadPublishInventory();
@@ -909,7 +909,7 @@ describe('server result text formatting for cover', () => {
     expect(result.structuredContent.cover.status).toBe('declined');
     const text = result.content[0]?.text ?? '';
     expect(text).toContain(
-      'Cover image: none, as asked. Link previews show the generic Relic card.'
+      'Cover image: none, as asked. Link previews show the generic Relik card.'
     );
   });
 
@@ -943,7 +943,7 @@ describe('server result text formatting for cover', () => {
     expect(result.structuredContent.cover.status).toBe('skipped');
     const text = result.content[0]?.text ?? '';
     expect(text).toContain(
-      'Cover image: none. ffmpeg is needed to depict audio and video and was not found. Link previews show the generic Relic card.'
+      'Cover image: none. ffmpeg is needed to depict audio and video and was not found. Link previews show the generic Relik card.'
     );
   });
 });

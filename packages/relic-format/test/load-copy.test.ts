@@ -23,7 +23,7 @@ import {
 describe('load copy constants and format errors', () => {
   test('copy constants match spec values verbatim', () => {
     expect(LOAD_EXPLANATION).toBe(
-      "The file in this link is decrypted in your browser. The key is in the link and your browser never sends it to Relic's servers."
+      "The file in this link is decrypted in your browser. The key is in the link and your browser never sends it to Relik's servers."
     );
     expect(LOAD_OPENING).toBe('Opening…');
     expect(PHASE_FETCHING).toBe('Fetching');
@@ -31,17 +31,17 @@ describe('load copy constants and format errors', () => {
     expect(PHASE_RENDERING).toBe('Rendering');
     expect(TRANSFER_LABEL).toBe('TRANSFER');
     expect(CONTENTS_LABEL).toBe('CONTENTS');
-    expect(REPORT_LINK_LABEL).toBe('Report this relic');
-    expect(POLICY_LINK_LABEL).toBe('How Relic handles your data');
-    expect(NOSCRIPT_TITLE).toBe('This page needs JavaScript to open a relic.');
+    expect(REPORT_LINK_LABEL).toBe('Report this relik');
+    expect(POLICY_LINK_LABEL).toBe('How Relik handles your data');
+    expect(NOSCRIPT_TITLE).toBe('This page needs JavaScript to open a relik.');
     expect(NOSCRIPT_DETAIL).toBe(
-      "Relic decrypts the file in your browser, so with JavaScript off there is nothing here to decrypt it with. Nothing has been sent to Relic's servers and the key in this link has not been used, so the link still works in a browser that runs JavaScript."
+      "Relik decrypts the file in your browser, so with JavaScript off there is nothing here to decrypt it with. Nothing has been sent to Relik's servers and the key in this link has not been used, so the link still works in a browser that runs JavaScript."
     );
     expect(INSECURE_TITLE).toBe(
       'This page did not arrive over a secure connection'
     );
     expect(INSECURE_DETAIL).toBe(
-      'Browsers only allow the decryption Relic uses on a secure connection, and this one is not on it. Relic serves every relic over HTTPS, so something between this browser and Relic changed that. On a company, campus, or hotel network it is usually a device that inspects traffic.'
+      'Browsers only allow the decryption Relik uses on a secure connection, and this one is not on it. Relik serves every relik over HTTPS, so something between this browser and Relik changed that. On a company, campus, or hotel network it is usually a device that inspects traffic.'
     );
     expect(INSECURE_ADVICE).toBe(
       'Opening the same link on a different network is the thing most likely to work. Reloading on this one will not.'

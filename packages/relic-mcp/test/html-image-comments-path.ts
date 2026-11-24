@@ -151,7 +151,7 @@ assert.ok(
 const relicId = published['relic_id'];
 assert.ok(
   typeof relicId === 'string' && relicId.length > 0,
-  'publish must return a relic ID'
+  'publish must return a relik ID'
 );
 const shell =
   process.env['RELIC_CHROME_PATH'] ??

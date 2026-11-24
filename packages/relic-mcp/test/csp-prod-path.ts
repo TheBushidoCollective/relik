@@ -659,7 +659,7 @@ const CASES: readonly CaseDef[] = [
   {
     id: 'f1-html-inline-script',
     group: 'f',
-    what: 'HTML relic: an inline script that changes the DOM and reports',
+    what: 'HTML relik: an inline script that changes the DOM and reports',
     expect: 'ran',
     kind: 'html',
     source: () =>
@@ -673,12 +673,12 @@ const CASES: readonly CaseDef[] = [
   {
     id: 'f2-markdown-raw-script',
     group: 'f',
-    what: 'Markdown relic with a raw HTML script block: the viewing origin escapes raw HTML, so the script does not run and the heading shows',
+    what: 'Markdown relik with a raw HTML script block: the viewing origin escapes raw HTML, so the script does not run and the heading shows',
     expect: 'text',
     kind: 'markdown',
-    needle: 'Markdown relic',
+    needle: 'Markdown relik',
     source: () =>
-      '# Markdown relic\n\nA paragraph.\n\n' +
+      '# Markdown relik\n\nA paragraph.\n\n' +
       scriptTag(
         "top.postMessage({ type: 'probe:result', result: { id: 'f2', ran: 'markdown' } }, '*');"
       ) +
@@ -687,7 +687,7 @@ const CASES: readonly CaseDef[] = [
   {
     id: 'f3-jsx-component',
     group: 'f',
-    what: 'JSX relic: a component whose effect reports after it mounts',
+    what: 'JSX relik: a component whose effect reports after it mounts',
     expect: 'ran',
     kind: 'jsx',
     source: () =>
@@ -699,7 +699,7 @@ const CASES: readonly CaseDef[] = [
   {
     id: 'f4-svg-script',
     group: 'f',
-    what: 'SVG relic with an inline script that reports',
+    what: 'SVG relik with an inline script that reports',
     expect: 'ran',
     kind: 'svg',
     source: () =>
@@ -757,7 +757,7 @@ const service = Bun.serve({
 const origin = `http://127.0.0.1:${service.port}`;
 const storage = new MemoryStorage(`${origin}/__storage`);
 
-const CONTROL_SHIM = `<!doctype html><meta charset="utf-8"><title>Relic content</title><script>
+const CONTROL_SHIM = `<!doctype html><meta charset="utf-8"><title>Relik content</title><script>
 addEventListener('message', function (event) {
   if (event.source !== parent) return;
   var data = event.data;

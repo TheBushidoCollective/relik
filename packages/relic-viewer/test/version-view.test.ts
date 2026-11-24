@@ -46,7 +46,7 @@ function view(
 }
 
 describe('history is offered separately from comparison', () => {
-  test('a relic with earlier versions has history, whatever its class', () => {
+  test('a relik with earlier versions has history, whatever its class', () => {
     // The two predicates were one, which is the whole defect: a download-only
     // relic reported no history and therefore got no control, while a notice
     // on the page said earlier versions existed.

@@ -115,7 +115,7 @@ async function publish(
   const grant = (await grantResponse.json()) as Record<string, unknown>;
 
   const container = await encryptRelic({
-    content: new TextEncoder().encode('hello relic'),
+    content: new TextEncoder().encode('hello relik'),
     filename: 'notes.md',
     mimetype: 'text/markdown',
     key,
@@ -170,7 +170,7 @@ async function publishThroughVersion(
     expect(response.status).toBe(200);
     storage.put(
       `${id}/v${version}`,
-      await encrypted(`hello relic, version ${version}`, key)
+      await encrypted(`hello relik, version ${version}`, key)
     );
   }
 
@@ -222,7 +222,7 @@ describe('the shell', () => {
     expect(response.headers.get('referrer-policy')).toBe('no-referrer');
   });
 
-  test('sends X-Robots-Tag on a real relic path, not just the apex', async () => {
+  test('sends X-Robots-Tag on a real relik path, not just the apex', async () => {
     const { id } = await publish();
     const response = await app.fetch(req(`/${id}`));
     expect(response.headers.get('x-robots-tag')).toBe('noindex');
@@ -299,7 +299,7 @@ describe('the shell', () => {
     }
   });
 
-  test('a relic published with a title emits it in og:title, twitter:title, and <title> while description carries the class', async () => {
+  test('a relik published with a title emits it in og:title, twitter:title, and <title> while description carries the class', async () => {
     const { id } = await publish({ title: 'My Custom Document' });
     const response = await app.fetch(req(`/${id}`));
     const body = await response.text();
@@ -310,7 +310,7 @@ describe('the shell', () => {
     expect(body).toContain(
       '<meta name="twitter:title" content="My Custom Document">'
     );
-    expect(body).toContain('<title>My Custom Document · Relic</title>');
+    expect(body).toContain('<title>My Custom Document · Relik</title>');
     expect(body).toContain(
       '<meta property="og:description" content="A Markdown document. It opens in your browser, and only someone holding the whole link, including the part after the #, can read it.">'
     );
@@ -319,19 +319,19 @@ describe('the shell', () => {
     );
   });
 
-  test('an untitled relic serves its per-class fallback title in og:title, twitter:title and <title>', async () => {
+  test('an untitled relik serves its per-class fallback title in og:title, twitter:title and <title>', async () => {
     const { id } = await publish();
     const response = await app.fetch(req(`/${id}`));
     const body = await response.text();
 
     expect(body).toContain(
-      '<meta property="og:title" content="A Markdown relic">'
+      '<meta property="og:title" content="A Markdown relik">'
     );
     expect(body).toContain(
-      '<meta name="twitter:title" content="A Markdown relic">'
+      '<meta name="twitter:title" content="A Markdown relik">'
     );
-    expect(body).toContain('<title>A Markdown relic</title>');
-    expect(body).not.toContain('· Relic');
+    expect(body).toContain('<title>A Markdown relik</title>');
+    expect(body).not.toContain('· Relik');
     expect(body).toContain(
       '<meta property="og:description" content="A Markdown document. It opens in your browser, and only someone holding the whole link, including the part after the #, can read it.">'
     );
@@ -348,8 +348,8 @@ describe('the shell', () => {
     expect(body).toContain(
       'The file in this link is decrypted in your browser.'
     );
-    expect(body).toContain('Report this relic');
-    expect(body).toContain('How Relic handles your data');
+    expect(body).toContain('Report this relik');
+    expect(body).toContain('How Relik handles your data');
     expect(body).toContain(`<span class="accession">${id}</span>`);
     // The Upload action is in the bar from the first paint, not added by script.
     const bar = body.slice(
@@ -364,9 +364,9 @@ describe('the shell', () => {
     expect(body).toContain(
       '<noscript><style>.stage-loading,[data-load-custody]{display:none}</style></noscript>'
     );
-    expect(body).toContain('This page needs JavaScript to open a relic.');
+    expect(body).toContain('This page needs JavaScript to open a relik.');
     expect(body).toContain(
-      'Relic decrypts the file in your browser, so with JavaScript off there is nothing here to decrypt it with.'
+      'Relik decrypts the file in your browser, so with JavaScript off there is nothing here to decrypt it with.'
     );
   });
 
@@ -398,7 +398,7 @@ describe('the shell', () => {
     expect(body).not.toContain('data-load-plate');
   });
 
-  test('a relic published as markdown serves the Markdown phrase and browser tail; one published as archive serves the archive phrase and download tail', async () => {
+  test('a relik published as markdown serves the Markdown phrase and browser tail; one published as archive serves the archive phrase and download tail', async () => {
     const { id: mdId } = await publish({ rendererClass: 'markdown' });
     const mdResponse = await app.fetch(req(`/${mdId}`));
     const mdBody = await mdResponse.text();
@@ -421,15 +421,15 @@ describe('the shell', () => {
       '<meta name="twitter:description" content="An archive. It downloads to your device, and only someone holding the whole link, including the part after the #, can open it.">'
     );
     expect(archiveBody).toContain(
-      '<meta property="og:title" content="An archive relic">'
+      '<meta property="og:title" content="An archive relik">'
     );
     expect(archiveBody).toContain(
-      '<meta name="twitter:title" content="An archive relic">'
+      '<meta name="twitter:title" content="An archive relik">'
     );
-    expect(archiveBody).toContain('<title>An archive relic</title>');
+    expect(archiveBody).toContain('<title>An archive relik</title>');
   });
 
-  test('a relic published as media serves the media phrase and played tail on og:description and twitter:description', async () => {
+  test('a relik published as media serves the media phrase and played tail on og:description and twitter:description', async () => {
     const { id } = await publish({ rendererClass: 'media' });
     const response = await app.fetch(req(`/${id}`));
     const body = await response.text();
@@ -445,14 +445,14 @@ describe('the shell', () => {
     );
     expect(body).not.toContain('downloads to your device');
     expect(body).toContain(
-      '<meta property="og:title" content="A media relic">'
+      '<meta property="og:title" content="A media relik">'
     );
     expect(body).toContain(
-      '<meta name="twitter:title" content="A media relic">'
+      '<meta name="twitter:title" content="A media relik">'
     );
-    expect(body).toContain('<title>A media relic</title>');
+    expect(body).toContain('<title>A media relik</title>');
   });
-  test('a relic published as otio serves the otio phrase and played tail on og:description and twitter:description', async () => {
+  test('a relik published as otio serves the otio phrase and played tail on og:description and twitter:description', async () => {
     const { id } = await publish({ rendererClass: 'otio' });
     const response = await app.fetch(req(`/${id}`));
     const body = await response.text();
@@ -468,12 +468,12 @@ describe('the shell', () => {
     );
     expect(body).not.toContain('downloads to your device');
     expect(body).toContain(
-      '<meta property="og:title" content="An OpenTimelineIO relic">'
+      '<meta property="og:title" content="An OpenTimelineIO relik">'
     );
     expect(body).toContain(
-      '<meta name="twitter:title" content="An OpenTimelineIO relic">'
+      '<meta name="twitter:title" content="An OpenTimelineIO relik">'
     );
-    expect(body).toContain('<title>An OpenTimelineIO relic</title>');
+    expect(body).toContain('<title>An OpenTimelineIO relik</title>');
   });
 
   test('a title containing quotes and angle brackets cannot break out', async () => {
@@ -490,11 +490,11 @@ describe('the shell', () => {
       '<meta name="twitter:title" content="hello &quot;evil&quot; &lt;script&gt;alert(1)&lt;/script&gt;">'
     );
     expect(body).toContain(
-      '<title>hello &quot;evil&quot; &lt;script&gt;alert(1)&lt;/script&gt; · Relic</title>'
+      '<title>hello &quot;evil&quot; &lt;script&gt;alert(1)&lt;/script&gt; · Relik</title>'
     );
   });
 
-  test('a tombstoned relic serves the constant card and leaks neither title nor class', async () => {
+  test('a tombstoned relik serves the constant card and leaks neither title nor class', async () => {
     const { id } = await publish({
       title: 'Secret Tombstoned Title',
       rendererClass: 'markdown',
@@ -517,9 +517,9 @@ describe('the shell', () => {
 
     expect(body).not.toContain('Secret Tombstoned Title');
     expect(body).not.toContain('Markdown');
-    expect(body).toContain('<meta property="og:title" content="A relic">');
-    expect(body).toContain('<meta name="twitter:title" content="A relic">');
-    expect(body).toContain('<title>Relic</title>');
+    expect(body).toContain('<meta property="og:title" content="A relik">');
+    expect(body).toContain('<meta name="twitter:title" content="A relik">');
+    expect(body).toContain('<title>Relik</title>');
     expect(body).toContain(
       '<meta property="og:description" content="An encrypted file. It opens in your browser, and only someone holding the whole link, including the part after the #, can read it.">'
     );
@@ -528,7 +528,7 @@ describe('the shell', () => {
     );
   });
 
-  test('an expired relic serves the constant card and leaks neither title nor class', async () => {
+  test('an expired relik serves the constant card and leaks neither title nor class', async () => {
     const { id } = await publish({
       title: 'Secret Expired Title',
       ttlDays: 1,
@@ -541,9 +541,9 @@ describe('the shell', () => {
 
     expect(body).not.toContain('Secret Expired Title');
     expect(body).not.toContain('Markdown');
-    expect(body).toContain('<meta property="og:title" content="A relic">');
-    expect(body).toContain('<meta name="twitter:title" content="A relic">');
-    expect(body).toContain('<title>Relic</title>');
+    expect(body).toContain('<meta property="og:title" content="A relik">');
+    expect(body).toContain('<meta name="twitter:title" content="A relik">');
+    expect(body).toContain('<title>Relik</title>');
     expect(body).toContain(
       '<meta property="og:description" content="An encrypted file. It opens in your browser, and only someone holding the whole link, including the part after the #, can read it.">'
     );
@@ -558,9 +558,9 @@ describe('the shell', () => {
     const body = await response.text();
 
     expect(body).not.toContain('Markdown');
-    expect(body).toContain('<meta property="og:title" content="A relic">');
-    expect(body).toContain('<meta name="twitter:title" content="A relic">');
-    expect(body).toContain('<title>Relic</title>');
+    expect(body).toContain('<meta property="og:title" content="A relik">');
+    expect(body).toContain('<meta name="twitter:title" content="A relik">');
+    expect(body).toContain('<title>Relik</title>');
     expect(body).toContain(
       '<meta property="og:description" content="An encrypted file. It opens in your browser, and only someone holding the whole link, including the part after the #, can read it.">'
     );
@@ -576,9 +576,9 @@ describe('the shell', () => {
     const body = await response.text();
 
     expect(body).not.toContain('Markdown');
-    expect(body).toContain('<meta property="og:title" content="A relic">');
-    expect(body).toContain('<meta name="twitter:title" content="A relic">');
-    expect(body).toContain('<title>Relic</title>');
+    expect(body).toContain('<meta property="og:title" content="A relik">');
+    expect(body).toContain('<meta name="twitter:title" content="A relik">');
+    expect(body).toContain('<title>Relik</title>');
     expect(body).toContain(
       '<meta property="og:description" content="An encrypted file. It opens in your browser, and only someone holding the whole link, including the part after the #, can read it.">'
     );
@@ -605,15 +605,15 @@ describe('the shell', () => {
     const body = await response.text();
 
     expect(body).not.toContain('Secret NonId Title');
-    expect(body).toContain('<meta property="og:title" content="A relic">');
-    expect(body).toContain('<meta name="twitter:title" content="A relic">');
-    expect(body).toContain('<title>Relic</title>');
+    expect(body).toContain('<meta property="og:title" content="A relik">');
+    expect(body).toContain('<meta name="twitter:title" content="A relik">');
+    expect(body).toContain('<title>Relik</title>');
     expect(body).toContain(
       '<meta property="og:url" content="https://relic.example/">'
     );
   });
 
-  test('serving /{id} for a titled relic still writes no mint log entry and leaves mintsUsed at 0', async () => {
+  test('serving /{id} for a titled relik still writes no mint log entry and leaves mintsUsed at 0', async () => {
     const { id } = await publish({ title: 'Uncounted Title' });
     const before = await app.store.readMintLog();
 
@@ -624,10 +624,10 @@ describe('the shell', () => {
     expect((await app.store.getRelic(id))?.mintsUsed).toBe(0);
   });
 
-  test('serving /{id} for a classed relic still writes no mint log entry and leaves mintsUsed at 0', async () => {
+  test('serving /{id} for a classed relik still writes no mint log entry and leaves mintsUsed at 0', async () => {
     const { id } = await publish({
       rendererClass: 'archive',
-      title: 'Classed Relic',
+      title: 'Classed Relik',
     });
     const before = await app.store.readMintLog();
 
@@ -718,7 +718,7 @@ const LANDING_CSP =
 
 describe('reserved segments beat ids at the router', () => {
   for (const word of RESERVED_SEGMENTS) {
-    test(`/${word} is not treated as a relic id`, async () => {
+    test(`/${word} is not treated as a relik id`, async () => {
       const response = await app.fetch(req(`/${word}`));
       // Whatever it does, it must not be the relic shell for an id.
       const body = await response.text();
@@ -749,19 +749,19 @@ describe('reserved segments beat ids at the router', () => {
     expect(body).toContain('markdown, code, html, jsx, image');
     expect(body).toContain(RENDERER_CLASSES.join(', '));
     expect(body).toContain(
-      "Anyone holding a relic's link can fetch every version it has ever held"
+      "Anyone holding a relik's link can fetch every version it has ever held"
     );
     expect(body).toContain(
-      'When someone comments or a relic gets a new version, we email the people following it.'
+      'When someone comments or a relik gets a new version, we email the people following it.'
     );
     expect(body).toContain('Sharing gives us addresses, never the link.');
-    expect(body).toContain('One stop link stops every email about that relic.');
+    expect(body).toContain('One stop link stops every email about that relik.');
     expect(body).toContain(
-      'A link whose key does not open a relic stops downloading after the first block'
+      'A link whose key does not open a relik stops downloading after the first block'
     );
   });
 
-  test("/policy opens in the markdown player for a browser, with none of a relic's chrome", async () => {
+  test("/policy opens in the markdown player for a browser, with none of a relik's chrome", async () => {
     const response = await app.fetch(
       req('/policy', { headers: { accept: 'text/html,application/xhtml+xml' } })
     );
@@ -776,7 +776,7 @@ describe('reserved segments beat ids at the router', () => {
     expect(body).not.toContain('data-load-plate');
     expect(body).not.toContain('data-relic-id');
     expect(body).toContain(
-      '<title>What Relic knows about your relic · Relic</title>'
+      '<title>What Relik knows about your relik · Relik</title>'
     );
     expect(body).toContain('href="/policy?raw=1"');
   });
@@ -796,7 +796,7 @@ describe('reserved segments beat ids at the router', () => {
       );
       expect(response.headers.get('vary')).toBe('accept');
       expect(await response.text()).toContain(
-        '# What Relic knows about your relic'
+        '# What Relik knows about your relik'
       );
     }
   });
@@ -807,7 +807,7 @@ describe('reserved segments beat ids at the router', () => {
     const response = await app.fetch(req('/install'));
     expect(response.status).toBe(200);
     const body = await response.text();
-    expect(body).toContain('claude mcp add relic');
+    expect(body).toContain('claude mcp add relik');
     expect(body).toContain('RELIC_SERVICE_ORIGIN=https://relic.example');
     expect(body).toContain('"RELIC_SERVICE_ORIGIN": "https://relic.example"');
   });
@@ -831,14 +831,14 @@ describe('reserved segments beat ids at the router', () => {
       .fetch(new Request('https://relik.link/install'))
       .then((r) => r.text());
 
-    expect(body).toContain('claude mcp add relic');
+    expect(body).toContain('claude mcp add relik');
     // Not a substring check on the whole variable name only: the page must
     // not mention it at all, in either snippet or in prose explaining it.
     expect(body).not.toContain('RELIC_SERVICE_ORIGIN');
     expect(body).not.toContain('Why the origin is required');
     // And the command it does print has to be the whole command, not a
     // fragment left behind by removing the flag.
-    expect(body).toContain('claude mcp add relic -- npx -y relic-mcp@latest');
+    expect(body).toContain('claude mcp add relik -- npx -y relic-mcp@latest');
   });
 
   test('/install claims no more than the system delivers', async () => {
@@ -859,7 +859,7 @@ describe('reserved segments beat ids at the router', () => {
 });
 
 describe('the landing page', () => {
-  test('/ is a real page, not the shell with a bogus relic id', async () => {
+  test('/ is a real page, not the shell with a bogus relik id', async () => {
     const response = await app.fetch(req('/'));
     expect(response.status).toBe(200);
     expect(response.headers.get('content-type')).toContain('text/html');
@@ -919,14 +919,14 @@ describe('the landing page', () => {
     expect(body).not.toContain('home-relics');
   });
 
-  test('the header links the reader to their relics', async () => {
+  test('the header links the reader to their reliks', async () => {
     const body = await app.fetch(req('/')).then((r) => r.text());
     const header = body.slice(
       body.indexOf('<header'),
       body.indexOf('</header>')
     );
     expect(header).toContain(
-      '<a class="mine" href="/dashboard">Your relics</a>'
+      '<a class="mine" href="/dashboard">Your reliks</a>'
     );
   });
 
@@ -1370,7 +1370,7 @@ describe('the mint', () => {
     expect(body['current_version']).toBe(5);
   });
 
-  test('version 1 on a version 5 relic signs the bare object path', async () => {
+  test('version 1 on a version 5 relik signs the bare object path', async () => {
     const { id } = await publishThroughVersion(5);
     const body = (await app
       .fetch(
@@ -1388,7 +1388,7 @@ describe('the mint', () => {
     expect(body['current_version']).toBe(5);
   });
 
-  test('version 3 on a version 5 relic signs the v3 object path', async () => {
+  test('version 3 on a version 5 relik signs the v3 object path', async () => {
     const { id } = await publishThroughVersion(5);
     const body = (await app
       .fetch(
@@ -1501,7 +1501,7 @@ describe('the mint', () => {
     expect((await response.json()).code).toBe('relic_not_found');
   });
 
-  test('an expired relic is 410 relic_expired', async () => {
+  test('an expired relik is 410 relic_expired', async () => {
     const { id } = await publish({ ttlDays: 7 });
     now += 8 * 86_400 * 1000;
     const response = await app.fetch(
@@ -1511,7 +1511,7 @@ describe('the mint', () => {
     expect((await response.json()).code).toBe('relic_expired');
   });
 
-  test('a granted-but-never-uploaded relic is 410 relic_never_published', async () => {
+  test('a granted-but-never-uploaded relik is 410 relic_never_published', async () => {
     const challenge = (await app
       .fetch(req('/api/challenge', { method: 'POST' }))
       .then((r) => r.json())) as { challenge_nonce: string };
@@ -1676,7 +1676,7 @@ describe('the publish completion call', () => {
     expect((await app.store.getRelic(id))?.publishedAt).toBe(now);
   });
 
-  test('is optional: a lost confirmation still yields a usable relic', async () => {
+  test('is optional: a lost confirmation still yields a usable relik', async () => {
     const { id } = await publish();
     now += 10 * 60 * 1000;
 
@@ -1825,7 +1825,7 @@ describe('republish and versions', () => {
     const first = await storage.stat(id);
 
     await republish(id, grant['publish_token'] as string);
-    const container = await encrypted('hello relic, revised and longer', key);
+    const container = await encrypted('hello relik, revised and longer', key);
     storage.put(`${id}/v2`, container);
 
     now += 30 * 1000;
@@ -1912,7 +1912,7 @@ describe('republish and versions', () => {
     await republish(id, grant['publish_token'] as string);
     storage.put(
       `${id}/v2`,
-      await encrypted('hello relic again', generateKey())
+      await encrypted('hello relik again', generateKey())
     );
     await app.fetch(req(`/api/relics/${id}/complete`, { method: 'POST' }));
 
@@ -1950,7 +1950,7 @@ describe('republish and versions', () => {
     await republish(id, grant['publish_token'] as string);
     storage.put(
       `${id}/v2`,
-      await encrypted('hello relic, second edition', key)
+      await encrypted('hello relik, second edition', key)
     );
     await app.fetch(req(`/api/relics/${id}/complete`, { method: 'POST' }));
 
@@ -2081,7 +2081,7 @@ describe('the download cap', () => {
     expect(app.config.downloadCap).toBe(200);
     const { id } = await publish();
     const row = await app.store.getRelic(id);
-    if (row === undefined) throw new Error('relic row missing');
+    if (row === undefined) throw new Error('relik row missing');
     await app.store.putRelic({ ...row, mintsUsed: 199 });
 
     const last = await app.fetch(
@@ -2172,7 +2172,7 @@ describe('publisher lifetimes', () => {
     }
   });
 
-  test('a relic with no lifetime mints however far the clock advances', async () => {
+  test('a relik with no lifetime mints however far the clock advances', async () => {
     const { id } = await publish();
     // Past the 3650-day ceiling, past any retention window.
     now += 11 * 365 * 86_400 * 1000;
@@ -2186,7 +2186,7 @@ describe('publisher lifetimes', () => {
     expect(body.relic_expires_at).toBeNull();
   });
 
-  test('a relic with no lifetime reports null on complete too', async () => {
+  test('a relik with no lifetime reports null on complete too', async () => {
     const { id } = await publish();
     const response = await app.fetch(
       req(`/api/relics/${id}/complete`, { method: 'POST' })
@@ -2195,7 +2195,7 @@ describe('publisher lifetimes', () => {
     expect((await response.json()).relic_expires_at).toBeNull();
   });
 
-  test('a relic with no lifetime mints at the full validity window', async () => {
+  test('a relik with no lifetime mints at the full validity window', async () => {
     const { id } = await publish();
     // Thirty days past any TTL this service ever had, and the URL still
     // carries the whole fifteen minutes: nothing left to clamp against.
@@ -2208,7 +2208,7 @@ describe('publisher lifetimes', () => {
     expect(Date.parse(body.url_expires_at)).toBe(now + 15 * 60 * 1000);
   });
 
-  test('a relic granted a lifetime behaves exactly as the fixed TTL did', async () => {
+  test('a relik granted a lifetime behaves exactly as the fixed TTL did', async () => {
     const { id } = await publish({ ttlDays: 7 });
     now += 6 * 86_400 * 1000;
     const live = await app.fetch(
@@ -2467,7 +2467,7 @@ describe('rate limiting', () => {
     expect((await mapped.json()).code).toBe('auth_rate_limited');
   });
 
-  test('stored relic and mint records keep the full client IP rather than rate limit key', async () => {
+  test('stored relik and mint records keep the full client IP rather than rate limit key', async () => {
     const store = new MemoryStore();
     app = build({ store });
     const lbIp = '130.211.0.1';
@@ -2558,7 +2558,7 @@ describe('delete by id', () => {
     expect(stone?.ciphertextHash).toHaveLength(64);
   });
 
-  test('a deleted relic mints 410 relic_removed with the appeal path', async () => {
+  test('a deleted relik mints 410 relic_removed with the appeal path', async () => {
     const { id } = await publish();
     await app.fetch(
       req(`/api/relics/${id}`, {
@@ -2910,7 +2910,7 @@ describe('comments', () => {
     expect(await app.store.listComments(id)).toHaveLength(0);
   });
 
-  test('a tombstoned relic has no thread, even to a reader who already has the link', async () => {
+  test('a tombstoned relik has no thread, even to a reader who already has the link', async () => {
     const { id } = await publish();
     await app.fetch(
       req(`/api/relics/${id}?reason=abuse`, {
@@ -2924,7 +2924,7 @@ describe('comments', () => {
     expect((await listed.json()).code).toBe('relic_removed');
   });
 
-  test('deleting a relic takes its comments with it', async () => {
+  test('deleting a relik takes its comments with it', async () => {
     const { id, grant } = await publish();
     await app.fetch(
       req(`/api/relics/${id}/comments`, {
@@ -2980,7 +2980,7 @@ describe('comments', () => {
     expect(await app.store.listComments(id)).toHaveLength(0);
   });
 
-  test('absent version in post stamps current relic version', async () => {
+  test('absent version in post stamps current relik version', async () => {
     const { id, key, grant } = await publish();
     const token = grant['publish_token'] as string;
 
@@ -3003,7 +3003,7 @@ describe('comments', () => {
     // Advance time and advance relic to version 2
     now += 1000;
     await republish(id, token);
-    storage.put(`${id}/v2`, await encrypted('relic revision 2', key));
+    storage.put(`${id}/v2`, await encrypted('relik revision 2', key));
 
     now += 1000;
     const post2 = await app.fetch(
@@ -3030,9 +3030,9 @@ describe('comments', () => {
 
     // Advance to version 3
     await republish(id, token);
-    storage.put(`${id}/v2`, await encrypted('relic revision 2', key));
+    storage.put(`${id}/v2`, await encrypted('relik revision 2', key));
     await republish(id, token);
-    storage.put(`${id}/v3`, await encrypted('relic revision 3', key));
+    storage.put(`${id}/v3`, await encrypted('relik revision 3', key));
     now += 1000;
     const postV1 = await app.fetch(
       req(`/api/relics/${id}/comments`, {
@@ -3088,7 +3088,7 @@ describe('comments', () => {
 
     // Advance to version 2
     await republish(id, token);
-    storage.put(`${id}/v2`, await encrypted('relic revision 2', key));
+    storage.put(`${id}/v2`, await encrypted('relik revision 2', key));
 
     // Zero, negative, fraction, string, and one past current (3)
     for (const badVersion of [0, -1, 1.5, 'three', 3]) {
@@ -3171,13 +3171,13 @@ describe('comments', () => {
     expect(storedLegacy?.version).toBeUndefined();
   });
 
-  test('stored comment version survives the relic being republished', async () => {
+  test('stored comment version survives the relik being republished', async () => {
     const { id, key, grant } = await publish();
     const token = grant['publish_token'] as string;
 
     // Advance to version 2
     await republish(id, token);
-    storage.put(`${id}/v2`, await encrypted('relic v2 content', key));
+    storage.put(`${id}/v2`, await encrypted('relik v2 content', key));
 
     // Comment written on version 2
     const posted = await app.fetch(
@@ -3202,7 +3202,7 @@ describe('comments', () => {
 
     // Advance to version 3
     await republish(id, token);
-    storage.put(`${id}/v3`, await encrypted('relic v3 content', key));
+    storage.put(`${id}/v3`, await encrypted('relik v3 content', key));
 
     expect((await app.store.getRelic(id))?.version).toBe(3);
 
@@ -3290,7 +3290,7 @@ describe('magic-link identity', () => {
     );
   });
 
-  test('one sign-in carries to every other relic, without a second link', async () => {
+  test('one sign-in carries to every other relik, without a second link', async () => {
     // The reported symptom was signing in again for each relic. The session
     // row has no relic id and the cookie is Path=/, so this asserts the
     // property end to end rather than reading the shapes and assuming it.
@@ -3509,7 +3509,7 @@ describe('magic-link identity', () => {
   });
 });
 
-describe('session relic listing', () => {
+describe('session relik listing', () => {
   async function createSession(
     email = 'reader@example.com',
     expiresAt = now + 3600 * 1000
@@ -3556,10 +3556,10 @@ describe('session relic listing', () => {
     expect(body.code).toBe('invalid_session');
   });
 
-  test('a signed-in address sees exactly the relics it commented on, ordered by most recent engagement first', async () => {
+  test('a signed-in address sees exactly the reliks it commented on, ordered by most recent engagement first', async () => {
     const cookie = await createSession('reader@example.com');
-    const relic1 = await publish({ title: 'First Relic' });
-    const relic2 = await publish({ title: 'Second Relic' });
+    const relic1 = await publish({ title: 'First Relik' });
+    const relic2 = await publish({ title: 'Second Relik' });
 
     // Comment on relic1 at now = 1000
     now = 1000;
@@ -3592,20 +3592,20 @@ describe('session relic listing', () => {
     expect(body.relics).toHaveLength(2);
     // relic1 had most recent engagement at 3000, so it appears first
     expect(body.relics[0]?.relic_id).toBe(relic1.id);
-    expect(body.relics[0]?.title).toBe('First Relic');
+    expect(body.relics[0]?.title).toBe('First Relik');
     expect(body.relics[0]?.last_comment_at).toBe(new Date(3000).toISOString());
 
     expect(body.relics[1]?.relic_id).toBe(relic2.id);
-    expect(body.relics[1]?.title).toBe('Second Relic');
+    expect(body.relics[1]?.title).toBe('Second Relik');
     expect(body.relics[1]?.last_comment_at).toBe(new Date(2000).toISOString());
   });
 
-  test("a second address's relics are absent", async () => {
+  test("a second address's reliks are absent", async () => {
     const reader1Cookie = await createSession('reader1@example.com');
     const reader2Cookie = await createSession('reader2@example.com');
 
-    const relic1 = await publish({ title: 'Reader 1 Relic' });
-    const relic2 = await publish({ title: 'Reader 2 Relic' });
+    const relic1 = await publish({ title: 'Reader 1 Relik' });
+    const relic2 = await publish({ title: 'Reader 2 Relik' });
 
     now = 1000;
     await postCommentAs(relic1.id, reader1Cookie);
@@ -3632,7 +3632,7 @@ describe('session relic listing', () => {
     expect(body2.relics.map((r) => r.relic_id)).toEqual([relic2.id]);
   });
 
-  test('tombstoned relics never appear', async () => {
+  test('tombstoned reliks never appear', async () => {
     const cookie = await createSession('reader@example.com');
     const relic = await publish({ title: 'To Be Tombstoned' });
 
@@ -3666,11 +3666,11 @@ describe('session relic listing', () => {
     expect(((await after.json()) as { relics: unknown[] }).relics).toEqual([]);
   });
 
-  test('expired relics never appear', async () => {
+  test('expired reliks never appear', async () => {
     const cookie = await createSession('reader@example.com');
     // Relic with ttl_days: 1
     now = 1000;
-    const relic = await publish({ title: 'Expiring Relic', ttlDays: 1 });
+    const relic = await publish({ title: 'Expiring Relik', ttlDays: 1 });
 
     await postCommentAs(relic.id, cookie);
 
@@ -3690,7 +3690,7 @@ describe('session relic listing', () => {
     expect(((await after.json()) as { relics: unknown[] }).relics).toEqual([]);
   });
 
-  test('absent-row relics never appear', async () => {
+  test('absent-row reliks never appear', async () => {
     const cookie = await createSession('reader@example.com');
     // Directly record a comment on a relic ID that was never created in the store
     await app.store.putComment({
@@ -3754,7 +3754,7 @@ describe('session relic listing', () => {
 });
 
 describe('GET /dashboard', () => {
-  test('returns 200 HTML with data-view="dashboard", no relic id value, no relic title, and noindex plus no-store headers', async () => {
+  test('returns 200 HTML with data-view="dashboard", no relik id value, no relik title, and noindex plus no-store headers', async () => {
     const response = await app.fetch(req('/dashboard'));
     expect(response.status).toBe(200);
     expect(response.headers.get('content-type')).toContain('text/html');
@@ -3767,8 +3767,8 @@ describe('GET /dashboard', () => {
     const body = await response.text();
     expect(body).toContain('data-view="dashboard"');
     expect(body).not.toContain('data-relic-id');
-    expect(body).toContain('<title>Relic</title>');
-    expect(body).toContain('content="A relic"');
+    expect(body).toContain('<title>Relik</title>');
+    expect(body).toContain('content="A relik"');
     expect(body).toContain('/dashboard');
   });
 
@@ -3779,7 +3779,7 @@ describe('GET /dashboard', () => {
     expect(body).toContain('data-view="dashboard"');
   });
 
-  test('dashboard is not parsed as a relic id', async () => {
+  test('dashboard is not parsed as a relik id', async () => {
     const response = await app.fetch(req('/dashboard'));
     const body = await response.text();
     expect(body).not.toContain('data-relic-id="dashboard"');
@@ -3793,7 +3793,7 @@ describe('GET /dashboard', () => {
 });
 
 describe('GET /publish', () => {
-  test('serves the publish view of the shell, with no relic id', async () => {
+  test('serves the publish view of the shell, with no relik id', async () => {
     const response = await app.fetch(req('/publish'));
     expect(response.status).toBe(200);
     expect(response.headers.get('content-type')).toContain('text/html');
@@ -3804,7 +3804,7 @@ describe('GET /publish', () => {
     const body = await response.text();
     expect(body).toContain('data-view="publish"');
     expect(body).not.toContain('data-relic-id');
-    expect(body).toContain('<title>Publish a file · Relic</title>');
+    expect(body).toContain('<title>Publish a file · Relik</title>');
     expect(body).toContain('/assets/viewer.js');
   });
 
@@ -3859,7 +3859,7 @@ describe('comment notifications', () => {
     app = build({ mailer: notifMailer });
   });
 
-  test('a comment on a relic with a verified owner address mails the owner', async () => {
+  test('a comment on a relik with a verified owner address mails the owner', async () => {
     await createSession('owner@example.com');
     const { id } = await publish({
       title: 'Roadmap',
@@ -3882,7 +3882,7 @@ describe('comment notifications', () => {
       'commenter@example.com left a comment on "Roadmap".'
     );
     expect(sentMails[0]?.mail.text).toContain(
-      'Open the link you hold for this relic to read and answer the comment.'
+      'Open the link you hold for this relik to read and answer the comment.'
     );
   });
 
@@ -3939,7 +3939,7 @@ describe('comment notifications', () => {
       'bob@example.com answered your comment on "Spec doc".'
     );
     expect(sentMails[0]?.mail.text).toContain(
-      'Open the link you hold for this relic to read the reply.'
+      'Open the link you hold for this relik to read the reply.'
     );
   });
 
@@ -4319,7 +4319,7 @@ describe('comment edits and resolutions', () => {
     resolved_by: string | null;
   };
 
-  test('delete enforces the author boundary and relic scope without changing refused threads', async () => {
+  test('delete enforces the author boundary and relik scope without changing refused threads', async () => {
     const { id, grant } = await publish();
     const other = await publish();
     const alice = await createSession('alice@example.com');
@@ -4697,7 +4697,7 @@ describe('comment edits and resolutions', () => {
     expect((await response.json()).code).toBe('comment_not_found');
   });
 
-  test('a comment on a tombstoned relic is refused', async () => {
+  test('a comment on a tombstoned relik is refused', async () => {
     const { id } = await publish();
     const alice = await createSession('alice@example.com');
     const { commentId } = await postAs(id, { cookie: alice });
@@ -5007,7 +5007,7 @@ describe('cover image upload, serving, and lifecycle', () => {
       expect(problem.code).toBe('invalid_relic_id');
     });
 
-    test('refusal 4: returns relic_removed for tombstoned relic', async () => {
+    test('refusal 4: returns relic_removed for tombstoned relik', async () => {
       const { id } = await publish();
       await app.fetch(
         req(`/api/relics/${id}`, {
@@ -5027,7 +5027,7 @@ describe('cover image upload, serving, and lifecycle', () => {
       expect(problem.code).toBe('relic_removed');
     });
 
-    test('refusal 5: returns relic_not_found when relic row does not exist', async () => {
+    test('refusal 5: returns relic_not_found when relik row does not exist', async () => {
       const unissuedId = generateRelicId();
       const res = await app.fetch(
         req(`/api/relics/${unissuedId}/cover`, {
@@ -5493,7 +5493,7 @@ describe('cover image upload, serving, and lifecycle', () => {
       expect(shellBody).not.toContain('/cover/');
     });
 
-    test('the cover index names the current cover path for a relic with one, and leaves out one without, a stale one, and a bad id', async () => {
+    test('the cover index names the current cover path for a relik with one, and leaves out one without, a stale one, and a bad id', async () => {
       const withCover = await publish();
       const bare = await publish();
       const stale = await publish();
@@ -5541,7 +5541,7 @@ describe('cover image upload, serving, and lifecycle', () => {
       expect(res.status).toBe(400);
     });
 
-    test('tombstoned relic cover route returns 404 and shell serves card.v1.png', async () => {
+    test('tombstoned relik cover route returns 404 and shell serves card.v1.png', async () => {
       const { id, grant } = await publish();
       const pngBytes = makeValidPng(2);
       const sha256 = await sha256Hex(pngBytes);
@@ -5583,7 +5583,7 @@ describe('cover image upload, serving, and lifecycle', () => {
       );
     });
 
-    test('expired relic cover route returns 404 and shell serves card.v1.png', async () => {
+    test('expired relik cover route returns 404 and shell serves card.v1.png', async () => {
       const { id, grant } = await publish({ ttlDays: 1 });
       const pngBytes = makeValidPng(2);
       const sha256 = await sha256Hex(pngBytes);
@@ -5614,7 +5614,7 @@ describe('cover image upload, serving, and lifecycle', () => {
       );
     });
 
-    test('unknown relic id cover route returns 404 and shell serves card.v1.png', async () => {
+    test('unknown relik id cover route returns 404 and shell serves card.v1.png', async () => {
       const unissuedId = generateRelicId();
       const sha256 = 'c'.repeat(64);
       const coverRes = await app.fetch(

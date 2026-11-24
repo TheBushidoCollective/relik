@@ -67,13 +67,13 @@ describe('service worker shell cache generation', () => {
     const gen1 = [
       { path: '/assets/viewer.js', content: 'console.log("gen1");' },
       { path: '/assets/styles.css', content: 'body { color: black; }' },
-      { path: '/manifest.webmanifest', content: '{"name":"Relic"}' },
+      { path: '/manifest.webmanifest', content: '{"name":"Relik"}' },
     ];
 
     const gen2 = [
       { path: '/assets/viewer.js', content: 'console.log("gen2");' },
       { path: '/assets/styles.css', content: 'body { color: black; }' },
-      { path: '/manifest.webmanifest', content: '{"name":"Relic"}' },
+      { path: '/manifest.webmanifest', content: '{"name":"Relik"}' },
     ];
 
     const hash1 = computeShellHash(gen1);

@@ -87,7 +87,7 @@ export async function readDecisions(
     ) {
       throw new PublishError(
         'app_response_unusable',
-        'This Relic service does not support relic_read_decisions yet.',
+        'This Relik service does not support relic_read_decisions yet.',
         { relic_id: relicId }
       );
     }

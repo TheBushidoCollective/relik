@@ -110,7 +110,7 @@ export function parseRelicId(candidate: string): string {
   if (candidate.length !== ID_LENGTH) {
     throw new InvalidRelicIdError(
       'length',
-      `relic id must be ${ID_LENGTH} characters, got ${candidate.length}`
+      `relik id must be ${ID_LENGTH} characters, got ${candidate.length}`
     );
   }
 
@@ -120,7 +120,7 @@ export function parseRelicId(candidate: string): string {
     if (!ALPHABET.includes(ch)) {
       throw new InvalidRelicIdError(
         'alphabet',
-        `relic id contains ${JSON.stringify(ch)}, outside Crockford base32`
+        `relik id contains ${JSON.stringify(ch)}, outside Crockford base32`
       );
     }
   }
@@ -128,7 +128,7 @@ export function parseRelicId(candidate: string): string {
   if (RESERVED_NORMALIZED.has(normalized)) {
     throw new InvalidRelicIdError(
       'reserved',
-      `relic id normalizes onto the reserved segment ${normalized}`
+      `relik id normalizes onto the reserved segment ${normalized}`
     );
   }
 
@@ -185,7 +185,7 @@ export function encodeRelicId(entropy: Uint8Array): string {
   if (entropy.length !== ID_ENTROPY_BYTES) {
     throw new InvalidRelicIdError(
       'length',
-      `relic id entropy must be ${ID_ENTROPY_BYTES} bytes`
+      `relik id entropy must be ${ID_ENTROPY_BYTES} bytes`
     );
   }
   return encodeCrockford(entropy);

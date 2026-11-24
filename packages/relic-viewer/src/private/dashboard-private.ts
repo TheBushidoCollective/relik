@@ -32,7 +32,7 @@ export interface PrivateDashboardContext {
 }
 
 const DISCLOSURE_BODY =
-  'Relic records who asked for access and who granted it, their email addresses and public keys, and an access log the owner can read. Your key is stored only encrypted under your passkey. ';
+  'Relik records who asked for access and who granted it, their email addresses and public keys, and an access log the owner can read. Your key is stored only encrypted under your passkey. ';
 
 interface OwnedRelic {
   readonly relic_id: string;
@@ -98,7 +98,7 @@ async function render(
           h(
             'p',
             { class: 'dashboard-section-note' },
-            'You have no private-share key yet. Open a private relic shared with you to set one up.'
+            'You have no private-share key yet. Open a private relik shared with you to set one up.'
           )
         )
       );
@@ -132,7 +132,7 @@ function disclosure(): HTMLElement {
   return h(
     'details',
     { class: 'disclosure' },
-    h('summary', {}, 'What Relic records about private relics'),
+    h('summary', {}, 'What Relik records about private reliks'),
     h(
       'blockquote',
       {},
@@ -329,7 +329,7 @@ async function relicSections(
           repairOutcome.className = 'dash-outcome is-ok';
           setChildren(
             repairOutcome,
-            `Repaired ${result.stored} wrap${result.stored === 1 ? '' : 's'} for ${holder.email}.${result.refused.length === 0 ? '' : ` Skipped ${result.refused.length} relic${result.refused.length === 1 ? '' : 's'} whose versions belong to another owner.`}`
+            `Repaired ${result.stored} wrap${result.stored === 1 ? '' : 's'} for ${holder.email}.${result.refused.length === 0 ? '' : ` Skipped ${result.refused.length} relik${result.refused.length === 1 ? '' : 's'} whose versions belong to another owner.`}`
           );
           again();
         })
@@ -343,8 +343,8 @@ async function relicSections(
   const holderName = holder?.email ?? 'your recovery key holder';
   const gapText =
     missing === 1
-      ? `1 version of 1 relic can\u2019t be read by ${holderName} yet.`
-      : `${missing} versions of ${gaps.length} relic${gaps.length === 1 ? '' : 's'} can\u2019t be read by ${holderName} yet.`;
+      ? `1 version of 1 relik can\u2019t be read by ${holderName} yet.`
+      : `${missing} versions of ${gaps.length} relik${gaps.length === 1 ? '' : 's'} can\u2019t be read by ${holderName} yet.`;
   return [
     h(
       'section',
@@ -352,12 +352,12 @@ async function relicSections(
       h(
         'h2',
         { class: 'dashboard-section-title', id: 'owned-title' },
-        'Private relics you own'
+        'Private reliks you own'
       ),
       h(
         'p',
         { class: 'dashboard-section-note' },
-        'Private relics have no title, so they\u2019re listed by catalog number. Open one to see what it is.'
+        'Private reliks have no title, so they\u2019re listed by catalog number. Open one to see what it is.'
       ),
       gaps.length > 0 && holder
         ? h(
@@ -380,7 +380,7 @@ async function relicSections(
       h(
         'h2',
         { class: 'dashboard-section-title', id: 'shared-title' },
-        'Private relics shared with you'
+        'Private reliks shared with you'
       ),
       h(
         'ul',

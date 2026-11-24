@@ -13,7 +13,7 @@ const b64 = (bytes: Uint8Array) => Buffer.from(bytes).toString('base64url');
 function creation(challenge: string, prf: boolean): CreationOptionsJSON {
   return {
     challenge,
-    rp: { id: RP_ID, name: 'Relic' },
+    rp: { id: RP_ID, name: 'Relik' },
     user: {
       id: 'dXNlcg',
       name: 'owner@example.com',

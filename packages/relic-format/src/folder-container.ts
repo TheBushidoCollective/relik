@@ -253,7 +253,7 @@ export interface OpenedFolder {
 }
 export function openFolder(opened: OpenedAnyRelic): OpenedFolder {
   if (opened.envelope.version !== 2)
-    throw new StrictParseError('not a folder relic');
+    throw new StrictParseError('not a folder relik');
   const header = opened.envelope as FolderHeader;
   const manifest = decodeManifest(
     opened.content.subarray(0, header.manifestLength),

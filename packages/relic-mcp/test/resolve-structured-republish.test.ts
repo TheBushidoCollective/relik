@@ -425,7 +425,7 @@ function watchUnversionedMints(): {
   return { deps: watched, seen };
 }
 
-describe('republished relics resolve each comment against its own version', () => {
+describe('republished reliks resolve each comment against its own version', () => {
   for (const scenario of SCENARIOS) {
     describe(scenario.name, () => {
       test('a version 1 comment resolves against version 1, and a version 2 comment against version 2', async () => {
@@ -452,7 +452,7 @@ describe('republished relics resolve each comment against its own version', () =
         );
       });
 
-      test('a comment recording a version the relic never had is not found, and prints nothing from the current file', async () => {
+      test('a comment recording a version the relik never had is not found, and prints nothing from the current file', async () => {
         const { relicId, v1CommentId } = await publishTwoVersions(scenario);
         const source = await firstCommentRow(relicId);
         await store.putComment({
@@ -545,7 +545,7 @@ describe('republished relics resolve each comment against its own version', () =
   }
 });
 
-describe('a versionless subtitle comment on a relic that was never republished', () => {
+describe('a versionless subtitle comment on a relik that was never republished', () => {
   test('resolves against version 1, the only version it has', async () => {
     const path = join(scratch, 'once.srt');
     await writeFile(path, SRT_V1);

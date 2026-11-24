@@ -184,7 +184,7 @@ describe('the fragment', () => {
     expect(stripped).toBe(true);
   });
 
-  test('is stripped even when the relic turns out to be dead', async () => {
+  test('is stripped even when the relik turns out to be dead', async () => {
     await load(generateRelicId(), deps('r1AAAAAAAAAAAAAAAAAAAA'));
     expect(stripped).toBe(true);
   });
@@ -272,7 +272,7 @@ describe('remembering the key', () => {
     ).toBe('# Still here\n');
   });
 
-  test('a relic with no lifetime is remembered as never expiring', async () => {
+  test('a relik with no lifetime is remembered as never expiring', async () => {
     // Found in the field: the mint returns relic_expires_at null for a relic
     // with no lifetime, Date.parse(null) is NaN, and the vault refused to
     // store anything, so every reload lost the key. The mapping to Infinity
@@ -292,7 +292,7 @@ describe('remembering the key', () => {
     expect(rememberCalls.get(id)).toBe(Number.POSITIVE_INFINITY);
   });
 
-  test('the real vault reloads a never-expiring relic', async () => {
+  test('the real vault reloads a never-expiring relik', async () => {
     // The fake vault above ignores expiry, which is how the bug slipped
     // through it. This one runs the actual localStorage vault, on a local
     // Storage shim rather than an import from another test file, against
@@ -317,7 +317,7 @@ describe('remembering the key', () => {
     expect(reloaded.kind).toBe('ready');
   });
 
-  test('nothing is remembered for a relic that does not exist', async () => {
+  test('nothing is remembered for a relik that does not exist', async () => {
     const { entries, vault } = fakeVault();
     const { fragment } = await seed(utf8('x'), 'a.md', 'text/markdown');
 
@@ -331,7 +331,7 @@ describe('remembering the key', () => {
     expect(entries.size).toBe(0);
   });
 
-  test('a dead relic evicts whatever this browser remembered', async () => {
+  test('a dead relik evicts whatever this browser remembered', async () => {
     const { id, fragment } = await seed(
       utf8('# Gone soon\n'),
       'report.md',
@@ -509,7 +509,7 @@ describe('rendering', () => {
     }
   });
 
-  test('routes a jsx relic to the usercontent origin, never inline', async () => {
+  test('routes a jsx relik to the usercontent origin, never inline', async () => {
     // The service origin renders markdown, code, and images itself. A
     // component must never join them: it executes, so it belongs on the
     // frame side of the boundary with html.
@@ -530,7 +530,7 @@ describe('rendering', () => {
     expect(compiled).not.toContain('<div');
   });
 
-  test('routes a tsx relic the same way', async () => {
+  test('routes a tsx relik the same way', async () => {
     const { id, fragment } = await seed(
       utf8(
         'type P = { n: string };\nexport default ({ n }: P) => <h1>{n}</h1>;\n'
@@ -774,7 +774,7 @@ describe('failure states', () => {
     expect(rememberCalls.has(id)).toBe(false);
   });
 
-  test('a removed relic reads as removed, never as a decrypt failure', async () => {
+  test('a removed relik reads as removed, never as a decrypt failure', async () => {
     const { id, fragment } = await seed(
       utf8('# hi'),
       'notes.md',
@@ -794,7 +794,7 @@ describe('failure states', () => {
     expect(state.dead.action).toBe('report');
   });
 
-  test('an expired relic reads as expired', async () => {
+  test('an expired relik reads as expired', async () => {
     const { id, fragment } = await seed(
       utf8('# hi'),
       'notes.md',

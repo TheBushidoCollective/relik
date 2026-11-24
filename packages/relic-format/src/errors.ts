@@ -15,7 +15,7 @@ export class RelicFormatError extends Error {
 export class UnknownVersionError extends RelicFormatError {
   override readonly name = 'UnknownVersionError';
   constructor(readonly marker: string) {
-    super(`unknown relic format version: ${JSON.stringify(marker)}`);
+    super(`unknown relik format version: ${JSON.stringify(marker)}`);
   }
 }
 

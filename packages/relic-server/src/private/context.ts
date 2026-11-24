@@ -241,7 +241,7 @@ export function privateRow(row: RelicRow): RelicRow {
   if (row.access !== 'private' || row.ownerIdentityId === undefined) {
     throw new ProblemError('private_policy_violation', {
       policy_check: 'version',
-      detail: 'This relic is not a private relic.',
+      detail: 'This relik is not a private relik.',
     });
   }
   return row;

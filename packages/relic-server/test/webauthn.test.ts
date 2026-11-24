@@ -34,7 +34,7 @@ const USER_HANDLE = 'dGVzdC11c2VyLWhhbmRsZQ'; // base64url 'test-user-handle'
 function creationOptions(challenge = 'Y2hhbGxlbmdlLTE'): CreationOptionsJSON {
   return {
     challenge,
-    rp: { id: RP_ID, name: 'Relic' },
+    rp: { id: RP_ID, name: 'Relik' },
     user: {
       id: USER_HANDLE,
       name: 'alice@example.com',

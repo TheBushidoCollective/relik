@@ -433,10 +433,10 @@ export async function runDecisionProofSequence(
   const v3Path = join(scratchDir, 'proof-v3.txt');
   const v4Path = join(scratchDir, 'proof-v4.txt');
 
-  await writeFile(v1Path, 'Relic Decision Proof Version 1\n');
-  await writeFile(v2Path, 'Relic Decision Proof Version 2\n');
-  await writeFile(v3Path, 'Relic Decision Proof Version 3\n');
-  await writeFile(v4Path, 'Relic Decision Proof Version 4\n');
+  await writeFile(v1Path, 'Relik Decision Proof Version 1\n');
+  await writeFile(v2Path, 'Relik Decision Proof Version 2\n');
+  await writeFile(v3Path, 'Relik Decision Proof Version 3\n');
+  await writeFile(v4Path, 'Relik Decision Proof Version 4\n');
 
   const pubRes = await callMcp(
     mcpCommand,
@@ -460,7 +460,7 @@ export async function runDecisionProofSequence(
     relics?: Record<string, { key?: string; publish_token?: string }>;
   };
   const relicState = stateRaw.relics?.[relicId];
-  assert.ok(relicState?.key, 'state file did not contain relic key');
+  assert.ok(relicState?.key, 'state file did not contain relik key');
   assert.ok(
     relicState.publish_token,
     'state file did not contain publish_token'
@@ -984,7 +984,7 @@ export async function runDecisionProofSequence(
         return navigator.credentials.create({
           publicKey: {
             challenge,
-            rp: { id: rpId, name: 'Relic' },
+            rp: { id: rpId, name: 'Relik' },
             user: { id: new Uint8Array([1, 2, 3]), name: ${JSON.stringify(readerEmail)}, displayName: ${JSON.stringify(readerEmail)} },
             pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
             authenticatorSelection: { userVerification: 'discouraged' }

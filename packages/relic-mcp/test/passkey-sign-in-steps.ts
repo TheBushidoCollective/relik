@@ -97,7 +97,7 @@ export async function runPasskeySignInSequence(
   const docPath = join(scratchDir, 'proof-passkey-sign-in.txt');
   await writeFile(
     docPath,
-    'Relic Passkey Sign-In Proof Document\nA verified reader signs in with a passkey without email.\n'
+    'Relik Passkey Sign-In Proof Document\nA verified reader signs in with a passkey without email.\n'
   );
 
   const pubRes = await callMcp(
@@ -122,7 +122,7 @@ export async function runPasskeySignInSequence(
     relics?: Record<string, { key?: string; publish_token?: string }>;
   };
   const relicState = stateRaw.relics?.[relicId];
-  assert.ok(relicState?.key, 'state file did not contain relic key');
+  assert.ok(relicState?.key, 'state file did not contain relik key');
   const key = relicState.key;
 
   console.log(`PASSKEY_STEP_1_PUBLISH_OK relic_id=${relicId}`);

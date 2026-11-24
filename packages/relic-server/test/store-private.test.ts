@@ -207,7 +207,7 @@ for (const backend of backends) {
       });
     });
 
-    describe('relic rows', () => {
+    describe('relik rows', () => {
       test('updateRelic applies the change and returns the row it wrote', async () => {
         const store = backend.make();
         await store.putRelic(relic());
@@ -233,7 +233,7 @@ for (const backend of backends) {
         expect((await store.getRelic(RELIC_ID))?.accessEpoch).toBeUndefined();
       });
 
-      test('updateRelic on a relic that is gone is undefined', async () => {
+      test('updateRelic on a relik that is gone is undefined', async () => {
         const store = backend.make();
         expect(await store.updateRelic(RELIC_ID, (row) => row)).toBeUndefined();
       });
@@ -287,7 +287,7 @@ for (const backend of backends) {
         expect((await store.listWraps(RELIC_ID, 2)).length).toBe(1);
       });
 
-      test('deleteWraps never reaches another relic', async () => {
+      test('deleteWraps never reaches another relik', async () => {
         const store = backend.make();
         await store.putWrap(wrap(RECIPIENT_A, 1));
         await store.putWrap(wrap(RECIPIENT_A, 1, 'other-relic'));
@@ -346,7 +346,7 @@ for (const backend of backends) {
         ).toBeUndefined();
       });
 
-      test('deleteGrantsForRelic removes every grant on that relic and counts them', async () => {
+      test('deleteGrantsForRelic removes every grant on that relik and counts them', async () => {
         const store = backend.make();
         await store.putGrant(grant(GRANTEE_ID));
         await store.putGrant(grant(OTHER_ID));
@@ -361,7 +361,7 @@ for (const backend of backends) {
     });
 
     describe('access requests', () => {
-      test('a request is create-only, decided in place, and cleared with its relic', async () => {
+      test('a request is create-only, decided in place, and cleared with its relik', async () => {
         const store = backend.make();
         expect(await store.putAccessRequest(accessRequest())).toBe(true);
         expect(await store.putAccessRequest(accessRequest())).toBe(false);
@@ -440,8 +440,8 @@ for (const backend of backends) {
       });
     });
 
-    describe('owned relics and the access log', () => {
-      test('owned relics are listed per owner and removed one at a time', async () => {
+    describe('owned reliks and the access log', () => {
+      test('owned reliks are listed per owner and removed one at a time', async () => {
         const store = backend.make();
         await store.putOwnedRelic(ownedRelic(RELIC_ID, OWNER_ID));
         await store.putOwnedRelic(ownedRelic('other-relic', OWNER_ID));
@@ -481,7 +481,7 @@ for (const backend of backends) {
         expect(await ids(NOW + 2 * DAY)).toEqual([]);
       });
 
-      test('access events can be listed for one relic', async () => {
+      test('access events can be listed for one relik', async () => {
         const store = backend.make();
         await store.appendAccessEvent(accessEvent({ eventId: 'a' }));
         await store.appendAccessEvent(
@@ -538,8 +538,8 @@ for (const backend of backends) {
       });
     });
 
-    describe('private relic lookups', () => {
-      test('a private relic row round-trips its access fields', async () => {
+    describe('private relik lookups', () => {
+      test('a private relik row round-trips its access fields', async () => {
         const store = backend.make();
         await store.putRelic(privateRelic());
 
@@ -549,7 +549,7 @@ for (const backend of backends) {
         expect(found?.accessEpoch).toBe(0);
       });
 
-      test('wraps of another relic are never listed for this one', async () => {
+      test('wraps of another relik are never listed for this one', async () => {
         const store = backend.make();
         await store.putWrap(wrap(RECIPIENT_A, 1, 'other-relic'));
         expect(await store.listWraps(RELIC_ID)).toEqual([]);

@@ -339,7 +339,7 @@ async function buildRow(
       filename_unrecovered_reason:
         recorded !== undefined || usableCache !== undefined
           ? null
-          : `the name lives in the relic's encrypted envelope and the ` +
+          : `the name lives in the relik's encrypted envelope and the ` +
             `service would not serve it: ${minted.detail}`,
       mimetype: usableCache?.mimetype ?? null,
       ...lifetime,
@@ -447,7 +447,7 @@ export async function showRelic(
       filename_basis: recorded === undefined ? null : 'recorded',
       filename_unrecovered_reason:
         recorded === undefined
-          ? `the name lives in the relic's encrypted envelope and the ` +
+          ? `the name lives in the relik's encrypted envelope and the ` +
             `service would not serve it: ${minted.detail}`
           : null,
       mimetype: null,
@@ -616,7 +616,7 @@ export async function showRelic(
       renderer_class: null,
       content: null,
       content_omitted_reason:
-        'the relic was served but did not open here: ' +
+        'the relik was served but did not open here: ' +
         `${(error as Error).message}`,
     };
   }
@@ -716,7 +716,7 @@ export async function mintRelic(
     if (mapped === undefined) {
       return unreachable(
         `the service refused with ${response.status} ${code}, which this ` +
-          'client does not recognize, so nothing is claimed about the relic.'
+          'client does not recognize, so nothing is claimed about the relik.'
       );
     }
     return {
@@ -740,7 +740,7 @@ export async function mintRelic(
   ) {
     return unreachable(
       'the mint response was missing the url, version, or length, so there ' +
-        'is no way to tell a served relic from an unreadable answer.'
+        'is no way to tell a served relik from an unreadable answer.'
     );
   }
 
@@ -764,7 +764,7 @@ function unreachable(detail: string): MintFailed {
       // Said outright, because an unreachable row is the one case where the
       // absence of news is about the network. Reading it as a dead relic
       // would retire something that is still live.
-      status_detail: `${detail} This says nothing about whether the relic is still there.`,
+      status_detail: `${detail} This says nothing about whether the relik is still there.`,
     },
   };
 }
@@ -811,11 +811,11 @@ const STATUS_BY_CODE: Readonly<
   },
   mint_rate_limited: {
     status: 'rate_limited',
-    detail: 'this client is being rate limited, not the relic being gone',
+    detail: 'this client is being rate limited, not the relik being gone',
   },
   service_paused: {
     status: 'service_paused',
-    detail: 'the service is not serving relics at all right now',
+    detail: 'the service is not serving reliks at all right now',
   },
   invalid_relic_id: {
     status: 'not_found',
@@ -858,7 +858,7 @@ async function probeRecord(
       return {
         status: 'unreachable',
         status_basis: 'record',
-        status_detail: `${error.message}. This says nothing about whether the relic is still there.`,
+        status_detail: `${error.message}. This says nothing about whether the relik is still there.`,
       };
     }
     if (error instanceof ServerRefusal) {
@@ -876,7 +876,7 @@ async function probeRecord(
         status_detail:
           `the service refused with ${error.status} ${error.code}, which ` +
           'this client does not recognize. This says nothing about whether ' +
-          'the relic is still there.',
+          'the relik is still there.',
       };
     }
     return {
@@ -884,7 +884,7 @@ async function probeRecord(
       status_basis: 'record',
       status_detail:
         `the check failed: ${(error as Error).message}. This says nothing ` +
-        'about whether the relic is still there.',
+        'about whether the relik is still there.',
     };
   }
 }
@@ -968,7 +968,7 @@ async function recoverEnvelope(
     return {
       kind: 'failed',
       detail:
-        "the relic's envelope did not open under the key this machine " +
+        "the relik's envelope did not open under the key this machine " +
         `holds: ${(error as Error).message}`,
     };
   }
@@ -1064,7 +1064,7 @@ async function requireLocalState(relicId: string): Promise<PublishState> {
   if (!isValidRelicId(relicId)) {
     throw new PublishError(
       'no_local_publish_state',
-      `"${relicId}" is not a relic id. This tool takes the 26-character id a ` +
+      `"${relicId}" is not a relik id. This tool takes the 26-character id a ` +
         'publish returned, never the share URL: the URL carries the key in ' +
         'its fragment, and passing it would put the key in this transcript ' +
         'for nothing. Call relic_list to see the ids this machine holds.'
@@ -1075,10 +1075,10 @@ async function requireLocalState(relicId: string): Promise<PublishState> {
     if (loaded === undefined) {
       throw new PublishError(
         'no_local_publish_state',
-        `relic ${relicId} was published from another machine, so it cannot ` +
+        `relik ${relicId} was published from another machine, so it cannot ` +
           'be read back here. The key that decrypts it lives only on the ' +
           'machine that published it, and it cannot be reconstructed from ' +
-          "the link or from the service. Open the relic's own page instead."
+          "the link or from the service. Open the relik's own page instead."
       );
     }
     return loaded;

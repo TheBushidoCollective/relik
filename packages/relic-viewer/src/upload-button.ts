@@ -18,7 +18,7 @@ const UPLOAD_ICON =
   'M8 1.8l3.8 3.8-.7.7-2.6-2.6V11h-1V3.7L4.9 6.3l-.7-.7L8 1.8zM2 12h12v1H2v-1z';
 
 export const UPLOAD_LABEL = 'Upload';
-export const UPLOAD_TITLE = 'Publish a file as a new relic';
+export const UPLOAD_TITLE = 'Publish a file as a new relik';
 
 /** The attribute that marks an element as the Upload action. */
 const UPLOAD_ATTRIBUTE = 'data-upload';

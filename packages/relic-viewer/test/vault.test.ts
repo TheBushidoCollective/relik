@@ -216,9 +216,9 @@ describe('browser key vault', () => {
     let clock = 1000;
     const vault1 = localStorageKeyVault(storage1, () => clock);
 
-    vault1.remember('r1', '#r1aaa', 10000, { title: 'First Relic' });
+    vault1.remember('r1', '#r1aaa', 10000, { title: 'First Relik' });
     clock = 2000;
-    vault1.remember('r2', '#r1bbb', 20000, { title: 'Second Relic' });
+    vault1.remember('r2', '#r1bbb', 20000, { title: 'Second Relik' });
     clock = 3000;
     vault1.remember('r3', '#r1ccc', Number.POSITIVE_INFINITY);
 

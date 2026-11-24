@@ -818,7 +818,7 @@ async function fetchAndDecryptRelic(
     return {
       ok: false,
       error:
-        'No local publish state or decryption key found on this machine for this relic.',
+        'No local publish state or decryption key found on this machine for this relik.',
     };
   }
 
@@ -849,7 +849,7 @@ async function fetchAndDecryptRelic(
         return {
           ok: false,
           error:
-            'Relic was not found or has expired on the service, so its content cannot be retrieved.',
+            'Relik was not found or has expired on the service, so its content cannot be retrieved.',
         };
       }
       return {
@@ -866,7 +866,7 @@ async function fetchAndDecryptRelic(
   } catch (error) {
     return {
       ok: false,
-      error: `Network error reaching relic service: ${(error as Error).message}.`,
+      error: `Network error reaching relik service: ${(error as Error).message}.`,
     };
   }
   if (requireConfirmedVersion && typeof mint.version !== 'number')
@@ -885,13 +885,13 @@ async function fetchAndDecryptRelic(
     return {
       ok: false,
       error:
-        'The service mint did not name the relic revision, so historical content was not decrypted against a guessed version.',
+        'The service mint did not name the relik revision, so historical content was not decrypted against a guessed version.',
     };
   }
   if (requestedVersion !== undefined && servedVersion !== requestedVersion) {
     return {
       ok: false,
-      error: `Requested relic version ${requestedVersion} but the service returned version ${servedVersion}.`,
+      error: `Requested relik version ${requestedVersion} but the service returned version ${servedVersion}.`,
     };
   }
 
@@ -900,7 +900,7 @@ async function fetchAndDecryptRelic(
     if (!containerResponse.ok) {
       return {
         ok: false,
-        error: `Failed to fetch relic ciphertext: HTTP status ${containerResponse.status}.`,
+        error: `Failed to fetch relik ciphertext: HTTP status ${containerResponse.status}.`,
       };
     }
     if (containerResponse.body === null) {
@@ -912,7 +912,7 @@ async function fetchAndDecryptRelic(
     } else if (state !== undefined) {
       key = decodeKey(state.key);
     } else {
-      throw new Error('No local publish state found for this relic.');
+      throw new Error('No local publish state found for this relik.');
     }
     let content = new Uint8Array(0);
     let offset = 0;
@@ -937,7 +937,7 @@ async function fetchAndDecryptRelic(
   } catch (error) {
     return {
       ok: false,
-      error: `Failed to decrypt relic content: ${(error as Error).message}.`,
+      error: `Failed to decrypt relik content: ${(error as Error).message}.`,
     };
   }
 }
@@ -1058,7 +1058,7 @@ async function parseOpenedOtio(opened: OpenedRelic): Promise<OtioParse> {
     ) {
       return {
         ok: false,
-        error: `Relic content is not an OTIO document${filename ? ` (${filename})` : ''}.`,
+        error: `Relik content is not an OTIO document${filename ? ` (${filename})` : ''}.`,
       };
     }
     return {
@@ -1680,7 +1680,7 @@ export async function resolveAnchors(
             resolved: {
               kind: anchor.kind,
               status: 'unresolvable',
-              explanation: `A text quote anchor cannot be resolved against a ${rendererClass} relic.`,
+              explanation: `A text quote anchor cannot be resolved against a ${rendererClass} relik.`,
             },
           });
           break;
@@ -1708,7 +1708,7 @@ export async function resolveAnchors(
               kind: anchor.kind,
               status: 'unresolvable',
               explanation:
-                'The quoted text was not found in the current relic content (it may have been edited or removed in a newer version).',
+                'The quoted text was not found in the current relik content (it may have been edited or removed in a newer version).',
             },
           });
           break;
@@ -1744,7 +1744,7 @@ export async function resolveAnchors(
             resolved: {
               kind: 'region',
               status: 'unresolvable',
-              explanation: `Region anchor cannot be resolved against a non-image relic (type: ${rendererClass}).`,
+              explanation: `Region anchor cannot be resolved against a non-image relik (type: ${rendererClass}).`,
             },
           });
           break;
@@ -1909,7 +1909,7 @@ export async function resolveAnchors(
               t_end: anchor.t_end,
               has_frames: false,
               downscaled: false,
-              explanation: `Audio relics have no visual frames to display. Timecode: ${formatTimecode(anchor.t)}${anchor.t_end !== undefined ? ` to ${formatTimecode(anchor.t_end)}` : ''}.`,
+              explanation: `Audio reliks have no visual frames to display. Timecode: ${formatTimecode(anchor.t)}${anchor.t_end !== undefined ? ` to ${formatTimecode(anchor.t_end)}` : ''}.`,
             },
           });
           break;
@@ -1921,7 +1921,7 @@ export async function resolveAnchors(
             resolved: {
               kind: 'time',
               status: 'unresolvable',
-              explanation: `Time anchor cannot be resolved against a non-video relic (type: ${rendererClass}).`,
+              explanation: `Time anchor cannot be resolved against a non-video relik (type: ${rendererClass}).`,
             },
           });
           break;
@@ -2103,7 +2103,7 @@ export async function resolveAnchors(
               kind: 'page',
               status: 'unresolvable',
               page: anchor.page,
-              explanation: `Page anchor cannot be resolved against a non-PDF relic (type: ${rendererClass}).`,
+              explanation: `Page anchor cannot be resolved against a non-PDF relik (type: ${rendererClass}).`,
             },
           });
           break;
