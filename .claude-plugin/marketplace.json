@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "relic",
-  "description": "Relic: zero-knowledge publishing for agent output. Install the plugin to give your agent a tool that turns a local file into a shareable link without handing the file to anybody.",
+  "description": "Relik: zero-knowledge publishing for agent output. Install the plugin to give your agent a tool that turns a local file into a shareable link without handing the file to anybody.",
   "owner": {
     "name": "The Bushido Collective",
     "url": "https://withbushido.ai"
