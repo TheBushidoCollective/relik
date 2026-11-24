@@ -807,7 +807,7 @@ describe('reserved segments beat ids at the router', () => {
     const response = await app.fetch(req('/install'));
     expect(response.status).toBe(200);
     const body = await response.text();
-    expect(body).toContain('claude mcp add relik');
+    expect(body).toContain('claude mcp add relic');
     expect(body).toContain('RELIC_SERVICE_ORIGIN=https://relic.example');
     expect(body).toContain('"RELIC_SERVICE_ORIGIN": "https://relic.example"');
   });
@@ -831,14 +831,14 @@ describe('reserved segments beat ids at the router', () => {
       .fetch(new Request('https://relik.link/install'))
       .then((r) => r.text());
 
-    expect(body).toContain('claude mcp add relik');
+    expect(body).toContain('claude mcp add relic');
     // Not a substring check on the whole variable name only: the page must
     // not mention it at all, in either snippet or in prose explaining it.
     expect(body).not.toContain('RELIC_SERVICE_ORIGIN');
     expect(body).not.toContain('Why the origin is required');
     // And the command it does print has to be the whole command, not a
     // fragment left behind by removing the flag.
-    expect(body).toContain('claude mcp add relik -- npx -y relic-mcp@latest');
+    expect(body).toContain('claude mcp add relic -- npx -y relic-mcp@latest');
   });
 
   test('/install claims no more than the system delivers', async () => {

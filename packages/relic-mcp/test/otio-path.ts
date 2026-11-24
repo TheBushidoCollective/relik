@@ -869,7 +869,7 @@ def close(a, b):
     return abs(left - right) <= 1e-4 * max(1.0, abs(left), abs(right))
 
 def relic_id(item):
-    meta = item.metadata.get("relik") if item.metadata else None
+    meta = item.metadata.get("relic") if item.metadata else None
     if isinstance(meta, Mapping):
         return meta.get("id")
     return None
@@ -1529,7 +1529,7 @@ def mutate(op, src, dest, extra):
         one = otio.opentime.RationalTime(1, 24)
         black = otio.schema.Clip(name="Black Policy Probe", media_reference=black_ref, source_range=otio.opentime.TimeRange(
             otio.opentime.RationalTime(0, 24), one))
-        black.metadata["relik"] = {"id": "clip-black-policy-probe"}
+        black.metadata["relic"] = {"id": "clip-black-policy-probe"}
         under = next(item for item in walk(timeline) if relic_id(item) == "clip-v1-primary-a")
         if not under.enabled or under.parent().parent() is not timeline.tracks:
             raise SystemExit("black probe needs an enabled top-level clip beneath it")
@@ -1543,10 +1543,10 @@ def mutate(op, src, dest, extra):
             target_url=prores,
             available_range=otio.opentime.TimeRange(otio.opentime.RationalTime(0, 24), otio.opentime.RationalTime(24, 24))),
             source_range=otio.opentime.TimeRange(otio.opentime.RationalTime(0, 24), one))
-        codec.metadata["relik"] = {"id": "clip-codec-probe"}
+        codec.metadata["relic"] = {"id": "clip-codec-probe"}
         duration = timeline.duration().rescaled_to(24)
         track = otio.schema.Track(name="State Probes", kind=otio.schema.TrackKind.Video)
-        track.metadata["relik"] = {"id": "track-state-probes"}
+        track.metadata["relic"] = {"id": "track-state-probes"}
         if black_at.value > 0:
             track.append(otio.schema.Gap(source_range=otio.opentime.TimeRange(otio.opentime.RationalTime(0, 24), black_at)))
         track.append(black)

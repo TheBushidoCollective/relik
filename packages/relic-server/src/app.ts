@@ -6960,7 +6960,7 @@ claude plugin install relic@relic</code></pre>
       <p>The same server runs in any client that speaks MCP.</p>
       <details open>
         <summary>Claude Code, server only</summary>
-        <pre><code>claude mcp add relik ${
+        <pre><code>claude mcp add relic ${
           hosted
             ? ''
             : `\\
@@ -6982,7 +6982,7 @@ npx -y relic-mcp@latest install --client cursor${hosted ? '' : ` --origin ${orig
         <summary>Any client that takes JSON</summary>
         <pre><code>{
   "mcpServers": {
-    "relik": {
+    "relic": {
       "command": "npx",
       "args": ["-y", "relic-mcp@latest"]${
         hosted

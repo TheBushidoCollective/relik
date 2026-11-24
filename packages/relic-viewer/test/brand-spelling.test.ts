@@ -56,7 +56,11 @@ export function misspelled(file: string, source: string): string[] {
       const raw = node.getText(sf);
       const inner = raw.slice(1, -1);
       const logLabel = /^(['"`])relic: /.test(raw);
-      const body = logLabel ? raw.slice(raw.indexOf(':') + 1) : raw;
+      // A quoted token inside a larger string is a key or a name (`meta["relic"]`,
+      // the `relic` MCP server in `claude mcp add relic`), not copy.
+      const body = (logLabel ? raw.slice(raw.indexOf(':') + 1) : raw)
+        .replace(/(["'`])relics?\1/gi, '')
+        .replace(/mcp add relic\b/g, '');
       if (!/^[a-z_-]+$/.test(inner) && COPY_WORD.test(body)) {
         const { line } = sf.getLineAndCharacterOfPosition(node.getStart(sf));
         found.push(`${file}:${line + 1}: ${raw.slice(0, 100)}`);
@@ -81,6 +85,8 @@ describe('the product is spelled Relik wherever a person reads it', () => {
         "const f = 'relic: passkey notice failed';",
         "const g = 'relic';",
         "const h = 'Relik is spelled right';",
+        "const i = 'claude mcp add relic -- npx -y relic-mcp@latest';",
+        `const j = 'item.metadata.get("relic")';`,
       ].join('\n')
     );
     expect(bad).toEqual(["x.ts:1: 'Publish a relic'", 'x.ts:2: } relics`']);
