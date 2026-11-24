@@ -112,24 +112,36 @@ function action(
   return labelled(control, label, iconPath);
 }
 
-/** PUT with progress, which `fetch` cannot report for an upload body. */
+/**
+ * PUT with progress, which `fetch` cannot report for an upload body. `headers`
+ * are only ones the grant signed and the bucket's CORS rule allows; the
+ * content length is never among them, because the browser derives it from the
+ * body itself.
+ */
 function xhrUpload(
   url: string,
   body: Uint8Array | Blob,
-  onProgress: (sent: number, total: number) => void
+  onProgress: (sent: number, total: number) => void,
+  headers: Readonly<Record<string, string>> = {},
+  signal?: AbortSignal
 ): Promise<number> {
   const { promise, resolve, reject } = Promise.withResolvers<number>();
   const request = new XMLHttpRequest();
   request.open('PUT', url);
+  for (const [name, value] of Object.entries(headers)) {
+    request.setRequestHeader(name, value);
+  }
   request.upload.onprogress = (event) => {
     if (event.lengthComputable) onProgress(event.loaded, event.total);
   };
   request.onload = () => resolve(request.status);
   request.onerror = () => reject(new Error('transport failure'));
   request.onabort = () => reject(new Error('aborted'));
-  // No headers are set. The grant signs the content length, which the
-  // browser derives from the body itself, and anything else would have to
-  // be allowed by the bucket's CORS rule and covered by the signature.
+  if (signal?.aborted) {
+    reject(new Error('aborted'));
+    return promise;
+  }
+  signal?.addEventListener('abort', () => request.abort(), { once: true });
   request.send(body as unknown as XMLHttpRequestBodyInit);
   return promise;
 }
@@ -344,6 +356,8 @@ function browserReviewAdapter(deps: PublishDeps): PublishReviewAdapter {
               ? {}
               : { ttlDays: submission.ttlDays }),
             onPhase: (phase) => reportPhase(phase),
+            upload: (url, body, headers, onProgress, signal) =>
+              xhrUpload(url, body, onProgress, headers, signal),
           });
           pending = { publisher, file: submission.file, fingerprint };
         }

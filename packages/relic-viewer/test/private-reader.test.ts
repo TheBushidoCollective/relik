@@ -2135,6 +2135,32 @@ describe('the owner surfaces are mounted from the reader, lazily', () => {
     expect(seen.map((entry) => entry.route)).toContain('GET /api/identity');
   });
 
+  test('the private sections mount inside the dashboard column, not beside it on the body', async () => {
+    const relicId = freshRelicId();
+    const world = await sealedWorld(relicId);
+    const { fetch } = service(world.routes);
+    const deps = depsFor(
+      fetch,
+      authenticator(() =>
+        assertion(world.readerPasskey.rawId, world.readerPasskey.prf)
+      )
+    );
+    const root = shellRootInPage();
+    const column = new El('div');
+    column.className = 'dashboard-container';
+    root.append(column);
+
+    await mountPrivateDashboard(deps);
+
+    await until(
+      () =>
+        column.querySelector('#private-dashboard [data-private-dashboard]') !==
+        null,
+      'the private dashboard inside the column'
+    );
+    expect(root.children.filter((child) => child !== column)).toHaveLength(0);
+  });
+
   test('a signed-out visitor gets no private dashboard and no identity request', async () => {
     const relicId = freshRelicId();
     const world = await sealedWorld(relicId);

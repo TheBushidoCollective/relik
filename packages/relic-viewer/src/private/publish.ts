@@ -85,7 +85,8 @@ export interface PrivatePublisherOptions {
     url: string,
     body: Blob | Uint8Array,
     headers: Readonly<Record<string, string>>,
-    onProgress: (sent: number, total: number) => void
+    onProgress: (sent: number, total: number) => void,
+    signal: AbortSignal
   ) => Promise<number>;
 }
 
@@ -481,7 +482,8 @@ export function createPrivatePublisher(
             grant.url,
             p.ciphertext,
             grant.headers,
-            progress
+            progress,
+            abort.signal
           );
     requireActive();
     if (status < 200 || status >= 300)
