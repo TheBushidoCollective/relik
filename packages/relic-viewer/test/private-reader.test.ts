@@ -2242,6 +2242,94 @@ describe('the owner surfaces are mounted from the reader, lazily', () => {
     expect(views).toHaveLength(0);
   });
 
+  /** Two pending requests with identities the panel can name, for the mail link's card. */
+  function identifiedRequests(ids: readonly string[]) {
+    return {
+      requests: ids.map((id, index) => ({
+        requester: {
+          email: `reader${index}@example.com`,
+          identity: { identity_id: id },
+        },
+        requested_at: '2026-11-11T00:00:00Z',
+        status: 'pending',
+        statement: {},
+        identity_signature: 'sig',
+      })),
+    };
+  }
+
+  test('the request mail link with a requester opens one card for that request in place of the unlock card', async () => {
+    const relicId = freshRelicId();
+    const world = await sealedWorld(relicId, { role: 'owner' });
+    const wanted = 'b'.repeat(32);
+    const other = 'c'.repeat(32);
+    const { fetch } = service({
+      ...world.routes,
+      [`GET /api/relics/${relicId}/requests`]: () =>
+        json(identifiedRequests([other, wanted])),
+      [`POST /api/relics/${relicId}/recipients`]: () =>
+        json({ devices: [], grants: [], recovery: null }),
+    });
+    const deps = {
+      ...depsFor(
+        fetch,
+        authenticator(() =>
+          assertion(world.readerPasskey.rawId, world.readerPasskey.prf)
+        )
+      ),
+      locationHref: `${ORIGIN}/r/${relicId}?access=requests&grant=${wanted}`,
+    };
+    const { root, views } = await mountReader(deps, relicId);
+
+    await until(() => stateOf(root) === 'grant', 'the grant card');
+    await until(
+      () => root.querySelector('article[data-request-identity]') !== null,
+      'the request card'
+    );
+    const cards = root.querySelectorAll('article[data-request-identity]');
+    expect(
+      cards.map((card) => card.attrs.get('data-request-identity'))
+    ).toEqual([wanted]);
+    expect(root.querySelector('#access-panel')).toBeNull();
+    expect(views).toHaveLength(0);
+
+    press(root, '[data-action="grant-skip"]');
+    expect(stateOf(root)).toBe('unlock');
+  });
+
+  test('the mail link card offers the relik itself once its request is no longer waiting', async () => {
+    const relicId = freshRelicId();
+    const world = await sealedWorld(relicId, { role: 'owner' });
+    const { fetch } = service({
+      ...world.routes,
+      [`GET /api/relics/${relicId}/requests`]: () =>
+        json(identifiedRequests(['c'.repeat(32)])),
+      [`POST /api/relics/${relicId}/recipients`]: () =>
+        json({ devices: [], grants: [], recovery: null }),
+    });
+    const deps = {
+      ...depsFor(
+        fetch,
+        authenticator(() =>
+          assertion(world.readerPasskey.rawId, world.readerPasskey.prf)
+        )
+      ),
+      locationHref: `${ORIGIN}/r/${relicId}?access=requests&grant=${'b'.repeat(32)}`,
+    };
+    const { root } = await mountReader(deps, relicId);
+
+    await until(() => stateOf(root) === 'grant', 'the grant card');
+    await until(
+      () =>
+        root.querySelector('.panel-empty')?.textContent ===
+        'No one is waiting.',
+      'nothing waiting'
+    );
+    const skip = root.querySelector('[data-action="grant-skip"]');
+    expect(skip?.textContent).toBe('Open the relik');
+    expect(skip?.attrs.get('class')).toBe('action primary');
+  });
+
   test('a signed-in visitor gets the private dashboard sections', async () => {
     const relicId = freshRelicId();
     const world = await sealedWorld(relicId);

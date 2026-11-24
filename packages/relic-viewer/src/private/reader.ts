@@ -98,6 +98,7 @@ type ReaderStage =
   | 'requested-locked'
   | 'declined'
   | 'unlock'
+  | 'grant'
   | 'revoked'
   | 'denied'
   | 'owner-changed'
@@ -129,6 +130,14 @@ const STAGES_HTML = `
       <summary>What Relik records about private reliks</summary>
       <blockquote>Relik records who asked for access and who granted it, their email addresses and public keys, and an access log the owner can read. Your key is stored only encrypted under your passkey. <a href="/policy" target="_blank" rel="noopener">Read the full statement.</a></blockquote>
     </details>
+  </div>
+</div>
+
+<div class="stage" data-for="grant" hidden>
+  <div class="card">
+    <h1 class="card-title" tabindex="-1">Review access request</h1>
+    <p class="card-meta" data-signed-in></p>
+    <div id="grant-focus"></div>
   </div>
 </div>
 
@@ -876,7 +885,13 @@ class PrivateReader {
     const wanted = new URL(this.mount.deps.locationHref).searchParams.get(
       'access'
     );
-    if (wanted === 'requests') void this.openOwnerPanel();
+    if (wanted === 'requests') {
+      const requester = new URL(this.mount.deps.locationHref).searchParams.get(
+        'grant'
+      );
+      if (requester === null) void this.openOwnerPanel();
+      else void this.openGrantCard(requester);
+    }
   }
 
   /** The owner's Access control on the relic's taskbar, with the pending count. */
@@ -951,6 +966,37 @@ class PrivateReader {
         },
       });
     } catch {
+      return;
+    }
+  }
+
+  /**
+   * The request mail's link: one card for the requester, in place of the
+   * relik's unlock card, so there is a single thing to do. Going on to the
+   * relik is a link under it, and the primary action once nothing is waiting.
+   */
+  private async openGrantCard(requester: string): Promise<void> {
+    const { deps, relicId } = this.mount;
+    try {
+      const access = await privateApi<PrivateAccessJSON>(
+        deps,
+        'GET',
+        `/api/relics/${encodeURIComponent(relicId)}/access`
+      );
+      this.show('grant');
+      openAccessPanel(required<HTMLElement>(this.host, '#grant-focus'), {
+        relicId,
+        access,
+        deps,
+        focusRequester: requester,
+        mode: 'focused',
+        onChanged: () => {
+          void this.refreshRequestCount();
+        },
+        onDone: () => this.show('unlock'),
+      });
+    } catch {
+      // The unlock card stays: a failed load must not strand the owner.
       return;
     }
   }
