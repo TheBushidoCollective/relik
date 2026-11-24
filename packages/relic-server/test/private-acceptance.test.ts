@@ -675,7 +675,7 @@ describe('access requests', () => {
     expect(full.body['code']).toBe('request_limit_reached');
   });
 
-  test('the request mail names neither the relic nor the requester, and the grant mail goes to the grantee without a title', async () => {
+  test('the request mail names the requester and not the relic, and the grant mail goes to the grantee without a title', async () => {
     const sent: { to: string; subject: string; text: string }[] = [];
     store = new HookStore();
     app = createApp({
@@ -714,8 +714,12 @@ describe('access requests', () => {
       )
     );
     const requestMail = sent.find((m) => m.to === owner.email);
-    expect(requestMail?.subject).toBe('Someone asked for access to a relic');
-    expect(requestMail?.text).not.toContain(reader.email);
+    expect(requestMail?.subject).toBe(
+      `${reader.email} asked for access to a relic`
+    );
+    expect(requestMail?.text).toContain(reader.email);
+    expect(requestMail?.text).toContain(`grant=${reader.identityId}`);
+    expect(requestMail?.text).not.toContain('Secret');
 
     const granted = await grantTo(owner, reader, [1], sealed.versionKey);
     expect(granted.status).toBe(201);

@@ -2,6 +2,8 @@
 
 Authorised by Jason Waldrip on 2026-11-11: build private shares (passkey-wrapped keys) per the draft, with his settled decisions: refuse private mode without WebAuthn PRF; the publisher types the fingerprint the requester reads aloud; the regulated profile is the default for every private relic; P-256 ECDH; wrap the content key, never re-encrypt for a grant; a fresh content key per version for private relics; revocation is a republish under a fresh key. This plan corrects the draft where the repo or a measurement contradicts it, and does not shrink it.
 
+> Amended 2026-11-24: the owner no longer types a fingerprint the requester reads aloud, and the request mail names the requester and carries their fingerprint. Where this plan says otherwise (the settled decision above, goal 3, goal 6, sections 4.14 and 4.15 and the receipts in the acceptance run), read `docs/decisions.md`, "2026-11-24: The access request mail names the requester". The plan below is the historical record and is not rewritten.
+
 ## 1. Goal
 
 When this ships, all of these are observably true:

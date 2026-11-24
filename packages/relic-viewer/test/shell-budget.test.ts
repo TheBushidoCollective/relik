@@ -450,7 +450,7 @@ describe('the app shell', () => {
     // Publisher and reader share private-key code in potentially multiple
     // lazy chunks. None may enter the shell's static dependency graph.
     const markers = [
-      'Read this fingerprint',
+      'sees your email and this fingerprint',
       'private-share key',
       'relic:owner-pins',
     ];

@@ -189,7 +189,7 @@ const STAGES_HTML = `
     <p class="card-meta" data-signed-in></p>
     <p class="fp-caption" id="fp-mine-caption">Your fingerprint</p>
     <p class="fingerprint" data-fingerprint="mine" aria-labelledby="fp-mine-caption"></p>
-    <p class="fp-instruction">Read this fingerprint to the person who shared the link, on a phone or video call. Don't send it by email or chat: it only protects you if it travels a different way than this site.</p>
+    <p class="fp-instruction">The owner sees your email and this fingerprint in the email Relic sends them, and can grant you access from there. You don't need to call anyone.</p>
     <p class="card-note" data-request-note></p>
   </div>
 </div>
@@ -199,7 +199,7 @@ const STAGES_HTML = `
     <h1 class="card-title" tabindex="-1">Request sent</h1>
     <p class="card-meta" data-signed-in></p>
     <div class="card-body">
-      <p>Your fingerprint shows here once your passkey unlocks it in this browser. Read it to the person who shared the link, on a phone or video call.</p>
+      <p>Your fingerprint shows here once your passkey unlocks it in this browser. The owner sees it in the email Relic sends them.</p>
     </div>
     <div class="card-actions">
       <button type="button" class="action primary" data-action="private-unlock-requested">Unlock with passkey</button>
@@ -926,10 +926,12 @@ class PrivateReader {
         `/api/relics/${encodeURIComponent(relicId)}/access`
       );
       if (this.panelHost === undefined) return;
+      const focus = new URL(deps.locationHref).searchParams.get('grant');
       openAccessPanel(this.panelHost, {
         relicId,
         access,
         deps,
+        ...(focus === null ? {} : { focusRequester: focus }),
         onChanged: () => {
           void this.refreshRequestCount();
         },
