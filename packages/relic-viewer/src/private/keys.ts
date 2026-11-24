@@ -36,6 +36,8 @@ import {
 } from '@relic/format/private';
 import {
   authenticationResponseToJSON,
+  ceremonyCode,
+  ceremonySignal,
   type CredentialsLike,
   parseDescriptors,
   requestOptionsFromJSON,
@@ -52,7 +54,9 @@ export class NoIdentityError extends Error {}
 export class PrivateRequestError extends Error {
   constructor(
     readonly code: string,
-    readonly status: number
+    readonly status: number,
+    /** For a browser refusal, the DOMException name. */
+    readonly detail?: string
   ) {
     super(code);
     this.name = 'PrivateRequestError';
@@ -204,8 +208,48 @@ export function readField(value: unknown, name: string): unknown {
     : undefined;
 }
 
+/**
+ * `navigator.credentials` for the private ceremonies. Each call replaces any
+ * passkey request still pending on the page (a conditional sign-in prompt
+ * would otherwise sit on the new one), and a browser refusal becomes a
+ * PrivateRequestError the reader can word, never a bare DOMException that
+ * reads as the service being down.
+ */
 export function credentialsOf(deps: ViewerDeps): CredentialsLike {
-  return deps.credentials ?? navigator.credentials;
+  const raw = deps.credentials ?? navigator.credentials;
+  const fresh = (outer: AbortSignal | null | undefined): AbortSignal => {
+    const own = ceremonySignal();
+    return outer === null || outer === undefined
+      ? own
+      : AbortSignal.any([own, outer]);
+  };
+  return {
+    create: (options) =>
+      ceremony(() => raw.create({ ...options, signal: fresh(options.signal) })),
+    get: (options) =>
+      ceremony(() => raw.get({ ...options, signal: fresh(options.signal) })),
+  };
+}
+
+async function ceremony<T>(attempt: () => Promise<T>): Promise<T> {
+  try {
+    return await attempt();
+  } catch (error) {
+    if (
+      error instanceof PrivateRequestError ||
+      error instanceof PrfUnavailableError
+    ) {
+      throw error;
+    }
+    const name =
+      typeof error === 'object' && error !== null && 'name' in error
+        ? String(error.name)
+        : 'Error';
+    if (name === 'NotAllowedError' || name === 'AbortError') {
+      throw new PrivateRequestError('ceremony_cancelled', 0, name);
+    }
+    throw new PrivateRequestError(ceremonyCode(error), 0, name);
+  }
 }
 
 export async function requestFailure(

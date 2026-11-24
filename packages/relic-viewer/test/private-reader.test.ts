@@ -1731,6 +1731,73 @@ describe('the reader drives every state of plan 4.15', () => {
     );
   });
 
+  test('a browser refusal of the passkey step is worded on the setup card, not shown as the service being down', async () => {
+    const relicId = freshRelicId();
+    const { fetch } = service({
+      'GET /api/auth/session': () => json({ email: READER_EMAIL }),
+      'GET /api/identity': () => json({ identity: null, passkeys: [] }),
+      'POST /api/attest/nonce': () => json({ code: 'passkey_required' }, 409),
+      'POST /api/auth/passkeys/options': () => json(creationOptions()),
+    });
+    const refuse = (name: string) => () => {
+      throw new DOMException('refused', name);
+    };
+    const { root } = await mountReader(
+      depsFor(
+        fetch,
+        authenticator(
+          () => assertion(randomBytes(32), undefined),
+          refuse('SecurityError')
+        )
+      ),
+      relicId
+    );
+
+    press(root, '[data-action="private-setup"]');
+    await until(
+      () => root.querySelector('.ceremony-note') !== null,
+      'the note on the setup card'
+    );
+    expect(stateOf(root)).toBe('setup');
+    expect(root.querySelector('.ceremony-note')?.textContent).toBe(
+      'Your browser blocked the passkey step on this page. (SecurityError)'
+    );
+    expect(root.querySelector('main.stage-dead')).toBeNull();
+  });
+
+  test('cancelling the passkey prompt leaves the setup card as it was', async () => {
+    const relicId = freshRelicId();
+    const { fetch } = service({
+      'GET /api/auth/session': () => json({ email: READER_EMAIL }),
+      'GET /api/identity': () => json({ identity: null, passkeys: [] }),
+      'POST /api/attest/nonce': () => json({ code: 'passkey_required' }, 409),
+      'POST /api/auth/passkeys/options': () => json(creationOptions()),
+    });
+    let prompted = false;
+    const { root } = await mountReader(
+      depsFor(
+        fetch,
+        authenticator(
+          () => assertion(randomBytes(32), undefined),
+          () => {
+            prompted = true;
+            throw new DOMException('cancelled', 'NotAllowedError');
+          }
+        )
+      ),
+      relicId
+    );
+
+    press(root, '[data-action="private-setup"]');
+    await until(() => prompted, 'the passkey prompt');
+    // Two more turns of the loop let the refusal travel back to the reader.
+    let turns = 0;
+    await until(() => ++turns > 2, 'the refusal to settle');
+    expect(stateOf(root)).toBe('setup');
+    expect(root.querySelector('.ceremony-note')).toBeNull();
+    expect(root.querySelector('main.stage-dead')).toBeNull();
+  });
+
   test('request: a signed-in reader with no request yet is offered the request', async () => {
     const relicId = freshRelicId();
     const world = await sealedWorld(relicId, { role: 'none' });

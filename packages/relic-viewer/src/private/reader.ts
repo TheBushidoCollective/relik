@@ -274,6 +274,15 @@ const STAGES_HTML = `
 
 const COPY_SIGNED_IN = 'Signed in as';
 const COPY_GENERIC_FAILURE = 'Something went wrong reaching the service.';
+
+/** What the reader sees when the browser refuses a passkey step, by the code the ceremony raised. */
+const CEREMONY_COPY: Readonly<Record<string, string>> = {
+  passkey_exists:
+    'This device already has a passkey for Relic. Use it, or choose a different one.',
+  passkey_security: 'Your browser blocked the passkey step on this page.',
+  passkey_failed:
+    'Your browser could not finish the passkey step. Try again, or use another browser or a security key.',
+};
 const COPY_REQUEST_SENT = 'When the owner lets you in, Relic emails';
 const COPY_REQUEST_SENT_TAIL = 'Open that link and confirm with your passkey.';
 const COPY_SEAL_DETAIL =
@@ -356,6 +365,9 @@ class PrivateReader {
   }
 
   private show(stage: ReaderStage): void {
+    for (const note of this.host.querySelectorAll('.ceremony-note')) {
+      note.remove();
+    }
     this.host.setAttribute('data-private-state', stage);
     for (const element of this.host.querySelectorAll<HTMLElement>(
       ':scope > [data-for]'
@@ -642,14 +654,7 @@ class PrivateReader {
   private async openSealed(identity: UnlockedIdentity): Promise<void> {
     const access = this.access;
     if (access === undefined || access.sealedVersion === null) {
-      this.mount.renderDead(
-        deadFromProblem('relic_not_yet_published'),
-        this.mount.relicId,
-        this.mount.usercontentOrigin,
-        this.mount.deps,
-        undefined,
-        () => void this.route()
-      );
+      this.showDead(deadFromProblem('relic_not_yet_published'));
       return;
     }
     this.pendingVersion = access.sealedVersion;
@@ -979,6 +984,15 @@ class PrivateReader {
     }
     if (error instanceof PrivateRequestError) {
       if (error.code === 'ceremony_cancelled') return;
+      const ceremony = CEREMONY_COPY[error.code];
+      if (ceremony !== undefined) {
+        this.noteCurrent(
+          error.detail === undefined
+            ? ceremony
+            : `${ceremony} (${error.detail})`
+        );
+        return;
+      }
       if (error.code === 'passkey_fresh_link_required') {
         // A first passkey needs a recent email sign-in.
         this.show('signin');
@@ -995,7 +1009,7 @@ class PrivateReader {
     }
     if (error instanceof MalformedContainerError) {
       const newer = error instanceof UnsupportedEnvelopeVersionError;
-      this.mount.renderDead(
+      this.showDead(
         newer
           ? {
               headline: 'This relic uses a newer format',
@@ -1009,12 +1023,7 @@ class PrivateReader {
                 'Its file list is damaged or names a file in a way Relik does not accept.',
               action: 'none',
               code: 'malformed_container',
-            },
-        this.mount.relicId,
-        this.mount.usercontentOrigin,
-        this.mount.deps,
-        undefined,
-        () => void this.route()
+            }
       );
       return;
     }
@@ -1029,14 +1038,50 @@ class PrivateReader {
               action: 'retry' as const,
               code: 'service_unreachable',
             };
+    this.showDead(dead);
+  }
+
+  /**
+   * The dead card replaces the reader's stages. Left visible they sit above
+   * it, because the shell removes only its own `main.stage`. Try again brings
+   * the stages back and routes afresh.
+   */
+  private showDead(
+    dead: Parameters<PrivateReaderMount['renderDead']>[0]
+  ): void {
+    this.host.hidden = true;
     this.mount.renderDead(
       dead,
       this.mount.relicId,
       this.mount.usercontentOrigin,
       this.mount.deps,
       undefined,
-      () => void this.route()
+      () => {
+        for (const card of document.body.querySelectorAll('main.stage-dead')) {
+          card.remove();
+        }
+        this.host.hidden = false;
+        void this.route();
+      }
     );
+  }
+
+  /** Says something on the stage the reader is looking at, without leaving it. */
+  private noteCurrent(text: string): void {
+    const state = this.host.getAttribute('data-private-state');
+    const card =
+      state === null
+        ? null
+        : this.stage(state as ReaderStage).querySelector<HTMLElement>('.card');
+    if (card === null) return;
+    let note = card.querySelector<HTMLElement>('.ceremony-note');
+    if (note === null) {
+      note = document.createElement('p');
+      note.className = 'card-note ceremony-note';
+      note.setAttribute('role', 'status');
+      card.append(note);
+    }
+    note.textContent = text;
   }
 
   private async showOwnerChanged(
