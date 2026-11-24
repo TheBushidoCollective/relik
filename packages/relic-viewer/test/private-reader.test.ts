@@ -1668,6 +1668,69 @@ describe('the reader drives every state of plan 4.15', () => {
     expect(stateOf(root)).toBe('setup-refused');
   });
 
+  test('setup with no passkey on the address makes one, then sets up, instead of failing as a service error', async () => {
+    const relicId = freshRelicId();
+    const seen: string[] = [];
+    let passkeyMade = false;
+    const { fetch } = service({
+      'GET /api/auth/session': () => json({ email: READER_EMAIL }),
+      'GET /api/identity': () => json({ identity: null, passkeys: [] }),
+      'POST /api/attest/nonce': () =>
+        passkeyMade
+          ? json(nonceResponse(randomBytes(32)))
+          : json({ code: 'passkey_required' }, 409),
+      'POST /api/auth/passkeys/options': () => {
+        seen.push('options');
+        return json(creationOptions());
+      },
+      'POST /api/auth/passkeys': () => {
+        seen.push('passkeys');
+        passkeyMade = true;
+        return json({ credential_id: 'created' }, 201);
+      },
+    });
+    const { root } = await mountReader(
+      depsFor(
+        fetch,
+        authenticator(() => assertion(randomBytes(32), undefined))
+      ),
+      relicId
+    );
+
+    press(root, '[data-action="private-setup"]');
+    // The new passkey has no PRF in this stand-in, so the retry ends at the
+    // refusal. What matters is that the passkey was made and setup went on.
+    await until(
+      () => stateOf(root) === 'setup-refused',
+      'setup after the passkey'
+    );
+    expect(seen).toEqual(['options', 'passkeys']);
+  });
+
+  test('a first passkey refused for want of a fresh sign-in sends the reader back to sign in, with the reason', async () => {
+    const relicId = freshRelicId();
+    const { fetch } = service({
+      'GET /api/auth/session': () => json({ email: READER_EMAIL }),
+      'GET /api/identity': () => json({ identity: null, passkeys: [] }),
+      'POST /api/attest/nonce': () => json({ code: 'passkey_required' }, 409),
+      'POST /api/auth/passkeys/options': () =>
+        json({ code: 'passkey_fresh_link_required' }, 401),
+    });
+    const { root } = await mountReader(
+      depsFor(
+        fetch,
+        authenticator(() => assertion(randomBytes(32), undefined))
+      ),
+      relicId
+    );
+
+    press(root, '[data-action="private-setup"]');
+    await until(() => stateOf(root) === 'signin', 'the sign-in stage');
+    expect(root.querySelector('#signin-note')?.textContent).toBe(
+      'To add a passkey, sign in again with a new code from your email.'
+    );
+  });
+
   test('request: a signed-in reader with no request yet is offered the request', async () => {
     const relicId = freshRelicId();
     const world = await sealedWorld(relicId, { role: 'none' });
