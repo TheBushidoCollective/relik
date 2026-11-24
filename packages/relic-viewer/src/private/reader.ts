@@ -127,7 +127,7 @@ const STAGES_HTML = `
     </div>
     <details class="disclosure">
       <summary>What Relic records about private relics</summary>
-      <blockquote><strong>Private relics.</strong> A private relic's link carries no key. Each reader who is let in has their own copy of each version's key, encrypted to a key only their passkey can unlock; the service stores those encrypted copies and never the keys. To let someone in, the service records who asked and who granted, the email addresses involved, the public keys, and a signed record of each grant and revocation. It keeps an access log of requests, grants, revocations, key fetches and deletions for the owner, for the retention the owner sets. It also stores each person's private-share key encrypted under a secret held by their passkey. Private relics carry no title or cover, always expire, and their notification emails say only that there is activity on a relic. The JavaScript that decrypts them comes from this service, the same as for every relic.</blockquote>
+      <blockquote>Relic records who asked for access and who granted it, their email addresses and public keys, and an access log the owner can read. Your key is stored only encrypted under your passkey. <a href="/policy" target="_blank" rel="noopener">Read the full statement.</a></blockquote>
     </details>
   </div>
 </div>
