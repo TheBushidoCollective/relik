@@ -687,13 +687,21 @@ export function gcsStorage(options: GcsOptions): ObjectStorage {
         object = updated;
       }
 
-      const headers = {
-        'accept-encoding': 'gzip',
-        'x-goog-if-generation-match': object.generation,
-        'x-goog-if-metageneration-match': object.metageneration,
-      };
-      const url = await sign('GET', relicId, 60, Date.now(), headers);
-      const response = await rawGet(url, headers, request);
+      // The bytes are read with the same bearer token as the metadata above,
+      // pinned to the generation and metageneration just read. The signed GET
+      // this replaced answered 403 in production ("digest failed with 403"),
+      // which failed every private seal. The JSON API takes the same
+      // preconditions as query parameters.
+      const mediaParams = new URLSearchParams({
+        alt: 'media',
+        ifGenerationMatch: object.generation,
+        ifMetagenerationMatch: object.metageneration,
+      });
+      const response = await rawGet(
+        `${metadataUrl}?${mediaParams}`,
+        { authorization, 'accept-encoding': 'gzip' },
+        request
+      );
       if (response.statusCode !== 200) {
         response.destroy();
         throw new Error(

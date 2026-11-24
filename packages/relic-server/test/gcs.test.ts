@@ -245,7 +245,13 @@ async function digestFixture(options: {
   const server = createServer((request, response) => {
     void (async () => {
       const url = new URL(request.url ?? '/', 'http://127.0.0.1');
-      const metadataRequest = url.pathname.startsWith('/storage/v1/b/');
+      const media = url.searchParams.get('alt') === 'media';
+      const metadataRequest =
+        url.pathname.startsWith('/storage/v1/b/') && !media;
+      if (media && request.headers.authorization !== 'Bearer fixture-token') {
+        response.writeHead(401).end();
+        return;
+      }
       if (metadataRequest) {
         if (request.headers.authorization !== 'Bearer fixture-token') {
           response.writeHead(401).end();
@@ -299,13 +305,16 @@ async function digestFixture(options: {
         response.writeHead(state.getStatus).end();
         return;
       }
+      const wantGeneration =
+        url.searchParams.get('ifGenerationMatch') ??
+        request.headers['x-goog-if-generation-match'];
+      const wantMetageneration =
+        url.searchParams.get('ifMetagenerationMatch') ??
+        request.headers['x-goog-if-metageneration-match'];
       if (
-        (request.headers['x-goog-if-generation-match'] &&
-          request.headers['x-goog-if-generation-match'] !==
-            state.metadata.generation) ||
-        (request.headers['x-goog-if-metageneration-match'] &&
-          request.headers['x-goog-if-metageneration-match'] !==
-            state.metadata.metageneration)
+        (wantGeneration && wantGeneration !== state.metadata.generation) ||
+        (wantMetageneration &&
+          wantMetageneration !== state.metadata.metageneration)
       ) {
         response.writeHead(412).end();
         return;
@@ -460,7 +469,7 @@ describe('the storage adapter', () => {
     ).rejects.toThrow(/ceiling/);
   });
 
-  test('digest streams chunked bytes and signs both generation preconditions', async () => {
+  test('digest streams chunked bytes with bearer auth and both generation preconditions', async () => {
     const bytes = Buffer.from('hello world');
     const fixture = await digestFixture({ bytes });
     fixture.state.chunked = true;
@@ -471,11 +480,11 @@ describe('the storage adapter', () => {
       expect(fixture.state.patchCalls).toHaveLength(0);
       const get = fixture.state.getCalls[0];
       expect(get?.headers['accept-encoding']).toBe('gzip');
-      expect(get?.headers['x-goog-if-generation-match']).toBe('12345');
-      expect(get?.headers['x-goog-if-metageneration-match']).toBe('7');
-      expect(get?.query.get('X-Goog-SignedHeaders')).toBe(
-        'accept-encoding;host;x-goog-if-generation-match;x-goog-if-metageneration-match'
-      );
+      expect(get?.headers['authorization']).toBe('Bearer fixture-token');
+      expect(get?.query.get('alt')).toBe('media');
+      expect(get?.query.get('ifGenerationMatch')).toBe('12345');
+      expect(get?.query.get('ifMetagenerationMatch')).toBe('7');
+      expect(get?.query.has('X-Goog-Signature')).toBe(false);
     } finally {
       await fixture.close();
     }
@@ -515,8 +524,8 @@ describe('the storage adapter', () => {
         retained: 'unchanged',
       });
       const get = fixture.state.getCalls[1];
-      expect(get?.headers['x-goog-if-generation-match']).toBe('12345');
-      expect(get?.headers['x-goog-if-metageneration-match']).toBe('8');
+      expect(get?.query.get('ifGenerationMatch')).toBe('12345');
+      expect(get?.query.get('ifMetagenerationMatch')).toBe('8');
       expect(get?.headers['accept-encoding']).toBe('gzip');
 
       // The same HTTP response is transparently decompressed by fetch. The
