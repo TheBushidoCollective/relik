@@ -110,20 +110,20 @@ const STAGES_HTML = `
     <h1 class="card-title" tabindex="-1">This relic is private</h1>
     <p class="card-meta">Its link carries no key.</p>
     <div class="card-body">
-      <p>Only people the owner lets in can open it. Sign in with the email address the owner knows you by.</p>
+      <p>Only people the owner lets in can open it. Enter your email address to ask the owner for access.</p>
     </div>
     <div class="signin" id="signin-form">
-      <div id="signin-passkey-host"></div>
-      <div class="signin-or">or</div>
-      <form class="signin-row" id="signin-email-form">
-        <label class="compose-field"><span>Email address</span><input class="compose-input" type="email" id="signin-email" autocomplete="email" required></label>
-        <button type="submit" class="action primary">Email me a code</button>
+      <form class="signin-form" id="signin-email-form">
+        <label class="compose-field"><span>Email address</span><input class="compose-input" type="email" id="signin-email" autocomplete="email" placeholder="you@example.com" required></label>
+        <button type="submit" class="action primary">Request access</button>
+        <p class="card-fine">Relic emails you a code to confirm the address. Then the owner is asked.</p>
       </form>
-      <form class="signin-row" id="signin-code-form" hidden>
+      <form class="signin-form" id="signin-code-form" hidden>
         <label class="compose-field"><span>Code from the email</span><input class="compose-input code-input" inputmode="numeric" autocomplete="one-time-code" id="signin-code" maxlength="6"></label>
-        <button type="submit" class="action primary">Sign in</button>
+        <button type="submit" class="action primary">Continue</button>
       </form>
       <p class="card-note" id="signin-note" hidden></p>
+      <div class="passkey-sign-in" id="signin-passkey-host"></div>
     </div>
     <details class="disclosure">
       <summary>What Relic records about private relics</summary>
@@ -173,11 +173,11 @@ const STAGES_HTML = `
     <h1 class="card-title" tabindex="-1">Ask the owner for access</h1>
     <p class="card-meta" data-signed-in></p>
     <div class="card-body">
-      <p>Relic will email the owner a link to review your request. The email doesn't name you or this relic.</p>
-      <p>The owner will ask you for your fingerprint before they let you in. You'll see it on the next screen.</p>
+      <p>Relic emails the owner your address and your fingerprint, with a link to let you in.</p>
+      <p>You'll see the same fingerprint on the next screen. Nobody needs to call you.</p>
     </div>
     <div class="card-actions">
-      <button type="button" class="action primary" data-action="private-request">Ask for access</button>
+      <button type="button" class="action primary" data-action="private-request">Request access</button>
     </div>
     <p class="card-note">Asking signs the request with your passkey: one tap.</p>
   </div>

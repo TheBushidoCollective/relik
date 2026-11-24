@@ -6929,19 +6929,12 @@ mark[data-concealed] {
 .action.danger { background: var(--oxide); color: var(--surface); border: 0; padding: 0.55rem 1rem; }
 .action.danger:hover { background: color-mix(in srgb, var(--oxide) 78%, var(--ink)); color: var(--surface); }
 .signin { display: grid; gap: 1rem; }
-.signin-or {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  color: var(--ink-soft);
-  font-family: var(--mono);
-  font-size: 0.66rem;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-}
-.signin-or::before, .signin-or::after { content: ""; flex: 1; border-top: 1px solid var(--rule); }
-.signin-row { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: flex-end; }
-.signin-row .compose-field { flex: 1 1 12rem; }
+/* The private relic's sign-in card: the field above its button, both on the
+   card's own column, with the passkey option under them. */
+.signin-form { display: grid; gap: 0.75rem; justify-items: start; }
+.signin-form .compose-field { width: 100%; }
+.card-fine { margin: 0; color: var(--ink-soft); font-size: 0.8rem; line-height: 1.45; }
+.card > .disclosure { margin-top: 1.5rem; }
 .card, .dashboard-section, .found-party, .fp-field, .approval-steps > li { container-type: inline-size; }
 .fingerprint {
   display: grid;
