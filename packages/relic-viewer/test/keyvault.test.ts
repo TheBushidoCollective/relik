@@ -55,12 +55,12 @@ describe('localStorageKeyVault', () => {
     expect(vault.recall('relic1')).toBe('#r1abc');
   });
 
-  test('an unknown relic recalls nothing', () => {
+  test('an unknown relik recalls nothing', () => {
     const vault = localStorageKeyVault(memoryStorage(), () => 1000);
     expect(vault.recall('never-seen')).toBeUndefined();
   });
 
-  test('keys are scoped per relic', () => {
+  test('keys are scoped per relik', () => {
     const vault = localStorageKeyVault(memoryStorage(), () => 1000);
     vault.remember('relic1', '#r1aaa', 1000 + HOUR);
     vault.remember('relic2', '#r1bbb', 1000 + HOUR);
@@ -78,7 +78,7 @@ describe('localStorageKeyVault', () => {
   });
 
   // A key outliving its relic is a secret kept for nothing.
-  test('an entry past the relic expiry is not returned', () => {
+  test('an entry past the relik expiry is not returned', () => {
     const storage = memoryStorage();
     let clock = 1000;
     const vault = localStorageKeyVault(storage, () => clock);

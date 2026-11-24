@@ -127,7 +127,7 @@ async function publish(
   const grant = (await grantResponse.json()) as Record<string, unknown>;
 
   const container = await encryptRelic({
-    content: new TextEncoder().encode('hello relic'),
+    content: new TextEncoder().encode('hello relik'),
     filename: 'notes.md',
     mimetype: 'text/markdown',
     key,
@@ -477,7 +477,7 @@ describe('change notices and relic_share', () => {
     expect(sentMails).toHaveLength(1);
   });
 
-  test('7. Expired, tombstoned, and cap-exhausted relics announce nothing.', async () => {
+  test('7. Expired, tombstoned, and cap-exhausted reliks announce nothing.', async () => {
     // 1. Expired
     const exp = await publish({ title: 'Expired', ttlDays: 1 });
     const expToken = exp.grant['publish_token'] as string;
@@ -718,7 +718,7 @@ describe('change notices and relic_share', () => {
     expect(getRes.status).toBe(200);
     const getHtml = await getRes.text();
     expect(getHtml).toContain('Stop emails');
-    expect(getHtml).toContain("Only this relic's emails stop.");
+    expect(getHtml).toContain("Only this relik's emails stop.");
     expect(getHtml).toContain('<form method="POST"');
     expect(getHtml).toContain('Stop these emails');
 
@@ -1213,7 +1213,7 @@ describe('change notices and relic_share', () => {
       const json = await res.json();
       expect(json.code).toBe('share_unavailable');
       expect(json.detail).toContain(
-        'This relic was published before sharing existed'
+        'This relik was published before sharing existed'
       );
     });
 
@@ -1326,10 +1326,10 @@ describe('change notices and relic_share', () => {
       expect(mail).toBeDefined();
       expect(mail?.email).toBe('bob@example.com');
       expect(mail?.mail.text).toContain(
-        "someone with this relic's link shared it with you"
+        "someone with this relik's link shared it with you"
       );
       expect(mail?.mail.html).toContain(
-        "someone with this relic's link shared it with you"
+        "someone with this relik's link shared it with you"
       );
     });
 
@@ -1633,7 +1633,7 @@ describe('change notices and relic_share', () => {
       }
     });
   });
-  describe('comment notifications to relic participants', () => {
+  describe('comment notifications to relik participants', () => {
     test('a reader comment emails every other commenter, every shared address and the owner exactly once, never the author', async () => {
       const { id, grant } = await publish({
         title: 'Project Roadmap',
@@ -1745,7 +1745,7 @@ describe('change notices and relic_share', () => {
         'bob@example.com answered your comment on "Project Roadmap".'
       );
       expect(aliceMail?.mail.text).toContain(
-        'Open the link you hold for this relic to read the reply.'
+        'Open the link you hold for this relik to read the reply.'
       );
 
       expect(ownerMail?.mail.subject).toBe('New comment on "Project Roadmap"');
@@ -1753,7 +1753,7 @@ describe('change notices and relic_share', () => {
         'bob@example.com left a comment on "Project Roadmap".'
       );
       expect(ownerMail?.mail.text).toContain(
-        'Open the link you hold for this relic to read and answer the comment.'
+        'Open the link you hold for this relik to read and answer the comment.'
       );
     });
 
@@ -1875,7 +1875,7 @@ describe('change notices and relic_share', () => {
       expect(recipients).not.toContain('bob@example.com');
     });
 
-    test('every comment/reply/owner email has a keyless relic link, a working stop link and both List-Unsubscribe headers', async () => {
+    test('every comment/reply/owner email has a keyless relik link, a working stop link and both List-Unsubscribe headers', async () => {
       const { id, grant } = await publish({
         title: 'Design Document',
         ownerEmail: 'owner@example.com',
@@ -1946,7 +1946,7 @@ describe('change notices and relic_share', () => {
         expect(getRes.status).toBe(200);
         const getHtml = await getRes.text();
         expect(getHtml).toContain('Stop emails');
-        expect(getHtml).toContain("Only this relic's emails stop.");
+        expect(getHtml).toContain("Only this relik's emails stop.");
 
         // POST stops emails
         const postRes = await app.fetch(
@@ -2034,7 +2034,7 @@ describe('change notices and relic_share', () => {
       expect(recipients).not.toContain('alice@example.com');
     });
 
-    test('tombstoned/expired/cap-exhausted relics send nothing', async () => {
+    test('tombstoned/expired/cap-exhausted reliks send nothing', async () => {
       // 1. Expired relic
       const { id: expiredId } = await publish({
         title: 'Short Lived',
@@ -2362,7 +2362,7 @@ describe('change notices and relic_share', () => {
     });
     test('a mint reaching the download cap between comment read and dispatch suppresses notification dispatch', async () => {
       const { id } = await publish({
-        title: 'Capped Relic',
+        title: 'Capped Relik',
         ownerEmail: 'owner@example.com',
       });
 

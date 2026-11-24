@@ -54,7 +54,7 @@ async function resolveStorage(): Promise<ObjectStorage> {
   }
 
   console.warn(
-    'relic: no GCS credentials, using in-memory storage. Every relic is lost ' +
+    'relic: no GCS credentials, using in-memory storage. Every relik is lost ' +
       'on restart.'
   );
   return new MemoryStorage();
@@ -94,14 +94,14 @@ async function resolveStore(): Promise<RelicStore> {
 
   if (process.env['NODE_ENV'] === 'production') {
     throw new Error(
-      'A durable relic store is required in production. Refusing to start on ' +
-        'an in-memory store: every relic would be lost on the next revision, ' +
+      'A durable relik store is required in production. Refusing to start on ' +
+        'an in-memory store: every relik would be lost on the next revision, ' +
         'and invisible to every other instance before then.'
     );
   }
 
   console.warn(
-    'relic: no durable store, using memory. Relics do not survive a restart ' +
+    'relic: no durable store, using memory. Reliks do not survive a restart ' +
       'and are invisible across instances.'
   );
   return new MemoryStore();
@@ -205,7 +205,7 @@ if (import.meta.main) {
     role,
     ...(app === undefined ? {} : { app }),
   });
-  console.log(`relic ${role} listening on :${port}`);
+  console.log(`relik ${role} listening on :${port}`);
 }
 
 export { createApp };

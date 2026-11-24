@@ -190,8 +190,8 @@ function terms(): HTMLElement {
   for (const line of [
     'This page encrypts your file before it leaves your device. Relik serves the code that encrypts it.',
     'A public link contains the decryption key. Its title and any preview image you choose can be read without the key.',
-    'To remove a public relic you published here, report it with its ID.',
-    'A public relic published here cannot be updated later. Publishing makes a new link; existing relics stay as they are.',
+    'To remove a public relik you published here, report it with its ID.',
+    'A public relik published here cannot be updated later. Publishing makes a new link; existing reliks stay as they are.',
   ]) {
     list.appendChild(el('li', 'pub-term', line));
   }
@@ -656,7 +656,7 @@ function createPublisher(
       `${id}-name`,
       'Encrypted filename',
       filename,
-      'Stored inside the encrypted relic. It does not change the public title.'
+      'Stored inside the encrypted relik. It does not change the public title.'
     );
     const expansion = el('div', 'pub-option');
     expansion.hidden = !eligible;
@@ -811,7 +811,7 @@ function createPublisher(
       el(
         'p',
         'pub-help pub-new-link',
-        'Publishing makes a new link and leaves existing relics unchanged. This page encrypts your file with code served by Relik.'
+        'Publishing makes a new link and leaves existing reliks unchanged. This page encrypts your file with code served by Relik.'
       ),
       notice,
       row
@@ -1107,7 +1107,7 @@ function createPublisher(
       ttlField.help.textContent = !privateMode.checked
         ? `Leave blank for no expiry, or enter 1 to ${MAX_PUBLIC_TTL_DAYS} days.`
         : privateSettings === undefined
-          ? 'Private relics always expire. Set up private access to see the available lifetime.'
+          ? 'Private reliks always expire. Set up private access to see the available lifetime.'
           : `Leave blank for the service default of ${privateSettings.defaultTtlDays} days, or enter 1 to ${privateSettings.maxTtlDays}.`;
     };
     const disposeSetup = (): void => {
@@ -1168,7 +1168,7 @@ function createPublisher(
       publicGroup.disabled = isPrivate;
       setup.hidden = !isPrivate;
       accessHelp.textContent = isPrivate
-        ? 'The link contains no key. Readers need a passkey and your permission to open it. Private relics have no public title or preview image.'
+        ? 'The link contains no key. Readers need a passkey and your permission to open it. Private reliks have no public title or preview image.'
         : 'The link contains the key. Anyone who has it can read the file.';
       if (adapter.setupPrivate === undefined)
         accessHelp.textContent += ' Private publishing is unavailable here.';
@@ -1346,7 +1346,7 @@ function createPublisher(
         'p',
         'pub-help',
         submission.private
-          ? 'This link contains no key. Open the relic with your passkey to manage who can read it. Open the link before you share it. If it does not open, publish again.'
+          ? 'This link contains no key. Open the relik with your passkey to manage who can read it. Open the link before you share it. If it does not open, publish again.'
           : 'This link holds the key. Copy it now: this page does not keep it, and we cannot recover it for you.'
       )
     );
@@ -1358,7 +1358,7 @@ function createPublisher(
     field.setAttribute(
       'aria-label',
       submission.private
-        ? 'Private relic link'
+        ? 'Private relik link'
         : 'Link, including the decryption key'
     );
     field.addEventListener('focus', () => field.select());

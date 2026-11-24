@@ -1,7 +1,7 @@
 {
-  "name": "Relic",
-  "short_name": "Relic",
-  "description": "Open an encrypted relic. Decryption happens in your browser.",
+  "name": "Relik",
+  "short_name": "Relik",
+  "description": "Open an encrypted relik. Decryption happens in your browser.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

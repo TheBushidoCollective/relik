@@ -630,7 +630,7 @@ export class PresenceView {
     const chip = doc.createElement('span');
     chip.className = 'sg-presence';
     const names = this.peers.map(({ state }) => peerName(state));
-    chip.title = `${names.join(' and ')} ${names.length > 1 ? 'are' : 'is'} suggesting on this relic`;
+    chip.title = `${names.join(' and ')} ${names.length > 1 ? 'are' : 'is'} suggesting on this relik`;
     for (const peer of this.peers) {
       const dot = doc.createElement('span');
       dot.className = 'peer-dot';

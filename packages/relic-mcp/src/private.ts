@@ -212,14 +212,14 @@ function refuseRegulatedOptions(
   if (title !== undefined && title.length > 0) {
     throw new PublishError(
       'private_policy_violation',
-      'a private relic carries no title. Publish it without one.',
+      'a private relik carries no title. Publish it without one.',
       { policy_check: 'title' }
     );
   }
   if (cover === true) {
     throw new PublishError(
       'private_policy_violation',
-      'a private relic carries no cover image.',
+      'a private relik carries no cover image.',
       { policy_check: 'cover' }
     );
   }
@@ -251,7 +251,7 @@ export async function privateCapability(
   ) {
     throw new PublishError(
       'private_unsupported',
-      `${deps.serviceOrigin} does not support private relics yet. Nothing was uploaded.`
+      `${deps.serviceOrigin} does not support private reliks yet. Nothing was uploaded.`
     );
   }
   const record = declared as Record<string, unknown>;
@@ -263,7 +263,7 @@ export async function privateCapability(
   ) {
     throw new PublishError(
       'private_unsupported',
-      `${deps.serviceOrigin} declared private relics with no usable lifetime limits. Nothing was uploaded.`
+      `${deps.serviceOrigin} declared private reliks with no usable lifetime limits. Nothing was uploaded.`
     );
   }
   return { defaultTtlDays, maxTtlDays };
@@ -273,7 +273,7 @@ function checkTtl(ttl: number, capability: PrivateCapability): void {
   if (!Number.isSafeInteger(ttl) || ttl < 1 || ttl > capability.maxTtlDays) {
     throw new PublishError(
       'private_ttl_out_of_range',
-      `a private relic lasts 1 to ${capability.maxTtlDays} days, not ${ttl}`,
+      `a private relik lasts 1 to ${capability.maxTtlDays} days, not ${ttl}`,
       { policy_check: 'ttl', max_ttl_days: capability.maxTtlDays }
     );
   }
@@ -327,7 +327,7 @@ export async function verifyGrant(
 ): Promise<VerifiedGrant> {
   const forged = new PublishError(
     'recipient_forged_grant',
-    'a grant is not signed by the pinned owner for this relic, so no key is wrapped for it'
+    'a grant is not signed by the pinned owner for this relik, so no key is wrapped for it'
   );
   const statement = parseStatement(
     'grant',
@@ -594,7 +594,7 @@ async function completeVersion(input: {
       if (snapshot.version !== input.first.version) {
         throw new PublishError(
           'version_conflict',
-          `relic ${input.relicId} moved to version ${snapshot.version} while version ${input.first.version} was being sealed`,
+          `relik ${input.relicId} moved to version ${snapshot.version} while version ${input.first.version} was being sealed`,
           { relic_id: input.relicId }
         );
       }
@@ -760,10 +760,10 @@ export async function publishPrivate(
     throw new PublishError(
       'source_already_published',
       `${lookup.match.source.description} is already version ${lookup.match.version} of ` +
-        `relic ${lookup.match.relic_id}. Call relic_republish(${JSON.stringify({
+        `relik ${lookup.match.relic_id}. Call relic_republish(${JSON.stringify({
           relic_id: lookup.match.relic_id,
           path: source.resolvedPath,
-        })}) instead. Set force_new to true only when you intend a separate relic.`,
+        })}) instead. Set force_new to true only when you intend a separate relik.`,
       { relic_id: lookup.match.relic_id, version: lookup.match.version }
     );
   }
@@ -950,7 +950,7 @@ export async function publishPrivate(
     } catch (error) {
       throw new PublishError(
         'local_state_write_failed',
-        'the private relic is published, but its encrypted folder format cache could not be recorded: ' +
+        'the private relik is published, but its encrypted folder format cache could not be recorded: ' +
           (error as Error).message,
         { relic_id: relicId, version: 1 }
       );
@@ -987,7 +987,7 @@ async function writeState(
     // The message names the failure and never the entry, which holds keys.
     throw new PublishError(
       'local_state_write_failed',
-      'the private relic was not recorded on this machine, so it cannot be ' +
+      'the private relik was not recorded on this machine, so it cannot be ' +
         `republished from here: ${(error as Error).message}`,
       { relic_id: relicId }
     );
@@ -1005,7 +1005,7 @@ export async function republishPrivate(
   if (!isValidRelicId(input.relic_id)) {
     throw new PublishError(
       'no_local_publish_state',
-      `"${input.relic_id}" is not a relic id. Republish takes the 26-character id the original publish returned.`
+      `"${input.relic_id}" is not a relik id. Republish takes the 26-character id the original publish returned.`
     );
   }
   refuseRegulatedOptions(input.title, input.cover);
@@ -1013,13 +1013,13 @@ export async function republishPrivate(
   if (state === undefined) {
     throw new PublishError(
       'no_local_publish_state',
-      `relic ${input.relic_id} was not published privately from this machine, so it cannot be republished here.`
+      `relik ${input.relic_id} was not published privately from this machine, so it cannot be republished here.`
     );
   }
   if (state.service_origin !== deps.serviceOrigin) {
     throw new PublishError(
       'no_local_publish_state',
-      `relic ${input.relic_id} was published to a different service than ${deps.serviceOrigin}.`
+      `relik ${input.relic_id} was published to a different service than ${deps.serviceOrigin}.`
     );
   }
   const key = generateKey();
@@ -1034,7 +1034,7 @@ export async function republishPrivate(
   if (session.pin.identity_id !== state.owner_identity_id) {
     throw new PublishError(
       'owner_pin_mismatch',
-      'this device is certified for a different owner than the one that published this relic'
+      'this device is certified for a different owner than the one that published this relik'
     );
   }
   if (input.ttl_days !== undefined) {
@@ -1044,7 +1044,7 @@ export async function republishPrivate(
   if (state.content_sha256 === digest) {
     throw new PublishError(
       'duplicate_version',
-      `version ${state.version} of relic ${input.relic_id} already holds exactly this content under this name, so a new version would show a reader nothing new. Change the file, or leave the relic where it is.`,
+      `version ${state.version} of relik ${input.relic_id} already holds exactly this content under this name, so a new version would show a reader nothing new. Change the file, or leave the relik where it is.`,
       {
         relic_id: input.relic_id,
         version: state.version,
@@ -1287,7 +1287,7 @@ async function openFetchedKey(
   if (!covered || !signed) {
     throw new PublishError(
       'seal_signature_invalid',
-      `version ${version} of relic ${relicId} does not carry a seal this machine can verify`,
+      `version ${version} of relik ${relicId} does not carry a seal this machine can verify`,
       { relic_id: relicId, version }
     );
   }
@@ -1344,7 +1344,7 @@ export async function bindOwner(
   if (state === undefined) {
     throw new PublishError(
       'no_local_publish_state',
-      `relic ${input.relic_id} was not published from this machine, so its owner cannot be bound here.`
+      `relik ${input.relic_id} was not published from this machine, so its owner cannot be bound here.`
     );
   }
   const session = await deviceSession(deps);
@@ -1437,7 +1437,7 @@ export async function showPrivateRelic(
   if (state === undefined) {
     throw new PublishError(
       'no_local_publish_state',
-      `relic ${relicId} is not a private relic this machine holds.`
+      `relik ${relicId} is not a private relik this machine holds.`
     );
   }
   const session = await deviceSession(deps);

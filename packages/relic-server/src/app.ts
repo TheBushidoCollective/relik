@@ -305,7 +305,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
             path: '/policy',
             title: DISCLOSURE_TITLE,
             description:
-              'What Relic stores, what it can see, and what it never receives.',
+              'What Relik stores, what it can see, and what it never receives.',
           },
           store,
           now,
@@ -3140,7 +3140,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
           return refuse('share_unavailable', {
             relic_id: relicId,
             detail:
-              'This relic was published before sharing existed. Its publisher can republish it to turn sharing on.',
+              'This relik was published before sharing existed. Its publisher can republish it to turn sharing on.',
           });
         }
         if (proofResult === 'malformed') {
@@ -3378,7 +3378,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
       return unsubscribeResponse(
         200,
         'Nothing to stop',
-        '<p>This relic is no longer available, so it sends no emails.</p>',
+        '<p>This relik is no longer available, so it sends no emails.</p>',
         undefined,
         isHead
       );
@@ -3389,13 +3389,13 @@ export function createApp(options: AppOptions = {}): RelicApp {
       return unsubscribeResponse(
         200,
         'Nothing to stop',
-        '<p>This relic is no longer available, so it sends no emails.</p>',
+        '<p>This relik is no longer available, so it sends no emails.</p>',
         undefined,
         isHead
       );
     }
 
-    const T = row.title ? `"${escapeHtml(row.title)}"` : 'this relic';
+    const T = row.title ? `"${escapeHtml(row.title)}"` : 'this relik';
 
     if (request.method === 'POST') {
       await store.putOptOut({
@@ -3408,7 +3408,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
         return unsubscribeResponse(
           200,
           'Nothing to stop',
-          '<p>This relic is no longer available, so it sends no emails.</p>',
+          '<p>This relik is no longer available, so it sends no emails.</p>',
           undefined,
           isHead
         );
@@ -3423,7 +3423,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
     }
 
     const action = `${config.serviceOrigin}/api/relics/${relicId}/unsubscribe?addr=${addr}&amp;token=${token}`;
-    const formHtml = `<p>Stop emails about ${T}?</p><form method="POST" action="${action}"><button type="submit">Stop these emails</button></form><p>Only this relic's emails stop.</p>`;
+    const formHtml = `<p>Stop emails about ${T}?</p><form method="POST" action="${action}"><button type="submit">Stop these emails</button></form><p>Only this relik's emails stop.</p>`;
     return unsubscribeResponse(200, 'Stop emails', formHtml, undefined, isHead);
   }
 
@@ -3457,7 +3457,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
     const row = await store.getRelic(relicId);
     if (existing === undefined && row === undefined) {
       // On this endpoint 404 means one thing only: never issued.
-      return new Response('No such relic id was ever issued', { status: 404 });
+      return new Response('No such relik id was ever issued', { status: 404 });
     }
 
     const reasonClass = (url.searchParams.get('reason') ??
@@ -3470,7 +3470,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
 
     if (existing === undefined) {
       if (row === undefined) {
-        return new Response('No such relic id was ever issued', {
+        return new Response('No such relik id was ever issued', {
           status: 404,
         });
       }
@@ -4576,7 +4576,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
       .filter((id) => id.length > 0);
     if (named.length > COVER_INDEX_MAX_IDS) {
       return refuse('invalid_publish_metadata', {
-        detail: `Name at most ${COVER_INDEX_MAX_IDS} relics at a time.`,
+        detail: `Name at most ${COVER_INDEX_MAX_IDS} reliks at a time.`,
       });
     }
     const covers: Record<string, string> = {};
@@ -5418,7 +5418,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
         mode: 'create',
         public_key: {
           challenge: newChallenge,
-          rp: { id: rpId, name: 'Relic' },
+          rp: { id: rpId, name: 'Relik' },
           user: {
             id: passkeyRecord.userHandle,
             name: email,
@@ -5476,7 +5476,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
         mode: 'create',
         public_key: {
           challenge,
-          rp: { id: rpId, name: 'Relic' },
+          rp: { id: rpId, name: 'Relik' },
           user: { id: userHandle, name: email, displayName: email },
           pubKeyCredParams: [
             { type: 'public-key', alg: -7 },
@@ -6347,7 +6347,7 @@ function relicExpiryIso(epochMillis: number | undefined): string | null {
 }
 
 const CARD_IMAGE_ALT =
-  "Relic's accession label with an empty field stack: a relic's record with nothing filled in.";
+  "Relik's accession label with an empty field stack: a relik's record with nothing filled in.";
 
 const PUBLISH_TITLE = 'Publish a file';
 const PUBLISH_DESCRIPTION =
@@ -6455,14 +6455,14 @@ async function shell(
     ? PUBLISH_DESCRIPTION
     : (doc?.description ?? card.description);
   const documentTitle = publishView
-    ? `${PUBLISH_TITLE} · Relic`
+    ? `${PUBLISH_TITLE} · Relik`
     : doc !== undefined
-      ? `${doc.title} · Relic`
+      ? `${doc.title} · Relik`
       : storedTitle !== undefined
-        ? `${storedTitle} · Relic`
+        ? `${storedTitle} · Relik`
         : storedRendererClass !== undefined
           ? card.title
-          : 'Relic';
+          : 'Relik';
 
   const baseRootAttributes =
     typeof target === 'string'
@@ -6487,7 +6487,7 @@ async function shell(
   const body = `<!doctype html>
 <meta charset="utf-8">
 <meta property="og:type" content="website">
-<meta property="og:site_name" content="Relic">
+<meta property="og:site_name" content="Relik">
 <meta property="og:title" content="${escapeHtml(cardTitle)}">
 <meta property="og:description" content="${escapeHtml(cardDescription)}">
 <meta property="og:url" content="${escapeHtml(ogUrl)}">
@@ -6520,7 +6520,7 @@ async function shell(
 <div class="actions">
 <a class="action" href="/policy" aria-label="${escapeHtml(POLICY_LINK_LABEL)}"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false" class="icon"><path d="M5.7 3.3 2 7l3.7 3.7.7-.7L3.4 7l3-3-.7-.7zm4.6 0-.7.7 3 3-3 3 .7.7L14 7l-3.7-3.7z"/></svg><span>${escapeHtml(POLICY_LINK_LABEL)}</span></a>
 <a class="action" href="/abuse" aria-label="${escapeHtml(REPORT_LINK_LABEL)}"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false" class="icon"><path d="M3 1h1v14H3V1zm2 1h8l-2 3 2 3H5V2z"/></svg><span>${escapeHtml(REPORT_LINK_LABEL)}</span></a>
-<a class="action action-upload" href="/publish" data-upload aria-label="Upload a file" title="Publish a file as a new relic"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false" class="icon"><path d="M8 1.8l3.8 3.8-.7.7-2.6-2.6V11h-1V3.7L4.9 6.3l-.7-.7L8 1.8zM2 12h12v1H2v-1z"/></svg><span>Upload</span></a>
+<a class="action action-upload" href="/publish" data-upload aria-label="Upload a file" title="Publish a file as a new relik"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false" class="icon"><path d="M8 1.8l3.8 3.8-.7.7-2.6-2.6V11h-1V3.7L4.9 6.3l-.7-.7L8 1.8zM2 12h12v1H2v-1z"/></svg><span>Upload</span></a>
 </div>
 </header>
 <main class="stage stage-loading" data-load-plate data-load-phase="opening">
@@ -6618,7 +6618,7 @@ export function landingPage(config: RelicConfig): Response {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#1f6b64">
-<title>Relic: share a file the server cannot read</title>
+<title>Relik: share a file the server cannot read</title>
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="/assets/icon.svg" type="image/svg+xml">
 <style>
@@ -6855,8 +6855,8 @@ export function landingPage(config: RelicConfig): Response {
     <a href="#recipient">What they see</a>
     <a href="#limits">What we hold</a>
   </nav>
-  <a class="mine" href="/dashboard">Your relics</a>
-  <a class="mine mine-upload" href="/publish" data-upload title="Publish a file as a new relic">Upload</a>
+  <a class="mine" href="/dashboard">Your reliks</a>
+  <a class="mine mine-upload" href="/publish" data-upload title="Publish a file as a new relik">Upload</a>
 </header>
 <main>
   <div class="wrap hero" id="install">
@@ -6874,14 +6874,14 @@ export function landingPage(config: RelicConfig): Response {
 `
       }claude plugin marketplace add TheBushidoCollective/relik
 claude plugin install relic@relic</code></pre>
-      <p class="after">Then tell your agent <em>publish ./report.md as a relic</em>.
+      <p class="after">Then tell your agent <em>publish ./report.md as a relik</em>.
       The plugin includes a skill that teaches it when sharing a file is the
       right move and what to tell you about the link. Using another client?
       <a href="#elsewhere">It installs there too</a>.</p>
       <p class="after">No agent handy? <a href="/publish">Drop a file on the
       publish page</a> and your browser does the encrypting.</p>
     </div>
-    <figure class="tag" aria-label="The two halves of a relic link">
+    <figure class="tag" aria-label="The two halves of a relik link">
       <div class="tag-part">
         <code class="tag-url"><span class="u-host">${host}/</span>01JC9M4T7KQZ2V8XH5RN3PWEYD</code>
         <p>This much reaches our servers. It says where the ciphertext is stored.</p>
@@ -6901,7 +6901,7 @@ claude plugin install relic@relic</code></pre>
         <p>The agent passes a path, never the file&rsquo;s contents, so the
         plaintext does not enter your conversation. It encrypts here, uploads
         the ciphertext, and gives the link back.</p>
-        <pre class="transcript"><code><span class="who">you</span>    publish ./release-notes.html as a relic
+        <pre class="transcript"><code><span class="who">you</span>    publish ./release-notes.html as a relik
 <span class="who">agent</span>  Published. ${host}/01JC9M4T7KQZ2V8XH5RN3PWEYD#q7Tn-&hellip;</code></pre>
         <p>Send the link anywhere. Opening it takes a browser and the whole
         link, including the part after the <code>#</code>. Reading needs no
@@ -6909,7 +6909,7 @@ claude plugin install relic@relic</code></pre>
       </div>
       <figure class="shot">
         <img src="/assets/landing-html.png" width="1440" height="900" loading="lazy"
-          alt="A published HTML page open in the Relic viewer, rendered in a sandboxed frame.">
+          alt="A published HTML page open in the Relik viewer, rendered in a sandboxed frame.">
         <figcaption>What the other person sees for an HTML file: the page,
         rendered in their browser in a sandboxed frame that blocks its web requests.</figcaption>
       </figure>
@@ -6924,12 +6924,12 @@ claude plugin install relic@relic</code></pre>
       <div class="pair">
         <figure class="shot">
           <img src="/assets/landing-markdown.png" width="1440" height="900" loading="lazy"
-            alt="A Markdown README open in the Relic viewer, rendered as a formatted document.">
+            alt="A Markdown README open in the Relik viewer, rendered as a formatted document.">
           <figcaption>Markdown, as published. This is this project&rsquo;s own README.</figcaption>
         </figure>
         <figure class="shot">
           <img src="/assets/landing-code-dark.png" width="1440" height="900" loading="lazy"
-            alt="A source file open in the Relic viewer in its dark theme, with syntax highlighting.">
+            alt="A source file open in the Relik viewer in its dark theme, with syntax highlighting.">
           <figcaption>Code, in the dark theme, with highlighting.</figcaption>
         </figure>
       </div>
@@ -6947,7 +6947,7 @@ claude plugin install relic@relic</code></pre>
           Your agent reads the comments back.</p>
           <p>Publish a new version and the link stays the same, so everyone who
           has it sees the update. Earlier versions stay readable to anyone
-          holding the link. A relic is kept until it is deleted, unless you give
+          holding the link. A relik is kept until it is deleted, unless you give
           it a lifetime when you publish.</p>
         </div>
       </div>
@@ -7020,7 +7020,7 @@ npx -y relic-mcp@latest install --client cursor${hosted ? '' : ` --origin ${orig
             <li><strong>The key.</strong> It sits after the <code>#</code>, and browsers never send a fragment to a server.</li>
             <li><strong>The file&rsquo;s contents</strong> in any form we could read.</li>
             <li><strong>The text of a comment.</strong> It is encrypted the way the file is.</li>
-            <li><strong>The keys a browser remembers</strong> for relics it opened. They stay in that browser&rsquo;s local storage.</li>
+            <li><strong>The keys a browser remembers</strong> for reliks it opened. They stay in that browser&rsquo;s local storage.</li>
           </ul>
         </div>
       </div>
@@ -7047,7 +7047,7 @@ npx -y relic-mcp@latest install --client cursor${hosted ? '' : ` --origin ${orig
 <footer>
   <div class="wrap">
     <a href="/policy">What we store and what we can see</a> &middot;
-    <a href="/abuse">Report a relic</a> &middot;
+    <a href="/abuse">Report a relik</a> &middot;
     <a href="https://github.com/TheBushidoCollective/relik">Source</a>
   </div>
 </footer>
@@ -7089,7 +7089,7 @@ function abuseForm(config: RelicConfig): Response {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#1f6b64">
-<title>Report a relic</title>
+<title>Report a relik</title>
 <link rel="icon" href="/assets/icon.svg" type="image/svg+xml">
 <style>
   :root {
@@ -7237,14 +7237,14 @@ function abuseForm(config: RelicConfig): Response {
 </header>
 <main class="wrap">
   <div>
-    <h1>Report a relic</h1>
-    <p class="guidance" id="key-guidance">Paste the relic ID. <strong>Do not include the part after <code>#</code>:</strong> that is
+    <h1>Report a relik</h1>
+    <p class="guidance" id="key-guidance">Paste the relik ID. <strong>Do not include the part after <code>#</code>:</strong> that is
 the decryption key, and we do not want it. We strip it either way.</p>
     <p class="response">We respond within ${config.abuseSlaHours} hours of arrival.</p>
   </div>
   <form method="post" action="/abuse">
     <div class="field">
-      <label for="relic-id">Relic ID</label>
+      <label for="relic-id">Relik ID</label>
       <input id="relic-id" name="relic_id" required aria-describedby="key-guidance" autocapitalize="none" spellcheck="false">
     </div>
     <div class="field">
@@ -7309,7 +7309,7 @@ function escapeHtml(value: string): string {
   );
 }
 
-const DISCLOSURE_TITLE = 'What Relic knows about your relic';
+const DISCLOSURE_TITLE = 'What Relik knows about your relik';
 
 function disclosureStatement(config: RelicConfig): string {
   const retention = Math.round(config.retentionSeconds / 86_400);
@@ -7322,47 +7322,47 @@ on it being readable first.
 
 Your file is encrypted on your machine with a key your machine generates. The
 key lives in the URL fragment, after the \`#\`. **Your browser never sends the
-key to Relic's servers.** That is the correct form of the claim. Saying "the
+key to Relik's servers.** That is the correct form of the claim. Saying "the
 key never reaches a server" unqualified would be wrong.
 
-A link whose key does not open a relic stops downloading after the first block,
+A link whose key does not open a relik stops downloading after the first block,
 so our storage provider and anyone watching the connection can tell the open
 stopped early but never see the key.
 
 ## What your own browser keeps
 
-Opening a relic strips the key out of the address bar immediately, which means
+Opening a relik strips the key out of the address bar immediately, which means
 a reload would otherwise lose it. So the viewer remembers the key in your
-browser's local storage for that relic, until the relic expires, and clears it
-as soon as the relic is gone.
+browser's local storage for that relik, until the relik expires, and clears it
+as soon as the relik is gone.
 
-It never leaves your machine, and it is stored under Relic's origin rather than
+It never leaves your machine, and it is stored under Relik's origin rather than
 the usercontent origin that renders content. The trade is real and worth
 stating plainly: for as long as the entry lives, anyone using this browser
-profile can reopen that relic without ever having been sent the link. Clearing
+profile can reopen that relik without ever having been sent the link. Clearing
 site data for this origin removes every remembered key.
 
 ## What we do know
 
-- **A coarse renderer class**, one of: ${RENDERER_CLASSES.join(', ')}. Nothing finer. It is now also on the relic's card, so the kind
+- **A coarse renderer class**, one of: ${RENDERER_CLASSES.join(', ')}. Nothing finer. It is now also on the relik's card, so the kind
   of thing that was published is readable by anyone who fetches the link, not
   only by the operator.
-- **The name of the tool that published it**, so we can tell whether Relic
+- **The name of the tool that published it**, so we can tell whether Relik
   serves the contexts it was built for.
 - **Open activity, correlated with the publishing IP address.** Upload IP and
   timestamp are retained for abuse response regardless.
 - **A title, in the clear.** The publishing tool defaults it to your
-  filename. We store it, the relic's page carries it in its metadata, and
+  filename. We store it, the relik's page carries it in its metadata, and
   every link preview shows it.
 - **A cover image, unencrypted.** By default relic-mcp renders the first screen
   of the file on your machine and uploads a 1200x630 preview image. The server
   stores it and serves it at \`/\${id}/cover/\${sha256}.{png|jpg}\` for link previews;
   anyone who fetches the link, unfurl services, and their caches can see it
   without the decryption key. Publishing with \`cover: false\` or republishing
-  with \`cover: false\` clears the cover. Takedown deletes it. When a relic expires,
+  with \`cover: false\` clears the cover. Takedown deletes it. When a relik expires,
   the cover stops serving immediately while the underlying storage object
   remains until deletion per our soft-delete retention policy. For OpenTimelineIO
-  timeline relics (otio), unencrypted first-screen media rendering is skipped by
+  timeline reliks (otio), unencrypted first-screen media rendering is skipped by
   default; link previews use a generic card carrying the publisher-declared title
   and format label, preventing referenced media frames and track metadata from
   leaking into unencrypted cover previews.
@@ -7379,12 +7379,12 @@ every fetch, forever.
 
 ## The title is not encrypted
 
-A relic carries a plaintext title so that a pasted link previews as something
+A relik carries a plaintext title so that a pasted link previews as something
 legible rather than as a blank card on an unfamiliar domain, which is what a
 phishing link looks like. The publishing tool defaults that title to your
 filename.
 
-It is the one thing about your relic that anyone who fetches the link can read
+It is the one thing about your relik that anyone who fetches the link can read
 without the key: the chat client drawing a preview, a mail scanner following
 the URL, a crawler that ignores our robots file, and us. **If the name is the
 sensitive part, publish without a title.** The content is unaffected either
@@ -7395,7 +7395,7 @@ rather than anything finer. **Declining a title does not hide it.** The class is
 derived from the bytes rather than chosen, so anyone who fetches the link learns
 what kind of thing was published even when you publish without a title.
 
-A relic that is removed or has expired stops serving its title with the rest
+A relik that is removed or has expired stops serving its title with the rest
 of it.
 
 ## The key enters your AI session transcript
@@ -7411,89 +7411,89 @@ your transcripts. This is structural, not a defect we plan to fix.
 Every page has an Upload button at the top right, and the page at \`/publish\`
 encrypts and uploads a file you drop on it. So does any other page of this
 site, the homepage included: a file dropped there, or chosen with Upload, opens
-the same publisher in a dialog and starts a new relic, and nothing is sent
+the same publisher in a dialog and starts a new relik, and nothing is sent
 until you confirm it. The file is encrypted by JavaScript in your browser.
-For public relics, the link holds the key; we cannot recover it. A private
-relic's link has no key, and access requires an authorized passkey. No model
+For public reliks, the link holds the key; we cannot recover it. A private
+relik's link has no key, and access requires an authorized passkey. No model
 receives the key through this publishing path.
 
 The homepage runs one small script of ours for this. It reads no key and no
-relic, and the publisher it opens is the same code the other pages use.
+relik, and the publisher it opens is the same code the other pages use.
 
-For public relics, we receive the coarse class, the tool's name
+For public reliks, we receive the coarse class, the tool's name
 (\`relik-web\`), sizes, and an optional title, which defaults to the filename
 and can be changed or cleared. If you choose a public preview image, the
 image shown before publishing is uploaded unencrypted and can be seen without
-the key. Public relics published here cannot be updated at the same link,
+the key. Public reliks published here cannot be updated at the same link,
 because the browser does not keep the publish token.
 
 Private publishing requires sign-in and a passkey-bound identity. The service
 stores identity and access metadata and encrypted key wraps, but no plaintext
-title or cover. A private relic always expires.
+title or cover. A private relik always expires.
 
 ## Republishing keeps the earlier versions
 
-**Anyone holding a relic's link can fetch every version it has ever held, so
+**Anyone holding a relik's link can fetch every version it has ever held, so
 republishing does not withdraw earlier content.** The same fragment key
 decrypts every version in your browser. Republishing is not a redaction
 mechanism.
 
 ## Comments, email notices, and sharing
 
-Anyone holding a relic's link can read its comments and add one. Comment
+Anyone holding a relik's link can read its comments and add one. Comment
 bodies are encrypted with a key derived from the link, so we cannot read them.
-We do keep who commented on which relic and when: a commenter is the email address they verified with a sign-in email, by following its link or typing its code, stored in the clear beside each comment. A sign-in email, and every email below, passes the address through our mail provider. A sign-in code works once, only in the browser that asked for it: until it is used or the storage cleanup removes it, which takes about a day, the service keeps it as a hash keyed by a random value that only that browser holds, and for a day it counts code attempts for each address, filed under a hash of the address. A reader who added a passkey can later sign in to the same address with it, and that sends no email.
+We do keep who commented on which relik and when: a commenter is the email address they verified with a sign-in email, by following its link or typing its code, stored in the clear beside each comment. A sign-in email, and every email below, passes the address through our mail provider. A sign-in code works once, only in the browser that asked for it: until it is used or the storage cleanup removes it, which takes about a day, the service keeps it as a hash keyed by a random value that only that browser holds, and for a day it counts code attempts for each address, filed under a hash of the address. A reader who added a passkey can later sign in to the same address with it, and that sends no email.
 
-**When someone comments or a relic gets a new version, we email the people following it.**
+**When someone comments or a relik gets a new version, we email the people following it.**
 That is every verified address that commented on it, every address its publisher or a reader
-shared it with, and the relic's owner address, minus the author of the comment and anyone
-who stopped emails for that relic. A new comment email names the commenter (their verified
+shared it with, and the relik's owner address, minus the author of the comment and anyone
+who stopped emails for that relik. A new comment email names the commenter (their verified
 email address, or "The publisher" for comments posted with the publish token), so everyone
 on the list, including third-party shared addresses, sees the commenter's address. The email
-cannot quote the comment and links to the relic without its key. The publisher gets owner-specific
-wording ("commented on your relic"), an answered commenter gets reply wording ("answered your comment"),
-and everyone else gets a notice with the reason they are following the relic. When a new version is
+cannot quote the comment and links to the relik without its key. The publisher gets owner-specific
+wording ("commented on your relik"), an answered commenter gets reply wording ("answered your comment"),
+and everyone else gets a notice with the reason they are following the relik. When a new version is
 published, the email announces the new version number. A publisher can skip the email for a version.
 
 **Burst limiter and spend fuse.** Comment notices and version notices share the same rate
-limits: at most one email per recipient per relic per 10 minutes, collapsing rapid comments or
-version republishes with replies into a single email. Outbound notices across all relics are
+limits: at most one email per recipient per relik per 10 minutes, collapsing rapid comments or
+version republishes with replies into a single email. Outbound notices across all reliks are
 capped by a global fuse to bound mail spend.
 
 **Sharing gives us addresses, never the link.** A publisher, or a signed-in reader holding
-the key, can register addresses on a relic so they receive these emails. Web sharing by a reader
+the key, can register addresses on a relik so they receive these emails. Web sharing by a reader
 is gated by a proof derived from the key: the service learns the proof, but never the key, and does
-not store who shared it. We store each address in the clear, linked to the relic, and we do not ask
+not store who shared it. We store each address in the clear, linked to the relik, and we do not ask
 its owner first. The email that carries the link goes from the sharer's own mail, not from us, so
 the key never reaches our servers.
 
-**One stop link stops every email about that relic.** Every email (comment, reply, owner, and version)
+**One stop link stops every email about that relik.** Every email (comment, reply, owner, and version)
 carries an unauthenticated stop link and RFC 8058 one-click unsubscribe headers. It stops all emails
-about that relic to that address. We record that it was used as a SHA-256 of the address beside the
-relic id. A hash of an email address is not anonymous: anyone who can guess the address can match it.
+about that relik to that address. We record that it was used as a SHA-256 of the address beside the
+relik id. A hash of an email address is not anonymous: anyone who can guess the address can match it.
 
-Deleting a relic deletes its comments, its shared addresses, and its stop records. An expired
-relic sends no more emails, and those records stay until it is deleted, like the rest of it.
+Deleting a relik deletes its comments, its shared addresses, and its stop records. An expired
+relik sends no more emails, and those records stay until it is deleted, like the rest of it.
 
 ## Live presence while suggesting
 
-When you are signed in and have a relic open, your browser keeps a connection to Relic's presence relay so you can see other readers' cursors and when they are typing. While you are in Suggesting mode with the page in front of you, your browser sends one update a second; otherwise it sends nothing.
+When you are signed in and have a relik open, your browser keeps a connection to Relik's presence relay so you can see other readers' cursors and when they are typing. While you are in Suggesting mode with the page in front of you, your browser sends one update a second; otherwise it sends nothing.
 
-Each update is encrypted in your browser with a key derived from the relic's key (the link for a public relic, the version key you were granted for a private one), padded to one fixed size, and passed to the other people in the same room. For a private relic, anyone who has held that version's key, including a reader whose access was later revoked, can join the room and see these updates. The relay never writes an update down and cannot read one: it does not see your cursor, what you type, or the name you entered.
+Each update is encrypted in your browser with a key derived from the relik's key (the link for a public relik, the version key you were granted for a private one), padded to one fixed size, and passed to the other people in the same room. For a private relik, anyone who has held that version's key, including a reader whose access was later revoked, can join the room and see these updates. The relay never writes an update down and cannot read one: it does not see your cursor, what you type, or the name you entered.
 
-What we do see: that a browser at your IP address joined a room, when it connected and left, how many browsers share the room, and when yours is sending updates, which shows when you are suggesting. The room's name is derived from that key and does not name the relic, but we can usually match it to the relic from your IP address and timing. Your browser sends your sign-in cookie with the connection, as with every request to Relic; the relay does not read it. Connection records are kept with our other request logs for ${retention} days.
+What we do see: that a browser at your IP address joined a room, when it connected and left, how many browsers share the room, and when yours is sending updates, which shows when you are suggesting. The room's name is derived from that key and does not name the relik, but we can usually match it to the relik from your IP address and timing. Your browser sends your sign-in cookie with the connection, as with every request to Relik; the relay does not read it. Connection records are kept with our other request logs for ${retention} days.
 
 ## Decisions and passkeys
 
-**Decisions.** When a signed-in reader approves or rejects a version in the viewer, the service stores that decision in the clear: the verdict, the reader's verified email address, the version number, the SHA-256 of that version's ciphertext, the id of the passkey that confirmed it, and the time. Anyone holding the relic's link can read its decisions. Decisions are never edited or deleted, except that removing a relic removes its decisions with it.
+**Decisions.** When a signed-in reader approves or rejects a version in the viewer, the service stores that decision in the clear: the verdict, the reader's verified email address, the version number, the SHA-256 of that version's ciphertext, the id of the passkey that confirmed it, and the time. Anyone holding the relik's link can read its decisions. Decisions are never edited or deleted, except that removing a relik removes its decisions with it.
 
-**Passkeys.** A passkey is registered to a reader's verified address. It confirms decisions, and it can sign that reader in instead of a link. The service keeps one record per address, filed under a hash of the address: the address itself, the random user handle its passkeys carry, and for each passkey its public key, credential id, signature counter, and when it was created and last used. A second entry, filed under a hash of the user handle, points to that record, so a passkey can sign you in without your typing the address. The first passkey registered for an address is trusted on first use, and only a session that a sign-in email started in the previous ${config.passkeyFreshLinkSeconds / 60} minutes, by its link or its code, can begin adding it; adding another requires confirming with an existing one. Whenever a passkey is added, the service emails that address to say so, with the time and how many passkeys the address has. That email has no stop link, because it is about the address rather than a relic. Signing in with a passkey sends no email, updates that passkey's counter and last-used time, and starts the same session a link does, except that the session records a passkey started it. If you type your address to use a passkey, the service answers the same way whether or not that address has one. The service never receives a private key.
+**Passkeys.** A passkey is registered to a reader's verified address. It confirms decisions, and it can sign that reader in instead of a link. The service keeps one record per address, filed under a hash of the address: the address itself, the random user handle its passkeys carry, and for each passkey its public key, credential id, signature counter, and when it was created and last used. A second entry, filed under a hash of the user handle, points to that record, so a passkey can sign you in without your typing the address. The first passkey registered for an address is trusted on first use, and only a session that a sign-in email started in the previous ${config.passkeyFreshLinkSeconds / 60} minutes, by its link or its code, can begin adding it; adding another requires confirming with an existing one. Whenever a passkey is added, the service emails that address to say so, with the time and how many passkeys the address has. That email has no stop link, because it is about the address rather than a relik. Signing in with a passkey sends no email, updates that passkey's counter and last-used time, and starts the same session a link does, except that the session records a passkey started it. If you type your address to use a passkey, the service answers the same way whether or not that address has one. The service never receives a private key.
 
 **Version digests.** To bind a decision to exact content, the service reads each version's ciphertext once and stores its SHA-256. It reads ciphertext only and holds no key.
 
 ## The JavaScript caveat
 
-The code that decrypts a relic in your browser, and the code that encrypts a
+The code that decrypts a relik in your browser, and the code that encrypts a
 file you publish from the web page, is served by us, the same party this
 promise is made against, and we could serve different code tomorrow. This is
 a statement about our intent, not a property you can verify.
@@ -7501,7 +7501,7 @@ Anyone claiming otherwise about a service of this shape is overclaiming.
 
 ## What rendered content can do
 
-A relic that renders as HTML or JSX runs its author's code in your browser.
+A relik that renders as HTML or JSX runs its author's code in your browser.
 The frame that hosts it is served a policy that permits no remote source, so
 that code cannot make outbound HTTP, WebSocket, or worker requests: it cannot
 fetch external resources, and a page that expects external images, fonts, or
@@ -7510,7 +7510,7 @@ over WebRTC ICE candidate gathering, the viewer frame installs a runtime deny-li
 that neutralizes WebRTC constructors across the prototype chain and blocks nested
 frame creation to prevent UDP STUN egress. This containment is tested defense in
 depth rather than an architectural impossibility: future platform APIs could reopen
-channels, and nested frames or workers in HTML and JSX relics are denied.
+channels, and nested frames or workers in HTML and JSX reliks are denied.
 
 **The isolation is about network and cross-origin reach, not safety.** The
 code still runs locally in your browser, can consume your CPU, and can
@@ -7538,13 +7538,13 @@ further retention period, and we never promise erasure.
 
 ## Lifetime
 
-A relic is kept until it is deleted. The publisher can set a lifetime when
+A relik is kept until it is deleted. The publisher can set a lifetime when
 creating it, and once that lifetime has passed the link is dead; without one,
-time alone never retires a relic. Deletion still is not erasure, as the
-retention section above says. Each relic can be opened ${config.downloadCap}
+time alone never retires a relik. Deletion still is not erasure, as the
+retention section above says. Each relik can be opened ${config.downloadCap}
 times before the link stops working.
 
-> **Private relics.** A private relic's link carries no key. Each reader who is let in has their own copy of each version's key, encrypted to a key only their passkey can unlock; the service stores those encrypted copies and never the keys. To let someone in, the service records who asked and who granted, the email addresses involved, the public keys, and a signed record of each grant and revocation. It keeps an access log of requests, grants, revocations, key fetches and deletions for the owner, for the retention the owner sets. It also stores each person's private-share key encrypted under a secret held by their passkey. Private relics carry no title or cover, always expire, and their notification emails say only that there is activity on a relic, except the email to the owner when someone asks for access, which names the requester and gives their fingerprint. The JavaScript that decrypts them comes from this service, the same as for every relic.
+> **Private reliks.** A private relik's link carries no key. Each reader who is let in has their own copy of each version's key, encrypted to a key only their passkey can unlock; the service stores those encrypted copies and never the keys. To let someone in, the service records who asked and who granted, the email addresses involved, the public keys, and a signed record of each grant and revocation. It keeps an access log of requests, grants, revocations, key fetches and deletions for the owner, for the retention the owner sets. It also stores each person's private-share key encrypted under a secret held by their passkey. Private reliks carry no title or cover, always expire, and their notification emails say only that there is activity on a relik, except the email to the owner when someone asks for access, which names the requester and gives their fingerprint. The JavaScript that decrypts them comes from this service, the same as for every relik.
 
 ## Reporting abuse
 

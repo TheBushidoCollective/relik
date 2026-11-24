@@ -326,7 +326,7 @@ const SAMPLE_REQUEST_OPTIONS: RequestOptionsJSON = {
 
 const SAMPLE_CREATION_OPTIONS: CreationOptionsJSON = {
   challenge: 'Y2hhbGxlbmdlLTMyLWJ5dGVzLWJhc2U2NHVybA',
-  rp: { id: 'relik.example', name: 'Relic' },
+  rp: { id: 'relik.example', name: 'Relik' },
   user: {
     id: 'dXNlci1oYW5kbGU',
     name: 'reader@example.com',
@@ -1323,7 +1323,7 @@ describe('passkey sign-in (spec §5 S2 requirements)', () => {
 
     expect(offerFail.getAttribute('data-state')).toBe('link-failed');
     expect(textOf(offerFail)).toContain(
-      'Relic could not send the email just now. Try again later.'
+      'Relik could not send the email just now. Try again later.'
     );
     expect(linkBtnFail.disabled).toBe(false);
   });
@@ -1470,7 +1470,7 @@ describe('passkey options carry PRF in, and results never out', () => {
   test('a creation option asking for PRF reaches WebAuthn with the extension', () => {
     const parsed = parseCreationOptions({
       challenge: 'AAAA',
-      rp: { id: 'relik.test', name: 'Relic' },
+      rp: { id: 'relik.test', name: 'Relik' },
       user: { id: 'AAAA', name: 'ada', displayName: 'ada' },
       pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
       extensions: { prf: {} },

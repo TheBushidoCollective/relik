@@ -1309,3 +1309,12 @@ Owner decision, in the owner's words: the requester must always be named, the ow
 - **Unchanged:** the request is a signed `access_request`, and the panel refuses to offer a grant for one that does not verify against the requester's keys. The grant statement still carries `fingerprint_typed`, now filled in by the panel from the computed value, and the service still refuses a grant whose fingerprint is not the grantee's. The activity, grant and key-replacement mails are unchanged. No mail names a relic's title or file.
 - **Costs:** the phone call was an out-of-band check that the key the service holds is the person's. The fingerprint now comes from the same service the key does, so it no longer protects against a service that substitutes a key. The owner reads the requester's address in the mail, and a mailbox that holds that mail learns who asked. The requester's screen no longer tells them to call anyone.
 - **Guard that remains:** the owner's page computes the fingerprint from the identity id and address the signed request verified against, and the service rejects a grant whose fingerprint does not match the grantee identity. A substituted request shows the substitute's own address and fingerprint, which the private-shares path proves in step 6.
+
+## 2026-11-24: The product is spelled Relik wherever a person reads it
+
+Owner decision: use the brand spelling "relik", not "relic", everywhere.
+
+- **Changed:** every string a person reads in the viewer, the server (pages, emails, the policy, problem text), the MCP (tool descriptions and results) and the format package (load copy, errors), plus the PWA manifest, the sandbox title, the icon label, the package and marketplace descriptions, the README files, the skill's body, `PATH.md` and the spec. The word covers the noun too: a relic is now a relik, relics are reliks.
+- **Unchanged, because software depends on the old spelling:** identifiers; package names (`relic-mcp`, `@relic/*`); tool names (`relic_publish`); API paths and cookie, storage and header names; protocol labels such as `relic/fp/v1`; log labels (`relic: ...`); the skill and plugin names. Renaming those would break installed clients and stored data and is a separate decision.
+- **Not rewritten:** the dated plans, the earlier decision entries and the knowledge notes, which are records of what was said then.
+- **Guard:** `packages/relic-viewer/test/brand-spelling.test.ts` parses every source and test file and fails on a string that spells the product `relic` as copy. It was shown failing on a planted violation.

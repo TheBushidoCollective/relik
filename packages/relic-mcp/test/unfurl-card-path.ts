@@ -196,7 +196,7 @@ try {
       body.includes(
         '<meta name="twitter:title" content="quarterly-review.md">'
       ) &&
-      body.includes('<title>quarterly-review.md · Relic</title>'),
+      body.includes('<title>quarterly-review.md · Relik</title>'),
     'the served head does not carry the published title'
   );
   // This assertion is the reverse of its former self: previously, card.v1.png
@@ -209,7 +209,7 @@ try {
     ),
     'the card image is not the fallback card.v1.png path'
   );
-  console.log('CARD_TITLE og:title=quarterly-review.md title=… · Relic');
+  console.log('CARD_TITLE og:title=quarterly-review.md title=… · Relik');
 
   const expectedMarkdownDesc =
     'A Markdown document. It opens in your browser, and only someone holding the whole link, including the part after the #, can read it.';
@@ -246,13 +246,13 @@ try {
   );
   assert.ok(
     declinedBody.includes(
-      '<meta property="og:title" content="A Markdown relic">'
+      '<meta property="og:title" content="A Markdown relik">'
     ) &&
       declinedBody.includes(
-        '<meta name="twitter:title" content="A Markdown relic">'
+        '<meta name="twitter:title" content="A Markdown relik">'
       ) &&
-      declinedBody.includes('<title>A Markdown relic</title>'),
-    'an untitled markdown relic served something other than the class fallback title'
+      declinedBody.includes('<title>A Markdown relik</title>'),
+    'an untitled markdown relik served something other than the class fallback title'
   );
   assert.ok(
     declinedBody.includes(
@@ -261,10 +261,10 @@ try {
       declinedBody.includes(
         `<meta name="twitter:description" content="${expectedMarkdownDesc}">`
       ),
-    'the untitled markdown relic does not carry the markdown class description'
+    'the untitled markdown relik does not carry the markdown class description'
   );
   console.log(
-    `DECLINED relic_id=${declined.relic_id} row_title=absent card=A Markdown relic`
+    `DECLINED relic_id=${declined.relic_id} row_title=absent card=A Markdown relik`
   );
 
   // --- An archive relic identified by content sniffing -------------------
@@ -295,20 +295,20 @@ try {
       archiveBody.includes(
         `<meta name="twitter:description" content="${expectedArchiveDesc}">`
       ),
-    'the archive relic does not carry the archive class download description'
+    'the archive relik does not carry the archive class download description'
   );
   assert.ok(
     archiveBody.includes(
-      '<meta property="og:title" content="An archive relic">'
+      '<meta property="og:title" content="An archive relik">'
     ) &&
       archiveBody.includes(
-        '<meta name="twitter:title" content="An archive relic">'
+        '<meta name="twitter:title" content="An archive relik">'
       ) &&
-      archiveBody.includes('<title>An archive relic</title>'),
-    'the untitled archive relic does not carry the archive fallback title'
+      archiveBody.includes('<title>An archive relik</title>'),
+    'the untitled archive relik does not carry the archive fallback title'
   );
   console.log(
-    'ARCHIVE_CARD class=archive tail=download title=An archive relic'
+    'ARCHIVE_CARD class=archive tail=download title=An archive relik'
   );
 
   // --- A media relic identified by content sniffing ----------------------
@@ -340,17 +340,17 @@ try {
       mediaBody.includes(
         `<meta name="twitter:description" content="${expectedMediaDesc}">`
       ),
-    'the media relic does not carry the media class playback description'
+    'the media relik does not carry the media class playback description'
   );
   assert.ok(
-    mediaBody.includes('<meta property="og:title" content="A media relic">') &&
+    mediaBody.includes('<meta property="og:title" content="A media relik">') &&
       mediaBody.includes(
-        '<meta name="twitter:title" content="A media relic">'
+        '<meta name="twitter:title" content="A media relik">'
       ) &&
-      mediaBody.includes('<title>A media relic</title>'),
-    'the untitled media relic does not carry the media fallback title'
+      mediaBody.includes('<title>A media relik</title>'),
+    'the untitled media relik does not carry the media fallback title'
   );
-  console.log('MEDIA_CARD class=media tail=plays title=A media relic');
+  console.log('MEDIA_CARD class=media tail=plays title=A media relik');
   // --- The one raster on this origin -------------------------------------
   const card = await fetch(`${origin}/assets/card.v1.png`);
   assert.equal(card.status, 200);

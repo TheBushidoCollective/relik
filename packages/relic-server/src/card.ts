@@ -56,21 +56,21 @@ export const CLASS_PHRASES: Record<RendererClass, string> = {
 };
 
 export const CLASS_TITLES: Record<RendererClass, string> = {
-  markdown: 'A Markdown relic',
-  code: 'A code relic',
-  html: 'An HTML relic',
-  jsx: 'A JSX relic',
-  image: 'An image relic',
-  pdf: 'A PDF relic',
-  model: 'A 3D model relic',
-  media: 'A media relic',
-  archive: 'An archive relic',
-  notebook: 'A notebook relic',
-  document: 'A document relic',
-  spreadsheet: 'A spreadsheet relic',
-  binary: 'A binary relic',
-  otio: 'An OpenTimelineIO relic',
-  folder: 'A folder relic',
+  markdown: 'A Markdown relik',
+  code: 'A code relik',
+  html: 'An HTML relik',
+  jsx: 'A JSX relik',
+  image: 'An image relik',
+  pdf: 'A PDF relik',
+  model: 'A 3D model relik',
+  media: 'A media relik',
+  archive: 'An archive relik',
+  notebook: 'A notebook relik',
+  document: 'A document relik',
+  spreadsheet: 'A spreadsheet relik',
+  binary: 'A binary relik',
+  otio: 'An OpenTimelineIO relik',
+  folder: 'A folder relik',
 };
 
 export const BEHAVIOUR_TAILS: Record<ClassBehaviour, string> = {
@@ -81,7 +81,7 @@ export const BEHAVIOUR_TAILS: Record<ClassBehaviour, string> = {
   downloads:
     'It downloads to your device, and only someone holding the whole link, including the part after the #, can open it.',
 };
-export const FALLBACK_TITLE = 'A relic';
+export const FALLBACK_TITLE = 'A relik';
 
 export const CARD_DESCRIPTION =
   'An encrypted file. It opens in your browser, and only someone holding the whole link, including the part after the #, can read it.';
@@ -120,8 +120,8 @@ export function cardCopy(rendererClass: RendererClass | undefined): CardCopy {
  * something this service may describe (plan 4.13).
  */
 export const PRIVATE_CARD: CardCopy = {
-  title: 'Relic',
-  description: 'A private relic. Sign in to open it.',
+  title: 'Relik',
+  description: 'A private relik. Sign in to open it.',
 };
 
 export const COVER_ALT: Readonly<Record<CoverKind, string>> = {

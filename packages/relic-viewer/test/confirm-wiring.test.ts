@@ -13,7 +13,7 @@ function proof() {
 }
 
 describe('confirmation wiring', () => {
-  test('large files are scoped to the signed relic version', () => {
+  test('large files are scoped to the signed relik version', () => {
     const prefs = createConfirmPrefs(undefined);
     prefs.remember(proof(), { kind: 'large-open', relicId: 'r1', version: 2 });
     expect(prefs.has('large-open', 'r1', 2)).toBe(true);

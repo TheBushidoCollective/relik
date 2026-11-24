@@ -208,7 +208,7 @@ describe('cover-raster', () => {
     const validPng = makeValidPng();
     const textChunk = makeChunk(
       'tEXt',
-      new TextEncoder().encode('Author=Relic')
+      new TextEncoder().encode('Author=Relik')
     );
     // Insert tEXt chunk between IHDR and IDAT
     const sigAndIhdr = validPng.subarray(0, 8 + 25);

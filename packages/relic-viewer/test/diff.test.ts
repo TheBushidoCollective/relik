@@ -211,7 +211,7 @@ describe('comparison availability', () => {
     expect(diffModeForViews(docx, viewOf('markdown'))).toBeUndefined();
   });
 
-  test('does not offer history to a version 1 relic', () => {
+  test('does not offer history to a version 1 relik', () => {
     expect(
       comparisonAvailability(ready('code', encoder.encode('one'), 1))
     ).toEqual({
@@ -219,7 +219,7 @@ describe('comparison availability', () => {
     });
   });
 
-  test('offers history to a diffable version 2 or higher relic', () => {
+  test('offers history to a diffable version 2 or higher relik', () => {
     expect(
       comparisonAvailability(ready('code', encoder.encode('two'), 2))
     ).toEqual({
@@ -228,7 +228,7 @@ describe('comparison availability', () => {
     });
   });
 
-  test('states why a download-only relic cannot be compared', () => {
+  test('states why a download-only relik cannot be compared', () => {
     const result = comparisonAvailability(
       ready('download', encoder.encode('zip bytes'))
     );

@@ -287,7 +287,7 @@ describe('presence relay', () => {
     const policy = await (await fetch(`${base}/policy?raw=1`)).text();
     expect(policy).toContain('## Live presence while suggesting');
     expect(policy).toContain(
-      "a key derived from the relic's key (the link for a public relic, the version key you were granted for a private one)"
+      "a key derived from the relik's key (the link for a public relik, the version key you were granted for a private one)"
     );
     expect(policy).toContain("The room's name is derived from that key");
   });

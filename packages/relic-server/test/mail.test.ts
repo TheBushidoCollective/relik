@@ -105,7 +105,7 @@ describe('the quota Resend reports on an accepted send', () => {
 describe('the sign-in mail', () => {
   test('the code and the link are the message, in both parts', () => {
     const mail = signInMail(LINK, '482913');
-    expect(mail.subject).toBe('482913 is your Relic sign-in code');
+    expect(mail.subject).toBe('482913 is your Relik sign-in code');
     expect(mail.text).toContain('482913');
     expect(mail.html).toContain('482913');
     expect(mail.text).toContain(LINK);
@@ -131,7 +131,7 @@ describe('the sign-in mail', () => {
     const requests: unknown[] = [];
     const mailer = resendMailer({
       apiKey: 'key',
-      from: 'Relic <relic@example.com>',
+      from: 'Relik <relic@example.com>',
       fetch: (async (_url, init) => {
         requests.push(init);
         return new Response('{}', { status: 200 });
@@ -154,21 +154,21 @@ describe('the comment notification mail', () => {
       'ada@example.com left a comment on "Q3 Strategy Brief".'
     );
     expect(mail.text).toContain(
-      'Open the link you hold for this relic to read and answer the comment.'
+      'Open the link you hold for this relik to read and answer the comment.'
     );
-    expect(mail.text).toContain('Relic does not store the decryption key');
+    expect(mail.text).toContain('Relik does not store the decryption key');
     expect(mail.html).toContain('ada@example.com');
     expect(mail.html).toContain('<strong>Q3 Strategy Brief</strong>');
-    expect(mail.html).toContain('Relic does not store the decryption key');
+    expect(mail.html).toContain('Relik does not store the decryption key');
   });
 
   test('uses fallback phrasing when title is absent', () => {
     const mail = commentNotificationMail(undefined, 'ada@example.com');
-    expect(mail.subject).toBe('New comment on your relic');
+    expect(mail.subject).toBe('New comment on your relik');
     expect(mail.text).toContain(
-      'ada@example.com left a comment on your relic.'
+      'ada@example.com left a comment on your relik.'
     );
-    expect(mail.html).toContain('your relic');
+    expect(mail.html).toContain('your relik');
   });
 
   test('escapes HTML in title and commenter', () => {
@@ -191,7 +191,7 @@ describe('the comment notification mail', () => {
     expect(mail.html).not.toContain('comment_id');
   });
 
-  test('carries relic link, stop link, and List-Unsubscribe headers when provided', () => {
+  test('carries relik link, stop link, and List-Unsubscribe headers when provided', () => {
     const stopUrl =
       'https://relic.example/api/relics/r1/unsubscribe?addr=h&token=t';
     const mail = commentNotificationMail({
@@ -221,7 +221,7 @@ describe('the reply notification mail', () => {
       'publisher answered your comment on "Q3 Strategy Brief".'
     );
     expect(mail.text).toContain(
-      'Open the link you hold for this relic to read the reply.'
+      'Open the link you hold for this relik to read the reply.'
     );
     expect(mail.html).toContain('publisher');
     expect(mail.html).toContain('<strong>Q3 Strategy Brief</strong>');
@@ -229,11 +229,11 @@ describe('the reply notification mail', () => {
 
   test('uses fallback phrasing when title is absent', () => {
     const mail = replyNotificationMail(undefined, 'bob@example.com');
-    expect(mail.subject).toBe('Your comment on a relic was answered');
+    expect(mail.subject).toBe('Your comment on a relik was answered');
     expect(mail.text).toContain(
-      'bob@example.com answered your comment on a relic.'
+      'bob@example.com answered your comment on a relik.'
     );
-    expect(mail.html).toContain('a relic');
+    expect(mail.html).toContain('a relik');
   });
 
   test('escapes HTML in title and replier', () => {
@@ -255,7 +255,7 @@ describe('the reply notification mail', () => {
     expect(mail.html).not.toContain('comment_id');
   });
 
-  test('carries relic link, stop link, and List-Unsubscribe headers when provided', () => {
+  test('carries relik link, stop link, and List-Unsubscribe headers when provided', () => {
     const stopUrl =
       'https://relic.example/api/relics/r1/unsubscribe?addr=h&token=t';
     const mail = replyNotificationMail({
@@ -288,7 +288,7 @@ describe('the comment notice mail', () => {
       'alice@example.com left a comment on "Quarterly Plan".'
     );
     expect(withTitleCommented.text).toContain(
-      'You are getting this because you commented on this relic.'
+      'You are getting this because you commented on this relik.'
     );
     expect(withTitleCommented.html).toContain(
       '<p>alice@example.com left a comment on "Quarterly Plan".</p>'
@@ -309,12 +309,12 @@ describe('the comment notice mail', () => {
       reason: 'shared',
       sharedBy: 'publisher',
     });
-    expect(untitledPublisher.subject).toBe('New comment on a relic');
+    expect(untitledPublisher.subject).toBe('New comment on a relik');
     expect(untitledPublisher.text).toContain(
-      'The publisher left a comment on a relic.'
+      'The publisher left a comment on a relik.'
     );
     expect(untitledPublisher.text).toContain(
-      'the person who published this relic shared it with you'
+      'the person who published this relik shared it with you'
     );
 
     const sharedReader = commentNoticeMail({
@@ -326,7 +326,7 @@ describe('the comment notice mail', () => {
       sharedBy: 'reader',
     });
     expect(sharedReader.text).toContain(
-      "someone with this relic's link shared it with you"
+      "someone with this relik's link shared it with you"
     );
 
     const ownerReason = commentNoticeMail({
@@ -383,7 +383,7 @@ describe('the change notice mail', () => {
       '"Quarterly Numbers" has a new version: version 2.'
     );
     expect(withTitleCommented.text).toContain(
-      'You are getting this because you commented on this relic.'
+      'You are getting this because you commented on this relik.'
     );
     expect(withTitleCommented.html).toContain(
       '<p>"Quarterly Numbers" has a new version: version 2.</p>'
@@ -399,15 +399,15 @@ describe('the change notice mail', () => {
       stopUrl: 'https://relic.example/api/relics/r2/unsubscribe?addr=b&token=u',
       reason: 'commented',
     });
-    expect(untitledCommented.subject).toBe('New version of a relic');
+    expect(untitledCommented.subject).toBe('New version of a relik');
     expect(untitledCommented.text).toContain(
-      'A relic has a new version: version 3.'
+      'A relik has a new version: version 3.'
     );
     expect(untitledCommented.text).toContain(
-      'You are getting this because you commented on this relic.'
+      'You are getting this because you commented on this relik.'
     );
     expect(untitledCommented.html).toContain(
-      '<p>A relic has a new version: version 3.</p>'
+      '<p>A relik has a new version: version 3.</p>'
     );
 
     const withTitleSharedPublisher = changeNoticeMail({
@@ -419,10 +419,10 @@ describe('the change notice mail', () => {
       sharedBy: 'publisher',
     });
     expect(withTitleSharedPublisher.text).toContain(
-      'You are getting this because the person who published this relic shared it with you.'
+      'You are getting this because the person who published this relik shared it with you.'
     );
     expect(withTitleSharedPublisher.html).toContain(
-      'You are getting this because the person who published this relic shared it with you.'
+      'You are getting this because the person who published this relik shared it with you.'
     );
 
     const withTitleSharedReader = changeNoticeMail({
@@ -434,10 +434,10 @@ describe('the change notice mail', () => {
       sharedBy: 'reader',
     });
     expect(withTitleSharedReader.text).toContain(
-      "You are getting this because someone with this relic's link shared it with you."
+      "You are getting this because someone with this relik's link shared it with you."
     );
     expect(withTitleSharedReader.html).toContain(
-      "You are getting this because someone with this relic's link shared it with you."
+      "You are getting this because someone with this relik's link shared it with you."
     );
     const withTitleOwner = changeNoticeMail({
       title: 'Quarterly Numbers',
@@ -508,19 +508,19 @@ describe('the passkey-added mail', () => {
       passkeys: 1,
     });
     expect(firstMail.subject).toBe(
-      'A passkey was added for your address on Relic'
+      'A passkey was added for your address on Relik'
     );
     expect(firstMail.text).toBe(
       'A passkey was added for ada@example.com on 25 Oct 2026 at 14:03 UTC.\n\n' +
-        'It signs in to Relic as this address without a link, and it confirms decisions. This address has 1 passkey.\n\n' +
+        'It signs in to Relik as this address without a link, and it confirms decisions. This address has 1 passkey.\n\n' +
         'If you added it, you can ignore this message.\n\n' +
-        'If you did not, whoever added it can read this mailbox, or used a browser that had just signed in with a link or code sent here. Relic has no way to remove a passkey.'
+        'If you did not, whoever added it can read this mailbox, or used a browser that had just signed in with a link or code sent here. Relik has no way to remove a passkey.'
     );
     expect(firstMail.html).toBe(
       '<p>A passkey was added for ada@example.com on 25 Oct 2026 at 14:03 UTC.</p>' +
-        '<p>It signs in to Relic as this address without a link, and it confirms decisions. This address has 1 passkey.</p>' +
+        '<p>It signs in to Relik as this address without a link, and it confirms decisions. This address has 1 passkey.</p>' +
         '<p>If you added it, you can ignore this message.</p>' +
-        '<p>If you did not, whoever added it can read this mailbox, or used a browser that had just signed in with a link or code sent here. Relic has no way to remove a passkey.</p>'
+        '<p>If you did not, whoever added it can read this mailbox, or used a browser that had just signed in with a link or code sent here. Relik has no way to remove a passkey.</p>'
     );
 
     const secondMail = passkeyAddedMail({
@@ -530,19 +530,19 @@ describe('the passkey-added mail', () => {
       passkeys: 2,
     });
     expect(secondMail.subject).toBe(
-      'A passkey was added for your address on Relic'
+      'A passkey was added for your address on Relik'
     );
     expect(secondMail.text).toBe(
       'A passkey was added for ada@example.com on 25 Oct 2026 at 14:03 UTC.\n\n' +
-        'It signs in to Relic as this address without a link, and it confirms decisions. A passkey this address already had confirmed it. This address has 2 passkeys.\n\n' +
+        'It signs in to Relik as this address without a link, and it confirms decisions. A passkey this address already had confirmed it. This address has 2 passkeys.\n\n' +
         'If you added it, you can ignore this message.\n\n' +
-        'If you did not, whoever added it could use a passkey this address already had. Relic has no way to remove a passkey.'
+        'If you did not, whoever added it could use a passkey this address already had. Relik has no way to remove a passkey.'
     );
     expect(secondMail.html).toBe(
       '<p>A passkey was added for ada@example.com on 25 Oct 2026 at 14:03 UTC.</p>' +
-        '<p>It signs in to Relic as this address without a link, and it confirms decisions. A passkey this address already had confirmed it. This address has 2 passkeys.</p>' +
+        '<p>It signs in to Relik as this address without a link, and it confirms decisions. A passkey this address already had confirmed it. This address has 2 passkeys.</p>' +
         '<p>If you added it, you can ignore this message.</p>' +
-        '<p>If you did not, whoever added it could use a passkey this address already had. Relic has no way to remove a passkey.</p>'
+        '<p>If you did not, whoever added it could use a passkey this address already had. Relik has no way to remove a passkey.</p>'
     );
   });
 
@@ -608,7 +608,7 @@ describe('sending through Resend', () => {
     const wire = recorder(accepted());
     await resendMailer({
       apiKey: 're_test_key',
-      from: 'Relic <no-reply@relik.link>',
+      from: 'Relik <no-reply@relik.link>',
       fetch: wire.fetch,
     }).send('ada@example.com', LINK, '482913');
 
@@ -625,9 +625,9 @@ describe('sending through Resend', () => {
     expect(headers['content-type']).toBe('application/json');
 
     const body = JSON.parse(String(call.init.body)) as Record<string, unknown>;
-    expect(body['from']).toBe('Relic <no-reply@relik.link>');
+    expect(body['from']).toBe('Relik <no-reply@relik.link>');
     expect(body['to']).toBe('ada@example.com');
-    expect(body['subject']).toBe('482913 is your Relic sign-in code');
+    expect(body['subject']).toBe('482913 is your Relik sign-in code');
     expect(String(body['text'])).toContain(LINK);
     expect(String(body['html'])).toContain('href=');
   });
@@ -689,7 +689,7 @@ describe('sending through Resend', () => {
     const wire = recorder(accepted());
     const mailer = resendMailer({
       apiKey: 're_test_key',
-      from: 'Relic <no-reply@relik.link>',
+      from: 'Relik <no-reply@relik.link>',
       fetch: wire.fetch,
     });
     const notification = commentNotificationMail('Report', 'ada@example.com');
@@ -707,7 +707,7 @@ describe('sending through Resend', () => {
     const wireWithHeaders = recorder(accepted());
     const mailerWithHeaders = resendMailer({
       apiKey: 're_test_key',
-      from: 'Relic <no-reply@relik.link>',
+      from: 'Relik <no-reply@relik.link>',
       fetch: wireWithHeaders.fetch,
     });
     const notice = changeNoticeMail({
@@ -729,7 +729,7 @@ describe('sending through Resend', () => {
     const wireWithoutHeaders = recorder(accepted());
     const mailerWithoutHeaders = resendMailer({
       apiKey: 're_test_key',
-      from: 'Relic <no-reply@relik.link>',
+      from: 'Relik <no-reply@relik.link>',
       fetch: wireWithoutHeaders.fetch,
     });
     await mailerWithoutHeaders.send('user@example.com', LINK, '482913');
@@ -743,7 +743,7 @@ describe('sending through Resend', () => {
     const wire = recorder(accepted());
     const mailer = resendMailer({
       apiKey: 're_test_key',
-      from: 'Relic <no-reply@relik.link>',
+      from: 'Relik <no-reply@relik.link>',
       fetch: wire.fetch,
     });
     const mail1 = commentNotificationMail({
@@ -771,7 +771,7 @@ describe('sending through Resend', () => {
       Record<string, unknown>
     >;
     expect(payload).toHaveLength(2);
-    expect(payload[0]?.['from']).toBe('Relic <no-reply@relik.link>');
+    expect(payload[0]?.['from']).toBe('Relik <no-reply@relik.link>');
     expect(payload[0]?.['to']).toEqual(['user1@example.com']);
     expect(payload[0]?.['subject']).toBe('New comment on "Doc 1"');
     expect(payload[0]?.['headers']).toEqual({
@@ -796,7 +796,7 @@ describe('sending through Resend', () => {
     );
     const mailer = resendMailer({
       apiKey: 're_test_key',
-      from: 'Relic <no-reply@relik.link>',
+      from: 'Relik <no-reply@relik.link>',
       fetch: wire.fetch,
     });
     const mail = commentNotificationMail('Doc', 'ada@example.com');

@@ -147,7 +147,7 @@ describe('fragment shape', () => {
   });
 });
 
-describe('relic url', () => {
+describe('relik url', () => {
   test('puts the id in the path and the key in the fragment', () => {
     const id = generateRelicId();
     const url = new URL(relicUrl('https://relics.example', id, generateKey()));

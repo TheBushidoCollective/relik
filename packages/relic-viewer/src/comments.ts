@@ -189,8 +189,8 @@ export function utf8Bytes(text: string): number {
  */
 export const IDENTITY_DISCLOSURE =
   'Your address is shown with your comment and in emails to people ' +
-  'following the relic, and Relic sees who commented on what. When someone ' +
-  'comments or a new version is published, Relic emails you, with a link ' +
+  'following the relik, and Relik sees who commented on what. When someone ' +
+  'comments or a new version is published, Relik emails you, with a link ' +
   'to stop.';
 
 /** Said at the point of asking for an address, before one is typed. */
@@ -291,7 +291,7 @@ export function commentRefusal(code: string): Refusal {
         code,
         headline: 'Too many comments from here just now',
         detail:
-          'Relic limits how fast comments arrive, per relic and per address, ' +
+          'Relik limits how fast comments arrive, per relik and per address, ' +
           'because an unlimited comment box on a link anybody can hold is an ' +
           'abuse surface. Nothing was lost. Wait a moment and post again.',
         retryable: true,
@@ -340,8 +340,8 @@ export function commentRefusal(code: string): Refusal {
         headline: 'That comment is not yours to change',
         detail:
           'A comment is edited, resolved and removed by whoever wrote it. ' +
-          'The publisher of a relic can resolve anything on it with the ' +
-          'token they published with, and the operator can remove the relic ' +
+          'The publisher of a relik can resolve anything on it with the ' +
+          'token they published with, and the operator can remove the relik ' +
           'entirely. Nothing else moves a comment.',
         retryable: false,
       };
@@ -366,14 +366,14 @@ export function commentRefusal(code: string): Refusal {
         code,
         headline: 'Comments are paused',
         detail:
-          'The operator has stopped writes for now. The relic above is ' +
+          'The operator has stopped writes for now. The relik above is ' +
           'unaffected and still opens.',
         retryable: true,
       };
     case 'relic_removed':
       return {
         code,
-        headline: 'This relic was taken down',
+        headline: 'This relik was taken down',
         detail:
           'Its comments went with it. A takedown covers every version and ' +
           'everything attached to them.',
@@ -383,7 +383,7 @@ export function commentRefusal(code: string): Refusal {
     case 'invalid_relic_id':
       return {
         code,
-        headline: 'This relic does not exist',
+        headline: 'This relik does not exist',
         detail: 'There is nothing here to comment on.',
         retryable: false,
       };
@@ -393,7 +393,7 @@ export function commentRefusal(code: string): Refusal {
         headline: 'Comments could not be reached',
         detail:
           'The request did not complete. That is a network problem rather ' +
-          'than a problem with this relic, and the content above is already ' +
+          'than a problem with this relik, and the content above is already ' +
           'decrypted and unaffected.',
         retryable: true,
       };
@@ -562,7 +562,7 @@ export function keySurvivesNavigation(
 
 /** Copy for the case where it does not. */
 export const KEY_AT_RISK_NOTE =
-  'This browser is not keeping the key for this relic, so following the ' +
+  'This browser is not keeping the key for this relik, so following the ' +
   'link in this tab would lose it. Type the code from the email here ' +
   'instead, or open the link in a new tab and come back to this one, ' +
   'which still holds the key in memory.';
@@ -1015,7 +1015,7 @@ export function resolvedLabel(resolution: Resolution): string {
  * say so where it is used rather than in a document nobody opens.
  */
 export const RESOLUTION_DISCLOSURE =
-  'Resolving is not encrypted. Relic records who settled it, never what it ' +
+  'Resolving is not encrypted. Relik records who settled it, never what it ' +
   'says.';
 
 /**

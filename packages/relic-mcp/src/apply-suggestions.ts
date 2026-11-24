@@ -664,7 +664,7 @@ async function readThread(
   if (newest > local.state.version) {
     throw new ApplyError(
       'local_state_stale',
-      `this machine records version ${local.state.version} of the relic, but its comments reach version ${newest}; the current version's source format is unknown here, so nothing was previewed or written`,
+      `this machine records version ${local.state.version} of the relik, but its comments reach version ${newest}; the current version's source format is unknown here, so nothing was previewed or written`,
       { local_version: local.state.version, thread_version: newest }
     );
   }
@@ -1168,7 +1168,7 @@ async function planSuggestionFile(
   if (folderEntry === undefined && local.state.shape === 'folder')
     throw new ApplyError(
       'suggestion_source_format_unavailable',
-      'this relic was published as a folder; supply the folder path',
+      'this relik was published as a folder; supply the folder path',
       {
         version: local.state.version,
         reason: 'relic_is_folder',
@@ -1192,7 +1192,7 @@ async function planSuggestionFile(
   ) {
     throw new ApplyError(
       'source_identity_mismatch',
-      'the local path is not the source recorded for this relic',
+      'the local path is not the source recorded for this relik',
       {
         source_identity: sourceIdentity,
         recorded_source: recorded?.description,
@@ -1578,7 +1578,7 @@ async function applyFolderSuggestions(
   if (local.state.shape === 'file')
     throw new ApplyError(
       'suggestion_source_format_unavailable',
-      'this relic was published as a file; supply the file path',
+      'this relik was published as a file; supply the file path',
       { version: local.state.version, reason: 'relic_is_file' }
     );
   const identity = await (deps.identifySource ?? resolveSourceIdentity)(root);
@@ -1596,7 +1596,7 @@ async function applyFolderSuggestions(
   ) {
     throw new ApplyError(
       'source_identity_mismatch',
-      'the local path is not the source recorded for this relic',
+      'the local path is not the source recorded for this relik',
       {
         source_identity: sourceIdentity,
         recorded_source: recorded?.description,

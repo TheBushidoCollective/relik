@@ -20,12 +20,12 @@ describe('describeLinkRequest', () => {
       'example.com:8080'
     );
     expect(
-      describeLinkRequest('mailto:press@example.com?subject=Relic%20question')
+      describeLinkRequest('mailto:press@example.com?subject=Relik%20question')
     ).toEqual({
-      href: 'mailto:press@example.com?subject=Relic%20question',
+      href: 'mailto:press@example.com?subject=Relik%20question',
       scheme: 'mailto:',
       host: 'press@example.com',
-      rest: '?subject=Relic%20question',
+      rest: '?subject=Relik%20question',
     });
   });
 

@@ -832,7 +832,7 @@ try {
     `invalid key format extracted from publish, length ${rightKey.length}`
   );
 
-  console.log(`Published live probe relic: id=${relicId}`);
+  console.log(`Published live probe relik: id=${relicId}`);
 
   // Fetch deployed viewer.js to record its sha256 in receipt
   const viewerResp = await fetch(`${serviceOrigin}/assets/viewer.js`);

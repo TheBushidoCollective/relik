@@ -45,8 +45,8 @@ export interface LinkRemember {
 }
 
 const READ_DELAY_STATUS = 'Open link becomes available after a moment.';
-const REMEMBER_LABEL = "Don't ask again for this relic";
-const REMEMBERED_TEXT = 'Links from this relic open without asking.';
+const REMEMBER_LABEL = "Don't ask again for this relik";
+const REMEMBERED_TEXT = 'Links from this relik open without asking.';
 const TURN_BACK_ON = 'Turn back on';
 
 export function createLinkConfirmBar(

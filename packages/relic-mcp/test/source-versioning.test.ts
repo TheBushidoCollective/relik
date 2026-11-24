@@ -129,7 +129,7 @@ async function makeRepository(
   const second = join(scratch, 'worktree-two');
   await mkdir(join(repository, 'docs'), { recursive: true });
   await git(repository, 'init', '-b', 'main');
-  await git(repository, 'config', 'user.name', 'Relic Test');
+  await git(repository, 'config', 'user.name', 'Relik Test');
   await git(repository, 'config', 'user.email', 'relic@example.invalid');
   await writeFile(join(repository, 'docs', 'report.md'), '# version one\n');
   await writeFile(join(repository, 'docs', 'other.md'), '# another file\n');
@@ -297,7 +297,7 @@ describe('prior publish steering', () => {
     );
   });
 
-  test('force_new publishes a separate relic and keeps both entries', async () => {
+  test('force_new publishes a separate relik and keeps both entries', async () => {
     const path = join(scratch, 'report.md');
     await writeFile(path, '# first\n');
     const first = await publish({ path }, deps);

@@ -37,18 +37,18 @@ export const SHARE_MAX_PER_CALL = 20;
 
 /** Said at the point of sharing, before an address is typed. */
 export const SHARE_FACT_SENDING =
-  'Relic never sends this email. You send it from your own mail, because ' +
+  'Relik never sends this email. You send it from your own mail, because ' +
   'the link in it carries the key.';
 
 /** The other half of the disclosure: what the service keeps, and why. */
 export const SHARE_FACT_STORING =
-  'Relic stores the addresses you add in the clear, linked to this relic, ' +
+  'Relik stores the addresses you add in the clear, linked to this relik, ' +
   'to email them when someone comments or a new version is published. Each of those emails has ' +
   'a link to stop them.';
 
 /** Why sharing asks for the comment sign-in, said where it asks. */
 export const SHARE_SIGN_IN_REASON =
-  'Sharing asks for the same verified address as commenting, so Relic can ' +
+  'Sharing asks for the same verified address as commenting, so Relik can ' +
   'limit how many people one reader adds. Your address is not stored with ' +
   'the ones you add.';
 
@@ -65,7 +65,7 @@ export const SHARE_PROVING_NOTE =
 /** Said beside the composed email, which is the one place the key travels. */
 export const SHARE_KEY_WARNING =
   'The link in this message carries the key. Anyone who gets it can read ' +
-  'the relic, so send it only to the people above.';
+  'the relik, so send it only to the people above.';
 
 /** The toast after a successful copy, for the same reason Copy link has one. */
 export const SHARE_COPIED_NOTE = 'Message copied. It contains the key.';
@@ -187,21 +187,21 @@ export function shareRefusal(
     case 'share_unavailable':
       return {
         code,
-        headline: 'Sharing is not turned on for this relic',
+        headline: 'Sharing is not turned on for this relik',
         detail:
-          'This relic was published before sharing existed. Its publisher ' +
+          'This relik was published before sharing existed. Its publisher ' +
           'can republish it to turn sharing on. Until then you can copy the ' +
-          'link and send it yourself, but Relic will not email those people ' +
+          'link and send it yourself, but Relik will not email those people ' +
           'about new comments or versions. Nothing was added.',
         retryable: false,
       };
     case 'invalid_share_proof':
       return {
         code,
-        headline: 'Relic could not confirm this link\u2019s key',
+        headline: 'Relik could not confirm this link\u2019s key',
         detail:
           'Sharing sends a value derived from the key in your link, and it ' +
-          'does not match the one this relic\u2019s publisher registered. ' +
+          'does not match the one this relik\u2019s publisher registered. ' +
           'Nothing was added. Republishing registers it again, so this one is ' +
           'for the publisher.',
         retryable: false,
@@ -211,7 +211,7 @@ export function shareRefusal(
         code,
         headline: 'Too many shares from here just now',
         detail:
-          'Relic limits how many addresses one reader and one network can ' +
+          'Relik limits how many addresses one reader and one network can ' +
           'add in an hour, because each one joins a mailing list. Nothing ' +
           `was added. Try again in about ${aboutMinutes(extensions.retry_after_seconds)}.`,
         // The wait is the answer. A Try again beside it would only be
@@ -222,22 +222,22 @@ export function shareRefusal(
       const limit = extensions.share_limit;
       const count = extensions.shared_count;
       let detail =
-        'It holds as many shared addresses as Relic allows. Nothing was ' +
+        'It holds as many shared addresses as Relik allows. Nothing was ' +
         'added. The people on the list still get emails about new comments and versions.';
       if (limit !== undefined && count !== undefined) {
         detail =
           count >= limit
-            ? `It already holds all ${limit} shared addresses Relic allows. ` +
+            ? `It already holds all ${limit} shared addresses Relik allows. ` +
               'Nothing was added. The people on the list still get emails ' +
               'about new comments and versions, and you can still copy the link and send it yourself.'
-            : `It holds ${count} of the ${limit} shared addresses Relic ` +
+            : `It holds ${count} of the ${limit} shared addresses Relik ` +
               'allows, and these would take it past that. Nothing was added. ' +
               'Remove some and try again; the people already on the list ' +
               'still get emails about new comments and versions.';
       }
       return {
         code,
-        headline: 'This relic\u2019s share list is full',
+        headline: 'This relik\u2019s share list is full',
         detail,
         retryable: false,
       };
@@ -245,7 +245,7 @@ export function shareRefusal(
     case 'invalid_share':
       return {
         code,
-        headline: 'Relic would not take that list',
+        headline: 'Relik would not take that list',
         detail:
           'Each entry has to be one email address, and one share takes at ' +
           `most ${extensions.share_max_per_call ?? SHARE_MAX_PER_CALL}. ` +
@@ -260,32 +260,32 @@ export function shareRefusal(
         code,
         headline: 'Sharing is paused',
         detail:
-          'The operator has stopped writes for now. The relic is unaffected ' +
+          'The operator has stopped writes for now. The relik is unaffected ' +
           'and still opens. Nothing was added.',
         retryable: true,
       };
     case 'relic_expired':
       return {
         code,
-        headline: 'This relic has expired',
+        headline: 'This relik has expired',
         detail:
-          'Its lifetime ran out, so Relic sends no more emails about ' +
+          'Its lifetime ran out, so Relik sends no more emails about ' +
           'it and takes no new addresses.',
         retryable: false,
       };
     case 'download_cap_exhausted':
       return {
         code,
-        headline: 'This relic has been opened as often as it allows',
+        headline: 'This relik has been opened as often as it allows',
         detail:
-          'It reached its download cap, so Relic sends no more emails ' +
+          'It reached its download cap, so Relik sends no more emails ' +
           'about it and takes no new addresses.',
         retryable: false,
       };
     case 'relic_removed':
       return {
         code,
-        headline: 'This relic was taken down',
+        headline: 'This relik was taken down',
         detail:
           'Its comments and shared addresses went with it. There is nothing ' +
           'left to share.',
@@ -295,14 +295,14 @@ export function shareRefusal(
     case 'invalid_relic_id':
       return {
         code,
-        headline: 'This relic does not exist',
+        headline: 'This relik does not exist',
         detail: 'There is nothing here to share.',
         retryable: false,
       };
     case 'http_404':
       return {
         code,
-        headline: 'This Relic service cannot take shares yet',
+        headline: 'This Relik service cannot take shares yet',
         detail:
           'The page is newer than the service answering it. Nothing was added.',
         retryable: false,
@@ -322,13 +322,13 @@ export function shareRefusal(
         headline: 'Sharing could not be reached',
         detail:
           'The request did not complete. That is a network problem rather ' +
-          `than a problem with this relic. ${SAFE_RETRY}`,
+          `than a problem with this relik. ${SAFE_RETRY}`,
         retryable: true,
       };
     case 'malformed_share':
       return {
         code,
-        headline: 'Relic\u2019s answer could not be read',
+        headline: 'Relik\u2019s answer could not be read',
         detail: `The addresses may have been added. ${SAFE_RETRY}`,
         retryable: true,
       };
@@ -526,9 +526,9 @@ export async function requestShare(
 export function sharedSummary(shared: Shared): string {
   const already = Math.max(0, shared.emails.length - shared.added);
   return (
-    `Added to this relic\u2019s emails about new comments and versions: ${shared.added} new, ` +
+    `Added to this relik\u2019s emails about new comments and versions: ${shared.added} new, ` +
     `${already} already there. Its list holds ${shared.sharedCount} of ` +
-    `${shared.shareLimit}. Relic has emailed nobody.`
+    `${shared.shareLimit}. Relik has emailed nobody.`
   );
 }
 

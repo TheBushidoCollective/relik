@@ -280,7 +280,7 @@ async function callTool(
 }
 
 describe('relic_list enumerates what nothing else could', () => {
-  test('lists every relic in a state file written by an older client', async () => {
+  test('lists every relik in a state file written by an older client', async () => {
     // The gap this closes: entries with no filename, no timestamp, and no
     // source are invisible to relic_lookup_source, which is the only other
     // way to find a relic id.
@@ -313,7 +313,7 @@ describe('relic_list enumerates what nothing else could', () => {
     }
   });
 
-  test('recovers the filename by decrypting a relic with no recorded source', async () => {
+  test('recovers the filename by decrypting a relik with no recorded source', async () => {
     const seeded = await seedLegacyRelic({
       filename: 'quarterly-review.md',
       body: '# quarterly review\n',
@@ -352,7 +352,7 @@ describe('relic_list enumerates what nothing else could', () => {
     expect(second.relics[0]?.status_basis).toBe('record');
   });
 
-  test('reports a removed relic as removed rather than dropping it', async () => {
+  test('reports a removed relik as removed rather than dropping it', async () => {
     const alive = await seedLegacyRelic({
       filename: 'alive.md',
       body: '# alive\n',
@@ -390,7 +390,7 @@ describe('relic_list enumerates what nothing else could', () => {
     ).toBe('reachable');
   });
 
-  test('reports an expired relic as expired rather than dropping it', async () => {
+  test('reports an expired relik as expired rather than dropping it', async () => {
     const seeded = await seedLegacyRelic({
       filename: 'ephemeral.md',
       body: '# ephemeral\n',
@@ -424,7 +424,7 @@ describe('relic_list enumerates what nothing else could', () => {
     expect(result.relics[0]?.expires_at).not.toBeNull();
   });
 
-  test('verify asks the service about a relic whose name is already known', async () => {
+  test('verify asks the service about a relik whose name is already known', async () => {
     await publishFile('known.md', '# known\n');
 
     const cheap = await listRelics({}, deps);
@@ -441,7 +441,7 @@ describe('relic_list enumerates what nothing else could', () => {
     expect(verified.relics[0]?.filename_basis).toBe('recorded');
   });
 
-  test('refresh re-reads the name from the relic itself', async () => {
+  test('refresh re-reads the name from the relik itself', async () => {
     const seeded = await seedLegacyRelic({
       filename: 'original.md',
       body: '# original\n',
@@ -475,7 +475,7 @@ describe('relic_list enumerates what nothing else could', () => {
     expect(result.relics[0]?.filename).toBe('kept.md');
   });
 
-  test('a service outage lists every relic with a reason, never an empty list', async () => {
+  test('a service outage lists every relik with a reason, never an empty list', async () => {
     await seedLegacyRelic({ filename: 'one.md', body: '# one\n' });
     await seedLegacyRelic({ filename: 'two.md', body: '# two\n' });
     await seedLegacyRelic({ filename: 'three.md', body: '# three\n' });
@@ -500,7 +500,7 @@ describe('relic_list enumerates what nothing else could', () => {
       expect(row.status_detail).toContain('could not be reached');
       // The one sentence that stops an outage reading as a graveyard.
       expect(row.status_detail).toContain(
-        'says nothing about whether the relic is still there'
+        'says nothing about whether the relik is still there'
       );
       expect(row.filename).toBeNull();
       expect(row.filename_unrecovered_reason).toContain('would not serve it');
@@ -509,7 +509,7 @@ describe('relic_list enumerates what nothing else could', () => {
     }
   });
 
-  test('a relic whose bytes are gone is not reported as reachable', async () => {
+  test('a relik whose bytes are gone is not reported as reachable', async () => {
     const seeded = await seedLegacyRelic({
       filename: 'orphaned.md',
       body: '# orphaned\n',
@@ -610,7 +610,7 @@ describe('relic_show reads back what a link holds', () => {
     });
   });
 
-  test('reads back a relic whose source was never recorded', async () => {
+  test('reads back a relik whose source was never recorded', async () => {
     const seeded = await seedLegacyRelic({
       filename: 'legacy.md',
       body: '# what this link holds\n',
@@ -669,7 +669,7 @@ describe('relic_show reads back what a link holds', () => {
     expect(shown.mimetype).toBe('image/png');
   });
 
-  test('a removed relic answers with the takedown, not a decrypt failure', async () => {
+  test('a removed relik answers with the takedown, not a decrypt failure', async () => {
     const seeded = await seedLegacyRelic({
       filename: 'gone.md',
       body: '# gone\n',
@@ -698,7 +698,7 @@ describe('relic_show reads back what a link holds', () => {
     expect(shown.content_omitted_reason).toContain('would not serve it');
   });
 
-  test('refuses a relic this machine never published, without a round trip', async () => {
+  test('refuses a relik this machine never published, without a round trip', async () => {
     const elsewhere = generateRelicId();
     let calls = 0;
     deps = {

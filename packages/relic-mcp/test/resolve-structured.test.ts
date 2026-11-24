@@ -672,7 +672,7 @@ describe('versions', () => {
     const load = async () =>
       ({
         ok: false,
-        error: 'Relic was not found or has expired on the service.',
+        error: 'Relik was not found or has expired on the service.',
       }) as const;
     const resolved = await resolveStructuredComment(
       commentOn(cell(2, 1), 7),
@@ -683,7 +683,7 @@ describe('versions', () => {
       kind: 'cell',
       status: 'unresolvable',
       explanation:
-        'The cell is not found in this version: Relic was not found or has expired on the service.',
+        'The cell is not found in this version: Relik was not found or has expired on the service.',
     });
   });
 

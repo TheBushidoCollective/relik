@@ -29,7 +29,7 @@ describe('authoring discoverability and honesty per artifact class', () => {
   beforeEach(installDom);
   afterEach(clearDom);
 
-  test('markdown relic offers text quote affordance and point tool', async () => {
+  test('markdown relik offers text quote affordance and point tool', async () => {
     const mounted = await mount({
       filename: 'doc.md',
       declaredMimetype: 'text/markdown',
@@ -49,7 +49,7 @@ describe('authoring discoverability and honesty per artifact class', () => {
     expect(withClass(mounted.thread, 'mark-region')).toHaveLength(0);
   });
 
-  test('image relic offers region tool and no text selection hint', async () => {
+  test('image relik offers region tool and no text selection hint', async () => {
     const mounted = await mount({
       filename: 'photo.png',
       declaredMimetype: 'image/png',
@@ -65,7 +65,7 @@ describe('authoring discoverability and honesty per artifact class', () => {
     expect(textOf(modeBtn)).toBe('Mark a region or point');
   });
 
-  test('audio relic offers moment comment and neither point nor text hint', async () => {
+  test('audio relik offers moment comment and neither point nor text hint', async () => {
     const mounted = await mount({
       filename: 'recording.mp3',
       declaredMimetype: 'audio/mpeg',
@@ -83,7 +83,7 @@ describe('authoring discoverability and honesty per artifact class', () => {
     expect(textOf(timeBtn)).toBe('Comment on this moment');
   });
 
-  test('video relic offers frame comment and no text hint', async () => {
+  test('video relik offers frame comment and no text hint', async () => {
     const mounted = await mount({
       filename: 'movie.mp4',
       declaredMimetype: 'video/mp4',

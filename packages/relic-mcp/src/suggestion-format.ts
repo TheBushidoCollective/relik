@@ -91,7 +91,7 @@ function isVersionFormat(value: unknown): value is VersionFormat {
 
 function assertVersion(version: number): void {
   if (!Number.isSafeInteger(version) || version < 1) {
-    throw new Error('Invalid relic version.');
+    throw new Error('Invalid relik version.');
   }
 }
 
@@ -171,7 +171,7 @@ function derivedKey(
   version: number,
   purpose: 'encryption' | 'entry-hmac'
 ): Buffer {
-  if (key.length !== KEY_BYTES) throw new Error('Invalid relic content key.');
+  if (key.length !== KEY_BYTES) throw new Error('Invalid relik content key.');
   const { aad } = context(relicId, version);
   return Buffer.from(
     hkdfSync('sha256', key, aad, `relic-suggestion-formats:${purpose}:v1`, 32)
@@ -192,7 +192,7 @@ export function buildCachedFormat(
   if (!isVersionFormat(format)) throw new Error('Invalid version format.');
   // Validate the binding even for file versions, which have no entry digests.
   context(relicId, version);
-  if (key.length !== KEY_BYTES) throw new Error('Invalid relic content key.');
+  if (key.length !== KEY_BYTES) throw new Error('Invalid relik content key.');
   if (format.shape === 'file') {
     return { shape: 'file', extension: format.extension };
   }

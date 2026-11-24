@@ -354,7 +354,7 @@ async function awaitStored(relicId: string, count: number): Promise<void> {
     await Bun.sleep(50);
   }
   throw new Error(
-    `relic ${relicId} stores ${(await store.listComments(relicId)).length} comments, expected ${count}`
+    `relik ${relicId} stores ${(await store.listComments(relicId)).length} comments, expected ${count}`
   );
 }
 
@@ -1324,7 +1324,7 @@ await stage('old-reader', async () => {
   // publish token the way the MCP posts.
   const csv = await publish('legacy.csv', CSV_TEXT);
   const state = await loadPublishState(csv.relicId);
-  assert.ok(state, 'the publish state holds the relic');
+  assert.ok(state, 'the publish state holds the relik');
   const key = await deriveCommentKey(decodeKey(state.key));
   // The format writer refuses an anchor it would read as unsupported, which is the
   // right rule for writers. This seal skips that guard on purpose, to play the

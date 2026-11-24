@@ -183,7 +183,7 @@ describe('createContentIndex', () => {
     expect(text).not.toContain('<h1>');
   });
 
-  test('oversized, non-text and keyless relics are skipped, not failed', async () => {
+  test('oversized, non-text and keyless reliks are skipped, not failed', async () => {
     const big = await seed(
       'big.md',
       'text/markdown',
@@ -209,7 +209,7 @@ describe('createContentIndex', () => {
     expect(index.text(big.relicId)).toBeUndefined();
   });
 
-  test('a stale key marks the relic failed and leaves the others searchable', async () => {
+  test('a stale key marks the relik failed and leaves the others searchable', async () => {
     const good = await seed(
       'a.md',
       'text/markdown',
@@ -248,7 +248,7 @@ describe('createContentIndex', () => {
     expect(remembered).toEqual([]);
   });
 
-  test('a second ensure does not read a relic twice', async () => {
+  test('a second ensure does not read a relik twice', async () => {
     const md = await seed('d.md', 'text/markdown', enc.encode('once only'));
     const calls: string[] = [];
     const deps = depsFor([md]);

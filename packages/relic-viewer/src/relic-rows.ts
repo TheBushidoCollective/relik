@@ -75,7 +75,7 @@ export function dashboardPreview(renderer: string | undefined): {
     case 'download':
       return { kind: 'file', label: 'File' };
     default:
-      return { kind: 'relic', label: 'Relic' };
+      return { kind: 'relic', label: 'Relik' };
   }
 }
 

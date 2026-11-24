@@ -173,7 +173,7 @@ await Bun.write(
       $schema: 'https://anthropic.com/claude-code/marketplace.schema.json',
       name: 'relic',
       description:
-        'Relic: zero-knowledge publishing for agent output. Turns a local ' +
+        'Relik: zero-knowledge publishing for agent output. Turns a local ' +
         'file into a shareable link without handing the file to anybody.',
       owner: author,
       plugins: [

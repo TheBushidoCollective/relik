@@ -110,14 +110,14 @@ describe('private-share routes refuse callers without a session', () => {
     expect((await body(response))['code']).toBe('sign_in_required');
   });
 
-  test('the access view of a private relic needs a signed-in session', async () => {
+  test('the access view of a private relik needs a signed-in session', async () => {
     await app.store.putRelic(privateRelic({ id: RELIC_ID }));
     const response = await app.fetch(req(`/api/relics/${RELIC_ID}/access`));
     expect(response.status).toBe(401);
     expect((await body(response))['code']).toBe('sign_in_required');
   });
 
-  test('a private relic delivers no key and no mint to an anonymous caller', async () => {
+  test('a private relik delivers no key and no mint to an anonymous caller', async () => {
     await app.store.putRelic(privateRelic({ id: RELIC_ID }));
     const mint = await app.fetch(req(`/api/relics/${RELIC_ID}/mint`, json({})));
     expect(mint.status).toBe(403);

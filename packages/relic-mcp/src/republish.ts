@@ -173,7 +173,7 @@ export async function republish(
   if (!isValidRelicId(input.relic_id)) {
     throw new PublishError(
       'no_local_publish_state',
-      `"${input.relic_id}" is not a relic id. Republish takes the ` +
+      `"${input.relic_id}" is not a relik id. Republish takes the ` +
         '26-character id the original publish returned.'
     );
   }
@@ -184,11 +184,11 @@ export async function republish(
     if (loaded === undefined) {
       throw new PublishError(
         'no_local_publish_state',
-        `relic ${input.relic_id} was published from another machine and ` +
+        `relik ${input.relic_id} was published from another machine and ` +
           'cannot be republished here. The key and the publish token live ' +
           'only on the machine that made the first publish, and neither can ' +
           'be reconstructed from the link or from the service. Publish the ' +
-          'content as a new relic instead.'
+          'content as a new relik instead.'
       );
     }
     state = loaded;
@@ -335,10 +335,10 @@ export async function republish(
       if (!previous) {
         throw new PublishError(
           'duplicate_version',
-          `version ${state.version} of relic ${input.relic_id} already holds ` +
+          `version ${state.version} of relik ${input.relic_id} already holds ` +
             'exactly this content, under this name and title, so a new version ' +
             'would show a reader nothing they are not already reading at the ' +
-            'same link. Change the file, or leave the relic where it is.',
+            'same link. Change the file, or leave the relik where it is.',
           {
             relic_id: input.relic_id,
             version: state.version,
@@ -351,10 +351,10 @@ export async function republish(
       if (previous) {
         throw new PublishError(
           'duplicate_version',
-          `version ${state.version} of relic ${input.relic_id} already holds ` +
+          `version ${state.version} of relik ${input.relic_id} already holds ` +
             'exactly this content, under this name and title, so a new version ' +
             'would show a reader nothing they are not already reading at the ' +
-            'same link. Change the file, or leave the relic where it is.',
+            'same link. Change the file, or leave the relik where it is.',
           {
             relic_id: input.relic_id,
             version: state.version,
@@ -375,11 +375,11 @@ export async function republish(
       } else {
         throw new PublishError(
           'duplicate_version',
-          `version ${state.version} of relic ${input.relic_id} already holds ` +
+          `version ${state.version} of relik ${input.relic_id} already holds ` +
             'exactly this content, under this name and title, so a new version ' +
             'would show a reader nothing they are not already reading at the ' +
             `same link, and no cover could be rendered: ${outcome.detail}. ` +
-            'Change the file, or leave the relic where it is.',
+            'Change the file, or leave the relik where it is.',
           {
             relic_id: input.relic_id,
             version: state.version,
@@ -466,7 +466,7 @@ export async function republish(
       if (!match) {
         throw new PublishError(
           'unknown_comment_id',
-          `comment ${entry.comment_id} does not exist on relic ${input.relic_id}. The comment ids can only come from having read the relic's comments.`
+          `comment ${entry.comment_id} does not exist on relik ${input.relic_id}. The comment ids can only come from having read the relik's comments.`
         );
       }
       if (!match.readable) {
@@ -706,7 +706,7 @@ export async function republish(
           `Version ${version} is live, but this machine could not record its encrypted folder format cache: ` +
           `${reason.replace(/[.!?]+$/, '')}. ` +
           `Applying a suggestion made on version ${version} is refused while the cache cannot be verified or recorded. ` +
-          "If the cache is absent, recovering its file formats spends one of the relic's downloads.",
+          "If the cache is absent, recovering its file formats spends one of the relik's downloads.",
       });
     }
   }

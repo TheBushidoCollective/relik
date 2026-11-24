@@ -266,8 +266,8 @@ describe('relic_read_decisions parameter validation', () => {
   );
 });
 
-describe('foreign relic and machine boundary', () => {
-  test('relic not published by this machine returns no_local_publish_state', async () => {
+describe('foreign relik and machine boundary', () => {
+  test('relik not published by this machine returns no_local_publish_state', async () => {
     const res = await handleMessage(
       {
         jsonrpc: '2.0',

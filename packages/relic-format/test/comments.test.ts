@@ -135,7 +135,7 @@ describe('the comment key', () => {
     // Which is what stops a link holder for one relic reading another's
     // comments.
     const sealed = await encryptComment(await deriveCommentKey(one), {
-      body: 'for this relic only',
+      body: 'for this relik only',
       display_name: null,
     });
     await expect(
@@ -440,7 +440,7 @@ describe('strict parsing', () => {
     });
 
     const freeform = await encryptComment(key, {
-      body: 'about the relic',
+      body: 'about the relik',
       display_name: null,
     });
     const opened = await decryptComment(key, freeform);

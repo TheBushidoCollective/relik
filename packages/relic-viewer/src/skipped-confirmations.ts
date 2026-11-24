@@ -130,13 +130,13 @@ export function installSkippedConfirmations(
         paragraph(
           'skipped-scope',
           pref.version === undefined
-            ? 'This relic, every version'
-            : `This relic and this version (version ${pref.version})`
+            ? 'This relik, every version'
+            : `This relik and this version (version ${pref.version})`
         )
       );
       const description =
         pref.kind === 'link'
-          ? 'Links you click in the relic open in a new tab without the bar.'
+          ? 'Links you click in the relik open in a new tab without the bar.'
           : pref.kind === 'large-open'
             ? pref.version === version
               ? `This ${sizeLabel} file opens without asking first.`
@@ -190,7 +190,7 @@ export function installSkippedConfirmations(
     body.className = 'share-body skipped-body';
     intro = paragraph(
       'skipped-intro',
-      'On this relic, the viewer no longer asks before these.'
+      'On this relik, the viewer no longer asks before these.'
     );
     list = document.createElement('ul');
     list.className = 'skipped-list';

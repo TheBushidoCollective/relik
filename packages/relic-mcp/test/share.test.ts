@@ -225,7 +225,7 @@ async function callTool(
 }
 
 describe('relic_share tool and shareRelic', () => {
-  test('refuses a share URL, non-id, and a relic published elsewhere before any request', async () => {
+  test('refuses a share URL, non-id, and a relik published elsewhere before any request', async () => {
     const relicId = await publishFixture();
     const state = await loadPublishState(relicId);
     if (!state) throw new Error('State missing');
@@ -367,14 +367,14 @@ describe('relic_share tool and shareRelic', () => {
     ]);
     expect(structured.email.subject).toBe('Shared with you: Test Document');
     expect(structured.email.text).toContain(
-      `I've shared "Test Document" with you on Relic. Open it here:`
+      `I've shared "Test Document" with you on Relik. Open it here:`
     );
     expect(structured.email.text).toContain(expectedUrl);
     expect(structured.email.text).toContain(
       'When someone comments or I publish a new version'
     );
     expect(structured.email.text).toContain(
-      'Relic keeps your address for that.'
+      'Relik keeps your address for that.'
     );
   });
 
@@ -423,7 +423,7 @@ describe('relic_share tool and shareRelic', () => {
     const limitText = limitRes.result?.content?.[0]?.text ?? '';
     expect(limitText).toContain('share_limit_reached:');
     expect(limitText).toContain(
-      'That relic already has the most shared addresses the service allows'
+      'That relik already has the most shared addresses the service allows'
     );
 
     // invalid_share
@@ -480,7 +480,7 @@ describe('relic_share tool and shareRelic', () => {
     const text = res.result?.content?.[0]?.text ?? '';
     expect(text).toContain('app_response_unusable');
     expect(text).toContain(
-      'This Relic service does not support relic_share yet.'
+      'This Relik service does not support relic_share yet.'
     );
   });
 });
@@ -505,7 +505,7 @@ describe('republish notify parameter and share_verifier', () => {
     expect(defaultStruct.notify).toBe(true);
     const defaultText = defaultRes.result?.content?.[0]?.text ?? '';
     expect(defaultText).toContain(
-      'Relic sends a change notice for version 2 to each address that commented on this relic or was added with relic_share'
+      'Relik sends a change notice for version 2 to each address that commented on this relik or was added with relic_share'
     );
     // notify: false sent on wire
     await writeFile(filePath, '# Version 3 content\n');

@@ -365,7 +365,7 @@ export async function markdownToDocx(
 
   const document = new Document({
     title: xmlSafe(title),
-    creator: 'Relic',
+    creator: 'Relik',
     styles: {
       default: {
         document: {

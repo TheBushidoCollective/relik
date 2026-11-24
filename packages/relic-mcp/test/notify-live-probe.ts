@@ -130,7 +130,7 @@ async function probeRelicId(): Promise<string> {
   assert.equal(
     ids.length,
     1,
-    `expected exactly one relic in ${statePath}; set RELIC_PUBLISH_STATE to the send phase's state file`
+    `expected exactly one relik in ${statePath}; set RELIC_PUBLISH_STATE to the send phase's state file`
   );
   return ids[0] as string;
 }
@@ -219,7 +219,7 @@ try {
       );
     } else {
       console.log(
-        'CLEANUP_NOTE: Operator token not provided; relic and share records will expire automatically.'
+        'CLEANUP_NOTE: Operator token not provided; relik and share records will expire automatically.'
       );
     }
   }

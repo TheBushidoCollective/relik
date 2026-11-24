@@ -47,7 +47,7 @@ function row(overrides: Partial<RelicRow> = {}): RelicRow {
 }
 
 describe('gcsStore', () => {
-  test('a relic survives being written and read back', async () => {
+  test('a relik survives being written and read back', async () => {
     const store = storeOn(fakeGcs());
     await store.putRelic(row());
 
@@ -56,7 +56,7 @@ describe('gcsStore', () => {
     expect(found?.rendererClass).toBe('html');
   });
 
-  test('a relic title survives being written and read back', async () => {
+  test('a relik title survives being written and read back', async () => {
     const store = storeOn(fakeGcs());
     await store.putRelic(row({ title: 'GCS Title' }));
 
@@ -135,7 +135,7 @@ describe('gcsStore', () => {
   });
 
   // The whole point of the change: a second reader is a different instance.
-  test('a second store over the same bucket sees the relic', async () => {
+  test('a second store over the same bucket sees the relik', async () => {
     const gcs = fakeGcs();
     await storeOn(gcs).putRelic(row());
 
@@ -143,7 +143,7 @@ describe('gcsStore', () => {
     expect(await other.getRelic('gdk6rpv49hftg5216ev7dejesc')).toBeDefined();
   });
 
-  test('an unknown relic is undefined, not an error', async () => {
+  test('an unknown relik is undefined, not an error', async () => {
     const store = storeOn(fakeGcs());
     expect(await store.getRelic('nope')).toBeUndefined();
   });
@@ -198,13 +198,13 @@ describe('gcsStore', () => {
     ).rejects.toThrow(/compare-and-swap/);
   });
 
-  test('minting a relic that is gone does not invent one', async () => {
+  test('minting a relik that is gone does not invent one', async () => {
     const store = storeOn(fakeGcs());
     expect(await store.consumeMint('missing')).toBe(0);
     expect(await store.getRelic('missing')).toBeUndefined();
   });
 
-  test('a tombstone outlives the relic it replaces', async () => {
+  test('a tombstone outlives the relik it replaces', async () => {
     const store = storeOn(fakeGcs());
     await store.putTombstone({
       id: 'gdk6rpv49hftg5216ev7dejesc',
@@ -268,7 +268,7 @@ describe('gcsStore', () => {
     ).toBeUndefined();
   });
 
-  test('dedup is per ip, not per relic', async () => {
+  test('dedup is per ip, not per relik', async () => {
     const store = storeOn(fakeGcs());
     await store.rememberMint('relic', '203.0.113.7', {
       url: 'https://signed',
@@ -385,7 +385,7 @@ describe('gcsStore', () => {
     expect(await store.listComments('other')).toEqual([]);
   });
 
-  test('deleting one comment leaves the rest, and deleting the relic takes all of them', async () => {
+  test('deleting one comment leaves the rest, and deleting the relik takes all of them', async () => {
     const store = storeOn(fakeGcs());
     await store.putComment({
       id: 'one',
@@ -411,7 +411,7 @@ describe('gcsStore', () => {
     expect(await store.listComments('relic')).toEqual([]);
   });
 
-  test('deleting parents or intermediate replies leaves descendants and other relics untouched', async () => {
+  test('deleting parents or intermediate replies leaves descendants and other reliks untouched', async () => {
     const store = storeOn(fakeGcs());
     const rows = [
       {
@@ -598,7 +598,7 @@ describe('gcsStore', () => {
     expect(legacy?.via).toBeUndefined();
   });
 
-  test('listCommentedRelics returns relics an author commented on, ordered by most recent engagement first', async () => {
+  test('listCommentedRelics returns reliks an author commented on, ordered by most recent engagement first', async () => {
     const store = storeOn(fakeGcs());
     await store.putComment({
       id: 'c1',
@@ -1197,7 +1197,7 @@ describe('gcsStore', () => {
       expect(storedSecret?.generation).toBe(1);
     });
 
-    test('legacy relics backfill commenter index once and write completion marker', async () => {
+    test('legacy reliks backfill commenter index once and write completion marker', async () => {
       const gcs = fakeGcs();
       const store = storeOn(gcs);
 
@@ -1937,7 +1937,7 @@ describe('gcsStore private-share objects', () => {
     expect(body['relic_expires_at']).toBeNull();
   });
 
-  test("a private relic's objects carry its expiry as customTime, so the lifecycle rule can erase them", async () => {
+  test("a private relik's objects carry its expiry as customTime, so the lifecycle rule can erase them", async () => {
     const gcs = fakeGcs();
     const store = storeOn(gcs);
     await store.putRelic(privateRelic());
@@ -1961,7 +1961,7 @@ describe('gcsStore private-share objects', () => {
     }
   });
 
-  test('comments and decisions on a private relic carry the expiry too', async () => {
+  test('comments and decisions on a private relik carry the expiry too', async () => {
     const gcs = fakeGcs();
     const store = storeOn(gcs);
     await store.putRelic(privateRelic());
@@ -1992,7 +1992,7 @@ describe('gcsStore private-share objects', () => {
     );
   });
 
-  test('a public relic and its comments never carry a customTime', async () => {
+  test('a public relik and its comments never carry a customTime', async () => {
     const gcs = fakeGcs();
     const store = storeOn(gcs);
     await store.putRelic(relic());
@@ -2020,7 +2020,7 @@ describe('gcsStore private-share objects', () => {
     );
   });
 
-  test('a rewrite of a private relic row keeps its expiry customTime', async () => {
+  test('a rewrite of a private relik row keeps its expiry customTime', async () => {
     const gcs = fakeGcs();
     const store = storeOn(gcs);
     await store.putRelic(privateRelic());

@@ -165,8 +165,8 @@ draw_tracked(draw, 'relik.link', 88, 64, mono_bold_34, COLOR_INK, -0.02 * 34, al
 # letter-spacing about 0.14em (2.8px).
 draw_tracked(draw, 'ACCESSION', 1112, 58, mono_reg_20, COLOR_SOFT_INK, 0.14 * 20, align='right')
 
-# Headline at x=88, cap height starting about y=176: An encrypted relic in IBM Plex Sans SemiBold 76px.
-draw.text((88, 229), 'An encrypted relic', fill=COLOR_INK, font=sans_bold_76, anchor='ls')
+# Headline at x=88, cap height starting about y=176: An encrypted relik in IBM Plex Sans SemiBold 76px.
+draw.text((88, 229), 'An encrypted relik', fill=COLOR_INK, font=sans_bold_76, anchor='ls')
 
 # Below it at x=88, wrapped to a right edge of about x=900, line height about 1.45 (44px).
 line1 = 'It opens in your browser. Only someone holding the whole link,'

@@ -94,13 +94,13 @@ export function createDeleteDialog(ctx: DeleteContext): DeleteDialog {
           'label',
           { class: 'radio' },
           allRadio,
-          h('span', {}, 'The whole relic, every version')
+          h('span', {}, 'The whole relik, every version')
         )
       ),
       h(
         'p',
         { class: 'sheet-warning', id: 'delete-warning' },
-        'Deleting removes the encrypted content and every key, seal and comment for what you choose. Deleting the whole relic also removes its grants and requests. It can\u2019t be undone.'
+        'Deleting removes the encrypted content and every key, seal and comment for what you choose. Deleting the whole relik also removes its grants and requests. It can\u2019t be undone.'
       ),
       h(
         'p',
@@ -157,7 +157,7 @@ export function createDeleteDialog(ctx: DeleteContext): DeleteDialog {
             ? h(
                 'span',
                 { class: 'lock-note', id: 'delete-current-note' },
-                'current, goes only with the whole relic'
+                'current, goes only with the whole relik'
               )
             : null
         )
@@ -208,7 +208,7 @@ export function createDeleteDialog(ctx: DeleteContext): DeleteDialog {
       restore();
       dialog.close();
       const message = answer.relic_deleted
-        ? 'Deleted. The relic, its keys, seals, grants, requests and comments are gone. Its link now says it was removed.'
+        ? 'Deleted. The relik, its keys, seals, grants, requests and comments are gone. Its link now says it was removed.'
         : `Deleted ${describeVersions(answer.deleted_versions)}. Readers can no longer fetch it.`;
       ctx.onSettled(message, answer.relic_deleted);
     } catch (error) {

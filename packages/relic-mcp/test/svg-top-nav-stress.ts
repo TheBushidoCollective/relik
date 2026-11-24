@@ -1163,7 +1163,7 @@ async function runJob(
 ): Promise<Outcome> {
   const viewerUrl = urls.get(`${job.attack}:${job.delay}`);
   if (viewerUrl === undefined) {
-    return errorOutcome(job, new Error('no relic for this attack'));
+    return errorOutcome(job, new Error('no relik for this attack'));
   }
   let page: Page | undefined;
   try {
@@ -1797,7 +1797,7 @@ async function main(): Promise<void> {
       urls.set(`${attack}:${delay}`, String(published['url']));
     }
   }
-  console.log(`PUBLISHED ${urls.size} attack relics`);
+  console.log(`PUBLISHED ${urls.size} attack reliks`);
 
   // The positive control: a copy of the viewer whose frame may navigate the top.
   const loosenedDist = await mkdtemp(join(tmpdir(), 'relic-top-nav-loosened-'));

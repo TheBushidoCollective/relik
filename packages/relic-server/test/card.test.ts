@@ -50,30 +50,30 @@ describe('cardCopy', () => {
     }
   });
 
-  test('media relic description plays in browser and does not download to device', () => {
+  test('media relik description plays in browser and does not download to device', () => {
     const copy = cardCopy('media');
     expect(copy.description).toContain('It plays in your browser');
     expect(copy.description).not.toContain('downloads to your device');
   });
 
-  test('pdf relic description opens in browser and does not download to device', () => {
+  test('pdf relik description opens in browser and does not download to device', () => {
     const copy = cardCopy('pdf');
-    expect(copy.title).toBe('A PDF relic');
+    expect(copy.title).toBe('A PDF relik');
     expect(copy.description).toContain('It opens in your browser');
     expect(copy.description).not.toContain('downloads to your device');
   });
 
   test('folder card describes the browser view', () => {
     expect(cardCopy('folder')).toEqual({
-      title: 'A folder relic',
+      title: 'A folder relik',
       description:
         'A folder of files. It opens in your browser, and only someone holding the whole link, including the part after the #, can read it.',
     });
   });
 
-  test('otio relic description plays in browser and does not download to device', () => {
+  test('otio relik description plays in browser and does not download to device', () => {
     const copy = cardCopy('otio');
-    expect(copy.title).toBe('An OpenTimelineIO relic');
+    expect(copy.title).toBe('An OpenTimelineIO relik');
     expect(copy.description).toContain('It plays in your browser');
     expect(copy.description).not.toContain('downloads to your device');
   });

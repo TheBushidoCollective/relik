@@ -295,7 +295,7 @@ describe('decisions and passkeys end to end (S2 acceptance)', () => {
     const regUnasserted = await auth2.register(
       {
         challenge: unassertedChallenge,
-        rp: { id: 'relic.example', name: 'Relic' },
+        rp: { id: 'relic.example', name: 'Relik' },
         user: {
           id: 'u',
           name: 'user@example.com',

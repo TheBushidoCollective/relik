@@ -1661,7 +1661,7 @@ try {
         )) === true
       );
     },
-    'relic heading open after key entry',
+    'relik heading open after key entry',
     15000,
     100
   );

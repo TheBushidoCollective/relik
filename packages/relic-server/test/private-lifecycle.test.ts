@@ -62,7 +62,7 @@ async function person(email: string): Promise<Person> {
   await auth.register(
     {
       challenge: encodeBase64url(randomBytes(32)),
-      rp: { id: RP, name: 'Relic' },
+      rp: { id: RP, name: 'Relik' },
       user: { id: 'dXNlcg', name: email, displayName: email },
       pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
       extensions: { prf: {} },
@@ -403,7 +403,7 @@ async function wrap(
   return { recipient_key_id: w.recipientKeyId, version, enc: w.enc, ct: w.ct };
 }
 
-describe("a private relic: publish, seal and the owner's own read", () => {
+describe("a private relik: publish, seal and the owner's own read", () => {
   test('the seal stores the wraps, sets the ciphertext customTime, and the owner can read the key', async () => {
     const owner = await person('owner@example.com');
     await registerIdentity(owner);
@@ -635,7 +635,7 @@ describe('owner hard delete', () => {
 });
 
 describe('private gating: comments, shell, cover and republish', () => {
-  test('comments on a private relic are refused to anyone without access, and served to the owner', async () => {
+  test('comments on a private relik are refused to anyone without access, and served to the owner', async () => {
     const owner = await person('owner@example.com');
     await registerIdentity(owner);
     await sealedPrivateRelic(owner);
@@ -658,18 +658,18 @@ describe('private gating: comments, shell, cover and republish', () => {
     expect(listed.status).toBe(200);
   });
 
-  test('the shell of a private relic shows the generic card, never the title', async () => {
+  test('the shell of a private relik shows the generic card, never the title', async () => {
     const owner = await person('owner@example.com');
     await registerIdentity(owner);
     await sealedPrivateRelic(owner);
     const response = await app.fetch(req(`/${RELIC_ID}`));
     const html = await response.text();
     expect(html).toContain('data-relic-access="private"');
-    expect(html).toContain('A private relic. Sign in to open it.');
+    expect(html).toContain('A private relik. Sign in to open it.');
     expect(html).not.toContain('Secret title');
   });
 
-  test('a cover upload to a private relic is refused', async () => {
+  test('a cover upload to a private relik is refused', async () => {
     const owner = await person('owner@example.com');
     await registerIdentity(owner);
     await sealedPrivateRelic(owner);
@@ -681,7 +681,7 @@ describe('private gating: comments, shell, cover and republish', () => {
     expect(response.body['code']).toBe('private_policy_violation');
   });
 
-  test('a republish of a private relic with a title is refused before any version opens', async () => {
+  test('a republish of a private relik with a title is refused before any version opens', async () => {
     const owner = await person('owner@example.com');
     await registerIdentity(owner);
     await sealedPrivateRelic(owner);
@@ -1026,7 +1026,7 @@ describe('security review: server fixes', () => {
     expect(short.body['code']).toBe('invalid_device');
   });
 
-  test('a refused mint of a private relic writes no raw-IP mint log', async () => {
+  test('a refused mint of a private relik writes no raw-IP mint log', async () => {
     const owner = await person('owner@example.com');
     await registerIdentity(owner);
     await sealedPrivateRelic(owner);
@@ -1113,7 +1113,7 @@ describe('security review: server fixes', () => {
     expect(found.body['party']).toMatchObject({ email: owner.email });
   });
 
-  test('an owner bind gives an unowned private relic the device owner, once, and a nonce binds one relic only', async () => {
+  test('an owner bind gives an unowned private relik the device owner, once, and a nonce binds one relik only', async () => {
     const owner = await person('owner@example.com');
     await registerIdentity(owner);
     const device = await certifyDevice(owner);
@@ -1217,8 +1217,8 @@ function unownedPublicRelic(token: string, id: string = RELIC_ID) {
   });
 }
 
-describe('owner bind on a public relic', () => {
-  test('binds an unowned public relic to the device owner, indexes it as public, and leaves its access alone', async () => {
+describe('owner bind on a public relik', () => {
+  test('binds an unowned public relik to the device owner, indexes it as public, and leaves its access alone', async () => {
     const owner = await person('owner@example.com');
     await registerIdentity(owner);
     const device = await certifyDevice(owner);
@@ -1254,7 +1254,7 @@ describe('owner bind on a public relic', () => {
     ]);
   });
 
-  test('a bound public relic serves, refuses and accepts exactly as an unbound one, and no response names the owner', async () => {
+  test('a bound public relik serves, refuses and accepts exactly as an unbound one, and no response names the owner', async () => {
     const owner = await person('owner@example.com');
     await registerIdentity(owner);
     const device = await certifyDevice(owner);

@@ -153,27 +153,27 @@ export function problemMessage(error: unknown): string {
       case 'grant_stale_version':
         return 'A newer version exists. Reload the panel and grant again.';
       case 'recipients_changed':
-        return 'Who can read this relic changed while this ran. Try again.';
+        return 'Who can read this relik changed while this ran. Try again.';
       case 'version_conflict':
-        return 'The relic changed while this was in progress. Reload and try again.';
+        return 'The relik changed while this was in progress. Reload and try again.';
       case 'cannot_delete_current_version':
-        return 'Delete the whole relic to remove its current version.';
+        return 'Delete the whole relik to remove its current version.';
       case 'identity_required':
         return 'Set up a private-share key first.';
       case 'owner_required':
-        return 'Only the relic\u2019s owner can do that.';
+        return 'Only the relik\u2019s owner can do that.';
       case 'request_limit_reached':
-        return 'This relic has too many pending requests.';
+        return 'This relik has too many pending requests.';
       case 'private_rate_limited':
         return 'Too many private-share requests. Wait a few minutes and try again.';
       default:
-        return `Relic could not finish that (${error.code ?? `HTTP ${error.status}`}).`;
+        return `Relik could not finish that (${error.code ?? `HTTP ${error.status}`}).`;
     }
   }
   if (error instanceof Error && error.name === 'PrfUnavailableError') {
     return 'This passkey can\u2019t hold a private-share key.';
   }
-  return 'Relic could not finish that.';
+  return 'Relik could not finish that.';
 }
 
 export type FingerprintState = 'empty' | 'mismatch' | 'match';
@@ -287,7 +287,7 @@ export function typedFingerprint(
             {},
             bad
               ? 'That has a character fingerprints don\u2019t use. Check what you heard.'
-              : `This isn\u2019t the fingerprint Relic computed for ${options.who}. Don\u2019t go on: check you\u2019re talking to the right person and have them read it again.`
+              : `This isn\u2019t the fingerprint Relik computed for ${options.who}. Don\u2019t go on: check you\u2019re talking to the right person and have them read it again.`
           )
         );
       } else {

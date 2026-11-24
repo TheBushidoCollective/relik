@@ -177,7 +177,7 @@ describe('suggestion format records', () => {
     }
   });
 
-  test('entry digests are scoped to each relic and version, and distinguish absent entries', () => {
+  test('entry digests are scoped to each relik and version, and distinguish absent entries', () => {
     const paths = ['private/client.csv', 'private/unknown.secret-suffix'];
     const one = buildCachedFormat({ shape: 'folder' }, paths, KEY, RELIC, 1);
     const next = buildCachedFormat({ shape: 'folder' }, paths, KEY, RELIC, 2);
@@ -306,7 +306,7 @@ describe('suggestion format records', () => {
     ).rejects.toThrow();
   });
 
-  test('serializes recovery for the same relic and version', async () => {
+  test('serializes recovery for the same relik and version', async () => {
     const events: string[] = [];
     let unblock!: () => void;
     const gate = new Promise<void>((resolve) => {

@@ -64,7 +64,7 @@ export function resolveOrigin(name: string, raw: string | undefined): string {
 export function requiredOrigin(name: string, raw: string | undefined): string {
   if (raw === undefined || raw.trim().length === 0) {
     throw new Error(
-      `${name} is not set. It is the Relic service this client publishes to, ` +
+      `${name} is not set. It is the Relik service this client publishes to, ` +
         `for example ${DEFAULT_SERVICE_ORIGIN}. Leave it unset to use the ` +
         'hosted service; set it when running your own.'
     );

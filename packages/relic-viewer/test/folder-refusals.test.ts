@@ -103,7 +103,7 @@ for (const [label, names, short] of [
     expect(result.kind).toBe('dead');
     if (result.kind === 'dead') {
       expect(result.dead.code).toBe('malformed_container');
-      expect(result.dead.headline).toBe('This relic could not be read');
+      expect(result.dead.headline).toBe('This relik could not be read');
     }
   });
 }
@@ -112,7 +112,7 @@ test('rejects an out-of-range default index', async () => {
   expect(result.kind).toBe('dead');
   if (result.kind === 'dead') {
     expect(result.dead.code).toBe('malformed_container');
-    expect(result.dead.headline).toBe('This relic could not be read');
+    expect(result.dead.headline).toBe('This relik could not be read');
   }
 });
 test('shows newer format copy for version 3', async () => {
@@ -120,6 +120,6 @@ test('shows newer format copy for version 3', async () => {
   expect(result.kind).toBe('dead');
   if (result.kind === 'dead') {
     expect(result.dead.code).toBe('unsupported_format');
-    expect(result.dead.headline).toBe('This relic uses a newer format');
+    expect(result.dead.headline).toBe('This relik uses a newer format');
   }
 });

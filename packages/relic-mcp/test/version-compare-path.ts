@@ -350,7 +350,7 @@ export async function publishPair(
   assert.equal(
     republished['relic_id'],
     relicId,
-    `${label}: the republish is the same relic`
+    `${label}: the republish is the same relik`
   );
   // Republish returns no share URL. The first publish's URL carries the key that
   // the republish keeps, so that is the link a visitor opens.

@@ -269,19 +269,19 @@ export function formatUnaddressedRefusal(
 
   if (openComments.length > 0 && unreadableComments.length > 0) {
     parts.push(
-      `cannot republish relic ${relicId} while comments remain unaddressed. ` +
+      `cannot republish relik ${relicId} while comments remain unaddressed. ` +
         `${openComments.length} comment(s) are unanswered, and ${unreadableComments.length} comment(s) could not be decrypted. ` +
         'Clear unanswered comments either by replying with relic_comment, by resolving them with relic_resolve_comment, or by passing addresses: [{ comment_id, note }] on republish.'
     );
   } else if (openComments.length > 0) {
     parts.push(
-      `cannot republish relic ${relicId} while comments remain unaddressed. ` +
+      `cannot republish relik ${relicId} while comments remain unaddressed. ` +
         `${openComments.length} comment(s) are unanswered. ` +
         'Clear each open comment either by replying with relic_comment, by resolving it with relic_resolve_comment, or by passing addresses: [{ comment_id, note }] on republish.'
     );
   } else {
     parts.push(
-      `cannot republish relic ${relicId} because ${unreadableComments.length} comment(s) could not be decrypted. ` +
+      `cannot republish relik ${relicId} because ${unreadableComments.length} comment(s) could not be decrypted. ` +
         'A comment this client cannot read cannot be verified as addressed.'
     );
   }
@@ -305,7 +305,7 @@ export function formatUnaddressedRefusal(
     const list = unreadableComments
       .map(
         (c) =>
-          `- [${c.comment_id}] from ${c.author} at ${c.created_at}: unreadable (${c.unreadable_reason ?? "it did not decrypt under this relic's comment key"})`
+          `- [${c.comment_id}] from ${c.author} at ${c.created_at}: unreadable (${c.unreadable_reason ?? "it did not decrypt under this relik's comment key"})`
       )
       .join('\n');
     parts.push(`Unreadable comments (${unreadableComments.length}):\n${list}`);
@@ -391,7 +391,7 @@ export async function readComments(
     throw new PublishError(
       'local_version_scope_invalid',
       'version must be a positive version number or the literal "*", not ' +
-        `${JSON.stringify(rawScope)}. Omit it to read the relic's current ` +
+        `${JSON.stringify(rawScope)}. Omit it to read the relik's current ` +
         'version.'
     );
   }
@@ -542,7 +542,7 @@ export async function readComments(
         edited_at: editedAt,
         resolution,
         readable: false,
-        unreadable_reason: `it did not decrypt under this relic's comment key: ${
+        unreadable_reason: `it did not decrypt under this relik's comment key: ${
           (error as Error).message
         }`,
       });
@@ -817,7 +817,7 @@ export async function postComment(
   ) {
     throw new PublishError(
       'suggestion_outcome_requires_suggestion',
-      'addresses must name a readable suggestion on this relic.'
+      'addresses must name a readable suggestion on this relik.'
     );
   }
 
@@ -834,7 +834,7 @@ export async function postComment(
   ) {
     throw new PublishError(
       'suggestion_outcome_requires_new_version',
-      'Republish the private relic to a newer version before accepting or superseding this suggestion.'
+      'Republish the private relik to a newer version before accepting or superseding this suggestion.'
     );
   }
   const commentEntry = target === undefined ? input.entry : target.entry;
@@ -947,7 +947,7 @@ export async function editComment(
     throw new PublishError(
       'local_comment_not_found',
       'comment_id is required. The id is service-minted and can only come ' +
-        'from having read the relic\u2019s comments.'
+        'from having read the relik\u2019s comments.'
     );
   }
 
@@ -981,9 +981,9 @@ export async function editComment(
   if (existing === undefined) {
     throw new PublishError(
       'local_comment_not_found',
-      `comment ${input.comment_id} does not exist on relic ` +
+      `comment ${input.comment_id} does not exist on relik ` +
         `${input.relic_id}. The comment ids can only come from having read ` +
-        'the relic\u2019s comments.'
+        'the relik\u2019s comments.'
     );
   }
   if (!existing.readable) {
@@ -992,7 +992,7 @@ export async function editComment(
       `comment ${input.comment_id} could not be decrypted on this machine, ` +
         'so its anchor and addresses cannot be carried into a re-sealed ' +
         'copy: editing it here would silently change where it points. ' +
-        `${existing.unreadable_reason ?? 'it did not decrypt under this relic\u2019s comment key'}`
+        `${existing.unreadable_reason ?? 'it did not decrypt under this relik\u2019s comment key'}`
     );
   }
 
@@ -1063,7 +1063,7 @@ export async function resolveComment(
     throw new PublishError(
       'local_comment_not_found',
       'comment_id is required. The id is service-minted and can only come ' +
-        'from having read the relic\u2019s comments.'
+        'from having read the relik\u2019s comments.'
     );
   }
 
@@ -1143,7 +1143,7 @@ async function resolveCurrentVersion(
   const unavailable = (detail: string) =>
     new PublishError(
       'current_version_unavailable',
-      `the relic's current version could not be read from the service, so the default scope cannot be resolved: ${detail}. Pass an explicit version, or "*" for every version, to read without it.`,
+      `the relik's current version could not be read from the service, so the default scope cannot be resolved: ${detail}. Pass an explicit version, or "*" for every version, to read without it.`,
       { relic_id: relicId }
     );
   if (local.access === 'private') {
@@ -1170,7 +1170,7 @@ export async function localState(relicId: string): Promise<PublishState> {
   if (!isValidRelicId(relicId)) {
     throw new PublishError(
       'no_local_publish_state',
-      `"${relicId}" is not a relic id. These tools take the 26-character id ` +
+      `"${relicId}" is not a relik id. These tools take the 26-character id ` +
         'the original publish returned, never the share URL: the URL carries ' +
         'the key in its fragment, and passing it would put the key in this ' +
         'transcript for nothing.'
@@ -1182,12 +1182,12 @@ export async function localState(relicId: string): Promise<PublishState> {
     if (loaded === undefined) {
       throw new PublishError(
         'no_local_publish_state',
-        `relic ${relicId} was published from another machine, so its ` +
+        `relik ${relicId} was published from another machine, so its ` +
           'comments can be neither read nor written here. The key that ' +
           'decrypts a comment and the publish token that authorizes one live ' +
           'only on the machine that made the first publish, and neither can ' +
           'be reconstructed from the link or from the service. Open the ' +
-          "relic's own page to read its comments, or ask whoever published it."
+          "relik's own page to read its comments, or ask whoever published it."
       );
     }
     return loaded;
@@ -1378,7 +1378,7 @@ export function parseTimecode(value: unknown, label: string): number {
  */
 export function describeAnchor(anchor: CommentAnchor | null): string {
   if (anchor === null) {
-    return 'about the whole relic';
+    return 'about the whole relik';
   }
 
   switch (anchor.kind) {
@@ -1461,7 +1461,7 @@ export function describeAnchor(anchor: CommentAnchor | null): string {
         duration.value === 0
           ? `point ${start.value}/${start.rate}`
           : `range ${start.value}/${start.rate} for ${duration.value}/${duration.rate}`;
-      return `on ${where} (${span}, relic version ${anchor.relic_version})`;
+      return `on ${where} (${span}, relik version ${anchor.relic_version})`;
     }
 
     case 'cell': {

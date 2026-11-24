@@ -168,7 +168,7 @@ try {
   const written = await callFresh(COMMENT_TOOL_NAME, {
     relic_id: relicId,
     body,
-    display_name: 'Relic Agent',
+    display_name: 'Relik Agent',
   });
   assert.equal(written['isError'], false, JSON.stringify(written));
   const writtenContent = written['structuredContent'] as Record<
@@ -201,7 +201,7 @@ try {
   assert.equal(readContent['unreadable_count'], 0);
   const comments = readContent['comments'] as Record<string, unknown>[];
   assert.equal(comments[0]?.['body'], body);
-  assert.equal(comments[0]?.['display_name'], 'Relic Agent');
+  assert.equal(comments[0]?.['display_name'], 'Relik Agent');
   assert.equal(comments[0]?.['author'], 'publisher');
   console.log(
     `READ_BACK count=${readContent['count']} ` +

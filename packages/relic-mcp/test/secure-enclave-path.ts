@@ -56,7 +56,7 @@ assert.notEqual(
   'signing and agreement blobs differ'
 );
 
-const message = encoder.encode('relic secure enclave path');
+const message = encoder.encode('relik secure enclave path');
 const signature = await helper.sign(keys.sig.blob, message);
 assert.equal(signature.length, 64, 'signature is raw r || s');
 

@@ -1,18 +1,18 @@
-# Relic
+# Relik
 
-Zero-knowledge publishing for agent output. Your coding agent encrypts a file on your machine, uploads only ciphertext, and hands you a link. For a public relic, the service never receives the key. Private relics are covered below.
+Zero-knowledge publishing for agent output. Your coding agent encrypts a file on your machine, uploads only ciphertext, and hands you a link. For a public relik, the service never receives the key. Private reliks are covered below.
 
-A public relic's link carries its key in the fragment:
+A public relik's link carries its key in the fragment:
 
 ```
 https://relik.link/{id}#{secret}
 ```
 
-For a public relic, the fragment is never sent to a server, so the operator holds ciphertext and nothing that opens it. A recipient's browser fetches the ciphertext, decrypts it locally, and renders it by type.
+For a public relik, the fragment is never sent to a server, so the operator holds ciphertext and nothing that opens it. A recipient's browser fetches the ciphertext, decrypts it locally, and renders it by type.
 
-## Private relics
+## Private reliks
 
-A private relic's link has no fragment: `https://relik.link/{id}`. Each version's content key is wrapped separately to each reader's identity, and each wrap opens only with that reader's passkey. The owner grants access per relic after typing the requester's fingerprint, which the requester reads aloud from their own device. Revoking a reader stops the service serving them at once, and the current content is republished under a fresh key. Private relics carry no title or cover, always expire, send only generic notification mail, and keep an access log. Their trade is stated plainly: the service holds requesters' and grantees' email addresses, their public keys, signed grant and revocation records, and the access log, so the operator learns who was let in and when. The operator still cannot read the content. Expired private relics are removed from live storage one day after expiry, but deleted copies stay restorable by the operator under the bucket's soft-delete retention, so this is not immediate permanent erasure. Private mode needs a passkey whose provider supports the WebAuthn PRF extension. The disclosure in [`docs/spec/service.md`](docs/spec/service.md) section 5 has the full statement.
+A private relik's link has no fragment: `https://relik.link/{id}`. Each version's content key is wrapped separately to each reader's identity, and each wrap opens only with that reader's passkey. The owner is emailed who asked, with their fingerprint and a link, and grants access per relik with one passkey tap. Revoking a reader stops the service serving them at once, and the current content is republished under a fresh key. Private reliks carry no title or cover, always expire, send generic notification mail (the access request email names the requester), and keep an access log. Their trade is stated plainly: the service holds requesters' and grantees' email addresses, their public keys, signed grant and revocation records, and the access log, so the operator learns who was let in and when. The operator still cannot read the content. Expired private reliks are removed from live storage one day after expiry, but deleted copies stay restorable by the operator under the bucket's soft-delete retention, so this is not immediate permanent erasure. Private mode needs a passkey whose provider supports the WebAuthn PRF extension. The disclosure in [`docs/spec/service.md`](docs/spec/service.md) section 5 has the full statement.
 
 ## What is honest about the claim
 
@@ -23,16 +23,16 @@ JavaScript tomorrow. This is a statement about operator intent, not a property
 a recipient can verify. Anyone claiming otherwise for a service of this shape
 is overclaiming.
 
-For a public relic, the publish tool returns the full URL including the fragment, because handing you a usable link is the product. **The key therefore enters your model's context and your session transcript on every public publish.** Zero-knowledge holds against the Relic operator. It does not hold against your model provider or whoever stores your transcripts, and that is structural rather than a defect on a schedule. A private relic's publish output carries no key. Its device keys stay on this machine, in the Secure Enclave where it is available and in an owner-only file otherwise.
+For a public relik, the publish tool returns the full URL including the fragment, because handing you a usable link is the product. **The key therefore enters your model's context and your session transcript on every public publish.** Zero-knowledge holds against the Relik operator. It does not hold against your model provider or whoever stores your transcripts, and that is structural rather than a defect on a schedule. A private relik's publish output carries no key. Its device keys stay on this machine, in the Secure Enclave where it is available and in an owner-only file otherwise.
 
-Drop a file on `/publish`, the homepage or a relic page, or use Upload in the top bar. Before publishing, choose the encrypted filename, lifetime and decision settings; ZIP files can be expanded into folders. For a public relic, the title and an optional preview image are unencrypted. For a private relic, the link holds no key and access requires an authorized passkey. Public relics published in the browser cannot be republished at the same link because the browser does not keep the publish token.
+Drop a file on `/publish`, the homepage or a relik page, or use Upload in the top bar. Before publishing, choose the encrypted filename, lifetime and decision settings; ZIP files can be expanded into folders. For a public relik, the title and an optional preview image are unencrypted. For a private relik, the link holds no key and access requires an authorized passkey. Public reliks published in the browser cannot be republished at the same link because the browser does not keep the publish token.
 
 The browser holds decrypted content in a browser-managed Blob. The browser
 may keep that plaintext in memory or temporary disk, and the operating system
-may swap memory to disk. Downloading writes plaintext to a file. Relic cannot
+may swap memory to disk. Downloading writes plaintext to a file. Relik cannot
 guarantee that the plaintext never touches disk or is erased on close.
 
-Rendered content is not inert. A relic that renders as HTML or JSX runs its
+Rendered content is not inert. A relik that renders as HTML or JSX runs its
 author's code in a sandboxed frame whose policy permits no remote source, so
 the code cannot make outbound HTTP, WebSocket, or worker requests, and a page
 that expects external images, fonts, or scripts renders without them. Because
@@ -43,8 +43,8 @@ chain and blocks nested browsing context creation (iframe, frame, object, embed,
 portal) to prevent UDP STUN candidate gathering. This is defense in depth
 alongside the opaque sandbox, not an architectural impossibility. Future browser
 APIs or parser entry points could reopen egress channels before we patch them,
-and the containment costs relic capabilities: nested frames and workers in HTML
-and JSX relics are denied. The sandbox keeps rendered content away from the
+and the containment costs relik capabilities: nested frames and workers in HTML
+and JSX reliks are denied. The sandbox keeps rendered content away from the
 decryption key, which never leaves the link and your browser. The isolation is
 about network reach, not safety: the code runs in your browser, can use your
 CPU, and can render whatever it wants. The viewer says so on the page before the
@@ -97,9 +97,9 @@ telemetry on that statement being readable before anybody publishes.
 | Package | What it is |
 |---|---|
 | `@relic/format` | The wire format. RFC 8188 `aes128gcm` framing around an envelope that lives inside the encrypted stream. Imported by both ends so the encryptor and the decryptor cannot drift apart. The private-share statements and key wraps live in its `private` subpath. |
-| `@relic/server` | The app server. Grants, mints, the abuse surface, delete-by-id, private-share access checks and the access log, and the published disclosure. Never handles relic bytes on either leg. |
-| `relic-mcp` | The local MCP server, published to npm. Holds the key, encrypts in process, returns no script, and persists the key and publish token that republish needs. For private relics it also keeps a device key on this machine. |
-| `@relic/viewer` | The PWA. Decrypts in the browser and renders by type under a taskbar. Private relics open after a passkey check. `/publish` encrypts a dropped file in the page and uploads it. |
+| `@relic/server` | The app server. Grants, mints, the abuse surface, delete-by-id, private-share access checks and the access log, and the published disclosure. Never handles relik bytes on either leg. |
+| `relic-mcp` | The local MCP server, published to npm. Holds the key, encrypts in process, returns no script, and persists the key and publish token that republish needs. For private reliks it also keeps a device key on this machine. |
+| `@relic/viewer` | The PWA. Decrypts in the browser and renders by type under a taskbar. Private reliks open after a passkey check. `/publish` encrypts a dropped file in the page and uploads it. |
 
 ## Running it
 
@@ -112,7 +112,7 @@ bun run --filter '@relic/server' dev
 
 The server refuses to start on memory storage when `NODE_ENV=production`. In
 development it warns and continues, because a service that silently serves
-from memory looks healthy, accepts publishes, and loses every relic on
+from memory looks healthy, accepts publishes, and loses every relik on
 restart.
 
 ### Configuration
@@ -127,7 +127,7 @@ restart.
 
 ## Connecting the MCP server
 
-Relic exposes `relic_publish`, which takes a filesystem path (and optional
+Relik exposes `relic_publish`, which takes a filesystem path (and optional
 `title` and `cover` arguments for link unfurls) and never inline content.
 Standard OpenTimelineIO directories (`.otiod`) are automatically packaged into
 standard `.otioz` archives for native in-browser timeline viewing while
@@ -136,40 +136,40 @@ refused. `relic_describe_client` explains what the client does with your file
 without reading it or contacting anything.
 
 It also exposes `relic_republish`, which posts a new version of a file to an
-existing relic's URL. It takes the relic id and a path (with an optional
+existing relik's URL. It takes the relik id and a path (with an optional
 `title` to replace or clear the card title, an optional `cover` argument to
 replace or clear the cover image, and an optional `notify` flag to control change
 notices, defaulting to true); the publish token is never an argument and
-never printed, because the client stored it beside the relic's key at first
+never printed, because the client stored it beside the relik's key at first
 publish and reads it back from there. Each new version emails a change notice to
 commenters and shared addresses unless `notify: false` is passed. At most one
-email per person per relic per 10 minutes is sent, and one stop link stops
-every email about that relic. The server issued that token once and keeps only
+email per person per relik per 10 minutes is sent, and one stop link stops
+every email about that relik. The server issued that token once and keeps only
 its hash, so the machine that published is the only machine that can
 republish: lose that state and nobody, the operator
 included, can authorize another version. Opening the link always serves the
-current version, and the download cap is shared across all versions. A relic
+current version, and the download cap is shared across all versions. A relik
 taken down for abuse refuses every future version whatever token is presented,
 because a takedown an abuser could out-publish would not be a takedown.
 
-`relic_share` sends a relic this machine published to named people. It registers
+`relic_share` sends a relik this machine published to named people. It registers
 up to 20 email addresses with the service for change and comment notices,
 and returns a ready share email and mailto link to draft in the sharer's own
 mailbox so the key never leaves the client. Addresses are stored in the clear by
-the service, linked to the relic id. A new comment emails everyone on the list
+the service, linked to the relik id. A new comment emails everyone on the list
 except the author, naming the commenter's address (or 'The publisher'). At most
-one email per person per relic per 10 minutes, and one stop link stops every
-email about that relic. Readers holding the link can also share from
-the viewer once the relic was published or republished by this client version.
+one email per person per relik per 10 minutes, and one stop link stops every
+email about that relik. Readers holding the link can also share from
+the viewer once the relik was published or republished by this client version.
 
-`relic_list` and `relic_show` are how a publisher finds a relic again. Lookup
-by source only answers when you are still holding the file, so a relic whose
+`relic_list` and `relic_show` are how a publisher finds a relik again. Lookup
+by source only answers when you are still holding the file, so a relik whose
 path was never recorded, or has since moved, was addressable by nothing: on
-one real state file, four of forty one relics were findable and the other
+one real state file, four of forty one reliks were findable and the other
 thirty seven held a key and a publish token that no tool could name. The list
 enumerates every one of them and recovers a name this machine never wrote
-down by decrypting the relic's own envelope rather than guessing from its id,
-reporting a relic the service will not serve with which of removed, expired,
+down by decrypting the relik's own envelope rather than guessing from its id,
+reporting a relik the service will not serve with which of removed, expired,
 exhausted or unreachable it is rather than leaving the row out. Every row
 carries the share URL including its fragment, which is the key, so a listing
 is a list of credentials. `relic_show` returns what a link currently serves,
@@ -177,20 +177,20 @@ which is what makes replacing it an edit rather than an overwrite from
 memory.
 
 Two more tools cover comments. `relic_read_comments` and `relic_comment` are
-how an agent takes part in the conversation on a relic rather than only
-creating one. Both take the relic id rather than the share URL, because the
+how an agent takes part in the conversation on a relik rather than only
+creating one. Both take the relik id rather than the share URL, because the
 URL carries the key in its fragment. Comment bodies are encrypted on the
-publishing machine under a key derived from that relic's key, so the service
+publishing machine under a key derived from that relik's key, so the service
 stores comment ciphertext it cannot read, and both tools work only on that
 machine for the same reason republish does. An agent has no mailbox to verify,
 so its comments are authorized by the publish token and attributed as
 `publisher` rather than as an email address. Posting with `relic_comment` emails
-everyone following the relic, naming "The publisher". A new comment on a relic
+everyone following the relik, naming "The publisher". A new comment on a relik
 emails everyone on its list (commenters, shared addresses, and the owner address)
 except the comment's author, naming the commenter's address (or "The publisher").
-At most one email per person per relic per 10 minutes is sent, and one stop link
-stops every email about that relic. What the service does learn is
-who commented on which relic and when; now also whether a comment was
+At most one email per person per relik per 10 minutes is sent, and one stop link
+stops every email about that relik. What the service does learn is
+who commented on which relik and when; now also whether a comment was
 edited, the `edited_at` stamp, and whether it was settled and by which
 address. There is no edit history, because the service holds one ciphertext
 per comment and an edit overwrites it. A resolution cannot be encrypted for
@@ -201,7 +201,7 @@ version, and each comment names the version it was made on, so remarks left
 on content a republish removed do not read as if they were about what is
 latest now. Sign-in emails carry both a magic link and a six-digit code you can type to sign in without leaving the page, and returning human readers who verified their email once and registered a passkey can sign in directly with that passkey to comment without waiting for another email.
 
-Approval decisions are read back with `relic_read_decisions`. Decisions are recorded only by human readers in the web viewer confirmed by a passkey: no MCP tool can record a decision, and comment text never creates one. The tool takes a relic id and an optional version (or `'*'` for every version) and returns the verdicts, verified authors, creation timestamps, and version digests. Reading decisions costs no opens and runs only on the machine that published the relic, where the decryption key is held locally to generate the required share proof.
+Approval decisions are read back with `relic_read_decisions`. Decisions are recorded only by human readers in the web viewer confirmed by a passkey: no MCP tool can record a decision, and comment text never creates one. The tool takes a relik id and an optional version (or `'*'` for every version) and returns the verdicts, verified authors, creation timestamps, and version digests. Reading decisions costs no opens and runs only on the machine that published the relik, where the decryption key is held locally to generate the required share proof.
 
 ```bash
 npx -y relic-mcp@latest   # nothing to clone, nothing to build
@@ -277,7 +277,7 @@ No clone and no build step. `npx` fetches on first use and caches. It
 publishes to the hosted service at `https://relik.link`; to publish to your
 own, see [Publishing to your own service](#publishing-to-your-own-service).
 
-Then ask your agent to publish something: *"publish ./report.md as a relic."*
+Then ask your agent to publish something: *"publish ./report.md as a relik."*
 
 ### Any client that takes a JSON config
 
@@ -337,7 +337,7 @@ browser callers, and an origin outside it is refused to defeat DNS rebinding.
 
 | Variable | Meaning |
 |---|---|
-| `RELIC_SERVICE_ORIGIN` | The Relic service to publish to. Unset means the hosted service, `https://relik.link`. |
+| `RELIC_SERVICE_ORIGIN` | The Relik service to publish to. Unset means the hosted service, `https://relik.link`. |
 | `RELIC_ORIGIN` | Origin used to build the shareable URL. Defaults to the service origin. |
 | `RELIC_CLIENT_NAME` | Reported to the service as the publishing client. |
 | `RELIC_MCP_HTTP` | `1` to serve Streamable HTTP instead of stdio. |
@@ -351,7 +351,7 @@ stateless. There is no `initialize` handshake, no session, and no
 `Mcp-Session-Id`: every request declares its own version in `_meta`, and the
 server accepts or rejects each one independently.
 
-Relic holds nothing between calls, so the server can be restarted,
+Relik holds nothing between calls, so the server can be restarted,
 round-robined behind a load balancer, or run one-shot without a client
 noticing. `server/discover` is implemented, as the revision requires.
 

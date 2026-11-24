@@ -317,7 +317,7 @@ const REQUEST_OPTIONS: RequestOptionsJSON = {
 
 const CREATION_OPTIONS: CreationOptionsJSON = {
   challenge: 'cmVnaXN0ZXItY2hhbGxlbmdl',
-  rp: { id: 'relik.example', name: 'Relic' },
+  rp: { id: 'relik.example', name: 'Relik' },
   user: { id: 'dXNlci1oYW5kbGU', name: READER, displayName: READER },
   pubKeyCredParams: [
     { type: 'public-key', alg: -7 },
@@ -786,7 +786,7 @@ describe('WebAuthn JSON and binary', () => {
       CREATION_OPTIONS.user.id
     );
     expect(options.user.name).toBe(READER);
-    expect(options.rp).toEqual({ id: 'relik.example', name: 'Relic' });
+    expect(options.rp).toEqual({ id: 'relik.example', name: 'Relik' });
     expect(options.pubKeyCredParams.map((p) => p.alg)).toEqual([-7, -257]);
     expect(options.attestation).toBe('none');
     expect(options.authenticatorSelection).toEqual({
@@ -914,7 +914,7 @@ describe('the decisions sheet', () => {
     expect(opened).toEqual([3]);
   });
 
-  test('a relic without decisions says so and closes the band count', async () => {
+  test('a relik without decisions says so and closes the band count', async () => {
     const { deps } = service({
       '/decisions/list': () => problem('decision_unavailable', 409),
     });
@@ -1325,7 +1325,7 @@ describe('the decisions sheet', () => {
     const failSectionAfter = one(failPanel, 'data-passkey-link');
     expect(failSectionAfter.getAttribute('data-state')).toBe('failed');
     expect(textOf(failSectionAfter)).toContain(
-      'Relic could not send the email just now. Try again later.'
+      'Relik could not send the email just now. Try again later.'
     );
     const failSendBtnAfter = one(failPanel, 'data-passkey-link-send');
     expect(failSendBtnAfter.disabled).toBe(false);

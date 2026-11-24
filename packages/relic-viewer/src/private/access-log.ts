@@ -161,7 +161,7 @@ export function accessLogSection(ctx: AccessLogContext): HTMLElement {
     h(
       'p',
       { class: 'dashboard-section-note' },
-      'Requests, grants, revocations, key fetches and deletions on your private relics. Kept after a relic is deleted, for the retention below.'
+      'Requests, grants, revocations, key fetches and deletions on your private reliks. Kept after a relik is deleted, for the retention below.'
     ),
     log,
     h('h3', { class: 'dash-sub' }, 'Retention'),

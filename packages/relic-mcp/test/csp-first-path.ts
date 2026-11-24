@@ -247,7 +247,7 @@ function candidateCsp(js: string, host: string): string {
 
 function shimDocument(js: string): string {
   return (
-    '<!doctype html><meta charset="utf-8"><title>Relic content</title>' +
+    '<!doctype html><meta charset="utf-8"><title>Relik content</title>' +
     scriptTag(js)
   );
 }

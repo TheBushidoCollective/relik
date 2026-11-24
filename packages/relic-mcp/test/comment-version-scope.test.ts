@@ -384,7 +384,7 @@ describe('version scoping on relic_read_comments', () => {
     expect(firstComments[0]?.['comment_id']).toBe('c1');
   });
 
-  test('a relic with no history shows every row regardless of stored version', async () => {
+  test('a relik with no history shows every row regardless of stored version', async () => {
     // Mirrors the viewer rule's first clause: no history, no version
     // dimension, so a single-version relic never loses rows.
     const relicId = await publishFixture();

@@ -10,7 +10,7 @@ import {
   RESERVED_SEGMENTS,
 } from '../src/id.ts';
 
-describe('relic id', () => {
+describe('relik id', () => {
   test('is 26 characters, which clears the 122-bit entropy floor', () => {
     expect(ID_LENGTH).toBe(26);
     // 26 characters x 5 bits = 130 bits of capacity, above the floor.

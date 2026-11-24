@@ -621,14 +621,14 @@ describe('recovery designations against the real service (PS-05, PS-10)', () => 
 });
 
 describe('relic_bind_owner against the real service (plan 4.7)', () => {
-  test('a public relic this machine published binds its owner', async () => {
+  test('a public relik this machine published binds its owner', async () => {
     const { owner } = await seedOwnerAndDevice();
     const published = await publish({ path: SOURCE_PATH }, depsFor());
     const bound = await bindOwner({ relic_id: published.relic_id }, depsFor());
     expect(bound.owner.email).toBe(owner.email);
   });
 
-  test('a second owner bind for the same relic answers owner_exists', async () => {
+  test('a second owner bind for the same relik answers owner_exists', async () => {
     await seedOwnerAndDevice();
     const published = await publish({ path: SOURCE_PATH }, depsFor());
     await bindOwner({ relic_id: published.relic_id }, depsFor());

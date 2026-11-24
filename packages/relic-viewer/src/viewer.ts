@@ -456,7 +456,7 @@ export async function load(
     return {
       kind: 'dead',
       dead: {
-        headline: 'No such relic',
+        headline: 'No such relik',
         detail:
           'This link does not point at anything. It may have been mistyped.',
         action: 'none',
@@ -537,7 +537,7 @@ export async function load(
   } catch (error) {
     if (error instanceof UnknownVersionError) {
       return dead(
-        'This relic uses a newer format',
+        'This relik uses a newer format',
         'This viewer does not know how to read it. Nothing was fetched.',
         'none',
         'unknown_version'
@@ -582,7 +582,7 @@ export async function load(
     mintResponse.version !== resume.requestedVersion
   ) {
     return dead(
-      'This relic does not match its link',
+      'This relik does not match its link',
       'The service signed a different version.',
       'retry',
       'version_mismatch'
@@ -682,7 +682,7 @@ export async function load(
           };
     if (!entry || !state.sink) {
       return dead(
-        'This relic is empty',
+        'This relik is empty',
         'Its envelope declares no content.',
         'none',
         'empty_envelope'
@@ -777,7 +777,7 @@ export async function load(
     if (error instanceof DownloadFailure) {
       if (error.code === 'removed_after_mint') {
         return dead(
-          'This relic is no longer available',
+          'This relik is no longer available',
           'It was removed after this page started loading.',
           'report',
           error.code
@@ -795,14 +795,14 @@ export async function load(
       }
       if (error.code === 'version_mismatch') {
         return dead(
-          'This relic does not match its link',
+          'This relik does not match its link',
           'The service signed a different version.',
           'retry',
           error.code
         );
       }
       return dead(
-        'This relic could not be opened',
+        'This relik could not be opened',
         'Something went wrong reaching the service.',
         'retry',
         error.code,
@@ -813,7 +813,7 @@ export async function load(
     if (error instanceof JsxCompilerUnavailableError) {
       return {
         ...dead(
-          'This relic could not be opened',
+          'This relik could not be opened',
           'Something went wrong reaching the service.',
           'retry',
           'service_unreachable',
@@ -843,7 +843,7 @@ export async function load(
       return {
         kind: 'dead',
         dead: {
-          headline: 'This relic could not be opened',
+          headline: 'This relik could not be opened',
           detail:
             'The file did not decrypt. That can mean the link was altered or ' +
             'shortened, or that the stored file was changed. There is no way ' +
@@ -869,8 +869,8 @@ export async function load(
         );
       }
       return dead(
-        'This file is larger than Relic allows',
-        'This file is larger than Relic allows. Report this link, because that should not be possible.',
+        'This file is larger than Relik allows',
+        'This file is larger than Relik allows. Report this link, because that should not be possible.',
         'report',
         'too_large'
       );
@@ -878,7 +878,7 @@ export async function load(
 
     if (error instanceof KeyIdPresentError) {
       return dead(
-        'This relic is malformed',
+        'This relik is malformed',
         'It sets a header field this format forbids.',
         'none',
         'keyid_present'
@@ -888,7 +888,7 @@ export async function load(
     if (error instanceof UnsupportedEnvelopeVersionError) {
       deps.keyVault.remember(relicId, fragment, keyExpiry(mintResponse), {});
       return dead(
-        'This relic uses a newer format',
+        'This relik uses a newer format',
         'Reload this page to get the current viewer.',
         'none',
         'unsupported_format'
@@ -896,7 +896,7 @@ export async function load(
     }
     if (error instanceof StrictParseError && envelopeFired) {
       return dead(
-        'This relic could not be read',
+        'This relik could not be read',
         'Its file list is damaged or names a file in a way Relik does not accept.',
         'none',
         'malformed_container'
@@ -905,7 +905,7 @@ export async function load(
 
     if (error instanceof VersionMismatchError) {
       return dead(
-        'This relic does not match its link',
+        'This relik does not match its link',
         'The format version inside the file disagrees with the one in the ' +
           'link. The link may have been altered.',
         'none',
@@ -926,7 +926,7 @@ export async function load(
       };
     }
     return dead(
-      'This relic could not be read',
+      'This relik could not be read',
       'Its contents are not in a shape this viewer understands.',
       'none',
       'malformed_container'
@@ -960,7 +960,7 @@ export async function mint(
   } catch {
     return {
       dead: {
-        headline: 'This relic could not be opened',
+        headline: 'This relik could not be opened',
         detail: 'Something went wrong reaching the service.',
         action: 'retry',
         code: 'service_unreachable',
@@ -1122,20 +1122,20 @@ export function deadFromProblem(code: string): DeadView {
   switch (code) {
     case 'relic_not_found':
       return view(
-        'No such relic',
+        'No such relik',
         'This link does not point at anything. It may have been mistyped.',
         'none'
       );
     case 'relic_expired':
       return view(
-        'This relic has expired',
-        'Relics are deleted on a fixed schedule and cannot be extended. Ask ' +
+        'This relik has expired',
+        'Reliks are deleted on a fixed schedule and cannot be extended. Ask ' +
           'the sender to publish it again.',
         'none'
       );
     case 'relic_never_published':
       return view(
-        'This relic was never uploaded',
+        'This relik was never uploaded',
         'The sender started publishing it and it never finished. Ask them ' +
           'to publish it again.',
         'none'
@@ -1144,12 +1144,12 @@ export function deadFromProblem(code: string): DeadView {
       // Temporary. It must not read as a dead link.
       return view(
         'Still uploading',
-        'The sender is still uploading this relic. It will be ready shortly.',
+        'The sender is still uploading this relik. It will be ready shortly.',
         'retry'
       );
     case 'relic_removed':
       return view(
-        'This relic was removed',
+        'This relik was removed',
         'It is no longer available. If you believe this was a mistake, you ' +
           'can contact us.',
         'report'
@@ -1157,7 +1157,7 @@ export function deadFromProblem(code: string): DeadView {
     case 'download_cap_exhausted':
       return view(
         'This link has been opened too many times',
-        'Each relic can be opened a fixed number of times. Waiting will not ' +
+        'Each relik can be opened a fixed number of times. Waiting will not ' +
           'help. Ask the sender to publish it again.',
         'none'
       );
@@ -1169,19 +1169,19 @@ export function deadFromProblem(code: string): DeadView {
       );
     case 'service_paused':
       return view(
-        'Relic is paused',
-        'The service is temporarily not serving relics. Try again later.',
+        'Relik is paused',
+        'The service is temporarily not serving reliks. Try again later.',
         'retry'
       );
     case 'invalid_relic_id':
       return view(
         'This link is not valid',
-        'The relic id in the link is not a well-formed one.',
+        'The relik id in the link is not a well-formed one.',
         'none'
       );
     default:
       return view(
-        'This relic could not be opened',
+        'This relik could not be opened',
         'Something went wrong reaching the service.',
         'retry'
       );
@@ -1911,7 +1911,7 @@ export async function openRelicWithKey(
       if (error instanceof DecryptFailedError) {
         return {
           kind: 'wrong_key',
-          message: 'That key does not open this relic.',
+          message: 'That key does not open this relik.',
           cachedPrefix,
         };
       }
@@ -1926,7 +1926,7 @@ export async function openRelicWithKey(
   if (state.dead.code === 'decrypt_failed') {
     return {
       kind: 'wrong_key',
-      message: 'That key does not open this relic.',
+      message: 'That key does not open this relik.',
       cachedPrefix: state.cachedPrefix ?? cachedPrefix,
     };
   }

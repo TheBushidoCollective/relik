@@ -15,7 +15,7 @@ export const COPY_LINK_LABEL = 'Copy link';
 export const COPY_KEYLESS_LABEL = 'Copy without the key';
 export const PHRASE_LABEL = 'Key phrase';
 export const PHRASE_NOTE =
-  'The same key in 12 words. Anyone who hears or reads it can open this relic.';
+  'The same key in 12 words. Anyone who hears or reads it can open this relik.';
 export const COPY_PHRASE_LABEL = 'Copy phrase';
 export const SPLIT_NOTE =
   'To keep the key out of a message, send the link without the key and say the phrase. They type it in where the page asks for the key.';
@@ -28,7 +28,7 @@ export const KEYLESS_COPIED_NOTE =
 export const PHRASE_COPIED_NOTE =
   'Key phrase copied. It is the decryption key.';
 export const KEY_ENTRY_PROMPT =
-  'If you have the key phrase or the full link for this relic, enter it here.';
+  'If you have the key phrase or the full link for this relik, enter it here.';
 export const KEY_ENTRY_LABEL = 'Key phrase or link';
 export const KEY_ENTRY_PLACEHOLDER = 'The 12 words, or the whole link';
 

@@ -13,7 +13,7 @@ import { publishStatePath } from '../src/state.ts';
 
 const SERVICE = 'https://relic.example';
 const VERSION_HISTORY_DISCLOSURE =
-  "Anyone holding a relic's link can fetch every version it has ever held, " +
+  "Anyone holding a relik's link can fetch every version it has ever held, " +
   'so republishing does not withdraw earlier content.';
 const runFile = promisify(execFile);
 const packageRoot = fileURLToPath(new URL('../', import.meta.url));
@@ -110,7 +110,7 @@ try {
   const second = join(scratch, 'worktree-two');
   await mkdir(join(repository, 'docs'), { recursive: true });
   await git(repository, 'init', '-b', 'main');
-  await git(repository, 'config', 'user.name', 'Relic Path');
+  await git(repository, 'config', 'user.name', 'Relik Path');
   await git(repository, 'config', 'user.email', 'relic@example.invalid');
   await writeFile(join(repository, 'docs', 'report.md'), '# path check\n');
   await git(repository, 'add', '.');

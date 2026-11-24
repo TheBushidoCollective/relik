@@ -632,7 +632,7 @@ describe('renderDead and Key Entry Form (DOM)', () => {
 
   test('renders key entry form on decrypt_failed', () => {
     const dead: DeadView = {
-      headline: 'This relic could not be opened',
+      headline: 'This relik could not be opened',
       detail: 'The file did not decrypt.',
       action: 'reopen-original-link',
       code: 'decrypt_failed',
@@ -733,9 +733,9 @@ describe('renderDead and Key Entry Form (DOM)', () => {
     expect(input.value).toBe('r1badshort');
   });
 
-  test('submitting a well-formed but wrong key shows "That key does not open this relic."', async () => {
+  test('submitting a well-formed but wrong key shows "That key does not open this relik."', async () => {
     const dead: DeadView = {
-      headline: 'This relic could not be opened',
+      headline: 'This relik could not be opened',
       detail: 'The file did not decrypt.',
       action: 'reopen-original-link',
       code: 'decrypt_failed',
@@ -745,7 +745,7 @@ describe('renderDead and Key Entry Form (DOM)', () => {
     const wrongKey = generateKey();
     const wrongFragment = encodeFragment(wrongKey);
 
-    const content = new TextEncoder().encode('# Secret relic content');
+    const content = new TextEncoder().encode('# Secret relik content');
     const ciphertext = await encryptRelic({
       content,
       filename: 'note.md',
@@ -795,11 +795,11 @@ describe('renderDead and Key Entry Form (DOM)', () => {
 
     await waitUntil(() => feedback.textContent !== '');
 
-    expect(feedback.textContent).toBe('That key does not open this relic.');
+    expect(feedback.textContent).toBe('That key does not open this relik.');
     expect(input.value).toBe(wrongFragment);
   });
 
-  test('submitting a correct fragment opens the relic in place and saves to vault', async () => {
+  test('submitting a correct fragment opens the relik in place and saves to vault', async () => {
     const dead: DeadView = {
       headline: 'This link is missing its key',
       detail: 'Open the original link again.',
@@ -868,9 +868,9 @@ describe('renderDead and Key Entry Form (DOM)', () => {
     expect(vault.recall(relicId)).toBe(correctFragment);
   });
 
-  test('submitting a correct mnemonic opens the relic in place and saves to vault', async () => {
+  test('submitting a correct mnemonic opens the relik in place and saves to vault', async () => {
     const dead: DeadView = {
-      headline: 'This relic could not be opened',
+      headline: 'This relik could not be opened',
       detail: 'The file did not decrypt.',
       action: 'reopen-original-link',
       code: 'decrypt_failed',
@@ -1151,10 +1151,10 @@ describe('Dashboard rendering (DOM)', () => {
     expect(secondLink.href).toBe(`/rel2#${frag2}`);
 
     const firstThumbnail = items[0]?.querySelector('.relic-thumbnail');
-    expect(firstThumbnail?.getAttribute('aria-label')).toBe('Document relic');
+    expect(firstThumbnail?.getAttribute('aria-label')).toBe('Document relik');
     expect(firstThumbnail?.className).toContain('relic-thumbnail-document');
     const secondThumbnail = items[1]?.querySelector('.relic-thumbnail');
-    expect(secondThumbnail?.getAttribute('aria-label')).toBe('Code relic');
+    expect(secondThumbnail?.getAttribute('aria-label')).toBe('Code relik');
     expect(secondThumbnail?.className).toContain('relic-thumbnail-code');
 
     for (const item of items) {
@@ -1292,7 +1292,7 @@ describe('Dashboard rendering (DOM)', () => {
       {
         relicId: 'known_relic',
         fragment: fragKnown,
-        title: 'Known Relic',
+        title: 'Known Relik',
         expiresAt: null,
       },
     ]);
@@ -1315,7 +1315,7 @@ describe('Dashboard rendering (DOM)', () => {
               relics: [
                 {
                   relic_id: 'known_relic',
-                  title: 'Known Relic',
+                  title: 'Known Relik',
                   renderer_class: 'markdown',
                   version: 1,
                   published_at: '2026-09-01T00:00:00Z',
@@ -1324,7 +1324,7 @@ describe('Dashboard rendering (DOM)', () => {
                 },
                 {
                   relic_id: 'unknown_key_relic',
-                  title: 'A Relic I Commented On Elsewhere',
+                  title: 'A Relik I Commented On Elsewhere',
                   renderer_class: 'markdown',
                   version: 1,
                   published_at: '2026-09-01T00:00:00Z',
@@ -1371,7 +1371,7 @@ describe('Dashboard rendering (DOM)', () => {
 
     const note = unopenableItem.querySelector('.relic-unopenable-note');
     expect(note?.textContent).toContain(
-      'This browser does not hold the key for this relic. The original link is the only way in.'
+      'This browser does not hold the key for this relik. The original link is the only way in.'
     );
   });
 
@@ -1398,7 +1398,7 @@ describe('Dashboard rendering (DOM)', () => {
     expect(rootBody.querySelector('.stage-dashboard')).not.toBeNull();
   });
 
-  test("boot renders a service document in the markdown player with none of a relic's chrome", async () => {
+  test("boot renders a service document in the markdown player with none of a relik's chrome", async () => {
     const root = new ElementStub('div');
     root.id = 'relic-root';
     root.setAttribute('data-view', 'document');
@@ -1415,7 +1415,7 @@ describe('Dashboard rendering (DOM)', () => {
             'accept'
           ],
         });
-        return new Response('# What Relic knows\n\nRead this **first**.', {
+        return new Response('# What Relik knows\n\nRead this **first**.', {
           status: 200,
         });
       }) as unknown as typeof globalThis.fetch,
@@ -1434,7 +1434,7 @@ describe('Dashboard rendering (DOM)', () => {
     expect(rootBody.querySelector('.doc')).not.toBeNull();
     expect(rootBody.querySelector('.prose')).not.toBeNull();
     expect(rootBody.querySelector('.filename')?.textContent).toBe(
-      'What Relic knows'
+      'What Relik knows'
     );
     // It is not a relic: no comments, decisions, share, copy link, download or
     // report, and no comment thread. Its bar carries the one action every bar
@@ -1485,7 +1485,7 @@ describe('Dashboard rendering (DOM)', () => {
       {
         relicId: 'r_export',
         fragment: frag1,
-        title: 'Export Test Relic',
+        title: 'Export Test Relik',
         expiresAt: null,
       },
     ]);
@@ -1546,7 +1546,7 @@ describe('Dashboard rendering (DOM)', () => {
     expect(accession?.textContent).toBe('CATALOGUE');
   });
 
-  test('the bar carries the relics link targeting a new tab with rel="noopener"', () => {
+  test('the bar carries the reliks link targeting a new tab with rel="noopener"', () => {
     const dummyView: ReadyView = {
       filename: 'test.md',
       declaredMimetype: 'text/markdown',
@@ -1572,12 +1572,12 @@ describe('Dashboard rendering (DOM)', () => {
       .map((c) => c.textContent)
       .join('')
       .trim();
-    expect(visible).toBe('Relics');
+    expect(visible).toBe('Reliks');
     expect(ariaLabel).toContain(visible ?? '');
   });
 });
 
-describe('a jsx relic opened by key', () => {
+describe('a jsx relik opened by key', () => {
   test('carries the module routing compiled from its bytes', async () => {
     const key = new Uint8Array(16);
     const fragment = encodeFragment(key);

@@ -501,7 +501,7 @@ describe('Spec B: V2 Load Plate, Boot, Dead Cards, and Key Entry', () => {
     const key = generateKey();
     const fragment = encodeFragment(key);
     const container = await encryptRelic({
-      content: new TextEncoder().encode('Hello, Relic!'),
+      content: new TextEncoder().encode('Hello, Relik!'),
       filename: 'hello.txt',
       mimetype: 'text/plain',
       key,
@@ -691,7 +691,7 @@ describe('Spec B: V2 Load Plate, Boot, Dead Cards, and Key Entry', () => {
     expect(rootBody.querySelector('[data-load-plate]')).toBeNull();
   });
 
-  test('5. content_damaged renders the damaged copy, Try again and Report this relic, no .key-entry, and one bar with report and policy links', () => {
+  test('5. content_damaged renders the damaged copy, Try again and Report this relik, no .key-entry, and one bar with report and policy links', () => {
     const dead: DeadView = {
       headline: DAMAGED_TITLE,
       detail: DAMAGED_DETAIL,
@@ -726,7 +726,7 @@ describe('Spec B: V2 Load Plate, Boot, Dead Cards, and Key Entry', () => {
     const reportLink = rootBody.querySelector('a[data-dead-action="report"]');
     expect(reportLink).not.toBeNull();
     expect(reportLink?.getAttribute('href')).toMatch(/\/abuse$/);
-    expect(reportLink?.textContent).toBe('Report this relic');
+    expect(reportLink?.textContent).toBe('Report this relik');
 
     // No key entry field on content_damaged
     expect(rootBody.querySelector('.key-entry')).toBeNull();
@@ -800,7 +800,7 @@ describe('Spec B: V2 Load Plate, Boot, Dead Cards, and Key Entry', () => {
     expect(loadCalls).toBeGreaterThan(1);
   });
 
-  test('7. Key entry with a cached prefix: a wrong key shows "That key does not open this relic." with zero fetch calls; right key opens', async () => {
+  test('7. Key entry with a cached prefix: a wrong key shows "That key does not open this relik." with zero fetch calls; right key opens', async () => {
     const relicId = generateRelicId();
     const key = generateKey();
     const rightKeyFragment = encodeFragment(key);
@@ -859,7 +859,7 @@ describe('Spec B: V2 Load Plate, Boot, Dead Cards, and Key Entry', () => {
     };
 
     const dead: DeadView = {
-      headline: 'This relic could not be opened',
+      headline: 'This relik could not be opened',
       detail: 'The file did not decrypt.',
       action: 'reopen-original-link',
       code: 'decrypt_failed',
@@ -893,7 +893,7 @@ describe('Spec B: V2 Load Plate, Boot, Dead Cards, and Key Entry', () => {
       () => feedback.textContent !== ''
     );
 
-    expect(feedback.textContent).toBe('That key does not open this relic.');
+    expect(feedback.textContent).toBe('That key does not open this relik.');
     expect(fetchCount).toBe(0);
     expect(blobFetchCount).toBe(0);
 
@@ -905,7 +905,7 @@ describe('Spec B: V2 Load Plate, Boot, Dead Cards, and Key Entry', () => {
       () => blobFetchCount === 1
     );
     await waitForCondition(
-      'right key to open and mount relic stage',
+      'right key to open and mount relik stage',
       () => rootBody.querySelector('main.stage-dead') === null
     );
     await waitForCondition(

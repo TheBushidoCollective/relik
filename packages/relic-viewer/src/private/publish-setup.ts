@@ -270,7 +270,7 @@ export async function mountPrivatePublishSetup(
 
   const signIn = (): void => {
     const help = text(
-      'Sign in to own this private relic. Use your passkey or enter an email code here to keep your selected file.'
+      'Sign in to own this private relik. Use your passkey or enter an email code here to keep your selected file.'
     );
     const label = document.createElement('label');
     label.textContent = 'Email address';

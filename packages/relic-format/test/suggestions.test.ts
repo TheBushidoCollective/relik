@@ -598,12 +598,12 @@ describe('suggestionFallbackBody', () => {
         replacement: 'new\tvalue',
       })
     ).toBe(
-      'Suggested edit: replace "old value" with "new value". A current Relic viewer shows it in place.'
+      'Suggested edit: replace "old value" with "new value". A current Relik viewer shows it in place.'
     );
     expect(
       suggestionFallbackBody('old', { v: 1, mode: 'replace', replacement: '' })
     ).toBe(
-      'Suggested edit: delete "old". A current Relic viewer shows it in place.'
+      'Suggested edit: delete "old". A current Relik viewer shows it in place.'
     );
     expect(
       suggestionFallbackBody('old', {
@@ -612,12 +612,12 @@ describe('suggestionFallbackBody', () => {
         replacement: 'new',
       })
     ).toBe(
-      'Suggested edit: insert "new" before "old". A current Relic viewer shows it in place.'
+      'Suggested edit: insert "new" before "old". A current Relik viewer shows it in place.'
     );
     expect(
       suggestionFallbackBody('old', { v: 1, mode: 'after', replacement: 'new' })
     ).toBe(
-      'Suggested edit: insert "new" after "old". A current Relic viewer shows it in place.'
+      'Suggested edit: insert "new" after "old". A current Relik viewer shows it in place.'
     );
   });
 

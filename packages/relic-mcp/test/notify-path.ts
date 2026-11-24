@@ -212,7 +212,7 @@ try {
 
   if (!isNpxMode) {
     const relicRow = await store.getRelic(relicId);
-    assert.ok(relicRow, 'relic row not found in store');
+    assert.ok(relicRow, 'relik row not found in store');
     const expectedVerifier = await shareVerifierFor(
       await deriveShareProof(key)
     );

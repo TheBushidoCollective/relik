@@ -32,7 +32,7 @@ const relicId = generateRelicId();
 const key = generateKey();
 const filename = 'discussion.md';
 const content = new TextEncoder().encode(
-  '# Review Discussion\n\nPlease leave feedback on the architecture plan below.\n\n## Summary\n\nThis is a living relic with threaded comments and Markdown support.\n'
+  '# Review Discussion\n\nPlease leave feedback on the architecture plan below.\n\n## Summary\n\nThis is a living relik with threaded comments and Markdown support.\n'
 );
 
 const container = await encryptRelic({
@@ -177,7 +177,7 @@ const server = Bun.serve({
 });
 
 const shareUrl = relicUrl(ORIGIN, relicId, key);
-console.log(`Relic URL: ${shareUrl}`);
+console.log(`Relik URL: ${shareUrl}`);
 console.log(`ready on ${server.port}`);
 
 if (process.env.FIXTURE_ONESHOT === 'true') {

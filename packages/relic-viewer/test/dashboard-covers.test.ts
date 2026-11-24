@@ -23,7 +23,7 @@ function depsAnswering(answer: (url: string) => Response | Promise<Response>): {
 }
 
 describe('dashboard covers', () => {
-  test('names each relic the service has a cover for, as a URL on the service origin', async () => {
+  test('names each relik the service has a cover for, as a URL on the service origin', async () => {
     const { deps, urls } = depsAnswering(() =>
       Response.json({ covers: { [A]: `/${A}/cover/${SHA}.png` } })
     );
@@ -32,7 +32,7 @@ describe('dashboard covers', () => {
     expect(urls).toEqual([`${ORIGIN}/api/covers?ids=${A},${B}`]);
   });
 
-  test('refuses anything that is not a relic cover path on the service', async () => {
+  test('refuses anything that is not a relik cover path on the service', async () => {
     const { deps } = depsAnswering(() =>
       Response.json({
         covers: {

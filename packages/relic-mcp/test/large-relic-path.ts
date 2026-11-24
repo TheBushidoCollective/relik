@@ -352,7 +352,7 @@ async function publish(path: string): Promise<Published> {
   const url = result.data['url'];
   assert.ok(
     typeof id === 'string' && typeof url === 'string',
-    'publish returned no relic id or URL'
+    'publish returned no relik id or URL'
   );
   assert.equal(
     new URL(url).origin,

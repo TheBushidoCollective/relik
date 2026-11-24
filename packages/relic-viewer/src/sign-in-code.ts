@@ -111,7 +111,7 @@ export const SIGN_IN_CODE_LABEL = 'Code from the email';
 export const SIGN_IN_CODE_SUBMIT = 'Sign in';
 export const SIGN_IN_CODE_CHECKING = 'Checking the code.';
 export const SIGN_IN_CODE_REJECTED =
-  'That code did not work. Check it against the newest email from Relic, and type it in the browser that asked for it.';
+  'That code did not work. Check it against the newest email from Relik, and type it in the browser that asked for it.';
 export const SIGN_IN_CODE_REJECTED_AGAIN =
   'That code still did not work. A code works once, only in the browser that asked for it, and stops working after a newer email or too many wrong tries. Open the link in the email instead, or send a new one.';
 export const SIGN_IN_CODE_FAILED =

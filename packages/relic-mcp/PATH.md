@@ -29,11 +29,11 @@ Run from the repository root:
 bun packages/relic-mcp/test/comment-path.ts
 ```
 
-The command starts a loopback HTTP service standing in for Relic, publishes a
+The command starts a loopback HTTP service standing in for Relik, publishes a
 file, then starts fresh MCP processes for `relic_comment` and
 `relic_read_comments`, so the read happens in a process holding nothing but the
 state file on disk. It also asserts what the service stored is ciphertext, and
-that a relic this machine never published and a share URL are both refused.
+that a relik this machine never published and a share URL are both refused.
 Success ends with:
 
 ```text
@@ -85,7 +85,7 @@ uninstrumented empty-output report. Its synchronous trace and stdout callback
 alter child scheduling. A passing control therefore does not identify or fix
 the original cause.
 
-## Finding and editing a relic whose source was never recorded
+## Finding and editing a relik whose source was never recorded
 
 Run from the repository root:
 
@@ -93,12 +93,12 @@ Run from the repository root:
 bun packages/relic-mcp/test/inventory-path.ts
 ```
 
-The command starts a loopback HTTP service standing in for Relic, publishes a
+The command starts a loopback HTTP service standing in for Relik, publishes a
 file, then strips the recorded entry back to the three fields a client older
 than this one wrote and deletes the source file, which is the shape most of a
 long-lived state file is in. Every step after that runs in a fresh MCP process
 holding nothing but the state file: `relic_list` recovers the name by
-decrypting the relic's first record, `relic_show` returns what the link
+decrypting the relik's first record, `relic_show` returns what the link
 currently serves, `relic_republish` replaces it, and a second `relic_show`
 proves the URL never changed. No URL is printed, because the fragment is the
 key. Success ends with:
@@ -133,13 +133,13 @@ constant card `card.v1.png`. The command exercises this fallback path.
 It asserts the Open Graph and Twitter block lands after the character-set
 declaration and before the first `link` or `script` tag, because an unfurler
 range-fetches the head and metadata outside that range produces no card at
-It also asserts that the card reveals the relic's coarse renderer class
+It also asserts that the card reveals the relik's coarse renderer class
 across renderable, playable (`media`, `otio`), and download-only types,
 catching description drift between browser, played, and download tails and
 proving the class reaches the card even when the publisher declines a title.
-It catches false download claims on audio, video, and timeline relics by
-asserting that media and otio relics carry the played tail.
-title and `cover: false`, proves the name reaches no field on the relic row,
+It catches false download claims on audio, video, and timeline reliks by
+asserting that media and otio reliks carry the played tail.
+title and `cover: false`, proves the name reaches no field on the relik row,
 fetches the card image and reads 1200x630 out of its PNG header, and confirms
 neither shell fetch spent an open.
 Success ends with:
@@ -244,7 +244,7 @@ RELIC_CHROME_PATH=none bun packages/relic-mcp/test/notify-path.ts
 
 The command puts the app server on loopback with `MemoryStore` and `MemoryStorage`,
 capturing email sends. Every tool call runs as a fresh stdio process. It exercises
-the full change notification and sharing lifecycle: publishing a relic with
+the full change notification and sharing lifecycle: publishing a relik with
 its derived `share_verifier`, posting a comment, sharing to recipient email addresses,
 republishing with change notices, exercising the one-click unsubscribe stop link,
 verifying opted-out recipients are skipped on subsequent republishes, verifying
@@ -272,7 +272,7 @@ NOTIFY_PATH_OK
 
 ## Copy link and the key phrase
 
-A reader on any relic presses Copy link, sees the link and its 12-word key phrase, and copies either one; a person sent the link without the key and told the phrase opens the relic.
+A reader on any relik presses Copy link, sees the link and its 12-word key phrase, and copies either one; a person sent the link without the key and told the phrase opens the relik.
 
 Run from the repository root:
 
@@ -318,7 +318,7 @@ Run the local headless proof across every class and network condition:
 mise exec -- bun packages/relic-mcp/test/load-progress-path.ts
 ```
 
-A reader opening any relic link on a slow connection sees the Relik bar and a named phase, with bytes against the total, from the first painted frame until the content appears. A link whose key does not open the relic stops downloading after the first block and says the relic could not be opened. A relic whose start decrypts but whose later blocks fail says the link is fine and the stored file is damaged.
+A reader opening any relik link on a slow connection sees the Relik bar and a named phase, with bytes against the total, from the first painted frame until the content appears. A link whose key does not open the relik stops downloading after the first block and says the relik could not be opened. A relik whose start decrypts but whose later blocks fail says the link is fine and the stored file is damaged.
 
 At startup, the proof launches an isolated headless Chrome instance over `--remote-debugging-pipe`, with software WebGL enabled for model fixtures. It publishes fixtures through the client and serves storage through a throttled stream. It checks loading, early cancellation, damage handling, model rendering, and interactive model controls.
 
@@ -347,7 +347,7 @@ RELIC_SERVICE_ORIGIN=loopback \
 
 The probe verifies progress indications and early cancellation against a live deployment or local loopback service.
 It requires `RELIC_LOAD_PROBE_CONFIRM=publish-one-1-day-relic` to prevent unprompted writes,
-publishes exactly one 1-day, untitled relic with `cover: false`, and tests:
+publishes exactly one 1-day, untitled relik with `cover: false`, and tests:
 1. Throttled valid open (1440x900 light): asserts the no-blank rule, phases in order through ready, at least five distinct `aria-valuenow` values, storage data received events spanning at least 2 seconds, and complete transfer (`encodedDataLength >= object_length`).
 2. Wrong key (one character changed): asserts the could-not-be-opened card appears within 30 seconds, storage request ends in `Network.loadingFailed` with `canceled: true`, `cancel_bytes` is at most 1,048,576 bytes and below `object_length / 4`, and no `dataReceived` arrives in the 5 seconds after the card appears.
 3. Mobile viewport (390x844 dark): asserts the no-blank rule, no horizontal overflow (`scrollWidth <= innerWidth`), and renders ready.
@@ -519,7 +519,7 @@ RELIC_LEGACY_VIEWER_DIST=<dist of a viewer built before the program change> \
 ```
 
 - `otio-program-path.ts` ends with `OTIO_PROGRAM_PATH_OK` and no `OTIO_PROGRAM_DEFERRED_FAILURES`. It covers Checks 1, 2, 6 and 7: the stored archive is unpacked with Python's zipfile, the MP4 is decoded with ffprobe and ffmpeg and compared with an analytic reference, and the viewer's first Play, time mapping, focus, comments and audio are measured. The next section describes its playback arms.
-- `otio-program-controls.ts` ends with `OTIO_PROGRAM_CONTROLS_OK` after 14 stages. It covers Check 5 and the parts of Checks 3 and 4 a publish can reach. An unsupported transition, an unsupported effect, a program over the size cap, a missing Chrome and a disabled encoder each publish an archive that carries `relic/program.json`, reports every timeline unavailable with the matching reason, and stores no MP4. An invalid size setting refuses the publish. Six single-field manifest mutations and a wrong program digest are each refused by the format's reader with the stated code, and the viewer shows the tampered relic unavailable with `digest-mismatch` and refuses composition play.
+- `otio-program-controls.ts` ends with `OTIO_PROGRAM_CONTROLS_OK` after 14 stages. It covers Check 5 and the parts of Checks 3 and 4 a publish can reach. An unsupported transition, an unsupported effect, a program over the size cap, a missing Chrome and a disabled encoder each publish an archive that carries `relic/program.json`, reports every timeline unavailable with the matching reason, and stores no MP4. An invalid size setting refuses the publish. Six single-field manifest mutations and a wrong program digest are each refused by the format's reader with the stated code, and the viewer shows the tampered relik unavailable with `digest-mismatch` and refuses composition play.
 - `program-jail-path.ts` ends with `PROGRAM_JAIL_PATH_OK`. It covers the isolation half of Check 8: the production jail passes its probe, five weakened profiles are each caught, the jailed browser's navigation to a loopback listener is denied with no connection made, a notification posted from inside the jail is denied, and WebCodecs still encodes H.264 and AAC inside the jail.
 - `program-signal-path.ts` ends with `PROGRAM_SIGNAL_PATH_OK`: a render stopped by SIGTERM exits 143 and leaves no browser process and no RAM disk mount behind.
 - `otio-program-legacy-reader-path.ts` ends with `OTIO_LEGACY_READER_OK`. It is Check 9. It serves the older viewer, opens a legacy archive and a program archive of one document, and prints one `OTIO_LEGACY_READER archive=<legacy|program> outcome=<opened|refused>` line for each.
@@ -536,7 +536,7 @@ Results on 2026-11-13, macOS, headless shell 1228. Product source is identical f
 | `program-signal-path.ts` | this revision | `PROGRAM_SIGNAL_PATH_OK` |
 | `otio-program-legacy-reader-path.ts` | this revision, older viewer built from main `238854c5` | `OTIO_LEGACY_READER_OK`: the legacy archive and the program archive both opened, with the same view, and both played the composition |
 
-The controls proof had never passed before this revision. It published one source several times, which the client refuses, it rewrote archives with a ZIP attribute Relic's reader rejects, and it required a focus-only archive to carry no manifest, against the 2026-11-10 decision. Those three faults were in the proof and its harness, not in the publisher or the viewer.
+The controls proof had never passed before this revision. It published one source several times, which the client refuses, it rewrote archives with a ZIP attribute Relik's reader rejects, and it required a focus-only archive to carry no manifest, against the 2026-11-10 decision. Those three faults were in the proof and its harness, not in the publisher or the viewer.
 
 ## Primer for the rendered program's first Play
 
@@ -599,7 +599,7 @@ Every MCP operation runs through a fresh Node stdio process with `title: ""`,
 
 It exercises:
 1. Publishing v1, republishing v2, and republishing v3, recording the v3 `version_digest`.
-2. Opening the relic in headless Chrome over a CDP pipe with an attached virtual CTAP2 authenticator.
+2. Opening the relik in headless Chrome over a CDP pipe with an attached virtual CTAP2 authenticator.
 3. Requesting a sign-in magic link from the decisions panel, extracting it from the captured mailer, and following it in the same browser context.
 4. Opening the decision panel, choosing Approve, completing trust-on-first-use (TOFU) passkey registration, and confirming the decision with a user-verified assertion.
 5. Verifying check (a): `relic_read_decisions` for v3 returns the reader address, `approve`, and matching `version_digest`.
@@ -641,7 +641,7 @@ It respects:
 - `RELIC_CHROME_PATH`: optional browser executable path
 
 The probe prints `PROBE_AWAIT_MAGIC_LINK email=<addr>` and blocks on stdin. The operator retrieves the magic link from the destination mailbox and pastes it into stdin.
-The probe never prints the relic URL or key. It executes all five checks and negative controls against the live service.
+The probe never prints the relik URL or key. It executes all five checks and negative controls against the live service.
 
 Success ends with:
 
@@ -726,10 +726,10 @@ Every MCP operation runs through a fresh Node stdio process with `title: ""`,
 
 It exercises:
 1. Publishing an initial document with title: "", cover: false, ttl_days: 1.
-2. Installing a script wrapper recording `credentials.get` calls `{mediation, aborted}`, opening the relic anonymously, and asserting autocomplete and `[data-passkey-sign-in]`.
+2. Installing a script wrapper recording `credentials.get` calls `{mediation, aborted}`, opening the relik anonymously, and asserting autocomplete and `[data-passkey-sign-in]`.
 3. Requesting a sign-in magic link from the comment composer, following it, and asserting `[data-passkey-offer]` is shown and the offer marker cookie is deleted.
 4. Clicking `[data-passkey-offer-create]`, waiting for `data-state="created"`, checking that WebAuthn holds 1 resident credential, and verifying `store.getPasskeysByUserHandle` resolves it.
-5. Reporting conditional mediation unavailable (a virtual authenticator answers an autofill request by itself, so this keeps the button path deliberate), deleting the `relic_session` cookie via CDP, reopening the relic URL, and asserting `/api/auth/session` returns `email: null` with no conditional request armed.
+5. Reporting conditional mediation unavailable (a virtual authenticator answers an autofill request by itself, so this keeps the button path deliberate), deleting the `relic_session` cookie via CDP, reopening the relik URL, and asserting `/api/auth/session` returns `email: null` with no conditional request armed.
 6. Clicking `[data-passkey-sign-in]`, verifying "Commenting as <addr>" appears, a sign-in POST was made, and zero emails were sent.
 6b. Making conditional mediation available again, signing out and reopening, and verifying the autofill request alone signs the reader in: "Commenting as <addr>", a conditional request armed, a sign-in POST, and zero emails.
 7. Posting a comment through `textarea.compose-textarea` and "Post comment", and reading it back via `relic_read_comments` to verify author attribution.
@@ -864,7 +864,7 @@ RELIC_CHROME_PATH=/absolute/path/to/chrome-headless-shell mise exec -- bun packa
 
 The command runs the same checks in two process models, one browser each. In the default model the frame is whatever process the browser chooses. In the isolated model the browser runs with `--site-per-process --enable-features=IsolateSandboxedIframes`, and the proof asserts that the viewer's frame appears as its own out-of-process iframe target. The usercontent origin is `relic-usercontent.test`, which the host resolver maps to 127.0.0.1, so it is cross-site from the service as in production.
 
-Each run publishes an SVG whose script tries to read its parent, the top document, cookies and storage, fetch an external URL and the service, open a popup, and navigate the top window. It opens that relic as a signed-in reader in the production viewer, served with the production shim headers. The script reports its attempts from its own document. The drawing must show in the frame, and every attempt must be refused: the browser's refusal lines are printed as `INFO`, and the proof counts any request that reaches the network layer or the service.
+Each run publishes an SVG whose script tries to read its parent, the top document, cookies and storage, fetch an external URL and the service, open a popup, and navigate the top window. It opens that relik as a signed-in reader in the production viewer, served with the production shim headers. The script reports its attempts from its own document. The drawing must show in the frame, and every attempt must be refused: the browser's refusal lines are printed as `INFO`, and the proof counts any request that reaches the network layer or the service.
 
 Three controls run in each model. Control A is a throwaway viewer copy whose frame grants `allow-same-origin` and `allow-top-navigation`; its origin, cookie, storage and top-navigation checks must flip. Control B loosens the shim's connection policy; its service and network checks must fire. Control C creates a user-gesture popup, which the popup check must count. Request interception is a harness aid. It covers the page and each out-of-process frame, and control B shows it reaches the frame.
 
@@ -912,11 +912,11 @@ bun run --cwd packages/relic-mcp build
 RELIC_CHROME_PATH=/absolute/path/to/chrome-headless-shell bun packages/relic-mcp/test/version-compare-path.ts
 ```
 
-The stage publishes three relics, a DOCX, an EPUB and an XLSX, each at version 1 and republished at version 2, through a fresh relic-mcp stdio process for each call. It opens each share URL, clicks Compare versions with real mouse input, and reads the result at 1440x900 and 390x844. Every reading comes from the page: the frames' outlines and heights, the Changes count, the change list and chapter rows, the sheet strip and the cell states.
+The stage publishes three reliks, a DOCX, an EPUB and an XLSX, each at version 1 and republished at version 2, through a fresh relic-mcp stdio process for each call. It opens each share URL, clicks Compare versions with real mouse input, and reads the result at 1440x900 and 390x844. Every reading comes from the page: the frames' outlines and heights, the Changes count, the change list and chapter rows, the sheet strip and the cell states.
 
 The expectations are the spec's. DOCX reads 1 added, 1 removed, 2 changed. EPUB reads 2 added, 2 removed, 1 changed, with chapters The crossing (1 change), Interlude (removed), Afterword (added) and 1 unchanged chapter. XLSX reads 4 cells changed, 1 added, 1 removed, and 1 sheet added, 1 removed, 1 renamed, with C3 changed in both grids and D5 added in version 2 only.
 
-The five negatives each publish their own relics: a core.xml-only version, a DOCX republished as an EPUB, a version over 16 MiB, hostile EPUB markup with a U+202E sheet name, and a frame's request check. Their expectations are in the root `PATH.md`.
+The five negatives each publish their own reliks: a core.xml-only version, a DOCX republished as an EPUB, a version over 16 MiB, hostile EPUB markup with a U+202E sheet name, and a frame's request check. Their expectations are in the root `PATH.md`.
 
 Two inputs are simulated, and the run output names the input each frame uses. Under Chrome for Testing 156 with `--headless=new`, a wheel turn over a grid or over an out-of-process frame reaches the document, not the element, so the stage sets the element's own scroll position. That fires the scroll event a wheel would, which the sync and the grid mirroring listen for. In-process frames take a real wheel turn.
 
@@ -928,7 +928,7 @@ VERSION_COMPARE_PATH_OK formats=docx,epub,xlsx widths=1440,390 negatives=5
 
 ### Live probe after a deploy
 
-`version-compare-live-probe.ts` checks the same result lines and Changes counts on the live service. It publishes one untitled relic per format with a one-day lifetime and no cover, republishes each as version 2, and opens each share URL in the owned headless shell at 1440x900 and 390x844. It requires an explicit confirmation, so it cannot publish by accident:
+`version-compare-live-probe.ts` checks the same result lines and Changes counts on the live service. It publishes one untitled relik per format with a one-day lifetime and no cover, republishes each as version 2, and opens each share URL in the owned headless shell at 1440x900 and 390x844. It requires an explicit confirmation, so it cannot publish by accident:
 
 ```bash
 RELIC_COMPARE_PROBE_CONFIRM=publish-three-1-day-relics \
