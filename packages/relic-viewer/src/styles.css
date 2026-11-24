@@ -4945,9 +4945,9 @@ button.diff-chapter-row:focus-visible {
   position: relative;
   display: grid;
   grid-template-rows: 1fr auto;
-  flex: 0 0 4.75rem;
-  width: 4.75rem;
-  height: 3.35rem;
+  flex: 0 0 6.25rem;
+  width: 6.25rem;
+  height: 3.3rem;
   padding: 0.42rem;
   overflow: hidden;
   border: 1px solid var(--rule-strong);
@@ -4983,6 +4983,25 @@ button.diff-chapter-row:focus-visible {
   text-transform: uppercase;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* The relic's own link-preview image, when the service has one. It is drawn at
+   the preview's 1.9:1 shape and fills the tile; the drawn tile is the fallback. */
+.relic-thumbnail.has-cover {
+  padding: 0;
+  background: var(--ground);
+}
+.relic-thumbnail.has-cover > .relic-thumbnail-rule,
+.relic-thumbnail.has-cover > .relic-thumbnail-label {
+  display: none;
+}
+.relic-thumbnail-cover {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top center;
 }
 
 .relic-thumbnail-code,

@@ -5493,6 +5493,54 @@ describe('cover image upload, serving, and lifecycle', () => {
       expect(shellBody).not.toContain('/cover/');
     });
 
+    test('the cover index names the current cover path for a relic with one, and leaves out one without, a stale one, and a bad id', async () => {
+      const withCover = await publish();
+      const bare = await publish();
+      const stale = await publish();
+      const pngBytes = makeValidPng(2);
+      const sha256 = await sha256Hex(pngBytes);
+      for (const { id, grant } of [withCover, stale]) {
+        await app.fetch(
+          req(`/api/relics/${id}/cover`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              publish_token: grant.publish_token,
+              version: 1,
+              kind: 'markdown',
+              type: 'image/png',
+              data: toBase64(pngBytes),
+            }),
+          })
+        );
+      }
+      const staleRow = await app.store.getRelic(stale.id);
+      if (staleRow !== undefined) {
+        await app.store.putRelic({ ...staleRow, version: 2 });
+      }
+
+      const res = await app.fetch(
+        req(
+          `/api/covers?ids=${withCover.id},${bare.id},${stale.id},not-an-id,${withCover.id}`
+        )
+      );
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({
+        covers: { [withCover.id]: `/${withCover.id}/cover/${sha256}.png` },
+      });
+      // The path it names is the one the cover route serves.
+      const served = await app.fetch(
+        req(`/${withCover.id}/cover/${sha256}.png`)
+      );
+      expect(served.status).toBe(200);
+    });
+
+    test('the cover index refuses more ids than it answers for', async () => {
+      const ids = Array.from({ length: 101 }, () => 'a'.repeat(26)).join(',');
+      const res = await app.fetch(req(`/api/covers?ids=${ids}`));
+      expect(res.status).toBe(400);
+    });
+
     test('tombstoned relic cover route returns 404 and shell serves card.v1.png', async () => {
       const { id, grant } = await publish();
       const pngBytes = makeValidPng(2);

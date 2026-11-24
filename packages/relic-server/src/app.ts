@@ -630,6 +630,13 @@ export function createApp(options: AppOptions = {}): RelicApp {
       }
       return new Response('Method not allowed', { status: 405 });
     }
+    // The dashboard's thumbnails. A relic's cover is already public (its link
+    // preview names it), so this answers only for ids the caller names and
+    // only with the path the shell would put in og:image.
+    if (first === 'covers' && second === undefined) {
+      if (request.method === 'GET') return coverIndex(url, now);
+      return new Response('Method not allowed', { status: 405 });
+    }
 
     // Decisions:
     // - relics/{id}/decisions: POST record; POST .../options; POST .../list; any other method or path returns 405.
@@ -4550,6 +4557,52 @@ export function createApp(options: AppOptions = {}): RelicApp {
     );
 
     return json({ relics });
+  }
+
+  /** The most ids one `/api/covers` call answers for. */
+  const COVER_INDEX_MAX_IDS = 100;
+
+  /**
+   * The current cover path for each named relic that has one.
+   *
+   * `GET /api/covers?ids=a,b,c`. A relic that is absent, tombstoned, expired,
+   * private, without a cover, or whose cover is for an older version is left
+   * out, exactly as the shell leaves it out of og:image. An id that does not
+   * parse is skipped.
+   */
+  async function coverIndex(url: URL, now: number): Promise<Response> {
+    const named = (url.searchParams.get('ids') ?? '')
+      .split(',')
+      .filter((id) => id.length > 0);
+    if (named.length > COVER_INDEX_MAX_IDS) {
+      return refuse('invalid_publish_metadata', {
+        detail: `Name at most ${COVER_INDEX_MAX_IDS} relics at a time.`,
+      });
+    }
+    const covers: Record<string, string> = {};
+    await Promise.all(
+      [...new Set(named)].map(async (raw) => {
+        let id: string;
+        try {
+          id = parseRelicId(raw);
+        } catch {
+          return;
+        }
+        const [tombstone, row] = await Promise.all([
+          store.getTombstone(id),
+          store.getRelic(id),
+        ]);
+        if (tombstone !== undefined || row === undefined) return;
+        if (row.access === 'private') return;
+        if (row.expiresAt !== undefined && now >= row.expiresAt) return;
+        if (row.cover === undefined || row.cover.version !== row.version) {
+          return;
+        }
+        covers[id] =
+          `/${id}/cover/${row.cover.sha256}.${coverExtension(row.cover.type)}`;
+      })
+    );
+    return json({ covers });
   }
 
   // --- decisions and passkeys ---------------------------------------------
