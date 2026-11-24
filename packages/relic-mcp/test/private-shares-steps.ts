@@ -1044,7 +1044,11 @@ async function approveDeviceFromProcess(
 /* Owner request panel helpers                                                */
 /* -------------------------------------------------------------------------- */
 
-/** The owner's relic page with the access panel open. The panel mounts before the unlock replaces the page. */
+/**
+ * The owner's relik page with the access panel open, or with the mail link's
+ * one card when the query names a requester. The panel mounts before the
+ * unlock replaces the page.
+ */
 async function openPanel(
   owner: Actor,
   relicUrl: string,
@@ -1053,7 +1057,7 @@ async function openPanel(
   await goto(owner.browser, `${relicUrl}?${query}`);
   await waitForState(
     owner.browser,
-    ['unlock'],
+    [query.includes('grant=') ? 'grant' : 'unlock'],
     'owner page with the access panel'
   );
 }

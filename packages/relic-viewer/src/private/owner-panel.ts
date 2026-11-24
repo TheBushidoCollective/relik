@@ -55,6 +55,13 @@ export interface OwnerPanelContext {
   onChanged(): void;
   /** The requester's identity ID from the mail link (`?grant=`): their card is listed first. */
   readonly focusRequester?: string;
+  /**
+   * `focused` is the mail link's view: one card for the requester, in the host,
+   * with no side sheet. The reader hides its own unlock card while it shows.
+   */
+  readonly mode?: 'panel' | 'focused';
+  /** Focused mode: the owner chose to go on to the relik, or has no request left to decide. */
+  onDone?(): void;
 }
 
 interface PendingRequest {
@@ -260,7 +267,18 @@ export function openAccessPanel(
     revoke.element,
     remove.element
   );
-  host.replaceChildren(panel);
+  const focusedView = ctx.mode === 'focused';
+  const skip = h(
+    'button',
+    { type: 'button', class: 'btn', 'data-action': 'grant-skip' },
+    'Open the relik instead'
+  );
+  skip.addEventListener('click', () => ctx.onDone?.());
+  host.replaceChildren(
+    ...(focusedView
+      ? [notice, requestsHost, h('p', { class: 'card-note' }, skip)]
+      : [panel])
+  );
 
   function showNotice(text: string, oxide = false): void {
     notice.hidden = text === '';
@@ -681,20 +699,27 @@ export function openAccessPanel(
       requestCount.textContent =
         data.requests.length > 0 ? String(data.requests.length) : '';
       setChildren(requestsHost);
-      if (data.requests.length === 0) {
+      const focus = ctx.focusRequester;
+      // The mail link's card is for one requester; the rest wait in the Access panel.
+      const listed =
+        focusedView && focus !== undefined
+          ? data.requests.filter(
+              (request) => request.requester.identity.identity_id === focus
+            )
+          : data.requests;
+      if (listed.length === 0) {
         requestsHost.append(
           h('p', { class: 'panel-empty' }, 'No one is waiting.')
         );
       }
-      const focus = ctx.focusRequester;
       const ordered =
         focus === undefined
-          ? data.requests
+          ? listed
           : [
-              ...data.requests.filter(
+              ...listed.filter(
                 (request) => request.requester.identity.identity_id === focus
               ),
-              ...data.requests.filter(
+              ...listed.filter(
                 (request) => request.requester.identity.identity_id !== focus
               ),
             ];
@@ -708,6 +733,12 @@ export function openAccessPanel(
             request.requester.identity.identity_id === focus
           )
         );
+      }
+      if (focusedView) {
+        // With the request decided, going on to the relik is the next step.
+        skip.className = listed.length === 0 ? 'action primary' : 'btn';
+        skip.textContent =
+          listed.length === 0 ? 'Open the relik' : 'Open the relik instead';
       }
       renderReaders(data);
       if (message || !keepNotice) showNotice(message);
