@@ -559,6 +559,15 @@ class PrivateReader {
         this.show('setup-refused');
       }
     } catch (error) {
+      if (
+        error instanceof PrivateRequestError &&
+        error.code === 'passkey_required'
+      ) {
+        // Signed in by email, with no passkey on this address yet. The key
+        // is held by a passkey, so make one, then set up.
+        await this.replacePasskey();
+        return;
+      }
       this.failure(error);
     }
   }
@@ -970,6 +979,15 @@ class PrivateReader {
     }
     if (error instanceof PrivateRequestError) {
       if (error.code === 'ceremony_cancelled') return;
+      if (error.code === 'passkey_fresh_link_required') {
+        // A first passkey needs a recent email sign-in.
+        this.show('signin');
+        const note = required<HTMLElement>(this.host, '#signin-note');
+        note.textContent =
+          'To add a passkey, sign in again with a new code from your email.';
+        note.hidden = false;
+        return;
+      }
       if (error.code === 'private_access_denied') {
         this.show('denied');
         return;
