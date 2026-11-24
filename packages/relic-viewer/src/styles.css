@@ -6954,6 +6954,8 @@ mark[data-concealed] {
 .signin-form .compose-field { width: 100%; }
 .card-fine { margin: 0; color: var(--ink-soft); font-size: 0.8rem; line-height: 1.45; }
 .card > .disclosure { margin-top: 1.5rem; }
+.disclosure blockquote { margin: 0.6rem 0 0 1.25rem; font-size: 0.88rem; line-height: 1.5; color: var(--ink-soft); }
+.disclosure blockquote a { color: var(--patina-ink); }
 .card, .dashboard-section, .found-party, .fp-field, .approval-steps > li { container-type: inline-size; }
 .fingerprint {
   display: grid;
