@@ -1065,7 +1065,12 @@ export async function mountPrivateDashboard(deps: ViewerDeps): Promise<void> {
   if (session.kind !== 'verified') return;
   const host = document.createElement('section');
   host.id = 'private-dashboard';
-  document.body.append(host);
+  // Inside the dashboard's own column, so it shares that column's width and
+  // scroll. Appended to the body instead, it became a second flex child that
+  // squeezed the stage to a sliver with a scrollbar of its own.
+  (document.body.querySelector('.dashboard-container') ?? document.body).append(
+    host
+  );
   const approve = new URL(deps.locationHref).searchParams.get('approve-device');
   renderPrivateDashboard(host, {
     deps,
