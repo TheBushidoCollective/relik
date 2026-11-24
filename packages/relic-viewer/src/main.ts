@@ -268,6 +268,7 @@ import { visibleText } from './json-tree-rows.ts';
 import { renderMarkdown } from './markdown.ts';
 import { visibleLabel } from './visible-label.ts';
 import type { DashboardSearch, RowMatch } from './dashboard-search.ts';
+import { loadCovers } from './dashboard-covers.ts';
 import {
   buildCommentedDashboardRows,
   buildLocalDashboardRows,
@@ -12603,7 +12604,16 @@ export function renderDead(
   document.body.appendChild(main);
 }
 
-/** A small cover for a dashboard row, built only from local/plain metadata. */
+/** Cover image URLs by relic id, filled in after the dashboard paints. */
+const dashboardCovers = new Map<string, string>();
+/** Ids already asked about, so a repaint never asks again. */
+const dashboardCoversAsked = new Set<string>();
+
+/**
+ * A small cover for a dashboard row. It is the relic's own link-preview image
+ * when the service has one, and otherwise a tile built only from local/plain
+ * metadata.
+ */
 function dashboardThumbnail(row: DashboardRelicRow): HTMLElement {
   const thumb = document.createElement('span');
   thumb.className = `relic-thumbnail relic-thumbnail-${row.previewKind}`;
@@ -12619,7 +12629,42 @@ function dashboardThumbnail(row: DashboardRelicRow): HTMLElement {
   label.textContent = row.previewLabel;
 
   thumb.append(rule, label);
+
+  const cover = dashboardCovers.get(row.relicId);
+  if (cover !== undefined) {
+    const image = document.createElement('img');
+    image.className = 'relic-thumbnail-cover';
+    image.alt = '';
+    image.loading = 'lazy';
+    image.decoding = 'async';
+    image.src = cover;
+    image.addEventListener('error', () => {
+      dashboardCovers.delete(row.relicId);
+      thumb.classList.remove('has-cover');
+      image.remove();
+    });
+    thumb.classList.add('has-cover');
+    thumb.append(image);
+  }
   return thumb;
+}
+
+/** Asks the service for the covers of rows not yet asked about, then repaints. */
+function fetchDashboardCovers(
+  deps: ViewerDeps,
+  rows: readonly DashboardRelicRow[],
+  repaint: () => void
+): void {
+  const missing = rows
+    .map((row) => row.relicId)
+    .filter((id) => !dashboardCoversAsked.has(id));
+  if (missing.length === 0) return;
+  for (const id of missing) dashboardCoversAsked.add(id);
+  void loadCovers(deps, missing).then((found) => {
+    if (found.size === 0) return;
+    for (const [id, url] of found) dashboardCovers.set(id, url);
+    repaint();
+  });
 }
 
 export async function renderDashboard(deps: ViewerDeps): Promise<void> {
@@ -12792,6 +12837,10 @@ export async function renderDashboard(deps: ViewerDeps): Promise<void> {
 
   repaintLocal = paintLocalList;
   paintLocalList();
+  fetchDashboardCovers(deps, localRows, () => {
+    paintLocalList();
+    repaintCommented();
+  });
   localSection.appendChild(localListContainer);
 
   // Vault export & import tools
@@ -13021,6 +13070,10 @@ export async function renderDashboard(deps: ViewerDeps): Promise<void> {
           ? []
           : buildCommentedDashboardRows(commented, deps.keyVault);
       repaintCommented();
+      fetchDashboardCovers(deps, commentedRows, () => {
+        paintLocalList();
+        repaintCommented();
+      });
       search?.refresh();
     });
   } else {
