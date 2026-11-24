@@ -9,27 +9,48 @@ import {
 const SERVICE = 'https://relic.example';
 
 describe('private-share mail (plan 4.14, verbatim)', () => {
-  test('the request mail says that someone asked, with the review link and the fingerprint rule', () => {
-    const requestUrl = `${SERVICE}/gdk6rpv49hftg5216ev7dejesc?access=requests`;
-    const mail = accessRequestedMail({ requestUrl });
-    expect(mail.subject).toBe('Someone asked for access to a relic');
+  test('the request mail names the requester, gives their fingerprint, and links to the request', () => {
+    const requestUrl = `${SERVICE}/gdk6rpv49hftg5216ev7dejesc?access=requests&grant=0123456789abcdef0123456789abcdef`;
+    const mail = accessRequestedMail({
+      requesterAddress: 'reader@example.com',
+      fingerprint: 'ABCD EFGH JKMN PQRS TVWX YZ01 2345 6789',
+      requestUrl,
+    });
+    expect(mail.subject).toBe('reader@example.com asked for access to a relic');
     expect(mail.text).toBe(
       [
-        'Someone asked for access to a relic you own on Relic.',
-        `Review the request: ${requestUrl}`,
-        "Before you grant access, ask them to read you their fingerprint on a phone or video call. Don't accept it by email or chat.",
+        'reader@example.com asked for access to a relic you own on Relic.',
+        'Their fingerprint: ABCD EFGH JKMN PQRS TVWX YZ01 2345 6789',
+        `Review and grant: ${requestUrl}`,
+        'Open the link, check the fingerprint on the page matches the one above, and tap your passkey to grant access.',
       ].join('\n\n')
+    );
+    expect(mail.html).toContain(
+      `<a href="${requestUrl.replace(/&/g, '&amp;')}">`
     );
   });
 
-  test('the request mail carries no title and no requester address', () => {
+  // This was `carries no title and no requester address`: the request notice is the one private mail that now
+  // names the requester (owner decision, 2026-11-24). It still carries no title.
+  test('the request mail carries no title', () => {
     const mail = accessRequestedMail({
+      requesterAddress: 'reader@example.com',
+      fingerprint: 'ABCD EFGH JKMN PQRS TVWX YZ01 2345 6789',
       requestUrl: `${SERVICE}/gdk6rpv49hftg5216ev7dejesc?access=requests`,
     });
     for (const body of [mail.subject, mail.text, mail.html]) {
-      expect(body).not.toContain('@');
       expect(body.toLowerCase()).not.toContain('title');
     }
+  });
+
+  test('the request mail escapes an address that carries markup', () => {
+    const mail = accessRequestedMail({
+      requesterAddress: 'a"<b>@example.com',
+      fingerprint: 'ABCD EFGH JKMN PQRS TVWX YZ01 2345 6789',
+      requestUrl: `${SERVICE}/gdk6rpv49hftg5216ev7dejesc?access=requests`,
+    });
+    expect(mail.html).not.toContain('<b>');
+    expect(mail.html).toContain('&lt;b&gt;');
   });
 
   test('the grant mail tells the reader to confirm with a passkey', () => {

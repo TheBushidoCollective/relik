@@ -125,9 +125,11 @@ export const COMMENT_TEXT = 'The reader comment for the private shares proof.';
 const DOCUMENT_TEXT =
   'Relic private shares proof document\nOne reader, one grant, one revocation.\n';
 const DEVICE_CERT_MS = 30 * 24 * 60 * 60 * 1000;
-/** The relic notification subjects from plan 4.14. Account mail (passkey and key notices) is not one of them. */
+/**
+ * The relic notification subjects from plan 4.14 that stay generic. Account mail (passkey and key notices) is not
+ * one of them, and the access request notice is not either: it names the requester on purpose (step 4 checks it).
+ */
 const RELIC_NOTICE_SUBJECTS: readonly string[] = [
-  'Someone asked for access to a relic',
   'You have access to a relic',
   'Activity on a relic',
 ];
@@ -1043,8 +1045,12 @@ async function approveDeviceFromProcess(
 /* -------------------------------------------------------------------------- */
 
 /** The owner's relic page with the access panel open. The panel mounts before the unlock replaces the page. */
-async function openPanel(owner: Actor, relicUrl: string): Promise<void> {
-  await goto(owner.browser, `${relicUrl}?access=requests`);
+async function openPanel(
+  owner: Actor,
+  relicUrl: string,
+  query = 'access=requests'
+): Promise<void> {
+  await goto(owner.browser, `${relicUrl}?${query}`);
   await waitForState(
     owner.browser,
     ['unlock'],
@@ -1052,32 +1058,31 @@ async function openPanel(owner: Actor, relicUrl: string): Promise<void> {
   );
 }
 
-async function typeFingerprint(
-  owner: Actor,
-  identityId: string,
-  value: string
-): Promise<void> {
-  await setField(
-    owner.browser,
-    `article[data-request-identity="${identityId}"] [data-fingerprint-input]`,
-    value
-  );
-}
-
-/** The grant button and the typed field's state inside one request, read from the page. */
+/** The grant button inside one request, read from the page. */
 async function grantState(
   owner: Actor,
   identityId: string
-): Promise<{ disabled: boolean; state: string | null }> {
+): Promise<{ disabled: boolean }> {
   return owner.browser.evaluate<{
     disabled: boolean;
-    state: string | null;
   }>(`(() => {
     const article = document.querySelector('article[data-request-identity="${identityId}"]');
     const grant = article?.querySelector('button[data-action="grant"]');
-    const field = article?.querySelector('.fp-field');
-    return { disabled: grant ? grant.disabled : true, state: field ? field.getAttribute('data-fingerprint-state') : null };
+    return { disabled: grant ? grant.disabled : true };
   })()`);
+}
+
+/** The fingerprint a request card shows, as the page computed it from the requester's keys. */
+async function shownRequesterFingerprint(
+  owner: Actor,
+  identityId: string
+): Promise<string> {
+  return poll('requester fingerprint on the card', 15000, async () => {
+    const text = await owner.browser.evaluate<string>(
+      `document.querySelector('article[data-request-identity="${identityId}"] [data-fingerprint="requester"]')?.textContent ?? ''`
+    );
+    return text === '' ? undefined : canonicalOf(text);
+  });
 }
 
 async function currentVersion(
@@ -1411,34 +1416,48 @@ async function stepsFourAndFive(
   const askMail = await env.mailbox.await(
     env.owner,
     mailMark,
-    (m) => m.subject === 'Someone asked for access to a relic',
+    (m) => m.subject === `${env.reader} asked for access to a relic`,
     'access request mail'
   );
-  // The review link carries the relic id, as the plan's requestUrl requires. Naming the relic means its file name.
+  // The mail names the requester and carries their fingerprint and a link that opens their request. It does not
+  // name the relic: the link carries the relic id, and naming the relic means its file name.
   const namesRelic = askMail.text.includes(FILE_NAME);
   const namesRequester = askMail.text.includes(env.reader);
+  const carriesFingerprint = canonicalOf(askMail.text).includes(shown);
+  const grantLink = askMail.text.includes(
+    `${relicUrl}?access=requests&grant=${identity.identityId}`
+  );
   env.receipt(
     4,
-    `PRIVATE_STEP_4_REQUESTED mail_names_relic=${namesRelic} mail_names_requester=${namesRequester}`
+    `PRIVATE_STEP_4_REQUESTED mail_names_relic=${namesRelic} mail_names_requester=${namesRequester} mail_fingerprint=${carriesFingerprint} mail_grant_link=${grantLink}`
   );
   assert.equal(namesRelic, false, 'the request mail names the relic');
-  assert.equal(namesRequester, false, 'the request mail names the requester');
+  assert.equal(
+    namesRequester,
+    true,
+    'the request mail does not name the requester'
+  );
+  assert.equal(
+    carriesFingerprint,
+    true,
+    'the request mail lacks the requester fingerprint'
+  );
+  assert.equal(
+    grantLink,
+    true,
+    'the request mail lacks the link that opens the request'
+  );
 
-  // Step 5. The owner types a wrong fingerprint: the page blocks the grant, and the service refuses a validly
-  // signed grant carrying that fingerprint.
+  // Step 5. The card shows the requester's true fingerprint with no field to type, and the service refuses a
+  // validly signed grant carrying a wrong fingerprint.
   await openPanel(owner, relicUrl);
   await owner.browser.waitForSelector(
     `article[data-request-identity="${identity.identityId}"]`,
     25000
   );
   const wrong = altered(shown);
-  await typeFingerprint(owner, identity.identityId, wrong);
-  const blocked = await grantState(owner, identity.identityId);
-  assert.equal(
-    blocked.disabled && blocked.state === 'mismatch',
-    true,
-    'the grant was not blocked for a wrong fingerprint'
-  );
+  const onCard = await shownRequesterFingerprint(owner, identity.identityId);
+  assert.equal(onCard, shown, 'the card shows a different fingerprint');
   const refused = await postGrant(env, owner, ownerKeys, {
     relicId,
     granteeEmail: env.reader,
@@ -1465,7 +1484,7 @@ async function stepsFourAndFive(
     : undefined;
   env.receipt(
     5,
-    `PRIVATE_STEP_5_WRONG_FINGERPRINT ui=blocked api=${refused.status} requester_wraps=${wraps ?? 'unobserved'}`
+    `PRIVATE_STEP_5_WRONG_FINGERPRINT ui=shows_true_fingerprint api=${refused.status} requester_wraps=${wraps ?? 'unobserved'}`
   );
   assert.equal(
     wraps ?? 0,
@@ -1482,8 +1501,8 @@ async function stepSix(
   relicId: string,
   reader: ReaderIdentity
 ): Promise<void> {
-  // Step 6. Substitution: the stored request is replaced by the third identity's signed request. The owner types
-  // the reader's true fingerprint, and the page blocks it. The stored rows are restored afterwards.
+  // Step 6. Substitution: the stored request is replaced by the third identity's signed request. The owner's page
+  // shows the third identity's own fingerprint, never the reader's. The stored rows are restored afterwards.
   const store = env.store;
   if (store === undefined)
     throw new Error('PRIVATE_STEP_6 needs the loopback store');
@@ -1510,14 +1529,16 @@ async function stepSix(
       `article[data-request-identity="${thirdIdentity}"]`,
       25000
     );
-    await typeFingerprint(owner, thirdIdentity, reader.shown);
-    const blocked = await grantState(owner, thirdIdentity);
-    assert.equal(
-      blocked.disabled && blocked.state === 'mismatch',
-      true,
-      'the grant was not blocked for a substituted key'
+    const onCard = await shownRequesterFingerprint(owner, thirdIdentity);
+    assert.notEqual(
+      onCard,
+      reader.shown,
+      'the card for a substituted request shows the reader fingerprint'
     );
-    env.receipt(6, 'PRIVATE_STEP_6_SUBSTITUTED_KEY ui=blocked');
+    env.receipt(
+      6,
+      'PRIVATE_STEP_6_SUBSTITUTED_KEY ui=shows_substitute_fingerprint'
+    );
   } finally {
     await store.deleteAccessRequestsForRelic(relicId);
     await store.putAccessRequest(original);
@@ -1533,13 +1554,25 @@ async function stepSeven(
   relicUrl: string,
   readerIdentity: ReaderIdentity
 ): Promise<void> {
-  // Step 7. The owner types the true fingerprint, picks versions, and taps once. The reader opens and comments.
-  await openPanel(owner, relicUrl);
+  // Step 7. The owner follows the mail link, which lists that request first, picks versions, and taps once. The
+  // reader opens and comments.
+  await openPanel(
+    owner,
+    relicUrl,
+    `access=requests&grant=${readerIdentity.identityId}`
+  );
   await owner.browser.waitForSelector(
     `article[data-request-identity="${readerIdentity.identityId}"]`,
     25000
   );
-  await typeFingerprint(owner, readerIdentity.identityId, readerIdentity.shown);
+  const firstCard = await owner.browser.evaluate<string | null>(
+    `document.querySelector('#requests article')?.getAttribute('data-request-identity') ?? null`
+  );
+  assert.equal(
+    firstCard,
+    readerIdentity.identityId,
+    'the mail link did not list the requester first'
+  );
   await poll('grant enabled', 15000, async () => {
     const state = await grantState(owner, readerIdentity.identityId);
     return !state.disabled ? true : undefined;

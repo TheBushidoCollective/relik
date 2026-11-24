@@ -1299,3 +1299,13 @@ The comparison design is in `docs/plans/version-compare/plan.md`, and section 9 
 - **The title line needs both titles.** A book whose title is missing on one side shows no title line.
 - **Byte-identical versions are answered first.** The identical-content sentence is shown, with the left version on its own, before any frame or worker starts.
 - **No server change and no relic-mcp release.** The comparison runs in the viewer, on the same version loader as every other class.
+
+## 2026-11-24: The access request mail names the requester, and the owner grants without a phone call
+
+Owner decision, in the owner's words: the requester must always be named, the owner grants by clicking a link, and their public key (the fingerprint) is in the email; "I dont need a phone call. I just need ME to grant access."
+
+- **Reversed:** private-share mail named no one (plan 4.14, `service.md` 8, `viewer.md` 6), and the owner typed a fingerprint the requester read out over a phone or video call before **Grant with passkey** enabled.
+- **Now:** the request mail's subject and body name the requester's address and give their fingerprint. Its link, `/{id}?access=requests&grant={identity id}`, opens the owner's access panel with that request first. The panel shows the fingerprint and enables **Grant with passkey** at once. One passkey tap grants. A link click never grants by itself: the grant still needs the owner's session and passkey, because that tap is what wraps the version keys for the grantee.
+- **Unchanged:** the request is a signed `access_request`, and the panel refuses to offer a grant for one that does not verify against the requester's keys. The grant statement still carries `fingerprint_typed`, now filled in by the panel from the computed value, and the service still refuses a grant whose fingerprint is not the grantee's. The activity, grant and key-replacement mails are unchanged. No mail names a relic's title or file.
+- **Costs:** the phone call was an out-of-band check that the key the service holds is the person's. The fingerprint now comes from the same service the key does, so it no longer protects against a service that substitutes a key. The owner reads the requester's address in the mail, and a mailbox that holds that mail learns who asked. The requester's screen no longer tells them to call anyone.
+- **Guard that remains:** the owner's page computes the fingerprint from the identity id and address the signed request verified against, and the service rejects a grant whose fingerprint does not match the grantee identity. A substituted request shows the substitute's own address and fingerprint, which the private-shares path proves in step 6.

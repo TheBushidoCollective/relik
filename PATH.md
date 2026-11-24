@@ -265,7 +265,7 @@ These are post-pressure growth gates, not bounds on transient renderer peaks or 
 
 # Private shares
 
-A reader is let into a private relic by its owner, who types the reader's fingerprint before granting one passkey tap. The link carries no key, the owner's device publishes without a tap, a provider that cannot hold a key is refused, a revocation republishes under a fresh key the revoked reader cannot use, and deletion removes everything the service held for the relic.
+A reader is let into a private relic by its owner, who sees who asked and their fingerprint, then grants with one passkey tap. The link carries no key, the owner's device publishes without a tap, a provider that cannot hold a key is refused, a revocation republishes under a fresh key the revoked reader cannot use, and deletion removes everything the service held for the relic.
 
 ## Acceptance command
 
@@ -279,9 +279,9 @@ Success requires these lines in order, then `PRIVATE_SHARES_PATH_OK`, and exit c
 `PRIVATE_STEP_1_OWNER_IDENTITY fingerprint=<32>`,
 `PRIVATE_STEP_2_DEVICE_PINNED wrong_owner_fingerprint=refused`,
 `PRIVATE_STEP_3_TAP_FREE_PUBLISH fragment=false key_in_output=false owner_sign_count_delta=0 owner_open=ok`,
-`PRIVATE_STEP_4_REQUESTED mail_names_relic=false mail_names_requester=false`,
-`PRIVATE_STEP_5_WRONG_FINGERPRINT ui=blocked api=409 requester_wraps=0`,
-`PRIVATE_STEP_6_SUBSTITUTED_KEY ui=blocked`,
+`PRIVATE_STEP_4_REQUESTED mail_names_relic=false mail_names_requester=true mail_fingerprint=true mail_grant_link=true`,
+`PRIVATE_STEP_5_WRONG_FINGERPRINT ui=shows_true_fingerprint api=409 requester_wraps=0`,
+`PRIVATE_STEP_6_SUBSTITUTED_KEY ui=shows_substitute_fingerprint`,
 `PRIVATE_STEP_7_GRANTED reader_open=ok comment=ok agent_read=ok`,
 `PRIVATE_STEP_8_REVOKED version=<n> revoked_wraps=0 revoked_key_fetch=403 revoked_mint=403 owner_open=ok agent_read=ok`,
 `PRIVATE_STEP_9_NO_PRF provider=refused credential_without_prf=replace_offered identity_posts=0`,

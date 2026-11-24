@@ -14,6 +14,7 @@ import type { PasskeyRecord } from '../store.ts';
 import {
   decodeBase64url,
   fingerprintsEqual,
+  formatFingerprint,
   identityFingerprint,
   parseStatement,
   parseTypedFingerprint,
@@ -254,7 +255,11 @@ export async function requestAccess(
     await env.sendMail(
       owner.email,
       accessRequestedMail({
-        requestUrl: `${new URL(env.config.serviceOrigin).origin}/${row.id}?access=requests`,
+        requesterAddress: me.email,
+        fingerprint: formatFingerprint(
+          await identityFingerprint(me.identityId, me.email)
+        ),
+        requestUrl: `${new URL(env.config.serviceOrigin).origin}/${row.id}?access=requests&grant=${me.identityId}`,
       })
     );
   } catch (error) {

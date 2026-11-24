@@ -458,20 +458,27 @@ export function passkeyAddedMail(p: {
 }
 
 /**
- * Private relics send these four messages and no others. They name neither
- * the relic's title nor the requester's address, so a mailbox learns that
- * something happened and nothing about what it was (4.14, verbatim copy).
+ * Private relics send these four messages and no others. The activity and
+ * grant notices name neither the relic's title nor anyone else's address, so a
+ * mailbox learns that something happened and nothing about what it was (4.14,
+ * verbatim copy). The access-request notice is the one exception: it names the
+ * requester and gives their fingerprint, because the owner decides from it
+ * (decision of 2026-11-24).
  */
 export function accessRequestedMail(p: {
+  readonly requesterAddress: string;
+  /** The requester's fingerprint in display form (eight groups of four). */
+  readonly fingerprint: string;
   readonly requestUrl: string;
 }): OutboundMail {
   const paragraphs = [
-    'Someone asked for access to a relic you own on Relic.',
-    `Review the request: ${p.requestUrl}`,
-    "Before you grant access, ask them to read you their fingerprint on a phone or video call. Don't accept it by email or chat.",
+    `${p.requesterAddress} asked for access to a relic you own on Relic.`,
+    `Their fingerprint: ${p.fingerprint}`,
+    `Review and grant: ${p.requestUrl}`,
+    'Open the link, check the fingerprint on the page matches the one above, and tap your passkey to grant access.',
   ];
   return {
-    subject: 'Someone asked for access to a relic',
+    subject: `${p.requesterAddress} asked for access to a relic`,
     text: paragraphs.join('\n\n'),
     html: htmlParagraphs(paragraphs, [p.requestUrl]),
   };

@@ -1,17 +1,19 @@
 /**
  * The owner's access panel on a private relic (section 4.15, mock
- * `#access-panel`). It lists pending requests with the typed fingerprint and
- * a version picker, the current readers with revoke, the parties who can
- * read regardless, and the delete entry point.
+ * `#access-panel`). It lists pending requests with the requester's address and
+ * fingerprint and a version picker, the current readers with revoke, the
+ * parties who can read regardless, and the delete entry point.
  *
  * Every owner action that changes access goes through the passkey: grant
- * types the fingerprint, picks versions, then one tap unlocks the owner
- * identity and attests the grant. Decline needs no tap.
+ * picks versions, then one tap unlocks the owner identity and attests the
+ * grant. The owner does not type or read out a fingerprint. Decline needs no
+ * tap.
  */
 
 import {
   type AccessRequestStatement,
   decodeBase64url,
+  formatFingerprint,
   identityFingerprint,
   type IdentityStateJSON,
   parseStatement,
@@ -28,12 +30,11 @@ import type { ViewerDeps } from '../viewer.ts';
 import { createDeleteDialog, type DeleteDialog } from './delete.ts';
 import { describeVersions, formatUtcDay } from './access-log.ts';
 import {
+  fingerprintGroups,
   h,
   privateApi,
   problemMessage,
   setChildren,
-  type TypedFingerprint,
-  typedFingerprint,
   waiting,
 } from './fingerprint-input.ts';
 import { privateKeysOf } from './ops.ts';
@@ -52,6 +53,8 @@ export interface OwnerPanelContext {
   readonly deps: ViewerDeps;
   /** Called after an action changed the relic (a grant, a revoke, a delete), so the page reloads. */
   onChanged(): void;
+  /** The requester's identity ID from the mail link (`?grant=`): their card is listed first. */
+  readonly focusRequester?: string;
 }
 
 interface PendingRequest {
@@ -302,7 +305,8 @@ export function openAccessPanel(
   function requestTicket(
     request: PendingRequest,
     verified: boolean,
-    access: PrivateAccessJSON
+    access: PrivateAccessJSON,
+    focused: boolean
   ): HTMLElement {
     const requester = request.requester;
     const decline = declineButton(request);
@@ -362,11 +366,14 @@ export function openAccessPanel(
       },
       'Grant with passkey'
     );
-    const fingerprintSlot = h('div', { class: 'step-fingerprint' });
+    const fingerprint = h('div', {
+      class: 'fingerprint',
+      'data-fingerprint': 'requester',
+    });
     const article = h(
       'article',
       {
-        class: 'request',
+        class: focused ? 'request is-focused' : 'request',
         'data-request-identity': requester.identity.identity_id,
         'aria-label': `Request from ${requester.email}`,
       },
@@ -381,62 +388,38 @@ export function openAccessPanel(
         )
       ),
       h(
-        'ol',
-        { class: 'request-steps' },
-        h(
-          'li',
-          {},
-          h(
-            'p',
-            { class: 'step-text' },
-            `Call ${requester.email} on the phone or a video call and ask them to read you their fingerprint. Don\u2019t accept it by email or chat.`
-          ),
-          fingerprintSlot
-        ),
-        h(
-          'li',
-          {},
-          h(
-            'fieldset',
-            { class: 'versions' },
-            h('legend', {}, 'Versions they can read'),
-            picks,
-            h(
-              'p',
-              { class: 'pick-note' },
-              'Later versions are always included.'
-            )
-          )
-        ),
-        h(
-          'li',
-          {},
-          h('div', { class: 'card-actions', style: 'margin:0' }, grant, decline)
-        )
-      )
+        'div',
+        { class: 'step-fingerprint' },
+        h('p', { class: 'step-text' }, 'Their fingerprint'),
+        fingerprint
+      ),
+      h(
+        'fieldset',
+        { class: 'versions' },
+        h('legend', {}, 'Versions they can read'),
+        picks,
+        h('p', { class: 'pick-note' }, 'Later versions are always included.')
+      ),
+      h('div', { class: 'card-actions', style: 'margin:0' }, grant, decline)
     );
 
-    let field: TypedFingerprint | undefined;
+    // The fingerprint is computed here from the identity ID and address the
+    // request just verified against, and it is what the grant signs.
+    let expected: string | undefined;
     void identityFingerprint(
       requester.identity.identity_id,
       requester.email
-    ).then((expected) => {
-      field = typedFingerprint({
-        id: fieldId,
-        label: `Fingerprint ${requester.email} read to you`,
-        inputHook: 'data-fingerprint-input',
-        placeholder: 'Type what you heard',
-        expected,
-        who: requester.email,
-      });
-      field.onChange((state) => {
-        grant.disabled = state !== 'match';
-      });
-      fingerprintSlot.replaceChildren(field.element);
+    ).then((value) => {
+      expected = value;
+      fingerprint.replaceChildren(
+        ...fingerprintGroups(formatFingerprint(value))
+      );
+      grant.disabled = false;
+      if (focused) article.scrollIntoView?.({ block: 'center' });
     });
     grant.addEventListener('click', () => {
-      if (!field?.matched()) return;
-      void grantAccess(request, article, field.matched() ?? '', grant);
+      if (expected === undefined) return;
+      void grantAccess(request, article, expected, grant);
     });
     return article;
   }
@@ -703,9 +686,28 @@ export function openAccessPanel(
           h('p', { class: 'panel-empty' }, 'No one is waiting.')
         );
       }
-      for (const request of data.requests) {
+      const focus = ctx.focusRequester;
+      const ordered =
+        focus === undefined
+          ? data.requests
+          : [
+              ...data.requests.filter(
+                (request) => request.requester.identity.identity_id === focus
+              ),
+              ...data.requests.filter(
+                (request) => request.requester.identity.identity_id !== focus
+              ),
+            ];
+      for (const request of ordered) {
         const verified = await requestVerifies(request, ctx.relicId);
-        requestsHost.append(requestTicket(request, verified, data.access));
+        requestsHost.append(
+          requestTicket(
+            request,
+            verified,
+            data.access,
+            request.requester.identity.identity_id === focus
+          )
+        );
       }
       renderReaders(data);
       if (message || !keepNotice) showNotice(message);
