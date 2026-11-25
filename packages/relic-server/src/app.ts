@@ -3511,6 +3511,13 @@ export function createApp(options: AppOptions = {}): RelicApp {
       if (row.access === 'private') {
         // Readers of a private relic prove access by a live wrap, not a fragment proof (plan 4.7).
         await privateReach(row, request, now, undefined);
+        const env = privateEnv(now);
+        const owner = await ownerRecord(env, row);
+        const identity = await currentIdentity(env, session.email);
+        const role = (await standingOf(env, row, owner, identity)).role;
+        if (role !== 'owner' && role !== 'grantee' && role !== 'recovery') {
+          return refuse('private_access_denied', { relic_id: relicId });
+        }
       } else {
         const proofResult = await checkShareProof(row, body['share_proof']);
         if (proofResult === 'unavailable') {
@@ -5643,7 +5650,10 @@ export function createApp(options: AppOptions = {}): RelicApp {
 
     if (row.access === 'private') {
       // Readers of a private relic prove access by a live wrap, not a fragment proof (plan 4.7).
-      await privateReach(row, request, now, undefined);
+      const reach = await privateReach(row, request, now, undefined);
+      if (reach !== 'all' && !reach.includes(version)) {
+        throw new ProblemError('private_access_denied', { relic_id: relicId });
+      }
       if (row.decisionsOpen !== true) {
         throw new ProblemError('decision_unavailable', { relic_id: relicId });
       }
@@ -6011,10 +6021,11 @@ export function createApp(options: AppOptions = {}): RelicApp {
       return refuse('invalid_decision', { relic_id: relicId });
     }
 
+    let privateVersions: 'all' | readonly number[] = 'all';
     if (row.access === 'private') {
       // A private list needs access or the publish token (plan 4.7). A fragment proof does not apply.
       try {
-        await privateReach(row, request, now, body['publish_token']);
+        privateVersions = await privateReach(row, request, now, body['publish_token']);
       } catch (error) {
         if (error instanceof ProblemError)
           return refuse(error.code, error.options);
@@ -6052,12 +6063,16 @@ export function createApp(options: AppOptions = {}): RelicApp {
     } else {
       return refuse('invalid_relic_version', { relic_id: relicId });
     }
+    if (targetVersion !== '*' && privateVersions !== 'all' && !privateVersions.includes(targetVersion)) {
+      return refuse('private_access_denied', { relic_id: relicId });
+    }
 
     const allDecisions = await store.listDecisions(relicId);
-    const filtered =
-      targetVersion === '*'
-        ? [...allDecisions]
-        : allDecisions.filter((d) => d.version === targetVersion);
+    const filtered = allDecisions.filter(
+      (d) =>
+        (targetVersion === '*' || d.version === targetVersion) &&
+        (privateVersions === 'all' || privateVersions.includes(d.version))
+    );
 
     filtered.sort(
       (a, b) =>

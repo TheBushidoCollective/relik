@@ -2096,3 +2096,33 @@ test('claiming is bound to the address and the current identity signature', asyn
     await store.getInviteClaim(RELIC_ID, invitee.identityId!)
   ).toBeUndefined();
 });
+
+test('an invited claimant cannot use the private share route', async () => {
+  const owner = await person('owner@example.com');
+  await registerIdentity(owner);
+  await sealedPrivateRelic(owner);
+  const invitee = await person('ada@example.com');
+  await registerIdentity(invitee);
+  await claimFor(invitee, owner, [1]);
+  const response = await send(`/api/relics/${RELIC_ID}/share`, post({ emails: ['stranger@example.net'] }, invitee.cookie));
+  expect(response.status).toBe(403);
+  expect(response.body['code']).toBe('private_access_denied');
+});
+
+test('invited decisions refuse versions outside the claim', async () => {
+  const owner = await person('owner@example.com');
+  await registerIdentity(owner);
+  await sealedPrivateRelic(owner);
+  const invitee = await person('ada@example.com');
+  await registerIdentity(invitee);
+  await claimFor(invitee, owner, [1]);
+  const seal = (await store.getSeal(RELIC_ID, 1))!;
+  await store.putSeal({ ...seal, version: 2 });
+  await store.updateRelic(RELIC_ID, (row) => ({ ...row, version: 2, sealedVersion: 2, decisionsOpen: true }));
+  await store.recordVersionDigest(RELIC_ID, 2, 'a'.repeat(64));
+  for (const path of ['decisions/options', 'decisions', 'decisions/list']) {
+    const response = await send(`/api/relics/${RELIC_ID}/${path}`, post({ version: 2, verdict: 'approve' }, invitee.cookie));
+    expect(response.status).toBe(403);
+    expect(response.body['code']).toBe('private_access_denied');
+  }
+});
