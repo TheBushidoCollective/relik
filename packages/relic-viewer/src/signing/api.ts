@@ -1,5 +1,9 @@
 import type { RequestOptionsJSON } from '@relic/format';
-import { parseStatement } from '@relic/format/private';
+import {
+  parseStatement,
+  type SigningGrantJSON,
+  type WrapJSON,
+} from '@relic/format/private';
 import {
   contentMac,
   openSigningLayout,
@@ -55,10 +59,20 @@ export function signingApi(
         attestation,
         mark_ciphertext: markCiphertext,
       }),
-    request: (attestation: unknown, layoutCiphertext: string) =>
+    request: (
+      attestation: unknown,
+      layoutCiphertext: string,
+      grants?: {
+        readonly grants: readonly SigningGrantJSON[];
+        readonly wraps: readonly WrapJSON[];
+      }
+    ) =>
       postJson(deps, `${base}/requests`, {
         attestation,
         layout_ciphertext: layoutCiphertext,
+        ...(grants === undefined
+          ? {}
+          : { grants: grants.grants, wraps: grants.wraps }),
       }) as Promise<SigningRequestJSON>,
     cancel: (attestation: unknown) =>
       postJson(deps, `${base}/cancel`, {
