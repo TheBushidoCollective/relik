@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test } from 'bun:test';
+import { beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { createHash, randomBytes } from 'node:crypto';
 import {
   attestationChallenge,
@@ -22,7 +22,11 @@ import {
   type RequestOptionsJSON,
 } from '@relic/format';
 import { createApp, type RelicApp } from '../src/app.ts';
-import { verifyStoredAttestation } from '../src/private/attest.ts';
+import {
+  verifyAttestation,
+  verifyStoredAttestation,
+} from '../src/private/attest.ts';
+import { verifyAssertion } from '../src/webauthn.ts';
 import { MemoryStorage } from '../src/storage.ts';
 import { MemoryStore, type RelicStore } from '../src/store.ts';
 import { fakeAuthenticator } from './fake-authenticator.ts';
@@ -73,6 +77,207 @@ test('signing owner nonces on public reliks require the bound identity and sign 
   );
   expect(sign.status).toBe(400);
   expect(sign.body['statement_check']).toBe('purpose');
+});
+
+test('paused signing nonce requests do not write a challenge', async () => {
+  const owner = await person('owner@example.com');
+  await registerIdentity(owner);
+  await store.putRelic(relic({ ownerIdentityId: owner.identityId as string }));
+  app = createApp({
+    store,
+    storage,
+    now: () => now,
+    config: { killSwitchEngaged: true },
+  });
+  const writes = spyOn(store, 'putWebauthnChallenge');
+  try {
+    for (const purpose of ['signing_request', 'signing_cancel']) {
+      const response = await send(
+        '/api/attest/nonce',
+        post({ purpose, relic_id: RELIC_ID }, owner.cookie)
+      );
+      expect(response.status).toBe(503);
+      expect(response.body['code']).toBe('service_paused');
+    }
+    expect(writes).not.toHaveBeenCalled();
+  } finally {
+    writes.mockRestore();
+  }
+});
+
+test('fresh and stored signing attestations reject signed trailing data, while identity attestations keep their existing behavior', async () => {
+  const owner = await person('owner@example.com');
+  await registerIdentity(owner);
+  await store.putRelic(relic({ ownerIdentityId: owner.identityId as string }));
+  const keys = owner.keys as IdentityKeys;
+  const identityId = owner.identityId as string;
+  const digest = 'a'.repeat(64);
+  const requestId = Buffer.alloc(16, 3).toString('base64url');
+  const cases = [
+    {
+      purpose: 'signing_request',
+      kind: 'signing_request',
+      statement: {
+        at: now,
+        ciphertext_sha256: digest,
+        consent: 'relic/sign-consent/v1',
+        content_mac: digest,
+        layout_sha256: digest,
+        order: 'parallel',
+        owner_identity_id: identityId,
+        relic_id: RELIC_ID,
+        request_id: requestId,
+        require_opened: false,
+        signer_id: identityId,
+        signers: [{ email: owner.email, identity_id: null }],
+        version: 1,
+      },
+    },
+    {
+      purpose: 'signing_cancel',
+      kind: 'signing_cancel',
+      statement: {
+        at: now,
+        owner_identity_id: identityId,
+        relic_id: RELIC_ID,
+        request_id: requestId,
+        signer_id: identityId,
+      },
+    },
+    {
+      purpose: 'sign',
+      kind: 'signature',
+      statement: {
+        at: now,
+        ciphertext_sha256: digest,
+        consent: 'relic/sign-consent/v1',
+        content_mac: digest,
+        mark_sha256: digest,
+        opened_receipt_sha256: null,
+        relic_id: RELIC_ID,
+        request_id: requestId,
+        request_sha256: digest,
+        signer_email: owner.email,
+        signer_identity_id: null,
+        signer_index: 0,
+        version: 1,
+      },
+    },
+    {
+      purpose: 'identity_bind',
+      kind: 'identity_bind',
+      statement: {
+        at: now,
+        credential_id: owner.auth.credentialId,
+        identity_id: identityId,
+      },
+    },
+  ] as const;
+  const passkeys = await store.getPasskeys(owner.email);
+  expect(passkeys).toBeDefined();
+  for (const entry of cases) {
+    const nonce = encodeBase64url(randomBytes(32));
+    await store.putWebauthnChallenge({
+      challengeHash: hex(
+        new Uint8Array(createHash('sha256').update(nonce).digest())
+      ),
+      email: owner.email,
+      purpose: 'attest',
+      attestPurpose: entry.purpose,
+      relicId: RELIC_ID,
+      expiresAt: now + 60_000,
+    });
+    const bytes = statementBytes(entry.kind, entry.statement as never);
+    const challenge = encodeBase64url(
+      await attestationChallenge(decodeBase64url(nonce), [bytes])
+    );
+    const base = await owner.auth.assert({ challenge, rpId: RP }, ORIGIN);
+    const data = Buffer.concat([
+      Buffer.from(base.response.authenticatorData, 'base64url'),
+      Buffer.from([0xff]),
+    ]);
+    const signed = await owner.auth.resign({
+      ...base,
+      response: {
+        ...base.response,
+        authenticatorData: data.toString('base64url'),
+      },
+    });
+    const { clientExtensionResults: _, ...credential } = signed;
+    const identitySignature =
+      entry.purpose === 'sign' ? '' : await signStatement(signer(keys), bytes);
+    const bundle = {
+      nonce,
+      credential,
+      statements: [
+        {
+          kind: entry.kind,
+          statement: entry.statement,
+          identity_signature: identitySignature,
+        },
+      ],
+    };
+    const privateEnv = {
+      store,
+      storage,
+      now,
+      config: app.config,
+      assertPasskey: async () => {
+        await verifyAssertion(credential, {
+          challenge,
+          origin: ORIGIN,
+          rpId: RP,
+          stored: {
+            credentialId: owner.auth.credentialId,
+            publicKeyJwk: owner.auth.publicJwk,
+            alg: -7,
+          },
+          userHandle: 'dXNlcg',
+        });
+        return { ok: true as const, credentialId: owner.auth.credentialId };
+      },
+    } as never;
+    const input = {
+      bundle,
+      purpose: entry.purpose,
+      email: owner.email,
+      passkeys,
+      signerKey: () => keys.sigPublicKey,
+      relicId: RELIC_ID,
+      ...(entry.purpose === 'sign' ? { identityFree: true } : {}),
+    };
+    const stored = {
+      statements: [
+        { kind: entry.kind, statement: entry.statement, identitySignature },
+      ],
+      nonce,
+      credential,
+      credentialId: owner.auth.credentialId,
+      credentialPublicKeyJwk: owner.auth.publicJwk,
+      credentialAlg: -7 as const,
+      rpId: RP,
+      origin: ORIGIN,
+      verifiedAt: now,
+    };
+    if (entry.purpose === 'identity_bind') {
+      await expect(verifyAttestation(privateEnv, input)).resolves.toBeDefined();
+      expect(
+        await verifyStoredAttestation(stored, () => keys.sigPublicKey)
+      ).toBe(true);
+    } else {
+      await expect(verifyAttestation(privateEnv, input)).rejects.toMatchObject({
+        code: 'invalid_passkey',
+        options: { passkey_check: 'auth_data' },
+      });
+      expect(
+        await verifyStoredAttestation(
+          stored,
+          () => keys.sigPublicKey,
+          entry.purpose === 'sign'
+        )
+      ).toBe(false);
+    }
+  }
 });
 
 /** A signed-in person: a passkey, a session, and a fresh identity when wanted. */

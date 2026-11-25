@@ -219,6 +219,41 @@ describe('live settings', () => {
     expect((await read()).status).toBe(200);
   });
 
+  test('changing a public lifetime to never removes the signing erasure deadline', async () => {
+    const fake = fakeGcs();
+    const store = gcsStore({
+      bucket: 'relics',
+      prefix: 'tenant/m',
+      host: 'https://gcs.test',
+      getAccessToken: async () => 'test',
+      fetch: fake.fetch,
+    });
+    const id = generateRelicId();
+    await store.putRelic({ ...(await row(id)), expiresAt: now + 86400000 });
+    await store.putSigningRequest(id, 'req', {
+      statement: {},
+      signature: 'sig',
+      signerKind: 'device',
+      signerId: 'owner',
+      layoutCiphertext: 'encrypted',
+      status: 'open',
+      createdAt: now,
+    });
+    const name = `tenant/m/signing/${id}/req/request.json`;
+    expect(fake.objects.get(name)?.customTime).toBe(
+      new Date(now + 86400000).toISOString()
+    );
+    const app = createApp({ store, now: () => now });
+    const response = await app.fetch(
+      request(`/api/relics/${id}/settings`, {
+        publish_token: token,
+        settings: { ttl_days: null },
+      })
+    );
+    expect(response.status).toBe(200);
+    expect((await store.getRelic(id))?.expiresAt).toBeUndefined();
+    expect(fake.objects.get(name)?.customTime).toBeUndefined();
+  });
   test('GCS extension moves scoped metadata and ciphertext, leaving other reliks alone', async () => {
     const fake = fakeGcs();
     const store = gcsStore({

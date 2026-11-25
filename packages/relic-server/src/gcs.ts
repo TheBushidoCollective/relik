@@ -564,6 +564,7 @@ export function gcsStorage(options: GcsOptions): ObjectStorage {
       // metadata and anything content-descriptive is barred from living there.
       const headers = {
         'content-length': String(contentLength),
+        'x-goog-if-generation-match': '0',
         ...(customTime === undefined
           ? {}
           : { 'x-goog-custom-time': new Date(customTime).toISOString() }),

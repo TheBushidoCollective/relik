@@ -732,6 +732,11 @@ export interface RelicStore {
   putReceipt(id: string, row: ReceiptRow): Promise<boolean>;
   listReceipts(id: string, version?: number): Promise<readonly ReceiptRow[]>;
   deleteSigningForRelic(id: string): Promise<number>;
+  /** Reconcile public signing record erasure with a requested expiry, or clear it for never. */
+  syncPublicSigningLifetime(
+    id: string,
+    expiresAt: number | undefined
+  ): Promise<void>;
   appendSettingsChange(id: string, row: SettingsChangeRow): Promise<void>;
   deleteSettingsChanges(id: string): Promise<void>;
   extendPrivateLifetime(id: string, expiresAt: number): Promise<void>;
@@ -1027,11 +1032,16 @@ export class MemoryStore implements RelicStore {
   private signingKey(id: string, ...parts: (string | number)[]): string {
     return [id, ...parts].join('/');
   }
+  private requireLiveSigningRelic(id: string): void {
+    if (this.tombstones.has(id) || !this.relics.has(id))
+      throw new ProblemError('relic_removed');
+  }
   async putSigningRequest(
     id: string,
     requestId: string,
     row: SigningRequestRow
   ): Promise<boolean> {
+    this.requireLiveSigningRelic(id);
     const key = this.signingKey(id, requestId);
     if (this.signingRequests.has(key)) return false;
     this.signingRequests.set(key, structuredClone(row));
@@ -1055,6 +1065,7 @@ export class MemoryStore implements RelicStore {
     requestId: string,
     change: (row: SigningRequestRow) => SigningRequestRow
   ): Promise<SigningRequestRow | undefined> {
+    this.requireLiveSigningRelic(id);
     const key = this.signingKey(id, requestId);
     const row = this.signingRequests.get(key);
     if (row === undefined) return undefined;
@@ -1067,6 +1078,7 @@ export class MemoryStore implements RelicStore {
     requestId: string,
     row: SignatureRow
   ): Promise<boolean> {
+    this.requireLiveSigningRelic(id);
     const key = this.signingKey(id, requestId, row.signerIndex);
     if (this.signatures.has(key)) return false;
     this.signatures.set(key, structuredClone(row));
@@ -1087,6 +1099,7 @@ export class MemoryStore implements RelicStore {
     requestId: string,
     certificate: Record<string, unknown>
   ): Promise<boolean> {
+    this.requireLiveSigningRelic(id);
     const key = this.signingKey(id, requestId);
     if (this.certificates.has(key)) return false;
     this.certificates.set(key, structuredClone(certificate));
@@ -1100,6 +1113,7 @@ export class MemoryStore implements RelicStore {
     return row === undefined ? undefined : structuredClone(row);
   }
   async putReceipt(id: string, row: ReceiptRow): Promise<boolean> {
+    this.requireLiveSigningRelic(id);
     const key = this.signingKey(id, row.version, row.identityId, row.kind);
     if (this.receipts.has(key)) return false;
     this.receipts.set(key, structuredClone(row));
@@ -1131,6 +1145,12 @@ export class MemoryStore implements RelicStore {
       }
     }
     return count;
+  }
+  async syncPublicSigningLifetime(
+    _id: string,
+    _expiresAt: number | undefined
+  ): Promise<void> {
+    // Memory objects do not have lifecycle metadata.
   }
   async appendSettingsChange(
     id: string,

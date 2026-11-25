@@ -88,6 +88,9 @@ export async function fakeAuthenticator(init?: FakeAuthenticatorInit): Promise<{
     origin: string,
     userHandleOverride?: string | null
   ): Promise<AuthenticationResponseJSON>;
+  resign(
+    credential: AuthenticationResponseJSON
+  ): Promise<AuthenticationResponseJSON>;
   setSignCount(n: number): void;
   readonly credentialId: string;
   readonly publicJwk: JsonWebKey;
@@ -313,9 +316,41 @@ export async function fakeAuthenticator(init?: FakeAuthenticatorInit): Promise<{
     };
   };
 
+  const resign = async (
+    credential: AuthenticationResponseJSON
+  ): Promise<AuthenticationResponseJSON> => {
+    const data = Buffer.from(
+      credential.response.authenticatorData,
+      'base64url'
+    );
+    const client = Buffer.from(credential.response.clientDataJSON, 'base64url');
+    const signed = Buffer.concat([
+      data,
+      createHash('sha256').update(client).digest(),
+    ]);
+    const signature = new Uint8Array(
+      await crypto.subtle.sign(
+        alg === -7
+          ? { name: 'ECDSA', hash: 'SHA-256' }
+          : { name: 'RSASSA-PKCS1-v1_5' },
+        keyPair.privateKey,
+        signed
+      )
+    );
+    return {
+      ...credential,
+      response: {
+        ...credential.response,
+        signature: Buffer.from(
+          alg === -7 ? rawToDerEcdsa(signature) : signature
+        ).toString('base64url'),
+      },
+    };
+  };
   return {
     register,
     publicJwk: await crypto.subtle.exportKey('jwk', keyPair.publicKey),
+    resign,
     assert,
     setSignCount(n: number) {
       currentSignCount = n;

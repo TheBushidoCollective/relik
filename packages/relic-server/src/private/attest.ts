@@ -20,6 +20,10 @@ import {
   statementBytes,
   verifyStatement,
 } from '@relic/format/private';
+import {
+  verifyWebauthnAssertion,
+  WebauthnAssertionError,
+} from '@relic/format/signing';
 import { verifyAssertion, WebauthnError } from '../webauthn.ts';
 import { ProblemError } from '../problems.ts';
 import type { PasskeyRecord, StoredAttestation } from '../store.ts';
@@ -329,6 +333,38 @@ export async function verifyAttestation(
   if (input.passkeys === undefined) {
     throw new ProblemError('passkey_required');
   }
+  if (
+    input.purpose === 'signing_request' ||
+    input.purpose === 'signing_cancel' ||
+    input.purpose === 'sign'
+  ) {
+    const credential = input.passkeys.credentials.find(
+      (item) => item.credentialId === bundle.credential['id']
+    );
+    if (credential === undefined)
+      throw new ProblemError('passkey_verification_failed', {
+        passkey_check: 'credential',
+      });
+    try {
+      await verifyWebauthnAssertion(bundle.credential, {
+        challenge,
+        origin: new URL(env.config.serviceOrigin).origin,
+        rpId: new URL(env.config.serviceOrigin).hostname,
+        credentialId: credential.credentialId,
+        publicKeyJwk: credential.publicKeyJwk,
+        alg: credential.alg,
+      });
+    } catch (error) {
+      if (error instanceof WebauthnAssertionError)
+        throw new ProblemError(
+          error.kind === 'malformed'
+            ? 'invalid_passkey'
+            : 'passkey_verification_failed',
+          { passkey_check: error.check }
+        );
+      throw error;
+    }
+  }
   const assertion = await env.assertPasskey(
     input.passkeys,
     bundle.credential,
@@ -430,8 +466,29 @@ export async function verifyStoredAttestation(
       },
       userHandle,
     });
+    if (
+      attestation.statements.some(
+        (statement) =>
+          statement.kind === 'signing_request' ||
+          statement.kind === 'signing_cancel' ||
+          statement.kind === 'signature'
+      )
+    ) {
+      await verifyWebauthnAssertion(credential, {
+        challenge,
+        origin: attestation.origin,
+        rpId: attestation.rpId,
+        credentialId: attestation.credentialId,
+        publicKeyJwk: attestation.credentialPublicKeyJwk,
+        alg: attestation.credentialAlg,
+      });
+    }
   } catch (error) {
-    if (error instanceof WebauthnError) return false;
+    if (
+      error instanceof WebauthnError ||
+      error instanceof WebauthnAssertionError
+    )
+      return false;
     throw error;
   }
   for (let i = 0; i < attestation.statements.length; i++) {
