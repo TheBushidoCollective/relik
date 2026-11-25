@@ -392,6 +392,10 @@ export interface GrantRow {
   readonly versions: readonly number[];
   readonly grantedAt: number;
   readonly attestation: StoredAttestation;
+  readonly grantStatement?: {
+    readonly statement: Record<string, unknown>;
+    readonly identitySignature: string;
+  };
   readonly revokedAt?: number | undefined;
   readonly revocation?: StoredAttestation | undefined;
 }

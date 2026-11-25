@@ -37,9 +37,14 @@ import type {
   IdentityRecord,
   RelicRow,
   SealRow,
+  StoredAttestation,
   WrapRow,
 } from '../store.ts';
-import { accessRequestedMail, accessGrantedMail } from '../mail.ts';
+import {
+  accessRequestedMail,
+  accessGrantedMail,
+  directShareMail,
+} from '../mail.ts';
 import {
   deviceJson,
   iso,
@@ -106,11 +111,13 @@ export interface GrantWireJSON extends GrantJSON {
 }
 
 function grantJson(grant: GrantRow, grantee: IdentityRecord): GrantWireJSON {
-  const signed = grant.attestation.statements.find(
-    (item) =>
-      item.kind === 'grant' &&
-      item.statement['grantee_identity_id'] === grant.granteeIdentityId
-  );
+  const signed =
+    grant.grantStatement ??
+    grant.attestation.statements.find(
+      (item) =>
+        item.kind === 'grant' &&
+        item.statement['grantee_identity_id'] === grant.granteeIdentityId
+    );
   return {
     statement: signed?.statement ?? {},
     identity_signature: signed?.identitySignature ?? '',
@@ -377,6 +384,19 @@ export async function grantAccess(
     signerKey: identitySigner(owner),
     relicId: row.id,
   });
+  return applyGrants(env, row, owner, verified, input.wraps, false);
+}
+
+export async function applyGrants(
+  env: PrivateEnv,
+  row: RelicRow,
+  owner: IdentityRecord,
+  verified: Pick<VerifiedAttestation, 'statements'> & {
+    readonly attestation: StoredAttestation;
+  },
+  rawWraps: unknown,
+  signing: boolean
+): Promise<{ status: 201; grants: GrantWireJSON[] }> {
   const statements = verified.statements.map((item) => item.statement);
 
   // Checks that do not depend on who is registered (plan 3.3 B.4).
@@ -466,8 +486,8 @@ export async function grantAccess(
   }
 
   // The wraps must cover exactly grantee keys x versions (plan 3.3 B.7).
-  if (!Array.isArray(input.wraps)) throw new ProblemError('invalid_wrap');
-  const wraps = (input.wraps as unknown[]).map(parseWrapItem);
+  if (!Array.isArray(rawWraps)) throw new ProblemError('invalid_wrap');
+  const wraps = (rawWraps as unknown[]).map(parseWrapItem);
   const expected = new Set<string>();
   for (const p of planned) {
     for (const v of p.versions) expected.add(`${v}:${p.grantee.kemKeyId}`);
@@ -579,6 +599,18 @@ export async function grantAccess(
         versions: [...p.versions],
         grantedAt: env.now,
         attestation: verified.attestation,
+        ...(signing
+          ? {
+              grantStatement: {
+                statement: verified.statements.find(
+                  (item) => item.statement['grantee_identity_id'] === granteeId
+                )!.statement,
+                identitySignature: verified.statements.find(
+                  (item) => item.statement['grantee_identity_id'] === granteeId
+                )!.identitySignature,
+              },
+            }
+          : {}),
       };
       if (p.prior === undefined) {
         // A concurrent grant to this grantee may have won. Its row and its
@@ -656,16 +688,28 @@ export async function grantAccess(
         subjectIdentityId: granteeId,
       }
     );
-    try {
-      await env.sendMail(
-        p.grantee.email,
-        accessGrantedMail({
-          relicUrl: `${new URL(env.config.serviceOrigin).origin}/${row.id}`,
-        })
-      );
-    } catch (error) {
-      console.error('relic: access grant notice failed:', error);
-    }
+    if (!signing)
+      try {
+        await env.sendMail(
+          p.grantee.email,
+          p.pending
+            ? accessGrantedMail({
+                relicUrl: `${new URL(env.config.serviceOrigin).origin}/${row.id}`,
+              })
+            : directShareMail({
+                ownerAddress: owner.email,
+                fingerprint: formatFingerprint(
+                  await identityFingerprint(
+                    p.grantee.identityId,
+                    p.grantee.email
+                  )
+                ),
+                relicUrl: `${new URL(env.config.serviceOrigin).origin}/${row.id}`,
+              })
+        );
+      } catch {
+        console.error('relic: access grant notice failed');
+      }
     const stored = await env.store.getGrant(row.id, granteeId);
     grants.push(grantJson(stored ?? writtenGrants.get(granteeId)!, p.grantee));
   }

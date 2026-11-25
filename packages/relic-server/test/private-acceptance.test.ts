@@ -7,6 +7,7 @@ import {
   deviceIdOf,
   encodeBase64url,
   generateIdentityKeys,
+  formatFingerprint,
   identityFingerprint,
   identityIdOf,
   kemKeyIdOf,
@@ -794,6 +795,39 @@ describe('access requests', () => {
     const grantMail = sent.find((m) => m.to === reader.email);
     expect(grantMail?.subject).toBe('You have access to a relik');
     expect(grantMail?.text).not.toContain('Secret');
+  });
+
+  test('a direct share mails the recipient the owner address and their own fingerprint, with no title', async () => {
+    const sent: { to: string; subject: string; text: string }[] = [];
+    store = new HookStore();
+    app = createApp({
+      store,
+      storage,
+      now: () => now,
+      mailer: {
+        send: async () => {},
+        sendMail: async (to, mail) => {
+          sent.push({ to, subject: mail.subject, text: mail.text });
+        },
+      },
+    });
+    const owner = await person('owner@example.com');
+    await registerIdentity(owner);
+    const sealed = await sealedPrivateRelic(owner);
+    const reader = await person('reader@example.com');
+    await registerIdentity(reader);
+
+    expect((await grantTo(owner, reader, [1], sealed.versionKey)).status).toBe(
+      201
+    );
+    const notice = sent.find((m) => m.to === reader.email);
+    expect(notice?.subject).toBe(`${owner.email} shared a relik with you`);
+    const fingerprint = formatFingerprint(
+      await identityFingerprint(reader.identityId as string, reader.email)
+    );
+    expect(notice?.text).toContain(`Your fingerprint: ${fingerprint}`);
+    expect(notice?.text).toContain(owner.email);
+    expect(notice?.text).not.toContain('SECRET');
   });
 });
 

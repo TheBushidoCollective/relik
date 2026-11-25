@@ -556,6 +556,24 @@ export function accessGrantedMail(p: {
   };
 }
 
+export function directShareMail(p: {
+  readonly ownerAddress: string;
+  readonly fingerprint: string;
+  readonly relicUrl: string;
+}): OutboundMail {
+  const paragraphs = [
+    `${p.ownerAddress} shared a private relik with you.`,
+    `Your fingerprint: ${p.fingerprint}`,
+    `Open it: ${p.relicUrl}`,
+    "You'll confirm with your passkey.",
+  ];
+  return {
+    subject: `${p.ownerAddress} shared a relik with you`,
+    text: paragraphs.join('\n\n'),
+    html: htmlParagraphs(paragraphs, [p.relicUrl]),
+  };
+}
+
 export function privateActivityMail(p: {
   readonly relicUrl: string;
   readonly stopUrl: string;
