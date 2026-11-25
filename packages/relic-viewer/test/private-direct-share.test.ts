@@ -81,3 +81,37 @@ test('invite key stays in the link and opens each returned wrap', async () => {
     expect(await unwrapVersionKey({ recipient, relicId: '0123456789abcdefghjkmnpqrs', version: wrap.version, enc: wrap.enc, ct: wrap.ct })).toEqual(keys.get(wrap.version)!);
   }
 });
+
+test('an invitation key is never written to storage or sent in a body', async () => {
+  const writes: string[] = [];
+  const originals = { local: globalThis.localStorage, session: globalThis.sessionStorage };
+  const recorder = { setItem: (key: string) => writes.push(key), getItem: () => null, removeItem: () => {}, clear: () => {}, key: () => null, length: 0 };
+  Object.defineProperty(globalThis, 'localStorage', { value: recorder, configurable: true });
+  Object.defineProperty(globalThis, 'sessionStorage', { value: recorder, configurable: true });
+  try {
+    const bodies: string[] = [];
+    const owner = 'b'.repeat(64);
+    const keys = new Map<number, Uint8Array>([[1, new Uint8Array(16).fill(7)]]);
+    const deps = {
+      serviceOrigin: 'https://example.test',
+      locationHref: 'https://example.test/0123456789abcdefghjkmnpqrs',
+      now: () => 1_700_000_000_000,
+      fetch: async (_url: unknown, init: RequestInit) => { bodies.push(String(init.body)); return Response.json({}); },
+      privateKeys: {
+        attest: async (_deps: unknown, request: { build(id: string): Record<string, unknown>[] }) => ({ identity: { identityId: owner }, bundle: { statements: request.build(owner) } }),
+        fetchVersionKey: async () => ({ key: keys.get(1), keyJson: { owner: { identity: { identity_id: owner } } } }),
+      },
+    } as unknown as ViewerDeps;
+    const [link] = await shareBatch(deps, {
+      relicId: '0123456789abcdefghjkmnpqrs', versions: [1], relicExpiresAt: 1_800_000_000_000,
+      grants: [], invites: [{ email: 'x@example.test', days: 7 }], origin: 'https://example.test',
+    });
+    expect(link).toBeDefined();
+    const fragment = new URL(link!.url).hash.slice(3);
+    expect(writes).toEqual([]);
+    for (const body of bodies) expect(body).not.toContain(fragment);
+  } finally {
+    Object.defineProperty(globalThis, 'localStorage', { value: originals.local, configurable: true });
+    Object.defineProperty(globalThis, 'sessionStorage', { value: originals.session, configurable: true });
+  }
+});
