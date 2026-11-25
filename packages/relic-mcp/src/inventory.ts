@@ -172,6 +172,7 @@ export interface ShowInput {
 
 export interface ShowResult extends RelicRow {
   readonly settings?: RelicSettingsJSON;
+  readonly signing?: { open_version: number | null; locked_versions: number[] };
   /** Versions the service holds, or null when it could not be asked. */
   readonly versions: number | null;
   /** Plaintext length from the envelope, when one was read. */
@@ -472,6 +473,7 @@ export async function showRelic(
     status_basis: 'mint' as const,
     status_detail: `the service served version ${minted.currentVersion}.`,
     ...(minted.settings === undefined ? {} : { settings: minted.settings }),
+    ...(minted.signing === undefined ? {} : { signing: minted.signing }),
     versions: minted.currentVersion,
   };
 
@@ -669,6 +671,7 @@ interface MintOk {
   readonly objectLength: number;
   readonly relicExpiresAt: string | null;
   readonly settings?: RelicSettingsJSON;
+  readonly signing?: { open_version: number | null; locked_versions: number[] };
 }
 
 interface MintFailed {
@@ -751,12 +754,30 @@ export async function mintRelic(
 
   const expiry = body?.['relic_expires_at'];
   const settings = parseSettings(body?.['settings']);
+  const value = body?.['signing'];
+  let signing: MintOk['signing'];
+  if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+    const record = value as Record<string, unknown>;
+    const open = record['open_version'];
+    const locked = record['locked_versions'];
+    if (
+      (open === null || (Number.isSafeInteger(open) && (open as number) > 0)) &&
+      Array.isArray(locked) &&
+      locked.every((v) => Number.isSafeInteger(v) && v > 0)
+    ) {
+      signing = {
+        open_version: open as number | null,
+        locked_versions: locked,
+      };
+    }
+  }
   return {
     kind: 'ok',
     url,
     currentVersion,
     objectLength,
     ...(settings === undefined ? {} : { settings }),
+    ...(signing === undefined ? {} : { signing }),
     relicExpiresAt: typeof expiry === 'string' ? expiry : null,
   };
 }

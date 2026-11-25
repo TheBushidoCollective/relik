@@ -163,6 +163,8 @@ export type ClientCode =
   | 'local_comment_not_found'
   | 'local_comment_unreadable'
   | 'app_response_unusable'
+  | 'signing_request_not_found'
+  | 'certificate_not_ready'
   | 'otio_bundle_invalid'
   | 'version_digest_mismatch'
   | 'program_refused'
