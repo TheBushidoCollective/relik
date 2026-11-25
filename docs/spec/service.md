@@ -932,7 +932,7 @@ encrypted suggestion from a comment. An already-open page can still send one
 until it reloads, and existing suggestions remain visible. Closing comments
 prevents new reader comments and ciphertext edits, but the owner and publisher
 remain exempt. Decisions retain their existing open or closed behavior. The
-signing switch is stored and reported but is not enforced in this phase.
+signing switch blocks new signing requests when off.
 Disabling notifications stops change notices and comment activity mail, not
 access-request or grant mail.
 
@@ -949,3 +949,34 @@ move erasure earlier. A pending upload sealed after shortening keeps the later
 of its stored erasure time and the row's erasure deadline. The restriction on
 moving `customTime` earlier is inferred from GCS documentation. Production GCS
 `customTime` behavior has not been proven locally.
+
+## 12. Signing requests
+
+`POST /api/relics/{id}/signing/requests` creates a request for the current
+published version. The owner signs a `signing_request` statement with an
+identity attestation, or the publisher supplies the publish token and a
+signature from an owner device. A request names its signers and ordering and
+commits to the ciphertext digest, content MAC, and encrypted layout. A private
+signer must have current access to the version. Only one request may be open
+for a relik at once.
+
+`POST /api/relics/{id}/signing/cancel` accepts an owner-attested
+`signing_cancel` statement, or a publish token and owner-device signature.
+Cancellation releases the open-request slot. A repeat cancellation returns the
+cancelled request.
+
+`POST /api/relics/{id}/signing/read` returns signing state. Public readers
+provide the share proof or publish token. Private readers provide the publish
+token or a signed-in session with a readable role or a listed signer's identity.
+Per-signer receipts are visible to the owner or publisher; a signer sees their
+own receipt times under `me`. Expired reliks remain readable, but writes are
+refused. Read and write requests use separate signing rate budgets, and session
+writes require JSON. A paused write is refused before it consumes an attestation
+nonce.
+
+The server cannot open the layout. It checks the encoded envelope, its size,
+and the signed hash; clients validate the plaintext layout when sealing and
+opening it. The signer and owner can check it with the signing key. The
+certificate verifier opens and validates the layout only when a signing key is
+provided; without that key it checks the signed ciphertext hash, not the
+decrypted layout.
