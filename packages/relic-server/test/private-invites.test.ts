@@ -674,3 +674,150 @@ describe('invitation creation (plan 3.3 B)', () => {
     ]);
   });
 });
+
+/** A claimed invitation, as route J leaves it: a claim row and a claim wrap for the claimant's key. */
+async function claimFor(
+  invitee: Person,
+  owner: Person,
+  versions: number[]
+): Promise<void> {
+  await store.putInviteClaim({
+    relicId: RELIC_ID,
+    identityId: invitee.identityId as string,
+    ownerIdentityId: owner.identityId as string,
+    inviteIds: [],
+    versions,
+    claimedAt: now,
+    claim: { statement: {}, identitySignature: '' },
+  });
+  const record = await store.getIdentity(invitee.identityId as string);
+  for (const version of versions) {
+    await store.putWrap({
+      relicId: RELIC_ID,
+      version,
+      recipientKeyId: record!.kemKeyId,
+      enc: 'enc',
+      ct: 'ct',
+      createdAt: now,
+      source: 'claim',
+    });
+  }
+}
+
+describe('the invited role (decision D14)', () => {
+  test('a claimed invitee reads the listed versions and comments, and is refused every owner route', async () => {
+    const owner = await person('owner@example.com');
+    await registerIdentity(owner);
+    await sealedPrivateRelic(owner);
+    const invitee = await person('ada@example.com');
+    await registerIdentity(invitee);
+    await claimFor(invitee, owner, [1]);
+
+    const access = await send(`/api/relics/${RELIC_ID}/access`, {
+      cookie: invitee.cookie,
+    });
+    expect(access.status).toBe(200);
+    const me = access.body['me'] as {
+      role: string;
+      readable_versions: number[];
+    };
+    expect(me.role).toBe('invited');
+    expect(me.readable_versions).toEqual([1]);
+
+    const comments = await send(`/api/relics/${RELIC_ID}/comments`, {
+      cookie: invitee.cookie,
+    });
+    expect(comments.status).toBe(200);
+
+    for (const path of [
+      `/api/relics/${RELIC_ID}/grants/lookup`,
+      `/api/relics/${RELIC_ID}/grants`,
+      `/api/relics/${RELIC_ID}/revocations`,
+    ]) {
+      const refused = await send(
+        path,
+        post(
+          { emails: ['x@example.com'], attestation: {}, wraps: [] },
+          invitee.cookie
+        )
+      );
+      expect(refused.status).toBe(403);
+      expect(refused.body['code']).toBe('owner_required');
+    }
+  });
+
+  test('an identity with an open invitation but no claim has no standing, so it cannot comment', async () => {
+    const owner = await person('owner@example.com');
+    await registerIdentity(owner);
+    await sealedPrivateRelic(owner);
+    const invitee = await person('ada@example.com');
+    await registerIdentity(invitee);
+    const access = await send(`/api/relics/${RELIC_ID}/access`, {
+      cookie: invitee.cookie,
+    });
+    expect((access.body['me'] as { role: string }).role).toBe('none');
+    const comments = await send(`/api/relics/${RELIC_ID}/comments`, {
+      cookie: invitee.cookie,
+    });
+    expect(comments.status).toBe(403);
+  });
+
+  test('a claim revoked by the owner reads as revoked and loses its versions', async () => {
+    const owner = await person('owner@example.com');
+    await registerIdentity(owner);
+    await sealedPrivateRelic(owner);
+    const invitee = await person('ada@example.com');
+    await registerIdentity(invitee);
+    await claimFor(invitee, owner, [1]);
+    const claim = await store.getInviteClaim(
+      RELIC_ID,
+      invitee.identityId as string
+    );
+    await store.updateInviteClaim(
+      RELIC_ID,
+      invitee.identityId as string,
+      (c) => ({
+        ...c,
+        revokedAt: now,
+      })
+    );
+    expect(claim).toBeDefined();
+    const access = await send(`/api/relics/${RELIC_ID}/access`, {
+      cookie: invitee.cookie,
+    });
+    const me = access.body['me'] as {
+      role: string;
+      readable_versions: number[];
+    };
+    expect(me.role).toBe('revoked');
+    expect(me.readable_versions).toEqual([]);
+  });
+
+  test('a grant confirms the claim, which is superseded by the grant', async () => {
+    const owner = await person('owner@example.com');
+    await registerIdentity(owner);
+    const { versionKey } = await sealedPrivateRelic(owner);
+    const invitee = await person('ada@example.com');
+    await registerIdentity(invitee);
+    await claimFor(invitee, owner, [1]);
+    const grant = await grantStatementFor(owner, invitee, [1]);
+    const response = await send(
+      `/api/relics/${RELIC_ID}/grants`,
+      post(
+        {
+          attestation: await attest(owner, 'grant', RELIC_ID, [grant]),
+          wraps: [await wrap(invitee.keys!.kemPublicKey, versionKey, 1)],
+        },
+        owner.cookie
+      )
+    );
+    expect(response.status).toBe(201);
+    expect(
+      await store.getInviteClaim(RELIC_ID, invitee.identityId as string)
+    ).toBeUndefined();
+    const access = await send(`/api/relics/${RELIC_ID}/access`, {
+      cookie: invitee.cookie,
+    });
+    expect((access.body['me'] as { role: string }).role).toBe('grantee');
+  });
+});

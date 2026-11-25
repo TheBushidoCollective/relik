@@ -26,6 +26,7 @@ export type AccessRole =
   | 'revoked'
   | 'requested'
   | 'declined'
+  | 'invited'
   | 'none';
 
 /** The roles that may open a version. A wrap alone is never authority (plan 4.12). */
@@ -33,6 +34,7 @@ const READABLE_ROLES: Partial<Record<AccessRole, true>> = {
   owner: true,
   grantee: true,
   recovery: true,
+  invited: true,
 };
 export interface Standing {
   readonly role: AccessRole;
@@ -135,6 +137,13 @@ export async function standingOf(
     return { role: 'grantee', grant };
   }
   if (grant !== undefined) return { role: 'revoked', grant };
+  // A claimed invitation (plan 3.2): the claimant reads the listed versions,
+  // and comments and decides on them, but is never a signer or a sharer.
+  const claim = await env.store.getInviteClaim(row.id, me.identityId);
+  if (claim !== undefined && claim.revokedAt !== undefined) {
+    return { role: 'revoked' };
+  }
+  if (claim !== undefined) return { role: 'invited' };
   const request = await env.store.getAccessRequest(row.id, me.identityId);
   if (request?.status === 'pending') return { role: 'requested', request };
   if (request?.status === 'declined') return { role: 'declined', request };

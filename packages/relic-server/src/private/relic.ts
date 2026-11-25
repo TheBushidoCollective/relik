@@ -177,6 +177,7 @@ export async function privateAccessView(
     standing.role === 'owner' ||
     standing.role === 'grantee' ||
     standing.role === 'recovery' ||
+    standing.role === 'invited' ||
     standing.role === 'revoked';
   const recovery =
     seesOwner && owner.recovery !== undefined
@@ -197,13 +198,15 @@ export async function privateAccessView(
     settings:
       standing.role === 'owner' ||
       standing.role === 'grantee' ||
-      standing.role === 'recovery'
+      standing.role === 'recovery' ||
+      standing.role === 'invited'
         ? settingsView(row)
         : null,
     signing:
       standing.role === 'owner' ||
       standing.role === 'grantee' ||
-      standing.role === 'recovery'
+      standing.role === 'recovery' ||
+      standing.role === 'invited'
         ? {
             open_version: row.signingOpen?.version ?? null,
             locked_versions: row.lockedVersions ?? [],
@@ -807,6 +810,8 @@ export async function applyGrants(
   const grants: GrantWireJSON[] = [];
   for (const p of planned) {
     const granteeId = p.grantee.identityId;
+    // A grant confirms a claimed invitation, and supersedes its claim row (plan 3.2).
+    await env.store.deleteInviteClaim(row.id, granteeId);
     if (p.pending) {
       await env.store
         .updateAccessRequest(row.id, granteeId, (r) => ({
