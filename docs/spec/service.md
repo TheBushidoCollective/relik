@@ -913,6 +913,15 @@ These are limits the build keeps by design or defers. Each is stated where it ap
 The publisher may read or change a relik's settings with its publish token.
 The signed-in owner identity may change them with an attested passkey statement.
 An unowned public relik has no owner settings control.
+Settings reads and writes have separate per-IP rate budgets. Exhausting either
+returns `429 settings_rate_limited`. Session-backed writes require an
+`application/json` content type. A paused write is refused before its
+attestation nonce is consumed.
+
+Each change appends an immutable settings record. Full owner and operator
+deletion remove those records. Private settings records carry the relik's
+erasure time and are included in the bucket lifecycle rule.
+
 
 Suggestions are enforced by the viewer only. The server cannot distinguish an
 encrypted suggestion from a comment. An already-open page can still send one
@@ -931,6 +940,8 @@ the lifetime was updated and the same change can be retried to finish the sweep.
 A write that read the row before the update and lands after the second pass can
 still retain the earlier erasure time.
 
-Shortening ends access sooner but does not move erasure earlier. That restriction
-is inferred from GCS documentation. Production GCS `customTime` behavior has not
-been proven locally.
+Shortening ends access, including private comment access, sooner but does not
+move erasure earlier. A pending upload sealed after shortening keeps the later
+of its stored erasure time and the row's erasure deadline. The restriction on
+moving `customTime` earlier is inferred from GCS documentation. Production GCS
+`customTime` behavior has not been proven locally.

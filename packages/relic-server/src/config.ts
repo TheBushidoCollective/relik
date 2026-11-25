@@ -111,6 +111,7 @@ export interface RelicConfig {
   /** Decision mutations per IP. */
   readonly decisionRateLimit: RateLimitConfig;
   readonly settingsRateLimit: RateLimitConfig;
+  readonly settingsReadRateLimit: RateLimitConfig;
   readonly settingsMinLifetimeSeconds: number;
   /** Decision read queries per IP. */
   readonly decisionReadRateLimit: RateLimitConfig;
@@ -250,6 +251,7 @@ export const DEFAULT_CONFIG: RelicConfig = {
   passkeyChallengeTtlSeconds: 300,
   decisionRateLimit: { limit: 30, windowSeconds: 3600 },
   settingsRateLimit: { limit: 60, windowSeconds: 3600 },
+  settingsReadRateLimit: { limit: 600, windowSeconds: 3600 },
   settingsMinLifetimeSeconds: 3600,
   decisionReadRateLimit: { limit: 600, windowSeconds: 3600 },
   passkeyRateLimit: { limit: 20, windowSeconds: 3600 },

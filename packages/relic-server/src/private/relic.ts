@@ -1128,6 +1128,7 @@ export async function deleteRelic(
     await env.store.deleteSharesForRelic(row.id);
     await env.store.deleteOptOutsForRelic(row.id);
     await env.store.deleteDecisionsForRelic(row.id);
+    await env.store.deleteSettingsChanges(row.id);
     await env.store.deleteWraps(row.id, {});
     await env.store.deleteSeals(row.id);
     await env.store.deleteGrantsForRelic(row.id);

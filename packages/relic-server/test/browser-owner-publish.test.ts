@@ -310,6 +310,16 @@ test('changed grant fields and a replayed attestation cannot reserve an ID', asy
 });
 
 test('owner publish signs expiry on the initial and retry PUT and remains unreadable until sealed', async () => {
+  class StrictStorage extends MemoryStorage {
+    override async setCustomTime(id: string, time: number): Promise<void> {
+      const old = this.customTimeOf(id);
+      if (old !== undefined && time < old)
+        throw new Error('customTime cannot move earlier');
+      return super.setCustomTime(id, time);
+    }
+  }
+  storage = new StrictStorage();
+  app = createApp({ store, storage, now: () => now });
   const who = await owner();
   const body = await grantBody();
   const relicId = body['relic_id'] as string;
@@ -351,6 +361,64 @@ test('owner publish signs expiry on the initial and retry PUT and remains unread
     who.cookie
   );
   expect(notYet.body['code']).toBe('relic_not_yet_published');
+  await expect(storage.setCustomTime(relicId, now + DAY)).rejects.toThrow(
+    'cannot move earlier'
+  );
+  const issued = await post(
+    '/api/attest/nonce',
+    { purpose: 'relic_settings', relic_id: relicId },
+    who.cookie
+  );
+  expect(issued.status).toBe(200);
+  const settingsStatement = {
+    at: now,
+    relic_id: relicId,
+    owner_identity_id: who.identityId,
+    suggestions: true,
+    comments: true,
+    decisions: false,
+    signing: true,
+    notifications: true,
+    lifetime: 1,
+  };
+  const settingsBytes = statementBytes('relic_settings', settingsStatement);
+  const nonce = issued.body['nonce'] as string;
+  const challenge = encodeBase64url(
+    await attestationChallenge(decodeBase64url(nonce), [settingsBytes])
+  );
+  const assertion = await who.auth.assert(
+    {
+      challenge,
+      rpId: RP,
+      userVerification: 'required',
+      allowCredentials: [{ type: 'public-key', id: who.auth.credentialId }],
+    } as RequestOptionsJSON,
+    ORIGIN
+  );
+  const { clientExtensionResults: _extensions, ...credential } =
+    assertion as unknown as Record<string, unknown>;
+  const changed = await post(
+    `/api/relics/${relicId}/settings`,
+    {
+      attestation: {
+        nonce,
+        statements: [
+          {
+            kind: 'relic_settings',
+            statement: settingsStatement,
+            identity_signature: await signStatement(
+              signer(who.keys),
+              settingsBytes
+            ),
+          },
+        ],
+        credential,
+      },
+    },
+    who.cookie
+  );
+  expect(changed.status).toBe(200);
+  expect((await store.getRelic(relicId))?.expiresAt).toBe(now + DAY);
 
   const versionKey = new Uint8Array(16);
   crypto.getRandomValues(versionKey);
@@ -400,6 +468,7 @@ test('owner publish signs expiry on the initial and retry PUT and remains unread
     who.cookie
   );
   expect(completed.status).toBe(200);
+  expect(storage.customTimeOf(relicId)).toBe(now + 7 * DAY);
   expect(completed.body['sealed_version']).toBe(1);
   expect(completed.body['version_digest']).toBe(digest);
   const readback = await post(
@@ -415,7 +484,7 @@ test('owner publish signs expiry on the initial and retry PUT and remains unread
   expect(
     (await post(`/api/relics/${relicId}/versions/1/key`, {})).body['code']
   ).toBe('sign_in_required');
-  now += 7 * DAY;
+  now += 2 * DAY;
   expect(
     (await post(`/api/relics/${relicId}/versions/1/key`, {}, who.cookie)).body[
       'code'

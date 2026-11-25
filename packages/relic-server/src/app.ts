@@ -1409,12 +1409,16 @@ export function createApp(options: AppOptions = {}): RelicApp {
         objectCrc32c: object.crc32c,
         digest,
       });
-      // Decision 7: the ciphertext erases one day after the relic expires. The
-      // object exists once it is sealed, so this is the first point it can be set.
-      if (row.expiresAt !== undefined) {
+      // A pending upload may have an older, later erasure deadline. Read the
+      // row again after sealing and never shorten the ciphertext's custom time.
+      const current = await liveRelic(env, relicId);
+      if (current.expiresAt !== undefined) {
         await storage.setCustomTime(
           objectKey(relicId, result.version),
-          row.expiresAt
+          Math.max(
+            current.expiresAt,
+            current.privateErasureAt ?? current.expiresAt
+          )
         );
       }
       return Response.json({
@@ -1423,7 +1427,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
         version_digest: result.digest,
         object_length: object.length,
         object_crc32c: object.crc32c,
-        relic_expires_at: relicExpiryIso(row.expiresAt),
+        relic_expires_at: relicExpiryIso(current.expiresAt),
         access: 'private',
         access_epoch: result.access_epoch,
         owner_epoch: result.owner_epoch,
@@ -3563,6 +3567,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
     const sharesDeleted = await store.deleteSharesForRelic(relicId);
     const optOutsDeleted = await store.deleteOptOutsForRelic(relicId);
     const decisionsDeleted = await store.deleteDecisionsForRelic(relicId);
+    await store.deleteSettingsChanges(relicId);
     if (row?.access === 'private') {
       await store.deleteWraps(relicId, {});
       await store.deleteSeals(relicId);
@@ -3676,6 +3681,8 @@ export function createApp(options: AppOptions = {}): RelicApp {
     now: number,
     publishToken: unknown
   ): Promise<'all' | readonly number[]> {
+    if (row.expiresAt !== undefined && row.expiresAt <= now)
+      throw new ProblemError('relic_expired', { relic_id: row.id });
     if (
       typeof publishToken === 'string' &&
       (await publishTokenOk(row, publishToken))
@@ -4825,15 +4832,6 @@ export function createApp(options: AppOptions = {}): RelicApp {
     ip: string,
     now: number
   ): Promise<Response> {
-    const verdict = limiter.check(
-      rateLimitKey('settings', ip),
-      config.settingsRateLimit,
-      now
-    );
-    if (!verdict.allowed)
-      throw new ProblemError('settings_rate_limited', {
-        retry_after_seconds: verdict.retryAfterSeconds,
-      });
     let relicId: string;
     try {
       relicId = parseRelicId(rawId);
@@ -4856,6 +4854,25 @@ export function createApp(options: AppOptions = {}): RelicApp {
     if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed))
       throw new ProblemError('invalid_settings', { settings_check: 'shape' });
     const body = parsed as Record<string, unknown>;
+    const candidate = body['settings'];
+    const isRead =
+      'publish_token' in body &&
+      (candidate === undefined ||
+        (typeof candidate === 'object' &&
+          candidate !== null &&
+          !Array.isArray(candidate) &&
+          Object.keys(candidate).length === 0));
+    const verdict = limiter.check(
+      rateLimitKey(isRead ? 'settings-read' : 'settings-write', ip),
+      isRead ? config.settingsReadRateLimit : config.settingsRateLimit,
+      now
+    );
+    if (!verdict.allowed)
+      throw new ProblemError('settings_rate_limited', {
+        retry_after_seconds: verdict.retryAfterSeconds,
+      });
+    if (!isRead && config.killSwitchEngaged)
+      throw new ProblemError('service_paused', { retry_after_seconds: 300 });
     let changes: Record<string, unknown>;
     let by: 'publisher' | 'owner';
     let attestation: StoredAttestation | undefined;
@@ -4874,6 +4891,9 @@ export function createApp(options: AppOptions = {}): RelicApp {
         throw new ProblemError('invalid_settings', { settings_check: 'shape' });
       else changes = input as Record<string, unknown>;
     } else {
+      const contentType = request.headers.get('content-type') ?? '';
+      if (!/^application\/json(?:\s*;|$)/i.test(contentType))
+        throw new ProblemError('invalid_settings', { settings_check: 'shape' });
       const session = await sessionOf(request, now);
       if (session === undefined) throw new ProblemError('sign_in_required');
       const identity = await currentIdentity(
@@ -4943,8 +4963,6 @@ export function createApp(options: AppOptions = {}): RelicApp {
         settings: settingsView(row),
         relic_expires_at: relicExpiryIso(row.expiresAt),
       });
-    if (config.killSwitchEngaged)
-      throw new ProblemError('service_paused', { retry_after_seconds: 300 });
     if (row.expiresAt !== undefined && row.expiresAt <= now)
       throw new ProblemError('relic_expired', { relic_id: relicId });
     let expiresAt = row.expiresAt;

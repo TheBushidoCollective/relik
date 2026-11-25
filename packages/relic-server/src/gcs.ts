@@ -491,6 +491,15 @@ async function tokenForSigner(
   };
 }
 
+/** Object name shared by the ciphertext store and metadata sweeps. */
+export function gcsObjectName(
+  prefix: string | undefined,
+  name: string
+): string {
+  const normalized = (prefix ?? '').replace(/^\/+|\/+$/g, '');
+  return normalized.length > 0 ? `${normalized}/${name}` : name;
+}
+
 export function gcsStorage(options: GcsOptions): ObjectStorage {
   const host = options.host ?? DEFAULT_HOST;
   const prefix = (options.prefix ?? '').replace(/^\/+|\/+$/g, '');
@@ -513,8 +522,7 @@ export function gcsStorage(options: GcsOptions): ObjectStorage {
     return signerToken.value;
   };
 
-  const objectFor = (relicId: string): string =>
-    prefix.length > 0 ? `${prefix}/${relicId}` : relicId;
+  const objectFor = (relicId: string): string => gcsObjectName(prefix, relicId);
 
   const pathFor = (relicId: string): string =>
     `/${encodeObjectPath(options.bucket)}/${encodeObjectPath(objectFor(relicId))}`;
@@ -620,19 +628,37 @@ export function gcsStorage(options: GcsOptions): ObjectStorage {
       const url =
         `https://${host}/storage/v1/b/${rfc3986(options.bucket)}` +
         `/o/${rfc3986(objectFor(relicId))}`;
-      const response = await doFetch(url, {
-        method: 'PATCH',
-        headers: {
-          authorization: `Bearer ${await accessToken()}`,
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify({
-          customTime: new Date(customTime).toISOString(),
-        }),
-      });
-      if (!response.ok) {
-        throw new Error(`customTime update failed with ${response.status}`);
+      const authorization = `Bearer ${await accessToken()}`;
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const metadataResponse = await doFetch(url, {
+          headers: { authorization },
+        });
+        if (!metadataResponse.ok)
+          throw new Error(
+            `customTime metadata read failed with ${metadataResponse.status}`
+          );
+        const metadata = (await metadataResponse.json()) as {
+          customTime?: string;
+          metageneration?: string;
+        };
+        const target = new Date(customTime).toISOString();
+        if (metadata.customTime !== undefined && metadata.customTime >= target)
+          return;
+        const query =
+          metadata.metageneration === undefined
+            ? ''
+            : `?ifMetagenerationMatch=${encodeURIComponent(metadata.metageneration)}`;
+        const response = await doFetch(`${url}${query}`, {
+          method: 'PATCH',
+          headers: { authorization, 'content-type': 'application/json' },
+          body: JSON.stringify({ customTime: target }),
+        });
+        if (response.status === 412) continue;
+        if (!response.ok)
+          throw new Error(`customTime update failed with ${response.status}`);
+        return;
       }
+      throw new Error('customTime update lost repeated metadata races');
     },
 
     async digest(relicId: string): Promise<string | undefined> {

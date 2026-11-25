@@ -86,6 +86,9 @@ async function resolveStore(): Promise<RelicStore> {
     return gcsStore({
       bucket,
       getAccessToken: () => metadataAccessToken(),
+      ...(process.env['RELIC_GCS_PREFIX']
+        ? { ciphertextPrefix: process.env['RELIC_GCS_PREFIX'] }
+        : {}),
       ...(process.env['RELIC_STORE_PREFIX']
         ? { prefix: process.env['RELIC_STORE_PREFIX'] }
         : {}),
