@@ -85,10 +85,16 @@ test('settings control follows access and disabled suggestions never mount', asy
       let accessCalls=0;
       const deps={serviceOrigin:location.origin,locationHref:location.href,keyVault:{remember(){},recall(){},forget(){}},fetch:async(url)=>{if(url.endsWith('/api/auth/session'))return Response.json({email:signed?'owner@example.test':null});if(url.endsWith('/access')){accessCalls++;return Response.json({manage,settings})}return Response.json([])}};
       renderReady({...base,...(access==='private'?{access:'private',manage,keyFor:async()=>key}: {})},id,location.origin,deps);
+      const row=document.querySelector('.relic-row');
+      check(row!==null,'the view did not draw its row');
       if(access==='public'&&signed)await until(()=>accessCalls===1,'access not requested');
-      await frame();await frame();
+      await frame();await frame();await frame();
       check(!!document.querySelector('[data-action="open-settings"]')===(manage&&signed),access+' '+manage+' '+signed+' control');
       if(!signed&&access==='public')check(accessCalls===0,'anonymous access requested');
+      if(access==='public'&&signed){
+        const redrawn=!row.isConnected;
+        check(redrawn===manage,manage?'an owner view was never redrawn with the Settings control':'a reader who owns nothing had the whole view redrawn');
+      }
     }
     try {
       await checkControl('public',true,true); await checkControl('public',false,true); await checkControl('public',false,false);

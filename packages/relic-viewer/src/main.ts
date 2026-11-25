@@ -11984,6 +11984,14 @@ export function renderReady(
         );
         if (!response.ok || disposed) return;
         const access = (await response.json()) as PublicAccessJSON;
+        // A reader who owns nothing learns nothing new: redrawing the whole view
+        // would discard selection, scroll and half-painted marks for no change.
+        if (
+          access.manage !== true &&
+          JSON.stringify(access.settings) ===
+            JSON.stringify(activeView.settings)
+        )
+          return;
         showSingle({
           ...activeView,
           manage: access.manage,
