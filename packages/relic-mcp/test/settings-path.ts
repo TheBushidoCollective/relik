@@ -129,6 +129,11 @@ handle = async (request) => {
 };
 const mcp = (name: string, args: Record<string, unknown>) =>
   callMcp(['node', bundle], scratch, statePath, origin, name, args);
+
+function text(value: unknown): string {
+  assert.equal(typeof value, 'string');
+  return value as string;
+}
 const req = (path: string, method: string, body: unknown, cookie?: string) =>
   fetch(`${origin}${path}${path.includes('?') ? '&' : '?'}instance=b`, {
     method,
@@ -290,14 +295,14 @@ try {
   const enrollment = await mcp('relic_enroll_device', {
     label: 'settings proof',
   });
-  assert.equal(typeof enrollment.enrollment_id, 'string');
-  assert.equal(typeof enrollment.device_fingerprint, 'string');
+  const enrollmentId = text(enrollment.enrollment_id);
+  const deviceFingerprint = text(enrollment.device_fingerprint);
   await approveDeviceFromProcess(
     env,
     owner,
     ownerKeys,
-    enrollment.enrollment_id,
-    enrollment.device_fingerprint
+    enrollmentId,
+    deviceFingerprint
   );
   await mcp('relic_confirm_device', {
     owner_fingerprint: await identityFingerprint(
@@ -309,11 +314,9 @@ try {
     path: privateFile,
     private: true,
   });
-  assert.equal(typeof privatePublished.relic_id, 'string');
-  assert.equal(typeof privatePublished.url, 'string');
   const privateRelik = {
-    relicId: privatePublished.relic_id,
-    relicUrl: privatePublished.url,
+    relicId: text(privatePublished.relic_id),
+    relicUrl: text(privatePublished.url),
     ownerKeys,
   };
   await goto(owner.browser, privateRelik.relicUrl);
@@ -403,7 +406,7 @@ try {
     true
   );
   actors.push(plainReader);
-  await goto(plainReader.browser, published.url);
+  await goto(plainReader.browser, text(published.url));
   await poll('plain public reader', 25000, async () =>
     (
       await plainReader.browser.evaluate<string>('document.body.innerText')
