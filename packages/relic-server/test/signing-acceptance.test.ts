@@ -9,7 +9,7 @@ import { sha256Hex } from '../src/gcs.ts';
 import { MemoryStorage } from '../src/storage.ts';
 import { MemoryStore } from '../src/store.ts';
 import { fakeAuthenticator } from './fake-authenticator.ts';
-import { attestation, identity, NOW, relic, RELIC_ID } from './private-fixtures.ts';
+import { attestation, identity, NOW, relic, RELIC_ID, seal, wrap } from './private-fixtures.ts';
 
 const origin = 'https://relic.example';
 const root = `/api/relics/${RELIC_ID}`;
@@ -175,4 +175,32 @@ test('cancel wins while an unadmitted signature write is in flight', async () =>
   expect((await signing).body.code).toBe('signing_request_closed');
   expect((await f.store.getSigningRequest(RELIC_ID, request.request_id))?.signedBy).toEqual([0]);
   expect(await f.store.getCertificate(RELIC_ID, request.request_id)).toBeUndefined();
+});
+
+test('private delivery creates a served receipt and a signed opened receipt is first-write-wins', async () => {
+  const f = await fixture();
+  const owner = await f.store.getIdentity(f.owner.identityId);
+  expect(owner).toBeDefined();
+  const digest = await f.storage.digest(RELIC_ID);
+  const commitment = 'c'.repeat(64);
+  await f.store.updateRelic(RELIC_ID, (row) => ({ ...row, access: 'private', expiresAt: NOW + 86400000, sealedVersion: 1 }));
+  await f.store.putSeal({ ...seal(1), signerId: f.owner.identityId, statement: { ciphertext_sha256: digest, key_commitment: commitment } });
+  await f.store.putWrap(wrap(owner!.kemKeyId, 1));
+  const statement = { at: NOW, ciphertext_sha256: digest!, key_commitment: commitment, reader_identity_id: f.owner.identityId, relic_id: RELIC_ID, version: 1 };
+  const signature = await signStatement(async (value) => new Uint8Array(await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, f.owner.keys.sig.privateKey, value as BufferSource)), statementBytes('open_receipt', statement));
+  const body = { statement, identity_signature: signature };
+  const before = await f.post(f.a, `${root}/receipts/opened`, body, f.owner.cookie);
+  expect(before.body.code).toBe('receipt_not_served');
+  const delivered = await f.post(f.a, `${root}/versions/1/key`, {}, f.owner.cookie);
+  expect(delivered.status).toBe(200);
+  expect((await f.store.listReceipts(RELIC_ID, 1)).find((item) => item.kind === 'served')?.identityId).toBe(f.owner.identityId);
+  const invalid = await f.post(f.a, `${root}/receipts/opened`, { ...body, identity_signature: 'bad' }, f.owner.cookie);
+  expect(invalid.body.code).toBe('invalid_receipt');
+  const mismatch = await f.post(f.a, `${root}/receipts/opened`, { ...body, statement: { ...statement, key_commitment: 'd'.repeat(64) } }, f.owner.cookie);
+  expect(mismatch.body.receipt_check).toBe('seal');
+  const opened = await f.post(f.b, `${root}/receipts/opened`, body, f.owner.cookie);
+  expect(opened.status).toBe(201);
+  const repeated = await f.post(f.a, `${root}/receipts/opened`, body, f.owner.cookie);
+  expect(repeated.status).toBe(200);
+  expect(repeated.body.opened_at).toBe(opened.body.opened_at);
 });
