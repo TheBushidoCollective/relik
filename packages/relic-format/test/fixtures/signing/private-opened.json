@@ -54,9 +54,7 @@
       "public_key_jwk": {
         "crv": "P-256",
         "ext": true,
-        "key_ops": [
-          "verify"
-        ],
+        "key_ops": ["verify"],
         "kty": "EC",
         "x": "kYXQ3jRua6nJ0FWrGcmCe7qa4DUhEYbmjvIgxC0P9eE",
         "y": "iWmvrOTzHoVMKin3R5Ny4C11Znid9eGBGTv8wyA5_24"
@@ -122,9 +120,7 @@
         "public_key_jwk": {
           "crv": "P-256",
           "ext": true,
-          "key_ops": [
-            "verify"
-          ],
+          "key_ops": ["verify"],
           "kty": "EC",
           "x": "xk3vXdw0mS_QQ5hyW1aHtpqM-fNWEnjsUutBx3t7MNg",
           "y": "NDLfAb29MX-DuTLPXgIsH_RAOywEOzhyNBoRbNmg5NU"
@@ -192,9 +188,7 @@
         "public_key_jwk": {
           "crv": "P-256",
           "ext": true,
-          "key_ops": [
-            "verify"
-          ],
+          "key_ops": ["verify"],
           "kty": "EC",
           "x": "nXk6oa_quozsfvXpSeIwO3VSyiVlKX71vYd0oyLn1CA",
           "y": "50dm6qCEh3_g9atK5qxlpR3YXouMUQffJTr00-U3JYQ"
