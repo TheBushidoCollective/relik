@@ -7,6 +7,7 @@ import {
   deviceIdOf,
   encodeBase64url,
   generateIdentityKeys,
+  formatFingerprint,
   identityFingerprint,
   identityIdOf,
   kemKeyIdOf,
@@ -409,6 +410,7 @@ async function wrap(
  */
 class HookStore extends MemoryStore {
   beforeUpdate: (() => Promise<void>) | undefined;
+  beforePutGrant: (() => Promise<void>) | undefined;
 
   override async updateRelic(
     id: string,
@@ -420,6 +422,17 @@ class HookStore extends MemoryStore {
       await hook();
     }
     return super.updateRelic(id, change);
+  }
+
+  override async putGrant(
+    row: Parameters<MemoryStore['putGrant']>[0]
+  ): Promise<boolean> {
+    const hook = this.beforePutGrant;
+    if (hook !== undefined) {
+      this.beforePutGrant = undefined;
+      await hook();
+    }
+    return super.putGrant(row);
   }
 }
 
@@ -555,6 +568,62 @@ async function grantTo(
       },
       owner.cookie
     )
+  );
+}
+
+/** A grant statement for one reader and versions, as the owner's browser signs it. */
+async function grantStatementFor(
+  owner: Person,
+  reader: Person,
+  versions: number[]
+) {
+  return {
+    kind: 'grant' as const,
+    statement: {
+      at: now,
+      fingerprint_typed: await identityFingerprint(
+        reader.identityId as string,
+        reader.email
+      ),
+      grantee_email: reader.email,
+      grantee_identity_id: reader.identityId,
+      owner_identity_id: owner.identityId,
+      relic_id: RELIC_ID,
+      versions,
+    },
+  };
+}
+
+/** A batch of grants under one owner attestation, each reader wrapped to `keyFor(version)`. */
+async function grantBatch(
+  owner: Person,
+  grants: { reader: Person; versions: number[] }[],
+  keyFor: (version: number) => Uint8Array
+): Promise<{ status: number; body: Record<string, unknown> }> {
+  const attestation = await attest(
+    owner,
+    'grant',
+    RELIC_ID,
+    await Promise.all(
+      grants.map((g) => grantStatementFor(owner, g.reader, g.versions))
+    )
+  );
+  const wraps = [];
+  for (const g of grants) {
+    const readerRecord = await store.getIdentity(g.reader.identityId as string);
+    for (const version of g.versions) {
+      wraps.push(
+        await wrap(
+          decodeBase64url(readerRecord!.kemPublicKey),
+          keyFor(version),
+          version
+        )
+      );
+    }
+  }
+  return send(
+    `/api/relics/${RELIC_ID}/grants`,
+    post({ attestation, wraps }, owner.cookie)
   );
 }
 
@@ -727,6 +796,39 @@ describe('access requests', () => {
     expect(grantMail?.subject).toBe('You have access to a relik');
     expect(grantMail?.text).not.toContain('Secret');
   });
+
+  test('a direct share mails the recipient the owner address and their own fingerprint, with no title', async () => {
+    const sent: { to: string; subject: string; text: string }[] = [];
+    store = new HookStore();
+    app = createApp({
+      store,
+      storage,
+      now: () => now,
+      mailer: {
+        send: async () => {},
+        sendMail: async (to, mail) => {
+          sent.push({ to, subject: mail.subject, text: mail.text });
+        },
+      },
+    });
+    const owner = await person('owner@example.com');
+    await registerIdentity(owner);
+    const sealed = await sealedPrivateRelic(owner);
+    const reader = await person('reader@example.com');
+    await registerIdentity(reader);
+
+    expect((await grantTo(owner, reader, [1], sealed.versionKey)).status).toBe(
+      201
+    );
+    const notice = sent.find((m) => m.to === reader.email);
+    expect(notice?.subject).toBe(`${owner.email} shared a relik with you`);
+    const fingerprint = formatFingerprint(
+      await identityFingerprint(reader.identityId as string, reader.email)
+    );
+    expect(notice?.text).toContain(`Your fingerprint: ${fingerprint}`);
+    expect(notice?.text).toContain(owner.email);
+    expect(notice?.text).not.toContain('SECRET');
+  });
 });
 
 describe('backfill and coverage', () => {
@@ -850,6 +952,276 @@ describe('backfill and coverage', () => {
     );
     expect(capped.status).toBe(400);
     expect(capped.body['code']).toBe('invalid_wrap');
+  });
+});
+
+describe('grant lookup', () => {
+  test('only the owner may look up addresses and recovery shares the per-address budget', async () => {
+    app = createApp({
+      store,
+      storage,
+      now: () => now,
+      config: {
+        identityLookupRateLimit: { limit: 2, windowSeconds: 3600 },
+      },
+    });
+    const owner = await person('owner@example.com');
+    await registerIdentity(owner);
+    await sealedPrivateRelic(owner);
+    const reader = await person('reader@example.com');
+    await registerIdentity(reader);
+    const path = `/api/relics/${RELIC_ID}/grants/lookup`;
+    expect((await send(path, post({ emails: [reader.email] }))).status).toBe(
+      401
+    );
+    expect(
+      (await send(path, post({ emails: [reader.email] }, reader.cookie))).status
+    ).toBe(403);
+    const response = await send(
+      path,
+      post({ emails: [owner.email, 'missing@example.com'] }, owner.cookie)
+    );
+    expect(response.status).toBe(200);
+    const results = response.body['results'] as Record<string, unknown>[];
+    expect(results[0]!['standing']).toBe('owner');
+    expect(results[1]!['party']).toBeNull();
+    expect(results[1]!['standing']).toBeNull();
+    expect(results[1]!['invites']).toEqual([]);
+    const blocked = await send(
+      '/api/identity/recovery/lookup',
+      post({ email: reader.email }, owner.cookie)
+    );
+    expect(blocked.status).toBe(429);
+    expect(blocked.body['code']).toBe('private_rate_limited');
+  });
+});
+
+describe('grant authority', () => {
+  test('the owner cannot grant to their own identity', async () => {
+    const owner = await person('owner@example.com');
+    await registerIdentity(owner);
+    const sealed = await sealedPrivateRelic(owner);
+
+    const refused = await grantTo(owner, owner, [1], sealed.versionKey);
+    expect(refused.status).toBe(400);
+    expect(refused.body['code']).toBe('invalid_statement');
+    expect(refused.body['statement_check']).toBe('grantee');
+    expect(
+      await store.getGrant(RELIC_ID, owner.identityId as string)
+    ).toBeUndefined();
+  });
+
+  test('each roster entry serves its own signed grant statement', async () => {
+    const owner = await person('owner@example.com');
+    await registerIdentity(owner);
+    const sealed = await sealedPrivateRelic(owner);
+    const first = await person('first@example.com');
+    const second = await person('second@example.com');
+    await registerIdentity(first);
+    await registerIdentity(second);
+    expect((await grantTo(owner, first, [1], sealed.versionKey)).status).toBe(
+      201
+    );
+    expect((await grantTo(owner, second, [1], sealed.versionKey)).status).toBe(
+      201
+    );
+    const firstGrant = await store.getGrant(
+      RELIC_ID,
+      first.identityId as string
+    );
+    const secondGrant = await store.getGrant(
+      RELIC_ID,
+      second.identityId as string
+    );
+    await store.updateGrant(RELIC_ID, second.identityId as string, (row) => ({
+      ...row,
+      attestation: {
+        ...row.attestation,
+        statements: [
+          firstGrant!.attestation.statements[0]!,
+          secondGrant!.attestation.statements[0]!,
+        ],
+      },
+    }));
+
+    const response = await recipientsOf(owner);
+    expect(response.status).toBe(200);
+    const grants = response.body['grants'] as {
+      statement: Record<string, unknown>;
+      identity_signature: string;
+    }[];
+    const served = grants.find(
+      (entry) => entry.statement['grantee_identity_id'] === second.identityId
+    );
+    expect(served?.identity_signature).toBe(
+      secondGrant!.attestation.statements[0]!.identitySignature
+    );
+  });
+
+  test('a grant that loses its row race keeps the winner and rolls back its own extra wraps', async () => {
+    store = new HookStore();
+    app = createApp({ store, storage, now: () => now });
+    const owner = await person('owner@example.com');
+    await registerIdentity(owner);
+    const sealed = await sealedPrivateRelic(owner);
+    const reader = await person('reader@example.com');
+    await registerIdentity(reader);
+    const device = { keys: sealed.deviceKeys, deviceId: sealed.deviceId };
+    const bytes = await openVersionTwo();
+    const second = await sealVersionTwo(owner, device, bytes, []);
+    expect(second.status).toBe(200);
+    // A writes its wraps for versions 1 and 2. Just before A's row write, B
+    // grants version 2 alone: B's wrap for version 2 is A's already, so B's
+    // putWrap is refused, and B's row lands. A's row write is then refused,
+    // and A rolls back only its version-1 wrap, which no live grant covers.
+    let winner: { status: number; body: Record<string, unknown> } | undefined;
+    store.beforePutGrant = async () => {
+      winner = await grantBatch(
+        owner,
+        [{ reader, versions: [2] }],
+        (version) => (version === 1 ? sealed.versionKey : second.key)
+      );
+    };
+    const loser = await grantBatch(
+      owner,
+      [{ reader, versions: [1, 2] }],
+      (version) => (version === 1 ? sealed.versionKey : second.key)
+    );
+
+    expect(winner?.status).toBe(201);
+    expect(loser.status).toBe(409);
+    expect(loser.body['code']).toBe('grant_exists');
+    expect(loser.body['grantee_identity_id']).toBe(reader.identityId);
+    const readerRecord = await store.getIdentity(reader.identityId as string);
+    const kept = await store.getGrant(RELIC_ID, reader.identityId as string);
+    expect(kept?.versions).toEqual([2]);
+    expect(
+      await store.getWrap(RELIC_ID, 2, readerRecord!.kemKeyId)
+    ).toBeDefined();
+    expect(
+      await store.getWrap(RELIC_ID, 1, readerRecord!.kemKeyId)
+    ).toBeUndefined();
+  });
+
+  test('one attestation grants two readers, and the response lists each grant', async () => {
+    store = new HookStore();
+    app = createApp({ store, storage, now: () => now });
+    const owner = await person('owner@example.com');
+    await registerIdentity(owner);
+    const sealed = await sealedPrivateRelic(owner);
+    const first = await person('first@example.com');
+    const second = await person('second@example.com');
+    await registerIdentity(first);
+    await registerIdentity(second);
+
+    const res = await grantBatch(
+      owner,
+      [
+        { reader: first, versions: [1] },
+        { reader: second, versions: [1] },
+      ],
+      () => sealed.versionKey
+    );
+    expect(res.status).toBe(201);
+    expect(res.body['grant']).toBeNull();
+    const grants = res.body['grants'] as {
+      statement: Record<string, unknown>;
+    }[];
+    expect(
+      grants.map((g) => g.statement['grantee_identity_id']).sort()
+    ).toEqual([first.identityId, second.identityId].sort());
+    expect(
+      await store.getGrant(RELIC_ID, first.identityId as string)
+    ).toBeDefined();
+    expect(
+      await store.getGrant(RELIC_ID, second.identityId as string)
+    ).toBeDefined();
+  });
+
+  test('a reader who already reads the relik is refused by grant_exists, and nothing changes', async () => {
+    store = new HookStore();
+    app = createApp({ store, storage, now: () => now });
+    const owner = await person('owner@example.com');
+    await registerIdentity(owner);
+    const sealed = await sealedPrivateRelic(owner);
+    const reader = await person('reader@example.com');
+    await registerIdentity(reader);
+    expect((await grantTo(owner, reader, [1], sealed.versionKey)).status).toBe(
+      201
+    );
+    const before = await store.getGrant(RELIC_ID, reader.identityId as string);
+
+    const again = await grantTo(owner, reader, [1], sealed.versionKey);
+    expect(again.status).toBe(409);
+    expect(again.body['code']).toBe('grant_exists');
+    expect(again.body['grantee_identity_id']).toBe(reader.identityId);
+    expect(await store.getGrant(RELIC_ID, reader.identityId as string)).toEqual(
+      before
+    );
+  });
+
+  test('a batch over privateShareMaxPerCall is refused by count before anything is written', async () => {
+    store = new HookStore();
+    app = createApp({
+      store,
+      storage,
+      now: () => now,
+      config: { privateShareMaxPerCall: 1 },
+    });
+    const owner = await person('owner@example.com');
+    await registerIdentity(owner);
+    const sealed = await sealedPrivateRelic(owner);
+    const first = await person('first@example.com');
+    const second = await person('second@example.com');
+    await registerIdentity(first);
+    await registerIdentity(second);
+
+    const res = await grantBatch(
+      owner,
+      [
+        { reader: first, versions: [1] },
+        { reader: second, versions: [1] },
+      ],
+      () => sealed.versionKey
+    );
+    expect(res.status).toBe(400);
+    expect(res.body['code']).toBe('invalid_statement');
+    expect(res.body['statement_check']).toBe('count');
+    expect(await store.listGrants(RELIC_ID)).toEqual([]);
+  });
+
+  test('the direct-share budget refuses a whole batch and charges nothing for it', async () => {
+    store = new HookStore();
+    app = createApp({
+      store,
+      storage,
+      now: () => now,
+      config: { directShareRateLimit: { limit: 1, windowSeconds: 3600 } },
+    });
+    const owner = await person('owner@example.com');
+    await registerIdentity(owner);
+    const sealed = await sealedPrivateRelic(owner);
+    const first = await person('first@example.com');
+    const second = await person('second@example.com');
+    await registerIdentity(first);
+    await registerIdentity(second);
+
+    const refused = await grantBatch(
+      owner,
+      [
+        { reader: first, versions: [1] },
+        { reader: second, versions: [1] },
+      ],
+      () => sealed.versionKey
+    );
+    expect(refused.status).toBe(429);
+    expect(refused.body['code']).toBe('private_rate_limited');
+    expect(await store.listGrants(RELIC_ID)).toEqual([]);
+
+    // Nothing was charged, so one grant still fits the one unit.
+    expect((await grantTo(owner, first, [1], sealed.versionKey)).status).toBe(
+      201
+    );
   });
 });
 

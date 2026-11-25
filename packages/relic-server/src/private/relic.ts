@@ -18,12 +18,15 @@ import {
   fingerprintsEqual,
   formatFingerprint,
   identityFingerprint,
+  inviteIdOf,
   parseStatement,
   parseTypedFingerprint,
   statementBytes,
   verifyStatement,
   InvalidStatementError,
   type GrantJSON,
+  type InviteJSON,
+  type InviteOpenJSON,
   type KeyJSON,
   type PartyJSON,
   type PrivateAccessJSON,
@@ -33,13 +36,21 @@ import { encryptedSize, isRendererClass, normalizeEmail } from '@relic/format';
 import { ProblemError } from '../problems.ts';
 import type {
   AccessRequestRow,
+  InviteRow,
   GrantRow,
   IdentityRecord,
   RelicRow,
   SealRow,
+  StoredAttestation,
   WrapRow,
 } from '../store.ts';
-import { accessRequestedMail, accessGrantedMail } from '../mail.ts';
+import {
+  accessRequestedMail,
+  accessGrantedMail,
+  directShareMail,
+  inviteNoticeMail,
+  inviteClaimedMail,
+} from '../mail.ts';
 import {
   deviceJson,
   iso,
@@ -70,6 +81,7 @@ import {
 } from './access.ts';
 import { ownerParty } from './context.ts';
 import { verifyOwnerBind } from './devices.ts';
+import { DAY_MS, type BudgetCharge } from './context.ts';
 
 // ---------------------------------------------------------------- helpers
 
@@ -106,10 +118,16 @@ export interface GrantWireJSON extends GrantJSON {
 }
 
 function grantJson(grant: GrantRow, grantee: IdentityRecord): GrantWireJSON {
+  const signed =
+    grant.grantStatement ??
+    grant.attestation.statements.find(
+      (item) =>
+        item.kind === 'grant' &&
+        item.statement['grantee_identity_id'] === grant.granteeIdentityId
+    );
   return {
-    statement: grant.attestation.statements[0]?.statement ?? {},
-    identity_signature:
-      grant.attestation.statements[0]?.identitySignature ?? '',
+    statement: signed?.statement ?? {},
+    identity_signature: signed?.identitySignature ?? '',
     granted_at: iso(grant.grantedAt),
     revoked_at: grant.revokedAt === undefined ? null : iso(grant.revokedAt),
     revocation: signedStatementJson(grant.revocation),
@@ -161,6 +179,7 @@ export async function privateAccessView(
     standing.role === 'owner' ||
     standing.role === 'grantee' ||
     standing.role === 'recovery' ||
+    standing.role === 'invited' ||
     standing.role === 'revoked';
   const recovery =
     seesOwner && owner.recovery !== undefined
@@ -169,7 +188,7 @@ export async function privateAccessView(
   const readable =
     me === undefined || standing.role === 'revoked' || standing.role === 'none'
       ? []
-      : await readableVersions(env, row, me.kemKeyId);
+      : await readableVersions(env, row, me.kemKeyId, me, owner);
   return {
     access: 'private',
     relic_id: row.id,
@@ -181,13 +200,15 @@ export async function privateAccessView(
     settings:
       standing.role === 'owner' ||
       standing.role === 'grantee' ||
-      standing.role === 'recovery'
+      standing.role === 'recovery' ||
+      standing.role === 'invited'
         ? settingsView(row)
         : null,
     signing:
       standing.role === 'owner' ||
       standing.role === 'grantee' ||
-      standing.role === 'recovery'
+      standing.role === 'recovery' ||
+      standing.role === 'invited'
         ? {
             open_version: row.signingOpen?.version ?? null,
             locked_versions: row.lockedVersions ?? [],
@@ -325,7 +346,11 @@ export async function declineRequest(
 }
 
 /** The owner's session, the private relic, and the owner record, or the refusal. */
-async function ownedPrivate(env: PrivateEnv, email: string, relicId: string) {
+export async function ownedPrivate(
+  env: PrivateEnv,
+  email: string,
+  relicId: string
+) {
   const row = privateRow(await liveRelic(env, relicId));
   const owner = await ownerRecord(env, row);
   const me = await currentIdentity(env, email);
@@ -338,13 +363,17 @@ async function ownedPrivate(env: PrivateEnv, email: string, relicId: string) {
 // ---------------------------------------------------------------- grants
 
 /**
- * Grants an identity the listed sealed versions. The owner types the
- * grantee's fingerprint and signs the grant; the wraps must cover exactly
- * the listed versions for the grantee's key.
+ * Grants a batch of identities the listed sealed versions (plan 3.3 B). One
+ * owner attestation names 1 to privateShareMaxPerCall grants. Each grant
+ * wraps its versions to the grantee's key. It is logged as `grant` when it
+ * answers a pending request, and as `share` otherwise.
  *
- * Order matters for the race with seals: the wraps and the grant record are
- * written first, and only then is the epoch bumped under compare-and-swap.
- * A seal that read the epoch before the bump fails its own CAS and retries.
+ * The order is the race story. Every refusal that does not depend on who is
+ * registered comes first, then the direct-share budget, then the refusals
+ * that do. Wraps and grant rows are written next, and one epoch
+ * compare-and-swap follows. A seal that read the epoch before the bump fails
+ * its own CAS and retries. Any failure rolls back what this call wrote; see
+ * `rollback` for what that means when another grant or seal raced it.
  */
 export async function grantAccess(
   env: PrivateEnv,
@@ -354,8 +383,9 @@ export async function grantAccess(
     readonly passkeys: PasskeyRecord | undefined;
     readonly attestation: unknown;
     readonly wraps: unknown;
+    readonly ip: string;
   }
-): Promise<{ status: 201; grant: GrantJSON }> {
+): Promise<GrantsResult> {
   const { row, owner } = await ownedPrivate(env, input.email, input.relicId);
   const verified = await verifyAttestation(env, {
     bundle: input.attestation,
@@ -365,156 +395,680 @@ export async function grantAccess(
     signerKey: identitySigner(owner),
     relicId: row.id,
   });
-  const s = statementOf(verified, 0);
-  if (s['owner_identity_id'] !== owner.identityId)
-    refuseStatement('owner_identity_id');
+  return applyGrants(env, row, owner, verified, input.wraps, false, input.ip);
+}
 
-  const granteeId = String(s['grantee_identity_id']);
-  const grantee = await env.store.getIdentity(granteeId);
-  if (
-    grantee === undefined ||
-    grantee.retiredAt !== undefined ||
-    grantee.email !== normalizeEmail(String(s['grantee_email']))
-  ) {
-    refuseStatement('grantee');
-  }
+export interface GrantsResult {
+  readonly status: 201;
+  readonly grants: GrantWireJSON[];
+  readonly invites: InviteJSON[];
+}
 
-  const typed = parseTypedFingerprint(String(s['fingerprint_typed']));
-  const computed = await identityFingerprint(grantee.identityId, grantee.email);
-  if (typed === undefined || !fingerprintsEqual(typed, computed)) {
-    throw new ProblemError('fingerprint_mismatch');
-  }
+export async function applyGrants(
+  env: PrivateEnv,
+  row: RelicRow,
+  owner: IdentityRecord,
+  verified: Pick<VerifiedAttestation, 'statements'> & {
+    readonly attestation: StoredAttestation;
+  },
+  rawWraps: unknown,
+  signing: boolean,
+  ip?: string
+): Promise<GrantsResult> {
+  const now = env.now;
+  const grantItems = verified.statements.filter(
+    (item) => item.kind === 'grant'
+  );
+  const inviteItems = verified.statements.filter(
+    (item) => item.kind === 'invite'
+  );
 
-  const versions = s['versions'] as number[];
-  for (const version of versions) {
-    if (isDeleted(row, version))
-      throw new ProblemError('version_deleted', { version });
+  // Checks that do not depend on who is registered (plan 3.3 B.4).
+  const granteeIds = new Set<string>();
+  const addresses = new Set<string>();
+  for (const { kind, statement: s } of verified.statements) {
+    if (s['owner_identity_id'] !== owner.identityId) {
+      refuseStatement('owner_identity_id');
+    }
+    const address = normalizeEmail(
+      String(kind === 'grant' ? s['grantee_email'] : s['invited_email'])
+    );
+    if (addresses.has(address)) refuseStatement('grantee');
+    addresses.add(address);
+    if (kind === 'grant') {
+      const granteeId = String(s['grantee_identity_id']);
+      if (granteeIds.has(granteeId)) refuseStatement('grantee');
+      granteeIds.add(granteeId);
+    }
+    const versions = s['versions'] as number[];
+    for (const version of versions) {
+      if (isDeleted(row, version)) {
+        throw new ProblemError('version_deleted', { version });
+      }
+      if (
+        version > (row.sealedVersion ?? 0) ||
+        (await env.store.getSeal(row.id, version)) === undefined
+      ) {
+        throw new ProblemError('private_seal_required', { version });
+      }
+    }
     if (
-      version > (row.sealedVersion ?? 0) ||
-      (await env.store.getSeal(row.id, version)) === undefined
+      row.sealedVersion === undefined ||
+      !versions.includes(row.sealedVersion)
     ) {
-      throw new ProblemError('private_seal_required', { version });
+      throw new ProblemError('grant_stale_version', {
+        current_version: row.version,
+      });
     }
   }
 
-  // The wraps must cover exactly versions x grantee key, no more and no less.
-  if (!Array.isArray(input.wraps)) throw new ProblemError('invalid_wrap');
-  const wraps = (input.wraps as unknown[]).map(parseWrapItem);
-  const expected = new Set(versions.map((v) => `${v}:${grantee.kemKeyId}`));
+  const inviteIds = new Set<string>();
+  const plannedInvites: PlannedInvite[] = [];
+  for (const { statement: s, identitySignature } of inviteItems) {
+    const at = s['at'] as number;
+    const expiresAt = s['expires_at'] as number;
+    const relikExpiry = row.expiresAt;
+    if (
+      expiresAt <= at ||
+      expiresAt > at + env.config.inviteMaxDays * DAY_MS ||
+      (expiresAt < at + env.config.inviteMinDays * DAY_MS &&
+        expiresAt !== relikExpiry) ||
+      (relikExpiry !== undefined && expiresAt > relikExpiry)
+    ) {
+      refuseStatement('expires_at');
+    }
+    const publicKey = await validInvitePublicKey(
+      String(s['invite_public_key'])
+    );
+    if (publicKey === undefined) refuseStatement('invite_key');
+    const inviteId = await inviteIdOf(publicKey);
+    if (
+      inviteIds.has(inviteId) ||
+      (await env.store.getInvite(row.id, inviteId)) !== undefined
+    ) {
+      refuseStatement('invite_key');
+    }
+    inviteIds.add(inviteId);
+    plannedInvites.push({
+      email: normalizeEmail(String(s['invited_email'])),
+      inviteId,
+      versions: [...(s['versions'] as number[])],
+      expiresAt,
+      statement: s,
+      identitySignature,
+    });
+  }
+  if (plannedInvites.length > 0) {
+    const open = (await env.store.listInvites(row.id)).filter(
+      (invite) => invite.status === 'open' && invite.expiresAt > now
+    ).length;
+    if (open + plannedInvites.length > env.config.privateInvitesMaxOpen) {
+      throw new ProblemError('invite_limit_reached');
+    }
+  }
+
+  // Who has a pending request decides how each grant is logged. A grant with
+  // no pending request, and every invitation, spends the owner's direct-share
+  // budget (plan 3.3 B.5).
+  const pending = new Map<string, boolean>();
+  for (const item of grantItems) {
+    const granteeId = String(item.statement['grantee_identity_id']);
+    const request = await env.store.getAccessRequest(row.id, granteeId);
+    pending.set(granteeId, request?.status === 'pending');
+  }
+  const directGrants = grantItems.filter(
+    (item) =>
+      pending.get(String(item.statement['grantee_identity_id'])) !== true
+  ).length;
+  const charges: BudgetCharge[] = [
+    {
+      scope: 'direct-share',
+      key: owner.identityId,
+      budget: env.config.directShareRateLimit,
+      units: directGrants + plannedInvites.length,
+    },
+  ];
+  if (plannedInvites.length > 0) {
+    charges.push(
+      {
+        scope: 'identity-lookup',
+        key: owner.email,
+        budget: env.config.identityLookupRateLimit,
+        units: plannedInvites.length,
+      },
+      {
+        scope: 'identity-lookup-ip',
+        key: ip ?? '',
+        budget: env.config.identityLookupIpRateLimit,
+        units: plannedInvites.length,
+      }
+    );
+  }
+  env.limitAll(charges);
+
+  // Checks that depend on who is registered (plan 3.3 B.6).
+  const planned: PlannedGrant[] = [];
+  for (const item of grantItems) {
+    const s = item.statement;
+    const granteeId = String(s['grantee_identity_id']);
+    const grantee = await env.store.getIdentity(granteeId);
+    if (
+      grantee === undefined ||
+      grantee.retiredAt !== undefined ||
+      grantee.identityId === owner.identityId ||
+      grantee.email !== normalizeEmail(String(s['grantee_email']))
+    ) {
+      refuseStatement('grantee');
+    }
+    const typed = parseTypedFingerprint(String(s['fingerprint_typed']));
+    const computed = await identityFingerprint(
+      grantee.identityId,
+      grantee.email
+    );
+    if (typed === undefined || !fingerprintsEqual(typed, computed)) {
+      throw new ProblemError('fingerprint_mismatch', {
+        grantee_identity_id: grantee.identityId,
+      });
+    }
+    const prior = await env.store.getGrant(row.id, grantee.identityId);
+    if (prior !== undefined && prior.revokedAt === undefined) {
+      throw new ProblemError('grant_exists', {
+        grantee_identity_id: grantee.identityId,
+      });
+    }
+    planned.push({
+      grantee,
+      versions: [...(s['versions'] as number[])],
+      prior,
+      pending: pending.get(granteeId) === true,
+    });
+  }
+  for (const invite of plannedInvites) {
+    if ((await currentIdentity(env, invite.email)) !== undefined) {
+      throw new ProblemError('identity_exists', { email: invite.email });
+    }
+  }
+
+  // The wraps must cover exactly grantee keys x versions, and invitation keys
+  // x versions (plan 3.3 B.7).
+  if (!Array.isArray(rawWraps)) throw new ProblemError('invalid_wrap');
+  const wraps = (rawWraps as unknown[]).map(parseWrapItem);
+  const expected = new Set<string>();
+  for (const p of planned) {
+    for (const v of p.versions) expected.add(`${v}:${p.grantee.kemKeyId}`);
+  }
+  for (const p of plannedInvites) {
+    for (const v of p.versions) expected.add(`${v}:${p.inviteId}`);
+  }
   const seen = new Set(wraps.map((w) => `${w.version}:${w.recipientKeyId}`));
   if (
-    wraps.length !== versions.length ||
-    seen.size !== versions.length ||
+    wraps.length > env.config.privateBackfillMaxWraps ||
+    seen.size !== wraps.length ||
+    wraps.length !== expected.size ||
     [...seen].some((k) => !expected.has(k))
   ) {
     throw new ProblemError('invalid_wrap', {
       detail: 'Wraps must cover the granted versions.',
     });
   }
-
-  const written: WrapRow[] = [];
   for (const wrap of wraps) {
     if (wrap.relicId !== undefined && wrap.relicId !== row.id) {
       throw new ProblemError('invalid_wrap');
     }
-    const row2: WrapRow = {
-      relicId: row.id,
-      version: wrap.version,
-      recipientKeyId: wrap.recipientKeyId,
-      enc: wrap.enc,
-      ct: wrap.ct,
-      createdAt: env.now,
-      source: 'grant',
-    };
-    if (await env.store.putWrap(row2)) written.push(row2);
   }
 
-  const prior = await env.store.getGrant(row.id, grantee.identityId);
-  const grantRow: GrantRow = {
-    relicId: row.id,
-    granteeIdentityId: grantee.identityId,
-    ownerIdentityId: owner.identityId,
-    versions: [...versions],
-    grantedAt: env.now,
-    attestation: verified.attestation,
+  const granteeByKey = new Map(
+    planned.map((p) => [p.grantee.kemKeyId, p.grantee.identityId] as const)
+  );
+  const inviteKeys = new Set(plannedInvites.map((p) => p.inviteId));
+  const writtenWraps: WrapRow[] = [];
+  const created: string[] = [];
+  const createdInvites: string[] = [];
+  const replaced: { granteeId: string; prior: GrantRow }[] = [];
+  const writtenGrants = new Map<string, GrantRow>();
+  const writtenInviteRows: InviteRow[] = [];
+
+  /** Whether a live grant of this relic, read now, covers a version for a grantee. */
+  const covers = async (granteeId: string, version: number) => {
+    const live = await env.store.getGrant(row.id, granteeId);
+    return (
+      live !== undefined &&
+      live.revokedAt === undefined &&
+      live.versions.includes(version)
+    );
   };
-  const rollback = async () => {
-    for (const w of written) {
+
+  /**
+   * Undoes what this call wrote and nothing it did not write.
+   *
+   * A grant row this call created is removed, and a revoked row it replaced
+   * is restored. A wrap this call wrote is removed, unless another role keeps
+   * its key current or a live grant covers its version. A wrap that was
+   * already there (`putWrap` returned false) is never removed: a wrap for the
+   * same version and key opens the same content whoever wrote it. An
+   * invitation row this call created is removed with its wraps. When a seal
+   * raced this call (`sealRace`), a key left with no live grant also loses
+   * the wraps the seal made for it.
+   */
+  const rollback = async (sealRace: boolean) => {
+    for (const granteeId of created) {
+      await env.store.deleteGrant(row.id, granteeId);
+    }
+    for (const r of replaced) {
+      await env.store.updateGrant(row.id, r.granteeId, () => r.prior);
+    }
+    for (const inviteId of createdInvites) {
+      await env.store.deleteInvite(row.id, inviteId);
+    }
+    const keptElsewhere = new Map<string, boolean>();
+    for (const p of planned) {
+      const keys = await recipientKeys(env, row, owner, {
+        exceptGrantee: p.grantee.identityId,
+      });
+      const claim = await env.store.getInviteClaim(
+        row.id,
+        p.grantee.identityId
+      );
+      keptElsewhere.set(
+        p.grantee.kemKeyId,
+        keys.includes(p.grantee.kemKeyId) ||
+          (claim !== undefined && claim.revokedAt === undefined)
+      );
+    }
+    for (const wrap of writtenWraps) {
+      if (keptElsewhere.get(wrap.recipientKeyId) === true) continue;
+      const granteeId = granteeByKey.get(wrap.recipientKeyId);
+      if (granteeId !== undefined && (await covers(granteeId, wrap.version))) {
+        continue;
+      }
       await env.store.deleteWraps(row.id, {
-        version: w.version,
-        recipientKeyId: w.recipientKeyId,
+        version: wrap.version,
+        recipientKeyId: wrap.recipientKeyId,
       });
     }
-    if (prior === undefined) {
-      // A fresh grantee has no earlier wraps. A seal that landed while this
-      // grant was in flight may have wrapped it, and a refused grant must not
-      // leave any of them behind. A key another role keeps current keeps them.
-      const keptElsewhere = (
-        await recipientKeys(env, row, owner, {
-          exceptGrantee: grantee.identityId,
-        })
-      ).includes(grantee.kemKeyId);
-      if (!keptElsewhere) {
+    if (sealRace) {
+      for (const p of planned) {
+        if (keptElsewhere.get(p.grantee.kemKeyId) === true) continue;
+        const live = await env.store.getGrant(row.id, p.grantee.identityId);
+        if (live !== undefined && live.revokedAt === undefined) continue;
         await env.store.deleteWraps(row.id, {
-          recipientKeyId: grantee.kemKeyId,
+          recipientKeyId: p.grantee.kemKeyId,
         });
       }
-
-      await env.store.deleteGrant(row.id, grantee.identityId);
-    } else {
-      await env.store.updateGrant(row.id, grantee.identityId, () => prior);
     }
   };
-  if (prior === undefined) {
-    await env.store.putGrant(grantRow);
-  } else {
-    await env.store.updateGrant(row.id, grantee.identityId, () => grantRow);
-  }
 
+  let epochStarted = false;
   try {
-    await env.store.updateRelic(row.id, (cur) => {
-      if (
-        cur.sealedVersion === undefined ||
-        !versions.includes(cur.sealedVersion)
-      ) {
-        throw new ProblemError('grant_stale_version', {
-          current_version: cur.version,
-        });
+    for (const wrap of wraps) {
+      if (inviteKeys.has(wrap.recipientKeyId)) continue;
+      const record: WrapRow = {
+        relicId: row.id,
+        version: wrap.version,
+        recipientKeyId: wrap.recipientKeyId,
+        enc: wrap.enc,
+        ct: wrap.ct,
+        createdAt: env.now,
+        source: 'grant',
+      };
+      if (await env.store.putWrap(record)) writtenWraps.push(record);
+    }
+
+    for (const p of planned) {
+      const granteeId = p.grantee.identityId;
+      const signedGrant = verified.statements.find(
+        (item) =>
+          item.kind === 'grant' &&
+          item.statement['grantee_identity_id'] === granteeId
+      );
+      const grantRow: GrantRow = {
+        relicId: row.id,
+        granteeIdentityId: granteeId,
+        ownerIdentityId: owner.identityId,
+        versions: [...p.versions],
+        grantedAt: env.now,
+        attestation: verified.attestation,
+        ...(signing && signedGrant !== undefined
+          ? {
+              grantStatement: {
+                statement: signedGrant.statement,
+                identitySignature: signedGrant.identitySignature,
+              },
+            }
+          : {}),
+      };
+      if (p.prior === undefined) {
+        // A concurrent grant to this grantee may have won. Its row and its
+        // wraps stay; this call's own wraps are rolled back above.
+        if (!(await env.store.putGrant(grantRow))) {
+          throw new ProblemError('grant_exists', {
+            grantee_identity_id: granteeId,
+          });
+        }
+        created.push(granteeId);
+      } else {
+        const prior = p.prior;
+        const updated = await env.store.updateGrant(
+          row.id,
+          granteeId,
+          (cur) => {
+            if (cur.revokedAt === undefined) {
+              throw new ProblemError('grant_exists', {
+                grantee_identity_id: granteeId,
+              });
+            }
+            return grantRow;
+          }
+        );
+        if (updated === undefined) {
+          throw new ProblemError('grant_exists', {
+            grantee_identity_id: granteeId,
+          });
+        }
+        replaced.push({ granteeId, prior });
       }
-      return { ...cur, accessEpoch: (cur.accessEpoch ?? 0) + 1 };
-    });
+      writtenGrants.set(granteeId, grantRow);
+    }
+
+    // Invitation rows are create-only and carry their own wraps. They never
+    // enter `m/wrap/`, so the recipient set and the sweeps cannot see them.
+    for (const invite of plannedInvites) {
+      const inviteRow: InviteRow = {
+        relicId: row.id,
+        inviteId: invite.inviteId,
+        ownerIdentityId: owner.identityId,
+        invitedEmail: invite.email,
+        invitePublicKey: String(invite.statement['invite_public_key']),
+        versions: [...invite.versions],
+        expiresAt: invite.expiresAt,
+        createdAt: env.now,
+        status: 'open',
+        wraps: wraps
+          .filter((w) => w.recipientKeyId === invite.inviteId)
+          .map((w) => ({ version: w.version, enc: w.enc, ct: w.ct })),
+        attestation: verified.attestation,
+      };
+      if (!(await env.store.putInvite(inviteRow))) {
+        refuseStatement('invite_key');
+      }
+      createdInvites.push(invite.inviteId);
+      writtenInviteRows.push(inviteRow);
+    }
+
+    if (planned.length > 0) {
+      epochStarted = true;
+      await env.store.updateRelic(row.id, (cur) => {
+        const sealed = cur.sealedVersion;
+        if (
+          sealed === undefined ||
+          planned.some((p) => !p.versions.includes(sealed))
+        ) {
+          throw new ProblemError('grant_stale_version', {
+            current_version: cur.version,
+          });
+        }
+        return { ...cur, accessEpoch: (cur.accessEpoch ?? 0) + 1 };
+      });
+    }
   } catch (error) {
-    await rollback();
+    await rollback(epochStarted).catch((rollbackError: unknown) => {
+      console.error('relic: grant rollback failed:', rollbackError);
+    });
     throw error;
   }
 
-  await env.store
-    .updateAccessRequest(row.id, grantee.identityId, (r) => ({
-      ...r,
-      status: 'granted',
-      decidedAt: env.now,
-    }))
-    .catch(() => undefined);
-  await logAccess(env, owner.identityId, row.id, 'grant', {
-    actorIdentityId: owner.identityId,
-    version: Math.max(...versions),
-    subjectIdentityId: grantee.identityId,
-  });
-  try {
-    await env.sendMail(
-      grantee.email,
-      accessGrantedMail({
-        relicUrl: `${new URL(env.config.serviceOrigin).origin}/${row.id}`,
+  const grants: GrantWireJSON[] = [];
+  for (const p of planned) {
+    const granteeId = p.grantee.identityId;
+    // A grant confirms a claimed invitation, and supersedes its claim row (plan 3.2).
+    await env.store.deleteInviteClaim(row.id, granteeId);
+    if (p.pending) {
+      await env.store
+        .updateAccessRequest(row.id, granteeId, (r) => ({
+          ...r,
+          status: 'granted',
+          decidedAt: env.now,
+        }))
+        .catch(() => undefined);
+    }
+    await logAccess(
+      env,
+      owner.identityId,
+      row.id,
+      p.pending ? 'grant' : 'share',
+      {
+        actorIdentityId: owner.identityId,
+        version: Math.max(...p.versions),
+        subjectIdentityId: granteeId,
+      }
+    );
+    if (!signing)
+      try {
+        await env.sendMail(
+          p.grantee.email,
+          p.pending
+            ? accessGrantedMail({
+                relicUrl: `${new URL(env.config.serviceOrigin).origin}/${row.id}`,
+              })
+            : directShareMail({
+                ownerAddress: owner.email,
+                fingerprint: formatFingerprint(
+                  await identityFingerprint(
+                    p.grantee.identityId,
+                    p.grantee.email
+                  )
+                ),
+                relicUrl: `${new URL(env.config.serviceOrigin).origin}/${row.id}`,
+              })
+        );
+      } catch {
+        console.error('relic: access grant notice failed');
+      }
+    const stored = await env.store.getGrant(row.id, granteeId);
+    grants.push(grantJson(stored ?? writtenGrants.get(granteeId)!, p.grantee));
+  }
+
+  const invites: InviteJSON[] = [];
+  for (const [index, invite] of plannedInvites.entries()) {
+    const inviteRow = writtenInviteRows[index]!;
+    await logAccess(env, owner.identityId, row.id, 'invite', {
+      actorIdentityId: owner.identityId,
+      version: Math.max(...invite.versions),
+      subjectEmail: invite.email,
+    });
+    try {
+      await env.sendMail(
+        invite.email,
+        inviteNoticeMail({
+          ownerAddress: owner.email,
+          expiresAt: iso(invite.expiresAt),
+        })
+      );
+    } catch {
+      console.error('relic: invitation notice failed');
+    }
+    invites.push(
+      inviteJson(inviteRow, invite.statement, invite.identitySignature)
+    );
+  }
+  return { status: 201, grants, invites };
+}
+
+/** One grant of a batch, once the checks that depend on who is registered have passed. */
+interface PlannedGrant {
+  readonly grantee: IdentityRecord;
+  readonly versions: readonly number[];
+  /** The grant row this grantee already had, when it was revoked. */
+  readonly prior: GrantRow | undefined;
+  /** True when the grantee has a pending request this grant answers. */
+  readonly pending: boolean;
+}
+
+/** One invitation of a batch, once its statement has passed the checks that do not depend on registration. */
+interface PlannedInvite {
+  readonly email: string;
+  readonly inviteId: string;
+  readonly versions: readonly number[];
+  readonly expiresAt: number;
+  readonly statement: Record<string, unknown>;
+  readonly identitySignature: string;
+}
+
+/** The owner's view of one invitation, as the grant response and the invitation list carry it. */
+export function inviteJson(
+  row: InviteRow,
+  statement: Record<string, unknown>,
+  identitySignature: string
+): InviteJSON {
+  return {
+    invite_id: row.inviteId,
+    invited_email: row.invitedEmail,
+    versions: [...row.versions],
+    created_at: iso(row.createdAt),
+    expires_at: iso(row.expiresAt),
+    status: row.status,
+    claimed_by: null,
+    claimed_at: null,
+    statement,
+    identity_signature: identitySignature,
+  };
+}
+
+async function ownerInviteJson(
+  env: PrivateEnv,
+  row: InviteRow
+): Promise<InviteJSON> {
+  const signed = row.attestation.statements.find(
+    (item) =>
+      item.kind === 'invite' &&
+      item.statement['invite_public_key'] === row.invitePublicKey
+  );
+  const claimant =
+    row.claimantIdentityId === undefined
+      ? undefined
+      : await env.store.getIdentity(row.claimantIdentityId);
+  const grant =
+    row.claimantIdentityId === undefined
+      ? undefined
+      : await env.store.getGrant(row.relicId, row.claimantIdentityId);
+  return {
+    ...inviteJson(
+      row,
+      signed?.statement ?? {},
+      signed?.identitySignature ?? ''
+    ),
+    status:
+      row.status === 'open' && row.expiresAt <= env.now
+        ? 'expired'
+        : row.status === 'claimed' &&
+            grant !== undefined &&
+            grant.revokedAt === undefined
+          ? 'confirmed'
+          : row.status,
+    claimed_by: claimant === undefined ? null : partyJson(claimant),
+    claimed_at: row.claimedAt === undefined ? null : iso(row.claimedAt),
+  };
+}
+
+export async function listInvitations(
+  env: PrivateEnv,
+  email: string,
+  relicId: string
+): Promise<InviteJSON[]> {
+  const { row } = await ownedPrivate(env, email, relicId);
+  return Promise.all(
+    (await env.store.listInvites(row.id)).map((invite) =>
+      ownerInviteJson(env, invite)
+    )
+  );
+}
+
+export async function revokeInvitation(
+  env: PrivateEnv,
+  email: string,
+  relicId: string,
+  inviteId: string
+): Promise<InviteJSON> {
+  const { row, owner } = await ownedPrivate(env, email, relicId);
+  const invite = await env.store.getInvite(row.id, inviteId);
+  if (invite === undefined) throw new ProblemError('invite_not_found');
+  if (invite.status !== 'revoked' && invite.claimantIdentityId !== undefined) {
+    const grant = await env.store.getGrant(row.id, invite.claimantIdentityId);
+    if (grant !== undefined && grant.revokedAt === undefined)
+      throw new ProblemError('grant_exists');
+  }
+  const revoked =
+    invite.status === 'revoked'
+      ? invite
+      : await env.store.updateInvite(row.id, inviteId, (current) => {
+          if (
+            current.status !== invite.status ||
+            current.claimantIdentityId !== invite.claimantIdentityId
+          ) {
+            throw new ProblemError('invite_claimed');
+          }
+          return {
+            ...current,
+            status: 'revoked',
+            wraps: [],
+            revokedAt: env.now,
+          };
+        });
+  if (revoked === undefined) throw new ProblemError('invite_not_found');
+  if (revoked.claimantIdentityId !== undefined) {
+    const claimant = await env.store.getIdentity(revoked.claimantIdentityId);
+    await env.store.updateInviteClaim(
+      row.id,
+      revoked.claimantIdentityId,
+      (claim) => ({
+        ...claim,
+        revokedAt: env.now,
       })
     );
-  } catch (error) {
-    console.error('relic: access grant notice failed:', error);
+    if (
+      claimant !== undefined &&
+      !(await recipientKeys(env, row, owner)).includes(claimant.kemKeyId)
+    ) {
+      await env.store.deleteWraps(row.id, {
+        recipientKeyId: claimant.kemKeyId,
+      });
+    }
   }
-  const stored = await env.store.getGrant(row.id, grantee.identityId);
-  return {
-    status: 201,
-    grant: grantJson(stored ?? grantRow, grantee),
-  };
+  if (invite.status !== 'revoked') {
+    await logAccess(env, owner.identityId, row.id, 'revoke', {
+      actorIdentityId: owner.identityId,
+      subjectEmail: revoked.invitedEmail,
+      ...(revoked.claimantIdentityId === undefined
+        ? {}
+        : { subjectIdentityId: revoked.claimantIdentityId }),
+    });
+  }
+  return ownerInviteJson(env, revoked);
+}
+
+/** The invitation's public key as P-256 SEC1 bytes, or undefined when it is not a point on the curve. */
+async function validInvitePublicKey(
+  value: string
+): Promise<Uint8Array | undefined> {
+  let bytes: Uint8Array;
+  try {
+    bytes = decodeBase64url(value);
+  } catch {
+    return undefined;
+  }
+  if (bytes.length !== 65 || bytes[0] !== 0x04) return undefined;
+  try {
+    await crypto.subtle.importKey(
+      'raw',
+      bytes as BufferSource,
+      { name: 'ECDH', namedCurve: 'P-256' },
+      false,
+      []
+    );
+  } catch {
+    return undefined;
+  }
+  return bytes;
 }
 
 export async function listGrants(
@@ -1156,6 +1710,8 @@ export async function deleteRelic(
     await env.store.deleteSeals(row.id);
     await env.store.deleteGrantsForRelic(row.id);
     await env.store.deleteAccessRequestsForRelic(row.id);
+    await env.store.deleteInvitesForRelic(row.id);
+    await env.store.deleteInviteClaimsForRelic(row.id);
     await env.store.deleteOwnedRelic(owner.identityId, row.id);
     await env.store.deleteRelicRow(row.id);
     return {
@@ -1188,6 +1744,28 @@ export async function deleteRelic(
     };
   });
   if (updated === undefined) throw new ProblemError('relic_removed');
+  for (const invite of await env.store.listInvites(row.id)) {
+    await env.store.updateInvite(row.id, invite.inviteId, (current) => {
+      const versions = current.versions.filter(
+        (version) => !list.includes(version)
+      );
+      return {
+        ...current,
+        versions,
+        wraps: current.wraps.filter((wrap) => !list.includes(wrap.version)),
+        status:
+          current.status === 'open' && versions.length === 0
+            ? 'revoked'
+            : current.status,
+      };
+    });
+  }
+  for (const claim of await env.store.listInviteClaims(row.id)) {
+    await env.store.updateInviteClaim(row.id, claim.identityId, (current) => ({
+      ...current,
+      versions: current.versions.filter((version) => !list.includes(version)),
+    }));
+  }
   for (const version of list) {
     await env.store.deleteWraps(row.id, { version });
     await env.store.deleteSeals(row.id, version);
@@ -1198,4 +1776,399 @@ export async function deleteRelic(
     });
   }
   return { deleted_versions: list, relic_deleted: false };
+}
+
+// ---------------------------------------------------------------- invitations: the invitee's reads
+
+/** A wrap the invited address may open, with the invitation and the owner it came from. */
+export interface HeldInvitation {
+  readonly row: RelicRow;
+  readonly owner: IdentityRecord;
+  readonly invite: InviteRow;
+  readonly wrap: {
+    readonly version: number;
+    readonly enc: string;
+    readonly ct: string;
+  };
+}
+
+/**
+ * The invitation the signed-in address holds, or the refusal the route names.
+ * Both refusals come for a missing invitation and for a different address, so
+ * the answer never says whether the invitation exists (plan 3.3 G, 4.2). The
+ * per-IP invitation budget is charged first (plan 3.5, D20). An invitation
+ * that expired or was withdrawn loses its wraps here (plan 3.3 G).
+ */
+async function heldInvitation(
+  env: PrivateEnv,
+  relicId: string,
+  email: string,
+  inviteId: string,
+  ip: string,
+  refusal: 'invite_not_found' | 'private_access_denied'
+): Promise<{ row: RelicRow; owner: IdentityRecord; invite: InviteRow }> {
+  env.limit('invite', ip, env.config.inviteRateLimit);
+  const row = privateRow(await liveRelic(env, relicId));
+  const owner = await ownerRecord(env, row);
+  const found = await env.store.getInvite(row.id, inviteId);
+  if (found === undefined || found.invitedEmail !== normalizeEmail(email)) {
+    throw new ProblemError(refusal, { relic_id: row.id });
+  }
+  const live = found.status === 'open' && found.expiresAt > env.now;
+  if (!live && found.wraps.length > 0) {
+    const cleared = await env.store.updateInvite(row.id, inviteId, (r) => ({
+      ...r,
+      wraps: [],
+    }));
+    return { row, owner, invite: cleared ?? found };
+  }
+  return { row, owner, invite: found };
+}
+
+/** `POST /api/relics/{id}/invites/{inviteId}/open`: the invitation's status and its owner-signed statement. */
+export async function openInvitation(
+  env: PrivateEnv,
+  relicId: string,
+  email: string,
+  inviteId: string,
+  ip: string
+): Promise<InviteOpenJSON> {
+  const { row, owner, invite } = await heldInvitation(
+    env,
+    relicId,
+    email,
+    inviteId,
+    ip,
+    'invite_not_found'
+  );
+  const signed = invite.attestation.statements.find(
+    (item) =>
+      item.kind === 'invite' &&
+      item.statement['invite_public_key'] === invite.invitePublicKey
+  );
+  if (signed === undefined) {
+    throw new ProblemError('invite_not_found', { relic_id: row.id });
+  }
+  return {
+    relic_id: row.id,
+    invite_id: invite.inviteId,
+    status:
+      invite.status === 'open' && invite.expiresAt <= env.now
+        ? 'expired'
+        : invite.status,
+    expires_at: iso(invite.expiresAt),
+    versions: invite.versions.filter((version) => !isDeleted(row, version)),
+    sealed_version: row.sealedVersion ?? null,
+    owner: partyJson(owner),
+    invite: {
+      statement: signed.statement,
+      identity_signature: signed.identitySignature,
+    },
+    claimed_by_identity_id: invite.claimantIdentityId ?? null,
+  };
+}
+
+/**
+ * The wrap an invited address may open for one version (plan 3.3 H, I). Every
+ * miss is the same `private_access_denied`: no invitation, another address,
+ * an invitation that is not open or has expired, a version not listed, deleted
+ * or sealed.
+ */
+export async function invitedWrap(
+  env: PrivateEnv,
+  relicId: string,
+  email: string,
+  inviteId: string,
+  version: number,
+  ip: string
+): Promise<HeldInvitation> {
+  const { row, owner, invite } = await heldInvitation(
+    env,
+    relicId,
+    email,
+    inviteId,
+    ip,
+    'private_access_denied'
+  );
+  const wrap = invite.wraps.find((w) => w.version === version);
+  const sealed =
+    version <= (row.sealedVersion ?? 0) &&
+    (await env.store.getSeal(row.id, version)) !== undefined;
+  if (
+    invite.status !== 'open' ||
+    invite.expiresAt <= env.now ||
+    !invite.versions.includes(version) ||
+    isDeleted(row, version) ||
+    !sealed ||
+    wrap === undefined
+  ) {
+    throw new ProblemError('private_access_denied', { relic_id: row.id });
+  }
+  return { row, owner, invite, wrap };
+}
+
+/** `POST /api/relics/{id}/versions/{v}/key` with an invitation: the wrap to the invite key, logged with the address and no receipt (D21). */
+export async function deliverInviteKey(
+  env: PrivateEnv,
+  relicId: string,
+  version: number,
+  input: {
+    readonly email: string;
+    readonly inviteId: string;
+    readonly ip: string;
+  }
+): Promise<KeyJSON> {
+  const held = await invitedWrap(
+    env,
+    relicId,
+    input.email,
+    input.inviteId,
+    version,
+    input.ip
+  );
+  const seal = (await env.store.getSeal(held.row.id, version)) as SealRow;
+  const signer =
+    seal.signerKind === 'identity'
+      ? ({ kind: 'identity' } as const)
+      : await deviceSigner(env, seal.signerId);
+  const address = normalizeEmail(input.email);
+  await logAccess(env, held.owner.identityId, held.row.id, 'wrap_fetch', {
+    version,
+    actorEmail: address,
+    subjectEmail: address,
+  });
+  return {
+    relic_id: held.row.id,
+    version,
+    wrap: {
+      recipient_key_id: held.invite.inviteId,
+      version,
+      enc: held.wrap.enc,
+      ct: held.wrap.ct,
+    },
+    seal: {
+      statement: seal.statement,
+      signature: seal.signature,
+      signer_kind: seal.signerKind,
+    },
+    signer,
+    owner: partyJson(held.owner),
+  };
+}
+
+/** A claim is authorized only after the invitation CAS and claim finalization. */
+export async function claimInvitation(
+  env: PrivateEnv,
+  relicId: string,
+  email: string,
+  inviteId: string,
+  body: Record<string, unknown>
+): Promise<{
+  status: 'claimed' | 'already_reader';
+  versions?: readonly number[];
+}> {
+  if (
+    typeof body['statement'] !== 'object' ||
+    body['statement'] === null ||
+    typeof body['identity_signature'] !== 'string' ||
+    !Array.isArray(body['wraps'])
+  )
+    refuseStatement('shape');
+  const row = privateRow(await liveRelic(env, relicId));
+  const owner = await ownerRecord(env, row);
+  let invite = await env.store.getInvite(row.id, inviteId);
+  if (invite === undefined || invite.invitedEmail !== normalizeEmail(email))
+    throw new ProblemError('invite_not_found');
+  if (invite.status === 'revoked') throw new ProblemError('invite_revoked');
+  if (invite.status === 'open' && invite.expiresAt <= env.now)
+    throw new ProblemError('invite_expired');
+  const identity = await currentIdentity(env, email);
+  if (identity === undefined) throw new ProblemError('identity_required');
+  let statement: StatementMap['invite_claim'];
+  try {
+    statement = parseStatement('invite_claim', body['statement']);
+  } catch (error) {
+    if (error instanceof InvalidStatementError) refuseStatement(error.check);
+    throw error;
+  }
+  if (
+    statement.claimant_identity_id !== identity.identityId ||
+    statement.invite_id !== inviteId ||
+    JSON.stringify(statement.versions) !== JSON.stringify(invite.versions)
+  )
+    refuseStatement('claim');
+  if (statement.relic_id !== row.id) refuseStatement('relic');
+  if (
+    Math.abs(env.now - statement.at) >
+    env.config.passkeyChallengeTtlSeconds * 1000
+  )
+    refuseStatement('stale');
+  if (
+    !(await verifyStatement(
+      decodeBase64url(identity.sigPublicKey),
+      statementBytes('invite_claim', statement),
+      body['identity_signature'] as string
+    ))
+  )
+    refuseStatement('signature');
+  const grant = await env.store.getGrant(row.id, identity.identityId);
+  if (
+    invite.status === 'claimed' &&
+    invite.claimantIdentityId !== identity.identityId
+  )
+    throw new ProblemError('invite_claimed');
+  if (
+    invite.status === 'open' &&
+    grant !== undefined &&
+    grant.revokedAt === undefined
+  ) {
+    await env.store.updateInvite(row.id, inviteId, (current) => {
+      if (current.status !== 'open') throw new ProblemError('invite_claimed');
+      return {
+        ...current,
+        status: 'claimed',
+        claimantIdentityId: identity.identityId,
+        claimedAt: env.now,
+        wraps: [],
+      };
+    });
+    await logAccess(env, owner.identityId, row.id, 'claim', {
+      actorIdentityId: identity.identityId,
+      actorEmail: identity.email,
+      subjectIdentityId: identity.identityId,
+      subjectEmail: identity.email,
+    });
+    return { status: 'already_reader' };
+  }
+  if (
+    invite.status === 'claimed' &&
+    grant !== undefined &&
+    grant.revokedAt === undefined
+  )
+    return { status: 'already_reader' };
+  const existing = await env.store.getInviteClaim(row.id, identity.identityId);
+  if (
+    existing !== undefined &&
+    (!existing.inviteIds.includes(inviteId) || existing.revokedAt !== undefined)
+  )
+    throw new ProblemError('invite_claimed', { reason: 'claim_exists' });
+  if (invite.status === 'claimed' && existing === undefined)
+    throw new ProblemError('invite_claimed');
+  if (invite.status === 'claimed' && existing?.state === 'committed')
+    return { status: 'claimed', versions: invite.versions };
+  const wraps = (body['wraps'] as unknown[]).map(parseWrapItem);
+  if (
+    wraps.length !== invite.versions.length ||
+    new Set(wraps.map((w) => w.version)).size !== wraps.length ||
+    wraps.some(
+      (w) =>
+        w.recipientKeyId !== identity.kemKeyId ||
+        !invite!.versions.includes(w.version) ||
+        (w.relicId !== undefined && w.relicId !== row.id)
+    )
+  )
+    throw new ProblemError('invalid_wrap');
+  for (const wrap of wraps)
+    await env.store.putWrap({
+      ...wrap,
+      relicId: row.id,
+      createdAt: env.now,
+      source: 'claim',
+    });
+  if (existing === undefined) {
+    await env.store.putInviteClaim({
+      relicId: row.id,
+      identityId: identity.identityId,
+      ownerIdentityId: owner.identityId,
+      inviteIds: [inviteId],
+      versions: [...invite.versions],
+      claimedAt: env.now,
+      state: 'pending',
+      claim: {
+        statement: statement as unknown as Record<string, unknown>,
+        identitySignature: body['identity_signature'] as string,
+      },
+    });
+  }
+  const pending = await env.store.getInviteClaim(row.id, identity.identityId);
+  if (
+    pending === undefined ||
+    !pending.inviteIds.includes(inviteId) ||
+    pending.revokedAt !== undefined
+  )
+    throw new ProblemError('invite_claimed', { reason: 'claim_exists' });
+  if (invite.status === 'open') {
+    try {
+      const updated = await env.store.updateInvite(
+        row.id,
+        inviteId,
+        (current) => {
+          if (current.status !== 'open' || current.expiresAt <= env.now)
+            throw new ProblemError('invite_claimed');
+          return {
+            ...current,
+            status: 'claimed',
+            claimantIdentityId: identity.identityId,
+            claimedAt: env.now,
+            wraps: [],
+          };
+        }
+      );
+      if (updated === undefined) throw new ProblemError('invite_not_found');
+      invite = updated;
+    } catch (error) {
+      const current = await env.store.getInvite(row.id, inviteId);
+      if (
+        current?.status !== 'claimed' ||
+        current.claimantIdentityId !== identity.identityId
+      )
+        throw error;
+      invite = current;
+    }
+  }
+  if ((await currentIdentity(env, email))?.identityId !== identity.identityId) {
+    await env.store.updateInviteClaim(
+      row.id,
+      identity.identityId,
+      (current) => ({
+        ...current,
+        revokedAt: env.now,
+      })
+    );
+    throw new ProblemError('identity_changed');
+  }
+  let newlyCommitted = false;
+  const committed = await env.store.updateInviteClaim(
+    row.id,
+    identity.identityId,
+    (current) => {
+      if (
+        current.revokedAt !== undefined ||
+        !current.inviteIds.includes(inviteId)
+      )
+        throw new ProblemError('invite_revoked');
+      newlyCommitted = current.state === 'pending';
+      return { ...current, state: 'committed' };
+    }
+  );
+  if (committed === undefined) throw new ProblemError('invite_revoked');
+  if (!newlyCommitted) return { status: 'claimed', versions: invite.versions };
+  await logAccess(env, owner.identityId, row.id, 'claim', {
+    actorIdentityId: identity.identityId,
+    actorEmail: identity.email,
+    subjectIdentityId: identity.identityId,
+    subjectEmail: identity.email,
+  });
+  try {
+    await env.sendMail(
+      owner.email,
+      inviteClaimedMail({
+        address: identity.email,
+        accessUrl: `${new URL(env.config.serviceOrigin).origin}/${row.id}?access=invites`,
+      })
+    );
+  } catch {
+    console.error('relic: invitation claim notice failed');
+  }
+  return { status: 'claimed', versions: invite.versions };
 }

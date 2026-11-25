@@ -556,6 +556,55 @@ export function accessGrantedMail(p: {
   };
 }
 
+export function directShareMail(p: {
+  readonly ownerAddress: string;
+  readonly fingerprint: string;
+  readonly relicUrl: string;
+}): OutboundMail {
+  const paragraphs = [
+    `${p.ownerAddress} shared a private relik with you.`,
+    `Your fingerprint: ${p.fingerprint}`,
+    `Open it: ${p.relicUrl}`,
+    "You'll confirm with your passkey.",
+  ];
+  return {
+    subject: `${p.ownerAddress} shared a relik with you`,
+    text: paragraphs.join('\n\n'),
+    html: htmlParagraphs(paragraphs, [p.relicUrl]),
+  };
+}
+
+export function inviteNoticeMail(p: {
+  readonly ownerAddress: string;
+  readonly expiresAt: string;
+}): OutboundMail {
+  const paragraphs = [
+    `${p.ownerAddress} invited you to open a private relik on Relik.`,
+    `They'll send you the link themselves: it holds the key, and Relik never has it. The link opens only after you confirm this address, and it works until ${p.expiresAt}.`,
+    `If you don't know ${p.ownerAddress}, ignore this email.`,
+  ];
+  return {
+    subject: `${p.ownerAddress} invited you to a relik`,
+    text: paragraphs.join('\n\n'),
+    html: htmlParagraphs(paragraphs, []),
+  };
+}
+
+export function inviteClaimedMail(p: {
+  readonly address: string;
+  readonly accessUrl: string;
+}): OutboundMail {
+  const paragraphs = [
+    `${p.address} accepted your invitation to a relik on Relik. They can open the versions you invited them to.`,
+    `To let them open later versions too, confirm in Access: ${p.accessUrl}`,
+  ];
+  return {
+    subject: `${p.address} accepted your invitation`,
+    text: paragraphs.join('\n\n'),
+    html: htmlParagraphs(paragraphs, [p.accessUrl]),
+  };
+}
+
 export function privateActivityMail(p: {
   readonly relicUrl: string;
   readonly stopUrl: string;

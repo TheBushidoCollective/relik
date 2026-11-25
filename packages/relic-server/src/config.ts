@@ -169,9 +169,23 @@ export interface RelicConfig {
   readonly privatePendingRequestsMax: number;
   /** Wraps one backfill call may carry. */
   readonly privateBackfillMaxWraps: number;
+  /** Recipients one grant batch may carry at once (plan 3.5). */
+  readonly privateShareMaxPerCall: number;
   readonly privateRateLimit: RateLimitConfig;
   readonly deviceEnrollmentRateLimit: RateLimitConfig;
   readonly identityLookupRateLimit: RateLimitConfig;
+  /** Lookups per client IP, counting addresses (plan 3.5). */
+  readonly identityLookupIpRateLimit: RateLimitConfig;
+  /** Direct grants per owner, counting grants with no pending request. */
+  readonly directShareRateLimit: RateLimitConfig;
+  /** Invitation creation, opening, key fetch, mint and claim per client IP. */
+  readonly inviteRateLimit: RateLimitConfig;
+  /** Lifetime of an invitation in days, the default and the bounds. */
+  readonly inviteDefaultDays: number;
+  readonly inviteMinDays: number;
+  readonly inviteMaxDays: number;
+  /** Open invitations one relik may hold at once. */
+  readonly privateInvitesMaxOpen: number;
   /**
    * Number of trusted proxy hops from the right in X-Forwarded-For.
    *
@@ -298,9 +312,17 @@ export const DEFAULT_CONFIG: RelicConfig = {
   deviceEnrollmentTtlSeconds: 900,
   privatePendingRequestsMax: 50,
   privateBackfillMaxWraps: 2000,
+  privateShareMaxPerCall: 20,
   privateRateLimit: { limit: 60, windowSeconds: 3600 },
   deviceEnrollmentRateLimit: { limit: 10, windowSeconds: 3600 },
   identityLookupRateLimit: { limit: 30, windowSeconds: 3600 },
+  identityLookupIpRateLimit: { limit: 120, windowSeconds: 3600 },
+  directShareRateLimit: { limit: 60, windowSeconds: 3600 },
+  inviteRateLimit: { limit: 240, windowSeconds: 3600 },
+  inviteDefaultDays: 7,
+  inviteMinDays: 1,
+  inviteMaxDays: 30,
+  privateInvitesMaxOpen: 50,
   trustedProxyHops: 2,
   limiterMaxEntries: 100_000,
   limiterSweepInterval: 100,
@@ -581,5 +603,21 @@ export function assertConfig(config: RelicConfig): void {
     config.privateBackfillMaxWraps < 1
   ) {
     throw new Error('private share limits must be positive integers');
+  }
+  if (
+    !Number.isInteger(config.privateShareMaxPerCall) ||
+    config.privateShareMaxPerCall < 1 ||
+    config.privateShareMaxPerCall > 20 ||
+    !Number.isInteger(config.privateInvitesMaxOpen) ||
+    config.privateInvitesMaxOpen < 1 ||
+    !Number.isInteger(config.inviteMinDays) ||
+    !Number.isInteger(config.inviteDefaultDays) ||
+    !Number.isInteger(config.inviteMaxDays) ||
+    config.inviteMinDays < 1 ||
+    config.inviteMinDays > config.inviteDefaultDays ||
+    config.inviteDefaultDays > config.inviteMaxDays ||
+    config.inviteMaxDays > 30
+  ) {
+    throw new Error('private share and invitation limits are out of range');
   }
 }

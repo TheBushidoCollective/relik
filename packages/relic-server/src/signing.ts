@@ -7,6 +7,7 @@ import {
   verifyStatement,
   type OpenReceiptStatement,
   type SigningCancelStatement,
+  type StatementMap,
   type SigningRequestStatement,
 } from '@relic/format/private';
 import {
@@ -40,6 +41,7 @@ import {
   requireRead,
   standingOf,
 } from './private/access.ts';
+import { applyGrants } from './private/relic.ts';
 import {
   deviceJson,
   identityPublicJson,
@@ -242,6 +244,14 @@ export async function createSigningRequest(
   if (!('publish_token' in body) && identity === undefined)
     throw new ProblemError('identity_required');
   const owner = await ownerRecord(env, row);
+  if (
+    'grants' in body &&
+    (row.access !== 'private' ||
+      'publish_token' in body ||
+      !Array.isArray(body.grants))
+  ) {
+    throw new ProblemError('invalid_statement', { statement_check: 'grants' });
+  }
   let statement: SigningRequestStatement;
   let signature: string;
   let signerKind: 'identity' | 'device';
@@ -402,132 +412,214 @@ export async function createSigningRequest(
     });
   if (row.signingOpen !== undefined)
     throw new ProblemError('signing_in_progress');
-  if (row.access === 'private') {
-    const seen = new Set<string>();
-    for (const signer of statement.signers) {
-      const identity = await currentIdentity(env, signer.email);
-      if (
-        identity === undefined ||
-        identity.identityId !== signer.identity_id ||
-        seen.has(identity.identityId)
-      )
-        throw new ProblemError('signer_without_access', {
-          signer_email: signer.email,
+  let granted: string[] = [];
+  if (Array.isArray(body.grants) && body.grants.length > 0) {
+    if (
+      attestation === undefined ||
+      body.grants.length > env.config.privateShareMaxPerCall
+    ) {
+      throw new ProblemError('invalid_statement', {
+        statement_check: 'grants',
+      });
+    }
+    const statements = [];
+    for (const value of body.grants) {
+      if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+        throw new ProblemError('invalid_statement', {
+          statement_check: 'grants',
         });
-      seen.add(identity.identityId);
-      if (identity.identityId !== owner.identityId) {
-        const grant = await env.store.getGrant(row.id, identity.identityId);
-        if (grant === undefined || grant.revokedAt !== undefined) {
+      }
+      const entry = value as Record<string, unknown>;
+      let grant: StatementMap['grant'];
+      try {
+        grant = parseStatement('grant', entry.statement);
+      } catch {
+        throw new ProblemError('invalid_statement', {
+          statement_check: 'grants',
+        });
+      }
+      if (
+        typeof entry.identity_signature !== 'string' ||
+        grant.relic_id !== row.id ||
+        grant.owner_identity_id !== owner.identityId ||
+        grant.grantee_identity_id === owner.identityId ||
+        grant.versions.length !== 1 ||
+        grant.versions[0] !== statement.version ||
+        Math.abs(env.now - grant.at) >
+          env.config.passkeyChallengeTtlSeconds * 1000 ||
+        !statement.signers.some(
+          (signer) =>
+            signer.identity_id === grant.grantee_identity_id &&
+            normalizeEmail(signer.email) === normalizeEmail(grant.grantee_email)
+        ) ||
+        !(await verifyStatement(
+          decodeBase64url(owner.sigPublicKey),
+          statementBytes('grant', grant),
+          entry.identity_signature
+        ))
+      ) {
+        throw new ProblemError('invalid_statement', {
+          statement_check: 'grants',
+        });
+      }
+      statements.push({
+        kind: 'grant' as const,
+        statement: grant as unknown as Record<string, unknown>,
+        identitySignature: entry.identity_signature,
+      });
+    }
+    await applyGrants(
+      env,
+      row,
+      owner,
+      { statements, attestation },
+      body.wraps,
+      true
+    );
+    granted = statements.map((item) =>
+      String(item.statement['grantee_identity_id'])
+    );
+    const latest = await env.store.getRelic(row.id);
+    if (latest === undefined)
+      throw new ProblemError('relic_not_found', { granted });
+    row = latest;
+  }
+  try {
+    if (row.access === 'private') {
+      const seen = new Set<string>();
+      for (const signer of statement.signers) {
+        const identity = await currentIdentity(env, signer.email);
+        if (
+          identity === undefined ||
+          identity.identityId !== signer.identity_id ||
+          seen.has(identity.identityId)
+        )
+          throw new ProblemError('signer_without_access', {
+            signer_email: signer.email,
+          });
+        seen.add(identity.identityId);
+        if (identity.identityId !== owner.identityId) {
+          const grant = await env.store.getGrant(row.id, identity.identityId);
+          if (grant === undefined || grant.revokedAt !== undefined) {
+            throw new ProblemError('signer_without_access', {
+              signer_email: signer.email,
+            });
+          }
+        }
+        try {
+          await requireRead(env, row, owner, identity, statement.version);
+        } catch (error) {
+          if (!(error instanceof ProblemError)) throw error;
           throw new ProblemError('signer_without_access', {
             signer_email: signer.email,
           });
         }
       }
-      try {
-        await requireRead(env, row, owner, identity, statement.version);
-      } catch (error) {
-        if (!(error instanceof ProblemError)) throw error;
-        throw new ProblemError('signer_without_access', {
-          signer_email: signer.email,
-        });
-      }
     }
-  }
-  const record: SigningRequestRow = {
-    statement: statement as unknown as Record<string, unknown>,
-    signature,
-    signerKind,
-    signerId: statement.signer_id,
-    ...(attestation === undefined ? {} : { attestation }),
-    layoutCiphertext: layout as string,
-    status: 'open',
-    createdAt: env.now,
-  };
-  if (
-    !(await env.store.putSigningRequest(row.id, statement.request_id, record))
-  )
-    invalid('request_id');
-  let updated: RelicRow | undefined;
-  try {
-    updated = await env.store.updateRelic(row.id, (current) => {
-      if (current.signingOpen !== undefined)
-        throw new ProblemError('signing_in_progress');
-      if (current.lockedVersions?.includes(statement.version))
-        throw new ProblemError('version_locked', {
-          locked_version: statement.version,
-        });
-      if (
-        current.version !== statement.version ||
-        current.deletedVersions?.includes(statement.version)
-      )
-        invalid('version');
-      if (current.ownerIdentityId !== owner.identityId)
-        throw new ProblemError('owner_required');
-      if (
-        current.access === 'private' &&
-        (current.accessEpoch ?? 0) !== (row.accessEpoch ?? 0)
-      ) {
-        throw new ProblemError('signer_without_access');
+    const record: SigningRequestRow = {
+      statement: statement as unknown as Record<string, unknown>,
+      signature,
+      signerKind,
+      signerId: statement.signer_id,
+      ...(attestation === undefined ? {} : { attestation }),
+      layoutCiphertext: layout as string,
+      status: 'open',
+      createdAt: env.now,
+    };
+    if (
+      !(await env.store.putSigningRequest(row.id, statement.request_id, record))
+    )
+      invalid('request_id');
+    let updated: RelicRow | undefined;
+    try {
+      updated = await env.store.updateRelic(row.id, (current) => {
+        if (current.signingOpen !== undefined)
+          throw new ProblemError('signing_in_progress');
+        if (current.lockedVersions?.includes(statement.version))
+          throw new ProblemError('version_locked', {
+            locked_version: statement.version,
+          });
+        if (
+          current.version !== statement.version ||
+          current.deletedVersions?.includes(statement.version)
+        )
+          invalid('version');
+        if (current.ownerIdentityId !== owner.identityId)
+          throw new ProblemError('owner_required');
+        if (
+          current.access === 'private' &&
+          (current.accessEpoch ?? 0) !== (row.accessEpoch ?? 0)
+        ) {
+          throw new ProblemError('signer_without_access');
+        }
+        if (
+          current.publishedAt === undefined ||
+          (current.access === 'private' &&
+            current.sealedVersion !== current.version)
+        )
+          invalid('published');
+        if (current.settings?.signing === false)
+          throw new ProblemError('signing_closed');
+        if (current.expiresAt !== undefined && current.expiresAt <= env.now)
+          throw new ProblemError('relic_expired', { relic_id: current.id });
+        return {
+          ...current,
+          signingOpen: {
+            requestId: statement.request_id,
+            version: statement.version,
+          },
+        };
+      });
+      if (updated === undefined) throw new ProblemError('relic_not_found');
+    } catch (error) {
+      const latest = await env.store.getRelic(row.id);
+      if (latest?.signingOpen?.requestId !== statement.request_id) {
+        await env.store.updateSigningRequest(
+          row.id,
+          statement.request_id,
+          (current) =>
+            current.status === 'open'
+              ? { ...current, status: 'cancelled', cancelledAt: env.now }
+              : current
+        );
       }
-      if (
-        current.publishedAt === undefined ||
-        (current.access === 'private' &&
-          current.sealedVersion !== current.version)
-      )
-        invalid('published');
-      if (current.settings?.signing === false)
-        throw new ProblemError('signing_closed');
-      if (current.expiresAt !== undefined && current.expiresAt <= env.now)
-        throw new ProblemError('relic_expired', { relic_id: current.id });
-      return {
-        ...current,
-        signingOpen: {
-          requestId: statement.request_id,
-          version: statement.version,
-        },
-      };
-    });
-    if (updated === undefined) throw new ProblemError('relic_not_found');
+      throw error;
+    }
+    const activeRequest = await env.store.getSigningRequest(
+      row.id,
+      statement.request_id
+    );
+    if (activeRequest?.status === 'cancelled') {
+      await env.store.updateRelic(row.id, (current) => {
+        if (current.signingOpen?.requestId !== statement.request_id)
+          return current;
+        const { signingOpen: _open, ...rest } = current;
+        return rest;
+      });
+      throw new ProblemError('signing_request_closed');
+    }
+    if ((await env.store.getTombstone(row.id)) !== undefined) {
+      await env.store.deleteSigningForRelic(row.id);
+      throw new ProblemError('relic_removed', { relic_id: row.id });
+    }
+    if (row.access === 'private') {
+      const recipients =
+        statement.order === 'parallel'
+          ? statement.signers
+          : statement.signers.filter(
+              (signer, index) =>
+                index === 0 || granted.includes(signer.identity_id ?? '')
+            );
+      for (const signer of recipients)
+        await sendSigningNotice(env, row, signer.email, 'invite');
+    }
+    return await signingRequestView(env, updated, record);
   } catch (error) {
-    const latest = await env.store.getRelic(row.id);
-    if (latest?.signingOpen?.requestId !== statement.request_id) {
-      await env.store.updateSigningRequest(
-        row.id,
-        statement.request_id,
-        (current) =>
-          current.status === 'open'
-            ? { ...current, status: 'cancelled', cancelledAt: env.now }
-            : current
-      );
+    if (granted.length > 0 && error instanceof ProblemError) {
+      throw new ProblemError(error.code, { ...error.options, granted });
     }
     throw error;
   }
-  const activeRequest = await env.store.getSigningRequest(
-    row.id,
-    statement.request_id
-  );
-  if (activeRequest?.status === 'cancelled') {
-    await env.store.updateRelic(row.id, (current) => {
-      if (current.signingOpen?.requestId !== statement.request_id)
-        return current;
-      const { signingOpen: _open, ...rest } = current;
-      return rest;
-    });
-    throw new ProblemError('signing_request_closed');
-  }
-  if ((await env.store.getTombstone(row.id)) !== undefined) {
-    await env.store.deleteSigningForRelic(row.id);
-    throw new ProblemError('relic_removed', { relic_id: row.id });
-  }
-  if (row.access === 'private') {
-    const recipients =
-      statement.order === 'parallel'
-        ? statement.signers
-        : statement.signers.slice(0, 1);
-    for (const signer of recipients)
-      await sendSigningNotice(env, row, signer.email, 'invite');
-  }
-  return signingRequestView(env, updated, record);
 }
 
 export async function cancelSigningRequest(

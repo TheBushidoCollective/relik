@@ -8,6 +8,8 @@ import {
   generateIdentityKeys,
   identityIdOf,
   kemKeyIdOf,
+  identityFingerprint,
+  wrapVersionKey,
   signStatement,
   statementBytes,
 } from '@relic/format/private';
@@ -235,7 +237,8 @@ async function fixture(store: RelicStore = new MemoryStore()) {
     version = 1,
     signers: readonly (typeof first)[] = [first, second],
     signerOverride?: SigningRequestStatement['signers'],
-    expectedStatus = 201
+    expectedStatus = 201,
+    extra: Record<string, unknown> = {}
   ) {
     const nonce = await post(
       a,
@@ -277,6 +280,7 @@ async function fixture(store: RelicStore = new MemoryStore()) {
           true
         ),
         layout_ciphertext: layout,
+        ...extra,
       },
       owner.cookie
     );
@@ -429,6 +433,96 @@ test('private owner signer needs a current version wrap and other signers need a
     409
   );
   await f.open('parallel', true, false, 1, undefined, ownerSigner);
+});
+
+test('a signing request grants its named private signer with the same attestation', async () => {
+  const f = await fixture();
+  await f.enablePrivate();
+  await f.store.deleteGrant(RELIC_ID, f.first.identityId);
+  const reader = await f.store.getIdentity(f.first.identityId);
+  await f.store.deleteWraps(RELIC_ID, { recipientKeyId: reader!.kemKeyId });
+  const grantStatement = {
+    at: NOW,
+    fingerprint_typed: await identityFingerprint(
+      f.first.identityId,
+      f.first.email
+    ),
+    grantee_email: f.first.email,
+    grantee_identity_id: f.first.identityId,
+    owner_identity_id: f.owner.identityId,
+    relic_id: RELIC_ID,
+    versions: [1],
+  };
+  const signature = await signStatement(
+    async (bytes) =>
+      new Uint8Array(
+        await crypto.subtle.sign(
+          { name: 'ECDSA', hash: 'SHA-256' },
+          f.owner.keys.sig.privateKey,
+          bytes as BufferSource
+        )
+      ),
+    statementBytes('grant', grantStatement)
+  );
+  const encrypted = await wrapVersionKey({
+    recipientPublicKey: f.first.keys.kemPublicKey,
+    relicId: RELIC_ID,
+    version: 1,
+    key: randomBytes(16),
+  });
+  await f.open('parallel', true, false, 1, [f.first], undefined, 201, {
+    grants: [{ statement: grantStatement, identity_signature: signature }],
+    wraps: [
+      {
+        recipient_key_id: encrypted.recipientKeyId,
+        version: 1,
+        enc: encrypted.enc,
+        ct: encrypted.ct,
+      },
+    ],
+  });
+  const saved = await f.store.getGrant(RELIC_ID, f.first.identityId);
+  expect(saved?.grantStatement?.statement).toEqual(grantStatement);
+  expect(saved?.grantStatement?.identitySignature).toBe(signature);
+  expect(saved?.attestation.statements[0]?.kind).toBe('signing_request');
+});
+
+test('a grant that applies stays when the request it came with is refused, and the refusal lists it', async () => {
+  const f = await fixture();
+  await f.enablePrivate();
+  await f.store.deleteGrant(RELIC_ID, f.first.identityId);
+  await f.store.deleteGrant(RELIC_ID, f.second.identityId);
+  const reader = await f.store.getIdentity(f.first.identityId);
+  await f.store.deleteWraps(RELIC_ID, { recipientKeyId: reader!.kemKeyId });
+  const grantStatement = {
+    at: NOW,
+    fingerprint_typed: await identityFingerprint(f.first.identityId, f.first.email),
+    grantee_email: f.first.email,
+    grantee_identity_id: f.first.identityId,
+    owner_identity_id: f.owner.identityId,
+    relic_id: RELIC_ID,
+    versions: [1],
+  };
+  const signature = await signStatement(
+    async (bytes) => new Uint8Array(await crypto.subtle.sign(
+      { name: 'ECDSA', hash: 'SHA-256' },
+      f.owner.keys.sig.privateKey,
+      bytes as BufferSource
+    )),
+    statementBytes('grant', grantStatement)
+  );
+  const encrypted = await wrapVersionKey({
+    recipientPublicKey: f.first.keys.kemPublicKey,
+    relicId: RELIC_ID,
+    version: 1,
+    key: randomBytes(16),
+  });
+  // The second signer has no grant, so the request is refused after the first grant applied.
+  await f.open('parallel', true, false, 1, [f.first, f.second], undefined, 409, {
+    grants: [{ statement: grantStatement, identity_signature: signature }],
+    wraps: [{ recipient_key_id: encrypted.recipientKeyId, version: 1, enc: encrypted.enc, ct: encrypted.ct }],
+  });
+  expect(await f.store.getGrant(RELIC_ID, f.first.identityId)).toBeDefined();
 });
 
 test('two public signatures complete across instances and the certificate verifies', async () => {

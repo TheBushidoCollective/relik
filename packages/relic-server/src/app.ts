@@ -136,22 +136,31 @@ import {
 } from './private/publish.ts';
 import {
   completeSeal,
+  claimInvitation,
   bindOwner,
   deleteRelic,
   declineRequest,
   deliverKey,
   grantAccess,
+  deliverInviteKey,
   listGrants,
+  listInvitations,
+  revokeInvitation,
   listRequests,
+  ownedPrivate,
   privateAccessView,
   recipientsState,
   requestAccess,
   reissueUpload,
   revokeAccess,
+  invitedWrap,
+  openInvitation,
+  type HeldInvitation,
 } from './private/relic.ts';
 import {
   identityPublicJson,
   liveRelic,
+  partyJson,
   type PrivateEnv,
 } from './private/context.ts';
 import type { AttestPurpose } from '@relic/format/private';
@@ -810,12 +819,41 @@ export function createApp(options: AppOptions = {}): RelicApp {
           );
         }
       },
-      limit: (scope, key, budget) => {
-        const verdict = limiter.check(rateLimitKey(scope, key), budget, now);
+      limit: (scope, key, budget, units = 1) => {
+        const verdict = limiter.check(
+          rateLimitKey(scope, key),
+          budget,
+          now,
+          units
+        );
         if (!verdict.allowed) {
           throw new ProblemError('private_rate_limited', {
             retry_after_seconds: verdict.retryAfterSeconds,
           });
+        }
+      },
+      limitAll: (charges) => {
+        // Peek every budget before charging any, so a refusal charges nothing.
+        const totals = new Map<
+          string,
+          { budget: (typeof charges)[number]['budget']; units: number }
+        >();
+        for (const charge of charges) {
+          if (charge.units < 1) continue;
+          const id = rateLimitKey(charge.scope, charge.key);
+          const sum = totals.get(id)?.units ?? 0;
+          totals.set(id, { budget: charge.budget, units: sum + charge.units });
+        }
+        for (const [id, total] of totals) {
+          const verdict = limiter.peek(id, total.budget, now, total.units);
+          if (!verdict.allowed) {
+            throw new ProblemError('private_rate_limited', {
+              retry_after_seconds: verdict.retryAfterSeconds,
+            });
+          }
+        }
+        for (const [id, total] of totals) {
+          limiter.check(id, total.budget, now, total.units);
         }
       },
       objectKey,
@@ -1075,7 +1113,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
             });
           }
           return Response.json({
-            party: await lookupRecovery(env, body['email'], email),
+            party: await lookupRecovery(env, body['email'], email, ip),
           });
         }
         if (second === 'recovery' && third === undefined && post) {
@@ -1257,6 +1295,70 @@ export function createApp(options: AppOptions = {}): RelicApp {
             ),
           });
         }
+        if (third === 'invites' && fourth === undefined && get) {
+          if (session === undefined) return refuse('sign_in_required');
+          return Response.json({
+            invites: await listInvitations(
+              env,
+              normalizeEmail(session.email),
+              relicId
+            ),
+          });
+        }
+        if (
+          third === 'invites' &&
+          fourth !== undefined &&
+          fifth === 'revoke' &&
+          post
+        ) {
+          if (session === undefined) return refuse('sign_in_required');
+          await privateBody(request, 'invalid_statement');
+          return Response.json({
+            invite: await revokeInvitation(
+              env,
+              normalizeEmail(session.email),
+              relicId,
+              fourth
+            ),
+          });
+        }
+        if (
+          third === 'invites' &&
+          fourth !== undefined &&
+          fifth === 'claim' &&
+          post
+        ) {
+          if (session === undefined) return refuse('sign_in_required');
+          env.limit('invite', ip, config.inviteRateLimit);
+          const body = await privateBody(request, 'invalid_statement');
+          const result = await claimInvitation(
+            env,
+            relicId,
+            normalizeEmail(session.email),
+            fourth,
+            body
+          );
+          return Response.json(result, {
+            status: result.status === 'claimed' ? 201 : 200,
+          });
+        }
+        if (
+          third === 'invites' &&
+          fourth !== undefined &&
+          fifth === 'open' &&
+          post
+        ) {
+          if (session === undefined) return refuse('sign_in_required');
+          return Response.json(
+            await openInvitation(
+              env,
+              relicId,
+              normalizeEmail(session.email),
+              fourth,
+              ip
+            )
+          );
+        }
         if (
           third === 'requests' &&
           fourth !== undefined &&
@@ -1272,6 +1374,84 @@ export function createApp(options: AppOptions = {}): RelicApp {
           );
           return Response.json({});
         }
+        if (
+          third === 'grants' &&
+          fourth === 'lookup' &&
+          fifth === undefined &&
+          post
+        ) {
+          if (session === undefined) return refuse('sign_in_required');
+          const body = await privateBody(request, 'invalid_identity');
+          const email = normalizeEmail(session.email);
+          const { row, owner } = await ownedPrivate(env, email, relicId);
+          const rawEmails = body['emails'];
+          if (
+            !Array.isArray(rawEmails) ||
+            rawEmails.length < 1 ||
+            rawEmails.length > config.privateShareMaxPerCall
+          ) {
+            throw new ProblemError('invalid_identity', {
+              identity_check: 'emails',
+            });
+          }
+          const addresses: string[] = [];
+          for (let index = 0; index < rawEmails.length; index++) {
+            const address = rawEmails[index];
+            if (
+              typeof address !== 'string' ||
+              !looksLikeEmail(address.trim())
+            ) {
+              throw new ProblemError('invalid_identity', {
+                identity_check: 'email',
+                index,
+              });
+            }
+            const normalized = normalizeEmail(address);
+            if (!addresses.includes(normalized)) addresses.push(normalized);
+          }
+          env.limitAll([
+            {
+              scope: 'identity-lookup',
+              key: email,
+              budget: config.identityLookupRateLimit,
+              units: addresses.length,
+            },
+            {
+              scope: 'identity-lookup-ip',
+              key: ip,
+              budget: config.identityLookupIpRateLimit,
+              units: addresses.length,
+            },
+          ]);
+          const results = [];
+          const invitations = await store.listInvites(row.id);
+          for (const address of addresses) {
+            const identity = await currentIdentity(env, address);
+            results.push({
+              email: address,
+              party: identity === undefined ? null : partyJson(identity),
+              standing:
+                identity === undefined
+                  ? null
+                  : (await standingOf(env, row, owner, identity)).role,
+              invites:
+                identity === undefined
+                  ? invitations
+                      .filter(
+                        (invite) =>
+                          invite.invitedEmail === address &&
+                          invite.status === 'open' &&
+                          invite.expiresAt > now
+                      )
+                      .map((invite) => ({
+                        invite_id: invite.inviteId,
+                        expires_at: new Date(invite.expiresAt).toISOString(),
+                      }))
+                  : [],
+            });
+          }
+          return Response.json({ results });
+        }
         if (third === 'grants' && fourth === undefined && post) {
           if (session === undefined) return refuse('sign_in_required');
           const body = await privateBody(request, 'invalid_wrap');
@@ -1282,8 +1462,16 @@ export function createApp(options: AppOptions = {}): RelicApp {
             passkeys: await store.getPasskeys(email),
             attestation: body['attestation'],
             wraps: body['wraps'],
+            ip,
           });
-          return Response.json({ grant: result.grant }, { status: 201 });
+          return Response.json(
+            {
+              grant: result.grants.length === 1 ? result.grants[0] : null,
+              grants: result.grants,
+              invites: result.invites,
+            },
+            { status: 201 }
+          );
         }
         if (third === 'grants' && fourth === undefined && get) {
           if (session === undefined) return refuse('sign_in_required');
@@ -1342,6 +1530,19 @@ export function createApp(options: AppOptions = {}): RelicApp {
                 kind: 'publish',
                 token: body['publish_token'],
                 recipientKeyId: body['recipient_key_id'],
+              })
+            );
+          }
+          const inviteId = body['invite_id'];
+          if (typeof inviteId === 'string') {
+            if (session === undefined) {
+              return refuse('private_access_denied', { relic_id: relicId });
+            }
+            return Response.json(
+              await deliverInviteKey(env, relicId, version, {
+                email: normalizeEmail(session.email),
+                inviteId,
+                ip,
               })
             );
           }
@@ -1408,10 +1609,27 @@ export function createApp(options: AppOptions = {}): RelicApp {
         return refuse('relic_expired', { relic_id: relicId });
       }
       let actor: IdentityRecord | undefined;
+      let inviteHold: HeldInvitation | undefined;
+      let inviteEmail: string | undefined;
+      const inviteId = body['invite_id'];
       if (typeof body['publish_token'] === 'string') {
         if (!(await publishTokenOk(row, body['publish_token']))) {
           return refuse('invalid_publish_token');
         }
+      } else if (typeof inviteId === 'string') {
+        const session = await sessionOf(request, now);
+        if (session === undefined) {
+          return refuse('private_access_denied', { relic_id: relicId });
+        }
+        inviteEmail = normalizeEmail(session.email);
+        inviteHold = await invitedWrap(
+          env,
+          relicId,
+          inviteEmail,
+          inviteId,
+          version,
+          clientIp(request, config)
+        );
       } else {
         const session = await sessionOf(request, now);
         if (session === undefined) {
@@ -1445,13 +1663,17 @@ export function createApp(options: AppOptions = {}): RelicApp {
           download_cap: config.downloadCap,
         });
       }
-      const validity =
+      const validity = Math.min(
         row.expiresAt === undefined
           ? config.urlValiditySeconds
           : Math.min(
               config.urlValiditySeconds,
               Math.floor((row.expiresAt - now) / 1000)
-            );
+            ),
+        inviteHold === undefined
+          ? config.urlValiditySeconds
+          : Math.floor((inviteHold.invite.expiresAt - now) / 1000)
+      );
       if (validity < config.minViableValiditySeconds) {
         return refuse('relic_expired', { relic_id: relicId });
       }
@@ -1467,6 +1689,15 @@ export function createApp(options: AppOptions = {}): RelicApp {
           version,
           actorIdentityId: actor.identityId,
           subjectIdentityId: actor.identityId,
+        });
+      } else if (
+        inviteEmail !== undefined &&
+        row.ownerIdentityId !== undefined
+      ) {
+        await logAccess(env, row.ownerIdentityId, relicId, 'wrap_fetch', {
+          version,
+          actorEmail: inviteEmail,
+          subjectEmail: inviteEmail,
         });
       }
       return Response.json(
@@ -3687,6 +3918,8 @@ export function createApp(options: AppOptions = {}): RelicApp {
       await store.deleteWraps(relicId, {});
       await store.deleteSeals(relicId);
       await store.deleteGrantsForRelic(relicId);
+      await store.deleteInvitesForRelic(relicId);
+      await store.deleteInviteClaimsForRelic(relicId);
       await store.deleteAccessRequestsForRelic(relicId);
       if (row.ownerIdentityId !== undefined) {
         await store.deleteOwnedRelic(row.ownerIdentityId, relicId);
@@ -3823,7 +4056,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
     ) {
       throw new ProblemError('private_access_denied', { relic_id: row.id });
     }
-    return readableVersions(env, row, me.kemKeyId);
+    return readableVersions(env, row, me.kemKeyId, me, owner);
   }
 
   /**
