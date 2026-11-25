@@ -1,14 +1,19 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { encryptRelic } from '@relic/format';
+import { encodeKey, encryptRelic } from '@relic/format';
 import {
   identityFingerprint,
+  parseStatement,
   signStatement,
   statementBytes,
 } from '@relic/format/private';
-import { contentMac, deriveSigningKey } from '@relic/format/signing';
+import {
+  contentMac,
+  deriveSigningKey,
+  parseSigningCertificate,
+} from '@relic/format/signing';
 import {
   makeDevice,
   makePerson,
@@ -315,4 +320,90 @@ test('cancel signs the cancellation with the enrolled device and keeps the token
   );
   expect(JSON.stringify(result)).toContain('cancelled');
   expect(JSON.stringify(result)).not.toContain('secret-token');
+});
+
+test('reads decrypted marks and writes a private certificate copy exclusively', async () => {
+  const fixture = new URL(
+    '../../relic-format/test/fixtures/signing/public-sequential.json',
+    import.meta.url
+  );
+  const cert = parseSigningCertificate(
+    JSON.parse(await readFile(fixture, 'utf8'))
+  );
+  const requestId = parseStatement(
+    'signing_request',
+    cert.request.statement
+  ).request_id;
+  const relicId = cert.relic_id as string;
+  await savePublishState(relicId, {
+    key: encodeKey(Uint8Array.from({ length: 16 }, (_, i) => i + 1)),
+    publish_token: 'certificate-token',
+    version: cert.version,
+  });
+  const signers = cert.signatures.map((entry) => ({
+    index: entry.signer_index,
+    email: entry.statement.signer_email,
+    status: 'signed',
+    served_at: null,
+    opened_at: null,
+    signature: {
+      statement: entry.statement,
+      identity_signature: entry.identity_signature,
+      mark_ciphertext: entry.mark_ciphertext,
+      webauthn: entry.webauthn,
+      recorded_at: entry.recorded_at,
+      opened_receipt: null,
+    },
+  }));
+  deps = {
+    ...deps,
+    fetch: (async (url: RequestInfo | URL) => {
+      if (String(url).endsWith('/signing/read'))
+        return Response.json({
+          relic_id: relicId,
+          current_version: cert.version,
+          locked_versions: [cert.version],
+          me: null,
+          requests: [
+            {
+              request_id: cert.request.statement.request_id,
+              version: cert.version,
+              status: 'complete',
+              request: cert.request,
+              signers,
+            },
+          ],
+        });
+      if (String(url).endsWith('/signing/certificate'))
+        return Response.json(cert);
+      throw new Error('unexpected route');
+    }) as typeof fetch,
+  };
+  const destination = join(dir, 'certificate.json');
+  const result = await readSigning(
+    {
+      relicId,
+      requestId,
+      saveCertificateTo: destination,
+    },
+    deps
+  );
+  expect(result.requests[0]?.signers.map((entry) => entry.name)).toEqual([
+    'Signer 0',
+    'Signer 1',
+  ]);
+  const saved = JSON.parse(await readFile(destination, 'utf8'));
+  expect(saved.signing_key).toBeString();
+  expect((await stat(destination)).mode & 0o777).toBe(0o600);
+  expect(JSON.stringify(result)).not.toContain(saved.signing_key);
+  await expect(
+    readSigning(
+      {
+        relicId,
+        requestId,
+        saveCertificateTo: destination,
+      },
+      deps
+    )
+  ).rejects.toThrow();
 });
