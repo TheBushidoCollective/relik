@@ -234,3 +234,42 @@ describe.each(['memory', 'gcs'] as const)(
     });
   }
 );
+
+test('private access exposes the signing summary only to readable roles', async () => {
+  const store = new MemoryStore();
+  const { a } = await setup(store);
+  await store.updateRelic(RELIC_ID, (row) => ({
+    ...row,
+    access: 'private',
+    expiresAt: NOW + 86400000,
+    signingOpen: { requestId: 'request', version: 1 },
+    lockedVersions: [2],
+  }));
+  await store.putSession({
+    tokenHash: await sha256Hex('owner-session'),
+    email: 'owner@example.com',
+    createdAt: NOW,
+    expiresAt: NOW + 86400000,
+  });
+  await store.putSession({
+    tokenHash: await sha256Hex('other-session'),
+    email: 'other@example.com',
+    createdAt: NOW,
+    expiresAt: NOW + 86400000,
+  });
+  const access = (token: string) =>
+    a.fetch(
+      new Request(`https://relic.example/api/relics/${RELIC_ID}/access`, {
+        headers: { cookie: `relic_session=${token}` },
+      })
+    );
+  const owner = await access('owner-session');
+  expect(owner.status).toBe(200);
+  expect((await owner.json()).signing).toEqual({
+    open_version: 1,
+    locked_versions: [2],
+  });
+  const other = await access('other-session');
+  expect(other.status).toBe(200);
+  expect((await other.json()).signing).toBeNull();
+});

@@ -1363,12 +1363,14 @@ describe('the mint', () => {
     expect(response.status).toBe(200);
     const body = (await response.json()) as {
       settings: { suggestions: boolean; comments: boolean; decisions: boolean };
+      signing: { open_version: number | null; locked_versions: number[] };
     };
     expect(body.settings).toMatchObject({
       suggestions: false,
       comments: true,
       decisions: false,
     });
+    expect(body.signing).toEqual({ open_version: null, locked_versions: [] });
   });
 
   test('omitting version signs the current object for version 1', async () => {
