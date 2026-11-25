@@ -173,6 +173,17 @@ describe.each(['memory', 'gcs'] as const)(
       const rejection = results.find((r) => r.status === 409)!;
       expect((await rejection.json()).code).toBe('signing_in_progress');
       expect((await store.getRelic(RELIC_ID))?.signingOpen).toBeDefined();
+      const state = await b.fetch(
+        new Request(
+          `https://relic.example/api/relics/${RELIC_ID}/signing/read`,
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ publish_token: token }),
+          }
+        )
+      );
+      expect((await state.json()).requests).toHaveLength(1);
       if (backend === 'gcs')
         expect(
           [...fake.objects.keys()].some((key) =>
@@ -285,6 +296,19 @@ describe.each(['memory', 'gcs'] as const)(
       expect(response.status).toBe(200);
       const state = await response.json();
       expect(state.requests[0].request_id).toBe(
+        request.request.statement.request_id
+      );
+      const shareBytes = randomBytes(32);
+      const verifier = await sha256Hex(shareBytes);
+      await store.updateRelic(RELIC_ID, (row) => ({
+        ...row,
+        shareVerifier: verifier,
+      }));
+      const shared = await b.fetch(
+        read({ share_proof: encodeBase64url(shareBytes) })
+      );
+      expect(shared.status).toBe(200);
+      expect((await shared.json()).requests[0].request_id).toBe(
         request.request.statement.request_id
       );
     });
@@ -515,88 +539,101 @@ test.each([
   expect((await response.json()).code).toBe(code);
 });
 
-test('private signer requires a current grant and a version wrap', async () => {
-  const store = new MemoryStore();
-  const { a, b, make } = await setup(store);
-  await store.updateRelic(RELIC_ID, (row) => ({
-    ...row,
-    access: 'private',
-    expiresAt: NOW + 86400000,
-    sealedVersion: 1,
-  }));
-  await store.createIdentity(
-    identity({
+test.each(['memory', 'gcs'] as const)(
+  'private signer on %s requires a current grant and a version wrap',
+  async (backend) => {
+    const fake = fakeGcs();
+    const store =
+      backend === 'memory'
+        ? new MemoryStore()
+        : gcsStore({
+            bucket: 'relics',
+            prefix: 'tenant/m',
+            host: 'https://gcs.test',
+            getAccessToken: async () => 'test',
+            fetch: fake.fetch,
+          });
+    const { a, b, make } = await setup(store);
+    await store.updateRelic(RELIC_ID, (row) => ({
+      ...row,
+      access: 'private',
+      expiresAt: NOW + 86400000,
+      sealedVersion: 1,
+    }));
+    await store.createIdentity(
+      identity({
+        identityId: GRANTEE_ID,
+        email: 'reader@example.com',
+        address: 'reader@example.com',
+        kemKeyId: RECIPIENT_B,
+      })
+    );
+    await store.putSeal(seal(1));
+    const request = () =>
+      make({
+        require_opened: true,
+        signers: [{ email: 'reader@example.com', identity_id: GRANTEE_ID }],
+      });
+    const noGrant = await a.fetch(post(await request()));
+    expect((await noGrant.json()).code).toBe('signer_without_access');
+    await store.putGrant(grant());
+    const noWrap = await a.fetch(post(await request()));
+    expect((await noWrap.json()).code).toBe('signer_without_access');
+    await store.putWrap(wrap(RECIPIENT_B, 1));
+    const accepted = await b.fetch(post(await request()));
+    expect(accepted.status).toBe(201);
+    expect((await accepted.json()).request.statement.require_opened).toBe(true);
+    await store.putReceipt(RELIC_ID, {
+      version: 1,
       identityId: GRANTEE_ID,
+      kind: 'served',
+      at: NOW,
+    });
+    await store.putSession({
+      tokenHash: await sha256Hex('signer-session'),
       email: 'reader@example.com',
-      address: 'reader@example.com',
-      kemKeyId: RECIPIENT_B,
-    })
-  );
-  await store.putSeal(seal(1));
-  const request = () =>
-    make({
-      require_opened: true,
-      signers: [{ email: 'reader@example.com', identity_id: GRANTEE_ID }],
+      createdAt: NOW,
+      expiresAt: NOW + 86400000,
     });
-  const noGrant = await a.fetch(post(await request()));
-  expect((await noGrant.json()).code).toBe('signer_without_access');
-  await store.putGrant(grant());
-  const noWrap = await a.fetch(post(await request()));
-  expect((await noWrap.json()).code).toBe('signer_without_access');
-  await store.putWrap(wrap(RECIPIENT_B, 1));
-  const accepted = await b.fetch(post(await request()));
-  expect(accepted.status).toBe(201);
-  expect((await accepted.json()).request.statement.require_opened).toBe(true);
-  await store.putReceipt(RELIC_ID, {
-    version: 1,
-    identityId: GRANTEE_ID,
-    kind: 'served',
-    at: NOW,
-  });
-  await store.putSession({
-    tokenHash: await sha256Hex('signer-session'),
-    email: 'reader@example.com',
-    createdAt: NOW,
-    expiresAt: NOW + 86400000,
-  });
-  await store.putSession({
-    tokenHash: await sha256Hex('stranger-session'),
-    email: 'stranger@example.com',
-    createdAt: NOW,
-    expiresAt: NOW + 86400000,
-  });
-  const read = (body: unknown, cookie?: string) =>
-    new Request(`https://relic.example/api/relics/${RELIC_ID}/signing/read`, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        ...(cookie === undefined ? {} : { cookie }),
-      },
-      body: JSON.stringify(body),
+    await store.putSession({
+      tokenHash: await sha256Hex('stranger-session'),
+      email: 'stranger@example.com',
+      createdAt: NOW,
+      expiresAt: NOW + 86400000,
     });
-  const publisher = await (
-    await a.fetch(read({ publish_token: token }))
-  ).json();
-  expect(publisher.requests[0].signers[0].served_at).toBe(
-    new Date(NOW).toISOString()
-  );
-  const signer = await (
-    await b.fetch(read({}, 'relic_session=signer-session'))
-  ).json();
-  expect(signer.me.served_at).toBe(new Date(NOW).toISOString());
-  expect(signer.requests[0].signers[0].served_at).toBeNull();
-  const denied = await a.fetch(read({}, 'relic_session=stranger-session'));
-  expect((await denied.json()).code).toBe('private_access_denied');
-  await store.updateGrant(RELIC_ID, GRANTEE_ID, (current) => ({
-    ...current,
-    revokedAt: NOW,
-  }));
-  const revoked = await b.fetch(read({}, 'relic_session=signer-session'));
-  expect(revoked.status).toBe(200);
-  expect((await revoked.json()).requests[0].signers[0].status).toBe(
-    'needs_access'
-  );
-});
+    const read = (body: unknown, cookie?: string) =>
+      new Request(`https://relic.example/api/relics/${RELIC_ID}/signing/read`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          ...(cookie === undefined ? {} : { cookie }),
+        },
+        body: JSON.stringify(body),
+      });
+    const publisher = await (
+      await a.fetch(read({ publish_token: token }))
+    ).json();
+    expect(publisher.requests[0].signers[0].served_at).toBe(
+      new Date(NOW).toISOString()
+    );
+    const signer = await (
+      await b.fetch(read({}, 'relic_session=signer-session'))
+    ).json();
+    expect(signer.me.served_at).toBe(new Date(NOW).toISOString());
+    expect(signer.requests[0].signers[0].served_at).toBeNull();
+    const denied = await a.fetch(read({}, 'relic_session=stranger-session'));
+    expect((await denied.json()).code).toBe('private_access_denied');
+    await store.updateGrant(RELIC_ID, GRANTEE_ID, (current) => ({
+      ...current,
+      revokedAt: NOW,
+    }));
+    const revoked = await b.fetch(read({}, 'relic_session=signer-session'));
+    expect(revoked.status).toBe(200);
+    expect((await revoked.json()).requests[0].signers[0].status).toBe(
+      'needs_access'
+    );
+  }
+);
 
 test('signing reads and writes spend separate rate budgets', async () => {
   const store = new MemoryStore();
@@ -759,3 +796,73 @@ test('another instance sees signing disabled and expired reads remain available'
   );
   expect(read.status).toBe(200);
 });
+
+test('creation rejects unknown, invalid, revoked and non-owner devices', async () => {
+  const store = new MemoryStore();
+  const { a, make } = await setup(store);
+  const invalid = await make();
+  invalid.request.device_id = 'invalid';
+  expect((await (await a.fetch(post(invalid))).json()).code).toBe(
+    'invalid_device'
+  );
+  const missing = await make();
+  missing.request.device_id = '9'.repeat(64);
+  missing.request.statement.signer_id = missing.request.device_id;
+  expect((await (await a.fetch(post(missing))).json()).code).toBe(
+    'device_not_found'
+  );
+  const wrongOwner = await make();
+  wrongOwner.request.statement.owner_identity_id = '9'.repeat(64);
+  expect((await (await a.fetch(post(wrongOwner))).json()).code).toBe(
+    'owner_required'
+  );
+  await store.updateDevice(deviceId, (current) => ({
+    ...current,
+    certifiedAt: NOW + 1,
+  }));
+  expect((await (await a.fetch(post(await make()))).json()).code).toBe(
+    'invalid_device'
+  );
+  await store.updateDevice(deviceId, (current) => ({
+    ...current,
+    certifiedAt: NOW,
+    notAfter: NOW - 1,
+  }));
+  expect((await (await a.fetch(post(await make()))).json()).code).toBe(
+    'device_revoked'
+  );
+  await store.updateDevice(deviceId, (current) => ({
+    ...current,
+    notAfter: NOW + 86400000,
+    revokedAt: NOW,
+  }));
+  expect((await (await a.fetch(post(await make()))).json()).code).toBe(
+    'device_revoked'
+  );
+});
+
+test.each(['requests', 'cancel', 'read'] as const)(
+  '%s refuses invalid, missing and removed reliks',
+  async (operation) => {
+    const store = new MemoryStore();
+    const { a } = await setup(store);
+    const send = (id: string) =>
+      a.fetch(
+        new Request(
+          `https://relic.example/api/relics/${id}/signing/${operation}`,
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: '{}',
+          }
+        )
+      );
+    expect((await (await send('not-an-id')).json()).code).toBe(
+      'invalid_relic_id'
+    );
+    await store.deleteRelicRow(RELIC_ID);
+    expect((await (await send(RELIC_ID)).json()).code).toBe('relic_not_found');
+    await store.putTombstone({ kind: 'owner', id: RELIC_ID, deletedAt: NOW });
+    expect((await (await send(RELIC_ID)).json()).code).toBe('relic_removed');
+  }
+);

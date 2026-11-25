@@ -249,7 +249,13 @@ export async function createSigningRequest(
       statement.owner_identity_id !== owner.identityId
     )
       throw new ProblemError('owner_required');
-    if (device.revokedAt !== undefined || device.notAfter < env.now)
+    if (statement.at < device.certifiedAt)
+      throw new ProblemError('invalid_device');
+    if (
+      device.revokedAt !== undefined ||
+      device.notAfter < env.now ||
+      device.notAfter < statement.at
+    )
       throw new ProblemError('device_revoked');
     if (
       statement.relic_id !== row.id ||
@@ -528,7 +534,13 @@ export async function cancelSigningRequest(
       statement.owner_identity_id !== owner.identityId
     )
       throw new ProblemError('owner_required');
-    if (device.revokedAt !== undefined || device.notAfter < env.now)
+    if (statement.at < device.certifiedAt)
+      throw new ProblemError('invalid_device');
+    if (
+      device.revokedAt !== undefined ||
+      device.notAfter < env.now ||
+      device.notAfter < statement.at
+    )
       throw new ProblemError('device_revoked');
     if (
       statement.relic_id !== row.id ||
