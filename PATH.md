@@ -387,9 +387,8 @@ Not proven here: Safari and Firefox, touch and IME input, phone memory, a reader
 
 # Live settings
 
-The loopback settings path is incomplete and exits nonzero. It currently checks
-MCP comment settings across two app instances and change-notice suppression
-against a captured mailer, including a positive notification control.
+The loopback path publishes through MCP and exercises settings against two app
+instances sharing a prefixed fake GCS metadata store and captured mail.
 
 ```sh
 bun run --cwd packages/relic-viewer build
@@ -397,7 +396,12 @@ bun run --cwd packages/relic-mcp build
 RELIC_CHROME_PATH=<owned-headless-shell> bun packages/relic-mcp/test/settings-path.ts
 ```
 
-The private publish, access-request or grant mail, owner browser settings,
-private lifetime, paused passkey challenge and the required browser and pause
-negative controls are not yet exercised. The path does not print
-`SETTINGS_PATH_OK`.
+Success prints `01_COMMENTS_CLOSED`, `02_COMMENTS_REOPENED`, `03_NOTIFICATIONS`,
+`04_OWNER_SETTINGS`, `05_PRIVATE_LIFETIME`, `06_PAUSED_SETTINGS` and
+`SETTINGS_PATH_OK`. The lifetime check models ciphertext metadata in fake GCS
+while the ciphertext bytes reside in loopback memory storage. It does not prove
+production GCS lifecycle behavior or real mail delivery.
+
+Mutation controls in a scratch checkout rejected a disabled comments guard
+(`201` instead of `409`), a removed viewer owner gate (reader saw Settings),
+and a pause check moved after attestation (replay returned `403`, not `200`).
