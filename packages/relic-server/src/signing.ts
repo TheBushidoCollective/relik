@@ -659,7 +659,7 @@ export async function readSigningState(
   body: Record<string, unknown>,
   checkProof: (row: RelicRow, proof: unknown) => Promise<string>
 ): Promise<SigningStateJSON> {
-  const requests = (await env.store.listSigningRequests(row.id)).filter(
+  let requests = (await env.store.listSigningRequests(row.id)).filter(
     (request) =>
       request.status === 'complete' ||
       (request.status === 'cancelled' && request.cancellation !== undefined) ||
@@ -685,7 +685,7 @@ export async function readSigningState(
     const ownerIdentity = await ownerRecord(env, row);
     const standing = await standingOf(env, row, ownerIdentity, identity);
     owner = standing.role === 'owner';
-    const isListed = requests.some((request) => {
+    const listedRequests = requests.filter((request) => {
       const statement = parseStatement('signing_request', request.statement);
       return statement.signers.some(
         (signer) =>
@@ -696,9 +696,11 @@ export async function readSigningState(
       !owner &&
       standing.role !== 'grantee' &&
       standing.role !== 'recovery' &&
-      !isListed
+      listedRequests.length === 0
     )
       throw new ProblemError('private_access_denied');
+    if (!owner && standing.role !== 'grantee' && standing.role !== 'recovery')
+      requests = listedRequests;
   }
   for (const request of requests) {
     if (request.status === 'complete')
@@ -928,6 +930,19 @@ export async function recordSignature(
       .some((_, prior) => !signedBy.includes(prior))
   )
     throw new ProblemError('signing_not_your_turn');
+  let previousSignedAt: number | undefined;
+  if (statement.order === 'sequential' && index > 0) {
+    const previous = (await env.store.listSignatures(row.id, requestId)).find(
+      (item) => item.signerIndex === index - 1
+    );
+    if (previous === undefined) throw new ProblemError('signing_not_your_turn');
+    previousSignedAt = parseStatement(
+      'signature',
+      previous.attestation.statements[0]?.statement
+    ).at;
+    if (signature.at < previousSignedAt)
+      throw new ProblemError('invalid_signature', { signing_check: 'order' });
+  }
   const receipt =
     identity === undefined
       ? undefined
@@ -992,7 +1007,9 @@ export async function recordSignature(
       attestation: verified.attestation,
       markCiphertext: mark,
       recordedAt: env.now,
-      ...(receipt === undefined ? {} : { openedReceipt: receipt }),
+      ...(statement.require_opened && receipt !== undefined
+        ? { openedReceipt: receipt }
+        : {}),
     }))
   ) {
     const stored = (await env.store.listSignatures(row.id, requestId)).find(
@@ -1003,6 +1020,8 @@ export async function recordSignature(
       'signature',
       stored.attestation.statements[0]?.statement
     );
+    if (previousSignedAt !== undefined && old.at < previousSignedAt)
+      throw new ProblemError('invalid_signature', { signing_check: 'order' });
     const signerKey =
       identity === undefined ? () => undefined : identitySigner(identity);
     if (
@@ -1128,7 +1147,9 @@ export async function finishCompletion(
         row.access === 'private'
           ? {
               served_at: signer.served_at,
-              opened: signer.signature.opened_receipt,
+              opened: statement.require_opened
+                ? signer.signature.opened_receipt
+                : null,
             }
           : null,
     };
@@ -1251,12 +1272,17 @@ export async function readSigningCertificate(
   body: Record<string, unknown>,
   checkProof: (row: RelicRow, proof: unknown) => Promise<string>
 ) {
-  await readSigningState(env, row, session, body, checkProof);
+  const state = await readSigningState(env, row, session, body, checkProof);
   if (typeof body.request_id !== 'string')
     throw new ProblemError('signing_request_not_found');
   const request = await env.store.getSigningRequest(row.id, body.request_id);
   if (request === undefined)
     throw new ProblemError('signing_request_not_found');
+  if (
+    row.access === 'private' &&
+    !state.requests.some((item) => item.request_id === body.request_id)
+  )
+    throw new ProblemError('private_access_denied');
   if (request.status !== 'complete')
     throw new ProblemError('certificate_not_ready');
   await finishCompletion(env, row, request);

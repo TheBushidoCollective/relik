@@ -1028,3 +1028,111 @@ test('concurrent signatures by one signer admit exactly one record', async () =>
     await f.store.listSignatures(RELIC_ID, request.request_id)
   ).toHaveLength(1);
 });
+
+test('optional opened receipts do not invalidate private signing completion', async () => {
+  const f = await fixture();
+  await f.enablePrivate();
+  const request = await f.open('parallel', true, false);
+  await f.opened(f.first);
+  await f.opened(f.second);
+  const first = await f.prepare(f.first, request);
+  const second = await f.prepare(f.second, request, f.b);
+  expect(
+    (await f.post(f.a, `${root}/signing/signatures`, first, f.first.cookie))
+      .status
+  ).toBe(201);
+  expect(
+    (await f.post(f.b, `${root}/signing/signatures`, second, f.second.cookie))
+      .status
+  ).toBe(201);
+  const certificate = await f.post(
+    f.b,
+    `${root}/signing/certificate`,
+    { request_id: request.request_id },
+    f.first.cookie
+  );
+  expect(certificate.status).toBe(200);
+  expect(
+    (
+      await verifySigningCertificate(certificate.body, {
+        expectedOrigin: origin,
+        trustedOwnerIdentityId: f.owner.identityId,
+      })
+    ).valid
+  ).toBe(true);
+});
+
+test('sequential signing rejects a later signer clock behind an admitted signature', async () => {
+  const f = await fixture();
+  const request = await f.open('sequential');
+  const first = await f.prepare(f.first, request);
+  expect(
+    (await f.post(f.a, `${root}/signing/signatures`, first, f.first.cookie))
+      .status
+  ).toBe(201);
+  const second = await f.prepare(f.second, request, f.b, undefined, {
+    at: NOW - 1000,
+  });
+  const refused = await f.post(
+    f.b,
+    `${root}/signing/signatures`,
+    second,
+    f.second.cookie
+  );
+  expect(refused.status).toBe(400);
+  expect(refused.body.code).toBe('invalid_signature');
+  expect(
+    (await f.store.getSigningRequest(RELIC_ID, request.request_id))?.status
+  ).toBe('open');
+  const correct = await f.prepare(f.second, request);
+  expect(
+    (await f.post(f.a, `${root}/signing/signatures`, correct, f.second.cookie))
+      .status
+  ).toBe(201);
+});
+
+test('a revoked signer cannot read unrelated requests or their certificates', async () => {
+  const f = await fixture();
+  await f.enablePrivate();
+  const first = await f.open('parallel', true);
+  const cancel = await f.cancel(first);
+  expect(
+    (await f.post(f.a, `${root}/signing/cancel`, cancel, f.owner.cookie)).status
+  ).toBe(200);
+  const original = await f.store.getSigningRequest(RELIC_ID, first.request_id);
+  expect(original).toBeDefined();
+  const otherId = b64(randomBytes(16));
+  await f.store.putSigningRequest(RELIC_ID, otherId, {
+    ...original!,
+    statement: {
+      ...original!.statement,
+      request_id: otherId,
+      signers: [{ email: f.second.email, identity_id: f.second.identityId }],
+    },
+    status: 'complete',
+    completedAt: NOW,
+  });
+  await f.store.putCertificate(RELIC_ID, otherId, { marker: 'unrelated' });
+  await f.store.updateRelic(RELIC_ID, (row) => ({
+    ...row,
+    lockedVersions: [1],
+  }));
+  await f.store.updateGrant(RELIC_ID, f.first.identityId, (row) => ({
+    ...row,
+    revokedAt: NOW,
+  }));
+  const read = await f.post(f.a, `${root}/signing/read`, {}, f.first.cookie);
+  expect(read.status).toBe(200);
+  expect(
+    (read.body.requests as { request_id: string }[]).map(
+      (item) => item.request_id
+    )
+  ).toEqual([first.request_id]);
+  const certificate = await f.post(
+    f.a,
+    `${root}/signing/certificate`,
+    { request_id: otherId },
+    f.first.cookie
+  );
+  expect(certificate.body.code).toBe('private_access_denied');
+});
