@@ -124,8 +124,17 @@ handler = async (request) => {
   }
   if (pauseSignature && url.pathname.endsWith('/signing/signatures')) {
     pauseSignature = false;
-    pausedSignature = request.clone();
-    const response = await pausedApp.fetch(request);
+    // Buffer the body: cloning a streaming request races the early refusal,
+    // which answers without reading it, and left the replay with no body.
+    const body = await request.arrayBuffer();
+    const copy = () =>
+      new Request(request.url, {
+        method: request.method,
+        headers: request.headers,
+        body: body.slice(0),
+      });
+    pausedSignature = copy();
+    const response = await pausedApp.fetch(copy());
     pausedSignatureStatus = response.status;
     return response;
   }
