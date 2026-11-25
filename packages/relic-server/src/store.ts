@@ -419,7 +419,11 @@ export interface InviteRow {
   readonly createdAt: number;
   readonly status: 'open' | 'claimed' | 'revoked';
   /** Wraps of the listed versions to the invite key. Empty once claimed or revoked. */
-  readonly wraps: readonly { readonly version: number; readonly enc: string; readonly ct: string }[];
+  readonly wraps: readonly {
+    readonly version: number;
+    readonly enc: string;
+    readonly ct: string;
+  }[];
   /** The owner's attested grant tap. Its single statement is the `invite` statement. */
   readonly attestation: StoredAttestation;
   readonly claimedAt?: number | undefined;
@@ -435,7 +439,10 @@ export interface InviteClaimRow {
   readonly inviteIds: readonly string[];
   readonly versions: readonly number[];
   readonly claimedAt: number;
-  readonly claim: { readonly statement: Record<string, unknown>; readonly identitySignature: string };
+  readonly claim: {
+    readonly statement: Record<string, unknown>;
+    readonly identitySignature: string;
+  };
   readonly revokedAt?: number | undefined;
 }
 export interface AccessRequestRow {
@@ -2241,7 +2248,10 @@ export class MemoryStore implements RelicStore {
   async listInvites(relicId: string): Promise<readonly InviteRow[]> {
     return [...this.invites.values()]
       .filter((r) => r.relicId === relicId)
-      .sort((a, b) => a.createdAt - b.createdAt || (a.inviteId < b.inviteId ? -1 : 1));
+      .sort(
+        (a, b) =>
+          a.createdAt - b.createdAt || (a.inviteId < b.inviteId ? -1 : 1)
+      );
   }
 
   async updateInvite(
@@ -2285,7 +2295,11 @@ export class MemoryStore implements RelicStore {
     identityId: string,
     change: (r: InviteClaimRow) => InviteClaimRow
   ): Promise<InviteClaimRow | undefined> {
-    return updateEntry(this.inviteClaims, compositeKey(relicId, identityId), change);
+    return updateEntry(
+      this.inviteClaims,
+      compositeKey(relicId, identityId),
+      change
+    );
   }
 
   async deleteInviteClaim(relicId: string, identityId: string): Promise<void> {

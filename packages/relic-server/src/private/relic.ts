@@ -378,6 +378,7 @@ export async function grantAccess(
     readonly passkeys: PasskeyRecord | undefined;
     readonly attestation: unknown;
     readonly wraps: unknown;
+    readonly ip: string;
   }
 ): Promise<GrantsResult> {
   const { row, owner } = await ownedPrivate(env, input.email, input.relicId);

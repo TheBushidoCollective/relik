@@ -1363,7 +1363,20 @@ export function createApp(options: AppOptions = {}): RelicApp {
                 identity === undefined
                   ? null
                   : (await standingOf(env, row, owner, identity)).role,
-              invites: [],
+              invites:
+                identity === undefined
+                  ? invitations
+                      .filter(
+                        (invite) =>
+                          invite.invitedEmail === address &&
+                          invite.status === 'open' &&
+                          invite.expiresAt > now
+                      )
+                      .map((invite) => ({
+                        invite_id: invite.inviteId,
+                        expires_at: new Date(invite.expiresAt).toISOString(),
+                      }))
+                  : [],
             });
           }
           return Response.json({ results });
