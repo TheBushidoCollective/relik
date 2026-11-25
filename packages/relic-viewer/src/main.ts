@@ -32,6 +32,12 @@ import {
   sniffModelFormat,
   TRANSFER_LABEL,
 } from '@relic/format';
+import type {
+  PublicAccessJSON,
+  RelicSettingsJSON,
+} from '@relic/format/private';
+import { openSettingsPanel } from './private/settings-panel.ts';
+
 import { registerBuiltInAnchorAdapters } from './anchor-adapters.ts';
 import {
   drawnStructuredView,
@@ -7010,6 +7016,8 @@ export function buildThread(
   onViewOriginal?: (version: number) => void,
   onFileCounts?: (counts: ReadonlyMap<string, number>) => void
 ): ThreadHandle {
+  const canComment = view.settings?.comments !== false || view.manage === true;
+  const canSuggest = view.settings?.suggestions !== false && canComment;
   const section = document.createElement('aside');
   section.className = 'thread';
   section.id = 'comment-thread';
@@ -7109,7 +7117,8 @@ export function buildThread(
       )
         return true;
       if (host === undefined || popover === undefined) return false;
-      if (session.kind !== 'verified' || cipher === undefined) return false;
+      if (!canComment || session.kind !== 'verified' || cipher === undefined)
+        return false;
       const targetBox =
         anchor.kind === 'image' ? box : (anchorBoxFor(PENDING_MARK_ID) ?? box);
       if (targetBox === undefined) return false;
@@ -7129,6 +7138,7 @@ export function buildThread(
         applied: suggestionController?.applied ?? false,
         suggesting: suggestionController?.suggesting ?? false,
         canSuggest:
+          canSuggest &&
           sourceIssue() === null &&
           !!selectedRoot?.contains(range.commonAncestorContainer) &&
           (selectedSurface?.acceptsSelection?.(range.startContainer) ??
@@ -7288,6 +7298,7 @@ export function buildThread(
     initialSelection?: Range
   ): Promise<SuggestController | undefined> => {
     if (suggestionController) return Promise.resolve(suggestionController);
+    if (!canSuggest) return Promise.resolve(undefined);
     if (suggestionLoading) return suggestionLoading;
     const stage = host;
     if (!stage || suggestionDisposed) return Promise.resolve(undefined);
@@ -8876,72 +8887,73 @@ export function buildThread(
       else closeCard();
     };
 
-    actions.push({
-      label: 'Reply',
-      className: 'popover-reply',
-      onSelect: () => {
-        stickyId = id;
-        if (session.kind !== 'verified' || cipher === undefined) {
-          // Replying needs an identity, verifying one needs the magic-link
-          // flow, and that flow lives in the sidebar. Saying so beats a
-          // field nobody could post from.
-          setOpen(true);
-          const note = document.createElement('p');
-          note.className = 'popover-note';
-          note.textContent =
-            'Verify an address in the comments panel, then reply here.';
-          layer.current()?.appendChild(note);
+    if (canComment)
+      actions.push({
+        label: 'Reply',
+        className: 'popover-reply',
+        onSelect: () => {
+          stickyId = id;
+          if (session.kind !== 'verified' || cipher === undefined) {
+            // Replying needs an identity, verifying one needs the magic-link
+            // flow, and that flow lives in the sidebar. Saying so beats a
+            // field nobody could post from.
+            setOpen(true);
+            const note = document.createElement('p');
+            note.className = 'popover-note';
+            note.textContent =
+              'Verify an address in the comments panel, then reply here.';
+            layer.current()?.appendChild(note);
+            layer.reposition();
+            return;
+          }
+          cardGeneration++;
+          const dismiss =
+            activePanel.querySelector<HTMLElement>('.popover-dismiss');
+          if (dismiss) dismiss.hidden = true;
+          const composer = inlineComposer({
+            placeholder: `Reply to ${plainLabel(entry.author ?? 'this comment')}`,
+            submitLabel: 'Post reply',
+            onCancel: reopen,
+            onSubmit: (body) => {
+              const opener = cipher;
+              if (opener === undefined) return;
+              const replyPanel = activePanel;
+              composer.setBusy(true);
+              void (async () => {
+                const result = await postComment(
+                  relicId,
+                  {
+                    body,
+                    display_name: readDisplayName() || null,
+                    // A reply answers a comment that already carries a mark,
+                    // so it does not get one of its own. The thread nests it
+                    // under what it answers.
+                    anchor: null,
+                    addresses: id,
+                    ...(entry.kind === 'open' && entry.entry !== undefined
+                      ? { entry: entry.entry }
+                      : {}),
+                  },
+                  deps,
+                  opener,
+                  view.version
+                );
+                if (result.kind === 'refused') {
+                  composer.setBusy(false);
+                  composer.setNote(result.refusal.headline);
+                  return;
+                }
+                await refresh();
+                if (layer.current() === replyPanel) reopen();
+              })();
+            },
+          });
+          composer.element.style.flex = 'none';
+          layer.current()?.appendChild(composer.element);
           layer.reposition();
-          return;
-        }
-        cardGeneration++;
-        const dismiss =
-          activePanel.querySelector<HTMLElement>('.popover-dismiss');
-        if (dismiss) dismiss.hidden = true;
-        const composer = inlineComposer({
-          placeholder: `Reply to ${plainLabel(entry.author ?? 'this comment')}`,
-          submitLabel: 'Post reply',
-          onCancel: reopen,
-          onSubmit: (body) => {
-            const opener = cipher;
-            if (opener === undefined) return;
-            const replyPanel = activePanel;
-            composer.setBusy(true);
-            void (async () => {
-              const result = await postComment(
-                relicId,
-                {
-                  body,
-                  display_name: readDisplayName() || null,
-                  // A reply answers a comment that already carries a mark,
-                  // so it does not get one of its own. The thread nests it
-                  // under what it answers.
-                  anchor: null,
-                  addresses: id,
-                  ...(entry.kind === 'open' && entry.entry !== undefined
-                    ? { entry: entry.entry }
-                    : {}),
-                },
-                deps,
-                opener,
-                view.version
-              );
-              if (result.kind === 'refused') {
-                composer.setBusy(false);
-                composer.setNote(result.refusal.headline);
-                return;
-              }
-              await refresh();
-              if (layer.current() === replyPanel) reopen();
-            })();
-          },
-        });
-        composer.element.style.flex = 'none';
-        layer.current()?.appendChild(composer.element);
-        layer.reposition();
-        composer.field.focus();
-      },
-    });
+          composer.field.focus();
+        },
+      });
 
     const permissionActions = (): PopoverAction[] => {
       const actions: PopoverAction[] = [];
@@ -8949,6 +8961,7 @@ export function buildThread(
       if (entry === undefined) return actions;
       if (
         entry.kind === 'open' &&
+        canComment &&
         !entry.suggestion &&
         canEditComment(entry, session)
       ) {
@@ -10368,11 +10381,23 @@ export function buildThread(
     sidebarName = undefined;
     sidebarPost = undefined;
     sidebarPaintCount = undefined;
+    if (!canComment) {
+      composer.replaceChildren(line('thread-note', 'Comments are closed.'));
+      return;
+    }
     if (session.kind === 'verified') {
       const commentEl = composeComment(session.email);
       composer.replaceChildren(
         ...(offerHost !== undefined ? [offerHost, commentEl] : [commentEl])
       );
+      if (view.settings?.comments === false) {
+        composer.prepend(
+          line(
+            'thread-note',
+            'Comments are closed to readers. You can still comment.'
+          )
+        );
+      }
     } else {
       composer.replaceChildren(composeIdentity());
     }
@@ -10511,7 +10536,7 @@ export function buildThread(
     element: section,
     tab,
     resizer,
-    ...(textSuggestions ? { suggestionBar } : {}),
+    ...(textSuggestions && canSuggest ? { suggestionBar } : {}),
     dispose: () => {
       if (suggestionController && !suggestionController.destroy()) return false;
       suggestionDisposed = true;
@@ -11616,7 +11641,9 @@ export function renderReady(
       onShare: (opener) => {
         openSharePanel(activeView, relicId, deps, opener);
       },
-      onDecide: toggleDecisions,
+      ...(activeView.settings?.decisions === false
+        ? {}
+        : { onDecide: toggleDecisions }),
       ...(decisionTally === undefined ? {} : { decisionTally }),
       ...(thread === undefined
         ? {}
@@ -11625,6 +11652,27 @@ export function renderReady(
             ...(commentCount === undefined ? {} : { commentCount }),
           }),
     });
+    if (activeView.manage && activeView.settings) {
+      const control = document.createElement('button');
+      control.type = 'button';
+      control.className = 'action';
+      control.textContent = 'Settings';
+      control.dataset['action'] = 'open-settings';
+      control.addEventListener('click', () => {
+        const settings = activeView.settings;
+        if (!settings) return;
+        openSettingsPanel({
+          relicId,
+          private: activeView.access === 'private',
+          settings,
+          deps,
+          onSaved: (next: RelicSettingsJSON) => {
+            showSingle({ ...activeView, settings: next });
+          },
+        });
+      });
+      built.append(control);
+    }
     if (activeView.folder) {
       const more = built.querySelector<HTMLElement>('.band-more-list');
       const downloadAll = button('Download all', ICONS.download, () => {
@@ -11928,6 +11976,23 @@ export function renderReady(
     window.onpopstate = folderHistoryHandler;
   }
   showSingle(activeView);
+  if (view.access !== 'private') {
+    void readSession(deps)
+      .then(async (session) => {
+        if (session.kind !== 'verified' || disposed) return;
+        const response = await deps.fetch(
+          `${deps.serviceOrigin}/api/relics/${encodeURIComponent(relicId)}/access`
+        );
+        if (!response.ok || disposed) return;
+        const access = (await response.json()) as PublicAccessJSON;
+        showSingle({
+          ...activeView,
+          manage: access.manage,
+          settings: access.settings,
+        });
+      })
+      .catch(() => {});
+  }
 }
 
 interface PlateHandles {

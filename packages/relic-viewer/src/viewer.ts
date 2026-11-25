@@ -125,6 +125,8 @@ export type ViewerState =
       resume?: LoadResume | undefined;
     };
 
+import type { RelicSettingsJSON } from '@relic/format/private';
+
 export interface ReadyView {
   readonly filename: string;
   readonly folder?: FolderRelic | undefined;
@@ -168,6 +170,8 @@ export interface ReadyView {
    * reader.
    */
   readonly access?: 'private';
+  readonly settings?: RelicSettingsJSON | null | undefined;
+  readonly manage?: boolean;
   /** Resolves the key for one retained version of a private relic. */
   keyFor?(version: number): Promise<Uint8Array>;
   /**
@@ -224,6 +228,7 @@ export interface MintResponse {
   readonly version: number;
   /** The newest revision retained for this relic. */
   readonly current_version: number;
+  readonly settings?: RelicSettingsJSON;
 }
 
 export type HistoricalVersionState =
@@ -708,6 +713,7 @@ export async function load(
         downgradeNotice: undefined,
         shareUrl,
         relicId,
+        settings: mintResponse.settings,
         version: mintResponse.version,
         currentVersion: mintResponse.current_version,
         versionDigest: digest.hex(),
@@ -740,6 +746,7 @@ export async function load(
         componentModule: route.componentModule,
         shareUrl,
         relicId,
+        settings: mintResponse.settings,
         version: mintResponse.version,
         currentVersion: mintResponse.current_version,
         versionDigest: digest.hex(),

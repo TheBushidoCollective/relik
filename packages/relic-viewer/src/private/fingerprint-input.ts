@@ -162,6 +162,18 @@ export function problemMessage(error: unknown): string {
         return 'Set up a private-share key first.';
       case 'owner_required':
         return 'Only the relik\u2019s owner can do that.';
+      case 'invalid_settings':
+        return 'These settings could not be saved. Check the lifetime and try again.';
+      case 'settings_rate_limited':
+        return 'Too many settings changes. Wait and try again.';
+      case 'sign_in_required':
+        return 'Sign in to change settings.';
+      case 'passkey_required':
+        return 'A passkey is required to change settings.';
+      case 'passkey_verification_failed':
+        return 'The passkey could not be verified. Nothing was changed.';
+      case 'service_paused':
+        return 'Changes are paused. Try again later.';
       case 'request_limit_reached':
         return 'This relik has too many pending requests.';
       case 'private_rate_limited':
