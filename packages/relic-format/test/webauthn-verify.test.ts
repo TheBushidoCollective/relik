@@ -243,6 +243,32 @@ describe('verifyWebauthnAssertion: the refusals, each named', () => {
       { kind: 'malformed', check: 'extensions' }
     );
   });
+  test('a CBOR integer beyond the safe integer range is refused', async () => {
+    const { passkey, expected } = await fixture();
+    const assertion = await passkey.assert({
+      challenge: CHALLENGE,
+      origin: ORIGIN,
+      rpId: RP_ID,
+      flags: 0x85,
+      extensions: Uint8Array.of(
+        0xa1,
+        0x61,
+        0x61,
+        0x1b,
+        0xff,
+        0xff,
+        0xff,
+        0xff,
+        0xff,
+        0xff,
+        0xff,
+        0xff
+      ),
+    });
+    expect(await refusal(verifyWebauthnAssertion(assertion, expected))).toEqual(
+      { kind: 'malformed', check: 'extensions' }
+    );
+  });
 
   test('extension data with trailing bytes after the map is refused (the walker stops exactly at the end)', async () => {
     const { passkey, expected } = await fixture();

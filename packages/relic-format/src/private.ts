@@ -1362,6 +1362,10 @@ const CROSS_CHECKS: Partial<
     }[];
     const emails = signers.map((signer) => normalizeEmail(signer.email));
     if (new Set(emails).size !== emails.length) return 'signers';
+    const identities = signers.flatMap((signer) =>
+      signer.identity_id === null ? [] : [signer.identity_id]
+    );
+    if (new Set(identities).size !== identities.length) return 'signers';
     const anonymous = signers.filter(
       (signer) => signer.identity_id === null
     ).length;

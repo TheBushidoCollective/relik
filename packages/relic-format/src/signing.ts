@@ -20,7 +20,6 @@ import {
   deviceFingerprint,
   deviceIdOf,
   encodeBase64url,
-  identityFingerprint,
   identityIdOf,
   parseStatement,
   SIGN_CONSENT_ID,
@@ -515,6 +514,16 @@ export interface CertificateSigner {
 }
 
 export interface CertificateReport {
+  /** Cryptographic consistency alone does not establish the owner's identity. */
+  readonly internal_consistency: boolean;
+  readonly trust: {
+    readonly owner: 'matches' | 'mismatch' | 'unchecked';
+    readonly signers: readonly {
+      readonly index: number;
+      readonly status: 'matches' | 'mismatch' | 'unchecked';
+      readonly method: 'identity_id' | 'trust_on_first_use';
+    }[];
+  };
   readonly valid: boolean;
   readonly checks: readonly CertificateCheck[];
   readonly relic_id: string | null;
@@ -525,6 +534,8 @@ export interface CertificateReport {
   readonly origin: string | null;
   readonly owner: {
     readonly email: string;
+    /** This address is an unsigned claim from the certificate. */
+    readonly email_status: 'claimed';
     readonly identity_id: string;
     readonly fingerprint: string;
   } | null;
@@ -539,6 +550,10 @@ export interface CertificateVerifyOptions {
   readonly content?: ContentBytes;
   /** The origin the certificate must claim. When absent the report states the origin it used. */
   readonly expectedOrigin?: string;
+  /** Owner identity id obtained independently of this certificate. */
+  readonly trustedOwnerIdentityId?: string;
+  /** Independently obtained private signer identity ids by signer index. */
+  readonly trustedSignerIdentityIds?: Readonly<Record<number, string>>;
 }
 
 /** A check run on its own, so one failure does not hide the others. */
@@ -613,6 +628,16 @@ export function parseSigningCertificate(value: unknown): SigningCertificate {
   const request = parseRequestPayload(top.request);
   const owner = parseOwner(top.owner);
   if (!Array.isArray(top.signatures)) refuse('certificate', 'signatures');
+  if (top.signatures.length > SIGNING_MAX_SIGNERS)
+    refuse('certificate', 'too many signatures');
+  // Bound all nested strings and structures before parsing or any cryptography.
+  boundedCertificate(top);
+  const requestSigners = parseStatement(
+    'signing_request',
+    request.statement
+  ).signers;
+  if (top.signatures.length > requestSigners.length)
+    refuse('certificate', 'too many signatures for request');
   const signatures = (top.signatures as unknown[]).map(parseSignature);
   const certificate: SigningCertificate = {
     format: SIGNING_CERTIFICATE_FORMAT,
@@ -689,7 +714,12 @@ export async function verifySigningCertificate(
   checks.push(
     await runCheck('signers_complete', () => {
       const count = requestStatement?.signers.length ?? 0;
-      const indices = parsed.signatures.map((sig) => sig.signer_index);
+      const indices = parsed.signatures.map(
+        (sig) => parseStatement('signature', sig.statement).signer_index
+      );
+      if (parsed.signatures.some((sig, i) => sig.signer_index !== indices[i])) {
+        refuse('certificate', 'record index differs from signed index');
+      }
       const unique = new Set(indices);
       if (
         count === 0 ||
@@ -717,7 +747,10 @@ export async function verifySigningCertificate(
       rpId,
     });
     for (const result of results) {
-      checks.push(withSigner(result, signature.signer_index));
+      const signedIndex = signature.statement.signer_index;
+      checks.push(
+        withSigner(result, typeof signedIndex === 'number' ? signedIndex : -1)
+      );
     }
   }
 
@@ -725,7 +758,9 @@ export async function verifySigningCertificate(
     await runCheck('order', () => {
       if (requestStatement?.order !== 'sequential') return;
       const ordered = [...parsed.signatures].sort(
-        (a, b) => a.signer_index - b.signer_index
+        (a, b) =>
+          parseStatement('signature', a.statement).signer_index -
+          parseStatement('signature', b.statement).signer_index
       );
       let previous = Number.NEGATIVE_INFINITY;
       for (const signature of ordered) {
@@ -758,7 +793,10 @@ export async function verifySigningCertificate(
             version: parsed.version,
             ciphertext: signature.mark_ciphertext,
           });
-          names.set(signature.signer_index, mark.name);
+          names.set(
+            parseStatement('signature', signature.statement).signer_index,
+            mark.name
+          );
         }
       })
     );
@@ -783,7 +821,8 @@ export async function verifySigningCertificate(
     requestStatement,
     parsed.signatures,
     content,
-    names
+    names,
+    opts
   );
 }
 
@@ -922,6 +961,12 @@ export async function verifySignatureRecord(input: {
       const keys = await identityKeys(identity);
       if (keys.id !== signerEntry().identity_id) {
         refuse('certificate', 'the signer identity is not the pinned one');
+      }
+      if (identity.email !== signerEntry().email) {
+        refuse(
+          'certificate',
+          'signer identity address differs from the request'
+        );
       }
       const ok = await verifyStatement(
         keys.sig,
@@ -1344,6 +1389,11 @@ function parseRequestPayload(value: unknown): SigningRequestPayload {
     refuse('certificate', 'request statement');
   requireString(object.signature, 'request signature');
   requireString(object.layout_ciphertext, 'layout_ciphertext');
+  if (
+    (object.layout_ciphertext as string).length >
+    Math.ceil(((SIGNING_LAYOUT_MAX_BYTES + 28) * 4) / 3)
+  )
+    refuse('certificate', 'layout ciphertext too large');
   if (object.signer_kind !== 'identity' && object.signer_kind !== 'device') {
     refuse('certificate', 'signer_kind');
   }
@@ -1464,6 +1514,11 @@ function parseSignature(value: unknown): SigningCertificateSignature {
     refuse('certificate', 'signature statement');
   requireString(object.identity_signature, 'identity_signature');
   requireString(object.mark_ciphertext, 'mark_ciphertext');
+  if (
+    (object.mark_ciphertext as string).length >
+    Math.ceil(((SIGNING_MARK_MAX_BYTES + 28) * 4) / 3)
+  )
+    refuse('certificate', 'mark ciphertext too large');
   requireString(object.recorded_at, 'recorded_at');
   const identity =
     object.signer_identity === null
@@ -1580,12 +1635,15 @@ async function finishReport(
   requestStatement: SigningRequestStatement | undefined,
   signatures: readonly SigningCertificateSignature[],
   content: 'match' | 'mismatch' | 'not_checked',
-  names: ReadonlyMap<number, string | null> = new Map()
+  names: ReadonlyMap<number, string | null> = new Map(),
+  opts: CertificateVerifyOptions = {}
 ): Promise<CertificateReport> {
   const owner = await ownerSummary(parsed);
   const signers: CertificateSigner[] = [];
   for (const [index, entry] of (requestStatement?.signers ?? []).entries()) {
-    const signature = signatures.find((sig) => sig.signer_index === index);
+    const signature = signatures.find(
+      (sig) => sig.statement.signer_index === index
+    );
     const opened = signature?.receipts?.opened ?? null;
     signers.push({
       index,
@@ -1598,8 +1656,37 @@ async function finishReport(
       name: names.get(index) ?? null,
     });
   }
+  const ownerTrust =
+    opts.trustedOwnerIdentityId === undefined
+      ? 'unchecked'
+      : opts.trustedOwnerIdentityId === requestStatement?.owner_identity_id
+        ? 'matches'
+        : 'mismatch';
+  const signerTrust = (requestStatement?.signers ?? []).map((entry, index) => {
+    const expected = opts.trustedSignerIdentityIds?.[index];
+    return {
+      index,
+      status:
+        expected === undefined
+          ? ('unchecked' as const)
+          : expected === entry.identity_id
+            ? ('matches' as const)
+            : ('mismatch' as const),
+      method:
+        entry.identity_id === null
+          ? ('trust_on_first_use' as const)
+          : ('identity_id' as const),
+    };
+  });
+  const internalConsistency =
+    checks.every((check) => check.ok) && checks.length > 0;
   return {
-    valid: checks.every((check) => check.ok) && checks.length > 0,
+    valid:
+      internalConsistency &&
+      ownerTrust === 'matches' &&
+      signerTrust.every((s) => s.status !== 'mismatch'),
+    internal_consistency: internalConsistency,
+    trust: { owner: ownerTrust, signers: signerTrust },
     checks,
     relic_id: parsed.relic_id,
     version: parsed.version,
@@ -1626,7 +1713,8 @@ async function signerFingerprint(
   const identity = signature?.signer_identity;
   if (identity === null || identity === undefined) return null;
   try {
-    return await identityFingerprint(identity.identity_id, identity.email);
+    const keys = await identityKeys(identity);
+    return keys.id;
   } catch {
     return null;
   }
@@ -1636,20 +1724,55 @@ async function ownerSummary(
   parsed: SigningCertificate
 ): Promise<CertificateReport['owner']> {
   try {
-    const { identity_id, email } = parsed.owner.identity;
+    const { email } = parsed.owner.identity;
+    const keys = await identityKeys(parsed.owner.identity);
     return {
       email,
-      identity_id,
-      fingerprint: await identityFingerprint(identity_id, email),
+      email_status: 'claimed',
+      identity_id: keys.id,
+      fingerprint: keys.id,
     };
   } catch {
     return null;
   }
 }
 
+/** Bound untrusted certificate structures before hashing, key imports, or signature checks. */
+function boundedCertificate(value: unknown): void {
+  const stack: { value: unknown; depth: number }[] = [{ value, depth: 0 }];
+  let nodes = 0;
+  while (stack.length > 0) {
+    const item = stack.pop()!;
+    if (++nodes > 20_000 || item.depth > 24)
+      refuse('certificate', 'structure too large');
+    if (typeof item.value === 'string') {
+      if (item.value.length > 48_000) refuse('certificate', 'field too large');
+    } else if (Array.isArray(item.value)) {
+      if (item.value.length > 100) refuse('certificate', 'array too large');
+      for (const child of item.value)
+        stack.push({ value: child, depth: item.depth + 1 });
+    } else if (isPlainObject(item.value)) {
+      const keys = Object.keys(item.value);
+      if (keys.length > 100) refuse('certificate', 'object too large');
+      for (const key of keys) {
+        if (key.length > 1024) refuse('certificate', 'field name too large');
+        stack.push({ value: item.value[key], depth: item.depth + 1 });
+      }
+    } else if (
+      item.value !== null &&
+      typeof item.value !== 'number' &&
+      typeof item.value !== 'boolean'
+    ) {
+      refuse('certificate', 'invalid value');
+    }
+  }
+}
+
 function unparsedReport(detail: string): CertificateReport {
   return {
     valid: false,
+    internal_consistency: false,
+    trust: { owner: 'unchecked', signers: [] },
     checks: [{ id: 'format', ok: false, detail }],
     relic_id: null,
     version: null,

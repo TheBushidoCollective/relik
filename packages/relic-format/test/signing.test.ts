@@ -46,9 +46,8 @@ import type { IdentityKeys, OpenReceiptStatement } from '../src/private.ts';
 
 type Obj = Record<string, unknown>;
 
-// Known answers from an independent run: Python's hashlib and hmac, and the
-// `cryptography` package's HKDF and AES-GCM. The script is in the commit that
-// added this file, so the vectors can be regenerated and checked.
+// Independent Python hashlib, hmac, HKDF and AES-GCM known answers.
+// Regenerate with test/support/signing-vectors.py (requires cryptography).
 const CONTENT_KEY = Uint8Array.from({ length: 16 }, (_, i) => i + 1);
 const KAT = {
   signingKey:
@@ -429,7 +428,8 @@ describe('golden certificates recorded from a virtual authenticator', () => {
       content: CONTENT,
     });
     expect(failing(report)).toEqual([]);
-    expect(report.valid).toBe(true);
+    expect(report.internal_consistency).toBe(true);
+    expect(report.valid).toBe(false);
     expect(report.access).toBe('public');
     expect(report.content).toBe('match');
     expect(report.signers.map((signer) => signer.name)).toEqual([
@@ -464,7 +464,7 @@ describe('golden certificates recorded from a virtual authenticator', () => {
       'Signer 0',
       'Signer 1',
     ]);
-    expect(report.owner?.fingerprint).toHaveLength(32);
+    expect(report.owner?.fingerprint).toHaveLength(64);
   });
 
   test('a private relik signed through a device verifies under the owner-signed device certificate', async () => {
@@ -473,7 +473,8 @@ describe('golden certificates recorded from a virtual authenticator', () => {
       options
     );
     expect(failing(report)).toEqual([]);
-    expect(report.valid).toBe(true);
+    expect(report.internal_consistency).toBe(true);
+    expect(report.valid).toBe(false);
   });
 });
 
@@ -501,6 +502,7 @@ describe('one mutation flips exactly its named check', () => {
     });
     const report = await verifySigningCertificate(built.cert, {
       expectedOrigin: ORIGIN,
+      trustedOwnerIdentityId: built.owner.identityId,
       signingKey: built.signingKey,
       content: built.content,
     });
