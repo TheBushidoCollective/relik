@@ -23,7 +23,14 @@ import {
 } from '@relic/format/signing';
 import { contentFromBytes } from '../../relic-viewer/src/content.ts';
 import { verifyViewerSigningRequest } from '../../relic-viewer/src/signing/api.ts';
-import { identityFingerprint } from '@relic/format/private';
+import {
+  identityFingerprint,
+  attestationChallenge,
+  decodeBase64url,
+  encodeBase64url,
+  statementBytes,
+  parseStatement,
+} from '@relic/format/private';
 import { createApp } from '@relic/server/src/app.ts';
 import { diskAssets } from '@relic/server/src/assets.ts';
 import { MemoryStorage } from '@relic/server/src/storage.ts';
@@ -202,6 +209,13 @@ try {
   ]);
   assert.equal(settingsExit, 0, settingsErrors);
   assert.ok(settingsOutput.includes('SETTINGS_PATH_OK'));
+  for (const receipt of [
+    '01_COMMENTS_CLOSED',
+    '03_NOTIFICATIONS',
+    '04_OWNER_SETTINGS',
+    '05_PRIVATE_LIFETIME',
+  ])
+    assert.ok(settingsOutput.includes(receipt), receipt);
   assert.ok(settingsOutput.includes('05_PRIVATE_LIFETIME'));
   const toolsProcess = Bun.spawn(['node', bundle], {
     cwd: scratch,
@@ -314,6 +328,115 @@ try {
   await inPage(ben.browser, pageCreatePasskey, { prf: true });
   await goto(ben.browser, text(published.url));
   const localState = JSON.parse(await readFile(statePath, 'utf8'));
+  const commentCiphertext = await encryptComment(
+    await deriveCommentKey(decodeKey(localState.relics[id].key)),
+    {
+      body: 'Owner test comment',
+      display_name: null,
+      anchor: null,
+    }
+  );
+  await mcp('relic_settings', { relic_id: id, comments: false });
+  const commentPost = (body: unknown, session?: string) =>
+    apps[1]!.fetch(
+      new Request(`${origin}/api/relics/${id}/comments`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          ...(session ? { cookie: session } : {}),
+        },
+        body: JSON.stringify(body),
+      })
+    );
+  const readerComment = await commentPost(
+    { ciphertext: commentCiphertext },
+    benCookie
+  );
+  assert.equal(readerComment.status, 409);
+  assert.equal(
+    ((await readerComment.json()) as { code: string }).code,
+    'comments_closed'
+  );
+  const ownerComment = await commentPost(
+    { ciphertext: commentCiphertext },
+    cookie
+  );
+  assert.equal(ownerComment.status, 201, await ownerComment.clone().text());
+  const publisherComment = await commentPost({
+    ciphertext: commentCiphertext,
+    publish_token: localState.relics[id].publish_token,
+  });
+  assert.equal(
+    publisherComment.status,
+    201,
+    await publisherComment.clone().text()
+  );
+  for (const response of [ownerComment, publisherComment]) {
+    const entry = (await response.json()) as { comment_id: string };
+    const resolved = await apps[1]!.fetch(
+      new Request(`${origin}/api/relics/${id}/comments/${entry.comment_id}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          publish_token: localState.relics[id].publish_token,
+          resolved: true,
+        }),
+      })
+    );
+    assert.equal(resolved.status, 200);
+  }
+  await mcp('relic_settings', { relic_id: id, comments: true });
+  const noIdentity = await apps[1]!.fetch(
+    new Request(`${origin}/api/attest/nonce`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie: benCookie },
+      body: JSON.stringify({ purpose: 'relic_settings', relic_id: id }),
+    })
+  );
+  assert.equal(noIdentity.status, 409, await noIdentity.clone().text());
+  await goto(owner.browser, text(published.url));
+  await owner.browser.waitForSelector('[data-action="open-settings"]', 25000);
+  await owner.browser.evaluate(`(() => {
+    window.__settingsTaps = 0;
+    const get = navigator.credentials.get.bind(navigator.credentials);
+    navigator.credentials.get = (...args) => { window.__settingsTaps++; return get(...args); };
+  })()`);
+  await click(owner.browser, '[data-action="open-settings"]');
+  await owner.browser.evaluate(
+    `document.querySelector('#settings-panel input[role="switch"]').click()`
+  );
+  await click(owner.browser, '#settings-panel button[type="submit"]');
+  await poll('owner settings saved', 25000, async () =>
+    (
+      await owner.browser.evaluate<string>(
+        `document.querySelector('#settings-panel [role="status"]')?.textContent ?? ''`
+      )
+    ).includes('Saved')
+      ? true
+      : undefined
+  );
+  assert.equal(
+    await owner.browser.evaluate<number>('window.__settingsTaps'),
+    1
+  );
+  await goto(
+    owner.browser,
+    `${origin}/${id}?settings-reload=1${new URL(text(published.url)).hash}`
+  );
+  await poll('owner reload', 25000, async () =>
+    (await owner.browser.evaluate<boolean>(
+      `document.body.innerText.includes('signing-proof.txt')`
+    ))
+      ? true
+      : undefined
+  );
+  assert.equal(
+    await owner.browser.evaluate<boolean>(
+      `!!document.querySelector('[data-sg-suggesting]')`
+    ),
+    false
+  );
+  await mcp('relic_settings', { relic_id: id, suggestions: true });
   const proof = encodeKey(
     await deriveShareProof(decodeKey(localState.relics[id].key))
   );
@@ -476,6 +599,85 @@ try {
       )
   );
   console.log('PUBLIC_SIGNER_1 signed=true');
+  const mismatchOptionsResponse = await fetch(
+    `${origin}/api/relics/${id}/signing/options`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie: benCookie },
+      body: JSON.stringify({
+        request_id: request.request_id,
+        share_proof: proof,
+      }),
+    }
+  );
+  assert.equal(mismatchOptionsResponse.status, 200);
+  const mismatchOptions = (await mismatchOptionsResponse.json()) as {
+    nonce: string;
+    public_key: { rpId: string; allowCredentials: Array<{ id: string }> };
+    request_sha256: string;
+    version_digest: string;
+    opened_receipt_sha256: string | null;
+  };
+  const mark = await sealSignatureMark({
+    signingKey: await deriveSigningKey(decodeKey(localState.relics[id].key)),
+    relicId: id,
+    version: 3,
+    mark: { v: 1, name: 'Ben Signer', strokes: null },
+  });
+  const mismatchStatement = parseStatement('signature', {
+    at: Date.now(),
+    ciphertext_sha256: mismatchOptions.version_digest,
+    consent: 'relic/sign-consent/v1',
+    content_mac: '0'.repeat(64),
+    mark_sha256: markCiphertextSha256(mark),
+    opened_receipt_sha256: mismatchOptions.opened_receipt_sha256,
+    relic_id: id,
+    request_id: request.request_id,
+    request_sha256: mismatchOptions.request_sha256,
+    signer_email: env.third,
+    signer_identity_id: null,
+    signer_index: 1,
+    version: 3,
+  });
+  const challenge = await attestationChallenge(
+    decodeBase64url(mismatchOptions.nonce),
+    [statementBytes('signature', mismatchStatement)]
+  );
+  const mismatchCredential = await inPage(ben.browser, pageSigningAssertion, {
+    challenge: encodeBase64url(challenge),
+    rpId: mismatchOptions.public_key.rpId,
+    allowCredentials: mismatchOptions.public_key.allowCredentials,
+  });
+  const mismatchResponse = await fetch(
+    `${origin}/api/relics/${id}/signing/signatures`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie: benCookie },
+      body: JSON.stringify({
+        request_id: request.request_id,
+        share_proof: proof,
+        mark_ciphertext: mark,
+        attestation: {
+          nonce: mismatchOptions.nonce,
+          statements: [
+            {
+              kind: 'signature',
+              statement: mismatchStatement,
+              identity_signature: '',
+            },
+          ],
+          credential: mismatchCredential,
+        },
+      }),
+    }
+  );
+  assert.equal(
+    mismatchResponse.status,
+    409,
+    await mismatchResponse.clone().text()
+  );
+  const mismatchBody = (await mismatchResponse.json()) as { code: string };
+  assert.equal(mismatchBody.code, 'signing_content_mismatch');
   await Bun.write(file, 'Changed signing acceptance content\n');
   const openRepublish = await callMcpRaw(env, 'relic_republish', {
     relic_id: id,
@@ -694,6 +896,26 @@ try {
     privateId,
     privateUrl,
     ownerKeys
+  );
+  const missingGrantResult = await callMcpRaw(
+    privateEnv,
+    'relic_request_signatures',
+    {
+      relic_id: privateId,
+      signers: [{ email: privateEnv.reader }],
+    }
+  );
+  assert.equal(missingGrantResult.isError, true);
+  assert.equal(missingGrantResult.structured.code, 'recipient_forged_grant');
+  console.log('SIGNING_STEP_10_NO_GRANT signer_without_grant=refused_by_mcp');
+  const privateInvitations = mails.filter(
+    (mail) =>
+      mail.to === privateEnv.reader && mail.subject.includes('turn to sign')
+  );
+  assert.equal(
+    privateInvitations.length,
+    0,
+    'private invitation was sent before a grant'
   );
   denyOpenedFor = privateId;
   await stepSeven(
@@ -944,9 +1166,15 @@ try {
   });
   assert.equal(shortening.isError, true);
   assert.equal(shortening.structured.code, 'version_locked');
-  throw new Error(
-    'section 11 receipt contract and record-side content mismatch remain unproven'
+  console.log('SIGNING_STEP_8_LOCKED republish=409 shorten=409 extend=200');
+  console.log(
+    'SIGNING_STEP_13_LIFETIME not_reproven_here see=settings-path(05_PRIVATE_LIFETIME)'
   );
+  console.log(
+    'SIGNING_STEP_14_MCP_NEVER_SIGNS record_tools=0 read_signing=ok verify_tool=valid'
+  );
+  console.log('SIGNING_STEP_15_CONTENT_MISMATCH sign_button=absent record=409');
+  console.log('SIGNING_PATH_OK');
 } catch (error) {
   console.error(
     `SIGNING_PATH_BLOCKED ${error instanceof Error ? error.message : String(error)}`
