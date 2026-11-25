@@ -75,7 +75,9 @@ export function signingNoticeMail(input: {
           : `It's your turn to sign${named}`;
   const detail =
     input.kind === 'complete'
-      ? 'Open it to download the signing certificate. A passkey approval does not establish who held it or whether a signature is legally binding.'
+      ? input.private
+        ? 'Open it to download the signing certificate.'
+        : "Proves: each listed passkey approved this exact version after agreeing to sign electronically, and the request came from the owner shown. Doesn't prove: who held the passkey, that the person is who the address suggests, or that the signature is legally binding. On a public relik a passkey is trusted from its first use with that address. Times come from each signer's device, checked by Relik to within 5 minutes."
       : input.kind === 'cancelled'
         ? 'The signing request was cancelled.'
         : input.kind === 'signed'
