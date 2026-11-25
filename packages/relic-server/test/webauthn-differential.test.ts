@@ -59,6 +59,12 @@ for (const alg of [-7, -257] as const) {
     const wrongCredential = { ...valid, id: 'YQ', rawId: 'YQ' };
     const vectors = [
       ['valid', valid, true],
+      ['shape', { ...valid, type: 'wrong' }, false],
+      [
+        'encoding',
+        { ...valid, response: { ...valid.response, clientDataJSON: '!!!' } },
+        false,
+      ],
       ['type', mutateClient({ type: 'webauthn.create' }), false],
       ['challenge', mutateClient({ challenge: 'wrong' }), false],
       ['origin', mutateClient({ origin: 'https://evil.test' }), false],
