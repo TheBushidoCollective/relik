@@ -312,7 +312,7 @@ async function deferredCueFixture() {
 }
 
 describe('relic_apply_suggestions', () => {
-  test('lists exactly 16 tools and requires explicit ids', async () => {
+  test('lists exactly 17 tools and requires explicit ids', async () => {
     const response = await handleMessage(
       { jsonrpc: '2.0', id: 1, method: 'tools/list' },
       deps
@@ -327,7 +327,7 @@ describe('relic_apply_suggestions', () => {
       throw new Error('tools/list returned no tool array');
     }
     const tools = list.tools;
-    expect(tools).toHaveLength(16);
+    expect(tools).toHaveLength(17);
     const tool = tools.find(
       (entry) => entry.name === APPLY_SUGGESTIONS_TOOL_NAME
     );

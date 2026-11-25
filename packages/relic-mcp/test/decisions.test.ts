@@ -130,7 +130,7 @@ function createMockFetch(): typeof globalThis.fetch {
 }
 
 describe('tools/list and tool definitions', () => {
-  test('tools/list returns 16 tools and only relic_read_decisions matches decision pattern', async () => {
+  test('tools/list returns 17 tools and only relic_read_decisions matches decision pattern', async () => {
     const res = await handleMessage(
       { jsonrpc: '2.0', id: 1, method: 'tools/list' },
       deps
@@ -138,7 +138,7 @@ describe('tools/list and tool definitions', () => {
     expect(res).toBeDefined();
     if (!res?.result) throw new Error('expected result');
     const tools = (res.result as { tools: Array<{ name: string }> }).tools;
-    expect(tools.length).toBe(16);
+    expect(tools.length).toBe(17);
 
     const matching = tools.filter((t) =>
       /decision|approv|reject|verdict/i.test(t.name)
@@ -666,7 +666,7 @@ describe('version_digest in publish and republish', () => {
 });
 
 describe('REFUSAL_GUIDANCE', () => {
-  test('decision_unavailable provides republish guidance', async () => {
+  test('decision_unavailable provides settings guidance', async () => {
     const sourceFile = join(scratch, 'doc.txt');
     await writeFile(sourceFile, 'Content\n');
     const pub = await publish({ path: sourceFile }, deps);
@@ -698,7 +698,7 @@ describe('REFUSAL_GUIDANCE', () => {
     };
     expect(r.isError).toBe(true);
     expect(r.content[0]?.text).toContain(
-      'relic_republish and decisions: true; the link does not change'
+      'relic_settings and decisions: true; the link does not change'
     );
   });
 
