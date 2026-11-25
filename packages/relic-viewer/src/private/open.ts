@@ -35,6 +35,7 @@ import {
   verifyStatement,
   WrapOpenError,
 } from '@relic/format/private';
+import { deriveSigningKey } from '@relic/format/signing';
 import {
   openContentStore,
   type ContentSink,
@@ -98,11 +99,15 @@ export type OpenedVersion =
       readonly envelope: Envelope;
       readonly content: Uint8Array;
       readonly digest: string;
+      readonly keyCommitment: string;
+      readonly signingKey: Uint8Array;
     }
   | {
       readonly envelope: FolderHeader;
       readonly folderContent: RelicContent;
       readonly digest: string;
+      readonly keyCommitment: string;
+      readonly signingKey: Uint8Array;
     };
 
 const PIN_STORAGE_KEY = 'relic:owner-pins';
@@ -522,9 +527,23 @@ export async function fetchAndDecryptVersion(
       },
     }
   );
+  const signingKey = await deriveSigningKey(verified.key);
+  const keyCommitment = verified.seal.key_commitment;
   if (!('entries' in envelope)) {
     if (!folderSink) throw new Error('folder sink missing');
-    return { envelope, folderContent: await folderSink.finish(), digest };
+    return {
+      envelope,
+      folderContent: await folderSink.finish(),
+      digest,
+      keyCommitment,
+      signingKey,
+    };
   }
-  return { envelope, content: concat(chunks, received), digest };
+  return {
+    envelope,
+    content: concat(chunks, received),
+    digest,
+    keyCommitment,
+    signingKey,
+  };
 }

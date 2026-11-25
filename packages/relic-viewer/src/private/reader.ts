@@ -42,6 +42,7 @@ import {
   type PrivateAccessJSON,
   identityFingerprint,
 } from '@relic/format/private';
+import { signStatement, statementBytes } from '@relic/format/private';
 import { type AccessView, loadAccess, requestAccess } from './request.ts';
 import {
   makeReplacementPasskey,
@@ -63,6 +64,8 @@ import {
   NoIdentityError,
   PrfUnavailableError,
   PrivateRequestError,
+  nowMs,
+  postJson,
   type UnlockedIdentity,
 } from './keys.ts';
 import { privateKeysOf } from './ops.ts';
@@ -673,6 +676,7 @@ class PrivateReader {
       access.sealedVersion,
       identity
     );
+    void this.recordOpened(opened, access.sealedVersion, identity);
     this.mountReady(
       await this.readyView(opened, access.sealedVersion, identity)
     );
@@ -763,6 +767,7 @@ class PrivateReader {
         version,
         identity
       );
+      void this.recordOpened(opened, version, identity);
       return {
         kind: 'ready',
         view: await this.readyView(opened, version, identity),
@@ -799,6 +804,35 @@ class PrivateReader {
         code: 'version_unavailable',
         detail: COPY_GENERIC_FAILURE,
       };
+    }
+  }
+
+  /** A receipt is only signed after the seal, key and ciphertext have verified. */
+  private async recordOpened(
+    opened: OpenedVersion,
+    version: number,
+    identity: UnlockedIdentity
+  ): Promise<void> {
+    try {
+      const statement = {
+        at: nowMs(this.mount.deps),
+        ciphertext_sha256: opened.digest,
+        key_commitment: opened.keyCommitment,
+        reader_identity_id: identity.identityId,
+        relic_id: this.mount.relicId,
+        version,
+      };
+      const identity_signature = await signStatement(
+        (bytes) => identity.sign(bytes),
+        statementBytes('open_receipt', statement)
+      );
+      await postJson(
+        this.mount.deps,
+        `/api/relics/${encodeURIComponent(this.mount.relicId)}/receipts/opened`,
+        { statement, identity_signature }
+      );
+    } catch {
+      // Recording a receipt must not prevent the reader opening the document.
     }
   }
 
