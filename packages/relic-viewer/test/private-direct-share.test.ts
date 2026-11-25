@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { lookupShares } from '../src/private/direct-share.ts';
+import { decodeBase64url, inviteRecipient, parseInviteFragment, unwrapVersionKey } from '@relic/format/private';
+import { lookupShares, parseShareFragment, shareBatch } from '../src/private/direct-share.ts';
 import { PrivateApiError, problemMessage } from '../src/private/fingerprint-input.ts';
 import type { ViewerDeps } from '../src/viewer.ts';
 
@@ -32,4 +33,51 @@ describe('direct share lookup', () => {
   test('describes an existing grant without treating it as success', () => {
     expect(problemMessage(new PrivateApiError(409, 'grant_exists'))).toBe('This person can already read this relik.');
   });
+});
+
+test('prefill decodes once, deduplicates and caps addresses', () => {
+  expect(parseShareFragment('#to=one%40example.test%2C%20ONE%40example.test%2Ctwo%40example.test')).toEqual(['one@example.test', 'two@example.test']);
+  expect(parseShareFragment('#to=%ZZ')).toEqual([]);
+  expect(parseShareFragment(`#to=${Array.from({ length: 21 }, (_, i) => `${i}%40example.test`).join('%2C')}`)).toHaveLength(20);
+});
+
+test('invite key stays in the link and opens each returned wrap', async () => {
+  const calls: string[] = [];
+  const drafts: Record<string, unknown>[] = [];
+  const keys = new Map<number, Uint8Array>([[1, new Uint8Array(16).fill(1)], [2, new Uint8Array(16).fill(2)]]);
+  const owner = 'a'.repeat(64);
+  const deps = {
+    serviceOrigin: 'https://example.test',
+    locationHref: 'https://example.test/0123456789abcdefghjkmnpqrs',
+    now: () => 1_700_000_000_000,
+    fetch: async (_url: unknown, init: RequestInit) => { calls.push(String(init.body)); return Response.json({ grants: [], invites: [] }); },
+    privateKeys: {
+      attest: async (_deps: unknown, request: { build(id: string): Record<string, unknown>[] }) => {
+        drafts.push(...request.build(owner));
+        return { identity: { identityId: owner }, bundle: { statements: drafts } };
+      },
+      fetchVersionKey: async (_deps: unknown, _id: unknown, version: number) => ({
+        key: keys.get(version), keyJson: { owner: { identity: { identity_id: owner } } },
+      }),
+    },
+  } as unknown as ViewerDeps;
+  const links = await shareBatch(deps, {
+    relicId: '0123456789abcdefghjkmnpqrs', versions: [1, 2],
+    relicExpiresAt: 1_800_000_000_000, grants: [],
+    invites: [{ email: 'new@example.test', days: 7 }], origin: 'https://example.test',
+  });
+  const link = links[0];
+  expect(link).toBeDefined();
+  if (!link) throw new Error('missing link');
+  const url = new URL(link.url);
+  const d = parseInviteFragment(url.hash.slice(1));
+  expect(d).toBeDefined();
+  expect(calls[0]).not.toContain(url.hash.slice(3));
+  const statement = drafts[0]?.statement as { invite_public_key: string };
+  const recipient = await inviteRecipient(d!, decodeBase64url(statement.invite_public_key));
+  const body = JSON.parse(calls[0]!) as { wraps: { version: number; enc: string; ct: string }[] };
+  expect(body.wraps).toHaveLength(2);
+  for (const wrap of body.wraps) {
+    expect(await unwrapVersionKey({ recipient, relicId: '0123456789abcdefghjkmnpqrs', version: wrap.version, enc: wrap.enc, ct: wrap.ct })).toEqual(keys.get(wrap.version)!);
+  }
 });

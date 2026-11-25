@@ -28,7 +28,8 @@ import {
 } from '@relic/format/private';
 import type { ViewerDeps } from '../viewer.ts';
 import { createDeleteDialog, type DeleteDialog } from './delete.ts';
-import { lookupShares, shareRegistered, type ShareRow } from './direct-share.ts';
+import { createShareSection } from './share-section.ts';
+import { createInvitationsSection } from './invitations-section.ts';
 import { describeVersions, formatUtcDay } from './access-log.ts';
 import {
   fingerprintGroups,
@@ -56,6 +57,7 @@ export interface OwnerPanelContext {
   onChanged(): void;
   /** The requester's identity ID from the mail link (`?grant=`): their card is listed first. */
   readonly focusRequester?: string;
+  readonly prefill?: readonly string[];
   /**
    * `focused` is the mail link's view: one card for the requester, in the host,
    * with no side sheet. The reader hides its own unlock card while it shows.
@@ -172,68 +174,20 @@ export function openAccessPanel(
   const requestsHost = h('div', { id: 'requests', class: 'dash-grid' });
   const grantList = h('ul', { class: 'row-list', id: 'grants' });
   const alsoList = h('ul', { class: 'row-list' });
-  const shareRows = h('ul', { class: 'row-list', 'data-share-rows': true });
-  const shareInput = h('input', {
-    class: 'input', type: 'email', 'data-share-input': true,
-    placeholder: 'name@example.com', 'aria-label': 'Email address to share with',
-  });
-  const shareError = h('p', { 'data-share-err': true, role: 'alert' });
-  const shareVersions = h('div', { class: 'version-picks' });
-  const shareButton = h('button', {
-    type: 'button', class: 'action primary', 'data-action': 'share-passkey', disabled: true,
-  }, 'Share with passkey');
-  const addAddress = h('button', { type: 'button', class: 'btn', 'data-add-address': true }, 'Add');
-  const shareSummary = h('p', { 'data-share-summary': true }, 'Add an address, or check a row, to share.');
-  const shares: ShareRow[] = [];
-  let admittedShares: ReadonlySet<string> = new Set();
-  function updateShareButton(): void {
-    const count = shareRows.querySelectorAll('input[data-share-grant]:checked').length;
-    shareButton.disabled = count === 0;
-    shareSummary.textContent = count === 0 ? 'Add an address, or check a row, to share.' : `One passkey tap shares with ${count} ${count === 1 ? 'person' : 'people'}.`;
-  }
-  function addShareRow(row: ShareRow): void {
-    shares.push(row);
-    const selectable = row.kind === 'registered' || row.kind === 'invited';
-    const check = selectable ? h('input', { type: 'checkbox', 'data-share-grant': true, checked: true, 'aria-label': `Share with ${row.email}` }) : null;
-    const meta = row.kind === 'reader' ? 'Already a reader. Nothing to do.' :
-      row.kind === 'self' ? "That's you" :
-      row.kind === 'unverified' ? 'Reload and try again.' :
-      row.kind === 'unregistered' ? `${row.email} hasn't set up a private-share key.` :
-      row.kind === 'invited' ? 'Accepted your invitation. Sharing lets them open later versions.' :
-      'Has a private-share key. Check this fingerprint with them if you can.';
-    const removeRow = h('button', { type: 'button', class: 'btn is-small', 'data-remove-row': true, 'aria-label': `Remove ${row.email}` }, 'Remove');
-    const li = h('li', { 'data-share-row': true, 'data-share-state': row.kind },
-      check, h('div', { class: 'row-main' }, h('strong', {}, row.email), h('span', { class: 'row-meta' }, meta)),
-      h('div', { class: 'row-end' }, removeRow),
-      selectable ? h('div', { class: 'row-extra', 'data-fingerprint': 'recipient' }, ...fingerprintGroups(formatFingerprint(row.fingerprint))) : null);
-    check?.addEventListener('change', updateShareButton);
-    removeRow.addEventListener('click', () => { const index = shares.indexOf(row); if (index >= 0) shares.splice(index, 1); li.remove(); updateShareButton(); });
-    shareRows.append(li);
-    updateShareButton();
-  }
-  addAddress.addEventListener('click', () => {
-    const email = shareInput.value.trim();
-    if (!email || shares.some((row) => row.email.toLowerCase() === email.toLowerCase())) return;
-    addAddress.disabled = true;
-    void lookupShares(ctx.deps, ctx.relicId, [email], admittedShares).then((rows) => {
-      for (const row of rows) addShareRow(row);
-      shareInput.value = '';
-      shareError.textContent = '';
-    }).catch((error: unknown) => { shareError.textContent = problemMessage(error); }).finally(() => { addAddress.disabled = false; });
-  });
-  shareButton.addEventListener('click', () => {
-    const selected = [...shareRows.querySelectorAll<HTMLElement>('[data-share-row]')].flatMap((li, index) => {
-      const row = shares[index];
-      return li.querySelector<HTMLInputElement>('input[data-share-grant]')?.checked && row && (row.kind === 'registered' || row.kind === 'invited') ? [row] : [];
-    });
-    const versions = [...shareVersions.querySelectorAll<HTMLInputElement>('input[data-share-version]:checked')].map((input) => Number(input.dataset.shareVersion));
-    const restore = waiting(shareButton);
-    void shareRegistered(ctx.deps, ctx.relicId, selected, versions).then(() => {
-      shares.length = 0;
-      shareRows.replaceChildren();
+  const share = createShareSection({
+    relicId: ctx.relicId,
+    deps: ctx.deps,
+    ...(ctx.prefill === undefined ? {} : { prefill: ctx.prefill }),
+    onChanged: (message) => {
       ctx.onChanged();
-      return refresh('Shared directly. Relik emailed them.', true);
-    }).catch((error: unknown) => { shareError.textContent = problemMessage(error); }).finally(() => { restore(); updateShareButton(); });
+      void refresh(message, true);
+    },
+  });
+  const invitations = createInvitationsSection({
+    relicId: ctx.relicId,
+    deps: ctx.deps,
+    onChanged: ctx.onChanged,
+    inviteAgain: (email) => share.fill([email]),
   });
   const deleteOpen = h(
     'button',
@@ -291,12 +245,9 @@ export function openAccessPanel(
       { class: 'panel-body' },
       lead,
       notice,
-      h('section', { class: 'panel-section', 'data-share-section': true },
-        h('h3', {}, 'Share'),
-        h('p', { class: 'panel-lead' }, "Type each person's email. People with a key are shared with at once. People without one are invited."),
-        h('fieldset', { class: 'versions' }, h('legend', {}, 'Versions they can open'), shareVersions),
-        h('div', { class: 'add-row' }, shareInput, addAddress), shareError, shareRows,
-        h('div', { class: 'share-foot' }, shareSummary, shareButton)),
+      share.element,
+      share.links,
+      invitations.element,
       h(
         'section',
         { class: 'panel-section', 'aria-labelledby': 'requests-title' },
@@ -755,11 +706,10 @@ export function openAccessPanel(
   async function refresh(message: string, keepNotice = false): Promise<void> {
     try {
       const data = await load();
-      admittedShares = data.admitted;
-      setChildren(shareVersions, ...grantableVersions(data.access).map((version) => {
-        const current = version === data.access.sealed_version;
-        return h('label', { class: 'pick' }, h('input', { type: 'checkbox', 'data-share-version': String(version), checked: true, disabled: current }), `v${version}`, current ? h('span', { class: 'lock-note' }, 'current') : null);
-      }));
+      share.update({ access: data.access, admitted: data.admitted });
+      if (ctx.mode !== 'focused') {
+        void invitations.update(data.access).catch((error: unknown) => showNotice(problemMessage(error), true));
+      }
       const count = data.admitted.size;
       const readers =
         count === 0

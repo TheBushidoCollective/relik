@@ -20,6 +20,7 @@ import { keylessLink } from '../copy-link.ts';
 import { privateApi } from './fingerprint-input.ts';
 import { renderPrivateDashboard } from './dashboard-private.ts';
 import { openAccessPanel } from './owner-panel.ts';
+import { parseShareFragment } from './direct-share.ts';
 import { mountPasskeySignIn } from '../passkey-sign-in.ts';
 import {
   normalizeSignInCode,
@@ -358,6 +359,7 @@ class PrivateReader {
   private pendingVersion = 0;
   private panelHost: HTMLElement | undefined;
   private requestCount: HTMLElement | undefined;
+  private sharePrefill: readonly string[] = [];
 
   constructor(private readonly mount: PrivateReaderMount) {
     this.host = document.createElement('section');
@@ -367,6 +369,11 @@ class PrivateReader {
   }
 
   async start(): Promise<void> {
+    const url = new URL(this.mount.deps.locationHref);
+    if (url.searchParams.get('access') === 'share' && url.hash.startsWith('#to=')) {
+      this.sharePrefill = parseShareFragment(url.hash);
+      this.mount.deps.stripFragment?.();
+    }
     document.body.replaceChildren(this.host);
     this.wire();
     await this.route();
@@ -932,6 +939,7 @@ class PrivateReader {
       if (requester === null) void this.openOwnerPanel();
       else void this.openGrantCard(requester);
     }
+    else if (wanted === 'share' || wanted === 'invites') void this.openOwnerPanel();
   }
 
   /** The owner's Access control on the relic's taskbar, with the pending count. */
@@ -1000,6 +1008,7 @@ class PrivateReader {
         relicId,
         access,
         deps,
+        prefill: this.sharePrefill,
         ...(focus === null ? {} : { focusRequester: focus }),
         onChanged: () => {
           void this.refreshRequestCount();
