@@ -405,3 +405,17 @@ production GCS lifecycle behavior or real mail delivery.
 Mutation controls in a scratch checkout rejected a disabled comments guard
 (`201` instead of `409`), a removed viewer owner gate (reader saw Settings),
 and a pause check moved after attestation (replay returned `403`, not `200`).
+
+# Signing
+
+```sh
+bun run build
+bun run --cwd packages/relic-mcp build
+RELIC_CHROME_PATH=<owned-headless-shell> bun packages/relic-mcp/test/signing-path.ts
+```
+
+The loopback path uses two app instances, a shared store, captured mail, the
+built viewer and virtual passkeys in isolated headless browsers. It exercises
+public and private signatures, receipts, certificate verification, cancellation,
+the signing pause, and version locks. It does not prove real passkeys, production
+storage lifecycle behavior or mail delivery.

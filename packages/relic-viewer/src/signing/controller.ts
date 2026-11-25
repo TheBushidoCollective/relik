@@ -31,6 +31,21 @@ export function showPausedSigning(
   return !signingEnabled && status === 'open' && listedSigner && trusted;
 }
 
+export function signingRefusalMessage(
+  failure: string,
+  ownerEmail: string
+): string {
+  if (
+    failure === 'signing_content_mismatch' ||
+    failure === 'signing_digest_mismatch'
+  )
+    return `This file doesn't match the one you were asked to sign. Don't sign it. Ask ${ownerEmail} (claimed) to send the request again.`;
+  if (failure === 'signing_page_invalid')
+    return `This request places a signature box beyond the last page. Don't sign it. Ask ${ownerEmail} (claimed) to send the request again.`;
+  if (failure === 'signing_owner_mismatch')
+    return "This signing request isn't signed by this relik's owner.";
+  return "This signing request could not be verified. Don't sign it.";
+}
 
 /** All async results decorate the mounted page; they never redraw the document. */
 export function mountSigning(input: {
@@ -146,10 +161,16 @@ export function mountSigning(input: {
         ? undefined
         : request?.signers.find((entry) => entry.index === signerIndex);
     const paused = view.settings?.signing === false;
-    if (paused && !showPausedSigning(false, request?.status, signer !== undefined, trusted))
+    if (
+      paused &&
+      !showPausedSigning(false, request?.status, signer !== undefined, trusted)
+    )
       return;
     const canSign =
-      !paused && trusted && request?.status === 'open' && signer?.status === 'ready';
+      !paused &&
+      trusted &&
+      request?.status === 'open' &&
+      signer?.status === 'ready';
     if (request && trusted && signerIndex !== undefined) {
       const banner = document.createElement('div');
       banner.className = 'signing-strip';
@@ -323,12 +344,10 @@ export function mountSigning(input: {
         body.className = 'panel-body';
         const message = document.createElement('p');
         message.className = 'panel-notice is-oxide';
-        message.textContent =
-          failure === 'signing_content_mismatch'
-            ? `This file doesn't match the one you were asked to sign. Don't sign it. Ask ${request.owner.identity.email} (claimed) to send the request again.`
-            : failure === 'signing_page_invalid'
-              ? `This request places a signature box beyond the last page. Don't sign it. Ask ${request.owner.identity.email} (claimed) to send the request again.`
-              : "This signing request isn't signed by this relik's owner.";
+        message.textContent = signingRefusalMessage(
+          failure,
+          request.owner.identity.email
+        );
         const close = document.createElement('button');
         close.type = 'button';
         close.className = 'btn';

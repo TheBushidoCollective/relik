@@ -115,7 +115,7 @@ export async function verifyViewerSigningRequest(input: {
       access: input.access,
       relicId: input.relicId,
       version: input.version,
-      ciphertextSha256: input.digest,
+      ciphertextSha256: statement.ciphertext_sha256,
       contentMac: statement.content_mac,
       origin: input.origin,
       rpId: new URL(input.origin).hostname,
@@ -123,6 +123,8 @@ export async function verifyViewerSigningRequest(input: {
   });
   if (checks.some((check) => !check.ok))
     throw new Error('signing_request_invalid');
+  if (statement.ciphertext_sha256 !== input.digest)
+    throw new Error('signing_digest_mismatch');
   const mac = await contentMac(input.signingKey, signingContent(input.content));
   if (mac !== statement.content_mac)
     throw new Error('signing_content_mismatch');
