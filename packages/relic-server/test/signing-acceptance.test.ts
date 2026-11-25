@@ -979,3 +979,21 @@ test('two instances complete and verify a certificate with prefixed fake GCS sto
     )
   ).toBe(true);
 });
+
+test('concurrent signatures by one signer admit exactly one record', async () => {
+  const f = await fixture();
+  const request = await f.open();
+  const first = await f.prepare(f.first, request, f.a);
+  const second = await f.prepare(f.first, request, f.b);
+  const results = await Promise.all([
+    f.post(f.a, `${root}/signing/signatures`, first, f.first.cookie),
+    f.post(f.b, `${root}/signing/signatures`, second, f.first.cookie),
+  ]);
+  expect(results.filter((result) => result.status === 201)).toHaveLength(1);
+  expect(
+    (await f.store.getSigningRequest(RELIC_ID, request.request_id))?.signedBy
+  ).toEqual([0]);
+  expect(
+    await f.store.listSignatures(RELIC_ID, request.request_id)
+  ).toHaveLength(1);
+});

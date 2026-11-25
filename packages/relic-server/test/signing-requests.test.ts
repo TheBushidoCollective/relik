@@ -683,6 +683,13 @@ test('creation reports malformed signers, request ids, layouts and mismatched ve
     'invalid_signing_request',
     'layout',
   ]);
+  const swappedLayout = await make();
+  swappedLayout.layout_ciphertext = encodeBase64url(randomBytes(64));
+  const swapped = await (await a.fetch(post(swappedLayout))).json();
+  expect([swapped.code, swapped.signing_check]).toEqual([
+    'invalid_signing_request',
+    'layout',
+  ]);
   const version = await (
     await a.fetch(post(await make({ version: 2 })))
   ).json();
