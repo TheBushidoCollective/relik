@@ -21,6 +21,7 @@ import {
   type SigningStateJSON,
 } from '@relic/format/signing';
 import { ProblemError } from './problems.ts';
+import { signingNoticeMail } from './mail.ts';
 import type {
   RelicRow,
   SessionRow,
@@ -490,6 +491,10 @@ export async function createSigningRequest(
     await env.store.deleteSigningForRelic(row.id);
     throw new ProblemError('relic_removed', { relic_id: row.id });
   }
+  if (row.access === 'private') {
+    const recipients = statement.order === 'parallel' ? statement.signers : statement.signers.slice(0, 1);
+    for (const signer of recipients) await sendSigningNotice(env, row, signer.email, 'invite');
+  }
   return signingRequestView(env, updated, record);
 }
 
@@ -602,10 +607,12 @@ export async function cancelSigningRequest(
   }
   if (row.expiresAt !== undefined && row.expiresAt <= env.now)
     throw new ProblemError('relic_expired', { relic_id: row.id });
+  let cancelledNow = false;
   const updated = await env.store.updateSigningRequest(
     row.id,
     statement.request_id,
     (current) => {
+      cancelledNow = current.status === 'open';
       if (current.status === 'cancelled') return current;
       if (current.status !== 'open')
         throw new ProblemError('signing_request_closed');
@@ -630,6 +637,10 @@ export async function cancelSigningRequest(
     return rest;
   });
   if (next === undefined) throw new ProblemError('relic_not_found');
+  if (cancelledNow) {
+    const original = parseStatement('signing_request', updated.statement);
+    for (const signer of original.signers) await sendSigningNotice(env, row, signer.email, 'cancelled');
+  }
   return signingRequestView(env, next, updated);
 }
 
@@ -906,8 +917,11 @@ export async function recordSignature(
       ? { ...current, signedBy: next, status: 'complete', completedAt: env.now }
       : { ...current, signedBy: next };
   });
-  if (updated?.status === 'complete') await finishCompletion(env, row, updated);
   if (updated === undefined) throw new ProblemError('signing_request_not_found');
+  await sendSigningNotice(env, row, (await ownerRecord(env, row)).email, 'signed');
+  if (updated.status === 'complete') await finishCompletion(env, row, updated);
+  else if (statement.order === 'sequential' && statement.signers[index + 1] !== undefined)
+    await sendSigningNotice(env, row, statement.signers[index + 1]!.email, 'turn');
   if ((await env.store.getTombstone(row.id)) !== undefined)
     throw new ProblemError('relic_removed', { relic_id: row.id });
   return { request_id: requestId, signer_index: index, recorded_at: new Date(recordedAt).toISOString(), status: updated.status };
@@ -924,7 +938,11 @@ export async function finishCompletion(env: PrivateEnv, row: RelicRow, request: 
     return { ...rest, lockedVersions: [...(current.lockedVersions ?? []), statement.version] };
   });
   if (locked === undefined) throw new ProblemError('relic_not_found');
-  if (await env.store.getCertificate(row.id, statement.request_id) !== undefined) return;
+  const existing = await env.store.getCertificate(row.id, statement.request_id);
+  if (existing !== undefined) {
+    await sendCompletionNotices(env, row, request, existing);
+    return;
+  }
   const view = await signingRequestView(env, locked, request, true);
   const signatures = view.signers.map((signer) => {
     if (signer.signature === null) throw new Error('admitted signature missing');
@@ -962,6 +980,7 @@ export async function finishCompletion(env: PrivateEnv, row: RelicRow, request: 
   });
   if (!report.valid) throw new Error(`signing certificate failed verification: ${report.checks.filter((check) => !check.ok).map((check) => check.id).join(', ')}`);
   await env.store.putCertificate(row.id, statement.request_id, certificate);
+  await sendCompletionNotices(env, row, request, certificate);
 }
 
 export async function postOpenedReceipt(
@@ -1020,4 +1039,44 @@ export async function readSigningCertificate(
   const certificate = await env.store.getCertificate(row.id, body.request_id);
   if (certificate === undefined) throw new ProblemError('certificate_not_ready');
   return certificate;
+}
+
+async function sendSigningNotice(
+  env: PrivateEnv, row: RelicRow, address: string,
+  kind: 'invite' | 'turn' | 'signed' | 'complete' | 'cancelled',
+  certificate?: Record<string, unknown>, details?: string
+): Promise<void> {
+  try {
+    await env.sendSigningMail?.(row.id, address, (stopUrl) => signingNoticeMail({
+      kind, private: row.access === 'private',
+      ...(row.title === undefined ? {} : { title: row.title }),
+      relicUrl: `${env.config.serviceOrigin}/${row.id}`, stopUrl,
+      ...(details === undefined ? {} : { details }),
+      ...(certificate === undefined || row.access === 'private' ? {} : {
+        certificate: { filename: `relik-${row.id}-v${certificate['version']}-signing.json`, content: new TextEncoder().encode(JSON.stringify(certificate)) },
+      }),
+    }));
+  } catch {
+    console.error('relic: signing notice could not be prepared');
+  }
+}
+
+async function sendCompletionNotices(
+  env: PrivateEnv, row: RelicRow, request: SigningRequestRow, certificate: Record<string, unknown>
+): Promise<void> {
+  if (env.sendSigningMail === undefined) return;
+  const statement = parseStatement('signing_request', request.statement);
+  let claimed = false;
+  await env.store.updateSigningRequest(row.id, statement.request_id, (current) => {
+    claimed = current.status === 'complete' && current.completionMailedAt === undefined;
+    return claimed ? { ...current, completionMailedAt: env.now } : current;
+  });
+  if (!claimed) return;
+  const signatures = await env.store.listSignatures(row.id, statement.request_id);
+  const details = `Version ${statement.version}; digest ${statement.ciphertext_sha256.slice(0, 16)}; expiry ${row.expiresAt === undefined ? 'never' : new Date(row.expiresAt).toISOString()}. ` +
+    signatures.filter((item) => request.signedBy?.includes(item.signerIndex))
+      .map((item) => `${item.email}: ${new Date(item.recordedAt).toISOString()}`).join('; ');
+  const owner = await ownerRecord(env, row);
+  for (const address of new Set([owner.email, ...statement.signers.map((signer) => signer.email)]))
+    await sendSigningNotice(env, row, address, 'complete', certificate, details);
 }

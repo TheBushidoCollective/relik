@@ -750,6 +750,26 @@ export function createApp(options: AppOptions = {}): RelicApp {
       sendMail: async (to, mail) => {
         if (mailer?.sendMail !== undefined) await mailer.sendMail(to, mail);
       },
+      sendSigningMail: async (relicId, address, build) => {
+        if (mailer?.sendMail === undefined) return;
+        const normalized = normalizeEmail(address);
+        const addressHash = await sha256Hex(normalized);
+        if (await store.isOptedOut(relicId, addressHash)) return;
+        const key = `signing ${relicId} ${normalized}`;
+        if (!limiter.peek(key, config.signingMailRateLimit, now).allowed ||
+            !limiter.peek('change-notice', config.changeNoticeRateLimit, now).allowed) return;
+        const row = await store.getRelic(relicId);
+        if (row === undefined || (row.expiresAt !== undefined && row.expiresAt <= now) ||
+            await store.getTombstone(relicId) !== undefined) return;
+        const secret = await store.unsubscribeKey();
+        const mac = await hmacSha256(secret, `relic-unsubscribe:v1:${parseRelicId(relicId)}:${addressHash}`);
+        const stopUrl = `${config.serviceOrigin}/api/relics/${relicId}/unsubscribe?addr=${addressHash}&token=${Buffer.from(mac).toString('base64url')}`;
+        if (await store.isOptedOut(relicId, addressHash)) return;
+        if (!limiter.check(key, config.signingMailRateLimit, now).allowed ||
+            !limiter.check('change-notice', config.changeNoticeRateLimit, now).allowed) return;
+        try { await mailer.sendMail(normalized, build(stopUrl)); }
+        catch (error) { console.error(`relic: signing notice failed: ${sanitizeMailError(error, normalized)}`); }
+      },
       limit: (scope, key, budget) => {
         const verdict = limiter.check(rateLimitKey(scope, key), budget, now);
         if (!verdict.allowed) {

@@ -5,11 +5,12 @@ import { attestationChallenge, decodeBase64url, encodeBase64url, generateIdentit
 import type { SigningRequestStatement, SignatureStatement, SigningCancelStatement } from '@relic/format/private';
 import { layoutCiphertextSha256, markCiphertextSha256, signingRequestSha256, verifySigningCertificate } from '@relic/format/signing';
 import { createApp } from '../src/app.ts';
+import type { OutboundMail } from '../src/mail.ts';
 import { sha256Hex } from '../src/gcs.ts';
 import { MemoryStorage } from '../src/storage.ts';
 import { MemoryStore } from '../src/store.ts';
 import { fakeAuthenticator } from './fake-authenticator.ts';
-import { attestation, identity, NOW, relic, RELIC_ID, seal, wrap } from './private-fixtures.ts';
+import { attestation, grant, identity, NOW, relic, RELIC_ID, seal, wrap } from './private-fixtures.ts';
 
 const origin = 'https://relic.example';
 const root = `/api/relics/${RELIC_ID}`;
@@ -18,8 +19,10 @@ const b64 = (bytes: Uint8Array) => encodeBase64url(bytes);
 async function fixture() {
   const store = new MemoryStore();
   const storage = new MemoryStorage();
-  const a = createApp({ store, storage, now: () => NOW });
-  const b = createApp({ store, storage, now: () => NOW });
+  const mails: { email: string; mail: OutboundMail }[] = [];
+  const mailer = { async send() {}, async sendMail(email: string, mail: OutboundMail) { mails.push({ email, mail }); } };
+  const a = createApp({ store, storage, mailer, now: () => NOW });
+  const b = createApp({ store, storage, mailer, now: () => NOW });
   const bytes = new TextEncoder().encode('signed ciphertext');
   storage.put(RELIC_ID, bytes);
   const digest = await storage.digest(RELIC_ID) as string;
@@ -38,9 +41,19 @@ async function fixture() {
     return { email, auth, keys, identityId, cookie: `relic_session=${token}` };
   }
   const owner = await person('owner@example.com', true);
-  const first = await person('first@example.com', false);
-  const second = await person('second@example.com', false);
+  const first = await person('first@example.com', true);
+  const second = await person('second@example.com', true);
   await store.putRelic(relic({ ownerIdentityId: owner.identityId, publishedAt: NOW, shareVerifier, versionDigests: { '1': digest } }));
+  async function enablePrivate() {
+    await store.updateRelic(RELIC_ID, (row) => ({ ...row, access: 'private', title: 'SECRET CLIENT TITLE', expiresAt: NOW + 86400000, sealedVersion: 1 }));
+    await store.putSeal({ ...seal(1), signerId: owner.identityId, statement: { ciphertext_sha256: digest, key_commitment: 'c'.repeat(64) } });
+    for (const who of [first, second]) {
+      const record = await store.getIdentity(who.identityId);
+      if (record === undefined) throw new Error('identity missing');
+      await store.putGrant({ ...grant(who.identityId), ownerIdentityId: owner.identityId });
+      await store.putWrap(wrap(record.kemKeyId, 1));
+    }
+  }
   async function post(app: typeof a, path: string, body: unknown, cookie: string) {
     const response = await app.fetch(new Request(`${origin}${path}`, { method: 'POST', headers: { 'content-type': 'application/json', cookie }, body: JSON.stringify(body) }));
     return { status: response.status, body: await response.json() as { nonce: string; signer_index: number; code: string } & Record<string, unknown> };
@@ -53,11 +66,11 @@ async function fixture() {
     const identitySignature = signIdentity ? await signStatement(async (value) => new Uint8Array(await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, who.keys.sig.privateKey, value as BufferSource)), message) : '';
     return { nonce, statements: [{ kind, statement, identity_signature: identitySignature }], credential: wire };
   }
-  async function open(order: 'parallel' | 'sequential' = 'parallel') {
+  async function open(order: 'parallel' | 'sequential' = 'parallel', isPrivate = false) {
     const nonce = await post(a, '/api/attest/nonce', { purpose: 'signing_request', relic_id: RELIC_ID }, owner.cookie);
     expect(nonce.status).toBe(200);
     const layout = b64(randomBytes(64));
-    const statement: SigningRequestStatement = { at: NOW, ciphertext_sha256: digest, consent: 'relic/sign-consent/v1', content_mac: 'f'.repeat(64), layout_sha256: layoutCiphertextSha256(layout), order, owner_identity_id: owner.identityId, relic_id: RELIC_ID, request_id: b64(randomBytes(16)), require_opened: false, signer_id: owner.identityId, signers: [{ email: first.email, identity_id: null }, { email: second.email, identity_id: null }], version: 1 };
+    const statement: SigningRequestStatement = { at: NOW, ciphertext_sha256: digest, consent: 'relic/sign-consent/v1', content_mac: 'f'.repeat(64), layout_sha256: layoutCiphertextSha256(layout), order, owner_identity_id: owner.identityId, relic_id: RELIC_ID, request_id: b64(randomBytes(16)), require_opened: false, signer_id: owner.identityId, signers: [{ email: first.email, identity_id: isPrivate ? first.identityId : null }, { email: second.email, identity_id: isPrivate ? second.identityId : null }], version: 1 };
     const result = await post(a, `${root}/signing/requests`, { attestation: await assertion(owner, nonce.body.nonce, 'signing_request', statement, true), layout_ciphertext: layout }, owner.cookie);
     expect(result.status).toBe(201);
     return statement;
@@ -75,7 +88,7 @@ async function fixture() {
     const statement: SigningCancelStatement = { at: NOW, owner_identity_id: owner.identityId, relic_id: RELIC_ID, request_id: request.request_id, signer_id: owner.identityId };
     return { attestation: await assertion(owner, nonce.body.nonce, 'signing_cancel', statement, true) };
   }
-  return { store, storage, a, b, owner, first, second, post, open, prepare, cancel, shareProof };
+  return { store, storage, a, b, owner, first, second, post, open, prepare, cancel, enablePrivate, shareProof, mails };
 }
 
 test('two public signatures complete across instances and the certificate verifies', async () => {
@@ -89,6 +102,10 @@ test('two public signatures complete across instances and the certificate verifi
   expect(certificate.status).toBe(200);
   expect((await verifySigningCertificate(certificate.body, { expectedOrigin: origin, trustedOwnerIdentityId: f.owner.identityId })).valid).toBe(true);
   expect((await f.store.getRelic(RELIC_ID))?.lockedVersions).toContain(1);
+  const completionMails = f.mails.filter(({ mail }) => mail.subject.startsWith('Everyone signed'));
+  expect(completionMails).toHaveLength(3);
+  expect(completionMails.every(({ mail }) => mail.attachments?.length === 1)).toBe(true);
+  expect(f.mails.every(({ mail }) => !mail.text.includes('#'))).toBe(true);
 });
 
 test('sequential requests refuse a signer out of turn', async () => {
@@ -203,4 +220,18 @@ test('private delivery creates a served receipt and a signed opened receipt is f
   const repeated = await f.post(f.a, `${root}/receipts/opened`, body, f.owner.cookie);
   expect(repeated.status).toBe(200);
   expect(repeated.body.opened_at).toBe(opened.body.opened_at);
+});
+
+test('private invitations stay generic and honor recipient stop links', async () => {
+  const f = await fixture();
+  await f.enablePrivate();
+  await f.store.putOptOut({ relicId: RELIC_ID, addressHash: await sha256Hex(f.second.email), at: NOW });
+  await f.open('parallel', true);
+  expect(f.mails).toHaveLength(1);
+  expect(f.mails[0]?.email).toBe(f.first.email);
+  const notice = f.mails[0]!.mail;
+  expect(JSON.stringify(notice)).not.toContain('SECRET CLIENT TITLE');
+  expect(JSON.stringify(notice)).not.toContain(f.second.email);
+  expect(notice.text).not.toContain('#');
+  expect(notice.text).toContain('/unsubscribe?');
 });
