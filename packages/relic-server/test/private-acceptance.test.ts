@@ -921,6 +921,47 @@ describe('backfill and coverage', () => {
   });
 });
 
+describe('grant lookup', () => {
+  test('only the owner may look up addresses and recovery shares the per-address budget', async () => {
+    app = createApp({
+      store,
+      storage,
+      now: () => now,
+      config: {
+        identityLookupRateLimit: { limit: 2, windowSeconds: 3600 },
+      },
+    });
+    const owner = await person('owner@example.com');
+    await registerIdentity(owner);
+    await sealedPrivateRelic(owner);
+    const reader = await person('reader@example.com');
+    await registerIdentity(reader);
+    const path = `/api/relics/${RELIC_ID}/grants/lookup`;
+    expect((await send(path, post({ emails: [reader.email] }))).status).toBe(
+      401
+    );
+    expect(
+      (await send(path, post({ emails: [reader.email] }, reader.cookie))).status
+    ).toBe(403);
+    const response = await send(
+      path,
+      post({ emails: [owner.email, 'missing@example.com'] }, owner.cookie)
+    );
+    expect(response.status).toBe(200);
+    const results = response.body['results'] as Record<string, unknown>[];
+    expect(results[0]!['standing']).toBe('owner');
+    expect(results[1]!['party']).toBeNull();
+    expect(results[1]!['standing']).toBeNull();
+    expect(results[1]!['invites']).toEqual([]);
+    const blocked = await send(
+      '/api/identity/recovery/lookup',
+      post({ email: reader.email }, owner.cookie)
+    );
+    expect(blocked.status).toBe(429);
+    expect(blocked.body['code']).toBe('private_rate_limited');
+  });
+});
+
 describe('grant authority', () => {
   test('the owner cannot grant to their own identity', async () => {
     const owner = await person('owner@example.com');

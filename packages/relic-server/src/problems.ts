@@ -373,6 +373,7 @@ export interface ProblemExtensions {
     | 'share_proof'
     | 'version';
   readonly identity_check?: string;
+  readonly index?: number;
   readonly statement_check?: string;
   readonly seal_check?: string;
   readonly device_check?: string;

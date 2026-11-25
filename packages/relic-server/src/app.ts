@@ -143,6 +143,7 @@ import {
   grantAccess,
   listGrants,
   listRequests,
+  ownedPrivate,
   privateAccessView,
   recipientsState,
   requestAccess,
@@ -152,6 +153,7 @@ import {
 import {
   identityPublicJson,
   liveRelic,
+  partyJson,
   type PrivateEnv,
 } from './private/context.ts';
 import type { AttestPurpose } from '@relic/format/private';
@@ -1104,7 +1106,7 @@ export function createApp(options: AppOptions = {}): RelicApp {
             });
           }
           return Response.json({
-            party: await lookupRecovery(env, body['email'], email),
+            party: await lookupRecovery(env, body['email'], email, ip),
           });
         }
         if (second === 'recovery' && third === undefined && post) {
@@ -1300,6 +1302,70 @@ export function createApp(options: AppOptions = {}): RelicApp {
             fourth
           );
           return Response.json({});
+        }
+        if (
+          third === 'grants' &&
+          fourth === 'lookup' &&
+          fifth === undefined &&
+          post
+        ) {
+          if (session === undefined) return refuse('sign_in_required');
+          const body = await privateBody(request, 'invalid_identity');
+          const email = normalizeEmail(session.email);
+          const { row, owner } = await ownedPrivate(env, email, relicId);
+          const rawEmails = body['emails'];
+          if (
+            !Array.isArray(rawEmails) ||
+            rawEmails.length < 1 ||
+            rawEmails.length > config.privateShareMaxPerCall
+          ) {
+            throw new ProblemError('invalid_identity', {
+              identity_check: 'emails',
+            });
+          }
+          const addresses: string[] = [];
+          for (let index = 0; index < rawEmails.length; index++) {
+            const address = rawEmails[index];
+            if (
+              typeof address !== 'string' ||
+              !looksLikeEmail(address.trim())
+            ) {
+              throw new ProblemError('invalid_identity', {
+                identity_check: 'email',
+                index,
+              });
+            }
+            const normalized = normalizeEmail(address);
+            if (!addresses.includes(normalized)) addresses.push(normalized);
+          }
+          env.limitAll([
+            {
+              scope: 'identity-lookup',
+              key: email,
+              budget: config.identityLookupRateLimit,
+              units: addresses.length,
+            },
+            {
+              scope: 'identity-lookup-ip',
+              key: ip,
+              budget: config.identityLookupIpRateLimit,
+              units: addresses.length,
+            },
+          ]);
+          const results = [];
+          for (const address of addresses) {
+            const identity = await currentIdentity(env, address);
+            results.push({
+              email: address,
+              party: identity === undefined ? null : partyJson(identity),
+              standing:
+                identity === undefined
+                  ? null
+                  : (await standingOf(env, row, owner, identity)).role,
+              invites: [],
+            });
+          }
+          return Response.json({ results });
         }
         if (third === 'grants' && fourth === undefined && post) {
           if (session === undefined) return refuse('sign_in_required');

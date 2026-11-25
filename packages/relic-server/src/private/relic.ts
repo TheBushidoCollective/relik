@@ -329,7 +329,11 @@ export async function declineRequest(
 }
 
 /** The owner's session, the private relic, and the owner record, or the refusal. */
-async function ownedPrivate(env: PrivateEnv, email: string, relicId: string) {
+export async function ownedPrivate(
+  env: PrivateEnv,
+  email: string,
+  relicId: string
+) {
   const row = privateRow(await liveRelic(env, relicId));
   const owner = await ownerRecord(env, row);
   const me = await currentIdentity(env, email);

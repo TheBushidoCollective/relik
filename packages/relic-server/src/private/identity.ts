@@ -372,12 +372,26 @@ export async function setRetention(
 export async function lookupRecovery(
   env: PrivateEnv,
   email: string,
-  viewer: string
+  viewer: string,
+  ip: string
 ): Promise<PartyJSON | null> {
   if ((await currentIdentity(env, viewer)) === undefined) {
     throw new ProblemError('identity_required');
   }
-  env.limit('identity-lookup', viewer, env.config.identityLookupRateLimit);
+  env.limitAll([
+    {
+      scope: 'identity-lookup',
+      key: viewer,
+      budget: env.config.identityLookupRateLimit,
+      units: 1,
+    },
+    {
+      scope: 'identity-lookup-ip',
+      key: ip,
+      budget: env.config.identityLookupIpRateLimit,
+      units: 1,
+    },
+  ]);
   const record = await currentIdentity(env, normalizeEmail(email));
   return record === undefined ? null : partyJson(record);
 }
