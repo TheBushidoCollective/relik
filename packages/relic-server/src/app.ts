@@ -877,6 +877,12 @@ export function createApp(options: AppOptions = {}): RelicApp {
             statement_check: 'purpose',
           });
         }
+        if (
+          config.killSwitchEngaged &&
+          (purpose === 'signing_request' || purpose === 'signing_cancel')
+        ) {
+          return refuse('service_paused');
+        }
         env.limit('attest', session.email, config.privateRateLimit);
         const email = normalizeEmail(session.email);
         const relicId =
@@ -5099,6 +5105,8 @@ export function createApp(options: AppOptions = {}): RelicApp {
       (row.expiresAt === undefined || expiresAt > row.expiresAt)
     )
       await store.extendPrivateLifetime(relicId, expiresAt);
+    if (row.access !== 'private' && 'ttl_days' in changes)
+      await store.syncPublicSigningLifetime(relicId, expiresAt);
     const updated = await store.updateRelic(relicId, (cur) => {
       const current = settingsView(cur);
       const nextExpiry = 'ttl_days' in changes ? expiresAt : cur.expiresAt;
@@ -5133,6 +5141,8 @@ export function createApp(options: AppOptions = {}): RelicApp {
     });
     if (updated === undefined)
       throw new ProblemError('relic_not_found', { relic_id: relicId });
+    if (updated.access !== 'private' && 'ttl_days' in changes)
+      await store.syncPublicSigningLifetime(relicId, updated.expiresAt);
     if (
       updated.access === 'private' &&
       'ttl_days' in changes &&

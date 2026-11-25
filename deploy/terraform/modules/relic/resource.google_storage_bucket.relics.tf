@@ -12,10 +12,10 @@ resource "google_storage_bucket" "relics" {
   # `customTime`. The app sets `customTime` to a private relic's expiry on
   # every object it writes for that relic: the ciphertext, the relic row, and
   # the wraps, seals, grants, requests, comments and decisions that name it.
-  # Each rule erases the object one day after its `customTime`. A public relic's
-  # objects never carry a `customTime`, so no rule here can reach them, and the
-  # bytes of a relic the publisher asked to keep are never a candidate. The
-  # application still refuses an expired relic at mint, as it always has.
+  # Each rule erases the object one day after its `customTime`. Public signing
+  # records also carry a deadline when the relik has a finite lifetime; other
+  # public objects do not. A never-expiring relik's records carry no deadline.
+  # The application refuses an expired relic at mint.
   #
   # Erasure is not the end of recoverability while soft delete (below) keeps
   # deleted objects, so read that window as part of the erasure.
@@ -34,8 +34,7 @@ resource "google_storage_bucket" "relics" {
     }
   }
 
-  # A private relic's ciphertext and every metadata object that names it.
-  # Public objects carry no `customTime`, so this rule matches none of them.
+  # Private relic objects and signing records of finite-lived public reliks.
   lifecycle_rule {
     action {
       type = "Delete"
@@ -107,7 +106,7 @@ resource "google_storage_bucket" "relics" {
   cors {
     origin          = [var.service_url]
     method          = ["GET", "HEAD", "PUT"]
-    response_header = ["Content-Type", "Content-Length", "Content-Range", "ETag", "x-goog-hash", "x-goog-custom-time"]
+    response_header = ["Content-Type", "Content-Length", "Content-Range", "ETag", "x-goog-hash", "x-goog-custom-time", "x-goog-if-generation-match"]
     max_age_seconds = 3600
   }
 

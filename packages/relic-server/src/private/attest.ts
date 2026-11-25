@@ -338,34 +338,30 @@ export async function verifyAttestation(
     input.purpose === 'signing_cancel' ||
     input.purpose === 'sign'
   ) {
-    const credentialId = bundle.credential['id'];
     const credential = input.passkeys.credentials.find(
-      (c) => c.credentialId === credentialId
+      (item) => item.credentialId === bundle.credential['id']
     );
-    if (credential === undefined) {
+    if (credential === undefined)
       throw new ProblemError('passkey_verification_failed', {
         passkey_check: 'credential',
       });
-    }
     try {
-      const origin = new URL(env.config.serviceOrigin);
       await verifyWebauthnAssertion(bundle.credential, {
         challenge,
-        origin: origin.origin,
-        rpId: origin.hostname,
+        origin: new URL(env.config.serviceOrigin).origin,
+        rpId: new URL(env.config.serviceOrigin).hostname,
+        credentialId: credential.credentialId,
         publicKeyJwk: credential.publicKeyJwk,
         alg: credential.alg,
-        credentialId: credential.credentialId,
       });
     } catch (error) {
-      if (error instanceof WebauthnAssertionError) {
+      if (error instanceof WebauthnAssertionError)
         throw new ProblemError(
           error.kind === 'malformed'
             ? 'invalid_passkey'
             : 'passkey_verification_failed',
           { passkey_check: error.check }
         );
-      }
       throw error;
     }
   }
@@ -470,8 +466,29 @@ export async function verifyStoredAttestation(
       },
       userHandle,
     });
+    if (
+      attestation.statements.some(
+        (statement) =>
+          statement.kind === 'signing_request' ||
+          statement.kind === 'signing_cancel' ||
+          statement.kind === 'signature'
+      )
+    ) {
+      await verifyWebauthnAssertion(credential, {
+        challenge,
+        origin: attestation.origin,
+        rpId: attestation.rpId,
+        credentialId: attestation.credentialId,
+        publicKeyJwk: attestation.credentialPublicKeyJwk,
+        alg: attestation.credentialAlg,
+      });
+    }
   } catch (error) {
-    if (error instanceof WebauthnError) return false;
+    if (
+      error instanceof WebauthnError ||
+      error instanceof WebauthnAssertionError
+    )
+      return false;
     throw error;
   }
   for (let i = 0; i < attestation.statements.length; i++) {
