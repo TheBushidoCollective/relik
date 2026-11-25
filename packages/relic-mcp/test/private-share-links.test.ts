@@ -250,4 +250,14 @@ describe('tool descriptions and instructions', () => {
     );
     expect(INSTRUCTIONS).toContain('relic_share returns grant_url');
   });
+
+  test('client description explains the private owner link', async () => {
+    const res = await callTool('relic_describe_client', {});
+    const sharing = res.result?.structuredContent?.['sharing'];
+    expect(typeof sharing).toBe('string');
+    expect(sharing).toContain('grant_url');
+    expect(sharing).toContain("owner's passkey");
+    expect(sharing).not.toMatch(/\bRelic\b|[\u2013\u2014]/);
+    expect(fetchCalls).toEqual([]);
+  });
 });
